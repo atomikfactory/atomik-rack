@@ -37,16 +37,18 @@ pub enum FxKind {
     AudioTrack,
     /// `atomik.tuner`: the tuner display of an effect (fed by the app from the device's scope tap).
     Tuner,
+    /// `atomik.clipper`: the transfer curve, the clip activity readout and the level meters.
+    Clipper,
     /// `atomik.dynamic-eq`: the static and live response curves over the spectrum of the input
     /// and of the key, with a draggable handle per band.
     DynamicEq,
-    /// `atomik.clipper`: the transfer curve, the clip activity readout and the level meters.
-    Clipper,
+    /// `atomik.duck`: the drawn duck curve with draggable points and bends, and a LEARN button.
+    Duck,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 14] = [
+    pub const ALL: [FxKind; 15] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -59,14 +61,15 @@ impl FxKind {
         FxKind::PhaseMeter,
         FxKind::AudioTrack,
         FxKind::Tuner,
-        FxKind::DynamicEq,
         FxKind::Clipper,
+        FxKind::DynamicEq,
+        FxKind::Duck,
     ];
 
     /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
     /// effect, the meters of one and a plain "meters change the painting" behaviour that the
     /// audio track's tuner does not share.
-    pub const EFFECTS: [FxKind; 13] = [
+    pub const EFFECTS: [FxKind; 14] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -78,8 +81,9 @@ impl FxKind {
         FxKind::Spectrum,
         FxKind::PhaseMeter,
         FxKind::Tuner,
-        FxKind::DynamicEq,
         FxKind::Clipper,
+        FxKind::DynamicEq,
+        FxKind::Duck,
     ];
 
     /// The kind of a device type id.
@@ -102,8 +106,9 @@ impl FxKind {
             FxKind::PhaseMeter => "atomik.phase-meter",
             FxKind::AudioTrack => "atomik.audio-track",
             FxKind::Tuner => "atomik.tuner",
-            FxKind::DynamicEq => "atomik.dynamic-eq",
             FxKind::Clipper => "atomik.clipper",
+            FxKind::DynamicEq => "atomik.dynamic-eq",
+            FxKind::Duck => "atomik.duck",
         }
     }
 
@@ -121,8 +126,9 @@ impl FxKind {
             FxKind::Spectrum => SPECTRUM_METERS,
             FxKind::PhaseMeter => phase::COUNT,
             FxKind::AudioTrack | FxKind::Tuner => 0,
-            FxKind::DynamicEq => DYNEQ_METERS,
             FxKind::Clipper => CLIPPER_METERS,
+            FxKind::DynamicEq => DYNEQ_METERS,
+            FxKind::Duck => DUCK_METERS,
         }
     }
 }
@@ -148,6 +154,11 @@ pub const GR_SCALE_DB: f32 = 24.0;
 pub const CHARACTER_METERS: usize = 4;
 /// The spectrum analyser publishes the recent peaks of its two inputs.
 pub const SPECTRUM_METERS: usize = 2;
+/// The clipper publishes `[driven peak, output peak, clipped share in percent, longest clipped
+/// run in ms]` (`atomik_devices::clipper::meter`; a test pins the two together).
+pub const CLIPPER_METERS: usize = 4;
+/// Longest clipped run (ms) that is below what is usually heard as distortion.
+pub const CLIPPER_RUN_SAFE_MS: f32 = 1.0;
 /// The dynamic EQ's published values (`atomik_devices::dynamic_eq::METER_COUNT`; a test pins the
 /// two together): five band gains in dB, 16 input energies, 16 key energies, two output peaks and
 /// the key-cabled flag.
@@ -164,11 +175,9 @@ pub const DYNEQ_PEAKS: usize = 37;
 pub const DYNEQ_KEY_CABLED: usize = 39;
 /// Number of bands of the dynamic EQ.
 pub const DYNEQ_BANDS: usize = 5;
-/// The clipper publishes `[driven peak, output peak, clipped share in percent, longest clipped
-/// run in ms]` (`atomik_devices::clipper::meter`; a test pins the two together).
-pub const CLIPPER_METERS: usize = 4;
-/// Longest clipped run (ms) that is below what is usually heard as distortion.
-pub const CLIPPER_RUN_SAFE_MS: f32 = 1.0;
+/// The Sidechain Tool publishes `[dip, position along the drawn curve]`, both 0 to 1
+/// (`atomik_devices::duck::METERS`; a test pins the two together).
+pub const DUCK_METERS: usize = 2;
 
 /// The phase meter's published values (`atomik_devices::phase_meter::value`; a test pins the
 /// two together): which index holds what.
@@ -230,11 +239,11 @@ enum Slot {
     /// A value -1..1 shown as published (the phase meter's correlation and balance, which the
     /// device already averages), no release.
     Signed,
-    /// A gain in dB (negative or positive) shown as published: the device already smooths it.
-    Gain,
     /// A value 0..10000 shown as published to a tenth (the clipper's share and run length, which
     /// the device already holds over a window), no release.
     Plain,
+    /// A gain in dB (negative or positive) shown as published: the device already smooths it.
+    Gain,
 }
 
 fn slot(kind: FxKind, i: usize) -> Slot {
@@ -244,6 +253,7 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::DynamicEq, i) if i < DYNEQ_INPUT => Slot::Gain,
         (FxKind::DynamicEq, i) if i < DYNEQ_PEAKS => Slot::Power,
         (FxKind::DynamicEq, DYNEQ_KEY_CABLED) => Slot::Unit,
+        (FxKind::Duck, _) => Slot::Unit,
         (FxKind::Mastering, 0..=3) => Slot::Raw,
         (FxKind::Mastering, _) => Slot::Gr,
         (FxKind::GuitarAmp, 2) => Slot::Gr,
@@ -276,7 +286,7 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
             match slot(kind, i) {
                 Slot::Gr => *v = 0.0,
                 Slot::Raw => *v = -120.0,
-                Slot::Unit | Slot::Activity | Slot::Signed | Slot::Gain | Slot::Plain => *v = 0.0,
+                Slot::Unit | Slot::Activity | Slot::Signed | Slot::Plain | Slot::Gain => *v = 0.0,
                 _ => {}
             }
         }
@@ -294,8 +304,8 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
             Slot::Unit => (r.clamp(0.0, 1.0), f32::INFINITY, 0.01, 0.0),
             Slot::Activity => (r.clamp(0.0, 1.0), ACTIVITY_FALL, 0.02, 0.0),
             Slot::Signed => (r.clamp(-1.0, 1.0), f32::INFINITY, 0.01, -1.0),
-            Slot::Gain => (r.clamp(-48.0, 48.0), f32::INFINITY, 0.1, -48.0),
             Slot::Plain => (r.clamp(0.0, 10_000.0), f32::INFINITY, 0.1, 0.0),
+            Slot::Gain => (r.clamp(-48.0, 48.0), f32::INFINITY, 0.1, -48.0),
         };
         let old = *cell;
         let v = if new >= old {
@@ -1017,6 +1027,7 @@ pub fn dyneq_help(key: &str) -> Option<&'static str> {
         "source" => "What the band listens to: its own input, or the key input",
         "channel" => "Which part of the stereo image the band filters and listens to",
         "output" => "Gain after the last band",
+        "delta" => "Listen to what the bands take out (the input minus the output), not the sound",
         _ => return None,
     })
 }

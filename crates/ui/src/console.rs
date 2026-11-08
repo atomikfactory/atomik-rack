@@ -303,6 +303,8 @@ enum Hit {
     MasterName,
     /// The bypass (B) part of a filled insert slot whose effect has a bypass.
     InsertBypass(Target, usize),
+    /// The EDIT (E) part of a filled insert slot: shows the effect in the rack.
+    InsertEdit(Target, usize),
     Menu(usize),
     MenuArea,
     Empty,
@@ -493,6 +495,13 @@ enum Drag {
     },
     Pan {
         last: Point,
+    },
+    /// A filled insert row pressed: a click selects its effect, a drag reorders the chain.
+    Insert {
+        target: Target,
+        slot: usize,
+        start_y: f64,
+        y: f64,
     },
     /// The fader of VCA strip `index`.
     VcaFader {
@@ -687,6 +696,16 @@ fn insert_b_rect(r: Rect) -> Rect {
     )
 }
 
+/// Width of the EDIT (E) hotspot left of the bypass (B) of a slot.
+const INSERT_E_W: f64 = 12.0;
+
+/// The EDIT hotspot of a filled slot: left of the B when the effect has a bypass, else right
+/// of the name against the x.
+fn insert_e_rect(r: Rect, has_bypass: bool) -> Rect {
+    let right = INSERT_X_W + if has_bypass { INSERT_B_W } else { 0.0 };
+    Rect::new(r.x1 - right - INSERT_E_W, r.y0, r.x1 - right, r.y1)
+}
+
 /// The insert slot hit by `p` (in the section's coordinates): a filled slot or the first
 /// empty one ("+ add"); later empty slots are inert.
 fn insert_hit(
@@ -702,13 +721,13 @@ fn insert_hit(
     if slot > used {
         return None;
     }
+    let has_bypass = bypass.get(slot).is_some_and(Option::is_some);
     Some(if slot < used && insert_x_rect(slots[row]).contains(p) {
         Hit::InsertRemove(target, slot)
-    } else if slot < used
-        && bypass.get(slot).is_some_and(Option::is_some)
-        && insert_b_rect(slots[row]).contains(p)
-    {
+    } else if slot < used && has_bypass && insert_b_rect(slots[row]).contains(p) {
         Hit::InsertBypass(target, slot)
+    } else if slot < used && insert_e_rect(slots[row], has_bypass).contains(p) {
+        Hit::InsertEdit(target, slot)
     } else {
         Hit::Insert(target, slot)
     })
@@ -1894,6 +1913,20 @@ impl ConsoleView {
         matches!(self.hit(p), Hit::InsertRemove(..)).then_some(p)
     }
 
+    /// Centre of the EDIT (E) of insert slot `slot`, when the slot is filled and in view.
+    pub fn insert_edit_center(&self, device: &DeviceKey, slot: usize) -> Option<Point> {
+        let view = self
+            .strips
+            .iter()
+            .find(|s| &s.key == device)
+            .or(self.master.as_ref().filter(|m| &m.key == device));
+        let has_bypass = view
+            .and_then(|s| s.insert_bypass.get(slot))
+            .is_some_and(Option::is_some);
+        let p = insert_e_rect(self.insert_rect(device, slot)?, has_bypass).center();
+        matches!(self.hit(p), Hit::InsertEdit(..)).then_some(p)
+    }
+
     /// Centre of the bypass (B) of insert slot `slot`, when the slot is filled with an effect
     /// that has a bypass and is in view.
     pub fn insert_bypass_center(&self, device: &DeviceKey, slot: usize) -> Option<Point> {
@@ -2770,7 +2803,26 @@ impl ConsoleView {
             (Hit::PeakReset, PointerButton::Primary) => self.reset_peaks(),
             (Hit::MasterName, PointerButton::Primary) => self.select_master(),
             (Hit::Insert(t, slot), PointerButton::Primary) => {
-                self.insert_click(t, slot, pos, doc, registry, out)
+                let filled = self.view_of(t).is_some_and(|v| slot < v.inserts.len());
+                if filled {
+                    // A press on a filled row selects its effect, unless it travels: then it
+                    // reorders the chain.
+                    self.drag = Drag::Insert {
+                        target: t,
+                        slot,
+                        start_y: pos.y,
+                        y: pos.y,
+                    };
+                } else {
+                    self.insert_click(t, slot, pos, doc, registry, out)
+                }
+            }
+            (Hit::InsertEdit(t, slot), PointerButton::Primary) => {
+                if let Some(v) = self.view_of(t)
+                    && let Some((effect, _)) = v.inserts.get(slot)
+                {
+                    out.push(UiAction::EditInsert(effect.clone()));
+                }
             }
             (Hit::InsertRemove(t, slot), PointerButton::Primary) => {
                 if let Some(v) = self.view_of(t) {
@@ -4044,6 +4096,20 @@ impl ConsoleView {
                 };
                 self.repaint = true;
             }
+            Drag::Insert {
+                target,
+                slot,
+                start_y,
+                ..
+            } => {
+                self.drag = Drag::Insert {
+                    target,
+                    slot,
+                    start_y,
+                    y: pos.y,
+                };
+                self.repaint = true;
+            }
             Drag::Pan { last } => {
                 self.drag = Drag::Pan { last: pos };
                 self.scroll += last - pos;
@@ -4163,9 +4229,50 @@ impl ConsoleView {
                 out.extend(command.map(|c| UiAction::Command(Command::Console(c))));
             }
             Drag::Move { strip, .. } => self.click_select(strip, modifiers),
+            Drag::Insert {
+                target,
+                slot,
+                start_y,
+                y,
+            } => {
+                let Some(v) = self.view_of(target) else {
+                    return;
+                };
+                let key = v.key.clone();
+                let effect = v.inserts.get(slot).map(|(e, _)| e.clone());
+                if (y - start_y).abs() > MOVE_THRESHOLD {
+                    let to = self.insert_drop_index(target, slot, y);
+                    if to != slot {
+                        out.push(UiAction::Command(Command::Console(
+                            ConsoleCommand::MoveInsert {
+                                channel: key,
+                                from: slot,
+                                to,
+                            },
+                        )));
+                    }
+                } else if let Some(effect) = effect {
+                    out.push(UiAction::Select(effect));
+                }
+            }
             _ => {}
         }
         self.repaint = true;
+    }
+
+    /// The final index of insert `slot` of the chain of `target` when dropped at window height
+    /// `y`: the number of the chain's other effects whose row centre is above `y` (an effect
+    /// scrolled out above the rows counts as above, one scrolled out below as below).
+    fn insert_drop_index(&self, target: Target, slot: usize, y: f64) -> usize {
+        let Some(v) = self.view_of(target) else {
+            return slot;
+        };
+        let (first, used) = (v.insert_scroll, v.inserts.len());
+        let key = v.key.clone();
+        (0..used)
+            .filter(|j| *j != slot)
+            .filter(|j| *j < first || self.insert_rect(&key, *j).is_some_and(|r| r.center().y < y))
+            .count()
     }
 
     /// The final index of strip `strip` among its group (the channels, or the buses) when
@@ -4781,6 +4888,25 @@ impl ConsoleView {
                 v.id,
                 Rect::new(x + 2.0, sr.y0 + 2.0, x + STRIP_W - 2.0, sr.y0 + 26.0),
             );
+        }
+        if let Drag::Insert {
+            target,
+            slot,
+            start_y,
+            y,
+        } = &self.drag
+            && (y - start_y).abs() > MOVE_THRESHOLD
+            && let Some(v) = self.view_of(*target)
+        {
+            // The drop line: above the row the effect lands on when it moves up, below it
+            // when it moves down.
+            let to = self.insert_drop_index(*target, *slot, *y);
+            if to != *slot
+                && let Some(r) = self.insert_rect(&v.key, to)
+            {
+                let ly = if to < *slot { r.y0 } else { r.y1 };
+                c.stroke_with(Line::new(pt(r.x0, ly), pt(r.x1, ly)), 2.5, t.highlight);
+            }
         }
         if let Drag::Move { strip, start_x, x } = &self.drag
             && (x - start_x).abs() > MOVE_THRESHOLD
@@ -5736,11 +5862,12 @@ fn record_inserts(
         match inserts.get(i) {
             Some((_, name)) => {
                 let state = bypass.get(i).copied().flatten();
-                let right = if state.is_some() {
-                    INSERT_X_W + INSERT_B_W
-                } else {
-                    INSERT_X_W
-                };
+                let right = INSERT_E_W
+                    + if state.is_some() {
+                        INSERT_X_W + INSERT_B_W
+                    } else {
+                        INSERT_X_W
+                    };
                 let body = Rect::new(r.x0, r.y0, r.x1 - right, r.y1);
                 let color = mix(accent, Color::WHITE, 0.3);
                 let color = if state == Some(true) {
@@ -5760,6 +5887,15 @@ fn record_inserts(
                         6.0,
                     );
                 }
+                small_button(
+                    c,
+                    st,
+                    insert_e_rect(*r, state.is_some()).inset((-1.0, -1.0)),
+                    "E",
+                    None,
+                    true,
+                    6.0,
+                );
                 let x = insert_x_rect(*r);
                 lcd_text(c, st, x.inset((-1.0, 0.0)), "x", t.text_muted, 7.0);
             }

@@ -290,3 +290,124 @@ fn every_control_of_the_panel_explains_itself_in_one_short_line() {
     }
     let _ = document;
 }
+
+fn set_band_on(document: &mut Document, band: usize, value: f32) {
+    document
+        .apply(
+            Command::SetParam {
+                key: key("fx"),
+                param: format!("band{band}.on"),
+                value,
+                merge: None,
+            },
+            &registry(),
+        )
+        .unwrap();
+}
+
+#[test]
+fn find_and_cut_are_buttons_that_ask_the_app_and_change_nothing_themselves() {
+    use atomik_ui::resonance_marks::ResonanceBtn;
+    let (document, mut v) = rig();
+    let reg = registry();
+    for (btn, want_find) in [(ResonanceBtn::Find, true), (ResonanceBtn::Cut, false)] {
+        let at = v.resonance_button_center(&key("fx"), btn).unwrap();
+        let a = v.handle(&down(at), document.doc(), &reg);
+        let a2 = v.handle(&up(at), document.doc(), &reg);
+        let all: Vec<UiAction> = a.into_iter().chain(a2).collect();
+        let asked = all.iter().any(|x| match x {
+            UiAction::FindResonances(k) => want_find && *k == key("fx"),
+            UiAction::CutResonances(k) => !want_find && *k == key("fx"),
+            _ => false,
+        });
+        assert!(asked, "{btn:?}: {all:?}");
+        assert!(commands(&all).is_empty(), "the buttons never edit the song");
+    }
+    v.set_flip(Flip::Back);
+    assert!(
+        v.resonance_button_center(&key("fx"), ResonanceBtn::Find)
+            .is_none()
+    );
+}
+
+#[test]
+fn the_markers_and_the_busy_state_are_drawn_and_shown_again_after_a_rebuild() {
+    use atomik_ui::resonance_marks::ResonanceMark;
+    let (mut document, mut v) = rig();
+    // The three bells are off: free for the cuts.
+    for band in 2..=4 {
+        set_band_on(&mut document, band, 0.0);
+    }
+    v.sync(document.doc(), &registry());
+    let plain = json(&mut v, &document);
+    assert!(texts(&mut v, &document).iter().any(|t| t == "FIND"));
+    assert!(
+        !texts(&mut v, &document)
+            .iter()
+            .any(|t| t.starts_with("CUT "))
+    );
+    let marks = [
+        ResonanceMark {
+            freq_hz: 1_200.0,
+            q: 8.0,
+            prominence_db: 14.0,
+        },
+        ResonanceMark {
+            freq_hz: 320.0,
+            q: 3.0,
+            prominence_db: 9.0,
+        },
+    ];
+    v.set_resonances(&key("fx"), &marks, false);
+    assert_eq!(v.resonance_marks(&key("fx")), &marks);
+    let shown = json(&mut v, &document);
+    assert_ne!(plain, shown, "the markers change the picture");
+    let t = texts(&mut v, &document);
+    // The three bells are free: CUT says how many of the two resonances they can take.
+    assert!(t.iter().any(|x| x == "CUT 2"), "{t:?}");
+    assert!(t.iter().any(|x| x == "1") && t.iter().any(|x| x == "2"));
+    // A rebuild of the view (a document change) keeps them.
+    v.sync(document.doc(), &registry());
+    assert_eq!(v.resonance_marks(&key("fx")), &marks);
+    // Busy: FIND shows it is working.
+    v.set_resonances(&key("fx"), &[], true);
+    assert!(texts(&mut v, &document).iter().any(|t| t == "..."));
+    assert!(v.resonance_marks(&key("fx")).is_empty());
+    // Other devices and unknown keys are ignored.
+    v.set_resonances(&key("nothing"), &marks, false);
+}
+
+#[test]
+fn a_bell_that_is_on_is_not_counted_as_free_on_the_cut_button() {
+    use atomik_ui::resonance_marks::ResonanceMark;
+    let (mut document, mut v) = rig();
+    for band in 2..=4 {
+        set_band_on(&mut document, band, 1.0);
+    }
+    v.sync(document.doc(), &registry());
+    v.set_resonances(
+        &key("fx"),
+        &[ResonanceMark {
+            freq_hz: 900.0,
+            q: 5.0,
+            prominence_db: 10.0,
+        }],
+        false,
+    );
+    let t = texts(&mut v, &document);
+    assert!(t.iter().any(|x| x == "CUT"), "no free bell: {t:?}");
+    assert!(!t.iter().any(|x| x.starts_with("CUT ")));
+}
+
+#[test]
+fn the_finder_buttons_and_delta_explain_themselves() {
+    use atomik_ui::resonance_marks::ResonanceBtn;
+    let (_, v) = rig();
+    for btn in [ResonanceBtn::Find, ResonanceBtn::Cut] {
+        let at = v.resonance_button_center(&key("fx"), btn).unwrap();
+        let help = v
+            .help_at(at)
+            .unwrap_or_else(|| panic!("{btn:?} has no tooltip"));
+        assert!(help.text.len() <= 100, "{}", help.text);
+    }
+}

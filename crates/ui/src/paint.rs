@@ -47,7 +47,7 @@ fn with_alpha(c: Color, a: f32) -> Color {
     c.with_alpha(a)
 }
 
-fn vgrad(y0: f64, y1: f64, top: Color, bottom: Color) -> Brush {
+pub(crate) fn vgrad(y0: f64, y1: f64, top: Color, bottom: Color) -> Brush {
     Brush::Gradient(Gradient::new_linear(pt(0.0, y0), pt(0.0, y1)).with_stops([top, bottom]))
 }
 
@@ -380,6 +380,8 @@ pub struct PanelInfo<'a> {
     /// Character panel: the animation phase of the screen, in cycles (it advances while the
     /// published meter values move, see `RackView::set_device_meter_values`).
     pub fx_phase: f32,
+    /// Dynamic EQ panel: the resonance finder's markers and state.
+    pub resonance: &'a crate::resonance_marks::ResonanceView,
     /// Player panels: the edited pattern, the published meter values and the name
     /// being edited.
     pub player: crate::seq_panel::PlayerInfo<'a>,
@@ -397,6 +399,9 @@ pub struct PanelInfo<'a> {
     pub io: crate::io_panel::IoInfo<'a>,
     /// Master panel: the effect on each return and the key-in state.
     pub master: crate::master_panel::MasterInfo<'a>,
+    /// Mix channel panel (a channel or an output bus): the insert bypass state, the fold state
+    /// of the insert area, the output display and the meter.
+    pub mix: crate::mix_panel::MixInfo<'a>,
     /// Key & Chord panel: the FROM CLIP button is enabled (the open clip has a scale).
     pub from_clip: bool,
     /// Granular panel: the published values, the sample and its peaks.
@@ -1009,16 +1014,6 @@ pub fn output_display<C: Canvas + ?Sized>(
 }
 
 fn section_title<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, s: &Section) {
-    section_title_with(c, theme, s, None);
-}
-
-/// [`section_title`] with a name after the title (the effect of a master return).
-fn section_title_with<C: Canvas + ?Sized>(
-    c: &mut C,
-    theme: &Theme,
-    s: &Section,
-    suffix: Option<&str>,
-) {
     c.text(
         &TextRun::new(
             s.label.as_str(),
@@ -1029,27 +1024,7 @@ fn section_title_with<C: Canvas + ?Sized>(
         .weight(600)
         .spacing(1.0),
     );
-    let mut lx = s.rect.x0 + estimate_width(&s.label, theme.section_size) + 6.0;
-    if let Some(name) = suffix {
-        let room = (s.rect.x1 - lx - 6.0).max(0.0);
-        let text = fit_label(name, room, theme.section_size + 0.5);
-        if !text.is_empty() {
-            c.text(
-                &TextRun::new(
-                    text.as_str(),
-                    pt(lx, s.rect.y0 + 7.5),
-                    theme.section_size + 0.5,
-                    if name == crate::master_panel::FREE_LABEL {
-                        theme.text_muted
-                    } else {
-                        theme.text
-                    },
-                )
-                .weight(600),
-            );
-            lx += estimate_width(&text, theme.section_size + 0.5) + 6.0;
-        }
-    }
+    let lx = s.rect.x0 + estimate_width(&s.label, theme.section_size) + 6.0;
     if lx < s.rect.x1 {
         c.stroke_with(
             Line::new(pt(lx, s.rect.y0 + 4.5), pt(s.rect.x1, s.rect.y0 + 4.5)),
@@ -1081,17 +1056,19 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
             let is_master =
                 info.device.is_some() && desc.type_id == crate::master_panel::MASTER_TYPE;
             for s in &info.spec.front_sections {
-                let suffix = is_master
-                    .then(|| crate::master_panel::section_suffix(&info.master, &s.label))
-                    .flatten();
-                section_title_with(c, theme, s, suffix.as_deref());
+                section_title(c, theme, s);
             }
+            let mix_panel = info.device.is_some() && crate::mix_panel::has_mix_top(desc.type_id);
             for pc in &info.spec.front {
                 if info.spec.on_back(pc) {
                     continue;
                 }
                 let p = &desc.params[info.spec.param_index(desc, pc, info.pad)];
                 let value = info.device.map_or(p.default, |d| current_value(d, p));
+                if mix_panel && pc.kind == ControlKind::Fader {
+                    // The mix channel's fader is its own horizontal track (drawn with the panel).
+                    continue;
+                }
                 if info.spec.fx.is_some() {
                     let label = crate::fx_layout::fx_label(p);
                     control_labelled(c, theme, pc, p, value, info.accent, &label);
@@ -1124,17 +1101,27 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     let label = crate::seq_panel::player_label(p.key)
                         .map_or_else(|| autolayout::control_label(p), str::to_string);
                     control_labelled(c, theme, pc, p, value, info.accent, &label);
-                } else if let Some(label) = is_master
-                    .then(|| crate::master_panel::send_label(&info.master, p.key))
-                    .flatten()
-                {
-                    control_labelled(c, theme, pc, p, value, info.accent, &label);
                 } else {
                     control(c, theme, pc, p, value, info.accent);
                 }
             }
-            if is_master {
-                crate::master_panel::paint_front(c, theme, info.spec, desc, &info.master);
+            if info.device.is_some() && crate::mix_panel::has_mix_top(desc.type_id) {
+                let device = info.device;
+                let value = |key: &str| {
+                    desc.param_by_key(key)
+                        .map_or(0.0, |p| device.map_or(p.default, |d| current_value(d, p)))
+                };
+                crate::mix_panel::paint_front(c, theme, desc, &value, &info.mix, info.accent);
+                if is_master {
+                    crate::master_panel::paint_front(
+                        c,
+                        theme,
+                        desc,
+                        &value,
+                        &info.master,
+                        info.accent,
+                    );
+                }
             }
             if info.device.is_none() {
                 interface_front(c, theme, desc, info);
@@ -1278,8 +1265,16 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
             }
             for ps in &info.spec.back {
                 let s = &desc.sockets[ps.socket];
+                let master_label = (info.device.is_some()
+                    && desc.type_id == crate::master_panel::MASTER_TYPE)
+                    .then(|| crate::master_panel::socket_label(s.key))
+                    .flatten();
                 let name = if info.spec.modsrc.is_some() {
                     crate::modsrc_panel::modsrc_socket_label(s.key).unwrap_or(s.name)
+                } else if let Some(label) = &master_label {
+                    label.as_str()
+                } else if info.device.is_some() && crate::mix_panel::is_mix_type(desc.type_id) {
+                    crate::mix_panel::socket_label(s.key).unwrap_or(s.name)
                 } else {
                     s.name
                 };

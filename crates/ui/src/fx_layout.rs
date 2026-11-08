@@ -3,7 +3,7 @@
 //!
 //! | Effect | Visual | Placement | Sections |
 //! |---|---|---|---|
-//! | reverb | decay sketch, output meters | left, 196 wide | SPACE, TONE, BALANCE, OUTPUT |
+//! | reverb | decay sketch, output meters | left, 196 wide | SPACE, TONE, BALANCE, OUTPUT, DUCK, KEY GATE |
 //! | compressor | transfer curve, level/GR meters, SC button | left, 172 wide | DETECTOR, GAIN, SIDECHAIN, OUTPUT |
 //! | EQ | response curve, draggable handles, analyser | across the top, 170 high | LOW CUT, LOW SHELF, PEAK 1, PEAK 2, HIGH SHELF, HIGH CUT, OUTPUT |
 //! | distortion | transfer curve, in/out meters | left, 172 wide | DRIVE, TONE, CUT, BODY, CRUSH, OUTPUT |
@@ -43,6 +43,7 @@ const TOP_MASTERING: f64 = 112.0;
 const TOP_SPECTRUM: f64 = 200.0;
 const TOP_PHASE: f64 = 148.0;
 const TOP_TUNER: f64 = 92.0;
+const TOP_DUCK: f64 = 150.0;
 
 /// Width of the guitar amp's setup selector.
 const SETUP_CELL_W: f64 = 140.0;
@@ -80,6 +81,17 @@ fn sections(kind: FxKind) -> Def {
             ("TONE", &["damping", "lowcut"]),
             ("BALANCE", &["early", "width", "modulation"]),
             ("OUTPUT", &["mix", "mix_cv_trim", "freeze", "output"]),
+            (
+                "DUCK",
+                &[
+                    "duck",
+                    "duck_release",
+                    "duck_mode",
+                    "duck_freq",
+                    "duck_threshold",
+                ],
+            ),
+            ("KEY GATE", &["key_gate", "key_gate_hold"]),
         ],
         FxKind::Compressor => &[
             (
@@ -208,14 +220,6 @@ fn sections(kind: FxKind) -> Def {
             ("TUNER", &["tuner_mute", "tuner_ref"]),
         ],
         FxKind::Tuner => &[("SETTINGS", &["mute", "ref"])],
-        FxKind::DynamicEq => &[
-            ("LOW SHELF", DYNEQ_BAND_1),
-            ("BELL 1", DYNEQ_BAND_2),
-            ("BELL 2", DYNEQ_BAND_3),
-            ("BELL 3", DYNEQ_BAND_4),
-            ("HIGH SHELF", DYNEQ_BAND_5),
-            ("OUTPUT", &["output"]),
-        ],
         FxKind::Clipper => &[
             ("INPUT", &["gain", "ceiling"]),
             ("SHAPE", &["curve", "symmetry", "guard"]),
@@ -231,6 +235,20 @@ fn sections(kind: FxKind) -> Def {
                     "band3.drive",
                 ],
             ),
+        ],
+        FxKind::DynamicEq => &[
+            ("LOW SHELF", DYNEQ_BAND_1),
+            ("BELL 1", DYNEQ_BAND_2),
+            ("BELL 2", DYNEQ_BAND_3),
+            ("BELL 3", DYNEQ_BAND_4),
+            ("HIGH SHELF", DYNEQ_BAND_5),
+            ("OUTPUT", &["output", "delta"]),
+        ],
+        FxKind::Duck => &[
+            ("MODE", &["mode", "rate", "length", "trigger"]),
+            ("LEVEL", &["depth", "threshold", "send"]),
+            ("SHAPE", &["attack", "time", "curve"]),
+            ("BAND", &["band", "band_freq"]),
         ],
         FxKind::Mastering => &[
             ("INPUT", &["input"]),
@@ -300,6 +318,7 @@ fn title(kind: FxKind) -> &'static str {
         FxKind::PhaseMeter => "STEREO IMAGE AND LEVELS",
         FxKind::AudioTrack | FxKind::Tuner => "TUNER",
         FxKind::Clipper => "CURVE",
+        FxKind::Duck => "DUCK CURVE",
     }
 }
 
@@ -318,6 +337,7 @@ fn placement(kind: FxKind) -> (f64, f64) {
         FxKind::PhaseMeter => (0.0, TOP_PHASE),
         FxKind::AudioTrack | FxKind::Tuner => (0.0, TOP_TUNER),
         FxKind::Clipper => (LEFT_CLIPPER, 0.0),
+        FxKind::Duck => (0.0, TOP_DUCK),
     }
 }
 
@@ -486,6 +506,13 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
         FxKind::Eq | FxKind::DynamicEq => (
             Rect::new(v.x0 + 26.0, v.y0, v.x1 - 40.0, v.y1 - 12.0),
             Rect::new(v.x1 - 32.0, v.y0, v.x1, v.y1 - 12.0),
+            empty,
+            None,
+        ),
+        // The curve fills the visual; the LEARN button sits inside it.
+        FxKind::Duck => (
+            Rect::new(v.x0, v.y0 + 1.0, v.x1, v.y1 - 1.0),
+            empty,
             empty,
             None,
         ),

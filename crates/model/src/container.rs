@@ -950,7 +950,7 @@ impl ContainerDoc {
                 // command (`SetMacro`).
                 let dead = crate::plugin::is_dead_plugin_param(desc, &t.param);
                 if (desc.param_by_key(&t.param).is_none() && !dead)
-                    || console::is_internal_param(&t.param)
+                    || console::is_hidden_param(&t.param)
                 {
                     return Err(bad(
                         at_t("param"),

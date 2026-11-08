@@ -1,0 +1,52 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.duck",
+      "name": "Sidechain Tool", "folded": false, "patch": "Half Bar Breath",
+      "params": {
+        "depth": 0.55,
+        "hidden.curve_n": 4,
+        "hidden.curve_p1_x": 0,
+        "hidden.curve_p1_y": 0,
+        "hidden.curve_p2_bend": 8,
+        "hidden.curve_p2_x": 0.1,
+        "hidden.curve_p2_y": 1,
+        "hidden.curve_p3_bend": 12,
+        "hidden.curve_p3_x": 0.45,
+        "hidden.curve_p3_y": 0.6,
+        "hidden.curve_p4_x": 1,
+        "hidden.curve_p4_y": 0,
+        "length": 3,
+        "mode": 3,
+        "threshold": -26
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

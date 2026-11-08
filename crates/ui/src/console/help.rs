@@ -2,7 +2,7 @@
 
 use super::{
     ConsoleButton, ConsoleView, Drag, Hit, Jump, STRIP_W, Target, colour_rect, insert_b_rect,
-    insert_x_rect, jump_rects,
+    insert_e_rect, insert_x_rect, jump_rects,
 };
 use crate::console_layout::CtrlKind;
 use crate::console_vca::{VcaPart, vca_layout};
@@ -141,8 +141,18 @@ impl ConsoleView {
             }
             Hit::Insert(t, slot) => help(
                 self.slot_rect(t, slot)?,
-                "Insert slot: click to choose or add an effect",
+                "Insert slot: click to select the effect or to add one, drag to reorder",
             ),
+            Hit::InsertEdit(t, slot) => {
+                let has_bypass = self
+                    .view_of(t)
+                    .and_then(|v| v.insert_bypass.get(slot))
+                    .is_some_and(Option::is_some);
+                help(
+                    insert_e_rect(self.slot_rect(t, slot)?, has_bypass),
+                    "Edit this insert effect in the rack",
+                )
+            }
             Hit::InsertRemove(t, slot) => help(
                 insert_x_rect(self.slot_rect(t, slot)?),
                 "Remove this insert effect",

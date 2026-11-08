@@ -163,15 +163,23 @@ use atomik_ui::keymap::{
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
-    BlindAction, BlindView, BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView,
-    ColorTarget, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key, MacrosAction,
-    MacrosView, MidiMapsAction, MidiMapsView, ModMatrixAction, ModMatrixView, Modifiers,
-    NotesAction, NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView, Place,
-    PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
-    QuantizeView, RelinkAction, RelinkEntry, RelinkView, ScaleAction, ScaleView, SilenceAction,
-    SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction,
-    UiEvent, VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues, WarpView,
+    BassReadAction, BassReadView, DeliveryAction, DeliveryPage, DeliveryView, SoundAnalystAction,
+    SoundAnalystView,
 };
+use atomik_ui::{
+    BlindAction, BlindView, BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView,
+    ColorTarget, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key,
+    KickBassAction, KickBassView, MacrosAction, MacrosView, MaskingAction, MaskingView,
+    MidiMapsAction, MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView,
+    Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView,
+    Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
+    QuantizeView, RelinkAction, RelinkEntry, RelinkView, RepetitionAction, RepetitionView,
+    ScaleAction, ScaleView, SilenceAction, SilenceValues, SilenceView, SongInfoAction,
+    SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, VersionItem, VersionsAction,
+    VersionsView, WarpAction, WarpValues, WarpView, ZoneAction, ZoneView,
+};
+use atomik_ui::{ReverbSendAction, ReverbSendValues, ReverbSendView};
+use atomik_ui::{WavetableAction, WavetableView};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -185,9 +193,6 @@ const PORT_RELIST_EVERY: std::time::Duration = std::time::Duration::from_secs(1)
 /// The keymap profile the app starts with: the standard
 /// keys. The `legacy` profile (the keys of earlier versions) stays selectable in Settings > Keyboard.
 pub const APP_DEFAULT_PROFILE: Profile = Profile::Standard;
-
-/// The one-time notice: the console devices show in the rack now.
-pub const CONSOLE_DEVICES_NOTICE: &str = "Console devices are now shown in the rack. View > Show Console Devices in Rack hides them again.";
 
 /// Height of the status bar, logical pixels.
 pub const STATUS_BAR_HEIGHT: f64 = 22.0;
@@ -316,6 +321,9 @@ pub enum ShellRequest {
     /// Show an open-file dialog for a reference track (Mixer > Reference > Add Reference
     /// Track), then call [`Shell::add_reference_file`] with the picked path.
     PickReference,
+    /// Show an open-file dialog for the audio file of the Sound Analyst (its OPEN FILE button),
+    /// then call [`Shell::analyse_sound_file`] with the picked path.
+    PickSoundFile,
     /// Open an address in the default browser (Help > Documentation, Report an Issue and the
     /// link of the About box). Only the project's own addresses are ever asked for.
     OpenUrl(&'static str),
@@ -539,8 +547,31 @@ pub struct Shell<B: AudioBackend> {
     silence: Option<SilenceView>,
     /// The song information panel (File > Song Information) while it is open.
     song_info: Option<SongInfoView>,
+    /// The reverb send wizard (Track > Add Reverb Send) while it is open.
+    reverb_send: Option<ReverbSendView>,
+    /// Its choices, kept between openings.
+    reverb_send_values: ReverbSendValues,
+    /// The kick and bass check panel (Mixer > Kick and Bass Check) while it is open.
+    kick_bass: Option<KickBassView>,
+    /// The references and decision zone panel (Mixer > Reference > Reference Panel) while it is
+    /// open.
+    zone: Option<ZoneView>,
     /// The versions panel, while it is open.
     versions: Option<VersionsView>,
+    /// The masking map panel (Mixer > Masking Map), while it is open.
+    masking: Option<MaskingView>,
+    /// The mix check panel (Mixer > Check Mix), while it is open.
+    mixcheck: Option<MixCheckView>,
+    /// The repetition panel (Edit > Find Repetition), while it is open.
+    repetition: Option<RepetitionView>,
+    /// The bass-read panel (Mixer > Will the Bass Read?), while it is open.
+    bass_read: Option<BassReadView>,
+    delivery: Option<DeliveryView>,
+    /// The Sound Analyst panel (File > Sound Analyst), while it is open.
+    sound_analyst: Option<SoundAnalystView>,
+    /// The wavetable editor (a click on a table display of a Wavetable Synth) while it is open,
+    /// with the device it edits.
+    wavetable: Option<(WavetableView, DeviceKey)>,
     /// The colour picker (the colour menu's Custom item) while it is open, with what it colours.
     color_picker: Option<(ColorPickerView, ColorTarget)>,
     /// The Audio to Notes panel (Audio > Audio to Notes) while it is open.
@@ -626,18 +657,11 @@ impl<B: AudioBackend> Shell<B> {
     /// Wraps a core.
     pub fn new(core: AppCore<LiveSession<B>>, options: ShellOptions) -> Self {
         let banner = PluginBannerView::new(core.view().theme().clone());
-        let (mut ui, ui_note) = options
+        let (ui, ui_note) = options
             .ui_state_path
             .as_deref()
             .map(UiState::load_checked)
             .unwrap_or_default();
-        // The one-time notice that console devices are shown now. Only with
-        // a state file to remember it in, and not for a user who switched them off already.
-        let console_notice = (options.ui_state_path.is_some() && !ui.console_notice_seen)
-            .then_some(ui.show_console_devices);
-        if console_notice.is_some() {
-            ui.console_notice_seen = true;
-        }
         let os = options.os.unwrap_or_else(Os::host);
         let default_profile = options.profile.unwrap_or(APP_DEFAULT_PROFILE);
         let keymap_path = options
@@ -724,7 +748,18 @@ impl<B: AudioBackend> Shell<B> {
             blind: None,
             silence: None,
             song_info: None,
+            reverb_send: None,
+            reverb_send_values: ReverbSendValues::default(),
+            kick_bass: None,
+            zone: None,
             versions: None,
+            masking: None,
+            mixcheck: None,
+            repetition: None,
+            bass_read: None,
+            delivery: None,
+            sound_analyst: None,
+            wavetable: None,
             start_screen: None,
             color_picker: None,
             notes: None,
@@ -772,12 +807,6 @@ impl<B: AudioBackend> Shell<B> {
         shell.restore_windows();
         shell.apply_workflow_to_views();
         shell.apply_ui_state_to_views();
-        if console_notice == Some(true) {
-            shell.notify(CONSOLE_DEVICES_NOTICE);
-        }
-        if console_notice.is_some() {
-            shell.write_ui_state();
-        }
         // The notice of the moved keys: a keymap problem found at start wins the status line.
         if shell.workflow_path.is_some()
             && !shell.workflow.keys_notice_seen
@@ -811,7 +840,6 @@ impl<B: AudioBackend> Shell<B> {
     fn apply_ui_state_to_views(&mut self) {
         {
             let view = self.core.view_mut();
-            view.set_show_console_devices(self.ui.show_console_devices);
             view.set_show_console_links(self.ui.show_console_links);
             view.set_navigator_visible(self.ui.show_rack_navigator);
         }
@@ -821,6 +849,7 @@ impl<B: AudioBackend> Shell<B> {
         {
             let arrangement = self.core.arrangement_mut();
             arrangement.set_tempo_lane(self.ui.show_tempo_lane);
+            arrangement.set_energy_lane(self.ui.show_energy_lane);
             arrangement.set_marker_strip(self.ui.show_marker_strip);
             arrangement.set_inspector(self.ui.show_inspector);
             arrangement.set_marker_list(self.ui.show_marker_list);
@@ -1118,6 +1147,82 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// Whether the reverb send wizard is open.
+    pub fn reverb_send_open(&self) -> bool {
+        self.reverb_send.is_some()
+    }
+
+    /// The reverb send wizard, while it is open.
+    pub fn reverb_send_view(&self) -> Option<&ReverbSendView> {
+        self.reverb_send.as_ref()
+    }
+
+    /// The choices of the wizard (those of the open panel, else the last ones).
+    pub fn reverb_send_values(&self) -> &ReverbSendValues {
+        self.reverb_send
+            .as_ref()
+            .map_or(&self.reverb_send_values, ReverbSendView::values)
+    }
+
+    /// Opens the reverb send wizard with the choices of the last time.
+    fn open_reverb_send(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = ReverbSendView::new(theme, self.reverb_send_values.clone());
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.reverb_send = Some(view);
+        self.sync_reverb_send();
+        self.repaint = true;
+    }
+
+    /// Closes the reverb send wizard, keeping its choices for the next time.
+    fn close_reverb_send(&mut self) {
+        if let Some(view) = self.reverb_send.take() {
+            self.reverb_send_values = view.values().clone();
+            self.repaint = true;
+        }
+    }
+
+    /// Feeds the wizard the track it works on and the decay that track suggests.
+    fn sync_reverb_send(&mut self) {
+        let Some(vocal) = self.reverb_send.as_ref().map(|v| v.values().vocal) else {
+            return;
+        };
+        let (name, decay) = self.core.reverb_send_info(vocal).unwrap_or_default();
+        if let Some(view) = &mut self.reverb_send {
+            view.set_target(name, decay);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the reverb send wizard asked for.
+    fn reverb_send_action(&mut self, action: ReverbSendAction) {
+        match action {
+            ReverbSendAction::Close => self.close_reverb_send(),
+            ReverbSendAction::Add => {
+                let v = self.reverb_send_values().clone();
+                let options = atomik_model::reverb_send::ReverbSendOptions {
+                    vocal: v.vocal,
+                    decay: v.decay,
+                    duck: v.duck,
+                    high_pass: v.high_pass as f32,
+                    low_pass: v.low_pass as f32,
+                    send_db: v.send_db as f32,
+                    pre_fader: v.pre_fader,
+                };
+                // The panel closes when the send is made; it stays, with the reason in the
+                // status line, when the model refuses.
+                if self.core.add_reverb_send(options) {
+                    self.close_reverb_send();
+                }
+            }
+        }
+        self.sync_reverb_send();
+        self.repaint = true;
+    }
+
     /// Opens the strip silence panel with the settings of the last time.
     fn open_silence(&mut self) {
         let theme = self.core.view().theme().clone();
@@ -1274,6 +1379,112 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// Whether the kick and bass check panel is open.
+    pub fn kick_bass_open(&self) -> bool {
+        self.kick_bass.is_some()
+    }
+
+    /// The kick and bass check panel, while it is open.
+    pub fn kick_bass_view(&self) -> Option<&KickBassView> {
+        self.kick_bass.as_ref()
+    }
+
+    /// Opens the kick and bass check panel (the picks are guessed from the track names).
+    fn open_kick_bass(&mut self) {
+        self.core.kick_bass_open();
+        let theme = self.core.view().theme().clone();
+        let mut view = KickBassView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_info(self.core.kick_bass_info());
+        self.kick_bass = Some(view);
+        self.repaint = true;
+    }
+
+    /// Hands the open kick and bass panel what the app knows now (the worker's progress and
+    /// result included).
+    fn sync_kick_bass(&mut self) {
+        if self.kick_bass.is_none() {
+            return;
+        }
+        let info = self.core.kick_bass_info();
+        if let Some(v) = &mut self.kick_bass {
+            v.set_info(info);
+            if v.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the kick and bass panel asked for.
+    fn kick_bass_action(&mut self, action: KickBassAction) {
+        match action {
+            KickBassAction::Close => {
+                self.kick_bass = None;
+                self.repaint = true;
+                return;
+            }
+            KickBassAction::Kick(d) => self.core.kick_bass_pick(false, d),
+            KickBassAction::Bass(d) => self.core.kick_bass_pick(true, d),
+            KickBassAction::Run => self.core.kick_bass_run(),
+            KickBassAction::Cancel => self.core.kick_bass_cancel(),
+            KickBassAction::Apply(n) => self.core.kick_bass_apply(n),
+        }
+        self.sync_kick_bass();
+    }
+
+    /// Whether the references and decision zone panel is open.
+    pub fn zone_open(&self) -> bool {
+        self.zone.is_some()
+    }
+
+    /// The references and decision zone panel, while it is open.
+    pub fn zone_view(&self) -> Option<&ZoneView> {
+        self.zone.as_ref()
+    }
+
+    /// Opens the references and decision zone panel. The first time, with a reference listed, it
+    /// starts measuring the mix.
+    fn open_zone(&mut self) {
+        let theme = self.core.view().theme().clone();
+        if !self.core.zone_measured() {
+            self.core.refresh_zone();
+        }
+        let mut view = ZoneView::new(theme, self.core.zone_data());
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.zone = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open decision zone panel in step with the core (a reading that landed, a
+    /// reference that was added or selected).
+    fn sync_zone(&mut self) {
+        if self.zone.is_none() {
+            return;
+        }
+        let data = self.core.zone_data();
+        if let Some(view) = &mut self.zone
+            && view.set_data(data)
+        {
+            self.repaint = true;
+        }
+    }
+
+    /// What the references and decision zone panel asked for.
+    fn zone_action(&mut self, action: ZoneAction) {
+        match action {
+            ZoneAction::Close => self.zone = None,
+            ZoneAction::Refresh => {
+                self.core.refresh_zone();
+            }
+            ZoneAction::Select(index) => self.core.select_reference(index),
+            ZoneAction::Listen => self.core.toggle_reference(),
+        }
+        self.sync_zone();
+        self.repaint = true;
+    }
+
     /// Whether the versions panel is open.
     pub fn versions_open(&self) -> bool {
         self.versions.is_some()
@@ -1298,6 +1509,469 @@ impl<B: AudioBackend> Shell<B> {
                 protected: v.protected,
             })
             .collect()
+    }
+
+    /// Whether the masking map panel is open.
+    pub fn masking_open(&self) -> bool {
+        self.masking.is_some()
+    }
+
+    /// The masking map panel, while it is open.
+    pub fn masking_view(&self) -> Option<&MaskingView> {
+        self.masking.as_ref()
+    }
+
+    /// Mixer > Masking Map: opens the panel (with the last result, if the project has one).
+    fn open_masking(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = MaskingView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.masking_data());
+        view.set_progress(self.core.masking_progress());
+        self.masking = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open masking panel in step with the analysis: its progress, its result, and the
+    /// line that says how it ended.
+    fn sync_masking(&mut self) {
+        let Some(view) = &mut self.masking else {
+            return;
+        };
+        let was_busy = view.busy();
+        view.set_progress(self.core.masking_progress());
+        view.set_data(self.core.masking_data());
+        if was_busy && !view.busy() {
+            view.set_note(self.core.last_rejection().unwrap_or(""));
+        }
+        if view.needs_repaint() {
+            self.repaint = true;
+        }
+    }
+
+    /// What the masking panel asked for.
+    fn masking_action(&mut self, action: MaskingAction) {
+        match action {
+            MaskingAction::Close => self.masking = None,
+            MaskingAction::Analyse => {
+                let _ = self.core.start_masking();
+                self.sync_masking();
+                if let Some(v) = &mut self.masking {
+                    v.set_note(
+                        self.core
+                            .last_rejection()
+                            .filter(|_| !self.core.masking_running())
+                            .unwrap_or(""),
+                    );
+                }
+            }
+            MaskingAction::Cancel => self.core.cancel_masking(),
+            MaskingAction::Locate { pair, range } => self.core.locate_masking(pair, range),
+            MaskingAction::Demask { pair, band } => {
+                let note = match self.core.demask(pair, band) {
+                    Ok(_) => self.core.last_rejection().unwrap_or("").to_owned(),
+                    Err(why) => why,
+                };
+                if let Some(v) = &mut self.masking {
+                    v.set_note(&note);
+                }
+            }
+        }
+        self.repaint = true;
+    }
+
+    /// Whether the bass-read panel is open.
+    pub fn bass_read_open(&self) -> bool {
+        self.bass_read.is_some()
+    }
+
+    /// The bass-read panel, while it is open.
+    pub fn bass_read_view(&self) -> Option<&BassReadView> {
+        self.bass_read.as_ref()
+    }
+
+    /// Mixer > Will the Bass Read?: opens the panel on the selected track, else the master.
+    fn open_bass_read(&mut self) {
+        self.core.bass_read_preselect();
+        let theme = self.core.view().theme().clone();
+        let mut view = BassReadView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.bass_read_data());
+        self.bass_read = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open bass-read panel in step with the reading: its progress and its result.
+    fn sync_bass_read(&mut self) {
+        if self.bass_read.is_none() {
+            return;
+        }
+        let data = self.core.bass_read_data();
+        if let Some(view) = &mut self.bass_read {
+            view.set_data(data);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the bass-read panel asked for.
+    fn bass_read_action(&mut self, action: BassReadAction) {
+        match action {
+            BassReadAction::Close => {
+                self.core.cancel_bass_read();
+                self.bass_read = None;
+            }
+            BassReadAction::Choose(n) => self.core.bass_read_choose(n),
+            BassReadAction::Measure => {
+                let _ = self.core.start_bass_read();
+            }
+            BassReadAction::Stop => self.core.cancel_bass_read(),
+        }
+        self.sync_bass_read();
+        self.repaint = true;
+    }
+
+    /// Whether the Delivery panel is open.
+    pub fn delivery_open(&self) -> bool {
+        self.delivery.is_some()
+    }
+
+    /// The Delivery panel, while it is open.
+    pub fn delivery_view(&self) -> Option<&DeliveryView> {
+        self.delivery.as_ref()
+    }
+
+    /// File > Delivery Targets (the Targets page) and Edit > Peak Surgeon (the Peaks page): opens
+    /// the panel.
+    fn open_delivery(&mut self, page: DeliveryPage) {
+        self.core.delivery_open(page);
+        let theme = self.core.view().theme().clone();
+        let mut view = DeliveryView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.delivery_data());
+        self.delivery = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open Delivery panel in step with the measurement and the clip.
+    fn sync_delivery(&mut self) {
+        if self.delivery.is_none() {
+            return;
+        }
+        let data = self.core.delivery_data();
+        if let Some(view) = &mut self.delivery {
+            view.set_data(data);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the Delivery panel asked for.
+    fn delivery_action(&mut self, action: DeliveryAction) {
+        match action {
+            DeliveryAction::Close => {
+                self.core.cancel_delivery();
+                self.delivery = None;
+            }
+            DeliveryAction::Page(page) => self.core.delivery_page(page),
+            DeliveryAction::Choose(n) => self.core.delivery_choose(n),
+            DeliveryAction::Measure => {
+                let _ = self.core.start_delivery();
+            }
+            DeliveryAction::Stop => self.core.cancel_delivery(),
+            DeliveryAction::SetCeiling => self.core.delivery_set_ceiling(),
+            DeliveryAction::PeakChoose(n) => self.core.surgeon_choose(n),
+            DeliveryAction::Threshold(delta) => self.core.surgeon_threshold(delta),
+            DeliveryAction::CycleStep => self.core.surgeon_cycle_step(),
+            DeliveryAction::CycleWidth => self.core.surgeon_cycle_width(),
+            DeliveryAction::Trim => self.core.surgeon_trim(),
+            DeliveryAction::ApplyAll => self.core.surgeon_apply_all(),
+            DeliveryAction::Rescan => self.core.surgeon_scan(),
+        }
+        self.sync_delivery();
+        self.repaint = true;
+    }
+
+    /// Whether the Sound Analyst panel is open.
+    pub fn sound_analyst_open(&self) -> bool {
+        self.sound_analyst.is_some()
+    }
+
+    /// The Sound Analyst panel, while it is open.
+    pub fn sound_analyst_view(&self) -> Option<&SoundAnalystView> {
+        self.sound_analyst.as_ref()
+    }
+
+    /// File > Sound Analyst: opens the panel on what was analysed last.
+    fn open_sound_analyst(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = SoundAnalystView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.sound_data());
+        self.sound_analyst = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open Sound Analyst panel in step with the analysis: its progress and its result.
+    fn sync_sound_analyst(&mut self) {
+        if self.sound_analyst.is_none() {
+            return;
+        }
+        let data = self.core.sound_data();
+        if let Some(view) = &mut self.sound_analyst {
+            view.set_data(data);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// Starts analysing the audio file `path` (the picked or dropped file) and opens the panel
+    /// when it is not open.
+    pub fn analyse_sound_file(&mut self, path: &Path) {
+        if self.sound_analyst.is_none() {
+            self.open_sound_analyst();
+        }
+        // A refusal is already in the status line.
+        let _ = self.core.analyse_sound_file(path);
+        self.sync_sound_analyst();
+    }
+
+    /// What the Sound Analyst panel asked for.
+    fn sound_analyst_action(&mut self, action: SoundAnalystAction) {
+        match action {
+            SoundAnalystAction::Close => {
+                self.core.cancel_sound();
+                self.sound_analyst = None;
+            }
+            SoundAnalystAction::OpenFile => self.pending.push(ShellRequest::PickSoundFile),
+            SoundAnalystAction::Stop => self.core.cancel_sound(),
+            SoundAnalystAction::MakePatch => {
+                let _ = self.core.make_sound_patch();
+            }
+            SoundAnalystAction::Match => {
+                let _ = self.core.start_sound_match();
+            }
+        }
+        self.sync_sound_analyst();
+        self.repaint = true;
+    }
+
+    /// Whether the wavetable editor is open.
+    pub fn wavetable_open(&self) -> bool {
+        self.wavetable.is_some()
+    }
+
+    /// The wavetable editor, while it is open.
+    pub fn wavetable_view(&self) -> Option<&WavetableView> {
+        self.wavetable.as_ref().map(|(v, _)| v)
+    }
+
+    /// A click on a table display: opens the editor on that Wavetable Synth.
+    fn open_wavetable_editor(&mut self, device: DeviceKey) {
+        let Some(data) = self.core.wavetable_data(&device) else {
+            return;
+        };
+        let theme = self.core.view().theme().clone();
+        let mut view = WavetableView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(data);
+        self.wavetable = Some((view, device));
+        self.repaint = true;
+    }
+
+    /// Keeps the open wavetable editor in step with the document (undo, redo, a new sample).
+    fn sync_wavetable(&mut self) {
+        let Some((_, device)) = &self.wavetable else {
+            return;
+        };
+        let device = device.clone();
+        match self.core.wavetable_data(&device) {
+            Some(data) => {
+                if let Some((view, _)) = &mut self.wavetable {
+                    view.set_data(data);
+                    if view.needs_repaint() {
+                        self.repaint = true;
+                    }
+                }
+            }
+            // The device was removed.
+            None => self.close_wavetable_editor(),
+        }
+    }
+
+    fn close_wavetable_editor(&mut self) {
+        self.wavetable = None;
+        self.core.release_wavetable();
+        self.repaint = true;
+    }
+
+    /// What the wavetable editor asked for.
+    fn wavetable_action(&mut self, action: WavetableAction) {
+        let Some((_, device)) = &self.wavetable else {
+            return;
+        };
+        let device = device.clone();
+        match action {
+            WavetableAction::Close => self.close_wavetable_editor(),
+            WavetableAction::Commit { keys, phase_safe } => {
+                if let Err(e) = self.core.commit_wavetable(&device, &keys, phase_safe) {
+                    self.core.report_wavetable(format!("table: {e}"));
+                }
+            }
+            WavetableAction::CutCycles => self.core.cut_wavetable_cycles(&device),
+            WavetableAction::UseOnOsc1 => self.core.wavetable_use_on_osc1(&device),
+        }
+        self.sync_wavetable();
+        self.repaint = true;
+    }
+
+    /// Whether the repetition panel is open.
+    pub fn repetition_open(&self) -> bool {
+        self.repetition.is_some()
+    }
+
+    /// The repetition panel, while it is open.
+    pub fn repetition_view(&self) -> Option<&RepetitionView> {
+        self.repetition.as_ref()
+    }
+
+    /// Edit > Find Repetition: searches the song and opens the panel on what it found.
+    fn open_repetition(&mut self) {
+        self.core.find_repetition();
+        let theme = self.core.view().theme().clone();
+        let mut view = RepetitionView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.repetition_data());
+        self.repetition = Some(view);
+        self.repaint = true;
+    }
+
+    /// What the repetition panel asked for.
+    fn repetition_action(&mut self, action: RepetitionAction) {
+        let mut note = None;
+        match action {
+            RepetitionAction::Close => self.repetition = None,
+            RepetitionAction::Find => {
+                let count = self.core.find_repetition();
+                note = Some(match count {
+                    0 => "Nothing repeats three times in a row unchanged".to_owned(),
+                    1 => "1 idea found".to_owned(),
+                    n => format!("{n} ideas found"),
+                });
+            }
+            RepetitionAction::Locate(n) => self.core.locate_repetition(n),
+            RepetitionAction::Apply(n, k) => {
+                note = Some(match self.core.apply_repetition(n, k) {
+                    Ok(()) => self.core.last_rejection().unwrap_or("").to_owned(),
+                    Err(why) => why,
+                });
+            }
+        }
+        if let Some(v) = &mut self.repetition {
+            v.set_data(self.core.repetition_data());
+            if let Some(note) = note {
+                v.set_note(&note);
+            }
+        }
+        self.repaint = true;
+    }
+
+    /// Whether the mix check panel is open.
+    pub fn mixcheck_open(&self) -> bool {
+        self.mixcheck.is_some()
+    }
+
+    /// The mix check panel, while it is open.
+    pub fn mixcheck_view(&self) -> Option<&MixCheckView> {
+        self.mixcheck.as_ref()
+    }
+
+    /// Mixer > Check Mix: opens the panel (with the last result, if the project has one).
+    fn open_mixcheck(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = MixCheckView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.mixcheck_data());
+        view.set_progress(self.core.mixcheck_progress());
+        self.mixcheck = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open mix check panel in step with the check: its progress, its result, and the
+    /// line that says how it ended.
+    fn sync_mixcheck(&mut self) {
+        let Some(view) = &mut self.mixcheck else {
+            return;
+        };
+        let was_busy = view.busy();
+        view.set_progress(self.core.mixcheck_progress());
+        view.set_data(self.core.mixcheck_data());
+        if was_busy && !view.busy() {
+            view.set_note(self.core.last_rejection().unwrap_or(""));
+        }
+        if view.needs_repaint() {
+            self.repaint = true;
+        }
+    }
+
+    /// What the mix check panel asked for.
+    fn mixcheck_action(&mut self, action: MixCheckAction) {
+        let mut note = None;
+        match action {
+            MixCheckAction::Close => self.mixcheck = None,
+            MixCheckAction::Run => {
+                let _ = self.core.start_mixcheck();
+                self.sync_mixcheck();
+                note = Some(
+                    self.core
+                        .last_rejection()
+                        .filter(|_| !self.core.mixcheck_running())
+                        .unwrap_or("")
+                        .to_owned(),
+                );
+            }
+            MixCheckAction::Cancel => self.core.cancel_mixcheck(),
+            MixCheckAction::Locate(n) => self.core.locate_mixcheck(n),
+            MixCheckAction::Fix(n) => {
+                note = Some(match self.core.fix_mixcheck(n) {
+                    Ok(()) => self.core.last_rejection().unwrap_or("").to_owned(),
+                    Err(why) => why,
+                });
+            }
+            MixCheckAction::Open(n) => match self.core.mixcheck_tool(n) {
+                Some(atomik_render::mixcheck::Tool::MaskingMap) => {
+                    self.mixcheck = None;
+                    self.open_masking();
+                    self.masking_action(MaskingAction::Analyse);
+                }
+                Some(atomik_render::mixcheck::Tool::KickBassCheck) => {
+                    self.core.mixcheck_kick_bass(n);
+                    self.mixcheck = None;
+                    self.open_kick_bass();
+                }
+                Some(atomik_render::mixcheck::Tool::Clipper) => {
+                    let _ = self.core.mixcheck_clipper(n);
+                    note = Some(self.core.last_rejection().unwrap_or("").to_owned());
+                }
+                None => {
+                    note = Some(self.core.last_rejection().unwrap_or("").to_owned());
+                }
+            },
+        }
+        if let (Some(v), Some(note)) = (&mut self.mixcheck, note) {
+            v.set_note(&note);
+        }
+        self.repaint = true;
     }
 
     /// File > Save Version and File > Versions: opens the versions panel (the name has the keys;
@@ -2594,7 +3268,37 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.song_info {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.reverb_send {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.kick_bass {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.zone {
+            v.set_theme(theme.clone());
+        }
         if let Some(v) = &mut self.versions {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.masking {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.mixcheck {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.repetition {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.bass_read {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.delivery {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.sound_analyst {
+            v.set_theme(theme.clone());
+        }
+        if let Some((v, _)) = &mut self.wavetable {
             v.set_theme(theme.clone());
         }
         if let Some((v, _)) = &mut self.color_picker {
@@ -2875,6 +3579,9 @@ impl<B: AudioBackend> Shell<B> {
             can_paste: self.core.can_paste(self.live_pane(self.focus)),
             can_combine,
             can_uncombine,
+            can_split_sub: self.core.split_sub_menu(),
+            can_reverb_send: self.core.reverb_send_menu(),
+            lens: self.core.lens(),
             song_visible: self.ui.show_song,
             piano_roll: self.core.piano_roll_open(),
             sample_editor: self.core.sample_editor_device().is_some(),
@@ -2900,11 +3607,11 @@ impl<B: AudioBackend> Shell<B> {
             align_returns: self.core.doc().console.align_returns,
             send_follow: self.core.doc().console.send_follow,
             link_faders: self.core.console().link_faders(),
-            console_devices: view.show_console_devices(),
             console_links: view.show_console_links(),
             cpu_meters: self.core.cpu_meters_on(),
             big_meter: view.big_meter_visible(),
             tempo_lane: self.core.arrangement().tempo_lane_visible(),
+            energy_lane: self.core.arrangement().energy_lane_visible(),
             marker_strip: self.core.arrangement().marker_strip_visible(),
             inspector: self.core.arrangement().inspector_visible(),
             marker_list: self.core.arrangement().marker_list_visible(),
@@ -3210,9 +3917,69 @@ impl<B: AudioBackend> Shell<B> {
                 v.set_bounds(rect);
             }
         }
+        if self.reverb_send.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.reverb_send {
+                v.set_bounds(rect);
+            }
+        }
+        if self.kick_bass.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.kick_bass {
+                v.set_bounds(rect);
+            }
+        }
+        if self.zone.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.zone {
+                v.set_bounds(rect);
+            }
+        }
         if self.versions.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.versions {
+                v.set_bounds(rect);
+            }
+        }
+        if self.masking.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.masking {
+                v.set_bounds(rect);
+            }
+        }
+        if self.mixcheck.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.mixcheck {
+                v.set_bounds(rect);
+            }
+        }
+        if self.repetition.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.repetition {
+                v.set_bounds(rect);
+            }
+        }
+        if self.bass_read.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.bass_read {
+                v.set_bounds(rect);
+            }
+        }
+        if self.delivery.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.delivery {
+                v.set_bounds(rect);
+            }
+        }
+        if self.sound_analyst.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.sound_analyst {
+                v.set_bounds(rect);
+            }
+        }
+        if self.wavetable.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some((v, _)) = &mut self.wavetable {
                 v.set_bounds(rect);
             }
         }
@@ -3445,6 +4212,20 @@ impl<B: AudioBackend> Shell<B> {
     /// that is not a sampler) imports the files as new tracks at the snapped playhead.
     fn file_event(&mut self, window: WindowKind, event: &UiEvent) {
         self.repaint = true;
+        if self.sound_analyst.is_some() {
+            // The open Sound Analyst takes the files: the first audio file is analysed, nothing
+            // is imported behind it.
+            if let UiEvent::FileDrop { paths, .. } = event {
+                match paths
+                    .iter()
+                    .find(|p| !crate::midi_file::is_midi_path(p) && !is_project_item(p))
+                {
+                    Some(path) => self.analyse_sound_file(path),
+                    None => self.notify("Drop an audio file on the panel to analyse it"),
+                }
+            }
+            return;
+        }
         if self.quantize.is_some() {
             // The open quantize panel takes the files: a MIDI file becomes a groove, nothing
             // else is imported behind it.
@@ -3754,7 +4535,8 @@ impl<B: AudioBackend> Shell<B> {
     fn open_patch_siblings(&mut self, device: &DeviceKey) {
         let (items, current) = self.core.patch_siblings(device);
         let can_clean = self.core.can_clean_up_bass(device);
-        if items.is_empty() && !can_clean {
+        let can_split = self.core.can_split_sub(device);
+        if items.is_empty() && !can_clean && !can_split {
             self.core
                 .report("There are no patches for this device type in the folder");
             return;
@@ -3767,7 +4549,7 @@ impl<B: AudioBackend> Shell<B> {
             return;
         };
         let at = self.rack_window_point(at);
-        let entries = context_menus::patch_entries(&items, current, can_clean);
+        let entries = context_menus::patch_entries(&items, current, can_clean, can_split);
         self.patch_menu = Some(device.clone());
         let (window, size) = self.menu_window(Pane::Rack);
         let menu = ContextMenu::from_entries(entries, at, size);
@@ -4154,6 +4936,201 @@ impl<B: AudioBackend> Shell<B> {
             }
             return Vec::new();
         }
+        if self.kick_bass.is_some() {
+            // The kick and bass panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.kick_bass = None;
+                return Vec::new();
+            }
+            let actions = self
+                .kick_bass
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::KickBass(a) = action {
+                    self.kick_bass_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.masking.is_some() {
+            // The masking panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.masking = None;
+                return Vec::new();
+            }
+            let actions = self
+                .masking
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Masking(a) = action {
+                    self.masking_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.mixcheck.is_some() {
+            // The mix check panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.mixcheck = None;
+                return Vec::new();
+            }
+            let actions = self
+                .mixcheck
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::MixCheck(a) = action {
+                    self.mixcheck_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.bass_read.is_some() {
+            // The bass-read panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.core.cancel_bass_read();
+                self.bass_read = None;
+                return Vec::new();
+            }
+            let actions = self
+                .bass_read
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::BassRead(a) = action {
+                    self.bass_read_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.delivery.is_some() {
+            // The Delivery panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.core.cancel_delivery();
+                self.delivery = None;
+                return Vec::new();
+            }
+            let actions = self
+                .delivery
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Delivery(a) = action {
+                    self.delivery_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.sound_analyst.is_some() {
+            // The Sound Analyst panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.core.cancel_sound();
+                self.sound_analyst = None;
+                return Vec::new();
+            }
+            let actions = self
+                .sound_analyst
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::SoundAnalyst(a) = action {
+                    self.sound_analyst_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.repetition.is_some() {
+            // The repetition panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.repetition = None;
+                return Vec::new();
+            }
+            let actions = self
+                .repetition
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Repetition(a) = action {
+                    self.repetition_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.zone.is_some() {
+            // The decision zone panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.zone = None;
+                return Vec::new();
+            }
+            let actions = self
+                .zone
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Zone(a) = action {
+                    self.zone_action(a);
+                }
+            }
+            return Vec::new();
+        }
         if self.versions.is_some() {
             // The versions panel takes every event (typed text included); Esc closes it.
             self.repaint = true;
@@ -4177,6 +5154,32 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::Versions(a) = action {
                     self.versions_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.wavetable.is_some() {
+            // The wavetable editor takes every event; Esc cancels a stroke, else closes it.
+            self.repaint = true;
+            let dragging = self.wavetable.as_ref().is_some_and(|(v, _)| v.dragging());
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+                && !dragging
+            {
+                self.close_wavetable_editor();
+                return Vec::new();
+            }
+            let actions = self
+                .wavetable
+                .as_mut()
+                .map(|(v, _)| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Wavetable(a) = action {
+                    self.wavetable_action(a);
                 }
             }
             return Vec::new();
@@ -4227,6 +5230,31 @@ impl<B: AudioBackend> Shell<B> {
                     self.blind_action(a);
                 }
             }
+            return Vec::new();
+        }
+        if self.reverb_send.is_some() {
+            // The reverb send wizard takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.close_reverb_send();
+                return Vec::new();
+            }
+            let actions = self
+                .reverb_send
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::ReverbSend(a) = action {
+                    self.reverb_send_action(a);
+                }
+            }
+            self.sync_reverb_send();
             return Vec::new();
         }
         if self.silence.is_some() {
@@ -4639,6 +5667,7 @@ impl<B: AudioBackend> Shell<B> {
             ("rack.replace_device", Some(type_id)) => self.core.replace_selected_device(type_id),
             ("sequencer.audio_normalise", None) => self.core.normalise_audio(),
             ("sequencer.audio_strip_silence", None) => self.open_silence(),
+            ("sequencer.add_reverb_send", None) => self.open_reverb_send(),
             ("sequencer.scale_tempo", Some("dialog")) => self.open_scale(),
             ("sequencer.audio_to_notes", None) => self.open_notes(),
             ("sequencer.audio_quantize", None) => self.quantize_audio(),
@@ -4690,6 +5719,10 @@ impl<B: AudioBackend> Shell<B> {
             ("rack.clean_up_bass", None) => {
                 self.patch_menu = None;
                 self.core.clean_up_bass();
+            }
+            ("rack.split_sub", None) => {
+                self.patch_menu = None;
+                self.core.split_sub();
             }
             ("rack.preview_player", None) => self.core.preview_selected_player(),
             ("rack.combine", None) => {
@@ -5313,6 +6346,10 @@ impl<B: AudioBackend> Shell<B> {
             org: core.arrangement().org_menu(),
             audio: core.arrangement().audio_menu(),
             freeze: core.freeze_menu(),
+            lens_small: core.lens().voicing == atomik_engine::LensVoicing::SmallSpeaker,
+            lens_club: core.lens().voicing == atomik_engine::LensVoicing::ClubSub,
+            lens_mono: core.lens().mono,
+            lens_off: core.lens().is_neutral(),
             tempo_can_ramp: core.arrangement().tempo_menu().can_ramp,
             tempo_ramped: core.arrangement().tempo_menu().ramped,
             tempo_can_delete: core.arrangement().tempo_menu().can_delete,
@@ -5561,6 +6598,7 @@ impl<B: AudioBackend> Shell<B> {
                     self.ui_changed();
                 }
                 UiAction::PickColor(target) => self.open_color_picker(target.clone()),
+                UiAction::EditWavetable(device) => self.open_wavetable_editor(device.clone()),
                 UiAction::OpenSampleEditor(_) => self.show_sample_editor(),
                 UiAction::CloseSampleEditor => {
                     if self.focus == Pane::SampleEditor {
@@ -5917,12 +6955,30 @@ impl<B: AudioBackend> Shell<B> {
                 self.open_song_info();
                 Vec::new()
             }
+            AppCommand::KickBassCheck => {
+                self.open_kick_bass();
+                Vec::new()
+            }
+            AppCommand::ReferencePanel => {
+                self.open_zone();
+                Vec::new()
+            }
             AppCommand::StartScreen => {
                 self.open_start_screen();
                 Vec::new()
             }
             AppCommand::SaveVersion => {
                 self.open_versions(false);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::MaskingMap => {
+                self.open_masking();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::CheckMix => {
+                self.open_mixcheck();
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
@@ -6116,6 +7172,26 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::AudioStripSilence => {
                 self.open_silence();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::AddReverbSend => {
+                self.open_reverb_send();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::RumbleMaker(choice) => {
+                self.core.rumble_maker(choice.mode());
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::ReverseReverbPrint(length) => {
+                self.core.reverse_reverb_print(length.seconds());
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::AddTransition(choice) => {
+                self.core.add_transition(choice);
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
@@ -6467,14 +7543,6 @@ impl<B: AudioBackend> Shell<B> {
                 self.ui_changed();
                 Vec::new()
             }
-            AppCommand::ToggleConsoleDevices => {
-                let view = self.core.view_mut();
-                let show = !view.show_console_devices();
-                view.set_show_console_devices(show);
-                self.ui.show_console_devices = show;
-                self.ui_changed();
-                Vec::new()
-            }
             AppCommand::ToggleConsoleLinks => {
                 let view = self.core.view_mut();
                 let show = !view.show_console_links();
@@ -6499,6 +7567,77 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.arrangement_mut().set_tempo_lane(show);
                 self.ui.show_tempo_lane = show;
                 self.ui_changed();
+                Vec::new()
+            }
+            AppCommand::ToggleEnergyLane => {
+                let show = !self.core.arrangement().energy_lane_visible();
+                self.core.arrangement_mut().set_energy_lane(show);
+                self.ui.show_energy_lane = show;
+                self.ui_changed();
+                // A lane with nothing to show measures the song (the reason is in the status
+                // line when it cannot).
+                if show && self.core.energy().is_none() && !self.core.energy_running() {
+                    let _ = self.core.start_energy();
+                }
+                Vec::new()
+            }
+            AppCommand::RefreshEnergyLane => {
+                if self.core.arrangement().energy_lane_visible() {
+                    let _ = self.core.start_energy();
+                }
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::SoundAnalyst => {
+                self.open_sound_analyst();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::BassRead => {
+                self.open_bass_read();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::DeliveryTargets => {
+                self.open_delivery(DeliveryPage::Targets);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::PeakSurgeon => {
+                self.open_delivery(DeliveryPage::Peaks);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::LensHeadphones => {
+                self.core.lens_off();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::LensSmallSpeaker => {
+                self.core
+                    .set_lens_voicing(atomik_engine::LensVoicing::SmallSpeaker);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::LensClubSub => {
+                self.core
+                    .set_lens_voicing(atomik_engine::LensVoicing::ClubSub);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::LensMono => {
+                self.core.toggle_lens_mono();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::SplitSub => {
+                self.core.split_sub();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::FindRepetition => {
+                self.open_repetition();
+                self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
             AppCommand::ToggleMarkerStrip => {
@@ -7243,12 +8382,20 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_library_ui();
         self.sync_relink();
         self.sync_export();
+        self.sync_masking();
+        self.sync_bass_read();
+        self.sync_delivery();
+        self.sync_sound_analyst();
+        self.sync_wavetable();
+        self.sync_mixcheck();
         self.sync_midi_maps();
         self.sync_macros();
         self.sync_mod_matrix();
         self.sync_blind();
         self.sync_param_search();
         self.sync_quantize();
+        self.sync_kick_bass();
+        self.sync_zone();
         // Imports and loads finish between frames: keep painting until the last one landed.
         if busy || self.core.is_busy() {
             self.repaint = true;
@@ -7311,7 +8458,7 @@ impl<B: AudioBackend> Shell<B> {
         if self.core.midi_received() != heard {
             self.repaint = true;
         }
-        if self.console_visible() {
+        if self.console_visible() || self.core.view().shows_mix_panels() {
             self.core.update_console_meters(now_seconds);
         }
         self.core.feed_rec_input(now_seconds);
@@ -7794,6 +8941,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(learn) = self.core.midi_status() {
             text = format!("{learn} \u{b7} {text}");
         }
+        if let Some(lens) = self.core.lens_status() {
+            text = format!("{lens} \u{b7} {text}");
+        }
         let changed = text != self.status;
         if changed {
             self.status = text;
@@ -8043,7 +9193,37 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.song_info {
             view.paint(canvas);
         }
+        if let Some(view) = &self.reverb_send {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.kick_bass {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.zone {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.versions {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.masking {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.mixcheck {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.repetition {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.bass_read {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.delivery {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.sound_analyst {
+            view.paint(canvas);
+        }
+        if let Some((view, _)) = &self.wavetable {
             view.paint(canvas);
         }
         if let Some((view, _)) = &self.color_picker {
@@ -8275,6 +9455,22 @@ mod midimap_tests;
 mod macros_tests;
 
 #[cfg(test)]
+#[path = "shell_kick_bass_tests.rs"]
+mod kick_bass_tests;
+
+#[cfg(test)]
+#[path = "shell_reverb_send_tests.rs"]
+mod reverb_send_tests;
+
+#[cfg(test)]
+#[path = "shell_rumble_tests.rs"]
+mod rumble_tests;
+
+#[cfg(test)]
+#[path = "shell_transition_tests.rs"]
+mod transition_tests;
+
+#[cfg(test)]
 #[path = "shell_key_chord_tests.rs"]
 mod key_chord_tests;
 
@@ -8404,6 +9600,34 @@ mod templates_tests;
 #[cfg(test)]
 #[path = "shell_versions_tests.rs"]
 mod versions_tests;
+
+#[cfg(test)]
+#[path = "shell_masking_tests.rs"]
+mod masking_tests;
+
+#[cfg(test)]
+#[path = "shell_mixcheck_tests.rs"]
+mod mixcheck_tests;
+
+#[cfg(test)]
+#[path = "shell_energy_tests.rs"]
+mod energy_tests;
+
+#[cfg(test)]
+#[path = "shell_translation_tests.rs"]
+mod translation_tests;
+
+#[cfg(test)]
+#[path = "shell_delivery_tests.rs"]
+mod delivery_tests;
+
+#[cfg(test)]
+#[path = "shell_sound_analyst_tests.rs"]
+mod sound_analyst_tests;
+
+#[cfg(test)]
+#[path = "shell_wavetable_tests.rs"]
+mod wavetable_tests;
 
 #[cfg(test)]
 #[path = "shell_piano_keys_tests.rs"]

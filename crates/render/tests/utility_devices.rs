@@ -99,6 +99,17 @@ const EFFECTS: &[(&str, &str)] = &[
         r#"{"mode": 0, "rate": 2, "depth": 1, "time": 100}"#,
     ),
     (
+        "atomik.duck",
+        r#"{"mode": 3, "depth": 1, "length": 1, "threshold": -30,
+            "hidden.curve_n": 3, "hidden.curve_p1_x": 0, "hidden.curve_p1_y": 0,
+            "hidden.curve_p2_x": 0.1, "hidden.curve_p2_y": 1, "hidden.curve_p2_bend": -16,
+            "hidden.curve_p3_x": 1, "hidden.curve_p3_y": 0}"#,
+    ),
+    (
+        "atomik.duck",
+        r#"{"mode": 3, "depth": 1, "length": 2, "band": 1, "band_freq": 300, "threshold": -30}"#,
+    ),
+    (
         "atomik.env-filter",
         r#"{"cutoff": 300, "amount": 4, "attack": 2, "decay": 300, "resonance": 0.5}"#,
     ),
@@ -145,7 +156,10 @@ fn every_effect_changes_the_phrase_and_renders_the_same_bits_at_every_block_size
             .zip(&dry[0])
             .chain(a[1].iter().zip(&dry[1]))
             .fold(0.0f32, |m, (x, y)| m.max((x - y).abs()));
-        assert!(diff > 1e-3, "{type_id} left the phrase alone ({diff})");
+        assert!(
+            diff > 1e-3,
+            "{type_id} left the phrase alone ({diff}) with {params}"
+        );
         assert!(peak(&a[0]).max(peak(&a[1])) > 1e-3, "{type_id}: silent");
         for block in [64, 333, 1024] {
             let b = render(&json, block, false);

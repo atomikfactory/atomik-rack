@@ -24,6 +24,8 @@
 //! allocation-free and lock-free. [`display_frame`] draws one interpolated frame for a panel
 //! without building the bank.
 
+pub mod edit;
+
 use std::sync::OnceLock;
 
 use crate::Rng;

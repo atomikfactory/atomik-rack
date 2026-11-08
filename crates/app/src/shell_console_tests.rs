@@ -167,8 +167,8 @@ fn clicking_the_console_focuses_it_and_keys_go_there() {
 }
 
 #[test]
-fn the_mixer_menu_and_the_console_devices_toggle() {
-    let mut s = shell();
+fn the_mixer_menu_and_the_view_menu_without_a_console_devices_switch() {
+    let s = shell();
     let model = s.menu_model();
     let titles: Vec<_> = model.iter().map(|m| m.title).collect();
     assert_eq!(
@@ -237,6 +237,8 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Peak Meters", None),
             ("PPM Meters", None),
             ("VU Meters", None),
+            ("Masking Map\u{2026}", None),
+            ("Check Mix\u{2026}", None),
             ("Listen to Reference", Some("Ctrl+Alt+R")),
             ("Add Reference Track\u{2026}", None),
             ("Reference 1", None),
@@ -253,6 +255,12 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Left and Right", None),
             ("Mid", None),
             ("Side", None),
+            ("Reference Panel\u{2026}", None),
+            ("Headphones", None),
+            ("Small Speaker", None),
+            ("Club Sub", None),
+            ("Mono", None),
+            ("Will the Bass Read?\u{2026}", None),
             ("MIDI Learn", None),
             ("MIDI Mappings\u{2026}", None),
             ("Previous track", None),
@@ -267,46 +275,50 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Clear MIDI Mappings", None),
             ("Macros\u{2026}", None),
             ("New Macro Bank", None),
+            ("Kick and Bass Check\u{2026}", None),
         ]
     );
     assert!(model[4].entries.contains(&MenuEntry::Separator));
     let view: Vec<_> = model[2].items().map(|i| i.label.as_ref()).collect();
-    assert!(view.contains(&"Show Console Devices in Rack"), "{view:?}");
+    assert!(
+        !view.contains(&"Show Console Devices in Rack"),
+        "the console devices are always in the rack: {view:?}"
+    );
     assert!(view.contains(&"Show Console Links"), "{view:?}");
-    // Shown by default by default; the toggle hides them.
-    assert!(s.core().view().show_console_devices());
-    assert!(s.menu_state().console_devices);
-    s.execute(AppCommand::ToggleConsoleDevices);
-    assert!(!s.core().view().show_console_devices());
-    assert!(!s.menu_state().console_devices);
 }
 
 #[test]
-fn the_console_display_choices_persist_in_ui_state_and_an_absent_key_means_shown() {
+fn the_console_links_choice_persists_in_ui_state_and_the_retired_devices_key_is_ignored() {
     let path = temp("ui-state-notice.json");
     let _ = std::fs::remove_file(&path);
     let mut s = shell_at(Some(path.clone()));
-    assert!(s.core().view().show_console_devices());
     assert!(!s.core().view().show_console_links());
     assert!(!s.menu_state().console_links);
     s.execute(AppCommand::ToggleConsoleLinks);
     assert!(s.core().view().show_console_links());
     assert!(s.menu_state().console_links);
-    s.execute(AppCommand::ToggleConsoleDevices);
     s.flush_ui_state();
     let saved = UiState::load(&path);
-    assert!(saved.show_console_links && !saved.show_console_devices);
+    assert!(saved.show_console_links);
 
-    // A new start reads them back.
+    // A new start reads it back.
     let s2 = shell_at(Some(path.clone()));
     assert!(s2.core().view().show_console_links());
-    assert!(!s2.core().view().show_console_devices());
 
-    // A file from before the update has no keys: devices shown, links off.
-    std::fs::write(&path, r#"{"rack_split": 0.4}"#).unwrap();
+    // A file from before the update has no keys: links off. A file that still carries the
+    // retired switch of the console devices loads, and the rack shows them all the same.
+    std::fs::write(
+        &path,
+        r#"{"rack_split": 0.4, "show_console_devices": false}"#,
+    )
+    .unwrap();
     let s3 = shell_at(Some(path.clone()));
-    assert!(s3.core().view().show_console_devices());
     assert!(!s3.core().view().show_console_links());
+    assert_eq!(
+        s3.core().last_rejection(),
+        None,
+        "no notice for an old file"
+    );
     let _ = std::fs::remove_file(&path);
 }
 
@@ -460,17 +472,49 @@ fn add_channel_shows_the_console_and_opens_its_picker() {
     assert!(!items.is_empty(), "the add-channel picker is open");
 }
 
+fn fold(s: &mut Shell<NullBackend>, key: &DeviceKey, folded: bool) {
+    s.core_mut()
+        .apply_command(Command::SetFolded {
+            key: key.clone(),
+            folded,
+        })
+        .unwrap();
+}
+
 #[test]
-fn frames_feed_the_meters_only_while_the_console_shows() {
+fn frames_feed_the_meters_only_while_the_console_or_a_mix_panel_shows() {
     let mut s = shell();
     add_synth(&mut s, "a");
     let ch = s.core().doc().console.channels[0].channel.clone();
+    // Folded strips and a folded master draw no panel and the console is hidden: nothing reads
+    // the meters.
+    let master = s.core().doc().console.master.clone().unwrap();
+    fold(&mut s, &ch, true);
+    fold(&mut s, &master, true);
+    assert!(!s.core().view().shows_mix_panels());
     s.frame_at(0.0);
     assert!(s.core().console().meter(&ch).is_none(), "hidden: not fed");
+    // The console shows.
     s.execute(AppCommand::ToggleConsole);
     s.frame_at(0.1);
     s.frame_at(0.2);
     assert!(s.core().console().meter(&ch).is_some());
+}
+
+#[test]
+fn an_open_mix_channel_panel_in_the_rack_gets_the_meter_feed_without_the_console() {
+    let mut s = shell();
+    add_synth(&mut s, "a");
+    let ch = s.core().doc().console.channels[0].channel.clone();
+    fold(&mut s, &ch, false);
+    assert!(s.core().view().shows_mix_panels());
+    assert_ne!(s.lower_pane(), Pane::Console);
+    s.frame_at(0.0);
+    s.frame_at(0.1);
+    assert!(
+        s.core().console().meter(&ch).is_some(),
+        "the rack's panel reads the same meters"
+    );
 }
 
 #[test]
@@ -521,47 +565,6 @@ fn the_console_view_knows_when_it_is_maximised() {
     let mut t = t;
     t.execute(AppCommand::ToggleSong);
     assert!(!t.core().console().maximised());
-    std::fs::remove_file(&path).ok();
-}
-
-// ------------------------------------------------------------------ the one-time notice
-
-#[test]
-fn the_first_start_after_4m_says_console_devices_are_shown_and_only_once() {
-    let path = temp("notice-ui-state.json");
-    let _ = std::fs::remove_file(&path);
-    // An older ui-state.json: no notice flag in it.
-    std::fs::write(&path, r#"{"rack_split": 0.4}"#).unwrap();
-    let mut s = shell_at(Some(path.clone()));
-    let text = s.core().last_rejection().expect("the notice").to_string();
-    assert!(
-        text.contains("Console devices are now shown in the rack")
-            && text.contains("View > Show Console Devices in Rack"),
-        "{text}"
-    );
-    assert!(s.ui_state().console_notice_seen);
-    // The flag is saved, with the user's other values kept.
-    s.flush_ui_state();
-    let saved = UiState::load(&path);
-    assert!(saved.console_notice_seen && (saved.rack_split - 0.4).abs() < 1e-9);
-    // The next start is quiet.
-    let again = shell_at(Some(path.clone()));
-    assert_eq!(again.core().last_rejection(), None);
-    // Without a state file (tests, a failed config dir) nothing is said and nothing written.
-    assert_eq!(shell().core().last_rejection(), None);
-    std::fs::remove_file(&path).ok();
-}
-
-#[test]
-fn a_user_who_hid_the_console_devices_is_not_told_they_are_shown() {
-    let path = temp("notice-hidden-ui-state.json");
-    std::fs::write(&path, r#"{"show_console_devices": false}"#).unwrap();
-    let s = shell_at(Some(path.clone()));
-    assert_eq!(s.core().last_rejection(), None);
-    assert!(
-        s.ui_state().console_notice_seen,
-        "nothing to say, never will be"
-    );
     std::fs::remove_file(&path).ok();
 }
 
@@ -2056,4 +2059,72 @@ fn the_reference_commands_reach_the_core_and_the_menu_state_follows() {
         let (id, arg) = command.command_id().expect("has an id");
         assert_eq!(AppCommand::from_command(id, arg), Some(command));
     }
+}
+
+#[test]
+fn the_reference_panel_opens_from_the_menu_and_the_ids_round_trip() {
+    let (id, arg) = AppCommand::ReferencePanel.command_id().expect("has an id");
+    assert_eq!(
+        AppCommand::from_command(id, arg),
+        Some(AppCommand::ReferencePanel)
+    );
+    let mut s = shell();
+    assert!(!s.zone_open());
+    s.execute(AppCommand::ReferencePanel);
+    assert!(s.zone_open());
+    // Nothing is listed: the panel says what to do and no analysis starts.
+    let data = s.zone_view().unwrap().data().clone();
+    assert!(data.references.is_empty() && !data.busy);
+    assert!(data.status.contains("Add a reference"), "{}", data.status);
+    assert_eq!(data.rows.len(), 7);
+    // Esc closes it and the song is as it was.
+    s.handle(&key(Key::Escape, Modifiers::default()));
+    assert!(!s.zone_open());
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // a real worker is waited for in real time
+fn the_reference_panel_lists_selects_and_refreshes_through_its_buttons() {
+    let mut s = shell();
+    s.add_reference_file(std::path::Path::new("no-such-one.wav"));
+    s.add_reference_file(std::path::Path::new("no-such-two.wav"));
+    s.execute(AppCommand::ReferencePanel);
+    let data = s.zone_view().unwrap().data().clone();
+    assert_eq!(data.references.len(), 2);
+    assert!(data.references[1].selected);
+    // A click on the first row selects it.
+    let first = {
+        let v = s.zone_view().unwrap();
+        let p = v.panel();
+        Point::new(p.x0 + 60.0, p.y0 + 34.0 + 22.0 + 10.0)
+    };
+    click(&mut s, first);
+    s.frame();
+    assert!(s.zone_view().unwrap().data().references[0].selected);
+    assert_eq!(s.core().reference_info().selected, 0);
+    // Down moves to the next one.
+    s.handle(&key(Key::Down, Modifiers::default()));
+    assert_eq!(s.core().reference_info().selected, 1);
+    // REFRESH measures (the files are missing, so every reading is an error) and the panel
+    // follows the worker.
+    let refresh = s.zone_view().unwrap().refresh_rect().center();
+    click(&mut s, refresh);
+    assert!(s.core().zone_busy() || s.core().zone_measured());
+    let start = std::time::Instant::now();
+    while s.core().zone_busy() {
+        s.frame();
+        assert!(
+            start.elapsed().as_secs() < 60,
+            "the analysis did not finish"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    s.frame();
+    let data = s.zone_view().unwrap().data().clone();
+    assert!(!data.busy);
+    assert!(data.status.contains("could not be read"), "{}", data.status);
+    // CLOSE closes it.
+    let close = s.zone_view().unwrap().close_rect().center();
+    click(&mut s, close);
+    assert!(!s.zone_open());
 }

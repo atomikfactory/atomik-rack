@@ -1499,6 +1499,13 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
             .and_then(|r| r.handle.reference_shared().short_term_lufs())
     }
 
+    fn lens_set(&mut self, settings: atomik_engine::LensSettings) -> Result<(), EngineError> {
+        match &mut self.running {
+            Some(r) => counted(&mut self.control_stalled, r.handle.lens_set(settings)),
+            None => Ok(()),
+        }
+    }
+
     fn engine_error(&self) -> Option<String> {
         self.status.error.clone()
     }

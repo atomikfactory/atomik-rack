@@ -147,7 +147,37 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &self.song_info {
             return v.help_at(pos);
         }
+        if let Some(v) = &self.reverb_send {
+            return v.help_at(pos);
+        }
+        if let Some(v) = &self.kick_bass {
+            return v.help_at(pos);
+        }
+        if let Some(v) = &self.zone {
+            return v.help_at(pos);
+        }
         if let Some(v) = &self.versions {
+            return v.help_at(pos);
+        }
+        if let Some(v) = &self.masking {
+            return v.help_at(pos);
+        }
+        if let Some(v) = &self.mixcheck {
+            return v.help_at(pos);
+        }
+        if let Some(v) = &self.repetition {
+            return v.help_at(pos);
+        }
+        if let Some(v) = &self.bass_read {
+            return v.help_at(pos);
+        }
+        if let Some(v) = &self.delivery {
+            return v.help_at(pos);
+        }
+        if let Some(v) = &self.sound_analyst {
+            return v.help_at(pos);
+        }
+        if let Some((v, _)) = &self.wavetable {
             return v.help_at(pos);
         }
         if let Some((v, _)) = &self.color_picker {

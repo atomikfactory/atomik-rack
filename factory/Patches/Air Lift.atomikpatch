@@ -1,0 +1,46 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.dynamic-eq",
+      "name": "Dynamic EQ", "folded": false, "patch": "Air Lift",
+      "params": {
+        "band5.attack": 25,
+        "band5.freq": 10500,
+        "band5.gain": 1,
+        "band5.on": 1,
+        "band5.q": 0.6,
+        "band5.range": 3.5,
+        "band5.ratio": 3,
+        "band5.release": 250,
+        "band5.threshold": -32
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

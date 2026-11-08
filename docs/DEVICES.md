@@ -300,6 +300,16 @@ The sockets are the poly synth's. A key played while another is held changes the
 and `delay.*` (see the poly synth's "Expansion") are the bass's effects.
 The modulation matrix is the poly synth's too (the same sources and targets).
 
+**Split Sub.** Edit > Split Sub on a selected Mono Bass track (or the same row on the pop-up of the patch name)
+puts the bass in a container with a mono sine sub layer, in one undo step. The sub layer is a Poly Synth with one
+voice, two sines at the pitches of the bass's oscillators (no detune, the phase reset at every note) balanced like
+their fundamentals, the bass's amp envelope, glide and legato, and a 12 dB low-pass at 1.25 times the split
+frequency (120 Hz). The bass keeps all its params and goes through an EQ with its low cut on at 24 dB per octave
+at the split, so its unison, width and chorus stay above the sub. A Line Mixer sums the two at +3.0103 dB per
+channel (the centred pan takes 3 dB off each). With the bass's filter open the sum is within 1 dB of the level of
+the bass; a strong resonance or drive on the bass moves it by up to about 3 dB, and the sub layer's `master.level`
+is the trim.
+
 ---
 
 ## Dual Layer: `atomik.dual-layer` (Instrument)
@@ -565,7 +575,56 @@ analysed, scaled to a peak of 1 and stored once per octave of bandwidth like the
 an imported table does not alias either. The table is built where the sample map is built (off
 the audio thread, a few hundred small FFTs), live and in a bounce alike. While the device has no
 sample, the imported table is silent and its display asks for one. A new sample replaces the table
-at once, without a fade. Not done: a table editor, and the frames of a long sample beyond 16.
+at once, without a fade. Not done: the frames of a long sample beyond 16.
+
+### Table editor
+
+A click on a table display of the panel opens the editor (a panel over the window; Escape closes it).
+It edits the device's one table as up to 16 **key frames**. Every finished gesture stores the table
+as the device's sample in one undo step, so an edit saves with the project, reloads, undoes and
+redoes like a dropped sample; while the panel is open it follows undo and redo.
+
+- **Stored form.** The key frames are baked into the 16 frames of 2048 samples that the synth cuts a
+  sample into: key frame `i` of `n` sits at frame `round(i * 15 / (n - 1))` and the frames between two
+  keys are their linear blend (the blend the synth plays between stored frames), so a table of four
+  key frames morphs over the whole position range. The result is one mono asset of 32768 samples,
+  named `Table frames N aligned` (or `plain`) so that reopening the editor shows the `N` key frames
+  again and not their 16 blends. Each frame still plays at full level, as for every imported table.
+  A device with no sample starts the editor from four frames of the table oscillator 1 shows; the
+  first edit stores them.
+- **Draw.** A press and a drag in the box set the samples under the pointer along straight lines;
+  Escape during a stroke puts the frame back.
+- **Harmonics.** One bar per harmonic 1 to 64 sets its level (0 to 1.5) and a dot under it its phase
+  (in cycles of that harmonic). A drag across several bars sets each. Only the harmonic you touch
+  changes; the others, also those above 64, stay as they were. A frame can be rebuilt from harmonics
+  alone with the additive code the bars use (`rebuild`).
+- **Frame list and processes.** ADD puts the blend of the selected frame and the next after it, DUP a
+  copy, DEL removes a frame (one stays), UP and DOWN move it. NORM scales the frame to peak 1, DC takes
+  the offset out, INV flips the polarity, REV plays the cycle backwards, SMOOTH rounds it off; the
+  ALL toggle applies them to every frame.
+- **Phase-safe morph.** Two frames whose fundamentals are out of phase cancel it half way through a
+  blend. With PHASE-SAFE on, every frame is shifted in time when the table is stored until its
+  fundamental has phase 0 (harmonic `h` turns by `h` times as much, so the shape is the same and so
+  is the sound of the frame alone). The line under the controls names the pairs of frames whose
+  fundamental cancels by more than 3 dB without it, names a frame with no fundamental (which cannot
+  be aligned), and otherwise shows the worst level dip of the morph between neighbouring frames (the
+  RMS of the blend against the straight line between the RMS of the two ends). The alignment is
+  plain arithmetic on the harmonics, so the stored table is the same on every platform. The drawn
+  shape of a frame is shifted when the table is stored with PHASE-SAFE on.
+- **Cleanup of a dropped sample.** For a table made from a sample the panel shows the length of one
+  cycle (the first strong peak of the normalised autocorrelation of the middle of the sample, 16 to
+  4096 samples) and its pitch. CUT cuts the sample again with one cycle per frame (each cycle
+  stretched to a frame with a four-point Hermite read, at most 16 evenly spaced) and drops silent and
+  near-identical frames (a difference under 5 % of the louder frame's RMS, after both are aligned),
+  one undo step. DEDUPE does the same drop on the frames the panel holds. EDGE makes the end of each
+  cycle meet its start: the chosen number of samples (32 to 512, the number beside the button cycles
+  it) are blended into the start, and the shorter cycle is stretched back to a frame. USE OSC 1 sets
+  the table choice of oscillator 1 to `imported`.
+
+The maths is in [crates/dsp/src/wavetable/edit.rs](../crates/dsp/src/wavetable/edit.rs), the panel in
+[crates/ui/src/wavetable_editor.rs](../crates/ui/src/wavetable_editor.rs) and the storing in
+[crates/app/src/app_core_wavetable.rs](../crates/app/src/app_core_wavetable.rs). Three factory
+patches use a drawn table: Drawn Bell Morph, Aligned Saw Pad and Table Sub Morph.
 
 ### Sockets
 
@@ -1203,6 +1262,9 @@ A stereo algorithmic reverb with three algorithms. Source:
 | `in_r` | Audio | in | |
 | `out_l` | Audio | out | |
 | `out_r` | Audio | out | |
+| `mix_cv_in` | CV | in | added to `mix` through `mix_cv_trim` |
+| `sc_in_l` | Audio | in | the key of the duck and the gate (see below) |
+| `sc_in_r` | Audio | in | |
 
 ### Params
 
@@ -1220,10 +1282,33 @@ A stereo algorithmic reverb with three algorithms. Source:
 | `mix` | 0 (dry) to 1 (wet) | 0.3 | percent | Linear | no |
 | `freeze` | 0 or 1 | 0 | toggle | Linear | yes |
 | `output` | −24 to 12 | 0 | dB | Linear | no |
+| `mix_cv_trim` | −1 to 1 | 1 | percent | Linear | no |
+| `duck` | 0 to 1 | 0 (off) | percent | Linear | no |
+| `duck_release` | 20 to 2000 | 300 | ms | Exp | no |
+| `duck_mode` | 0–2: broadband, low band, band | 0 | choice | Linear | yes |
+| `duck_freq` | 60 to 8000 | 250 | Hz | Exp | no |
+| `duck_threshold` | −60 to 0 | −30 | dB | Linear | no |
+| `key_gate` | 0 or 1 | 0 | toggle | Linear | yes |
+| `key_gate_hold` | 0 to 500 | 80 | ms | Linear | no |
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 ### Behaviour (as built)
 
+- **Duck and key gate (the key).** The reverb can be ducked, and gated, by the level of another
+  signal, on the wet path only: the dry signal is never touched, bit for bit. The key is `sc_in_l`
+  and `sc_in_r` when one of them is cabled (a lone side feeds both) and the main input otherwise.
+  Its level is the larger of the two channels, followed by a peak follower with a 5 ms attack and
+  a `duck_release` fall. Both read the same `duck_threshold`. The duck engages linearly between
+  half the threshold (6 dB under) and the threshold; at full engagement it takes the share `duck`
+  out of the part it works on. *Broadband* turns the whole wet signal down; with the duck at 0 or
+  the key silent the wet signal is untouched. *Low band* splits the wet signal at `duck_freq` with
+  a 24 dB per octave Linkwitz-Riley pair and turns the part under it down (the halves add up to
+  an allpass of the wet signal, so this mode shifts the phase around `duck_freq` while the duck is
+  on). *Band* cuts a bell of Q 2 at `duck_freq` (at most 40 dB at its centre). The key gate
+  (`key_gate`) closes the wet output `key_gate_hold` ms after the key last exceeded the threshold,
+  with a 12 ms fade, and opens within 1 ms: the tail stops when the dry track stops. A hold of 0
+  keeps it open. The reverb of the Add Reverb Send wizard cables the track's channel to the key
+  and turns the duck on.
 - **Structure.** Pre-delay, a one-pole low cut, six early-reflection taps per side from a tapped
   delay, and a late tail from an 8-line feedback route network (Hermite-interpolated delay lines, a
   damping lowpass, a feedback gain and an in-loop allpass per line, mixed by an orthonormal 8×8
@@ -1282,10 +1367,13 @@ freeze, mix behaviour, buffers) with four other algorithms and two extra output 
 | `out_l` | Audio | out | |
 | `out_r` | Audio | out | |
 | `mix_cv_in` | CV | in | added to `mix` through `mix_cv_trim`, as in the reverb |
+| `sc_in_l` | Audio | in | the key of the duck and the gate, as in the reverb |
+| `sc_in_r` | Audio | in | |
 
 ### Params
 
 The first thirteen params are those of the reverb with the same meaning; `decay` defaults to 3 s.
+The last seven before `bypass` (`duck` to `key_gate_hold`) are the reverb's keyed duck and gate.
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
@@ -1305,6 +1393,13 @@ The first thirteen params are those of the reverb with the same meaning; `decay`
 | `highcut` | 1000 to 20000 | 20000 | Hz | Exp | no |
 | `gate` | 0 (off) to 500 | 0 | ms | Linear | no |
 | `gate_level` | −60 to 0 | −40 | dB | Linear | no |
+| `duck` | 0 to 1 | 0 (off) | percent | Linear | no |
+| `duck_release` | 20 to 2000 | 300 | ms | Exp | no |
+| `duck_mode` | 0–2: broadband, low band, band | 0 | choice | Linear | yes |
+| `duck_freq` | 60 to 8000 | 250 | Hz | Exp | no |
+| `duck_threshold` | −60 to 0 | −30 | dB | Linear | no |
+| `key_gate` | 0 or 1 | 0 | toggle | Linear | yes |
+| `key_gate_hold` | 0 to 500 | 80 | ms | Linear | no |
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 ### Behaviour (as built)
@@ -1317,7 +1412,9 @@ The first thirteen params are those of the reverb with the same meaning; `decay`
 - **High cut.** A one-pole lowpass on the wet signal, smoothed like the other controls.
 - **Gate.** `gate` is the hold time and `gate_level` the input level that keeps the gate open. The
   wet output fades out over 12 ms `gate` ms after the input last exceeded the level, and opens again
-  within 1 ms. `gate` 0 keeps it open.
+  within 1 ms. `gate` 0 keeps it open. This gate listens to the reverb's own input; the key gate
+  (see the reverb) listens to the key.
+- **Duck and key gate.** As the reverb, after the high cut and the gate.
 - **Mix and latency.** As the reverb: latency 0, and at `mix` 0 the input is copied bit for bit.
 - **Meter values.** `[output peak L, output peak R, tail RMS]`.
 
@@ -3861,77 +3958,6 @@ and has a flag off still plays and releases its notes.
 
 ---
 
-## Dynamic EQ: `atomik.dynamic-eq` (Effect)
-
-A five-band stereo equaliser whose bands move with the level of the signal, or of a key signal, in
-their own frequency range: a resonance is cut only while it sounds, a band is lifted only when it is
-loud. Source: [crates/devices/src/dynamic_eq.rs](../crates/devices/src/dynamic_eq.rs).
-
-### Sockets
-
-`in_l`, `in_r` (Audio in), `sc_in_l`, `sc_in_r` (Audio in, the key; a lone connected side feeds both
-channels, as on the compressor), `out_l`, `out_r` (Audio out).
-
-### Params
-
-Every band has the same eleven params, `bandN.<name>` for N = 1 to 5. Band 1 is a low shelf, bands 2
-to 4 are bells, band 5 is a high shelf. The param ids run band by band (`band1.on` is 0,
-`band2.on` is 11).
-
-| Key (`bandN.`) | Range | Default | Unit |
-|---|---|---|---|
-| `on` | 0 or 1 | 0 | toggle |
-| `freq` | shelves 20 to 5000 Hz (low) and 500 to 20000 Hz (high), bells 20 to 20000 Hz | 120 / 400 / 1500 / 4000 / 8000 | Hz |
-| `q` | shelves 0.3 to 2, bells 0.1 to 18 | 0.707 (shelves), 1 (bells) | none |
-| `gain` (static) | -24 to 24 | 0 | dB |
-| `threshold` | -60 to 0 | -24 | dB |
-| `range` | -24 to 24 (negative cuts, positive lifts) | -6 | dB |
-| `ratio` | 1.5 to 20 | 4 | none |
-| `attack` | 0.1 to 200 | 10 | ms |
-| `release` | 5 to 2000 | 100 | ms |
-| `source` | 0 to 1: band, key | 0 | choice |
-| `channel` | 0 to 2: stereo, mid, side | 0 | choice |
-
-Shared: `output` (-24 to 24 dB, default 0), `bypass` (0 or 1, see [Effect bypass](#effect-bypass)) and
-the never-stored `internal.analyser_live` (0 or 1) that the rack view sets for the panels on screen.
-Frequencies, Q, ratio, attack and release use the exponential taper.
-
-### Behaviour (as built)
-
-- **A band.** A band-pass at the band's frequency (unity gain at the centre, width `q` kept between
-  0.5 and 8) feeds a level follower of the rectified signal (`attack` rising, `release` falling),
-  scaled by pi/2 so a sine of peak A reads A when attack and release are equal. The overshoot above
-  `threshold` goes through a soft-knee curve (6 dB knee) with slope `1 - 1/ratio` and stops at
-  `|range|`; with a negative `range` the band's gain falls by that much, with a positive one it rises.
-  The band's gain is the static `gain` plus that dynamic part, limited to 36 dB.
-- **Source.** `band` listens to the device input (not to what the other bands did), `key` to the
-  key sockets band-passed at the band's own frequency; with no cable in the key sockets a band set to
-  `key` listens to its input. A shelf listens around its corner frequency.
-- **Channel.** `stereo` filters left and right and the detector follows the louder side, so the image
-  does not move. `mid` and `side` filter one signal, `(L + R) / 2` or `(L - R) / 2`, add the change
-  back (the same on both sides for mid, opposite on the two for side) and listen to that signal.
-- **Smoothing.** The static gain, the frequency and the Q follow a 10 ms one-pole; the coefficients
-  are RBJ sections with `f64` state, recomputed every 16 samples while something moves.
-- **Bit-transparent when idle.** A band that is off, or on with a static gain and a range of exactly
-  0 dB, fades out over 10 ms and is skipped with its state reset. With every band off and `output`
-  at 0 dB the input is copied bit for bit (the default state). A band that comes on starts clean and
-  fades in over 10 ms.
-- **No latency**, no look-ahead. Non-finite input counts as 0; nothing allocates on the audio thread.
-- **Meter values** (40): `[0..5)` the gain each band applies now in dB (0 for a band that is off),
-  `[5..21)` the energies of 16 band-pass filters over the mono mix of the INPUT (centres from
-  `atomik_devices::eq::analyser_centres`, linear power, smoothed over 50 ms), `[21..37)` the same for
-  the KEY (0 without a cable), `[37]`, `[38]` the output peaks, `[39]` 1 when a cable is in the key
-  sockets. The two analyser banks run only while `internal.analyser_live` is 1; the audio is the same
-  either way.
-- **Panel.** A plot across the top draws the spectrum of the input (and, while a cable is in the key
-  sockets, of the key in another colour), the static curve (every band at its own gain, thin), the
-  live curve (every band at the gain it has now, from the meter values, thick and filled), a bar from
-  each handle over the reach of its range, and a numbered handle per band with a white dot where the
-  band's live gain is. A handle drags its frequency (sideways) and static gain (up and down), the wheel
-  over it steps the Q, a double click switches the band; every control has a tooltip. The panel is nine
-  rack units tall.
-- **Not built:** the EQ's low and high cut, a hold time and a look-ahead.
-
 ## Clipper: `atomik.clipper` (Effect)
 
 A stereo clipper: the signal is driven into a ceiling through a curve that runs from a hard clip to
@@ -4024,6 +4050,107 @@ density, a hard one after to catch the peaks it raises), one per drum bus and on
 are the classic ways to gain loudness in small steps. A little asymmetry on a bass or a drum adds
 even harmonics.
 
+## Dynamic EQ: `atomik.dynamic-eq` (Effect)
+
+A five-band stereo equaliser whose bands move with the level of the signal, or of a key signal, in
+their own frequency range: a resonance is cut only while it sounds, a band is lifted only when it is
+loud. Source: [crates/devices/src/dynamic_eq.rs](../crates/devices/src/dynamic_eq.rs).
+
+### Sockets
+
+`in_l`, `in_r` (Audio in), `sc_in_l`, `sc_in_r` (Audio in, the key; a lone connected side feeds both
+channels, as on the compressor), `out_l`, `out_r` (Audio out).
+
+### Params
+
+Every band has the same eleven params, `bandN.<name>` for N = 1 to 5. Band 1 is a low shelf, bands 2
+to 4 are bells, band 5 is a high shelf. The param ids run band by band (`band1.on` is 0,
+`band2.on` is 11).
+
+| Key (`bandN.`) | Range | Default | Unit |
+|---|---|---|---|
+| `on` | 0 or 1 | 0 | toggle |
+| `freq` | shelves 20 to 5000 Hz (low) and 500 to 20000 Hz (high), bells 20 to 20000 Hz | 120 / 400 / 1500 / 4000 / 8000 | Hz |
+| `q` | shelves 0.3 to 2, bells 0.1 to 18 | 0.707 (shelves), 1 (bells) | none |
+| `gain` (static) | -24 to 24 | 0 | dB |
+| `threshold` | -60 to 0 | -24 | dB |
+| `range` | -24 to 24 (negative cuts, positive lifts) | -6 | dB |
+| `ratio` | 1.5 to 20 | 4 | none |
+| `attack` | 0.1 to 200 | 10 | ms |
+| `release` | 5 to 2000 | 100 | ms |
+| `source` | 0 to 1: band, key | 0 | choice |
+| `channel` | 0 to 2: stereo, mid, side | 0 | choice |
+
+Shared: `output` (-24 to 24 dB, default 0, id 55), `delta` (0 or 1, default 0, id 56: listen to what the
+bands take out), `bypass` (0 or 1, id 57, see [Effect bypass](#effect-bypass)), the never-stored
+`internal.analyser_live` (0 or 1, id 58) that the rack view sets for the panels on screen, and the hidden
+never-stored `internal.match` (id 59) of the loudness match. Frequencies, Q, ratio,
+attack and release use the exponential taper.
+
+### Behaviour (as built)
+
+- **A band.** A band-pass at the band's frequency (unity gain at the centre, width `q` kept between
+  0.5 and 8) feeds a level follower of the rectified signal (`attack` rising, `release` falling),
+  scaled by pi/2 so a sine of peak A reads A when attack and release are equal. The overshoot above
+  `threshold` goes through a soft-knee curve (6 dB knee) with slope `1 - 1/ratio` and stops at
+  `|range|`; with a negative `range` the band's gain falls by that much, with a positive one it rises.
+  The band's gain is the static `gain` plus that dynamic part, limited to 36 dB.
+- **Source.** `band` listens to the device input (not to what the other bands did), `key` to the
+  key sockets band-passed at the band's own frequency; with no cable in the key sockets a band set to
+  `key` listens to its input. A shelf listens around its corner frequency.
+- **Channel.** `stereo` filters left and right and the detector follows the louder side, so the image
+  does not move. `mid` and `side` filter one signal, `(L + R) / 2` or `(L - R) / 2`, add the change
+  back (the same on both sides for mid, opposite on the two for side) and listen to that signal.
+- **Smoothing.** The static gain, the frequency and the Q follow a 10 ms one-pole; the coefficients
+  are RBJ sections with `f64` state, recomputed every 16 samples while something moves.
+- **Delta.** With `delta` on the device plays the input minus the output of the bands (before `output`): a cut
+  is heard as the part of the sound that was taken out, a lift as the same part with the opposite sign. The switch
+  crossfades over 10 ms. With every band off, or with bands that have no gain and no range, the delta is exactly
+  0.0, so a neutral device is silent. It covers all five bands together; to hear one band, switch the others
+  off. The meter values and peaks follow what is played.
+- **Bit-transparent when idle.** A band that is off, or on with a static gain and a range of exactly
+  0 dB, fades out over 10 ms and is skipped with its state reset. With every band off and `output`
+  at 0 dB the input is copied bit for bit (the default state). A band that comes on starts clean and
+  fades in over 10 ms.
+- **No latency**, no look-ahead. Non-finite input counts as 0; nothing allocates on the audio thread.
+- **Meter values** (40): `[0..5)` the gain each band applies now in dB (0 for a band that is off),
+  `[5..21)` the energies of 16 band-pass filters over the mono mix of the INPUT (centres from
+  `atomik_devices::eq::analyser_centres`, linear power, smoothed over 50 ms), `[21..37)` the same for
+  the KEY (0 without a cable), `[37]`, `[38]` the output peaks, `[39]` 1 when a cable is in the key
+  sockets. The two analyser banks run only while `internal.analyser_live` is 1; the audio is the same
+  either way.
+- **Panel.** A plot across the top draws the spectrum of the input (and, while a cable is in the key
+  sockets, of the key in another colour), the static curve (every band at its own gain, thin), the
+  live curve (every band at the gain it has now, from the meter values, thick and filled), a bar from
+  each handle over the reach of its range, and a numbered handle per band with a white dot where the
+  band's live gain is. A handle drags its frequency (sideways) and static gain (up and down), the wheel
+  over it steps the Q, a double click switches the band; every control has a tooltip. The panel is nine
+  rack units tall.
+- **Resonance finder (panel buttons FIND and CUT).** It is a function of this device, not a device of its own:
+  the cuts it makes are ordinary bands that can be edited, switched off or automated, so nothing is gained by a
+  second device that would hold the same five bands. FIND renders the range between the locators (at most 30
+  seconds from its start) offline, with the renderer of a bounce, on a worker, with one tap on whatever feeds
+  `in_l` and `in_r` ([crates/render/src/device_input.rs](../crates/render/src/device_input.rs)): the device hears
+  exactly what it hears in playback and its own settings change nothing in it. The audio goes through
+  [crates/dsp/src/resonance.rs](../crates/dsp/src/resonance.rs): the average power spectrum (Hann windows of 8192
+  points, 16384 from 88.2 kHz, half-window hop, silent windows skipped), a trend of that spectrum in dB smoothed
+  over a third of an octave (at least 13 bins wide, a second pass clipped to 3 dB above the first so a peak does
+  not lift its own trend), and the local maxima between 50 Hz and 16 kHz that stand at least 6 dB above it. A
+  peak's frequency is refined with a parabola through its three bins, its Q is its frequency over its width 3 dB
+  under the top (half the prominence for a lower peak), kept within 0.7 and 18; peaks closer than a sixth of an
+  octave to a stronger one are dropped and at most 12 are kept, strongest first (by height over the trend). The
+  result is the same on every platform: the maths is the deterministic FFT and dB of the spectrum analyser. A
+  stationary tone is found within a bin and 2 % of its frequency (the tests use 2 % or one bin, whichever is
+  larger). The panel marks each resonance with a line at its frequency, a bar as wide as its Q and its rank. The
+  search changes nothing in the song and is not an undo step; a plugin that cannot be built offline sounds as a
+  silent stand-in. CUT takes the strongest resonances in order and sets the bells (bands 2 to 4) that are off, one
+  each, in one undo step: the band on, `freq` at the resonance, `q` its Q within 1 to 18, `gain` 0, `range` minus
+  its height over the trend within 3 to 12 dB, `threshold` a quarter of the way from the trend's level to the
+  peak's level in the detector's scale, `ratio` 20, `attack` 8 ms, `release` 120 ms, `source` the input and
+  `channel` stereo. So each cut acts only while the sound at its frequency is above the trend. A bell that is on
+  is never touched; with none free CUT says so. The device itself has no find mode: `delta` is its listening aid.
+- **Not built:** the EQ's low and high cut, a hold time and a look-ahead.
+
 ---
 
 ## Utility devices
@@ -4066,7 +4193,7 @@ Sockets: `in_l`, `in_r`, `aux_l`, `aux_r` (Audio in), `out_l`, `out_r` (Audio ou
 
 ### Stereo Tool: `atomik.stereo-tool` (Effect)
 
-Polarity, width with a bass bypass, balance, mono and mid/side conversion.
+Polarity, phase rotation, width with a bass bypass, balance, mono and mid/side conversion.
 Source: [stereo_tool.rs](../crates/devices/src/stereo_tool.rs).
 
 Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
@@ -4079,15 +4206,24 @@ Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
 | `low_bypass` | 20 to 500 (20 = off) | 20 | Hz |
 | `balance` | -1 to 1 | 0 | none |
 | `mono` | 0 or 1 | 0 | toggle |
+| `rotate` | 0 to 180 (degrees) | 0 | none |
+| `rotate_hz` | 20 to 1000 | 100 | Hz |
 | `bypass` | 0 or 1 | 0 | toggle |
 
-- **Order:** polarity, width, balance, the mid/side mode, then mono. Encode writes
+- **Order:** polarity, rotation, width, balance, the mid/side mode, then mono. Encode writes
   `(L + R) / 2` to `out_l` and `(L - R) / 2` to `out_r`; decode reads them back as mid and side.
 - **Mono** is the last stage: both outputs become `(L + R) / 2` of what the mode produced (10 ms
   ramp), so the output is mono in every mode, an encoded signal included.
 - **Low bypass.** Above 20 Hz the signal is split by a fourth-order Linkwitz-Riley crossover at
   that frequency; only the band above it is widened, the bass stays as it was.
-- Width 1, balance 0, polarity and mono off, mode stereo: the output is the input bit for bit.
+- **Rotation.** `rotate` turns the phase of both channels by that angle at `rotate_hz` with a first-order
+  all-pass: the level is the same at every frequency, the turn is smaller below `rotate_hz` and larger above
+  it (up to 180 degrees), and 180 is a polarity inversion (`-x` exactly). It reshapes the waveform of a bass
+  or a kick without changing what it sounds like alone, and so changes how it adds to the other one (the
+  Kick and Bass Check in the Mixer menu uses it, and finds an angle for you). At 0 the stage is skipped.
+  The angle and the frequency switch at once, like the mode, so set them with the signal stopped. The
+  params were added after the first release, before `bypass`: a project from before them plays the same bits.
+- Width 1, balance 0, polarity and mono off, rotation 0, mode stereo: the output is the input bit for bit.
 
 ### Gate: `atomik.gate` (Effect)
 
@@ -4144,23 +4280,32 @@ Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out), `gr_cv_out` (C
 
 ### Sidechain Tool: `atomik.duck` (Effect)
 
-Pumping and ducking from the song position, from the hits of a key, or from the key's level.
-Source: [duck.rs](../crates/devices/src/duck.rs).
+Pumping and ducking from the song position, from the hits of a key, from the key's level, or along a
+hand-drawn curve. Source: [duck.rs](../crates/devices/src/duck.rs); the curve maths is in
+[duck_curve.rs](../crates/dsp/src/duck_curve.rs), the learning in
+[duck_learn.rs](../crates/dsp/src/duck_learn.rs) and the panel in
+[duck_panel.rs](../crates/ui/src/duck_panel.rs).
 
 Sockets: `in_l`, `in_r`, `sc_in_l`, `sc_in_r` (Audio in), `out_l`, `out_r` (Audio out),
-`duck_cv_out` (CV out).
+`duck_cv_out` (CV out), `notes_in` (Notes in, starts the curve).
 
 | Key | Range | Default | Unit |
 |---|---|---|---|
-| `mode` | 0 to 2: pump, trigger, classic | 0 | choice |
+| `mode` | 0 to 3: pump, trigger, classic, curve | 0 | choice |
 | `rate` | 0 to 3: 1/2, 1/4, 1/8, 1/16 (pump) | 1 | choice |
 | `depth` | 0 to 1 | 0.8 | percent |
 | `attack` | 0.1 to 50 | 2 | ms |
 | `time` | 10 to 2000 | 250 | ms |
 | `curve` | 0.25 to 4 | 1 | none |
-| `threshold` | -60 to 0 (trigger, classic) | -30 | dB |
+| `threshold` | -60 to 0 (trigger, classic, curve) | -30 | dB |
 | `send` | 0 or 1 (audio untouched, only the CV moves) | 0 | toggle |
+| `length` | 0 to 4: 1/16, 1/8, 1/4, 1/2, 1 bar (curve) | 2 | choice |
+| `trigger` | 0 to 2: key, notes, key or notes (curve) | 2 | choice |
+| `band` | 0 or 1 (duck only the low band) | 0 | toggle |
+| `band_freq` | 30 to 600 (band) | 120 | Hz |
 | `bypass` | 0 or 1 | 0 | toggle |
+| `hidden.curve_n` | 0 to 8 points, 0 for the built-in curve | 0 | none |
+| `hidden.curve_pN_x`, `_y`, `_bend` | N = 1 to 8: position 0 to 1, dip 0 to 1, bend -64 to 64 | 0 | none |
 
 - The audio is multiplied by `1 - depth * dip`. The dip falls to 1 over `attack`, then recovers
   over `time`, bent by `curve` (1 is a straight line, above 1 it hangs low).
@@ -4169,8 +4314,39 @@ Sockets: `in_l`, `in_r`, `sc_in_l`, `sc_in_r` (Audio in), `out_l`, `out_r` (Audi
   **trigger** restarts it when the key (the sidechain, else the input) crosses `threshold` (a hit
   during a curve continues from the current dip). **classic** follows the key level, 12 dB over
   the threshold ducking the full depth.
-- `duck_cv_out` is `depth * dip`. The curve is set by `attack`, `time` and `curve`; there is no
-  hand-drawn curve editor yet.
+- **curve** plays a drawn curve of up to eight points over `length` (a note value, or one bar of the
+  meter at that moment, counted in song time, so it follows tempo changes) from every trigger: a hit
+  on the key as in trigger mode, a note-on at `notes_in`, or either, as `trigger` says. With the
+  trigger on notes the key is not read, so the ducked signal never triggers itself. Between two points
+  the line runs `y0 + (y1 - y0) * shape`, with the shape of the first point's `bend` (the bend of an
+  automation segment: 0 is straight, a positive bend eases in, a negative one eases out). Before the
+  first point and after the last the curve holds the end values, so after its end it holds its last
+  value until the next hit. The first and last point sit at the left and right edge and `y` is the
+  dip: 0 is no ducking, 1 the full `depth`. The panel draws the gain, with the top as no ducking.
+- **Retrigger.** A hit during a curve enters the new curve where it first reaches the dip that is
+  playing, so a double kick never lifts the gain: the gain only moves down, or on along the curve. A
+  curve that never gets as high as the dip fades the difference out over the rest of its length.
+- **band** ducks only the part of the signal under `band_freq`: a Linkwitz-Riley split (24 dB per
+  octave), the low band times `1 - depth * dip`, the bands added again. Added back unducked the pair
+  is an allpass, so the level of every frequency is the input's and only the phase turns around the
+  split; with `band` off the output at rest is the input bit for bit. A tone several octaves above
+  the split changes by the leak of the low-pass only (under -80 dB at five octaves). It works in
+  every mode.
+- **Hidden params.** The points are stored in the `hidden.*` params, which belong to the panel's
+  editor: they are saved and undone with the device and its patches, but no knob, macro, automation
+  lane, MIDI mapping or search result offers them (`atomik_model::console::is_hidden_param`). A
+  device with no stored points draws and plays the built-in curve (a fall to full over four percent
+  of the length, then a smooth recovery); the first edit on the panel writes the points out.
+- **Panel.** The curve is drawn across the top of the panel. Drag a point; drag the line between two
+  points to bend that segment so the line follows the pointer; click on empty plot to add a point (up
+  to eight); double-click a point that is not the first or last to remove it. Escape puts a drag
+  back. A running curve shows its position and the dip as a line and a dot. LEARN listens to the
+  range between the locators (at most 30 s) at the key (the sidechain cable, else the input), finds
+  the hits, averages their envelopes over `length` and puts the curve and the curve mode into the
+  device in one undo step. Four factory patches draw curves of their own.
+- `duck_cv_out` is `depth * dip`. In pump, trigger and classic mode the curve is set by `attack`,
+  `time` and `curve`. The meter values are the dip and the position along the curve (1 when idle or
+  in another mode).
 
 ### Envelope Filter: `atomik.env-filter` (Effect)
 
@@ -5156,6 +5332,15 @@ an insert loop, the fader, the main output and the control-room (`monitor_*`) ou
   Automation**. The lane lives on an automation track of the strip's device (see ARCHITECTURE.md,
   2.6b); the strip and the master draw the automation mark on the control and follow the lane while
   the song plays, and a bounce plays it like an instrument's lane.
+
+- **Rack panels of the console devices.** A console channel and an output bus draw as a one-unit mix channel
+  panel and the master as a four-unit master section panel; the sockets and params that a panel does not
+  draw stay in the descriptor and keep working. Channel and bus back: Input L/R (`in_l/r`, or `bus_l/r` on a
+  bus), Insert FX TO DEVICE (`insert_send_l/r`), Insert FX FROM DEVICE (`insert_return_l/r`) and Output L/R
+  (`out_l/r`). Master back: FX SEND 1-8 (`fx_send{k}_l/r`), FX RETURN 1-8 (`return{k}_l/r`), Insert FX TO and
+  FROM DEVICE, Master Out (`main_l/r`) and Control Room Out (`monitor_l/r`). Master front: `fader`, the eight
+  `return{k}.level` sliders and the insert switches; the bus compressor, the control-room source and level,
+  the key input and the send levels are edited in the console view.
 
 ## Console output bus: `atomik.bus` (Mixer)
 

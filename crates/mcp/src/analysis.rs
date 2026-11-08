@@ -280,6 +280,24 @@ pub fn report(channels: &[Vec<f32>], sample_rate: u32, window_s: f64) -> Value {
         "window_s": round4(window as f64 / f64::from(sample_rate.max(1))),
         "window_rms_dbfs": levels.iter().map(|l| round2(*l)).collect::<Vec<_>>(),
         "spectrum": spectrum_json(&mix, sample_rate),
+        "zone": zone_json(channels, sample_rate),
+    })
+}
+
+/// The decision-zone attributes of the audio (`atomik_render::zone`): loudness, punch, brightness,
+/// low end, width and correlation, each `null` when the audio has none. All but the two loudness
+/// values are the same when the file is scaled.
+pub fn zone_json(channels: &[Vec<f32>], sample_rate: u32) -> Value {
+    let m = atomik_render::zone::measure_channels(channels, sample_rate);
+    let r = |x: Option<f32>| x.map(|v| round2(f64::from(v)));
+    json!({
+        "integrated_lufs": r(m.integrated_lufs),
+        "loudest_lufs": r(m.loudest_lufs),
+        "punch_db": r(m.punch_db),
+        "tilt_db_per_octave": r(m.tilt_db_per_octave),
+        "low_end_percent": r(m.low_end_percent),
+        "width_db": r(m.width_db),
+        "correlation": r(m.correlation),
     })
 }
 
@@ -401,6 +419,20 @@ mod tests {
         assert!((dominant - 1000.0).abs() < 12.0, "dominant {dominant}");
         assert_eq!(r["silent"], false);
         assert_eq!(r["clipped_samples"], 0);
+    }
+
+    #[test]
+    fn the_report_carries_the_zone_attributes() {
+        let tone = sine(1000.0, 0.1, 4.0);
+        let r = report(&[tone.clone(), tone], SR, 0.5);
+        let zone = &r["zone"];
+        assert!((zone["integrated_lufs"].as_f64().unwrap() + 20.0).abs() < 0.3);
+        assert!(zone["punch_db"].as_f64().unwrap().abs() < 0.3);
+        assert!(zone["width_db"].as_f64().unwrap() <= -59.0);
+        assert!((zone["correlation"].as_f64().unwrap() - 1.0).abs() < 0.001);
+        let silent = report(&[vec![0.0; 4800]], SR, 0.1);
+        assert!(silent["zone"]["integrated_lufs"].is_null());
+        assert!(silent["zone"]["tilt_db_per_octave"].is_null());
     }
 
     #[test]

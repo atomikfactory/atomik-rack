@@ -746,7 +746,6 @@ fn the_new_column_zone_is_on_screen_while_a_device_is_dragged_whatever_the_windo
     for navigator in [false, true] {
         for width in [820.0, 900.0, 1000.0, 1100.0, 1400.0, 1800.0] {
             let mut v = RackView::new(atomik_ui::Theme::dark());
-            v.set_show_console_devices(false);
             v.set_navigator_visible(navigator);
             let size = Size::new(width + if navigator { 136.0 } else { 0.0 }, 1200.0);
             let _ = v.handle(&UiEvent::Resize(size), &doc, &reg);

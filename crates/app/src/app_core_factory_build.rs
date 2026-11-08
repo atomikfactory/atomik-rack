@@ -13,8 +13,8 @@
 //! ATOMIK_WRITE_FACTORY=1 cargo test -p atomik-app --lib write_the_factory_library -- --ignored
 //! ```
 //!
-//! which rewrites every item of the `factory` folder (patches, drum kits with their audio,
-//! containers and note clips) and `factory/factory.json`.
+//! which rewrites every item of the `factory` folder (patches, drum kits and drawn tables with
+//! their audio, containers and note clips) and `factory/factory.json`.
 
 use atomik_device_sdk::Registry;
 use atomik_model::{
@@ -31,10 +31,15 @@ pub(in crate::app_core) mod clips;
 pub(in crate::app_core) mod examples;
 #[path = "app_core_factory_kits.rs"]
 pub(in crate::app_core) mod kits;
+#[path = "app_core_factory_tables.rs"]
+pub(in crate::app_core) mod tables;
 
 pub(in crate::app_core) use clips::{CLIPS, ClipDef, clip_notes, clip_text};
 pub(in crate::app_core) use examples::{EXAMPLES, write_examples};
-pub(in crate::app_core) use kits::{KITS, KitDef, build_kit, kit_item, write_audio};
+pub(in crate::app_core) use kits::{
+    KITS, KitDef, build_kit, kit_item, write_audio, write_audio_for,
+};
+pub(in crate::app_core) use tables::{TABLES, build_table};
 
 pub(super) const POLY: &str = "atomik.poly-synth";
 pub(super) const BASS: &str = "atomik.mono-bass";
@@ -44,6 +49,9 @@ pub(super) const GRAIN: &str = "atomik.granular";
 pub(super) const WAVE: &str = "atomik.wavetable-synth";
 pub(super) const ORGAN: &str = "atomik.organ";
 pub(super) const SEMI: &str = "atomik.semi-modular";
+pub(super) const DYNAMIC_EQ: &str = "atomik.dynamic-eq";
+pub(super) const CLIPPER: &str = "atomik.clipper";
+pub(super) const DUCK: &str = "atomik.duck";
 
 /// The author every factory item carries.
 pub(super) const AUTHOR: &str = "Atomik";
@@ -1008,6 +1016,391 @@ pub(super) const DEFS: &[Def] = &[
             amount: 0.3,
         }],
     },
+    Def {
+        name: "Vocal Resonance Tamer",
+        device: DYNAMIC_EQ,
+        category: "Vocal",
+        tags: &["dynamic eq", "vocal", "resonance", "smooth"],
+        sound: "Three narrow bells at 300 Hz, 2.4 kHz and 5.2 kHz that cut by up to six decibels \
+                only while a voice pushes a resonance there: a boxy note or a harsh syllable \
+                is smoothed and the rest of the take is left alone.",
+        params: &[
+            ("band2.on", 1.0),
+            ("band2.freq", 300.0),
+            ("band2.q", 5.0),
+            ("band2.threshold", -30.0),
+            ("band2.range", -6.0),
+            ("band2.attack", 8.0),
+            ("band2.release", 120.0),
+            ("band3.on", 1.0),
+            ("band3.freq", 2400.0),
+            ("band3.q", 6.0),
+            ("band3.threshold", -28.0),
+            ("band3.range", -5.0),
+            ("band3.attack", 5.0),
+            ("band3.release", 80.0),
+            ("band4.on", 1.0),
+            ("band4.freq", 5200.0),
+            ("band4.q", 6.0),
+            ("band4.threshold", -30.0),
+            ("band4.range", -6.0),
+            ("band4.attack", 3.0),
+            ("band4.release", 60.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "De-boxer",
+        device: DYNAMIC_EQ,
+        category: "Drums",
+        tags: &["dynamic eq", "drums", "boxy", "room"],
+        sound: "Two wide bells at 400 and 650 Hz that pull the cardboard-box resonance of a drum \
+                or a room recording down by up to seven decibels on the loud hits, and let the \
+                quiet tails keep their body.",
+        params: &[
+            ("band2.on", 1.0),
+            ("band2.freq", 400.0),
+            ("band2.q", 1.4),
+            ("band2.threshold", -26.0),
+            ("band2.range", -7.0),
+            ("band2.ratio", 3.0),
+            ("band2.attack", 15.0),
+            ("band2.release", 150.0),
+            ("band3.on", 1.0),
+            ("band3.freq", 650.0),
+            ("band3.q", 2.0),
+            ("band3.threshold", -28.0),
+            ("band3.range", -4.0),
+            ("band3.ratio", 3.0),
+            ("band3.attack", 15.0),
+            ("band3.release", 150.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Air Lift",
+        device: DYNAMIC_EQ,
+        category: "Mix",
+        tags: &["dynamic eq", "air", "bright", "lift"],
+        sound: "A high shelf at 10.5 kHz with a small fixed lift that opens another three and a \
+                half decibels as the top end gets louder: a dull mix gains air on its bright \
+                moments without hiss in the gaps.",
+        params: &[
+            ("band5.on", 1.0),
+            ("band5.freq", 10500.0),
+            ("band5.q", 0.6),
+            ("band5.gain", 1.0),
+            ("band5.threshold", -32.0),
+            ("band5.range", 3.5),
+            ("band5.ratio", 3.0),
+            ("band5.attack", 25.0),
+            ("band5.release", 250.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Drum Bus De-harsh",
+        device: DYNAMIC_EQ,
+        category: "Drums",
+        tags: &["dynamic eq", "drums", "bus", "smooth"],
+        sound: "Two bells at 3.2 and 6.5 kHz that take up to five decibels off the bite of a \
+                drum bus only while the hits are loud, so the snare crack and the hats stay \
+                lively at low level and stop stinging when they are pushed.",
+        params: &[
+            ("band3.on", 1.0),
+            ("band3.freq", 3200.0),
+            ("band3.q", 2.0),
+            ("band3.threshold", -24.0),
+            ("band3.range", -5.0),
+            ("band3.attack", 3.0),
+            ("band3.release", 60.0),
+            ("band4.on", 1.0),
+            ("band4.freq", 6500.0),
+            ("band4.q", 1.5),
+            ("band4.threshold", -26.0),
+            ("band4.range", -4.0),
+            ("band4.attack", 2.0),
+            ("band4.release", 50.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Master Peak Trim",
+        device: CLIPPER,
+        category: "Mastering",
+        tags: &["clipper", "master", "peaks", "transparent"],
+        sound: "A hard clipper with a ceiling one decibel under full scale and eight times \
+                oversampling: it shaves the few tall peaks a mix has, a fraction of a decibel \
+                at a time, so the limiter after it has less to do.",
+        params: &[
+            ("gain", 1.5),
+            ("ceiling", -1.0),
+            ("curve", 0.0),
+            ("oversample", 3.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Drum Bus Soft Clip",
+        device: CLIPPER,
+        category: "Drums",
+        tags: &["clipper", "drums", "soft", "density"],
+        sound: "A soft-knee clipper driven six decibels into a ceiling three under full scale: \
+                the snare and kick tops are rounded off and the bus gets denser and louder \
+                without a hard edge.",
+        params: &[
+            ("gain", 6.0),
+            ("ceiling", -3.0),
+            ("curve", 0.7),
+            ("oversample", 2.0),
+            ("output", 1.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Bass Warm Clip",
+        device: CLIPPER,
+        category: "Bass",
+        tags: &["clipper", "bass", "warm", "even harmonics"],
+        sound: "A soft clipper with a little asymmetry that drives only the band under 160 Hz: \
+                the bass picks up even harmonics and a thicker body while the highs pass \
+                untouched.",
+        params: &[
+            ("gain", 0.0),
+            ("ceiling", -4.0),
+            ("curve", 0.9),
+            ("symmetry", 0.25),
+            ("oversample", 2.0),
+            ("bands", 1.0),
+            ("xover.low", 160.0),
+            ("band1.drive", 8.0),
+            ("band2.drive", 0.0),
+            ("output", -1.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Kick Click Tamer",
+        device: CLIPPER,
+        category: "Drums",
+        tags: &["clipper", "kick", "click", "tame"],
+        sound: "A hard clipper that works on the click of a kick above 1.5 kHz: the beater is \
+                driven into the ceiling and loses its sharp spike, the body below passes \
+                under it untouched.",
+        params: &[
+            ("gain", 0.0),
+            ("ceiling", -4.0),
+            ("curve", 0.1),
+            ("oversample", 2.0),
+            ("bands", 1.0),
+            ("xover.low", 1500.0),
+            ("band1.drive", -6.0),
+            ("band2.drive", 6.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Clean Kick Sub",
+        device: POLY,
+        category: "Bass",
+        tags: &["kick", "sub", "sine", "reset phase"],
+        sound: "Two sines an octave and two octaves down with a short pitch drop, started at \
+                the same angle on every note: each hit begins with the identical first cycle, \
+                so a layered kick adds up the same way every time.",
+        params: &[
+            ("osc1.wave", 3.0),
+            ("osc1.octave", -1.0),
+            ("osc2.wave", 3.0),
+            ("osc2.octave", -2.0),
+            ("osc.mix", 0.35),
+            ("osc.phase", 0.0),
+            ("osc.phase_start", 0.0),
+            ("filter.cutoff", 420.0),
+            ("filter.resonance", 0.05),
+            ("filter.env_amount", 0.0),
+            ("filter.key_track", 0.0),
+            ("env.amp.attack", 1.0),
+            ("env.amp.decay", 380.0),
+            ("env.amp.sustain", 0.0),
+            ("env.amp.release", 30.0),
+            ("env.mod.attack", 1.0),
+            ("env.mod.decay", 55.0),
+            ("env.mod.sustain", 0.0),
+            ("env.mod.release", 20.0),
+            ("env.mod.amount", 0.45),
+            ("env.mod.dest", 0.0),
+            ("voices", 1.0),
+            ("master.level", 3.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Mono Sub Bass",
+        device: BASS,
+        category: "Bass",
+        tags: &["sub", "mono", "reset phase", "clean"],
+        sound: "A sine an octave down with a trace of triangle above it, one voice, a short \
+                twelve millisecond release and the filter following the key: a clean sub whose \
+                notes all start at the same angle and end without a click.",
+        params: &[
+            ("osc1.wave", 3.0),
+            ("osc1.octave", -1.0),
+            ("osc2.wave", 2.0),
+            ("osc.mix", 0.15),
+            ("osc.phase", 0.0),
+            ("osc.phase_start", 0.0),
+            ("filter.cutoff", 500.0),
+            ("filter.resonance", 0.08),
+            ("filter.env_amount", 0.1),
+            ("filter.key_track", 0.5),
+            ("env.amp.attack", 2.0),
+            ("env.amp.decay", 250.0),
+            ("env.amp.sustain", 0.85),
+            ("env.amp.release", 12.0),
+            ("voices", 1.0),
+            ("master.level", 5.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Reset Pluck Bass",
+        device: WAVE,
+        category: "Bass",
+        tags: &["pluck", "bass", "wavetable", "reset phase"],
+        sound: "The sine-to-saw table closing from bright to dark in a fifth of a second, one \
+                voice, every note started on the top of the wave: a short plucked bass with \
+                the same snap on each note.",
+        params: &[
+            ("osc1.table", 2.0),
+            ("osc1.position", 0.2),
+            ("osc1.level", 0.8),
+            ("osc2.level", 0.0),
+            ("osc.phase", 0.0),
+            ("osc.phase_start", 90.0),
+            ("env.mod.attack", 1.0),
+            ("env.mod.decay", 220.0),
+            ("env.mod.sustain", 0.0),
+            ("env.mod.to_pos1", 0.7),
+            ("filter.cutoff", 1800.0),
+            ("filter.resonance", 0.15),
+            ("filter.env_amount", 0.5),
+            ("filter.key_track", 0.5),
+            ("env.amp.attack", 1.0),
+            ("env.amp.decay", 350.0),
+            ("env.amp.sustain", 0.0),
+            ("env.amp.release", 60.0),
+            ("voices", 1.0),
+            ("master.level", -1.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Four Floor Pump",
+        device: DUCK,
+        category: "Bass",
+        tags: &["sidechain", "pump", "curve", "kick"],
+        sound: "A drawn curve over a quarter note: the level drops to nothing within a few \
+                milliseconds of every kick and swells back along a long, smooth line, so the \
+                bass and pads breathe with a four on the floor kick. Put the kick on the \
+                sidechain input.",
+        params: &[
+            ("mode", 3.0),
+            ("depth", 0.85),
+            ("length", 2.0),
+            ("threshold", -24.0),
+            ("hidden.curve_n", 4.0),
+            ("hidden.curve_p1_x", 0.0),
+            ("hidden.curve_p1_y", 0.0),
+            ("hidden.curve_p2_x", 0.03),
+            ("hidden.curve_p2_y", 1.0),
+            ("hidden.curve_p2_bend", -24.0),
+            ("hidden.curve_p3_x", 0.3),
+            ("hidden.curve_p3_y", 0.35),
+            ("hidden.curve_p3_bend", -16.0),
+            ("hidden.curve_p4_x", 1.0),
+            ("hidden.curve_p4_y", 0.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Sub Only Duck",
+        device: DUCK,
+        category: "Bass",
+        tags: &["sidechain", "band", "low end", "kick"],
+        sound: "The same quick drop and slow return, but only the part of the sound under \
+                120 Hz is ducked: the kick keeps the low end to itself while the highs of the \
+                bass line stay at full level.",
+        params: &[
+            ("mode", 3.0),
+            ("depth", 1.0),
+            ("length", 2.0),
+            ("threshold", -24.0),
+            ("band", 1.0),
+            ("band_freq", 120.0),
+            ("hidden.curve_n", 4.0),
+            ("hidden.curve_p1_x", 0.0),
+            ("hidden.curve_p1_y", 0.0),
+            ("hidden.curve_p2_x", 0.025),
+            ("hidden.curve_p2_y", 1.0),
+            ("hidden.curve_p2_bend", -24.0),
+            ("hidden.curve_p3_x", 0.35),
+            ("hidden.curve_p3_y", 0.4),
+            ("hidden.curve_p3_bend", -12.0),
+            ("hidden.curve_p4_x", 1.0),
+            ("hidden.curve_p4_y", 0.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Half Bar Breath",
+        device: DUCK,
+        category: "Pad",
+        tags: &["sidechain", "pad", "slow", "curve"],
+        sound: "A gentle duck over a half note: the level eases down over a tenth of the curve, \
+                holds a little under full level and rises back slowly, so a pad leaves room for \
+                a kick or a chord stab without an obvious pump.",
+        params: &[
+            ("mode", 3.0),
+            ("depth", 0.55),
+            ("length", 3.0),
+            ("threshold", -26.0),
+            ("hidden.curve_n", 4.0),
+            ("hidden.curve_p1_x", 0.0),
+            ("hidden.curve_p1_y", 0.0),
+            ("hidden.curve_p2_x", 0.1),
+            ("hidden.curve_p2_y", 1.0),
+            ("hidden.curve_p2_bend", 8.0),
+            ("hidden.curve_p3_x", 0.45),
+            ("hidden.curve_p3_y", 0.6),
+            ("hidden.curve_p3_bend", 12.0),
+            ("hidden.curve_p4_x", 1.0),
+            ("hidden.curve_p4_y", 0.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Eighth Chop",
+        device: DUCK,
+        category: "Keys",
+        tags: &["sidechain", "chop", "rhythm", "curve"],
+        sound: "A short curve over an eighth note that cuts the level hard on every hit and \
+                lets it climb back in a straight line over the rest of the note: a chopped, \
+                rhythmic movement for keys and stabs that follows the tempo.",
+        params: &[
+            ("mode", 3.0),
+            ("depth", 0.9),
+            ("length", 1.0),
+            ("threshold", -24.0),
+            ("hidden.curve_n", 3.0),
+            ("hidden.curve_p1_x", 0.0),
+            ("hidden.curve_p1_y", 0.0),
+            ("hidden.curve_p2_x", 0.06),
+            ("hidden.curve_p2_y", 1.0),
+            ("hidden.curve_p3_x", 1.0),
+            ("hidden.curve_p3_y", 0.0),
+        ],
+        mods: &[],
+    },
 ];
 
 /// Runs `command` on `doc`, naming the item when the model refuses it.
@@ -1908,6 +2301,51 @@ pub(super) const CONTAINERS: &[ContainerDef] = &[
         ],
     },
     ContainerDef {
+        name: "Double Clip",
+        category: "Dynamics",
+        tags: &["chain", "clipper", "loud", "density"],
+        sound: "A soft clipper that rounds the tallest peaks, then a hard clipper two decibels \
+                under full scale that catches what the soft one raised: a bus gets louder in \
+                two small steps instead of one hard one. The Drive macro pushes both, the \
+                Softness macro moves the first from a hard knee to a round one.",
+        parts: &[
+            fx(
+                "soft",
+                CLIPPER,
+                &[
+                    ("gain", 0.0),
+                    ("ceiling", -8.0),
+                    ("curve", 0.8),
+                    ("oversample", 2.0),
+                ],
+            ),
+            fx(
+                "hard",
+                CLIPPER,
+                &[
+                    ("gain", 0.0),
+                    ("ceiling", -3.0),
+                    ("curve", 0.0),
+                    ("oversample", 2.0),
+                ],
+            ),
+        ],
+        wires: &[],
+        chain: true,
+        macros: &[
+            MacroDef {
+                name: "Drive",
+                switch: false,
+                targets: &[("soft", "gain", 0.0, 14.0), ("hard", "gain", 0.0, 6.0)],
+            },
+            MacroDef {
+                name: "Softness",
+                switch: false,
+                targets: &[("soft", "curve", 0.2, 1.0)],
+            },
+        ],
+    },
+    ContainerDef {
         name: "Random Walk Lead",
         category: "Modular",
         tags: &["modular", "generative", "lead", "pentatonic"],
@@ -2127,6 +2565,160 @@ pub(super) const CONTAINERS: &[ContainerDef] = &[
             },
         ],
     },
+    ContainerDef {
+        name: "Ducked Vocal Reverb",
+        category: "Reverb",
+        tags: &["chain", "reverb", "vocal", "duck", "send"],
+        sound: "For an FX return: a de-esser, an equaliser with a high-pass at 300 Hz and a \
+                low-pass at 8 kHz, and a cathedral reverb that is all wet and ducks while the \
+                signal coming in is loud, so the tail blooms in the gaps between words. The \
+                Duck macro sets how far it ducks and the Decay macro the length.",
+        parts: &[
+            fx(
+                "deess",
+                DE_ESSER,
+                &[("freq", 6800.0), ("threshold", -32.0), ("range", 10.0)],
+            ),
+            fx(
+                "eq",
+                EQ,
+                &[
+                    ("band1.on", 1.0),
+                    ("band1.freq", 300.0),
+                    ("lowcut.slope", 1.0),
+                    ("band6.on", 1.0),
+                    ("band6.freq", 8000.0),
+                    ("highcut.slope", 1.0),
+                ],
+            ),
+            fx(
+                "hall",
+                SPACE_REVERB,
+                &[
+                    ("algorithm", 1.0),
+                    ("predelay", 25.0),
+                    ("decay", 2.6),
+                    ("mix", 1.0),
+                    ("output", 4.0),
+                    ("duck", 0.5),
+                    ("duck_release", 380.0),
+                    ("duck_threshold", -34.0),
+                ],
+            ),
+        ],
+        wires: &[],
+        chain: true,
+        macros: &[
+            MacroDef {
+                name: "Duck",
+                switch: false,
+                targets: &[("hall", "duck", 0.0, 1.0)],
+            },
+            MacroDef {
+                name: "Decay",
+                switch: false,
+                targets: &[("hall", "decay", 0.8, 6.0)],
+            },
+        ],
+    },
+    ContainerDef {
+        name: "Gated Plate",
+        category: "Reverb",
+        tags: &["chain", "reverb", "gated", "drums", "send"],
+        sound: "For an FX return: an equaliser that clears the lows and the extreme highs and \
+                a plate reverb with a long decay that the key gate cuts 120 ms after the signal \
+                coming in stops: a big, tight, gated tail. The Hold macro sets how long the \
+                tail stays open and the Decay macro how long it would ring.",
+        parts: &[
+            fx(
+                "eq",
+                EQ,
+                &[
+                    ("band1.on", 1.0),
+                    ("band1.freq", 250.0),
+                    ("band6.on", 1.0),
+                    ("band6.freq", 9000.0),
+                ],
+            ),
+            fx(
+                "plate",
+                REVERB,
+                &[
+                    ("algorithm", 2.0),
+                    ("predelay", 8.0),
+                    ("decay", 3.5),
+                    ("mix", 1.0),
+                    ("key_gate", 1.0),
+                    ("key_gate_hold", 120.0),
+                    ("duck_threshold", -38.0),
+                ],
+            ),
+        ],
+        wires: &[],
+        chain: true,
+        macros: &[
+            MacroDef {
+                name: "Hold",
+                switch: false,
+                targets: &[("plate", "key_gate_hold", 20.0, 400.0)],
+            },
+            MacroDef {
+                name: "Decay",
+                switch: false,
+                targets: &[("plate", "decay", 1.0, 6.0)],
+            },
+        ],
+    },
+    ContainerDef {
+        name: "Clean Low Hall",
+        category: "Reverb",
+        tags: &["chain", "reverb", "duck", "low end", "send"],
+        sound: "For an FX return: an equaliser with a high-pass at 200 Hz and a low-pass at \
+                6 kHz and an arena reverb whose part under 400 Hz is ducked by the signal \
+                coming in: the tail keeps its size and the low mids stay clear. The Clean \
+                macro sets how much of the lows is ducked and the Split macro where the \
+                split sits.",
+        parts: &[
+            fx(
+                "eq",
+                EQ,
+                &[
+                    ("band1.on", 1.0),
+                    ("band1.freq", 200.0),
+                    ("band6.on", 1.0),
+                    ("band6.freq", 6000.0),
+                ],
+            ),
+            fx(
+                "arena",
+                SPACE_REVERB,
+                &[
+                    ("algorithm", 0.0),
+                    ("decay", 3.2),
+                    ("mix", 1.0),
+                    ("duck", 0.85),
+                    ("duck_mode", 1.0),
+                    ("duck_freq", 400.0),
+                    ("duck_release", 450.0),
+                    ("duck_threshold", -34.0),
+                ],
+            ),
+        ],
+        wires: &[],
+        chain: true,
+        macros: &[
+            MacroDef {
+                name: "Clean",
+                switch: false,
+                targets: &[("arena", "duck", 0.2, 1.0)],
+            },
+            MacroDef {
+                name: "Split",
+                switch: false,
+                targets: &[("arena", "duck_freq", 150.0, 900.0)],
+            },
+        ],
+    },
 ];
 
 // ------------------------------------------------------------------------------- the folder
@@ -2171,6 +2763,13 @@ pub(super) fn marks() -> Vec<Mark> {
             path: patch_path(k.name),
             category: k.category,
             tags: k.tags,
+        });
+    }
+    for t in TABLES {
+        out.push(Mark {
+            path: patch_path(t.name),
+            category: t.category,
+            tags: t.tags,
         });
     }
     for c in CONTAINERS {
@@ -2237,6 +2836,11 @@ pub(super) fn write_all(root: &Path) {
         write_audio(&root.join("Patches"), kit, &built);
         write(patch_path(kit.name), built.text.clone());
         built_kits.push((kit.name, built));
+    }
+    for def in TABLES {
+        let built = build_table(def);
+        write_audio_for(&root.join("Patches"), def.name, &built);
+        write(patch_path(def.name), built.text);
     }
     for def in CONTAINERS {
         write(container_path(def.name), container_text(def));

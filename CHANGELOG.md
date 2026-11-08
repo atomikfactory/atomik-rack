@@ -9,6 +9,195 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Mix channel panel.** A console channel or output bus is a compact one-unit panel in the rack, in place of the
+  generated panel of its descriptor. Its front carries MUTE and SOLO, a horizontal fader (a drag along the track, a
+  double-click resets it, a readout in dB), a PAN knob, an L and R peak meter, BYPASS INSERT FX, SHOW INSERT FX and the
+  AUDIO OUTPUT display (Master Section, the bus name or the Audio I/O pair). The controls drive the same params as the
+  console strip, so the rack and the mixer stay in step; BYPASS INSERT FX bypasses every insert effect (and the
+  dynamics and EQ sections in use) in one undo step, as the B-all button of the strip does. The plate shows the name of
+  the source instrument and a rename changes it. SHOW INSERT FX is view state for now (it starts on and is not saved
+  with the project); it folds the insert stack under the panel (see below). The back carries four pairs of jacks and
+  nothing else: INPUT, INSERT FX TO DEVICE, INSERT FX FROM DEVICE and OUTPUT. The sends, the parallel output, the key,
+  the CV inputs and the gain reduction output have no jack in the rack; they keep working and their cables stay.
+  The meters of the panels are fed while the rack shows them, with or without the console.
+- **Insert stack in the rack.** The insert effects of a channel or an output bus are stacked right under its panel, in
+  chain order, inside a frame in the strip's colour that ends with a drop row ("drop or create an effect here"). With
+  SHOW INSERT FX off the frame shrinks to one header line that names the effects; a click on it shows them again.
+  Creating an effect with an insert selected puts it after that insert, and with the strip selected at the end of the
+  chain; dropping a device or a browser row in the frame adds it at the place under the pointer; dragging an insert up
+  or down moves it in the chain; dragging it out to the plain rack takes it out of the chain, which closes behind it,
+  and leaves the effect uncabled in the rack; deleting an insert reconnects its neighbours. Each gesture is one undo
+  step, and a refusal (a device that is no stereo effect, a full chain) says why in the status line. Moving a
+  channel or a bus moves its inserts along, and a move never lands between the effects of another strip. In the
+  mixer the insert rows of a strip reorder by drag and each has an E that shows the effect in the rack, with the
+  insert area unfolded and the effect selected. New commands `AddInsert` and `ExtractInsert`. The fold state is view
+  state for now and is not saved with the project.
+- **Master section panel.** The console master is a compact four-unit panel in the rack. The front carries the master
+  fader (the same horizontal fader, readout and meter as a mix channel panel), BYPASS INSERT FX, SHOW INSERT FX, the
+  AUDIO OUTPUT display and eight send rows: the number, the name of the effect on the send (or "free"), its return
+  level as a slider (a drag, a double-click resets it) and an EDIT button that selects that effect and scrolls the rack
+  to it. The back carries FX SEND 1-8 and FX RETURN 1-8 (left and right jacks), INSERT FX TO DEVICE and FROM
+  DEVICE, MASTER OUT and CONTROL ROOM OUT; the summing inputs, the key and the CV sockets keep working but have no
+  jack in the rack, and the bus compressor and the control room stay on the mixer. The master has the same insert
+  area as a channel (still after its compressor): effects stacked under it, the same gestures, one undo step each, `SetInsert`,
+  `AddInsert`, `MoveInsert` and `ExtractInsert` with the master as the strip, and in the mixer its insert rows
+  reorder by drag and have an E. The effects of the 8 shared sends sit under the master's insert area, each send in
+  a framed group labelled "Send N" (a send with several effects in series shows them all), and they move with the
+  master; they stay ordinary devices shared by all channels. Creating an effect with the master selected still makes
+  the next free send (with all 8 in use the effect is added unrouted and the status line says that all 8 send and
+  return slots are in use), creating one after a click on the master's insert area, with one of its inserts selected
+  or by dropping it right under the panel makes a master insert, and "Use as Send Effect" brings the effect under the
+  master. SHOW INSERT FX stays view state (not saved with the project, no format change).
+- **Delivery targets and Peak Surgeon.** File > Delivery Targets... (`file.delivery_targets`) opens a panel that
+  renders the master on a worker, as the export would write it, and measures its integrated loudness, loudness range,
+  true peak and sample peak. It lists eight common targets under generic names (Streaming loud -11 LUFS / -1 dBTP,
+  Streaming -14 / -1, Streaming quiet -16 / -1, Podcast -16 / -1, Broadcast -23 / -1, Broadcast -24 / -2, Club -9 /
+  -0.5 and Film mix -27 / -2) with the gain a normalising chain would apply to the measured master: turned down (no
+  loss), left alone, turned up with its peaks still under the ceiling, or turned up into a limiter, which is the
+  warning: a quiet master with peaks near 0 dBFS that the extra gain would push past the target's ceiling, so the
+  chain's own limiter would act on it. Set Ceiling sets the ceiling of the Mastering device on the master's insert
+  chain (else the master's Clipper) to the chosen target's, and the project's delivery target, in one undo step; with
+  neither device it sets the target only. The target is the optional root field `delivery` of the project
+  (`Command::SetDelivery`, ignorable at format 44, written only when set, also accepted in a `Command::Batch`), and
+  the toast of every export, and of a stems export for the master, says how the export sits against it: the loudness
+  over or under the target and the true peak against the ceiling. Edit > Peak Surgeon... (`sequencer.peak_surgeon`)
+  opens the same panel on its Peaks page for the selected audio clip: the highest peaks of the clip as it plays (its
+  gain, fades and envelope included, forwards or reversed) with their times and the headroom won by trimming down to
+  each, a threshold in 0.1 dB steps, a dip step of 0.2, 0.3 or 0.4 dB and a half-width of 4 to 32 frames. TRIM dips
+  the chosen peak by one step; APPLY ALL dips every peak above the threshold, each in steps at the peak's own frame,
+  down to the threshold, never more than 3 dB deep. A dip is three breakpoints of the clip's gain envelope (a triangle
+  of linear gain), so nothing is rendered, the file and the clip gain are untouched, and the whole trim is one
+  `SetAudioClip` and one undo step; the clip is read again afterwards and the status line says how far the highest
+  peak went down. A warped or looped clip, a missing file and an asset at another sample rate are refused with a
+  reason. The format is unchanged (44, one new ignorable field) and the command count is 501.
+- **Transition kit.** Add Transition puts a transition at a section boundary: the Track menu, and the right-click
+  menus of a marker, a range and a bar line in the ruler (`sequencer.add_transition`, with the choice as its
+  argument). A boundary is the start of a section: the marker or range the menu opened on, the bar line nearest to
+  the pointer in the ruler, else the selected marker, else the first section line at or after the playhead. A
+  riser (1, 2 or 4 bars) is the reverse reverb of the next section's first beat, from the track that plays the
+  first hit (a drum machine first on a tie), printed on a new track that ends exactly where the section starts; it
+  reuses the print of Reverse Reverb Print on the freeze worker. An impact is that hit through a saturator
+  (`atomik_dsp::transition::impact`) and a three second reverb, printed from the downbeat. Filter Down (1, 2 or 4
+  bars) puts an Auto-Filter low-pass as the last insert of the master, or with Group Filter Down of the group bus the
+  selected track plays into, and closes its cutoff over the last bars in nine steps that fall by the same share per
+  octave, open again at the boundary; a second one reuses the filter and its lane. Silence on Beat One takes the
+  master fader to zero for one beat from the boundary. Fill plays the last beat of a note track (the selected one,
+  else the first that plays through it, a drum machine first) twice at double rate, each note moved to half its
+  distance from the beat and half as long. The filter, the silence and the fill are one `AddTransition` command
+  each, so every transition is one undo step, and the status line says what it did. When one kind is on more than
+  half of the boundaries, and on at least three, the status line says so. The project format is unchanged (44) and
+  the command count is 499.
+- **Rumble Maker and Reverse Reverb Print.** Track > Rumble Maker (`sequencer.rumble_maker`) turns the selected
+  kick track into a rumble layer: the kick (the selected clips of the track, else all of them; the kick pad of a
+  drum machine; an audio kick by its onsets) is rendered offline through its insert effects, and one piece per
+  hit is built from its own sub band, which starts in phase with the kick, then goes on as a tail until the next
+  hit, either by repeating a trimmed chunk of the kick's tail with crossfades (Tail Repeat) or through a long dark
+  reverb low-passed to the sub band (Reverb Tail, its decay twice the gap between the hits). The layer is printed
+  into the project's audio as one file on a new track after the kick's, with a Sidechain Tool keyed by the kick, a
+  24 dB low-pass at 160 Hz and a low cut at 28 Hz, in one undo step. Track > Reverse Reverb Print
+  (`sequencer.reverse_reverb_print`, 0.5 to 8 seconds) reverses the selected clips, or the range of a lane or the
+  locators, into the reverb, keeps the tail and reverses it again: a swell that rises to its loudest where the source
+  starts. It is printed on a new track on whole ticks and ends exactly at the first frame of the source; a source
+  near the start of the song gets the swell that fits, one at the start is refused. Both render on the freeze
+  worker, never on the audio thread, and the prints are saved, collected and undone like other audio. The project
+  format is unchanged (44) and the command count is 498.
+- **Reverb send wizard and ducking reverbs.** The Reverb and the Space Reverb take a key on `sc_in_l/r` (the main
+  input when neither is cabled, as in the compressor) and seven new params: `duck` (how much of the wet
+  signal the key takes out), `duck_release`, `duck_mode` (broadband, the part under `duck_freq`, or a band of Q 2
+  around it) and `duck_threshold`, and `key_gate` with `key_gate_hold`, a gate that closes the tail (a 12 ms fade)
+  that long after the key last exceeded the threshold. The duck and the gate act on the wet path only: the dry
+  signal is never touched, bit for bit. The reverb panel has two new sections, DUCK and KEY GATE, and is three
+  units tall. Track > Add Reverb Send... (`sequencer.add_reverb_send`) opens a small wizard (a de-esser for a
+  vocal, the duck from the track, post- or pre-fader, the decay, the high-pass, the low-pass and the send level) and
+  adds, in one undo step, a send of the track's channel to a new FX return that holds an optional de-esser, an EQ
+  (a 24 dB high-pass at 300 Hz and a 24 dB low-pass at 8 kHz by default) and an all-wet Space Reverb, cables the
+  channel's output to the reverb's key and turns the duck on. The decay is suggested from the track: twice the
+  median gap between the onsets of its notes, between 0.4 and 4 s (3 s for a vocal), and 2 s for a track without a
+  rhythm to read; the duck release follows the same gap. Three factory containers (Ducked Vocal Reverb, Gated
+  Plate, Clean Low Hall) are the same chains for an FX return. The project format is unchanged (44) and the
+  command count is 496.
+- **Sound Analyst.** File > Sound Analyst opens a panel that takes an audio file (dropped on it or picked with
+  OPEN FILE) and measures it on a worker thread: the amplitude envelope (the rise from a tenth to nine tenths of the
+  peak, the decay to the sustain, the sustain level, the release and how long the note is held), the brightness over
+  time (the spectral centroid), the pitch over time (the tracker of Audio to Notes; a pitch offset at the start and
+  the time it takes to settle count as a pitch envelope), the harmonic profile (a pure tone, all harmonics, odd
+  harmonics only, inharmonic, noise) and the share of the sound that is noise. The panel draws the level, brightness
+  and pitch curves and prints the numbers. It also proposes a starting patch by rules that are constants in
+  `atomik_render::sound_analyst`: the Poly Synth on one oscillator (sine, saw, square, or triangle when the third
+  harmonic is under -14 dB) for a harmonic sound, the FM Synth for an inharmonic one (a modulator at the ratio of the
+  strongest partial that is not a harmonic), and the Poly Synth as a noise voice for noise or an unpitched sound (a
+  high-pass filter from 2.5 kHz of centroid, else a band-pass). The amp envelope is converted with the exact shape
+  of the synth's envelope, the brightness movement becomes a filter envelope, the pitch movement a pitch envelope
+  and the noise share the noise level. The proposal is rendered on the note of the sound (the key of its
+  fundamental, held for the measured note length), measured again with the same analysis and corrected on the
+  cutoff up to three times; the match meter shows how far each curve of the render is from the sound (decibels,
+  octaves, semitones) with a score from 0 to 100 %. MAKE PATCH adds the patch on a new track with a one-note clip,
+  in one undo step; MATCH renders the patch as it is now (a patch changed by hand), and a match of a patch that was
+  changed afterwards is shown faded. Analysing never changes the song. The project format is unchanged (44) and the
+  command count is 495. Not done: chords, patches for the sampler or the wavetable synth, several candidate synths
+  side by side, effects recognised in the sound, and an audio clip of the song as the source.
+- **Wavetable editor.** A click on a table display of the Wavetable Synth opens a panel for the device's table:
+  a list of up to 16 key frames (add a blend, duplicate, delete, move), a box to draw the selected frame in, a
+  bar and a dot for the level and phase of each of its first 64 harmonics (the frame is rebuilt by additive
+  synthesis and every other harmonic stays as it was), and whole-frame processes (normalise, remove offset,
+  invert, reverse, smooth; on one frame or on all). The key frames are baked into the 16 frames the synth plays,
+  with the frames between two keys filled by the same linear blend, and stored as the device's one sample in the
+  project's audio, so a table saves, reloads and undoes like a dropped sample, one undo step per gesture (a
+  stroke, a bar drag, a button). PHASE-SAFE shifts every frame in time until its fundamental starts at phase 0
+  (the waveform keeps its shape), so a morph no longer loses level where two frames' fundamentals were out of
+  phase; the panel names the pairs whose fundamental would cancel and shows the level dip of the morph. For a
+  table made from a dropped sample the panel shows the length of one cycle found in it and offers CUT (cut the
+  sample again with one cycle per frame), DEDUPE (drop silent and near-identical frames) and EDGE (cross-fade
+  the end of each cycle into its start); USE OSC 1 makes oscillator 1 play the table. The project format is
+  unchanged (44). Three factory patches use drawn tables. Not done: brushes for a region of a frame, a
+  mirrored-half drawing mode, and import from an image or from FFT chunks.
+- **Drawn duck curve, learn from kick and band mode in the Sidechain Tool.** A new curve mode (`curve`) ducks
+  along a hand-drawn gain curve of up to eight points with bends over one sixteenth, eighth, quarter or half
+  note or one bar (in song time, so it follows tempo changes), started by every hit on the key, every note at
+  the new `notes_in` socket, or either (`trigger`). A hit during a curve enters the new one where it first
+  reaches the dip that is playing, so a double kick never lifts the gain. The panel now draws the curve across
+  its top: drag a point, drag the line to bend a segment, click to add a point, double-click to remove one,
+  Escape to put a drag back; the plot shows the running position. LEARN renders the range between the locators
+  at the key (the sidechain cable, else the input) on a worker, averages the envelope of its hits over the
+  curve length and puts a curve of up to eight points and the curve mode into the device in one undo step. The
+  new `band` switch and `band_freq` duck only the part of the sound under the split (a 24 dB per octave
+  Linkwitz-Riley pair added back, an allpass at rest), in every mode. The points are stored in the new
+  `hidden.*` params, which are saved and undone with the device but offered to no macro, automation lane, MIDI
+  mapping or search; the project format is unchanged (44). The `bypass` param of the device moved from id 8 to
+  12 (projects store params by key). Four factory patches draw curves. Not done: a chosen track as the key
+  without a cable, and more than eight points.
+- **Translation lens, "Will the bass read?" and Split Sub.** Mixer > Translation Lens (and five rows in the
+  transport bar's more menu) switches the live master between headphones (as it is), a small speaker (a 12 dB per
+  octave high-pass at 140 Hz and a +3 dB bell at 3 kHz), a club sub system (a 12 dB per octave high-pass at 32 Hz)
+  and mono (`(L + R) / 2` on both sides); choosing the voicing that is on goes back to headphones. It is
+  monitoring only: it sits after the master chain and the reference, before the click, on the live output, is
+  kept in the app like the loudness match, never saved, not an undo step, and never in a bounce or an export; the
+  status line shows `LENS ...` while it is on. Mixer > Will the Bass Read? renders a track or the master on a
+  worker and shows the share of the low note's energy that a small speaker still plays through the 2nd to 5th
+  harmonics of the note (a saw bass at 55 Hz reads about 16 %, a pure sine under 0.1 %) on a meter with the verdict
+  (reads from 8 %, partly from 2 %, lost below) and a line on what to do. Edit > Split Sub (also on the patch name
+  pop-up of a Mono Bass) puts the bass track in a container, in one undo step, with a mono sine sub layer that
+  follows the same notes, a 24 dB low cut at 120 Hz on the bass itself, and a mixer that sums them, so width and
+  unison stay above the sub; with the bass's filter open the level stays within 1 dB. Not done: a choice of split
+  frequency in the menu (the model takes 60 to 250 Hz), a lens that follows the reference only, and a headphone
+  correction. The project format is unchanged (44) and the command count is 494.
+- **Energy map and repetition finder.** View > Energy Lane (off by default, saved with the view) adds one row
+  above the track lanes with a bar per section as tall as the section's energy, from 0 to 1, and its name and value.
+  The sections are the range markers, else the point markers (each runs to the next, with a "Start" section before
+  the first), else every 8 bars; a name is read as a role (intro, verse, build or pre-chorus, drop or chorus, break,
+  outro). The master is rendered on a worker (`atomik-energy`, never the audio or UI thread) and each section gets
+  its loudness, brightness (the centroid of the band levels) and stereo width from the same deterministic band
+  analysis as the masking map, plus the share of the tracks that play in it; four documented weights (0.40, 0.25,
+  0.20, 0.15) combine them. The lane flags a build with more energy than the drop after it, the strongest drop when
+  another kind of section has more energy, and two neighbours of near-equal energy over 16 bars or more; the status
+  line says it when the measurement ends. An out-of-date lane is drawn faded; View > Refresh Energy Lane measures
+  again, and turning the lane on measures when there is no result. Edit > Find Repetition lists what a track plays
+  three times or more in a row unchanged (a pattern of 1, 2 or 4 bars seen through loops, copies and grooves, or
+  identical touching audio clips or one looping audio clip), where it is, and three suggestions each: drop the last
+  hit of the last bar, a low-pass sweep over the last bar, cut the last beat. A suggestion that is a plain edit (mute
+  the notes in one unlooped clip; add a sweep of the channel's low-pass on two new automation lanes when the filter
+  is off and not automated) is one button and one undo step and says what it did; any other is advice in text.
+  The project format is unchanged (44) and the command count is 488.
 - **Dragging between song windows, and audio at another sample rate.** Clips, a track header or devices dragged
   out of one song's window and let go over a window of another open song are pasted there at the point of the
   drop: clips on the lane and snapped tick under the pointer (on a lane that fits them, else each on its own kind
@@ -762,22 +951,90 @@ may break APIs and the patch and project formats.
   43: a program change with a bank is saved as `[tick, program, bank MSB, bank LSB]`, the usual one as before,
   and a clip's data is changed by the new `SetClipMidi` command. Not done yet: per-note expression (MPE), a
   groove taken from a MIDI file, and typing the bytes of a SysEx message.
-- **Reference tracks.** A song keeps up to 16 reference audio files (Mixer > Reference > Add Reference Track), saved
-  in the project as paths in an optional root field (written only when there are any; the project format stays 44)
-  and copied into the project's `Files` folder by Collect Files and by a save to a new place, as one undo step.
-  One key (Ctrl+Alt+R, Cmd+Alt+R on macOS; Mixer > Reference > Listen to Reference) switches between the mix and
-  the selected reference with a 30 ms crossfade, also on a stopped song. The reference plays after the master chain
-  on outputs 1 and 2, so none of the master processing touches it, and only live: a bounce, an export, a freeze or
-  an offline render never gets one. It starts at the file position equal to the song position, or at a start of its
-  own (Start at Playhead Position; Follow Playhead takes it away). The level is matched automatically: the engine
-  measures the short-term loudness of the mix (K-weighted, 3 s) while any reference exists, the file is measured
-  once for its loudest 3 s section, and the reference plays at the difference, updated slowly (at most 0.5 dB a
-  quarter of a second, the first reading at once, silence never moves it); Match Reference Level switches it off.
-  Reference Band (sub below 80 Hz, low to 300 Hz, mid to 4 kHz, high above) and Reference Stereo Solo (mid or side
-  on both sides) limit the mix and the reference alike, with a 5 ms duck around a change. Not done yet: a Reference
-  panel that lists the files by name with the matched gain and loudness shown (the Mixer menu lists them as
-  Reference 1 to 16 today and the status line names the file), a reference that follows a seek while it plays, a
-  manual trim of the matched gain, and a loudness match over a chosen section. The command count is 478.
+- **Oscillator start phase and Clean Up Bass.** The Poly Synth, Mono Bass and Wavetable Synth have two new
+  params, `osc.phase` (reset or free) and `osc.phase_start` (0 to 360 degrees). Reset starts the oscillators at
+  the angle at every note start, so every kick or bass note begins with the same first cycle; free starts each
+  note at a seeded random angle. The default, reset at 0 degrees, is what these synths always did, so old
+  projects sound the same bit for bit and no format change was needed (the params are appended, after the
+  modulation slots on the poly synth and Mono Bass). Right-clicking the patch name of one of these synths now
+  opens a pop-up that starts with Clean Up Bass: it sets the phase to reset at 0 degrees, one voice, a 12 ms
+  amp release when the release is outside 5 to 20 ms and the filter key tracking on, only where they differ,
+  in one undo step, and the status line names what changed. The command is `rack.clean_up_bass`
+  The Semi-Modular and FM synth already restarted at phase 0; polarity stays in the Stereo Tool.
+- **Kick and Bass Check, and phase rotation.** Mixer > Kick and Bass Check opens a panel where you pick a kick
+  track and a bass track. The check renders the two channel strips in one pass on a worker (the first 20
+  seconds, deterministic), compares the sub range below 120 Hz of their sum with the power sum of the two for
+  every kick hit and draws a strip with one bar per hit (down: they cancel, up: they build up). It also reads
+  the two fundamentals and warns when they are within two semitones, where they beat. When something cancels or
+  beats it tries the fixes that fit, each one on a copy of the song that is rendered and checked again, so the
+  strip next to a fix is what it really gives: start the oscillator of a built-in bass synth at a fixed angle,
+  invert the polarity of the bass, rotate its phase, delay it by a few samples, or nudge the fine tune of the
+  kick pad of a drum machine. A last row, "fix asymmetry", looks at the bass alone: when it swings further one
+  way than the other, it finds the rotation that evens the positive and negative peaks and shows the headroom
+  gained (and, since a rotation that is silent alone can change how the bass adds to the kick, the strip the
+  song then gives). Apply is one undo step and the status line says what changed; the check never changes the
+  song itself. The Stereo Tool has two new params, `rotate` (0 to 180 degrees) and `rotate_hz`,
+  an all-pass that turns the phase at unit gain (0 is the input bit for bit, 180 is a polarity inversion); the
+  fix for an uneven waveform in `atomik_dsp::best_rotation` finds the angle that evens the positive and negative
+  peaks and reports the headroom gained. The command is `mixer.kick_bass_check`; the project
+  format is unchanged.
+- **Clipper.** A new effect, Clipper (`atomik.clipper`): an input gain drives the signal into a ceiling through a
+  curve that runs from a hard clip to a soft knee (under the knee nothing changes; above it the curve leaves with
+  slope 1 and settles on the ceiling), with a symmetry control that lowers one half of the wave (it adds even
+  harmonics, and an 8 Hz high-pass takes the offset out), off, 2x, 4x or 8x oversampling with the filter latency
+  reported (0, 29, 35 or 37 samples) and the dry path and the delta lined up with it, an output gain and a mix. A
+  multiband mode splits the sound in two or three bands with the flat-sum crossovers of the mastering device and
+  gives each band its own drive in front of its own curve. A delta switch plays what the clipper removes. The panel
+  draws the transfer curve with the level of the moment, and reads the clip activity: the share of clipped samples
+  and the longest clipped run in milliseconds, which turns warm past one millisecond, the number to judge
+  audibility by. With a hard curve, no oversampling, no symmetry, one band, a full mix and 0 dB gains the clipper
+  is bit-transparent below the ceiling. A guard (on by default) holds the single-band output to the ceiling after
+  the oversampling filters. The oversampler gains an 8x stage (37 samples of latency; images at least 84 dB
+  down). The project format stays 44 and no command is added. Not done: a lookahead limiter stage after the
+  clipper, a user-drawn curve, and a per-band ceiling.
+- **Dynamic EQ (`atomik.dynamic-eq`).** A new effect next to the EQ (no EQ param moves): five bands, a low shelf,
+  three bells and a high shelf, each with a static gain, frequency and Q and its own dynamics: a threshold, a signed
+  range (below 0 cuts the band while it is loud, above 0 lifts it, 0 keeps it static), a ratio, an attack and a
+  release. A band listens to its own band of the input, or to the key input (`sc_in_l`/`sc_in_r`, a lone side
+  feeding both, band-passed at the band's frequency; with no cable it listens to its input), and works on the
+  stereo signal (the louder side decides), the mid or the side. Idle bands are skipped, so with every band off
+  the signal passes bit for bit; there is no latency. The panel draws the static curve, the live curve with the
+  gain every band has now, the reach of each band's dynamics and the spectrum of the input and, while the key is
+  cabled, of the key; every band has a handle (drag for frequency and static gain, wheel for Q, double click to
+  switch it off or on) and every control has a tooltip. The analysers run only while a panel is on screen. The
+  format is still 44; not done: the low and high cut, a hold time and a look-ahead.
+- **Resonance finder and delta on the Dynamic EQ.** The panel has FIND and CUT buttons in the corner of its plot.
+  FIND renders the range between the locators (up to 30 seconds) offline on a worker, with one tap on what feeds the
+  device's input, and marks the narrow peaks that stand 6 dB or more above the third-octave trend of the average
+  spectrum, strongest first, each with a frequency and a Q estimated from its width (a line, a bar and a rank on the
+  plot, and the frequencies in the status line). CUT sets the bells that are off, one per resonance, as dynamic
+  cuts that act only while the sound at that frequency is above the trend, in one undo step; a bell that is on is
+  never touched. A search changes nothing in the song. New param `delta` (id 56, the output is 55, bypass moves to
+  57 and the never-stored analyser switch to 58; the device is new in this release): the device plays the input
+  minus the output of its bands, so a cut is heard as the part that was taken out, and a neutral device is silent.
+  The format is still 44 and no command is added.
+- **Masking map.** Mixer > Masking Map renders every channel of the song (or the selected time range) as a stem on
+  a worker, measures each in 27 one-third-octave bands from 40 Hz to 18 kHz and ranks the pairs of tracks by how
+  much the louder one covers the other in a band at the same time (the score is the percentage of the time, so a
+  clash that lasts is worth more than a blip). The panel lists the worst pairs, draws the two spectra of the chosen
+  pair with the clash bands shaded, and a time range moves the playhead to where it starts. DE-MASK on a band adds
+  a Dynamic EQ to the covered channel (or uses one that has a free bell band and no other key), cables its key from
+  the covering channel's insert send and switches a bell band on at the clash band, cutting half the lead (2 to
+  6 dB) while the covering track is loud there; it is one undo step and the status line says what it did. The
+  analysis never changes the song. The format is still 44 and the command is `mixer.masking_map`.
+
+- **Mix check.** Mixer > Check Mix renders the channels, the FX returns and the master of the song (or the
+  selected time range) on a worker and lists what the mix needs. Each finding names the track, the measured number
+  and a line on why: a bass root outside about 40 to 60 Hz (from the bass track's notes), a bass or kick whose
+  fundamental is more than 6 dB under its harmonics, a low-mid build-up (the share of the master's power between
+  150 and 500 Hz over 40%) broken down by track with the reverb returns, the master's highest peaks with the
+  tracks that drive them, a low end under 120 Hz that loses 3 dB or more when the master is summed to mono, and a
+  compressor, distortion, Character, amp or mastering device fed more than 9 dB from -18 dBFS RMS. A finding can
+  carry a one-click fix, one undo step with a status-line message: a Gain Tool before the device that trims the
+  feed to the reference level, a static cut on a Dynamic EQ band of the track that fills the low mids most, or a
+  Stereo Tool with Mono on. A peak finding moves the playhead to it and a low-mid finding opens the masking map.
+  The thresholds are constants with their reasons in one place. The check never changes the song, the format is
+  still 44 and the command is `mixer.check_mix`.
 - **Loudness match and a blind A/B test for every built-in effect.** Right-click an effect and choose Match Loudness:
   the effect's bypass wrapper then measures the K-weighted short-term loudness (the Mastering meter's filters, 100 ms
   steps over 3 s) of what goes in and of what the effect makes, and applies a gain, smoothed over about a second, to
@@ -792,41 +1049,51 @@ may break APIs and the patch and project formats.
   guessing, and whether you reliably prefer it. The test sets bypass on the engine only, hands the effect back as
   the project has it when it ends, and changes nothing in the project. New commands `rack.toggle_match` and
   `rack.blind_ab` (no default keys); the command count is 471 and the format is still 44.
-- **Dynamic EQ (`atomik.dynamic-eq`).** A new effect next to the EQ (no EQ param moves): five bands, a low shelf,
-  three bells and a high shelf, each with a static gain, frequency and Q and its own dynamics: a threshold, a signed
-  range (below 0 cuts the band while it is loud, above 0 lifts it, 0 keeps it static), a ratio, an attack and a
-  release. A band listens to its own band of the input, or to the key input (`sc_in_l`/`sc_in_r`, a lone side
-  feeding both, band-passed at the band's frequency; with no cable it listens to its input), and works on the
-  stereo signal (the louder side decides), the mid or the side. Idle bands are skipped, so with every band off
-  the signal passes bit for bit; there is no latency. The panel draws the static curve, the live curve with the
-  gain every band has now, the reach of each band's dynamics and the spectrum of the input and, while the key is
-  cabled, of the key; every band has a handle (drag for frequency and static gain, wheel for Q, double click to
-  switch it off or on) and every control has a tooltip. The analysers run only while a panel is on screen. The
-  format is still 44; not done: the low and high cut, a hold time and a look-ahead.
-- **Clipper.** A new effect, Clipper (`atomik.clipper`): an input gain drives the signal into a ceiling through a
-  curve that runs from a hard clip to a soft knee (under the knee nothing changes; above it the curve leaves with
-  slope 1 and settles on the ceiling), with a symmetry control that lowers one half of the wave (it adds even
-  harmonics, and an 8 Hz high-pass takes the offset out), off, 2x, 4x or 8x oversampling with the filter latency
-  reported (0, 29, 35 or 37 samples) and the dry path and the delta lined up with it, an output gain and a mix. A
-  multiband mode splits the sound in two or three bands with the flat-sum crossovers of the mastering device and
-  gives each band its own drive in front of its own curve. A delta switch plays what the clipper removes. The panel
-  draws the transfer curve with the level of the moment, and reads the clip activity: the share of clipped samples
-  and the longest clipped run in milliseconds, which turns warm past one millisecond, the number to judge
-  audibility by. With a hard curve, no oversampling, no symmetry, one band, a full mix and 0 dB gains the clipper
-  is bit-transparent below the ceiling. A guard (on by default) holds the single-band output to the ceiling after
-  the oversampling filters. The oversampler gains an 8x stage (37 samples of latency; images at least 84 dB
-  down). The project format stays 44 and the command count 469. Not done: a lookahead limiter stage after the
-  clipper, a user-drawn curve, and a per-band ceiling.
-- **Oscillator start phase and Clean Up Bass.** The Poly Synth, Mono Bass and Wavetable Synth have two new
-  params, `osc.phase` (reset or free) and `osc.phase_start` (0 to 360 degrees). Reset starts the oscillators at
-  the angle at every note start, so every kick or bass note begins with the same first cycle; free starts each
-  note at a seeded random angle. The default, reset at 0 degrees, is what these synths always did, so old
-  projects sound the same bit for bit and no format change was needed (the params are appended, after the
-  modulation slots on the poly synth and Mono Bass). Right-clicking the patch name of one of these synths now
-  opens a pop-up that starts with Clean Up Bass: it sets the phase to reset at 0 degrees, one voice, a 12 ms
-  amp release when the release is outside 5 to 20 ms and the filter key tracking on, only where they differ,
-  in one undo step, and the status line names what changed. The command is `rack.clean_up_bass`
-  (470 commands). The Semi-Modular and FM synth already restarted at phase 0; polarity stays in the Stereo Tool.
+- **Reference tracks.** A song keeps up to 16 reference audio files (Mixer > Reference > Add Reference Track), saved
+  in the project as paths in an optional root field (written only when there are any; the project format stays 44)
+  and copied into the project's `Files` folder by Collect Files and by a save to a new place, as one undo step.
+  One key (Ctrl+Alt+R, Cmd+Alt+R on macOS; Mixer > Reference > Listen to Reference) switches between the mix and
+  the selected reference with a 30 ms crossfade, also on a stopped song. The reference plays after the master chain
+  on outputs 1 and 2, so none of the master processing touches it, and only live: a bounce, an export, a freeze or
+  an offline render never gets one. It starts at the file position equal to the song position, or at a start of its
+  own (Start at Playhead Position; Follow Playhead takes it away). The level is matched automatically: the engine
+  measures the short-term loudness of the mix (K-weighted, 3 s) while any reference exists, the file is measured
+  once for its loudest 3 s section, and the reference plays at the difference, updated slowly (at most 0.5 dB a
+  quarter of a second, the first reading at once, silence never moves it); Match Reference Level switches it off.
+  Reference Band (sub below 80 Hz, low to 300 Hz, mid to 4 kHz, high above) and Reference Stereo Solo (mid or side
+  on both sides) limit the mix and the reference alike, with a 5 ms duck around a change. Not done yet: a reference
+  that follows a seek while it plays, a manual trim of the matched gain, and a loudness match over a chosen
+  section. The command count is 478.
+- **Reference panel and decision zone.** Mixer > Reference > Reference Panel opens a panel that lists the song's
+  reference files by name, with the loudest section of each and the matched gain of the selected one (click or Up and
+  Down selects, LISTEN is the reference key, Esc closes). Below the list, the decision zone sets the mix against the
+  references on seven readings: loudness, the loudest part, punch (sample peak over loudness), brightness (the slope
+  of the octave-band energy from 125 Hz to 8 kHz in dB per octave), low end (share of the energy under 120 Hz),
+  width (side against mid, dB) and correlation. Each row draws the range the references span as a band and the mix
+  as a marker, and says inside, above or below with the distance. All but the two loudness rows read the same at
+  every level, so they are compared without matching levels first; the panel marks them. REFRESH renders the mix
+  again; the references are read once and kept while they stay listed. The analysis runs on a worker, uses the
+  renderer a bounce uses (a song with third-party plugins is refused), never changes the song, and the panel says
+  when the song changed since the mix was measured. The same seven readings are in the `zone` entry of the MCP
+  `analyze_audio` and bounce reports. The command count is 479.
+
+- **Check Mix opens the clipper and the kick and bass check.** A finding that names a tool now has its button. The
+  peaks finding adds a Clipper to the end of the master's inserts in one undo step, with a hard curve, 4x
+  oversampling and the ceiling a decibel under the loudest peak the check found (never above -0.1 dB); a master
+  that has a Clipper already is left as it is and the status line says so. A bass root or weak fundamental
+  finding opens the Kick and Bass Check with the track of the finding picked as the bass (or as the kick when
+  its name says kick) and the other one guessed from the names. The check itself still changes nothing.
+- **More factory patches.** Four Dynamic EQ patches (Vocal Resonance Tamer, De-boxer, Air Lift, Drum Bus
+  De-harsh), four Clipper patches (Master Peak Trim, Drum Bus Soft Clip, Bass Warm Clip, Kick Click Tamer), three
+  synths that start every note at the same angle (Clean Kick Sub on the Poly Synth, Mono Sub Bass, Reset Pluck
+  Bass on the Wavetable Synth) and a Double Clip container (a soft clipper then a hard one, with Drive and
+  Softness macros). The Factory root now lists 42 patches and 14 containers.
+
+### Changed
+- **Channels, buses and the master are always in the rack.** View > Show Console Devices in Rack and its command
+  (`view.toggle_console_devices`) are gone, with the one-time notice about it; the registry lists 500 commands. An
+  older `ui-state.json` that still has `show_console_devices` or `console_notice_seen` loads as before and both keys
+  are ignored.
 
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before

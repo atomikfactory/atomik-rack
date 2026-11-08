@@ -11,7 +11,7 @@
 //!
 //! Every band has the same eleven params `on`, `freq`, `q`, `gain` (the static gain, dB),
 //! `threshold` (dB), `range` (dB), `ratio`, `attack`, `release`, `source` (`band` or `key`) and
-//! `channel` (`stereo`, `mid` or `side`), plus the shared `output` gain. The bands run in series,
+//! `channel` (`stereo`, `mid` or `side`), plus the shared `output` gain and the `delta` switch. The bands run in series,
 //! 1 to 5, as RBJ cookbook sections of [`atomik_dsp::BiquadCoeffs`] (`f64` coefficients and
 //! state, direct form I).
 //!
@@ -51,6 +51,10 @@
 //!   of exactly 0 dB, fades out (10 ms) and is then skipped with its state reset, so with every
 //!   band off and `output` at 0 dB the input is copied bit for bit. A band that comes on starts
 //!   from a clean state and fades in over the same 10 ms.
+//! * **Delta.** With `delta` on the device plays what the bands took out: the input minus the
+//!   output of the bands (a cut shows as the cut part of the sound, a lift with the opposite sign),
+//!   before the `output` gain. The switch fades over 10 ms, and with every band off the delta is
+//!   exactly 0.0, so a neutral device is silent. Meter values and peaks follow what is played.
 //! * **Latency.** None: no look-ahead.
 //!
 //! # Meter values (`has_meter_values`, 40 values)
@@ -78,6 +82,7 @@ use atomik_dsp::{
     Biquad, BiquadCoeffs, BiquadShape, BlockSmoother, Svf, exp2_det, exp2_det_f64, log2_det,
 };
 
+pub mod cuts;
 #[cfg(test)]
 mod tests;
 
@@ -120,7 +125,8 @@ const UPDATE: u8 = 16;
 const SNAP: f32 = 5e-5;
 
 const P_OUTPUT: u32 = (BANDS * PER_BAND) as u32;
-const P_ANALYSER_LIVE: u32 = P_OUTPUT + 2;
+const P_DELTA: u32 = P_OUTPUT + 1;
+const P_ANALYSER_LIVE: u32 = P_OUTPUT + 3;
 
 const SOURCES: &[&str] = &["band", "key"];
 const CHANNELS: &[&str] = &["stereo", "mid", "side"];
@@ -194,7 +200,7 @@ macro_rules! names {
     };
 }
 
-const TOTAL_PARAMS: usize = BANDS * PER_BAND + 3;
+const TOTAL_PARAMS: usize = BANDS * PER_BAND + 4;
 
 const fn build_params() -> [ParamDescriptor; TOTAL_PARAMS] {
     let bands = [
@@ -236,7 +242,8 @@ const fn build_params() -> [ParamDescriptor; TOTAL_PARAMS] {
     ];
     let tail = [
         linear(P_OUTPUT, "output", "Output", -24.0, 24.0, 0.0, Unit::Db),
-        bypass_param(P_OUTPUT + 1),
+        toggle(P_DELTA, "delta", "Delta", 0.0),
+        bypass_param(P_DELTA + 1),
         toggle(
             P_ANALYSER_LIVE,
             "internal.analyser_live",
@@ -257,6 +264,7 @@ const fn build_params() -> [ParamDescriptor; TOTAL_PARAMS] {
     out[BANDS * PER_BAND] = tail[0];
     out[BANDS * PER_BAND + 1] = tail[1];
     out[BANDS * PER_BAND + 2] = tail[2];
+    out[BANDS * PER_BAND + 3] = tail[3];
     out
 }
 
@@ -623,6 +631,9 @@ pub struct DynamicEq {
     rates: Rates,
     bands: Vec<Band>,
     output_db: f32,
+    /// The `delta` switch and how far its fade has got (0 = the sound, 1 = the delta).
+    delta_on: bool,
+    delta_w: f32,
     out_sm: BlockSmoother,
     fresh: bool,
     analyser: bool,
@@ -648,6 +659,8 @@ impl DynamicEq {
             rates,
             bands: (0..BANDS).map(|i| Band::new(i, &rates)).collect(),
             output_db: 0.0,
+            delta_on: false,
+            delta_w: 0.0,
             out_sm: BlockSmoother::new(1.0),
             fresh: true,
             analyser: false,
@@ -699,6 +712,7 @@ impl Device for DynamicEq {
         self.key_bank.clear();
         self.peaks = [0.0; 2];
         self.key_connected = false;
+        self.delta_w = if self.delta_on { 1.0 } else { 0.0 };
         self.fresh = true;
     }
 
@@ -710,6 +724,10 @@ impl Device for DynamicEq {
         match id.0 {
             P_OUTPUT => {
                 self.output_db = v;
+                return;
+            }
+            P_DELTA => {
+                self.delta_on = v >= 0.5;
                 return;
             }
             P_ANALYSER_LIVE => {
@@ -795,10 +813,28 @@ impl Device for DynamicEq {
         let g = self.out_sm.advance(target, BATCH);
         let mut peaks = [0.0f32; 2];
         let [out_l, out_r] = &mut out;
+        let delta_target = if self.delta_on { 1.0 } else { 0.0 };
         for (n, (l, r)) in out_l.iter_mut().zip(out_r.iter_mut()).enumerate() {
             let gn = g.at(n);
-            *l *= gn;
-            *r *= gn;
+            let w = if (self.delta_w - delta_target).abs() <= 0.0 {
+                self.delta_w
+            } else {
+                self.delta_w += (delta_target - self.delta_w) * self.rates.fade;
+                if (self.delta_w - delta_target).abs() < SNAP {
+                    self.delta_w = delta_target;
+                }
+                self.delta_w
+            };
+            if w <= 0.0 {
+                *l *= gn;
+                *r *= gn;
+            } else if w >= 1.0 {
+                *l = x[0][n] - *l;
+                *r = x[1][n] - *r;
+            } else {
+                *l = *l * gn * (1.0 - w) + (x[0][n] - *l) * w;
+                *r = *r * gn * (1.0 - w) + (x[1][n] - *r) * w;
+            }
             peaks[0] = peaks[0].max(l.abs());
             peaks[1] = peaks[1].max(r.abs());
         }

@@ -41,7 +41,7 @@ impl RackView {
             || is_inner(&d.key)
             || bank
             || kind == ControlKind::Display
-            || atomik_model::console::is_internal_param(p.key)
+            || atomik_model::console::is_hidden_param(p.key)
         {
             return false;
         }

@@ -896,12 +896,21 @@ pub(in crate::app_core) fn kit_item(kit: &KitDef, samples: Vec<AudioData>) -> Bu
 /// # Panics
 /// A file cannot be written.
 pub(in crate::app_core) fn write_audio(patches: &Path, kit: &KitDef, built: &Built) {
-    let folder = patches.join(kit.name);
+    write_audio_for(patches, kit.name, built);
+}
+
+/// [`write_audio`] for any patch with audio beside it (a drum kit, a drawn table): `<patches>/
+/// <name>/Audio/<id>.wav`.
+///
+/// # Panics
+/// A file cannot be written.
+pub(in crate::app_core) fn write_audio_for(patches: &Path, name: &str, built: &Built) {
+    let folder = patches.join(name);
     let _ = std::fs::remove_dir_all(&folder);
     let audio = folder.join("Audio");
-    std::fs::create_dir_all(&audio).expect("the audio folder of a kit");
+    std::fs::create_dir_all(&audio).expect("the audio folder of a patch");
     for (hash, data) in &built.audio {
         write_wav_f32(&audio.join(format!("{hash}.wav")), data)
-            .unwrap_or_else(|e| panic!("{}: {e}", kit.name));
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
     }
 }
