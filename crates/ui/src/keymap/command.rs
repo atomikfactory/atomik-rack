@@ -2995,7 +2995,7 @@ mod tests {
             assert!(!d.label.trim().is_empty(), "{}", d.id);
             let prefix = d.id.split('.').next().unwrap();
             let expected: &[&str] = match d.group {
-                Group::Global => &["file", "audio", "help"],
+                Group::Global => &["file", "audio", "help", "video"],
                 Group::Transport => &["transport", "sync"],
                 Group::View => &["view", "window"],
                 Group::Edit => &["edit"],

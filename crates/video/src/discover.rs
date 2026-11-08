@@ -198,12 +198,19 @@ fn first_with_both(
 }
 
 /// The folders the Settings folder stands for: itself, its `bin` folder, and the folder holding
-/// it when it names the `ffmpeg` program.
-fn settings_candidates(folder: &Path, platform: Platform) -> Vec<PathBuf> {
+/// it when it names the `ffmpeg` program. A folder that happens to be called `ffmpeg` (as
+/// `/opt/ffmpeg` is on a system where programs have no extension) is a folder: only a file is
+/// the program.
+fn settings_candidates(
+    folder: &Path,
+    platform: Platform,
+    is_file: &dyn Fn(&Path) -> bool,
+) -> Vec<PathBuf> {
     let program = platform.exe_name("ffmpeg");
     if folder
         .file_name()
         .is_some_and(|n| n == OsStr::new(&program))
+        && is_file(folder)
         && let Some(parent) = folder.parent()
     {
         return vec![parent.to_path_buf()];
@@ -220,7 +227,11 @@ pub fn discover(
 ) -> FfmpegStatus {
     let platform = search.platform;
     let found = match search.folder {
-        Some(folder) => first_with_both(&settings_candidates(folder, platform), platform, is_file),
+        Some(folder) => first_with_both(
+            &settings_candidates(folder, platform, is_file),
+            platform,
+            is_file,
+        ),
         None => {
             let mut dirs: Vec<PathBuf> = search
                 .path_var
@@ -373,6 +384,32 @@ mod tests {
             let status = run(Some(folder), "", Platform::Other, &present, &tool);
             assert!(status.is_usable(), "{folder}: {status:?}");
         }
+    }
+
+    #[test]
+    fn a_settings_folder_called_ffmpeg_is_a_folder_not_the_program() {
+        let folder_only = files(&["/opt/ffmpeg/ffmpeg", "/opt/ffmpeg/ffprobe"]);
+        let status = run(
+            Some("/opt/ffmpeg"),
+            "",
+            Platform::Other,
+            &folder_only,
+            &FakeTool::new(),
+        );
+        assert_eq!(
+            status.tools().unwrap().ffmpeg,
+            PathBuf::from("/opt/ffmpeg/ffmpeg")
+        );
+        // The same path as a file is the program: its folder is searched.
+        let file_only = files(&["/opt/ffmpeg", "/opt/ffprobe"]);
+        let status = run(
+            Some("/opt/ffmpeg"),
+            "",
+            Platform::Other,
+            &file_only,
+            &FakeTool::new(),
+        );
+        assert_eq!(status.tools().unwrap().ffmpeg, PathBuf::from("/opt/ffmpeg"));
     }
 
     #[test]
