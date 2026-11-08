@@ -61,7 +61,7 @@ impl Exit {
     }
 }
 
-/// `ffmpeg` for `C:\tools\ffmpeg.exe`.
+/// `ffmpeg` for a program at `tools/ffmpeg.exe`.
 pub fn tool_name(exe: &Path) -> String {
     exe.file_stem().map_or_else(
         || "the program".to_owned(),

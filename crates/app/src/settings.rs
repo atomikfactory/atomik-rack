@@ -1402,20 +1402,20 @@ mod tests {
             video_cache_dir(TargetOs::Windows, &win),
             Some(PathBuf::from("C:/Local/Atomik Rack/Cache/video"))
         );
-        let mac = env(&[("HOME", "/Users/x")]);
+        let mac = env(&[("HOME", "/Users/name")]);
         assert_eq!(
             video_cache_dir(TargetOs::MacOs, &mac),
-            Some(PathBuf::from("/Users/x/Library/Caches/Atomik Rack/video"))
+            Some(PathBuf::from("/Users/name/Library/Caches/Atomik Rack/video"))
         );
-        let xdg = env(&[("XDG_CACHE_HOME", "/c"), ("HOME", "/home/x")]);
+        let xdg = env(&[("XDG_CACHE_HOME", "/c"), ("HOME", "/home/name")]);
         assert_eq!(
             video_cache_dir(TargetOs::Other, &xdg),
             Some(PathBuf::from("/c/atomik-rack/video"))
         );
-        let home = env(&[("HOME", "/home/x")]);
+        let home = env(&[("HOME", "/home/name")]);
         assert_eq!(
             video_cache_dir(TargetOs::Other, &home),
-            Some(PathBuf::from("/home/x/.cache/atomik-rack/video"))
+            Some(PathBuf::from("/home/name/.cache/atomik-rack/video"))
         );
         assert_eq!(video_cache_dir(TargetOs::Windows, &env(&[])), None);
         assert_eq!(
