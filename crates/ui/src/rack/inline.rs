@@ -194,6 +194,7 @@ pub(super) fn flatten(doc: &RackDoc) -> Option<RackDoc> {
         sort_mode: doc.sort_mode,
         references: Vec::new(),
         delivery: None,
+        video: None,
     })
 }
 

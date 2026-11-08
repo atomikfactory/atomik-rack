@@ -171,6 +171,7 @@ ImportAudio | Import Audio…
 ImportMidi | Import MIDI…
 ImportMidiPreset | Import MIDI Mapping Preset…
 ImportMidiSong | Import MIDI as Song…
+ImportVideo | Import Video…
 InputChannels(0) | 0 (off)
 InputChannels(1) | 1
 InputChannels(16) | 16
@@ -211,6 +212,7 @@ MorphTime(8) | 8 Seconds
 MoveProject | Move Project…
 MoveTrackDown | Move Track Down
 MoveTrackUp | Move Track Up
+MoveVideoToPlayhead | Move Video to Playhead
 New | New
 NewAtRate(44100) | 44.1 kHz
 NewAtRate(48000) | 48 kHz
@@ -288,10 +290,12 @@ ReferenceSolo(Side) | Side
 RefreezeTrack | Re-render Frozen Track
 RefreshEnergyLane | Refresh Energy Lane
 RelinkAudio | Relink Missing Audio…
+RelinkVideo | Relink Video…
 RemoveBars | Remove Bars at Locators
 RemoveChannel | Delete Channel
 RemoveFromVca | Remove from VCA
 RemoveReference | Remove Reference Track
+RemoveVideo | Remove Video
 RenameFolder | Rename Folder…
 RenameNoteLane | Rename Note Lane…
 RenameTrack | Rename Track…
@@ -404,6 +408,8 @@ Transport(ToggleMetronome) | Click
 Transport(ToggleMetronome) | Metronome
 Transport(TogglePlay) | Play / Stop
 Transport(ToggleRecord) | Record
+TrimVideoEnd | Trim Video End to Playhead
+TrimVideoStart | Trim Video Start to Playhead
 Uncombine | Uncombine
 Undo | Undo
 UnfreezeTrack | Unfreeze Track

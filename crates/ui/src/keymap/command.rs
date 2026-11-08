@@ -2748,7 +2748,31 @@ const COMMANDS: &[CommandDef] = &[
     cmd("transport.tempo_up", "Tempo Up", G::Transport, C::Global).rep(),
     cmd("video.cancel", "Cancel Video Job", G::Global, C::Global).menu(),
     cmd("video.check_ffmpeg", "Check FFmpeg", G::Global, C::Global).menu(),
+    cmd("video.import", "Import Video", G::Global, C::Global).menu(),
+    cmd(
+        "video.move_to_playhead",
+        "Move Video to Playhead",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
     cmd("video.prepare", "Prepare Video", G::Global, C::Global).menu(),
+    cmd("video.relink", "Relink Video", G::Global, C::Global).menu(),
+    cmd("video.remove", "Remove Video", G::Global, C::Global).menu(),
+    cmd(
+        "video.trim_end",
+        "Trim Video End to Playhead",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "video.trim_start",
+        "Trim Video Start to Playhead",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
     cmd("view.app_zoom", "Application Zoom", G::View, C::Global)
         .arg(APP_ZOOM_ARGS)
         .menu(),

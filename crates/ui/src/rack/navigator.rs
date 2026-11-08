@@ -505,6 +505,7 @@ mod tests {
             sort_mode: atomik_model::RackSort::Free,
             references: Vec::new(),
             delivery: None,
+            video: None,
         };
         let mut v = RackView::new(Theme::dark());
         v.set_navigator_visible(true);

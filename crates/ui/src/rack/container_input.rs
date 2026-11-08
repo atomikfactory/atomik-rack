@@ -241,6 +241,7 @@ impl RackView {
             sort_mode: doc.sort_mode,
             references: Vec::new(),
             delivery: None,
+            video: None,
         })
     }
 

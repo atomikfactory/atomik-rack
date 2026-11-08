@@ -86,6 +86,12 @@ pub(crate) enum Msg {
         job: u64,
         done: Box<crate::video_worker::Done>,
     },
+    /// A film was probed, before its proxy is built (Import Video, Relink Video): see
+    /// [`crate::video_worker`].
+    VideoProbed {
+        job: u64,
+        probe: Box<atomik_video::ProbeInfo>,
+    },
     /// An instrument file (SFZ, SoundFont) was read, its samples stored and its regions made
     /// into zones (or it failed): see [`crate::instrument_import`].
     Instrument {

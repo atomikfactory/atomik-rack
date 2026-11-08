@@ -75,6 +75,19 @@ pub enum AppCommand {
     PrepareVideo,
     /// File ▸ Video ▸ Cancel Video Job: stop the check or the preparation that runs.
     CancelVideo,
+    /// File ▸ Video ▸ Import Video…: probe a film and put it in the song at its start (a dialog
+    /// picks the film), then build its proxy in the background.
+    ImportVideo,
+    /// File ▸ Video ▸ Remove Video: take the film out of the song (the file stays).
+    RemoveVideo,
+    /// File ▸ Video ▸ Relink Video…: point the song's film at another file (a dialog picks it).
+    RelinkVideo,
+    /// File ▸ Video ▸ Move Video to Playhead: start the film where the playhead is.
+    MoveVideoToPlayhead,
+    /// File ▸ Video ▸ Trim Video Start to Playhead: cut the film's beginning up to the playhead.
+    TrimVideoStart,
+    /// File ▸ Video ▸ Trim Video End to Playhead: cut the film's end from the playhead on.
+    TrimVideoEnd,
     /// File ▸ Close: end the song and start a new empty one (asks about unsaved changes).
     Close,
     /// File ▸ Save.
@@ -798,6 +811,12 @@ impl AppCommand {
             AppCommand::CheckFfmpeg => ("video.check_ffmpeg", None),
             AppCommand::PrepareVideo => ("video.prepare", None),
             AppCommand::CancelVideo => ("video.cancel", None),
+            AppCommand::ImportVideo => ("video.import", None),
+            AppCommand::RemoveVideo => ("video.remove", None),
+            AppCommand::RelinkVideo => ("video.relink", None),
+            AppCommand::MoveVideoToPlayhead => ("video.move_to_playhead", None),
+            AppCommand::TrimVideoStart => ("video.trim_start", None),
+            AppCommand::TrimVideoEnd => ("video.trim_end", None),
             AppCommand::Close => ("file.close", None),
             AppCommand::Save => ("file.save", None),
             AppCommand::SaveAs => ("file.save_as", None),
@@ -1166,6 +1185,12 @@ impl AppCommand {
             ("video.check_ffmpeg", None) => AppCommand::CheckFfmpeg,
             ("video.prepare", None) => AppCommand::PrepareVideo,
             ("video.cancel", None) => AppCommand::CancelVideo,
+            ("video.import", None) => AppCommand::ImportVideo,
+            ("video.remove", None) => AppCommand::RemoveVideo,
+            ("video.relink", None) => AppCommand::RelinkVideo,
+            ("video.move_to_playhead", None) => AppCommand::MoveVideoToPlayhead,
+            ("video.trim_start", None) => AppCommand::TrimVideoStart,
+            ("video.trim_end", None) => AppCommand::TrimVideoEnd,
             ("file.close", None) => AppCommand::Close,
             ("file.save", None) => AppCommand::Save,
             ("file.save_as", None) => AppCommand::SaveAs,
@@ -2047,6 +2072,11 @@ pub struct MenuState {
     /// FFmpeg is being looked for or a film is being prepared (File > Video > Cancel Video Job
     /// is available).
     pub video_busy: bool,
+    /// The song has a video (File > Video > Remove, Relink, Move and Trim are available).
+    pub video_clip: bool,
+    /// The song's video file is not where the project says (the viewer cannot show it until
+    /// it is relinked).
+    pub video_missing: bool,
     /// Collect Files or Move Project is copying audio on its worker (File > Cancel Collect or
     /// Move is available).
     pub collect_busy: bool,
@@ -2670,6 +2700,30 @@ pub fn menus_with_songs(
                 MenuEntry::Submenu(Submenu {
                     label: "Video",
                     entries: vec![
+                        item("Import Video\u{2026}", AppCommand::ImportVideo),
+                        enabled("Remove Video", AppCommand::RemoveVideo, state.video_clip),
+                        enabled(
+                            "Relink Video\u{2026}",
+                            AppCommand::RelinkVideo,
+                            state.video_clip,
+                        ),
+                        MenuEntry::Separator,
+                        enabled(
+                            "Move Video to Playhead",
+                            AppCommand::MoveVideoToPlayhead,
+                            state.video_clip,
+                        ),
+                        enabled(
+                            "Trim Video Start to Playhead",
+                            AppCommand::TrimVideoStart,
+                            state.video_clip,
+                        ),
+                        enabled(
+                            "Trim Video End to Playhead",
+                            AppCommand::TrimVideoEnd,
+                            state.video_clip,
+                        ),
+                        MenuEntry::Separator,
                         item("Prepare Video\u{2026}", AppCommand::PrepareVideo),
                         item("Check FFmpeg", AppCommand::CheckFfmpeg),
                         enabled(
@@ -4212,6 +4266,8 @@ mod tests {
             missing_audio: false,
             archive_busy: false,
             video_busy: false,
+            video_clip: false,
+            video_missing: false,
             collect_busy: false,
             default_song: false,
             midi_clip: false,
@@ -4260,6 +4316,12 @@ mod tests {
             AppCommand::CheckFfmpeg,
             AppCommand::PrepareVideo,
             AppCommand::CancelVideo,
+            AppCommand::ImportVideo,
+            AppCommand::RemoveVideo,
+            AppCommand::RelinkVideo,
+            AppCommand::MoveVideoToPlayhead,
+            AppCommand::TrimVideoStart,
+            AppCommand::TrimVideoEnd,
             AppCommand::Close,
             AppCommand::Save,
             AppCommand::SaveAs,
@@ -5300,6 +5362,8 @@ mod tests {
                 missing_audio: true,
                 archive_busy: false,
                 video_busy: false,
+                video_clip: false,
+                video_missing: false,
                 collect_busy: false,
                 default_song: false,
                 midi_clip: true,

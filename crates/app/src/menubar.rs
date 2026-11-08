@@ -961,6 +961,8 @@ mod tests {
             missing_audio: false,
             archive_busy: false,
             video_busy: false,
+            video_clip: false,
+            video_missing: false,
             collect_busy: false,
             default_song: false,
             midi_clip: false,

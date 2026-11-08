@@ -12,7 +12,7 @@ use crate::cursor_art::{self, CursorArt};
 use crate::plugin_setup;
 use crate::session::{LiveSession, SystemBackend};
 use crate::settings::{self, AudioSettings, default_settings_path};
-use crate::shell::{Shell, ShellOptions, ShellRequest};
+use crate::shell::{Shell, ShellOptions, ShellRequest, VideoPick};
 use crate::stress::{
     STRESS_AUDIO_THRESHOLD_BYTES, add_stress_character, add_stress_containers, add_stress_drums,
     add_stress_fx, add_stress_players, add_stress_plugins, add_stress_samplers, add_stress_slicers,
@@ -1472,9 +1472,13 @@ impl App {
                         self.shell.set_ffmpeg_folder(folder);
                     }
                 }
-                ShellRequest::PickVideoFile => {
+                ShellRequest::PickVideoFile(pick) => {
                     let mut dialog = rfd::FileDialog::new()
-                        .set_title("Prepare a video")
+                        .set_title(match pick {
+                            VideoPick::Import => "Import a video",
+                            VideoPick::Relink => "Find the video",
+                            VideoPick::Prepare => "Prepare a video",
+                        })
                         .add_filter(
                             "Video",
                             &[
@@ -1487,7 +1491,7 @@ impl App {
                         dialog = dialog.set_parent(w);
                     }
                     if let Some(path) = dialog.pick_file() {
-                        self.shell.prepare_video_from(&path);
+                        self.shell.video_picked(pick, &path);
                     }
                 }
                 ShellRequest::PickScratchFolder => {
