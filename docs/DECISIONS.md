@@ -326,3 +326,35 @@ at this size and keeps the amount of third-party `unsafe` in the program as smal
 (`FrameDecoder`), never on the UI thread or the audio thread, with a byte-limited cache of decoded frames.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## Q. The film's sound and "keep with video"
+
+**Question.** How does the film's own sound get into the song, how is it lined up with the picture, and where does
+the link that makes it follow the film live?
+
+**Options.**
+
+1. Extract the sound to a WAV file with FFmpeg and use the song's import (any sample rate, the bundle, the peaks),
+   placing a plain audio clip.
+2. Ask FFmpeg for the song's rate and channel count directly, and place the clip from the file.
+3. Keep the sound inside the film clip (no audio track), played by the engine from the film.
+
+For the link: a field of the film (the audio clip's id, how late the sound starts, a flag), or a field of the audio
+clip, or a second command the user runs after each move.
+
+**Implications.** The song already imports audio files, hashes and stores them, resamples to the song's rate and
+draws peaks; option 1 reuses all of that and the sound is an ordinary clip the user can edit, mute or bounce.
+Option 2 would add a second resampler path (FFmpeg's) beside the song's. Option 3 would put the film's decoder in
+the audio path, which video must never touch. A clip starts on a tick, a fraction of a beat that is a few dozen
+samples at usual tempos, so a tick alone cannot place the sound under the first frame; the skip into the asset
+(`source_offset`) absorbs the rest, and the arithmetic has to be done in frames of the song's rate from the film's
+microseconds. The link belongs to the film because the film is what moves and trims (the edit has to be one undo
+step of both, planned from the film's new state), and because an audio clip has no idea of a film; as an optional
+part of the already ignorable `video` field it needs no format bump.
+
+**Decision.** Option 1, extracted at the track's own rate and resampled by the import, surround mixed down to
+stereo by FFmpeg. The link is `VideoClip::audio_link` (clip id, lead in microseconds, a keep flag); `Move`, `Trim`
+and `Relink` plan the film and the clip together as one compound edit and a drag merges both. The clip is recomputed
+from the film's state each time. Importing the film's audio is one undo step with the new track.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

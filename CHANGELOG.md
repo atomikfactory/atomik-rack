@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **The film's own sound.** File > Video > Import Video Audio takes an audio track out of the song's film through
+  FFmpeg, on a worker with progress in the status line and a cancel that leaves no file and no asset, and imports
+  it like any audio file (converted to the song's rate, stored in the project's audio folder by its hash, with its
+  waveform). The sound goes on a new audio track named after the film, in one undo step, and its first sample sits
+  exactly on the film's first frame: the song frame of the film's start plus the offset the file states between its
+  sound and its picture, to the sample whatever the tempo (the clip starts on the first tick at or after it and
+  skips into the sound by the rest), showing only the part inside the film's trim. A film with several audio tracks
+  asks which one in a pop-up (number, channels, codec, language, title); a surround track is mixed down to stereo.
+  A film with no sound, or a machine without FFmpeg, says so and changes nothing. Keep Audio with Video (on after an
+  import, saved with the film) makes moving, trimming and relinking the film move and trim that clip in the same
+  undo step, a drag included; turned off, the clip is an ordinary one, and turned on again it is lined up with the
+  film again. Import Audio with Video makes Import Video do both. Project format stays 44 (the link is an optional
+  part of the ignorable `video` field).
 - **A video row in the arrangement.** A song with a film shows it in a row above the track lanes: a clip bar with a
   frame thumbnail every picture-width, the frame that plays at the start of each slot, so the pictures follow the
   zoom. Only the slots in view are decoded, on a worker, with a placeholder until they arrive, and they are kept

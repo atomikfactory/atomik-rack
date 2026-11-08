@@ -506,3 +506,74 @@ fn a_project_that_changed_meanwhile_does_not_get_the_track() {
     assert!(toast(&c).contains("The project changed"), "{}", toast(&c));
     assert!(c.doc().song.tracks.is_empty());
 }
+
+/// Import Video Audio with the real FFmpeg, when it is installed (the folder in
+/// `ATOMIK_FFMPEG_DIR` when set, else the system path): a 44.1 kHz sound that starts half a second
+/// after the picture goes on a new track of a 48 kHz song, its first sample on the song frame of
+/// the film's first frame plus the offset the file states, and trimming the film trims it. Run it
+/// with `cargo test -p atomik-app --lib real_ffmpeg -- --ignored --nocapture`; without FFmpeg it
+/// says so and passes.
+#[test]
+#[ignore = "needs a real FFmpeg"]
+fn real_ffmpeg_imports_the_audio_of_a_generated_film_lined_up_with_the_picture() {
+    use atomik_video::{FfmpegStatus, Search, SystemTool, discover};
+    let folder = std::env::var_os("ATOMIK_FFMPEG_DIR").map(PathBuf::from);
+    let path_var = std::env::var_os("PATH");
+    let status = discover(
+        &Search::of_process(folder.as_deref(), path_var.as_deref()),
+        &SystemTool,
+        &Path::is_file,
+    );
+    let FfmpegStatus::Found(ffmpeg) = status else {
+        println!("no usable FFmpeg here: {}", status.message());
+        return;
+    };
+    let t = Tmp::new("real");
+    let film = t.path("late sound.mkv");
+    let made = std::process::Command::new(&ffmpeg.ffmpeg)
+        .args(["-nostdin", "-v", "error", "-f", "lavfi", "-i"])
+        .arg("testsrc=size=320x180:rate=25:duration=4")
+        .args(["-itsoffset", "0.5", "-f", "lavfi", "-i"])
+        .arg("sine=frequency=440:duration=3:sample_rate=44100")
+        .args(["-pix_fmt", "yuv420p", "-y"])
+        .arg(&film)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let mut c = AppCore::with_doc(RecordingSink::new(), atomik_model::empty_doc(), None);
+    c.set_video_tool(Arc::new(SystemTool));
+    c.set_video_folder(folder);
+    c.set_video_cache(t.path("cache"));
+    c.import_video(film).unwrap();
+    c.wait_background();
+    c.import_video_audio(None).unwrap();
+    c.wait_background();
+    println!("{}", toast(&c));
+    let link = c
+        .video_clip()
+        .unwrap()
+        .audio_link
+        .expect("the sound is linked");
+    println!("lead {} us", link.lead_us);
+    assert!((link.lead_us - 500_000).abs() <= 5_000, "{}", link.lead_us);
+    let meta = c.doc().assets.values().next().unwrap().clone();
+    assert_eq!(meta.sample_rate, 48_000, "converted to the song's rate");
+    assert!((meta.frames as f64 / 48_000.0 - 3.0).abs() < 0.1);
+    assert_eq!(c.doc().song.tracks.len(), 1);
+    // The first sample is on the first frame plus the file's offset, to the sample.
+    assert_eq!(asset_zero(&c), frames_of(link.lead_us, 48_000));
+    // Trimming the film's first second takes it off the sound too.
+    c.apply_command(Command::Video(VideoCommand::Trim {
+        in_us: 1_000_000,
+        out_us: 3_000_000,
+        merge: None,
+    }))
+    .unwrap();
+    assert_eq!(asset_zero(&c), frames_of(link.lead_us, 48_000));
+    let (_, start, length, offset, _) = clips(&c).remove(0);
+    let song = &c.doc().song;
+    assert_eq!(song.frame_at(start, 48_000), 48_000, "starts at the cut");
+    assert_eq!(song.frame_at(start + length, 48_000), 3 * 48_000);
+    assert_eq!(i128::from(offset), 48_000 - frames_of(link.lead_us, 48_000));
+    assert!(c.undo());
+}

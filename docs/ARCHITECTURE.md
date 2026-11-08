@@ -2578,7 +2578,8 @@ the document adds is where a track's notes enter.
 
 Video tracks are decoded by an FFmpeg the user installs: nothing is bundled and no codec ships with the program.
 Without FFmpeg the video features are off and nothing else changes. This section is the foundation (the crate
-`atomik-video` and its place in the app); the viewer, the thumbnail track and the film's sound come on top of it.
+`atomik-video` and its place in the app); the viewer, the thumbnail track and the film's sound come on top of it
+(the whole feature is in the last items of this list).
 
 - **Finding it.** `discover` (`crates/video/src/discover.rs`) looks in the folder set in Settings > Video (the
   `ffmpeg_folder` of `workflow.json`; its `bin` folder too, or the `ffmpeg` program itself), else in the folders of
@@ -2697,6 +2698,42 @@ Without FFmpeg the video features are off and nothing else changes. This section
   (`trimmed_in`, `trimmed_out`: at least one frame is left, and an out edge within half a frame of the file's end
   takes the end itself). The no-snap role switches both snaps off. The row is drawn live over the cached lanes,
   so a timecode that changes with every frame of playback does not re-record them.
+- **The film's sound.** Import Video Audio (`video.import_audio`, `app_core_video_audio.rs`) is a third job of the
+  video worker (`Job::Audio`): it finds FFmpeg, probes the film, chooses the track (`atomik_video::pick_stream`: the
+  one asked for by its stream number, else the only one, else the job ends with the list and the shell opens a
+  pop-up of one row per track whose choice runs `video.import_audio_pick <stream>`, which starts the job again for
+  that track; no track is `VideoError::NoAudio`, and a film whose facts say it has none is refused before any
+  program starts), writes it with `extract_audio` (`audio_args`: `-map 0:N -vn -c:a pcm_s24le -rf64 auto -f wav`,
+  `-ac 2` only above two channels, no `-ar`, progress from `-progress pipe:1` read as `out_time_us` into the
+  job's counters, the file removed on a cancel, a failure or an empty result) into a temporary folder, hands the
+  WAV to the song's own `import_file` (decode, resample to the song's rate by the existing converter, store in the
+  bundle by hash with peaks) and deletes the folder. A cancel set before the import leaves no asset; one that
+  comes after the file is stored is too late and the sound is placed. The result reaches the UI thread as
+  `Done::audio`; the track, the clip and the link are added there as one undo step (`join_next` folds the clip and
+  the link into the step of the track), only for the project that started the job and the film that is still the
+  song's. File > Video > Import Audio with Video (`ui-state.json`: `video_import_audio`) chains the job after
+  Import Video.
+- **Aligning the sound.** `atomik_model::video_audio::placement` works in frames of the song's rate and is pure.
+  The probe gives each track its own `start_time_s`; the lead is `audio start - picture start` in microseconds
+  (`atomik_video::lead_us`; ffmpeg writes no silence for a late start, so the lead is the whole offset: checked
+  with a real file whose sound starts 0.5 s late). The track's first sample belongs at the song frame of
+  `film start + lead - trim in`; what is shown is the part inside the track and inside the trim from the song's
+  start; the clip starts on the first tick whose frame is at or after that and `source_offset` skips the
+  frames between, so the sample under the first frame plays on exactly that frame at any tempo; the length is
+  whole ticks that stop at the trim's out point (never past it) or cover the track to its end. A film before the
+  song's start, a track shorter than the film and a trim with no sound in it are handled (the last gives no
+  placement and the clip stays).
+- **Keep with video.** The link is `VideoClip::audio_link: Option<AudioLink { clip, lead_us, keep }>`, saved as
+  `"audio_link": {"clip", "lead_us", "keep"}` inside the `"video"` object (**still format 44**: the root field is
+  ignorable, so an older reader drops the whole film with its link; nothing new at the root). `Move`, `Trim` and
+  `Relink` (and `KeepAudio(true)`) plan the film's `Swap` and, when the link is kept and names a plain unwarped
+  audio clip of an asset at the song's rate, the clip's own edit (`SetAudioClip` planned and validated like any
+  other, fades and envelope clamped to the new length), as one `Edit::Compound`: one undo step, undone in reverse.
+  A drag merges the pairs (`Edit::merge_video`: the film and the clip each keep their first old and take the last
+  new value), so it stays one step. The clip is recomputed from the film's state, not moved by the delta, so a
+  tick rounding never accumulates. A clip that was deleted, warped or turned to another rate is skipped and the
+  film still moves; `VideoCommand::LinkAudio` sets or clears the link and `KeepAudio(bool)` turns the following off
+  and on (on lines the clip up again). `Command::Video` now also reports `SongChanged` when it moved a clip.
 - **Tests.** `crates/video` has unit tests for the version parser, the discovery order, the probe of an MP4/H.264,
   a ProRes MOV with a timecode, an MKV with two audio tracks, a silent film, a rotated variable-rate phone film
   and cover art, the argument lists, the frame splitter, the proxy index and random access, the cache key,
@@ -2706,8 +2743,12 @@ Without FFmpeg the video features are off and nothing else changes. This section
   old file) and a video op in `doc_sequences.rs`, and the frame snap arithmetic in `video_snap.rs`; the UI has
   `crates/ui/tests/video_row.rs` (slot layout per zoom, the frames asked for, the byte budget, the states painted,
   moves and trims with both snaps, Escape, Delete, no press taken from a track); the app has
-  `app_core_video_clip_tests.rs`, `app_core_video_thumbs_tests.rs` and the File > Video menu test, all with the
-  fake.
+  `app_core_video_clip_tests.rs`, `app_core_video_thumbs_tests.rs`, `app_core_video_audio_tests.rs` (the track
+  chosen, the rate converted, the start offsets, no audio, no FFmpeg, a failing FFmpeg, a stopped job leaving no
+  asset, keep with video through a move, a trim and the toggle, one undo step, the option of Import Video) and the
+  File > Video menu tests, all with the fake; the model has `crates/model/tests/video_audio.rs` (the sound moving
+  with the film to the sample at two tempos, one undo step, a drag merging, a trim, the lead, keep off and on, a
+  missing clip, the saved link) and the arithmetic tests of `video_audio.rs`.
 
 ## 3. Inside `Engine::render`
 
