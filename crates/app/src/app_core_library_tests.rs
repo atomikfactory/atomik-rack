@@ -1292,3 +1292,150 @@ fn delete_item_never_follows_a_linked_bundle_folder_out_of_the_library() {
     delete_item(&mut a, &dir.join("Kit.atomikpatch"));
     assert!(precious.is_file(), "a linked folder is left alone");
 }
+
+/// Saves one device of `type_id` named `name` as a patch and returns its path.
+fn one_device_patch(lib: &Tmp, type_id: &str, name: &str) -> PathBuf {
+    let mut a = core(lib);
+    add(&mut a, type_id, "a");
+    rename(&mut a, "a", name);
+    select(&mut a, &["a"]);
+    a.save_selection_to_library();
+    lib.path(&format!("Library/Patches/{name}.atomikpatch"))
+}
+
+fn armed(c: &AppCore<RecordingSink>, device: &str) -> bool {
+    c.doc().song.track(&key(device)).is_some_and(|t| t.armed)
+}
+
+fn instrument_key(c: &AppCore<RecordingSink>, name: &str) -> DeviceKey {
+    c.doc()
+        .devices
+        .iter()
+        .find(|d| d.name == name)
+        .expect("the device")
+        .key
+        .clone()
+}
+
+#[test]
+fn an_instrument_patch_dropped_on_the_rack_gets_an_armed_track_in_one_undo_step() {
+    let lib = Tmp::new("patch-track");
+    let path = one_device_patch(&lib, SYNTH, "Lead");
+    let mut c = core(&lib);
+    let before = save_project(c.doc());
+    let columns = c.doc().columns;
+    c.load_library_item(
+        &path,
+        LoadTarget::Rack {
+            container: None,
+            slot: RackSlot {
+                column: columns,
+                index: 0,
+            },
+        },
+    );
+    let lead = instrument_key(&c, "Lead");
+    assert_eq!(c.doc().song.tracks.len(), 1, "a song track");
+    assert!(armed(&c, &lead.0), "armed like a created instrument");
+    assert!(c.doc().console.channel_of(&lead).is_some(), "a mix channel");
+    assert!(c.undo(), "one undo step");
+    assert_eq!(save_project(c.doc()), before);
+    assert!(c.redo());
+    assert!(armed(&c, &lead.0));
+}
+
+#[test]
+fn a_loaded_patch_disarms_the_track_an_earlier_auto_arm_armed() {
+    let lib = Tmp::new("patch-disarm");
+    let path = one_device_patch(&lib, SYNTH, "Lead");
+    let mut c = core(&lib);
+    c.load_library_item(&device_uri(SYNTH), LoadTarget::Default);
+    let first = c.doc().song.tracks[0].device.clone();
+    assert!(armed(&c, &first.0));
+    c.load_library_item(&path, LoadTarget::Default);
+    assert_eq!(c.doc().song.tracks.len(), 2);
+    assert!(
+        !armed(&c, &first.0),
+        "the earlier auto-armed track is disarmed"
+    );
+    assert!(armed(&c, &instrument_key(&c, "Lead").0));
+    assert!(c.undo());
+    assert!(armed(&c, &first.0), "undo restores the arming too");
+    assert_eq!(c.doc().song.tracks.len(), 1);
+}
+
+#[test]
+fn a_loaded_instrument_patch_stays_unarmed_in_manual_rec() {
+    let lib = Tmp::new("patch-manual");
+    let path = one_device_patch(&lib, SYNTH, "Lead");
+    let mut c = core(&lib);
+    c.set_manual_rec(true);
+    c.load_library_item(&path, LoadTarget::Default);
+    assert_eq!(c.doc().song.tracks.len(), 1);
+    assert!(!armed(&c, &instrument_key(&c, "Lead").0));
+    assert!(c.undo());
+    assert!(c.doc().song.tracks.is_empty());
+}
+
+#[test]
+fn a_patch_of_two_instruments_gets_one_track_each() {
+    let lib = Tmp::new("patch-two");
+    let mut a = core(&lib);
+    add(&mut a, SYNTH, "a");
+    add(&mut a, SYNTH, "b");
+    select(&mut a, &["a", "b"]);
+    a.save_selection_to_library();
+    let path = lib.path("Library/Patches/Poly Synth+1.atomikpatch");
+    let mut c = core(&lib);
+    c.load_library_item(&path, LoadTarget::Default);
+    assert_eq!(c.doc().song.tracks.len(), 2);
+    assert_eq!(
+        c.doc().song.tracks.iter().filter(|t| t.armed).count(),
+        1,
+        "only the last one is armed, as creating two in a row leaves it"
+    );
+    assert!(c.undo());
+    assert!(c.doc().song.tracks.is_empty());
+}
+
+#[test]
+fn an_effect_patch_gets_no_track() {
+    let lib = Tmp::new("patch-effect");
+    let path = one_device_patch(&lib, DELAY, "Echo");
+    let mut c = core(&lib);
+    c.load_library_item(&path, LoadTarget::Default);
+    assert_eq!(type_count(&c, DELAY), 1);
+    assert!(c.doc().song.tracks.is_empty());
+}
+
+#[test]
+fn an_instrument_patch_dropped_into_a_container_slot_gets_no_track() {
+    let lib = Tmp::new("patch-in-box");
+    let path = one_device_patch(&lib, SYNTH, "Lead");
+    let mut c = core(&lib);
+    add(&mut c, "atomik.container", "box");
+    c.load_library_item(
+        &path,
+        LoadTarget::Rack {
+            container: Some(key("box")),
+            slot: RackSlot {
+                column: 0,
+                index: 0,
+            },
+        },
+    );
+    assert_eq!(c.doc().scope_devices(Some(&key("box"))).unwrap().len(), 1);
+    assert!(c.doc().song.tracks.is_empty());
+}
+
+#[test]
+fn replacing_an_instrument_with_a_patch_keeps_its_track() {
+    let lib = Tmp::new("patch-replace");
+    let path = one_device_patch(&lib, SYNTH, "Lead");
+    let mut c = core(&lib);
+    c.load_library_item(&device_uri(SYNTH), LoadTarget::Default);
+    let device = c.doc().song.tracks[0].device.clone();
+    c.load_library_item(&path, LoadTarget::Replace(device.clone()));
+    assert_eq!(c.doc().song.tracks.len(), 1, "no second track");
+    assert_eq!(c.doc().song.tracks[0].device, device);
+}
