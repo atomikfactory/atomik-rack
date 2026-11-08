@@ -9,6 +9,7 @@ use atomik_model::{
     notes_from_text, notes_to_text, points_from_text, points_to_text,
 };
 use common::audio::*;
+use common::plugin::*;
 use common::song::*;
 use common::*;
 
@@ -178,4 +179,33 @@ fn a_newer_project_text_is_refused_not_misread() {
     let newer = text.replacen("\"version\": 44", "\"version\": 9999", 1);
     let message = load_error(devices_from_text(&newer, &reg));
     assert!(message.contains("version"), "{message}");
+}
+
+#[test]
+fn a_plugin_device_keeps_its_id_and_loads_as_a_stand_in_where_it_is_missing() {
+    let installed = plugin_registry();
+    let mut d = atomik_model::Document::new(atomik_model::empty_doc());
+    run(
+        &mut d,
+        &installed,
+        [
+            add_plugin(0, &synth_ref(), &synth_layout(), Some("lead")),
+            sync_state("lead", b"chunk-of-state"),
+            set_pinned("lead", &[10]),
+        ],
+    );
+    let snapshot = DeviceSnapshot::capture(d.doc(), &[key("lead")], false).unwrap();
+    let text = devices_to_text(&snapshot, 48_000, 120.0);
+    let back = devices_from_text(&text, &registry()).expect("a missing plugin is a stand-in");
+    assert_eq!(
+        back.devices[0].plugin.as_ref().unwrap().id,
+        snapshot.devices[0].plugin.as_ref().unwrap().id
+    );
+    let (got, want) = (
+        back.devices[0].plugin.as_ref().unwrap(),
+        snapshot.devices[0].plugin.as_ref().unwrap(),
+    );
+    assert!(want.state.is_some(), "the fixture has a state chunk");
+    assert_eq!(got.state, want.state, "the state chunk travels");
+    assert_eq!(got.pinned, want.pinned);
 }
