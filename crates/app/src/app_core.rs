@@ -4055,6 +4055,10 @@ mod video;
 #[path = "app_core_video_clip.rs"]
 mod video_clip;
 
+#[path = "app_core_video_audio.rs"]
+mod video_audio;
+pub use video_audio::AudioChoice;
+
 #[path = "app_core_video_view.rs"]
 mod video_view;
 
@@ -4064,6 +4068,10 @@ mod video_thumbs;
 #[cfg(test)]
 #[path = "app_core_video_clip_tests.rs"]
 mod video_clip_tests;
+
+#[cfg(test)]
+#[path = "app_core_video_audio_tests.rs"]
+mod video_audio_tests;
 
 #[cfg(test)]
 #[path = "app_core_video_tests.rs"]

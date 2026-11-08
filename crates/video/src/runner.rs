@@ -87,6 +87,18 @@ pub trait VideoTool: Send + Sync {
     ) -> Result<Exit, VideoError>;
 }
 
+impl<T: VideoTool + ?Sized> VideoTool for std::sync::Arc<T> {
+    fn run(
+        &self,
+        exe: &Path,
+        args: &[OsString],
+        stdout: &mut dyn FnMut(&[u8]) -> bool,
+        cancel: &AtomicBool,
+    ) -> Result<Exit, VideoError> {
+        (**self).run(exe, args, stdout, cancel)
+    }
+}
+
 /// Runs a program to the end and returns its standard output as text, at most `limit` bytes.
 ///
 /// # Errors

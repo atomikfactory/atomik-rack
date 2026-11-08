@@ -128,9 +128,14 @@ pub struct AudioStream {
 }
 
 impl AudioStream {
-    /// The track as one line for a list: its number, channel layout, codec, language and title
+    /// The track as one line for a list: its number, then what [`AudioStream::describe`] says
     /// (`2: stereo aac, eng`).
     pub fn label(&self, number: usize) -> String {
+        format!("{number}: {}", self.describe())
+    }
+
+    /// The channel layout, codec, language and title (`stereo aac, eng, Commentary`).
+    pub fn describe(&self) -> String {
         let layout = match self.channels {
             0 => "no channels".to_owned(),
             1 => "mono".to_owned(),
@@ -139,7 +144,7 @@ impl AudioStream {
             8 => "7.1".to_owned(),
             n => format!("{n} channels"),
         };
-        let mut line = format!("{number}: {layout} {}", self.codec);
+        let mut line = format!("{layout} {}", self.codec);
         if let Some(language) = &self.language {
             line.push_str(", ");
             line.push_str(language);
