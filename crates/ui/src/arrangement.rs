@@ -6113,7 +6113,13 @@ impl ArrangementView {
     /// Selects `base` and the clips whose rectangles touch the band `a`-`b`.
     fn marquee_select(&mut self, a: Point, b: Point, base: &BTreeSet<ClipId>) {
         let picked = self.band_clips(a, b);
-        self.selection.set(base.iter().copied().chain(picked));
+        // A clip the selection held when the band began may be gone (an undo during the drag).
+        let song = &self.song;
+        let kept = base
+            .iter()
+            .copied()
+            .filter(|id| find_clip(song, *id).is_some());
+        self.selection.set(kept.chain(picked));
     }
 
     /// The clips whose rectangles touch the band `a`-`b`.
@@ -6199,7 +6205,11 @@ impl ArrangementView {
             Drag::Crossfade { open: true, .. } => {
                 out.push(UiAction::CrossfadeEnd { commit: false });
             }
-            Drag::Marquee { base, .. } => self.selection.set(base),
+            Drag::Marquee { base, .. } => {
+                let song = &self.song;
+                self.selection
+                    .set(base.into_iter().filter(|id| find_clip(song, *id).is_some()));
+            }
             Drag::Resize {
                 clip,
                 merge,
