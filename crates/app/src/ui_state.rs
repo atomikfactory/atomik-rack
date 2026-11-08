@@ -103,6 +103,8 @@ pub struct UiState {
     pub show_video_row: bool,
     /// The video row is collapsed to a thin bar. An absent key means open.
     pub video_row_collapsed: bool,
+    /// Import Video imports the film's audio too. An absent key means off.
+    pub video_import_audio: bool,
     /// The arrangement shows the marker strip under its ruler. An absent key in the file means
     /// shown.
     pub show_marker_strip: bool,
@@ -198,6 +200,7 @@ impl Default for UiState {
             show_energy_lane: false,
             show_video_row: true,
             video_row_collapsed: false,
+            video_import_audio: false,
             show_marker_strip: true,
             show_inspector: false,
             show_marker_list: false,
@@ -351,6 +354,7 @@ mod tests {
             show_energy_lane: true,
             show_video_row: false,
             video_row_collapsed: true,
+            video_import_audio: true,
             show_marker_strip: false,
             show_inspector: true,
             show_marker_list: true,
@@ -379,6 +383,10 @@ mod tests {
         assert!(!old.show_energy_lane, "an older file has no energy lane");
         assert!(old.show_video_row, "an older file shows the video row");
         assert!(!old.video_row_collapsed, "an older file has it open");
+        assert!(
+            !old.video_import_audio,
+            "an older file imports the film alone"
+        );
         assert!(
             old.show_marker_strip,
             "an older file shows the marker strip"

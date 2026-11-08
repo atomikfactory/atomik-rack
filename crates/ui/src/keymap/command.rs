@@ -2750,6 +2750,33 @@ const COMMANDS: &[CommandDef] = &[
     cmd("video.check_ffmpeg", "Check FFmpeg", G::Global, C::Global).menu(),
     cmd("video.import", "Import Video", G::Global, C::Global).menu(),
     cmd(
+        "video.import_audio",
+        "Import Video Audio",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "video.import_audio_pick",
+        "Pick Video Audio Track",
+        G::Global,
+        C::Global,
+    ),
+    cmd(
+        "video.import_with_audio",
+        "Import Audio with Video",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "video.keep_audio",
+        "Keep Audio with Video",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "video.move_to_playhead",
         "Move Video to Playhead",
         G::Global,

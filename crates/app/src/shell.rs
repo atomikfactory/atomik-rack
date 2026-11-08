@@ -860,6 +860,8 @@ impl<B: AudioBackend> Shell<B> {
             view.set_show_console_links(self.ui.show_console_links);
             view.set_navigator_visible(self.ui.show_rack_navigator);
         }
+        self.core
+            .set_import_audio_with_video(self.ui.video_import_audio);
         self.core.console_mut().set_link_faders(self.ui.link_faders);
         self.core.console_mut().set_meter_mode(self.ui.meter_mode);
         self.core.set_morph_seconds(self.ui.morph_seconds);
@@ -3693,6 +3695,9 @@ impl<B: AudioBackend> Shell<B> {
             archive_busy: self.core.archive_busy(),
             video_busy: self.core.video_busy(),
             video_clip: self.core.video_clip().is_some(),
+            video_audio: self.core.video_audio_kept().is_some(),
+            video_audio_keep: self.core.video_audio_kept() == Some(true),
+            video_import_audio: self.ui.video_import_audio,
             video_missing: self.core.video_missing(),
             collect_busy: self.core.collect_busy(),
             default_song: self.workflow.default_song.is_some(),
@@ -5821,6 +5826,13 @@ impl<B: AudioBackend> Shell<B> {
                 None => self.core.report("Select a MIDI Out device first"),
             },
             ("rack.midi_out_pick", Some(port)) => self.pick_midi_out_port(port),
+            ("video.import_audio_pick", Some(stream)) => match stream.parse::<u32>() {
+                // The core says why in a toast when it refuses.
+                Ok(stream) => {
+                    let _ = self.core.import_video_audio(Some(stream));
+                }
+                Err(_) => self.core.report("That is not an audio track of the video"),
+            },
             ("rack.blind_ab", None) => self.open_blind(),
             ("rack.toggle_match", None) => self.toggle_match_of_selection(),
             ("rack.mod_matrix", None) => match self.core.view().primary() {
@@ -6893,6 +6905,20 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// Opens the pop-up of the audio tracks of a film when Import Video Audio found several: one
+    /// row per track, a choice runs `video.import_audio_pick` (see
+    /// [`AppCore::take_video_audio_choice`]).
+    fn sync_video_ui(&mut self) {
+        let Some(choice) = self.core.take_video_audio_choice() else {
+            return;
+        };
+        let entries = context_menus::video_audio_entries(&choice.tracks);
+        let (window, size) = self.menu_window(Pane::Arrangement);
+        let at = Point::new(size.width * 0.5 - 140.0, size.height * 0.3);
+        let menu = ContextMenu::from_entries(entries, at, size);
+        self.show_context_menu(Pane::Arrangement, window, menu);
+    }
+
     /// Opens the project `path` now, or asks first when the rack has unsaved changes.
     fn open_project_request(&mut self, path: PathBuf) {
         // A save that is still writing decides whether there is anything unsaved.
@@ -7109,6 +7135,24 @@ impl<B: AudioBackend> Shell<B> {
                     self.notify("The song has no video".to_owned());
                     Vec::new()
                 }
+            }
+            AppCommand::ImportVideoAudio => {
+                // The core says why in a toast when it refuses.
+                let _ = self.core.import_video_audio(None);
+                self.repaint = true;
+                Vec::new()
+            }
+            AppCommand::ImportVideoWithAudio => {
+                self.ui.video_import_audio = !self.ui.video_import_audio;
+                self.core
+                    .set_import_audio_with_video(self.ui.video_import_audio);
+                self.ui_changed();
+                Vec::new()
+            }
+            AppCommand::KeepVideoAudio => {
+                self.core.toggle_keep_video_audio();
+                self.repaint = true;
+                Vec::new()
             }
             AppCommand::RemoveVideo => {
                 self.core.remove_video();
@@ -8539,6 +8583,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core.frame();
         self.sync_plugin_ui();
         self.sync_library_ui();
+        self.sync_video_ui();
         self.sync_relink();
         self.sync_export();
         self.sync_masking();

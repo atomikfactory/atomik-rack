@@ -1248,6 +1248,25 @@ pub fn midi_out_entries(ports: &[String], current: Option<&str>) -> Vec<Entry> {
     rows
 }
 
+/// The rows of the pop-up that asks which audio track of a film to import: one item per track,
+/// the line the track is described by, each running `video.import_audio_pick` with the track's
+/// stream number as its argument.
+pub fn video_audio_entries(tracks: &[(u32, String)]) -> Vec<Entry> {
+    tracks
+        .iter()
+        .map(|(stream, label)| {
+            Entry::Item(MenuItemDef {
+                command: "video.import_audio_pick".to_string(),
+                arg: Some(stream.to_string()),
+                label: label.clone(),
+                shortcut: None,
+                enabled: true,
+                checked: None,
+            })
+        })
+        .collect()
+}
+
 /// The rows of the pop-up on a patch name: one check item per patch (the current one checked)
 /// that runs `rack.patch_pick` with the patch file as its argument. For a bass instrument
 /// (`clean_up`) the first row is Clean Up Bass, and for a Mono Bass with a track (`split_sub`)
@@ -1517,6 +1536,38 @@ mod tests {
             midi_out: true,
             ..some
         }));
+    }
+
+    #[test]
+    fn the_video_audio_pop_up_has_one_row_per_track_with_its_stream_number() {
+        let rows: Vec<(String, String, String)> = video_audio_entries(&[
+            (1, "1: 5.1 opus, eng".to_owned()),
+            (4, "2: stereo aac".to_owned()),
+        ])
+        .into_iter()
+        .map(|e| match e {
+            Entry::Item(i) => {
+                assert!(i.enabled && i.checked.is_none());
+                (i.command, i.arg.unwrap(), i.label)
+            }
+            other => panic!("{other:?}"),
+        })
+        .collect();
+        assert_eq!(
+            rows,
+            [
+                (
+                    "video.import_audio_pick".to_owned(),
+                    "1".to_owned(),
+                    "1: 5.1 opus, eng".to_owned()
+                ),
+                (
+                    "video.import_audio_pick".to_owned(),
+                    "4".to_owned(),
+                    "2: stereo aac".to_owned()
+                ),
+            ]
+        );
     }
 
     #[test]

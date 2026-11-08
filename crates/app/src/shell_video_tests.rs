@@ -69,7 +69,7 @@ fn programs(t: &Tmp) -> PathBuf {
 }
 
 #[test]
-fn the_file_menu_has_a_video_submenu_with_the_three_commands() {
+fn the_file_menu_has_a_video_submenu_with_its_commands() {
     let t = Tmp::new("menu");
     let s = shell(&t, FakeTool::new());
     let video = s.menu_model()[0]
@@ -92,8 +92,11 @@ fn the_file_menu_has_a_video_submenu_with_the_three_commands() {
         rows,
         [
             ("Import Video\u{2026}".to_owned(), true),
+            ("Import Video Audio".to_owned(), false),
+            ("Import Audio with Video".to_owned(), true),
             ("Remove Video".to_owned(), false),
             ("Relink Video\u{2026}".to_owned(), false),
+            ("Keep Audio with Video".to_owned(), false),
             ("Move Video to Playhead".to_owned(), false),
             ("Trim Video Start to Playhead".to_owned(), false),
             ("Trim Video End to Playhead".to_owned(), false),
@@ -317,4 +320,123 @@ fn the_video_row_hides_collapses_and_is_remembered() {
     s.core.arrangement_mut().set_video_row_collapsed(false);
     s.save_zoom_state();
     assert!(!s.ui.video_row_collapsed);
+}
+
+fn wav(frames: usize) -> Vec<u8> {
+    atomik_video::fake::wav_pcm16(48_000, 2, &vec![100i16; frames * 2])
+}
+
+/// A shell whose song has the film `film.mp4` (imported through the fake) and FFmpeg set up.
+fn shell_with_film(t: &Tmp, tool: FakeTool) -> Shell<NullBackend> {
+    let mut s = shell(t, tool);
+    s.workflow.ffmpeg_folder = Some(programs(t));
+    s.apply_workflow_to_views();
+    let film = t.path("film.mp4");
+    std::fs::write(&film, b"pretend film").unwrap();
+    s.video_picked(VideoPick::Import, &film);
+    s.core_mut().wait_background();
+    assert!(s.core().video_clip().is_some());
+    s
+}
+
+#[test]
+fn import_video_audio_runs_from_the_menu_and_keep_audio_is_a_check_that_follows_the_link() {
+    let t = Tmp::new("audio");
+    let tool = FakeTool::new()
+        .frames((0..6).map(|i| tiny_jpeg(640, 360, i)).collect())
+        .audio(wav(48_000));
+    let mut s = shell_with_film(&t, tool);
+    let state = s.menu_state();
+    assert!(state.video_clip && !state.video_audio && !state.video_audio_keep);
+    assert!(s.execute(AppCommand::ImportVideoAudio).is_empty());
+    s.core_mut().wait_background();
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.starts_with("Imported the audio of film.mp4")),
+        "{:?}",
+        s.core().last_rejection()
+    );
+    let state = s.menu_state();
+    assert!(state.video_audio && state.video_audio_keep);
+    // Keep Audio with Video is a check in the menu, enabled with the link.
+    let keep = s.menu_model()[0]
+        .entries
+        .iter()
+        .find_map(|e| match e {
+            MenuEntry::Submenu(sub) if sub.label == "Video" => Some(sub.clone()),
+            _ => None,
+        })
+        .unwrap()
+        .items()
+        .find(|i| i.command == AppCommand::KeepVideoAudio)
+        .cloned()
+        .unwrap();
+    assert!(keep.enabled && keep.checked == Some(true));
+    s.execute(AppCommand::KeepVideoAudio);
+    assert!(!s.menu_state().video_audio_keep);
+    s.execute(AppCommand::KeepVideoAudio);
+    assert!(s.menu_state().video_audio_keep);
+}
+
+#[test]
+fn import_video_audio_without_a_film_says_so_and_the_option_is_remembered() {
+    let t = Tmp::new("audio-none");
+    let mut s = shell(&t, FakeTool::new());
+    assert!(s.execute(AppCommand::ImportVideoAudio).is_empty());
+    assert_eq!(s.core().last_rejection(), Some("The song has no video"));
+    s.execute(AppCommand::KeepVideoAudio);
+    assert_eq!(
+        s.core().last_rejection(),
+        Some("The song has no imported video audio")
+    );
+    // Import Audio with Video is a check, kept in the window state and handed to the core.
+    assert!(!s.ui.video_import_audio && !s.core().import_audio_with_video());
+    s.execute(AppCommand::ImportVideoWithAudio);
+    assert!(s.ui.video_import_audio && s.core().import_audio_with_video());
+    assert!(s.menu_state().video_import_audio);
+    s.execute(AppCommand::ImportVideoWithAudio);
+    assert!(!s.ui.video_import_audio && !s.core().import_audio_with_video());
+}
+
+#[test]
+fn a_film_with_several_audio_tracks_opens_a_pop_up_and_the_choice_imports_that_track() {
+    let t = Tmp::new("audio-choose");
+    let tool = FakeTool::new()
+        .probe(atomik_video::samples::MKV_HEVC)
+        .frames((0..6).map(|i| tiny_jpeg(640, 360, i)).collect())
+        .audio(wav(48_000));
+    let mut s = shell_with_film(&t, tool);
+    assert!(s.context_menu().is_none());
+    s.execute(AppCommand::ImportVideoAudio);
+    s.core_mut().wait_background();
+    // The next frame shows the tracks, and nothing was imported yet.
+    s.frame();
+    let menu = s.context_menu().expect("the pop-up of the audio tracks");
+    let rows: Vec<&str> = menu.items().map(|i| i.label.as_str()).collect();
+    assert_eq!(
+        rows,
+        [
+            "1: 5.1 opus, eng, Surround",
+            "2: stereo opus, fre, Stereo (Francais)"
+        ]
+    );
+    assert!(s.core().doc().song.tracks.is_empty());
+    // Choosing a row runs the pick command, which imports that track.
+    s.run_command("video.import_audio_pick", Some("2"));
+    s.core_mut().wait_background();
+    assert_eq!(s.core().doc().song.tracks.len(), 1);
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.contains("stereo opus")),
+        "{:?}",
+        s.core().last_rejection()
+    );
+    // A bad argument is a message.
+    s.run_command("video.import_audio_pick", Some("two"));
+    assert_eq!(
+        s.core().last_rejection(),
+        Some("That is not an audio track of the video")
+    );
 }
