@@ -773,3 +773,38 @@ fn the_picker_colours_a_folder_from_the_folder_menu_item() {
     assert_eq!(song.shown_color(&key("a")), Some([0xab, 0xcd, 0xef]));
     assert_eq!(song.track_color(&key("a")), None);
 }
+
+#[test]
+fn a_context_submenu_opens_at_once_and_a_switch_wakes_the_loop_at_its_deadline() {
+    use atomik_ui::context_menu::SUBMENU_DELAY;
+    let mut s = shell();
+    let at = header(&s, "b");
+    press(&mut s, at, PointerButton::Secondary, Modifiers::NONE);
+    let hover = |s: &mut Shell<NullBackend>, p: Point| {
+        s.handle(&UiEvent::PointerMove {
+            pos: p,
+            modifiers: Modifiers::NONE,
+        });
+    };
+    let colour = s.context_menu().unwrap().submenu_center("Colour").unwrap();
+    hover(&mut s, colour);
+    assert_eq!(s.context_menu().unwrap().open_path(), ["Colour"]);
+    assert!(!s.context_menu_pending(), "nothing to wait for");
+    assert_eq!(s.context_menu_wake(), None);
+    // Another submenu row: the loop is asked for a frame, then for one wake-up at the deadline.
+    let height = s.context_menu().unwrap().submenu_center("Height").unwrap();
+    hover(&mut s, height);
+    assert_eq!(s.context_menu().unwrap().open_path(), ["Colour"]);
+    assert!(s.context_menu_pending());
+    s.frame_at(40.0);
+    assert!(!s.context_menu_pending(), "it sleeps until the deadline");
+    let due = s.context_menu_wake().unwrap();
+    assert!((due - (40.0 + SUBMENU_DELAY)).abs() < 1e-9);
+    s.frame_at(due - 0.01);
+    assert_eq!(s.context_menu().unwrap().open_path(), ["Colour"]);
+    s.frame_at(due);
+    assert_eq!(s.context_menu().unwrap().open_path(), ["Height"]);
+    assert!(s.needs_repaint());
+    assert_eq!(s.context_menu_wake(), None);
+    s.close_context_menu();
+}

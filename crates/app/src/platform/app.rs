@@ -1846,7 +1846,16 @@ impl ApplicationHandler for App {
             plugins: songs.iter().any(|s| s.core().plugin_instance_count() > 0),
         };
         let mut deadline = window_logic::wake_after(wakers, FRAME).map(|d| now + d);
-        for t in [self.quit_at, self.screenshot_at].into_iter().flatten() {
+        // A submenu switch waits for its deadline: wake exactly then.
+        let menu_wake = songs
+            .iter()
+            .filter_map(|s| s.context_menu_wake())
+            .reduce(f64::min)
+            .map(|t| self.epoch + Duration::from_secs_f64(t.max(0.0)));
+        for t in [self.quit_at, self.screenshot_at, menu_wake]
+            .into_iter()
+            .flatten()
+        {
             deadline = Some(deadline.map_or(t, |d| d.min(t)));
         }
         event_loop.set_control_flow(match deadline {
