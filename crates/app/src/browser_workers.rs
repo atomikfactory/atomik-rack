@@ -17,7 +17,9 @@
 //! [`split_devices`] takes it out before any lookup, and the probe and stat functions skip it
 //! again.
 
-use atomik_audio_file::{Bundle, StreamDecoder, overview_levels, probe_file, read_file_meta};
+use atomik_audio_file::{
+    Bundle, StreamDecoder, overview_levels, overview_peaks, probe_file, read_file_meta,
+};
 use atomik_engine::PreviewFeed;
 use atomik_library::{
     AudioInfo, FileKind, FileRow, ItemInfo, LibrarySection, classify, device_type_of, natural_cmp,
@@ -120,6 +122,7 @@ pub(crate) enum BrowseMsg {
         path: PathBuf,
         tempo: Option<f64>,
         levels: Vec<f32>,
+        peaks: Vec<[f32; 2]>,
     },
     /// The waveform thumbnail of an audio row: levels from 0 to 255 (empty when the file could
     /// not be read) and the file size they were read at.
@@ -718,18 +721,76 @@ fn finish_requests(tx: &Sender<BrowseMsg>, requests: &mut usize) -> bool {
 
 /// The frames of a file the loudness picture reads at most (ten minutes at 48 kHz).
 pub(crate) const DETAIL_MAX_FRAMES: u64 = 48_000 * 600;
-/// Parts of the loudness picture.
-pub(crate) const DETAIL_BUCKETS: usize = 480;
+/// Columns of the waveform picture: twice the widest info pane at 1x, so a 2x display still has
+/// a sample column per device pixel. A short file has fewer (one per frame at the least).
+pub(crate) const DETAIL_BUCKETS: usize = 1_024;
+/// Pictures the detail worker keeps, so selecting a file again is instant.
+const DETAIL_CACHE: usize = 24;
 
-/// The tempo a file states and its loudness picture; the picture is empty for a file that
+/// What the info pane shows of a file: its stated tempo, the loudness envelope (0 to 1) and
+/// the low and high sample value of each column.
+pub(crate) type DetailRead = (Option<f64>, Vec<f32>, Vec<[f32; 2]>);
+
+/// The tempo a file states and its waveform picture; the picture is empty for a file that
 /// cannot be decoded.
-pub(crate) fn detail_of(path: &Path) -> (Option<f64>, Vec<f32>) {
+pub(crate) fn detail_of(path: &Path) -> DetailRead {
     let tempo = read_file_meta(path).tempo_bpm;
-    let levels = overview_levels(path, DETAIL_BUCKETS, DETAIL_MAX_FRAMES).unwrap_or_default();
-    (tempo, levels)
+    let peaks: Vec<[f32; 2]> = overview_peaks(path, DETAIL_BUCKETS, DETAIL_MAX_FRAMES)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(lo, hi)| [lo, hi])
+        .collect();
+    let levels = peaks.iter().map(|[lo, hi]| lo.abs().max(*hi)).collect();
+    (tempo, levels, peaks)
+}
+
+/// Pictures read so far, keyed by file and the size and modification time they were read at.
+type DetailKey = (PathBuf, u64, Option<std::time::SystemTime>);
+
+fn detail_key(path: &Path) -> DetailKey {
+    let meta = std::fs::metadata(path).ok();
+    (
+        path.to_path_buf(),
+        meta.as_ref().map_or(0, std::fs::Metadata::len),
+        meta.and_then(|m| m.modified().ok()),
+    )
+}
+
+/// The pictures the detail worker has read, newest last.
+#[derive(Default)]
+pub(crate) struct DetailCache {
+    entries: VecDeque<(DetailKey, DetailRead)>,
+}
+
+impl DetailCache {
+    /// The picture of `path`: the kept one when the file is as it was, else `read` (and a
+    /// picture that came out is kept).
+    pub(crate) fn get_or_read(
+        &mut self,
+        path: &Path,
+        read: impl FnOnce(&Path) -> DetailRead,
+    ) -> DetailRead {
+        let key = detail_key(path);
+        if let Some(at) = self.entries.iter().position(|(k, _)| *k == key)
+            && let Some(entry) = self.entries.remove(at)
+        {
+            let picture = entry.1.clone();
+            self.entries.push_back(entry);
+            return picture;
+        }
+        let picture = read(path);
+        if !picture.2.is_empty() {
+            self.entries.push_back((key, picture.clone()));
+            if self.entries.len() > DETAIL_CACHE {
+                self.entries.pop_front();
+            }
+        }
+        picture
+    }
 }
 
 fn detail_thread(rx: &Receiver<PathBuf>, tx: &Sender<BrowseMsg>) {
+    let mut cache = DetailCache::default();
     while let Ok(mut path) = rx.recv() {
         // Only the newest request is worth reading: the pane follows the selection.
         let mut requests = 1usize;
@@ -737,13 +798,14 @@ fn detail_thread(rx: &Receiver<PathBuf>, tx: &Sender<BrowseMsg>) {
             path = newer;
             requests += 1;
         }
-        let read = catch_unwind(AssertUnwindSafe(|| detail_of(&path)));
-        if let Ok((tempo, levels)) = read
+        let read = catch_unwind(AssertUnwindSafe(|| cache.get_or_read(&path, detail_of)));
+        if let Ok((tempo, levels, peaks)) = read
             && tx
                 .send(BrowseMsg::Detail {
                     path,
                     tempo,
                     levels,
+                    peaks,
                 })
                 .is_err()
         {

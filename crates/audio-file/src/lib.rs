@@ -47,7 +47,7 @@ pub use instrument::{
     read_instrument,
 };
 pub use meta::{FileMeta, parse_meta, read_file_meta};
-pub use overview::overview_levels;
+pub use overview::{overview_levels, overview_peaks};
 pub use peaks::{FINEST_PEAK_FRAMES, PEAK_LEVELS, PeakPyramid, Peaks, compute_peaks, raw_min_max};
 pub use relocate::{RetireReport, retire_old_project, verify_copy};
 pub use resample::{resample, resample_owned};

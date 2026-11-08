@@ -468,12 +468,35 @@ pub(super) fn level_at(levels: &[f32], x: usize, columns: usize) -> f32 {
         .fold(0.0, f32::max)
 }
 
+/// The lowest and highest sample value of picture column `x` of `columns` in `peaks` (the
+/// range every part the column covers spans; flat for an empty picture).
+pub(super) fn peak_at(peaks: &[[f32; 2]], x: usize, columns: usize) -> [f32; 2] {
+    if peaks.is_empty() || columns == 0 {
+        return [0.0, 0.0];
+    }
+    let from = x * peaks.len() / columns;
+    let to = ((x + 1) * peaks.len() / columns).clamp(from + 1, peaks.len());
+    peaks[from.min(peaks.len() - 1)..to]
+        .iter()
+        .fold([0.0f32, 0.0f32], |[lo, hi], p| [lo.min(p[0]), hi.max(p[1])])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn bounds(w: f64, h: f64) -> Rect {
         Rect::new(10.0, 20.0, 10.0 + w, 20.0 + h)
+    }
+
+    #[test]
+    fn peak_columns_span_the_parts_they_cover_and_stretch_when_there_are_few() {
+        let peaks = [[-0.1, 0.2], [-0.6, 0.1], [0.0, 0.9], [-0.2, 0.0]];
+        assert_eq!(peak_at(&peaks, 0, 2), [-0.6, 0.2]);
+        assert_eq!(peak_at(&peaks, 1, 2), [-0.2, 0.9]);
+        assert_eq!(peak_at(&peaks, 5, 8), [0.0, 0.9]);
+        assert_eq!(peak_at(&peaks, 0, 0), [0.0, 0.0]);
+        assert_eq!(peak_at(&[], 3, 8), [0.0, 0.0]);
     }
 
     #[test]

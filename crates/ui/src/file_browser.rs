@@ -104,6 +104,9 @@ pub struct DetailData {
     pub tempo: Option<f64>,
     /// The loudness picture: one level from 0 to 1 per equal part of the file, in time order.
     pub levels: Vec<f32>,
+    /// The waveform picture: the lowest and highest sample value of each equal part of the
+    /// file, in time order. When empty the pane draws `levels` mirrored round the middle.
+    pub peaks: Vec<[f32; 2]>,
 }
 
 /// A sub-folder in the tree (see [`FileBrowserView::set_children`]).

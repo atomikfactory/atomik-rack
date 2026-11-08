@@ -73,6 +73,80 @@ fn fold(blocks: &[f32], buckets: usize) -> Vec<f32> {
         .collect()
 }
 
+/// Most blocks the peak pass keeps when the file does not state its length.
+const PEAK_MAX_BLOCKS: usize = 200_000;
+/// Frames per block of the peak pass when the file does not state its length.
+const PEAK_UNKNOWN_BLOCK: usize = 1_024;
+
+/// The lowest and highest sample value (all channels together) of each of `buckets` equal
+/// parts of the file's first `max_frames` frames, in time order: what a waveform picture
+/// `buckets` columns wide draws. A file whose length is stated is split exactly, so a short
+/// file gives one bucket per requested column (or one per frame when it has fewer frames than
+/// columns); a file of unknown length is read in fixed blocks that are folded afterwards. A
+/// silent file gives `(0, 0)` buckets, an empty one an empty list. Memory stays bounded
+/// whatever the length: the read stops at `max_frames`.
+///
+/// # Errors
+/// The file cannot be opened or decoded from the start.
+pub fn overview_peaks(path: &Path, buckets: usize, max_frames: u64) -> Result<Vec<(f32, f32)>> {
+    let mut decoder = StreamDecoder::open(path)?;
+    let known = decoder.info().frames.map(|f| f.min(max_frames));
+    let block = match known {
+        Some(frames) if buckets > 0 => (frames as usize).div_ceil(buckets).max(1),
+        _ => PEAK_UNKNOWN_BLOCK,
+    };
+    let mut blocks: Vec<(f32, f32)> = Vec::new();
+    let (mut lo, mut hi) = (0.0f32, 0.0f32);
+    let mut in_block = 0usize;
+    let mut frames = 0u64;
+    'read: while let Some(chunk) = decoder.next_chunk(block.clamp(256, 8_192))? {
+        let len = chunk.first().map_or(0, Vec::len);
+        for i in 0..len {
+            if frames >= max_frames {
+                break 'read;
+            }
+            for channel in &chunk {
+                let v = channel[i];
+                if v.is_finite() {
+                    lo = lo.min(v.max(-1.0));
+                    hi = hi.max(v.min(1.0));
+                }
+            }
+            in_block += 1;
+            frames += 1;
+            if in_block == block {
+                blocks.push((lo, hi));
+                (lo, hi) = (0.0, 0.0);
+                in_block = 0;
+                if blocks.len() == PEAK_MAX_BLOCKS {
+                    break 'read;
+                }
+            }
+        }
+    }
+    if in_block > 0 {
+        blocks.push((lo, hi));
+    }
+    Ok(fold_peaks(&blocks, buckets))
+}
+
+/// `blocks` folded into at most `buckets` ranges, each spanning its share of the blocks.
+fn fold_peaks(blocks: &[(f32, f32)], buckets: usize) -> Vec<(f32, f32)> {
+    if blocks.is_empty() || buckets == 0 {
+        return Vec::new();
+    }
+    let parts = buckets.min(blocks.len());
+    (0..parts)
+        .map(|k| {
+            let from = k * blocks.len() / parts;
+            let to = ((k + 1) * blocks.len() / parts).max(from + 1);
+            blocks[from..to]
+                .iter()
+                .fold((0.0f32, 0.0f32), |(lo, hi), &(l, h)| (lo.min(l), hi.max(h)))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,6 +191,73 @@ mod tests {
         let cut = overview_levels(&path, 20, (frames / 2) as u64).unwrap();
         assert!(cut.iter().all(|l| *l < 0.5), "{cut:?}");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_short_file_gives_one_peak_bucket_per_requested_column() {
+        // Half a second at 48 kHz, asked for 1000 columns: every column is real data.
+        let frames = 24_000;
+        let left: Vec<f32> = (0..frames).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
+        let path = scratch("short-peaks");
+        write_wav_f32(&path, &AudioData::new(48_000, vec![left]).unwrap()).unwrap();
+        let peaks = overview_peaks(&path, 1_000, u64::MAX).unwrap();
+        assert_eq!(peaks.len(), 1_000);
+        assert!(
+            peaks
+                .iter()
+                .all(|(lo, hi)| lo <= hi && *hi <= 0.5001 && *lo >= -0.5001)
+        );
+        assert!(peaks.iter().any(|(_, hi)| *hi > 0.45) && peaks.iter().any(|(lo, _)| *lo < -0.45));
+        // Fewer frames than columns: one bucket per frame, never an empty one.
+        let tiny = scratch("tiny-peaks");
+        write_wav_f32(&tiny, &AudioData::new(48_000, vec![vec![0.25; 7]]).unwrap()).unwrap();
+        assert_eq!(overview_peaks(&tiny, 1_000, u64::MAX).unwrap().len(), 7);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&tiny);
+    }
+
+    #[test]
+    fn peaks_find_an_impulse_in_its_own_column_and_merge_the_channels() {
+        let mut left = vec![0.0f32; 1_000];
+        let mut right = vec![0.0f32; 1_000];
+        left[250] = 0.75;
+        right[750] = -0.5;
+        let path = scratch("impulse-peaks");
+        write_wav_f32(&path, &AudioData::new(48_000, vec![left, right]).unwrap()).unwrap();
+        let peaks = overview_peaks(&path, 10, u64::MAX).unwrap();
+        assert_eq!(peaks.len(), 10);
+        for (k, (lo, hi)) in peaks.iter().enumerate() {
+            let want_hi = if k == 2 { 0.75 } else { 0.0 };
+            let want_lo = if k == 7 { -0.5 } else { 0.0 };
+            assert!(
+                (hi - want_hi).abs() < 1e-6 && (lo - want_lo).abs() < 1e-6,
+                "{k}: {peaks:?}"
+            );
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_peak_read_stops_at_the_frame_limit() {
+        let mut left = vec![0.1f32; 20_000];
+        for s in left.iter_mut().skip(10_000) {
+            *s = 0.9;
+        }
+        let path = scratch("limit-peaks");
+        write_wav_f32(&path, &AudioData::new(48_000, vec![left]).unwrap()).unwrap();
+        let cut = overview_peaks(&path, 50, 10_000).unwrap();
+        assert_eq!(cut.len(), 50);
+        assert!(cut.iter().all(|(_, hi)| *hi < 0.5), "{cut:?}");
+        assert!(overview_peaks(&path, 0, 10_000).unwrap().is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn folding_peaks_spans_each_part() {
+        let blocks = [(-0.1, 0.2), (-0.5, 0.1), (0.0, 0.9), (-0.2, 0.0)];
+        assert_eq!(fold_peaks(&blocks, 2), vec![(-0.5, 0.2), (-0.2, 0.9)]);
+        assert_eq!(fold_peaks(&blocks[..1], 8).len(), 1);
+        assert!(fold_peaks(&[], 4).is_empty());
     }
 
     #[test]

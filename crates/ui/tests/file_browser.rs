@@ -2427,6 +2427,7 @@ fn the_info_pane_follows_the_one_selected_file_and_asks_for_its_detail_once() {
         DetailData {
             tempo: Some(93.5),
             levels: vec![0.2, 0.9, 0.5],
+            peaks: Vec::new(),
         },
     );
     let with = paint(&mut v);
@@ -2527,10 +2528,34 @@ fn golden_info_pane() {
         DetailData {
             tempo: Some(120.0),
             levels: (0..40).map(|i| (i as f32 * 0.7).sin().abs()).collect(),
+            peaks: Vec::new(),
         },
     );
     v.set_preview(Some(p("kick 1.wav")), 0.25);
     check_golden("file_browser_info_pane_1x.json", &paint(&mut v).to_json());
+}
+
+#[test]
+fn golden_info_pane_peaks() {
+    let mut v = golden_view(300.0);
+    click(&mut v, 3);
+    v.set_detail(
+        p("kick 1.wav"),
+        DetailData {
+            tempo: None,
+            levels: Vec::new(),
+            peaks: (0..120)
+                .map(|i| {
+                    let a = (i as f32 * 0.21).sin().abs() * 0.8;
+                    [-a * 0.6, a]
+                })
+                .collect(),
+        },
+    );
+    check_golden(
+        "file_browser_info_pane_peaks_1x.json",
+        &paint(&mut v).to_json(),
+    );
 }
 
 #[test]

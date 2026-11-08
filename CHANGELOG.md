@@ -1109,6 +1109,11 @@ may break APIs and the patch and project formats.
   are ignored.
 
 ### Fixed
+- **The browser's sample waveform** is drawn at full quality. The info pane read at most 480 coarse blocks of 4096
+  frames, so a short one-shot showed a handful of wide bars. The picture is now read per column (the lowest and highest
+  sample of each part, every frame read for a short file), up to 1024 columns, and drawn as a filled shape with two
+  columns per logical pixel. Selecting a file again answers from a cache keyed by file, size and modification time.
+  Clip waveforms in the arrangement and the saved peak cache are unchanged.
 - **Quit > Save** no longer asks again and again. A project whose undo history still held an audio file that no clip
   used any more (a deleted clip, say) was saved without that file in its pool but compared against a pool that kept it,
   so it looked changed right after the save. The saved state now matches the live state, and once a Save in the quit or
