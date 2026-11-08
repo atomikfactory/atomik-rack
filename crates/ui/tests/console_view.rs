@@ -354,22 +354,25 @@ fn add_channel_lists_instruments_without_a_channel() {
     let (doc, reg, mut v) = setup();
     let b = v.button_center(ConsoleButton::AddChannel).unwrap();
     assert!(click(&mut v, &doc, &reg, b).is_empty());
-    assert_eq!(v.menu_items(), ["Pad"]);
-    let row = v.menu_row_center(0).unwrap();
+    assert_eq!(v.menu_items(), ["Empty Mix Channel", "Pad"]);
+    let row = v.menu_row_center(1).unwrap();
     let a = click(&mut v, &doc, &reg, row);
     assert_eq!(
         console_cmds(&a),
         [ConsoleCommand::AddChannel { source: key("pad") }]
     );
     assert!(v.menu_items().is_empty(), "the menu closes");
-    // With every instrument on a channel, the menu says so and does nothing.
+    // With every instrument on a channel, the empty channel is still on offer, and picking it
+    // asks the app to add one.
     let mut doc2 = doc.clone();
     doc2.console.channels.push(chan("ch-pad", Some("pad")));
     v.sync(&doc2, &reg);
     click(&mut v, &doc2, &reg, b);
-    assert_eq!(v.menu_items().len(), 1);
+    assert_eq!(v.menu_items(), ["Empty Mix Channel"]);
     let row = v.menu_row_center(0).unwrap();
-    assert!(click(&mut v, &doc2, &reg, row).is_empty());
+    let a = click(&mut v, &doc2, &reg, row);
+    assert!(matches!(a.as_slice(), [UiAction::AddEmptyChannel]), "{a:?}");
+    assert!(v.menu_items().is_empty(), "the menu closes");
     // Escape closes a menu.
     click(&mut v, &doc, &reg, b);
     v.handle(&key_event(Key::Escape, Modifiers::NONE), &doc, &reg);

@@ -342,6 +342,8 @@ fn colour_rect(name: Rect) -> Rect {
 
 #[derive(Debug, Clone, PartialEq)]
 enum MenuItem {
+    /// "Empty Mix Channel" of the add-channel picker: a channel with no source.
+    EmptyChannel,
     Source(DeviceKey),
     Effect(Option<DeviceKey>),
     /// A new effect device of this type (insert menu).
@@ -3139,24 +3141,24 @@ impl ConsoleView {
     }
 
     fn open_add_menu(&mut self, pos: Point, doc: &RackDoc, registry: &Registry) {
-        let mut items: Vec<(String, MenuItem)> = doc
-            .devices
-            .iter()
-            .filter(|d| {
-                registry
-                    .get(&d.type_id)
-                    .is_some_and(|f| f.descriptor.kind == DeviceKind::Instrument)
-                    && !doc
-                        .console
-                        .channels
-                        .iter()
-                        .any(|c| c.source.as_ref() == Some(&d.key))
-            })
-            .map(|d| (d.name.clone(), MenuItem::Source(d.key.clone())))
-            .collect();
-        if items.is_empty() {
-            items.push(("Every instrument has a channel".into(), MenuItem::Disabled));
-        }
+        // The empty channel is always on offer, so the picker never has nothing to add.
+        let mut items: Vec<(String, MenuItem)> =
+            vec![("Empty Mix Channel".into(), MenuItem::EmptyChannel)];
+        items.extend(
+            doc.devices
+                .iter()
+                .filter(|d| {
+                    registry
+                        .get(&d.type_id)
+                        .is_some_and(|f| f.descriptor.kind == DeviceKind::Instrument)
+                        && !doc
+                            .console
+                            .channels
+                            .iter()
+                            .any(|c| c.source.as_ref() == Some(&d.key))
+                })
+                .map(|d| (d.name.clone(), MenuItem::Source(d.key.clone()))),
+        );
         let origin = self.menu_origin(Point::new(pos.x, self.area_top()), items.len());
         self.menu = Some(Menu {
             slot: None,
@@ -3305,6 +3307,11 @@ impl ConsoleView {
             return;
         }
         // A group's lanes live on the master's automation track.
+        if item == MenuItem::EmptyChannel {
+            self.menu = None;
+            out.push(UiAction::AddEmptyChannel);
+            return;
+        }
         if let MenuItem::VcaLane(vca, kind, add) = &item {
             if let Some(device) = self.master.as_ref().map(|m| m.key.clone()) {
                 let param = atomik_model::vca_lane_key_of(*vca, *kind);
