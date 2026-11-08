@@ -649,8 +649,7 @@ impl<S: EngineSink> AppCore<S> {
     pub fn show_touched_lane(&mut self) -> bool {
         let selected = self
             .view
-            .selected()
-            .cloned()
+            .selected_path()
             .or_else(|| self.arrangement.selected_track().cloned());
         let Some(device) = selected else {
             self.report("Select a device first, and touch one of its controls");
@@ -671,8 +670,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         let selected = self
             .view
-            .selected()
-            .cloned()
+            .selected_path()
             .or_else(|| self.arrangement.selected_track().cloned());
         if selected == self.macros.selection_seen {
             return;

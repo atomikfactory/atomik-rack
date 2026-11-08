@@ -2904,7 +2904,8 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Where live MIDI notes go. In Separated master keyboard mode: the track chosen with its
     /// header arrow, while it has a notes input. Otherwise, with record-armed tracks: the
-    /// selected device if it is armed, else the first armed track's device (an armed track
+    /// selected device (or the container it is inside) if it is armed, else the track selected
+    /// in the arrangement if it is armed, else the first armed track's device (an armed track
     /// receives the keyboard). Otherwise the selected device's first notes input if it has
     /// one, else the first device in rack order with a notes input.
     pub fn notes_target(&self) -> Option<Target> {
@@ -2914,17 +2915,29 @@ impl<S: EngineSink> AppCore<S> {
         {
             return Some(target);
         }
-        let selected = self.view.selected();
+        // What is selected may sit inside a container (a view-local key there): the track it
+        // belongs to is the outermost device of its path, so tweaking an inner device keeps the
+        // keyboard on the armed track that was playing.
+        let selected_path = self.view.selected_path();
+        let owner = selected_path.as_ref().map(|k| doc.owner_device(k));
+        let selected = owner.as_ref();
         let mut armed = doc.song.tracks.iter().filter(|t| t.armed);
         if let Some(first) = armed.next() {
+            // A selection that is no armed track (an effect, a device inside a container, an
+            // empty rack scope) leaves the keyboard on the track selected in the arrangement
+            // while that one is armed, never on "the first armed track" it happens to be.
+            let is_armed = |k: &&DeviceKey| doc.song.track(k).is_some_and(|t| t.armed);
             let pick = selected
-                .filter(|k| doc.song.track(k).is_some_and(|t| t.armed))
+                .filter(is_armed)
+                .or_else(|| self.arrangement.selected_track().filter(is_armed))
                 .unwrap_or(&first.device);
             if let Some(target) = self.target_of(pick) {
                 return Some(target);
             }
         }
-        selected
+        // With no armed track the selected device itself plays, inner devices directly.
+        selected_path
+            .as_ref()
             .and_then(|k| self.target_of(k))
             .or_else(|| doc.devices.iter().find_map(|d| self.target_of(&d.key)))
     }

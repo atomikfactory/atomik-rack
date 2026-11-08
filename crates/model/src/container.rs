@@ -400,6 +400,13 @@ impl RackDoc {
         find_relative(&self.devices, &key.0)
     }
 
+    /// The top-level device that owns `key`: the first segment of a path key (`layer/synth` is
+    /// owned by `layer`), the key itself for a top-level device. An inner device has no track or
+    /// channel of its own; its container's are the ones it belongs to.
+    pub fn owner_device(&self, key: &DeviceKey) -> DeviceKey {
+        DeviceKey(key.0.split('/').next().unwrap_or(&key.0).to_string())
+    }
+
     /// Mutable [`RackDoc::resolve`].
     pub fn resolve_mut(&mut self, key: &DeviceKey) -> Option<&mut RackDevice> {
         find_relative_mut(&mut self.devices, &key.0)
