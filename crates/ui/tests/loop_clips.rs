@@ -12,7 +12,7 @@ use atomik_model::{
 use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::timeline::Snap;
-use atomik_ui::{ArrangementView, DisplayList, Key, Modifiers, UiAction, UiEvent};
+use atomik_ui::{ArrangementView, DisplayList, Key, Modifiers, Op, UiAction, UiEvent};
 use std::path::PathBuf;
 use support::audio::*;
 use support::song::*;
@@ -527,4 +527,66 @@ fn the_set_clip_meta_command_is_a_song_command() {
         color: MetaChange::Keep,
     });
     assert!(matches!(c, Command::Song(SongCommand::SetClipMeta { .. })));
+}
+
+/// The drawing ops of the waveform of clip 10 whose boxes lie inside the x range `[x0, x1]`
+/// and below the clip header.
+fn wave_ops_between(v: &mut ArrangementView, d: &Document, reg: &Registry, x: (f64, f64)) -> usize {
+    let r = v.clip_rect(ClipId(10)).unwrap();
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), reg);
+    dl.ops()
+        .iter()
+        .filter_map(|op| match op {
+            Op::Fill { shape, .. } | Op::Stroke { shape, .. } => Some(shape.bounding_box()),
+            _ => None,
+        })
+        .filter(|b| {
+            b.x0 >= x.0
+                && b.x1 <= x.1
+                && b.y0 > r.y0 + HEADER + 2.0
+                && b.y1 < r.y1
+                && b.height() > 3.0
+        })
+        .count()
+}
+
+#[test]
+fn a_looped_audio_clip_paints_its_waveform_in_every_repetition() {
+    let reg = registry();
+    let mut doc = audio_doc();
+    // Clip 10 (a two-bar pass of the asset) grows to four bars and loops every two.
+    for t in &mut doc.song_mut().tracks {
+        for l in &mut t.lanes {
+            for c in &mut l.clips {
+                if c.id == ClipId(10) {
+                    c.length = 4 * BAR;
+                    c.loop_length = Some(2 * BAR);
+                }
+            }
+        }
+    }
+    let d = Document::new(doc);
+    let mut v = audio_arrangement(d.doc(), &reg);
+    let r = v.clip_rect(ClipId(10)).unwrap();
+    let mid = (r.x0 + r.x1) / 2.0;
+    let first = wave_ops_between(&mut v, &d, &reg, (r.x0, mid - 1.0));
+    let second = wave_ops_between(&mut v, &d, &reg, (mid + 1.0, r.x1));
+    assert!(first > 0, "the first pass shows the waveform");
+    assert!(second > 0, "the repetition shows the waveform too");
+    // Without the loop the clip runs past the asset and the same x range holds the shaded end.
+    let mut plain = audio_doc();
+    for t in &mut plain.song_mut().tracks {
+        for l in &mut t.lanes {
+            for c in &mut l.clips {
+                if c.id == ClipId(10) {
+                    c.length = 4 * BAR;
+                }
+            }
+        }
+    }
+    let d = Document::new(plain);
+    let mut v = audio_arrangement(d.doc(), &reg);
+    let unlooped = wave_ops_between(&mut v, &d, &reg, (mid + 1.0, r.x1));
+    assert!(second > unlooped, "{second} ops looped, {unlooped} not");
 }
