@@ -19,9 +19,12 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
-  # Which files the change touches: a change to documents only (Markdown and docs/) skips the
-  # build and test jobs. The hygiene job, which checks the documents against the code, always
-  # runs. Any doubt (a push, a manual run, an API failure) means the code jobs run.
+  # Which files the change touches, and so which packages to build and test: on a pull request
+  # only the packages that own a changed file, those that depend on them, and those whose tests
+  # read a changed document or data file (`scripts/ci/affected.py`). A change outside the crates
+  # (manifests, lock file, CI, scripts) tests everything. A change to documents no test reads skips
+  # the build and test jobs. The hygiene job, which checks the documents against the code, always
+  # runs. Any doubt (a push, a manual run, an API failure) means the whole workspace.
   changes:
     name: changed files
     runs-on: ubuntu-latest
@@ -31,6 +34,7 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ steps.plan.outputs.code }}
+      packages: ${{ steps.plan.outputs.packages }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,25 +49,25 @@ jobs:
         run: |
           set -u
           code=true
+          packages="--workspace"
           if [ "$EVENT" = "pull_request" ] \
             && files="$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')" \
-            && [ -n "$files" ]; then
-            code=false
-            # A document counts as code when a test of the crates names it (the architecture
-            # guide's command count, the devices guide): such a change runs everything.
-            for file in $files; do
-              case "$file" in
-                docs/* | *.md)
-                  if grep -rqF --include='*.rs' "$(basename "$file")" crates; then code=true; fi
-                  ;;
-                *) code=true ;;
-              esac
-            done
-            if [ "$code" = "false" ]; then
-              echo "::notice title=Documents only::the build and test jobs are skipped"
-            fi
+            && [ -n "$files" ] \
+            && plan="$(printf '%s\n' "$files" | python3 scripts/ci/affected.py)"; then
+            case "$plan" in
+              all) ;;
+              none)
+                code=false
+                echo "::notice title=Documents only::the build and test jobs are skipped"
+                ;;
+              *)
+                packages="$plan"
+                echo "::notice title=Affected packages::$plan"
+                ;;
+            esac
           fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
 
   fmt:
     name: rustfmt
@@ -89,7 +93,11 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: clippy
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo clippy
+        env:
+          PACKAGES: ${{ needs.changes.outputs.packages }}
+        # shellcheck disable=SC2086
+        run: cargo clippy $PACKAGES --all-targets -- -D warnings
 
   test:
     name: test (${{ matrix.os }}, ${{ matrix.profile }})
@@ -113,6 +121,8 @@ jobs:
       # A documents-only change skips the steps below, not the job: a matrix job that is skipped
       # as a whole never reports the names a required check waits for.
       RUN_CODE: ${{ needs.changes.outputs.code }}
+      # `--workspace`, or the affected packages as `-p name ...` on a pull request.
+      PACKAGES: ${{ needs.changes.outputs.packages }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -141,10 +151,14 @@ jobs:
           echo "ATOMIK_TEST_PLUGINS_PREBUILT=1" >> "$GITHUB_ENV"
       - name: cargo test (debug)
         if: env.RUN_CODE == 'true' && matrix.profile == 'debug'
-        run: cargo test --workspace --no-fail-fast
+        shell: bash
+        # shellcheck disable=SC2086
+        run: cargo test $PACKAGES --no-fail-fast
       - name: cargo test (release)
         if: env.RUN_CODE == 'true' && matrix.profile == 'release'
-        run: cargo test --workspace --release --no-fail-fast
+        shell: bash
+        # shellcheck disable=SC2086
+        run: cargo test $PACKAGES --release --no-fail-fast
       # A pixel golden that fails leaves the actual, golden and diff images here.
       - name: Upload the pixel diff images
         if: failure() && env.RUN_CODE == 'true'
@@ -161,7 +175,11 @@ jobs:
   sandbox:
     name: sandbox end to end (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # Only when the plugin process code is affected (or on a full run).
+    if: >-
+      needs.changes.outputs.code == 'true'
+      && (needs.changes.outputs.packages == '--workspace'
+          || contains(needs.changes.outputs.packages, 'atomik-plugin-'))
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
