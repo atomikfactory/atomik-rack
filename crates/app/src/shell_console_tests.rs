@@ -179,6 +179,7 @@ fn the_mixer_menu_and_the_view_menu_without_a_console_devices_switch() {
             "View",
             "Transport",
             "Mixer",
+            "Analyze",
             "Create",
             "Track",
             "Audio",
@@ -237,8 +238,46 @@ fn the_mixer_menu_and_the_view_menu_without_a_console_devices_switch() {
             ("Peak Meters", None),
             ("PPM Meters", None),
             ("VU Meters", None),
-            ("Masking Map\u{2026}", None),
-            ("Check Mix\u{2026}", None),
+            ("MIDI Learn", None),
+            ("MIDI Mappings\u{2026}", None),
+            ("Previous track", None),
+            ("Next track", None),
+            ("Undo", None),
+            ("Redo", None),
+            ("Previous preset", None),
+            ("Next preset", None),
+            ("Lock Surfaces to Selection", None),
+            ("Export MIDI Mapping Preset\u{2026}", None),
+            ("Import MIDI Mapping Preset\u{2026}", None),
+            ("Clear MIDI Mappings", None),
+            ("Macros\u{2026}", None),
+            ("New Macro Bank", None),
+        ]
+    );
+    assert!(model[4].entries.contains(&MenuEntry::Separator));
+    let view: Vec<_> = model[2].items().map(|i| i.label.as_ref()).collect();
+    assert!(
+        !view.contains(&"Show Console Devices in Rack"),
+        "the console devices are always in the rack: {view:?}"
+    );
+    assert!(view.contains(&"Show Console Links"), "{view:?}");
+}
+
+#[test]
+fn the_analyze_menu_gathers_the_analysis_tools_and_the_reference_panel_is_one_click_in() {
+    let s = shell();
+    let model = s.menu_model();
+    assert_eq!(model[5].title, "Analyze", "Analyze follows Mixer");
+    let analyze = &model[5];
+    let rows: Vec<_> = analyze
+        .items()
+        .map(|i| (i.label.as_ref(), i.shortcut.as_deref()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("Sound Analyst\u{2026}", None),
+            ("Reference Panel\u{2026}", None),
             ("Listen to Reference", Some("Ctrl+Alt+R")),
             ("Add Reference Track\u{2026}", None),
             ("Reference 1", None),
@@ -255,36 +294,25 @@ fn the_mixer_menu_and_the_view_menu_without_a_console_devices_switch() {
             ("Left and Right", None),
             ("Mid", None),
             ("Side", None),
-            ("Reference Panel\u{2026}", None),
             ("Headphones", None),
             ("Small Speaker", None),
             ("Club Sub", None),
             ("Mono", None),
-            ("Will the Bass Read?\u{2026}", None),
-            ("MIDI Learn", None),
-            ("MIDI Mappings\u{2026}", None),
-            ("Previous track", None),
-            ("Next track", None),
-            ("Undo", None),
-            ("Redo", None),
-            ("Previous preset", None),
-            ("Next preset", None),
-            ("Lock Surfaces to Selection", None),
-            ("Export MIDI Mapping Preset\u{2026}", None),
-            ("Import MIDI Mapping Preset\u{2026}", None),
-            ("Clear MIDI Mappings", None),
-            ("Macros\u{2026}", None),
-            ("New Macro Bank", None),
+            ("Check Mix\u{2026}", None),
+            ("Masking Map\u{2026}", None),
             ("Kick and Bass Check\u{2026}", None),
+            ("Will the Bass Read?\u{2026}", None),
+            ("Find Repetition\u{2026}", None),
+            ("Delivery Targets\u{2026}", None),
         ]
     );
-    assert!(model[4].entries.contains(&MenuEntry::Separator));
-    let view: Vec<_> = model[2].items().map(|i| i.label.as_ref()).collect();
+    // The panel is a row of the menu itself, not buried in the Reference submenu.
     assert!(
-        !view.contains(&"Show Console Devices in Rack"),
-        "the console devices are always in the rack: {view:?}"
+        analyze
+            .entries
+            .iter()
+            .any(|e| matches!(e, MenuEntry::Item(i) if i.command == AppCommand::ReferencePanel))
     );
-    assert!(view.contains(&"Show Console Links"), "{view:?}");
 }
 
 #[test]
@@ -1951,6 +1979,7 @@ fn the_mixer_menu_names_each_group_in_add_to_group_and_delete_group() {
         s.menu_model()
             .iter()
             .find(|m| m.title == "Mixer")
+            .and_then(|m| crate::commands::find_submenu(&m.entries, "Groups and VCAs").cloned())
             .unwrap()
             .entries
             .iter()

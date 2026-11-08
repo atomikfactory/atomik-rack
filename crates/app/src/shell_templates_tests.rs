@@ -186,7 +186,8 @@ fn the_file_menu_lists_the_templates_and_follows_the_folder() {
 fn the_new_menu_rows_sit_after_open_recent_and_the_first_rows_do_not_move() {
     let t = Tmp::new("rows");
     let s = shell(&t);
-    let labels: Vec<String> = s.menu_model()[0]
+    let model = s.menu_model();
+    let labels: Vec<String> = model[0]
         .entries
         .iter()
         .filter_map(|e| match e {
@@ -194,6 +195,7 @@ fn the_new_menu_rows_sit_after_open_recent_and_the_first_rows_do_not_move() {
             MenuEntry::Submenu(s) => Some(s.label.to_string()),
             MenuEntry::Separator => None,
         })
+        .chain(model[0].items().map(|i| i.label.to_string()))
         .collect();
     assert_eq!(
         labels[..6],

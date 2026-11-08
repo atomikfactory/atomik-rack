@@ -1,7 +1,6 @@
 //! `Shell` audio tests: File > Import Audio, Ctrl+I, file drops and hovers.
 
 use super::*;
-use crate::commands::MenuEntry;
 use crate::session::NullBackend;
 use atomik_audio_file::AudioData;
 use atomik_ui::{ImportTarget, Key, Modifiers};
@@ -56,11 +55,8 @@ fn import_audio_is_a_file_menu_item_with_ctrl_shift_i() {
     assert_eq!(item.label, "Import Audio\u{2026}");
     assert_eq!(item.shortcut.as_deref(), Some("Ctrl+Shift+I"));
     assert!(item.enabled);
-    assert!(
-        file.entries
-            .iter()
-            .any(|e| matches!(e, MenuEntry::Item(i) if i.command == AppCommand::ImportAudio))
-    );
+    let import = crate::commands::find_submenu(&file.entries, "Import").expect("File > Import");
+    assert!(import.items().any(|i| i.command == AppCommand::ImportAudio));
 }
 
 #[test]

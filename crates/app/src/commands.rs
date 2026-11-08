@@ -2344,6 +2344,15 @@ impl MenuEntry {
     }
 }
 
+/// The submenu labelled `label` among `entries` or the submenus inside them.
+pub fn find_submenu<'a>(entries: &'a [MenuEntry], label: &str) -> Option<&'a Submenu> {
+    entries.iter().find_map(|e| match e {
+        MenuEntry::Submenu(s) if s.label == label => Some(s),
+        MenuEntry::Submenu(s) => find_submenu(&s.entries, label),
+        _ => None,
+    })
+}
+
 /// A top-level menu.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Menu {
@@ -2360,7 +2369,8 @@ impl Menu {
     }
 }
 
-/// The menu bar: File, Edit, View, Transport, Mixer, Audio. Shortcut texts come from `keymap`
+/// The menu bar: File, Edit, View, Transport, Mixer, Analyze, Create, Track, Audio, Options, Window,
+/// Help. No menu is longer than [`MAX_MENU_ROWS`]: the long ones hold submenus by theme. Shortcut texts come from `keymap`
 /// (its OS decides `Ctrl` or `Cmd`); no key is written in this function.
 pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
     menus_with_recent(state, keymap, &[])
@@ -2399,6 +2409,9 @@ pub struct SongList<'a> {
     /// submenu.
     pub buses: &'a [(u32, String)],
 }
+
+/// The most rows (separators and submenu entries included) a top-level menu has.
+pub const MAX_MENU_ROWS: usize = 30;
 
 /// Most groups the Mixer menu's Add to Group and Delete Group submenus list (and buses its Route
 /// Folder to Bus submenu).
@@ -2505,12 +2518,13 @@ pub fn menus_with_songs(
                 open_recent,
                 new_template,
                 item("Close", AppCommand::Close),
+                MenuEntry::Separator,
                 item("Save", AppCommand::Save),
                 item("Save As\u{2026}", AppCommand::SaveAs),
                 item("Save Version\u{2026}", AppCommand::SaveVersion),
                 item("Versions\u{2026}", AppCommand::Versions),
+                MenuEntry::Separator,
                 item("Song Information\u{2026}", AppCommand::SongInfo),
-                item("Start Screen\u{2026}", AppCommand::StartScreen),
                 MenuEntry::Submenu(Submenu {
                     label: "New at Sample Rate",
                     entries: vec![
@@ -2539,90 +2553,113 @@ pub fn menus_with_songs(
                         ),
                     ],
                 }),
-                item("Import Audio\u{2026}", AppCommand::ImportAudio),
-                item("Import MIDI\u{2026}", AppCommand::ImportMidi),
-                item("Import MIDI as Song\u{2026}", AppCommand::ImportMidiSong),
-                item("Sound Analyst\u{2026}", AppCommand::SoundAnalyst),
-                enabled(
-                    "Relink Missing Audio\u{2026}",
-                    AppCommand::RelinkAudio,
-                    state.missing_audio,
-                ),
-                item("Collect Files\u{2026}", AppCommand::CollectFiles),
-                item("Preview Collect Files", AppCommand::CollectPreview),
-                enabled(
-                    "Cancel Collect or Move",
-                    AppCommand::CancelCollect,
-                    state.collect_busy,
-                ),
-                item("Move Project\u{2026}", AppCommand::MoveProject),
-                item("Export Project Archive\u{2026}", AppCommand::ExportArchive),
-                item("Import Project Archive\u{2026}", AppCommand::ImportArchive),
-                enabled(
-                    "Cancel Project Archive",
-                    AppCommand::CancelArchive,
-                    state.archive_busy,
-                ),
-                item("Export Patch\u{2026}", AppCommand::ExportPatch),
-                enabled(
-                    "Export MIDI Clip\u{2026}",
-                    AppCommand::ExportMidiClip,
-                    state.midi_clip,
-                ),
-                enabled(
-                    "Export MIDI Track\u{2026}",
-                    AppCommand::ExportMidiTrack,
-                    state.midi_track,
-                ),
-                enabled(
-                    "Export MIDI Song\u{2026}",
-                    AppCommand::ExportMidiSong,
-                    state.midi_song,
-                ),
+                item("Start Screen\u{2026}", AppCommand::StartScreen),
+                MenuEntry::Separator,
                 MenuEntry::Submenu(Submenu {
-                    label: "MIDI Export Resolution",
+                    label: "Import",
                     entries: vec![
-                        check(
-                            "15360 per quarter (native)",
-                            AppCommand::SetMidiResolution(MidiResolution::Native),
-                            state.midi_resolution == MidiResolution::Native,
+                        item("Import Audio\u{2026}", AppCommand::ImportAudio),
+                        item("Import MIDI\u{2026}", AppCommand::ImportMidi),
+                        item("Import MIDI as Song\u{2026}", AppCommand::ImportMidiSong),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Export",
+                    entries: vec![
+                        enabled(
+                            "Export Song as Audio File\u{2026}",
+                            AppCommand::ExportSongAudio,
+                            state.export_song,
                         ),
-                        check(
-                            "960 per quarter",
-                            AppCommand::SetMidiResolution(MidiResolution::Ppq960),
-                            state.midi_resolution == MidiResolution::Ppq960,
+                        enabled(
+                            "Export Loop as Audio File\u{2026}",
+                            AppCommand::ExportLoopAudio,
+                            state.export_loop,
                         ),
-                        check(
-                            "480 per quarter",
-                            AppCommand::SetMidiResolution(MidiResolution::Ppq480),
-                            state.midi_resolution == MidiResolution::Ppq480,
+                        enabled(
+                            "Export Selection as Audio File\u{2026}",
+                            AppCommand::ExportSelectionAudio,
+                            state.export_selection,
+                        ),
+                        enabled(
+                            "Export Stems as Audio Files\u{2026}",
+                            AppCommand::ExportStems,
+                            state.export_stems,
+                        ),
+                        MenuEntry::Separator,
+                        enabled(
+                            "Export MIDI Clip\u{2026}",
+                            AppCommand::ExportMidiClip,
+                            state.midi_clip,
+                        ),
+                        enabled(
+                            "Export MIDI Track\u{2026}",
+                            AppCommand::ExportMidiTrack,
+                            state.midi_track,
+                        ),
+                        enabled(
+                            "Export MIDI Song\u{2026}",
+                            AppCommand::ExportMidiSong,
+                            state.midi_song,
+                        ),
+                        MenuEntry::Submenu(Submenu {
+                            label: "MIDI Export Resolution",
+                            entries: vec![
+                                check(
+                                    "15360 per quarter (native)",
+                                    AppCommand::SetMidiResolution(MidiResolution::Native),
+                                    state.midi_resolution == MidiResolution::Native,
+                                ),
+                                check(
+                                    "960 per quarter",
+                                    AppCommand::SetMidiResolution(MidiResolution::Ppq960),
+                                    state.midi_resolution == MidiResolution::Ppq960,
+                                ),
+                                check(
+                                    "480 per quarter",
+                                    AppCommand::SetMidiResolution(MidiResolution::Ppq480),
+                                    state.midi_resolution == MidiResolution::Ppq480,
+                                ),
+                            ],
+                        }),
+                        MenuEntry::Separator,
+                        item("Export Patch\u{2026}", AppCommand::ExportPatch),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Project Files",
+                    entries: vec![
+                        enabled(
+                            "Relink Missing Audio\u{2026}",
+                            AppCommand::RelinkAudio,
+                            state.missing_audio,
+                        ),
+                        item("Collect Files\u{2026}", AppCommand::CollectFiles),
+                        item("Preview Collect Files", AppCommand::CollectPreview),
+                        enabled(
+                            "Cancel Collect or Move",
+                            AppCommand::CancelCollect,
+                            state.collect_busy,
+                        ),
+                        item("Move Project\u{2026}", AppCommand::MoveProject),
+                        MenuEntry::Separator,
+                        item("Export Project Archive\u{2026}", AppCommand::ExportArchive),
+                        item("Import Project Archive\u{2026}", AppCommand::ImportArchive),
+                        enabled(
+                            "Cancel Project Archive",
+                            AppCommand::CancelArchive,
+                            state.archive_busy,
                         ),
                     ],
                 }),
-                enabled(
-                    "Export Song as Audio File\u{2026}",
-                    AppCommand::ExportSongAudio,
-                    state.export_song,
-                ),
-                enabled(
-                    "Export Loop as Audio File\u{2026}",
-                    AppCommand::ExportLoopAudio,
-                    state.export_loop,
-                ),
-                enabled(
-                    "Export Selection as Audio File\u{2026}",
-                    AppCommand::ExportSelectionAudio,
-                    state.export_selection,
-                ),
-                enabled(
-                    "Export Stems as Audio Files\u{2026}",
-                    AppCommand::ExportStems,
-                    state.export_stems,
-                ),
-                item("Delivery Targets\u{2026}", AppCommand::DeliveryTargets),
                 MenuEntry::Separator,
-                item("Stress Rack", AppCommand::StressRack),
-                item("Stress Song", AppCommand::StressSong),
+                MenuEntry::Submenu(Submenu {
+                    label: "Stress Test",
+                    entries: vec![
+                        item("Stress Rack", AppCommand::StressRack),
+                        item("Stress Song", AppCommand::StressSong),
+                    ],
+                }),
                 MenuEntry::Separator,
                 item("Quit", AppCommand::Quit),
             ],
@@ -2648,78 +2685,86 @@ pub fn menus_with_songs(
                 enabled("Quantize", AppCommand::QuantizeApply, state.can_edit),
                 item("Quantize Options\u{2026}", AppCommand::QuantizeOptions),
                 MenuEntry::Separator,
-                enabled(
-                    "Reverse Audio",
-                    AppCommand::AudioReverse,
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Normalise Audio",
-                    AppCommand::AudioNormalise,
-                    state.audio.can_edit,
-                ),
                 MenuEntry::Submenu(Submenu {
-                    label: "Normalise To",
-                    entries: NormaliseTarget::ALL
-                        .into_iter()
-                        .map(|t| {
-                            enabled(
-                                t.label(),
-                                AppCommand::AudioNormaliseTo(t),
-                                state.audio.can_edit,
-                            )
-                        })
-                        .collect(),
-                }),
-                enabled(
-                    "Peak Surgeon\u{2026}",
-                    AppCommand::PeakSurgeon,
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Strip Silence\u{2026}",
-                    AppCommand::AudioStripSilence,
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Quantize Audio",
-                    AppCommand::AudioQuantize,
-                    state.audio.can_warp,
-                ),
-                MenuEntry::Separator,
-                item("Insert Bars at Locators", AppCommand::InsertBars),
-                item("Remove Bars at Locators", AppCommand::RemoveBars),
-                MenuEntry::Separator,
-                item("Reverse Clips", AppCommand::ReverseClipsDefault),
-                item("Reverse Note Starts", AppCommand::ReverseClips(false)),
-                MenuEntry::Submenu(Submenu {
-                    label: "Scale Tempo",
-                    entries: ScaleStep::ALL
-                        .into_iter()
-                        .map(|s| item(s.label(), AppCommand::ScaleTempo(s)))
-                        .collect(),
+                    label: "Audio Edits",
+                    entries: vec![
+                        enabled(
+                            "Reverse Audio",
+                            AppCommand::AudioReverse,
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Normalise Audio",
+                            AppCommand::AudioNormalise,
+                            state.audio.can_edit,
+                        ),
+                        MenuEntry::Submenu(Submenu {
+                            label: "Normalise To",
+                            entries: NormaliseTarget::ALL
+                                .into_iter()
+                                .map(|t| {
+                                    enabled(
+                                        t.label(),
+                                        AppCommand::AudioNormaliseTo(t),
+                                        state.audio.can_edit,
+                                    )
+                                })
+                                .collect(),
+                        }),
+                        enabled(
+                            "Peak Surgeon\u{2026}",
+                            AppCommand::PeakSurgeon,
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Strip Silence\u{2026}",
+                            AppCommand::AudioStripSilence,
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Quantize Audio",
+                            AppCommand::AudioQuantize,
+                            state.audio.can_warp,
+                        ),
+                    ],
                 }),
                 MenuEntry::Submenu(Submenu {
-                    label: "Chop Clips To",
-                    entries: ChopStep::ALL
-                        .into_iter()
-                        .map(|s| item(s.label(), AppCommand::ChopClips(s)))
-                        .collect(),
+                    label: "Time and Clips",
+                    entries: vec![
+                        item("Insert Bars at Locators", AppCommand::InsertBars),
+                        item("Remove Bars at Locators", AppCommand::RemoveBars),
+                        MenuEntry::Separator,
+                        item("Reverse Clips", AppCommand::ReverseClipsDefault),
+                        item("Reverse Note Starts", AppCommand::ReverseClips(false)),
+                        MenuEntry::Submenu(Submenu {
+                            label: "Scale Tempo",
+                            entries: ScaleStep::ALL
+                                .into_iter()
+                                .map(|s| item(s.label(), AppCommand::ScaleTempo(s)))
+                                .collect(),
+                        }),
+                        MenuEntry::Submenu(Submenu {
+                            label: "Chop Clips To",
+                            entries: ChopStep::ALL
+                                .into_iter()
+                                .map(|s| item(s.label(), AppCommand::ChopClips(s)))
+                                .collect(),
+                        }),
+                        MenuEntry::Separator,
+                        MenuEntry::Submenu(Submenu {
+                            label: "Cleanup Automation",
+                            entries: ThinLevel::ALL
+                                .into_iter()
+                                .map(|l| item(l.label(), AppCommand::CleanupAutomation(l)))
+                                .collect(),
+                        }),
+                        item(
+                            "Move Automation into Note Clip",
+                            AppCommand::AutomationIntoClip,
+                        ),
+                        item("Clear Clip Parameter Lanes", AppCommand::ClearParamLanes),
+                    ],
                 }),
-                MenuEntry::Submenu(Submenu {
-                    label: "Cleanup Automation",
-                    entries: ThinLevel::ALL
-                        .into_iter()
-                        .map(|l| item(l.label(), AppCommand::CleanupAutomation(l)))
-                        .collect(),
-                }),
-                item(
-                    "Move Automation into Note Clip",
-                    AppCommand::AutomationIntoClip,
-                ),
-                item("Clear Clip Parameter Lanes", AppCommand::ClearParamLanes),
-                MenuEntry::Separator,
-                item("Find Repetition\u{2026}", AppCommand::FindRepetition),
             ],
         },
         Menu {
@@ -2730,12 +2775,16 @@ pub fn menus_with_songs(
                     AppCommand::ToggleFlip,
                     state.flip == Flip::Back,
                 ),
-                MenuEntry::Separator,
-                cables("Cables: Show", CableVisibility::Show),
-                cables("Cables: Hover", CableVisibility::HoverOnly),
-                cables("Cables: Selected", CableVisibility::SelectedOnly),
-                cables("Cables: Hide Auto-routed", CableVisibility::HideAutoRouted),
-                cables("Cables: Hide", CableVisibility::Hide),
+                MenuEntry::Submenu(Submenu {
+                    label: "Cables",
+                    entries: vec![
+                        cables("Cables: Show", CableVisibility::Show),
+                        cables("Cables: Hover", CableVisibility::HoverOnly),
+                        cables("Cables: Selected", CableVisibility::SelectedOnly),
+                        cables("Cables: Hide Auto-routed", CableVisibility::HideAutoRouted),
+                        cables("Cables: Hide", CableVisibility::Hide),
+                    ],
+                }),
                 MenuEntry::Separator,
                 item("Zoom In", AppCommand::ZoomIn),
                 item("Zoom Out", AppCommand::ZoomOut),
@@ -2776,118 +2825,135 @@ pub fn menus_with_songs(
                         .collect(),
                 }),
                 MenuEntry::Separator,
-                check("Device Browser", AppCommand::ToggleBrowser, state.browser),
-                check(
-                    "File Browser",
-                    AppCommand::ToggleFileBrowser,
-                    state.file_browser,
-                ),
-                check(
-                    "Detach Browser",
-                    AppCommand::DetachBrowser,
-                    state.browser_detached,
-                ),
-                check("Piano Keys", AppCommand::TogglePianoKeys, state.piano_keys),
-                check(
-                    "Track Panel",
-                    AppCommand::ToggleTrackPanel,
-                    state.track_panel,
-                ),
-                check("Rack", AppCommand::ToggleRack, state.rack),
-                check("Detach Rack", AppCommand::DetachRack, state.rack_detached),
-                check(
-                    "Detach Mixer",
-                    AppCommand::DetachConsole,
-                    state.console_detached,
-                ),
-                check(
-                    "Spectrum EQ",
-                    AppCommand::ToggleSpectrumEq,
-                    state.spectrum_eq,
-                ),
-                check(
-                    "Rack Navigator",
-                    AppCommand::ToggleRackNavigator,
-                    state.rack_navigator,
-                ),
                 MenuEntry::Submenu(Submenu {
-                    label: "Rack Sorting",
-                    entries: [
-                        ("No Grouping", atomik_model::RackSort::Free),
-                        ("Rack per Track", atomik_model::RackSort::PerTrack),
-                        ("Auto-Group", atomik_model::RackSort::AutoGroup),
-                    ]
-                    .into_iter()
-                    .map(|(label, mode)| {
-                        make(
-                            label,
-                            AppCommand::SetRackSort(mode),
-                            Some(state.rack_sort == mode),
-                            true,
-                        )
-                    })
-                    .collect(),
+                    label: "Panels",
+                    entries: vec![
+                        check("Device Browser", AppCommand::ToggleBrowser, state.browser),
+                        check(
+                            "File Browser",
+                            AppCommand::ToggleFileBrowser,
+                            state.file_browser,
+                        ),
+                        check(
+                            "Detach Browser",
+                            AppCommand::DetachBrowser,
+                            state.browser_detached,
+                        ),
+                        check("Piano Keys", AppCommand::TogglePianoKeys, state.piano_keys),
+                        check(
+                            "Track Panel",
+                            AppCommand::ToggleTrackPanel,
+                            state.track_panel,
+                        ),
+                        check("Rack", AppCommand::ToggleRack, state.rack),
+                        check("Detach Rack", AppCommand::DetachRack, state.rack_detached),
+                        check(
+                            "Detach Mixer",
+                            AppCommand::DetachConsole,
+                            state.console_detached,
+                        ),
+                        check(
+                            "Spectrum EQ",
+                            AppCommand::ToggleSpectrumEq,
+                            state.spectrum_eq,
+                        ),
+                        check(
+                            "Rack Navigator",
+                            AppCommand::ToggleRackNavigator,
+                            state.rack_navigator,
+                        ),
+                        MenuEntry::Submenu(Submenu {
+                            label: "Rack Sorting",
+                            entries: [
+                                ("No Grouping", atomik_model::RackSort::Free),
+                                ("Rack per Track", atomik_model::RackSort::PerTrack),
+                                ("Auto-Group", atomik_model::RackSort::AutoGroup),
+                            ]
+                            .into_iter()
+                            .map(|(label, mode)| {
+                                make(
+                                    label,
+                                    AppCommand::SetRackSort(mode),
+                                    Some(state.rack_sort == mode),
+                                    true,
+                                )
+                            })
+                            .collect(),
+                        }),
+                        check(
+                            "Single Column",
+                            AppCommand::ToggleSingleColumn,
+                            state.single_column,
+                        ),
+                        check(
+                            "Sequencer Only",
+                            AppCommand::SequencerOnly,
+                            state.sequencer_only,
+                        ),
+                        check("Clip Editor", AppCommand::ToggleEditor, state.editor),
+                        check("Inspector", AppCommand::ToggleInspector, state.inspector),
+                    ],
                 }),
-                check(
-                    "Single Column",
-                    AppCommand::ToggleSingleColumn,
-                    state.single_column,
-                ),
-                check(
-                    "Sequencer Only",
-                    AppCommand::SequencerOnly,
-                    state.sequencer_only,
-                ),
-                check("Clip Editor", AppCommand::ToggleEditor, state.editor),
-                MenuEntry::Separator,
-                check("Arrangement", AppCommand::ToggleSong, state.song_visible),
-                check("Piano Roll", AppCommand::TogglePianoRoll, state.piano_roll),
-                check(
-                    "Sample Editor",
-                    AppCommand::ToggleSampleEditor,
-                    state.sample_editor,
-                ),
-                check(
-                    "Step Editor",
-                    AppCommand::ToggleStepEditor,
-                    state.step_editor,
-                ),
-                check(
-                    "Slice Editor",
-                    AppCommand::ToggleSliceEditor,
-                    state.slice_editor,
-                ),
-                MenuEntry::Separator,
-                check(
-                    "Show Console Links",
-                    AppCommand::ToggleConsoleLinks,
-                    state.console_links,
-                ),
-                check("CPU Meters", AppCommand::ToggleCpuMeters, state.cpu_meters),
-                check("Big Meter", AppCommand::ToggleBigMeter, state.big_meter),
-                MenuEntry::Separator,
-                check("Tempo Lane", AppCommand::ToggleTempoLane, state.tempo_lane),
-                check(
-                    "Energy Lane",
-                    AppCommand::ToggleEnergyLane,
-                    state.energy_lane,
-                ),
-                enabled(
-                    "Refresh Energy Lane",
-                    AppCommand::RefreshEnergyLane,
-                    state.energy_lane,
-                ),
-                check(
-                    "Marker Strip",
-                    AppCommand::ToggleMarkerStrip,
-                    state.marker_strip,
-                ),
-                check(
-                    "Marker List",
-                    AppCommand::ToggleMarkerList,
-                    state.marker_list,
-                ),
-                check("Inspector", AppCommand::ToggleInspector, state.inspector),
+                MenuEntry::Submenu(Submenu {
+                    label: "Editors",
+                    entries: vec![
+                        check("Arrangement", AppCommand::ToggleSong, state.song_visible),
+                        check("Piano Roll", AppCommand::TogglePianoRoll, state.piano_roll),
+                        check(
+                            "Sample Editor",
+                            AppCommand::ToggleSampleEditor,
+                            state.sample_editor,
+                        ),
+                        check(
+                            "Step Editor",
+                            AppCommand::ToggleStepEditor,
+                            state.step_editor,
+                        ),
+                        check(
+                            "Slice Editor",
+                            AppCommand::ToggleSliceEditor,
+                            state.slice_editor,
+                        ),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Lanes and Markers",
+                    entries: vec![
+                        check("Tempo Lane", AppCommand::ToggleTempoLane, state.tempo_lane),
+                        check(
+                            "Energy Lane",
+                            AppCommand::ToggleEnergyLane,
+                            state.energy_lane,
+                        ),
+                        enabled(
+                            "Refresh Energy Lane",
+                            AppCommand::RefreshEnergyLane,
+                            state.energy_lane,
+                        ),
+                        check(
+                            "Marker Strip",
+                            AppCommand::ToggleMarkerStrip,
+                            state.marker_strip,
+                        ),
+                        check(
+                            "Marker List",
+                            AppCommand::ToggleMarkerList,
+                            state.marker_list,
+                        ),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Meters and Links",
+                    entries: vec![
+                        check(
+                            "Show Console Links",
+                            AppCommand::ToggleConsoleLinks,
+                            state.console_links,
+                        ),
+                        check("CPU Meters", AppCommand::ToggleCpuMeters, state.cpu_meters),
+                        check("Big Meter", AppCommand::ToggleBigMeter, state.big_meter),
+                    ],
+                }),
                 MenuEntry::Separator,
                 item("Find Parameter\u{2026}", AppCommand::FindParameter),
                 check(
@@ -2957,154 +3023,167 @@ pub fn menus_with_songs(
                 item("Create Parallel Channel", AppCommand::CreateParallel),
                 item("Delete Channel", AppCommand::RemoveChannel),
                 MenuEntry::Separator,
-                enabled(
-                    "Create VCA from Selection",
-                    AppCommand::CreateVca,
-                    state.vca.can_create,
-                ),
-                enabled(
-                    "Create VCA from Folder",
-                    AppCommand::CreateVcaForFolder,
-                    state.vca.can_folder,
-                ),
-                enabled(
-                    "Route Folder to New Bus",
-                    AppCommand::RouteFolder(None),
-                    state.vca.can_route_folder,
-                ),
-                enabled(
-                    "Stop Routing Folder",
-                    AppCommand::UnrouteFolder,
-                    state.vca.can_unroute_folder,
-                ),
-                enabled("Add to VCA", AppCommand::AddToVca(None), state.vca.can_add),
-                enabled(
-                    "Remove from VCA",
-                    AppCommand::RemoveFromVca,
-                    state.vca.can_remove,
-                ),
-                enabled(
-                    "Delete VCA",
-                    AppCommand::DeleteVca(None),
-                    state.vca.can_delete,
-                ),
-                enabled(
-                    "Route Group to New Bus",
-                    AppCommand::RouteVca(None),
-                    state.vca.can_route,
-                ),
-                enabled(
-                    "Stop Routing Group",
-                    AppCommand::UnrouteVca(None),
-                    state.vca.can_unroute,
-                ),
-                check("Link Faders", AppCommand::LinkFaders, state.link_faders),
-                MenuEntry::Separator,
-                enabled(
-                    "Toggle Polarity",
-                    AppCommand::TogglePolarity,
-                    state.strip.can_polarity,
-                ),
-                enabled(
-                    "Bypass All Inserts",
-                    AppCommand::BypassAllInserts,
-                    state.strip.can_bypass,
-                ),
-                enabled(
-                    "Clear Inserts",
-                    AppCommand::ClearInserts,
-                    state.strip.can_clear_inserts,
-                ),
-                MenuEntry::Separator,
-                enabled(
-                    "Copy Channel Settings",
-                    AppCommand::CopySettings(SettingsSection::All),
-                    state.strip.can_copy_settings,
-                ),
-                enabled(
-                    "Paste Channel Settings",
-                    AppCommand::PasteSettings,
-                    state.strip.can_paste_settings,
-                ),
-                enabled(
-                    "Reset Channel",
-                    AppCommand::ResetStrip,
-                    state.strip.can_reset,
-                ),
-                MenuEntry::Separator,
-                enabled(
-                    "Store Snapshot",
-                    AppCommand::StoreSnapshot,
-                    state.snapshots.can_store,
-                ),
-                enabled(
-                    "Update Snapshot",
-                    AppCommand::UpdateSnapshot(None),
-                    state.snapshots.can_update,
-                ),
-                enabled(
-                    "Recall Snapshot",
-                    AppCommand::RecallSnapshot(None),
-                    state.snapshots.can_recall,
-                ),
-                enabled(
-                    "Recall Next Snapshot",
-                    AppCommand::RecallNextSnapshot,
-                    state.snapshots.can_cycle,
-                ),
-                enabled(
-                    "Recall Previous Snapshot",
-                    AppCommand::RecallPreviousSnapshot,
-                    state.snapshots.can_cycle,
-                ),
-                enabled(
-                    "Morph to Next Snapshot",
-                    AppCommand::MorphSnapshot(None),
-                    state.snapshots.can_morph,
-                ),
-                enabled(
-                    "Morph to Previous Snapshot",
-                    AppCommand::MorphPreviousSnapshot,
-                    state.snapshots.can_morph,
-                ),
                 MenuEntry::Submenu(Submenu {
-                    label: "Morph Time",
-                    entries: [
-                        ("1 Second", 1u8),
-                        ("2 Seconds", 2),
-                        ("4 Seconds", 4),
-                        ("8 Seconds", 8),
-                    ]
-                    .into_iter()
-                    .map(|(label, s)| {
-                        check(
-                            label,
-                            AppCommand::MorphTime(s),
-                            state.snapshots.morph_seconds == s,
-                        )
-                    })
-                    .collect(),
+                    label: "Groups and VCAs",
+                    entries: vec![
+                        enabled(
+                            "Create VCA from Selection",
+                            AppCommand::CreateVca,
+                            state.vca.can_create,
+                        ),
+                        enabled(
+                            "Create VCA from Folder",
+                            AppCommand::CreateVcaForFolder,
+                            state.vca.can_folder,
+                        ),
+                        enabled(
+                            "Route Folder to New Bus",
+                            AppCommand::RouteFolder(None),
+                            state.vca.can_route_folder,
+                        ),
+                        enabled(
+                            "Stop Routing Folder",
+                            AppCommand::UnrouteFolder,
+                            state.vca.can_unroute_folder,
+                        ),
+                        enabled("Add to VCA", AppCommand::AddToVca(None), state.vca.can_add),
+                        enabled(
+                            "Remove from VCA",
+                            AppCommand::RemoveFromVca,
+                            state.vca.can_remove,
+                        ),
+                        enabled(
+                            "Delete VCA",
+                            AppCommand::DeleteVca(None),
+                            state.vca.can_delete,
+                        ),
+                        enabled(
+                            "Route Group to New Bus",
+                            AppCommand::RouteVca(None),
+                            state.vca.can_route,
+                        ),
+                        enabled(
+                            "Stop Routing Group",
+                            AppCommand::UnrouteVca(None),
+                            state.vca.can_unroute,
+                        ),
+                        check("Link Faders", AppCommand::LinkFaders, state.link_faders),
+                    ],
                 }),
-                enabled(
-                    "Snapshot Includes Effects",
-                    AppCommand::SnapshotEffects,
-                    state.snapshots.can_effects,
-                ),
-                enabled(
-                    "Compare A/B",
-                    AppCommand::CompareSnapshot(None),
-                    state.snapshots.can_compare,
-                ),
-                enabled(
-                    "End Compare",
-                    AppCommand::EndCompare,
-                    state.snapshots.comparing,
-                ),
-                enabled(
-                    "Delete Snapshot",
-                    AppCommand::DeleteSnapshot(None),
-                    state.snapshots.can_delete,
-                ),
+                MenuEntry::Submenu(Submenu {
+                    label: "Channel Strip",
+                    entries: vec![
+                        enabled(
+                            "Toggle Polarity",
+                            AppCommand::TogglePolarity,
+                            state.strip.can_polarity,
+                        ),
+                        enabled(
+                            "Bypass All Inserts",
+                            AppCommand::BypassAllInserts,
+                            state.strip.can_bypass,
+                        ),
+                        enabled(
+                            "Clear Inserts",
+                            AppCommand::ClearInserts,
+                            state.strip.can_clear_inserts,
+                        ),
+                        MenuEntry::Separator,
+                        enabled(
+                            "Copy Channel Settings",
+                            AppCommand::CopySettings(SettingsSection::All),
+                            state.strip.can_copy_settings,
+                        ),
+                        enabled(
+                            "Paste Channel Settings",
+                            AppCommand::PasteSettings,
+                            state.strip.can_paste_settings,
+                        ),
+                        enabled(
+                            "Reset Channel",
+                            AppCommand::ResetStrip,
+                            state.strip.can_reset,
+                        ),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Snapshots",
+                    entries: vec![
+                        enabled(
+                            "Store Snapshot",
+                            AppCommand::StoreSnapshot,
+                            state.snapshots.can_store,
+                        ),
+                        enabled(
+                            "Update Snapshot",
+                            AppCommand::UpdateSnapshot(None),
+                            state.snapshots.can_update,
+                        ),
+                        enabled(
+                            "Recall Snapshot",
+                            AppCommand::RecallSnapshot(None),
+                            state.snapshots.can_recall,
+                        ),
+                        enabled(
+                            "Recall Next Snapshot",
+                            AppCommand::RecallNextSnapshot,
+                            state.snapshots.can_cycle,
+                        ),
+                        enabled(
+                            "Recall Previous Snapshot",
+                            AppCommand::RecallPreviousSnapshot,
+                            state.snapshots.can_cycle,
+                        ),
+                        enabled(
+                            "Morph to Next Snapshot",
+                            AppCommand::MorphSnapshot(None),
+                            state.snapshots.can_morph,
+                        ),
+                        enabled(
+                            "Morph to Previous Snapshot",
+                            AppCommand::MorphPreviousSnapshot,
+                            state.snapshots.can_morph,
+                        ),
+                        MenuEntry::Submenu(Submenu {
+                            label: "Morph Time",
+                            entries: [
+                                ("1 Second", 1u8),
+                                ("2 Seconds", 2),
+                                ("4 Seconds", 4),
+                                ("8 Seconds", 8),
+                            ]
+                            .into_iter()
+                            .map(|(label, s)| {
+                                check(
+                                    label,
+                                    AppCommand::MorphTime(s),
+                                    state.snapshots.morph_seconds == s,
+                                )
+                            })
+                            .collect(),
+                        }),
+                        enabled(
+                            "Snapshot Includes Effects",
+                            AppCommand::SnapshotEffects,
+                            state.snapshots.can_effects,
+                        ),
+                        enabled(
+                            "Compare A/B",
+                            AppCommand::CompareSnapshot(None),
+                            state.snapshots.can_compare,
+                        ),
+                        enabled(
+                            "End Compare",
+                            AppCommand::EndCompare,
+                            state.snapshots.comparing,
+                        ),
+                        enabled(
+                            "Delete Snapshot",
+                            AppCommand::DeleteSnapshot(None),
+                            state.snapshots.can_delete,
+                        ),
+                    ],
+                }),
                 MenuEntry::Separator,
                 check(
                     "Delay Compensation",
@@ -3138,8 +3217,60 @@ pub fn menus_with_songs(
                     })
                     .collect(),
                 }),
-                enabled("Masking Map\u{2026}", AppCommand::MaskingMap, true),
-                enabled("Check Mix\u{2026}", AppCommand::CheckMix, true),
+                MenuEntry::Separator,
+                MenuEntry::Submenu(Submenu {
+                    label: "Control and Macros",
+                    entries: vec![
+                        check("MIDI Learn", AppCommand::MidiLearn, state.midi.learning),
+                        enabled("MIDI Mappings\u{2026}", AppCommand::MidiMappings, true),
+                        MenuEntry::Submenu(Submenu {
+                            label: "Map Command",
+                            entries: atomik_model::RemoteCommand::ALL
+                                .iter()
+                                .map(|c| {
+                                    MenuEntry::Item(MenuItem {
+                                        label: Cow::Owned(c.label()),
+                                        command: AppCommand::MapCommand(*c),
+                                        shortcut: None,
+                                        checked: None,
+                                        enabled: true,
+                                    })
+                                })
+                                .collect(),
+                        }),
+                        make(
+                            "Lock Surfaces to Selection",
+                            AppCommand::LockSurfaces,
+                            Some(state.midi.locked),
+                            state.midi.surfaces,
+                        ),
+                        enabled(
+                            "Export MIDI Mapping Preset\u{2026}",
+                            AppCommand::ExportMidiPreset,
+                            state.midi.has_maps,
+                        ),
+                        enabled(
+                            "Import MIDI Mapping Preset\u{2026}",
+                            AppCommand::ImportMidiPreset,
+                            true,
+                        ),
+                        enabled(
+                            "Clear MIDI Mappings",
+                            AppCommand::ClearMidiMaps,
+                            state.midi.has_maps,
+                        ),
+                        MenuEntry::Separator,
+                        enabled("Macros\u{2026}", AppCommand::MacroPanel, true),
+                        enabled("New Macro Bank", AppCommand::NewMacroBank, true),
+                    ],
+                }),
+            ],
+        },
+        Menu {
+            title: "Analyze",
+            entries: vec![
+                item("Sound Analyst\u{2026}", AppCommand::SoundAnalyst),
+                enabled("Reference Panel\u{2026}", AppCommand::ReferencePanel, true),
                 MenuEntry::Submenu(Submenu {
                     label: "Reference",
                     entries: vec![
@@ -3235,8 +3366,6 @@ pub fn menus_with_songs(
                             })
                             .collect(),
                         }),
-                        MenuEntry::Separator,
-                        enabled("Reference Panel\u{2026}", AppCommand::ReferencePanel, true),
                     ],
                 }),
                 MenuEntry::Submenu(Submenu {
@@ -3260,55 +3389,18 @@ pub fn menus_with_songs(
                         check("Mono", AppCommand::LensMono, state.lens.mono),
                     ],
                 }),
-                enabled("Will the Bass Read?\u{2026}", AppCommand::BassRead, true),
                 MenuEntry::Separator,
-                check("MIDI Learn", AppCommand::MidiLearn, state.midi.learning),
-                enabled("MIDI Mappings\u{2026}", AppCommand::MidiMappings, true),
-                MenuEntry::Submenu(Submenu {
-                    label: "Map Command",
-                    entries: atomik_model::RemoteCommand::ALL
-                        .iter()
-                        .map(|c| {
-                            MenuEntry::Item(MenuItem {
-                                label: Cow::Owned(c.label()),
-                                command: AppCommand::MapCommand(*c),
-                                shortcut: None,
-                                checked: None,
-                                enabled: true,
-                            })
-                        })
-                        .collect(),
-                }),
-                make(
-                    "Lock Surfaces to Selection",
-                    AppCommand::LockSurfaces,
-                    Some(state.midi.locked),
-                    state.midi.surfaces,
-                ),
-                enabled(
-                    "Export MIDI Mapping Preset\u{2026}",
-                    AppCommand::ExportMidiPreset,
-                    state.midi.has_maps,
-                ),
-                enabled(
-                    "Import MIDI Mapping Preset\u{2026}",
-                    AppCommand::ImportMidiPreset,
-                    true,
-                ),
-                enabled(
-                    "Clear MIDI Mappings",
-                    AppCommand::ClearMidiMaps,
-                    state.midi.has_maps,
-                ),
-                MenuEntry::Separator,
-                enabled("Macros\u{2026}", AppCommand::MacroPanel, true),
-                enabled("New Macro Bank", AppCommand::NewMacroBank, true),
-                MenuEntry::Separator,
+                enabled("Check Mix\u{2026}", AppCommand::CheckMix, true),
+                enabled("Masking Map\u{2026}", AppCommand::MaskingMap, true),
                 enabled(
                     "Kick and Bass Check\u{2026}",
                     AppCommand::KickBassCheck,
                     true,
                 ),
+                enabled("Will the Bass Read?\u{2026}", AppCommand::BassRead, true),
+                item("Find Repetition\u{2026}", AppCommand::FindRepetition),
+                MenuEntry::Separator,
+                item("Delivery Targets\u{2026}", AppCommand::DeliveryTargets),
             ],
         },
         Menu {
@@ -3370,112 +3462,129 @@ pub fn menus_with_songs(
                     state.org.track_selected,
                 ),
                 MenuEntry::Separator,
-                enabled("Add Note Lane", AppCommand::AddNoteLane, state.lane.can_add),
-                enabled(
-                    "Rename Note Lane\u{2026}",
-                    AppCommand::RenameNoteLane,
-                    state.lane.can_rename,
-                ),
-                enabled(
-                    "Delete Note Lane",
-                    AppCommand::DeleteNoteLane,
-                    state.lane.can_delete,
-                ),
-                make(
-                    "Mute Lane",
-                    AppCommand::ToggleLaneMute,
-                    Some(state.lane.muted),
-                    state.lane.can_rename,
-                ),
-                enabled(
-                    "Merge Note Lanes",
-                    AppCommand::MergeNoteLanes,
-                    state.lane.can_merge,
-                ),
-                enabled(
-                    "Explode Notes to Lanes",
-                    AppCommand::ExplodeNotes,
-                    state.lane.can_explode,
-                ),
-                MenuEntry::Separator,
-                enabled(
-                    "Freeze Track",
-                    AppCommand::FreezeTrack,
-                    state.freeze.can_freeze,
-                ),
-                enabled(
-                    "Freeze Track up to Selected Device",
-                    AppCommand::FreezeTrackToDevice,
-                    state.freeze.can_freeze,
-                ),
-                check(
-                    "Freeze with Tail",
-                    AppCommand::FreezeTail,
-                    state.freeze.tail,
-                ),
-                check(
-                    "Freeze with Strip",
-                    AppCommand::FreezeStrip,
-                    state.freeze.strip,
-                ),
-                enabled(
-                    "Re-render Frozen Track",
-                    AppCommand::RefreezeTrack,
-                    state.freeze.can_refreeze,
-                ),
-                enabled(
-                    "Unfreeze Track",
-                    AppCommand::UnfreezeTrack,
-                    state.freeze.can_unfreeze,
-                ),
-                enabled(
-                    "Unfreeze Track and Keep Audio",
-                    AppCommand::UnfreezeTrackKeep,
-                    state.freeze.can_unfreeze,
-                ),
-                enabled("Cancel Freeze", AppCommand::FreezeCancel, state.freeze.busy),
-                MenuEntry::Separator,
-                enabled(
-                    "Bounce in Place",
-                    AppCommand::BounceInPlace,
-                    state.freeze.can_bounce,
-                ),
-                enabled(
-                    "Bounce in Place and Mute Originals",
-                    AppCommand::BounceInPlaceMute,
-                    state.freeze.can_bounce,
-                ),
-                enabled(
-                    "Bounce Clips to New Track (Dry)",
-                    AppCommand::BounceClipDry,
-                    state.freeze.can_bounce,
-                ),
-                enabled(
-                    "Bounce Range in Place",
-                    AppCommand::BounceRange,
-                    state.freeze.can_bounce_range,
-                ),
-                MenuEntry::Separator,
-                enabled(
-                    "Send Players to Track",
-                    AppCommand::SendPlayersToTrack,
-                    state.freeze.players,
-                ),
-                check(
-                    "Direct Record",
-                    AppCommand::DirectRecord,
-                    state.freeze.direct_record,
-                ),
-                enabled(
-                    "Fold All Players",
-                    AppCommand::FoldPlayers,
-                    state.freeze.players,
-                ),
-                enabled(
-                    "Bypass All Players",
-                    AppCommand::BypassPlayers,
-                    state.freeze.players,
-                ),
+                MenuEntry::Submenu(Submenu {
+                    label: "Note Lanes",
+                    entries: vec![
+                        enabled("Add Note Lane", AppCommand::AddNoteLane, state.lane.can_add),
+                        enabled(
+                            "Rename Note Lane\u{2026}",
+                            AppCommand::RenameNoteLane,
+                            state.lane.can_rename,
+                        ),
+                        enabled(
+                            "Delete Note Lane",
+                            AppCommand::DeleteNoteLane,
+                            state.lane.can_delete,
+                        ),
+                        make(
+                            "Mute Lane",
+                            AppCommand::ToggleLaneMute,
+                            Some(state.lane.muted),
+                            state.lane.can_rename,
+                        ),
+                        enabled(
+                            "Merge Note Lanes",
+                            AppCommand::MergeNoteLanes,
+                            state.lane.can_merge,
+                        ),
+                        enabled(
+                            "Explode Notes to Lanes",
+                            AppCommand::ExplodeNotes,
+                            state.lane.can_explode,
+                        ),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Freeze",
+                    entries: vec![
+                        enabled(
+                            "Freeze Track",
+                            AppCommand::FreezeTrack,
+                            state.freeze.can_freeze,
+                        ),
+                        enabled(
+                            "Freeze Track up to Selected Device",
+                            AppCommand::FreezeTrackToDevice,
+                            state.freeze.can_freeze,
+                        ),
+                        check(
+                            "Freeze with Tail",
+                            AppCommand::FreezeTail,
+                            state.freeze.tail,
+                        ),
+                        check(
+                            "Freeze with Strip",
+                            AppCommand::FreezeStrip,
+                            state.freeze.strip,
+                        ),
+                        enabled(
+                            "Re-render Frozen Track",
+                            AppCommand::RefreezeTrack,
+                            state.freeze.can_refreeze,
+                        ),
+                        enabled(
+                            "Unfreeze Track",
+                            AppCommand::UnfreezeTrack,
+                            state.freeze.can_unfreeze,
+                        ),
+                        enabled(
+                            "Unfreeze Track and Keep Audio",
+                            AppCommand::UnfreezeTrackKeep,
+                            state.freeze.can_unfreeze,
+                        ),
+                        enabled("Cancel Freeze", AppCommand::FreezeCancel, state.freeze.busy),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Bounce",
+                    entries: vec![
+                        enabled(
+                            "Bounce in Place",
+                            AppCommand::BounceInPlace,
+                            state.freeze.can_bounce,
+                        ),
+                        enabled(
+                            "Bounce in Place and Mute Originals",
+                            AppCommand::BounceInPlaceMute,
+                            state.freeze.can_bounce,
+                        ),
+                        enabled(
+                            "Bounce Clips to New Track (Dry)",
+                            AppCommand::BounceClipDry,
+                            state.freeze.can_bounce,
+                        ),
+                        enabled(
+                            "Bounce Range in Place",
+                            AppCommand::BounceRange,
+                            state.freeze.can_bounce_range,
+                        ),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Players",
+                    entries: vec![
+                        enabled(
+                            "Send Players to Track",
+                            AppCommand::SendPlayersToTrack,
+                            state.freeze.players,
+                        ),
+                        check(
+                            "Direct Record",
+                            AppCommand::DirectRecord,
+                            state.freeze.direct_record,
+                        ),
+                        enabled(
+                            "Fold All Players",
+                            AppCommand::FoldPlayers,
+                            state.freeze.players,
+                        ),
+                        enabled(
+                            "Bypass All Players",
+                            AppCommand::BypassPlayers,
+                            state.freeze.players,
+                        ),
+                    ],
+                }),
                 MenuEntry::Separator,
                 item("Add Pattern Lane", AppCommand::AddPatternLane),
                 item("Pattern Lane to Notes", AppCommand::PatternLaneToNotes),
@@ -3512,29 +3621,34 @@ pub fn menus_with_songs(
                         .collect(),
                 }),
                 MenuEntry::Separator,
-                item("Fold Automation Lanes", AppCommand::FoldLanes(true)),
-                item("Unfold Automation Lanes", AppCommand::FoldLanes(false)),
-                MenuEntry::Separator,
-                item(
-                    "Track Height: Small",
-                    AppCommand::TrackHeight(HeightPreset::Small),
-                ),
-                item(
-                    "Track Height: Medium",
-                    AppCommand::TrackHeight(HeightPreset::Medium),
-                ),
-                item(
-                    "Track Height: Large",
-                    AppCommand::TrackHeight(HeightPreset::Large),
-                ),
-                item(
-                    "Track Height: Fit",
-                    AppCommand::TrackHeight(HeightPreset::Fit),
-                ),
-                item(
-                    "Track Height: Minimise / Restore",
-                    AppCommand::TrackHeight(HeightPreset::Minimise),
-                ),
+                MenuEntry::Submenu(Submenu {
+                    label: "Lane Height and Folding",
+                    entries: vec![
+                        item("Fold Automation Lanes", AppCommand::FoldLanes(true)),
+                        item("Unfold Automation Lanes", AppCommand::FoldLanes(false)),
+                        MenuEntry::Separator,
+                        item(
+                            "Track Height: Small",
+                            AppCommand::TrackHeight(HeightPreset::Small),
+                        ),
+                        item(
+                            "Track Height: Medium",
+                            AppCommand::TrackHeight(HeightPreset::Medium),
+                        ),
+                        item(
+                            "Track Height: Large",
+                            AppCommand::TrackHeight(HeightPreset::Large),
+                        ),
+                        item(
+                            "Track Height: Fit",
+                            AppCommand::TrackHeight(HeightPreset::Fit),
+                        ),
+                        item(
+                            "Track Height: Minimise / Restore",
+                            AppCommand::TrackHeight(HeightPreset::Minimise),
+                        ),
+                    ],
+                }),
             ],
         },
         Menu {
@@ -3586,157 +3700,178 @@ pub fn menus_with_songs(
                     .collect(),
                 }),
                 MenuEntry::Separator,
-                enabled(
-                    "Clip Gain: Up 1 dB",
-                    AppCommand::AudioGain(GainStep::Up),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Clip Gain: Down 1 dB",
-                    AppCommand::AudioGain(GainStep::Down),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Clip Gain: Reset",
-                    AppCommand::AudioGain(GainStep::Reset),
-                    state.audio.can_edit,
-                ),
-                MenuEntry::Separator,
-                enabled(
-                    "Fades: 5 ms Declick",
-                    AppCommand::AudioFades(true),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Fades: None",
-                    AppCommand::AudioFades(false),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Clear Gain Envelope",
-                    AppCommand::AudioClearEnvelope,
-                    state.audio.envelope,
-                ),
-                MenuEntry::Separator,
-                enabled(
-                    "Fade Shape: Linear",
-                    AppCommand::AudioFadeShape(FadeCurve::Linear),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Fade Shape: Equal Power",
-                    AppCommand::AudioFadeShape(FadeCurve::EqualPower),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Fade Shape: Exponential",
-                    AppCommand::AudioFadeShape(FadeCurve::Exponential),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Fade Shape: S-curve",
-                    AppCommand::AudioFadeShape(FadeCurve::SCurve),
-                    state.audio.can_edit,
-                ),
-                MenuEntry::Separator,
-                enabled(
-                    "Crossfade: Off",
-                    AppCommand::AudioCrossfade(None),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Crossfade: Linear",
-                    AppCommand::AudioCrossfade(Some(FadeCurve::Linear)),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Crossfade: Equal Power",
-                    AppCommand::AudioCrossfade(Some(FadeCurve::EqualPower)),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Crossfade: Exponential",
-                    AppCommand::AudioCrossfade(Some(FadeCurve::Exponential)),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Crossfade: S-curve",
-                    AppCommand::AudioCrossfade(Some(FadeCurve::SCurve)),
-                    state.audio.can_edit,
-                ),
-                MenuEntry::Separator,
-                enabled("Warp Audio", AppCommand::AudioWarp, state.audio.can_warp),
-                enabled(
-                    "Warp to Song Tempo",
-                    AppCommand::AudioWarpTempo,
-                    state.audio.can_warp,
-                ),
-                enabled(
-                    "Warp Settings\u{2026}",
-                    AppCommand::AudioWarpPanel,
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Warp Mode: Beats",
-                    AppCommand::AudioWarpMode(WarpMode::Beats),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Warp Mode: Tonal",
-                    AppCommand::AudioWarpMode(WarpMode::Tonal),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Warp Mode: Repitch",
-                    AppCommand::AudioWarpMode(WarpMode::Repitch),
-                    state.audio.can_edit,
-                ),
-                enabled(
-                    "Warp Loop as 1 Bar",
-                    AppCommand::AudioWarpBars(1),
-                    state.audio.can_warp,
-                ),
-                enabled(
-                    "Warp Loop as 2 Bars",
-                    AppCommand::AudioWarpBars(2),
-                    state.audio.can_warp,
-                ),
-                enabled(
-                    "Warp Loop as 4 Bars",
-                    AppCommand::AudioWarpBars(4),
-                    state.audio.can_warp,
-                ),
-                enabled(
-                    "Warp Loop as 8 Bars",
-                    AppCommand::AudioWarpBars(8),
-                    state.audio.can_warp,
-                ),
-                MenuEntry::Separator,
-                enabled(
-                    "Transpose: Up a Semitone",
-                    AppCommand::AudioTranspose(TransposeStep::Up),
-                    state.audio.can_warp,
-                ),
-                enabled(
-                    "Transpose: Down a Semitone",
-                    AppCommand::AudioTranspose(TransposeStep::Down),
-                    state.audio.can_warp,
-                ),
-                enabled(
-                    "Transpose: Up an Octave",
-                    AppCommand::AudioTranspose(TransposeStep::OctaveUp),
-                    state.audio.can_warp,
-                ),
-                enabled(
-                    "Transpose: Down an Octave",
-                    AppCommand::AudioTranspose(TransposeStep::OctaveDown),
-                    state.audio.can_warp,
-                ),
-                enabled(
-                    "Transpose: Reset",
-                    AppCommand::AudioTranspose(TransposeStep::Reset),
-                    state.audio.can_warp,
-                ),
+                MenuEntry::Submenu(Submenu {
+                    label: "Clip Gain",
+                    entries: vec![
+                        enabled(
+                            "Clip Gain: Up 1 dB",
+                            AppCommand::AudioGain(GainStep::Up),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Clip Gain: Down 1 dB",
+                            AppCommand::AudioGain(GainStep::Down),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Clip Gain: Reset",
+                            AppCommand::AudioGain(GainStep::Reset),
+                            state.audio.can_edit,
+                        ),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Fades",
+                    entries: vec![
+                        enabled(
+                            "Fades: 5 ms Declick",
+                            AppCommand::AudioFades(true),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Fades: None",
+                            AppCommand::AudioFades(false),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Clear Gain Envelope",
+                            AppCommand::AudioClearEnvelope,
+                            state.audio.envelope,
+                        ),
+                        MenuEntry::Separator,
+                        enabled(
+                            "Fade Shape: Linear",
+                            AppCommand::AudioFadeShape(FadeCurve::Linear),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Fade Shape: Equal Power",
+                            AppCommand::AudioFadeShape(FadeCurve::EqualPower),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Fade Shape: Exponential",
+                            AppCommand::AudioFadeShape(FadeCurve::Exponential),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Fade Shape: S-curve",
+                            AppCommand::AudioFadeShape(FadeCurve::SCurve),
+                            state.audio.can_edit,
+                        ),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Crossfade",
+                    entries: vec![
+                        enabled(
+                            "Crossfade: Off",
+                            AppCommand::AudioCrossfade(None),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Crossfade: Linear",
+                            AppCommand::AudioCrossfade(Some(FadeCurve::Linear)),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Crossfade: Equal Power",
+                            AppCommand::AudioCrossfade(Some(FadeCurve::EqualPower)),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Crossfade: Exponential",
+                            AppCommand::AudioCrossfade(Some(FadeCurve::Exponential)),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Crossfade: S-curve",
+                            AppCommand::AudioCrossfade(Some(FadeCurve::SCurve)),
+                            state.audio.can_edit,
+                        ),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Warp",
+                    entries: vec![
+                        enabled("Warp Audio", AppCommand::AudioWarp, state.audio.can_warp),
+                        enabled(
+                            "Warp to Song Tempo",
+                            AppCommand::AudioWarpTempo,
+                            state.audio.can_warp,
+                        ),
+                        enabled(
+                            "Warp Settings\u{2026}",
+                            AppCommand::AudioWarpPanel,
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Warp Mode: Beats",
+                            AppCommand::AudioWarpMode(WarpMode::Beats),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Warp Mode: Tonal",
+                            AppCommand::AudioWarpMode(WarpMode::Tonal),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Warp Mode: Repitch",
+                            AppCommand::AudioWarpMode(WarpMode::Repitch),
+                            state.audio.can_edit,
+                        ),
+                        enabled(
+                            "Warp Loop as 1 Bar",
+                            AppCommand::AudioWarpBars(1),
+                            state.audio.can_warp,
+                        ),
+                        enabled(
+                            "Warp Loop as 2 Bars",
+                            AppCommand::AudioWarpBars(2),
+                            state.audio.can_warp,
+                        ),
+                        enabled(
+                            "Warp Loop as 4 Bars",
+                            AppCommand::AudioWarpBars(4),
+                            state.audio.can_warp,
+                        ),
+                        enabled(
+                            "Warp Loop as 8 Bars",
+                            AppCommand::AudioWarpBars(8),
+                            state.audio.can_warp,
+                        ),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Transpose",
+                    entries: vec![
+                        enabled(
+                            "Transpose: Up a Semitone",
+                            AppCommand::AudioTranspose(TransposeStep::Up),
+                            state.audio.can_warp,
+                        ),
+                        enabled(
+                            "Transpose: Down a Semitone",
+                            AppCommand::AudioTranspose(TransposeStep::Down),
+                            state.audio.can_warp,
+                        ),
+                        enabled(
+                            "Transpose: Up an Octave",
+                            AppCommand::AudioTranspose(TransposeStep::OctaveUp),
+                            state.audio.can_warp,
+                        ),
+                        enabled(
+                            "Transpose: Down an Octave",
+                            AppCommand::AudioTranspose(TransposeStep::OctaveDown),
+                            state.audio.can_warp,
+                        ),
+                        enabled(
+                            "Transpose: Reset",
+                            AppCommand::AudioTranspose(TransposeStep::Reset),
+                            state.audio.can_warp,
+                        ),
+                    ],
+                }),
                 MenuEntry::Separator,
                 enabled(
                     "Audio to Notes\u{2026}",
@@ -3880,8 +4015,8 @@ pub fn menus_with_songs(
     menus
 }
 
-/// The Mixer menu's Route Folder to Bus submenu, with a row per output bus, after Stop Routing
-/// Folder (nothing when the song has no bus).
+/// The Mixer menu's Route Folder to Bus submenu (in Groups and VCAs), with a row per output bus,
+/// after Stop Routing Folder (nothing when the song has no bus).
 fn name_bus_items(menus: &mut [Menu], state: &MenuState, buses: &[(u32, String)]) {
     if buses.is_empty() {
         return;
@@ -3903,18 +4038,34 @@ fn name_bus_items(menus: &mut [Menu], state: &MenuState, buses: &[(u32, String)]
         label: "Route Folder to Bus",
         entries,
     });
-    if let Some(menu) = menus.iter_mut().find(|m| m.title == "Mixer")
-        && let Some(at) = menu
-            .entries
-            .iter()
-            .position(|e| matches!(e, MenuEntry::Item(i) if i.command == AppCommand::UnrouteFolder))
-    {
-        menu.entries.insert(at + 1, submenu);
+    if let Some(menu) = menus.iter_mut().find(|m| m.title == "Mixer") {
+        insert_after(
+            &mut menu.entries,
+            &|e| matches!(e, MenuEntry::Item(i) if i.command == AppCommand::UnrouteFolder),
+            &[submenu],
+        );
     }
 }
 
+/// Inserts `new` after the entry of `entries` that `is` picks, looking into the submenus too:
+/// `true` when it was found.
+fn insert_after(
+    entries: &mut Vec<MenuEntry>,
+    is: &dyn Fn(&MenuEntry) -> bool,
+    new: &[MenuEntry],
+) -> bool {
+    if let Some(at) = entries.iter().position(is) {
+        entries.splice(at + 1..at + 1, new.iter().cloned());
+        return true;
+    }
+    entries.iter_mut().any(|e| match e {
+        MenuEntry::Submenu(s) => insert_after(&mut s.entries, is, new),
+        _ => false,
+    })
+}
+
 /// The Mixer menu's items that name a group: with groups in the song, Add to Group and Delete
-/// Group submenus with a row per group follow Delete VCA.
+/// Group submenus with a row per group follow Delete VCA (in Groups and VCAs).
 fn name_vca_items(menus: &mut [Menu], state: &MenuState, vcas: &[(u32, String)]) {
     if vcas.is_empty() {
         return;
@@ -3951,14 +4102,12 @@ fn name_vca_items(menus: &mut [Menu], state: &MenuState, vcas: &[(u32, String)])
             entries: rows(|id| AppCommand::UnrouteVca(Some(id)), state.vca.can_unroute),
         }),
     ];
-    if let Some(menu) = menus.iter_mut().find(|m| m.title == "Mixer")
-        && let Some(at) = menu.entries.iter().position(
-            |e| matches!(e, MenuEntry::Item(i) if i.command == AppCommand::DeleteVca(None)),
-        )
-    {
-        for (k, entry) in named.into_iter().enumerate() {
-            menu.entries.insert(at + 1 + k, entry);
-        }
+    if let Some(menu) = menus.iter_mut().find(|m| m.title == "Mixer") {
+        insert_after(
+            &mut menu.entries,
+            &|e| matches!(e, MenuEntry::Item(i) if i.command == AppCommand::DeleteVca(None)),
+            &named,
+        );
     }
 }
 
@@ -4760,6 +4909,7 @@ mod tests {
                 "View",
                 "Transport",
                 "Mixer",
+                "Analyze",
                 "Create",
                 "Track",
                 "Audio",
@@ -4769,255 +4919,10 @@ mod tests {
             ]
         );
         let labels = |i: usize| m[i].items().map(|it| it.label.as_ref()).collect::<Vec<_>>();
+        // File, Edit, View, Mixer, Analyze, Track and Audio are long and grouped into
+        // submenus: the menu structure goldens pin their content.
         assert_eq!(
-            labels(0),
-            [
-                "New",
-                "Open\u{2026}",
-                "Clear Menu",
-                // The New from Template submenu: no templates in the list.
-                "Save as Template",
-                "Show Template Folder",
-                "Use Song as Default Song",
-                "Reset Default Song",
-                "Close",
-                "Save",
-                "Save As\u{2026}",
-                "Save Version\u{2026}",
-                "Versions\u{2026}",
-                "Song Information\u{2026}",
-                "Start Screen\u{2026}",
-                // New at Sample Rate, then Convert Sample Rate: three rates each.
-                "44.1 kHz",
-                "48 kHz",
-                "96 kHz",
-                "44.1 kHz",
-                "48 kHz",
-                "96 kHz",
-                "Import Audio\u{2026}",
-                "Import MIDI\u{2026}",
-                "Import MIDI as Song\u{2026}",
-                "Sound Analyst\u{2026}",
-                "Relink Missing Audio\u{2026}",
-                "Collect Files\u{2026}",
-                "Preview Collect Files",
-                "Cancel Collect or Move",
-                "Move Project\u{2026}",
-                "Export Project Archive\u{2026}",
-                "Import Project Archive\u{2026}",
-                "Cancel Project Archive",
-                "Export Patch\u{2026}",
-                "Export MIDI Clip\u{2026}",
-                "Export MIDI Track\u{2026}",
-                "Export MIDI Song\u{2026}",
-                // The MIDI Export Resolution submenu.
-                "15360 per quarter (native)",
-                "960 per quarter",
-                "480 per quarter",
-                "Export Song as Audio File\u{2026}",
-                "Export Loop as Audio File\u{2026}",
-                "Export Selection as Audio File\u{2026}",
-                "Export Stems as Audio Files\u{2026}",
-                "Delivery Targets\u{2026}",
-                "Stress Rack",
-                "Stress Song",
-                "Quit"
-            ]
-        );
-        assert_eq!(
-            labels(1),
-            [
-                "Undo",
-                "Redo",
-                "Cut",
-                "Copy",
-                "Paste",
-                "Duplicate",
-                "Delete",
-                "Select All",
-                "Combine",
-                "Uncombine",
-                "Split Sub",
-                "Quantize",
-                "Quantize Options\u{2026}",
-                "Reverse Audio",
-                "Normalise Audio",
-                "Peak -1 dBFS",
-                "RMS -18 dBFS",
-                "Loudness -23 LUFS",
-                "Loudness -14 LUFS",
-                "Peak Surgeon\u{2026}",
-                "Strip Silence\u{2026}",
-                "Quantize Audio",
-                "Insert Bars at Locators",
-                "Remove Bars at Locators",
-                "Reverse Clips",
-                "Reverse Note Starts",
-                "Double (200 %)",
-                "Halve (50 %)",
-                "150 %",
-                "125 %",
-                "75 %",
-                "Other\u{2026}",
-                "Bar",
-                "Half Bar",
-                "Beat",
-                "1/8 Note",
-                "1/16 Note",
-                "Normal",
-                "Heavy",
-                "Maximum",
-                "Move Automation into Note Clip",
-                "Clear Clip Parameter Lanes",
-                "Find Repetition\u{2026}"
-            ]
-        );
-        assert_eq!(
-            labels(2),
-            [
-                "Back of Rack",
-                "Cables: Show",
-                "Cables: Hover",
-                "Cables: Selected",
-                "Cables: Hide Auto-routed",
-                "Cables: Hide",
-                "Zoom In",
-                "Zoom Out",
-                "Actual Size",
-                // Application Zoom, then Theme.
-                "75 %",
-                "100 %",
-                "125 %",
-                "150 %",
-                "175 %",
-                "200 %",
-                "Dark",
-                "Light",
-                "Same as System",
-                "Device Browser",
-                "File Browser",
-                "Detach Browser",
-                "Piano Keys",
-                "Track Panel",
-                "Rack",
-                "Detach Rack",
-                "Detach Mixer",
-                "Spectrum EQ",
-                "Rack Navigator",
-                "No Grouping",
-                "Rack per Track",
-                "Auto-Group",
-                "Single Column",
-                "Sequencer Only",
-                "Clip Editor",
-                "Arrangement",
-                "Piano Roll",
-                "Sample Editor",
-                "Step Editor",
-                "Slice Editor",
-                "Show Console Links",
-                "CPU Meters",
-                "Big Meter",
-                "Tempo Lane",
-                "Energy Lane",
-                "Refresh Energy Lane",
-                "Marker Strip",
-                "Marker List",
-                "Inspector",
-                "Find Parameter\u{2026}",
-                "Automation Follows Selection",
-                "Show Automation Lane",
-            ]
-        );
-        assert_eq!(
-            labels(4),
-            [
-                "Console",
-                "Maximise Console",
-                "Add Channel\u{2026}",
-                "Route to New Output Bus",
-                "Create Parallel Channel",
-                "Delete Channel",
-                "Create VCA from Selection",
-                "Create VCA from Folder",
-                "Route Folder to New Bus",
-                "Stop Routing Folder",
-                "Add to VCA",
-                "Remove from VCA",
-                "Delete VCA",
-                "Route Group to New Bus",
-                "Stop Routing Group",
-                "Link Faders",
-                "Toggle Polarity",
-                "Bypass All Inserts",
-                "Clear Inserts",
-                "Copy Channel Settings",
-                "Paste Channel Settings",
-                "Reset Channel",
-                "Store Snapshot",
-                "Update Snapshot",
-                "Recall Snapshot",
-                "Recall Next Snapshot",
-                "Recall Previous Snapshot",
-                "Morph to Next Snapshot",
-                "Morph to Previous Snapshot",
-                "1 Second",
-                "2 Seconds",
-                "4 Seconds",
-                "8 Seconds",
-                "Snapshot Includes Effects",
-                "Compare A/B",
-                "End Compare",
-                "Delete Snapshot",
-                "Delay Compensation",
-                "Align Returns",
-                "Sends Follow Bus",
-                "Peak Meters",
-                "PPM Meters",
-                "VU Meters",
-                "Masking Map\u{2026}",
-                "Check Mix\u{2026}",
-                "Listen to Reference",
-                "Add Reference Track\u{2026}",
-                "Reference 1",
-                "Next Reference Track",
-                "Remove Reference Track",
-                "Start at Playhead Position",
-                "Follow Playhead",
-                "Match Reference Level",
-                "Full Range",
-                "Sub",
-                "Low",
-                "Mid",
-                "High",
-                "Left and Right",
-                "Mid",
-                "Side",
-                "Reference Panel\u{2026}",
-                "Headphones",
-                "Small Speaker",
-                "Club Sub",
-                "Mono",
-                "Will the Bass Read?\u{2026}",
-                "MIDI Learn",
-                "MIDI Mappings\u{2026}",
-                "Previous track",
-                "Next track",
-                "Undo",
-                "Redo",
-                "Previous preset",
-                "Next preset",
-                "Lock Surfaces to Selection",
-                "Export MIDI Mapping Preset\u{2026}",
-                "Import MIDI Mapping Preset\u{2026}",
-                "Clear MIDI Mappings",
-                "Macros\u{2026}",
-                "New Macro Bank",
-                "Kick and Bass Check\u{2026}"
-            ]
-        );
-        assert_eq!(
-            labels(5),
+            labels(6),
             [
                 "Create Instrument\u{2026}",
                 "Create Effect\u{2026}",
@@ -5027,127 +4932,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            labels(6),
-            [
-                "Group Tracks",
-                "Ungroup",
-                "Collapse Folder",
-                "Rename Folder\u{2026}",
-                "Move Track Up",
-                "Move Track Down",
-                "Rename Track\u{2026}",
-                "Track Comment\u{2026}",
-                "Delete Track and Device",
-                "Add Note Lane",
-                "Rename Note Lane\u{2026}",
-                "Delete Note Lane",
-                "Mute Lane",
-                "Merge Note Lanes",
-                "Explode Notes to Lanes",
-                "Freeze Track",
-                "Freeze Track up to Selected Device",
-                "Freeze with Tail",
-                "Freeze with Strip",
-                "Re-render Frozen Track",
-                "Unfreeze Track",
-                "Unfreeze Track and Keep Audio",
-                "Cancel Freeze",
-                "Bounce in Place",
-                "Bounce in Place and Mute Originals",
-                "Bounce Clips to New Track (Dry)",
-                "Bounce Range in Place",
-                "Send Players to Track",
-                "Direct Record",
-                "Fold All Players",
-                "Bypass All Players",
-                "Add Pattern Lane",
-                "Pattern Lane to Notes",
-                "Edit Track Controllers",
-                "Add Reverb Send\u{2026}",
-                "Tail Repeat",
-                "Reverb Tail",
-                "0.5 s",
-                "1 s",
-                "2 s",
-                "4 s",
-                "8 s",
-                "Riser, 1 Bar",
-                "Riser, 2 Bars",
-                "Riser, 4 Bars",
-                "Impact",
-                "Filter Down, 1 Bar",
-                "Filter Down, 2 Bars",
-                "Filter Down, 4 Bars",
-                "Group Filter Down, 1 Bar",
-                "Group Filter Down, 2 Bars",
-                "Group Filter Down, 4 Bars",
-                "Silence on Beat One",
-                "Fill",
-                "Fold Automation Lanes",
-                "Unfold Automation Lanes",
-                "Track Height: Small",
-                "Track Height: Medium",
-                "Track Height: Large",
-                "Track Height: Fit",
-                "Track Height: Minimise / Restore"
-            ]
-        );
-        assert_eq!(
-            labels(7),
-            [
-                "Settings\u{2026}",
-                "Plugins\u{2026}",
-                "Restart Audio",
-                "Rescan MIDI Ports",
-                // Input Channels (0 is off), then Output Channels.
-                "0 (off)",
-                "1",
-                "2",
-                "4",
-                "8",
-                "16",
-                "32",
-                "1",
-                "2",
-                "4",
-                "8",
-                "16",
-                "32",
-                "Clip Gain: Up 1 dB",
-                "Clip Gain: Down 1 dB",
-                "Clip Gain: Reset",
-                "Fades: 5 ms Declick",
-                "Fades: None",
-                "Clear Gain Envelope",
-                "Fade Shape: Linear",
-                "Fade Shape: Equal Power",
-                "Fade Shape: Exponential",
-                "Fade Shape: S-curve",
-                "Crossfade: Off",
-                "Crossfade: Linear",
-                "Crossfade: Equal Power",
-                "Crossfade: Exponential",
-                "Crossfade: S-curve",
-                "Warp Audio",
-                "Warp to Song Tempo",
-                "Warp Settings\u{2026}",
-                "Warp Mode: Beats",
-                "Warp Mode: Tonal",
-                "Warp Mode: Repitch",
-                "Warp Loop as 1 Bar",
-                "Warp Loop as 2 Bars",
-                "Warp Loop as 4 Bars",
-                "Warp Loop as 8 Bars",
-                "Transpose: Up a Semitone",
-                "Transpose: Down a Semitone",
-                "Transpose: Up an Octave",
-                "Transpose: Down an Octave",
-                "Transpose: Reset",
-                "Audio to Notes\u{2026}"
-            ]
-        );
-        assert_eq!(
-            labels(8),
+            labels(9),
             [
                 "Click",
                 "Pre-count",
@@ -5164,7 +4949,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            labels(9),
+            labels(10),
             [
                 "Main Window",
                 "Rack Window",
@@ -5178,7 +4963,7 @@ mod tests {
             "the Window menu lists the windows and the song commands"
         );
         assert_eq!(
-            labels(10),
+            labels(11),
             [
                 "Keyboard Shortcuts",
                 "Documentation",
@@ -5369,7 +5154,7 @@ mod tests {
     #[test]
     fn the_options_menu_reuses_the_commands_of_their_own_menus() {
         let m = menus(&state(), &legacy(Os::Windows));
-        let options = &m[8];
+        let options = &m[9];
         assert_eq!(options.title, "Options");
         let command = |label: &str| {
             options
@@ -5392,7 +5177,7 @@ mod tests {
         // Pre-count has a key in the standard profile and shows it.
         let standard = Keymap::bundled(Profile::Standard, Os::Windows);
         let m = menus(&state(), &standard);
-        let pre = m[8]
+        let pre = m[9]
             .items()
             .find(|i| i.label.as_ref() == "Pre-count")
             .unwrap();
@@ -5409,7 +5194,7 @@ mod tests {
             ..state()
         };
         let m = menus(&on, &standard);
-        let pre = m[8]
+        let pre = m[9]
             .items()
             .find(|i| i.label.as_ref() == "Pre-count")
             .unwrap();

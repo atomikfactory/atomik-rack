@@ -5471,8 +5471,10 @@ impl<B: AudioBackend> Shell<B> {
             }
         }
         let model = self.menu_model();
+        let window_size = self.size();
         if let Some(bar) = &mut self.menubar {
-            let before = bar.look();
+            bar.set_window(window_size);
+            let before = (bar.look(), bar.deep_look());
             let was_open = bar.is_open();
             let outcome = bar.handle(event, &model);
             // A menu that opens shows the keys as the file has them now.
@@ -5490,7 +5492,7 @@ impl<B: AudioBackend> Shell<B> {
                     // shows nothing new, and one that changes it only repaints the main
                     // window, where the bar is.
                     let moved = matches!(event, UiEvent::PointerMove { .. });
-                    let changed = bar.look() != before;
+                    let changed = (bar.look(), bar.deep_look()) != before;
                     if !moved {
                         self.repaint = true;
                     } else if changed && let Some(w) = self.win_mut(WindowKind::Main) {
@@ -8445,6 +8447,17 @@ impl<B: AudioBackend> Shell<B> {
         }
         self.core.piano_roll_tick(now_seconds);
         self.tick_tooltip(now_seconds);
+        // A pointer resting on a scroll strip of a menu bar list scrolls it.
+        if self.menubar.as_ref().is_some_and(MenuBar::is_open) {
+            let model = self.menu_model();
+            let window_size = self.size();
+            if let Some(bar) = &mut self.menubar {
+                bar.set_window(window_size);
+                if bar.tick(now_seconds, &model) {
+                    self.repaint = true;
+                }
+            }
+        }
         // A pointer resting on another row of a context menu switches its submenu.
         if let Some(open) = &mut self.context_menu
             && open.menu.tick(now_seconds)
@@ -9261,7 +9274,7 @@ impl<B: AudioBackend> Shell<B> {
         ));
         if let Some(menubar) = &self.menubar {
             let model = self.menu_model();
-            menubar.paint(canvas, &theme, &model, w);
+            menubar.paint(canvas, &theme, &model, Size::new(w, h));
         }
         self.paint_overlays(WindowKind::Main, canvas, &theme, Size::new(w, h));
         if let Some(dialog) = &self.dialog {

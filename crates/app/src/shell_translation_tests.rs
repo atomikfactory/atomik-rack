@@ -125,37 +125,37 @@ fn click(s: &mut Shell<NullBackend>, p: atomik_ui::kurbo::Point) {
 #[test]
 fn the_mixer_menu_has_the_lens_switches_with_checks() {
     let mut s = shell();
-    let (label, enabled, checked) = menu_row(&s, "Mixer", AppCommand::LensHeadphones);
+    let (label, enabled, checked) = menu_row(&s, "Analyze", AppCommand::LensHeadphones);
     assert_eq!(
         (label.as_str(), enabled, checked),
         ("Headphones", true, Some(true))
     );
-    let (_, _, small) = menu_row(&s, "Mixer", AppCommand::LensSmallSpeaker);
+    let (_, _, small) = menu_row(&s, "Analyze", AppCommand::LensSmallSpeaker);
     assert_eq!(small, Some(false));
-    let (label, enabled, _) = menu_row(&s, "Mixer", AppCommand::BassRead);
+    let (label, enabled, _) = menu_row(&s, "Analyze", AppCommand::BassRead);
     assert_eq!(label, "Will the Bass Read?\u{2026}");
     assert!(enabled);
     s.execute(AppCommand::LensSmallSpeaker);
     s.execute(AppCommand::LensMono);
     assert_eq!(
-        menu_row(&s, "Mixer", AppCommand::LensSmallSpeaker).2,
+        menu_row(&s, "Analyze", AppCommand::LensSmallSpeaker).2,
         Some(true)
     );
     assert_eq!(
-        menu_row(&s, "Mixer", AppCommand::LensClubSub).2,
+        menu_row(&s, "Analyze", AppCommand::LensClubSub).2,
         Some(false)
     );
-    assert_eq!(menu_row(&s, "Mixer", AppCommand::LensMono).2, Some(true));
+    assert_eq!(menu_row(&s, "Analyze", AppCommand::LensMono).2, Some(true));
     assert_eq!(
-        menu_row(&s, "Mixer", AppCommand::LensHeadphones).2,
+        menu_row(&s, "Analyze", AppCommand::LensHeadphones).2,
         Some(false)
     );
     s.execute(AppCommand::LensHeadphones);
     assert_eq!(
-        menu_row(&s, "Mixer", AppCommand::LensHeadphones).2,
+        menu_row(&s, "Analyze", AppCommand::LensHeadphones).2,
         Some(true)
     );
-    assert_eq!(menu_row(&s, "Mixer", AppCommand::LensMono).2, Some(false));
+    assert_eq!(menu_row(&s, "Analyze", AppCommand::LensMono).2, Some(false));
 }
 
 #[test]

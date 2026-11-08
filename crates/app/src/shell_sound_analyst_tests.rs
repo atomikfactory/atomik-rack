@@ -100,9 +100,13 @@ fn drop_file(s: &mut Shell<NullBackend>, path: PathBuf) {
 }
 
 #[test]
-fn the_file_menu_has_the_row_and_the_command_has_an_id() {
+fn the_analyze_menu_has_the_row_and_the_command_has_an_id() {
     let s = shell();
-    let row = s.menu_model()[0]
+    let model = s.menu_model();
+    let row = model
+        .iter()
+        .find(|m| m.title == "Analyze")
+        .unwrap()
         .items()
         .find(|i| i.command == AppCommand::SoundAnalyst)
         .map(|i| (i.label.to_string(), i.enabled));
