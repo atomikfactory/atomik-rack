@@ -5197,8 +5197,18 @@ creation chain in the **Creation chain** bullet.
   ([app/src/clipboard.rs](../crates/app/src/clipboard.rs),
   [app_core_clipboard.rs](../crates/app/src/app_core_clipboard.rs)): `Clipboard` holds one typed
   `ClipboardData` (`Clips`, `Notes`, `AutomationPoints`, `Devices`, `Tracks`, the snapshots of
-  `atomik_model::workflow`) in `AppCore`, which New and Open keep, so a copy survives both; there is
-  no OS clipboard. Copy, cut and paste of the focused pane run in `AppCore::clipboard_command` (cut
+  `atomik_model::workflow`) in `AppCore`, which New and Open keep, so a copy survives both. Copy and
+  Cut of those five kinds also write an `atomik-clipboard/1 <kind>` envelope to the system clipboard
+  (`AppCore::set_clipboard`, [clipboard_os.rs](../crates/app/src/clipboard_os.rs), through the
+  `OsClipboard` trait so tests use an in-memory one): a second line of JSON naming the audio folder,
+  then the model's text of the kind (`clips_to_text`, `notes_to_text`, `points_to_text`,
+  `devices_to_text` in `project/snippet.rs`, which reuse the project's clip object, an `atomik-clip`
+  file, the project's point tuples and an `atomik-project` text). A paste first calls
+  `AppCore::adopt_os_clipboard`: an envelope that differs from the text the holder stands for
+  (`Clipboard::known`) came from another instance and replaces the in-process data; anything else
+  uses it as it is. Audio is fetched by hash from the named folder through the audio lenders. Over
+  8 MB, a failed write and the kinds that stay local (strips, takes, settings, controller points)
+  keep the copy in the instance. Copy, cut and paste of the focused pane run in `AppCore::clipboard_command` (cut
   is copy then the view's own delete): clips and points paste at the playhead (on the selected track
   when there is one), notes at the playhead inside the open clip, devices after the primary device
   (inside the open container), tracks after the selected track; a repeated paste advances the
