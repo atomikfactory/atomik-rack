@@ -719,6 +719,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomik-video"
+version = "0.3.0-rc.2"
+dependencies = [
+ "log",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "audio-codec-algorithms"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

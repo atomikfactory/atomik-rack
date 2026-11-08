@@ -1,0 +1,136 @@
+//! The real FFmpeg, when it is installed. Ignored by default: CI and most machines have none.
+//!
+//! Run it with `cargo test -p atomik-video --test real_ffmpeg -- --ignored --nocapture`. It looks
+//! for FFmpeg like the app does (the `ATOMIK_FFMPEG_DIR` folder when set, else the system path),
+//! makes a two-second test film with FFmpeg's own generators in a temporary folder, probes it,
+//! builds its proxy and reads frames back. Without FFmpeg it says so and passes.
+
+use atomik_video::runner::capture;
+use atomik_video::{
+    Control, FfmpegStatus, Platform, ProxyCache, ProxyReader, ProxySpec, Search, SystemTool,
+    discover, prepare,
+};
+use std::ffi::OsString;
+use std::fs::{self, File};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+fn temp(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("atomik-video-real-{tag}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+#[ignore = "needs a real FFmpeg"]
+fn a_generated_film_is_probed_and_gets_its_proxy() {
+    let folder = std::env::var_os("ATOMIK_FFMPEG_DIR").map(PathBuf::from);
+    let path_var = std::env::var_os("PATH");
+    let status = discover(
+        &Search {
+            folder: folder.as_deref(),
+            path_var: path_var.as_deref(),
+            platform: Platform::current(),
+        },
+        &SystemTool,
+        &Path::is_file,
+    );
+    let FfmpegStatus::Found(ffmpeg) = status else {
+        println!("no usable FFmpeg here: {}", status.message());
+        return;
+    };
+    println!("{}", FfmpegStatus::Found(ffmpeg.clone()).message());
+    let dir = temp("film");
+    let film = dir.join("test film.mp4");
+    let never = AtomicBool::new(false);
+    let args: Vec<OsString> = [
+        "-nostdin",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=size=640x360:rate=25:duration=2",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:duration=2",
+        "-pix_fmt",
+        "yuv420p",
+        "-shortest",
+        "-y",
+    ]
+    .map(OsString::from)
+    .into_iter()
+    .chain([film.clone().into_os_string()])
+    .collect();
+    capture(&SystemTool, &ffmpeg.ffmpeg, &args, 1 << 20, &never).unwrap();
+
+    let cache = ProxyCache::new(dir.join("cache"));
+    let done = AtomicU64::new(0);
+    let total = AtomicU64::new(0);
+    let ctl = Control {
+        cancel: &never,
+        done: &done,
+        total: &total,
+    };
+    let got = prepare(
+        &SystemTool,
+        &ffmpeg,
+        &film,
+        &cache,
+        &ProxySpec::default(),
+        &ctl,
+    )
+    .unwrap();
+    println!("{:?}", got.probe);
+    assert_eq!((got.probe.video.width, got.probe.video.height), (640, 360));
+    assert_eq!(got.probe.video.frame_rate.num, 25);
+    assert_eq!(got.probe.audio.len(), 1);
+    assert!((got.probe.duration_s - 2.0).abs() < 0.1);
+    assert!((49..=51).contains(&got.info.frames), "{}", got.info.frames);
+    assert_eq!(got.info.height, 360);
+    assert_eq!(done.load(Ordering::Relaxed), u64::from(got.info.frames));
+
+    let mut reader = ProxyReader::open(File::open(&got.proxy).unwrap()).unwrap();
+    let mut frame = Vec::new();
+    for n in [0, got.info.frames / 2, got.info.frames - 1] {
+        reader.read_frame(n, &mut frame).unwrap();
+        assert_eq!(&frame[..2], &[0xFF, 0xD8]);
+        assert_eq!(&frame[frame.len() - 2..], &[0xFF, 0xD9]);
+    }
+    // The second call is a cache hit.
+    let again = prepare(
+        &SystemTool,
+        &ffmpeg,
+        &film,
+        &cache,
+        &ProxySpec::default(),
+        &ctl,
+    )
+    .unwrap();
+    assert!(again.reused);
+
+    // A cancelled build leaves nothing: a flag that is already set stops before the start.
+    let stop = AtomicBool::new(true);
+    let other = dir.join("other.mp4");
+    fs::copy(&film, &other).unwrap();
+    let ctl = Control {
+        cancel: &stop,
+        done: &done,
+        total: &total,
+    };
+    assert!(
+        prepare(
+            &SystemTool,
+            &ffmpeg,
+            &other,
+            &cache,
+            &ProxySpec::default(),
+            &ctl
+        )
+        .is_err()
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
