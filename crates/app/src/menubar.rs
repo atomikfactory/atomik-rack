@@ -689,6 +689,7 @@ mod tests {
             vca: crate::commands::VcaMenu::default(),
             strip: crate::commands::StripMenu::default(),
             snapshots: crate::commands::SnapshotMenu::default(),
+            reference: crate::commands::ReferenceMenu::default(),
             midi: crate::commands::MidiMenu::default(),
             freeze: crate::commands::FreezeMenu::default(),
             follow_selection: false,

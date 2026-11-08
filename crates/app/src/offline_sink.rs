@@ -321,4 +321,25 @@ impl EngineSink for OfflineSink {
             .as_ref()
             .is_some_and(EngineHandle::preview_active)
     }
+
+    fn reference_start(
+        &mut self,
+        stream: atomik_engine::PreviewStream,
+        settings: atomik_engine::ReferenceSettings,
+    ) -> Result<(), EngineError> {
+        handle!(self).reference_start(stream, settings)
+    }
+
+    fn reference_set(
+        &mut self,
+        settings: atomik_engine::ReferenceSettings,
+    ) -> Result<(), EngineError> {
+        handle!(self).reference_set(settings)
+    }
+
+    fn reference_level(&self) -> Option<f32> {
+        self.handle
+            .as_ref()
+            .and_then(|h| h.reference_shared().short_term_lufs())
+    }
 }

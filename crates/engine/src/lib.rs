@@ -20,6 +20,7 @@ mod player;
 mod preview;
 mod preview_clock;
 mod record;
+mod reference;
 mod seq;
 mod stream;
 mod sync;
@@ -56,6 +57,9 @@ pub use preview::{
     PREVIEW_RING_FRAMES, PreviewFeed, PreviewMonitor, PreviewStream, preview_channel,
 };
 pub use record::{LIMIT_RELEASE_FRAMES, RecordTap, TapChannel, TapControls};
+pub use reference::{
+    REFERENCE_FLOOR_LUFS, ReferenceBand, ReferenceSettings, ReferenceShared, ReferenceSolo,
+};
 pub use seq::{
     PreRoll, SongAutomation, SongCurve, SongError, SongInput, SongNote, SongPoint, SongPosition,
     SongSnapshot, SongTempo, SongTrack, TransportCommand, TransportState, compile_song,

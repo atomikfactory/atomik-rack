@@ -7,8 +7,8 @@ use atomik_core::{NoteKind, ParamId, Tempo};
 use atomik_device_sdk::{Device, PlayerDataRef, SampleMapRef};
 use atomik_engine::{
     DeviceInstanceId, Endpoint, EngineConfig, EngineError, MeterReading, PreviewStream, RecordTap,
-    RoutingPlan, SongInput, SongSnapshot, TapChannel, TapControls, Topology, TransportCommand,
-    TransportState,
+    ReferenceSettings, RoutingPlan, SongInput, SongSnapshot, TapChannel, TapControls, Topology,
+    TransportCommand, TransportState,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -221,6 +221,24 @@ pub trait EngineSink {
     fn preview_active(&self) -> bool {
         false
     }
+    /// [`atomik_engine::EngineHandle::reference_start`]: loads a reference stream and applies
+    /// the settings (live only). Without an engine the stream is dropped.
+    fn reference_start(
+        &mut self,
+        _stream: PreviewStream,
+        _settings: ReferenceSettings,
+    ) -> Result<(), EngineError> {
+        Ok(())
+    }
+    /// [`atomik_engine::EngineHandle::reference_set`].
+    fn reference_set(&mut self, _settings: ReferenceSettings) -> Result<(), EngineError> {
+        Ok(())
+    }
+    /// The short-term loudness of the mix in LUFS the engine measures while the reference voice
+    /// is told to measure; `None` while it is not measured or no engine runs.
+    fn reference_level(&self) -> Option<f32> {
+        None
+    }
 }
 
 /// One call recorded by [`RecordingSink`].
@@ -314,6 +332,11 @@ pub enum SinkCall {
     },
     /// [`EngineSink::preview_stop`].
     PreviewStop,
+    /// [`EngineSink::reference_start`] (the stream is held in
+    /// [`RecordingSink::reference_streams`]).
+    ReferenceStart(ReferenceSettings),
+    /// [`EngineSink::reference_set`].
+    ReferenceSet(ReferenceSettings),
 }
 
 /// A preview stream held by [`RecordingSink`] so its feed is not abandoned while a test runs.
@@ -387,6 +410,10 @@ pub struct RecordingSink {
     /// The preview stream the fake keeps alive (at most one: a new start replaces it, a stop
     /// drops it, as the engine retires streams). Nothing reads it; its feed sees it as playing.
     pub previews: Vec<HeldStream>,
+    /// The reference stream the fake keeps alive (a new start replaces it).
+    pub reference_streams: Vec<HeldStream>,
+    /// What [`EngineSink::reference_level`] returns (tests script the mix loudness).
+    pub mix_lufs: Option<f32>,
 }
 
 impl RecordingSink {
@@ -627,6 +654,25 @@ impl EngineSink for RecordingSink {
 
     fn preview_active(&self) -> bool {
         !self.previews.is_empty()
+    }
+
+    fn reference_start(
+        &mut self,
+        stream: PreviewStream,
+        settings: ReferenceSettings,
+    ) -> Result<(), EngineError> {
+        self.record(SinkCall::ReferenceStart(settings))?;
+        self.reference_streams.clear();
+        self.reference_streams.push(HeldStream(stream));
+        Ok(())
+    }
+
+    fn reference_set(&mut self, settings: ReferenceSettings) -> Result<(), EngineError> {
+        self.record(SinkCall::ReferenceSet(settings))
+    }
+
+    fn reference_level(&self) -> Option<f32> {
+        self.mix_lufs
     }
 }
 

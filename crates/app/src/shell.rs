@@ -313,6 +313,9 @@ pub enum ShellRequest {
     /// Show an open-file dialog for a MIDI file (the quantize panel's GROOVE FROM MIDI FILE),
     /// then call [`Shell::groove_from_midi_file`] with the picked path.
     PickGrooveMidi,
+    /// Show an open-file dialog for a reference track (Mixer > Reference > Add Reference
+    /// Track), then call [`Shell::add_reference_file`] with the picked path.
+    PickReference,
     /// Open an address in the default browser (Help > Documentation, Report an Issue and the
     /// link of the About box). Only the project's own addresses are ever asked for.
     OpenUrl(&'static str),
@@ -1847,6 +1850,15 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// Adds the audio file the Add Reference Track dialog picked to the song's reference
+    /// tracks (a refusal goes to the status line).
+    pub fn add_reference_file(&mut self, path: &Path) {
+        if let Err(e) = self.core.add_reference(path) {
+            self.core.report(format!("Reference track not added: {e}"));
+        }
+        self.repaint = true;
+    }
+
     /// Feeds the relink panel the missing list; it closes when nothing is missing any more.
     fn sync_relink(&mut self) {
         let entries: Vec<RelinkEntry> = self
@@ -2922,6 +2934,7 @@ impl<B: AudioBackend> Shell<B> {
             vca: self.core.vca_menu(self.live_pane(self.focus)),
             strip: self.core.strip_menu(self.live_pane(self.focus)),
             snapshots: self.core.snapshot_menu(),
+            reference: self.core.reference_menu(),
             midi: self.core.midi_menu(),
             freeze: self.core.freeze_menu(),
             follow_selection: self.core.follow_selection(),
@@ -6683,6 +6696,42 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.console_mut().set_meter_mode(mode);
                 self.ui.meter_mode = mode;
                 self.ui_changed();
+                Vec::new()
+            }
+            AppCommand::ToggleReference => {
+                self.core.toggle_reference();
+                Vec::new()
+            }
+            AppCommand::AddReference => vec![ShellRequest::PickReference],
+            AppCommand::SelectReference(n) => {
+                self.core.select_reference(usize::from(n));
+                Vec::new()
+            }
+            AppCommand::NextReference => {
+                self.core.next_reference();
+                Vec::new()
+            }
+            AppCommand::RemoveReference => {
+                let selected = self.core.reference_info().selected;
+                self.core.remove_reference(selected);
+                Vec::new()
+            }
+            AppCommand::ReferenceCue(on) => {
+                let selected = self.core.reference_info().selected;
+                self.core.set_reference_cue(selected, on);
+                Vec::new()
+            }
+            AppCommand::ReferenceMatch => {
+                let on = !self.core.reference_info().level_match;
+                self.core.set_reference_level_match(on);
+                Vec::new()
+            }
+            AppCommand::ReferenceBand(band) => {
+                self.core.set_reference_band(band);
+                Vec::new()
+            }
+            AppCommand::ReferenceSolo(solo) => {
+                self.core.set_reference_solo(solo);
                 Vec::new()
             }
             AppCommand::MorphTime(seconds) => {

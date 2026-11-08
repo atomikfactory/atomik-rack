@@ -304,6 +304,7 @@ mod tests {
             info: Default::default(),
             tune_cents: 0.0,
             sort_mode: atomik_model::RackSort::Free,
+            references: Vec::new(),
         };
         let mut v = RackView::new(Theme::dark());
         let _ = v.handle(&UiEvent::Resize(Size::new(1200.0, 200.0)), &doc, &reg);
