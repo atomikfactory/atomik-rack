@@ -1115,6 +1115,13 @@ may break APIs and the patch and project formats.
   audio of a bundle folder is tidied only when no other project file sits in the folder (or directly in one of
   its subfolders); where one does, the folder is left as it is. Collect Files gives a song audio of its own.
 - Undoing while a clip is being drawn on a lane no longer lets the release add a clip to a track the undo removed.
+- **Right-click menus open their submenus without lag.** A submenu opens the moment the pointer is on its row (it used
+  to wait about a third of a second plus a frame), and a click on its row opens it at once. Only a switch from one
+  open submenu to another waits, for a tenth of a second, so a diagonal move toward the open submenu still keeps it;
+  the app wakes exactly when that wait ends instead of on the next event. A context menu taller than the window is cut
+  to it and scrolls like the menu bar (wheel, the arrow strips at its top and bottom, Up, Down, Home and End), and a
+  submenu near the window edge moves up or opens on the left to stay on screen. The menu bar flyouts already opened
+  at once.
 
 ## [0.3.0-rc.2] - 2026-11-04
 
