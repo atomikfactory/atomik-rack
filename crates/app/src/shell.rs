@@ -888,6 +888,13 @@ impl<B: AudioBackend> Shell<B> {
             keys.set_octave(self.ui.piano_keys_octave);
             keys.set_velocity(self.ui.piano_keys_velocity);
         }
+        self.core.set_video_prefs(atomik_ui::VideoPrefs {
+            size: self.ui.video_size,
+            overlay: atomik_ui::VideoOverlay {
+                timecode: self.ui.video_timecode,
+                frame_number: self.ui.video_frame_number,
+            },
+        });
         {
             let roll = self.core.piano_roll_mut();
             roll.set_snap_to_scale(self.ui.piano_roll_snap_scale);
@@ -3602,9 +3609,11 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Keys])
             }
             Pane::PianoKeys => ContextStack::global(),
-            Pane::Transport | Pane::PluginParams | Pane::SpectrumEq | Pane::TrackPanel => {
-                ContextStack::global()
-            }
+            Pane::Transport
+            | Pane::PluginParams
+            | Pane::SpectrumEq
+            | Pane::Video
+            | Pane::TrackPanel => ContextStack::global(),
         }
     }
 
@@ -3671,6 +3680,8 @@ impl<B: AudioBackend> Shell<B> {
             rack_detached: self.rack_detached(),
             console_detached: self.console_detached(),
             spectrum_eq: self.detached(WindowKind::SpectrumEq),
+            video_window: self.detached(WindowKind::Video),
+            video_overlay: self.core.video_window().prefs().overlay.any(),
             browser_detached: self.browser_detached(),
             sequencer_only: self.in_sequencer_only(),
             editor: !self.lower_is_console()
@@ -3885,6 +3896,9 @@ impl<B: AudioBackend> Shell<B> {
         }
         if let Some((_, rect)) = self.pane_rect(Pane::SpectrumEq) {
             self.core.spectrum_eq_mut().set_bounds(rect);
+        }
+        if let Some((_, rect)) = self.pane_rect(Pane::Video) {
+            self.core.video_window_mut().set_bounds(rect);
         }
         if let Some((_, rect)) = self.pane_rect(Pane::Console)
             && self.console_detached()
@@ -4193,6 +4207,7 @@ impl<B: AudioBackend> Shell<B> {
                 WindowKind::SpectrumEq => Pane::SpectrumEq,
                 WindowKind::Browser => Pane::FileBrowser,
                 WindowKind::PianoKeys => Pane::PianoKeys,
+                WindowKind::Video => Pane::Video,
                 _ => Pane::Rack,
             };
             let (_, rect) = self.pane_rect(pane)?;
@@ -6123,6 +6138,25 @@ impl<B: AudioBackend> Shell<B> {
         self.ui_changed();
     }
 
+    /// The size and overlay choices of the Video window are saved when they changed.
+    fn save_video_prefs(&mut self) {
+        let prefs = self.core.video_window().prefs();
+        let (size, timecode, frame_number) = (
+            prefs.size,
+            prefs.overlay.timecode,
+            prefs.overlay.frame_number,
+        );
+        if size != self.ui.video_size
+            || timecode != self.ui.video_timecode
+            || frame_number != self.ui.video_frame_number
+        {
+            self.ui.video_size = size;
+            self.ui.video_timecode = timecode;
+            self.ui.video_frame_number = frame_number;
+            self.ui_changed();
+        }
+    }
+
     /// The vertical zooms (track heights, key height) and the piano roll's snap to scale and
     /// fold are saved when an event changed them.
     fn save_zoom_state(&mut self) {
@@ -6145,6 +6179,7 @@ impl<B: AudioBackend> Shell<B> {
             self.ui.piano_keys_velocity = velocity;
             self.ui_changed();
         }
+        self.save_video_prefs();
         let fade_unit = self.core.transport_bar().fade_unit();
         if fade_unit != self.ui.fade_unit {
             self.ui.fade_unit = fade_unit;
@@ -7555,6 +7590,16 @@ impl<B: AudioBackend> Shell<B> {
                     WindowKind::SpectrumEq,
                     !self.detached(WindowKind::SpectrumEq),
                 );
+                Vec::new()
+            }
+            AppCommand::ToggleVideo => {
+                self.set_detached(WindowKind::Video, !self.detached(WindowKind::Video));
+                Vec::new()
+            }
+            AppCommand::ToggleVideoOverlay => {
+                self.core.toggle_video_overlay();
+                self.save_video_prefs();
+                self.repaint = true;
                 Vec::new()
             }
             AppCommand::DetachConsole => {
@@ -9205,6 +9250,9 @@ impl<B: AudioBackend> Shell<B> {
                 return self.repaint || win.dirty || self.core.file_browser().needs_repaint();
             }
             WindowKind::PianoKeys => return self.repaint || win.dirty,
+            WindowKind::Video => {
+                return self.repaint || win.dirty || self.core.video_window().needs_repaint();
+            }
             WindowKind::Main => {}
         }
         self.repaint
@@ -9247,6 +9295,7 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::Rack
             | WindowKind::Console
             | WindowKind::SpectrumEq
+            | WindowKind::Video
             | WindowKind::PianoKeys
             | WindowKind::Browser => {
                 self.paint_detached(window, canvas);

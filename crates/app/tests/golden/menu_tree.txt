@@ -91,6 +91,8 @@ File
     Trim Video Start to Playhead
     Trim Video End to Playhead
     ---
+    Video Overlay
+    ---
     Prepare Video…
     Check FFmpeg
     Cancel Video Job
@@ -190,6 +192,7 @@ View
     Detach Rack
     Detach Mixer
     Spectrum EQ
+    Video
     Rack Navigator
     Rack Sorting >
       No Grouping

@@ -30,6 +30,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugin_params.set_theme(theme.clone());
         self.file_browser.set_theme(theme.clone());
         self.spectrum_eq.set_theme(theme.clone());
+        self.video_win.set_theme(theme.clone());
         self.track_panel.set_theme(theme.clone());
         self.piano_keys.set_theme(theme);
     }

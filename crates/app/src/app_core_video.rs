@@ -39,6 +39,10 @@ pub(super) enum Purpose {
     Import,
     /// Relinking the film of the song: the song points at the file when it is probed.
     Relink,
+    /// Preparing the film of the song for the Video window, started by the core when a project
+    /// with a film opens or the window opens: quiet, the window shows the progress and the
+    /// reason when it cannot be done.
+    Open,
 }
 
 /// The video job that runs.
@@ -74,6 +78,10 @@ pub(super) struct VideoState {
     pub(super) file: std::cell::RefCell<Option<(PathBuf, bool)>>,
     /// The probe of the running job already said something the proxy message must not replace.
     pub(super) warned: bool,
+    /// The platform gave the core real tools (a headless core never starts a program).
+    tool_set: bool,
+    /// A project with a film was opened and its proxy is to be built once the tools are set.
+    pub(super) warm: bool,
 }
 
 impl Default for VideoState {
@@ -89,11 +97,18 @@ impl Default for VideoState {
             prepared: Vec::new(),
             file: std::cell::RefCell::new(None),
             warned: false,
+            tool_set: false,
+            warm: false,
         }
     }
 }
 
 impl VideoState {
+    /// The core has what a job needs: real tools and a cache folder.
+    pub(super) fn ready(&self) -> bool {
+        self.tool_set && self.cache.is_some()
+    }
+
     /// Stops the running job (the core goes away).
     pub(super) fn stop(&self) {
         if let Some(r) = &self.running {
@@ -114,6 +129,7 @@ impl<S: EngineSink> AppCore<S> {
     /// starts without any).
     pub fn set_video_tool(&mut self, tool: Arc<dyn VideoTool>) {
         self.video.tool = tool;
+        self.video.tool_set = true;
     }
 
     /// Sets the folder FFmpeg is looked for in (`None` or empty: the system path). A change
@@ -229,7 +245,7 @@ impl<S: EngineSink> AppCore<S> {
             cache: self.video.cache.clone().unwrap_or_else(fallback_cache),
             announce: matches!(purpose, Purpose::Import | Purpose::Relink),
         };
-        self.spawn_video(job, Some((name, film, purpose)), false)
+        self.spawn_video(job, Some((name, film, purpose)), purpose == Purpose::Open)
     }
 
     /// Stops the running video job; it leaves no half-written proxy.
@@ -317,6 +333,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             return;
         };
+        let quiet = running.quiet;
         let film = running.film.unwrap_or_default();
         let in_song = matches!(running.purpose, Purpose::Import | Purpose::Relink);
         let warned = std::mem::take(&mut self.video.warned);
@@ -333,7 +350,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.video.prepared.retain(|q| q.source != p.source);
                 self.video.prepared.push(p);
                 // The warning of a relink stays on screen: this message would replace it.
-                if !warned {
+                if !warned && !quiet {
                     self.reject(message);
                 }
             }
@@ -341,6 +358,7 @@ impl<S: EngineSink> AppCore<S> {
                 "Preparing {film} cancelled; the video stays in the song without its preview"
             )),
             Err(VideoError::Cancelled) => self.reject(format!("Preparing {film} cancelled")),
+            Err(VideoError::NotUsable(_)) if quiet => {}
             Err(VideoError::NotUsable(message)) => self.reject(message),
             Err(e) if in_song => self.reject(format!("Cannot use {film}: {e}")),
             Err(e) => self.reject(format!("Preparing {film} failed: {e}")),

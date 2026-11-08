@@ -2652,6 +2652,24 @@ Without FFmpeg the video features are off and nothing else changes. This section
   tools lists the film with `missing`. Remove Video, Move Video to Playhead and Trim Video Start / End to Playhead
   (`video.remove`, `video.move_to_playhead`, `video.trim_start`, `video.trim_end`) read the playhead through the
   tempo map into the film's own time.
+- **The Video window.** View > Video (`view.toggle_video`) is a floating window of its own, like the Spectrum EQ
+  (`WindowKind::Video`, `Pane::Video`, `windows.video` in `ui-state.json`); its view is
+  [video_view.rs](../crates/ui/src/video_view.rs) and its logic `app_core_video_view.rs`. The core works out the
+  picture once per `AppCore::frame`: the song position (ticks, read through the tempo map into microseconds) goes
+  through `atomik_video::timeline::locate` with the film's start, trim and the proxy's rate, in integer arithmetic
+  (a frame changes exactly at its start for 24, 25 and 30000/1001 alike), giving the proxy frame, or black before
+  and after the film with the frame number the film would have (for the timecode, drop frame included:
+  `Timecode`). A `FrameDecoder` worker thread opens the proxy and decodes with `zune-jpeg`; the core asks it for
+  the frame shown first, then `timeline::wanted` (ahead while playing, around while stopped, the first frames of
+  the loop near its end), a new request replaces the old one so a slow decode drops frames, and decoded frames
+  sit in a byte-limited `FrameCache` (48 MiB). Nothing is read or decoded on the UI or audio thread; closing the
+  window frees the worker and the pictures. The song position is whole ticks, so the picture can change up to one
+  tick (under a millisecond at usual tempos) late and at most one UI frame after the transport. The view paints
+  an RGBA image brush, the timecode and frame number overlay (`video.toggle_overlay`) and a bar with Fit, 50%,
+  100%, 200% (kept in `ui-state.json`). With no picture it shows a message (no film, file missing, FFmpeg
+  missing) or the proxy's progress. The proxy of a song's film is built quietly (`Purpose::Open`, no toast) once
+  per film when a project with a film opens (after the platform has set the tools and cache, in `video_frame`)
+  and when the window opens. No key is bound (the menu has both commands).
 - **Tests.** `crates/video` has unit tests for the version parser, the discovery order, the probe of an MP4/H.264,
   a ProRes MOV with a timecode, an MKV with two audio tracks, a silent film, a rotated variable-rate phone film
   and cover art, the argument lists, the frame splitter, the proxy index and random access, the cache key,
@@ -4892,7 +4910,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (509) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (511) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

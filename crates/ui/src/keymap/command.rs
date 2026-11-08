@@ -2760,6 +2760,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd("video.relink", "Relink Video", G::Global, C::Global).menu(),
     cmd("video.remove", "Remove Video", G::Global, C::Global).menu(),
     cmd(
+        "video.toggle_overlay",
+        "Video Overlay",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "video.trim_end",
         "Trim Video End to Playhead",
         G::Global,
@@ -2905,6 +2912,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.toggle_step_editor", "Step Editor", G::View, C::Global).menu(),
     cmd("view.toggle_tempo_lane", "Tempo Lane", G::View, C::Global).menu(),
     cmd("view.toggle_track_panel", "Track Panel", G::View, C::Global).menu(),
+    cmd("view.toggle_video", "Video", G::View, C::Global).menu(),
     cmd("view.zoom_in", "Zoom In", G::View, C::Global)
         .rep()
         .menu(),
@@ -2995,7 +3003,7 @@ mod tests {
             assert!(!d.label.trim().is_empty(), "{}", d.id);
             let prefix = d.id.split('.').next().unwrap();
             let expected: &[&str] = match d.group {
-                Group::Global => &["file", "audio", "help"],
+                Group::Global => &["file", "audio", "help", "video"],
                 Group::Transport => &["transport", "sync"],
                 Group::View => &["view", "window"],
                 Group::Edit => &["edit"],

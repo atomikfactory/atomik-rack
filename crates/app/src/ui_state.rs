@@ -134,6 +134,13 @@ pub struct UiState {
     /// The velocity of the Piano Keys' typed keys and clicks (1 to 127). An absent key means
     /// the default (98). Whether the Piano Keys window is open is `windows.piano_keys`.
     pub piano_keys_velocity: u8,
+    /// The size of the Video window picture (`"fit"`, `"half"`, `"full"` or `"double"`). An
+    /// absent key means fit. Whether the window is open is `windows.video`.
+    pub video_size: atomik_ui::VideoSize,
+    /// The Video window shows the timecode over the picture. An absent key means yes.
+    pub video_timecode: bool,
+    /// The Video window shows the frame number over the picture. An absent key means no.
+    pub video_frame_number: bool,
     /// The mode the audio clip editor opens in (`"overview"` or `"slice"`). An absent key means
     /// overview.
     pub audio_editor_mode: AudioMode,
@@ -198,6 +205,9 @@ impl Default for UiState {
             piano_roll_fold: Fold::Off,
             piano_keys_octave: DEFAULT_OCTAVE,
             piano_keys_velocity: DEFAULT_VELOCITY,
+            video_size: atomik_ui::VideoSize::Fit,
+            video_timecode: true,
+            video_frame_number: false,
             audio_editor_mode: AudioMode::Overview,
             fade_unit: FadeUnit::Ms,
             link_faders: false,

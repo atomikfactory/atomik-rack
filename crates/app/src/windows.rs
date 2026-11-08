@@ -51,6 +51,9 @@ pub enum WindowKind {
     Browser,
     /// The Piano Keys strip: a floating window of its own while open.
     PianoKeys,
+    /// The Video window (the song's film at the song position): a floating window of its own
+    /// while open.
+    Video,
 }
 
 impl WindowKind {
@@ -65,6 +68,7 @@ impl WindowKind {
             Self::SpectrumEq => format!("Spectrum EQ \u{2014} {project}"),
             Self::Browser => format!("Browser \u{2014} {project}"),
             Self::PianoKeys => format!("Piano Keys \u{2014} {project}"),
+            Self::Video => format!("Video \u{2014} {project}"),
         }
     }
 }
@@ -136,6 +140,8 @@ pub struct WindowsState {
     pub browser: DetachState,
     /// The Piano Keys window (`detached` means open).
     pub piano_keys: DetachState,
+    /// The Video window (`detached` means open).
+    pub video: DetachState,
 }
 
 impl WindowsState {
@@ -148,6 +154,7 @@ impl WindowsState {
             WindowKind::SpectrumEq => self.spectrum_eq.detached,
             WindowKind::Browser => self.browser.detached,
             WindowKind::PianoKeys => self.piano_keys.detached,
+            WindowKind::Video => self.video.detached,
         }
     }
 
@@ -160,6 +167,7 @@ impl WindowsState {
             WindowKind::SpectrumEq => self.spectrum_eq.detached = detached,
             WindowKind::Browser => self.browser.detached = detached,
             WindowKind::PianoKeys => self.piano_keys.detached = detached,
+            WindowKind::Video => self.video.detached = detached,
         }
     }
 
@@ -172,6 +180,7 @@ impl WindowsState {
             WindowKind::SpectrumEq => self.spectrum_eq.geom.as_ref(),
             WindowKind::Browser => self.browser.geom.as_ref(),
             WindowKind::PianoKeys => self.piano_keys.geom.as_ref(),
+            WindowKind::Video => self.video.geom.as_ref(),
         }
     }
 
@@ -184,6 +193,7 @@ impl WindowsState {
             WindowKind::SpectrumEq => self.spectrum_eq.geom = Some(geom),
             WindowKind::Browser => self.browser.geom = Some(geom),
             WindowKind::PianoKeys => self.piano_keys.geom = Some(geom),
+            WindowKind::Video => self.video.geom = Some(geom),
         }
     }
 
@@ -196,6 +206,7 @@ impl WindowsState {
             WindowKind::SpectrumEq,
             WindowKind::Browser,
             WindowKind::PianoKeys,
+            WindowKind::Video,
         ]
         .into_iter()
         .filter(|&k| k == WindowKind::Main || self.detached(k))
@@ -212,6 +223,7 @@ impl WindowsState {
         self.spectrum_eq.geom = keep(self.spectrum_eq.geom);
         self.browser.geom = keep(self.browser.geom);
         self.piano_keys.geom = keep(self.piano_keys.geom);
+        self.video.geom = keep(self.video.geom);
         self
     }
 }

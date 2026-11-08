@@ -2018,14 +2018,19 @@ start a program either; they pass a `FakeTool` and a folder of stand-in files na
   splitter, proxy index and random access, cache key and pruning, build, cancel and failures).
 - `cargo test -p atomik-app --lib -- video` runs the core, shell and Settings tab tests, among them Import Video,
   Relink Video (and its warning), a missing file, Remove, Move and Trim with the fake.
+- `cargo test -p atomik-ui --test video_view` paints the window with the CPU canvas (the frame's pixels, black,
+  message, progress, overlay texts, the bar buttons and the sizes). `cargo test -p atomik-app --lib -- video_view`
+  runs the viewer in the core with the fake piping real tiny JPEGs (frame `n` is red, green, blue or white): the
+  frame at a position, the frame edges, a start offset, a trim, a tempo change, decode-ahead while playing, the
+  loop, the messages, the progress and the proxy started when a project opens.
 - `cargo test -p atomik-model --test video` runs the model tests of the film in the song (undo of each command, a
   drag merging, the limits, relink, a tempo change keeping the film locked to time, the saved text, an old file).
 - The one test that needs the real programs is ignored by default:
   `cargo test -p atomik-video --test real_ffmpeg -- --ignored --nocapture`. It finds FFmpeg like the app does (the
   folder in `ATOMIK_FFMPEG_DIR` when set, else `PATH`), makes a two-second film with FFmpeg's own generators in a
-  temporary folder, probes it, builds and reads its proxy, checks the cache hit and a cancelled build. Without
-  FFmpeg it says so and passes. A second one runs Import Video of a generated film through the app core and
-  checks the film in the song: `cargo test -p atomik-app --lib real_ffmpeg -- --ignored --nocapture`.
+  temporary folder, probes it, builds and reads its proxy, checks the cache hit and a cancelled build, and decodes
+  real proxy frames with the viewer's decoder and worker. Without FFmpeg it says so and passes. A second one
+  runs Import Video of a generated film through the app core and checks the film in the song: `cargo test -p atomik-app --lib real_ffmpeg -- --ignored --nocapture`.
 
 Hand checks (a machine with FFmpeg): File > Video > Check FFmpeg says `FFmpeg 7.1 found at ...`; Settings > Video
 shows the same line and the folder; set the folder to an empty one and Apply: the line says it was not found there;
