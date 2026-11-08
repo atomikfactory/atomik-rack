@@ -9,6 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A video row in the arrangement.** A song with a film shows it in a row above the track lanes: a clip bar with a
+  frame thumbnail every picture-width, the frame that plays at the start of each slot, so the pictures follow the
+  zoom. Only the slots in view are decoded, on a worker, with a placeholder until they arrive, and they are kept
+  while you scroll and zoom. The header cell shows the film's timecode at the playhead and the bar the timecode of
+  its first and last frame. Drag the bar to move the film and either end to trim it: a move snaps to the grid and
+  then to a whole frame, a trim snaps its edge to the grid and the cut to a whole frame of the film (the no-snap
+  key switches both off); a drag is one undo step and Escape puts the film back. Click the bar and press Delete to
+  remove the video. A missing file or a film with no preview yet is a labelled bar that still moves. The chevron
+  collapses the row to a thin bar and View > Lanes and Markers > Video Row hides it (both are remembered).
 - **The Video window.** View > Video opens a window with the picture of the song's film at the song position:
   frame-accurate while stopped (locate, scrub, ruler clicks), following the transport while it plays (frames are
   dropped, never lag), jumping back with the loop, and locked to time when the tempo changes. Before the film starts
