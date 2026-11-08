@@ -9,6 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A video in the song.** A song can hold one film, linked by its path (never copied: films are huge) with what the
+  probe found (length, frame rate, picture size, start timecode, whether it has sound) saved in the project, so the
+  project opens and shows its film without FFmpeg. The film's start and trim are kept in microseconds, not in
+  ticks, so it stays locked to time when the tempo changes. File > Video has Import Video... (probes the film, puts
+  it at the start of the song and builds its preview in the background; without FFmpeg it says how to set it up),
+  Remove Video, Relink Video..., Move Video to Playhead and Trim Video Start / End to Playhead, each one undo step.
+  A song whose film file is gone opens with the video marked missing and a toast; Relink Video points it at the file
+  again and warns when its length or frame rate differs from the original. The MCP project inspect lists the film.
+  Project format 44 (an optional field that older readers skip); the viewer and the thumbnails come later.
 - **Video foundation (FFmpeg).** Video tracks will be decoded by an FFmpeg you install: nothing is bundled. A new
   crate `atomik-video` finds FFmpeg (the folder set in Settings > Video, else your `PATH`, else the usual package
   folders on macOS), checks that it is release 4 or later and says clearly when it is missing, too old or broken:

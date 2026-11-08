@@ -2016,7 +2016,10 @@ start a program either; they pass a `FakeTool` and a folder of stand-in files na
 
 - `cargo test -p atomik-video` runs the unit tests (version, discovery order, probe samples, arguments, frame
   splitter, proxy index and random access, cache key and pruning, build, cancel and failures).
-- `cargo test -p atomik-app --lib -- video` runs the core, shell and Settings tab tests.
+- `cargo test -p atomik-app --lib -- video` runs the core, shell and Settings tab tests, among them Import Video,
+  Relink Video (and its warning), a missing file, Remove, Move and Trim with the fake.
+- `cargo test -p atomik-model --test video` runs the model tests of the film in the song (undo of each command, a
+  drag merging, the limits, relink, a tempo change keeping the film locked to time, the saved text, an old file).
 - The one test that needs the real programs is ignored by default:
   `cargo test -p atomik-video --test real_ffmpeg -- --ignored --nocapture`. It finds FFmpeg like the app does (the
   folder in `ATOMIK_FFMPEG_DIR` when set, else `PATH`), makes a two-second film with FFmpeg's own generators in a
@@ -2028,3 +2031,12 @@ shows the same line and the folder; set the folder to an empty one and Apply: th
 File > Video > Prepare Video on a long film shows the progress in the status line, Cancel Video Job stops it and the
 cache folder holds no `.part` file; preparing the same film again says it came from the cache; with FFmpeg not on
 the `PATH` (rename it) nothing crashes and every message says to install it and set its folder.
+
+Hand checks of the film in the song (a machine with FFmpeg): File > Video > Import Video on a short film puts it at
+the start of the song and the status line shows the proxy being built; Edit > Undo takes it out again. Save, close
+and open the project: nothing about the film needs FFmpeg. Rename the film's file and open the project: a toast says
+the video is missing and Relink Video is available; relink to the file and nothing warns; relink to another film of
+a different length or frame rate and the toast says so. Put the playhead inside the film and use Move Video to
+Playhead and Trim Video Start / End to Playhead; each is one undo step. Change the tempo: File > Video > Move Video to
+Playhead at the same playhead afterwards reports the same time in seconds (the film did not move). MCP:
+`project_inspect` of the saved project lists `song.video`.
