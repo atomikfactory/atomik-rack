@@ -1405,7 +1405,9 @@ mod tests {
         let mac = env(&[("HOME", "/Users/name")]);
         assert_eq!(
             video_cache_dir(TargetOs::MacOs, &mac),
-            Some(PathBuf::from("/Users/name/Library/Caches/Atomik Rack/video"))
+            Some(PathBuf::from(
+                "/Users/name/Library/Caches/Atomik Rack/video"
+            ))
         );
         let xdg = env(&[("XDG_CACHE_HOME", "/c"), ("HOME", "/home/name")]);
         assert_eq!(
