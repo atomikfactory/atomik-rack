@@ -7,7 +7,7 @@
 //!
 //! A list taller than the window is cut to it and scrolls (mouse wheel, the strips at its two
 //! ends, the arrow keys); a submenu opens beside its row, on the other side when the window ends
-//! there, and may hold submenus of its own. The geometry is in [`crate::menu_layout`].
+//! there, and may hold submenus of its own. The geometry is in [`atomik_ui::menu_layout`].
 
 use crate::commands::{AppCommand, Menu, MenuEntry};
 use crate::menu_layout::{
@@ -19,10 +19,7 @@ use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, Ui
 
 /// Height of the bar, logical pixels.
 pub const MENU_BAR_HEIGHT: f64 = 26.0;
-/// Height of one dropdown item.
-pub const ITEM_HEIGHT: f64 = 24.0;
-/// Height of a dropdown separator.
-pub const SEPARATOR_HEIGHT: f64 = 9.0;
+pub use atomik_ui::menu_layout::{ITEM_HEIGHT, SEPARATOR_HEIGHT};
 /// Approximate advance of one character of UI text at 13 px (layout estimate).
 pub const CHAR_WIDTH: f64 = 7.2;
 const TITLE_PAD: f64 = 12.0;

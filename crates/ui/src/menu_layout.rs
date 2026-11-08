@@ -1,9 +1,14 @@
 //! The geometry of the in-window menus: where a dropdown or a flyout goes so that it stays on
 //! screen, how far it scrolls when the window is shorter than the list, and what scrolling does
-//! to the rows. Pure arithmetic in logical pixels, used by [`crate::menubar`].
+//! to the rows. Pure arithmetic in logical pixels, shared by the in-window menu bar and the
+//! context menus.
 
-use crate::menubar::{ITEM_HEIGHT, SEPARATOR_HEIGHT};
-use atomik_ui::kurbo::Rect;
+use vello::kurbo::Rect;
+
+/// Height of one menu row, logical pixels.
+pub const ITEM_HEIGHT: f64 = 24.0;
+/// Height of a separator.
+pub const SEPARATOR_HEIGHT: f64 = 9.0;
 
 /// Space kept between a menu and the edge of the window.
 pub const EDGE_MARGIN: f64 = 6.0;
