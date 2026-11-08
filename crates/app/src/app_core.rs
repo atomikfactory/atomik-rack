@@ -456,6 +456,8 @@ pub struct AppCore<S: EngineSink> {
     templates: templates::TemplatesState,
     /// The archive job that runs ([`AppCore::start_archive_export`]).
     archive: archive::ArchiveState,
+    /// FFmpeg and the films prepared with it ([`AppCore::check_ffmpeg`]).
+    video: video::VideoState,
     /// Third-party plugins: the manager, the catalog, the instances. Declared after
     /// the sink so the engine's devices drop before the manager that owns their plugins.
     plugins: plugins::PluginState,
@@ -640,6 +642,7 @@ impl<S: EngineSink> AppCore<S> {
             browser: browser::BrowserState::default(),
             templates: templates::TemplatesState::default(),
             archive: archive::ArchiveState::default(),
+            video: video::VideoState::default(),
             plugin_params_open: false,
             plugins: plugins::PluginState::new(),
             patches: patches::PatchState::default(),
@@ -3795,6 +3798,8 @@ impl<S: EngineSink> Drop for AppCore<S> {
     fn drop(&mut self) {
         // An archive job that runs removes its part file when it sees this.
         self.archive.stop();
+        // So does a video job: ffmpeg is killed and the part file removed.
+        self.video.stop();
         self.audio.remove_scratch();
     }
 }
@@ -4028,6 +4033,13 @@ pub use versions::{VersionComparison, VersionRow};
 
 #[path = "app_core_archive.rs"]
 mod archive;
+
+#[path = "app_core_video.rs"]
+mod video;
+
+#[cfg(test)]
+#[path = "app_core_video_tests.rs"]
+mod video_tests;
 
 #[path = "app_core_patches.rs"]
 mod patches;

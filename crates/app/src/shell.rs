@@ -254,6 +254,9 @@ pub enum ShellRequest {
     /// Show an open dialog for a project archive (File > Import Project Archive), then call
     /// [`Shell::import_archive_from`] with the path.
     PickImportArchive,
+    /// Show an open dialog for a film (File > Video > Prepare Video), then call
+    /// [`Shell::prepare_video_from`] with the path.
+    PickVideoFile,
     /// Show a folder dialog (the Workflow tab's Scratch folder Choose...), then call
     /// [`Shell::set_scratch_folder`] with the picked folder.
     PickScratchFolder,
@@ -1095,6 +1098,13 @@ impl<B: AudioBackend> Shell<B> {
         }
         // The core says why in a toast when it refuses.
         let _ = self.core.start_archive_export(path);
+        self.repaint = true;
+    }
+
+    /// Prepares the film the dialog picked: FFmpeg is looked for, the film probed and its proxy
+    /// built or found in the cache (see [`AppCore::start_prepare_video`]).
+    pub fn prepare_video_from(&mut self, path: &Path) {
+        let _ = self.core.start_prepare_video(path.to_path_buf());
         self.repaint = true;
     }
 
@@ -3145,6 +3155,8 @@ impl<B: AudioBackend> Shell<B> {
             .set_autosave_minutes(self.workflow.autosave_minutes);
         self.core
             .set_scratch_folder(self.workflow.scratch_folder.clone());
+        self.core
+            .set_video_folder(self.workflow.ffmpeg_folder.clone());
         self.core.set_record_mode(self.workflow.record_mode);
         self.core.set_keep_events(self.workflow.keep_events);
         self.core.set_warp_imports(self.workflow.warp_imports);
@@ -3626,6 +3638,7 @@ impl<B: AudioBackend> Shell<B> {
                 && !matches!(self.lower_pane(), Pane::Arrangement | Pane::Console),
             missing_audio: !self.core.missing_assets().is_empty(),
             archive_busy: self.core.archive_busy(),
+            video_busy: self.core.video_busy(),
             collect_busy: self.core.collect_busy(),
             default_song: self.workflow.default_song.is_some(),
             midi_clip: self.core.can_export_midi(MidiExport::Clip),
@@ -7002,6 +7015,16 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.cancel_archive();
                 Vec::new()
             }
+            AppCommand::PrepareVideo => vec![ShellRequest::PickVideoFile],
+            AppCommand::CheckFfmpeg => {
+                // The core says why in a toast when it refuses.
+                let _ = self.core.check_ffmpeg();
+                Vec::new()
+            }
+            AppCommand::CancelVideo => {
+                self.core.cancel_video();
+                Vec::new()
+            }
             AppCommand::ConvertRate(rate) => {
                 self.core.convert_sample_rate(rate);
                 Vec::new()
@@ -8958,6 +8981,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(progress) = self.core.freeze_progress() {
             text = format!("{progress} \u{b7} {text}");
         }
+        if let Some((_, progress)) = self.core.video_progress() {
+            text = format!("{progress} \u{b7} {text}");
+        }
         if let Some(learn) = self.core.midi_status() {
             text = format!("{learn} \u{b7} {text}");
         }
@@ -9616,6 +9642,10 @@ mod save_tests;
 #[cfg(test)]
 #[path = "shell_templates_tests.rs"]
 mod templates_tests;
+
+#[cfg(test)]
+#[path = "shell_video_tests.rs"]
+mod video_tests;
 
 #[cfg(test)]
 #[path = "shell_versions_tests.rs"]

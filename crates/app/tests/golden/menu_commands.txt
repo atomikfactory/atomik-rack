@@ -87,6 +87,8 @@ Cables(SelectedOnly) | Cables: Selected
 Cables(Show) | Cables: Show
 CancelArchive | Cancel Project Archive
 CancelCollect | Cancel Collect or Move
+CancelVideo | Cancel Video Job
+CheckFfmpeg | Check FFmpeg
 CheckMix | Check Mix…
 ChopClips(Bar) | Bar
 ChopClips(Beat) | Beat
@@ -255,6 +257,7 @@ PasteSettings | Paste Channel Settings
 PatternLaneToNotes | Pattern Lane to Notes
 PeakSurgeon | Peak Surgeon…
 PluginSettings | Plugins…
+PrepareVideo | Prepare Video…
 PreviousMarker | Previous Marker
 PreviousSong | Previous Song
 Quantize(InputQuantize { grid_ticks: None }) | Input Quantize: Off

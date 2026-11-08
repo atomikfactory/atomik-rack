@@ -109,6 +109,9 @@ pub struct WorkflowPrefs {
     /// The folder the session scratch bundle (the audio of a song that has no folder yet) is
     /// made in (`None`: the OS temporary folder).
     pub scratch_folder: Option<PathBuf>,
+    /// The folder holding the `ffmpeg` and `ffprobe` programs video uses (`None`: search the
+    /// system path).
+    pub ffmpeg_folder: Option<PathBuf>,
     /// What Reverse Clips does with the notes of a clip when no mode is named (default: each
     /// note mirrors as a bar).
     pub reverse_mode: ReverseMode,
@@ -212,6 +215,7 @@ impl Default for WorkflowPrefs {
             midi_resolution: MidiResolution::default(),
             default_song: None,
             scratch_folder: None,
+            ffmpeg_folder: None,
             reverse_mode: ReverseMode::default(),
             keep_versions: DEFAULT_KEEP_VERSIONS,
             extra: BTreeMap::new(),
@@ -313,6 +317,7 @@ impl WorkflowPrefs {
                 .unwrap_or(defaults.midi_resolution),
             default_song: path_field(obj, "default_song"),
             scratch_folder: path_field(obj, "scratch_folder"),
+            ffmpeg_folder: path_field(obj, "ffmpeg_folder"),
             reverse_mode: obj
                 .get("reverse_mode")
                 .and_then(Value::as_str)
@@ -354,6 +359,7 @@ impl WorkflowPrefs {
                             | "midi_resolution"
                             | "default_song"
                             | "scratch_folder"
+                            | "ffmpeg_folder"
                             | "reverse_mode"
                             | "keep_versions"
                     )
@@ -444,6 +450,7 @@ impl WorkflowPrefs {
         for (name, path) in [
             ("default_song", &self.default_song),
             ("scratch_folder", &self.scratch_folder),
+            ("ffmpeg_folder", &self.ffmpeg_folder),
         ] {
             if let Some(path) = path {
                 map.insert(
@@ -1085,6 +1092,29 @@ mod packaging_tests {
         assert_eq!(back, set);
         assert!(back.extra.is_empty(), "known fields are not kept as extra");
         assert_eq!(back.to_json(), text, "the text is canonical");
+    }
+
+    #[test]
+    fn the_ffmpeg_folder_defaults_to_none_and_round_trips() {
+        assert_eq!(WorkflowPrefs::default().ffmpeg_folder, None);
+        assert_eq!(WorkflowPrefs::from_json("{}").unwrap().ffmpeg_folder, None);
+        assert!(!WorkflowPrefs::default().to_json().contains("ffmpeg_folder"));
+        let set = WorkflowPrefs {
+            ffmpeg_folder: Some(PathBuf::from("/opt/ffmpeg/bin")),
+            ..WorkflowPrefs::default()
+        };
+        let text = set.to_json();
+        assert!(
+            text.contains("\"ffmpeg_folder\": \"/opt/ffmpeg/bin\""),
+            "{text}"
+        );
+        let back = WorkflowPrefs::from_json(&text).unwrap();
+        assert_eq!(back, set);
+        assert!(back.extra.is_empty());
+        assert_eq!(back.to_json(), text);
+        for bad in [r#"{"ffmpeg_folder": ""}"#, r#"{"ffmpeg_folder": 7}"#] {
+            assert_eq!(WorkflowPrefs::from_json(bad).unwrap().ffmpeg_folder, None);
+        }
     }
 
     #[test]

@@ -54,7 +54,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), model | none | Platform-independent views, widgets, display lists, theme |
-| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
+| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, video, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
 
@@ -4804,7 +4804,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (500) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (503) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

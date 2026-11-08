@@ -79,6 +79,13 @@ pub(crate) enum Msg {
         job: u64,
         result: Box<Result<crate::archive_worker::Done, atomik_audio_file::ArchiveError>>,
     },
+    /// FFmpeg was looked for, or a film was prepared (or it failed or was stopped): see
+    /// [`crate::video_worker`]. The project it belongs to does not matter, so there is no
+    /// generation.
+    Video {
+        job: u64,
+        done: Box<crate::video_worker::Done>,
+    },
     /// An instrument file (SFZ, SoundFont) was read, its samples stored and its regions made
     /// into zones (or it failed): see [`crate::instrument_import`].
     Instrument {

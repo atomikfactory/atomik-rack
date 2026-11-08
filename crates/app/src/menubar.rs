@@ -960,6 +960,7 @@ mod tests {
             editor: false,
             missing_audio: false,
             archive_busy: false,
+            video_busy: false,
             collect_busy: false,
             default_song: false,
             midi_clip: false,
