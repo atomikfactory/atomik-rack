@@ -1319,3 +1319,209 @@ fn recovered_songs_open_in_windows_of_their_own_without_moving_the_audio() {
     assert_eq!(w.recover_songs(&[]), 0);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// A song saved to a project file in `dir` whose undo history still holds an audio asset
+/// that no clip uses (the saved file does not have it, the live pool does), then changed.
+fn saved_song_with_history_asset(
+    w: &mut Workspace<Counting>,
+    dir: &std::path::Path,
+    file: PathBuf,
+    name: &str,
+) -> PathBuf {
+    use atomik_ui::ImportTarget;
+    let path = dir.join(name);
+    w.core_mut()
+        .import_audio(vec![file], ImportTarget::NewTracks, 0);
+    w.core_mut().wait_background();
+    w.core_mut().save_as(&path).unwrap();
+    let clip = w.core().doc().song.tracks[0].lanes[0].clips[0].id;
+    w.core_mut()
+        .apply_command(Command::Song(atomik_model::SongCommand::RemoveClip {
+            id: clip,
+        }))
+        .unwrap();
+    assert!(w.core().is_dirty());
+    path
+}
+
+#[test]
+fn quit_with_save_writes_the_file_and_quits_without_asking_again() {
+    let (mut w, _backend) = workspace();
+    let path = temp("quit-save.atomik");
+    add_synth(&mut w, "lead");
+    w.core_mut().save_as(&path).unwrap();
+    let before = std::fs::read_to_string(&path).unwrap();
+    add_synth(&mut w, "bass");
+    let quit = PendingAction::Command(AppCommand::Quit);
+    assert_eq!(
+        w.execute(AppCommand::Quit),
+        vec![ShellRequest::ConfirmSave { then: quit.clone() }]
+    );
+    assert_eq!(w.save_then(quit), vec![ShellRequest::Quit]);
+    assert_ne!(std::fs::read_to_string(&path).unwrap(), before);
+    assert!(!w.core().is_dirty());
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn a_song_is_clean_right_after_a_save_even_when_the_undo_history_holds_an_asset() {
+    let (mut w, _backend) = workspace();
+    let (dir, file) = ramp_file("clean-after-save");
+    saved_song_with_history_asset(&mut w, &dir, file, "proj.atomik");
+    w.core_mut().save().unwrap();
+    assert!(!w.core().is_dirty(), "the saved state is the live state");
+    // Undo brings the clip back (a change), redo returns to the saved state (clean again).
+    assert!(w.core_mut().undo());
+    assert!(w.core().is_dirty());
+    assert!(w.core_mut().redo());
+    assert!(!w.core().is_dirty());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn quit_with_save_does_not_loop_when_the_undo_history_holds_an_asset() {
+    let (mut w, _backend) = workspace();
+    let (dir, file) = ramp_file("quit-loop");
+    saved_song_with_history_asset(&mut w, &dir, file, "proj.atomik");
+    let quit = PendingAction::Command(AppCommand::Quit);
+    assert_eq!(
+        w.execute(AppCommand::Quit),
+        vec![ShellRequest::ConfirmSave { then: quit.clone() }]
+    );
+    assert_eq!(w.save_then(quit), vec![ShellRequest::Quit]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn quit_goes_on_after_a_save_that_worked_even_if_the_song_is_dirty_again() {
+    let (mut w, _backend) = workspace();
+    let path = temp("quit-dirty-again.atomik");
+    add_synth(&mut w, "lead");
+    w.core_mut().save_as(&path).unwrap();
+    add_synth(&mut w, "bass");
+    let quit = PendingAction::Command(AppCommand::Quit);
+    w.execute(AppCommand::Quit);
+    // Whatever marks the song changed after the save, the answer was given and the save worked.
+    let after = w.save_then(quit);
+    assert_eq!(after, vec![ShellRequest::Quit]);
+    add_synth(&mut w, "pad");
+    assert!(w.core().is_dirty());
+    assert_eq!(w.execute(AppCommand::Quit).len(), 1, "a new quit asks anew");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn quit_with_a_failing_save_stays_open_and_asks_nothing_more() {
+    let (mut w, _backend) = workspace();
+    let path = temp("quit-failing.atomik");
+    add_synth(&mut w, "lead");
+    w.core_mut().save_as(&path).unwrap();
+    add_synth(&mut w, "bass");
+    // The project file becomes a folder: the write cannot replace it.
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    let quit = PendingAction::Command(AppCommand::Quit);
+    w.execute(AppCommand::Quit);
+    assert_eq!(
+        w.save_then(quit.clone()),
+        Vec::new(),
+        "no quit, no new question"
+    );
+    assert!(w.core().is_dirty(), "nothing is lost");
+    assert_eq!(w.ids().len(), 1);
+    // A later quit asks again.
+    assert_eq!(
+        w.execute(AppCommand::Quit),
+        vec![ShellRequest::ConfirmSave { then: quit }]
+    );
+    let _ = std::fs::remove_dir_all(path);
+}
+
+#[test]
+fn quit_with_a_cancelled_save_as_dialog_stays_open() {
+    let (mut w, _backend) = workspace();
+    add_synth(&mut w, "lead");
+    let quit = PendingAction::Command(AppCommand::Quit);
+    w.execute(AppCommand::Quit);
+    // A song with no file yet asks for one; the dialog is cancelled, nothing else happens.
+    assert_eq!(
+        w.save_then(quit.clone()),
+        vec![ShellRequest::PickSaveFileThen { then: quit.clone() }]
+    );
+    assert!(w.core().is_dirty());
+    assert_eq!(
+        w.execute(AppCommand::Quit),
+        vec![ShellRequest::ConfirmSave { then: quit }]
+    );
+}
+
+#[test]
+fn quit_with_cancel_leaves_the_song_and_asks_again_next_time() {
+    let (mut w, _backend) = workspace();
+    add_synth(&mut w, "lead");
+    let quit = PendingAction::Command(AppCommand::Quit);
+    w.execute(AppCommand::Quit);
+    // Cancel: the platform layer does nothing at all.
+    assert!(w.core().is_dirty());
+    assert_eq!(
+        w.execute(AppCommand::Quit),
+        vec![ShellRequest::ConfirmSave { then: quit }]
+    );
+}
+
+#[test]
+fn quit_with_save_asks_each_song_once() {
+    let (mut w, _backend) = workspace();
+    let (dir, file) = ramp_file("quit-two");
+    let (dir2, file2) = ramp_file("quit-two-b");
+    saved_song_with_history_asset(&mut w, &dir, file, "one.atomik");
+    let second = w.new_song();
+    saved_song_with_history_asset(&mut w, &dir2, file2, "two.atomik");
+    w.focus(DocId::FIRST);
+    let quit = PendingAction::Command(AppCommand::Quit);
+    assert_eq!(
+        w.execute(AppCommand::Quit),
+        vec![ShellRequest::ConfirmSave { then: quit.clone() }]
+    );
+    assert_eq!(w.routed(), DocId::FIRST);
+    // Save for the first song: the second one is asked next, once.
+    assert_eq!(
+        w.save_then(quit.clone()),
+        vec![ShellRequest::ConfirmSave { then: quit.clone() }]
+    );
+    assert_eq!(w.routed(), second);
+    assert_eq!(w.save_then(quit), vec![ShellRequest::Quit]);
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(dir2);
+}
+
+#[test]
+fn closing_the_last_window_with_save_quits_without_asking_again() {
+    let (mut w, _backend) = workspace();
+    let (dir, file) = ramp_file("close-last");
+    saved_song_with_history_asset(&mut w, &dir, file, "proj.atomik");
+    let close = PendingAction::Command(AppCommand::CloseSongWindow);
+    assert_eq!(
+        w.execute(AppCommand::CloseSongWindow),
+        vec![ShellRequest::ConfirmSave {
+            then: close.clone()
+        }]
+    );
+    assert_eq!(w.save_then(close), vec![ShellRequest::Quit]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn closing_one_of_two_windows_with_save_closes_only_that_song() {
+    let (mut w, _backend) = workspace();
+    let (dir, file) = ramp_file("close-one");
+    add_synth(&mut w, "lead");
+    let second = w.new_song();
+    saved_song_with_history_asset(&mut w, &dir, file, "proj.atomik");
+    let close = PendingAction::Command(AppCommand::CloseSongWindow);
+    w.execute(AppCommand::CloseSongWindow);
+    assert_eq!(w.save_then(close), Vec::new());
+    assert!(w.song(second).is_none());
+    assert_eq!(w.ids(), vec![DocId::FIRST]);
+    let _ = std::fs::remove_dir_all(dir);
+}

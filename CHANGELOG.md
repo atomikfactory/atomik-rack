@@ -1109,6 +1109,11 @@ may break APIs and the patch and project formats.
   are ignored.
 
 ### Fixed
+- **Quit > Save** no longer asks again and again. A project whose undo history still held an audio file that no clip
+  used any more (a deleted clip, say) was saved without that file in its pool but compared against a pool that kept it,
+  so it looked changed right after the save. The saved state now matches the live state, and once a Save in the quit or
+  window-close question has worked the song is not asked again; a save that fails or a cancelled Save As leaves the
+  window open.
 - An **instrument patch** dropped on the rack, double-clicked or loaded from the browser now makes its song track, as
   creating the instrument does: named after the device, with its mixer channel, armed like a created instrument (the
   tracks an earlier auto-arm armed are disarmed; Manual Rec leaves arming alone), all in the load's one undo step. A
