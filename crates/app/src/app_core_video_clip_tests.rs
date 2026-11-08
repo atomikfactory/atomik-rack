@@ -396,3 +396,51 @@ fn remove_takes_the_film_out_and_every_edit_needs_one() {
     assert!(c.undo());
     assert!(c.video_clip().is_some());
 }
+
+/// Import Video with the real FFmpeg, when it is installed (the folder in `ATOMIK_FFMPEG_DIR`
+/// when set, else the system path). Run it with
+/// `cargo test -p atomik-app --lib real_ffmpeg -- --ignored --nocapture`; without FFmpeg it says
+/// so and passes.
+#[test]
+#[ignore = "needs a real FFmpeg"]
+fn real_ffmpeg_imports_a_generated_film_into_the_song() {
+    use atomik_video::{FfmpegStatus, Search, SystemTool, discover};
+    let folder = std::env::var_os("ATOMIK_FFMPEG_DIR").map(PathBuf::from);
+    let path_var = std::env::var_os("PATH");
+    let status = discover(
+        &Search::of_process(folder.as_deref(), path_var.as_deref()),
+        &SystemTool,
+        &Path::is_file,
+    );
+    let FfmpegStatus::Found(ffmpeg) = status else {
+        println!("no usable FFmpeg here: {}", status.message());
+        return;
+    };
+    let t = Tmp::new("real");
+    let film = t.path("generated film.mp4");
+    let made = std::process::Command::new(&ffmpeg.ffmpeg)
+        .args(["-nostdin", "-v", "error", "-f", "lavfi", "-i"])
+        .arg("testsrc=size=640x360:rate=25:duration=2")
+        .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=2"])
+        .args(["-pix_fmt", "yuv420p", "-shortest", "-y"])
+        .arg(&film)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let mut c = AppCore::with_doc(RecordingSink::new(), atomik_model::empty_doc(), None);
+    c.set_video_tool(Arc::new(SystemTool));
+    c.set_video_folder(folder);
+    c.set_video_cache(t.path("cache"));
+    c.import_video(film.clone()).unwrap();
+    c.wait_background();
+    let v = clip(&c);
+    println!("{v:?}\n{}", toast(&c));
+    assert_eq!((v.facts.width, v.facts.height), (640, 360));
+    assert_eq!((v.facts.fps_num, v.facts.fps_den), (25, 1));
+    assert!(v.facts.has_audio);
+    assert!((1_900_000..=2_200_000).contains(&v.facts.duration_us));
+    assert_eq!((v.start_us, v.in_us), (0, 0));
+    assert!(c.video_prepared().is_some_and(|p| p.info.frames >= 49));
+    assert!(c.undo());
+    assert!(c.video_clip().is_none());
+}

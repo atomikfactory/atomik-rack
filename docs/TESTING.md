@@ -2024,7 +2024,8 @@ start a program either; they pass a `FakeTool` and a folder of stand-in files na
   `cargo test -p atomik-video --test real_ffmpeg -- --ignored --nocapture`. It finds FFmpeg like the app does (the
   folder in `ATOMIK_FFMPEG_DIR` when set, else `PATH`), makes a two-second film with FFmpeg's own generators in a
   temporary folder, probes it, builds and reads its proxy, checks the cache hit and a cancelled build. Without
-  FFmpeg it says so and passes.
+  FFmpeg it says so and passes. A second one runs Import Video of a generated film through the app core and
+  checks the film in the song: `cargo test -p atomik-app --lib real_ffmpeg -- --ignored --nocapture`.
 
 Hand checks (a machine with FFmpeg): File > Video > Check FFmpeg says `FFmpeg 7.1 found at ...`; Settings > Video
 shows the same line and the folder; set the folder to an empty one and Apply: the line says it was not found there;
