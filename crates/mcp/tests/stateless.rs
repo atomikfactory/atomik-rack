@@ -1124,3 +1124,37 @@ fn project_inspect_lists_clip_names_colours_and_loops_of_a_lane() {
         e.first_text()
     );
 }
+
+#[test]
+fn project_inspect_shows_the_linked_video_and_whether_its_file_is_there() {
+    let mut s = server();
+    let text = std::fs::read_to_string(repo().join("examples/projects/demo.atomik")).unwrap();
+    let mut v: Value = serde_json::from_str(&text).unwrap();
+    v["video"] = json!({
+        "path": "no-such-folder/film.mov", "start_us": 2_500_000, "in_us": 1_000_000,
+        "out_us": 9_000_000, "duration_us": 12_000_000, "fps_num": 24000, "fps_den": 1001,
+        "width": 1920, "height": 1080, "timecode": "01:00:00:00", "audio": true
+    });
+    let path = tmp("video.atomik");
+    std::fs::write(&path, v.to_string()).unwrap();
+    let r = call(&mut s, "project_inspect", json!({"path": path}));
+    assert!(!r.is_error, "{}", r.first_text());
+    let film = &r.parsed()["song"]["video"];
+    assert_eq!(film["name"], "film.mov");
+    assert_eq!(film["missing"], true);
+    assert_eq!(film["start_s"], 2.5);
+    assert_eq!(film["trim_in_s"], 1.0);
+    assert_eq!(film["end_s"], 10.5);
+    assert_eq!(film["duration_s"], 12.0);
+    assert_eq!(film["fps"], 23.976024);
+    assert_eq!(film["timecode"], "01:00:00:00");
+    assert_eq!(film["has_audio"], true);
+    // A project without a film has no such field.
+    let plain = call(
+        &mut s,
+        "project_inspect",
+        json!({"path": "examples/projects/demo.atomik"}),
+    )
+    .parsed();
+    assert!(plain["song"].get("video").is_none());
+}
