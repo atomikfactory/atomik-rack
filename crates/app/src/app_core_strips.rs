@@ -93,7 +93,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Copy in the console.
     pub(super) fn copy_strips(&mut self) -> Result<(), String> {
         let snapshot = self.capture_strips(&self.strips_for_vca(Pane::Console))?;
-        self.clipboard.set(ClipboardData::Strips(snapshot));
+        self.set_clipboard(ClipboardData::Strips(snapshot));
         Ok(())
     }
 

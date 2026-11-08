@@ -1109,6 +1109,18 @@ may break APIs and the patch and project formats.
   are ignored.
 
 ### Fixed
+- **Copy and paste between two running instances.** Copying clips, notes, automation points, devices or tracks in
+  one Atomik Rack window and pasting in another used to do nothing, because the clipboard lived inside one process.
+  Copy and Cut now also put a small versioned text on the system clipboard (the first line reads
+  `atomik-clipboard/1` and the kind), and Paste in any instance that finds a copy of another instance there uses it.
+  Audio clips and sampler devices bring their files: the paste fetches them by content hash from the audio folder of
+  the song they were copied in, and a file that cannot be reached is pasted as missing media with a status line
+  that says so, ready for the usual relink. Devices keep the cables between them and plugin devices carry their
+  state, with the usual stand-in where the plugin is not installed. A copy over 8 MB, or a system without a
+  clipboard, stays inside the instance (the status line says so for a big one); text from other programs is ignored
+  by these pastes, a newer or damaged copy is refused with a message, and the Paste menu items enable for a copy
+  waiting from another instance. Copies of strips, takes, device settings and controller points still stay in the
+  instance they were made in.
 - **Shift+drag on an audio clip's end edge loops it**, as it does for a MIDI clip. The clip grows and repeats the
   audio it plays (the same as dragging the loop handle), dragging back trims the repeats, and one drag is one undo
   step. A plain edge drag still resizes, and a reversed clip, which cannot loop, keeps the plain resize.

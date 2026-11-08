@@ -4,8 +4,10 @@
 //! notes, automation points, devices (with the cables between them) or tracks (a device
 //! snapshot that also carries its song tracks). The snapshots are plain data from
 //! `atomik_model::workflow` that own what they copied and reference no document, so the
-//! holder survives New and Open inside one run (a cross-song paste). It is not shared with the
-//! operating system's clipboard (no dependency, no serialisation contract: backlog).
+//! holder survives New and Open inside one run (a cross-song paste). Clips, notes, automation
+//! points, devices and tracks are also written to the operating system's clipboard as text, so
+//! another running instance can paste them (see [`crate::clipboard_os`]); the holder remembers
+//! which system text it already stands for.
 
 use atomik_model::controller_edit::ControllerSnapshot;
 use atomik_model::{
@@ -164,6 +166,10 @@ impl ClipboardData {
 #[derive(Debug, Default, Clone)]
 pub struct Clipboard {
     data: Option<ClipboardData>,
+    /// The system clipboard text this holder stands for: what the last Copy wrote, or the text it
+    /// adopted from another instance. A Paste that finds the same text there uses `data`; one
+    /// that finds another Atomik envelope decodes it.
+    known: Option<String>,
 }
 
 impl Clipboard {
@@ -175,6 +181,16 @@ impl Clipboard {
     /// Replaces the contents.
     pub fn set(&mut self, data: ClipboardData) {
         self.data = Some(data);
+    }
+
+    /// The system clipboard text the contents stand for (see the field).
+    pub fn known(&self) -> Option<&str> {
+        self.known.as_deref()
+    }
+
+    /// Records the system clipboard text the contents stand for.
+    pub fn set_known(&mut self, text: Option<String>) {
+        self.known = text;
     }
 
     /// The contents, if any.

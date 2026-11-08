@@ -494,6 +494,7 @@ mod read_legacy;
 mod read_song;
 mod read_track;
 pub(crate) mod schema;
+mod snippet;
 mod write;
 mod write_clip;
 mod write_console;
@@ -513,6 +514,10 @@ pub(crate) use read_clip::{
     clip_span, load_clip_meta, load_controllers, load_grid, load_notes, load_scale,
 };
 pub(crate) use read_devices::{load_curves, load_drums, load_steps, load_zones};
+pub use snippet::{
+    clips_from_text, clips_to_text, devices_from_text, devices_to_text, notes_from_text,
+    notes_to_text, points_from_text, points_to_text,
+};
 pub(crate) use write::save;
 pub(crate) use write_clip::{clip_meta_text, write_note_clip_tail};
 pub(crate) use write_devices::{write_curves, write_drums, write_steps, write_zones};

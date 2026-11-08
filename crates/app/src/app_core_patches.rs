@@ -247,7 +247,7 @@ impl<S: EngineSink> AppCore<S> {
                 .map_err(|e| e.to_string())
         });
         match result {
-            Ok(snapshot) => self.clipboard.set(ClipboardData::Settings(snapshot)),
+            Ok(snapshot) => self.set_clipboard(ClipboardData::Settings(snapshot)),
             Err(message) => self.report(message),
         }
     }
