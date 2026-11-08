@@ -27,14 +27,25 @@
 //! # Saved and edited
 //!
 //! `None` for a new project; saved as the root field `"video"` only when set (project format 44,
-//! ignorable) and edited with [`crate::Command::Video`]: one undo step each, reporting
-//! [`crate::SyncOp::ViewChanged`]. [`VideoCommand::Move`] and [`VideoCommand::Trim`] carry a
-//! merge id, so the steps of one drag are one undo step.
+//! ignorable; the optional `"audio_link"` inside it is part of the same field) and edited with
+//! [`crate::Command::Video`]: one undo step each, reporting [`crate::SyncOp::ViewChanged`].
+//! [`VideoCommand::Move`] and [`VideoCommand::Trim`] carry a merge id, so the steps of one drag are
+//! one undo step.
+//!
+//! # The film's sound
+//!
+//! Import Video Audio puts the film's own audio in the song as an ordinary audio clip and
+//! links it with an [`AudioLink`]. While the link's `keep` flag is on, every edit of the film that
+//! changes where its sound belongs (move, trim, relink, [`VideoCommand::KeepAudio`]) also moves
+//! and trims that clip, **in the same undo step** (the step is a compound of the film's change and
+//! the clip's, and a drag merges both), by the arithmetic of [`crate::video_audio`].
 
 use crate::history::{Edit, Swap};
 use crate::patch::{JsonPath, json_str, object, string, uint};
-use crate::song::Song;
-use crate::{ModelError, RackDoc};
+use crate::song::{ClipContent, ClipId, Song};
+use crate::song_cmd::{audio_span_frames, clamp_audio_span};
+use crate::{ModelError, RackDoc, SongCommand};
+use atomik_device_sdk::Registry;
 use serde_json::Value;
 use std::fmt::Write as _;
 
@@ -65,6 +76,7 @@ const FIELDS: &[&str] = &[
     "height",
     "timecode",
     "audio",
+    "audio_link",
 ];
 const REQUIRED: &[&str] = &[
     "path",
@@ -130,6 +142,26 @@ impl VideoFacts {
     }
 }
 
+/// The audio clip kept with the film: the film's own sound, imported by Import Video Audio.
+///
+/// While `keep` is on, moving or trimming the film (or relinking it) moves and trims this clip in
+/// the same undo step, so the sound stays under the picture: see [`crate::video_audio`] for how
+/// the clip is placed from the film's start, its trim and `lead_us`. With `keep` off the clip is
+/// an ordinary audio clip and the link only remembers how to line it up again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AudioLink {
+    /// The audio clip.
+    pub clip: ClipId,
+    /// How long after the film's first frame the track's first sample sits, in microseconds
+    /// (negative: before it), from the start times the probe found.
+    pub lead_us: i64,
+    /// The clip follows the film.
+    pub keep: bool,
+}
+
+/// The farthest the sound may start from the picture, in microseconds (an hour).
+pub const MAX_LEAD_US: i64 = 3_600_000_000;
+
 /// The film of a song (see the module docs).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoClip {
@@ -144,6 +176,8 @@ pub struct VideoClip {
     pub in_us: u64,
     /// The trim's end in the source, in microseconds.
     pub out_us: u64,
+    /// The film's own sound as an audio clip, when it was imported (see [`AudioLink`]).
+    pub audio_link: Option<AudioLink>,
 }
 
 impl VideoClip {
@@ -154,6 +188,7 @@ impl VideoClip {
             start_us: 0,
             in_us: 0,
             out_us: facts.duration_us,
+            audio_link: None,
             facts,
         }
     }
@@ -224,6 +259,12 @@ pub enum VideoCommand {
         /// One id per drag: the steps of a drag merge into one.
         merge: Option<u64>,
     },
+    /// Sets (`Some`) or clears (`None`) the audio clip kept with the film. It changes the link
+    /// only: the clip is placed by the caller (Import Video Audio does both in one undo step).
+    LinkAudio(Option<AudioLink>),
+    /// Turns "keep with video" on or off for the linked audio clip. Turning it on puts the clip
+    /// where the film's sound belongs again (as at import), in the same undo step.
+    KeepAudio(bool),
     /// Points the clip at another file (the film was moved, or this is another copy of it) with
     /// the replacement's facts. The trim and the start are kept; the out point is limited to
     /// the new length.
@@ -243,6 +284,9 @@ pub(crate) fn label(c: &VideoCommand) -> &'static str {
         VideoCommand::Move { .. } => "Move Video",
         VideoCommand::Trim { .. } => "Trim Video",
         VideoCommand::Relink { .. } => "Relink Video",
+        VideoCommand::LinkAudio(_) => "Link Video Audio",
+        VideoCommand::KeepAudio(true) => "Keep Audio with Video",
+        VideoCommand::KeepAudio(false) => "Free Audio from Video",
     }
 }
 
@@ -295,6 +339,14 @@ fn check_one(v: &VideoClip) -> Result<(), String> {
         return Err("the path must not hold control characters".into());
     }
     check_facts(&v.facts)?;
+    if let Some(link) = &v.audio_link
+        && !(-MAX_LEAD_US..=MAX_LEAD_US).contains(&link.lead_us)
+    {
+        return Err(format!(
+            "the audio lead {} us is outside -{MAX_LEAD_US}..={MAX_LEAD_US}",
+            link.lead_us
+        ));
+    }
     if !(-MAX_START_US..=MAX_START_US).contains(&v.start_us) {
         return Err(format!(
             "the start {} us is outside -{MAX_START_US}..={MAX_START_US}",
@@ -317,8 +369,14 @@ fn check_one(v: &VideoClip) -> Result<(), String> {
 }
 
 /// Plans `Command::Video`.
-pub(crate) fn plan(doc: &RackDoc, command: &VideoCommand) -> Result<Edit, ModelError> {
+pub(crate) fn plan(
+    doc: &RackDoc,
+    registry: &Registry,
+    command: &VideoCommand,
+) -> Result<Edit, ModelError> {
     let none = || ModelError::BadScope("the song has no video".into());
+    // Whether the audio clip kept with the film goes where the new film state puts it.
+    let mut follow_audio = false;
     let new = match command {
         VideoCommand::Set(clip) => Some(clip.clone()),
         VideoCommand::Remove => {
@@ -328,6 +386,7 @@ pub(crate) fn plan(doc: &RackDoc, command: &VideoCommand) -> Result<Edit, ModelE
         VideoCommand::Move { start_us, .. } => {
             let mut clip = doc.video.clone().ok_or_else(none)?;
             clip.start_us = *start_us;
+            follow_audio = true;
             Some(clip)
         }
         VideoCommand::Trim { in_us, out_us, .. } => {
@@ -338,6 +397,22 @@ pub(crate) fn plan(doc: &RackDoc, command: &VideoCommand) -> Result<Edit, ModelE
             clip.start_us = i64::try_from(moved).unwrap_or(i64::MAX);
             clip.in_us = *in_us;
             clip.out_us = *out_us;
+            follow_audio = true;
+            Some(clip)
+        }
+        VideoCommand::LinkAudio(link) => {
+            let mut clip = doc.video.clone().ok_or_else(none)?;
+            clip.audio_link = *link;
+            Some(clip)
+        }
+        VideoCommand::KeepAudio(keep) => {
+            let mut clip = doc.video.clone().ok_or_else(none)?;
+            let link = clip
+                .audio_link
+                .as_mut()
+                .ok_or_else(|| ModelError::BadScope("the song has no video audio".into()))?;
+            link.keep = *keep;
+            follow_audio = *keep;
             Some(clip)
         }
         VideoCommand::Relink { path, facts } => {
@@ -345,19 +420,76 @@ pub(crate) fn plan(doc: &RackDoc, command: &VideoCommand) -> Result<Edit, ModelE
             clip.path.clone_from(path);
             clip.facts = facts.clone();
             clip.out_us = clip.out_us.min(facts.duration_us);
+            follow_audio = true;
             Some(clip)
         }
     };
     if let Some(clip) = &new {
         check_video(clip)?;
     }
-    if doc.video == new {
+    let swap = Edit::Swap(Swap::Video {
+        old: doc.video.clone(),
+        new: new.clone(),
+    });
+    let kept = new
+        .as_ref()
+        .filter(|_| follow_audio)
+        .and_then(|clip| follow(doc, registry, clip));
+    if doc.video == new && kept.is_none() {
         return Err(ModelError::BadScope("the video is already that".into()));
     }
-    Ok(Edit::Swap(Swap::Video {
-        old: doc.video.clone(),
-        new,
-    }))
+    Ok(match kept {
+        // The film and its sound are one undo step; the film comes first, so undo puts the
+        // sound back first.
+        Some(clip_edit) if doc.video != new => Edit::Compound(vec![swap, clip_edit]),
+        Some(clip_edit) => clip_edit,
+        None => swap,
+    })
+}
+
+/// The edit that puts the audio clip kept with the film (`film.audio_link`, with `keep` on) where
+/// the film's sound belongs (see [`crate::video_audio::placement`]). `None` when there is no
+/// such clip, it is not a plain audio clip of an asset at the song's rate, no part of the sound
+/// is inside the film that plays, or the clip already is there.
+fn follow(doc: &RackDoc, registry: &Registry, film: &VideoClip) -> Option<Edit> {
+    let link = film.audio_link.filter(|l| l.keep)?;
+    let (_, _, clip) = doc.song.clip(link.clip)?;
+    let ClipContent::Audio(audio) = &clip.content else {
+        return None;
+    };
+    // A warped clip follows the tempo, not the clock: it cannot be lined up to the sample.
+    if audio.warp.enabled || clip.loop_length.is_some() {
+        return None;
+    }
+    let meta = doc.assets.get(&audio.asset)?;
+    if meta.sample_rate != doc.sample_rate {
+        return None;
+    }
+    let at =
+        crate::video_audio::placement(&doc.song, doc.sample_rate, film, link.lead_us, meta.frames)?;
+    let mut content = audio.clone();
+    content.source_offset = at.source_offset;
+    clamp_audio_span(
+        &mut content,
+        audio_span_frames(doc, at.start, at.length, clip.loop_length),
+    );
+    if (at.start, at.length) == (clip.start, clip.length) && content == *audio {
+        return None;
+    }
+    crate::song_cmd::plan(
+        doc,
+        registry,
+        SongCommand::SetAudioClip {
+            id: link.clip,
+            start: at.start,
+            length: at.length,
+            muted: clip.muted,
+            content,
+            merge: None,
+        },
+    )
+    .ok()
+    .map(|(edit, _)| edit)
 }
 
 /// Writes `"video"` (with its trailing comma and newline) after `"delivery"`; nothing when the
@@ -387,6 +519,13 @@ pub(crate) fn write_video(w: &mut String, video: &Option<VideoClip>) {
     if f.has_audio {
         let _ = write!(w, ", \"audio\": true");
     }
+    if let Some(link) = &v.audio_link {
+        let _ = write!(
+            w,
+            ", \"audio_link\": {{\"clip\": {}, \"lead_us\": {}, \"keep\": {}}}",
+            link.clip.0, link.lead_us, link.keep
+        );
+    }
     let _ = writeln!(w, "}},");
 }
 
@@ -412,8 +551,39 @@ pub(crate) fn load_video(v: &Value, path: &JsonPath) -> Result<VideoClip, ModelE
         }
         None => false,
     };
+    let audio_link = match o.get("audio_link") {
+        Some(link) => {
+            let at = path.field("audio_link");
+            let l = object(
+                link,
+                &at,
+                &["clip", "lead_us", "keep"],
+                &["clip", "lead_us"],
+            )?;
+            let lead = &l["lead_us"];
+            let keep = match l.get("keep") {
+                Some(Value::Bool(b)) => *b,
+                Some(other) => {
+                    return Err(at
+                        .field("keep")
+                        .error(format!("expected true or false, found {other}")));
+                }
+                None => true,
+            };
+            Some(AudioLink {
+                clip: ClipId(uint(&l["clip"], &at.field("clip"), u64::MAX)?),
+                lead_us: lead.as_i64().ok_or_else(|| {
+                    at.field("lead_us")
+                        .error(format!("expected a whole number, found {lead}"))
+                })?,
+                keep,
+            })
+        }
+        None => None,
+    };
     let clip = VideoClip {
         path: string(&o["path"], &path.field("path"))?.to_owned(),
+        audio_link,
         start_us,
         in_us: part("in_us", MAX_DURATION_US)?,
         out_us: part("out_us", MAX_DURATION_US)?,
@@ -533,6 +703,11 @@ mod tests {
                 start_us: -4_500_000,
                 in_us: 1_000_000,
                 out_us: 80_000_000,
+                audio_link: Some(AudioLink {
+                    clip: ClipId(3),
+                    lead_us: -7_000,
+                    keep: false,
+                }),
             },
         ] {
             let mut text = String::from("{\n");

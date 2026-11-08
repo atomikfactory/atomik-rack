@@ -105,6 +105,7 @@ mod time_edit;
 pub mod transition;
 mod validate;
 pub mod video;
+pub mod video_audio;
 pub mod video_snap;
 pub mod warp;
 mod workflow;
@@ -204,7 +205,8 @@ pub use steps::{
     MAX_CV_PATTERNS, MAX_DRUM_PATTERNS, MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PATTERN_PARAM,
     PatternDoc, SeqResolution, StepDoc, StepSeqDoc, pattern_cap, player_data_for,
 };
-pub use video::{VideoClip, VideoCommand, VideoFacts, check_video};
+pub use video::{AudioLink, MAX_LEAD_US, VideoClip, VideoCommand, VideoFacts, check_video};
+pub use video_audio::{AudioPlacement, placement as video_audio_placement};
 pub use workflow::{
     ClipEntry, ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, TakeSnapshot,
     neighbour_clip, neighbour_device, neighbour_track,
@@ -877,7 +879,7 @@ pub enum Command {
 /// | `SetSongInfo` (also undo/redo) | `ViewChanged` |
 /// | `SetReferences` (also undo/redo) | `ViewChanged` |
 /// | `SetDelivery` (also undo/redo, also in a `Batch`) | `ViewChanged` |
-/// | `Video` (also undo/redo) | `ViewChanged` |
+/// | `Video` (also undo/redo) | `ViewChanged`, and `SongChanged` when it also moves or trims the audio clip kept with the film |
 /// | `SetMasterTune` (also undo/redo) | `TuneChanged` |
 /// | `ConvertSampleRate` | `RoutingChanged`, `SongChanged`, then `ZonesChanged` per device with zones |
 /// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits, audio clip edits included) |
@@ -1630,6 +1632,16 @@ impl Document {
             self.merge = merge;
             return Ok(ops);
         }
+        if merged
+            && matches!(merge, Some(MergeKey::Video(_)))
+            && let Edit::Compound(latest) = &edit
+            && let Some(Edit::Compound(parts)) = self.undo.back_mut()
+            && Edit::merge_video(parts, latest)
+        {
+            self.resize_last_undo(before);
+            self.merge = merge;
+            return Ok(ops);
+        }
         let mut pushed = false;
         match (self.undo.back_mut(), &edit) {
             (Some(Edit::Param { new, .. }), Edit::Param { new: latest, .. }) if merged => {
@@ -2334,7 +2346,7 @@ impl Document {
             Command::SetRackSort(mode) => rack_groups::plan_set(doc, registry, mode)?,
             Command::SetReferences(list) => references::plan_set(doc, &list)?,
             Command::SetDelivery(target) => delivery::plan_set(doc, &target)?,
-            Command::Video(c) => video::plan(doc, &c)?,
+            Command::Video(c) => video::plan(doc, registry, &c)?,
             Command::ConvertSampleRate { rate, assets } => rate_convert::plan(doc, rate, &assets)?,
             Command::SetTempo(bpm) => {
                 if !(TEMPO_MIN..=TEMPO_MAX).contains(&bpm) {
