@@ -278,7 +278,7 @@ fn the_analyze_menu_gathers_the_analysis_tools_and_the_reference_panel_is_one_cl
         [
             ("Sound Analyst\u{2026}", None),
             ("Reference Panel\u{2026}", None),
-            ("Listen to Reference", Some("Ctrl+Alt+R")),
+            ("Listen to Reference", Some("Ctrl+Shift+R")),
             ("Add Reference Track\u{2026}", None),
             ("Reference 1", None),
             ("Next Reference Track", None),

@@ -30,11 +30,13 @@ pub fn cursor_art(hint: CursorHint) -> Option<CursorArt> {
         CursorHint::Eraser => Some(CursorArt::Eraser),
         CursorHint::Razor => Some(CursorArt::Razor),
         CursorHint::Speaker => Some(CursorArt::Speaker),
+        CursorHint::Stretch => Some(CursorArt::Stretch),
         _ => None,
     }
 }
 
-/// The winit cursor icon for a view's cursor hint (the stand-in for a drawn cursor).
+/// The winit cursor icon for a view's cursor hint (the stand-in for a drawn cursor; the stretch
+/// cursor falls back to the column-resize icon when the drawn one cannot be made).
 pub fn cursor_icon(hint: CursorHint) -> CursorIcon {
     match hint {
         CursorHint::Default => CursorIcon::Default,
@@ -416,6 +418,7 @@ mod tests {
         assert_eq!(cursor_art(CursorHint::Eraser), Some(CursorArt::Eraser));
         assert_eq!(cursor_art(CursorHint::Razor), Some(CursorArt::Razor));
         assert_eq!(cursor_art(CursorHint::Speaker), Some(CursorArt::Speaker));
+        assert_eq!(cursor_art(CursorHint::Stretch), Some(CursorArt::Stretch));
     }
 
     #[test]

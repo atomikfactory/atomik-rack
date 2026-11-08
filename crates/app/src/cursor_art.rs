@@ -1,4 +1,4 @@
-//! The bitmaps of the edit-tool mouse cursors (pen, eraser, razor, speaker), drawn in code.
+//! The bitmaps of the drawn mouse cursors (pen, eraser, razor, speaker, stretch), drawn in code.
 //!
 //! Each cursor is a few shapes in a 32 x 32 design grid, rasterised at the size the window's
 //! scale asks for (4 x 4 samples per pixel, straight alpha), so it is crisp at 1x and 2x. A
@@ -16,6 +16,8 @@ pub enum CursorArt {
     Razor,
     /// A loudspeaker with sound waves: the middle of its box is the hotspot.
     Speaker,
+    /// A double arrow with a bar across its middle: the middle is the hotspot.
+    Stretch,
 }
 
 /// A rendered cursor: straight-alpha RGBA, `size` x `size` pixels.
@@ -183,6 +185,18 @@ fn design(art: CursorArt) -> (Vec<Shape>, Pt) {
             ];
             (shapes, (9.0, 16.0))
         }
+        CursorArt::Stretch => {
+            let arrow = [236, 238, 242];
+            let bar = [250, 205, 60];
+            let shapes = vec![
+                // The shaft, an arrow head each side, and the bar of the clip edge between them.
+                Shape::Capsule((8.0, 16.0), (24.0, 16.0), 1.5, arrow),
+                Shape::Poly(vec![(3.0, 16.0), (11.0, 9.5), (11.0, 22.5)], arrow),
+                Shape::Poly(vec![(29.0, 16.0), (21.0, 9.5), (21.0, 22.5)], arrow),
+                Shape::Capsule((16.0, 8.0), (16.0, 24.0), 1.7, bar),
+            ];
+            (shapes, (16.0, 16.0))
+        }
     }
 }
 
@@ -254,11 +268,12 @@ fn sample(shapes: &[Shape], p: Pt) -> Option<[u8; 3]> {
 mod tests {
     use super::*;
 
-    const ALL: [CursorArt; 4] = [
+    const ALL: [CursorArt; 5] = [
         CursorArt::Pen,
         CursorArt::Eraser,
         CursorArt::Razor,
         CursorArt::Speaker,
+        CursorArt::Stretch,
     ];
 
     #[test]
@@ -321,12 +336,34 @@ mod tests {
         assert_ne!(bitmaps[0].rgba, bitmaps[1].rgba);
         assert_ne!(bitmaps[1].rgba, bitmaps[2].rgba);
         assert_ne!(bitmaps[2].rgba, bitmaps[3].rgba);
+        assert_ne!(bitmaps[3].rgba, bitmaps[4].rgba);
         for b in &bitmaps {
             assert!(
                 b.rgba
                     .chunks(4)
                     .any(|p| p[3] == 255 && p[..3] == OUTLINE_COLOR),
                 "a dark outline"
+            );
+        }
+    }
+
+    #[test]
+    fn the_stretch_cursor_is_centred_and_readable_at_both_scales() {
+        for size in [32u32, 64] {
+            let b = render(CursorArt::Stretch, size);
+            // The hotspot is the middle of the bitmap and sits on opaque art.
+            assert_eq!(b.hotspot, (size / 2, size / 2));
+            let at = |x: u32, y: u32| b.rgba[((y * size + x) * 4 + 3) as usize];
+            assert_eq!(at(b.hotspot.0, b.hotspot.1), 255, "size {size}");
+            // The arrow heads reach both sides: art near the left and right edges, on the
+            // hotspot's row.
+            let row = b.hotspot.1;
+            assert!(at(size / 8, row) > 0 && at(size - 1 - size / 8, row) > 0);
+            // A white fill and a dark outline both show.
+            assert!(
+                b.rgba
+                    .chunks(4)
+                    .any(|p| p[3] == 255 && p[..3] == [236, 238, 242])
             );
         }
     }

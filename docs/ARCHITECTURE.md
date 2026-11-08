@@ -6347,7 +6347,7 @@ reference key (`AppCore::toggle_reference`) fills the ring from the song positio
 from the cue, then sends `EngineSink::reference_start`; a feeder thread keeps the ring full. While any reference exists
 the engine measures the mix; the matched gain is the mix reading minus the loudest section, moved at most 0.5 dB every
 15 frames, the first reading at once, readings at or under -60 LUFS ignored. A new engine (`rebuild_engine`) returns the
-song to the mix. Commands: `mixer.toggle_reference` (Ctrl+Alt+R), `mixer.add_reference`, `mixer.select_reference`,
+song to the mix. Commands: `mixer.toggle_reference` (Ctrl+Shift+R), `mixer.add_reference`, `mixer.select_reference`,
 `mixer.next_reference`, `mixer.remove_reference`, `mixer.reference_cue`, `mixer.reference_match`,
 `mixer.reference_band` and `mixer.reference_solo`, all in the Analyze menu's Reference submenu.
 

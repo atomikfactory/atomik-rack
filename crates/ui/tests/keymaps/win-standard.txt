@@ -111,7 +111,7 @@ mixer.scroll_left | mixer | Ctrl+Left, Ctrl+Shift+Left
 mixer.scroll_right | mixer | Ctrl+Right, Ctrl+Shift+Right
 mixer.select_left | mixer | Left
 mixer.select_right | mixer | Right
-mixer.toggle_reference | global | Ctrl+Alt+R
+mixer.toggle_reference | global | Ctrl+Shift+R
 mixer.value_down | mixer | Down
 mixer.value_down_fine | mixer | Shift+Down
 mixer.value_page_down | mixer | PageDown
