@@ -45,7 +45,7 @@ pub mod library_store;
 pub mod logging;
 pub mod masking_worker;
 pub mod master_keyboard;
-pub mod menu_layout;
+pub use atomik_ui::menu_layout;
 pub mod menubar;
 pub mod midi;
 pub mod midi_control;

@@ -8,14 +8,22 @@
 //! through a [`Canvas`], takes [`UiEvent`]s in the coordinates it was opened in and owns no
 //! document state.
 //!
-//! A submenu opens beside its row when the pointer rests on the row (or clicks it) and stays
-//! open while the pointer is over it or the rows that opened it; submenus nest to any depth.
+//! A submenu opens beside its row the moment the pointer is on the row (or presses it) when no
+//! other submenu of that panel is open, and stays open while the pointer is over it or the rows
+//! that opened it; submenus nest to any depth.
 //!
 //! While a submenu is open, the pointer may cross the other rows of its panel on the way to the
 //! submenu: a move inside the triangle from the previous pointer position to the submenu near
 //! edge that gets closer to it keeps the submenu, and any other move onto another row only
-//! switches after [`SUBMENU_DELAY`] seconds. The delay is counted by [`ContextMenu::tick`], which
-//! the shell calls once a frame, so the widget reads no clock.
+//! switches after the short grace delay [`SUBMENU_DELAY`]. The delay is counted by
+//! [`ContextMenu::tick`], which the shell calls on every frame the menu asks for
+//! ([`ContextMenu::needs_tick`]) and at the deadline [`ContextMenu::wake_at`] names, so the widget
+//! reads no clock and the loop need not poll while it waits.
+//!
+//! A panel taller than the window is cut to it and scrolls (wheel, a pointer resting on the strip
+//! at its top or bottom, and the keys that move the highlight); a submenu starts level with its
+//! row, moves up before it scrolls and opens on the left of its parent when the right side leaves
+//! the window. The geometry is [`crate::menu_layout`], shared with the menu bar.
 //!
 //! The keys work in and between the panels: Up and Down (wrapping) and Home and End move the one
 //! highlight that the pointer moves too, skipping separators and disabled rows; Right or Enter
@@ -24,22 +32,19 @@
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun};
 use crate::event::{Key, PointerButton, UiEvent};
 use crate::keymap::{Keymap, Registry};
+use crate::menu_layout::{self as geo, ARROW_SPEED, ListLayout, WHEEL_STEP};
 use crate::theme::Theme;
 use vello::kurbo::{Point, Rect, RoundedRect, Size, Vec2};
 use vello::peniko::Color;
 
-/// Height of one item, logical pixels.
-pub const ITEM_HEIGHT: f64 = 24.0;
-/// Height of a separator.
-pub const SEPARATOR_HEIGHT: f64 = 9.0;
+pub use crate::menu_layout::{ITEM_HEIGHT, SEPARATOR_HEIGHT};
 /// Approximate advance of one character of UI text at 13 px (layout estimate).
 const CHAR_WIDTH: f64 = 7.2;
 const MIN_WIDTH: f64 = 200.0;
 const FONT: f32 = 13.0;
-/// How far a submenu overlaps the panel it opens from.
-const OVERLAP: f64 = 2.0;
-/// How long the pointer must rest on another row before it replaces the open submenu, seconds.
-pub const SUBMENU_DELAY: f64 = 0.28;
+/// How long the pointer must rest on another row before it replaces the open submenu, seconds:
+/// only a switch waits, the first submenu opens at once.
+pub const SUBMENU_DELAY: f64 = 0.1;
 
 /// One row of a menu description: a registry command, a submenu or a separator.
 #[derive(Debug, Clone, PartialEq)]
@@ -210,6 +215,12 @@ pub struct ContextMenu {
     entries: Vec<Entry>,
     origin: Point,
     width: f64,
+    /// The panel's height: all the rows when they fit, else what the window leaves.
+    height: f64,
+    /// How far the rows are scrolled.
+    offset: f64,
+    /// Where the rows are now (`origin`, `width`, `height` and `offset` laid out).
+    lay: ListLayout,
     hover: Option<usize>,
     bounds: Size,
     open: Option<Box<Open>>,
@@ -221,6 +232,8 @@ pub struct ContextMenu {
     last: Option<Point>,
     /// A switch the pointer asked for by resting on another row, made by [`Self::tick`].
     pending: Option<Pending>,
+    /// When the strips last scrolled a panel under the pointer (the first panel keeps it).
+    scroll_clock: Option<f64>,
 }
 
 /// A row the pointer rests on while a submenu is open beside another row.
@@ -332,6 +345,23 @@ fn panel_width(entries: &[Entry]) -> f64 {
         .fold(MIN_WIDTH, f64::max)
 }
 
+/// The height of each entry.
+fn heights_of(entries: &[Entry]) -> Vec<f64> {
+    entries.iter().map(Entry::height).collect()
+}
+
+/// The rows of `entries` laid out in a panel at `origin`.
+fn laid(entries: &[Entry], origin: Point, width: f64, height: f64, offset: f64) -> ListLayout {
+    geo::layout(
+        &heights_of(entries),
+        origin.x,
+        origin.x + width,
+        origin.y,
+        height,
+        offset,
+    )
+}
+
 impl ContextMenu {
     /// Builds the menu of `specs`: labels from `registry`, shortcut text from `keymap`, placed
     /// at `at` and moved so it stays inside `bounds` (the window, logical pixels). A command
@@ -355,23 +385,118 @@ impl ContextMenu {
     /// One panel of `entries` at `at`, moved inside `bounds`.
     fn panel(entries: Vec<Entry>, at: Point, bounds: Size) -> Self {
         let width = panel_width(&entries);
-        let mut menu = ContextMenu {
+        let natural = geo::natural_height(&heights_of(&entries));
+        // Moved up before it is made shorter; a panel the window cannot hold scrolls.
+        let (top, height) = geo::fit_vertical(at.y, natural, 0.0, bounds.height, true);
+        let origin = Point::new(at.x.min(bounds.width - width).max(0.0), top);
+        let lay = laid(&entries, origin, width, height, 0.0);
+        ContextMenu {
             entries,
-            origin: at,
+            origin,
             width,
+            height,
+            offset: 0.0,
+            lay,
             hover: None,
             bounds,
             open: None,
             armed: false,
             last: None,
             pending: None,
-        };
-        let size = menu.rect().size();
-        menu.origin = Point::new(
-            at.x.min(bounds.width - size.width).max(0.0),
-            at.y.min(bounds.height - size.height).max(0.0),
+            scroll_clock: None,
+        }
+    }
+
+    /// Lays the rows out again after the position or the scroll changed.
+    fn relayout(&mut self) {
+        self.lay = laid(
+            &self.entries,
+            self.origin,
+            self.width,
+            self.height,
+            self.offset,
         );
-        menu
+        self.offset = self.lay.offset;
+    }
+
+    /// Scrolls the rows by `by` pixels (positive shows later rows); `true` when they moved. The
+    /// submenus open from this panel close, as their rows moved.
+    fn scroll_by(&mut self, by: f64) -> bool {
+        let next = (self.offset + by).clamp(0.0, self.lay.max_offset);
+        if (next - self.offset).abs() < 1e-9 {
+            return false;
+        }
+        self.offset = next;
+        self.relayout();
+        self.open = None;
+        self.pending = None;
+        true
+    }
+
+    /// Scrolls the least that shows the highlighted row whole.
+    fn reveal(&mut self) {
+        let Some(row) = self.hover else { return };
+        if !self.lay.scrolls() {
+            return;
+        }
+        let top = self.lay.content_top(row);
+        let to = geo::offset_to_show(
+            self.offset,
+            self.lay.view.height(),
+            self.lay.max_offset,
+            top,
+            top + self.entries[row].height(),
+        );
+        if (to - self.offset).abs() > 1e-9 {
+            self.offset = to;
+            self.relayout();
+        }
+    }
+
+    /// Scrolls the panel under `pos` (the innermost one) by `by`; `true` when it moved.
+    fn wheel(&mut self, pos: Point, by: f64) -> bool {
+        if let Some(o) = &mut self.open
+            && o.menu.covers(pos)
+        {
+            return o.menu.wheel(pos, by);
+        }
+        self.rect().contains(pos) && self.scroll_by(by)
+    }
+
+    /// The panel (its depth below this one) whose scroll strip `p` is on, and the direction it
+    /// scrolls: `-1` up, `1` down. A strip with nothing left to scroll does not count.
+    fn strip_depth(&self, p: Point) -> Option<(usize, f64)> {
+        if let Some(o) = &self.open
+            && o.menu.covers(p)
+        {
+            return o.menu.strip_depth(p).map(|(d, dir)| (d + 1, dir));
+        }
+        if !self.rect().contains(p) {
+            return None;
+        }
+        let on = |s: Option<Rect>| s.is_some_and(|s| s.contains(p));
+        if on(self.lay.up_strip()) && self.offset > 0.0 {
+            Some((0, -1.0))
+        } else if on(self.lay.down_strip()) && self.offset < self.lay.max_offset - 1e-9 {
+            Some((0, 1.0))
+        } else {
+            None
+        }
+    }
+
+    /// Scrolls the panel `depth` levels below this one by `by`.
+    fn scroll_depth(&mut self, depth: usize, by: f64) -> bool {
+        if depth == 0 {
+            return self.scroll_by(by);
+        }
+        self.open
+            .as_mut()
+            .is_some_and(|o| o.menu.scroll_depth(depth - 1, by))
+    }
+
+    /// The strip the pointer rests on (the first panel sees every pointer move).
+    fn on_strip(&self) -> Option<(usize, f64)> {
+        self.last.and_then(|p| self.strip_depth(p))
     }
 
     /// The rows of the first panel, top to bottom.
@@ -405,32 +530,23 @@ impl ContextMenu {
 
     /// The first panel's rectangle.
     pub fn rect(&self) -> Rect {
-        let h: f64 = self.entries.iter().map(Entry::height).sum();
-        Rect::new(
-            self.origin.x,
-            self.origin.y,
-            self.origin.x + self.width,
-            self.origin.y + h + 8.0,
-        )
+        self.lay.panel
     }
 
-    /// The rectangle of each row of the first panel (separators included).
+    /// The rectangle of each row of the first panel (separators included), cut to what shows:
+    /// a row scrolled out of the panel has an empty one.
     pub fn row_rects(&self) -> Vec<Rect> {
-        let mut y = self.origin.y + 4.0;
-        self.entries
-            .iter()
-            .map(|e| {
-                let h = e.height();
-                let r = Rect::new(
-                    self.origin.x + 4.0,
-                    y,
-                    self.origin.x + self.width - 4.0,
-                    y + h,
-                );
-                y += h;
-                r
-            })
-            .collect()
+        self.lay.rows.clone()
+    }
+
+    /// How far the first panel is scrolled (0 when it fits the window).
+    pub fn scroll_offset(&self) -> f64 {
+        self.offset
+    }
+
+    /// The furthest the first panel can scroll: 0 when all its rows show.
+    pub fn max_scroll(&self) -> f64 {
+        self.lay.max_offset
     }
 
     /// The centre of the row of command `command` in the innermost open panel that has one (the
@@ -452,11 +568,10 @@ impl ContextMenu {
     }
 
     fn find_center(&self, pred: impl Fn(&Entry) -> bool + Copy) -> Option<Point> {
-        let rows = self.row_rects();
         self.entries
             .iter()
-            .zip(rows)
-            .find_map(|(e, r)| pred(e).then(|| r.center()))
+            .zip(&self.lay.rows)
+            .find_map(|(e, r)| (pred(e) && *r != Rect::ZERO).then(|| r.center()))
             .or_else(|| self.open.as_ref().and_then(|o| o.menu.find_center(pred)))
     }
 
@@ -479,7 +594,7 @@ impl ContextMenu {
     }
 
     fn row_at(&self, p: Point) -> Option<usize> {
-        self.row_rects().iter().position(|r| r.contains(p))
+        self.lay.rows.iter().position(|r| r.contains(p))
     }
 
     /// Whether row `row` can be highlighted and chosen.
@@ -503,14 +618,14 @@ impl ContextMenu {
         }
     }
 
-    /// What the menu looks like: the highlighted row and the open submenu row of every panel,
-    /// outermost first. Two equal looks paint the same, so a caller repaints only when it
+    /// What the menu looks like: the highlighted row, the open submenu row and the scroll of every
+    /// panel, outermost first. Two equal looks paint the same, so a caller repaints only when it
     /// changes (a pointer move inside one row, or in the padding, changes nothing).
-    pub fn look(&self) -> Vec<(Option<usize>, Option<usize>)> {
+    pub fn look(&self) -> Vec<(Option<usize>, Option<usize>, f64)> {
         let mut out = Vec::new();
         let mut at = self;
         loop {
-            out.push((at.hover, at.open.as_ref().map(|o| o.row)));
+            out.push((at.hover, at.open.as_ref().map(|o| o.row), at.offset));
             match &at.open {
                 Some(o) => at = &o.menu,
                 None => return out,
@@ -518,18 +633,60 @@ impl ContextMenu {
         }
     }
 
-    /// Whether a pointer switch is waiting for its delay (the caller keeps ticking).
+    /// Whether a pointer switch is waiting for its delay.
     pub fn has_pending(&self) -> bool {
         self.pending.is_some() || self.open.as_ref().is_some_and(|o| o.menu.has_pending())
     }
 
-    /// Advances the hover delay to `now` (seconds, any monotonic clock): a pointer that rested on
-    /// another row for [`SUBMENU_DELAY`] switches to it. Returns whether the menu changed.
+    /// Whether the menu wants a tick on the very next frame: a switch whose delay has not been
+    /// stamped yet, or a pointer resting on a scroll strip that can still scroll. Otherwise a
+    /// pending switch only needs the tick at [`Self::wake_at`].
+    pub fn needs_tick(&self) -> bool {
+        self.unstamped() || self.on_strip().is_some()
+    }
+
+    fn unstamped(&self) -> bool {
+        self.pending.is_some_and(|p| p.since.is_none())
+            || self.open.as_ref().is_some_and(|o| o.menu.unstamped())
+    }
+
+    /// The time (the clock of [`Self::tick`]) at which a waiting switch is due, the earliest of
+    /// the panels'. The loop sleeps until then instead of polling.
+    pub fn wake_at(&self) -> Option<f64> {
+        let own = self
+            .pending
+            .and_then(|p| p.since)
+            .map(|t| t + SUBMENU_DELAY);
+        let inner = self.open.as_ref().and_then(|o| o.menu.wake_at());
+        match (own, inner) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// Advances the menu to `now` (seconds, any monotonic clock): a pointer that rested on
+    /// another row for [`SUBMENU_DELAY`] switches to it, and one resting on a scroll strip scrolls
+    /// the panel. Returns whether the menu changed.
     pub fn tick(&mut self, now: f64) -> bool {
-        let mut changed = self.open.as_mut().is_some_and(|o| o.menu.tick(now));
+        let mut changed = self.tick_pending(now);
+        match self.on_strip() {
+            None => self.scroll_clock = None,
+            Some((depth, dir)) => {
+                let dt = self
+                    .scroll_clock
+                    .map_or(1.0 / 60.0, |t| (now - t).clamp(0.0, 0.1));
+                self.scroll_clock = Some(now);
+                changed |= self.scroll_depth(depth, dir * ARROW_SPEED * dt);
+            }
+        }
+        changed
+    }
+
+    fn tick_pending(&mut self, now: f64) -> bool {
+        let mut changed = self.open.as_mut().is_some_and(|o| o.menu.tick_pending(now));
         if let Some(p) = &mut self.pending {
             let since = *p.since.get_or_insert(now);
-            if now - since >= SUBMENU_DELAY {
+            if now >= since + SUBMENU_DELAY {
                 let row = p.row;
                 self.pending = None;
                 self.switch_to(row);
@@ -581,16 +738,12 @@ impl ContextMenu {
         let Entry::Submenu(s) = &self.entries[row] else {
             return;
         };
-        let rr = self.row_rects()[row];
+        let rr = self.lay.drawn[row];
         let child_width = panel_width(&s.entries);
+        // Level with its row, moved up before it scrolls, on the left when the right is full.
         let mut child = Self::panel(s.entries.clone(), Point::new(0.0, rr.y0 - 4.0), self.bounds);
-        let right = self.origin.x + self.width - OVERLAP;
-        let x = if right + child_width <= self.bounds.width {
-            right
-        } else {
-            (self.origin.x - child_width + OVERLAP).max(0.0)
-        };
-        child.origin.x = x;
+        child.origin.x = geo::place_flyout_x(self.rect(), child_width, self.bounds.width);
+        child.relayout();
         child.armed = true;
         self.hover = Some(row);
         self.open = Some(Box::new(Open { row, menu: child }));
@@ -637,7 +790,41 @@ impl ContextMenu {
                 }
                 MenuOutcome::Consumed
             }
-            UiEvent::PointerDown { .. } | UiEvent::Wheel { .. } => MenuOutcome::Consumed,
+            UiEvent::PointerDown { pos, button, .. } => {
+                if let Some(o) = &mut self.open
+                    && o.menu.covers(*pos)
+                {
+                    return o.menu.handle(event);
+                }
+                // Pressing a submenu row opens it at once.
+                let hit = self
+                    .row_at(*pos)
+                    .filter(|r| matches!(&self.entries[*r], Entry::Submenu(s) if s.enabled));
+                if let (PointerButton::Primary, Some(r)) = (button, hit) {
+                    self.pending = None;
+                    self.open_row(r);
+                }
+                MenuOutcome::Consumed
+            }
+            UiEvent::Wheel {
+                pos,
+                delta,
+                modifiers,
+            } => {
+                // A notch up (positive) moves the rows down.
+                if self.wheel(*pos, -delta.y * WHEEL_STEP) {
+                    return self.handle(&UiEvent::PointerMove {
+                        pos: *pos,
+                        modifiers: *modifiers,
+                    });
+                }
+                MenuOutcome::Consumed
+            }
+            UiEvent::PointerLeave => {
+                self.last = None;
+                self.scroll_clock = None;
+                MenuOutcome::Ignored
+            }
             UiEvent::PointerUp { pos, button, .. } => {
                 if let Some(o) = &mut self.open
                     && o.menu.covers(*pos)
@@ -723,6 +910,7 @@ impl ContextMenu {
             Key::Left | Key::Escape if nested => return Nav::Back,
             _ => {}
         }
+        self.reveal();
         Nav::Done
     }
 
@@ -751,7 +939,19 @@ impl ContextMenu {
         );
         canvas.fill_with(RoundedRect::from_rect(panel, 6.0), theme.browser_bg);
         canvas.stroke_with(RoundedRect::from_rect(panel, 6.0), 1.0, theme.section_line);
-        for (i, (entry, r)) in self.entries.iter().zip(self.row_rects()).enumerate() {
+        let scrolls = self.lay.scrolls();
+        if scrolls {
+            canvas.push_clip(&self.lay.view.into());
+        }
+        for (i, (entry, r)) in self
+            .entries
+            .iter()
+            .zip(self.lay.drawn.iter().copied())
+            .enumerate()
+        {
+            if scrolls && (r.y1 <= self.lay.view.y0 || r.y0 >= self.lay.view.y1) {
+                continue;
+            }
             match entry {
                 Entry::Separator => {
                     let y = r.center().y;
@@ -814,8 +1014,47 @@ impl ContextMenu {
                 }
             }
         }
+        if scrolls {
+            canvas.pop_clip();
+            self.paint_strips(canvas, theme);
+        }
         if let Some(o) = &self.open {
             o.menu.paint(canvas, theme);
+        }
+    }
+
+    /// Paints the two scroll strips of a panel that scrolls; one lights when the pointer is on it.
+    fn paint_strips(&self, canvas: &mut dyn Canvas, theme: &Theme) {
+        let pointer = self.last.unwrap_or(Point::new(-1.0e6, -1.0e6));
+        for (strip, glyph, enabled) in [
+            (self.lay.up_strip(), "\u{25B4}", self.offset > 0.0),
+            (
+                self.lay.down_strip(),
+                "\u{25BE}",
+                self.offset < self.lay.max_offset,
+            ),
+        ] {
+            let Some(strip) = strip else { continue };
+            if enabled && strip.contains(pointer) {
+                canvas.fill_with(
+                    RoundedRect::from_rect(strip.inset(-2.0), 4.0),
+                    theme.selection,
+                );
+            }
+            let color = if enabled {
+                theme.text
+            } else {
+                theme.text_muted
+            };
+            canvas.text(
+                &TextRun::new(
+                    glyph,
+                    Point::new(strip.center().x, strip.y1 - 2.5),
+                    11.0,
+                    color,
+                )
+                .align(Align::Center),
+            );
         }
     }
 }
@@ -1488,5 +1727,328 @@ mod tests {
         tick(&mut m, 0.0);
         tick(&mut m, 5.0);
         assert_eq!(m.open_path(), ["Chords"]);
+    }
+
+    fn two_submenus() -> Vec<Spec> {
+        vec![
+            Spec::item("edit.copy"),
+            Spec::submenu("First", vec![Spec::item("edit.cut")]),
+            Spec::submenu("Second", vec![Spec::item("edit.paste")]),
+        ]
+    }
+
+    fn down(p: Point) -> UiEvent {
+        UiEvent::PointerDown {
+            pos: p,
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        }
+    }
+
+    fn wheel(p: Point, notches: f64) -> UiEvent {
+        UiEvent::Wheel {
+            delta: Vec2::new(0.0, notches),
+            pos: p,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn the_first_submenu_opens_the_moment_the_pointer_is_on_its_row() {
+        let mut m = menu(&two_submenus(), Os::Windows);
+        m.handle(&mv(m.submenu_center("First").unwrap()));
+        assert_eq!(m.open_path(), ["First"], "no tick, no delay");
+        assert!(!m.has_pending());
+        assert!(!m.needs_tick());
+        assert_eq!(m.wake_at(), None);
+    }
+
+    #[test]
+    fn switching_to_another_submenu_waits_the_short_grace_and_wakes_at_its_deadline() {
+        const { assert!(SUBMENU_DELAY <= 0.100_000_001, "a short grace") };
+        let mut m = menu(&two_submenus(), Os::Windows);
+        m.handle(&mv(m.submenu_center("First").unwrap()));
+        m.handle(&mv(m.submenu_center("Second").unwrap()));
+        assert_eq!(m.open_path(), ["First"], "still the first one");
+        // Until the first tick stamps the wait, the menu asks for a frame; no deadline yet.
+        assert!(m.needs_tick());
+        assert_eq!(m.wake_at(), None);
+        tick(&mut m, 10.0);
+        // Then it sleeps until the deadline: no frames, one wake-up at the right time.
+        assert!(!m.needs_tick());
+        assert_eq!(m.wake_at(), Some(10.0 + SUBMENU_DELAY));
+        assert!(!m.tick(10.0 + SUBMENU_DELAY * 0.5));
+        assert_eq!(m.open_path(), ["First"]);
+        assert!(m.tick(10.0 + SUBMENU_DELAY));
+        assert_eq!(m.open_path(), ["Second"]);
+        assert_eq!(m.wake_at(), None);
+        assert!(!m.has_pending());
+    }
+
+    #[test]
+    fn a_deadline_inside_an_open_submenu_is_reported_too() {
+        let spec = vec![Spec::submenu(
+            "Outer",
+            vec![
+                Spec::submenu("A", vec![Spec::item("edit.cut")]),
+                Spec::submenu("B", vec![Spec::item("edit.paste")]),
+            ],
+        )];
+        let mut m = menu(&spec, Os::Windows);
+        m.handle(&mv(m.submenu_center("Outer").unwrap()));
+        m.handle(&mv(m.submenu_center("A").unwrap()));
+        m.handle(&mv(m.submenu_center("B").unwrap()));
+        assert!(m.needs_tick());
+        tick(&mut m, 3.0);
+        assert_eq!(m.wake_at(), Some(3.0 + SUBMENU_DELAY));
+        tick(&mut m, 3.0 + SUBMENU_DELAY);
+        assert_eq!(m.open_path(), ["Outer", "B"]);
+    }
+
+    #[test]
+    fn a_pointer_heading_for_the_open_submenu_keeps_pushing_the_deadline_back() {
+        let mut m = menu(&nested(), Os::Windows);
+        let row = m.submenu_center("Chords").unwrap();
+        m.handle(&mv(row));
+        let paste = m.item_center("edit.paste").unwrap();
+        let mut t = 100.0;
+        for i in 1..=30 {
+            m.handle(&mv(row.lerp(paste, f64::from(i) / 30.0)));
+            t += 0.03;
+            tick(&mut m, t);
+            assert_eq!(m.open_path().first(), Some(&"Chords"), "step {i}");
+        }
+    }
+
+    #[test]
+    fn a_press_on_a_submenu_row_opens_it_at_once_even_while_another_is_open() {
+        let mut m = menu(&two_submenus(), Os::Windows);
+        m.handle(&mv(m.submenu_center("First").unwrap()));
+        let second = m.submenu_center("Second").unwrap();
+        assert_eq!(m.handle(&down(second)), MenuOutcome::Consumed);
+        assert_eq!(m.open_path(), ["Second"], "no grace for a click");
+        assert!(!m.has_pending());
+        // A press on a closed menu's row too.
+        let mut m = menu(&two_submenus(), Os::Windows);
+        m.handle(&down(m.submenu_center("First").unwrap()));
+        assert_eq!(m.open_path(), ["First"]);
+    }
+
+    /// A panel of `n` items whose rows are told apart by their argument.
+    fn many(n: usize) -> Vec<Entry> {
+        (0..n)
+            .map(|i| {
+                Entry::Item(MenuItemDef {
+                    command: "edit.copy".into(),
+                    arg: Some(i.to_string()),
+                    label: format!("Row {i}"),
+                    shortcut: None,
+                    enabled: true,
+                    checked: None,
+                })
+            })
+            .collect()
+    }
+
+    fn tall(n: usize, at: Point, bounds: Size) -> ContextMenu {
+        ContextMenu::from_entries(many(n), at, bounds)
+    }
+
+    fn at_row(m: &ContextMenu, i: usize) -> Option<Point> {
+        m.item_center_with("edit.copy", &i.to_string())
+    }
+
+    #[test]
+    fn a_menu_taller_than_the_window_is_clamped_to_it_and_scrolls() {
+        let window = Size::new(800.0, 300.0);
+        let m = tall(40, Point::new(100.0, 120.0), window);
+        let r = m.rect();
+        assert!(r.y0 >= 0.0 && r.y1 <= 300.0, "{r:?}");
+        assert_eq!(r.y0, 0.0, "moved up first, then made shorter");
+        assert!(m.max_scroll() > 0.0);
+        assert!(at_row(&m, 0).is_some());
+        assert!(at_row(&m, 39).is_none(), "the last rows are scrolled out");
+        // A menu that fits is not touched.
+        let m = tall(5, Point::new(100.0, 120.0), window);
+        assert_eq!(m.max_scroll(), 0.0);
+        assert_eq!(m.rect().y0, 120.0);
+    }
+
+    #[test]
+    fn the_wheel_scrolls_a_tall_menu_to_both_ends() {
+        let window = Size::new(800.0, 300.0);
+        let mut m = tall(40, Point::new(100.0, 0.0), window);
+        let inside = m.rect().center();
+        assert_eq!(m.handle(&wheel(inside, -1.0)), MenuOutcome::Consumed);
+        assert!(m.scroll_offset() > 0.0, "a notch down shows later rows");
+        let first = m.scroll_offset();
+        m.handle(&wheel(inside, -1.0));
+        assert!(m.scroll_offset() > first);
+        for _ in 0..40 {
+            m.handle(&wheel(inside, -1.0));
+        }
+        assert_eq!(m.scroll_offset(), m.max_scroll());
+        assert!(at_row(&m, 39).is_some(), "the last row shows at the end");
+        assert!(at_row(&m, 0).is_none());
+        for _ in 0..60 {
+            m.handle(&wheel(inside, 1.0));
+        }
+        assert_eq!(m.scroll_offset(), 0.0);
+        // A wheel over nothing does nothing.
+        m.handle(&wheel(Point::new(700.0, 250.0), -1.0));
+        assert_eq!(m.scroll_offset(), 0.0);
+    }
+
+    #[test]
+    fn a_scrolled_row_is_chosen_where_it_is_drawn() {
+        let mut m = tall(40, Point::new(100.0, 0.0), Size::new(800.0, 300.0));
+        let inside = m.rect().center();
+        for _ in 0..40 {
+            m.handle(&wheel(inside, -1.0));
+        }
+        let p = at_row(&m, 39).unwrap();
+        m.handle(&mv(p));
+        assert_eq!(
+            m.handle(&up(p)),
+            MenuOutcome::Run {
+                command: "edit.copy".into(),
+                arg: Some("39".into())
+            }
+        );
+    }
+
+    #[test]
+    fn a_pointer_resting_on_a_strip_scrolls_until_the_end_and_asks_for_frames() {
+        let mut m = tall(40, Point::new(100.0, 0.0), Size::new(800.0, 300.0));
+        let down_strip = m.lay.down_strip().unwrap().center();
+        let up_strip = m.lay.up_strip().unwrap().center();
+        assert!(!m.needs_tick());
+        m.handle(&mv(up_strip));
+        assert!(!m.needs_tick(), "nothing above the first row");
+        m.handle(&mv(down_strip));
+        assert!(m.needs_tick());
+        let mut t = 0.0;
+        while m.scroll_offset() < m.max_scroll() {
+            t += 1.0 / 60.0;
+            assert!(m.tick(t), "scrolls on every frame");
+            assert!(t < 10.0, "reaches the end");
+        }
+        assert!(!m.needs_tick(), "at the end the strip has nothing to do");
+        m.handle(&mv(up_strip));
+        assert!(m.needs_tick());
+        let before = m.scroll_offset();
+        t += 0.1;
+        m.tick(t);
+        assert!(m.scroll_offset() < before);
+        // Leaving the window stops it.
+        m.handle(&UiEvent::PointerLeave);
+        assert!(!m.needs_tick());
+    }
+
+    #[test]
+    fn arrow_keys_scroll_the_highlighted_row_into_view_and_wrap_around() {
+        let mut m = tall(40, Point::new(100.0, 0.0), Size::new(800.0, 300.0));
+        press(&mut m, Key::Down);
+        assert_eq!(m.scroll_offset(), 0.0);
+        for _ in 0..20 {
+            press(&mut m, Key::Down);
+        }
+        let row = at_row(&m, 20).expect("the highlighted row shows whole");
+        assert!(m.rect().contains(row));
+        assert!(m.scroll_offset() > 0.0);
+        press(&mut m, Key::End);
+        assert!(at_row(&m, 39).is_some());
+        assert_eq!(m.scroll_offset(), m.max_scroll());
+        press(&mut m, Key::Home);
+        assert_eq!(m.scroll_offset(), 0.0);
+        press(&mut m, Key::Up);
+        assert_eq!(m.highlighted(), Some("Row 39"), "wraps to the last row");
+        assert!(at_row(&m, 39).is_some());
+    }
+
+    #[test]
+    fn scrolling_a_panel_closes_the_submenu_opened_from_it_and_a_scroll_repaints() {
+        let mut entries = many(40);
+        entries.insert(
+            1,
+            Entry::Submenu(SubmenuDef {
+                label: "Sub".into(),
+                enabled: true,
+                entries: many(3),
+            }),
+        );
+        let mut m =
+            ContextMenu::from_entries(entries, Point::new(100.0, 0.0), Size::new(800.0, 300.0));
+        m.handle(&mv(m.submenu_center("Sub").unwrap()));
+        assert_eq!(m.open_path(), ["Sub"]);
+        let before = m.look();
+        m.handle(&wheel(m.rect().center(), -1.0));
+        assert!(m.scroll_offset() > 0.0);
+        assert!(m.open_path().is_empty(), "its row moved");
+        assert_ne!(m.look(), before, "the shell repaints on a scroll");
+    }
+
+    #[test]
+    fn a_submenu_near_the_bottom_moves_up_and_a_tall_one_scrolls_in_the_window() {
+        let window = Size::new(800.0, 400.0);
+        let mut entries = many(2);
+        entries.push(Entry::Submenu(SubmenuDef {
+            label: "Low".into(),
+            enabled: true,
+            entries: many(12),
+        }));
+        entries.push(Entry::Submenu(SubmenuDef {
+            label: "Tall".into(),
+            enabled: true,
+            entries: many(60),
+        }));
+        let mut m = ContextMenu::from_entries(entries, Point::new(100.0, 300.0), window);
+        let root = m.rect();
+        assert!(root.y1 <= 400.0, "{root:?}");
+        m.handle(&mv(m.submenu_center("Low").unwrap()));
+        let low = m.open.as_ref().unwrap().menu.rect();
+        assert!(low.y0 >= 0.0 && low.y1 <= 400.0, "stays on screen: {low:?}");
+        assert!(low.y0 < m.row_rects()[2].y0, "moved up to fit");
+        assert_eq!(m.open.as_ref().unwrap().menu.max_scroll(), 0.0);
+        m.handle(&down(m.submenu_center("Tall").unwrap()));
+        let tall = &m.open.as_ref().unwrap().menu;
+        assert!(tall.rect().y0 >= 0.0 && tall.rect().y1 <= 400.0);
+        assert!(tall.max_scroll() > 0.0, "scrolls");
+        // The wheel over the submenu scrolls it and leaves the parent where it is.
+        let at = tall.rect().center();
+        let parent = m.scroll_offset();
+        m.handle(&wheel(at, -1.0));
+        assert!(m.open.as_ref().unwrap().menu.scroll_offset() > 0.0);
+        assert_eq!(m.scroll_offset(), parent);
+        assert_eq!(m.open_path(), ["Tall"]);
+    }
+
+    #[test]
+    fn a_submenu_at_the_right_edge_flips_left_and_a_scrolled_parent_row_places_it() {
+        let window = Size::new(500.0, 300.0);
+        let mut entries = many(30);
+        entries.push(Entry::Submenu(SubmenuDef {
+            label: "Late".into(),
+            enabled: true,
+            entries: many(3),
+        }));
+        let mut m = ContextMenu::from_entries(entries, Point::new(290.0, 0.0), window);
+        let inside = m.rect().center();
+        for _ in 0..40 {
+            m.handle(&wheel(inside, -1.0));
+        }
+        let row = m.submenu_center("Late").unwrap();
+        m.handle(&mv(row));
+        let child = m.open.as_ref().unwrap().menu.rect();
+        assert!(
+            child.x1 <= m.rect().x0 + 3.0,
+            "flipped to the left: {child:?}"
+        );
+        assert!(child.x0 >= 0.0 && child.y1 <= 300.0 && child.y0 >= 0.0);
+        assert!(
+            child.y0 <= row.y && row.y <= child.y1,
+            "level with its scrolled row"
+        );
     }
 }

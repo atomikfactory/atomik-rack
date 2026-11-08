@@ -1296,9 +1296,11 @@ model, the engine, the bounce and the UI call it instead of keeping copies.
   `editor.set_chord`, `editor.set_chord_inversion`, `editor.chordify`, `editor.arpeggiate`,
   `editor.set_arp_*`, `editor.strum` and `editor.set_strum_*` (the arguments are lists in
   `keymap/command.rs`, pinned to the theory names by a test), and context menus with submenus
-  (`ContextMenu` opens submenus to any depth beside their row; a release that ends the press which
-  opened a menu chooses nothing). `Shift+S`, `Shift+F` and `Shift+C` are bound in the standard
-  profile only. Snap to scale and the fold are window state (`piano_roll_snap_scale`,
+  (`ContextMenu` opens submenus to any depth beside their row, at once when the pointer is on the row
+  and none is open there; a switch waits `SUBMENU_DELAY`, which `Shell::context_menu_wake` hands to the
+  platform loop as a deadline; a panel taller than the window scrolls with the `menu_layout` math shared
+  with the menu bar; a release that ends the press which opened a menu chooses nothing).
+  `Shift+S`, `Shift+F` and `Shift+C` are bound in the standard profile only. Snap to scale and the fold are window state (`piano_roll_snap_scale`,
   `piano_roll_fold` in `ui-state.json`).
 
 ### 2.12 MIDI controller data
@@ -4851,7 +4853,7 @@ creation chain in the **Creation chain** bullet.
   router and the role table at once, and `poll_status` compares the file's modification time and
   size and reloads an edited or deleted file.
 - **Menus that scroll and stay on screen**
-  ([menu_layout.rs](../crates/app/src/menu_layout.rs), [menubar.rs](../crates/app/src/menubar.rs)). The in-window
+  ([menu_layout.rs](../crates/ui/src/menu_layout.rs), [menubar.rs](../crates/app/src/menubar.rs)). The in-window
   bar lays a dropdown or a flyout out with `menu_layout::layout` for the window's size (`MenuBar::set_window`, set by
   the shell before every event): a list taller than the room below the bar is cut to it (`EDGE_MARGIN` left under
   it) and scrolls by the mouse wheel over it, by a pointer resting on the strip at its top or bottom

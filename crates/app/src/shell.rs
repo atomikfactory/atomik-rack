@@ -6447,11 +6447,18 @@ impl<B: AudioBackend> Shell<B> {
         self.context_menu.as_ref().map(|o| &o.menu)
     }
 
-    /// Whether the context menu waits for a pointer to rest (the platform loop keeps ticking).
+    /// Whether the context menu wants a frame now (a switch not yet timed, a scroll strip under
+    /// the pointer): the platform loop keeps ticking while it does.
     pub fn context_menu_pending(&self) -> bool {
         self.context_menu
             .as_ref()
-            .is_some_and(|o| o.menu.has_pending())
+            .is_some_and(|o| o.menu.needs_tick())
+    }
+
+    /// When a submenu switch of the context menu is due, on the clock of `frame_at` (seconds):
+    /// the loop sleeps until then and ticks, instead of polling.
+    pub fn context_menu_wake(&self) -> Option<f64> {
+        self.context_menu.as_ref().and_then(|o| o.menu.wake_at())
     }
 
     /// Closes the context menu without choosing.
