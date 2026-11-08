@@ -58,7 +58,8 @@ pub struct Workspace<B: AudioBackend> {
     make: SongFactory<B>,
     /// The song whose question about unsaved changes is on the screen, for the answer.
     asking: Option<DocId>,
-    /// The songs that answered Don't Save to the question of a quit that is in progress.
+    /// The songs that answered the question of a quit that is in progress: Don't Save, or Save
+    /// with a save that worked (the quit never asks such a song again).
     declined: Vec<DocId>,
     /// The recent list every song has (see [`Self::sync_shared`]).
     recent: Vec<std::path::PathBuf>,
@@ -633,6 +634,22 @@ impl<B: AudioBackend> Workspace<B> {
         vec![ShellRequest::Quit]
     }
 
+    /// A save in the question of a quit or of the last window closing worked (the song went on
+    /// with the quit or the close): the song is answered, whatever changed in it during the
+    /// save does not bring the question back. A save that failed or still needs a file leaves
+    /// the song asked and the window open.
+    fn note_saved(&mut self, then: &PendingAction, requests: &[ShellRequest]) {
+        let leaving = matches!(
+            then,
+            PendingAction::Command(AppCommand::Quit | AppCommand::CloseSongWindow)
+        ) && requests
+            .iter()
+            .any(|r| matches!(r, ShellRequest::Quit | ShellRequest::CloseSong));
+        if leaving && !self.declined.contains(&self.routed) {
+            self.declined.push(self.routed);
+        }
+    }
+
     /// Selects the song that raised the question the answer is for.
     fn select_asking(&mut self) {
         if let Some(id) = self.asking {
@@ -685,14 +702,16 @@ impl<B: AudioBackend> Workspace<B> {
     /// Save, in the question about unsaved changes (see [`Shell::save_then`]).
     pub fn save_then(&mut self, then: PendingAction) -> Vec<ShellRequest> {
         self.select_asking();
-        let requests = self.deref_mut().save_then(then);
+        let requests = self.deref_mut().save_then(then.clone());
+        self.note_saved(&then, &requests);
         self.route(requests, false)
     }
 
     /// The file picked for a save that continues with `then` (see [`Shell::save_to_then`]).
     pub fn save_to_then(&mut self, path: &Path, then: PendingAction) -> Vec<ShellRequest> {
         self.select_asking();
-        let requests = self.deref_mut().save_to_then(path, then);
+        let requests = self.deref_mut().save_to_then(path, then.clone());
+        self.note_saved(&then, &requests);
         self.route(requests, false)
     }
 

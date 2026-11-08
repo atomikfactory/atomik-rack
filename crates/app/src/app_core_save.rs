@@ -1152,6 +1152,10 @@ impl<S: EngineSink> AppCore<S> {
             }
         }
         self.file = Some(file.to_path_buf());
+        // The file lacks the assets only the undo history still references; the live pool keeps
+        // them, so the baseline holds the same pool and the saved song is not "changed" by them.
+        let mut snapshot = snapshot;
+        snapshot.assets = self.doc().assets.clone();
         self.set_saved(snapshot);
         // The recovered recordings are in the saved project now: their files can go.
         for path in std::mem::take(&mut self.audio.recovered_files) {
