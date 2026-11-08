@@ -14,6 +14,9 @@
 //! - the proxy ([`proxy`], [`jpeg`]): every frame as a small independent JPEG in one indexed
 //!   file, so any frame is one seek; [`prepare`] builds it from ffmpeg's piped output with
 //!   progress and cancel and never leaves a partial file;
+//! - the viewer's side ([`decode`], [`frames`], [`timeline`]): a pure-Rust JPEG decoder, the
+//!   [`FrameDecoder`] worker with its [`FrameCache`], and the exact arithmetic from a song time to
+//!   a frame and a timecode ([`timeline::locate`], [`Timecode`]);
 //! - [`ProxyCache`]: the per-user folder of proxies, keyed by [`SourceIdentity`], versioned and
 //!   pruned to a size.
 //!
@@ -22,23 +25,29 @@
 
 pub mod args;
 pub mod cache;
+pub mod decode;
 pub mod discover;
 mod error;
 pub mod fake;
+pub mod frames;
 pub mod jpeg;
 pub mod prepare;
 pub mod probe;
 pub mod proxy;
 pub mod runner;
 pub mod samples;
+pub mod timeline;
 pub mod version;
 
 pub use args::ProxySpec;
 pub use cache::{DEFAULT_MAX_BYTES, ProxyCache, SourceIdentity};
+pub use decode::{Picture, decode_jpeg};
 pub use discover::{Ffmpeg, FfmpegStatus, Platform, Search, discover};
 pub use error::VideoError;
+pub use frames::{Event as FrameEvent, FrameCache, FrameDecoder};
 pub use prepare::{Control, Prepared, prepare, probe as probe_file};
 pub use probe::{AudioStream, ProbeInfo, Rational, VideoStream, parse_probe};
 pub use proxy::{PROXY_VERSION, ProxyInfo, ProxyReader, ProxyWriter};
 pub use runner::{NoVideoTools, SystemTool, VideoTool};
+pub use timeline::{Shot, Timecode};
 pub use version::{FfmpegVersion, MIN_MAJOR, parse_version};

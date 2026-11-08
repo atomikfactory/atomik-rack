@@ -25,9 +25,17 @@ Which dependencies are held on purpose, why, and how they are kept current. The 
 | `rust-version` and `rust-toolchain.toml` | 1.99 | root | One toolchain for CI, the release builds and the docs. The two files move together; a dependency that needs a newer compiler moves both in a pull request of their own. |
 | `serde_json` | feature `float_roundtrip` | root | Saved files and settings must read back the floats that were written. |
 | `symphonia`, `arboard` | `default-features = false` | root | Only the formats and backends the program uses are built: fewer crates, fewer advisories, shorter builds. |
+| `zune-jpeg` | `default-features = false`, feature `std` | root, used by `crates/video` | The JPEG decoder of the video viewer. The default features add hand-written SIMD paths (AVX2 and NEON intrinsics, `unsafe`); a 360-line proxy frame decodes in a few milliseconds without them, off the UI thread, so the build keeps the portable code only. |
 
 The clipboard dependency (`arboard`, MIT or Apache-2.0) was added for the text fields; the system
 clipboard is its only use.
+
+The JPEG decoder (`zune-jpeg` with its one dependency `zune-core`, both `MIT OR Apache-2.0 OR Zlib`, pure Rust, no
+C code) was added for the video viewer: the proxy of a film is a file of JPEG frames and the viewer has to turn one
+into pixels. It decodes only; nothing encodes. The alternatives were `jpeg-decoder` (no longer developed, its
+authors point to `zune-jpeg`) and `image` (a framework with a codec per format, far more than one decoder needs).
+The choice is in [DECISIONS.md](DECISIONS.md#p-the-jpeg-decoder-of-the-viewer); `cargo deny check` passes with the
+licences the policy already allows.
 
 ## Duplicate versions
 

@@ -271,7 +271,7 @@ frames that is one seek away at any frame.
 folder, then `PATH`, then the usual package folders on macOS), needs release 4 or later, and runs them only through
 one trait with a fake for tests. The proxy is JPEG (every frame intra-coded; about 360 lines), packed in one indexed
 file per film in a per-user cache that is pruned to 2 GiB. JPEG decoding is a small pure-Rust dependency that comes
-with the viewer; the first item adds none.
+with the viewer; the first item adds none (the viewer added it, see P).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
 
@@ -300,5 +300,29 @@ the facts the project kept.
 **Decision.** Option 3. `RackDoc::video` is one optional clip with a path, the probe facts, a start and a trim in
 microseconds. It is saved as an optional ignorable root field of format 44 (no bump: a reader that does not know it
 drops it with a warning and plays the song, which is all it can do), and edited by `Command::Video`.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## P. The JPEG decoder of the viewer
+
+**Question.** Which decoder turns a frame of the video proxy into pixels for the viewer window?
+
+**Options.**
+
+1. `zune-jpeg`: a pure-Rust baseline and progressive decoder, `MIT OR Apache-2.0 OR Zlib`, one small dependency.
+2. `jpeg-decoder`: pure Rust and older, but no longer developed.
+3. `image`: a framework with a decoder per format, many dependencies.
+4. FFmpeg for every frame (a process per frame, or one long-running process asked for frames).
+
+**Implications.** The viewer decodes a frame per video frame while the song plays, so it must be fast and must not
+need the user's FFmpeg at that moment (the proxy exists so that it does not). A process per frame is far too slow and
+a long-running one adds a protocol and a second thing to kill. `image` brings formats nobody uses here. `zune-jpeg`
+is maintained, reads what FFmpeg's motion JPEG encoder writes, and decodes a 360-line frame in a few milliseconds.
+Its licence (any of MIT, Apache-2.0 or Zlib) is on the allow list of `deny.toml`. Its SIMD paths are `unsafe`
+inside the dependency; the build turns the default features off and keeps the portable code, which is fast enough
+at this size and keeps the amount of third-party `unsafe` in the program as small as it can be.
+
+**Decision.** Option 1, `default-features = false` with `std`. Decoding runs on a worker thread of the app
+(`FrameDecoder`), never on the UI thread or the audio thread, with a byte-limited cache of decoded frames.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.

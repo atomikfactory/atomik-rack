@@ -7,8 +7,8 @@
 
 use atomik_video::runner::capture;
 use atomik_video::{
-    Control, FfmpegStatus, Platform, ProxyCache, ProxyReader, ProxySpec, Search, SystemTool,
-    discover, prepare,
+    Control, FfmpegStatus, FrameDecoder, FrameEvent, Platform, ProxyCache, ProxyReader, ProxySpec,
+    Search, SystemTool, decode_jpeg, discover, prepare,
 };
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -100,6 +100,49 @@ fn a_generated_film_is_probed_and_gets_its_proxy() {
         assert_eq!(&frame[..2], &[0xFF, 0xD8]);
         assert_eq!(&frame[frame.len() - 2..], &[0xFF, 0xD9]);
     }
+    // The pure-Rust decoder reads what FFmpeg wrote, frame by frame, and the frames differ (the
+    // test picture runs a counter), through the worker the viewer uses as well.
+    let first = {
+        reader.read_frame(0, &mut frame).unwrap();
+        decode_jpeg(&frame).unwrap()
+    };
+    assert_eq!(
+        (first.width, first.height),
+        (got.info.width, got.info.height)
+    );
+    assert!(
+        first
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|p| p[..3] != [0, 0, 0])
+    );
+    let worker = FrameDecoder::spawn_file(got.proxy.clone()).unwrap();
+    let last = got.info.frames - 1;
+    worker.want(vec![last, 0]);
+    let mut decoded = Vec::new();
+    for _ in 0..2_000 {
+        for e in worker.poll() {
+            match e {
+                FrameEvent::Frame(n, p) => decoded.push((n, p)),
+                FrameEvent::Failed(n, why) => panic!("frame {n:?}: {why}"),
+                FrameEvent::Opened(_) => {}
+            }
+        }
+        if decoded.len() == 2 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(decoded.len(), 2, "the worker decoded both frames");
+    assert_eq!(decoded[0].0, last);
+    assert_eq!(decoded[1].1, first);
+    assert_ne!(
+        decoded[0].1.rgba, first.rgba,
+        "the last frame is not the first"
+    );
+    println!("decoded {}x{}", first.width, first.height);
     // The second call is a cache hit.
     let again = prepare(
         &SystemTool,
