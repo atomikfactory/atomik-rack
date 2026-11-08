@@ -188,6 +188,23 @@ fn mix_channel(c: &mut AppCore<RecordingSink>) -> DeviceKey {
 }
 
 #[test]
+fn the_empty_channel_action_adds_selects_and_reports_one_undo_step() {
+    let (mut c, s) = three();
+    let depth = c.document().undo_depth();
+    c.handle_action(atomik_ui::UiAction::AddEmptyChannel);
+    assert_eq!(c.document().undo_depth(), depth + 1, "one undo step");
+    let made = c.doc().console.channels.last().unwrap().clone();
+    assert_eq!(made.source, None);
+    assert_eq!(c.doc().console.channels.len(), s.len() + 1);
+    let name = c.doc().device(&made.channel).unwrap().name.clone();
+    assert_eq!(name, format!("Channel {}", s.len() + 1));
+    assert_eq!(c.console().selected_strips(), vec![made.channel.clone()]);
+    assert_eq!(c.last_rejection(), Some(format!("Added {name}").as_str()));
+    c.undo();
+    assert_eq!(channels(&c), s);
+}
+
+#[test]
 fn a_bus_is_copied_by_name_and_settings_and_pastes_as_a_new_bus() {
     let (mut c, s) = three();
     let drums = bus(&mut c, "Drums");

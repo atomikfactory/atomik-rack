@@ -22,7 +22,14 @@ impl<S: EngineSink> AppCore<S> {
             .last()
             .map(|c| c.channel.clone())
         {
-            self.console.set_selected_strips(&[channel]);
+            let name = self
+                .doc()
+                .device(&channel)
+                .map_or_else(String::new, |d| d.name.clone());
+            self.console
+                .set_selected_strips(std::slice::from_ref(&channel));
+            self.select(Some(channel));
+            self.report(format!("Added {name}"));
         }
         self.after_view_change();
         true
