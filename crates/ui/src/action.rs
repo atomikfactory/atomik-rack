@@ -83,6 +83,9 @@ pub enum UiAction {
     /// EDIT on an insert row of the console: the rack shows the strip with its insert area
     /// unfolded and the effect selected.
     EditInsert(DeviceKey),
+    /// "Empty Mix Channel" of the console's add-channel picker: a channel with no source, routed
+    /// to the master. The app adds it (one undo step), selects it and says so in the status line.
+    AddEmptyChannel,
     /// The rack selection holds several devices: `primary` is the device
     /// the editors and the live keyboard follow (the last clicked), `keys` the whole selection
     /// in rack order (path keys inside a container). View state, not an undo step.

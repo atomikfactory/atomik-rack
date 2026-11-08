@@ -99,7 +99,12 @@ fn new_sourceless_channel(
 pub(crate) fn add_mix_channel(p: &mut Planner<'_>, name: &str) -> Result<DeviceKey, ModelError> {
     let name = name.trim();
     let name = if name.is_empty() {
-        rules::unique_name(p.doc(), "Mix Channel")
+        // "Channel N": the first number from the strip count up that no device uses.
+        let start = p.doc().console.channels.len() + 1;
+        (start..)
+            .map(|n| format!("Channel {n}"))
+            .find(|n| p.doc().devices.iter().all(|d| d.name != *n))
+            .expect("a free name exists")
     } else {
         name.to_owned()
     };

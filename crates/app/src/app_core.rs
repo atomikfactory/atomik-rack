@@ -1055,6 +1055,9 @@ impl<S: EngineSink> AppCore<S> {
                 self.view
                     .reveal_insert(self.document.doc(), &self.registry, &key);
             }
+            UiAction::AddEmptyChannel => {
+                self.add_mix_channel();
+            }
             UiAction::OpenBrowser => {}
             // A note clip of a drum machine opens in the step editor (View > Piano Roll
             // still opens it in the piano roll).

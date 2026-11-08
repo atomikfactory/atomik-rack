@@ -500,6 +500,15 @@ fn add_channel_shows_the_console_and_opens_its_picker() {
     assert!(!items.is_empty(), "the add-channel picker is open");
 }
 
+#[test]
+fn add_channel_with_every_instrument_channelled_still_offers_an_empty_channel() {
+    let mut s = shell();
+    add_synth(&mut s, "a");
+    assert_eq!(s.core().doc().console.channels.len(), 1);
+    s.execute(AppCommand::AddChannel);
+    assert_eq!(s.core().console().menu_items(), ["Empty Mix Channel"]);
+}
+
 fn fold(s: &mut Shell<NullBackend>, key: &DeviceKey, folded: bool) {
     s.core_mut()
         .apply_command(Command::SetFolded {

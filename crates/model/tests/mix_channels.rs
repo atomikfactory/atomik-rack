@@ -140,10 +140,29 @@ fn an_empty_name_gets_the_default_and_names_do_not_collide() {
         .collect();
     assert_eq!(names.len(), 2);
     assert_ne!(names[0], names[1]);
-    assert!(
-        names.iter().all(|n| n.starts_with("Mix Channel")),
-        "{names:?}"
-    );
+    // Two strips exist (one per synth), so the first free numbers are 3 and 4.
+    assert_eq!(names, ["Channel 3", "Channel 4"]);
+}
+
+#[test]
+fn an_empty_channel_is_named_by_the_next_free_number_and_goes_to_the_master() {
+    let (mut d, r) = project();
+    // Two strips exist; a channel already called "Channel 4" is skipped (3 is free).
+    run(&mut d, &r, [mix("Channel 4")]);
+    one_step(&mut d, &r, mix(""));
+    let doc = d.doc();
+    let k = doc
+        .console
+        .channels
+        .last()
+        .unwrap()
+        .channel
+        .as_str()
+        .to_owned();
+    assert_eq!(name_of(doc, &k), "Channel 5");
+    assert_eq!(doc.console.channels.last().unwrap().source, None);
+    assert_eq!(out_of(doc, &k, "out_l"), ["master:bus_l"]);
+    assert_eq!(out_of(doc, &k, "out_r"), ["master:bus_r"]);
 }
 
 #[test]

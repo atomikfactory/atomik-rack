@@ -15,7 +15,9 @@ fn button(b: ConsoleButton, rect: Rect) -> Help {
     let help = |text: &'static str| Help::new(rect, text);
     match b {
         ConsoleButton::FoldAll => help("Fold every section of the strips, or unfold them all"),
-        ConsoleButton::AddChannel => help("Add a mixer channel for an instrument that has none"),
+        ConsoleButton::AddChannel => {
+            help("Add an empty mix channel, or a channel for an instrument that has none")
+        }
         ConsoleButton::Compensation => {
             help("Delay compensation: line the strips up by their latency")
                 .with_command("mixer.toggle_compensation")
