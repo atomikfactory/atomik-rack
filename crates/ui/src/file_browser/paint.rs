@@ -568,23 +568,39 @@ impl FileBrowserView {
             pane.x1 - lay::PAD,
             pane.y1 - 4.0,
         );
-        let levels = self
+        let detail = self
             .detail
             .as_ref()
             .filter(|(p, _)| *p == row.path)
-            .map(|(_, d)| d.levels.as_slice())
-            .filter(|l| !l.is_empty());
-        if let Some(levels) = levels
+            .map(|(_, d)| d);
+        let drawable = detail.is_some_and(|d| !d.peaks.is_empty() || !d.levels.is_empty());
+        if let Some(d) = detail
+            && drawable
             && wave.height() >= 4.0
             && wave.width() >= 4.0
         {
-            let columns = wave.width() as usize;
             let mid = wave.center().y;
             let half = wave.height() / 2.0;
-            for x in 0..columns {
-                let h = (f64::from(lay::level_at(levels, x, columns)) * half).max(0.5);
-                let x0 = wave.x0 + x as f64;
-                c.fill_with(Rect::new(x0, mid - h, x0 + 1.0, mid + h), t.cable_audio);
+            if d.peaks.is_empty() {
+                let columns = wave.width() as usize;
+                for x in 0..columns {
+                    let h = (f64::from(lay::level_at(&d.levels, x, columns)) * half).max(0.5);
+                    let x0 = wave.x0 + x as f64;
+                    c.fill_with(Rect::new(x0, mid - h, x0 + 1.0, mid + h), t.cable_audio);
+                }
+            } else {
+                // Two columns per logical pixel (a sharp picture on a 2x display): each one
+                // spans the lowest to the highest sample of its share of the file.
+                let columns = (wave.width() * 2.0) as usize;
+                let step = wave.width() / columns as f64;
+                for x in 0..columns {
+                    let [lo, hi] = lay::peak_at(&d.peaks, x, columns);
+                    let top = (mid - f64::from(hi) * half).min(mid - 0.25);
+                    let bottom = (mid - f64::from(lo) * half).max(mid + 0.25);
+                    let x0 = wave.x0 + x as f64 * step;
+                    // A hair of overlap so neighbouring columns leave no gap.
+                    c.fill_with(Rect::new(x0, top, x0 + step + 0.05, bottom), t.cable_audio);
+                }
             }
             // The preview position runs over the picture while the file plays.
             if let Some(progress) = self

@@ -1684,9 +1684,53 @@ fn the_one_selected_audio_file_gets_its_loudness_picture_from_a_worker_once() {
 fn a_file_that_cannot_be_decoded_gets_an_empty_picture_and_the_core_stays_idle() {
     let lib = library("detail-bad");
     std::fs::write(lib.path("broken.wav"), b"not a wav").unwrap();
-    let (tempo, levels) = crate::browser_workers::detail_of(&lib.path("broken.wav"));
+    let (tempo, levels, peaks) = crate::browser_workers::detail_of(&lib.path("broken.wav"));
     assert_eq!(tempo, None);
-    assert!(levels.is_empty());
+    assert!(levels.is_empty() && peaks.is_empty());
+}
+
+#[test]
+fn the_detail_picture_has_a_column_per_requested_part_even_for_a_short_file() {
+    let lib = library("detail-short");
+    let (_, levels, peaks) = crate::browser_workers::detail_of(&lib.path("kick 2.wav"));
+    assert_eq!(levels.len(), peaks.len());
+    assert!(
+        peaks.len() > 480,
+        "finer than the old 480 parts: {}",
+        peaks.len()
+    );
+    assert!(peaks.iter().all(|[lo, hi]| lo <= hi));
+    assert!(
+        peaks.iter().any(|[lo, _]| *lo < -0.4),
+        "the sine swings below zero"
+    );
+}
+
+#[test]
+fn selecting_a_file_again_answers_from_the_detail_cache_until_the_file_changes() {
+    let lib = library("detail-cache");
+    let path = lib.path("kick 2.wav");
+    let mut cache = crate::browser_workers::DetailCache::default();
+    let reads = std::cell::Cell::new(0);
+    let read = |p: &std::path::Path| {
+        reads.set(reads.get() + 1);
+        crate::browser_workers::detail_of(p)
+    };
+    let first = cache.get_or_read(&path, read);
+    let second = cache.get_or_read(&path, read);
+    assert_eq!(first, second);
+    assert_eq!(reads.get(), 1, "the second selection was instant");
+    // A different size is a different file as far as the cache can tell.
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.extend_from_slice(&[0, 0, 0, 0]);
+    std::fs::write(&path, bytes).unwrap();
+    cache.get_or_read(&path, read);
+    assert_eq!(reads.get(), 2);
+    // A file that cannot be decoded is not kept.
+    std::fs::write(lib.path("junk.wav"), b"not a wav").unwrap();
+    cache.get_or_read(&lib.path("junk.wav"), read);
+    cache.get_or_read(&lib.path("junk.wav"), read);
+    assert_eq!(reads.get(), 4);
 }
 
 // ------------------------------------------------------------------------------- thumbnails

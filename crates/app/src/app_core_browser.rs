@@ -897,13 +897,20 @@ impl<S: EngineSink> AppCore<S> {
                 path,
                 tempo,
                 levels,
+                peaks,
             } => {
                 #[cfg(test)]
                 self.browser
                     .trace
                     .push(ViewCall::Detail(path.clone(), tempo, levels.clone()));
-                self.file_browser
-                    .set_detail(path, DetailData { tempo, levels });
+                self.file_browser.set_detail(
+                    path,
+                    DetailData {
+                        tempo,
+                        levels,
+                        peaks,
+                    },
+                );
             }
             BrowseMsg::Thumb { path, size, levels } => {
                 #[cfg(test)]
