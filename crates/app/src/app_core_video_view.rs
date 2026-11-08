@@ -167,12 +167,13 @@ impl<S: EngineSink> AppCore<S> {
         if self.viewer.shown {
             self.feed_video_view();
         }
+        self.video_row_frame();
     }
 
     // ------------------------------------------------------------------ the picture
 
     /// The song position in microseconds through the tempo map.
-    fn position_us(&self) -> i64 {
+    pub(super) fn position_us(&self) -> i64 {
         let seconds = TempoMap::new(&self.doc().song.tempo).seconds_at_tick(self.position as f64);
         (seconds * 1e6).round() as i64
     }

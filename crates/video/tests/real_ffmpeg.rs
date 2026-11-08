@@ -143,6 +143,25 @@ fn a_generated_film_is_probed_and_gets_its_proxy() {
         "the last frame is not the first"
     );
     println!("decoded {}x{}", first.width, first.height);
+    // The thumbnail worker of the arrangement: the same frames, scaled down on its thread.
+    let thumbs = FrameDecoder::spawn_file_scaled(got.proxy.clone(), 40).unwrap();
+    thumbs.want(vec![last]);
+    let mut small = None;
+    for _ in 0..2_000 {
+        for e in thumbs.poll() {
+            if let FrameEvent::Frame(n, p) = e {
+                assert_eq!(n, last);
+                small = Some(p);
+            }
+        }
+        if small.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let small = small.expect("the thumbnail worker decoded the last frame");
+    assert_eq!(small.height, 40);
+    assert_eq!(small, decoded[0].1.scaled_to_height(40));
     // The second call is a cache hit.
     let again = prepare(
         &SystemTool,

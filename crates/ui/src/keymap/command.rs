@@ -2913,6 +2913,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.toggle_tempo_lane", "Tempo Lane", G::View, C::Global).menu(),
     cmd("view.toggle_track_panel", "Track Panel", G::View, C::Global).menu(),
     cmd("view.toggle_video", "Video", G::View, C::Global).menu(),
+    cmd("view.toggle_video_row", "Video Row", G::View, C::Global).menu(),
     cmd("view.zoom_in", "Zoom In", G::View, C::Global)
         .rep()
         .menu(),

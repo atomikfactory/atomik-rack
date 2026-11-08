@@ -947,6 +947,7 @@ mod tests {
             big_meter: false,
             tempo_lane: false,
             energy_lane: false,
+            video_row: false,
             marker_strip: false,
             inspector: false,
             marker_list: false,

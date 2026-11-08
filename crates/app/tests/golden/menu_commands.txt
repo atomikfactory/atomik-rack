@@ -397,6 +397,7 @@ ToggleTempoLane | Tempo Lane
 ToggleTrackPanel | Track Panel
 ToggleVideo | Video
 ToggleVideoOverlay | Video Overlay
+ToggleVideoRow | Video Row
 TrackComment | Track Comment…
 TrackHeight(Fit) | Track Height: Fit
 TrackHeight(Large) | Track Height: Large
