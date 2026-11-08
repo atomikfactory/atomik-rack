@@ -1273,8 +1273,8 @@ model, the engine, the bounce and the UI call it instead of keeping copies.
   render (same id, place, name, colour and crossfade) in one undo step. The arrangement offers
   them in the clip context menu (`sequencer.convert_loop`, `sequencer.loop_instance` for the
   repetition under the playhead), a loop handle in the upper right corner of a clip's body
-  (dragging it repeats what the clip shows), `sequencer.clip_color` and `sequencer.rename_clip`
-  (also a double-click on the clip's header strip).
+  (dragging it repeats what the clip shows; Shift on an audio clip's end edge does the same),
+  `sequencer.clip_color` and `sequencer.rename_clip` (also a double-click on the clip's header strip).
 - **Rows and fold** (`ui/src/key_rows.rs`). `KeyRows` is the list of visible keys, top row first,
   with `row_of` and `key_at_row`; the piano roll's geometry (`key_at`, `key_center_y`, hit testing,
   painting, the scroll range, band select and the key zoom) goes through it, so a folded roll is the

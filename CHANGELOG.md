@@ -1109,6 +1109,9 @@ may break APIs and the patch and project formats.
   are ignored.
 
 ### Fixed
+- **Shift+drag on an audio clip's end edge loops it**, as it does for a MIDI clip. The clip grows and repeats the
+  audio it plays (the same as dragging the loop handle), dragging back trims the repeats, and one drag is one undo
+  step. A plain edge drag still resizes, and a reversed clip, which cannot loop, keeps the plain resize.
 - **The browser's sample waveform** is drawn at full quality. The info pane read at most 480 coarse blocks of 4096
   frames, so a short one-shot showed a handful of wide bars. The picture is now read per column (the lowest and highest
   sample of each part, every frame read for a short file), up to 1024 columns, and drawn as a filled shape with two

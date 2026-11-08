@@ -4140,6 +4140,15 @@ impl ArrangementView {
                 if !self.selection.contains(&id) {
                     return;
                 }
+                // The loop-extend gesture on an audio clip repeats what it plays, like the loop
+                // handle (a reversed clip cannot loop, so it keeps the plain resize).
+                if modifiers.shift
+                    && id != FROZEN_CLIP
+                    && matches!(&clip.content, ClipContent::Audio(a) if !a.reverse)
+                {
+                    self.begin_loop_drag(clip, pos);
+                    return;
+                }
                 let merge = self.merge_id();
                 let loop_mode = modifiers.shift && !matches!(clip.content, ClipContent::Audio(_));
                 // The other selected clips follow the grabbed one (not while the loop length moves).

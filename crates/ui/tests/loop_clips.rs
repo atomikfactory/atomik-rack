@@ -215,6 +215,58 @@ fn an_audio_clip_gets_a_loop_through_the_handle_but_a_reversed_one_has_none() {
 }
 
 #[test]
+fn shift_on_an_audio_clips_end_edge_repeats_it_and_a_plain_drag_resizes() {
+    let reg = registry();
+    let d = Document::new(audio_doc());
+    let mut v = audio_arrangement(d.doc(), &reg);
+    v.set_snap(Snap::Bar);
+    let bp = bar_px(&v);
+    let r = v.clip_rect(ClipId(10)).unwrap();
+    let edge = Point::new(r.x1 - 2.0, r.center().y + 12.0);
+    let to = edge + Vec2::new(bp * 2.2, 0.0);
+    // Shift: the clip grows to bar 5 and loops over the two bars it plays; one merge group.
+    let a = drive(
+        &d,
+        &reg,
+        &mut v,
+        &[
+            down_mods(edge, Modifiers::SHIFT, 1),
+            mv_with(to, Modifiers::SHIFT),
+            up(to),
+        ],
+    );
+    let g = geometry(&a);
+    assert_eq!(
+        (g[0].0, g[0].1, g[0].2, g[0].3, g[0].4),
+        (ClipId(10), BAR, 4 * BAR, 0, Some(2 * BAR))
+    );
+    assert_eq!(a.iter().filter(|x| **x == UiAction::EndMerge).count(), 1);
+    // Dragging back below the length trims the repeats and leaves no loop.
+    let a = drive(
+        &d,
+        &reg,
+        &mut v,
+        &[
+            down_mods(edge, Modifiers::SHIFT, 1),
+            mv_with(edge - Vec2::new(bp * 1.0, 0.0), Modifiers::SHIFT),
+            up(edge),
+        ],
+    );
+    let g = geometry(&a);
+    assert_eq!((g[0].2, g[0].4), (BAR, None));
+    // No modifier: today's resize, no loop.
+    let mut v = audio_arrangement(d.doc(), &reg);
+    v.set_snap(Snap::Bar);
+    let a = drive(&d, &reg, &mut v, &[down(edge), mv(to), up(to)]);
+    assert!(geometry(&a).is_empty(), "a plain drag is a SetAudioClip");
+    assert!(
+        song_commands(&a)
+            .iter()
+            .any(|c| matches!(c, SongCommand::SetAudioClip { .. }))
+    );
+}
+
+#[test]
 fn the_handle_is_painted_for_looped_selected_and_hovered_clips_only() {
     let (d, reg, mut v) = setup();
     let paint = |v: &mut ArrangementView| {
