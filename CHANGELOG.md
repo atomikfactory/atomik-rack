@@ -9,6 +9,9 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Stretch cursor.** A clip edge that stretches the clip (Alt held over the edge, before and during the drag) shows a
+  drawn cursor, a double arrow with a bar across its middle, in place of the plain column-resize icon. It is crisp at
+  1x and 2x, and pressing or releasing Alt over an edge swaps it with the resize cursor at once, without a pointer move.
 - **Mix channel panel.** A console channel or output bus is a compact one-unit panel in the rack, in place of the
   generated panel of its descriptor. Its front carries MUTE and SOLO, a horizontal fader (a drag along the track, a
   double-click resets it, a readout in dB), a PAN knob, an L and R peak meter, BYPASS INSERT FX, SHOW INSERT FX and the

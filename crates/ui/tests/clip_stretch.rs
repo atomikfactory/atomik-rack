@@ -196,3 +196,22 @@ fn the_edge_shows_the_stretch_cursor_only_with_alt_and_the_body_keeps_the_pencil
     assert!(steps(&a).is_empty(), "{a:?}");
     assert_eq!(v.cursor(), CursorHint::Pen);
 }
+
+#[test]
+fn pressing_and_releasing_alt_over_an_edge_swaps_the_cursor_without_a_move() {
+    let (mut v, doc, reg) = setup();
+    let p = right_edge(&v, 1);
+    let _ = v.handle(&mv(p), &doc, &reg);
+    assert_eq!(v.cursor(), CursorHint::ResizeHorizontal);
+    // The pointer stays put: only the modifier changes.
+    hold_alt(&mut v, &doc, &reg);
+    assert_eq!(v.cursor(), CursorHint::Stretch);
+    let _ = v.handle(
+        &UiEvent::ModifiersChanged {
+            modifiers: Modifiers::NONE,
+        },
+        &doc,
+        &reg,
+    );
+    assert_eq!(v.cursor(), CursorHint::ResizeHorizontal);
+}
