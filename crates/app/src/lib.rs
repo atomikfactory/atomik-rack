@@ -22,6 +22,7 @@ pub mod browser_workers;
 pub mod cli;
 pub mod clicks;
 pub mod clipboard;
+pub mod clipboard_os;
 pub mod commands;
 pub mod context_menus;
 pub mod crash;

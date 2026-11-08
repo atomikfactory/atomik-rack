@@ -99,6 +99,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn paste_strips_from_clipboard(&mut self) -> Result<(), String> {
+        self.adopt_os_clipboard()?;
         match self.clipboard.get().cloned() {
             Some(ClipboardData::Strips(s))
                 if !s.devices.devices.is_empty() || !s.loose.is_empty() =>
@@ -143,7 +144,13 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Whether the clipboard holds something `pane` can paste (menus).
     pub fn can_paste(&self, pane: Pane) -> bool {
-        match (pane, self.clipboard.kind()) {
+        // Another instance's copy on the system clipboard is the newest one: it can be pasted
+        // (non-empty by construction) whatever this instance holds.
+        let (kind, filled) = match self.foreign_kind() {
+            Some(kind) => (Some(kind), true),
+            None => (self.clipboard.kind(), !self.clipboard.is_empty()),
+        };
+        match (pane, kind) {
             (
                 Pane::Rack,
                 Some(ClipboardKind::Devices | ClipboardKind::Tracks | ClipboardKind::Strips),
@@ -157,15 +164,13 @@ impl<S: EngineSink> AppCore<S> {
                     | ClipboardKind::Strips
                     | ClipboardKind::Takes,
                 ),
-            ) => !self.clipboard.is_empty(),
-            (Pane::Console, Some(ClipboardKind::Strips | ClipboardKind::Tracks)) => {
-                !self.clipboard.is_empty()
-            }
+            ) => filled,
+            (Pane::Console, Some(ClipboardKind::Strips | ClipboardKind::Tracks)) => filled,
             (Pane::PianoRoll, Some(ClipboardKind::Notes)) => {
-                !self.clipboard.is_empty() && self.piano_roll.clip().is_some()
+                filled && self.piano_roll.clip().is_some()
             }
             (Pane::PianoRoll, Some(ClipboardKind::Controllers)) => {
-                !self.clipboard.is_empty()
+                filled
                     && (self.piano_roll.clip().is_some() || self.piano_roll.track().is_some())
                     && self.piano_roll.controllers_open()
             }
@@ -191,7 +196,7 @@ impl<S: EngineSink> AppCore<S> {
 
     fn copy(&mut self, pane: Pane) -> Result<(), String> {
         let data = self.capture(pane)?;
-        self.clipboard.set(data);
+        self.set_clipboard(data);
         Ok(())
     }
 
@@ -294,6 +299,7 @@ impl<S: EngineSink> AppCore<S> {
     // ------------------------------------------------------------------ paste
 
     fn paste(&mut self, pane: Pane) -> Result<(), String> {
+        self.adopt_os_clipboard()?;
         let data = match self.clipboard.get() {
             Some(d) if !d.is_empty() => d.clone(),
             _ => return Err("The clipboard is empty: copy something first".into()),

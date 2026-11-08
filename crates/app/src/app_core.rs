@@ -184,6 +184,12 @@ pub struct AppCore<S: EngineSink> {
     registry: Registry,
     /// The in-process clipboard; New and Open keep it.
     clipboard: Clipboard,
+    /// The system clipboard Copy writes to and Paste reads from, so another instance can paste
+    /// what this one copied (see `clipboard_os`).
+    os_clipboard: std::cell::RefCell<Box<dyn crate::clipboard_os::OsClipboard>>,
+    /// The last look at the system clipboard for the Paste menu: when, and the kind of the other
+    /// instance's copy found there.
+    os_peek: std::cell::Cell<Option<(std::time::Instant, Option<crate::clipboard::ClipboardKind>)>>,
     /// The channel settings the last Copy Channel Settings took.
     settings_clip: Option<atomik_model::ChannelSettingsClip>,
     /// The transitions made in this session: the boundary, the kind and the undo depth after the
@@ -524,6 +530,8 @@ impl<S: EngineSink> AppCore<S> {
         let mut core = Self {
             registry,
             clipboard: Clipboard::new(),
+            os_clipboard: std::cell::RefCell::new(crate::clipboard_os::default_clipboard()),
+            os_peek: std::cell::Cell::new(None),
             settings_clip: None,
             transitions: Vec::new(),
             strip_delete_ask: None,
@@ -3908,6 +3916,9 @@ mod settings_ops;
 #[path = "app_core_clipboard.rs"]
 mod clipboard_ops;
 
+#[path = "app_core_os_clipboard.rs"]
+mod os_clipboard_ops;
+
 #[path = "app_core_strips.rs"]
 mod strip_ops;
 
@@ -4243,6 +4254,10 @@ mod macros_tests;
 #[cfg(test)]
 #[path = "app_core_clipboard_tests.rs"]
 mod clipboard_tests;
+
+#[cfg(test)]
+#[path = "app_core_os_clipboard_tests.rs"]
+mod os_clipboard_tests;
 
 #[cfg(test)]
 #[path = "app_core_console_select_tests.rs"]

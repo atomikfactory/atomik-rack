@@ -38,7 +38,7 @@ impl<S: EngineSink> AppCore<S> {
         match TakeSnapshot::capture(self.document.doc(), group, takes) {
             Ok(snapshot) => {
                 let n = snapshot.takes.len();
-                self.clipboard.set(ClipboardData::Takes(snapshot));
+                self.set_clipboard(ClipboardData::Takes(snapshot));
                 self.report(format!("Copied {n} take{}", if n == 1 { "" } else { "s" }));
             }
             Err(e) => self.report(e.to_string()),

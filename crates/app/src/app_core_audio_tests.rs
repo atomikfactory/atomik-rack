@@ -2,7 +2,7 @@
 //! All fixtures are procedural and live in temporary folders.
 
 use super::*;
-use crate::app_core::engine_config;
+use crate::app_core::{Pane, engine_config};
 use crate::sink::{RecordingSink, SinkCall};
 use atomik_audio_file::{AudioData, content_hash, write_wav_f32};
 use atomik_core::PPQ;
@@ -663,4 +663,75 @@ fn a_project_file_over_the_size_cap_is_refused_unread_and_nothing_changes() {
         "{err}"
     );
     assert_eq!(c.doc(), &before);
+}
+
+// ------------------------------------------------------------------ paste from another instance
+
+/// Two cores that share one in-memory system clipboard; the first imported `kick.wav` onto a
+/// track and copied that clip, the second has an audio track of its own (another file).
+fn two_instances(t: &Tmp) -> (AppCore<RecordingSink>, AppCore<RecordingSink>, String) {
+    use crate::clipboard::ClipboardKind;
+    let os = crate::clipboard_os::FakeClipboard::default();
+    let mut a = core();
+    a.set_os_clipboard(Box::new(os.clone()));
+    let kick = wav(t, "kick.wav", 4_800, 48_000, 1.0);
+    import(&mut a, &[kick], ImportTarget::NewTracks, 0);
+    let hash = audio_clips(&a)[0].3.clone();
+    let clip = a.doc().song.tracks[0].lanes[0].clips[0].id;
+    a.arrangement_mut().set_selected_clips(&[clip]);
+    a.pane_command(Pane::Arrangement, "edit.copy", None);
+    assert_eq!(a.clipboard().kind(), Some(ClipboardKind::Clips));
+    let mut b = core();
+    b.set_os_clipboard(Box::new(os));
+    let other = wav(t, "other.wav", 2_400, 48_000, 0.5);
+    import(&mut b, &[other], ImportTarget::NewTracks, 0);
+    let track = b.doc().song.tracks[0].device.clone();
+    b.arrangement_mut().set_selected_track(Some(track));
+    assert!(!b.doc().assets.contains_key(&hash));
+    (a, b, hash)
+}
+
+#[test]
+fn an_audio_clip_copied_in_another_instance_brings_its_file_on_paste() {
+    let t = Tmp::new("xinstance");
+    let (a, mut b, hash) = two_instances(&t);
+    b.transport_action(atomik_ui::TransportAction::Locate(8 * PPQ));
+    b.pane_command(Pane::Arrangement, "edit.paste", None);
+    b.wait_background();
+    assert!(b.last_rejection().is_none(), "{:?}", b.last_rejection());
+    assert!(
+        b.doc().assets.contains_key(&hash),
+        "the asset is in the pool"
+    );
+    assert!(
+        audio_clips(&b)
+            .iter()
+            .any(|c| c.3 == hash && c.1 == 8 * PPQ)
+    );
+    // The file was fetched into the pasting instance's own bundle, not just referenced.
+    let bundle = Bundle::open(b.bundle_root().unwrap()).unwrap();
+    assert!(
+        bundle.exists(&hash),
+        "the file is in the bundle of the second instance"
+    );
+    assert_ne!(a.bundle_root(), b.bundle_root());
+}
+
+#[test]
+fn an_audio_clip_whose_file_cannot_be_reached_pastes_as_missing_media_and_says_so() {
+    let t = Tmp::new("xmissing");
+    let (a, mut b, hash) = two_instances(&t);
+    // The copying instance's audio folder is gone before the paste.
+    std::fs::remove_dir_all(a.bundle_root().unwrap()).unwrap();
+    b.pane_command(Pane::Arrangement, "edit.paste", None);
+    b.wait_background();
+    assert!(
+        b.doc().assets.contains_key(&hash),
+        "the clip is pasted with its pool entry"
+    );
+    assert!(audio_clips(&b).iter().any(|c| c.3 == hash));
+    let message = b.last_rejection().unwrap_or_default();
+    assert!(message.contains("could not be found"), "{message}");
+    let bundle = Bundle::open(b.bundle_root().unwrap()).unwrap();
+    assert!(!bundle.exists(&hash), "nothing was invented");
 }

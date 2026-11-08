@@ -196,11 +196,20 @@ impl<B: AudioBackend> Workspace<B> {
         let Some(data) = self.songs[a].shell.core().clipboard().get().cloned() else {
             return;
         };
+        let known = self.songs[a]
+            .shell
+            .core()
+            .clipboard()
+            .known()
+            .map(str::to_owned);
         self.lend_audio(a, b);
         let target = self.songs[b].shell.core_mut().clipboard_mut();
         if target.get() != Some(&data) {
             target.set(data);
         }
+        // The same system clipboard text stands for it in both songs, so the paste there does
+        // not decode it again.
+        target.set_known(known);
     }
 
     /// The audio of what was copied (or dragged) stays in the bundle of the song it came from
