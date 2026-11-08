@@ -1,0 +1,538 @@
+File
+  New
+  Open…
+  Open Recent >
+    song 0
+    song 1
+    song 2
+    song 3
+    song 4
+    song 5
+    song 6
+    song 7
+    ---
+    Clear Menu
+  New from Template >
+    template 0
+    template 1
+    template 2
+    template 3
+    template 4
+    template 5
+    template 6
+    template 7
+    template 8
+    template 9
+    template 10
+    template 11
+    template 12
+    template 13
+    template 14
+    template 15
+    ---
+    Save as Template
+    Show Template Folder
+    ---
+    Use Song as Default Song
+    Reset Default Song
+  Close
+  ---
+  Save
+  Save As…
+  Save Version…
+  Versions…
+  ---
+  Song Information…
+  New at Sample Rate >
+    44.1 kHz
+    48 kHz
+    96 kHz
+  Convert Sample Rate >
+    44.1 kHz
+    48 kHz
+    96 kHz
+  Start Screen…
+  ---
+  Import >
+    Import Audio…
+    Import MIDI…
+    Import MIDI as Song…
+  Export >
+    Export Song as Audio File…
+    Export Loop as Audio File…
+    Export Selection as Audio File…
+    Export Stems as Audio Files…
+    ---
+    Export MIDI Clip…
+    Export MIDI Track…
+    Export MIDI Song…
+    MIDI Export Resolution >
+      15360 per quarter (native)
+      960 per quarter
+      480 per quarter
+    ---
+    Export Patch…
+  Project Files >
+    Relink Missing Audio…
+    Collect Files…
+    Preview Collect Files
+    Cancel Collect or Move
+    Move Project…
+    ---
+    Export Project Archive…
+    Import Project Archive…
+    Cancel Project Archive
+  ---
+  Stress Test >
+    Stress Rack
+    Stress Song
+  ---
+  Quit
+Edit
+  Undo
+  Redo
+  ---
+  Cut
+  Copy
+  Paste
+  Duplicate
+  Delete
+  ---
+  Select All
+  ---
+  Combine
+  Uncombine
+  Split Sub
+  ---
+  Quantize
+  Quantize Options…
+  ---
+  Audio Edits >
+    Reverse Audio
+    Normalise Audio
+    Normalise To >
+      Peak -1 dBFS
+      RMS -18 dBFS
+      Loudness -23 LUFS
+      Loudness -14 LUFS
+    Peak Surgeon…
+    Strip Silence…
+    Quantize Audio
+  Time and Clips >
+    Insert Bars at Locators
+    Remove Bars at Locators
+    ---
+    Reverse Clips
+    Reverse Note Starts
+    Scale Tempo >
+      Double (200 %)
+      Halve (50 %)
+      150 %
+      125 %
+      75 %
+      Other…
+    Chop Clips To >
+      Bar
+      Half Bar
+      Beat
+      1/8 Note
+      1/16 Note
+    ---
+    Cleanup Automation >
+      Normal
+      Heavy
+      Maximum
+    Move Automation into Note Clip
+    Clear Clip Parameter Lanes
+View
+  Back of Rack
+  Cables >
+    Cables: Show
+    Cables: Hover
+    Cables: Selected
+    Cables: Hide Auto-routed
+    Cables: Hide
+  ---
+  Zoom In
+  Zoom Out
+  Actual Size
+  Application Zoom >
+    75 %
+    100 %
+    125 %
+    150 %
+    175 %
+    200 %
+  Theme >
+    Dark
+    Light
+    Same as System
+  ---
+  Panels >
+    Device Browser
+    File Browser
+    Detach Browser
+    Piano Keys
+    Track Panel
+    Rack
+    Detach Rack
+    Detach Mixer
+    Spectrum EQ
+    Rack Navigator
+    Rack Sorting >
+      No Grouping
+      Rack per Track
+      Auto-Group
+    Single Column
+    Sequencer Only
+    Clip Editor
+    Inspector
+  Editors >
+    Arrangement
+    Piano Roll
+    Sample Editor
+    Step Editor
+    Slice Editor
+  Lanes and Markers >
+    Tempo Lane
+    Energy Lane
+    Refresh Energy Lane
+    Marker Strip
+    Marker List
+  Meters and Links >
+    Show Console Links
+    CPU Meters
+    Big Meter
+  ---
+  Find Parameter…
+  Automation Follows Selection
+  Show Automation Lane
+Transport
+  Play / Stop
+  Record
+  Return to Zero
+  ---
+  Loop
+  Metronome
+  Auto-create Lanes
+  ---
+  Add Marker
+  Add Range Marker from Loop
+  Set End Marker at Playhead
+  Set Left Locator at Playhead
+  Set Right Locator at Playhead
+  Previous Marker
+  Next Marker
+  ---
+  Input Quantize: Off
+  Input Quantize: 1/8
+  Input Quantize: 1/16
+Mixer
+  Console
+  Maximise Console
+  ---
+  Add Channel…
+  Route to New Output Bus
+  Create Parallel Channel
+  Delete Channel
+  ---
+  Groups and VCAs >
+    Create VCA from Selection
+    Create VCA from Folder
+    Route Folder to New Bus
+    Stop Routing Folder
+    Route Folder to Bus >
+      Bus A
+      Bus B
+    Add to VCA
+    Remove from VCA
+    Delete VCA
+    Add to Group >
+      Drums
+      Bass
+    Delete Group >
+      Drums
+      Bass
+    Route Group to Bus >
+      Drums
+      Bass
+    Stop Routing Group >
+      Drums
+      Bass
+    Route Group to New Bus
+    Stop Routing Group
+    Link Faders
+  Channel Strip >
+    Toggle Polarity
+    Bypass All Inserts
+    Clear Inserts
+    ---
+    Copy Channel Settings
+    Paste Channel Settings
+    Reset Channel
+  Snapshots >
+    Store Snapshot
+    Update Snapshot
+    Recall Snapshot
+    Recall Next Snapshot
+    Recall Previous Snapshot
+    Morph to Next Snapshot
+    Morph to Previous Snapshot
+    Morph Time >
+      1 Second
+      2 Seconds
+      4 Seconds
+      8 Seconds
+    Snapshot Includes Effects
+    Compare A/B
+    End Compare
+    Delete Snapshot
+  ---
+  Delay Compensation
+  Align Returns
+  Sends Follow Bus
+  Meter Mode >
+    Peak Meters
+    PPM Meters
+    VU Meters
+  ---
+  Control and Macros >
+    MIDI Learn
+    MIDI Mappings…
+    Map Command >
+      Previous track
+      Next track
+      Undo
+      Redo
+      Previous preset
+      Next preset
+    Lock Surfaces to Selection
+    Export MIDI Mapping Preset…
+    Import MIDI Mapping Preset…
+    Clear MIDI Mappings
+    ---
+    Macros…
+    New Macro Bank
+Analyze
+  Sound Analyst…
+  Reference Panel…
+  Reference >
+    Listen to Reference
+    Add Reference Track…
+    Select Reference Track >
+      Reference 1
+    Next Reference Track
+    Remove Reference Track
+    ---
+    Start at Playhead Position
+    Follow Playhead
+    Match Reference Level
+    Reference Band >
+      Full Range
+      Sub
+      Low
+      Mid
+      High
+    Reference Stereo Solo >
+      Left and Right
+      Mid
+      Side
+  Translation Lens >
+    Headphones
+    Small Speaker
+    Club Sub
+    Mono
+  ---
+  Check Mix…
+  Masking Map…
+  Kick and Bass Check…
+  Will the Bass Read?…
+  Find Repetition…
+  ---
+  Delivery Targets…
+Create
+  Create Instrument…
+  Create Effect…
+  Create Player…
+  Create Audio Track
+  Create Mixer Channel…
+Track
+  Group Tracks
+  Ungroup
+  Collapse Folder
+  Rename Folder…
+  ---
+  Move Track Up
+  Move Track Down
+  Rename Track…
+  Track Comment…
+  Delete Track and Device
+  ---
+  Note Lanes >
+    Add Note Lane
+    Rename Note Lane…
+    Delete Note Lane
+    Mute Lane
+    Merge Note Lanes
+    Explode Notes to Lanes
+  Freeze >
+    Freeze Track
+    Freeze Track up to Selected Device
+    Freeze with Tail
+    Freeze with Strip
+    Re-render Frozen Track
+    Unfreeze Track
+    Unfreeze Track and Keep Audio
+    Cancel Freeze
+  Bounce >
+    Bounce in Place
+    Bounce in Place and Mute Originals
+    Bounce Clips to New Track (Dry)
+    Bounce Range in Place
+  Players >
+    Send Players to Track
+    Direct Record
+    Fold All Players
+    Bypass All Players
+  ---
+  Add Pattern Lane
+  Pattern Lane to Notes
+  Edit Track Controllers
+  Add Reverb Send…
+  Rumble Maker >
+    Tail Repeat
+    Reverb Tail
+  Reverse Reverb Print >
+    0.5 s
+    1 s
+    2 s
+    4 s
+    8 s
+  Add Transition >
+    Riser, 1 Bar
+    Riser, 2 Bars
+    Riser, 4 Bars
+    ---
+    Impact
+    ---
+    Filter Down, 1 Bar
+    Filter Down, 2 Bars
+    Filter Down, 4 Bars
+    Group Filter Down, 1 Bar
+    Group Filter Down, 2 Bars
+    Group Filter Down, 4 Bars
+    ---
+    Silence on Beat One
+    Fill
+  ---
+  Lane Height and Folding >
+    Fold Automation Lanes
+    Unfold Automation Lanes
+    ---
+    Track Height: Small
+    Track Height: Medium
+    Track Height: Large
+    Track Height: Fit
+    Track Height: Minimise / Restore
+Audio
+  Settings…
+  Plugins…
+  Restart Audio
+  Rescan MIDI Ports
+  Input Channels >
+    0 (off)
+    1
+    2
+    4
+    8
+    16
+    32
+  Output Channels >
+    1
+    2
+    4
+    8
+    16
+    32
+  ---
+  Clip Gain >
+    Clip Gain: Up 1 dB
+    Clip Gain: Down 1 dB
+    Clip Gain: Reset
+  Fades >
+    Fades: 5 ms Declick
+    Fades: None
+    Clear Gain Envelope
+    ---
+    Fade Shape: Linear
+    Fade Shape: Equal Power
+    Fade Shape: Exponential
+    Fade Shape: S-curve
+  Crossfade >
+    Crossfade: Off
+    Crossfade: Linear
+    Crossfade: Equal Power
+    Crossfade: Exponential
+    Crossfade: S-curve
+  Warp >
+    Warp Audio
+    Warp to Song Tempo
+    Warp Settings…
+    Warp Mode: Beats
+    Warp Mode: Tonal
+    Warp Mode: Repitch
+    Warp Loop as 1 Bar
+    Warp Loop as 2 Bars
+    Warp Loop as 4 Bars
+    Warp Loop as 8 Bars
+  Transpose >
+    Transpose: Up a Semitone
+    Transpose: Down a Semitone
+    Transpose: Up an Octave
+    Transpose: Down an Octave
+    Transpose: Reset
+  ---
+  Audio to Notes…
+Options
+  Click
+  Pre-count
+  ---
+  Input Quantize: Off
+  Input Quantize: 1/8
+  Input Quantize: 1/16
+  ---
+  Chase Notes
+  Delay Compensation
+  Align Returns
+  ---
+  Sync >
+    MIDI Clock Out
+    Send Clock While Stopped
+    Follow MIDI Clock
+  ---
+  Settings…
+Window
+  Main Window
+  Rack Window
+  Mixer Window
+  ---
+  New Song Window
+  Open Song in New Window…
+  Close Song Window
+  ---
+  Next Song
+  Previous Song
+  ---
+  open song 0
+  open song 1
+  open song 2
+  open song 3
+Help
+  Keyboard Shortcuts
+  Documentation
+  Report an Issue
+  ---
+  Export Diagnostics…
+  Export Device Parameter List…
+  ---
+  About Atomik Rack

@@ -135,7 +135,7 @@ fn the_menus_have_the_lane_and_the_finder() {
     let (label, enabled) = menu_row(&s, "View", AppCommand::RefreshEnergyLane);
     assert_eq!(label, "Refresh Energy Lane");
     assert!(!enabled, "nothing to refresh while the lane is off");
-    let (label, enabled) = menu_row(&s, "Edit", AppCommand::FindRepetition);
+    let (label, enabled) = menu_row(&s, "Analyze", AppCommand::FindRepetition);
     assert_eq!(label, "Find Repetition\u{2026}");
     assert!(enabled);
     assert_eq!(

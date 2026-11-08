@@ -2631,7 +2631,7 @@ Stage kinds in signal order; the Transform column lists the morph values (at mos
 The player device of an audio track. It has no sound of its own: the engine renders the track's
 audio clips (start, offset, trim, gain and fades) and hands the result to the device, which adds the
 monitored input and writes the outputs. Because it is an Instrument, it gets a console channel like
-any other source. You do not add it by hand: the arrangement's add-track row, File ▸ Import Audio
+any other source. You do not add it by hand: the arrangement's add-track row, File > Import > Import Audio
 and dropping files create it with its track and its input cables. Source:
 [crates/devices/src/audio_track.rs](../crates/devices/src/audio_track.rs).
 
@@ -4220,7 +4220,7 @@ Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
   all-pass: the level is the same at every frequency, the turn is smaller below `rotate_hz` and larger above
   it (up to 180 degrees), and 180 is a polarity inversion (`-x` exactly). It reshapes the waveform of a bass
   or a kick without changing what it sounds like alone, and so changes how it adds to the other one (the
-  Kick and Bass Check in the Mixer menu uses it, and finds an angle for you). At 0 the stage is skipped.
+  Kick and Bass Check in the Analyze menu uses it, and finds an angle for you). At 0 the stage is skipped.
   The angle and the frequency switch at once, like the mode, so set them with the signal stopped. The
   params were added after the first release, before `bypass`: a project from before them plays the same bits.
 - Width 1, balance 0, polarity and mono off, rotation 0, mode stereo: the output is the input bit for bit.
@@ -5305,8 +5305,9 @@ an insert loop, the fader, the main output and the control-room (`monitor_*`) ou
 - **Level CV.** `fader_cv_in` (a control input read in stage 2, after `gr_cv_out`) and `fader_cv_trim` (-1 to 1,
   default 1, appended after `comp.auto`) add `trim * cv * 24` dB to the fader, `cv` being the batch mean clamped
   to -1..+1. Not cabled, the master is bit-identical to one without it.
-- **Settings.** A click on the name plate in the console selects the master; Mixer > Copy Channel Settings, Paste,
-  Reset Channel and Clear Inserts then act on it. Its copy pastes onto the master only (of this song or another).
+- **Settings.** A click on the name plate in the console selects the master; Mixer > Channel Strip >
+  Copy Channel Settings, Paste, Reset Channel and Clear Inserts then act on it. Its copy pastes onto the master
+  only (of this song or another).
 - **Taps.** The send and return taps are copies the master keeps per block in its own state (written
   in stages 0 and 1, read in stage 2); the stages, sockets and cables of the device did not change,
   and the audio thread still does not allocate.

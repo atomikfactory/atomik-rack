@@ -61,7 +61,7 @@ fn the_mixer_menu_has_the_check_and_it_opens_the_panel() {
     let item = s
         .menu_model()
         .into_iter()
-        .find(|m| m.title == "Mixer")
+        .find(|m| m.title == "Analyze")
         .and_then(|m| {
             m.items()
                 .find(|i| i.command == AppCommand::KickBassCheck)

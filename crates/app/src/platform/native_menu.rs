@@ -16,26 +16,89 @@ pub struct NativeMenus {
 }
 
 /// A submenu that is rebuilt when its entries change: muda cannot relabel an item in place,
-/// so the whole list is replaced.
+/// so the whole list is replaced. Submenus inside it are built the same way, to any depth.
 struct DynamicSubmenu {
+    /// The title of the menu it is in.
+    menu: &'static str,
     label: &'static str,
     submenu: Submenu,
-    /// What the submenu shows now, to rebuild only when the model says otherwise: the label,
-    /// command and enabled state of each entry (`None` for a separator).
-    shown: Vec<Option<(String, AppCommand, bool)>>,
-    /// The items of the entries, to find the command a click chose.
-    chosen: Vec<(muda::MenuId, AppCommand, MenuItem)>,
+    /// What the submenu shows now, to rebuild only when the model says otherwise.
+    shown: Vec<Shown>,
+    /// The ids of its items (at any depth) and what each runs, to find the command a click
+    /// chose.
+    chosen: Vec<(muda::MenuId, AppCommand)>,
 }
 
-/// The entries of `sub` as [`DynamicSubmenu::shown`] keeps them.
-fn shape(sub: &SubModel) -> Vec<Option<(String, AppCommand, bool)>> {
-    sub.entries
+/// One entry as [`DynamicSubmenu::shown`] keeps it.
+#[derive(Debug, Clone, PartialEq)]
+enum Shown {
+    Separator,
+    Item {
+        label: String,
+        command: AppCommand,
+        enabled: bool,
+        checked: Option<bool>,
+    },
+    Submenu {
+        label: &'static str,
+        entries: Vec<Shown>,
+    },
+}
+
+/// The entries of `entries` as [`DynamicSubmenu::shown`] keeps them.
+fn shape(entries: &[MenuEntry]) -> Vec<Shown> {
+    entries
         .iter()
         .map(|e| match e {
-            MenuEntry::Item(i) => Some((i.label.to_string(), i.command, i.enabled)),
-            _ => None,
+            MenuEntry::Separator => Shown::Separator,
+            MenuEntry::Item(i) => Shown::Item {
+                label: i.label.to_string(),
+                command: i.command,
+                enabled: i.enabled,
+                checked: i.checked,
+            },
+            MenuEntry::Submenu(s) => Shown::Submenu {
+                label: s.label,
+                entries: shape(&s.entries),
+            },
         })
         .collect()
+}
+
+/// Appends `entries` to `parent`, the submenus among them with their own entries, and notes the
+/// id of each item in `chosen`.
+fn fill(
+    parent: &Submenu,
+    entries: &[MenuEntry],
+    chosen: &mut Vec<(muda::MenuId, AppCommand)>,
+) -> Option<()> {
+    for entry in entries {
+        match entry {
+            MenuEntry::Separator => parent.append(&PredefinedMenuItem::separator()).ok()?,
+            MenuEntry::Submenu(model) => {
+                let nested = Submenu::new(model.label, true);
+                fill(&nested, &model.entries, chosen)?;
+                parent.append(&nested).ok()?;
+            }
+            MenuEntry::Item(item) => {
+                let accel = accelerator(item.shortcut.as_deref());
+                match item.checked {
+                    Some(checked) => {
+                        let c =
+                            CheckMenuItem::new(item.label.as_ref(), item.enabled, checked, accel);
+                        parent.append(&c).ok()?;
+                        chosen.push((c.id().clone(), item.command));
+                    }
+                    None => {
+                        let i = MenuItem::new(item.label.as_ref(), item.enabled, accel);
+                        parent.append(&i).ok()?;
+                        chosen.push((i.id().clone(), item.command));
+                    }
+                }
+            }
+        }
+    }
+    Some(())
 }
 
 impl DynamicSubmenu {
@@ -43,17 +106,8 @@ impl DynamicSubmenu {
     fn rebuild(&mut self, model: &SubModel) -> Option<()> {
         while self.submenu.remove_at(0).is_some() {}
         self.chosen.clear();
-        for entry in &model.entries {
-            match entry {
-                MenuEntry::Item(item) => {
-                    let i = MenuItem::new(item.label.as_ref(), item.enabled, None);
-                    self.submenu.append(&i).ok()?;
-                    self.chosen.push((i.id().clone(), item.command, i));
-                }
-                _ => self.submenu.append(&PredefinedMenuItem::separator()).ok()?,
-            }
-        }
-        self.shown = shape(model);
+        fill(&self.submenu, &model.entries, &mut self.chosen)?;
+        self.shown = shape(&model.entries);
         Some(())
     }
 }
@@ -103,6 +157,7 @@ impl NativeMenus {
                     }
                     MenuEntry::Submenu(model) => {
                         let mut d = DynamicSubmenu {
+                            menu: m.title,
                             label: model.label,
                             submenu: Submenu::new(model.label, true),
                             shown: Vec::new(),
@@ -151,12 +206,16 @@ impl NativeMenus {
     /// (the recent songs).
     pub fn update(&mut self, model: &[MenuModel]) {
         for d in &mut self.dynamic {
-            let wanted = model.iter().flat_map(|m| &m.entries).find_map(|e| match e {
-                MenuEntry::Submenu(s) if s.label == d.label => Some(s),
-                _ => None,
-            });
+            let wanted = model
+                .iter()
+                .filter(|m| m.title == d.menu)
+                .flat_map(|m| &m.entries)
+                .find_map(|e| match e {
+                    MenuEntry::Submenu(s) if s.label == d.label => Some(s),
+                    _ => None,
+                });
             if let Some(wanted) = wanted
-                && shape(wanted) != d.shown
+                && shape(&wanted.entries) != d.shown
             {
                 d.rebuild(wanted);
             }
@@ -193,7 +252,7 @@ impl NativeMenus {
                 .chain(
                     self.dynamic
                         .iter()
-                        .flat_map(|d| d.chosen.iter().map(|(id, command, _)| (id, command))),
+                        .flat_map(|d| d.chosen.iter().map(|(id, command)| (id, command))),
                 )
                 .find(|(id, _)| **id == event.id);
             if let Some((_, command)) = chosen {

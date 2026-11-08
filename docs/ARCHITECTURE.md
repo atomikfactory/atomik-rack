@@ -402,7 +402,7 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
 ### 2.3 Audio import
 
 ```
- drop / File ▸ Import Audio ──UiAction::ImportAudio { paths, target, tick }──► AppCore::import_audio
+ drop / File > Import > Import Audio ──UiAction::ImportAudio { paths, target, tick }──► AppCore::import_audio
         │
         ▼  one worker thread "atomik-import" per drop or pick
    decode (symphonia) ─► resample to session rate (rubato) ─► content hash ─► Audio/<hash>.wav
@@ -452,7 +452,7 @@ missing assets by original file name in any case (when several files share a nam
 header agrees on channels and length wins, else the shallowest), then relinks the matches as above;
 unmatched assets stay missing. Each finished batch toasts `relinked N, M still missing`. The missing
 list (`AppCore::missing_assets`) follows undo and redo: an asset a relink replaced is missing again
-once the document uses it again. In the window, File > Relink Missing Audio... (`file.relink_audio`,
+once the document uses it again. In the window, File > Project Files > Relink Missing Audio... (`file.relink_audio`,
 enabled while audio is missing) opens `RelinkView`, a modal list with LOCATE... per file and SEARCH
 FOLDER... and PROJECT FOLDER..., which raise `ShellRequest::PickRelinkFile`, `PickRelinkFolder` and
 `PickRelinkProjectFolder`; the MCP tool `session_relink` answers them headlessly. PROJECT FOLDER...
@@ -462,9 +462,10 @@ the project file that holds `<name>/Audio`) gives back each missing file by its 
 session bundle and loaded by the same adopt worker a library item's audio uses, with no decoding.
 
 **Collect and relocate** are the save worker's uses of `Bundle::collect_from_with` (`audio-file`, `CollectReport`:
-copied, already present, missing, bytes, cancelled). `AppCore::collect_files` (`file.collect_files`, File > Collect Files)
-is a Save in place whose destination is the project's own bundle folder (`collect_root`: the file's folder when it
-is named like the file, else the sibling `<name>/`); the job copies each used asset the destination lacks, with
+copied, already present, missing, bytes, cancelled). `AppCore::collect_files` (`file.collect_files`,
+File > Project Files > Collect Files) is a Save in place whose destination is the project's own bundle folder
+(`collect_root`: the file's folder when it is named like the file, else the sibling `<name>/`); the job copies
+each used asset the destination lacks, with
 its peak cache, from the session bundle and then from the folders near the project file that hold an `Audio/`
 directory (`audio_folders`), writes the project atomically and removes the orphans of the destination only. Save As
 uses the same copy instead of copying the whole `Audio/` tree. Audio that was missing and was found is loaded by the
@@ -963,7 +964,7 @@ while it runs; the live children are not reused, because the offline output must
 
 ### 2.7a Export as an audio file
 
-File > Export Song as Audio File, Export Loop as Audio File and Export Stems as Audio Files
+File > Export > Export Song as Audio File, Export Loop as Audio File and Export Stems as Audio Files
 (`file.export_song_audio`, `file.export_loop_audio`, `file.export_stems`, remappable, no default
 keys) write the project as a WAV, AIFF or FLAC file, or one file per mixer strip.
 
@@ -1018,7 +1019,7 @@ keys) write the project as a WAV, AIFF or FLAC file, or one file per mixer strip
 - **Range of stems.** `ExportValues::locators` makes a stems export use `ExportSpan::Loop`
   (the frames between the locators, no tail) instead of the song with its tail.
 - **Time selection.** `ExportSpan::Range(start, end)` is a range in ticks, cut out like a loop with
-  no tail. File > Export Selection as Audio File (`ExportScope::Selection`) and the SELECTION range
+  no tail. File > Export > Export Selection as Audio File (`ExportScope::Selection`) and the SELECTION range
   of stems (`ExportValues::selection`, which is not saved in `export.json`) take the range selected
   on the lanes of the arrangement (`AppCore::export_selection`, the first and last tick of
   `lane_ranges`); with none selected the command is greyed and says so.
@@ -1037,7 +1038,7 @@ keys) write the project as a WAV, AIFF or FLAC file, or one file per mixer strip
   numbered `01 Name` in mixer order in a `Bounced <song>` folder; a stopped or failed export removes
   the files it wrote. Without sends the channel stems add up to the master within float
   rounding (tested).
-- **Dry clip bounce.** Track > Bounce Clips to New Track (Dry) (`sequencer.bounce_clip_dry`) is a
+- **Dry clip bounce.** Track > Bounce > Bounce Clips to New Track (Dry) (`sequencer.bounce_clip_dry`) is a
   bounce in place through zero insert effects: the freeze render with `effects: 0` taps the
   instrument's own output (an audio clip's gain, fades and warp included), so neither the inserts,
   the fader, the pan nor the sends are in it.
@@ -1432,8 +1433,8 @@ notes, and reach the track's device as the note events it already understands
   refuses a device that is not in the rack or has no such param, clamps the values into the param's
   range and checks the points like an automation clip's (the check at `AddClip` and at load looks at
   the shape only, so a clip pasted from another project keeps a lane whose device is missing; it
-  plays nothing). `WorkflowCommand::AutomationIntoClip { automation, into }` (Edit > Move Automation
-  into Note Clip; Edit > Clear Clip Parameter Lanes sends the empty list) turns what an automation
+  plays nothing). `WorkflowCommand::AutomationIntoClip { automation, into }` (Edit > Time and Clips > Move Automation
+  into Note Clip; Edit > Time and Clips > Clear Clip Parameter Lanes sends the empty list) turns what an automation
   clip plays under a note clip into a lane of that clip and removes the automation clip.
   `flatten_param_lanes` flattens them like an automation lane (a piece starts with the value it has
   there, a ramp cut by the piece end is closed, the last point of a piece holds), merging the lanes of
@@ -1846,23 +1847,23 @@ of them touching the engine or the audio thread.
   Import MIDI puts the whole file (all tracks and channels merged) in one clip on the selected note
   track (the track selected in the arrangement, the track of a selected or open clip, or the
   selected rack device) at the snapped playhead, and makes new tracks (a poly synth each) at the
-  playhead when no note track is selected; File > Import MIDI as Song makes new tracks from tick 0
+  playhead when no note track is selected; File > Import > Import MIDI as Song makes new tracks from tick 0
   and also takes the tempo map, meter map and markers. The file browser lists `.mid` and `.midi`
   files (`FileKind::Midi`, the extensions are `atomik_library::MIDI_EXTENSIONS`, shared with the
-  import dialog) with a MIDI label, and a double click or Enter on one is File > Import MIDI. A
+  import dialog) with a MIDI label, and a double click or Enter on one is File > Import > Import MIDI. A
   MIDI file dropped from the browser or the system on the arrangement goes where it lands
   (`UiAction::ImportMidi`, `AppCore::import_midi_at`): on a note lane it is one clip on that lane
   at the snapped drop tick (a file of several tracks is merged into that one clip, as the import
   does), elsewhere in the track area it makes new tracks from the drop tick; dropped anywhere else
   in the window (the rack included, an instrument there is not a target) it makes new tracks at the
   playhead (audio files in the same drop go on as before).
-  File > Export MIDI Clip, Track and Song are disabled while there is nothing to write (a note clip
+  File > Export > Export MIDI Clip, Track and Song are disabled while there is nothing to write (a note clip
   selected or open, a note track selected, a note track in the song). The dialogs are
   `ShellRequest::PickImportMidi` and `PickExportMidi`; the file is read and converted before
   anything is applied, so a bad file is reported by name and changes nothing, and files above 64 MiB
   are refused. The registry ids are `file.import_midi`, `file.import_midi_song`,
   `file.export_midi_clip`, `file.export_midi_track` and `file.export_midi_song`; none has a key.
-  File > MIDI Export Resolution (`file.midi_resolution` with `native`, `960` or `480`) sets the
+  File > Export > MIDI Export Resolution (`file.midi_resolution` with `native`, `960` or `480`) sets the
   resolution of the files written from then on and is kept in `workflow.json`. The QA server has
   `session_midi` (MCP.md).
 
@@ -2620,7 +2621,7 @@ number, the Audio settings tab has an Auto chip).
 
 ### Per-device processing time
 
-[timing.rs](../crates/engine/src/timing.rs) feeds the CPU readout (View > CPU Meters). The engine
+[timing.rs](../crates/engine/src/timing.rs) feeds the CPU readout (View > Meters and Links > CPU Meters). The engine
 never reads a clock itself: the host installs a monotonic nanosecond counter once (`install_clock`;
 the app passes `monotonic_ns` of audio-io) and switches the measurement on with `set_enabled`.
 While it is on, `Node::run` reads the counter before and after each device call and adds the
@@ -3668,14 +3669,14 @@ fast forward move a bar and the jog wheel a sixteenth per detent.
   driver, ports; at most eight); each enabled one runs its own driver and link in
   `AppCore::surface_frame`, in settings order, and an older file with one `"surface"` loads as a
   list of one. A mapping target `focused` is a param of the focused device: the device the surface
-  of the message is locked to (`AppCore::lock_surface`, Mixer > Lock Surfaces to Selection; never
-  saved), else the device selected in the rack. A locked surface never falls back to the selection
+  of the message is locked to (`AppCore::lock_surface`, Mixer > Control and Macros > Lock Surfaces to
+  Selection; never saved), else the device selected in the rack. A locked surface never falls back to the selection
   for a device that lacks the param.
 - **Commands as targets.** A `command` target (`RemoteCommand`: select the previous or next track,
   undo, redo, previous or next preset of the focused device) is a trigger run on the press. It ends
   an open mapped sweep first, so undo takes back the whole sweep. The preset step uses the plugin
-  presets of a plugin device and the patch list of the library folder for the others. Mixer > Map
-  Command arms one for the next control moved.
+  presets of a plugin device and the patch list of the library folder for the others. Mixer >
+  Control and Macros > Map Command arms one for the next control moved.
 - **Ports and threads.** `SurfaceLink` is the surface's two ports (`SystemLink`: a `midir` listener
   that keeps SysEx and only queues the bytes, and an output; `LoopbackSurface`: the same in memory,
   for tests and the MCP server). `AppCore::surface_frame(now)` runs on the UI thread, never the
@@ -3943,7 +3944,7 @@ already had (format 37 reads it, older readers refuse it).
 
 ### The Spectrum EQ window
 
-View > Spectrum EQ (F2) opens a floating window of its own (an OS window, so it resizes and moves
+View > Panels > Spectrum EQ (F2) opens a floating window of its own (an OS window, so it resizes and moves
 freely; closing it ends it) that shows one console strip. The channel, bus and master devices
 ([channel.rs](../crates/devices/src/channel.rs), [master.rs](../crates/devices/src/master.rs)) each
 own a `ScopeTap` allocated in `prepare`; with the app-set `internal.tap_live` param at 1 they push
@@ -4002,8 +4003,8 @@ and the native menu. Audio adds:
   forgets the per-device view state (selected pad, edited pattern, page, cache ids) of devices that leave the
   document (`prune_device_maps`).
 - [`app_core_archive.rs`](../crates/app/src/app_core_archive.rs) and
-  [`archive_worker.rs`](../crates/app/src/archive_worker.rs): File > Export and Import Project
-  Archive. The archive is one `.atomikz` file, a stored (uncompressed) ZIP with ZIP64 fields for
+  [`archive_worker.rs`](../crates/app/src/archive_worker.rs): File > Project Files > Export and
+  Import Project Archive. The archive is one `.atomikz` file, a stored (uncompressed) ZIP with ZIP64 fields for
   entries and archives over 4 GiB, holding `<name>/<name>.atomik` and `<name>/Audio/<hash>.wav`
   ([`audio-file/src/archive.rs`](../crates/audio-file/src/archive.rs)). Writing streams through a part
   file that is renamed when complete; reading takes the central directory first and accepts only
@@ -4011,8 +4012,8 @@ and the native menu. Audio adds:
   encrypted entry, an entry or total over `ArchiveLimits` is refused before a byte is written),
   checks every CRC, and extracts into a new folder `<destination>.part` that is renamed when whole
   and removed on any failure or cancel. One job runs at a time on a worker thread
-  (`Msg::Archived`), with a progress counter and a cancel flag (File > Cancel Project Archive); an
-  unpacked project is handed to the shell like a library project (`take_open_request`), which asks
+  (`Msg::Archived`), with a progress counter and a cancel flag (File > Project Files > Cancel Project Archive);
+  an unpacked project is handed to the shell like a library project (`take_open_request`), which asks
   about unsaved changes before opening it.
 - [`stream_source.rs`](../crates/app/src/stream_source.rs): the 64 MiB streaming threshold and the
   engine's `StreamSource` over a WAV reader (a read error plays as silence and is counted).
@@ -4849,6 +4850,22 @@ creation chain in the **Creation chain** bullet.
   assigned, but a default may keep its own. The shell hot-reloads: applying the dialog swaps the
   router and the role table at once, and `poll_status` compares the file's modification time and
   size and reloads an edited or deleted file.
+- **Menus that scroll and stay on screen**
+  ([menu_layout.rs](../crates/app/src/menu_layout.rs), [menubar.rs](../crates/app/src/menubar.rs)). The in-window
+  bar lays a dropdown or a flyout out with `menu_layout::layout` for the window's size (`MenuBar::set_window`, set by
+  the shell before every event): a list taller than the room below the bar is cut to it (`EDGE_MARGIN` left under
+  it) and scrolls by the mouse wheel over it, by a pointer resting on the strip at its top or bottom
+  (`MenuBar::tick`, from `Shell::frame_at`), and by Up, Down, Home and End, which keep the lit row whole in the view
+  (`offset_to_show`). Hit boxes, hover and the submenu logic read the scrolled rows (`ListLayout::rows` are cut to the
+  view; a row scrolled out has none). A flyout starts level with its row, moves up before it scrolls, and opens on
+  the left of its parent when the right side leaves the window. Submenus nest to any depth (`MenuBar::subs`, one entry
+  per open list, `deep_look` for the shell's repaint check); the macOS native menu builds the same nesting
+  recursively (`native_menu::fill`) and rebuilds a submenu when a label, state or check in it changes. No top-level
+  menu has more than `MAX_MENU_ROWS` rows: File, Edit, View, Mixer, Track and Audio keep their long runs in submenus by
+  theme, and the analysis features (Sound Analyst, Reference Panel and Reference, Translation Lens, Check Mix, Masking
+  Map, Kick and Bass Check, Will the Bass Read, Find Repetition, Delivery Targets) have the Analyze menu after Mixer.
+  Only the menu path of a command changed: `crates/app/tests/golden/menu_commands.txt` pins every item and its
+  command and `menu_tree.txt` the tree (`ATOMIK_UPDATE_GOLDEN=1` regenerates them).
 - **The unsaved-changes question, Close and the recent songs**
   ([shell.rs](../crates/app/src/shell.rs), [recent.rs](../crates/app/src/recent.rs),
   [menubar.rs](../crates/app/src/menubar.rs)). New, Open, Close, Quit and a project to open (a
@@ -5346,7 +5363,7 @@ change (version 9), no change to the routing plan, summing order, PDC or stages.
   running every block). A meter read resets its peak, so an endpoint the console strips also meter
   (the master's `main`) is read once per frame and the reading is shared with
   `update_console_meters` of the same frame.
-- **Big Meter.** View > Big Meter floats a larger meter over the top right of the rack
+- **Big Meter.** View > Meters and Links > Big Meter floats a larger meter over the top right of the rack
   ([big_meter.rs](../crates/ui/src/big_meter.rs), glue in
   [big_meter_view.rs](../crates/ui/src/rack/big_meter_view.rs)). It shows one pair of sockets
   (inputs two by two, then outputs; the arrows pick the pair) from the same per-socket peaks as the
@@ -5565,7 +5582,7 @@ Device::process                              AppCore::feed_device_scopes
   are cheap and exact there, and published as 16 meter values.
 - **Kick and bass check** ([app/src/kick_bass.rs](../crates/app/src/kick_bass.rs) the analysis and the
   fixes, [app_core_kick_bass.rs](../crates/app/src/app_core_kick_bass.rs) the worker and the picks,
-  [kick_bass_panel.rs](../crates/ui/src/kick_bass_panel.rs) the panel, `Mixer > Kick and Bass Check`).
+  [kick_bass_panel.rs](../crates/ui/src/kick_bass_panel.rs) the panel, `Analyze > Kick and Bass Check`).
   `analyse` runs on the worker `atomik-kick-bass` on a copy of the song: it renders the two channel strips
   of the picked tracks in one `render_stems` pass (the first 20 seconds, plugins as stand-ins), mixes each
   to mono and hands them to `atomik_dsp::kick_bass::check`, which low-passes both at 120 Hz (the sum of the
@@ -5605,7 +5622,7 @@ Device::process                              AppCore::feed_device_scopes
 
 ### Mix analysis: the masking map
 
-Mixer > Masking Map answers "which tracks cover each other, where and when" without changing the song.
+Analyze > Masking Map answers "which tracks cover each other, where and when" without changing the song.
 
 - **Band maps.** `atomik_render::masking::render_maps` renders every console channel as a stem
   (`render_stems`, one deterministic pass, the strips as they sound in the mix) over the song or the time
@@ -5630,7 +5647,7 @@ Mixer > Masking Map answers "which tracks cover each other, where and when" with
 
 ### Mix analysis: the mix check
 
-Mixer > Check Mix lists what the mix needs, with a measured number for each finding, and never changes the song
+Analyze > Check Mix lists what the mix needs, with a measured number for each finding, and never changes the song
 by itself.
 
 - **What is read.** `atomik_render::mixcheck::plan` takes every console channel (up to 48), the FX returns and
@@ -5656,8 +5673,8 @@ by itself.
 
 ### Mix analysis: the energy map and the repetition finder
 
-View > Energy Lane draws how much energy each section of the song has, and Edit > Find Repetition lists what a
-track repeats unchanged. Neither changes the song by itself.
+View > Lanes and Markers > Energy Lane draws how much energy each section of the song has, and
+Analyze > Find Repetition lists what a track repeats unchanged. Neither changes the song by itself.
 
 - **Sections and roles.** `atomik_model::energy_map::sections` is a pure function of the song: the range markers,
   else each point marker to the next (or the End) with a leading "Start" section, else `DEFAULT_SECTION_BARS`
@@ -5708,7 +5725,7 @@ Three tools for how the low end carries over to small speakers, club systems and
   render and model sources for the names. The app keeps the setting like the loudness match (`AppCore::lens`,
   `set_lens_voicing`, `toggle_lens_mono`, `lens_off`): sent when it changes and again to a new engine, never in the
   project, not an undo step. A voicing that is on goes back to headphones when chosen again. The switches are the
-  Mixer > Translation Lens submenu, five rows in the transport bar's more menu and `mixer.lens_*` commands, and the
+  Analyze > Translation Lens submenu, five rows in the transport bar's more menu and `mixer.lens_*` commands, and the
   status line shows `LENS ...` while the lens is on.
 - **The meter.** `atomik_dsp::bass_read::read` cuts the mid signal into Hann windows of 8192 frames (hop 4096) with
   the in-house transform. In each window with at least -70 dB between 25 and 150 Hz the note is the lowest strong
@@ -5730,7 +5747,7 @@ Three tools for how the low end carries over to small speakers, club systems and
 
 ### Sound analysis: the Sound Analyst
 
-"Recreate this sound": File > Sound Analyst measures an audio file and proposes a starting patch on a built-in
+"Recreate this sound": Analyze > Sound Analyst measures an audio file and proposes a starting patch on a built-in
 synth. The analysis never changes the song; Make Patch is the one undo step.
 
 - **Measurements.** `atomik_dsp::sound_analysis::analyse` mixes the input to mono (the first `MAX_SECONDS`) and
@@ -5860,7 +5877,7 @@ audio thread.
 
 ### Delivery targets and the Peak Surgeon
 
-File > Delivery Targets (`file.delivery_targets`) and Edit > Peak Surgeon (`sequencer.peak_surgeon`) open one modal
+Analyze > Delivery Targets (`file.delivery_targets`) and Edit > Peak Surgeon (`sequencer.peak_surgeon`) open one modal
 panel, `DeliveryView` ([ui/src/delivery_panel.rs](../crates/ui/src/delivery_panel.rs)), on its Targets or its Peaks
 page. The panel only draws a `DeliveryData` and emits `UiAction::Delivery`; the app core holds the state and nothing
 runs on the audio thread.
@@ -6071,7 +6088,7 @@ about unsaved changes (`ShellRequest::ConfirmSave`) is a message box with the bu
 platform (`save_answer` reads the result); on Windows rfd makes it a task dialog, which needs Common Controls 6, so
 the build scripts of the app and of the MCP server embed `windows/atomik.manifest` in every program they link.
 
-The rack and the console (the mixer) can leave the main window (View > Detach Rack, Detach Mixer, or
+The rack and the console (the mixer) can leave the main window (View > Panels > Detach Rack, Detach Mixer, or
 `--detach rack,console`). A `Shell` is one song: one document, one view per pane and its undo history; the
 shell owns each open window's size and scale and says which windows should exist
 ([`Shell::windows_wanted`](../crates/app/src/shell_windows.rs)). Any number of songs can be open, each
@@ -6320,7 +6337,7 @@ the engine measures the mix; the matched gain is the mix reading minus the loude
 15 frames, the first reading at once, readings at or under -60 LUFS ignored. A new engine (`rebuild_engine`) returns the
 song to the mix. Commands: `mixer.toggle_reference` (Ctrl+Alt+R), `mixer.add_reference`, `mixer.select_reference`,
 `mixer.next_reference`, `mixer.remove_reference`, `mixer.reference_cue`, `mixer.reference_match`,
-`mixer.reference_band` and `mixer.reference_solo`, all in the Mixer menu's Reference submenu.
+`mixer.reference_band` and `mixer.reference_solo`, all in the Analyze menu's Reference submenu.
 
 **The decision zone** ([render/src/zone.rs](../crates/render/src/zone.rs),
 [app/src/app_core_zone.rs](../crates/app/src/app_core_zone.rs),
@@ -6702,7 +6719,7 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   Source, step sequencer and arpeggiator work from the tick and stay on the beat. The piano roll and
   the step editor count bars from the clip start under the meter in effect there.
 - **Relinking missing audio.** A missing file is reported and its clips play silence until it is
-  relinked (File > Relink Missing Audio...). A relink keeps zone ranges and clip offsets as they
+  relinked (File > Project Files > Relink Missing Audio...). A relink keeps zone ranges and clip offsets as they
   are, so a replacement shorter than a zone or a clip offset needs is refused; the folder search
   matches by file name only (no content search), looks 8 levels deep and at 50 000 entries at most,
   and a bounce still stops with an error naming a missing asset.

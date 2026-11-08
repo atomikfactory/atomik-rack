@@ -103,7 +103,7 @@ fn row(s: &Shell<NullBackend>, menu: &str, command: AppCommand) -> Option<(Strin
 fn the_menu_rows_exist_and_the_commands_have_ids() {
     let s = shell();
     assert_eq!(
-        row(&s, "File", AppCommand::DeliveryTargets),
+        row(&s, "Analyze", AppCommand::DeliveryTargets),
         Some(("Delivery Targets\u{2026}".to_owned(), true))
     );
     // Peak Surgeon needs an audio clip: its Edit row is off without one.

@@ -728,9 +728,9 @@ Hand checks, not automated (they need another program or a real window):
   check the hover and the new tracks.
 - Import a long, dense file (a few hundred thousand events) and check that the window stays
   responsive and that undo removes it in one step.
-- Try File > Import MIDI with a note track selected and with nothing selected, and the three Export
+- Try File > Import > Import MIDI with a note track selected and with nothing selected, and the three Export
   MIDI entries with and without a selection, in the in-window menu and, on macOS, the native one.
-- Export a song at 960 and at 480 (File > MIDI Export Resolution) and open the files in a hardware
+- Export a song at 960 and at 480 (File > Export > MIDI Export Resolution) and open the files in a hardware
   sequencer or a notation program that dislikes 15 360: the division, tempo and note positions must
   match. Import a file with program changes and SysEx from another program and export it again: both
   must be in the new file.
@@ -1197,7 +1197,7 @@ by dragging a plate, the member chips and readouts, and the arrangement bar;
 
 Hand checks, not automated (they need a real window and your ears):
 
-- Make a group of a few channels (select them, Mixer > Create VCA from Selection), pull its fader
+- Make a group of a few channels (select them, Mixer > Groups and VCAs > Create VCA from Selection), pull its fader
   down while playing and listen for zipper noise or clicks; compare with moving the members' faders
   by the same amount. Push it up past 0 dB and back to the bottom (off) and up again.
 - Mute and solo the group, then a member inside and outside it, and check the buttons, the dimmed
@@ -1209,11 +1209,11 @@ Hand checks, not automated (they need a real window and your ears):
 - Delete a channel that is in a group and undo it; save, close and reopen the project and check the
   groups, their colours and levels; open an older project and check that it sounds the same and
   shows no groups.
-- Select a track folder in the arrangement and choose Mixer > Create VCA from Folder (or the folder
+- Select a track folder in the arrangement and choose Mixer > Groups and VCAs > Create VCA from Folder (or the folder
   row's context menu): the group takes the folder's name. Drag a track into the folder and out of it,
   add and delete tracks in it, dissolve the folder and undo each step: the group's bars on the
   headers, its member count and what you hear follow, and one undo takes the move and the membership
-  back together. Switch Mixer > Link Faders on, pull one member's fader and watch the others move by
+  back together. Switch Mixer > Groups and VCAs > Link Faders on, pull one member's fader and watch the others move by
   the same dB; drag a track header onto the colour bar at the right edge of a grouped track's header
   and check it joins the group; save and reopen the project and check the group still follows.
 
@@ -1355,7 +1355,7 @@ Hand checks, not automated (they need a real window and your ears):
   Macro > Macro 1: a macro bank appears at the end of the rack, the knob takes an M1 tag and a dim
   veil, a drag and a double click only show a message, and hovering it says it is driven by macro 1.
   Turn the bank's Macro 1 knob: the cutoff knob follows on screen and the sound follows without
-  zipper noise, also while a note is held. Open Mixer > Macros..., narrow MIN and MAX, press INV,
+  zipper noise, also while a note is held. Open Mixer > Control and Macros > Macros..., narrow MIN and MAX, press INV,
   name the macro, click on the bar, and watch the knob follow. Right-click the locked knob and
   choose Remove from Macro: it keeps its value and a drag works again. Undo each step.
 - **Automate an effect through a macro.** Assign a delay's mix and a channel fader to macros, draw a
@@ -1431,7 +1431,7 @@ undo), and a version 27 file as before.
 
 Hand checks, not automated (they need hardware):
 
-- **A real controller.** Open a project, turn on Mixer > MIDI Learn, change a knob on a rack panel
+- **A real controller.** Open a project, turn on Mixer > Control and Macros > MIDI Learn, change a knob on a rack panel
   (it must not move), then move a knob on the controller: the mapping appears in the MIDI Mappings
   panel and the control carries a dot. Do it for a console fader, a pan, a mute button (with a pad:
   it should toggle), a VCA fader and the tempo. Check the soft takeover (start with the controller
@@ -1745,7 +1745,7 @@ Diagnostics and the logging of growing counters; `crates/mcp/tests/session.rs` c
 Hand checks (a person at the machine):
 
 - Start the app and look in `<config folder>/logs`: `atomik.log` has the version line and the
-  startup status. Run the stress song (File > Stress Song) for ten minutes: the log stays small
+  startup status. Run the stress song (File > Stress Test > Stress Song) for ten minutes: the log stays small
   unless a counter grew, and the audio path writes nothing into it.
 - Make a crash: a debug build with a `panic!` in a command, or kill a worker thread by hand.
   `crash-<timestamp>.txt` appears next to the log with the message and backtrace; Help > Export

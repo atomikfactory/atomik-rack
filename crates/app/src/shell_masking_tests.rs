@@ -136,7 +136,7 @@ fn the_mixer_menu_has_the_masking_map() {
     let mixer = s
         .menu_model()
         .into_iter()
-        .find(|m| m.title == "Mixer")
+        .find(|m| m.title == "Analyze")
         .unwrap();
     let row = mixer
         .items()

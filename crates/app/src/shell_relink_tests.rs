@@ -2,7 +2,6 @@
 //! as platform requests, and the panel closing once nothing is missing.
 
 use super::*;
-use crate::commands::MenuEntry;
 use crate::session::NullBackend;
 use crate::sink::RecordingSink;
 use atomik_audio_file::{AudioData, write_wav_f32};
@@ -83,13 +82,10 @@ fn opened(t: &Tmp) -> Shell<NullBackend> {
 
 fn relink_item(s: &Shell<NullBackend>) -> crate::commands::MenuItem {
     s.menu_model()[0]
-        .entries
-        .iter()
-        .find_map(|e| match e {
-            MenuEntry::Item(i) if i.command == AppCommand::RelinkAudio => Some(i.clone()),
-            _ => None,
-        })
-        .expect("File > Relink Missing Audio")
+        .items()
+        .find(|i| i.command == AppCommand::RelinkAudio)
+        .cloned()
+        .expect("File > Project Files > Relink Missing Audio")
 }
 
 fn click(s: &mut Shell<NullBackend>, p: atomik_ui::kurbo::Point) -> Vec<ShellRequest> {

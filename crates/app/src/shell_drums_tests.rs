@@ -161,7 +161,8 @@ fn the_view_menu_lists_the_step_editor_after_the_sample_editor() {
     let s = shell_with_drums();
     let model = s.menu_model();
     let view = model.iter().find(|m| m.title == "View").unwrap();
-    let labels: Vec<&str> = view
+    let editors = crate::commands::find_submenu(&view.entries, "Editors").unwrap();
+    let labels: Vec<&str> = editors
         .entries
         .iter()
         .filter_map(|e| match e {

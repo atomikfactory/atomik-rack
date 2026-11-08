@@ -1,0 +1,417 @@
+About | About Atomik Rack
+ActivateSong(0) | open song 0
+ActivateSong(1) | open song 1
+ActivateSong(2) | open song 2
+ActivateSong(3) | open song 3
+AddChannel | Add Channel…
+AddMarker | Add Marker
+AddNoteLane | Add Note Lane
+AddPatternLane | Add Pattern Lane
+AddRangeFromLoop | Add Range Marker from Loop
+AddReference | Add Reference Track…
+AddReverbSend | Add Reverb Send…
+AddToVca(None) | Add to VCA
+AddToVca(Some(1)) | Drums
+AddToVca(Some(2)) | Bass
+AddTransition(Fill) | Fill
+AddTransition(FilterDown(1)) | Filter Down, 1 Bar
+AddTransition(FilterDown(2)) | Filter Down, 2 Bars
+AddTransition(FilterDown(4)) | Filter Down, 4 Bars
+AddTransition(GroupFilterDown(1)) | Group Filter Down, 1 Bar
+AddTransition(GroupFilterDown(2)) | Group Filter Down, 2 Bars
+AddTransition(GroupFilterDown(4)) | Group Filter Down, 4 Bars
+AddTransition(Impact) | Impact
+AddTransition(Riser(1)) | Riser, 1 Bar
+AddTransition(Riser(2)) | Riser, 2 Bars
+AddTransition(Riser(4)) | Riser, 4 Bars
+AddTransition(Silence) | Silence on Beat One
+AppZoom(To(100)) | 100 %
+AppZoom(To(125)) | 125 %
+AppZoom(To(150)) | 150 %
+AppZoom(To(175)) | 175 %
+AppZoom(To(200)) | 200 %
+AppZoom(To(75)) | 75 %
+AudioClearEnvelope | Clear Gain Envelope
+AudioCrossfade(None) | Crossfade: Off
+AudioCrossfade(Some(EqualPower)) | Crossfade: Equal Power
+AudioCrossfade(Some(Exponential)) | Crossfade: Exponential
+AudioCrossfade(Some(Linear)) | Crossfade: Linear
+AudioCrossfade(Some(SCurve)) | Crossfade: S-curve
+AudioFadeShape(EqualPower) | Fade Shape: Equal Power
+AudioFadeShape(Exponential) | Fade Shape: Exponential
+AudioFadeShape(Linear) | Fade Shape: Linear
+AudioFadeShape(SCurve) | Fade Shape: S-curve
+AudioFades(false) | Fades: None
+AudioFades(true) | Fades: 5 ms Declick
+AudioGain(Down) | Clip Gain: Down 1 dB
+AudioGain(Reset) | Clip Gain: Reset
+AudioGain(Up) | Clip Gain: Up 1 dB
+AudioNormalise | Normalise Audio
+AudioNormaliseTo(Broadcast) | Loudness -23 LUFS
+AudioNormaliseTo(Peak) | Peak -1 dBFS
+AudioNormaliseTo(Rms) | RMS -18 dBFS
+AudioNormaliseTo(Streaming) | Loudness -14 LUFS
+AudioQuantize | Quantize Audio
+AudioReverse | Reverse Audio
+AudioSettings | Settings…
+AudioSettings | Settings…
+AudioStripSilence | Strip Silence…
+AudioToNotes | Audio to Notes…
+AudioTranspose(Down) | Transpose: Down a Semitone
+AudioTranspose(OctaveDown) | Transpose: Down an Octave
+AudioTranspose(OctaveUp) | Transpose: Up an Octave
+AudioTranspose(Reset) | Transpose: Reset
+AudioTranspose(Up) | Transpose: Up a Semitone
+AudioWarp | Warp Audio
+AudioWarpBars(1) | Warp Loop as 1 Bar
+AudioWarpBars(2) | Warp Loop as 2 Bars
+AudioWarpBars(4) | Warp Loop as 4 Bars
+AudioWarpBars(8) | Warp Loop as 8 Bars
+AudioWarpMode(Beats) | Warp Mode: Beats
+AudioWarpMode(Repitch) | Warp Mode: Repitch
+AudioWarpMode(Tonal) | Warp Mode: Tonal
+AudioWarpPanel | Warp Settings…
+AudioWarpTempo | Warp to Song Tempo
+AutomationIntoClip | Move Automation into Note Clip
+BassRead | Will the Bass Read?…
+BounceClipDry | Bounce Clips to New Track (Dry)
+BounceInPlace | Bounce in Place
+BounceInPlaceMute | Bounce in Place and Mute Originals
+BounceRange | Bounce Range in Place
+BypassAllInserts | Bypass All Inserts
+BypassPlayers | Bypass All Players
+Cables(Hide) | Cables: Hide
+Cables(HideAutoRouted) | Cables: Hide Auto-routed
+Cables(HoverOnly) | Cables: Hover
+Cables(SelectedOnly) | Cables: Selected
+Cables(Show) | Cables: Show
+CancelArchive | Cancel Project Archive
+CancelCollect | Cancel Collect or Move
+CheckMix | Check Mix…
+ChopClips(Bar) | Bar
+ChopClips(Beat) | Beat
+ChopClips(Eighth) | 1/8 Note
+ChopClips(HalfBar) | Half Bar
+ChopClips(Sixteenth) | 1/16 Note
+CleanupAutomation(Heavy) | Heavy
+CleanupAutomation(Maximum) | Maximum
+CleanupAutomation(Normal) | Normal
+ClearInserts | Clear Inserts
+ClearMidiMaps | Clear MIDI Mappings
+ClearParamLanes | Clear Clip Parameter Lanes
+ClearRecent | Clear Menu
+Close | Close
+CloseSongWindow | Close Song Window
+CollectFiles | Collect Files…
+CollectPreview | Preview Collect Files
+Combine | Combine
+CompareSnapshot(None) | Compare A/B
+ConvertRate(44100) | 44.1 kHz
+ConvertRate(48000) | 48 kHz
+ConvertRate(96000) | 96 kHz
+Copy | Copy
+CopySettings(All) | Copy Channel Settings
+CreateAudioTrack | Create Audio Track
+CreateEffect | Create Effect…
+CreateInstrument | Create Instrument…
+CreateMixerChannel | Create Mixer Channel…
+CreateParallel | Create Parallel Channel
+CreatePlayer | Create Player…
+CreateVca | Create VCA from Selection
+CreateVcaForFolder | Create VCA from Folder
+Cut | Cut
+Delete | Delete
+DeleteNoteLane | Delete Note Lane
+DeleteSnapshot(None) | Delete Snapshot
+DeleteTrackAndDevice | Delete Track and Device
+DeleteVca(None) | Delete VCA
+DeleteVca(Some(1)) | Drums
+DeleteVca(Some(2)) | Bass
+DeliveryTargets | Delivery Targets…
+DetachBrowser | Detach Browser
+DetachConsole | Detach Mixer
+DetachRack | Detach Rack
+DirectRecord | Direct Record
+Documentation | Documentation
+Duplicate | Duplicate
+EditTrackControllers | Edit Track Controllers
+EndCompare | End Compare
+ExplodeNotes | Explode Notes to Lanes
+ExportArchive | Export Project Archive…
+ExportDeviceInfo | Export Device Parameter List…
+ExportDiagnostics | Export Diagnostics…
+ExportLoopAudio | Export Loop as Audio File…
+ExportMidiClip | Export MIDI Clip…
+ExportMidiPreset | Export MIDI Mapping Preset…
+ExportMidiSong | Export MIDI Song…
+ExportMidiTrack | Export MIDI Track…
+ExportPatch | Export Patch…
+ExportSelectionAudio | Export Selection as Audio File…
+ExportSongAudio | Export Song as Audio File…
+ExportStems | Export Stems as Audio Files…
+FindParameter | Find Parameter…
+FindRepetition | Find Repetition…
+FocusWindow(Console) | Mixer Window
+FocusWindow(Main) | Main Window
+FocusWindow(Rack) | Rack Window
+FoldLanes(false) | Unfold Automation Lanes
+FoldLanes(true) | Fold Automation Lanes
+FoldPlayers | Fold All Players
+FollowSelection | Automation Follows Selection
+FreezeCancel | Cancel Freeze
+FreezeStrip | Freeze with Strip
+FreezeTail | Freeze with Tail
+FreezeTrack | Freeze Track
+FreezeTrackToDevice | Freeze Track up to Selected Device
+GroupTracks | Group Tracks
+ImportArchive | Import Project Archive…
+ImportAudio | Import Audio…
+ImportMidi | Import MIDI…
+ImportMidiPreset | Import MIDI Mapping Preset…
+ImportMidiSong | Import MIDI as Song…
+InputChannels(0) | 0 (off)
+InputChannels(1) | 1
+InputChannels(16) | 16
+InputChannels(2) | 2
+InputChannels(32) | 32
+InputChannels(4) | 4
+InputChannels(8) | 8
+InsertBars | Insert Bars at Locators
+KeyboardShortcuts | Keyboard Shortcuts
+KickBassCheck | Kick and Bass Check…
+LensClubSub | Club Sub
+LensHeadphones | Headphones
+LensMono | Mono
+LensSmallSpeaker | Small Speaker
+LinkFaders | Link Faders
+LockSurfaces | Lock Surfaces to Selection
+MacroPanel | Macros…
+MapCommand(Redo) | Redo
+MapCommand(SelectPreset { delta: -1 }) | Previous preset
+MapCommand(SelectPreset { delta: 1 }) | Next preset
+MapCommand(SelectTrack { delta: -1 }) | Previous track
+MapCommand(SelectTrack { delta: 1 }) | Next track
+MapCommand(Undo) | Undo
+MaskingMap | Masking Map…
+MaximiseConsole | Maximise Console
+MergeNoteLanes | Merge Note Lanes
+MeterMode(Peak) | Peak Meters
+MeterMode(Ppm) | PPM Meters
+MeterMode(Vu) | VU Meters
+MidiLearn | MIDI Learn
+MidiMappings | MIDI Mappings…
+MorphPreviousSnapshot | Morph to Previous Snapshot
+MorphSnapshot(None) | Morph to Next Snapshot
+MorphTime(1) | 1 Second
+MorphTime(2) | 2 Seconds
+MorphTime(4) | 4 Seconds
+MorphTime(8) | 8 Seconds
+MoveProject | Move Project…
+MoveTrackDown | Move Track Down
+MoveTrackUp | Move Track Up
+New | New
+NewAtRate(44100) | 44.1 kHz
+NewAtRate(48000) | 48 kHz
+NewAtRate(96000) | 96 kHz
+NewFromTemplate(0) | template 0
+NewFromTemplate(1) | template 1
+NewFromTemplate(10) | template 10
+NewFromTemplate(11) | template 11
+NewFromTemplate(12) | template 12
+NewFromTemplate(13) | template 13
+NewFromTemplate(14) | template 14
+NewFromTemplate(15) | template 15
+NewFromTemplate(2) | template 2
+NewFromTemplate(3) | template 3
+NewFromTemplate(4) | template 4
+NewFromTemplate(5) | template 5
+NewFromTemplate(6) | template 6
+NewFromTemplate(7) | template 7
+NewFromTemplate(8) | template 8
+NewFromTemplate(9) | template 9
+NewMacroBank | New Macro Bank
+NewSongWindow | New Song Window
+NextMarker | Next Marker
+NextReference | Next Reference Track
+NextSong | Next Song
+Open | Open…
+OpenRecent(0) | song 0
+OpenRecent(1) | song 1
+OpenRecent(2) | song 2
+OpenRecent(3) | song 3
+OpenRecent(4) | song 4
+OpenRecent(5) | song 5
+OpenRecent(6) | song 6
+OpenRecent(7) | song 7
+OpenSongWindow | Open Song in New Window…
+OutputChannels(1) | 1
+OutputChannels(16) | 16
+OutputChannels(2) | 2
+OutputChannels(32) | 32
+OutputChannels(4) | 4
+OutputChannels(8) | 8
+Paste | Paste
+PasteSettings | Paste Channel Settings
+PatternLaneToNotes | Pattern Lane to Notes
+PeakSurgeon | Peak Surgeon…
+PluginSettings | Plugins…
+PreviousMarker | Previous Marker
+PreviousSong | Previous Song
+Quantize(InputQuantize { grid_ticks: None }) | Input Quantize: Off
+Quantize(InputQuantize { grid_ticks: None }) | Input Quantize: Off
+Quantize(InputQuantize { grid_ticks: Some(3840) }) | Input Quantize: 1/16
+Quantize(InputQuantize { grid_ticks: Some(3840) }) | Input Quantize: 1/16
+Quantize(InputQuantize { grid_ticks: Some(7680) }) | Input Quantize: 1/8
+Quantize(InputQuantize { grid_ticks: Some(7680) }) | Input Quantize: 1/8
+QuantizeApply | Quantize
+QuantizeOptions | Quantize Options…
+Quit | Quit
+RecallNextSnapshot | Recall Next Snapshot
+RecallPreviousSnapshot | Recall Previous Snapshot
+RecallSnapshot(None) | Recall Snapshot
+Redo | Redo
+ReferenceBand(Full) | Full Range
+ReferenceBand(High) | High
+ReferenceBand(Low) | Low
+ReferenceBand(Mid) | Mid
+ReferenceBand(Sub) | Sub
+ReferenceCue(false) | Follow Playhead
+ReferenceCue(true) | Start at Playhead Position
+ReferenceMatch | Match Reference Level
+ReferencePanel | Reference Panel…
+ReferenceSolo(Mid) | Mid
+ReferenceSolo(Off) | Left and Right
+ReferenceSolo(Side) | Side
+RefreezeTrack | Re-render Frozen Track
+RefreshEnergyLane | Refresh Energy Lane
+RelinkAudio | Relink Missing Audio…
+RemoveBars | Remove Bars at Locators
+RemoveChannel | Delete Channel
+RemoveFromVca | Remove from VCA
+RemoveReference | Remove Reference Track
+RenameFolder | Rename Folder…
+RenameNoteLane | Rename Note Lane…
+RenameTrack | Rename Track…
+ReportIssue | Report an Issue
+RescanMidi | Rescan MIDI Ports
+ResetDefaultSong | Reset Default Song
+ResetStrip | Reset Channel
+RestartAudio | Restart Audio
+ReverseClips(false) | Reverse Note Starts
+ReverseClipsDefault | Reverse Clips
+ReverseReverbPrint(Eight) | 8 s
+ReverseReverbPrint(Four) | 4 s
+ReverseReverbPrint(Half) | 0.5 s
+ReverseReverbPrint(One) | 1 s
+ReverseReverbPrint(Two) | 2 s
+RouteFolder(None) | Route Folder to New Bus
+RouteFolder(Some(1)) | Bus A
+RouteFolder(Some(2)) | Bus B
+RouteToNewBus | Route to New Output Bus
+RouteVca(None) | Route Group to New Bus
+RouteVca(Some(1)) | Drums
+RouteVca(Some(2)) | Bass
+RumbleMaker(Reverb) | Reverb Tail
+RumbleMaker(Tail) | Tail Repeat
+Save | Save
+SaveAs | Save As…
+SaveAsTemplate | Save as Template
+SaveVersion | Save Version…
+ScaleTempo(Double) | Double (200 %)
+ScaleTempo(FiveQuarters) | 125 %
+ScaleTempo(Halve) | Halve (50 %)
+ScaleTempo(Other) | Other…
+ScaleTempo(ThreeHalves) | 150 %
+ScaleTempo(ThreeQuarters) | 75 %
+SelectAll | Select All
+SelectReference(0) | Reference 1
+SendPlayersToTrack | Send Players to Track
+SequencerOnly | Sequencer Only
+SetDefaultSong | Use Song as Default Song
+SetEndMarker | Set End Marker at Playhead
+SetLeftLocator | Set Left Locator at Playhead
+SetMidiResolution(Native) | 15360 per quarter (native)
+SetMidiResolution(Ppq480) | 480 per quarter
+SetMidiResolution(Ppq960) | 960 per quarter
+SetRackSort(AutoGroup) | Auto-Group
+SetRackSort(Free) | No Grouping
+SetRackSort(PerTrack) | Rack per Track
+SetRightLocator | Set Right Locator at Playhead
+SetTheme(Dark) | Dark
+SetTheme(Light) | Light
+SetTheme(System) | Same as System
+ShowParamLane | Show Automation Lane
+ShowTemplateFolder | Show Template Folder
+SnapshotEffects | Snapshot Includes Effects
+SongInfo | Song Information…
+SoundAnalyst | Sound Analyst…
+SplitSub | Split Sub
+StartScreen | Start Screen…
+StoreSnapshot | Store Snapshot
+StressRack | Stress Rack
+StressSong | Stress Song
+ToggleBigMeter | Big Meter
+ToggleBrowser | Device Browser
+ToggleChase | Chase Notes
+ToggleClockIn | Follow MIDI Clock
+ToggleClockOut | MIDI Clock Out
+ToggleClockWhileStopped | Send Clock While Stopped
+ToggleCompensation | Delay Compensation
+ToggleCompensation | Delay Compensation
+ToggleConsole | Console
+ToggleConsoleLinks | Show Console Links
+ToggleCpuMeters | CPU Meters
+ToggleEditor | Clip Editor
+ToggleEnergyLane | Energy Lane
+ToggleFileBrowser | File Browser
+ToggleFlip | Back of Rack
+ToggleFolder | Collapse Folder
+ToggleInspector | Inspector
+ToggleLaneMute | Mute Lane
+ToggleMarkerList | Marker List
+ToggleMarkerStrip | Marker Strip
+TogglePianoKeys | Piano Keys
+TogglePianoRoll | Piano Roll
+TogglePolarity | Toggle Polarity
+TogglePreCount | Pre-count
+ToggleRack | Rack
+ToggleRackNavigator | Rack Navigator
+ToggleReference | Listen to Reference
+ToggleReturnAlignment | Align Returns
+ToggleReturnAlignment | Align Returns
+ToggleSampleEditor | Sample Editor
+ToggleSendFollow | Sends Follow Bus
+ToggleSingleColumn | Single Column
+ToggleSliceEditor | Slice Editor
+ToggleSong | Arrangement
+ToggleSpectrumEq | Spectrum EQ
+ToggleStepEditor | Step Editor
+ToggleTempoLane | Tempo Lane
+ToggleTrackPanel | Track Panel
+TrackComment | Track Comment…
+TrackHeight(Fit) | Track Height: Fit
+TrackHeight(Large) | Track Height: Large
+TrackHeight(Medium) | Track Height: Medium
+TrackHeight(Minimise) | Track Height: Minimise / Restore
+TrackHeight(Small) | Track Height: Small
+Transport(ReturnToZero) | Return to Zero
+Transport(ToggleAutoLanes) | Auto-create Lanes
+Transport(ToggleLoop) | Loop
+Transport(ToggleMetronome) | Click
+Transport(ToggleMetronome) | Metronome
+Transport(TogglePlay) | Play / Stop
+Transport(ToggleRecord) | Record
+Uncombine | Uncombine
+Undo | Undo
+UnfreezeTrack | Unfreeze Track
+UnfreezeTrackKeep | Unfreeze Track and Keep Audio
+UngroupTracks | Ungroup
+UnrouteFolder | Stop Routing Folder
+UnrouteVca(None) | Stop Routing Group
+UnrouteVca(Some(1)) | Drums
+UnrouteVca(Some(2)) | Bass
+UpdateSnapshot(None) | Update Snapshot
+Versions | Versions…
+ZoomIn | Zoom In
+ZoomOut | Zoom Out
+ZoomReset | Actual Size

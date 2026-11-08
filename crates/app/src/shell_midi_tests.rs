@@ -30,11 +30,8 @@ fn shell() -> Shell<NullBackend> {
 fn item(s: &Shell<NullBackend>, label: &str) -> crate::commands::MenuItem {
     s.menu_model()
         .into_iter()
-        .flat_map(|m| m.entries)
-        .find_map(|e| match e {
-            MenuEntry::Item(i) if i.label == label => Some(i),
-            _ => None,
-        })
+        .flat_map(|m| m.items().cloned().collect::<Vec<_>>())
+        .find(|i| i.label == label)
         .unwrap_or_else(|| panic!("no menu item {label}"))
 }
 
@@ -347,12 +344,10 @@ fn the_export_resolution_is_a_checked_submenu_that_changes_the_files_written() {
     let submenu = |s: &Shell<NullBackend>| {
         s.menu_model()
             .into_iter()
-            .flat_map(|m| m.entries)
-            .find_map(|e| match e {
-                MenuEntry::Submenu(sub) if sub.label == "MIDI Export Resolution" => Some(sub),
-                _ => None,
+            .find_map(|m| {
+                crate::commands::find_submenu(&m.entries, "MIDI Export Resolution").cloned()
             })
-            .expect("File > MIDI Export Resolution")
+            .expect("File > Export > MIDI Export Resolution")
     };
     let checked = |s: &Shell<NullBackend>| -> Vec<bool> {
         submenu(s)

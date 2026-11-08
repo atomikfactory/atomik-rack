@@ -299,13 +299,7 @@ fn scale_tempo_has_an_other_item_that_opens_the_percent_panel() {
         .into_iter()
         .find(|m| m.title == "Edit")
         .unwrap();
-    let scale = edit
-        .entries
-        .iter()
-        .find_map(|e| match e {
-            MenuEntry::Submenu(sub) if sub.label == "Scale Tempo" => Some(sub),
-            _ => None,
-        })
+    let scale = crate::commands::find_submenu(&edit.entries, "Scale Tempo")
         .expect("the Scale Tempo submenu");
     let last = scale.entries.last().unwrap();
     let MenuEntry::Item(other) = last else {

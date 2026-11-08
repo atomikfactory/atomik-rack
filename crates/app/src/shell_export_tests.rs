@@ -2,7 +2,6 @@
 //! options panel, the progress panel with CANCEL, and the choices remembered in `export.json`.
 
 use super::*;
-use crate::commands::MenuEntry;
 use crate::session::NullBackend;
 use atomik_core::PPQ;
 use atomik_model::{
@@ -92,12 +91,9 @@ fn shell(dir: &Path) -> Shell<NullBackend> {
 
 fn item(s: &Shell<NullBackend>, command: AppCommand) -> crate::commands::MenuItem {
     s.menu_model()[0]
-        .entries
-        .iter()
-        .find_map(|e| match e {
-            MenuEntry::Item(i) if i.command == command => Some(i.clone()),
-            _ => None,
-        })
+        .items()
+        .find(|i| i.command == command)
+        .cloned()
         .expect("a File menu item")
 }
 
