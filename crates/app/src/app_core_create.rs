@@ -318,7 +318,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Arms the song track of `device` and disarms the tracks an earlier auto-arm armed, then
     /// selects the device in the rack (what the live keyboard plays). One batched undo step.
-    fn arm_track_device(&mut self, device: &DeviceKey) {
+    pub(super) fn arm_track_device(&mut self, device: &DeviceKey) {
         let device = device.clone();
         let doc = self.document.doc();
         // An automation track (a channel strip, an effect) is never armed: nothing to play live.

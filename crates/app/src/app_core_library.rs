@@ -25,7 +25,10 @@
 //!   creation chain for an instrument or an effect at the top level, a plain add otherwise.
 //! * A **patch** or **container** is pasted (`WorkflowCommand::PasteDevices`, or
 //!   `PasteDevicesAt` for a rack slot): fresh keys, the cables between the devices kept. A
-//!   `.atomikcontainer` that holds anything but one container is refused.
+//!   `.atomikcontainer` that holds anything but one container is refused. At the top level
+//!   each instrument that plays notes arrives with an empty song track, armed like a created
+//!   one (`DeviceSnapshot::add_instrument_tracks`, `arm_track_device`), in the same undo step;
+//!   inside a container, for an effect, and for Replace the load makes no track.
 //! * Its **audio**: the pool entries are registered (no undo step), then a worker copies the
 //!   `<hash>.wav` files the session bundle lacks from the item's sibling bundle into it and
 //!   loads them for the engine, like an opened project's audio. A file the item does not have
@@ -329,6 +332,25 @@ impl<S: EngineSink> AppCore<S> {
         register_stand_ins(&holder, &mut self.registry)
             .map_err(|e| format!("'{name}' cannot be loaded: {e}"))?;
         let assets = snapshot.assets.clone();
+        // At the top level an instrument arrives with its song track, as a created one does;
+        // inside a container (a slot or the open container) it stays a plain device.
+        let top_level = match &target {
+            LoadTarget::Rack { container, .. } => container.is_none(),
+            _ => self.view.scope_path().is_none(),
+        };
+        let mut snapshot = snapshot;
+        let with_tracks = if top_level {
+            snapshot.add_instrument_tracks(&self.registry)
+        } else {
+            Vec::new()
+        };
+        let tracks_before: BTreeSet<DeviceKey> = self
+            .doc()
+            .song
+            .tracks
+            .iter()
+            .map(|t| t.device.clone())
+            .collect();
         match target {
             LoadTarget::Rack {
                 container: None,
@@ -350,8 +372,30 @@ impl<S: EngineSink> AppCore<S> {
             }),
             _ => self.paste_devices(snapshot, Pane::Rack),
         }?;
+        if !with_tracks.is_empty() {
+            self.arm_loaded_track(&tracks_before);
+        }
         self.adopt_assets(&path.with_extension(""), &assets);
         Ok(())
+    }
+
+    /// Arms the last song track the load made and disarms the ones an earlier auto-arm armed
+    /// (what creating an instrument does; Manual Rec leaves arming alone), in the load's own
+    /// undo step.
+    fn arm_loaded_track(&mut self, before: &BTreeSet<DeviceKey>) {
+        let made = self
+            .doc()
+            .song
+            .tracks
+            .iter()
+            .rev()
+            .find(|t| !before.contains(&t.device))
+            .map(|t| t.device.clone());
+        if let Some(device) = made {
+            self.join_next = true;
+            self.arm_track_device(&device);
+            self.join_next = false;
+        }
     }
 
     fn load_clip(&mut self, path: &Path, target: LoadTarget) -> Result<(), String> {
