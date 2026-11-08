@@ -1109,6 +1109,11 @@ may break APIs and the patch and project formats.
   are ignored.
 
 ### Fixed
+- **Add Channel** in the mixer always has something to add. The picker lists **Empty Mix Channel** first: a channel
+  with no source, routed to the master, named "Channel N" (the next free number), added in one undo step, selected
+  in the mixer and the rack, with the status line saying what was added. Its input jacks can be cabled by hand from
+  the rack back panel. The instruments without a channel follow it; the disabled "Every instrument has a channel"
+  row is gone, and Create Mixer Channel names its channel the same way.
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
   tick 0 that the document refuses; the drag measures from what the document holds.
 - A plain **Save** no longer deletes audio from an `Audio` folder that several project files share. The unused
