@@ -355,7 +355,7 @@ pub(crate) fn clip_meta_text(c: &Clip) -> String {
 }
 
 /// One automation point: `[tick, value, "curve"]`, `[tick, value, "bend", amount]` for a bent one.
-fn write_point(w: &mut String, p: &AutomationPoint) {
+pub(super) fn write_point(w: &mut String, p: &AutomationPoint) {
     let _ = write!(w, "[{}, ", p.tick);
     write_f32(w, p.value);
     match p.curve {

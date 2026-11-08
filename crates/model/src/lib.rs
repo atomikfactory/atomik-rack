@@ -171,7 +171,10 @@ pub use plugin::{
     PLUGIN_GESTURE_MERGE_BASE, PluginCommand, PluginDoc, register_stand_ins,
 };
 pub use plugin_files::{PluginFileRef, rewrite_paths};
-pub use project::{PROJECT_FORMAT, PROJECT_VERSION};
+pub use project::{
+    PROJECT_FORMAT, PROJECT_VERSION, clips_from_text, clips_to_text, devices_from_text,
+    devices_to_text, notes_from_text, notes_to_text, points_from_text, points_to_text,
+};
 pub use rack_columns::{MAX_RACK_COLUMNS, RackSlot, ResolvedSlot};
 pub use rack_groups::{DeviceGroup, RackSort};
 pub use rate_convert::{RateCopy, assets_off_rate};

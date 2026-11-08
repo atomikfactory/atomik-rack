@@ -8,7 +8,7 @@ pub(super) fn load_take_groups(
     path: &JsonPath,
     (clip_obj, version): (Obj, u64),
     kind: &LaneKind,
-    (doc, desc): (&RackDoc, &atomik_device_sdk::DeviceDescriptor),
+    (doc, desc): (&RackDoc, Option<&atomik_device_sdk::DeviceDescriptor>),
     song: &Song,
     (lane_clips, clip_first, loose): (&[Clip], &mut ClipFirst, &mut Loose),
 ) -> Result<Vec<TakeGroup>, ModelError> {
@@ -99,7 +99,7 @@ pub(super) fn load_clip(
     path: &JsonPath,
     (clip_obj, version): (Obj, u64),
     kind: &LaneKind,
-    (doc, desc): (&RackDoc, &atomik_device_sdk::DeviceDescriptor),
+    (doc, desc): (&RackDoc, Option<&atomik_device_sdk::DeviceDescriptor>),
     song: &Song,
     clip_first: &BTreeMap<u64, JsonPath>,
 ) -> Result<Clip, ModelError> {
@@ -160,7 +160,7 @@ pub(super) fn load_clip(
         LaneKind::Notes => ClipContent::Notes(load_notes(items, &content_path, version)?.into()),
         LaneKind::Automation(param) => {
             // `None`: a dead plugin param, whose values are kept as they are.
-            let pd = crate::console_vca::lane_param(desc, param);
+            let pd = desc.and_then(|d| crate::console_vca::lane_param(d, param));
             let mut points: Vec<AutomationPoint> = Vec::with_capacity(items.len());
             let lazy = JsonPath::lazy();
             for (i, item) in items.iter().enumerate() {
@@ -300,7 +300,7 @@ fn load_midi_data(
 
 /// One point of an automation clip, checked on its own. `pd` is the automated param, `None` for a
 /// dead plugin param whose values are kept as they are.
-fn read_point(
+pub(super) fn read_point(
     item: &Value,
     p: &JsonPath,
     pd: Option<&atomik_core::ParamDescriptor>,

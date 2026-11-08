@@ -171,7 +171,7 @@ pub(super) fn load_track(
                 &cp,
                 (clip_obj, version),
                 &kind,
-                (doc, desc),
+                (doc, Some(desc)),
                 song,
                 clip_first,
             )?;
@@ -185,7 +185,7 @@ pub(super) fn load_track(
                 &p.field("take_groups"),
                 (clip_obj, version),
                 &kind,
-                (doc, desc),
+                (doc, Some(desc)),
                 song,
                 (&clips, clip_first, loose),
             )?,
