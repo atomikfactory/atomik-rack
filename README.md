@@ -39,6 +39,7 @@ There are no screenshots in the repository yet. The user interface is drawn proc
 - **File browser.** A docked panel (`F9`) to browse folders, search by name, `#tag`, `kind:`, `author:` or favourites, keep named favourite lists, preview audio files with one click and drag them onto the arrangement, sample editor or a sampler; tags, authors, categories and favourites are saved in `library.json` next to the settings.
 - **Library.** The file browser's Library sections list the built-in devices and the patches, containers, clips and projects in your library folder. **Save to Library** (device and clip context menus) writes the selected devices, a container or a note clip there, with their samples; double click or drag an item onto the rack (devices) or a note lane (clips) to load it as one undo step, and a project opens after the question about unsaved changes. Items are plain project texts (`.atomikpatch`, `.atomikcontainer`) and a small clip file (`.atomikclip`).
 - **Workflow and keymap.** A data-driven keymap with a standard profile and a legacy profile, remappable in Settings (see [docs/KEYBOARD.md](docs/KEYBOARD.md)), tools (select, pencil, eraser, razor), a clipboard for clips, notes, devices and tracks, context menus, and a creation chain that wires new instruments and effects automatically.
+- **Video (first step).** File > Video checks for FFmpeg and prepares a film: Atomik Rack does not ship FFmpeg, it uses the one you install (on your `PATH`, or the folder set in Settings > Video) to read a film's length, frame rate and sound tracks and to make a small, fast-to-read copy of its picture in a cache folder. Without FFmpeg nothing else changes.
 - **Offline bounce.** `atomik-render` renders patches and projects to WAV, bit-identical for any block size and worker count.
 - **Projects.** A project with audio is a bundle folder (`name/name.atomik` plus `Audio/`, files named by content hash); a project without audio is a single `.atomik` file. Saves are atomic.
 
@@ -173,6 +174,7 @@ Four rules are never traded away. Each one is enforced by tests or process, not 
                   │          │               │                │
           atomik-audio-file ◄┘      atomik-dsp ── atomik-device-sdk ── atomik-core
       file browser data: atomik-library (used by audio-file, ui and app)
+      video: atomik-video (FFmpeg discovery, probe and proxy; used by app)
       plugin hosting: atomik-plugin-host, -clap, -vst3, -scan (scanner binary)
       plugin sandbox: atomik-plugin-ipc, -sandbox, -hostd (child binary atomik-plugin-host)
       atomik-testkit (dev-dependency only: fakes, signal analysis, no-alloc harness)

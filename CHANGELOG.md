@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Video foundation (FFmpeg).** Video tracks will be decoded by an FFmpeg you install: nothing is bundled. A new
+  crate `atomik-video` finds FFmpeg (the folder set in Settings > Video, else your `PATH`, else the usual package
+  folders on macOS), checks that it is release 4 or later and says clearly when it is missing, too old or broken:
+  video is then off and nothing else changes. It reads a film with `ffprobe` (length, frame rate with variable rate
+  handled, size, rotation, start time and timecode, and the audio tracks) and builds a small proxy of the picture:
+  every frame as a low-resolution JPEG in one indexed file, so any frame is one seek. The proxy is built on a worker
+  with progress in the status line and a cancel that leaves no partial file, and cached per user (`LOCALAPPDATA` on
+  Windows, `Library/Caches` on macOS, `XDG_CACHE_HOME` elsewhere) keyed by the film's path, size, time and its first
+  and last mebibyte, pruned to 2 GiB, oldest first. File > Video has Prepare Video..., Check FFmpeg and Cancel Video
+  Job; Settings has a Video tab with the FFmpeg folder and what was found (the tab strip is a little tighter for the
+  seventh tab). No project format change; no film appears in the arrangement yet.
 - **Stretch cursor.** A clip edge that stretches the clip (Alt held over the edge, before and during the drag) shows a
   drawn cursor, a double arrow with a bar across its middle, in place of the plain column-resize icon. It is crisp at
   1x and 2x, and pressing or releasing Alt over an edge swaps it with the resize cursor at once, without a pointer move.
