@@ -1090,6 +1090,19 @@ may break APIs and the patch and project formats.
   Softness macros). The Factory root now lists 42 patches and 14 containers.
 
 ### Changed
+- **Menus scroll, stay inside the window and are grouped.** A dropdown or a submenu taller than the window is cut to it
+  and scrolls: with the mouse wheel over it, by resting the pointer on the small arrow strip at its top or bottom, or
+  with Up, Down, Home and End (the lit row always stays in view). A submenu starts level with its row, moves up before
+  it scrolls, and opens on the left when the right side would leave the window; submenus can now hold submenus of their
+  own in the in-window menu bar too (Reference > Select Reference Track was out of reach there). The long menus are
+  split into submenus by theme, so no menu has more than 30 rows: File (Import, Export, Project Files, Stress Test),
+  Edit (Audio Edits, Time and Clips), View (Cables, Panels, Editors, Lanes and Markers, Meters and Links), Mixer (Groups
+  and VCAs, Channel Strip, Snapshots, Control and Macros), Track (Note Lanes, Freeze, Bounce, Players, Lane Height and
+  Folding) and Audio (Clip Gain, Fades, Crossfade, Warp, Transpose). A new **Analyze** menu after Mixer gathers the
+  analysis tools: Sound Analyst, Reference Panel (the decision zone) and the Reference submenu, Translation Lens, Check
+  Mix, Masking Map, Kick and Bass Check, Will the Bass Read, Find Repetition and Delivery Targets. Only the menu path
+  of a command changed: ids, keys and the command count (the registry still lists 500) are the same. The macOS menus
+  nest the same way and rebuild a submenu when a check or a label in it changes.
 - **Channels, buses and the master are always in the rack.** View > Show Console Devices in Rack and its command
   (`view.toggle_console_devices`) are gone, with the one-time notice about it; the registry lists 500 commands. An
   older `ui-state.json` that still has `show_console_devices` or `console_notice_seen` loads as before and both keys
