@@ -12,7 +12,8 @@
 use crate::console::is_console_type;
 use crate::container::{collect_device_assets, join, split_path};
 use crate::song::{AutomationPoint, Clip, ClipContent, ClipId, LaneKind, Note, Song, Track};
-use crate::{AssetMeta, Cable, DeviceKey, ModelError, RackDevice, RackDoc, rules};
+use crate::{AssetMeta, Cable, DeviceKey, ModelError, RackDevice, RackDoc, Registry, rules};
+use atomik_device_sdk::DeviceKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn bad_song(message: impl Into<String>) -> ModelError {
@@ -61,6 +62,59 @@ pub struct DeviceSnapshot {
 }
 
 impl DeviceSnapshot {
+    /// Gives every instrument of the snapshot that plays notes and has no song track an empty
+    /// note track, the way creating the instrument does (the paste makes the console channel;
+    /// a track enters at the top of the note players that feed the instrument in the snapshot).
+    /// A snapshot that already carries tracks keeps them. Returns the devices that got one.
+    /// Containers are not instruments to the creation chain and get none.
+    pub fn add_instrument_tracks(&mut self, registry: &Registry) -> Vec<DeviceKey> {
+        let mut added = Vec::new();
+        for d in &self.devices {
+            let plays = registry.descriptor(&d.type_id).is_some_and(|desc| {
+                desc.kind == DeviceKind::Instrument && crate::song_cmd::has_notes_input(desc)
+            });
+            if !plays || self.tracks.iter().any(|t| t.device == d.key) {
+                continue;
+            }
+            // Up the note cables while a copied note player feeds the device.
+            let mut top = d.key.clone();
+            for _ in 0..self.devices.len() {
+                let feeder = self
+                    .cables
+                    .iter()
+                    .find(|c| {
+                        c.to.device == top
+                            && self
+                                .devices
+                                .iter()
+                                .find(|x| x.key == c.to.device)
+                                .and_then(|x| registry.descriptor(&x.type_id))
+                                .and_then(|desc| desc.socket_by_key(&c.to.socket))
+                                .is_some_and(|s| s.kind == atomik_device_sdk::SocketKind::Notes)
+                    })
+                    .map(|c| c.from.device.clone());
+                let player = feeder.filter(|f| {
+                    *f != d.key
+                        && self
+                            .devices
+                            .iter()
+                            .find(|x| x.key == *f)
+                            .and_then(|x| registry.descriptor(&x.type_id))
+                            .is_some_and(crate::is_note_player)
+                });
+                match player {
+                    Some(f) => top = f,
+                    None => break,
+                }
+            }
+            let mut track = crate::song_cmd::new_track(d.key.clone());
+            track.notes_to = (top != d.key).then_some(top);
+            self.tracks.push(track);
+            added.push(d.key.clone());
+        }
+        added
+    }
+
     /// Copies the devices `keys` (path keys of one scope: all top level, or all inside the same
     /// container) in rack order, the cables between them and, with `with_tracks`, their song
     /// tracks (top level only). Console devices in the selection are left out (an instrument's
