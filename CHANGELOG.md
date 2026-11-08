@@ -8,6 +8,8 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+## [0.4.0-rc.1] - 2026-11-08
+
 ### Added
 - **The film's own sound.** File > Video > Import Video Audio takes an audio track out of the song's film through
   FFmpeg, on a worker with progress in the status line and a cancel that leaves no file and no asset, and imports
