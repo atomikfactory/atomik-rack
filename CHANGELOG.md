@@ -8,6 +8,17 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **MP3, AAC and Opus export.** The export panel has MP3, AAC (`.m4a`) and Opus buttons next to WAV, AIFF and FLAC
+  and a QUALITY row: MP3 at 128, 192, 256 or 320 kbit/s or variable quality V0, V2 or V4, AAC at 128 to 320 and Opus
+  at 64 to 192 kbit/s. They encode through the FFmpeg you installed, so no codec ships: the song, the loop and the
+  selection are rendered to a temporary WAV file and FFmpeg encodes it on the export worker, with progress and a
+  cancel that removes the temporary and partial files (an existing file is replaced only by a complete one). The
+  song's title and author go into the file's tags as arguments, never through a shell. Without FFmpeg the three
+  buttons are greyed with a line that says to set its folder in Settings > Video or put it on your `PATH`; stems stay
+  WAV, AIFF or FLAC. The loudness in the toast is measured before encoding, so leave about 1 dB of true-peak
+  headroom. The last format and quality are remembered in `export.json`. The project format stays 44.
+
 ## [0.4.0-rc.1] - 2026-11-08
 
 ### Added

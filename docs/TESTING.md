@@ -956,7 +956,15 @@ a cancel that leaves no file, the mapping of the panel values to the render) and
 `crates/app/src/shell_export_tests.rs` the flow (the menu items and commands, the file request and
 the proposed name, the options and progress panels, the choices saved in `export.json` and restored,
 CANCEL and Esc, the items disabled while an export runs); `crates/ui/tests/export_panel.rs` the
-panel itself. `crates/mcp/tests/session.rs` has `session_export` (the file against the bounce, the
+panel itself. The compressed formats run through the fake tool, so no test needs FFmpeg: the argument list of each
+format and quality, the tags (quotes, line breaks, a leading dash) and the rate the format holds are tests of
+`crates/video/src/encode.rs`, with the cancel and the failure leaving no partial file; the app core tests export a
+song, a loop and a selection as MP3, AAC and Opus (the file, the arguments, the tags from the song information, the
+temporary WAV removed), cancel before and during the encoder, a failing encoder and a missing FFmpeg; the panel tests
+grey the three buttons with the setup line and the shell test remembers the format and quality in `export.json`.
+`cargo test -p atomik-video --test real_ffmpeg -- --ignored` also encodes a generated WAV file to each format and reads
+the tags back with ffprobe, and `cargo test -p atomik-app --lib real_ffmpeg -- --ignored` exports an MP3 of the starter
+project. `crates/mcp/tests/session.rs` has `session_export` (the file against the bounce, the
 loop, argument validation and the path policy). A time selection is tested at the three layers: the
 render exports exactly the frames of `ExportSpan::Range` (the bounce slice, no tail, locators ignored,
 an empty range refused) and stems cut the same frames, the app takes the range selected on a lane

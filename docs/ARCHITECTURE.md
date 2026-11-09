@@ -967,7 +967,8 @@ while it runs; the live children are not reused, because the offline output must
 
 File > Export > Export Song as Audio File, Export Loop as Audio File and Export Stems as Audio Files
 (`file.export_song_audio`, `file.export_loop_audio`, `file.export_stems`, remappable, no default
-keys) write the project as a WAV, AIFF or FLAC file, or one file per mixer strip.
+keys) write the project as a WAV, AIFF, FLAC, MP3, AAC or Opus file, or one file per mixer strip (stems are WAV,
+AIFF or FLAC only).
 
 ```
  command ─► ShellRequest::PickExportAudio ─► native save dialog ─► Shell::export_audio_to ─► options panel (ExportView)
@@ -1009,8 +1010,26 @@ keys) write the project as a WAV, AIFF or FLAC file, or one file per mixer strip
   of the unencoded samples in the stream info. It takes the 16-bit and 24-bit codes of the same
   `Dither`, so the decoded file equals the WAV's samples (a test decodes both through the project's
   reader); every choice is a pure function of the codes, so the bytes are deterministic. There is
-  no 32-bit float FLAC (the panel and `write_export` refuse it). MP3 stays deferred until its
-  encoder licence is settled; tempo chunks are not written either.
+  no 32-bit float FLAC (the panel and `write_export` refuse it). Tempo chunks are not written.
+- **Compressed formats** ([video/src/encode.rs](../crates/video/src/encode.rs)). MP3 (constant bitrate 128,
+  192, 256 or 320 kbit/s, or variable quality V0, V2, V4), AAC in `.m4a` (128 to 320 kbit/s) and Opus in
+  `.opus` (64 to 192 kbit/s) are encoded by the FFmpeg the user installed ([video through
+  FFmpeg](#223-video-through-the-users-ffmpeg)), so no codec ships. The panel always shows the three
+  buttons; `AppCore::export_encoder` says whether FFmpeg is `Ready`, being looked for or missing, and a
+  missing one greys them with a line that says to set its folder in Settings > Video or put it on `PATH`
+  (the same places as video import). The export worker renders as for a WAV file, writes the audio to a
+  float WAV file in a temporary folder at the rate of the result (the asked rate, else the song's, brought
+  to one the format holds by `LossyCodec::output_rate`: MP3 and Opus stop at 48 kHz), runs `encode_audio`
+  through the same `VideoTool` seam (a list of arguments, no shell; the song's title and author are the
+  values of `-metadata` arguments with control characters turned into spaces), writes under `<file>.partial`
+  and renames when FFmpeg has finished. Progress is the render (80 %) and then FFmpeg's own `out_time_us`
+  lines; a cancel kills FFmpeg; a cancel or a failure removes the partial file and the temporary WAV and
+  leaves an existing result file as it was. The loudness in the report is that of the audio that went into
+  the encoder, and the encoder can raise the true peak (an MP3 or AAC decoder may overshoot a signal that
+  peaks at 0 dBTP by a decibel or more): leave about 1 dB of true-peak headroom, for instance with the
+  true-peak limiter of the mastering suite. The panel's bit depth and dither rows are greyed for these
+  formats. `export.json` keeps the format, the MP3 quality and the AAC and Opus bitrates. The tests use the
+  fake tool; one ignored test runs the real FFmpeg.
 - **Loudness report.** `write_export` measures the audio it writes with
   [render/src/loudness.rs](../crates/render/src/loudness.rs): integrated loudness, loudness range
   (3 s short-term windows, -70 LUFS absolute and -20 LU relative gates, 10th to 95th percentile),
@@ -2596,6 +2615,9 @@ Without FFmpeg the video features are off and nothing else changes. This section
   consumer of its output stops and when the call unwinds. `NoVideoTools` refuses every call: a core starts with it,
   so a test or a headless session never starts a program, and the platform layer installs `SystemTool`.
   `FakeTool` answers with canned text and frames and records the calls; no test needs FFmpeg.
+- **Compressed audio export.** The same seam also encodes the audio export to MP3, AAC or Opus
+  (`encode_audio` in `crates/video/src/encode.rs`, see section 2.7a): a WAV file in, a tagged file out, with progress,
+  cancel and no partial file.
 - **Probe.** `ffprobe -v error -print_format json -show_format -show_streams` is parsed by `parse_probe`: length,
   size, rotation (display matrix or the old `rotate` tag), the nominal frame rate (the average rate, snapped to the
   standard rates within 0.02 %; the container's rate when there is no average; `variable_rate` when the two differ
