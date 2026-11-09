@@ -16,6 +16,8 @@
 //!   progress and cancel and never leaves a partial file;
 //! - [`audio`]: choosing a film's audio track and writing it to a WAV file (with progress and
 //!   cancel) for the song to import;
+//! - [`encode`]: compressed audio export, a WAV file to MP3, AAC or Opus through the same tool,
+//!   with the song's title and author as tags, progress and cancel, and no partial file;
 //! - the viewer's side ([`decode`], [`frames`], [`timeline`]): a pure-Rust JPEG decoder, the
 //!   [`FrameDecoder`] worker with its [`FrameCache`], and the exact arithmetic from a song time to
 //!   a frame and a timecode ([`timeline::locate`], [`Timecode`]);
@@ -30,6 +32,7 @@ pub mod audio;
 pub mod cache;
 pub mod decode;
 pub mod discover;
+pub mod encode;
 mod error;
 pub mod fake;
 pub mod frames;
@@ -47,6 +50,9 @@ pub use audio::{MAX_LEAD_US, Pick, extract_audio, lead_us, pick_stream};
 pub use cache::{DEFAULT_MAX_BYTES, ProxyCache, SourceIdentity};
 pub use decode::{Picture, decode_jpeg};
 pub use discover::{Ffmpeg, FfmpegStatus, Platform, Search, discover};
+pub use encode::{
+    EncodeJob, EncodeSpec, LossyCodec, LossyQuality, Tags, encode_args, encode_audio,
+};
 pub use error::VideoError;
 pub use frames::{Event as FrameEvent, FrameCache, FrameDecoder};
 pub use prepare::{Control, Prepared, prepare, probe as probe_file};

@@ -27,12 +27,12 @@ impl Default for ProxySpec {
     }
 }
 
-fn os(text: &str) -> OsString {
+pub(crate) fn os(text: &str) -> OsString {
     OsString::from(text)
 }
 
 /// The input as one argument: `file:` and the path.
-fn file_input(path: &Path) -> OsString {
+pub(crate) fn file_input(path: &Path) -> OsString {
     let mut arg = os("file:");
     arg.push(path.as_os_str());
     arg
