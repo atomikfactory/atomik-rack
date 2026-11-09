@@ -263,3 +263,23 @@ cargo test -p atomik-devices
 - [ ] The device is registered in `register_all` and listed in `TYPE_IDS`, [DEVICES.md](DEVICES.md) and `examples/patches/README.md`.
 - [ ] A device with a modulation matrix registers with `Registry::register_with_mods` and follows the rules of "Modulation matrix" above.
 - [ ] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass.
+
+## 7. Factory content
+
+The `factory` folder at the repository root ships with the application. Nothing in it is written by hand and nothing
+is downloaded or recorded: the tables and the writer are test code in the app crate (`app_core_factory_build.rs`
+and the files beside it), and every sound is rendered by the application's own devices.
+
+- **Patches** (`Patches`): a row of the patch table per device patch (the device, its changed params by key and its
+  modulation slots), with a few rows for every instrument and a number for the effects. A drum kit is a table of
+  hits that the writer renders from the drum machine's pad modules into short mono samples, 12 to 16 pads for the
+  newer kits, with the audio in `<kit>/Audio/` beside the item.
+- **Clips** (`Clips`): note clips written from pattern tables (drum lanes as step strings, bass lines, chords,
+  arpeggios), and audio loops (24-bit FLAC, stereo) rendered from those clips by a factory kit or a factory
+  instrument patch. A loop plays its clip twice and keeps the second pass, so the loop repeats without a gap. The
+  tags of a loop carry its tempo (`88 bpm`) and, when it is pitched, its key (`A minor`), which the browser's tag
+  filter lists.
+- **Rebuilding**: `ATOMIK_WRITE_FACTORY=1 cargo test -p atomik-app --lib write_the_factory_library -- --ignored`
+  writes every file and `factory.json`; the tests then check that the files are what the tables describe, that
+  every patch makes sound (a non-silent, bounded bounce of a built-in phrase), that every loop decodes at its tagged
+  tempo and that the folder stays under 25 MB.

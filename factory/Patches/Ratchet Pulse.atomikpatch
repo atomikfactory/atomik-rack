@@ -1,0 +1,84 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.semi-modular",
+      "name": "Semi-Modular", "folded": false, "patch": "Ratchet Pulse",
+      "params": {
+        "env.amp.attack": 1,
+        "env.amp.decay": 240,
+        "env.amp.release": 110,
+        "env.amp.sustain": 0.3,
+        "env.filter.decay": 220,
+        "env.filter.sustain": 0.1,
+        "filter1.cutoff": 1100,
+        "filter1.env": 2.5,
+        "filter1.mode": 5,
+        "filter1.resonance": 0.35,
+        "filter1.track": 0.5,
+        "master.level": 6,
+        "mod1_amount": 0.12,
+        "osc1.level": 1,
+        "osc1.shape": 0.3,
+        "osc1.type": 1,
+        "osc2.fine": 6,
+        "osc2.level": 0.7,
+        "osc2.octave": -1,
+        "osc2.type": 0,
+        "play.mode": 1,
+        "seq.gate": 35,
+        "seq.on.10": 0,
+        "seq.on.14": 0,
+        "seq.on.2": 0,
+        "seq.on.6": 0,
+        "seq.pitch.1": 0,
+        "seq.pitch.10": 12,
+        "seq.pitch.11": 5,
+        "seq.pitch.12": 12,
+        "seq.pitch.13": 7,
+        "seq.pitch.14": 12,
+        "seq.pitch.15": 10,
+        "seq.pitch.16": 12,
+        "seq.pitch.2": 12,
+        "seq.pitch.3": 0,
+        "seq.pitch.4": 12,
+        "seq.pitch.5": 7,
+        "seq.pitch.6": 12,
+        "seq.pitch.7": 0,
+        "seq.pitch.8": 12,
+        "seq.pitch.9": 0,
+        "seq.rate": 3,
+        "seq.run": 1
+      },
+      "mods": [
+        { "slot": 0, "source": 9, "target": 7 }
+      ]
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

@@ -78,9 +78,9 @@ impl LibrarySection {
         }
     }
 
-    /// Whether a file of `kind` is listed in this section.
+    /// Whether a file of `kind` is listed in this section. Clips also lists audio loops.
     pub fn accepts(self, kind: FileKind) -> bool {
-        Self::of(kind) == Some(self)
+        Self::of(kind) == Some(self) || (self == Self::Clips && matches!(kind, FileKind::Audio(_)))
     }
 }
 
@@ -192,6 +192,9 @@ mod tests {
         assert!(LibrarySection::Devices.accepts(FileKind::Device));
         assert!(!LibrarySection::Clips.accepts(FileKind::Folder));
         assert!(!LibrarySection::Projects.accepts(FileKind::Audio(AudioFormat::Wav)));
+        // Clips also lists audio loops, and no other section lists audio.
+        assert!(LibrarySection::Clips.accepts(FileKind::Audio(AudioFormat::Flac)));
+        assert!(!LibrarySection::Patches.accepts(FileKind::Audio(AudioFormat::Flac)));
         for kind in [
             FileKind::Device,
             FileKind::Patch,

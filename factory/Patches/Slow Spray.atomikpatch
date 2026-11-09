@@ -1,0 +1,55 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.granular",
+      "name": "Grain Sampler", "folded": false, "patch": "Slow Spray",
+      "params": {
+        "env.amp.attack": 1500,
+        "env.amp.decay": 400,
+        "env.amp.release": 1800,
+        "env.amp.sustain": 1,
+        "filter.cutoff": 3200,
+        "filter.enabled": 1,
+        "grain.density": 20,
+        "grain.size": 300,
+        "grain.spread": 0.9,
+        "grain.timing": 0.4,
+        "grain.window": 0,
+        "lfo.rate": 0.12,
+        "lfo.to_position": 0.1,
+        "lfo.wave": 0,
+        "master.level": 2,
+        "pos.position": 0.3,
+        "pos.scan": 0.12,
+        "pos.spray": 0.4
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

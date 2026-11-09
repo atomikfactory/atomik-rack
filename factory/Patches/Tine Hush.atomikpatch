@@ -1,0 +1,69 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.fm-synth",
+      "name": "FM Synth", "folded": false, "patch": "Tine Hush",
+      "params": {
+        "algorithm": 0,
+        "chorus.mix": 0.25,
+        "feedback": 0.05,
+        "master.level": -2,
+        "op1.attack": 1,
+        "op1.coarse": 1,
+        "op1.decay": 1800,
+        "op1.level": 0.85,
+        "op1.release": 400,
+        "op1.sustain": 0.1,
+        "op1.velocity": 0.5,
+        "op2.attack": 1,
+        "op2.coarse": 2,
+        "op2.decay": 400,
+        "op2.level": 0.3,
+        "op2.release": 200,
+        "op2.sustain": 0,
+        "op2.velocity": 0.7,
+        "op3.attack": 1,
+        "op3.coarse": 1,
+        "op3.decay": 900,
+        "op3.level": 0.2,
+        "op3.release": 300,
+        "op3.sustain": 0.05,
+        "op3.velocity": 0.3,
+        "op4.attack": 1,
+        "op4.coarse": 6,
+        "op4.decay": 60,
+        "op4.level": 0.08,
+        "op4.release": 60,
+        "op4.sustain": 0,
+        "op4.velocity": 0.3
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

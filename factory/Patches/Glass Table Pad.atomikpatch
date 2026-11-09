@@ -1,0 +1,53 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.wavetable-synth",
+      "name": "Wavetable Synth", "folded": false, "patch": "Glass Table Pad",
+      "params": {
+        "env.amp.attack": 500,
+        "env.amp.release": 700,
+        "env.amp.sustain": 0.8,
+        "env.mod.decay": 2200,
+        "env.mod.to_pos1": 0.5,
+        "filter.cutoff": 5500,
+        "master.level": -3,
+        "osc1.level": 0.7,
+        "osc1.position": 0.1,
+        "osc1.table": 3,
+        "osc2.level": 0.25,
+        "osc2.octave": -1,
+        "osc2.table": 2,
+        "unison.detune": 10,
+        "unison.spread": 0.6,
+        "unison.voices": 2
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}
