@@ -27,6 +27,7 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 | [M](#m-warp-on-import-default) | Warp on import default | Decided |
 | [N](#n-video-through-the-users-ffmpeg) | Video through the user's FFmpeg | Default (not yet confirmed) |
 | [O](#o-the-video-of-a-song-and-its-time) | The video of a song and its time | Default (not yet confirmed) |
+| [R](#r-controller-profiles) | Controller profiles | Default (not yet confirmed) |
 
 ---
 
@@ -356,5 +357,17 @@ part of the already ignorable `video` field it needs no format bump.
 stereo by FFmpeg. The link is `VideoClip::audio_link` (clip id, lead in microseconds, a keep flag); `Move`, `Trim`
 and `Relink` plan the film and the clip together as one compound edit and a drag merges both. The clip is recomputed
 from the film's state each time. Importing the film's audio is one undo step with the new track.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## R. Controller profiles
+
+**Question.** How does a hardware controller that is set up once keep working: as mappings saved in each project, or as a driver of its own?
+
+**Options.** (1) A set of mappings written into the project's MIDI maps. (2) A profile file with the controller's own surface driver.
+
+**Implications.** Mappings address a concrete device and live in the project, so a controller set up in one song would have to be mapped again in the next, and a layout that follows the selected device (knobs on whatever device is selected, faders on the strips of a bank) is not something a mapping can say. A driver reads a layout by position, follows the selection like the existing surfaces, owns its bank and its feedback, and the profile is plain data that can be shared. It adds one more kind of surface driver but no new plumbing: the actions are the ones the console surfaces already use, plus one for a remote knob.
+
+**Decision.** Option 2. A profile is a JSON file in the settings folder, found by its MIDI port name, and a surface of the settings runs it (`profile:<name>`). The project format does not change.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
