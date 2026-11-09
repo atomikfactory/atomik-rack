@@ -8,7 +8,27 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **Drum pads light when they play.** A pad of the drum machine panel flashes when the engine plays it, whatever
+  sent the note: a note generator, the sequencer, a MIDI input, a click on the pad or a gate on its jack. A harder
+  hit lights it brighter and the light fades out in a quarter of a second. The drum machine counts the hits that
+  sound and publishes the counters like any other device's display values; nothing on the audio thread waits for
+  the panel, and a hit on a pad that makes no sound lights nothing.
+- **A level for the browser's previews.** A small control in the browser's header sets the level audio files,
+  patches, containers and clips play at when you preview them, from -60 dB to +6 dB (drag it, double-click to go
+  back to 0 dB). It is saved with the Settings and applies to the next preview of every kind.
+
+### Changed
+- **Bigger drum pads.** The pad grid of the drum machine panel uses the room between the pads and the knob
+  columns, and the sample name and the pad number are drawn larger.
+- **A click on an empty automation lane selects the lane.** With the Select tool a click on empty lane space picks
+  the lane and its track, and a drag draws a selection band, instead of adding a clip and a point. A double-click
+  on empty lane space still adds a point (a clip over the bar clicked, with a point at the pointer), and the Pencil
+  tool still draws.
+
 ### Fixed
+- **A dropped sample names its drum pad at once.** The panel kept saying "empty" for a pad that had just received
+  a sample until something else rebuilt it; the pad names now follow the zones the moment they change.
 - **Undo in the middle of a band selection.** Undoing while a rubber band was open in the arrangement left clips
   in the selection that the undo had removed; the band now keeps only the clips that still exist, on release and
   on cancel.
