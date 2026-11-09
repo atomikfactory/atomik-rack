@@ -59,6 +59,9 @@ pub enum VideoError {
     /// No video tools can run here (a headless run, or none was given).
     #[error("video tools are not available")]
     Unavailable,
+    /// A film export cannot be done as asked; the text says why and what to choose instead.
+    #[error("{0}")]
+    Film(String),
     /// FFmpeg is not installed or cannot be used; the text says what to do.
     #[error("{0}")]
     NotUsable(String),
