@@ -24,10 +24,19 @@ use crate::app_core::midimap::{GestureKey, Resolved};
 use crate::surface::SurfaceHost;
 use atomik_core::PPQ;
 use atomik_midi_io::surface::{
-    MasterState, PositionState, StripKind, StripState, SurfaceAction, SurfaceState,
-    TransportButton, TransportLeds,
+    KnobMove, MasterState, PositionState, StripKind, StripState, SurfaceAction, SurfaceDriver,
+    SurfaceState, TransportButton, TransportLeds,
 };
 use atomik_ui::timeline::tick_to_seconds;
+
+/// How many remote knobs a surface has: the knobs drive this many parameters of the device the
+/// surface follows.
+pub const REMOTE_KNOBS: usize = crate::controller_profile::KNOBS as usize;
+
+/// True for a parameter the remote knobs may address.
+fn is_remote_param(key: &str) -> bool {
+    !atomik_model::console::is_hidden_param(key) && key != "bypass" && !key.starts_with("cv.")
+}
 
 /// What a surface strip is in the project.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +96,16 @@ impl<S: EngineSink> AppCore<S> {
     ) -> Result<crate::surface::LoopbackSurface, String> {
         let d = atomik_midi_io::surface::driver_by_id(driver)
             .ok_or_else(|| format!("no control surface driver {driver:?}"))?;
+        Ok(self.add_loopback_driver(name, d))
+    }
+
+    /// Adds an in-memory surface named `name` run by `d` beside the surfaces that are set up (one
+    /// with the same name is replaced) and returns the surface's end of it.
+    pub fn add_loopback_driver(
+        &mut self,
+        name: &str,
+        d: Box<dyn SurfaceDriver>,
+    ) -> crate::surface::LoopbackSurface {
         let surface = crate::surface::LoopbackSurface::new();
         let host = SurfaceHost::new(d, Box::new(surface.clone())).named(name, name);
         let mut hosts = std::mem::take(&mut self.surfaces);
@@ -100,7 +119,7 @@ impl<S: EngineSink> AppCore<S> {
             None => hosts.push(host),
         }
         self.surfaces = hosts;
-        Ok(surface)
+        surface
     }
 
     /// The first control surface, if any is set up.
@@ -282,9 +301,88 @@ impl<S: EngineSink> AppCore<S> {
                     looping: doc.song.loop_enabled,
                 },
                 position,
+                knobs: Vec::new(),
             },
             refs,
         )
+    }
+
+    /// The surface `id`'s view of the project: [`Self::surface_view`] plus the value of each
+    /// remote knob (the first parameters of the device the surface follows).
+    pub(super) fn surface_view_of(&self, id: &str) -> (SurfaceState, Vec<StripRef>) {
+        let (mut state, refs) = self.surface_view();
+        state.knobs = self.remote_knobs(id);
+        (state, refs)
+    }
+
+    /// The device the surface `id` follows: the one it is locked to, else the device selected in
+    /// the rack (the primary one first). `None` when there is none.
+    pub fn followed_device(&self, id: &str) -> Option<DeviceKey> {
+        let fits = |key: &DeviceKey| self.doc().resolve(key).is_some();
+        if let Some(lock) = self.midi.locks.get(id) {
+            return fits(lock).then(|| lock.clone());
+        }
+        self.view
+            .primary()
+            .into_iter()
+            .chain(self.view.selection())
+            .find(|k| fits(k))
+    }
+
+    /// The remote parameter `knob` (0-based) of `device`: the knobs address the first
+    /// [`REMOTE_KNOBS`] parameters of the device in descriptor order, leaving out the hidden ones,
+    /// the plugin CV rows and the bypass switch.
+    pub(super) fn remote_param(&self, device: &DeviceKey, knob: usize) -> Option<Resolved> {
+        let d = self.doc().resolve(device)?;
+        let desc = self
+            .registry
+            .get(&d.type_id)?
+            .descriptor
+            .params
+            .iter()
+            .filter(|p| is_remote_param(p.key))
+            .nth(knob)?;
+        Some(Resolved::Param {
+            key: device.clone(),
+            desc,
+        })
+    }
+
+    fn remote_knobs(&self, id: &str) -> Vec<Option<f32>> {
+        let device = self.followed_device(id);
+        (0..REMOTE_KNOBS)
+            .map(|knob| {
+                let r = self.remote_param(device.as_ref()?, knob)?;
+                self.target_value(&r)
+            })
+            .collect()
+    }
+
+    fn surface_knob(&mut self, id: &str, knob: usize, change: KnobMove) {
+        let Some(device) = self.followed_device(id) else {
+            return;
+        };
+        let Some(r) = self.remote_param(&device, knob) else {
+            return;
+        };
+        let norm = match change {
+            KnobMove::To(v) => v,
+            KnobMove::By(delta) => {
+                let Some(now) = self.target_value(&r) else {
+                    return;
+                };
+                // A stepped parameter moves one step per click of the encoder.
+                let delta = match &r {
+                    Resolved::Param { desc, .. } if desc.discrete && delta != 0.0 => {
+                        delta.signum() * delta.abs().max(1.0 / (desc.max - desc.min).max(1.0))
+                    }
+                    _ => delta,
+                };
+                now + delta
+            }
+        };
+        let key = GestureKey::Surface(format!("{id}:knob:{knob}"));
+        self.surface_set(key, false, &r, norm.clamp(0.0, 1.0));
     }
 
     fn surface_position(&self) -> PositionState {
@@ -322,7 +420,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn surface_host_frame(&mut self, host: &mut SurfaceHost, now: f64) {
-        let (state, refs) = self.surface_view();
+        let (state, refs) = self.surface_view_of(&host.id);
         let mut out = Vec::new();
         if !host.connected {
             host.connected = true;
@@ -356,7 +454,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         if now >= host.next_feedback {
             // What the actions changed is what the surface shows next.
-            let (state, _) = self.surface_view();
+            let (state, _) = self.surface_view_of(&host.id);
             host.driver.feedback(&state, &mut out);
             host.send_all(&mut out);
             host.next_feedback = now + crate::surface::FEEDBACK_PERIOD;
@@ -456,6 +554,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.after_view_change();
             }
             SurfaceAction::Transport(button) => self.surface_transport(button),
+            SurfaceAction::Knob { knob, change } => self.surface_knob(id, knob, change),
             SurfaceAction::Jog(detents) => {
                 let step = PPQ / 4;
                 let tick = (self.position + i64::from(detents) * step).max(0);
@@ -551,3 +650,7 @@ mod tests;
 #[cfg(test)]
 #[path = "app_core_surfaces_tests.rs"]
 mod surfaces_tests;
+
+#[cfg(test)]
+#[path = "app_core_controller_tests.rs"]
+mod controller_tests;

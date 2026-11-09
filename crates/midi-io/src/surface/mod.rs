@@ -99,6 +99,9 @@ pub struct SurfaceState {
     pub transport: TransportLeds,
     /// The play position.
     pub position: PositionState,
+    /// The value of each remote knob, 0..=1 (`None` when the knob has no parameter): the first
+    /// parameters of the device the surface follows. Empty for a surface with no knobs.
+    pub knobs: Vec<Option<f32>>,
 }
 
 /// A transport key.
@@ -116,6 +119,16 @@ pub enum TransportButton {
     FastForward,
     /// The loop (cycle) switch.
     Cycle,
+}
+
+/// How a remote knob moved.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum KnobMove {
+    /// The knob is at this position, 0..=1 (an absolute knob).
+    To(f32),
+    /// The knob turned by this fraction of the parameter's range, positive clockwise (an
+    /// encoder: the size already follows the encoder's detents).
+    By(f32),
 }
 
 /// What the user did on the surface. A strip is an index into [`SurfaceState::strips`].
@@ -158,6 +171,14 @@ pub enum SurfaceAction {
     Transport(TransportButton),
     /// The jog wheel turned by this many detents (positive is forward).
     Jog(i32),
+    /// A remote knob moved: the knob (0-based) drives the matching parameter of the device the
+    /// surface follows.
+    Knob {
+        /// The knob.
+        knob: usize,
+        /// How it moved.
+        change: KnobMove,
+    },
 }
 
 /// A control-surface protocol.
