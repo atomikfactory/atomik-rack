@@ -266,6 +266,7 @@ pub struct ExportView {
     project_rate: u32,
     values: ExportValues,
     encoder: EncoderState,
+    warning: Option<String>,
     mode: Mode,
     hover: Option<Point>,
     repaint: bool,
@@ -289,6 +290,7 @@ impl ExportView {
             project_rate: 48_000,
             values: ExportValues::default(),
             encoder: EncoderState::Ready,
+            warning: None,
             mode: Mode::Options,
             hover: None,
             repaint: true,
@@ -322,9 +324,24 @@ impl ExportView {
         self.file = file.to_owned();
         self.project_rate = project_rate;
         self.values = values;
+        self.warning = None;
         self.mode = Mode::Options;
         self.settle_file();
         self.repaint = true;
+    }
+
+    /// Shows a line under the options (the app says why it did not start, or what to confirm: a
+    /// file that the export would replace); it goes away when a button changes a choice.
+    pub fn set_warning(&mut self, text: Option<String>) {
+        if text != self.warning {
+            self.warning = text;
+            self.repaint = true;
+        }
+    }
+
+    /// The line shown under the options, if any.
+    pub fn warning(&self) -> Option<&str> {
+        self.warning.as_deref()
     }
 
     /// Tells the panel whether FFmpeg can encode the compressed formats. Without it their
@@ -754,6 +771,8 @@ impl ExportView {
             Hit::Start => return self.start(),
             Hit::Cancel => return Some(ExportAction::Cancel),
         }
+        // A changed choice is a new question: the old line no longer applies.
+        self.warning = None;
         None
     }
 
@@ -999,10 +1018,13 @@ impl ExportView {
             t.text_muted,
             Align::Start,
         );
-        let encoder_line = match &self.encoder {
-            EncoderState::Ready => None,
-            EncoderState::Checking => Some("Looking for FFmpeg (MP3, AAC and Opus need it)..."),
-            EncoderState::Missing(why) => Some(why.as_str()),
+        let encoder_line = match (&self.warning, &self.encoder) {
+            (Some(warning), _) => Some(warning.as_str()),
+            (None, EncoderState::Ready) => None,
+            (None, EncoderState::Checking) => {
+                Some("Looking for FFmpeg (MP3, AAC and Opus need it)...")
+            }
+            (None, EncoderState::Missing(why)) => Some(why.as_str()),
         };
         if let Some(line) = encoder_line {
             sp::label(
