@@ -963,7 +963,14 @@ song, a loop and a selection as MP3, AAC and Opus (the file, the arguments, the 
 temporary WAV removed), cancel before and during the encoder, a failing encoder and a missing FFmpeg; the panel tests
 grey the three buttons with the setup line and the shell test remembers the format and quality in `export.json`.
 `cargo test -p atomik-video --test real_ffmpeg -- --ignored` also encodes a generated WAV file to each format and reads
-the tags back with ffprobe, and `cargo test -p atomik-app --lib real_ffmpeg -- --ignored` exports an MP3 of the starter
+the tags back with ffprobe, and makes films from a generated film and mix in every mode (copy, re-encode of a trim,
+black before and after, PCM in MOV, the film's own sound as track two) and checks the streams, the frame counts and that
+the mix starts after its silence. The film export is tested at three layers: the cut arithmetic, the picture decision
+and the argument lists with the cancel and failure cleanup (`crates/video/src/film/tests.rs`), the plan and the export of
+the app core with the fake tool (`app_core_film_tests.rs`: the range under a trimmed film, a film before the song, the
+whole song with black, copy and re-encode, PCM in MOV, the second track, cancel, failure, and the states that refuse the
+export), and the shell (`shell_film_tests.rs`: the menu item, the panel flow, the remembered choices and the guard
+against replacing a file at the extension the format gives), and `cargo test -p atomik-app --lib real_ffmpeg -- --ignored` exports an MP3 of the starter
 project. `crates/mcp/tests/session.rs` has `session_export` (the file against the bounce, the
 loop, argument validation and the path policy). A time selection is tested at the three layers: the
 render exports exactly the frames of `ExportSpan::Range` (the bounce slice, no tail, locators ignored,

@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Film with Mix.** File > Export > Film with Mix... writes a new film made of the song's film and the song's mix,
+  through the FFmpeg you installed. The film's span is exactly the part of the song under the film after its trim and
+  start (a film that begins before the song gets silence in front of the mix); the whole song renders from the start
+  to the End with black pictures before and after the film. The mix's first sample sits at the first exported frame.
+  The picture is copied without re-encoding when the cut is at the film's start (AUTO), always (COPY, which cuts at
+  keyframes: the dialog says so, and RE-ENCODE cuts exactly) or re-encoded to H.264 at a high, standard or small
+  quality; black before or after the film needs a re-encode. The mix goes in as AAC at 128 to 320 kbit/s in an MP4
+  file or as 24-bit PCM in a MOV file, and the film's own sound can stay as a second track. It runs on the export
+  worker with progress and a cancel that leaves no partial file (an existing film is replaced only by a complete
+  one), and the menu item is greyed with the reason in the toast when the song has no video, the film's file is
+  missing or FFmpeg cannot be used. The choices are remembered in `export.json`. The project format stays 44.
 - **MP3, AAC and Opus export.** The export panel has MP3, AAC (`.m4a`) and Opus buttons next to WAV, AIFF and FLAC
   and a QUALITY row: MP3 at 128, 192, 256 or 320 kbit/s or variable quality V0, V2 or V4, AAC at 128 to 320 and Opus
   at 64 to 192 kbit/s. They encode through the FFmpeg you installed, so no codec ships: the song, the loop and the
@@ -18,6 +29,13 @@ may break APIs and the patch and project formats.
   buttons are greyed with a line that says to set its folder in Settings > Video or put it on your `PATH`; stems stay
   WAV, AIFF or FLAC. The loudness in the toast is measured before encoding, so leave about 1 dB of true-peak
   headroom. The last format and quality are remembered in `export.json`. The project format stays 44.
+
+### Fixed
+- **A compressed or renamed export no longer replaces a file unasked.** The save dialog picks a name before the
+  format is chosen in the export panel, and the file gets the extension of the format, so an existing `.mp3`, `.m4a`,
+  `.opus`, `.aiff` or `.flac` (or the `.mov` of a film) at that name was overwritten without a question. The dialog now
+  proposes the extension of the format used last, and an export whose format changes the name to a file that exists
+  says so under the options and starts only when EXPORT is pressed again.
 
 ## [0.4.0-rc.1] - 2026-11-08
 
