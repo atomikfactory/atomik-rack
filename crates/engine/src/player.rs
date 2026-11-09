@@ -255,14 +255,14 @@ impl TransportCell {
 }
 
 /// Appends song events within the preallocated buffer; overflow is dropped and counted.
-struct Emitter<'a> {
+pub(crate) struct Emitter<'a> {
     events: &'a mut Vec<SongEvent>,
     seq: &'a mut u32,
     dropped: &'a AtomicU64,
 }
 
 impl Emitter<'_> {
-    fn push(
+    pub(crate) fn push(
         &mut self,
         offset: usize,
         device: DeviceInstanceId,
@@ -291,7 +291,7 @@ impl Emitter<'_> {
         }
     }
 
-    fn release_track(
+    pub(crate) fn release_track(
         &mut self,
         device: DeviceInstanceId,
         socket: SocketId,
@@ -321,10 +321,19 @@ impl Emitter<'_> {
             }
         }
     }
+
+    /// Each resetting controller lane of `t` (pitch bend, aftertouch, the sustain pedal) back to
+    /// zero at `offset`: a track that leaves its arrangement for a launcher slot must not leave
+    /// a bend or a held pedal behind.
+    pub(crate) fn reset_controllers(&mut self, t: &CompiledTrack, offset: usize) {
+        for lane in t.ctl.iter().filter(|l| l.kind.resets()) {
+            self.push(offset, t.device, t.socket, lane.kind.note(0.0));
+        }
+    }
 }
 
 /// Points every cursor at the first event at or after song frame `pos`.
-fn seek(
+pub(crate) fn seek(
     map: TempoMap<'_>,
     sr: f64,
     tracks: &[CompiledTrack],
@@ -397,7 +406,7 @@ fn chase_controllers(
 /// setting the key's held bit so the note's regular `Off` releases it. Every track first gets
 /// its controller values ([`chase_controllers`]), chasing or not. Call after the seek (and after
 /// the releases of a wrap), so these events sort after them.
-fn chase(
+pub(crate) fn chase(
     map: TempoMap<'_>,
     sr: f64,
     tracks: &[CompiledTrack],
@@ -409,6 +418,10 @@ fn chase(
     let mut velocity = [0.0f32; 128];
     let mut note = [0u32; 128];
     for (t, c) in tracks.iter().zip(cursors) {
+        // A track that plays a launcher slot is silent: nothing of its arrangement starts.
+        if c.silent {
+            continue;
+        }
         chase_controllers(map, sr, t, pos, offset, em);
         if !t.chase {
             continue;
@@ -486,7 +499,7 @@ fn wrap(
 
 /// Emits the events of song frames `[a, b)` at batch offsets starting at `base`.
 #[allow(clippy::too_many_arguments)] // Justification: one hot RT helper; a struct would only rename them.
-fn emit_notes(
+pub(crate) fn emit_notes(
     map: TempoMap<'_>,
     sr: f64,
     tracks: &[CompiledTrack],
@@ -503,6 +516,11 @@ fn emit_notes(
                 break;
             }
             let offset = base + f.saturating_sub(a) as usize;
+            if c.silent {
+                // A launched slot plays instead: the cursor moves on, nothing sounds.
+                c.next += 1;
+                continue;
+            }
             match ev.kind {
                 NoteKind::On { key, .. } => {
                     if em.push(offset, t.device, t.socket, ev.kind) {
@@ -680,6 +698,10 @@ pub(crate) struct Player {
     requests: Producer<StreamRequest>,
     /// Stream counters shared with the handle.
     stats: Arc<StreamStats>,
+    /// The clip launcher's published states.
+    launch_cell: Arc<crate::launch::LaunchCell>,
+    /// What the launcher did, for the app.
+    launch_events: Producer<crate::launch::LaunchEvent>,
 }
 
 /// Non-RT construction.
@@ -688,6 +710,7 @@ impl Player {
         sample_rate: f64,
         requests: Producer<StreamRequest>,
         stats: Arc<StreamStats>,
+        launch_events: Producer<crate::launch::LaunchEvent>,
     ) -> Self {
         Self {
             song: None,
@@ -719,6 +742,8 @@ impl Player {
             follow: None,
             requests,
             stats,
+            launch_cell: Arc::default(),
+            launch_events,
         }
     }
 
@@ -730,6 +755,11 @@ impl Player {
     /// The cell a clock input writes and the handle switches.
     pub(crate) fn external(&self) -> Arc<ExternalClock> {
         Arc::clone(&self.external)
+    }
+
+    /// The cell the handle reads the launcher's states from.
+    pub(crate) fn launch_cell(&self) -> Arc<crate::launch::LaunchCell> {
+        Arc::clone(&self.launch_cell)
     }
 
     /// The hold the handle writes the lanes to skip to.
@@ -834,16 +864,33 @@ impl Player {
             } = &mut *new;
             crate::audio::start_handoffs(&old.audio, audio, audio_rt, sr);
         }
+        if let Some(old) = old.as_deref() {
+            // The clip launcher: slots keep playing across the swap where the new song still has
+            // them.
+            let mut em = Emitter {
+                events: &mut self.events,
+                seq: &mut self.seq,
+                dropped,
+            };
+            let SongSnapshot {
+                launch, launch_rt, ..
+            } = &mut *new;
+            crate::launch::carry((&old.launch, &old.launch_rt), (launch, launch_rt), &mut em);
+        }
         let SongSnapshot {
             tempo,
             tracks,
             cursors,
+            launch,
+            launch_rt,
             ..
         } = &mut *new;
         let map = ext
             .as_ref()
             .map_or(TempoMap::new(tempo), |e| TempoMap::new(e));
         seek(map, sr, tracks, cursors, self.pos);
+        crate::launch::seek(map, sr, launch, launch_rt, self.pos);
+        crate::launch::mark_silent(launch, launch_rt, cursors);
         self.song = Some(new);
         self.audio_reseek = true;
         old
@@ -891,15 +938,17 @@ impl Player {
             seq,
             ..
         } = self;
-        let (map, mut parts) = match song.as_deref_mut() {
+        let (map, mut parts, mut lch) = match song.as_deref_mut() {
             Some(s) => (
                 ext.as_ref()
                     .map_or(TempoMap::new(&s.tempo), |e| TempoMap::new(e)),
                 Some((&s.tracks[..], &mut s.cursors[..])),
+                Some((&s.launch[..], &mut s.launch_rt[..])),
             ),
             None => (
                 ext.as_ref()
                     .map_or(TempoMap::new(&constant), |e| TempoMap::new(e)),
+                None,
                 None,
             ),
         };
@@ -917,6 +966,14 @@ impl Player {
                         seek(map, sr, tracks, cursors, *pos);
                         chase(map, sr, tracks, cursors, *pos, 0, &mut em);
                     }
+                    if let Some((lt, lr)) = lch.as_mut() {
+                        crate::launch::seek(map, sr, lt, lr, *pos);
+                    }
+                }
+            }
+            TransportCommand::Launch(request) => {
+                if let Some((lt, lr)) = lch.as_mut() {
+                    crate::launch::command(lt, lr, request);
                 }
             }
             TransportCommand::PlayWithPreRoll(plan) => {
@@ -933,12 +990,18 @@ impl Player {
                             seek(map, sr, tracks, cursors, *pos);
                             chase(map, sr, tracks, cursors, *pos, 0, &mut em);
                         }
+                        if let Some((lt, lr)) = lch.as_mut() {
+                            crate::launch::seek(map, sr, lt, lr, *pos);
+                        }
                     }
                 }
             }
             TransportCommand::Stop => {
                 self.pre_roll = None;
                 self.click = None;
+                if let Some((_, lr)) = lch.as_mut() {
+                    crate::launch::all_off(lr);
+                }
                 if *playing {
                     *playing = false;
                     if let Some((tracks, cursors)) = parts.as_mut() {
@@ -960,6 +1023,10 @@ impl Player {
                     }
                 } else {
                     *pos = map.song_frame(tick.0, sr);
+                }
+                if let Some((lt, lr)) = lch.as_mut() {
+                    crate::launch::all_off(lr);
+                    crate::launch::seek(map, sr, lt, lr, *pos);
                 }
             }
             TransportCommand::SetLoop {
@@ -1180,31 +1247,36 @@ impl Player {
             counting,
             sync,
             audio_reseek,
+            launch_events,
+            launch_cell,
             ..
         } = self;
         let four_four = [MeterSegment::FOUR_FOUR];
         let following = ext.is_some();
         // The song's own tempo map: the audio clips of a followed song are placed on it.
-        let (map, own, meters, (lanes, lane_last), mut parts, mut aud) = match song.as_deref_mut() {
-            Some(s) => (
-                ext.as_ref()
-                    .map_or(TempoMap::new(&s.tempo), |e| TempoMap::new(e)),
-                TempoMap::new(&s.tempo),
-                MeterMap::new(&s.meter),
-                (&s.lanes[..], &mut s.lane_last[..]),
-                Some((&s.tracks[..], &mut s.cursors[..])),
-                Some((&s.audio[..], &mut s.audio_rt[..])),
-            ),
-            None => (
-                ext.as_ref()
-                    .map_or(TempoMap::new(&constant), |e| TempoMap::new(e)),
-                TempoMap::new(&constant),
-                MeterMap::new(&four_four),
-                (&[][..], &mut [][..]),
-                None,
-                None,
-            ),
-        };
+        let (map, own, meters, (lanes, lane_last), mut parts, mut aud, mut lch) =
+            match song.as_deref_mut() {
+                Some(s) => (
+                    ext.as_ref()
+                        .map_or(TempoMap::new(&s.tempo), |e| TempoMap::new(e)),
+                    TempoMap::new(&s.tempo),
+                    MeterMap::new(&s.meter),
+                    (&s.lanes[..], &mut s.lane_last[..]),
+                    Some((&s.tracks[..], &mut s.cursors[..])),
+                    Some((&s.audio[..], &mut s.audio_rt[..])),
+                    Some((&s.launch[..], &mut s.launch_rt[..])),
+                ),
+                None => (
+                    ext.as_ref()
+                        .map_or(TempoMap::new(&constant), |e| TempoMap::new(e)),
+                    TempoMap::new(&constant),
+                    MeterMap::new(&four_four),
+                    (&[][..], &mut [][..]),
+                    None,
+                    None,
+                    None,
+                ),
+            };
         let (ls, le) = (
             map.song_frame(self.loop_start, sr),
             map.song_frame(self.loop_end, sr),
@@ -1231,6 +1303,9 @@ impl Player {
                 seek(map, sr, tracks, cursors, *pos);
                 chase(map, sr, tracks, cursors, *pos, 0, &mut em);
             }
+            if let Some((lt, lr)) = lch.as_mut() {
+                crate::launch::seek(map, sr, lt, lr, *pos);
+            }
         }
         // MIDI clock out: the transport changes since the last batch go out first.
         let sync_cfg = sync.batch_start(frame, *playing, map.tick(*pos as f64, sr).round() as i64);
@@ -1239,6 +1314,9 @@ impl Player {
             && *pos == le
         {
             wrap(map, sr, &mut parts, &mut em, 0, ls);
+            if let Some((lt, lr)) = lch.as_mut() {
+                crate::launch::wrap(map, sr, (lt, lr), &mut em, 0, ls);
+            }
             *pos = ls;
             *loop_count += 1;
             *lanes_dirty = true;
@@ -1310,6 +1388,10 @@ impl Player {
             *audio_reseek = true;
             return time;
         }
+        // The clip launcher: requests waiting for a boundary get one, from this batch's position.
+        if let Some((_, lr)) = lch.as_mut() {
+            crate::launch::resolve(lr, map, meters, sr, *pos);
+        }
         // A lane is applied when its value changed since the last batch, or when anything else
         // may have touched the device (`lanes_dirty`). Repeating a value is a no-op for every
         // device, so skipping it is output-neutral. A held lane forgets its last value: the
@@ -1342,8 +1424,22 @@ impl Player {
                 _ => (rem, false),
             };
             let (a, b) = (*pos, *pos + len);
-            if let Some((tracks, cursors)) = parts.as_mut() {
-                emit_notes(map, sr, tracks, cursors, a, b, off, &mut em);
+            match (parts.as_mut(), lch.as_mut()) {
+                (Some((tracks, cursors)), Some((lt, lr))) if !lt.is_empty() => {
+                    crate::launch::emit(
+                        map,
+                        sr,
+                        (tracks, cursors),
+                        (lt, lr),
+                        (a, b, off),
+                        &mut em,
+                        launch_events,
+                    );
+                }
+                (Some((tracks, cursors)), _) => {
+                    emit_notes(map, sr, tracks, cursors, a, b, off, &mut em);
+                }
+                _ => {}
             }
             if b > a
                 && let Some((tracks, rts)) = aud.as_mut()
@@ -1386,6 +1482,9 @@ impl Player {
             off += len as usize;
             if wraps && let Some((ls, _)) = lp {
                 wrap(map, sr, &mut parts, &mut em, off, ls);
+                if let Some((lt, lr)) = lch.as_mut() {
+                    crate::launch::wrap(map, sr, (lt, lr), &mut em, off, ls);
+                }
                 *pos = ls;
                 *loop_count += 1;
                 *audio_reseek = true;
@@ -1397,6 +1496,9 @@ impl Player {
                     });
                 }
             }
+        }
+        if let Some((lt, lr)) = lch.as_ref() {
+            crate::launch::publish(launch_cell, lt, lr, map, sr, *pos);
         }
         if let Some((tracks, rts)) = aud.as_mut() {
             publish_audio(arena, tracks, rts, *pos);

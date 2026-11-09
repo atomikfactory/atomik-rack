@@ -212,6 +212,10 @@ pub struct SongSnapshot {
     pub(crate) audio: Vec<crate::audio::CompiledAudio>,
     /// RT scratch per audio track: the playback pair and the stream lane.
     pub(crate) audio_rt: Vec<crate::audio::AudioRt>,
+    /// The launcher: tracks with clip slots (empty without a launcher).
+    pub(crate) launch: Vec<crate::launch::LaunchTrack>,
+    /// RT scratch, one per launch track.
+    pub(crate) launch_rt: Vec<crate::launch::LaunchRt>,
 }
 
 /// One flattened note event of a track.
@@ -279,6 +283,8 @@ pub(crate) struct TrackCursor {
     pub(crate) next: usize,
     /// Bit `k` set while key `k` is held by the player (128 keys).
     pub(crate) held: u128,
+    /// The track plays a launcher slot: its arrangement events advance but do not sound.
+    pub(crate) silent: bool,
 }
 
 /// Where a live event at an engine frame falls in the song ([`SongSnapshot::position_at`]).
@@ -369,6 +375,8 @@ pub fn compile_song(input: &SongInput) -> Result<SongSnapshot, SongError> {
         cursors: vec![TrackCursor::default(); tracks.len()],
         tracks,
         by_key,
+        launch: Vec::new(),
+        launch_rt: Vec::new(),
         lane_last: vec![None; lanes.len()],
         lanes,
     })
@@ -388,7 +396,7 @@ fn compile_tempo_map(map: &[SongTempo]) -> Result<Vec<TempoSegment>, SongError> 
 }
 
 /// Validates and flattens one track's notes (see [`compile_song`]).
-fn compile_track(track: &SongTrack) -> Result<CompiledTrack, SongError> {
+pub(crate) fn compile_track(track: &SongTrack) -> Result<CompiledTrack, SongError> {
     for n in &track.notes {
         let valid = n.tick.0 >= 0
             && n.length > 0
@@ -671,6 +679,22 @@ pub(crate) fn unroll(start: u64, loops: u64, d: i128, lp: Option<(u64, u64)>) ->
 }
 
 impl SongSnapshot {
+    /// The snapshot with the clip launcher's tracks compiled in (see [`crate::launch`]): each
+    /// launch track is linked to the arrangement track of the same device and socket, when the
+    /// song has one. Off the audio thread.
+    ///
+    /// # Errors
+    /// [`SongError::DuplicateTrack`] for two launch tracks on one input, [`SongError::BadEvent`]
+    /// for a slot with a bad length or a bad note.
+    pub fn with_launch(
+        mut self,
+        tracks: &[crate::launch::LaunchTrackInput],
+    ) -> Result<Self, SongError> {
+        self.launch = crate::launch::compile_launch(tracks, &self.tracks)?;
+        self.launch_rt = vec![crate::launch::LaunchRt::default(); self.launch.len()];
+        Ok(self)
+    }
+
     /// Converts a song tick to a song-relative frame position using the tempo map.
     ///
     /// Exact to f64 rounding over any song length: each tempo segment's start time is
@@ -775,6 +799,9 @@ pub enum TransportCommand {
         /// Enabled.
         enabled: bool,
     },
+    /// A clip launcher request (see [`crate::launch`]): queued on its track until the next launch
+    /// quantize boundary.
+    Launch(crate::LaunchCommand),
     /// Metronome on/off and level (linear gain, 0..=1), mixed into interface outputs 1/2.
     Metronome {
         /// On.

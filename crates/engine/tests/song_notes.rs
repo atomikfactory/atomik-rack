@@ -94,7 +94,9 @@ fn oracle(
                         let (ls, le) = (f(start.0), f(end.0));
                         lp = (enabled && le > ls).then_some((ls, le));
                     }
-                    TransportCommand::Metronome { .. } | TransportCommand::PlayWithPreRoll(_) => {}
+                    TransportCommand::Metronome { .. }
+                    | TransportCommand::PlayWithPreRoll(_)
+                    | TransportCommand::Launch(_) => {}
                 }
             }
         }
