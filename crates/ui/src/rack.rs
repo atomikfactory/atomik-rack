@@ -4254,7 +4254,7 @@ impl RackView {
                 };
                 let target = self.drop_target().map(|g| g.end.clone());
                 self.drag = Drag::None;
-                self.cable_up(&anchor, target, detached, modifiers, doc, out);
+                self.cable_up(&anchor, target, detached, modifiers, (doc, registry), out);
             }
             Drag::Move {
                 dev,

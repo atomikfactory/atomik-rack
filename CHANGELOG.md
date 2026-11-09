@@ -48,6 +48,8 @@ may break APIs and the patch and project formats.
   matches the rack as it really was.
 - **Sandbox crash tests on slow machines.** The tests that wait for a crashed plugin child to turn its device
   to Crashed now wait on that state against a generous deadline instead of a fixed number of batches.
+- **Cables that would close a loop through the console.** Dropping a cable from a console output onto a channel
+  input (or its stereo pair) used to send a cable the project refuses; the drop is now ignored up front.
 
 ## [0.4.0-rc.1] - 2026-11-08
 
