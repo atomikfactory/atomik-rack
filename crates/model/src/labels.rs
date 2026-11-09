@@ -125,6 +125,7 @@ fn song_label(c: &SongCommand) -> &'static str {
         SongCommand::SetMarkers(_) | SongCommand::DragMarkers { .. } => "Edit Markers",
         SongCommand::SetLoop { .. } => "Set Loop",
         SongCommand::SetSongEnd(_) => "Set Song End",
+        SongCommand::Launcher(c) => crate::launcher::label(c),
         SongCommand::QuantizeNotes { .. } | SongCommand::ApplyQuantize { .. } => "Quantize",
         SongCommand::SetClipGroove { .. } => "Set Clip Groove",
         SongCommand::ApplyNoteTool { tool, .. } => tool.label(),

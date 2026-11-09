@@ -799,6 +799,10 @@ pub struct Song {
     /// piece, so a project written before the flag plays and bounces as it did.
     /// [`empty_song`] has it off; a new project turns it on.
     pub tails: bool,
+    /// The clip launcher: scenes, slots and the launch quantize (see [`crate::launcher`]).
+    /// Empty by default, and written only when it holds something (project format 44, an
+    /// optional field older readers skip).
+    pub launcher: crate::launcher::Launcher,
 }
 
 /// A named point in the song. The id is only for telling markers apart while editing; files do
@@ -1286,6 +1290,9 @@ pub enum SongCommand {
     },
     /// Set the song end.
     SetSongEnd(i64),
+    /// A launcher edit (see [`crate::launcher`]): slots, scenes and the launch quantize. One undo
+    /// step; reports [`crate::SyncOp::SongChanged`].
+    Launcher(crate::launcher::LauncherCommand),
     /// Set or clear a note clip's step grid. The clip must be a note
     /// clip (audio and automation clips take no grid) and the grid must satisfy
     /// [`StepGrid::validate`]. The clip's length and notes do not change. `merge` groups drags
@@ -1782,6 +1789,7 @@ pub fn empty_song(bpm: f64) -> Song {
         grooves: Vec::new(),
         org: Organisation::default(),
         tails: false,
+        launcher: crate::launcher::Launcher::default(),
     }
 }
 
@@ -1876,7 +1884,14 @@ impl Song {
     pub fn clip_or_take(&self, id: ClipId) -> Option<(&Track, &Clip)> {
         match self.clip(id) {
             Some((t, _, c)) => Some((t, c)),
-            None => self.take_clip(id).map(|(t, _, g, i)| (t, &g.takes[i])),
+            None => match self.take_clip(id) {
+                Some((t, _, g, i)) => Some((t, &g.takes[i])),
+                // A launcher slot clip: the clip editors open it like a lane clip.
+                None => {
+                    let (device, _, slot) = self.launcher.find(id)?;
+                    Some((self.track(device)?, &slot.clip))
+                }
+            },
         }
     }
 

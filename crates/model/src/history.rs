@@ -164,6 +164,11 @@ pub(crate) enum Edit {
         old: Vec<Groove>,
         new: Vec<Groove>,
     },
+    /// The clip launcher: scenes, slots and the launch quantize.
+    Launcher {
+        old: Box<crate::launcher::Launcher>,
+        new: Box<crate::launcher::Launcher>,
+    },
     /// The track heights.
     TrackHeights {
         old: BTreeMap<DeviceKey, u16>,
@@ -696,6 +701,7 @@ impl Edit {
             Edit::Ranges { old, new } => Edit::Ranges { old: new, new: old },
             Edit::Grooves { old, new } => Edit::Grooves { old: new, new: old },
             Edit::TrackHeights { old, new } => Edit::TrackHeights { old: new, new: old },
+            Edit::Launcher { old, new } => Edit::Launcher { old: new, new: old },
             Edit::Organise { old, new } => Edit::Organise { old: new, new: old },
             Edit::Loop { old, new } => Edit::Loop { old: new, new: old },
             Edit::SongEnd { old, new } => Edit::SongEnd { old: new, new: old },
@@ -1139,6 +1145,10 @@ impl Edit {
             Edit::Ranges { new, .. } => {
                 doc.song_mut().ranges.clone_from(new);
                 vec![SyncOp::ViewChanged]
+            }
+            Edit::Launcher { new, .. } => {
+                doc.song_mut().launcher.clone_from(new);
+                vec![SyncOp::SongChanged]
             }
             Edit::TrackHeights { new, .. } => {
                 doc.song_mut().track_heights.clone_from(new);

@@ -1050,6 +1050,13 @@ pub(crate) fn plan(
     registry: &Registry,
     command: SongCommand,
 ) -> Result<(Edit, Option<ClipId>), ModelError> {
+    // A clip editor open on a launcher slot sends the commands of a plain clip: they edit the slot.
+    if let Some(id) = crate::launcher::slot_target(doc, &command) {
+        let edit = crate::launcher::plan_slot_edit(doc, id, |scratch| {
+            plan(scratch, registry, command).map(|(edit, _)| edit)
+        })?;
+        return Ok((edit, None));
+    }
     // A clip editor open on a take sends the commands of a plain clip: they edit the take.
     if let Some(id) = crate::takes_cmd::take_target(doc, &command) {
         let edit = crate::takes_cmd::plan_take_edit(doc, registry, id, |scratch, registry| {
@@ -1846,6 +1853,7 @@ pub(crate) fn plan(
                 new: heights,
             }
         }
+        SongCommand::Launcher(command) => return crate::launcher::plan(doc, registry, command),
         SongCommand::SetLoop { range: r, enabled } => {
             check_loop(r.0, r.1).map_err(range)?;
             Edit::Loop {

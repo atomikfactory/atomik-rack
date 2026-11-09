@@ -53,6 +53,15 @@ impl Edit {
                 }
                 Edit::Grooves { old, new } => (old.len() + new.len()) * PATTERN_BYTES,
                 Edit::TrackHeights { old, new } => (old.len() + new.len()) * ENTRY_BYTES,
+                Edit::Launcher { old, new } => {
+                    let slots = |l: &crate::launcher::Launcher| {
+                        l.clips()
+                            .map(|(_, _, c)| clip_bytes(Some(&c.clip)))
+                            .sum::<usize>()
+                            + l.scenes.len() * ENTRY_BYTES
+                    };
+                    slots(old) + slots(new)
+                }
                 Edit::Organise { old, new } => {
                     (old.order.len() + new.order.len()) * ENTRY_BYTES
                         + (old.org.members.len() + new.org.members.len()) * ENTRY_BYTES

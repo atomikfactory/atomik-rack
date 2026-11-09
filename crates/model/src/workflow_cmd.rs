@@ -855,6 +855,12 @@ pub(crate) fn plan(
     command: WorkflowCommand,
 ) -> Result<(Edit, Option<ClipId>), ModelError> {
     let plain = |edit: Result<Edit, ModelError>| edit.map(|e| (e, None));
+    // The piano roll open on a launcher slot pastes notes into the slot.
+    if let Some(id) = crate::launcher::slot_target_workflow(doc, &command) {
+        return plain(crate::launcher::plan_slot_edit(doc, id, |scratch| {
+            plan(scratch, registry, command).map(|(edit, _)| edit)
+        }));
+    }
     // The piano roll open on a take pastes notes into the take.
     if let Some(id) = crate::takes_cmd::take_target_workflow(doc, &command) {
         return plain(crate::takes_cmd::plan_take_edit(

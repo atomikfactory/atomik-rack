@@ -1200,6 +1200,134 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
     })
 }
 
+/// A launcher command in abstract form: indices wrap around what the document holds.
+#[derive(Debug, Clone)]
+enum LauncherOp {
+    New(usize, usize),
+    Put(usize, usize, usize),
+    Move(usize, usize, usize, usize, bool),
+    Clear(usize, usize),
+    Edit(usize, usize, u8),
+    Scene(u8, usize),
+    Settings(u8),
+    ToArrangement(usize, usize, i64),
+    EditClip(usize, usize, u8),
+}
+
+fn launcher_op() -> impl Strategy<Value = LauncherOp> {
+    prop_oneof![
+        (0usize..4, 0usize..5).prop_map(|(t, r)| LauncherOp::New(t, r)),
+        (0usize..4, 0usize..5, 0usize..4).prop_map(|(t, r, c)| LauncherOp::Put(t, r, c)),
+        (0usize..4, 0usize..5, 0usize..4, 0usize..5, any::<bool>())
+            .prop_map(|(a, b, c, d, copy)| LauncherOp::Move(a, b, c, d, copy)),
+        (0usize..4, 0usize..5).prop_map(|(t, r)| LauncherOp::Clear(t, r)),
+        (0usize..4, 0usize..5, 0u8..8).prop_map(|(t, r, k)| LauncherOp::Edit(t, r, k)),
+        (0u8..5, 0usize..6).prop_map(|(k, at)| LauncherOp::Scene(k, at)),
+        (0u8..4).prop_map(LauncherOp::Settings),
+        (0usize..4, 0usize..5, 0i64..8).prop_map(|(t, r, b)| LauncherOp::ToArrangement(
+            t,
+            r,
+            b * BAR
+        )),
+        (0usize..4, 0usize..5, 0u8..4).prop_map(|(t, r, k)| LauncherOp::EditClip(t, r, k)),
+    ]
+}
+
+fn resolve_launcher(op: &LauncherOp, doc: &RackDoc) -> Option<Command> {
+    use atomik_model::{LaunchQuantize, LauncherCommand as L, MetaChange};
+    let tracks: Vec<DeviceKey> = doc
+        .song
+        .tracks
+        .iter()
+        .filter(|t| !t.is_audio() && !t.is_automation_only())
+        .map(|t| t.device.clone())
+        .collect();
+    let slots: Vec<_> = doc
+        .song
+        .launcher
+        .clips()
+        .map(|(d, r, _)| (d.clone(), r))
+        .collect();
+    let ids = clip_ids(doc);
+    Some(sc(SongCommand::Launcher(match op {
+        LauncherOp::New(t, r) => L::NewClip {
+            device: pick(&tracks, *t)?,
+            row: *r,
+            length: BAR,
+        },
+        LauncherOp::Put(t, r, c) => L::PutClip {
+            device: pick(&tracks, *t)?,
+            row: *r,
+            clip: pick(&ids, *c)?,
+        },
+        LauncherOp::Move(a, b, c, d, copy) => L::MoveSlot {
+            from: pick(&slots, a + b)?,
+            to: (pick(&tracks, *c)?, *d),
+            copy: *copy,
+        },
+        LauncherOp::Clear(t, r) => L::ClearSlots {
+            slots: vec![pick(&slots, t + r)?],
+        },
+        LauncherOp::Edit(t, r, k) => {
+            let (device, row) = pick(&slots, t + r)?;
+            L::EditSlot {
+                device,
+                row,
+                name: if *k % 2 == 0 {
+                    MetaChange::Set(format!("S{k}"))
+                } else {
+                    MetaChange::Clear
+                },
+                color: if *k % 3 == 0 {
+                    MetaChange::Set([*k, 2, 3])
+                } else {
+                    MetaChange::Keep
+                },
+                length: (*k % 4 == 0).then_some(BAR * 2),
+                quantize: (*k % 5 == 0).then_some(Some(LaunchQuantize::Eighth)),
+            }
+        }
+        LauncherOp::Scene(k, at) => match k {
+            0 => L::InsertScene { at: *at },
+            1 => L::DeleteScene { at: *at },
+            2 => L::DuplicateScene { at: *at },
+            3 => L::RenameScene {
+                at: *at,
+                name: Some(format!("Scene {at}")),
+            },
+            _ => L::SetSceneTempo {
+                at: *at,
+                tempo: Some(90.0 + *at as f64),
+            },
+        },
+        LauncherOp::Settings(k) => match k {
+            0 => L::SetQuantize(LaunchQuantize::TwoBars),
+            1 => L::SetQuantize(LaunchQuantize::Bar),
+            2 => L::SetStopEmpty(false),
+            _ => L::SetStopEmpty(true),
+        },
+        LauncherOp::ToArrangement(t, r, start) => {
+            let (device, row) = pick(&slots, t + r)?;
+            L::ToArrangement {
+                device,
+                row,
+                start: *start,
+            }
+        }
+        LauncherOp::EditClip(t, r, k) => {
+            let (device, row) = pick(&slots, t + r)?;
+            let id = doc.song.launcher.slot(&device, row)?.clip.id;
+            return Some(sc(SongCommand::SetClipContent {
+                id,
+                content: atomik_model::ClipContent::Notes(
+                    vec![note(0, PPQ / 4, 60 + *k, 0.8)].into(),
+                ),
+                merge: None,
+            }));
+        }
+    })))
+}
+
 /// One step of a run.
 #[derive(Debug, Clone)]
 enum Step {
@@ -1207,6 +1335,7 @@ enum Step {
     Console(ConsoleOp),
     Audio(AudioOp),
     Wf(WfOp),
+    Launcher(LauncherOp),
 }
 
 fn step() -> impl Strategy<Value = Step> {
@@ -1215,6 +1344,7 @@ fn step() -> impl Strategy<Value = Step> {
         1 => console_op().prop_map(Step::Console),
         2 => audio_op().prop_map(Step::Audio),
         4 => wf_op().prop_map(Step::Wf),
+        2 => launcher_op().prop_map(Step::Launcher),
     ]
 }
 
@@ -1261,6 +1391,7 @@ fn resolve(op: &Step, doc: &RackDoc, reg: &Registry) -> Option<Command> {
         Step::Console(o) => resolve_console(o, doc),
         Step::Audio(o) => resolve_audio(o, doc),
         Step::Wf(o) => resolve_wf(o, doc),
+        Step::Launcher(o) => resolve_launcher(o, doc),
     }
 }
 
