@@ -6,8 +6,8 @@ mod support;
 
 use atomik_ui::kurbo::{Point, Rect};
 use atomik_ui::{
-    DisplayList, ExportAction, ExportDepth, ExportDither, ExportScope, ExportValues, ExportView,
-    Key, Modifiers, Theme, UiAction, UiEvent,
+    DisplayList, EncoderState, ExportAction, ExportDepth, ExportDither, ExportFile, ExportQuality,
+    ExportScope, ExportValues, ExportView, Key, Modifiers, Theme, UiAction, UiEvent,
 };
 use support::*;
 
@@ -363,4 +363,204 @@ fn a_selection_has_its_own_panel_and_stems_can_choose_it() {
     assert_eq!(v.values(), ExportValues::default());
     let p = center(&v, "SELECTION");
     assert!(v.help_at(p).is_some());
+}
+
+fn start_values(actions: Vec<ExportAction>) -> ExportValues {
+    match actions.as_slice() {
+        [ExportAction::Start(v)] => *v,
+        other => panic!("expected one Start, got {other:?}"),
+    }
+}
+
+const MISSING: &str = "MP3, AAC and Opus need FFmpeg: set its folder in Settings > Video.";
+
+#[test]
+fn the_compressed_formats_are_always_shown_and_choosable_with_ffmpeg() {
+    let mut v = view(ExportScope::Song);
+    for label in ["WAV", "AIFF", "FLAC", "MP3", "AAC", "OPUS"] {
+        assert!(v.button_rect(label).is_some(), "{label}");
+    }
+    // No quality buttons for a lossless format.
+    assert!(v.button_rect("192 kbps").is_none());
+    click(&mut v, "MP3");
+    assert_eq!(v.values().file, ExportFile::Mp3);
+    for label in [
+        "128 kbps", "192 kbps", "256 kbps", "320 kbps", "V0", "V2", "V4",
+    ] {
+        assert!(v.button_rect(label).is_some(), "{label}");
+    }
+    click(&mut v, "AAC");
+    assert!(
+        v.button_rect("V2").is_none(),
+        "AAC has no variable bitrate here"
+    );
+    assert!(v.button_rect("320 kbps").is_some());
+    click(&mut v, "OPUS");
+    for label in ["64 kbps", "96 kbps", "128 kbps", "160 kbps", "192 kbps"] {
+        assert!(v.button_rect(label).is_some(), "{label}");
+    }
+    assert!(v.button_rect("320 kbps").is_none());
+}
+
+#[test]
+fn the_quality_buttons_set_the_quality_of_the_format_chosen() {
+    let mut v = view(ExportScope::Song);
+    click(&mut v, "MP3");
+    click(&mut v, "V2");
+    assert_eq!(v.values().mp3, ExportQuality::Vbr(2));
+    click(&mut v, "320 kbps");
+    assert_eq!(v.values().mp3, ExportQuality::Cbr(320));
+    click(&mut v, "AAC");
+    click(&mut v, "256 kbps");
+    click(&mut v, "OPUS");
+    click(&mut v, "96 kbps");
+    let values = v.values();
+    // Each format keeps its own quality while the others are chosen.
+    assert_eq!(
+        (values.mp3, values.aac, values.opus),
+        (ExportQuality::Cbr(320), 256, 96)
+    );
+    assert_eq!(values.quality(), Some(ExportQuality::Cbr(96)));
+    click(&mut v, "WAV");
+    assert_eq!(v.values().quality(), None);
+    click(&mut v, "AAC");
+    let started = start_values(click(&mut v, "EXPORT"));
+    assert_eq!((started.file, started.aac), (ExportFile::Aac, 256));
+}
+
+#[test]
+fn a_compressed_file_has_no_bit_depth_or_dither() {
+    let mut v = view(ExportScope::Song);
+    click(&mut v, "16-BIT");
+    click(&mut v, "TPDF");
+    click(&mut v, "MP3");
+    let depth = v.values().depth;
+    // Both rows are greyed: pressing them changes nothing.
+    click(&mut v, "24-BIT");
+    click(&mut v, "SHAPED");
+    assert_eq!(v.values().depth, depth);
+    assert_ne!(v.values().dither, ExportDither::Shaped);
+    let text = texts(&v);
+    assert!(
+        text.iter().any(|t| t.contains("true-peak headroom")),
+        "the panel says to leave headroom for lossy encoding: {text:?}"
+    );
+}
+
+#[test]
+fn without_ffmpeg_the_compressed_formats_are_disabled_with_a_line_that_says_what_to_do() {
+    let mut v = ExportView::new(Theme::dark());
+    v.set_bounds(BOUNDS);
+    v.set_encoder(EncoderState::Missing(MISSING.to_owned()));
+    v.open(
+        ExportScope::Song,
+        "my song.wav",
+        48_000,
+        ExportValues::default(),
+    );
+    for label in ["MP3", "AAC", "OPUS"] {
+        // Shown, but pressing them does nothing.
+        assert!(v.button_rect(label).is_some(), "{label}");
+        click(&mut v, label);
+        assert_eq!(v.values().file, ExportFile::Wav, "{label}");
+        let tip = v.help_at(center(&v, label)).unwrap();
+        assert_eq!(tip.text, MISSING, "the tooltip says how to set FFmpeg up");
+    }
+    assert!(has(&texts(&v), MISSING), "{:?}", texts(&v));
+    // The lossless formats are untouched.
+    click(&mut v, "FLAC");
+    assert_eq!(v.values().file, ExportFile::Flac);
+    // Finding FFmpeg later enables them and clears the line.
+    v.set_encoder(EncoderState::Ready);
+    assert!(!has(&texts(&v), MISSING));
+    click(&mut v, "OPUS");
+    assert_eq!(v.values().file, ExportFile::Opus);
+}
+
+#[test]
+fn a_remembered_compressed_format_falls_back_to_wav_when_ffmpeg_is_missing() {
+    let remembered = ExportValues {
+        file: ExportFile::Mp3,
+        mp3: ExportQuality::Vbr(0),
+        ..ExportValues::default()
+    };
+    let mut v = ExportView::new(Theme::dark());
+    v.set_bounds(BOUNDS);
+    v.set_encoder(EncoderState::Checking);
+    v.open(ExportScope::Song, "a.wav", 48_000, remembered);
+    // While FFmpeg is being looked for the choice stays, and EXPORT waits.
+    assert_eq!(v.values().file, ExportFile::Mp3);
+    assert!(click(&mut v, "EXPORT").is_empty());
+    assert!(key(&mut v, Key::Enter).is_empty());
+    v.set_encoder(EncoderState::Ready);
+    assert_eq!(
+        start_values(click(&mut v, "EXPORT")).mp3,
+        ExportQuality::Vbr(0)
+    );
+    v.set_encoder(EncoderState::Missing(MISSING.to_owned()));
+    assert_eq!(v.values().file, ExportFile::Wav);
+    assert_eq!(start_values(click(&mut v, "EXPORT")).file, ExportFile::Wav);
+}
+
+#[test]
+fn stems_are_never_compressed() {
+    let remembered = ExportValues {
+        file: ExportFile::Aac,
+        ..ExportValues::default()
+    };
+    let mut v = ExportView::new(Theme::dark());
+    v.set_bounds(BOUNDS);
+    v.open(ExportScope::Stems, "stems", 48_000, remembered);
+    assert_eq!(v.values().file, ExportFile::Wav);
+    for label in ["MP3", "AAC", "OPUS"] {
+        click(&mut v, label);
+        assert_eq!(v.values().file, ExportFile::Wav, "{label}");
+        let tip = v.help_at(center(&v, label)).unwrap();
+        assert!(tip.text.contains("WAV, AIFF or FLAC"), "{}", tip.text);
+    }
+}
+
+#[test]
+fn a_loop_and_a_selection_can_be_compressed_too() {
+    for scope in [ExportScope::Loop, ExportScope::Selection] {
+        let mut v = view(scope);
+        click(&mut v, "OPUS");
+        click(&mut v, "160 kbps");
+        let started = start_values(click(&mut v, "EXPORT"));
+        assert_eq!((started.file, started.opus), (ExportFile::Opus, 160));
+    }
+}
+
+#[test]
+fn every_compressed_button_has_a_short_tooltip() {
+    let mut v = view(ExportScope::Song);
+    for file in ["MP3", "AAC", "OPUS"] {
+        click(&mut v, file);
+        let tip = v.help_at(center(&v, file)).unwrap();
+        assert!(tip.text.len() <= 90, "{}", tip.text);
+        for label in ["64 kbps", "128 kbps", "320 kbps", "V0", "V2", "V4"] {
+            if v.button_rect(label).is_some() {
+                let tip = v.help_at(center(&v, label)).unwrap();
+                assert!(tip.text.len() <= 90, "{label}: {}", tip.text);
+            }
+        }
+        let depth = v.help_at(center(&v, "16-BIT")).unwrap();
+        assert!(depth.text.contains("compressed"), "{}", depth.text);
+    }
+}
+
+#[test]
+fn the_panel_with_six_formats_and_a_quality_row_fits_in_its_width() {
+    let mut v = view(ExportScope::Song);
+    click(&mut v, "MP3");
+    let panel = v.panel();
+    for label in ["OPUS", "V4", "320 kbps"] {
+        let r = v.button_rect(label).unwrap();
+        assert!(
+            r.x1 <= panel.x1 - 14.0 + 0.5,
+            "{label} ends at {} of {}",
+            r.x1,
+            panel.x1
+        );
+    }
 }

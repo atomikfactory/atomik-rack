@@ -487,8 +487,8 @@ pub use delivery_panel::{
 pub use display_list::{DisplayList, Op};
 pub use event::{ImeEvent, Key, Modifiers, NumpadKey, PointerButton, UiEvent};
 pub use export_panel::{
-    EXPORT_RATES, ExportAction, ExportDepth, ExportDither, ExportFile, ExportScope, ExportValues,
-    ExportView,
+    AAC_BITRATES, EXPORT_RATES, EncoderState, ExportAction, ExportDepth, ExportDither, ExportFile,
+    ExportQuality, ExportScope, ExportValues, ExportView, MP3_BITRATES, MP3_VBR, OPUS_BITRATES,
 };
 pub use file_browser::{DetailData, FileBrowserView, PlacesData, TreeChild};
 pub use io_panel::IoSocketState;
