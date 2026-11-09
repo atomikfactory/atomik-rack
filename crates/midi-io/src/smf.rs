@@ -12,8 +12,10 @@
 //! running status carries across meta events and SysEx, a note-on with velocity 0 stays a
 //! [`SmfMessage::NoteOn`] (the caller decides it is an off), a track chunk that claims more bytes
 //! than the file has is read up to the end of the file, and an event cut short by the end of its
-//! chunk ends the track. A data byte with no running status, a data byte above 127, a delta
-//! time of more than four bytes, a bad header or a file with no track at all are errors. It never
+//! chunk ends the track. A channel message missing its data bytes (the next byte is above 127,
+//! as some exporters write a program change with no program) is dropped, and reading goes on
+//! with that byte as the next delta time. A data byte with no running status, a delta time of
+//! more than four bytes, a bad header or a file with no track at all are errors. It never
 //! panics, for any input, and it keeps at most [`MAX_EVENTS_PER_TRACK`] events per track and
 //! [`MAX_EVENTS`] per file (a larger count is an error), so a small hostile file cannot make it
 //! allocate without bound.
@@ -406,18 +408,27 @@ fn read_track(data: &[u8], index: usize, base: usize) -> Result<SmfTrack, SmfErr
                 };
                 let mut d = [0u8; 2];
                 let mut cut = false;
+                let mut short = false;
                 for slot in d.iter_mut().take(wants) {
                     let Some(b) = c.u8() else {
                         cut = true;
                         break;
                     };
                     if b >= 0x80 {
-                        return Err(bad(&c, "a data byte above 127"));
+                        // Some exporters write a message without its data bytes (a program
+                        // change with no program). The byte belongs to the next delta time:
+                        // drop the short message and read on from there.
+                        c.pos -= 1;
+                        short = true;
+                        break;
                     }
                     *slot = b;
                 }
                 if cut {
                     break;
+                }
+                if short {
+                    continue;
                 }
                 let message = match status >> 4 {
                     0x8 => SmfMessage::NoteOff {
