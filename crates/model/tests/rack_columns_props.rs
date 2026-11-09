@@ -215,3 +215,31 @@ proptest! {
         prop_assert_eq!(d.doc(), &last);
     }
 }
+
+/// An effect created under a channel at a slot above the channel's own insert chain joins the
+/// chain; the step must undo (the layout it records starts from the order the rack really had).
+#[test]
+fn an_effect_created_at_a_slot_inside_an_insert_chain_undoes_and_redoes() {
+    let ops = [
+        Op::PasteAt(vec![0], 0, 0),
+        Op::Duplicate(vec![4]),
+        Op::InstrumentAt(0, 4),
+        Op::AddFlat(0),
+        Op::EffectAt(0, 6),
+        Op::EffectAt(0, 6),
+    ];
+    let r = reg();
+    let mut d = base(&r);
+    for op in &ops {
+        let Some(c) = command(&d, op) else { continue };
+        let before = save_project(d.doc());
+        if d.apply(c, &r).is_err() {
+            continue;
+        }
+        let after = save_project(d.doc());
+        assert!(d.undo().is_some(), "{op:?} can be undone");
+        assert_eq!(save_project(d.doc()), before, "{op:?} undoes to the start");
+        assert!(d.redo().is_some(), "{op:?} can be redone");
+        assert_eq!(save_project(d.doc()), after, "{op:?} redoes to the end");
+    }
+}

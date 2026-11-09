@@ -111,6 +111,14 @@ impl<B: AudioBackend> Shell<B> {
         {
             return Some(help);
         }
+        // The guide panel floats over the song (and under every modal).
+        if window == WindowKind::Main
+            && !self.modal_open()
+            && let Some(guide) = &self.guide
+            && guide.rect(self.guide_bounds()).contains(pos)
+        {
+            return guide.help_at(self.guide_bounds(), pos);
+        }
         // The modals take the whole window, in the order they take the events.
         if let Some(v) = &self.plugin_settings {
             return v.help_at(pos);

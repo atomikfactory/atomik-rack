@@ -15,8 +15,8 @@ use atomik_testkit::harness::DeviceHarness;
 use atomik_testkit::no_alloc::assert_no_alloc;
 use sandbox_support::SR;
 use sandbox_support::{
-    FORMATS, Format, METER_LATE, METER_STATE, Plug, Sandbox, bits, config, config_with_env, effect,
-    meters, null_plugin, out_l, request, request_with_state, run_to_crash,
+    CRASH_DEADLINE, FORMATS, Format, METER_LATE, METER_STATE, Plug, Sandbox, bits, config,
+    config_with_env, effect, meters, null_plugin, out_l, request, request_with_state, run_to_crash,
 };
 use std::time::Duration;
 
@@ -172,7 +172,7 @@ fn crash_case(mut sb: Sandbox, plugin: &PluginRef) {
     let id = handle.id;
     let slot = sb.manager.slot(id).unwrap();
     let mut h = effect(handle, 0.25);
-    let batches = run_to_crash(&mut h, 0.25, 500);
+    let batches = run_to_crash(&mut h, 0.25, CRASH_DEADLINE);
     println!("crashed after {batches} batches");
     assert_eq!(slot.device_state(), DeviceState::Crashed);
     for _ in 0..10 {
@@ -247,13 +247,8 @@ fn a_crashed_effect_with_no_input_cabled_is_silent() {
     let mut sb = null_sandbox();
     let handle = instantiate_null(&mut sb, "null.crash", RunMode::Realtime);
     let mut h = DeviceHarness::new(Box::new(handle.device), SR);
-    for _ in 0..500 {
-        h.process();
-        if meters(&h)[METER_STATE] == DeviceState::Crashed.as_f32() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    // The batch that finds the crash is the dry input, which is silence with no input cabled.
+    run_to_crash(&mut h, 0.0, CRASH_DEADLINE);
     assert_eq!(meters(&h)[METER_STATE], DeviceState::Crashed.as_f32());
     assert!(out_l(&h).iter().all(|s| *s == 0.0));
     drop(h);
@@ -486,7 +481,7 @@ fn a_lost_instance_fails_every_call_with_the_process_stopped_text() {
     let handle = instantiate_null(&mut sb, "null.crash", RunMode::Realtime);
     let id = handle.id;
     let mut h = effect(handle, 0.25);
-    run_to_crash(&mut h, 0.25, 500);
+    run_to_crash(&mut h, 0.25, CRASH_DEADLINE);
     let e = sb.manager.capture_state(id).unwrap_err();
     assert!(e.to_string().contains(LOST), "{e}");
     drop(h);

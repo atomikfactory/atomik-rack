@@ -896,6 +896,9 @@ pub enum BrowseAction {
     SetRecursive(bool),
     /// Auto-preview on selection changed (persist it).
     SetAutoPreview(bool),
+    /// The level of the preview control changed, in whole dB (apply it to the next previews and
+    /// persist it).
+    SetPreviewLevel(f32),
     /// Start previewing this audio file (replaces any preview).
     Preview(PathBuf),
     /// Stop the preview.

@@ -70,6 +70,18 @@ Builds are code-signed (Windows) and notarised (macOS) only when the project's s
 - **macOS.** Open the disk image and drag `Atomik Rack.app` to Applications (or unzip the archive). A build that is not notarised is only ad-hoc signed: right-click the app, choose **Open**, then **Open** again. Or remove the quarantine flag once: `xattr -dr com.apple.quarantine "/Applications/Atomik Rack.app"`.
 - **Linux.** Install the package with `sudo apt-get install ./atomik-rack_<version>_amd64.deb` (it pulls in ALSA and fontconfig and puts `atomik` on your path), or extract the archive and run `./atomik`. The archive needs ALSA (`libasound2`), fontconfig (`libfontconfig1`) and a working Vulkan or OpenGL driver; on Debian/Ubuntu: `sudo apt-get install libasound2 libfontconfig1`.
 
+## First steps
+
+The start screen opens when Atomik Rack starts without a song, and File > Start Screen shows it at any time. It
+offers a new song, the templates, your recent songs (pin one to keep it at the top) and a strip of cards: the
+example songs that ship with the program (each opens as a new unsaved song, so the shipped copy is never changed)
+and **Make your first song**. That card, or Help > Guided Tour, opens a new song and shows a small panel with seven
+steps: add an instrument, play or draw some notes, loop them, add a drum pattern, mix (move a level and add an
+effect), save, and export. Each step says what to do and moves on by itself when the song shows it is done; the
+control it talks about is outlined where there is one. Back, Skip, Move (to the other side of the window) and Close
+are always there, the panel never takes the keyboard and you can use the song as usual while it is open. A check box
+at the foot of the start screen turns the card off.
+
 ## Building
 
 You need a Rust toolchain. [rust-toolchain.toml](rust-toolchain.toml) pins the version and `rustup` installs it automatically.

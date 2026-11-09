@@ -140,12 +140,13 @@ use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane, Reveal
 use crate::commands::{AppCommand, Menu, MenuState, ScaleStep, SongList, menus_with_songs};
 use crate::context_menus::{self, MenuEnable};
 use crate::export_prefs::ExportPrefs;
+use crate::guide::{Guide, GuideOutcome, Spot};
 use crate::keymap_store::{self, WorkflowPrefs};
 use crate::menubar::{MENU_BAR_HEIGHT, MenuBar, MenuBarOutcome};
 use crate::session::{AudioBackend, LiveSession, SettingsChange};
 use crate::settings::{self, AudioSettings, LastGood, SurfaceSettings};
 use crate::settings_dialog::{DeviceLists, DialogOutcome, SettingsDialog};
-use crate::start_screen::{RecentRow, StartOutcome, StartScreen};
+use crate::start_screen::{ExampleCard, RecentRow, StartOutcome, StartScreen};
 use crate::status::{AudioStatus, OverloadStats, status_text};
 use crate::stress::{STRESS_CABLES, STRESS_DEVICES, stress_doc, stress_song_doc};
 use crate::ui_state::UiState;
@@ -488,6 +489,8 @@ pub struct Shell<B: AudioBackend> {
     update_notice: Option<UpdateNotice>,
     /// The newer release the news is about (what its buttons act on).
     update_release: Option<atomik_update::Release>,
+    /// The guided first song, while its panel is open (shell state: never saved in a song).
+    guide: Option<Guide>,
     /// The operating system is set to a dark theme (what the System theme choice follows).
     system_dark: bool,
     /// The rack split before a double-click on the divider collapsed the rack: the next
@@ -812,6 +815,7 @@ impl<B: AudioBackend> Shell<B> {
             updater: Updater::new(updates_path),
             update_notice: None,
             update_release: None,
+            guide: None,
             color_picker: None,
             notes: None,
             notes_values: NotesValues::default(),
@@ -2210,12 +2214,21 @@ impl<B: AudioBackend> Shell<B> {
             .map(|t| t.name.clone())
             .collect();
         let recent = self.start_recent_rows();
-        self.start_screen = Some(StartScreen::new(
-            templates,
-            recent,
-            self.workflow.default_song.is_some(),
-            self.workflow.show_start_screen,
-        ));
+        let examples: Vec<ExampleCard> = self
+            .core
+            .examples()
+            .into_iter()
+            .map(|e| ExampleCard::new(e.name, e.line))
+            .collect();
+        self.start_screen = Some(
+            StartScreen::new(
+                templates,
+                recent,
+                self.workflow.default_song.is_some(),
+                self.workflow.show_start_screen,
+            )
+            .with_cards(examples, self.workflow.show_guide_card),
+        );
         self.fill_template_preview();
         self.repaint = true;
     }
@@ -2257,6 +2270,11 @@ impl<B: AudioBackend> Shell<B> {
             }
             StartOutcome::ShowAtStart(on) => {
                 self.workflow.show_start_screen = on;
+                self.save_workflow();
+                Vec::new()
+            }
+            StartOutcome::ShowGuide(on) => {
+                self.workflow.show_guide_card = on;
                 self.save_workflow();
                 Vec::new()
             }
@@ -3271,6 +3289,7 @@ impl<B: AudioBackend> Shell<B> {
             .set_reverse_mode(self.workflow.reverse_mode.graphical());
         self.core.set_midi_resolution(self.workflow.midi_resolution);
         self.core.set_keep_versions(self.workflow.keep_versions);
+        self.core.set_preview_db(self.workflow.preview_db);
         self.core
             .view_mut()
             .set_value_tips(self.workflow.value_tooltips);
@@ -5493,6 +5512,16 @@ impl<B: AudioBackend> Shell<B> {
             return self.context_menu_event(window, event);
         }
         let bar_open = self.menubar.as_ref().is_some_and(MenuBar::is_open);
+        // The guide panel takes the pointer inside its own rectangle and nothing else: never a
+        // key, so the song keeps the keyboard.
+        if window == WindowKind::Main
+            && self.capture.is_none()
+            && self.file_drag.is_none()
+            && !bar_open
+            && let Some(requests) = self.guide_event(event)
+        {
+            return requests;
+        }
         if matches!(event, UiEvent::Ime(_)) {
             if let Some(pane) = self.ime_target().filter(|_| !bar_open) {
                 self.repaint = true;
@@ -6837,6 +6866,11 @@ impl<B: AudioBackend> Shell<B> {
                     self.ui_changed();
                 }
                 UiAction::Browse(BrowseAction::SetAutoPreview(_)) => self.ui_changed(),
+                // The level lives in Settings (workflow.json), not in the window state.
+                UiAction::Browse(BrowseAction::SetPreviewLevel(_)) => {
+                    self.workflow.preview_db = self.core.preview_db();
+                    self.save_workflow();
+                }
                 UiAction::Browse(BrowseAction::Reveal(path)) => {
                     self.pending.push(ShellRequest::Reveal(path.clone()));
                 }
@@ -7113,6 +7147,8 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::New
             | AppCommand::NewAtRate(_)
             | AppCommand::NewFromTemplate(_)
+            | AppCommand::OpenExample(_)
+            | AppCommand::GuidedTour
             | AppCommand::Open
             | AppCommand::Close
             | AppCommand::CloseSongWindow
@@ -8381,6 +8417,14 @@ impl<B: AudioBackend> Shell<B> {
                 self.new_from_template(i);
                 Vec::new()
             }
+            AppCommand::OpenExample(i) => {
+                self.open_example(i);
+                Vec::new()
+            }
+            AppCommand::GuidedTour => {
+                self.start_guide();
+                Vec::new()
+            }
             AppCommand::NewAtRate(rate) => {
                 self.core.new_document_at(rate);
                 Vec::new()
@@ -8553,6 +8597,112 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// A factory example from the start screen: the example at this place of the list, as an
+    /// untitled song (the factory copy is never the song's file).
+    fn open_example(&mut self, index: usize) {
+        let Some(entry) = self.core.examples().into_iter().nth(index) else {
+            return;
+        };
+        if let Err(e) = self.core.open_template(&entry.path) {
+            self.notify(e.to_string());
+        }
+    }
+
+    /// Help > Guided Tour: a new starter song and the guide panel at its first step.
+    fn start_guide(&mut self) {
+        self.core.new_document();
+        self.guide = Some(Guide::new());
+        self.sync_guide();
+    }
+
+    /// Whether the guide panel is open.
+    pub fn guide_open(&self) -> bool {
+        self.guide.is_some()
+    }
+
+    /// The guided first song, while its panel is open.
+    pub fn guide(&self) -> Option<&Guide> {
+        self.guide.as_ref()
+    }
+
+    /// The area the guide panel floats in: the window between the menu bar and the status bar,
+    /// without the file browser column and the Track Panel column.
+    pub fn guide_bounds(&self) -> Rect {
+        let size = self.size();
+        let layout = self.layout();
+        let x0 = layout.file_browser.map_or(0.0, |r| r.x1);
+        let x1 = layout.track_panel.map_or(size.width, |r| r.x0);
+        Rect::new(
+            x0,
+            self.bar_height(),
+            x1.max(x0 + 1.0),
+            (size.height - STATUS_BAR_HEIGHT).max(self.bar_height() + 1.0),
+        )
+    }
+
+    /// The rectangle of the control the guide's step talks about, where the interface has one
+    /// (the menus of a native menu bar have none).
+    pub fn guide_outline(&self) -> Option<Rect> {
+        let step = self.guide.as_ref()?.current()?;
+        match step.spot() {
+            Spot::Menu(title) => {
+                self.menubar.as_ref()?;
+                let menus = self.menu_model();
+                let at = menus.iter().position(|m| m.title == title)?;
+                MenuBar::title_rects(&menus).get(at).copied()
+            }
+            Spot::Loop => Some(
+                self.core
+                    .transport_bar()
+                    .button_rect(atomik_ui::TransportButton::Loop),
+            ),
+            Spot::Song => self.layout().song,
+            Spot::Rack => Some(self.layout().rack),
+        }
+    }
+
+    /// Takes a new look at the song for the guide (once a frame, and when it starts).
+    fn sync_guide(&mut self) {
+        if self.guide.is_none() {
+            return;
+        }
+        let progress = self.core.guide_progress();
+        if let Some(guide) = &mut self.guide
+            && guide.update(progress)
+        {
+            self.repaint = true;
+        }
+    }
+
+    /// An event for the guide panel: `Some` when the panel took it.
+    fn guide_event(&mut self, event: &UiEvent) -> Option<Vec<ShellRequest>> {
+        let bounds = self.guide_bounds();
+        let guide = self.guide.as_mut()?;
+        let was_hot = guide.hovered().is_some();
+        let outcome = guide.handle(event, bounds);
+        match outcome {
+            GuideOutcome::Ignored => {
+                if was_hot {
+                    self.repaint = true;
+                }
+                None
+            }
+            GuideOutcome::Consumed => {
+                self.repaint = true;
+                if matches!(event, UiEvent::PointerMove { .. }) {
+                    self.leave_hover();
+                }
+                self.sync_guide();
+                Some(Vec::new())
+            }
+            GuideOutcome::Close => {
+                self.guide = None;
+                self.repaint = true;
+                Some(Vec::new())
+            }
+        }
+    }
+
     /// File > New from Template > Save as Template: a copy of the song in the templates folder.
     fn save_as_template(&mut self) {
         let name = self.core.template_name();
@@ -8670,6 +8820,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_quantize();
         self.sync_kick_bass();
         self.sync_zone();
+        self.sync_guide();
         // Imports and loads finish between frames: keep painting until the last one landed.
         if busy || self.core.is_busy() {
             self.repaint = true;
@@ -9577,6 +9728,14 @@ impl<B: AudioBackend> Shell<B> {
             menubar.paint(canvas, &theme, &model, Size::new(w, h));
         }
         self.paint_overlays(WindowKind::Main, canvas, &theme, Size::new(w, h));
+        if let Some(guide) = &self.guide
+            && !self.modal_open()
+        {
+            if let Some(outline) = self.guide_outline() {
+                crate::guide::paint_outline(canvas, &theme, outline);
+            }
+            guide.paint(canvas, &theme, self.guide_bounds());
+        }
         if let Some(dialog) = &self.dialog {
             dialog.paint(canvas, &theme, self.size());
         }
@@ -9980,3 +10139,7 @@ mod edit_keys_tests;
 #[cfg(test)]
 #[path = "shell_start_screen_tests.rs"]
 mod start_screen_tests;
+
+#[cfg(test)]
+#[path = "shell_guide_tests.rs"]
+mod guide_tests;

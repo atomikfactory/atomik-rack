@@ -1,0 +1,22 @@
+{"ops":[
+{"fill":{"rrect":[686.00,552.00,986.00,764.00,10.00]},"brush":"#f2f3f5ff"},
+{"stroke":{"rrect":[686.00,552.00,986.00,764.00,10.00]},"width":1.00,"cap":"round","join":"round","brush":"#0000002e"},
+{"text":"MAKE YOUR FIRST SONG   STEP 5 OF 7","at":[702.00,576.00],"size":10.50,"weight":700,"align":"start","color":"#4d545eff"},
+{"text":"Mix it","at":[702.00,598.00],"size":14.50,"weight":700,"align":"start","color":"#1b1e23ff"},
+{"text":"Move a channel fader to set a level, then","at":[702.00,620.00],"size":11.50,"weight":400,"align":"start","color":"#4d545eff"},
+{"text":"add an effect with Ctrl+E (Cmd+E on a Mac),","at":[702.00,635.50],"size":11.50,"weight":400,"align":"start","color":"#4d545eff"},
+{"text":"a reverb or a delay for example.","at":[702.00,651.00],"size":11.50,"weight":400,"align":"start","color":"#4d545eff"},
+{"stroke":{"rrect":[702.00,683.00,713.00,694.00,2.50]},"width":1.00,"cap":"round","join":"round","brush":"#4d545eff"},
+{"fill":{"rrect":[704.50,685.50,710.50,691.50,1.00]},"brush":"#aa6600ff"},
+{"text":"a channel level moved","at":[721.00,692.00],"size":11.50,"weight":400,"align":"start","color":"#1b1e23ff"},
+{"stroke":{"rrect":[702.00,699.00,713.00,710.00,2.50]},"width":1.00,"cap":"round","join":"round","brush":"#4d545eff"},
+{"text":"an effect","at":[721.00,708.00],"size":11.50,"weight":400,"align":"start","color":"#4d545eff"},
+{"fill":{"rrect":[702.00,724.00,758.00,750.00,6.00]},"brush":"#e1e4e8ff"},
+{"text":"Back","at":[730.00,741.50],"size":12.00,"weight":400,"align":"center","color":"#1b1e23ff"},
+{"fill":{"rrect":[764.00,724.00,820.00,750.00,6.00]},"brush":"#f0b030b0"},
+{"text":"Skip","at":[792.00,741.50],"size":12.00,"weight":400,"align":"center","color":"#1b1e23ff"},
+{"fill":{"rrect":[852.00,724.00,908.00,750.00,6.00]},"brush":"#e1e4e8ff"},
+{"text":"Move","at":[880.00,741.50],"size":12.00,"weight":400,"align":"center","color":"#1b1e23ff"},
+{"fill":{"rrect":[914.00,724.00,970.00,750.00,6.00]},"brush":"#e1e4e8ff"},
+{"text":"Close","at":[942.00,741.50],"size":12.00,"weight":400,"align":"center","color":"#1b1e23ff"}
+]}

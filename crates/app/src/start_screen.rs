@@ -6,6 +6,11 @@
 //! meter ([`TemplatePreview`], read by the shell on demand). A recent song has a pin: a pinned
 //! song stays at the top of the list (click the pin, or press P on the row).
 //!
+//! Below the title a strip of cards offers more: the factory example songs (each opens as a new
+//! unsaved song, with a line saying what it is for) and "Make your first song", which starts the
+//! guided first song (the same command as Help > Guided Tour). A second check box at the foot
+//! hides the guide card; the strip is then all examples.
+//!
 //! The box only draws and picks: what a pick does is an [`AppCommand`] the shell runs, the same
 //! command the File menu runs for that row, so the question about unsaved changes, a template
 //! that is gone and a recent song that is gone behave exactly as they do there.
@@ -43,6 +48,18 @@ const CARD_WIDTH: f64 = 232.0;
 /// The most tracks the template card lists.
 const CARD_TRACKS: usize = 8;
 const CARD_LINE: f64 = 16.0;
+/// The height of a card of the strip, and the space the strip takes (the card and a gap).
+const STRIP_CARD: f64 = 88.0;
+const STRIP: f64 = STRIP_CARD + 14.0;
+const STRIP_GAP: f64 = 12.0;
+/// The widest a card of the strip gets (one card alone does not stretch over the box).
+const STRIP_CARD_WIDTH: f64 = 240.0;
+/// The most example cards the strip shows.
+pub const VISIBLE_EXAMPLES: usize = 3;
+/// A box shorter than this has no room for the strip: the lists come first.
+const STRIP_MIN_HEIGHT: f64 = 540.0;
+/// The width of the "show at start-up" check box when a second one sits beside it.
+const CHECK_SPLIT: f64 = 332.0;
 
 /// One recent song as the box lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +99,25 @@ impl RecentRow {
     }
 }
 
+/// One example song as the strip shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExampleCard {
+    /// The song name.
+    pub name: String,
+    /// What it is for, in a line.
+    pub line: String,
+}
+
+impl ExampleCard {
+    /// A card for the example `name` with its `line`.
+    pub fn new(name: impl Into<String>, line: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            line: line.into(),
+        }
+    }
+}
+
 /// What a row of the box does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
@@ -98,6 +134,12 @@ pub enum Target {
     Pin(usize),
     /// The "show at start-up" check box.
     ShowAtStart,
+    /// The "Make your first song" card: the guided first song.
+    Guide,
+    /// The card of the example at this place of the examples list.
+    Example(usize),
+    /// The check box that shows or hides the guide card.
+    ShowGuide,
     /// The Close button.
     Close,
 }
@@ -110,7 +152,9 @@ impl Target {
             Target::Open => Some(AppCommand::Open),
             Target::Template(i) => Some(AppCommand::NewFromTemplate(i)),
             Target::Recent(i) => Some(AppCommand::OpenRecent(i)),
-            Target::Pin(_) | Target::ShowAtStart | Target::Close => None,
+            Target::Guide => Some(AppCommand::GuidedTour),
+            Target::Example(i) => Some(AppCommand::OpenExample(i)),
+            Target::Pin(_) | Target::ShowAtStart | Target::ShowGuide | Target::Close => None,
         }
     }
 }
@@ -126,6 +170,8 @@ pub enum StartOutcome {
     Run(AppCommand),
     /// The check box was flipped: the preference is now this.
     ShowAtStart(bool),
+    /// The guide card check box was flipped: the preference is now this.
+    ShowGuide(bool),
     /// Pin or unpin the song at this place of the recent list; the shell changes the list and
     /// gives the box the new rows ([`StartScreen::set_recent`]).
     TogglePin(usize),
@@ -141,6 +187,12 @@ pub struct StartScreen {
     recent: Vec<RecentRow>,
     default_song: bool,
     show_at_start: bool,
+    /// The example songs of the strip.
+    examples: Vec<ExampleCard>,
+    /// The strip and the second check box exist (the shell asks for them; a bare box has none).
+    guide_offered: bool,
+    /// The guide card shows in the strip.
+    show_guide: bool,
     focus: Target,
     hover: Option<Target>,
 }
@@ -164,9 +216,48 @@ impl StartScreen {
             recent,
             default_song,
             show_at_start,
+            examples: Vec::new(),
+            guide_offered: false,
+            show_guide: true,
             focus: Target::New,
             hover: None,
         }
+    }
+
+    /// The same box with the strip of cards: the `examples` (at most [`VISIBLE_EXAMPLES`]) and
+    /// the guide card, shown while `show_guide` is on (the second check box flips it).
+    pub fn with_cards(mut self, examples: Vec<ExampleCard>, show_guide: bool) -> Self {
+        self.examples = examples;
+        self.examples.truncate(VISIBLE_EXAMPLES);
+        self.guide_offered = true;
+        self.show_guide = show_guide;
+        self
+    }
+
+    /// Whether the guide card is on (the second check box is ticked).
+    pub fn show_guide(&self) -> bool {
+        self.show_guide
+    }
+
+    /// The example cards.
+    pub fn examples(&self) -> &[ExampleCard] {
+        &self.examples
+    }
+
+    /// Whether there is a card to show at all.
+    fn has_cards(&self) -> bool {
+        (self.guide_offered && self.show_guide) || !self.examples.is_empty()
+    }
+
+    /// Whether the strip of cards is drawn: there are cards and the box is big enough.
+    pub fn cards_shown(&self, view: Size) -> bool {
+        self.has_cards() && self.two_columns(view) && self.rect(view).height() >= STRIP_MIN_HEIGHT
+    }
+
+    /// Where the lists start: lower when the strip is above them.
+    fn top(&self, view: Size) -> f64 {
+        let strip = if self.cards_shown(view) { STRIP } else { 0.0 };
+        self.rect(view).y0 + TOP + strip
     }
 
     /// The row that has the keys.
@@ -233,7 +324,8 @@ impl StartScreen {
     /// The box in a window of `view` (logical units).
     pub fn rect(&self, view: Size) -> Rect {
         let w = (view.width - 32.0).clamp(300.0, WIDTH);
-        let h = (view.height - 32.0).clamp(240.0, HEIGHT);
+        let strip = if self.has_cards() { STRIP } else { 0.0 };
+        let h = (view.height - 32.0).clamp(240.0, HEIGHT + strip);
         let x0 = ((view.width - w) / 2.0).max(0.0);
         let y0 = ((view.height - h) / 2.0).max(0.0);
         Rect::new(x0, y0, x0 + w, y0 + h)
@@ -250,15 +342,67 @@ impl StartScreen {
         )
     }
 
+    /// Whether the second check box (the guide card) is drawn.
+    fn guide_check_shown(&self, view: Size) -> bool {
+        self.guide_offered && self.two_columns(view)
+    }
+
     /// The check box and its label.
     pub fn check_row(&self, view: Size) -> Rect {
         let r = self.rect(view);
+        let right = if self.guide_check_shown(view) {
+            r.x0 + PAD + CHECK_SPLIT
+        } else {
+            r.x1 - 2.0 * PAD - BUTTON.0
+        };
         Rect::new(
             r.x0 + PAD,
+            r.y1 - FOOT + 14.0,
+            right,
+            r.y1 - FOOT + 14.0 + BUTTON.1,
+        )
+    }
+
+    /// The check box of the guide card, beside the first one.
+    pub fn guide_check_row(&self, view: Size) -> Rect {
+        let r = self.rect(view);
+        Rect::new(
+            r.x0 + PAD + CHECK_SPLIT,
             r.y1 - FOOT + 14.0,
             r.x1 - 2.0 * PAD - BUTTON.0,
             r.y1 - FOOT + 14.0 + BUTTON.1,
         )
+    }
+
+    /// The cards of the strip, in order: the guide card, then the examples.
+    fn card_targets(&self) -> Vec<Target> {
+        let mut targets = Vec::new();
+        if self.guide_offered && self.show_guide {
+            targets.push(Target::Guide);
+        }
+        targets.extend((0..self.examples.len()).map(Target::Example));
+        targets
+    }
+
+    /// The cards of the strip that are drawn, left to right.
+    fn card_rows(&self, view: Size) -> Vec<(Target, Rect)> {
+        if !self.cards_shown(view) {
+            return Vec::new();
+        }
+        let targets = self.card_targets();
+        let r = self.rect(view);
+        let n = targets.len() as f64;
+        let inner = r.width() - 2.0 * PAD;
+        let width = ((inner - STRIP_GAP * (n - 1.0)) / n).min(STRIP_CARD_WIDTH);
+        let y = r.y0 + TOP;
+        targets
+            .into_iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let x = r.x0 + PAD + (width + STRIP_GAP) * i as f64;
+                (t, Rect::new(x, y, x + width, y + STRIP_CARD))
+            })
+            .collect()
     }
 
     /// Whether the window is wide enough for the recent column beside the left one.
@@ -294,7 +438,7 @@ impl StartScreen {
 
     /// Where the headings of the left column sit: START, then TEMPLATES.
     fn left_headings(&self, view: Size) -> (f64, f64) {
-        let top = self.rect(view).y0 + TOP;
+        let top = self.top(view);
         (top, top + HEADING + 2.0 * ROW + 12.0)
     }
 
@@ -323,7 +467,7 @@ impl StartScreen {
     fn recent_rows(&self, view: Size) -> Vec<(Target, Rect)> {
         let (x0, x1) = self.right_x(view);
         let top = if self.two_columns(view) {
-            self.rect(view).y0 + TOP + HEADING
+            self.top(view) + HEADING
         } else {
             // One column: the recent songs have no room; the File menu lists them.
             return Vec::new();
@@ -354,7 +498,11 @@ impl StartScreen {
     pub fn rows(&self, view: Size) -> Vec<(Target, Rect)> {
         let mut rows = self.left_rows(view);
         rows.extend(self.recent_rows(view));
+        rows.extend(self.card_rows(view));
         rows.push((Target::ShowAtStart, self.check_row(view)));
+        if self.guide_check_shown(view) {
+            rows.push((Target::ShowGuide, self.guide_check_row(view)));
+        }
         rows.push((Target::Close, self.close_button(view)));
         rows
     }
@@ -383,6 +531,11 @@ impl StartScreen {
             }
             Target::Pin(_) => "Pin this song: it stays at the top of the list",
             Target::ShowAtStart => "Show this screen whenever Atomik Rack starts without a song",
+            Target::Guide => "A new song and seven short steps that make a first song",
+            Target::Example(_) => "Open this example as a new, unsaved song",
+            Target::ShowGuide => {
+                "Show the first-song card here (Help > Guided Tour always starts it)"
+            }
             Target::Close => "Close the start screen",
         };
         Some(Help::new(rect, text))
@@ -400,6 +553,24 @@ impl StartScreen {
     fn move_in_column(&mut self, view: Size, delta: isize) {
         let left: Vec<Target> = self.left_rows(view).into_iter().map(|(t, _)| t).collect();
         let right: Vec<Target> = self.recent_rows(view).into_iter().map(|(t, _)| t).collect();
+        let cards: Vec<Target> = self.card_rows(view).into_iter().map(|(t, _)| t).collect();
+        if cards.contains(&self.focus) {
+            // Down leaves the strip for the first row of the lists; Up has nowhere to go.
+            if delta > 0
+                && let Some(first) = left.first()
+            {
+                self.focus = *first;
+            }
+            return;
+        }
+        // Up from the top of a list goes to the strip.
+        if delta < 0
+            && let Some(card) = cards.first()
+            && (left.first() == Some(&self.focus) || right.first() == Some(&self.focus))
+        {
+            self.focus = *card;
+            return;
+        }
         let column = if right.contains(&self.focus) {
             &right
         } else if left.contains(&self.focus) {
@@ -416,6 +587,19 @@ impl StartScreen {
         let at = column.iter().position(|t| *t == self.focus).unwrap_or(0) as isize;
         let to = (at + delta).clamp(0, column.len() as isize - 1) as usize;
         self.focus = column[to];
+    }
+
+    /// Whether the keys are on a card of the strip.
+    fn focus_on_card(&self, view: Size) -> bool {
+        self.card_rows(view).iter().any(|(t, _)| *t == self.focus)
+    }
+
+    /// Moves the keys to the next or previous card of the strip.
+    fn move_in_strip(&mut self, view: Size, delta: isize) {
+        let cards: Vec<Target> = self.card_rows(view).into_iter().map(|(t, _)| t).collect();
+        let at = cards.iter().position(|t| *t == self.focus).unwrap_or(0) as isize;
+        let to = (at + delta).clamp(0, cards.len() as isize - 1) as usize;
+        self.focus = cards[to];
     }
 
     /// Moves the keys to the other column, to the row at the same place (or the nearest).
@@ -451,6 +635,10 @@ impl StartScreen {
                 self.show_at_start = !self.show_at_start;
                 StartOutcome::ShowAtStart(self.show_at_start)
             }
+            Target::ShowGuide => {
+                self.show_guide = !self.show_guide;
+                StartOutcome::ShowGuide(self.show_guide)
+            }
             Target::Pin(i) => StartOutcome::TogglePin(i),
             other => other
                 .command()
@@ -478,6 +666,8 @@ impl StartScreen {
                 }
                 Key::Up => self.move_in_column(view, -1),
                 Key::Down => self.move_in_column(view, 1),
+                Key::Left if self.focus_on_card(view) => self.move_in_strip(view, -1),
+                Key::Right if self.focus_on_card(view) => self.move_in_strip(view, 1),
                 Key::Left => self.switch_column(view, false),
                 Key::Right => self.switch_column(view, true),
                 Key::Tab => self.step(view, modifiers.shift),
@@ -531,11 +721,19 @@ impl StartScreen {
         let mut lines = vec![
             "Atomik Rack".to_string(),
             "Start a song, or pick up where you left off.".to_string(),
+        ];
+        if self.guide_offered && self.show_guide {
+            lines.push("Make your first song".to_string());
+        }
+        for e in &self.examples {
+            lines.push(e.name.clone());
+        }
+        lines.extend([
             "START".to_string(),
             self.new_label().to_string(),
             "Open\u{2026}".to_string(),
             "TEMPLATES".to_string(),
-        ];
+        ]);
         if self.templates.is_empty() {
             lines.push("No templates yet".to_string());
         }
@@ -548,6 +746,9 @@ impl StartScreen {
             lines.push(r.name.clone());
         }
         lines.push("Show this screen when Atomik Rack starts".to_string());
+        if self.guide_offered {
+            lines.push("Show the first-song card".to_string());
+        }
         lines.push("Close".to_string());
         lines
     }
@@ -588,7 +789,7 @@ impl StartScreen {
         heading(canvas, "TEMPLATES", lx, templates);
         if self.two_columns(view) {
             let (rx, _) = self.right_x(view);
-            heading(canvas, "RECENT", rx, r.y0 + TOP);
+            heading(canvas, "RECENT", rx, self.top(view));
         }
         let rule = snap_hairline(r.y1 - FOOT, 1.0);
         canvas.fill_with(
@@ -625,7 +826,7 @@ impl StartScreen {
                 let (rx, _) = self.right_x(view);
                 canvas.text(&TextRun::new(
                     "No songs opened yet",
-                    Point::new(rx + 10.0, r.y0 + TOP + HEADING + 18.0),
+                    Point::new(rx + 10.0, self.top(view) + HEADING + 18.0),
                     12.5,
                     theme.text_muted,
                 ));
@@ -686,8 +887,28 @@ impl StartScreen {
                 }
             }
         }
+        self.paint_strip(canvas, theme, view);
         self.paint_card(canvas, theme, view);
-        self.paint_check(canvas, theme, view);
+        let first = self.check_row(view);
+        self.paint_check(
+            canvas,
+            theme,
+            Target::ShowAtStart,
+            first,
+            "Show this screen when Atomik Rack starts",
+            self.show_at_start,
+        );
+        if self.guide_check_shown(view) {
+            let second = self.guide_check_row(view);
+            self.paint_check(
+                canvas,
+                theme,
+                Target::ShowGuide,
+                second,
+                "Show the first-song card",
+                self.show_guide,
+            );
+        }
         let b = self.close_button(view);
         self.paint_row_back(canvas, theme, Target::Close, b);
         canvas.text(
@@ -717,7 +938,7 @@ impl StartScreen {
         let width = CARD_WIDTH.min(rx1 - rx);
         let lines = self.card_lines(i);
         let height = 16.0 + CARD_LINE * (lines.len() as f64 + 1.0) + 6.0;
-        let top = self.rect(view).y0 + TOP;
+        let top = self.top(view);
         let bottom = self.list_bottom(view);
         let y0 = (row.y0 - 8.0).clamp(top, (bottom - height).max(top));
         let card = Rect::new(rx, y0, rx + width, y0 + height);
@@ -790,9 +1011,74 @@ impl StartScreen {
         }
     }
 
-    fn paint_check(&self, canvas: &mut dyn Canvas, theme: &Theme, view: Size) {
-        let row = self.check_row(view);
-        self.paint_row_back(canvas, theme, Target::ShowAtStart, row);
+    /// The strip of cards under the title: the guide card, then the examples.
+    fn paint_strip(&self, canvas: &mut dyn Canvas, theme: &Theme, view: Size) {
+        for (target, rect) in self.card_rows(view) {
+            let (title, line) = match target {
+                Target::Guide => (
+                    "Make your first song",
+                    "Seven short steps, from nothing to an export.",
+                ),
+                Target::Example(i) => (
+                    self.examples[i].name.as_str(),
+                    self.examples[i].line.as_str(),
+                ),
+                _ => continue,
+            };
+            let shape = RoundedRect::from_rect(rect, 8.0);
+            canvas.fill_with(shape, theme.browser_row);
+            if self.hover == Some(target) {
+                canvas.fill_with(shape, theme.selection);
+            }
+            let edge = if target == Target::Guide {
+                theme.highlight
+            } else {
+                theme.section_line
+            };
+            canvas.stroke_with(shape, 1.0, edge);
+            if self.focus == target {
+                canvas.stroke_with(shape, 1.5, theme.focus);
+            }
+            // A long title takes a second line and leaves two for the description.
+            let heading = atomik_ui::paint::wrap_name(title, rect.width() - 24.0, 13.0);
+            for (n, text) in heading.iter().enumerate() {
+                canvas.text(
+                    &TextRun::new(
+                        text.clone(),
+                        Point::new(rect.x0 + 12.0, rect.y0 + 21.0 + 15.0 * n as f64),
+                        13.0,
+                        theme.text,
+                    )
+                    .weight(700),
+                );
+            }
+            let first = 21.0 + 15.0 * (heading.len() as f64 - 1.0) + 20.0;
+            let room = if heading.len() > 1 { 2 } else { 3 };
+            for (n, text) in crate::guide::wrap(line, rect.width() - 24.0, 11.0)
+                .iter()
+                .take(room)
+                .enumerate()
+            {
+                canvas.text(&TextRun::new(
+                    text.clone(),
+                    Point::new(rect.x0 + 12.0, rect.y0 + first + 14.0 * n as f64),
+                    11.0,
+                    theme.text_muted,
+                ));
+            }
+        }
+    }
+
+    fn paint_check(
+        &self,
+        canvas: &mut dyn Canvas,
+        theme: &Theme,
+        target: Target,
+        row: Rect,
+        text: &str,
+        on: bool,
+    ) {
+        self.paint_row_back(canvas, theme, target, row);
         let cy = row.center().y;
         let square = Rect::new(
             row.x0 + 8.0,
@@ -802,18 +1088,13 @@ impl StartScreen {
         );
         let shape = RoundedRect::from_rect(square, 3.0);
         canvas.stroke_with(shape, 1.0, theme.text_muted);
-        if self.show_at_start {
+        if on {
             canvas.fill_with(
                 RoundedRect::from_rect(square.inset(-3.0), 1.5),
                 theme.highlight,
             );
         }
-        let label = fit_label_in(
-            canvas,
-            "Show this screen when Atomik Rack starts",
-            row.width() - 40.0,
-            12.5,
-        );
+        let label = fit_label_in(canvas, text, row.width() - 40.0, 12.5);
         canvas.text(&TextRun::new(
             label,
             Point::new(square.x1 + 8.0, cy + 4.5),
