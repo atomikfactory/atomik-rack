@@ -108,6 +108,7 @@ CloseSongWindow | Close Song Window
 CollectFiles | Collect Files…
 CollectPreview | Preview Collect Files
 Combine | Combine
+CommandPalette | Command Palette…
 CompareSnapshot(None) | Compare A/B
 ConvertRate(44100) | 44.1 kHz
 ConvertRate(48000) | 48 kHz

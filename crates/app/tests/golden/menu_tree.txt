@@ -548,6 +548,7 @@ Window
   open song 2
   open song 3
 Help
+  Command Palette…
   Guided Tour
   Keyboard Shortcuts
   Documentation

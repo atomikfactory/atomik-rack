@@ -680,12 +680,12 @@ fn chord_texts(k: &Keymap, command: &str) -> Vec<String> {
 fn a_user_binding_replaces_the_profile_os_overrides_too() {
     // Import Audio has a macOS override in the standard profile; a user entry holds the chord
     // list for every OS, so the override must not survive it.
-    let json = r#"{"bindings":[{"command":"file.import_audio","context":"global","chords":["Cmd+Shift+K"]}]}"#;
+    let json = r#"{"bindings":[{"command":"file.import_audio","context":"global","chords":["Cmd+Shift+J"]}]}"#;
     for os in Os::ALL {
         let built = user(json).build(Profile::Standard, os);
         assert_eq!(
             chord_texts(&built.keymap, "file.import_audio"),
-            ["Cmd+Shift+K"],
+            ["Cmd+Shift+J"],
             "{os:?}"
         );
         assert!(built.report.is_clean(), "{os:?}");
@@ -694,12 +694,12 @@ fn a_user_binding_replaces_the_profile_os_overrides_too() {
     let mut e = editor(Os::Mac, Profile::Standard, "{}");
     let k = key("file.import_audio", Context::Global);
     assert!(matches!(
-        e.rebind(&k, Slot::Replace(0), c("Cmd+Shift+K")),
+        e.rebind(&k, Slot::Replace(0), c("Cmd+Shift+J")),
         Rebind::Applied { .. }
     ));
     assert_eq!(
         chords_of(&e, "file.import_audio", Context::Global),
-        ["Cmd+Shift+K"]
+        ["Cmd+Shift+J"]
     );
 }
 

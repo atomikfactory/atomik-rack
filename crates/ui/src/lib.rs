@@ -359,6 +359,7 @@ pub mod character_screen;
 pub mod chord_edit;
 pub mod clipboard;
 pub mod color_picker;
+pub mod command_palette;
 pub mod console;
 mod console_gang;
 pub mod console_layout;
@@ -409,6 +410,7 @@ pub mod modsrc_panel;
 pub mod note_tool_args;
 pub mod notes_panel;
 pub mod paint;
+pub mod palette_rank;
 pub mod param_search_panel;
 pub mod piano_keys;
 pub mod piano_roll;
@@ -477,6 +479,7 @@ pub use blind_panel::{BlindAction, BlindInfo, BlindView};
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
 pub use color_picker::{ColorPickerAction, ColorPickerView, ColorTarget};
+pub use command_palette::{CommandPaletteView, PaletteAction};
 pub use console::{ConsoleButton, ConsoleView, console_shortcut, fader_db, is_console_device};
 pub use console_meter::ChannelMeters;
 pub use console_vca::VcaPart;
@@ -515,6 +518,7 @@ pub use mod_matrix_panel::{ModMatrixAction, ModMatrixInfo, ModMatrixView};
 pub use notes_panel::{
     DrumKit, DrumMap, NotesAction, NotesMode, NotesProgress, NotesRow, NotesValues, NotesView,
 };
+pub use palette_rank::{PaletteEntry, Ranked};
 pub use param_search_panel::{ParamSearchAction, ParamSearchRow, ParamSearchView};
 pub use piano_keys::{
     DEFAULT_OCTAVE, DEFAULT_VELOCITY, KeysButton, KeysMode, OCTAVES, PIANO_KEYS_HEIGHT,

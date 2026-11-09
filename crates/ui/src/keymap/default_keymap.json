@@ -41,6 +41,7 @@
         { "command": "view.toggle_spectrum_eq", "context": "global", "chords": ["F2"], "os": { "mac": ["F2", "Cmd+Alt+Digit2"] } },
         { "command": "view.focus_browser_search", "context": "global", "chords": ["Cmd+Shift+F"] },
         { "command": "view.find_parameter", "context": "global", "chords": ["Cmd+Shift+P"] },
+        { "command": "view.command_palette", "context": "global", "chords": ["Cmd+Shift+K"] },
         { "command": "view.toggle_console", "context": "global", "chords": ["F5"], "os": { "mac": ["F5", "Cmd+Alt+Digit5"] } },
         { "command": "view.maximise_console", "context": "global", "chords": ["Shift+F5"] },
         { "command": "view.toggle_rack", "context": "global", "chords": ["F6"], "os": { "mac": ["F6", "Cmd+Alt+Digit6"] } },

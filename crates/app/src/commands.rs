@@ -354,6 +354,8 @@ pub enum AppCommand {
     MacroPanel,
     /// Mixer > New Macro Bank: a macro bank device at the end of the rack (one undo step).
     NewMacroBank,
+    /// Help > Command Palette...: one window to find and run any command by name.
+    CommandPalette,
     /// View > Find Parameter...: the search over every parameter of the project.
     FindParameter,
     /// View > Automation Follows Selection (on/off, kept in the workflow preferences): the
@@ -1063,6 +1065,7 @@ impl AppCommand {
             AppCommand::ClearMidiMaps => ("midi.clear_maps", None),
             AppCommand::MacroPanel => ("macro.panel", None),
             AppCommand::NewMacroBank => ("macro.new_bank", None),
+            AppCommand::CommandPalette => ("view.command_palette", None),
             AppCommand::FindParameter => ("view.find_parameter", None),
             AppCommand::FollowSelection => ("view.follow_selection", None),
             AppCommand::ShowParamLane => ("view.show_param_lane", None),
@@ -1476,6 +1479,7 @@ impl AppCommand {
             ("midi.clear_maps", None) => AppCommand::ClearMidiMaps,
             ("macro.panel", None) => AppCommand::MacroPanel,
             ("macro.new_bank", None) => AppCommand::NewMacroBank,
+            ("view.command_palette", None) => AppCommand::CommandPalette,
             ("view.find_parameter", None) => AppCommand::FindParameter,
             ("view.follow_selection", None) => AppCommand::FollowSelection,
             ("view.show_param_lane", None) => AppCommand::ShowParamLane,
@@ -4171,6 +4175,7 @@ pub fn menus_with_songs(
         Menu {
             title: "Help",
             entries: vec![
+                item("Command Palette\u{2026}", AppCommand::CommandPalette),
                 item("Guided Tour", AppCommand::GuidedTour),
                 item("Keyboard Shortcuts", AppCommand::KeyboardShortcuts),
                 item("Documentation", AppCommand::Documentation),
@@ -4490,6 +4495,7 @@ mod tests {
             AppCommand::ToggleMarkerStrip,
             AppCommand::ToggleInspector,
             AppCommand::ToggleMarkerList,
+            AppCommand::CommandPalette,
             AppCommand::FindParameter,
             AppCommand::FollowSelection,
             AppCommand::ShowParamLane,
@@ -5170,6 +5176,7 @@ mod tests {
         assert_eq!(
             labels(11),
             [
+                "Command Palette\u{2026}",
                 "Guided Tour",
                 "Keyboard Shortcuts",
                 "Documentation",

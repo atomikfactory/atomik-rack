@@ -9,6 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Command palette.** Help > Command Palette (Ctrl+Shift+K, Cmd+Shift+K on macOS) opens a floating panel with a search
+  field and a list of every command: the menu items as the menus show them now, with their menu path, and the other
+  commands the keys reach, under their group. The search takes several words and matches the name, the menu path and
+  the id, by whole words first and by scattered letters after that, and the matched letters are bold. Each row shows
+  the key the live keymap gives the command, so remapped keys show; a command that cannot run now is dimmed and still
+  says why when run. Up, Down, Page Up and Page Down move, Enter or a click runs the command after the palette has
+  closed (on the pane that had the focus), Escape or a click outside closes it, and typing never reaches a shortcut.
+  The last eight commands run from the palette come first, and are kept in `palette.json` next to the settings.
+  Format unchanged (44), command count 520.
 - **More factory content.** The Factory root grows from 49 to 79 patches, from 12 to 36 note clips and gains 12
   audio loops (the addition is about 8 MB in git; a test keeps the whole folder under 25 MB). Four new drum kits
   (Timber Kit, acoustic-like; Circuit Kit, electronic; Cassette Kit, lo-fi; Bazaar Kit, hand percussion) have 14 or

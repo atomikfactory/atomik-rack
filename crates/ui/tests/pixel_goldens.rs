@@ -153,6 +153,59 @@ fn a_context_menu_matches_its_goldens() {
     });
 }
 
+#[test]
+fn the_command_palette_matches_its_goldens() {
+    let entries = [
+        ("editor.quantize", "Quantize", "Edit", Some("Ctrl+K"), true),
+        (
+            "edit.quantize_options",
+            "Quantize Options",
+            "Edit",
+            None,
+            true,
+        ),
+        (
+            "sequencer.audio_quantize",
+            "Quantize Audio",
+            "Edit > Audio",
+            None,
+            false,
+        ),
+        (
+            "transport.input_quantize",
+            "Input Quantize",
+            "Transport",
+            None,
+            true,
+        ),
+        ("edit.undo", "Undo", "Edit", Some("Ctrl+Z"), true),
+    ]
+    .map(
+        |(id, name, path, shortcut, enabled)| atomik_ui::PaletteEntry {
+            key: id.to_owned(),
+            id: id.to_owned(),
+            name: name.to_owned(),
+            path: path.to_owned(),
+            shortcut: shortcut.map(str::to_owned),
+            enabled,
+        },
+    );
+    each(
+        &PLAIN,
+        "command_palette",
+        Size::new(760.0, 200.0),
+        |c, scale| {
+            let theme = Theme::dark();
+            c.fill_with(Rect::new(0.0, 0.0, 760.0, 200.0), theme.panel_top);
+            let mut v = atomik_ui::CommandPaletteView::new(theme, entries.to_vec(), Vec::new());
+            v.set_bounds(Rect::new(0.0, 0.0, 760.0, 200.0));
+            v.set_scale(scale);
+            v.set_query("quan");
+            v.paint(c);
+        },
+    );
+}
+
 /// Labels cut to a width, drawn one under the other: the overflow cases.
 fn overflow_rows(c: &mut dyn Canvas, names: &[&str], width: f64) {
     let theme = Theme::dark();

@@ -639,6 +639,8 @@ pub enum UiAction {
     /// The modulation matrix panel ([`crate::ModMatrixView`]) asks to close; its edits are
     /// ordinary [`UiAction::Command`]s.
     ModMatrix(crate::mod_matrix_panel::ModMatrixAction),
+    /// The command palette ([`crate::CommandPaletteView`]) asks to run a command or to close.
+    CommandPalette(crate::command_palette::PaletteAction),
     /// The parameter search ([`crate::ParamSearchView`]) asks for something: a new query, an action
     /// on a result, or to close.
     ParamSearch(crate::param_search_panel::ParamSearchAction),
