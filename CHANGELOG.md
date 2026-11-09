@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **More factory content.** The Factory root grows from 49 to 79 patches, from 12 to 36 note clips and gains 12
+  audio loops (the addition is about 8 MB in git; a test keeps the whole folder under 25 MB). Four new drum kits
+  (Timber Kit, acoustic-like; Circuit Kit, electronic; Cassette Kit, lo-fi; Bazaar Kit, hand percussion) have 14 or
+  15 pads each on keys 36 to 50, rendered by the writer from the drum machine's pad modules. Thirty patches are
+  new: more for the FM synth, dual layer, organ, semi-modular synth, grain sampler, mono bass and wavetable synth
+  (at least five each now), and the first for two reverbs, an echo, modulation, distortion, the auto-filter and the
+  rotary speaker. The 24 new clips are eight drum grooves (from 70 to 174 BPM, in straight and triplet time), six
+  bass lines, five chord progressions and five arpeggios. The 12 loops are 24-bit stereo FLAC files rendered from
+  clips by a factory kit or patch; each plays its clip twice and keeps the second pass so it repeats without a
+  gap, and carries a tempo tag (`88 bpm`) and, when pitched, a key tag, so the browser's tag filter finds them.
+  The Clips section of a library, and of the factory, now lists audio files next to note clips. Everything is
+  original and rendered by the application's own devices; the writer is still test code
+  (`ATOMIK_WRITE_FACTORY=1 cargo test -p atomik-app --lib write_the_factory_library -- --ignored`), and tests check
+  that every file is what the tables describe, that each patch and kit makes sound and that each loop decodes at its
+  tagged tempo. Format unchanged (44), command count unchanged.
 - **MPE: per-note expression.** A MIDI input can be switched to MPE in Settings > Audio > MIDI inputs with MPE
   (a click steps through off and a lower or upper zone of 15, 7 or 4 member channels). The zone is the one set
   there until the controller sends an MPE Configuration Message, which then replaces it (a zone of 0 members
