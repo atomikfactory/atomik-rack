@@ -4851,6 +4851,27 @@ The mod wheel (CC 1) and the other controllers keep the per-instrument meaning i
 table; in the sampler the wheel deepens the LFO vibrato and opens the filter cutoff (see its
 params). Controllers an instrument does not list are ignored.
 
+## Per-note expression (MPE)
+
+A note can carry its own tuning, pressure and slide (the third MPE dimension) as `NoteExpr` events for its key:
+from an MPE keyboard, from the curves recorded with a note, or from a note player above the instrument. Each
+instrument that reads them keeps the values per key in `ControllerState` and applies them to the voice of that
+key; a new note on a key starts from rest, and a note without expression is bit for bit the old sound
+(`cargo test -p atomik-devices note_` renders it).
+
+| Device | Tuning (semitones, up to 96 each way) | Pressure (0 to 1) | Slide (0 to 1) |
+|---|---|---|---|
+| `atomik.poly-synth` | Added to the voice's pitch beside the bend | The voice's Pressure modulation source (with channel and key pressure) | Opens the voice's filter cutoff by up to 3 octaves |
+| `atomik.mono-bass` | As the poly synth | As the poly synth | As the poly synth |
+| `atomik.dual-layer` | Both layers, as the poly synth | Both layers | Both layers |
+| `atomik.wavetable-synth` | Added to the voice's pitch beside the bend | Raises the voice's gain by up to 6 dB (a gain of 1 + pressure, followed at the control rate) | Adds to the frame position of both oscillators (held to 0..=1) |
+| `atomik.fm-synth` | Added to the voice's pitch beside the bend | Raises the voice's gain by up to 6 dB (ramped over a control step) | Adds up to 1 to the modulation index before its clamp to 0..=3 |
+
+The other melodic instruments (the grain sampler, the sampler, the semi-modular synth) take a note's pressure
+as their pressure source and ignore its tuning and slide; the organ and the drum devices ignore all three.
+A CLAP or VST3 plugin gets them as note expression events (tuning, pressure and brightness); the MIDI Out
+device has no MIDI 1.0 message for them and drops them.
+
 ## Third-party plugin devices: `clap.<id>` and `vst3.<id>`
 
 A CLAP or VST3 plugin the scanner found is a device type of its own: `clap.<the plugin's CLAP id>`
