@@ -86,6 +86,15 @@ pub trait EngineSink {
     fn set_previews(&mut self, _devices: &[DeviceInstanceId]) {}
     /// Moves the captured live notes into `out` (oldest first).
     fn drain_recorded(&mut self, out: &mut Vec<RecordedNote>);
+    /// [`atomik_engine::EngineHandle::launch_states`]: what the clip launcher's tracks do, one
+    /// entry per launch track of the last submitted song. The default reports nothing.
+    fn launch_states(&self, out: &mut Vec<atomik_engine::LaunchState>) {
+        out.clear();
+    }
+    /// [`atomik_engine::EngineHandle::next_launch_event`]: the next launch or stop the player made.
+    fn next_launch_event(&mut self) -> Option<atomik_engine::LaunchEvent> {
+        None
+    }
     /// [`atomik_engine::EngineHandle::hold_automation`]: the song player leaves these
     /// `(device, param)` lanes alone (empty releases them). A take that writes automation
     /// holds the lanes it writes. The default does nothing (no engine).
@@ -368,6 +377,10 @@ pub struct RecordingSink {
     pub state: TransportState,
     /// What [`EngineSink::drain_recorded`] hands out next (tests script live input).
     pub recorded: Vec<RecordedNote>,
+    /// What [`EngineSink::launch_states`] returns (tests script the launcher).
+    pub launch_state: Vec<atomik_engine::LaunchState>,
+    /// What [`EngineSink::next_launch_event`] hands out next, oldest first.
+    pub launch_events: std::collections::VecDeque<atomik_engine::LaunchEvent>,
     /// The devices armed for recording ([`EngineSink::set_recording`]).
     pub armed: Vec<DeviceInstanceId>,
     /// The devices whose received notes are tapped ([`EngineSink::set_note_taps`]).
@@ -555,6 +568,14 @@ impl EngineSink for RecordingSink {
     fn set_recording(&mut self, devices: &[DeviceInstanceId]) {
         self.armed = devices.to_vec();
         self.calls.push(SinkCall::Recording(devices.to_vec()));
+    }
+
+    fn launch_states(&self, out: &mut Vec<atomik_engine::LaunchState>) {
+        out.clone_from(&self.launch_state);
+    }
+
+    fn next_launch_event(&mut self) -> Option<atomik_engine::LaunchEvent> {
+        self.launch_events.pop_front()
     }
 
     fn drain_recorded(&mut self, out: &mut Vec<RecordedNote>) {

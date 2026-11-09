@@ -213,6 +213,24 @@ View
     Sample Editor
     Step Editor
     Slice Editor
+  Launcher >
+    Launcher
+    Back to Arrangement
+    Stop All Clips
+    Record Launches
+    New Scene
+    Scene Stops Empty Tracks
+    Clip to Launcher
+    Launcher Clip to Arrangement
+    Launch Quantize >
+      None
+      1/16
+      1/8
+      1/4
+      1/2
+      1 bar
+      2 bars
+      4 bars
   Lanes and Markers >
     Tempo Lane
     Energy Lane

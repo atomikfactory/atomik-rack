@@ -905,6 +905,7 @@ mod tests {
             piano_keys: false,
             track_panel: false,
             history_panel: false,
+            launcher: crate::commands::LauncherMenu::default(),
             rack_sort: atomik_model::RackSort::Free,
             single_column: false,
             can_undo: false,

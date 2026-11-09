@@ -394,6 +394,7 @@ pub mod key_chord_panel;
 pub mod key_rows;
 pub mod keymap;
 pub mod kick_bass_panel;
+pub mod launcher;
 mod library_drop;
 pub mod macro_marks;
 pub mod macros_panel;
@@ -508,6 +509,7 @@ pub use io_panel::IoSocketState;
 pub use kick_bass_panel::{
     FixView, KickBassAction, KickBassInfo, KickBassView, RunView, StripHit, StripView,
 };
+pub use launcher::{LauncherAction, LauncherFeed, LauncherView, TrackLaunch};
 pub use macros_panel::{
     EntryUnit, MacroAssignRow, MacroBankRow, MacroRow, MacrosAction, MacrosView,
 };

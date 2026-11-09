@@ -42,11 +42,11 @@ use atomik_device_sdk::{
     DeviceDescriptor, Direction, Registry, RunMode, SampleMapRef, SocketId, SocketKind,
 };
 use atomik_engine::{
-    AssetId, DeviceInstanceId, EngineOptions, HotEdit, Knot, OfflineJob, SongAsset,
-    SongAudioRegion, SongAudioTrack, SongAutomation, SongController, SongControllerKind, SongCurve,
-    SongExprPoint, SongExpression, SongFadeCurve, SongInput, SongNote, SongPoint, SongSnapshot,
-    SongTempo, SongTrack, TimedEdit, TransportCommand, WorkerConfig, compile_song,
-    new_engine_with_options,
+    AssetId, DeviceInstanceId, EngineOptions, HotEdit, Knot, LaunchSlotInput, LaunchTrackInput,
+    OfflineJob, SongAsset, SongAudioRegion, SongAudioTrack, SongAutomation, SongController,
+    SongControllerKind, SongCurve, SongExprPoint, SongExpression, SongFadeCurve, SongInput,
+    SongNote, SongPoint, SongSnapshot, SongTempo, SongTrack, TimedEdit, TransportCommand,
+    WorkerConfig, compile_song, new_engine_with_options,
 };
 use atomik_model::console::{SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM, VCA_SOLO_PARAM};
 use atomik_model::song::{
@@ -1718,4 +1718,132 @@ mod tests {
             assert_eq!(host.manager_ref().run_mode(ids[0]), Some(mode), "{mode:?}");
         }
     }
+}
+
+/// The clip launcher's tracks for the engine: a note track's slots, compiled for
+/// [`atomik_engine::SongSnapshot::with_launch`] (see [`atomik_model::launcher`]).
+///
+/// Tracks are [`effective_tracks`] (mute and solo applied), note tracks that are not frozen and
+/// have at least one slot; each slot's clip is flattened as the arrangement flattens a lane
+/// (`flatten_track_notes`, the track's live groove included) over a copy of the track that holds
+/// the slot clip alone at tick 0, so the loop, the offset, controllers and expression play as the
+/// clip editors show them. A track that enters at a player plays its slots there, like its
+/// arrangement. A device that two tracks enter gets the first track's slots.
+pub fn launch_input(
+    doc: &RackDoc,
+    registry: &Registry,
+    id_of: impl Fn(&DeviceKey) -> Option<DeviceInstanceId>,
+) -> Vec<LaunchPlan> {
+    let song = &doc.song;
+    if song.launcher.slots.is_empty() {
+        return Vec::new();
+    }
+    let expanded = doc.has_containers().then(|| doc.expand(registry));
+    let mut out: Vec<LaunchPlan> = Vec::new();
+    for track in effective_tracks(song) {
+        if track.frozen.is_some() || track.is_audio() || track.is_automation_only() {
+            continue;
+        }
+        let Some(slots) = song.launcher.slots.get(&track.device) else {
+            continue;
+        };
+        let is_container = doc.device(&track.device).is_some_and(|d| d.inner.is_some());
+        let (flat, type_id) = match (&expanded, is_container) {
+            (Some(exp), true) => {
+                let Some(split) = exp.alias.get(&track.device) else {
+                    continue;
+                };
+                (split.clone(), atomik_model::SPLIT_TYPE.to_string())
+            }
+            _ => {
+                let Some(d) = doc.device(&track.device) else {
+                    continue;
+                };
+                (track.device.clone(), d.type_id.clone())
+            }
+        };
+        let (Some(device), Some(desc)) =
+            (id_of(&flat), registry.get(&type_id).map(|f| f.descriptor))
+        else {
+            continue;
+        };
+        let Some(socket) = notes_input(desc) else {
+            continue;
+        };
+        let (device, notes_socket) = entry_input(doc, registry, expanded.as_ref(), &id_of, track)
+            .unwrap_or((device, socket));
+        if out
+            .iter()
+            .any(|p| p.input.device == device && p.input.notes_socket == notes_socket)
+        {
+            continue;
+        }
+        let compiled = slots
+            .iter()
+            .map(|slot| {
+                let slot = slot.as_ref()?;
+                let mut scratch = track.clone();
+                scratch.controllers.clear();
+                scratch.frozen = None;
+                scratch.lanes = vec![atomik_model::Lane {
+                    kind: LaneKind::Notes,
+                    name: None,
+                    muted: false,
+                    solo: false,
+                    color: None,
+                    static_value: None,
+                    clips: vec![slot.clip.clone()],
+                    take_groups: Vec::new(),
+                }];
+                let notes = flatten_track_notes(song, &scratch)
+                    .into_iter()
+                    .map(|(tick, length, key, velocity)| SongNote {
+                        tick: Ticks(tick),
+                        length,
+                        key,
+                        velocity,
+                    })
+                    .collect();
+                let controllers = flatten_controllers(&scratch)
+                    .into_iter()
+                    .map(|(kind, points)| SongController {
+                        kind: match kind {
+                            ControllerKind::PitchBend => SongControllerKind::PitchBend,
+                            ControllerKind::ChannelPressure => SongControllerKind::ChannelPressure,
+                            ControllerKind::Cc(n) => SongControllerKind::Cc(n),
+                            ControllerKind::PolyPressure(k) => SongControllerKind::PolyPressure(k),
+                        },
+                        points: points
+                            .into_iter()
+                            .map(|(tick, value, curve)| song_point(tick, value, curve))
+                            .collect(),
+                    })
+                    .collect();
+                Some(LaunchSlotInput {
+                    length: slot.clip.length,
+                    notes,
+                    controllers,
+                    expression: song_expression(&flatten_expression(song, &scratch)),
+                })
+            })
+            .collect();
+        out.push(LaunchPlan {
+            track: track.device.clone(),
+            input: LaunchTrackInput {
+                device,
+                notes_socket,
+                slots: compiled,
+            },
+        });
+    }
+    out
+}
+
+/// One launch track and the model track it belongs to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaunchPlan {
+    /// The model track.
+    pub track: DeviceKey,
+    /// What the engine gets.
+    pub input: LaunchTrackInput,
 }

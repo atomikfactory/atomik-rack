@@ -33,6 +33,7 @@ impl<S: EngineSink> AppCore<S> {
         self.video_win.set_theme(theme.clone());
         self.track_panel.set_theme(theme.clone());
         self.history.set_theme(theme.clone());
+        self.launcher_view.set_theme(theme.clone());
         self.piano_keys.set_theme(theme);
     }
 
@@ -73,6 +74,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::SliceEditor => self.slice_editor.command(id, arg, doc, &self.registry),
             Pane::AudioEditor => self.audio_editor.command(id, arg, doc, &self.registry),
             Pane::Console => self.console.command(id, arg, doc, &self.registry),
+            Pane::Launcher => self.launcher_view.command(id, arg),
             _ => CommandOutcome::Declined,
         };
         match outcome {

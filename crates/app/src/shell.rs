@@ -3769,6 +3769,10 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Text, Context::Mixer])
             }
             Pane::Console => ContextStack::new(&[Context::Mixer]),
+            Pane::Launcher if self.core.launcher().is_text_owner() => {
+                ContextStack::new(&[Context::Text])
+            }
+            Pane::Launcher => ContextStack::new(&[Context::Launcher]),
             Pane::PluginParams if self.core.plugin_params().is_text_owner() => {
                 ContextStack::new(&[Context::Text])
             }
@@ -3789,6 +3793,17 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// What the Launcher menu shows.
+    fn launcher_menu(&self) -> crate::commands::LauncherMenu {
+        let l = &self.core.doc().song.launcher;
+        crate::commands::LauncherMenu {
+            shown: self.core.launcher_visible(),
+            record: self.core.record_launches(),
+            stop_empty: l.stop_empty,
+            quantize: l.quantize,
+        }
+    }
+
     /// What the menus show.
     pub fn menu_state(&self) -> MenuState {
         let view = self.core.view();
@@ -3802,6 +3817,7 @@ impl<B: AudioBackend> Shell<B> {
             piano_keys: self.detached(WindowKind::PianoKeys),
             track_panel: self.core.track_panel_visible(),
             history_panel: self.core.history_visible(),
+            launcher: self.launcher_menu(),
             rack_sort: self.core.doc().sort_mode,
             single_column: view.single_column(),
             can_undo: self.core.document().can_undo(),
@@ -4092,6 +4108,7 @@ impl<B: AudioBackend> Shell<B> {
             self.core.seq_editor_mut().set_bounds(song);
             self.core.container_editor_mut().set_bounds(song);
             self.core.plugin_params_mut().set_bounds(song);
+            self.core.launcher_mut().set_bounds(song);
             if !self.console_detached() {
                 self.core.console_mut().set_bounds(song);
             }
@@ -4312,6 +4329,8 @@ impl<B: AudioBackend> Shell<B> {
             Pane::PianoRoll
         } else if self.core.audio_editor_clip().is_some() {
             Pane::AudioEditor
+        } else if self.core.launcher_visible() {
+            Pane::Launcher
         } else {
             Pane::Arrangement
         }
@@ -4338,6 +4357,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::SeqEditor
             | Pane::ContainerEditor
             | Pane::PluginParams
+            | Pane::Launcher
                 if !self.ui.show_song =>
             {
                 Pane::Rack
@@ -4392,6 +4412,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .plugin_params_mut()
             .set_focused(pane == Pane::PluginParams);
+        self.core.launcher_mut().set_focused(pane == Pane::Launcher);
         self.core
             .transport_bar_mut()
             .set_focused(pane == Pane::Transport);
@@ -7096,6 +7117,15 @@ impl<B: AudioBackend> Shell<B> {
                         self.set_focus(Pane::Arrangement);
                     }
                 }
+                // A clip opened from the launcher: the piano roll takes the keys.
+                UiAction::Launcher(
+                    atomik_ui::LauncherAction::OpenClip(_)
+                    | atomik_ui::LauncherAction::NewClip { .. },
+                ) => {
+                    if self.core.piano_roll_open() {
+                        self.set_focus(Pane::PianoRoll);
+                    }
+                }
                 UiAction::OpenSeqEditor { .. } => self.show_seq_editor(),
                 UiAction::OpenContainerEditor { .. } => self.show_container_editor(),
                 UiAction::CloseContainerEditor => {
@@ -7905,6 +7935,58 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 self.layout_view();
                 self.repaint = true;
+                Vec::new()
+            }
+            AppCommand::ToggleLauncher => {
+                let visible = !self.core.launcher_visible();
+                if visible {
+                    // An open editor hides the launcher: close it, then show the launcher.
+                    self.core.close_open_editor();
+                    self.reveal_lower_pane();
+                }
+                self.core.set_launcher_visible(visible);
+                if visible {
+                    self.set_focus(Pane::Launcher);
+                } else if self.focus == Pane::Launcher {
+                    self.set_focus(self.live_pane(Pane::Arrangement));
+                }
+                self.layout_view();
+                self.repaint = true;
+                Vec::new()
+            }
+            AppCommand::LauncherBack => {
+                self.core.launcher_back();
+                Vec::new()
+            }
+            AppCommand::LauncherStopAll => {
+                self.core.stop_all_slots(false);
+                Vec::new()
+            }
+            AppCommand::LauncherRecord => {
+                let on = !self.core.record_launches();
+                self.core.set_record_launches(on);
+                Vec::new()
+            }
+            AppCommand::LauncherNewScene => {
+                self.core.launcher_new_scene();
+                Vec::new()
+            }
+            AppCommand::LauncherStopEmpty => {
+                self.core
+                    .launcher_action(atomik_ui::LauncherAction::ToggleStopEmpty);
+                Vec::new()
+            }
+            AppCommand::LauncherQuantize(q) => {
+                self.core
+                    .launcher_action(atomik_ui::LauncherAction::SetQuantize(q));
+                Vec::new()
+            }
+            AppCommand::LauncherFromArrangement => {
+                self.core.launcher_from_arrangement();
+                Vec::new()
+            }
+            AppCommand::LauncherToArrangement => {
+                self.core.launcher_to_arrangement();
                 Vec::new()
             }
             AppCommand::SetRackSort(mode) => {
@@ -10064,6 +10146,7 @@ impl<B: AudioBackend> Shell<B> {
                     Pane::ContainerEditor => self.core.container_editor().needs_repaint(),
                     Pane::PluginParams => self.core.plugin_params().needs_repaint(),
                     Pane::Console => self.core.console().needs_repaint(),
+                    Pane::Launcher => self.core.launcher().needs_repaint(),
                     _ => self.core.arrangement().needs_repaint(),
                 })
     }
@@ -10674,3 +10757,7 @@ mod palette_tests;
 #[cfg(test)]
 #[path = "shell_history_tests.rs"]
 mod history_tests;
+
+#[cfg(test)]
+#[path = "shell_launcher_tests.rs"]
+mod launcher_tests;

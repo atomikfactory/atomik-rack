@@ -99,6 +99,8 @@ keys.velocity 6 | keys | 6
 keys.velocity 7 | keys | 7
 keys.velocity 8 | keys | 8
 keys.velocity 9 | keys | 9
+launcher.launch | launcher | Enter
+launcher.launch_scene | launcher | Shift+Enter
 mixer.compare_snapshot | global | Cmd+Opt+B
 mixer.extend_left | mixer | Shift+Left
 mixer.extend_right | mixer | Shift+Right
@@ -219,6 +221,7 @@ view.toggle_editor | global | F8, Shift+Tab, Cmd+Opt+Digit8
 view.toggle_editor | sequencer | Cmd+E
 view.toggle_file_browser | global | F9, Cmd+Opt+Digit9
 view.toggle_flip | global | Tab
+view.toggle_launcher | global | F10
 view.toggle_piano_keys | global | F4, Cmd+Opt+Digit4
 view.toggle_rack | global | F6, Cmd+Opt+Digit6
 view.toggle_spectrum_eq | global | F2, Cmd+Opt+Digit2

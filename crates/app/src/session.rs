@@ -1317,6 +1317,17 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         }
     }
 
+    fn launch_states(&self, out: &mut Vec<atomik_engine::LaunchState>) {
+        match &self.running {
+            Some(r) => r.handle.launch_states(out),
+            None => out.clear(),
+        }
+    }
+
+    fn next_launch_event(&mut self) -> Option<atomik_engine::LaunchEvent> {
+        self.running.as_mut()?.handle.next_launch_event()
+    }
+
     fn drain_recorded(&mut self, out: &mut Vec<RecordedNote>) {
         self.tap.drain(out);
         for (device, tap) in &self.note_taps {
