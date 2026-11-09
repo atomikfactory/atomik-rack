@@ -9,6 +9,16 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A start screen that teaches.** A strip of cards sits above the lists of the start screen: the three factory
+  example songs, each with a line about what it is for (a click opens one as a new unsaved song, like a template),
+  and a Make your first song card. A check box at the foot of the box turns that card off; Help > Guided Tour starts
+  the same guide whenever you like.
+- **A guided first song.** Make your first song (the start screen card or Help > Guided Tour) opens a new song and
+  shows a small floating panel with seven steps: add an instrument, play or draw some notes, loop them, add a drum
+  pattern, mix (a level and an effect), save and export. Each step says what to do, watches the song and moves on
+  when it is done (or waits for Next when you had done it already), and outlines the menu, button or area it talks
+  about. Back, Skip, Move (to the other side of the window) and Close are always there. The panel never takes the
+  keyboard, only the pointer inside its own rectangle, and what it shows is not saved in the song.
 - **Drum pads light when they play.** A pad of the drum machine panel flashes when the engine plays it, whatever
   sent the note: a note generator, the sequencer, a MIDI input, a click on the pad or a gate on its jack. A harder
   hit lights it brighter and the light fades out in a quarter of a second. The drum machine counts the hits that

@@ -76,6 +76,9 @@ pub struct WorkflowPrefs {
     /// The start screen (new song, templates, recent songs) shows when the app starts with no
     /// project to open (default on).
     pub show_start_screen: bool,
+    /// The "Make your first song" card shows in the strip of the start screen (default on;
+    /// Help > Guided Tour starts the guide either way).
+    pub show_guide_card: bool,
     /// Stop returns the playhead to where playback started; a second Stop goes to the start
     /// (default off).
     pub return_to_start_on_stop: bool,
@@ -208,6 +211,7 @@ impl Default for WorkflowPrefs {
             autosave_minutes: 5,
             open_last_project: false,
             show_start_screen: true,
+            show_guide_card: true,
             return_to_start_on_stop: false,
             record_mode: RecordMode::default(),
             keep_events: KeepEvents::default(),
@@ -273,6 +277,7 @@ impl WorkflowPrefs {
                 .map_or(defaults.autosave_minutes, |m| m.min(240) as u32),
             open_last_project: flag("open_last_project", defaults.open_last_project),
             show_start_screen: flag("show_start_screen", defaults.show_start_screen),
+            show_guide_card: flag("show_guide_card", defaults.show_guide_card),
             return_to_start_on_stop: flag(
                 "return_to_start_on_stop",
                 defaults.return_to_start_on_stop,
@@ -360,6 +365,7 @@ impl WorkflowPrefs {
                             | "autosave_minutes"
                             | "open_last_project"
                             | "show_start_screen"
+                            | "show_guide_card"
                             | "return_to_start_on_stop"
                             | "record_mode"
                             | "keep_events"
@@ -416,6 +422,7 @@ impl WorkflowPrefs {
             "show_start_screen".into(),
             Value::Bool(self.show_start_screen),
         );
+        map.insert("show_guide_card".into(), Value::Bool(self.show_guide_card));
         map.insert(
             "return_to_start_on_stop".into(),
             Value::Bool(self.return_to_start_on_stop),
