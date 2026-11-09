@@ -13,12 +13,18 @@ use crate::audio_import::Msg;
 use crate::freeze_worker::{PluginEnv, plugin_host};
 use atomik_device_sdk::RunMode;
 use atomik_model::RackDoc;
-use atomik_render::export::{ExportFormat, ExportReport, ExportRequest, export_audio_file};
+use atomik_render::RenderError;
+use atomik_render::export::{
+    ExportFormat, ExportReport, ExportRequest, export_audio_file, render_export, write_export,
+};
 use atomik_render::plugin_pass::RenderControl;
 use atomik_render::plugins::MissingPlugins;
 use atomik_render::project::{PluginBounce, ProjectOptions};
 use atomik_render::stems::{StemRequest, StemStrip, StemsReport, export_stems};
-use std::path::PathBuf;
+use atomik_video::{
+    EncodeJob, EncodeSpec, LossyCodec, LossyQuality, Tags, VideoError, VideoTool, encode_audio,
+};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
@@ -35,6 +41,20 @@ pub(crate) enum Target {
         /// Which signal of the channels.
         strip: StemStrip,
     },
+}
+
+/// A compressed export: the render goes to a temporary WAV file that FFmpeg encodes.
+pub(crate) struct Lossy {
+    /// What runs FFmpeg.
+    pub tool: Arc<dyn VideoTool>,
+    /// The folder set in Settings > Video (`None`: the system path).
+    pub folder: Option<PathBuf>,
+    /// The format.
+    pub codec: LossyCodec,
+    /// The quality.
+    pub quality: LossyQuality,
+    /// The song's title and author for the file's tags.
+    pub tags: Tags,
 }
 
 /// What a finished export wrote.
@@ -60,6 +80,99 @@ pub(crate) struct Work {
     pub bundle_root: Option<PathBuf>,
     /// The plugin machinery.
     pub plugins: PluginEnv,
+    /// Encode the file with FFmpeg after the render (the format is then the temporary WAV file,
+    /// at the rate of the result); `None` for a file the program writes itself.
+    pub lossy: Option<Lossy>,
+}
+
+/// The share of an export's progress that is the render; the encoding is the rest.
+const RENDER_SHARE: f32 = 0.8;
+
+/// Removes the temporary folder of a compressed export (and the WAV file in it) when dropped.
+struct TempFolder(PathBuf);
+
+impl Drop for TempFolder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// The folder a compressed export writes its WAV file to: one per process and export.
+fn temp_folder() -> PathBuf {
+    use std::sync::atomic::AtomicU64;
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "atomik-export-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// The compressed export: render, write the audio to a temporary WAV file (float, at the rate of
+/// the result: the encoder is the only step that loses anything), encode it, and report the
+/// loudness of the audio that went in. Cancelling at any step removes the temporary file and
+/// leaves no result file.
+fn export_lossy(
+    (doc, registry): (&RackDoc, &atomik_device_sdk::Registry),
+    project: (&ProjectOptions, Option<&Path>),
+    bounce: &mut PluginBounce<'_>,
+    (request, format): (&ExportRequest, &ExportFormat),
+    (path, lossy): (&Path, &Lossy),
+    control: RenderControl<'_>,
+) -> Result<Option<ExportReport>, RenderError> {
+    let failed = |e: &dyn std::fmt::Display| RenderError::Project(e.to_string());
+    let status = crate::video_worker::search(&*lossy.tool, lossy.folder.as_deref());
+    let Some(ffmpeg) = status.tools() else {
+        return Err(failed(&status.message()));
+    };
+    let outer = control.progress;
+    let render_progress = |p: f32| {
+        if let Some(outer) = outer {
+            outer(p * RENDER_SHARE);
+        }
+    };
+    let rendering = RenderControl {
+        cancel: control.cancel,
+        progress: Some(&render_progress),
+    };
+    let render = render_export(doc, registry, project, bounce, request, rendering)?;
+    let Some(render) = render.filter(|_| !control.cancelled()) else {
+        return Ok(None);
+    };
+    let folder = TempFolder(temp_folder());
+    std::fs::create_dir_all(&folder.0).map_err(|e| failed(&e))?;
+    let wav = folder.0.join("mix.wav");
+    let mut report = write_export(&wav, &render, format)?;
+    if control.cancelled() {
+        return Ok(None);
+    }
+    let seconds = report.frames as f64 / f64::from(report.sample_rate);
+    let job = EncodeJob {
+        source: &wav,
+        out: path,
+        spec: EncodeSpec {
+            codec: lossy.codec,
+            quality: lossy.quality,
+            rate: report.sample_rate,
+            channels: render.audio.channels.len(),
+        },
+        tags: &lossy.tags,
+        duration_s: seconds,
+    };
+    let never = AtomicBool::new(false);
+    let cancel = control.cancel.unwrap_or(&never);
+    let encoded = encode_audio(&*lossy.tool, ffmpeg, &job, cancel, &|p| {
+        if let Some(outer) = outer {
+            outer(RENDER_SHARE + p * (1.0 - RENDER_SHARE));
+        }
+    });
+    match encoded {
+        Ok(()) => {}
+        Err(VideoError::Cancelled) => return Ok(None),
+        Err(e) => return Err(failed(&e)),
+    }
+    path.clone_into(&mut report.path);
+    Ok(Some(report))
 }
 
 /// Renders and writes `work`. `None`: the control stopped it (nothing was written).
@@ -71,6 +184,7 @@ fn run(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String> {
         target,
         bundle_root,
         plugins,
+        lossy,
     } = work;
     let mut registry = atomik_render::default_registry();
     let mut host = plugin_host(&doc, plugins, &mut registry, "an export")?;
@@ -86,14 +200,24 @@ fn run(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String> {
         missing: MissingPlugins::Error,
     };
     match target {
-        Target::File(path) => export_audio_file(
-            &doc,
-            &registry,
-            (&options, bundle_root.as_deref()),
-            &mut bounce,
-            (&request, &format),
-            (&path, control),
-        )
+        Target::File(path) => match &lossy {
+            Some(lossy) => export_lossy(
+                (&doc, &registry),
+                (&options, bundle_root.as_deref()),
+                &mut bounce,
+                (&request, &format),
+                (&path, lossy),
+                control,
+            ),
+            None => export_audio_file(
+                &doc,
+                &registry,
+                (&options, bundle_root.as_deref()),
+                &mut bounce,
+                (&request, &format),
+                (&path, control),
+            ),
+        }
         .map(|r| r.map(Done::File)),
         Target::Stems { folder, strip } => {
             let stems = StemRequest {

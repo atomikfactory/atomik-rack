@@ -2,7 +2,8 @@
 //!
 //! The flow is: the command asks the platform for a file ([`ShellRequest::PickExportAudio`], a
 //! native save dialog), the platform calls [`Shell::export_audio_to`] with the path, and the
-//! shell shows the options panel ([`ExportView`]: bit depth, dither, sample rate, tail). EXPORT
+//! shell shows the options panel ([`ExportView`]: bit depth, dither, sample rate, file format and
+//! quality, tail; MP3, AAC and Opus are greyed unless FFmpeg was found). EXPORT
 //! starts the render on its worker ([`AppCore::start_audio_export`]), remembers the choices in
 //! `export.json` ([`ExportPrefs`]) and turns the panel into a progress bar with CANCEL; the panel
 //! closes when the export is over (the result is the toast). Esc cancels, like CANCEL. The panel
@@ -76,6 +77,10 @@ impl<B: AudioBackend> Shell<B> {
         let mut view = ExportView::new(self.core.view().theme().clone());
         view.set_scale(self.scale());
         view.set_bounds(self.plugin_modal_rect());
+        // MP3, AAC and Opus need FFmpeg: look for it now (unless that was done) so the panel
+        // knows whether to offer them.
+        self.core.refresh_ffmpeg_status();
+        view.set_encoder(self.core.export_encoder());
         view.open(
             scope,
             &name,
@@ -130,10 +135,16 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Feeds the progress bar, and closes the panel when the export is over.
     pub(super) fn sync_export(&mut self) {
+        let encoder = self.core.export_encoder();
         let Some(view) = &mut self.export else {
             return;
         };
         if !view.in_progress() {
+            // The answer to "is FFmpeg there" may arrive while the options are open.
+            view.set_encoder(encoder);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
             return;
         }
         match self.core.audio_export_progress() {

@@ -7,8 +7,9 @@
 
 use atomik_video::runner::capture;
 use atomik_video::{
-    Control, FfmpegStatus, FrameDecoder, FrameEvent, Platform, ProxyCache, ProxyReader, ProxySpec,
-    Search, SystemTool, decode_jpeg, discover, prepare,
+    Control, EncodeJob, EncodeSpec, FfmpegStatus, FrameDecoder, FrameEvent, LossyCodec,
+    LossyQuality, Platform, ProxyCache, ProxyReader, ProxySpec, Search, SystemTool, Tags,
+    decode_jpeg, discover, encode_audio, prepare,
 };
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -316,4 +317,100 @@ fn the_audio_of_a_generated_film_is_extracted_with_its_start_offset() {
     );
     assert!(!other.exists());
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// Each compressed format is encoded from a generated WAV file, tagged, and read back by ffprobe.
+#[test]
+#[ignore = "needs a real FFmpeg"]
+fn a_generated_wav_is_encoded_to_each_compressed_format_with_its_tags() {
+    let folder = std::env::var_os("ATOMIK_FFMPEG_DIR").map(PathBuf::from);
+    let path_var = std::env::var_os("PATH");
+    let status = discover(
+        &Search {
+            folder: folder.as_deref(),
+            path_var: path_var.as_deref(),
+            platform: Platform::current(),
+        },
+        &SystemTool,
+        &Path::is_file,
+    );
+    let FfmpegStatus::Found(ffmpeg) = status else {
+        println!("no usable FFmpeg here: {}", status.message());
+        return;
+    };
+    let dir = temp("encode");
+    let wav = dir.join("tone.wav");
+    let never = AtomicBool::new(false);
+    let make: Vec<OsString> = [
+        "-nostdin",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:duration=2:sample_rate=44100",
+        "-ac",
+        "2",
+        "-y",
+    ]
+    .map(OsString::from)
+    .into_iter()
+    .chain([wav.clone().into_os_string()])
+    .collect();
+    capture(&SystemTool, &ffmpeg.ffmpeg, &make, 1 << 20, &never).unwrap();
+    let tags = Tags {
+        title: "A \"quoted\"; title".to_owned(),
+        author: "Zoe".to_owned(),
+    };
+    for (codec, quality, rate) in [
+        (LossyCodec::Mp3, LossyQuality::Cbr(192), 44_100),
+        (LossyCodec::Mp3, LossyQuality::Vbr(2), 44_100),
+        (LossyCodec::Aac, LossyQuality::Cbr(128), 44_100),
+        (LossyCodec::Opus, LossyQuality::Cbr(96), 48_000),
+    ] {
+        let out = dir.join(format!("tone.{}", codec.extension()));
+        let job = EncodeJob {
+            source: &wav,
+            out: &out,
+            spec: EncodeSpec {
+                codec,
+                quality,
+                rate: if codec == LossyCodec::Opus {
+                    44_100
+                } else {
+                    rate
+                },
+                channels: 2,
+            },
+            tags: &tags,
+            duration_s: 2.0,
+        };
+        match encode_audio(&SystemTool, &ffmpeg, &job, &never, &|_| {}) {
+            Ok(()) => {}
+            // A build without the encoder is not a failure of the code under test.
+            Err(e) if e.to_string().contains("Unknown encoder") => {
+                println!("{} is not built into this FFmpeg: {e}", codec.name());
+                continue;
+            }
+            Err(e) => panic!("{}: {e}", codec.name()),
+        }
+        assert!(fs::metadata(&out).unwrap().len() > 1000, "{}", codec.name());
+        let probe: Vec<OsString> = [
+            "-v",
+            "error",
+            "-show_entries",
+            "stream_tags=title,artist:format_tags=title,artist:format=duration",
+            "-of",
+            "default=nw=1",
+        ]
+        .map(OsString::from)
+        .into_iter()
+        .chain([out.clone().into_os_string()])
+        .collect();
+        let text = capture(&SystemTool, &ffmpeg.ffprobe, &probe, 1 << 16, &never).unwrap();
+        println!("{}: {text}", codec.name());
+        assert!(text.contains("Zoe"), "{text}");
+        assert!(text.contains("A \"quoted\"; title"), "{text}");
+    }
+    let _ = fs::remove_dir_all(dir);
 }
