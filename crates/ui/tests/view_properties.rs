@@ -469,3 +469,21 @@ fn committing_an_unchanged_clip_name_sends_nothing() {
     ];
     run(a, b, doc, &reg, &steps).expect("an unchanged name is not a command");
 }
+
+#[test]
+fn a_selection_dragged_and_undone_mid_gesture_names_only_clips_that_exist() {
+    let (doc, reg) = (song_doc(), registry());
+    let (a, b) = arrangement_pair(&doc, &reg);
+    let steps = [
+        Step::Down(752.360210358058, 205.72625343128817, 0, true, false),
+        Step::Wheel(0.0, 0.0, -4.8836286008679926, 0.0, 2),
+        Step::Down(632.8414329912573, 275.54728886814155, 0, false, false),
+        Step::Move(0.0, 0.0, 0),
+        Step::Up(0.0, 0.0, 0),
+        Step::Down(750.4928051096111, 396.61738931534865, 1, false, false),
+        Step::Move(0.0, 0.0, 0),
+        Step::Undo,
+        Step::Up(0.0, 0.0, 0),
+    ];
+    run(a, b, doc, &reg, &steps).expect("the selection stays valid");
+}

@@ -668,3 +668,114 @@ fn pad_names_wrap_at_separators_then_in_words_and_never_past_two_lines() {
     assert!(lines.iter().all(|l| l.chars().count() <= 10), "{lines:?}");
     assert_eq!(w(""), [""]);
 }
+
+// ------------------------------------------------------------------ pad lights and names
+
+/// The meter values of a drum machine: the 16 hit counters, then the 16 last velocities.
+fn published(hits: &[(usize, f32)], velocity: f32) -> Vec<f32> {
+    let mut v = vec![0.0; atomik_ui::autolayout::DRUM_METERS];
+    for (pad, count) in hits {
+        v[*pad - 1] = *count;
+        v[16 + *pad - 1] = velocity;
+    }
+    v
+}
+
+#[test]
+fn the_device_publishes_as_many_meter_values_as_the_panel_reads() {
+    assert_eq!(
+        atomik_ui::autolayout::DRUM_METERS,
+        atomik_devices::drum_machine::METER_COUNT
+    );
+}
+
+#[test]
+fn a_pad_lights_when_its_hit_counter_moves_and_fades_out() {
+    let doc = drum_only();
+    let reg = registry();
+    let mut v = view(&doc, &reg);
+    let d = key("drums");
+    // The first feed only learns the counters: a project that played before the panel looked
+    // does not flash.
+    v.set_device_meter_values(&d, &published(&[(3, 5.0)], 1.0));
+    assert!(!v.pad_lights_active());
+    assert_eq!(v.pad_light(&d, 3), 0.0);
+    // A counter that moved lights that pad and no other, louder for a harder hit.
+    v.set_device_meter_values(&d, &published(&[(3, 6.0)], 1.0));
+    assert!(v.pad_lights_active());
+    assert_eq!(v.pad_light(&d, 3), 1.0);
+    assert_eq!(v.pad_light(&d, 4), 0.0);
+    v.set_device_meter_values(&d, &published(&[(3, 6.0), (8, 1.0)], 0.0));
+    assert!(v.pad_light(&d, 8) > 0.4 && v.pad_light(&d, 8) < 0.7);
+    // The same values again change nothing.
+    v.set_device_meter_values(&d, &published(&[(3, 6.0), (8, 1.0)], 0.0));
+    assert_eq!(v.pad_light(&d, 3), 1.0);
+    // The lights fade on the tick's clock and are out after a quarter second.
+    assert!(!v.tick(10.0), "the first tick only starts the clock");
+    assert!(v.tick(10.1));
+    let mid = v.pad_light(&d, 3);
+    assert!(mid > 0.0 && mid < 1.0, "{mid}");
+    for n in 2..8 {
+        v.tick(10.0 + 0.1 * f64::from(n));
+    }
+    assert!(!v.pad_lights_active());
+    assert_eq!(v.pad_light(&d, 3), 0.0);
+    assert!(!v.tick(11.0));
+}
+
+#[test]
+fn a_lit_pad_is_painted_and_the_picture_comes_back_when_it_is_out() {
+    let doc = drum_only();
+    let reg = registry();
+    let mut v = view(&doc, &reg);
+    let d = key("drums");
+    let mut dark = DisplayList::new();
+    v.paint(&mut dark, &doc, &reg);
+    v.set_device_meter_values(&d, &published(&[], 0.0));
+    v.set_device_meter_values(&d, &published(&[(1, 1.0)], 1.0));
+    let mut lit = DisplayList::new();
+    v.paint(&mut lit, &doc, &reg);
+    assert_ne!(dark.to_json(), lit.to_json());
+    let _ = v.tick(1.0);
+    for n in 1..6 {
+        let _ = v.tick(1.0 + 0.1 * f64::from(n));
+    }
+    let mut out = DisplayList::new();
+    v.paint(&mut out, &doc, &reg);
+    assert_eq!(dark.to_json(), out.to_json());
+}
+
+#[test]
+fn a_dropped_sample_names_its_pad_at_once() {
+    let full = drum_only();
+    let reg = registry();
+    // The panel is drawn with every pad empty, then a drop lands zones and an asset in the
+    // document: the same device keeps its place, so the panel is not rebuilt.
+    let mut empty = full.clone();
+    empty.devices[0].zones.clear();
+    let mut v = view(&empty, &reg);
+    let before = texts_of(&mut v, &empty);
+    assert_eq!(
+        before.iter().filter(|x| *x == "empty").count(),
+        16,
+        "{before:?}"
+    );
+    v.sync(&full, &reg);
+    let after = texts_of(&mut v, &full);
+    for name in ["kick_808", "snare_soft"] {
+        assert!(after.iter().any(|x| x == name), "{name}: {after:?}");
+    }
+    assert_eq!(
+        after.iter().filter(|x| *x == "empty").count(),
+        14,
+        "{after:?}"
+    );
+    // And back: removing the zones empties the pads again.
+    v.sync(&empty, &reg);
+    let again = texts_of(&mut v, &empty);
+    assert_eq!(
+        again.iter().filter(|x| *x == "empty").count(),
+        16,
+        "{again:?}"
+    );
+}

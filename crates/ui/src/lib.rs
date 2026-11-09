@@ -490,7 +490,9 @@ pub use export_panel::{
     AAC_BITRATES, EXPORT_RATES, EncoderState, ExportAction, ExportDepth, ExportDither, ExportFile,
     ExportQuality, ExportScope, ExportValues, ExportView, MP3_BITRATES, MP3_VBR, OPUS_BITRATES,
 };
-pub use file_browser::{DetailData, FileBrowserView, PlacesData, TreeChild};
+pub use file_browser::{
+    DetailData, FileBrowserView, PREVIEW_DB_MAX, PREVIEW_DB_MIN, PlacesData, TreeChild,
+};
 pub use io_panel::IoSocketState;
 pub use kick_bass_panel::{
     FixView, KickBassAction, KickBassInfo, KickBassView, RunView, StripHit, StripView,

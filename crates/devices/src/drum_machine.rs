@@ -83,6 +83,10 @@ use voice::{Pending, SYNTH_ZONE, Slot, Voice, VoiceCv};
 
 /// Number of pads.
 pub const PAD_COUNT: usize = 16;
+/// The hit counters published as meter values wrap here, so every value stays exact in an `f32`.
+pub const HIT_COUNT_WRAP: u32 = 1 << 20;
+/// Meter values: the hit counter of each pad, then the velocity of its last hit (0 to 1).
+pub const METER_COUNT: usize = 2 * PAD_COUNT;
 /// Key of pad 1 (pad `n` is on key `PAD_KEY_BASE + n - 1`).
 pub const PAD_KEY_BASE: u8 = 36;
 /// Voices (fixed).
@@ -671,6 +675,10 @@ pub struct DrumMachine {
     gate_out: [f32; PAD_COUNT],
     /// Gate-in state per pad (above the threshold at the last sample looked at).
     gate_high: [bool; PAD_COUNT],
+    /// Hits that sounded per pad, counted modulo [`HIT_COUNT_WRAP`] (published as meter values).
+    hits: [u32; PAD_COUNT],
+    /// The velocity of the last hit that sounded on each pad.
+    hit_velocity: [f32; PAD_COUNT],
     voices: Vec<Voice>,
     next_order: u64,
     zones: [PadZones; PAD_COUNT],
@@ -709,6 +717,8 @@ impl DrumMachine {
             pitch_prev: None,
             gate_out: [0.0; PAD_COUNT],
             gate_high: [false; PAD_COUNT],
+            hits: [0; PAD_COUNT],
+            hit_velocity: [0.0; PAD_COUNT],
             voices: vec![Voice::new(); VOICES],
             next_order: 0,
             zones: [PadZones::EMPTY; PAD_COUNT],
@@ -816,6 +826,13 @@ impl DrumMachine {
         self.note_off(pad);
     }
 
+    /// Counts a hit that sounds on `pad` (zero-based) at `velocity` for the panel's pad lights.
+    fn mark_hit(hits: &mut [u32; PAD_COUNT], velocities: &mut [f32; PAD_COUNT], pad: u8, v: f32) {
+        let p = usize::from(pad);
+        hits[p] = (hits[p] + 1) % HIT_COUNT_WRAP;
+        velocities[p] = v;
+    }
+
     /// A hit on `pad` (zero-based) at `velocity`.
     fn note_on(&mut self, pad: u8, velocity: f32) {
         if self.pads[usize::from(pad)].module.is_synth() {
@@ -837,6 +854,7 @@ impl DrumMachine {
         if !(0..usize::from(list.n)).any(matches) {
             return;
         }
+        Self::mark_hit(&mut self.hits, &mut self.hit_velocity, pad, velocity);
         let fade = self.samples(FADE_MS);
         let pads = self.pads;
         choke_and_retrigger(&mut self.voices, &pads, pad, fade);
@@ -867,6 +885,7 @@ impl DrumMachine {
 
     /// A hit on a pad that plays a synthesised module: one voice, no sample map needed.
     fn synth_hit(&mut self, pad: u8, velocity: f32) {
+        Self::mark_hit(&mut self.hits, &mut self.hit_velocity, pad, velocity);
         let fade = self.samples(FADE_MS);
         let pads = self.pads;
         choke_and_retrigger(&mut self.voices, &pads, pad, fade);
@@ -998,6 +1017,25 @@ impl Device for DrumMachine {
             self.values[i] = plain;
             self.apply(id.0, plain);
         }
+    }
+
+    fn has_meter_values(&self) -> bool {
+        true
+    }
+
+    /// The pad lights: [`PAD_COUNT`] hit counters, then [`PAD_COUNT`] last velocities. A counter
+    /// moves each time its pad starts a sound (a note, the gate input or a trigger), so a view
+    /// that watches the counters sees every hit the engine played, whoever sent it.
+    fn meter_values(&self, out: &mut [f32]) -> usize {
+        let n = METER_COUNT.min(out.len());
+        for (i, slot) in out[..n].iter_mut().enumerate() {
+            *slot = if i < PAD_COUNT {
+                self.hits[i] as f32
+            } else {
+                self.hit_velocity[i - PAD_COUNT]
+            };
+        }
+        n
     }
 
     fn swap_samples(&mut self, map: Option<SampleMapRef>) -> Option<SampleMapRef> {

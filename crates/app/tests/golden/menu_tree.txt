@@ -547,6 +547,7 @@ Window
   open song 2
   open song 3
 Help
+  Guided Tour
   Keyboard Shortcuts
   Documentation
   Report an Issue

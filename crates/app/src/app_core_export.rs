@@ -65,6 +65,8 @@ struct Running {
 pub(super) struct ExportState {
     running: Option<Running>,
     next_job: u64,
+    /// How many exports finished since the project was opened (the guided first song reads it).
+    finished: u32,
 }
 
 impl ExportState {
@@ -73,6 +75,12 @@ impl ExportState {
         if let Some(r) = self.running.take() {
             r.cancel.store(true, Ordering::Relaxed);
         }
+        self.finished = 0;
+    }
+
+    /// How many exports finished since the project was opened.
+    pub(super) fn finished(&self) -> u32 {
+        self.finished
     }
 }
 
@@ -492,6 +500,7 @@ impl<S: EngineSink> AppCore<S> {
             Err(e) => self.reject(format!("Export of {} failed: {e}", running.file)),
             Ok(None) => self.reject(format!("Export of {} cancelled", running.file)),
             Ok(Some(done)) => {
+                self.audio.export.finished = self.audio.export.finished.saturating_add(1);
                 let rate = self.doc().sample_rate;
                 // The report says how the export sits against the project's delivery target.
                 let target = self.doc().delivery.clone();
