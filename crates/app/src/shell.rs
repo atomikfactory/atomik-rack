@@ -150,6 +150,8 @@ use crate::start_screen::{ExampleCard, RecentRow, StartOutcome, StartScreen};
 use crate::status::{AudioStatus, OverloadStats, status_text};
 use crate::stress::{STRESS_CABLES, STRESS_DEVICES, stress_doc, stress_song_doc};
 use crate::ui_state::UiState;
+use crate::update_check::Updater;
+use crate::update_notice::UpdateNotice;
 use crate::windows::{DocId, WindowHit, WindowKind};
 use atomik_audio_io::StreamState;
 use atomik_model::{ClipId, Command, ConsoleCommand, DeviceKey};
@@ -349,6 +351,10 @@ pub enum ShellRequest {
     /// Open an address in the default browser (Help > Documentation, Report an Issue and the
     /// link of the About box). Only the project's own addresses are ever asked for.
     OpenUrl(&'static str),
+    /// Open the page of a newer release in the default browser (the update notice's "What's
+    /// new"). The address is made from a checked tag by `atomik-update`, never read from the
+    /// network answer as it is.
+    OpenRelease(String),
     /// Bring a window to the front and give it the keyboard focus (restoring it if it is
     /// minimised).
     FocusWindow(WindowKind),
@@ -477,6 +483,12 @@ pub struct Shell<B: AudioBackend> {
     about: Option<AboutBox>,
     /// The start screen, while it is open.
     start_screen: Option<StartScreen>,
+    /// The update check: its worker, the daily throttle and what is kept (`updates.json`).
+    updater: Updater,
+    /// The question or the news of the update check, while it shows.
+    update_notice: Option<UpdateNotice>,
+    /// The newer release the news is about (what its buttons act on).
+    update_release: Option<atomik_update::Release>,
     /// The guided first song, while its panel is open (shell state: never saved in a song).
     guide: Option<Guide>,
     /// The operating system is set to a dark theme (what the System theme choice follows).
@@ -704,6 +716,10 @@ impl<B: AudioBackend> Shell<B> {
             .settings_path
             .as_deref()
             .map(keymap_store::workflow_path);
+        let updates_path = options
+            .settings_path
+            .as_deref()
+            .map(|p| p.with_file_name(atomik_update::FILE));
         let loaded_keymap = keymap_path.as_deref().map(keymap_store::load_user_keymap);
         let loaded_workflow = workflow_path.as_deref().map(keymap_store::load_workflow);
         let mut startup_notes: Vec<String> = ui_note.into_iter().collect();
@@ -796,6 +812,9 @@ impl<B: AudioBackend> Shell<B> {
             sound_analyst: None,
             wavetable: None,
             start_screen: None,
+            updater: Updater::new(updates_path),
+            update_notice: None,
+            update_release: None,
             guide: None,
             color_picker: None,
             notes: None,
@@ -4822,6 +4841,10 @@ impl<B: AudioBackend> Shell<B> {
             self.forward_modifiers();
             return Vec::new();
         }
+        // The notice of the update check takes only the events that land on its card.
+        if let Some(requests) = self.update_notice_event(window, event) {
+            return requests;
+        }
         // The modals live in the main window: while one is open the other windows are inert, and
         // a press in one brings the main window forward.
         if window != WindowKind::Main && self.modal_open() {
@@ -8301,6 +8324,10 @@ impl<B: AudioBackend> Shell<B> {
                 vec![ShellRequest::OpenUrl(crate::about_box::REPOSITORY_URL)]
             }
             AppCommand::ReportIssue => vec![ShellRequest::OpenUrl(crate::about_box::ISSUES_URL)],
+            AppCommand::CheckForUpdates => {
+                self.check_for_updates_command();
+                Vec::new()
+            }
             AppCommand::About => {
                 self.about = Some(AboutBox::new(crate::about_box::VERSION));
                 self.menubar.as_mut().map(MenuBar::close);
@@ -8778,6 +8805,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_relink();
         self.sync_export();
         self.sync_film();
+        self.poll_updates();
         self.sync_masking();
         self.sync_bass_read();
         self.sync_delivery();
@@ -9717,6 +9745,11 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(start) = &self.start_screen {
             start.paint(canvas, &theme, self.size());
         }
+        if self.update_notice_reachable()
+            && let Some(notice) = &self.update_notice
+        {
+            notice.paint(canvas, &theme, self.size());
+        }
         canvas.pop_transform();
     }
 }
@@ -9832,6 +9865,9 @@ fn pointer_pos(event: &UiEvent) -> Option<Point> {
 
 #[path = "shell_film.rs"]
 mod film_impl;
+
+#[path = "shell_update.rs"]
+mod update_impl;
 
 #[path = "shell_export.rs"]
 mod export_impl;
@@ -10039,6 +10075,10 @@ mod export_tests;
 #[cfg(test)]
 #[path = "shell_film_tests.rs"]
 mod film_tests;
+
+#[cfg(test)]
+#[path = "shell_update_tests.rs"]
+mod update_tests;
 
 #[cfg(test)]
 #[path = "shell_save_tests.rs"]

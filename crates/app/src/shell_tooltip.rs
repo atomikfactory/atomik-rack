@@ -104,6 +104,13 @@ impl<B: AudioBackend> Shell<B> {
         if window != WindowKind::Main && self.modal_open() {
             return None;
         }
+        if window == WindowKind::Main
+            && self.update_notice_reachable()
+            && let Some(v) = &self.update_notice
+            && let Some(help) = v.help_at(self.size(), pos)
+        {
+            return Some(help);
+        }
         // The guide panel floats over the song (and under every modal).
         if window == WindowKind::Main
             && !self.modal_open()

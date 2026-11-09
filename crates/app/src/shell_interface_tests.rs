@@ -391,6 +391,7 @@ fn the_help_menu_lists_its_items_and_the_shortcut_list_shows_f1() {
             "Keyboard Shortcuts",
             "Documentation",
             "Report an Issue",
+            "Check for Updates",
             "Export Diagnostics\u{2026}",
             "Export Device Parameter List\u{2026}",
             "About Atomik Rack"

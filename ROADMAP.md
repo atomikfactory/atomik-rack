@@ -98,6 +98,9 @@ chain, a switch for the insert area and the output display, and a back with only
 return and the output; the insert effects stacked under the panel; and a compact master section panel with the
 master fader, the meter, the insert switches and eight send rows, its own insert area and the shared send effects
 grouped under it),
+the optional update check (a question at the first start, one request a day for the list of releases that sends
+only the program name and version, a notice with What's new, Skip this version and Later, and Help > Check for Updates;
+nothing is downloaded or installed),
 and a start screen that teaches (a strip of cards above the lists with the factory example songs, each with a line
 about what it is for and each opening as a new unsaved song, and a Make your first song card, also Help > Guided Tour,
 that opens a new song and walks through seven steps in a small floating panel: add an instrument, play or draw some
@@ -114,6 +117,10 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 - **macOS and wider Linux verification.** Ubuntu 26.04 is a main platform beside Windows; other distributions and audio setups still need checking. macOS is built, linted and tested only on GitHub Actions and has not been run on a Mac by hand. Verifying and fixing both is a priority.
 - **VST3 on Wayland.** Plugin editor embedding on native Wayland (sandboxed editors already run through XWayland; in-process editors and sessions without `DISPLAY` fall back to the parameter pane). Editors that need file-descriptor handlers now run on Linux; they still need checking with more real plugins.
 - **Signed builds.** The pipeline is wired (Authenticode or Azure Trusted Signing, Developer ID signing with notarisation, a GPG signature of the checksums) and skips each step until its secrets exist; what is left is to obtain the certificates (a Windows code-signing certificate or an Azure signing account, an Apple Developer ID account, a GPG key), add them to the `release-signing` environment and confirm the first signed release on real machines. Until then the builds are unsigned.
+- **Update check follow-ups.** The check is done (see the paragraph above and the Privacy section of the README). Still to
+  come: the notes of a release shown in the program instead of the browser, the notice in every song window (it shows in
+  the window that asked or was open at the start), and the answer in a Settings tab of its own once the tab strip has room
+  (it sits in Settings > Video & updates today).
 
 ## Phase 2: The sequencer
 

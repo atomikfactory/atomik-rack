@@ -8,8 +8,13 @@
 //! ([`crate::AppCore::video_status`]) and describes the folder that is applied, so after a
 //! change it is looked for again once Apply is pressed. File > Video > Check FFmpeg looks again
 //! on request.
+//!
+//! Under the FFmpeg rows the tab holds the **New versions** section ([`crate::updates_tab`]): the
+//! answer to "Check for new versions once a day?", with Yes and No, saved with the other drafts
+//! (the tab strip and the other tabs have no room for a row of their own).
 
 use crate::keyboard_tab::{PAD, TITLE, TabOutcome};
+use crate::updates_tab::{UpdatesLayout, UpdatesSection};
 use atomik_ui::kurbo::{Point, Rect, RoundedRect};
 use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, UiEvent};
 use std::path::PathBuf;
@@ -77,6 +82,8 @@ pub struct VideoLayout {
     pub status: (Point, Vec<String>),
     /// The notes under the status, line by line.
     pub notes: Vec<(Point, String)>,
+    /// The "New versions" section under the notes (the answer to the update check question).
+    pub updates: UpdatesLayout,
 }
 
 /// The Video tab state.
@@ -84,6 +91,7 @@ pub struct VideoLayout {
 pub struct VideoTab {
     folder: Option<PathBuf>,
     status: String,
+    updates: UpdatesSection,
     hover: Option<Point>,
 }
 
@@ -93,8 +101,21 @@ impl VideoTab {
         Self {
             folder,
             status,
+            updates: UpdatesSection::new(None),
             hover: None,
         }
+    }
+
+    /// The same tab editing `answer` to the question of the update check as well (`None`: not
+    /// answered).
+    pub fn with_update_answer(mut self, answer: Option<bool>) -> Self {
+        self.updates = UpdatesSection::new(answer);
+        self
+    }
+
+    /// The edited answer to the question of the update check.
+    pub fn update_answer(&self) -> Option<bool> {
+        self.updates.answer()
     }
 
     /// The edited folder (`None`: the system path).
@@ -143,10 +164,12 @@ impl VideoTab {
             }
             y += 6.0;
         }
+        let (updates, _) = UpdatesSection::layout_at(x0, inner, y + 8.0);
         VideoLayout {
             folder,
             status: (title, lines),
             notes,
+            updates,
         }
     }
 
@@ -157,7 +180,7 @@ impl VideoTab {
             .iter()
             .map(|n| 16.0 * wrap(n, WRAP + 8).len() as f64 + 6.0)
             .sum();
-        ROW + 14.0 + 22.0 + 16.0 * lines + 14.0 + notes
+        ROW + 14.0 + 22.0 + 16.0 * lines + 14.0 + notes + 8.0 + UpdatesSection::height()
     }
 
     /// Handles an event inside `panel`.
@@ -184,6 +207,7 @@ impl VideoTab {
                 if layout.folder.default.contains(*pos) {
                     self.folder = None;
                 }
+                self.updates.press(&layout.updates, event);
             }
             _ => {}
         }
@@ -238,5 +262,6 @@ impl VideoTab {
         for (at, line) in &l.notes {
             canvas.text(&TextRun::new(line.clone(), *at, 11.5, theme.text_muted));
         }
+        self.updates.paint(canvas, theme, &l.updates, self.hover);
     }
 }
