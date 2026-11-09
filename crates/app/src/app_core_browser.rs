@@ -612,6 +612,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             BrowseAction::RequestInfo(paths) => self.queue_probe(paths),
             // Show in Folder is a request the shell hands to the platform.
+            BrowseAction::SetPreviewLevel(db) => self.set_preview_db(db),
             BrowseAction::SetAutoPreview(_)
             | BrowseAction::DragFiles(_)
             | BrowseAction::Reveal(_)
@@ -1226,14 +1227,31 @@ impl<S: EngineSink> AppCore<S> {
 
     // ------------------------------------------------------------------ preview
 
+    /// Sets the level browser previews play at, in dB (clamped to the control's range and
+    /// rounded to a whole dB), and shows it on the browser's control. It applies to the next
+    /// preview of every kind: audio files, patches and clips.
+    pub fn set_preview_db(&mut self, db: f32) {
+        self.file_browser.set_preview_db(db);
+        self.preview_db = self.file_browser.preview_db();
+    }
+
+    /// The level browser previews play at, in dB.
+    pub fn preview_db(&self) -> f32 {
+        self.preview_db
+    }
+
+    /// The linear gain a preview starts with: the preview level.
+    pub(super) fn preview_gain(&self) -> f32 {
+        10f32.powf(self.preview_db / 20.0)
+    }
+
     /// Starts a preview: the stream reaches the engine now, the decoder thread fills it.
     fn start_preview(&mut self, path: PathBuf) {
         self.stop_clip_preview();
         self.forget_patch_preview();
         let (feed, stream) = preview_channel();
         let monitor = stream.monitor();
-        // Gain is fixed at 0 dB.
-        if let Err(e) = self.sink.preview_start(stream, 1.0) {
+        if let Err(e) = self.sink.preview_start(stream, self.preview_gain()) {
             self.report(format!("preview: {e}"));
             return;
         }

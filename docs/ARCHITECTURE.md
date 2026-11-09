@@ -5328,8 +5328,9 @@ creation chain in the **Creation chain** bullet.
   container; never a no-op). The arrangement gained a track selection (header click, Up and Down)
   and an automation-point selection; its clip selection takes Shift and Ctrl clicks across tracks
   and a rubber band (`Drag::Marquee`: a plain drag on a lane with the Select tool, or below the last
-  track; the pencil, Alt and a double-click create clips instead); dragging clips onto another track
-  ends in `MoveClips` (one
+  track; the pencil, Alt and a double-click create clips instead; a plain click on an empty automation
+  lane picks the lane and its track and adds nothing, while a double-click adds a clip with a point);
+  dragging clips onto another track ends in `MoveClips` (one
   `ClipMove { id, track, start }` per clip: the grabbed clip's track change applies to all, each
   clip takes the lane of its own `LaneKind` on the target track, one without such a lane rejects the
   command and the view does not emit it), Ctrl at the press makes it a copy (fresh ids from
@@ -5713,6 +5714,10 @@ and on Rename, and nowhere else.
   win over global chords of the same keys (Space previews instead of playing, Backspace goes up a
   folder). While the search or tag field owns the keyboard the context is `Text` over `Files`.
   `view.toggle_file_browser` (`F9`) is global. The full list is in [KEYBOARD.md](KEYBOARD.md).
+- **Preview level.** A control in the header (`BrowseAction::SetPreviewLevel`, -60 to +6 dB in whole
+  dB, a double-click returns to 0 dB) sets the gain every preview starts with: audio files, patches,
+  containers and clips all go through `AppCore::preview_gain`. The level lives in `workflow.json`
+  (`preview_db`), not in `ui-state.json`, and applies to the next preview.
 - **Persistence.** `ui-state.json` keeps the panel's visibility, width, tree/list split, the
   auto-preview switch and the last folder. `atomik --file-browser [DIR]` shows the panel at start,
   on `DIR` when given.
@@ -6569,7 +6574,9 @@ arrangement and edits one note clip of an `atomik.drum-machine` as a grid of 16 
 `SetClipContent`, the toolbar changes resolution and length as one `Command::Batch` of `SetClipGrid`
 and `SetClipGeometry` (the clip length follows the grid) and swing as merged `SetClipGrid` drags;
 notes the grid cannot show are kept untouched. The drum machine has its own rack panel
-(`autolayout::drum_layout`): a 4×4 pad grid (click selects and auditions, drops load the pad), the
+(`autolayout::drum_layout`): a 4×4 pad grid (click selects and auditions, drops load the pad; a pad
+lights when the engine plays it, from the hit counters the device publishes as meter values and fades
+on the rack's tick), the
 eighteen knobs of the selected pad (view state, remapped onto `padN.*`), master level and an Edit
 button, and a back panel that groups the sockets per pad (outputs and gates) with the two global CV
 jacks and trims in a CV section.

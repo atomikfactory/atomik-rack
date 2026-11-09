@@ -3237,6 +3237,7 @@ impl<B: AudioBackend> Shell<B> {
             .set_reverse_mode(self.workflow.reverse_mode.graphical());
         self.core.set_midi_resolution(self.workflow.midi_resolution);
         self.core.set_keep_versions(self.workflow.keep_versions);
+        self.core.set_preview_db(self.workflow.preview_db);
         self.core
             .view_mut()
             .set_value_tips(self.workflow.value_tooltips);
@@ -6774,6 +6775,11 @@ impl<B: AudioBackend> Shell<B> {
                     self.ui_changed();
                 }
                 UiAction::Browse(BrowseAction::SetAutoPreview(_)) => self.ui_changed(),
+                // The level lives in Settings (workflow.json), not in the window state.
+                UiAction::Browse(BrowseAction::SetPreviewLevel(_)) => {
+                    self.workflow.preview_db = self.core.preview_db();
+                    self.save_workflow();
+                }
                 UiAction::Browse(BrowseAction::Reveal(path)) => {
                     self.pending.push(ShellRequest::Reveal(path.clone()));
                 }

@@ -273,7 +273,7 @@ impl<S: EngineSink> AppCore<S> {
         feed.set_source_rate(RENDER_RATE);
         let monitor = stream.monitor();
         self.sink
-            .preview_start(stream, 1.0)
+            .preview_start(stream, self.preview_gain())
             .map_err(|e| format!("preview: {e}"))?;
         let spawned = std::thread::Builder::new()
             .name("atomik-clip-preview".into())
@@ -609,6 +609,19 @@ mod tests {
         c.browse(BrowseAction::StopPreview);
         assert_eq!(previews(&c).last(), Some(&SinkCall::PreviewStop));
         assert_eq!(c.preview_path(), None);
+    }
+
+    #[test]
+    fn a_clip_preview_plays_at_the_preview_level() {
+        let dir = tmp("level");
+        let path = write_clip(&dir, riff());
+        let mut c = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+        c.set_preview_db(-12.0);
+        c.browse(BrowseAction::Preview(path));
+        let [SinkCall::PreviewStart { gain }] = previews(&c)[..] else {
+            panic!("{:?}", previews(&c))
+        };
+        assert!((gain - 0.251_189).abs() < 1e-4, "{gain}");
     }
 
     #[test]

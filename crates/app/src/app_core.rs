@@ -378,6 +378,9 @@ pub struct AppCore<S: EngineSink> {
     auto_color: bool,
     /// How many automatic versions a save keeps (Settings; see [`AppCore::set_keep_versions`]).
     keep_versions: u32,
+    /// The level browser previews play at, in dB (the browser's level control; see
+    /// [`AppCore::set_preview_db`]).
+    preview_db: f32,
     /// The ticks per quarter note File > Export MIDI writes (File > MIDI Export Resolution).
     midi_resolution: crate::midi_file::MidiResolution,
     /// The take group the file the import dialog returns becomes a take of (Import File as
@@ -677,6 +680,7 @@ impl<S: EngineSink> AppCore<S> {
             join_next: false,
             auto_color: false,
             keep_versions: crate::keymap_store::DEFAULT_KEEP_VERSIONS,
+            preview_db: 0.0,
             midi_resolution: crate::midi_file::MidiResolution::default(),
             take_import: None,
             trial_next: false,

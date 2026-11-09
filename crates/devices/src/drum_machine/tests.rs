@@ -1631,3 +1631,80 @@ fn master_tune_shifts_every_pad_like_the_tune_params() {
         assert!((f64::from(*v) - w).abs() < 1e-5, "{n}: {v} vs {w}");
     }
 }
+
+// ---- pad lights ------------------------------------------------------------------------
+
+/// The published meter values: the hit counters, then the last velocities.
+fn lights(h: &DeviceHarness) -> [f32; METER_COUNT] {
+    let mut out = [0.0f32; METER_COUNT];
+    assert_eq!(h.device().meter_values(&mut out), METER_COUNT);
+    out
+}
+
+#[test]
+fn every_hit_that_sounds_moves_its_pads_counter_and_publishes_its_velocity() {
+    let m = flat_kit(&[1, 3], 0.1, 4000);
+    let (mut h, _) = with_map(&m);
+    assert!(h.device().has_meter_values());
+    assert!(lights(&h).iter().all(|v| *v == 0.0));
+    hit(&mut h, 0, 3, 0.5);
+    render(&mut h, 1);
+    let l = lights(&h);
+    assert_eq!((l[2], l[PAD_COUNT + 2]), (1.0, 0.5));
+    assert!(
+        l[..PAD_COUNT]
+            .iter()
+            .enumerate()
+            .all(|(i, v)| i == 2 || *v == 0.0)
+    );
+    // A second hit on the same pad and one on another pad.
+    hit(&mut h, 0, 3, 1.0);
+    hit(&mut h, 4, 1, 0.25);
+    render(&mut h, 1);
+    let l = lights(&h);
+    assert_eq!((l[2], l[PAD_COUNT + 2]), (2.0, 1.0));
+    assert_eq!((l[0], l[PAD_COUNT]), (1.0, 0.25));
+}
+
+#[test]
+fn the_gate_input_lights_a_pad_like_a_note_does() {
+    let m = flat_kit(&[3], 0.1, 4000);
+    let (mut h, _) = with_map(&m);
+    *h.input_mut("pad3_gate_cv_in") = gate_pulse(10, BATCH, 1.0);
+    render(&mut h, 1);
+    assert_eq!(lights(&h)[2], 1.0);
+}
+
+#[test]
+fn a_hit_that_plays_nothing_lights_nothing() {
+    // No sample map: the hit is silent, so the pad stays dark.
+    let (mut h, _) = drum();
+    hit(&mut h, 0, 2, 1.0);
+    render(&mut h, 1);
+    assert!(lights(&h).iter().all(|v| *v == 0.0));
+    // A pad with no zone beside pads that have one.
+    let m = flat_kit(&[1], 0.1, 4000);
+    let (mut h, _) = with_map(&m);
+    hit(&mut h, 0, 2, 1.0);
+    render(&mut h, 1);
+    assert!(lights(&h).iter().all(|v| *v == 0.0));
+}
+
+#[test]
+fn a_synthesised_pad_lights_without_a_sample_map() {
+    let (mut h, _) = drum();
+    h.set_param("pad2.module", 1.0);
+    hit(&mut h, 0, 2, 0.8);
+    render(&mut h, 1);
+    let l = lights(&h);
+    assert_eq!((l[1], l[PAD_COUNT + 1]), (1.0, 0.8));
+}
+
+#[test]
+fn the_hit_counters_wrap_so_they_stay_exact_in_an_f32() {
+    let mut d = DrumMachine::new();
+    d.hits[0] = HIT_COUNT_WRAP - 1;
+    DrumMachine::mark_hit(&mut d.hits, &mut d.hit_velocity, 0, 1.0);
+    assert_eq!(d.hits[0], 0);
+    assert_eq!(HIT_COUNT_WRAP as f32 as u32, HIT_COUNT_WRAP);
+}

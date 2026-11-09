@@ -3455,7 +3455,17 @@ impl ArrangementView {
                 let device = self.song.tracks[track].device.clone();
                 let automation = self.is_automation_lane(track, lane);
                 if clicks >= 2 {
-                    // A double-click on an empty lane creates a one-bar clip.
+                    // A double-click on an empty automation lane with the Select tool adds a
+                    // point (a clip over the bar clicked, with a point at the pointer).
+                    if automation
+                        && tool == Tool::Select
+                        && let Some(add) =
+                            self.new_automation_point(&device, lane, t, pos, modifiers)
+                    {
+                        out.push(add);
+                        return;
+                    }
+                    // A double-click on any other empty lane creates a one-bar clip.
                     let start = snap_floor(t, self.step(modifiers)).max(0);
                     let length = self.new_clip_length(start, modifiers);
                     out.push(self.drawn_clip((device, lane), automation, (start, length), pos));
@@ -4419,7 +4429,7 @@ impl ArrangementView {
             .max(1)
     }
 
-    /// The command for a click on empty automation lane: a clip over the bar holding `t0` with
+    /// The command for a double-click on empty automation lane: a clip over the bar holding `t0` with
     /// one point at the click (the tick snapped to the grid, the value from the pointer's
     /// height), as a single undo step. `None` when the lane is not shown.
     fn new_automation_point(
@@ -5409,13 +5419,9 @@ impl ArrangementView {
                     self.selection.clear();
                     self.point_sel = None;
                     if automation && !pencil {
-                        // A click on empty automation lane draws: a clip over the bar clicked,
-                        // with a point where the pointer is.
-                        if let Some(add) =
-                            self.new_automation_point(&device, lane, t0, start, modifiers)
-                        {
-                            out.push(add);
-                        }
+                        // A click on empty automation lane space with the Select tool selects
+                        // the lane; a double-click adds a point and the Pencil draws.
+                        self.select_lane(&device, lane);
                         return;
                     }
                     if pencil {

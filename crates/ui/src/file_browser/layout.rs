@@ -1,5 +1,6 @@
 //! Pure geometry and text formatting of the file browser panel (logical pixels).
 
+use super::{PREVIEW_DB_MAX, PREVIEW_DB_MIN};
 use atomik_library::{AudioFormat, FileKind, FileRow};
 use std::path::{Path, PathBuf};
 use vello::kurbo::Rect;
@@ -46,6 +47,10 @@ pub(super) const SEP_W: f64 = 12.0;
 pub(super) const ELLIPSIS_W: f64 = 14.0;
 /// Width of the back and forward buttons at the left of the path bar.
 pub(super) const NAV_W: f64 = 18.0;
+/// Width of the preview level control in the header.
+pub(super) const LEVEL_W: f64 = 54.0;
+/// The narrowest the search field may get before the level control makes room for it.
+pub(super) const SEARCH_MIN_W: f64 = 96.0;
 
 /// The regions of the panel.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,6 +65,8 @@ pub(super) struct Layout {
     pub recursive_btn: Rect,
     /// Auto-preview toggle.
     pub preview_btn: Rect,
+    /// The preview level control (empty when the panel is too narrow for it).
+    pub level: Rect,
     /// Tree region.
     pub tree: Rect,
     /// Splitter between tree and list.
@@ -113,10 +120,19 @@ pub(super) fn layout(bounds: Rect, tree_fraction: f64, banner: bool, info: bool)
         (preview_btn.x0 - 4.0).max(bounds.x0),
         top + FIELD_H,
     );
+    // The level control sits between the search field and the toggles, when the field keeps a
+    // usable width.
+    let level_x1 = recursive_btn.x0 - 4.0;
+    let level_x0 = level_x1 - LEVEL_W;
+    let level = if level_x0 - 6.0 - (bounds.x0 + PAD) >= SEARCH_MIN_W {
+        Rect::new(level_x0, top, level_x1, top + FIELD_H)
+    } else {
+        Rect::new(recursive_btn.x0, top, recursive_btn.x0, top + FIELD_H)
+    };
     let search = Rect::new(
         bounds.x0 + PAD,
         top,
-        (recursive_btn.x0 - 6.0).max(bounds.x0 + PAD),
+        (level.x0 - 6.0).max(bounds.x0 + PAD),
         top + FIELD_H,
     );
     let avail = (bounds.y1 - header.y1).max(0.0);
@@ -156,6 +172,7 @@ pub(super) fn layout(bounds: Rect, tree_fraction: f64, banner: bool, info: bool)
         search,
         recursive_btn,
         preview_btn,
+        level,
         tree,
         splitter,
         path,
@@ -166,6 +183,28 @@ pub(super) fn layout(bounds: Rect, tree_fraction: f64, banner: bool, info: bool)
         list,
         info,
         handle,
+    }
+}
+
+/// The level a pointer at `x` asks for on the control `rect`, in whole dB.
+pub(super) fn preview_level_at(rect: Rect, x: f64) -> f32 {
+    let span = f64::from(PREVIEW_DB_MAX - PREVIEW_DB_MIN);
+    let f = ((x - rect.x0) / rect.width().max(1.0)).clamp(0.0, 1.0);
+    ((f64::from(PREVIEW_DB_MIN) + f * span).round() + 0.0) as f32
+}
+
+/// Where `db` sits along the level control, as a fraction of its width.
+pub(super) fn level_fraction(db: f32) -> f64 {
+    let span = f64::from(PREVIEW_DB_MAX - PREVIEW_DB_MIN);
+    ((f64::from(db) - f64::from(PREVIEW_DB_MIN)) / span).clamp(0.0, 1.0)
+}
+
+/// The text the control shows for `db`.
+pub(super) fn level_text(db: f32) -> String {
+    if db > 0.0 {
+        format!("+{db:.0} dB")
+    } else {
+        format!("{db:.0} dB")
     }
 }
 

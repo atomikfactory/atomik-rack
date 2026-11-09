@@ -151,7 +151,9 @@ pub fn wrap_name(text: &str, width: f64, size: f32) -> Vec<String> {
 }
 
 /// Size of the sample name on a loaded drum pad.
-pub const PAD_NAME_SIZE: f32 = 9.5;
+pub const PAD_NAME_SIZE: f32 = 11.0;
+/// Font size of the pad number in a pad's corner.
+const PAD_NUMBER_SIZE: f32 = 9.0;
 
 /// Splits a file name into at most two lines that fit `width`: after the last space, `_`, `-`
 /// or `.` that leaves the first line at least half full, else in the middle of a word.
@@ -1552,12 +1554,22 @@ fn drum_panel<C: Canvas + ?Sized>(
             (false, true) => mix(theme.button, info.accent, 0.42),
             (false, false) => with_alpha(theme.lcd, 0.8),
         };
+        // A pad the engine just played is lit, fading out (the app feeds the hits).
+        let lit = info
+            .fx_meters
+            .get(usize::from(pad - 1))
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+        let face = mix(face, theme.highlight, 0.75 * lit);
         let rr = RoundedRect::from_rect(r, 4.0);
         c.fill_with(rr, face);
         c.stroke_with(
             RoundedRect::from_rect(r.inset(-0.5), 4.5),
-            if selected { 2.0 } else { 1.0 },
-            if selected {
+            if selected || lit > 0.05 { 2.0 } else { 1.0 },
+            if lit > 0.05 {
+                mix(theme.bevel_dark, theme.highlight, lit)
+            } else if selected {
                 info.accent
             } else {
                 theme.bevel_dark
@@ -1567,8 +1579,8 @@ fn drum_panel<C: Canvas + ?Sized>(
         c.text(
             &TextRun::new(
                 pad.to_string(),
-                pt(r.x0 + 4.0, r.y0 + 9.0),
-                7.5,
+                pt(r.x0 + 5.0, r.y0 + 11.0),
+                PAD_NUMBER_SIZE,
                 if loaded { theme.text } else { theme.text_muted }.with_alpha(dim * 0.8),
             )
             .weight(700),
@@ -1576,12 +1588,12 @@ fn drum_panel<C: Canvas + ?Sized>(
         if loaded {
             // The sample's file name, on up to two lines, centred in the lit pad.
             let lines = wrap_pad_name(name, r.width() - 8.0, PAD_NAME_SIZE);
-            let first = r.center().y + 4.0 - (lines.len() as f64 - 1.0) * 6.0;
+            let first = r.center().y + 4.0 - (lines.len() as f64 - 1.0) * 7.0;
             for (n, line) in lines.into_iter().enumerate() {
                 c.text(
                     &TextRun::new(
                         line,
-                        pt(r.center().x, first + n as f64 * 12.0),
+                        pt(r.center().x, first + n as f64 * 14.0),
                         PAD_NAME_SIZE,
                         theme.text,
                     )
@@ -1593,8 +1605,8 @@ fn drum_panel<C: Canvas + ?Sized>(
             c.text(
                 &TextRun::new(
                     "empty",
-                    pt(r.center().x, r.center().y + 3.5),
-                    8.0,
+                    pt(r.center().x, r.center().y + 4.0),
+                    9.0,
                     theme.text_muted.with_alpha(0.4),
                 )
                 .align(Align::Center),
