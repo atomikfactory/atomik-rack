@@ -41,6 +41,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
 | `atomik-video` | [crates/video](../crates/video) | none (serde_json, sha2, thiserror, log, zune-jpeg) | none | The foundation of video tracks, pure and headless, with no codec of its own: finding the FFmpeg the user installed (Settings folder, then `PATH`, version check; `discover.rs`), the one `VideoTool` trait every `ffmpeg` and `ffprobe` call goes through (`SystemTool` with no shell, a list of arguments, no console window and a kill on cancel; a fake for the tests), the `ffprobe` parser (`probe.rs`), the proxy file of small independent JPEG frames with a frame index (`proxy.rs`, `jpeg.rs`), the build of it from the piped frames with progress and cancel (`prepare.rs`), the per-user proxy cache (`cache.rs`), and what the viewer reads it with: the pure-Rust JPEG decode to RGBA (`decode.rs`), the decode worker and its byte-limited frame cache (`frames.rs`) and the exact song-time to frame and timecode arithmetic (`timeline.rs`), and the film export that puts the song's mix and the picture of its film together (`film.rs`) |
+| `atomik-update` | [crates/update](../crates/update) | none (serde_json, thiserror, log, ureq) | none | The optional update check, the only network request the program makes: `Version` (semantic order, release candidates included), the list of releases and the choice of the newest eligible one, `UpdateState` (the daily throttle and the skipped version, `updates.json`), `Consent` (the answer to the question) and the one request behind the `HttpGet` trait: `UreqGet` (rustls, HTTPS only, no redirect, no cookie, a timeout) for the application window, `FakeHttp` and `Offline` for tests and every other shell. Pure and headless |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v44), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
@@ -54,7 +55,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), model | none | Platform-independent views, widgets, display lists, theme |
-| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, video, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
+| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, video, update, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
 
@@ -2922,6 +2923,7 @@ edit is an ordinary `UiAction::Command` (`SetModSlot`, `SetParam` on `modN_amoun
 | `atomik-thumbs` | file browser: the 48-bar waveform thumbnail of each visible audio row (first thirty seconds, newest request first) | Yes (disk) |
 | `atomik-library-save` | file browser: writes `library.json` from the newest snapshot | Yes (disk) |
 | `atomik-video` | video: looks for FFmpeg, or probes a film and builds its proxy file from ffmpeg's piped frames (one job at a time, progress and cancel); `atomik-video-stdout` and `atomik-video-stderr` read the two pipes of the child process | Yes (disk, child process) |
+| `atomik-update` | update check: one request for the list of releases, only after the user said Yes, at most once a day (one short-lived thread per request, a timeout of 8 s; the shell polls its answer on the frame) | Yes (network) |
 | `atomik-library` | library: copies the audio of a saved item into its sibling bundle | Yes (disk) |
 | `atomik-adopt` | library: copies the audio of a loaded item into the session bundle, then decodes and builds peaks like `atomik-load` | Yes (disk) |
 | MIDI callback (midir) | maps event times to frames, pushes live notes; parses every message once more for the control path and queues it in the control hub (a short mutex, never held by the audio thread), consuming it when a mapping listens | Yes, then one wait-free push |
@@ -5031,7 +5033,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (517) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (518) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -6547,6 +6549,42 @@ stderr is their output).
   plugin cache and the plugin journal, the last crash report and the end of the log. Everything
   under the user's home folder is written as `~`.
 
+### The update check
+
+The program makes one kind of network request, and only when the user said yes: the check for a newer
+version. [crates/update](../crates/update) holds everything except the buttons; the shell side is
+[update_check.rs](../crates/app/src/update_check.rs) (the `Updater`: the rules, the worker, what is kept),
+[shell_update.rs](../crates/app/src/shell_update.rs) (the words and the buttons) and
+[update_notice.rs](../crates/app/src/update_notice.rs) (the card, `UpdateNotice`). The decision is
+[DECISIONS.md](DECISIONS.md#s-the-update-check).
+
+- **Consent.** The answer to "Check for new versions once a day?" is the workflow preference `update_check`
+  (`None` until answered, in `workflow.json`; `Consent` in the crate). While it is `None` nothing is asked:
+  at the first start the question shows as the notice in the lower left corner (over the start screen too),
+  and Help > Check for Updates (`help.check_for_updates`) shows the same question instead of going to the
+  network. Settings > Video & updates changes the answer (the section is
+  [updates_tab.rs](../crates/app/src/updates_tab.rs)).
+- **The request.** One GET of the fixed address `RELEASES_URL` (the list of releases of the project), HTTPS
+  only, no query, no redirect, no cookie store, no compression, a timeout of 8 seconds, at most 1 MiB read.
+  The only header the program sets is the User-Agent, `atomik-rack/<version>`; the client adds `Host` and
+  `Accept`. Nothing about the user or the machine is sent. It runs on its own thread, `atomik-update`, never on the
+  UI or the audio thread, and any failure is logged at debug level and told to nobody unless the user asked.
+- **The answer.** `newest` takes the highest version of the list that is not a draft; a pre-release counts only
+  when the running build is one itself. `Version` orders release candidates (`0.4.0-rc.2` < `0.4.0-rc.10` <
+  `0.4.0`). A newer version shows the notice with What's new (the page is made from the checked tag, never taken
+  from the answer), Skip this version (kept in `updates.json`; a later version shows again) and Later.
+  Nothing is downloaded or installed.
+- **The day.** After a Yes the check runs at the start when a day has passed since the last request, counted
+  from the request whatever its outcome (`UpdateState`, in `updates.json` next to `settings.json`; it is read again
+  before each write, so two song windows do not undo each other). Help > Check for Updates does not wait for the day.
+- **The seam.** The request goes through the `HttpGet` trait. A `Shell` starts with `Offline`, which fails every
+  request; only `platform/app.rs` installs `UreqGet`, and not for a screenshot or a stress run. Tests use
+  `FakeHttp`, which records the requests, so no test reaches the network and the tests can assert what was sent.
+- **Tests.** The version order, the list parser (drafts, pre-releases, odd entries, hostile tags) and the
+  fake answers (newer, same, older, malformed, error status, no network) are in `crates/update`; the throttle, the
+  consent states, the skipped version and "no request while off" in `update_check_tests.rs` and
+  `shell_update_tests.rs`.
+
 ## 6o. Reference tracks
 
 A song keeps up to 16 reference audio files to compare the mix with. The list is project data with no part in the
@@ -6789,7 +6827,7 @@ Tests (the counting allocator is described in [TESTING.md](TESTING.md#allocation
 
 | Mechanism | Where |
 |---|---|
-| `HashMap`, `HashSet`, `Instant::now` and `SystemTime::now` are banned by clippy; the exceptions are the CLI `--stats` timer, the audio-io telemetry and the clock of the CPU readout, which never influence audio | [clippy.toml](../clippy.toml); local `#[allow]`s |
+| `HashMap`, `HashSet`, `Instant::now` and `SystemTime::now` are banned by clippy; the exceptions are the CLI `--stats` timer, the audio-io telemetry, the clock of the CPU readout and the wall clock of the daily update check, which never influence audio | [clippy.toml](../clippy.toml); local `#[allow]`s |
 | Graph, topology and compile state use `BTreeMap`/`BTreeSet`; ready sets are ordered by id; summing is a fixed-order fold | [graph.rs](../crates/engine/src/graph.rs), [plan.rs](../crates/engine/src/plan.rs), [console.rs](../crates/engine/src/console.rs) |
 | Each device's seed is `mix_seed(patch seed, device id)` | `mix_seed` in [plan.rs](../crates/engine/src/plan.rs) |
 | Fixed 64-frame batches behind a FIFO make the host block size irrelevant; workers only compute, the audio thread gathers and scatters | [engine.rs](../crates/engine/src/engine.rs), [workers.rs](../crates/engine/src/workers.rs) |

@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **An optional check for a newer version.** The first time the program starts it asks "Check for new versions once a
+  day?" in a small notice in the lower left corner (over the start screen too); until you answer Yes nothing is sent.
+  A Yes asks the project page once a day, at the start, for its list of releases; Help > Check for Updates asks at once
+  (and shows the question first while it is open). The request is one HTTPS GET of a fixed address with the User-Agent
+  `atomik-rack/<version>` and nothing else: no identifier, no cookie, no query, no redirect, a short timeout. It runs
+  on a worker, and a failure is silent unless you asked. A newer version (release candidates in the right order; a
+  pre-release only for a pre-release build; never a draft) shows a notice with What's new (its release page in the
+  browser), Skip this version (a later version still shows) and Later. Nothing is downloaded or installed. The answer
+  is in Settings > Video & updates (`update_check` in `workflow.json`), the time of the last request and the skipped
+  version are in `updates.json`. The README and `SECURITY.md` say what is sent; the client is the new crate
+  `atomik-update` (ureq on rustls with the bundled root certificates; `CDLA-Permissive-2.0` joins the allowed
+  licences). The project format stays 44.
 - **Film with Mix.** File > Export > Film with Mix... writes a new film made of the song's film and the song's mix,
   through the FFmpeg you installed. The film's span is exactly the part of the song under the film after its trim and
   start (a film that begins before the song gets silence in front of the mix); the whole song renders from the start

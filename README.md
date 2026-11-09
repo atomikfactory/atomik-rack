@@ -44,6 +44,16 @@ There are no screenshots in the repository yet. The user interface is drawn proc
 - **Export.** The song, the loop or the selected range goes to WAV, AIFF or FLAC with dither and a loudness report, or to MP3, AAC (`.m4a`) and Opus through the FFmpeg you install (on your `PATH`, or the folder set in Settings > Video; without it those three are greyed and nothing else changes). Compressed files carry the song's title and author as tags; leave about 1 dB of true-peak headroom, since lossy encoding can raise the peaks. Stems are WAV, AIFF or FLAC. The file dialog proposes the extension of the format you used last, and an export whose format gives the name of a file that exists asks before replacing it.
 - **Projects.** A project with audio is a bundle folder (`name/name.atomik` plus `Audio/`, files named by content hash); a project without audio is a single `.atomik` file. Saves are atomic.
 
+## Privacy
+
+Atomik Rack sends nothing about you or your computer anywhere. The only network request the program can make is an
+optional check for a newer version: the first time it starts it asks "Check for new versions once a day?", and until you
+answer Yes nothing is sent. A Yes makes one request a day at the start (and Help > Check for Updates makes one when you
+choose it): it asks `api.github.com` for the list of releases of this project and sends the address and the name
+`atomik-rack` with its version as the User-Agent, with no identifier, no cookie and nothing else. A newer version is only
+announced, with a link to its release page; nothing is downloaded or installed. Settings > Video & updates changes the
+answer at any time.
+
 ## Install
 
 Release builds are attached to each [GitHub release](https://github.com/atomikfactory/atomik-rack/releases), each with a `SHA256SUMS` file to check them against:
@@ -176,6 +186,7 @@ Four rules are never traded away. Each one is enforced by tests or process, not 
           atomik-audio-file ◄┘      atomik-dsp ── atomik-device-sdk ── atomik-core
       file browser data: atomik-library (used by audio-file, ui and app)
       video: atomik-video (FFmpeg discovery, probe and proxy; used by app)
+      update check: atomik-update (the one optional request for the newest release; used by app)
       plugin hosting: atomik-plugin-host, -clap, -vst3, -scan (scanner binary)
       plugin sandbox: atomik-plugin-ipc, -sandbox, -hostd (child binary atomik-plugin-host)
       atomik-testkit (dev-dependency only: fakes, signal analysis, no-alloc harness)

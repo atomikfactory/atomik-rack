@@ -2077,3 +2077,26 @@ a different length or frame rate and the toast says so. Put the playhead inside 
 Playhead and Trim Video Start / End to Playhead; each is one undo step. Change the tempo: File > Video > Move Video to
 Playhead at the same playhead afterwards reports the same time in seconds (the film did not move). MCP:
 `project_inspect` of the saved project lists `song.video`.
+
+## The update check and the fake client
+
+The program's only network request goes through the `HttpGet` trait of `atomik-update`. A `Shell` starts with the
+`Offline` client, which fails every request, and only the application window installs the real one (`UreqGet`), so no
+test, headless session or MCP session can reach the network. Tests use `FakeHttp` (`crates/update/src/fake.rs`): it
+answers with a canned status and body, or fails, and records every request, so a test can assert that nothing was
+sent, or that what was sent is exactly the fixed address and the generic User-Agent.
+
+- `cargo test -p atomik-update` runs the version order (release candidates included), the list parser (drafts,
+  pre-releases, odd entries, tags that cannot go in an address), the fake answers (newer, same, older, malformed,
+  error status, no network, an answer over the limit), the daily throttle, the skipped version and the saved file.
+- The app tests `update_check_tests.rs` (the rules and the worker) and `shell_update_tests.rs` (the question, the
+  buttons, Help > Check for Updates, the notice on the start screen, no request before a Yes or after a No) use the
+  fake only. The one test that builds the real client only asks it for a plain `http` address, which it refuses
+  before opening a socket.
+
+Hand checks (they need the network): delete the `update_check` line of `workflow.json` and start the program: the
+question shows in the lower left corner and nothing is sent (watch the connections). Answer Yes: one request goes
+to `api.github.com` and, when a newer release exists, the notice offers What's new (the release page opens in the
+browser), Skip this version and Later; start again within a day and no request is made. Help > Check for Updates
+asks at once and says "is the newest version" when there is nothing newer. With the network off, the same command
+says it could not check and the daily check says nothing.

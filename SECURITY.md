@@ -35,6 +35,16 @@ no more than the file can account for and refuses what exceeds a documented limi
 targets are in `fuzz/` and run on a schedule (see `docs/TESTING.md`). A crafted file that gets past
 a limit, aborts the program or makes it run out of memory is a vulnerability worth reporting.
 
+## Network use
+
+The program makes one kind of network request, and only after the user has answered Yes to "Check for new versions
+once a day?" (or chooses Help > Check for Updates): a single HTTPS GET of the list of releases of this project
+(`https://api.github.com/repos/atomikfactory/atomik-rack/releases`). It sends the program name and version as the
+User-Agent and nothing else: no identifier, no cookie, no query and nothing about the user or the machine. It follows no
+redirect, reads at most 1 MiB, and never downloads or installs anything; the release page it can open is made from a
+checked tag. The client is `crates/update` (rustls); see [docs/DECISIONS.md](docs/DECISIONS.md#s-the-update-check). A
+report about this request sending more than that is in scope.
+
 ## Third-party plugins
 
 Plugin hosting is off until the user enables it. When it is on, each plugin instance runs in its own
