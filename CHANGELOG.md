@@ -123,6 +123,16 @@ may break APIs and the patch and project formats.
   back to 0 dB). It is saved with the Settings and applies to the next preview of every kind.
 
 ### Changed
+- **One text field everywhere.** Every place where you type text (names of markers, folders, tracks, clips, lanes,
+  buses, groups, snapshots, devices, patterns, macros and assets, the search boxes, comments, the tempo, signature,
+  position, time, locator and clip inspector entries, the note and point fields, the macro range values and the
+  buffer size) is now the same field, with a caret, a selection by Shift and the arrows or the mouse, a double click
+  on a word, Ctrl/Cmd+A, C, X and V, Home, End, word moves with Ctrl, input methods and an undo of its own:
+  Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z or Ctrl+Y redoes, a run of letters is one step and 50 steps are kept. While a
+  field has the keyboard these chords edit the field and never run the song's Undo; with no field, Ctrl+Z is the
+  song's Undo as before. Number fields refuse other characters. In the plugin parameter pane, whose search field
+  always has the keys, Undo is the field's only while it has typing to take back. The right-click menu of a field
+  is not done. Format unchanged (44), command count unchanged.
 - **Bigger drum pads.** The pad grid of the drum machine panel uses the room between the pads and the knob
   columns, and the sample name and the pad number are drawn larger.
 - **A click on an empty automation lane selects the lane.** With the Select tool a click on empty lane space picks
