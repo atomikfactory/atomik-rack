@@ -245,6 +245,52 @@ fn an_enabled_input_can_be_made_mapping_only() {
 }
 
 #[test]
+fn an_enabled_keyboard_input_can_be_given_an_mpe_zone() {
+    let mut d = SettingsDialog::new(current(), lists());
+    let title = "MIDI inputs with MPE (click to change the zone)";
+    let titles = |d: &SettingsDialog| -> Vec<&'static str> {
+        d.sections().iter().map(|s| s.title).collect()
+    };
+    assert!(!titles(&d).contains(&title), "no input, no section");
+    pick(&mut d, "Example Keyboard");
+    assert_eq!(labels(&d, title), ["Example Keyboard: MPE off"]);
+    let click_mpe = |d: &mut SettingsDialog| {
+        let layout = d.layout(VIEW);
+        let (rect, _, _) = layout
+            .options
+            .iter()
+            .find(|(_, _, c)| matches!(c, Choice::MidiMpe(_)))
+            .expect("the MPE row");
+        click(d, rect.center());
+    };
+    click_mpe(&mut d);
+    let mpe = d.draft().midi_inputs[0].mpe;
+    assert!(mpe.enabled && mpe.members == 15);
+    assert_eq!(
+        labels(&d, title),
+        ["Example Keyboard: MPE lower zone, 15 member channels"]
+    );
+    assert!(d.is_selected(&Choice::MidiMpe("Example Keyboard".into())));
+    click_mpe(&mut d);
+    assert_eq!(d.draft().midi_inputs[0].mpe.members, 7);
+    // An input that only feeds the mappings has no MPE row.
+    pick(&mut d, "Example Keyboard");
+    pick(&mut d, "Example Keyboard");
+    let mut d = SettingsDialog::new(
+        AudioSettings {
+            midi_inputs: vec![MidiInputSetting {
+                role: MidiInputRole::Mapping,
+                ..MidiInputSetting::enabled("Example Keyboard")
+            }],
+            ..current()
+        },
+        lists(),
+    );
+    assert!(!titles(&d).contains(&title));
+    d.set_lists(lists());
+}
+
+#[test]
 fn listing_the_ports_again_keeps_the_draft_and_the_stream_notes() {
     let mut first = lists();
     first.stream_notes = vec!["Buffer 256 frames".into()];
@@ -288,8 +334,9 @@ fn missing_saved_values_are_still_offered_and_marked() {
 fn choosing_options_edits_the_draft_and_apply_returns_it() {
     let mut d = SettingsDialog::new(current(), lists());
     assert_eq!(pick(&mut d, "512"), DialogOutcome::Open);
-    assert_eq!(pick(&mut d, "Example Keyboard"), DialogOutcome::Open);
+    // The list scrolls: the chips further down are picked before an enabled port adds rows.
     assert_eq!(pick(&mut d, "4"), DialogOutcome::Open);
+    assert_eq!(pick(&mut d, "Example Keyboard"), DialogOutcome::Open);
     assert_eq!(pick(&mut d, "Host default"), DialogOutcome::Open);
     let apply = d.layout(VIEW).apply.center();
     let expected = AudioSettings {
