@@ -18,6 +18,10 @@ pub enum UiAction {
     Command(Command),
     /// A drag ended (pointer released): call [`atomik_model::Document::end_merge`].
     EndMerge,
+    /// The Undo History panel asked to go to a row: the starting row is 0 and row `n` is the
+    /// state right after the `n`-th undo step. The host undoes or redoes as many steps as it
+    /// takes (see [`crate::HistoryView`]).
+    HistoryGoto(usize),
     /// A step of a clip edge dragged with the stretch role: the host puts the document back to
     /// before the drag and stretches `ids` by `percent` (see
     /// [`atomik_model::WorkflowCommand::StretchClips`]) as a preview that adds no undo step.
