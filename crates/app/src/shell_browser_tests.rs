@@ -488,6 +488,47 @@ fn typing_in_the_search_field_is_not_a_shortcut_but_chords_and_function_keys_are
 }
 
 #[test]
+fn select_all_in_the_device_browser_search_selects_the_text_not_the_devices() {
+    for os in [Os::Windows, Os::Mac] {
+        let mut s = shell_with(os, true);
+        s.core_mut().view_mut().set_browser_visible(true);
+        assert!(s.core().view().is_text_owner());
+        let before = s.core().view().selection();
+        for key in ["B", "A", "S", "S"] {
+            tap(&mut s, os, key);
+        }
+        assert_eq!(s.core().view().browser_query(), "bass", "{os:?}");
+        tap(&mut s, os, "Cmd+A");
+        assert_eq!(s.core().view().browser_query(), "bass", "{os:?}");
+        tap(&mut s, os, "X");
+        assert_eq!(s.core().view().browser_query(), "x", "{os:?}");
+        assert_eq!(
+            s.core().view().selection(),
+            before,
+            "{os:?}: no device selected"
+        );
+    }
+}
+
+#[test]
+fn copy_cut_and_paste_in_the_device_browser_search_act_on_its_text() {
+    let mut s = shell_with(Os::Windows, true);
+    s.core_mut().view_mut().set_browser_visible(true);
+    for key in ["P", "A", "D"] {
+        tap(&mut s, Os::Windows, key);
+    }
+    tap(&mut s, Os::Windows, "Cmd+A");
+    tap(&mut s, Os::Windows, "Cmd+X");
+    assert_eq!(s.core().view().browser_query(), "");
+    tap(&mut s, Os::Windows, "Cmd+V");
+    tap(&mut s, Os::Windows, "Cmd+V");
+    assert_eq!(s.core().view().browser_query(), "padpad");
+    tap(&mut s, Os::Windows, "Cmd+A");
+    tap(&mut s, Os::Windows, "Backspace");
+    assert_eq!(s.core().view().browser_query(), "");
+}
+
+#[test]
 fn every_files_command_is_taken_by_the_shell_and_declines_nothing() {
     let mut s = focused_panel(Os::Windows);
     for id in [

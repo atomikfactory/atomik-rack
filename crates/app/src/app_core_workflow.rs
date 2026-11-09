@@ -57,7 +57,9 @@ impl<S: EngineSink> AppCore<S> {
         if id == "edit.delete" && self.discard_take_notes() {
             return Some(Vec::new());
         }
-        if let Some(actions) = self.clipboard_command(pane, id) {
+        // The device browser's search field takes copy, cut and paste for its text.
+        let field_has_keys = pane == Pane::Rack && self.view.search_has_focus();
+        if !field_has_keys && let Some(actions) = self.clipboard_command(pane, id) {
             return Some(actions);
         }
         let doc = self.document.doc();
