@@ -89,6 +89,7 @@ CancelArchive | Cancel Project Archive
 CancelCollect | Cancel Collect or Move
 CancelVideo | Cancel Video Job
 CheckFfmpeg | Check FFmpeg
+CheckForUpdates | Check for Updates
 CheckMix | Check Mix…
 ChopClips(Bar) | Bar
 ChopClips(Beat) | Beat

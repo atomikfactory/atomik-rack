@@ -104,6 +104,13 @@ impl<B: AudioBackend> Shell<B> {
         if window != WindowKind::Main && self.modal_open() {
             return None;
         }
+        if window == WindowKind::Main
+            && self.update_notice_reachable()
+            && let Some(v) = &self.update_notice
+            && let Some(help) = v.help_at(self.size(), pos)
+        {
+            return Some(help);
+        }
         // The modals take the whole window, in the order they take the events.
         if let Some(v) = &self.plugin_settings {
             return v.help_at(pos);

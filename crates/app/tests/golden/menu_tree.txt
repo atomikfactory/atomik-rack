@@ -551,6 +551,7 @@ Help
   Keyboard Shortcuts
   Documentation
   Report an Issue
+  Check for Updates
   ---
   Export Diagnostics…
   Export Device Parameter List…

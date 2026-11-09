@@ -234,6 +234,13 @@ pub fn run(cli: Cli) -> Result<(), String> {
     if cli.starts_empty() {
         shell.start_without_project();
     }
+    // The program's only network client, installed here and nowhere else (a shell without one
+    // cannot reach the network). It is used for the optional update check: with no answer to the
+    // question yet the notice asks it and nothing is sent. A screenshot or stress run never checks.
+    shell.set_update_http(Arc::new(atomik_update::UreqGet));
+    if cli.screenshot.is_none() && !cli.stress && !cli.stress_song_loads() {
+        shell.start_update_check();
+    }
     let no_config = config
         .fallback
         .then(|| settings::NO_CONFIG_NOTE.to_string());
@@ -1590,6 +1597,7 @@ impl App {
                 // The workspace answers these before they get here.
                 ShellRequest::NewSong | ShellRequest::CloseSong | ShellRequest::ShowSong(_) => {}
                 ShellRequest::OpenUrl(url) => open_url(url),
+                ShellRequest::OpenRelease(url) => open_url(&url),
                 ShellRequest::ToggleMaximise(kind) => {
                     if let Some(w) = self.windows.get(&(self.shell.routed(), kind)) {
                         w.window.set_maximized(!w.window.is_maximized());

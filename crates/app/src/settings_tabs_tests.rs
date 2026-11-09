@@ -1197,6 +1197,66 @@ fn golden_video() {
 }
 
 #[test]
+fn the_video_tab_holds_the_update_question_and_apply_returns_the_answer() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Video);
+    assert_eq!(d.preferences().unwrap().1.update_check, None);
+    let l = d.video_layout(VIEW).unwrap();
+    let mut list = DisplayList::new();
+    d.paint(&mut list, &Theme::dark(), VIEW);
+    let texts = list.texts();
+    for t in [
+        "Video & updates",
+        "New versions",
+        "Check for new versions once a day",
+        "Yes",
+        "No",
+    ] {
+        assert!(texts.contains(&t), "{t} in {texts:?}");
+    }
+    assert!(
+        texts.iter().any(|t| t.contains("Not answered yet")),
+        "{texts:?}"
+    );
+    assert_eq!(down(&mut d, l.updates.yes.center()), DialogOutcome::Open);
+    assert_eq!(d.preferences().unwrap().1.update_check, Some(true));
+    down(&mut d, l.updates.no.center());
+    assert_eq!(d.preferences().unwrap().1.update_check, Some(false));
+    down(&mut d, l.updates.yes.center());
+    assert_eq!(d.preferences().unwrap().1.update_check, Some(true));
+    // The question does not disturb the FFmpeg folder, and sits inside the panel above the
+    // Apply and Cancel buttons.
+    assert_eq!(d.preferences().unwrap().1.ffmpeg_folder, None);
+    let panel = d.panel(VIEW);
+    let (apply, _) = d.buttons(VIEW);
+    let last_note = l.updates.notes.last().unwrap().0.y;
+    assert!(
+        l.updates.rect.y0 >= panel.y0 && last_note < apply.y0,
+        "{last_note} {apply:?}"
+    );
+}
+
+#[test]
+fn the_update_answer_starts_from_the_saved_one_and_keeps_the_other_drafts() {
+    for saved in [None, Some(true), Some(false)] {
+        let prefs = WorkflowPrefs {
+            update_check: saved,
+            auto_route: false,
+            ..WorkflowPrefs::default()
+        };
+        let mut d = SettingsDialog::new(AudioSettings::default(), DeviceLists::default())
+            .with_preferences(
+                KeymapEditor::new(Os::Windows, Profile::Standard, UserKeymap::default()),
+                prefs,
+            );
+        goto(&mut d, Tab::Video);
+        let (_, wf) = d.preferences().unwrap();
+        assert_eq!(wf.update_check, saved);
+        assert!(!wf.auto_route);
+    }
+}
+
+#[test]
 fn the_row_keys_are_the_registry_keys() {
     let mut d = dialog();
     goto(&mut d, Tab::Keyboard);

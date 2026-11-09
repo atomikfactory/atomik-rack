@@ -1,6 +1,6 @@
 use super::*;
 use atomik_update::{DAY_SECS, FakeHttp};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const LIST: &str = r#"[
     {"tag_name":"v0.6.0-rc.1","prerelease":true,"draft":false},
@@ -39,17 +39,13 @@ fn updater_with(http: &Arc<FakeHttp>, running: &str, path: Option<PathBuf>) -> U
 
 /// Waits for the worker's answer (it is instant with a fake; the limit only ends a hung test).
 fn finished(updater: &mut Updater) -> Finished {
-    let start = Instant::now();
-    loop {
+    for _ in 0..10_000 {
         if let Some(done) = updater.poll() {
             return done;
         }
-        assert!(
-            start.elapsed() < Duration::from_secs(10),
-            "the check never finished"
-        );
         std::thread::sleep(Duration::from_millis(1));
     }
+    panic!("the check never finished");
 }
 
 fn tag(done: &Finished) -> Option<String> {

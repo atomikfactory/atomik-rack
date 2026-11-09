@@ -676,6 +676,9 @@ pub enum AppCommand {
     Documentation,
     /// Help ▸ Report an Issue: the project's issue forms, in the browser.
     ReportIssue,
+    /// Help ▸ Check for Updates: asks the project page for the newest release now (with the
+    /// question first while it is unanswered).
+    CheckForUpdates,
     /// Help ▸ About Atomik Rack…: the version, the licence and the notices.
     About,
     /// View ▸ Theme: dark, light, or the operating system's.
@@ -1163,6 +1166,7 @@ impl AppCommand {
             AppCommand::KeyboardShortcuts => ("help.keyboard_shortcuts", None),
             AppCommand::Documentation => ("help.documentation", None),
             AppCommand::ReportIssue => ("help.report_issue", None),
+            AppCommand::CheckForUpdates => ("help.check_for_updates", None),
             AppCommand::About => ("help.about", None),
             AppCommand::SetTheme(t) => ("view.theme", Some(t.id())),
             AppCommand::AppZoom(z) => ("view.app_zoom", Some(z.arg()?)),
@@ -1592,6 +1596,7 @@ impl AppCommand {
             ("help.keyboard_shortcuts", None) => AppCommand::KeyboardShortcuts,
             ("help.documentation", None) => AppCommand::Documentation,
             ("help.report_issue", None) => AppCommand::ReportIssue,
+            ("help.check_for_updates", None) => AppCommand::CheckForUpdates,
             ("help.about", None) => AppCommand::About,
             ("view.theme", Some(a)) => AppCommand::SetTheme(ThemeChoice::from_id(a)?),
             ("view.app_zoom", Some(a)) => AppCommand::AppZoom(ZoomChange::from_arg(a)?),
@@ -4160,6 +4165,7 @@ pub fn menus_with_songs(
                 item("Keyboard Shortcuts", AppCommand::KeyboardShortcuts),
                 item("Documentation", AppCommand::Documentation),
                 item("Report an Issue", AppCommand::ReportIssue),
+                item("Check for Updates", AppCommand::CheckForUpdates),
                 MenuEntry::Separator,
                 item("Export Diagnostics\u{2026}", AppCommand::ExportDiagnostics),
                 item(
@@ -4618,6 +4624,7 @@ mod tests {
             AppCommand::KeyboardShortcuts,
             AppCommand::Documentation,
             AppCommand::ReportIssue,
+            AppCommand::CheckForUpdates,
             AppCommand::About,
             AppCommand::AppZoom(ZoomChange::In),
             AppCommand::AppZoom(ZoomChange::Out),
@@ -5155,6 +5162,7 @@ mod tests {
                 "Keyboard Shortcuts",
                 "Documentation",
                 "Report an Issue",
+                "Check for Updates",
                 "Export Diagnostics\u{2026}",
                 "Export Device Parameter List\u{2026}",
                 "About Atomik Rack"

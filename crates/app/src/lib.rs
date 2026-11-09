@@ -82,6 +82,8 @@ pub mod transition_choice;
 pub mod translate;
 pub mod ui_state;
 pub mod update_check;
+pub mod update_notice;
+pub mod updates_tab;
 pub mod video_tab;
 pub mod video_worker;
 pub mod windows;

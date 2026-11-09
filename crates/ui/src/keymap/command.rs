@@ -1003,6 +1003,13 @@ const COMMANDS: &[CommandDef] = &[
     ),
     cmd("files.up", "Previous Item", G::Files, C::Files).rep(),
     cmd("help.about", "About Atomik Rack", G::Global, C::Global).menu(),
+    cmd(
+        "help.check_for_updates",
+        "Check for Updates",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
     cmd("help.documentation", "Documentation", G::Global, C::Global).menu(),
     cmd(
         "help.export_diagnostics",
