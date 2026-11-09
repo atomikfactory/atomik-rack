@@ -97,6 +97,11 @@ impl SearchField {
         Some(self.edit.text() != before)
     }
 
+    /// A right-click at `pos` asks for the field menu when it is on the field.
+    pub fn right_click(&self, pos: Point) -> bool {
+        self.edit.right_click(pos)
+    }
+
     /// Whether the field has a typing step to undo.
     pub fn can_undo(&self) -> bool {
         self.edit.can_undo()

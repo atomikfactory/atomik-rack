@@ -1264,3 +1264,95 @@ fn without_a_text_field_ctrl_z_is_the_documents_undo() {
         );
     }
 }
+
+fn right_press(s: &mut Shell<NullBackend>, p: Point) {
+    // The field knows where it is from its last paint.
+    s.paint(&mut atomik_ui::DisplayList::new());
+    s.handle(&UiEvent::PointerDown {
+        pos: p,
+        button: PointerButton::Secondary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    });
+    s.handle(&up(p));
+}
+
+fn choose_in_menu(s: &mut Shell<NullBackend>, command: &str) {
+    let at = s.context_menu().unwrap().item_center(command).unwrap();
+    s.handle(&down(at));
+    s.handle(&up(at));
+}
+
+fn menu_items(s: &Shell<NullBackend>) -> Vec<(String, bool)> {
+    s.context_menu()
+        .unwrap()
+        .items()
+        .map(|i| (i.command.clone(), i.enabled))
+        .collect()
+}
+
+#[test]
+fn the_right_click_menu_of_a_text_field_edits_that_field_and_never_the_document() {
+    let os = Os::Windows;
+    let mut s = shell_with(os, true);
+    add_a_device(&mut s);
+    s.core_mut().view_mut().set_browser_visible(true);
+    for key in ["B", "A", "S", "S"] {
+        tap(&mut s, os, key);
+    }
+    let o = s.layout().rack.origin();
+    let search = Point::new(o.x + 110.0, o.y + 49.0);
+    right_press(&mut s, search);
+    assert!(
+        s.context_menu().is_some(),
+        "a right-click on the field opens its menu"
+    );
+    let on = |s: &Shell<NullBackend>, c: &str| {
+        menu_items(s)
+            .into_iter()
+            .find(|(i, _)| i == c)
+            .map(|(_, e)| e)
+    };
+    assert_eq!(on(&s, "edit.undo"), Some(true), "the typing can be undone");
+    assert_eq!(on(&s, "edit.redo"), Some(false));
+    assert_eq!(on(&s, "edit.cut"), Some(false), "nothing is selected");
+    assert_eq!(on(&s, "edit.copy"), Some(false));
+    assert_eq!(on(&s, "edit.delete"), Some(false));
+    assert_eq!(on(&s, "edit.select_all"), Some(true));
+    choose_in_menu(&mut s, "edit.select_all");
+    assert!(s.context_menu().is_none());
+    assert_eq!(s.core().view().browser_query(), "bass");
+    right_press(&mut s, search);
+    assert_eq!(
+        on(&s, "edit.cut"),
+        Some(true),
+        "a selection enables Cut, Copy and Delete"
+    );
+    choose_in_menu(&mut s, "edit.cut");
+    assert_eq!(s.core().view().browser_query(), "");
+    right_press(&mut s, search);
+    assert_eq!(
+        on(&s, "edit.paste"),
+        Some(true),
+        "the cut text is on the clipboard"
+    );
+    choose_in_menu(&mut s, "edit.paste");
+    assert_eq!(s.core().view().browser_query(), "bass");
+    right_press(&mut s, search);
+    choose_in_menu(&mut s, "edit.undo");
+    assert_eq!(s.core().view().browser_query(), "");
+    right_press(&mut s, search);
+    choose_in_menu(&mut s, "edit.redo");
+    assert_eq!(s.core().view().browser_query(), "bass");
+    right_press(&mut s, search);
+    choose_in_menu(&mut s, "edit.select_all");
+    right_press(&mut s, search);
+    choose_in_menu(&mut s, "edit.delete");
+    assert_eq!(s.core().view().browser_query(), "");
+    assert_eq!(
+        s.core().doc().devices.len(),
+        1,
+        "the document was never touched"
+    );
+    assert!(s.core().document().can_undo());
+}

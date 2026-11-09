@@ -263,6 +263,8 @@ pub struct ContainerEditorView {
     selected_macro: usize,
     scroll: f64,
     rename: Option<TextField>,
+    /// A pointer drag is selecting in the name being typed.
+    rename_drag: bool,
     drag: Drag,
     hover: Hit,
     next_merge: u64,
@@ -309,6 +311,7 @@ impl ContainerEditorView {
             selected_macro: 0,
             scroll: 0.0,
             rename: None,
+            rename_drag: false,
             drag: Drag::None,
             hover: Hit::None,
             next_merge: MERGE_BASE,
@@ -438,6 +441,11 @@ impl ContainerEditorView {
     /// The macro name being edited in place.
     pub fn renaming(&self) -> Option<&str> {
         self.rename.as_ref().map(|f| f.text())
+    }
+
+    /// Where the macro name being typed was painted (for tests).
+    pub fn renaming_rect(&self) -> Option<Rect> {
+        self.rename.as_ref().map(|f| f.painted_rect())
     }
 
     /// Whether the view owns the keyboard as a text field (a macro name is being edited): the
@@ -1015,6 +1023,12 @@ impl ContainerEditorView {
             return out;
         }
         if self.container.is_none() {
+            return out;
+        }
+        if let Some(f) = &mut self.rename
+            && f.pointer_event(&mut self.rename_drag, event)
+        {
+            self.repaint = true;
             return out;
         }
         match event {

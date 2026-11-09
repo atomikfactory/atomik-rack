@@ -464,11 +464,12 @@ impl TransportBar {
             .meter
             .get(self.meter_edit_event)
             .map_or((4, 4), |e| (e.num, e.den));
-        self.meter_editing = Some(TextField::entry(
-            &format!("{num}/{den}"),
-            METER_TEXT_MAX,
-            |c| c.is_ascii_digit() || c == '/',
-        ));
+        self.meter_editing = Some(
+            TextField::entry(&format!("{num}/{den}"), METER_TEXT_MAX, |c| {
+                c.is_ascii_digit() || c == '/'
+            })
+            .aligned(crate::canvas::Align::Center),
+        );
         self.repaint = true;
     }
 

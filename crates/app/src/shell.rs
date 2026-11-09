@@ -465,6 +465,8 @@ struct OpenContextMenu {
     menu: ContextMenu,
     pane: Pane,
     window: WindowKind,
+    /// The menu of a text field: its commands edit that field, not the song.
+    field: bool,
 }
 
 /// What holds the pointer between a press and its release.
@@ -486,6 +488,8 @@ pub struct Shell<B: AudioBackend> {
     menubar: Option<MenuBar>,
     /// The open context menu (a right click) and the pane it belongs to.
     context_menu: Option<OpenContextMenu>,
+    /// The window point of the last right-press (where a text field menu opens).
+    secondary_at: Point,
     dialog: Option<SettingsDialog>,
     /// The About box, while it is open.
     about: Option<AboutBox>,
@@ -765,6 +769,7 @@ impl<B: AudioBackend> Shell<B> {
             core,
             menubar: options.in_window_menu.then(MenuBar::new),
             context_menu: None,
+            secondary_at: Point::ORIGIN,
             dialog: None,
             about: None,
             system_dark: true,
@@ -6521,7 +6526,19 @@ impl<B: AudioBackend> Shell<B> {
     /// Sends an event to a pane: the rack view gets its own coordinates (below the menu
     /// bar), the sequencer views window coordinates.
     fn forward(&mut self, pane: Pane, event: &UiEvent) -> Vec<UiAction> {
+        if let UiEvent::PointerDown {
+            pos,
+            button: PointerButton::Secondary,
+            ..
+        } = event
+        {
+            self.secondary_at = *pos;
+        }
+        let _ = atomik_ui::take_field_menu();
         let actions = self.forward_to(pane, event);
+        if let Some(state) = atomik_ui::take_field_menu() {
+            self.open_field_menu(pane, state);
+        }
         self.mark_forwarded(pane, event, &actions);
         actions
     }
@@ -6781,9 +6798,66 @@ impl<B: AudioBackend> Shell<B> {
         Point::new(at.x + o.x, at.y + o.y)
     }
 
+    /// Opens the menu of the text field that was right-clicked in `pane`.
+    fn open_field_menu(&mut self, pane: Pane, state: atomik_ui::FieldMenuState) {
+        let specs = context_menus::field_specs(state);
+        let (window, size) = self.menu_window(pane);
+        let menu = ContextMenu::build(
+            &specs,
+            &atomik_ui::keymap::Registry::bundled(),
+            self.router.keymap(),
+            self.secondary_at,
+            size,
+        );
+        self.show_context_menu(pane, window, menu);
+        if let Some(open) = &mut self.context_menu {
+            open.field = true;
+        }
+    }
+
+    /// Runs the field menu item `command` on the field of `pane`: the key the command stands
+    /// for goes to the pane, as if it had been typed.
+    fn field_menu_command(&mut self, pane: Pane, command: &str) {
+        let (key, shift) = match command {
+            "edit.undo" => (Key::Char('z'), false),
+            "edit.redo" => (Key::Char('z'), true),
+            "edit.cut" => (Key::Char('x'), false),
+            "edit.copy" => (Key::Char('c'), false),
+            "edit.paste" => (Key::Char('v'), false),
+            "edit.select_all" => (Key::Char('a'), false),
+            "edit.delete" => (Key::Delete, false),
+            _ => return,
+        };
+        let modifiers = if key == Key::Delete {
+            Modifiers::NONE
+        } else {
+            Modifiers {
+                ctrl: true,
+                shift,
+                ..Modifiers::NONE
+            }
+        };
+        self.set_focus(pane);
+        for pressed in [true, false] {
+            self.forward(
+                pane,
+                &UiEvent::Key {
+                    key: key.clone(),
+                    modifiers,
+                    pressed,
+                },
+            );
+        }
+    }
+
     /// Shows `menu` as the open context menu of `pane`, in `window`.
     fn show_context_menu(&mut self, pane: Pane, window: WindowKind, menu: ContextMenu) {
-        self.context_menu = Some(OpenContextMenu { menu, pane, window });
+        self.context_menu = Some(OpenContextMenu {
+            menu,
+            pane,
+            window,
+            field: false,
+        });
         // The pointer press that opened it must not keep a drag alive.
         self.capture = None;
         self.leave_all_hover();
@@ -6854,8 +6928,13 @@ impl<B: AudioBackend> Shell<B> {
         let before = open.menu.look();
         match open.menu.handle(event) {
             MenuOutcome::Run { command, arg } => {
+                let field = open.field;
                 self.context_menu = None;
                 self.repaint = true;
+                if field {
+                    self.field_menu_command(pane, &command);
+                    return Vec::new();
+                }
                 self.set_focus(pane);
                 self.run_command(&command, arg.as_deref())
                     .unwrap_or_default()

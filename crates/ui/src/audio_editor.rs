@@ -1046,6 +1046,11 @@ impl AudioEditorView {
     ) {
         self.repaint = true;
         let hit = self.hit(pos);
+        if button == PointerButton::Secondary
+            && self.rename.as_ref().is_some_and(|f| f.right_click(pos))
+        {
+            return;
+        }
         // A click anywhere but on the name being typed commits it; on it, it places the caret.
         if self.rename.is_some() && hit != Hit::Title {
             self.finish_rename(true, out);

@@ -3118,6 +3118,9 @@ impl ArrangementView {
             }
             h => h,
         };
+        if button == PointerButton::Secondary && self.field_right_click(pos) {
+            return;
+        }
         if self.rename_press(pos, clicks, modifiers.shift, out) {
             return;
         }

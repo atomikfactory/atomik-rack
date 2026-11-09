@@ -875,6 +875,11 @@ impl ArrangementView {
         self.og.edit.as_ref().map(|e| e.field.text())
     }
 
+    /// The field of the name or comment being typed in the track list.
+    pub(super) fn org_field(&self) -> Option<&TextField> {
+        self.og.edit.as_ref().map(|e| &e.field)
+    }
+
     /// Input-method and drag events of a comment being typed. True when the event is used up.
     pub(super) fn org_edit_event(&mut self, event: &crate::event::UiEvent) -> bool {
         use crate::event::UiEvent;

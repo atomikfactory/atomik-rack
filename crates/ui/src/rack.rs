@@ -725,6 +725,8 @@ pub struct RackView {
     fx_modes: BTreeMap<DeviceKey, u8>,
     /// The pattern name (or macro name) being edited on a panel.
     rename: Option<Rename>,
+    /// A pointer drag is selecting in the name being typed.
+    rename_drag: bool,
     /// The hover tooltips of the BYPASS and EDIT buttons show (the "Show tooltips" setting).
     button_tips: bool,
     /// Hovering a control shows its name and value, not only while it is automated or driven.
@@ -1023,6 +1025,7 @@ impl RackView {
             pages: BTreeMap::new(),
             fx_modes: BTreeMap::new(),
             rename: None,
+            rename_drag: false,
             button_tips: true,
             value_tips: false,
             knob_range: widget::KnobRange::default(),
@@ -3607,6 +3610,9 @@ impl RackView {
 
     fn pointer_move(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.pointer = pos;
+        if self.rename_field_drag(pos) {
+            return;
+        }
         let rp = self.view_to_rack(pos);
         if self.sc_menu.is_some() {
             self.sc_hover(pos);
@@ -3773,6 +3779,9 @@ impl RackView {
                 self.browser.search_press(pos, clicks, modifiers.shift);
                 return;
             }
+            if button == PointerButton::Secondary && self.browser.search.right_click(pos) {
+                return;
+            }
             let rows = self.browser.list(registry);
             if let Some(i) = self.browser.row_at(pos, rows.len())
                 && rows[i].selectable()
@@ -3796,6 +3805,9 @@ impl RackView {
             return;
         }
         self.browser.focused = false;
+        if self.rename_field_press(pos, clicks, modifiers.shift, button) {
+            return;
+        }
         if self.device_rename_press(pos, out) {
             return;
         }
@@ -4251,6 +4263,9 @@ impl RackView {
         out: &mut Vec<UiAction>,
     ) {
         self.pointer = pos;
+        if std::mem::take(&mut self.rename_drag) {
+            return;
+        }
         // A device drop is worked out in the layout of the drag (which may show the new-column
         // zone), so that drag ends after it.
         let drag = if matches!(self.drag, Drag::Move { .. } | Drag::Browser { .. }) {

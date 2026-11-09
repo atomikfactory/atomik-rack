@@ -1021,3 +1021,26 @@ fn ctrl_a_then_typing_replaces_the_pattern_name() {
     let _ = v.handle(&press(Key::Char('z'), Modifiers::CTRL), d.doc(), &reg);
     assert_eq!(v.renaming(), Some("Fill"), "undo is the field's own");
 }
+
+#[test]
+fn a_triple_click_in_the_pattern_name_selects_all_and_a_right_click_asks_for_the_menu() {
+    let (d, reg, mut v) = setup();
+    let _ = click_with!(v, &d, &reg, v.slot_center(1), 2);
+    let _ = paint(&mut v, d.doc());
+    let at = v.renaming_rect().expect("painted").center();
+    let _ = click_with!(v, &d, &reg, at, 3);
+    assert_eq!(v.renaming(), Some("Fill"));
+    let _ = v.handle(&press(Key::Char('M'), Modifiers::NONE), d.doc(), &reg);
+    assert_eq!(v.renaming(), Some("M"), "the click selected the whole name");
+    let _ = paint(&mut v, d.doc());
+    let _ = atomik_ui::take_field_menu();
+    let ev = UiEvent::PointerDown {
+        pos: at,
+        button: PointerButton::Secondary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    };
+    let _ = v.handle(&ev, d.doc(), &reg);
+    assert!(atomik_ui::take_field_menu().is_some());
+    assert_eq!(v.renaming(), Some("M"));
+}

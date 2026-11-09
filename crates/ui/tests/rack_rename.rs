@@ -245,3 +245,34 @@ fn ctrl_a_then_typing_replaces_the_device_name_and_ctrl_z_undoes_inside_it() {
     assert_eq!(v.renaming_device(&key("delay")), Some("Stereo Delay"));
     assert!(v.is_text_owner());
 }
+
+#[test]
+fn a_click_in_the_device_name_places_the_caret_a_triple_click_selects_all_and_a_right_click_asks_for_the_menu()
+ {
+    let doc = reference_doc();
+    let mut v = plain_view(&doc, &registry());
+    let _ = double_click_name(&mut v, &doc, "delay");
+    let _ = paint_rack(&mut v, &doc);
+    let p = v.name_center(&key("delay")).unwrap();
+    let _ = press_with(&mut v, &doc, p, PointerButton::Primary, 3, Modifiers::NONE);
+    assert!(v.is_text_owner(), "a press inside the field keeps editing");
+    type_text(&mut v, &doc, "Z");
+    assert_eq!(v.renaming_device(&key("delay")), Some("Z"));
+    let _ = paint_rack(&mut v, &doc);
+    let _ = atomik_ui::take_field_menu();
+    let _ = press_with(
+        &mut v,
+        &doc,
+        p,
+        PointerButton::Secondary,
+        1,
+        Modifiers::NONE,
+    );
+    let state = atomik_ui::take_field_menu().expect("the field menu is asked for");
+    assert!(state.can_undo && !state.has_selection && state.has_text);
+    assert_eq!(
+        v.renaming_device(&key("delay")),
+        Some("Z"),
+        "the edit goes on"
+    );
+}

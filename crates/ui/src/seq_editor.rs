@@ -289,6 +289,8 @@ struct Layout {
 #[derive(Debug, Clone)]
 struct Rename {
     field: TextField,
+    /// A pointer drag is selecting in the field.
+    dragging: bool,
 }
 
 /// The sequencer grid editor. See the module documentation.
@@ -514,6 +516,11 @@ impl SeqEditorView {
     /// The pattern name being edited in place.
     pub fn renaming(&self) -> Option<&str> {
         self.rename.as_ref().map(|r| r.field.text())
+    }
+
+    /// Where the pattern name being typed was painted (for tests and tooltips).
+    pub fn renaming_rect(&self) -> Option<Rect> {
+        self.rename.as_ref().map(|r| r.field.painted_rect())
     }
 
     /// The field of the pattern name being typed.
@@ -1049,6 +1056,12 @@ impl SeqEditorView {
         if self.device.is_none() {
             return out;
         }
+        if let Some(r) = &mut self.rename
+            && r.field.pointer_event(&mut r.dragging, event)
+        {
+            self.repaint = true;
+            return out;
+        }
         match event {
             UiEvent::PointerMove { pos, modifiers } => {
                 self.pointer_move(*pos, *modifiers, &mut out)
@@ -1172,6 +1185,7 @@ impl SeqEditorView {
         if clicks >= 2 {
             self.rename = Some(Rename {
                 field: seq_panel::name_field(&self.patterns[i].name),
+                dragging: false,
             });
         }
     }

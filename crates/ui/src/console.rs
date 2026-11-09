@@ -111,6 +111,7 @@ use atomik_model::{
     OutputDest, RackDevice, RackDoc, SnapshotScope, bypass_inserts_commands, insert_bypass_states,
     insert_chain, inserts_bypassed, output_dest,
 };
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use vello::kurbo::{Affine, BezPath, Circle, Line, Point, Rect, RoundedRect, Vec2};
@@ -867,6 +868,10 @@ pub struct ConsoleView {
     cursor: Option<DeviceKey>,
     /// A strip name being edited in place.
     rename: Option<RenameState>,
+    /// Where the strip painted the name field being edited (its transform), for the pointer.
+    field_off: Cell<(f64, f64)>,
+    /// A pointer drag is selecting in the name field.
+    field_drag: bool,
     /// The last rejected command, shown in the toolbar until the next click.
     notice: Option<String>,
     focus: Option<(Target, usize)>,
@@ -951,6 +956,8 @@ impl ConsoleView {
             link_faders: false,
             cursor: None,
             rename: None,
+            field_off: Cell::new((0.0, 0.0)),
+            field_drag: false,
             notice: None,
             focus: None,
             next_merge: MERGE_BASE,
@@ -2736,18 +2743,21 @@ impl ConsoleView {
         if let Some(r) = &self.rename {
             let editing = self.strips.iter().position(|s| s.key == r.strip);
             if editing.is_some() && hit == Hit::Name(editing.unwrap_or(0)) {
+                self.field_press(pos, clicks, modifiers, button);
                 return;
             }
             let group = r
                 .vca
                 .and_then(|id| self.vcas.iter().position(|v| v.id == id));
             if group.is_some_and(|g| hit == Hit::Vca(g, VcaPart::Plate)) {
+                self.field_press(pos, clicks, modifiers, button);
                 return;
             }
             let chip = r
                 .snapshot
                 .and_then(|id| self.snaps.iter().position(|s| s.id == id));
             if chip.is_some_and(|c| hit == Hit::Snap(c)) {
+                self.field_press(pos, clicks, modifiers, button);
                 return;
             }
             self.finish_rename(true, out);
@@ -4028,8 +4038,46 @@ impl ConsoleView {
         }
     }
 
+    /// The pointer position in the coordinates the name field was painted in.
+    fn field_local(&self, pos: Point) -> Point {
+        let plain = self
+            .rename
+            .as_ref()
+            .is_some_and(|r| r.vca.is_none() && r.snapshot.is_none());
+        let (ox, oy) = if plain {
+            self.field_off.get()
+        } else {
+            (0.0, 0.0)
+        };
+        Point::new(pos.x - ox, pos.y - oy)
+    }
+
+    /// A press on the name being edited: the caret goes there (a double click selects a word).
+    fn field_press(&mut self, pos: Point, clicks: u8, modifiers: Modifiers, button: PointerButton) {
+        let local = self.field_local(pos);
+        if let Some(r) = &mut self.rename {
+            match button {
+                PointerButton::Primary => {
+                    r.field.press(local, clicks, modifiers.shift);
+                    self.field_drag = true;
+                }
+                PointerButton::Secondary => {
+                    r.field.right_click(local);
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn pointer_move(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.pointer = pos;
+        if self.field_drag {
+            let local = self.field_local(pos);
+            if let Some(r) = &mut self.rename {
+                r.field.drag(local);
+            }
+            return;
+        }
         match self.drag.clone() {
             Drag::Value {
                 target,
@@ -4156,6 +4204,10 @@ impl ConsoleView {
 
     fn pointer_up(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.pointer = pos;
+        if std::mem::take(&mut self.field_drag) {
+            self.repaint = true;
+            return;
+        }
         match std::mem::replace(&mut self.drag, Drag::None) {
             Drag::Value { .. } | Drag::VcaFader { .. } => out.push(UiAction::EndMerge),
             Drag::Move { strip, start_x, x } if (x - start_x).abs() > MOVE_THRESHOLD => {
@@ -4805,6 +4857,7 @@ impl ConsoleView {
                 stereo_meter(c, &self.st, r, self.meters.get(&s.key), s.silenced);
             }
             if let Some(r) = self.rename.as_ref().filter(|r| r.strip == s.key) {
+                self.field_off.set((x, top));
                 rename_field(c, &self.st, l.name, &r.field);
             }
             self.focus_ring(c, Target::Strip(i), true, l);

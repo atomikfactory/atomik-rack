@@ -634,3 +634,36 @@ fn ctrl_a_then_typing_replaces_the_tempo_text_and_ctrl_z_undoes_it() {
     assert_eq!(v.tempo_text(), Some("13"));
     assert!(v.is_editing_tempo());
 }
+
+#[test]
+fn a_typed_number_sits_at_the_right_of_its_lcd_box_like_the_shown_one() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = transport_bar(&doc, &reg);
+    let x_of = |dl: &DisplayList, text: &str| -> f64 {
+        let json = dl.to_json();
+        let at = json
+            .find(&format!("\"text\":\"{text}\""))
+            .expect("the text")
+            + 1;
+        let tail = &json[at..];
+        let from = tail.find("\"at\":[").unwrap() + 6;
+        tail[from..].split(',').next().unwrap().parse().unwrap()
+    };
+    let mut shown = DisplayList::new();
+    v.paint(&mut shown, &doc, &reg);
+    let before = x_of(&shown, "120.00");
+    let t = v.tempo_center();
+    run(
+        |e| v.handle(e, &doc, &reg),
+        &[down_mods(t, Modifiers::NONE, 2), up(t)],
+    );
+    let mut typed = DisplayList::new();
+    v.paint(&mut typed, &doc, &reg);
+    let after = x_of(&typed, "120");
+    // The shown text is right-aligned at `before`; the typed one starts where a text of its
+    // width would, so that it ends at the same edge (not at the left of the box).
+    assert!(
+        before - 40.0 < after && after < before - 10.0,
+        "{after} vs {before}"
+    );
+}

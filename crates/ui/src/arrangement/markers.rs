@@ -634,6 +634,15 @@ impl ArrangementView {
         self.repaint = true;
     }
 
+    /// A right-click on a name being typed (a marker, folder, track, clip or lane name or a
+    /// comment) asks for the field menu. True when it was on the field.
+    pub(super) fn field_right_click(&self, pos: Point) -> bool {
+        if let Some(r) = &self.mk.rename {
+            return r.field.right_click(pos);
+        }
+        self.org_field().is_some_and(|f| f.right_click(pos))
+    }
+
     /// Input-method and drag events of a name being typed. True when the event is used up.
     pub(super) fn rename_event(&mut self, event: &crate::event::UiEvent) -> bool {
         use crate::event::UiEvent;

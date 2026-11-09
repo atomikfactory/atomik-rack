@@ -507,6 +507,13 @@ impl KeyboardTab {
                 }
                 return self.click(*pos, panel);
             }
+            UiEvent::PointerDown {
+                pos,
+                button: PointerButton::Secondary,
+                ..
+            } if self.layout(panel).search.contains(*pos) => {
+                self.search.right_click(*pos);
+            }
             _ => {}
         }
         TabOutcome::Open

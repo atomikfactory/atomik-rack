@@ -1234,6 +1234,9 @@ impl PluginParamsView {
             }
             return;
         }
+        if button == PointerButton::Secondary && hit == Hit::Search && self.query.right_click(pos) {
+            return;
+        }
         if button != PointerButton::Primary {
             return;
         }

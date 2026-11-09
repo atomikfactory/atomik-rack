@@ -85,6 +85,31 @@ struct Preedit {
     cursor: Option<(usize, usize)>,
 }
 
+/// What the right-click menu of a field needs to know: which of its items can work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldMenuState {
+    /// There is a step to undo.
+    pub can_undo: bool,
+    /// There is a step to redo.
+    pub can_redo: bool,
+    /// Some text is selected (Cut, Copy and Delete).
+    pub has_selection: bool,
+    /// The clipboard holds text (Paste).
+    pub can_paste: bool,
+    /// The field holds text (Select All).
+    pub has_text: bool,
+}
+
+thread_local! {
+    static MENU_REQUEST: Cell<Option<FieldMenuState>> = const { Cell::new(None) };
+}
+
+/// The right-click on a field the views reported since the last call, if any: the shell opens
+/// the field menu where the pointer is.
+pub fn take_field_menu() -> Option<FieldMenuState> {
+    MENU_REQUEST.with(Cell::take)
+}
+
 /// How many undo steps a field keeps.
 pub const HISTORY_LIMIT: usize = 50;
 
@@ -146,6 +171,10 @@ pub struct TextField {
     redo: VecDeque<Snap>,
     /// The last edit and where the caret was left, so the next one can join it.
     last: Option<(EditKind, usize)>,
+    /// Where a one-line text sits in the box when it is shorter than the box.
+    align: Align,
+    /// The box the field was painted in, for the pointer.
+    rect: Cell<Rect>,
 }
 
 impl TextField {
@@ -165,6 +194,8 @@ impl TextField {
             undo: VecDeque::new(),
             redo: VecDeque::new(),
             last: None,
+            align: Align::Start,
+            rect: Cell::new(Rect::ZERO),
         };
         f.set_text(text);
         f
@@ -174,9 +205,19 @@ impl TextField {
     /// character typed replaces it, takes at most `limit` characters and only those `accept`
     /// says yes to.
     pub fn entry(text: &str, limit: usize, accept: fn(char) -> bool) -> Self {
-        let mut f = Self::new(text, limit, false).with_filter(accept);
+        let mut f = Self::new(text, limit, false)
+            .with_filter(accept)
+            .aligned(Align::End);
         f.select_all();
         f
+    }
+
+    /// A one-line text shorter than its box sits at the start (the default), the centre or the
+    /// end of it, as an LCD readout does.
+    #[must_use]
+    pub fn aligned(mut self, align: Align) -> Self {
+        self.align = align;
+        self
     }
 
     /// Paints the field in the lower part of the LCD box `rect` of `theme` (the label sits in the
@@ -679,6 +720,7 @@ impl TextField {
             "edit.copy" => ('c', false),
             "edit.cut" => ('x', false),
             "edit.paste" => ('v', false),
+            "edit.delete" => return Some(self.handle_key(&Key::Delete, Modifiers::NONE)),
             _ => return None,
         };
         let mods = Modifiers {
@@ -713,6 +755,61 @@ impl TextField {
                 self.edit(EditKind::Other, |f| f.insert_raw(text)) || had
             }
             ImeEvent::Disabled => self.preedit.take().is_some(),
+        }
+    }
+
+    /// A right-click at `pos` (in the coordinates the field is painted in): when it is inside the
+    /// box, the field asks the shell for its menu (see [`take_field_menu`]) and this is true.
+    pub fn right_click(&self, pos: Point) -> bool {
+        if !self.rect.get().contains(pos) {
+            return false;
+        }
+        let state = FieldMenuState {
+            can_undo: self.can_undo(),
+            can_redo: self.can_redo(),
+            has_selection: self.selection().is_some(),
+            can_paste: crate::clipboard::read().is_some(),
+            has_text: !self.is_empty(),
+        };
+        MENU_REQUEST.with(|m| m.set(Some(state)));
+        true
+    }
+
+    /// The box the field was painted in last, in the coordinates it was painted in.
+    pub fn painted_rect(&self) -> Rect {
+        self.rect.get()
+    }
+
+    /// The pointer events of a field edited in place, in the coordinates it is painted in: a
+    /// press inside its box places the caret (a double click selects a word), a drag selects.
+    /// `dragging` is the caller's flag for a drag in progress. True when the event is used up.
+    pub fn pointer_event(&mut self, dragging: &mut bool, event: &crate::event::UiEvent) -> bool {
+        use crate::event::{PointerButton, UiEvent};
+        match event {
+            UiEvent::PointerDown {
+                pos,
+                button: PointerButton::Primary,
+                clicks,
+                modifiers,
+            } if self.rect.get().contains(*pos) => {
+                self.press(*pos, *clicks, modifiers.shift);
+                *dragging = true;
+                true
+            }
+            UiEvent::PointerDown {
+                pos,
+                button: PointerButton::Secondary,
+                ..
+            } if self.right_click(*pos) => true,
+            UiEvent::PointerMove { pos, .. } if *dragging => {
+                self.drag(*pos);
+                true
+            }
+            UiEvent::PointerUp { .. } if *dragging => {
+                *dragging = false;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -839,7 +936,19 @@ impl TextField {
         } else {
             (caret_x - width + 2.0).max(0.0)
         };
-        let x0 = rect.x0 + pad - scroll;
+        let slack = if self.multiline || self.align == Align::Start {
+            0.0
+        } else {
+            let whole = lines.first().copied().unwrap_or("");
+            let room = (width - measure(c, whole)).max(0.0);
+            if self.align == Align::End {
+                room
+            } else {
+                room / 2.0
+            }
+        };
+        self.rect.set(rect);
+        let x0 = rect.x0 + pad + slack - scroll;
         let y0 = rect.y0 + 3.0;
         self.origin.set((x0, y0, line_h));
         let total: usize = lines.iter().map(|l| l.chars().count()).sum();

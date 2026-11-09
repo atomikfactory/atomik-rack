@@ -62,6 +62,59 @@ impl RackView {
         }
     }
 
+    /// The pointer in the panel coordinates of the device whose name is being typed.
+    fn rename_local(&self, pos: Point) -> Option<Point> {
+        let r = self.rename.as_ref()?;
+        let d = self.devices.get(r.dev)?;
+        Some(self.view_to_rack(pos) - d.offset())
+    }
+
+    /// A press on the name being typed (any kind of name): the caret goes there, a double click
+    /// selects a word and a drag selects. True when the press was inside the field.
+    pub(super) fn rename_field_press(
+        &mut self,
+        pos: Point,
+        clicks: u8,
+        shift: bool,
+        button: crate::event::PointerButton,
+    ) -> bool {
+        let Some(local) = self.rename_local(pos) else {
+            return false;
+        };
+        let Some(r) = &mut self.rename else {
+            return false;
+        };
+        if !r.field.painted_rect().contains(local) {
+            return false;
+        }
+        if button == crate::event::PointerButton::Secondary {
+            return r.field.right_click(local);
+        }
+        if button != crate::event::PointerButton::Primary {
+            return true;
+        }
+        r.field.press(local, clicks, shift);
+        let dev = r.dev;
+        self.rename_drag = true;
+        self.bump(dev);
+        true
+    }
+
+    /// A pointer move while the mouse selects in the name being typed. True when it did.
+    pub(super) fn rename_field_drag(&mut self, pos: Point) -> bool {
+        if !self.rename_drag {
+            return false;
+        }
+        if let Some(local) = self.rename_local(pos)
+            && let Some(r) = &mut self.rename
+        {
+            r.field.drag(local);
+            let dev = r.dev;
+            self.bump(dev);
+        }
+        true
+    }
+
     /// A press while a device name is typed: on the field it keeps editing (true: the press is
     /// taken), anywhere else it commits the name and the press goes on.
     pub(super) fn device_rename_press(&mut self, pos: Point, out: &mut Vec<UiAction>) -> bool {

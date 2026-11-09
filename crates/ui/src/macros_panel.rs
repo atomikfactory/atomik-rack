@@ -769,8 +769,18 @@ impl MacrosView {
                 clicks,
             } => {
                 self.repaint = true;
+                if *button == PointerButton::Secondary && self.field_rect.get().contains(*pos) {
+                    let field = match (&self.rename, &self.entry) {
+                        (Some(r), _) => Some(&r.field),
+                        (None, Some(e)) => Some(&e.field),
+                        _ => None,
+                    };
+                    if field.is_some_and(|f| f.right_click(*pos)) {
+                        return out;
+                    }
+                }
                 // A press on the name or value being typed places the caret.
-                if self.field_rect.get().contains(*pos) {
+                if *button == PointerButton::Primary && self.field_rect.get().contains(*pos) {
                     let field = match (&mut self.rename, &mut self.entry) {
                         (Some(r), _) => Some(&mut r.field),
                         (None, Some(e)) => Some(&mut e.field),
