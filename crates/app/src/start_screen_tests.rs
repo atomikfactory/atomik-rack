@@ -544,3 +544,229 @@ fn golden_start_screen_pinned_and_card_dark() {
 fn golden_start_screen_pinned_and_card_light() {
     golden_pinned("start_screen_pinned_light", &Theme::light());
 }
+
+// ------------------------------------------------------------------------------ the cards
+
+fn cards() -> Vec<ExampleCard> {
+    vec![
+        ExampleCard::new("Basalt Beat", "A slow broken beat with a sampled kit."),
+        ExampleCard::new("Bus Room", "A small mix with buses and groups."),
+        ExampleCard::new("Moonrise Modular", "Drifting arpeggios and a slow sweep."),
+    ]
+}
+
+fn with_cards() -> StartScreen {
+    StartScreen::new(names(3), songs(4), false, true).with_cards(cards(), true)
+}
+
+#[test]
+fn the_strip_has_the_guide_card_first_then_the_examples_above_the_lists() {
+    let s = with_cards();
+    assert!(s.cards_shown(VIEW));
+    let targets: Vec<Target> = s.rows(VIEW).into_iter().map(|(t, _)| t).collect();
+    assert_eq!(
+        targets,
+        [
+            Target::New,
+            Target::Open,
+            Target::Template(0),
+            Target::Template(1),
+            Target::Template(2),
+            Target::Recent(0),
+            Target::Recent(1),
+            Target::Recent(2),
+            Target::Recent(3),
+            Target::Guide,
+            Target::Example(0),
+            Target::Example(1),
+            Target::Example(2),
+            Target::ShowAtStart,
+            Target::ShowGuide,
+            Target::Close,
+        ]
+    );
+    let strip = row_rect(&s, Target::Guide);
+    for t in [Target::Example(0), Target::Example(1), Target::Example(2)] {
+        let card = row_rect(&s, t);
+        assert!((card.y0 - strip.y0).abs() < 0.5 && card.x0 > strip.x0);
+    }
+    // The lists start under the strip.
+    assert!(row_rect(&s, Target::New).y0 >= strip.y1);
+    assert!(row_rect(&s, Target::Recent(0)).y0 >= strip.y1);
+    let lines = s.lines().join("\n");
+    assert!(lines.contains("Make your first song") && lines.contains("Moonrise Modular"));
+    assert!(lines.contains("Show the first-song card"));
+}
+
+#[test]
+fn a_bare_box_has_no_strip_and_no_second_check_box() {
+    let s = screen();
+    assert!(!s.cards_shown(VIEW));
+    assert!(
+        s.rows(VIEW)
+            .iter()
+            .all(|(t, _)| !matches!(t, Target::Guide | Target::Example(_) | Target::ShowGuide))
+    );
+}
+
+#[test]
+fn a_pick_of_a_card_runs_the_command_of_the_card() {
+    let mut s = with_cards();
+    let out = s.handle(&down(centre(&s, Target::Guide)), VIEW);
+    assert_eq!(out, StartOutcome::Run(AppCommand::GuidedTour));
+    let out = s.handle(&down(centre(&s, Target::Example(2))), VIEW);
+    assert_eq!(out, StartOutcome::Run(AppCommand::OpenExample(2)));
+    assert_eq!(Target::Guide.command(), Some(AppCommand::GuidedTour));
+    assert_eq!(Target::ShowGuide.command(), None);
+}
+
+#[test]
+fn the_second_check_box_hides_the_guide_card_and_the_examples_stay() {
+    let mut s = with_cards();
+    assert!(s.show_guide());
+    let out = s.handle(&down(centre(&s, Target::ShowGuide)), VIEW);
+    assert_eq!(out, StartOutcome::ShowGuide(false));
+    assert!(!s.show_guide());
+    assert!(s.cards_shown(VIEW), "the examples are still there");
+    let targets: Vec<Target> = s.rows(VIEW).into_iter().map(|(t, _)| t).collect();
+    assert!(!targets.contains(&Target::Guide) && targets.contains(&Target::Example(0)));
+    let out = s.handle(&down(centre(&s, Target::ShowGuide)), VIEW);
+    assert_eq!(out, StartOutcome::ShowGuide(true));
+    // With no examples and no guide card there is no strip, and the box is its old height.
+    let mut bare = StartScreen::new(names(3), songs(4), false, true).with_cards(Vec::new(), false);
+    assert!(!bare.cards_shown(VIEW));
+    assert_eq!(bare.rect(VIEW).height(), screen().rect(VIEW).height());
+    let out = bare.handle(&down(centre(&bare, Target::ShowGuide)), VIEW);
+    assert_eq!(out, StartOutcome::ShowGuide(true));
+    assert!(bare.cards_shown(VIEW));
+}
+
+#[test]
+fn the_keys_reach_the_strip_from_the_lists_and_walk_along_it() {
+    let mut s = with_cards();
+    assert_eq!(s.focus(), Target::New);
+    s.handle(&key(Key::Up), VIEW);
+    assert_eq!(s.focus(), Target::Guide);
+    s.handle(&key(Key::Right), VIEW);
+    s.handle(&key(Key::Right), VIEW);
+    assert_eq!(s.focus(), Target::Example(1));
+    s.handle(&key(Key::Left), VIEW);
+    assert_eq!(s.focus(), Target::Example(0));
+    s.handle(&key(Key::Left), VIEW);
+    s.handle(&key(Key::Left), VIEW);
+    assert_eq!(s.focus(), Target::Guide, "the strip ends stay");
+    s.handle(&key(Key::Down), VIEW);
+    assert_eq!(s.focus(), Target::New);
+    // Enter on a card picks it.
+    s.handle(&key(Key::Up), VIEW);
+    s.handle(&key(Key::Right), VIEW);
+    assert_eq!(
+        s.handle(&key(Key::Enter), VIEW),
+        StartOutcome::Run(AppCommand::OpenExample(0))
+    );
+    // Tab visits every card.
+    let mut seen = Vec::new();
+    let mut s = with_cards();
+    for _ in 0..s.rows(VIEW).len() {
+        s.handle(&key(Key::Tab), VIEW);
+        seen.push(s.focus());
+    }
+    for t in [
+        Target::Guide,
+        Target::Example(0),
+        Target::Example(2),
+        Target::ShowGuide,
+    ] {
+        assert!(seen.contains(&t), "{t:?}");
+    }
+}
+
+#[test]
+fn a_box_too_short_for_the_strip_keeps_the_lists_and_drops_the_cards() {
+    let s = with_cards();
+    for size in [Size::new(640.0, 480.0), Size::new(900.0, 500.0)] {
+        assert!(!s.cards_shown(size), "{size:?}");
+        let targets: Vec<Target> = s.rows(size).into_iter().map(|(t, _)| t).collect();
+        assert!(targets.contains(&Target::New) && targets.contains(&Target::Close));
+        assert!(!targets.contains(&Target::Guide));
+    }
+}
+
+#[test]
+fn with_cards_the_box_and_its_rows_stay_inside_the_window_and_apart() {
+    for size in [
+        VIEW,
+        Size::new(900.0, 640.0),
+        Size::new(640.0, 480.0),
+        Size::new(400.0, 300.0),
+        Size::new(300.0, 260.0),
+    ] {
+        let mut s = StartScreen::new(names(20), songs(20), true, true).with_cards(cards(), true);
+        let r = s.rect(size);
+        assert!(r.x0 >= 0.0 && r.y0 >= 0.0 && r.x1 <= size.width && r.y1 <= size.height);
+        let rows = s.rows(size);
+        for (target, row) in &rows {
+            assert!(
+                r.contains(row.center()) && row.y1 <= r.y1 && row.x1 <= r.x1,
+                "{target:?} {row:?} in {r:?} at {size:?}"
+            );
+        }
+        for (i, (_, a)) in rows.iter().enumerate() {
+            for (_, b) in &rows[i + 1..] {
+                assert!(
+                    a.intersect(*b).area() < 1.0,
+                    "{a:?} overlaps {b:?} at {size:?}"
+                );
+            }
+        }
+        for _ in 0..40 {
+            s.handle(&key(Key::Down), size);
+            s.handle(&key(Key::Right), size);
+            s.handle(&key(Key::Up), size);
+            s.handle(&key(Key::Tab), size);
+            assert!(
+                s.rows(size).iter().any(|(t, _)| *t == s.focus()),
+                "{size:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_cards_and_the_second_check_box_have_tooltips() {
+    let s = with_cards();
+    let help = |t: Target| s.help_at(VIEW, centre(&s, t)).expect("a tooltip").text;
+    assert!(help(Target::Guide).contains("seven"));
+    assert!(help(Target::Example(1)).contains("example"));
+    assert!(help(Target::ShowGuide).contains("Guided Tour"));
+    for t in [Target::Guide, Target::Example(0), Target::ShowGuide] {
+        assert!(help(t).len() < 80, "{t:?}");
+    }
+}
+
+fn golden_cards(name: &str, theme: &Theme) {
+    let mut list = DisplayList::new();
+    let mut s = StartScreen::new(
+        vec!["Band Rehearsal".into(), "Beat Sketch".into()],
+        vec![RecentRow::new(
+            &PathBuf::from("/songs/demo/Night Drive.atomik"),
+            Some(1_700_000_000),
+        )],
+        false,
+        true,
+    )
+    .with_cards(cards(), true);
+    s.handle(&key(Key::Up), VIEW);
+    s.paint(&mut list, theme, VIEW);
+    check_golden(name, &list.to_json());
+}
+
+#[test]
+fn golden_start_screen_cards_dark() {
+    golden_cards("start_screen_cards", &Theme::dark());
+}
+
+#[test]
+fn golden_start_screen_cards_light() {
+    golden_cards("start_screen_cards_light", &Theme::light());
+}

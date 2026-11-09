@@ -95,6 +95,7 @@ fn a_song_export_renders_on_a_worker_and_writes_the_file_without_touching_the_en
     let end = c.doc().song.end_tick();
     let end_frames = c.doc().song.frame_at(end, c.doc().sample_rate);
     let path = t.file("song.wav");
+    assert_eq!(c.exports_finished(), 0);
     c.start_audio_export(ExportScope::Song, path.clone(), values(ExportDepth::Pcm16))
         .unwrap();
     assert!(c.audio_export_busy());
@@ -108,6 +109,7 @@ fn a_song_export_renders_on_a_worker_and_writes_the_file_without_touching_the_en
     c.wait_background();
     assert!(!c.audio_export_busy());
     assert!(c.audio_export_progress().is_none());
+    assert_eq!(c.exports_finished(), 1, "a finished export is counted");
     let message = c.last_rejection().unwrap();
     assert!(
         message.contains("Exported song.wav") && message.contains("16-bit"),
@@ -181,6 +183,7 @@ fn a_cancelled_export_leaves_no_file_and_a_second_one_can_start() {
         "no partial file"
     );
     assert!(c.last_rejection().unwrap().contains("cancelled"));
+    assert_eq!(c.exports_finished(), 0, "a cancelled export is not counted");
     c.cancel_audio_export();
     assert!(c.last_rejection().unwrap().contains("No export is running"));
     // The next one goes through.
@@ -193,6 +196,7 @@ fn a_cancelled_export_leaves_no_file_and_a_second_one_can_start() {
     c.wait_background();
     assert!(path.exists());
     assert!(c.last_rejection().unwrap().contains("32-bit float"));
+    assert_eq!(c.exports_finished(), 1);
 }
 
 #[test]

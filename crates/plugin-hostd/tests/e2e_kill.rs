@@ -9,8 +9,8 @@ mod sandbox_support;
 use atomik_device_sdk::RunMode;
 use atomik_plugin_host::{DeviceState, ManagerEvent};
 use sandbox_support::{
-    FORMATS, METER_STATE, Plug, Sandbox, bits, effect, meters, out_l, request, request_with_state,
-    run_to_crash,
+    CRASH_DEADLINE, FORMATS, METER_STATE, Plug, Sandbox, bits, effect, meters, out_l, request,
+    request_with_state, run_to_crash,
 };
 use std::process::Command;
 use std::sync::Mutex;
@@ -64,7 +64,7 @@ fn a_child_killed_from_outside_crashes_the_device_and_a_reload_from_the_captured
         assert!(heard.iter().any(|s| s.abs() > 0.001));
 
         kill_children();
-        let batches = run_to_crash(&mut h, 0.25, 1000);
+        let batches = run_to_crash(&mut h, 0.25, CRASH_DEADLINE);
         println!(
             "{}: crashed {batches} batches after the kill",
             format.name()

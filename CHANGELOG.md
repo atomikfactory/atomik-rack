@@ -62,6 +62,47 @@ may break APIs and the patch and project formats.
   hand on the control. Profiles are exported and imported from the same tab to share them, and several
   controllers work at once, each with its own profile, bank and lock. No project format change (profiles
   live with the settings, not the project).
+- **A start screen that teaches.** A strip of cards sits above the lists of the start screen: the three factory
+  example songs, each with a line about what it is for (a click opens one as a new unsaved song, like a template),
+  and a Make your first song card. A check box at the foot of the box turns that card off; Help > Guided Tour starts
+  the same guide whenever you like.
+- **A guided first song.** Make your first song (the start screen card or Help > Guided Tour) opens a new song and
+  shows a small floating panel with seven steps: add an instrument, play or draw some notes, loop them, add a drum
+  pattern, mix (a level and an effect), save and export. Each step says what to do, watches the song and moves on
+  when it is done (or waits for Next when you had done it already), and outlines the menu, button or area it talks
+  about. Back, Skip, Move (to the other side of the window) and Close are always there. The panel never takes the
+  keyboard, only the pointer inside its own rectangle, and what it shows is not saved in the song.
+- **Drum pads light when they play.** A pad of the drum machine panel flashes when the engine plays it, whatever
+  sent the note: a note generator, the sequencer, a MIDI input, a click on the pad or a gate on its jack. A harder
+  hit lights it brighter and the light fades out in a quarter of a second. The drum machine counts the hits that
+  sound and publishes the counters like any other device's display values; nothing on the audio thread waits for
+  the panel, and a hit on a pad that makes no sound lights nothing.
+- **A level for the browser's previews.** A small control in the browser's header sets the level audio files,
+  patches, containers and clips play at when you preview them, from -60 dB to +6 dB (drag it, double-click to go
+  back to 0 dB). It is saved with the Settings and applies to the next preview of every kind.
+
+### Changed
+- **Bigger drum pads.** The pad grid of the drum machine panel uses the room between the pads and the knob
+  columns, and the sample name and the pad number are drawn larger.
+- **A click on an empty automation lane selects the lane.** With the Select tool a click on empty lane space picks
+  the lane and its track, and a drag draws a selection band, instead of adding a clip and a point. A double-click
+  on empty lane space still adds a point (a clip over the bar clicked, with a point at the pointer), and the Pencil
+  tool still draws.
+
+### Fixed
+- **A dropped sample names its drum pad at once.** The panel kept saying "empty" for a pad that had just received
+  a sample until something else rebuilt it; the pad names now follow the zones the moment they change.
+- **Undo in the middle of a band selection.** Undoing while a rubber band was open in the arrangement left clips
+  in the selection that the undo had removed; the band now keeps only the clips that still exist, on release and
+  on cancel.
+- **Undo of an effect created inside a channel's insert chain.** Creating an effect at a rack slot above the
+  chain's end joins it to the chain and rearranges the rack in the same step; the step recorded the old order
+  from before the new effect moved, so undo could fail and leave the effect behind. The recorded order now
+  matches the rack as it really was.
+- **Sandbox crash tests on slow machines.** The tests that wait for a crashed plugin child to turn its device
+  to Crashed now wait on that state against a generous deadline instead of a fixed number of batches.
+- **Cables that would close a loop through the console.** Dropping a cable from a console output onto a channel
+  input (or its stereo pair) used to send a cable the project refuses; the drop is now ignored up front.
 
 ## [0.4.0-rc.1] - 2026-11-08
 

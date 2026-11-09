@@ -138,6 +138,18 @@ impl ArrangementView {
         }
     }
 
+    /// A click on empty automation lane space with the Select tool: the lane is picked (the lane
+    /// items of the track menu act on it) and its track is selected; the clips and points
+    /// selected before are let go.
+    pub(super) fn select_lane(&mut self, device: &DeviceKey, lane: usize) {
+        let Some(track) = self.song.tracks.iter().position(|t| &t.device == device) else {
+            return;
+        };
+        self.set_selected_track(Some(device.clone()));
+        self.picked_note_lane = None;
+        self.picked_lane = self.lane_id(track, lane);
+    }
+
     /// Picks the lane of a row of track `track` when it is a note lane.
     pub(super) fn pick_note_lane(&mut self, track: usize, lane: usize) {
         if let Some(d) = self.song.tracks.get(track).map(|t| t.device.clone()) {

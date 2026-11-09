@@ -881,6 +881,76 @@ mod property {
         }
     }
 
+    /// Replays `gestures` on a view scoped into "layer": no gesture may make the model refuse
+    /// a command (a lone cable may still close a loop, as at the top level).
+    fn replay(gestures: Vec<G>) -> Result<(), TestCaseError> {
+        let mut d = nested();
+        let reg = registry();
+        let mut v = scoped_view(d.doc(), &["layer"]);
+        for g in gestures {
+            let actions = match g {
+                G::Click(p, clicks, b) => {
+                    press_with(&mut v, d.doc(), p, button(b), clicks, Modifiers::NONE)
+                }
+                G::Drag(a, b) => {
+                    let mut out = v.handle(&down(a), d.doc(), &reg);
+                    out.extend(v.handle(&mv(b), d.doc(), &reg));
+                    out.extend(v.handle(&up(b), d.doc(), &reg));
+                    out
+                }
+                G::Key(n) => send_key(&mut v, d.doc(), key_for(n)),
+                G::Wheel(p, n) => v.handle(
+                    &UiEvent::Wheel {
+                        delta: atomik_ui::kurbo::Vec2::new(0.0, f64::from(n)),
+                        pos: p,
+                        modifiers: Modifiers::NONE,
+                    },
+                    d.doc(),
+                    &reg,
+                ),
+                G::Flip => {
+                    let f = if v.flip() == Flip::Front {
+                        Flip::Back
+                    } else {
+                        Flip::Front
+                    };
+                    v.set_flip(f);
+                    Vec::new()
+                }
+                G::Browser => {
+                    v.set_browser_visible(!v.browser_visible());
+                    Vec::new()
+                }
+                G::Move(p) => v.handle(&mv(p), d.doc(), &reg),
+            };
+            for a in actions {
+                match a {
+                    UiAction::Command(c) => {
+                        let is_cable =
+                            matches!(c, Command::Connect(_) | Command::Disconnect { .. });
+                        let r = d.apply(c.clone(), &reg);
+                        // A cable may close a loop: the model says so, as at the top level.
+                        let loop_refusal = matches!(&r, Err(ModelError::BadCable(_)));
+                        prop_assert!(
+                            r.is_ok() || (is_cable && loop_refusal),
+                            "{c:?} refused: {r:?}"
+                        );
+                    }
+                    UiAction::EndMerge => d.end_merge(),
+                    UiAction::Undo => {
+                        d.undo();
+                    }
+                    UiAction::Redo => {
+                        d.redo();
+                    }
+                    _ => {}
+                }
+            }
+            v.sync(d.doc(), &reg);
+        }
+        Ok(())
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
@@ -888,61 +958,30 @@ mod property {
         fn no_gesture_inside_a_container_makes_the_model_refuse_a_command(
             gestures in proptest::collection::vec(arb_gesture(), 1..24)
         ) {
-            let mut d = nested();
-            let reg = registry();
-            let mut v = scoped_view(d.doc(), &["layer"]);
-            for g in gestures {
-                let actions = match g {
-                    G::Click(p, clicks, b) => press_with(
-                        &mut v, d.doc(), p, button(b), clicks, Modifiers::NONE),
-                    G::Drag(a, b) => {
-                        let mut out = v.handle(&down(a), d.doc(), &reg);
-                        out.extend(v.handle(&mv(b), d.doc(), &reg));
-                        out.extend(v.handle(&up(b), d.doc(), &reg));
-                        out
-                    }
-                    G::Key(n) => send_key(&mut v, d.doc(), key_for(n)),
-                    G::Wheel(p, n) => v.handle(
-                        &UiEvent::Wheel {
-                            delta: atomik_ui::kurbo::Vec2::new(0.0, f64::from(n)),
-                            pos: p,
-                            modifiers: Modifiers::NONE,
-                        },
-                        d.doc(),
-                        &reg,
-                    ),
-                    G::Flip => {
-                        let f = if v.flip() == Flip::Front { Flip::Back } else { Flip::Front };
-                        v.set_flip(f);
-                        Vec::new()
-                    }
-                    G::Browser => {
-                        v.set_browser_visible(!v.browser_visible());
-                        Vec::new()
-                    }
-                    G::Move(p) => v.handle(&mv(p), d.doc(), &reg),
-                };
-                for a in actions {
-                    match a {
-                        UiAction::Command(c) => {
-                            let is_cable = matches!(c, Command::Connect(_) | Command::Disconnect { .. });
-                            let r = d.apply(c.clone(), &reg);
-                            // A cable may close a loop: the model says so, as at the top level.
-                            let loop_refusal = matches!(&r, Err(ModelError::BadCable(_)));
-                            prop_assert!(
-                                r.is_ok() || (is_cable && loop_refusal),
-                                "{c:?} refused: {r:?}"
-                            );
-                        }
-                        UiAction::EndMerge => d.end_merge(),
-                        UiAction::Undo => { d.undo(); }
-                        UiAction::Redo => { d.redo(); }
-                        _ => {}
-                    }
-                }
-                v.sync(d.doc(), &reg);
-            }
+            replay(gestures)?;
         }
+    }
+
+    /// Regression: a cable dragged from a console output onto a channel input closes a loop
+    /// (the channel feeds the master); the drop is ignored instead of emitting a cable the
+    /// model refuses, alone or in a replace or stereo-pair batch.
+    #[test]
+    fn a_drag_that_would_close_a_loop_emits_no_refused_batch() {
+        let p = |x, y| Point::new(x, y);
+        replay(vec![
+            G::Key(2),
+            G::Flip,
+            G::Drag(p(719.47, 926.58), p(279.67, 805.75)),
+        ])
+        .unwrap();
+        replay(vec![
+            G::Flip,
+            G::Key(2),
+            G::Flip,
+            G::Flip,
+            G::Drag(p(600.89, 844.86), p(545.43, 980.75)),
+        ])
+        .unwrap();
     }
 }
 

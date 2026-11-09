@@ -347,10 +347,18 @@ pub fn bits(b: &Batch) -> Vec<u32> {
     b.iter().map(|s| s.to_bits()).collect()
 }
 
-/// Processes until the device is Crashed (at most `limit` batches); returns how many batches it
-/// took, and checks that every batch from the first late one on was the dry input.
-pub fn run_to_crash(h: &mut DeviceHarness, level: f32, limit: usize) -> usize {
-    for n in 1..=limit {
+/// How long a test waits for a child's crash to reach the device. A crash is seen when the link
+/// notices the dead child, which a loaded machine can delay by seconds; the wait ends on the
+/// event, so the deadline is generous and costs nothing when the machine is idle.
+pub const CRASH_DEADLINE: Duration = Duration::from_secs(60);
+
+/// Processes until the device is Crashed, giving up only after `within`; returns how many
+/// batches it took, and checks that the batch that found the crash was the dry input.
+pub fn run_to_crash(h: &mut DeviceHarness, level: f32, within: Duration) -> usize {
+    let limit = std::time::Instant::now() + within;
+    let mut n = 0;
+    loop {
+        n += 1;
         h.process();
         if meters(h)[METER_STATE] == DeviceState::Crashed.as_f32() {
             assert!(
@@ -359,7 +367,10 @@ pub fn run_to_crash(h: &mut DeviceHarness, level: f32, limit: usize) -> usize {
             );
             return n;
         }
+        assert!(
+            std::time::Instant::now() < limit,
+            "the device did not turn Crashed within {within:?} ({n} batches)"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
-    panic!("the device did not turn Crashed in {limit} batches");
 }
