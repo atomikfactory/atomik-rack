@@ -124,7 +124,8 @@ pub(crate) fn spawn(
         .map(|_| ())
 }
 
-fn search(tool: &dyn VideoTool, folder: Option<&std::path::Path>) -> FfmpegStatus {
+/// Looks for FFmpeg in `folder` (else on the system path) through `tool`.
+pub(crate) fn search(tool: &dyn VideoTool, folder: Option<&std::path::Path>) -> FfmpegStatus {
     let path_var = std::env::var_os("PATH");
     discover(
         &Search::of_process(folder, path_var.as_deref()),

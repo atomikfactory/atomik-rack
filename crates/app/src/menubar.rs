@@ -969,6 +969,7 @@ mod tests {
             video_audio_keep: false,
             video_import_audio: false,
             video_missing: false,
+            export_film: false,
             collect_busy: false,
             default_song: false,
             midi_clip: false,

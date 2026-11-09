@@ -956,7 +956,22 @@ a cancel that leaves no file, the mapping of the panel values to the render) and
 `crates/app/src/shell_export_tests.rs` the flow (the menu items and commands, the file request and
 the proposed name, the options and progress panels, the choices saved in `export.json` and restored,
 CANCEL and Esc, the items disabled while an export runs); `crates/ui/tests/export_panel.rs` the
-panel itself. `crates/mcp/tests/session.rs` has `session_export` (the file against the bounce, the
+panel itself. The compressed formats run through the fake tool, so no test needs FFmpeg: the argument list of each
+format and quality, the tags (quotes, line breaks, a leading dash) and the rate the format holds are tests of
+`crates/video/src/encode.rs`, with the cancel and the failure leaving no partial file; the app core tests export a
+song, a loop and a selection as MP3, AAC and Opus (the file, the arguments, the tags from the song information, the
+temporary WAV removed), cancel before and during the encoder, a failing encoder and a missing FFmpeg; the panel tests
+grey the three buttons with the setup line and the shell test remembers the format and quality in `export.json`.
+`cargo test -p atomik-video --test real_ffmpeg -- --ignored` also encodes a generated WAV file to each format and reads
+the tags back with ffprobe, and makes films from a generated film and mix in every mode (copy, re-encode of a trim,
+black before and after, PCM in MOV, the film's own sound as track two) and checks the streams, the frame counts and that
+the mix starts after its silence. The film export is tested at three layers: the cut arithmetic, the picture decision
+and the argument lists with the cancel and failure cleanup (`crates/video/src/film/tests.rs`), the plan and the export of
+the app core with the fake tool (`app_core_film_tests.rs`: the range under a trimmed film, a film before the song, the
+whole song with black, copy and re-encode, PCM in MOV, the second track, cancel, failure, and the states that refuse the
+export), and the shell (`shell_film_tests.rs`: the menu item, the panel flow, the remembered choices and the guard
+against replacing a file at the extension the format gives), and `cargo test -p atomik-app --lib real_ffmpeg -- --ignored` exports an MP3 of the starter
+project. `crates/mcp/tests/session.rs` has `session_export` (the file against the bounce, the
 loop, argument validation and the path policy). A time selection is tested at the three layers: the
 render exports exactly the frames of `ExportSpan::Range` (the bounce slice, no tail, locators ignored,
 an empty range refused) and stems cut the same frames, the app takes the range selected on a lane
@@ -2062,3 +2077,26 @@ a different length or frame rate and the toast says so. Put the playhead inside 
 Playhead and Trim Video Start / End to Playhead; each is one undo step. Change the tempo: File > Video > Move Video to
 Playhead at the same playhead afterwards reports the same time in seconds (the film did not move). MCP:
 `project_inspect` of the saved project lists `song.video`.
+
+## The update check and the fake client
+
+The program's only network request goes through the `HttpGet` trait of `atomik-update`. A `Shell` starts with the
+`Offline` client, which fails every request, and only the application window installs the real one (`UreqGet`), so no
+test, headless session or MCP session can reach the network. Tests use `FakeHttp` (`crates/update/src/fake.rs`): it
+answers with a canned status and body, or fails, and records every request, so a test can assert that nothing was
+sent, or that what was sent is exactly the fixed address and the generic User-Agent.
+
+- `cargo test -p atomik-update` runs the version order (release candidates included), the list parser (drafts,
+  pre-releases, odd entries, tags that cannot go in an address), the fake answers (newer, same, older, malformed,
+  error status, no network, an answer over the limit), the daily throttle, the skipped version and the saved file.
+- The app tests `update_check_tests.rs` (the rules and the worker) and `shell_update_tests.rs` (the question, the
+  buttons, Help > Check for Updates, the notice on the start screen, no request before a Yes or after a No) use the
+  fake only. The one test that builds the real client only asks it for a plain `http` address, which it refuses
+  before opening a socket.
+
+Hand checks (they need the network): delete the `update_check` line of `workflow.json` and start the program: the
+question shows in the lower left corner and nothing is sent (watch the connections). Answer Yes: one request goes
+to `api.github.com` and, when a newer release exists, the notice offers What's new (the release page opens in the
+browser), Skip this version and Later; start again within a day and no request is made. Help > Check for Updates
+asks at once and says "is the newest version" when there is nothing newer. With the network off, the same command
+says it could not check and the daily check says nothing.

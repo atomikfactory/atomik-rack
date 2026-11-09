@@ -25,6 +25,7 @@ Which dependencies are held on purpose, why, and how they are kept current. The 
 | `rust-version` and `rust-toolchain.toml` | 1.99 | root | One toolchain for CI, the release builds and the docs. The two files move together; a dependency that needs a newer compiler moves both in a pull request of their own. |
 | `serde_json` | feature `float_roundtrip` | root | Saved files and settings must read back the floats that were written. |
 | `symphonia`, `arboard` | `default-features = false` | root | Only the formats and backends the program uses are built: fewer crates, fewer advisories, shorter builds. |
+| `ureq` | `default-features = false`, feature `rustls` | root, used by `crates/update` | The update check's one HTTPS request. The default features add gzip; no cookie store, no JSON layer and no redirect handling are used (the request is configured to follow none). rustls runs on `ring` with the bundled root certificates (`webpki-roots`), so the behaviour is the same on every platform. |
 | `zune-jpeg` | `default-features = false`, feature `std` | root, used by `crates/video` | The JPEG decoder of the video viewer. The default features add hand-written SIMD paths (AVX2 and NEON intrinsics, `unsafe`); a 360-line proxy frame decodes in a few milliseconds without them, off the UI thread, so the build keeps the portable code only. |
 
 The clipboard dependency (`arboard`, MIT or Apache-2.0) was added for the text fields; the system
@@ -36,6 +37,16 @@ into pixels. It decodes only; nothing encodes. The alternatives were `jpeg-decod
 authors point to `zune-jpeg`) and `image` (a framework with a codec per format, far more than one decoder needs).
 The choice is in [DECISIONS.md](DECISIONS.md#p-the-jpeg-decoder-of-the-viewer); `cargo deny check` passes with the
 licences the policy already allows.
+
+The HTTPS client (`ureq` 3 with `rustls`, `rustls-webpki`, `ring` and `webpki-roots`, plus the small `http`,
+`httparse`, `base64`, `subtle`, `untrusted` and `zeroize` crates they use) was added for the optional update check
+and is used by nothing else: it makes the one request of that check and only after the user said yes. The
+alternatives were `reqwest` (an asynchronous framework with its own runtime and far more crates), `rustls` used
+directly with a hand-written HTTP exchange, and a platform verifier for the certificates (one code path per platform).
+`ring` is the one part that is not pure Rust (a few C and assembly files, `Apache-2.0 AND ISC`); `aws-lc-rs` would be a
+larger C build. `webpki-roots` is licensed `CDLA-Permissive-2.0`, a permissive data licence, which is now in the
+allowed licences of `deny.toml`; `cargo deny check` passes. The choice is in
+[DECISIONS.md](DECISIONS.md#s-the-update-check).
 
 ## Duplicate versions
 
