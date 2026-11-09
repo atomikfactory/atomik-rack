@@ -380,6 +380,7 @@ pub mod duck_panel;
 pub mod event;
 pub mod export_panel;
 pub mod file_browser;
+pub mod film_panel;
 pub mod fm_panel;
 pub mod fx;
 pub mod fx_layout;
@@ -487,11 +488,15 @@ pub use delivery_panel::{
 pub use display_list::{DisplayList, Op};
 pub use event::{ImeEvent, Key, Modifiers, NumpadKey, PointerButton, UiEvent};
 pub use export_panel::{
-    EXPORT_RATES, ExportAction, ExportDepth, ExportDither, ExportFile, ExportScope, ExportValues,
-    ExportView,
+    AAC_BITRATES, EXPORT_RATES, EncoderState, ExportAction, ExportDepth, ExportDither, ExportFile,
+    ExportQuality, ExportScope, ExportValues, ExportView, MP3_BITRATES, MP3_VBR, OPUS_BITRATES,
 };
 pub use file_browser::{
     DetailData, FileBrowserView, PREVIEW_DB_MAX, PREVIEW_DB_MIN, PlacesData, TreeChild,
+};
+pub use film_panel::{
+    FilmAction, FilmCover, FilmPictureChoice, FilmQualityChoice, FilmSoundChoice, FilmValues,
+    FilmView,
 };
 pub use io_panel::IoSocketState;
 pub use kick_bass_panel::{

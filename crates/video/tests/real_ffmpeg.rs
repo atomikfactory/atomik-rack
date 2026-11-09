@@ -7,8 +7,9 @@
 
 use atomik_video::runner::capture;
 use atomik_video::{
-    Control, FfmpegStatus, FrameDecoder, FrameEvent, Platform, ProxyCache, ProxyReader, ProxySpec,
-    Search, SystemTool, decode_jpeg, discover, prepare,
+    Control, EncodeJob, EncodeSpec, FfmpegStatus, FrameDecoder, FrameEvent, LossyCodec,
+    LossyQuality, Platform, ProxyCache, ProxyReader, ProxySpec, Search, SystemTool, Tags,
+    decode_jpeg, discover, encode_audio, prepare,
 };
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -316,4 +317,341 @@ fn the_audio_of_a_generated_film_is_extracted_with_its_start_offset() {
     );
     assert!(!other.exists());
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// Each compressed format is encoded from a generated WAV file, tagged, and read back by ffprobe.
+#[test]
+#[ignore = "needs a real FFmpeg"]
+fn a_generated_wav_is_encoded_to_each_compressed_format_with_its_tags() {
+    let folder = std::env::var_os("ATOMIK_FFMPEG_DIR").map(PathBuf::from);
+    let path_var = std::env::var_os("PATH");
+    let status = discover(
+        &Search {
+            folder: folder.as_deref(),
+            path_var: path_var.as_deref(),
+            platform: Platform::current(),
+        },
+        &SystemTool,
+        &Path::is_file,
+    );
+    let FfmpegStatus::Found(ffmpeg) = status else {
+        println!("no usable FFmpeg here: {}", status.message());
+        return;
+    };
+    let dir = temp("encode");
+    let wav = dir.join("tone.wav");
+    let never = AtomicBool::new(false);
+    let make: Vec<OsString> = [
+        "-nostdin",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:duration=2:sample_rate=44100",
+        "-ac",
+        "2",
+        "-y",
+    ]
+    .map(OsString::from)
+    .into_iter()
+    .chain([wav.clone().into_os_string()])
+    .collect();
+    capture(&SystemTool, &ffmpeg.ffmpeg, &make, 1 << 20, &never).unwrap();
+    let tags = Tags {
+        title: "A \"quoted\"; title".to_owned(),
+        author: "Zoe".to_owned(),
+    };
+    for (codec, quality, rate) in [
+        (LossyCodec::Mp3, LossyQuality::Cbr(192), 44_100),
+        (LossyCodec::Mp3, LossyQuality::Vbr(2), 44_100),
+        (LossyCodec::Aac, LossyQuality::Cbr(128), 44_100),
+        (LossyCodec::Opus, LossyQuality::Cbr(96), 48_000),
+    ] {
+        let out = dir.join(format!("tone.{}", codec.extension()));
+        let job = EncodeJob {
+            source: &wav,
+            out: &out,
+            spec: EncodeSpec {
+                codec,
+                quality,
+                rate: if codec == LossyCodec::Opus {
+                    44_100
+                } else {
+                    rate
+                },
+                channels: 2,
+            },
+            tags: &tags,
+            duration_s: 2.0,
+        };
+        match encode_audio(&SystemTool, &ffmpeg, &job, &never, &|_| {}) {
+            Ok(()) => {}
+            // A build without the encoder is not a failure of the code under test.
+            Err(e) if e.to_string().contains("Unknown encoder") => {
+                println!("{} is not built into this FFmpeg: {e}", codec.name());
+                continue;
+            }
+            Err(e) => panic!("{}: {e}", codec.name()),
+        }
+        assert!(fs::metadata(&out).unwrap().len() > 1000, "{}", codec.name());
+        let probe: Vec<OsString> = [
+            "-v",
+            "error",
+            "-show_entries",
+            "stream_tags=title,artist:format_tags=title,artist:format=duration",
+            "-of",
+            "default=nw=1",
+        ]
+        .map(OsString::from)
+        .into_iter()
+        .chain([out.clone().into_os_string()])
+        .collect();
+        let text = capture(&SystemTool, &ffmpeg.ffprobe, &probe, 1 << 16, &never).unwrap();
+        println!("{}: {text}", codec.name());
+        assert!(text.contains("Zoe"), "{text}");
+        assert!(text.contains("A \"quoted\"; title"), "{text}");
+    }
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// The samples of the first audio stream of `file` between `from` and `to` seconds, as floats.
+fn audio_samples(ffmpeg: &atomik_video::Ffmpeg, file: &Path, (from, to): (f64, f64)) -> Vec<f32> {
+    use atomik_video::VideoTool;
+    let args: Vec<OsString> = [
+        "-nostdin".to_owned(),
+        "-v".to_owned(),
+        "error".to_owned(),
+        "-ss".to_owned(),
+        from.to_string(),
+        "-t".to_owned(),
+        (to - from).to_string(),
+        "-i".to_owned(),
+        file.to_string_lossy().into_owned(),
+        "-map".to_owned(),
+        "0:a:0".to_owned(),
+        "-ac".to_owned(),
+        "1".to_owned(),
+        "-ar".to_owned(),
+        "48000".to_owned(),
+        "-f".to_owned(),
+        "f32le".to_owned(),
+        "-".to_owned(),
+    ]
+    .map(OsString::from)
+    .into();
+    let mut bytes = Vec::new();
+    SystemTool
+        .run(
+            &ffmpeg.ffmpeg,
+            &args,
+            &mut |c| {
+                bytes.extend_from_slice(c);
+                true
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
+        .collect()
+}
+
+/// Streams and length of `file` as ffprobe prints them.
+fn describe(ffmpeg: &atomik_video::Ffmpeg, file: &Path) -> String {
+    let probe: Vec<OsString> = [
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=codec_name,codec_type,nb_read_frames,width,height:format=duration,format_name",
+        "-count_frames",
+        "-of",
+        "default=nw=1",
+    ]
+    .map(OsString::from)
+    .into_iter()
+    .chain([file.as_os_str().to_owned()])
+    .collect();
+    capture(
+        &SystemTool,
+        &ffmpeg.ffprobe,
+        &probe,
+        1 << 16,
+        &AtomicBool::new(false),
+    )
+    .unwrap()
+}
+
+/// A film is made from a generated film and a generated mix in every way the dialog offers, and
+/// ffprobe and the samples confirm the streams, the length and where the mix starts.
+#[test]
+#[ignore = "needs a real FFmpeg"]
+fn a_generated_film_gets_the_mix_in_every_mode() {
+    use atomik_video::{
+        FilmCut, FilmJob, FilmPicture, FilmQuality, FilmSound, FilmSpec, export_film, probe_file,
+    };
+    let folder = std::env::var_os("ATOMIK_FFMPEG_DIR").map(PathBuf::from);
+    let path_var = std::env::var_os("PATH");
+    let status = discover(
+        &Search {
+            folder: folder.as_deref(),
+            path_var: path_var.as_deref(),
+            platform: Platform::current(),
+        },
+        &SystemTool,
+        &Path::is_file,
+    );
+    let FfmpegStatus::Found(ffmpeg) = status else {
+        println!("no usable FFmpeg here: {}", status.message());
+        return;
+    };
+    let dir = temp("filmmix");
+    let (film, mix) = (dir.join("source film.mp4"), dir.join("mix.wav"));
+    let never = AtomicBool::new(false);
+    let make = |args: &[&str], out: &Path| {
+        let all: Vec<OsString> = args
+            .iter()
+            .map(OsString::from)
+            .chain([out.as_os_str().to_owned()])
+            .collect();
+        capture(&SystemTool, &ffmpeg.ffmpeg, &all, 1 << 20, &never).unwrap();
+    };
+    // A 4 s film with its own 330 Hz sound, 640x360 at 25 fps, and a 3 s mix of 880 Hz.
+    make(
+        &[
+            "-nostdin",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=640x360:rate=25:duration=4",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=330:duration=4:sample_rate=48000",
+            "-pix_fmt",
+            "yuv420p",
+            "-g",
+            "25",
+            "-shortest",
+            "-y",
+        ],
+        &film,
+    );
+    make(
+        &[
+            "-nostdin",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:duration=3:sample_rate=48000",
+            "-ac",
+            "2",
+            "-y",
+        ],
+        &mix,
+    );
+    let info = probe_file(&SystemTool, &ffmpeg, &film, &never).unwrap();
+    let tags = Tags {
+        title: "Film".to_owned(),
+        author: "Zoe".to_owned(),
+    };
+    let s = 1_000_000u64;
+    let run = |name: &str, spec: FilmSpec, cut: FilmCut| -> PathBuf {
+        let out = dir.join(name);
+        let job = FilmJob {
+            film: &film,
+            mix: &mix,
+            out: &out,
+            info: &info,
+            spec,
+            cut,
+            tags: &tags,
+        };
+        match export_film(&SystemTool, &ffmpeg, &job, &never, &|_| {}) {
+            Ok(()) => {}
+            Err(e) if e.to_string().contains("Unknown encoder") => {
+                println!("{name}: {e}");
+                return out;
+            }
+            Err(e) => panic!("{name}: {e}"),
+        }
+        let text = describe(&ffmpeg, &out);
+        println!("{name}:\n{text}");
+        out
+    };
+    let base = FilmSpec {
+        picture: FilmPicture::Copy,
+        sound: FilmSound::Aac(192),
+        own_audio: false,
+        rate: 48_000,
+        channels: 2,
+    };
+    // 1. Copy, the whole film, the mix starting half a second in.
+    let cut = FilmCut {
+        in_us: 0,
+        length_us: 4 * s,
+        black_before_us: 0,
+        black_after_us: 0,
+        mix_delay_us: s / 2,
+        total_us: 4 * s,
+    };
+    let out = run("copy.mp4", base, cut);
+    let text = describe(&ffmpeg, &out);
+    assert!(text.contains("codec_name=h264"), "{text}");
+    assert_eq!(text.matches("codec_type=audio").count(), 1, "{text}");
+    let early = audio_samples(&ffmpeg, &out, (0.05, 0.4));
+    let late = audio_samples(&ffmpeg, &out, (0.7, 1.0));
+    let peak = |v: &[f32]| v.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+    assert!(
+        peak(&early) < 0.01,
+        "silence before the mix: {}",
+        peak(&early)
+    );
+    assert!(peak(&late) > 0.05, "the mix after it: {}", peak(&late));
+    // 2. Re-encode a trimmed middle, exact to the frame, with the film's own sound as track two.
+    let cut = FilmCut {
+        in_us: s,
+        length_us: 2 * s,
+        black_before_us: 0,
+        black_after_us: 0,
+        mix_delay_us: 0,
+        total_us: 2 * s,
+    };
+    let spec = FilmSpec {
+        picture: FilmPicture::Encode(FilmQuality::Small),
+        own_audio: true,
+        ..base
+    };
+    let out = run("trim.mp4", spec, cut);
+    let text = describe(&ffmpeg, &out);
+    assert_eq!(text.matches("codec_type=audio").count(), 2, "{text}");
+    assert!(text.contains("nb_read_frames=50"), "{text}");
+    // 3. The whole song with black before and after the film, PCM in MOV.
+    let cut = FilmCut {
+        in_us: 0,
+        length_us: 2 * s,
+        black_before_us: s,
+        black_after_us: s,
+        mix_delay_us: 0,
+        total_us: 4 * s,
+    };
+    let spec = FilmSpec {
+        picture: FilmPicture::Encode(FilmQuality::Standard),
+        sound: FilmSound::Pcm,
+        own_audio: true,
+        ..base
+    };
+    let out = run("whole.mov", spec, cut);
+    let text = describe(&ffmpeg, &out);
+    assert!(text.contains("nb_read_frames=100"), "{text}");
+    assert!(text.contains("codec_name=pcm_s24le"), "{text}");
+    assert!(text.contains("width=640"), "{text}");
+    let _ = fs::remove_dir_all(dir);
 }

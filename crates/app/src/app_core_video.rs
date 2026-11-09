@@ -166,6 +166,14 @@ impl<S: EngineSink> AppCore<S> {
         &self.video.status
     }
 
+    /// What a job that needs FFmpeg outside the video worker runs it with: the tool and the
+    /// folder set in Settings. `None` when the platform gave the core no real tools.
+    pub(super) fn video_tool_and_folder(&self) -> Option<(Arc<dyn VideoTool>, Option<PathBuf>)> {
+        self.video
+            .tool_set
+            .then(|| (Arc::clone(&self.video.tool), self.video.folder.clone()))
+    }
+
     /// The folder FFmpeg is looked for in, `None` for the system path.
     pub fn video_folder(&self) -> Option<&Path> {
         self.video.folder.as_deref()

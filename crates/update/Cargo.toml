@@ -1,0 +1,19 @@
+[package]
+name = "atomik-update"
+description = "Atomik Rack update check: the one optional request for the latest release, the version order, the daily throttle and the saved answer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+serde_json.workspace = true
+thiserror.workspace = true
+log.workspace = true
+ureq.workspace = true
+
+[lints]
+workspace = true

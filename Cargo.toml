@@ -38,6 +38,7 @@ atomik-plugin-ipc = { path = "crates/plugin-ipc" }
 atomik-plugin-sandbox = { path = "crates/plugin-sandbox" }
 atomik-plugin-hostd = { path = "crates/plugin-hostd" }
 atomik-video = { path = "crates/video" }
+atomik-update = { path = "crates/update" }
 memmap2 = "0.9.11"
 libc = "0.2.190"
 windows-sys = "0.61.2"
@@ -73,6 +74,9 @@ criterion = { version = "0.8.2", default-features = false, features = ["cargo_be
 rustfft = "6"
 sha2 = "0.11"
 zune-jpeg = { version = "0.5", default-features = false, features = ["std"] }
+# The update check only (crates/update): a small blocking HTTPS client on rustls. No gzip, no cookies, no JSON
+# layer: the request carries a User-Agent and nothing else.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

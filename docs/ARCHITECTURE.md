@@ -40,7 +40,8 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk, dsp | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`), the reference voice (`reference.rs`, after the master chain) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
-| `atomik-video` | [crates/video](../crates/video) | none (serde_json, sha2, thiserror, log, zune-jpeg) | none | The foundation of video tracks, pure and headless, with no codec of its own: finding the FFmpeg the user installed (Settings folder, then `PATH`, version check; `discover.rs`), the one `VideoTool` trait every `ffmpeg` and `ffprobe` call goes through (`SystemTool` with no shell, a list of arguments, no console window and a kill on cancel; a fake for the tests), the `ffprobe` parser (`probe.rs`), the proxy file of small independent JPEG frames with a frame index (`proxy.rs`, `jpeg.rs`), the build of it from the piped frames with progress and cancel (`prepare.rs`), the per-user proxy cache (`cache.rs`), and what the viewer reads it with: the pure-Rust JPEG decode to RGBA (`decode.rs`), the decode worker and its byte-limited frame cache (`frames.rs`) and the exact song-time to frame and timecode arithmetic (`timeline.rs`) |
+| `atomik-video` | [crates/video](../crates/video) | none (serde_json, sha2, thiserror, log, zune-jpeg) | none | The foundation of video tracks, pure and headless, with no codec of its own: finding the FFmpeg the user installed (Settings folder, then `PATH`, version check; `discover.rs`), the one `VideoTool` trait every `ffmpeg` and `ffprobe` call goes through (`SystemTool` with no shell, a list of arguments, no console window and a kill on cancel; a fake for the tests), the `ffprobe` parser (`probe.rs`), the proxy file of small independent JPEG frames with a frame index (`proxy.rs`, `jpeg.rs`), the build of it from the piped frames with progress and cancel (`prepare.rs`), the per-user proxy cache (`cache.rs`), and what the viewer reads it with: the pure-Rust JPEG decode to RGBA (`decode.rs`), the decode worker and its byte-limited frame cache (`frames.rs`) and the exact song-time to frame and timecode arithmetic (`timeline.rs`), and the film export that puts the song's mix and the picture of its film together (`film.rs`) |
+| `atomik-update` | [crates/update](../crates/update) | none (serde_json, thiserror, log, ureq) | none | The optional update check, the only network request the program makes: `Version` (semantic order, release candidates included), the list of releases and the choice of the newest eligible one, `UpdateState` (the daily throttle and the skipped version, `updates.json`), `Consent` (the answer to the question) and the one request behind the `HttpGet` trait: `UreqGet` (rustls, HTTPS only, no redirect, no cookie, a timeout) for the application window, `FakeHttp` and `Offline` for tests and every other shell. Pure and headless |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v44), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
@@ -54,7 +55,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), model | none | Platform-independent views, widgets, display lists, theme |
-| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, video, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
+| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, video, update, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
 
@@ -967,7 +968,8 @@ while it runs; the live children are not reused, because the offline output must
 
 File > Export > Export Song as Audio File, Export Loop as Audio File and Export Stems as Audio Files
 (`file.export_song_audio`, `file.export_loop_audio`, `file.export_stems`, remappable, no default
-keys) write the project as a WAV, AIFF or FLAC file, or one file per mixer strip.
+keys) write the project as a WAV, AIFF, FLAC, MP3, AAC or Opus file, or one file per mixer strip (stems are WAV,
+AIFF or FLAC only).
 
 ```
  command ─► ShellRequest::PickExportAudio ─► native save dialog ─► Shell::export_audio_to ─► options panel (ExportView)
@@ -1009,8 +1011,51 @@ keys) write the project as a WAV, AIFF or FLAC file, or one file per mixer strip
   of the unencoded samples in the stream info. It takes the 16-bit and 24-bit codes of the same
   `Dither`, so the decoded file equals the WAV's samples (a test decodes both through the project's
   reader); every choice is a pure function of the codes, so the bytes are deterministic. There is
-  no 32-bit float FLAC (the panel and `write_export` refuse it). MP3 stays deferred until its
-  encoder licence is settled; tempo chunks are not written either.
+  no 32-bit float FLAC (the panel and `write_export` refuse it). Tempo chunks are not written.
+- **Compressed formats** ([video/src/encode.rs](../crates/video/src/encode.rs)). MP3 (constant bitrate 128,
+  192, 256 or 320 kbit/s, or variable quality V0, V2, V4), AAC in `.m4a` (128 to 320 kbit/s) and Opus in
+  `.opus` (64 to 192 kbit/s) are encoded by the FFmpeg the user installed ([video through
+  FFmpeg](#223-video-through-the-users-ffmpeg)), so no codec ships. The panel always shows the three
+  buttons; `AppCore::export_encoder` says whether FFmpeg is `Ready`, being looked for or missing, and a
+  missing one greys them with a line that says to set its folder in Settings > Video or put it on `PATH`
+  (the same places as video import). The export worker renders as for a WAV file, writes the audio to a
+  float WAV file in a temporary folder at the rate of the result (the asked rate, else the song's, brought
+  to one the format holds by `LossyCodec::output_rate`: MP3 and Opus stop at 48 kHz), runs `encode_audio`
+  through the same `VideoTool` seam (a list of arguments, no shell; the song's title and author are the
+  values of `-metadata` arguments with control characters turned into spaces), writes under `<file>.partial`
+  and renames when FFmpeg has finished. Progress is the render (80 %) and then FFmpeg's own `out_time_us`
+  lines; a cancel kills FFmpeg; a cancel or a failure removes the partial file and the temporary WAV and
+  leaves an existing result file as it was. The loudness in the report is that of the audio that went into
+  the encoder, and the encoder can raise the true peak (an MP3 or AAC decoder may overshoot a signal that
+  peaks at 0 dBTP by a decibel or more): leave about 1 dB of true-peak headroom, for instance with the
+  true-peak limiter of the mastering suite. The panel's bit depth and dither rows are greyed for these
+  formats. `export.json` keeps the format, the MP3 quality and the AAC and Opus bitrates. The tests use the
+  fake tool; one ignored test runs the real FFmpeg.
+- **Not replacing unasked.** The native save dialog confirms an overwrite of the name it picked, but the
+  container is chosen afterwards, so the file gets the extension of the format (`export_file`). The dialog
+  proposes the extension of the format used last (`Shell::export_audio_extension`), and `export_action` in
+  [shell_export.rs](../crates/app/src/shell_export.rs) compares the picked name with the file the export
+  would write: when they differ and the file exists, nothing starts, `ExportView::set_warning` says so under
+  the options, and a second EXPORT on the same file confirms. A changed choice clears the line.
+- **Film with mix** ([app_core_film.rs](../crates/app/src/app_core_film.rs),
+  [video/src/film.rs](../crates/video/src/film.rs)). File > Export > Film with Mix (`file.export_film`) opens the
+  film panel (`FilmView`, a modal of its own with the same options and progress modes as the export panel) and
+  `AppCore::start_film_export` starts the same export worker with a `Film` step instead of `Lossy`. `film_plan`
+  turns the film's start, trim and the song's tempo map into the range of the song the mix covers (an
+  `ExportSpan::Range` under the film, or `ExportSpan::Song` for the whole song) and `FilmCut::layout` into
+  integer microseconds: the part of the film that plays, the black before and after (whole song only, a stretch
+  under half a frame is dropped), how long the mix waits (a film that begins before the song, or a mix that starts
+  a tick after the film) and the length of the result. The worker checks FFmpeg, probes the film, decides the
+  picture with `plan_picture` (a refusal comes before the render), renders the mix to a temporary float WAV file at
+  the rate the sound codec holds, and `export_film` runs one FFmpeg call built by `film_args`: the film is
+  the first input with the trim as input options (frame accurate when the picture is re-encoded), the mix the
+  second, delayed in samples with `adelay` and padded, black pictures from the `color` source joined to the film
+  with `concat`, the picture copied or encoded to H.264, the mix as AAC in MP4 or 24-bit PCM in MOV, the film's own
+  first audio track as a second one, and the output cut to the length of the cut. Copy is automatic only for a
+  cut at the film's start and a codec the container holds (a copy cuts at keyframes, so any other cut is
+  re-encoded unless the user asks for the copy). Progress is the render (40 %) and then FFmpeg's `out_time_us`;
+  a cancel kills FFmpeg and, like a failure, leaves no partial file and no temporary mix. The tests use the fake
+  tool; the ignored test in `crates/video/tests/real_ffmpeg.rs` runs the real FFmpeg for every mode.
 - **Loudness report.** `write_export` measures the audio it writes with
   [render/src/loudness.rs](../crates/render/src/loudness.rs): integrated loudness, loudness range
   (3 s short-term windows, -70 LUFS absolute and -20 LU relative gates, 10th to 95th percentile),
@@ -2597,6 +2642,12 @@ Without FFmpeg the video features are off and nothing else changes. This section
   consumer of its output stops and when the call unwinds. `NoVideoTools` refuses every call: a core starts with it,
   so a test or a headless session never starts a program, and the platform layer installs `SystemTool`.
   `FakeTool` answers with canned text and frames and records the calls; no test needs FFmpeg.
+- **Compressed audio export.** The same seam also encodes the audio export to MP3, AAC or Opus
+  (`encode_audio` in `crates/video/src/encode.rs`, see section 2.7a): a WAV file in, a tagged file out, with progress,
+  cancel and no partial file.
+- **Film export.** The same seam makes a new film from the song's mix and the picture of its film
+  (`export_film` in `crates/video/src/film.rs`, see section 2.7a): the picture copied or re-encoded, the mix as AAC
+  or PCM, optionally the film's own sound as a second track, with progress, cancel and no partial file.
 - **Probe.** `ffprobe -v error -print_format json -show_format -show_streams` is parsed by `parse_probe`: length,
   size, rotation (display matrix or the old `rotate` tag), the nominal frame rate (the average rate, snapped to the
   standard rates within 0.02 %; the container's rate when there is no average; `variable_rate` when the two differ
@@ -2873,6 +2924,7 @@ edit is an ordinary `UiAction::Command` (`SetModSlot`, `SetParam` on `modN_amoun
 | `atomik-thumbs` | file browser: the 48-bar waveform thumbnail of each visible audio row (first thirty seconds, newest request first) | Yes (disk) |
 | `atomik-library-save` | file browser: writes `library.json` from the newest snapshot | Yes (disk) |
 | `atomik-video` | video: looks for FFmpeg, or probes a film and builds its proxy file from ffmpeg's piped frames (one job at a time, progress and cancel); `atomik-video-stdout` and `atomik-video-stderr` read the two pipes of the child process | Yes (disk, child process) |
+| `atomik-update` | update check: one request for the list of releases, only after the user said Yes, at most once a day (one short-lived thread per request, a timeout of 8 s; the shell polls its answer on the frame) | Yes (network) |
 | `atomik-library` | library: copies the audio of a saved item into its sibling bundle | Yes (disk) |
 | `atomik-adopt` | library: copies the audio of a loaded item into the session bundle, then decodes and builds peaks like `atomik-load` | Yes (disk) |
 | MIDI callback (midir) | maps event times to frames, pushes live notes; parses every message once more for the control path and queues it in the control hub (a short mutex, never held by the audio thread), consuming it when a mapping listens | Yes, then one wait-free push |
@@ -5008,7 +5060,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (517) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (519) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -6539,6 +6591,42 @@ stderr is their output).
   plugin cache and the plugin journal, the last crash report and the end of the log. Everything
   under the user's home folder is written as `~`.
 
+### The update check
+
+The program makes one kind of network request, and only when the user said yes: the check for a newer
+version. [crates/update](../crates/update) holds everything except the buttons; the shell side is
+[update_check.rs](../crates/app/src/update_check.rs) (the `Updater`: the rules, the worker, what is kept),
+[shell_update.rs](../crates/app/src/shell_update.rs) (the words and the buttons) and
+[update_notice.rs](../crates/app/src/update_notice.rs) (the card, `UpdateNotice`). The decision is
+[DECISIONS.md](DECISIONS.md#s-the-update-check).
+
+- **Consent.** The answer to "Check for new versions once a day?" is the workflow preference `update_check`
+  (`None` until answered, in `workflow.json`; `Consent` in the crate). While it is `None` nothing is asked:
+  at the first start the question shows as the notice in the lower left corner (over the start screen too),
+  and Help > Check for Updates (`help.check_for_updates`) shows the same question instead of going to the
+  network. Settings > Video & updates changes the answer (the section is
+  [updates_tab.rs](../crates/app/src/updates_tab.rs)).
+- **The request.** One GET of the fixed address `RELEASES_URL` (the list of releases of the project), HTTPS
+  only, no query, no redirect, no cookie store, no compression, a timeout of 8 seconds, at most 1 MiB read.
+  The only header the program sets is the User-Agent, `atomik-rack/<version>`; the client adds `Host` and
+  `Accept`. Nothing about the user or the machine is sent. It runs on its own thread, `atomik-update`, never on the
+  UI or the audio thread, and any failure is logged at debug level and told to nobody unless the user asked.
+- **The answer.** `newest` takes the highest version of the list that is not a draft; a pre-release counts only
+  when the running build is one itself. `Version` orders release candidates (`0.4.0-rc.2` < `0.4.0-rc.10` <
+  `0.4.0`). A newer version shows the notice with What's new (the page is made from the checked tag, never taken
+  from the answer), Skip this version (kept in `updates.json`; a later version shows again) and Later.
+  Nothing is downloaded or installed.
+- **The day.** After a Yes the check runs at the start when a day has passed since the last request, counted
+  from the request whatever its outcome (`UpdateState`, in `updates.json` next to `settings.json`; it is read again
+  before each write, so two song windows do not undo each other). Help > Check for Updates does not wait for the day.
+- **The seam.** The request goes through the `HttpGet` trait. A `Shell` starts with `Offline`, which fails every
+  request; only `platform/app.rs` installs `UreqGet`, and not for a screenshot or a stress run. Tests use
+  `FakeHttp`, which records the requests, so no test reaches the network and the tests can assert what was sent.
+- **Tests.** The version order, the list parser (drafts, pre-releases, odd entries, hostile tags) and the
+  fake answers (newer, same, older, malformed, error status, no network) are in `crates/update`; the throttle, the
+  consent states, the skipped version and "no request while off" in `update_check_tests.rs` and
+  `shell_update_tests.rs`.
+
 ## 6o. Reference tracks
 
 A song keeps up to 16 reference audio files to compare the mix with. The list is project data with no part in the
@@ -6835,7 +6923,7 @@ Tests (the counting allocator is described in [TESTING.md](TESTING.md#allocation
 
 | Mechanism | Where |
 |---|---|
-| `HashMap`, `HashSet`, `Instant::now` and `SystemTime::now` are banned by clippy; the exceptions are the CLI `--stats` timer, the audio-io telemetry and the clock of the CPU readout, which never influence audio | [clippy.toml](../clippy.toml); local `#[allow]`s |
+| `HashMap`, `HashSet`, `Instant::now` and `SystemTime::now` are banned by clippy; the exceptions are the CLI `--stats` timer, the audio-io telemetry, the clock of the CPU readout and the wall clock of the daily update check, which never influence audio | [clippy.toml](../clippy.toml); local `#[allow]`s |
 | Graph, topology and compile state use `BTreeMap`/`BTreeSet`; ready sets are ordered by id; summing is a fixed-order fold | [graph.rs](../crates/engine/src/graph.rs), [plan.rs](../crates/engine/src/plan.rs), [console.rs](../crates/engine/src/console.rs) |
 | Each device's seed is `mix_seed(patch seed, device id)` | `mix_seed` in [plan.rs](../crates/engine/src/plan.rs) |
 | Fixed 64-frame batches behind a FIFO make the host block size irrelevant; workers only compute, the audio thread gathers and scatters | [engine.rs](../crates/engine/src/engine.rs), [workers.rs](../crates/engine/src/workers.rs) |

@@ -192,7 +192,7 @@ pub enum Tab {
     Surfaces,
     /// MIDI clock in and out.
     Sync,
-    /// Where the user's FFmpeg is.
+    /// Where the user's FFmpeg is, and the answer to the update check question.
     Video,
 }
 
@@ -230,7 +230,7 @@ impl Tab {
             Tab::Interface => "User interface",
             Tab::Surfaces => "Controllers",
             Tab::Sync => "MIDI clock",
-            Tab::Video => "Video",
+            Tab::Video => "Video & updates",
         }
     }
 }
@@ -381,7 +381,8 @@ impl SettingsDialog {
         self.prefs = Some(Prefs {
             keyboard: KeyboardTab::new(keymap),
             interface: InterfaceTab::new(UiPrefs::of(&workflow)),
-            video: VideoTab::new(workflow.ffmpeg_folder.clone(), String::new()),
+            video: VideoTab::new(workflow.ffmpeg_folder.clone(), String::new())
+                .with_update_answer(workflow.update_check),
             workflow: WorkflowTab::new(workflow),
         });
         self
@@ -483,6 +484,7 @@ impl SettingsDialog {
             let mut workflow = p.workflow.prefs().clone();
             p.interface.prefs().apply_to(&mut workflow);
             workflow.ffmpeg_folder = p.video.folder().cloned();
+            workflow.update_check = p.video.update_answer();
             (p.keyboard.editor().user().clone(), workflow)
         })
     }
