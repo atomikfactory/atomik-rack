@@ -12,15 +12,19 @@
 //! `"aac"` or `"opus"`; FLAC has no `"32f"`), `mp3` is the MP3 quality (`"cbr128"`, `"cbr192"`,
 //! `"cbr256"`, `"cbr320"`, `"v0"`, `"v2"` or `"v4"`), `aac_kbps` and `opus_kbps` are the bitrates
 //! of those formats in kilobits per second, `dry` takes the channels of a stems export before their strips, `locators`
-//! exports stems only between the locators, and `folder` is where the last export went. Loading
-//! is
+//! exports stems only between the locators, and `folder` is where the last export went. The film
+//! export (File > Export > Film with Mix) keeps its choices in the `film_*` fields: `film_cover`
+//! (`"span"` or `"song"`), `film_picture` (`"auto"`, `"copy"` or `"encode"`), `film_quality`
+//! (`"high"`, `"standard"` or `"small"`), `film_sound` (`"aac"` or `"pcm"`), `film_aac_kbps`
+//! and `film_own_audio`. Loading is
 //! lenient: a missing or unreadable file, a missing field or a value this build does not know is
 //! the default. Saving is atomic ([`crate::keymap_store::write_atomic`]) and canonical, so an
 //! unchanged choice writes identical bytes. These are app preferences, not part of the project.
 
 use atomik_ui::{
     AAC_BITRATES, EXPORT_RATES, ExportDepth, ExportDither, ExportFile, ExportQuality, ExportValues,
-    MP3_BITRATES, MP3_VBR, OPUS_BITRATES,
+    FilmCover, FilmPictureChoice, FilmQualityChoice, FilmSoundChoice, FilmValues, MP3_BITRATES,
+    MP3_VBR, OPUS_BITRATES,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -59,6 +63,18 @@ pub struct ExportPrefs {
     pub locators: bool,
     /// The folder the last export went to.
     pub folder: Option<String>,
+    /// Film export: `"span"` or `"song"`.
+    pub film_cover: String,
+    /// Film export: `"auto"`, `"copy"` or `"encode"`.
+    pub film_picture: String,
+    /// Film export: `"high"`, `"standard"` or `"small"`.
+    pub film_quality: String,
+    /// Film export: `"aac"` or `"pcm"`.
+    pub film_sound: String,
+    /// Film export: the AAC bitrate in kilobits per second.
+    pub film_aac_kbps: u16,
+    /// Film export: keep the film's own sound as a second track.
+    pub film_own_audio: bool,
 }
 
 impl Default for ExportPrefs {
@@ -103,6 +119,80 @@ impl ExportPrefs {
             dry: values.dry,
             locators: values.locators,
             folder: folder.map(|f| f.to_string_lossy().into_owned()),
+            film_cover: "span".to_owned(),
+            film_picture: "auto".to_owned(),
+            film_quality: "standard".to_owned(),
+            film_sound: "aac".to_owned(),
+            film_aac_kbps: FilmValues::default().aac,
+            film_own_audio: false,
+        }
+    }
+
+    /// These prefs with the film choices of `values`.
+    pub fn with_film(mut self, values: &FilmValues) -> Self {
+        self.film_cover = match values.cover {
+            FilmCover::Span => "span",
+            FilmCover::Song => "song",
+        }
+        .to_owned();
+        self.film_picture = match values.picture {
+            FilmPictureChoice::Auto => "auto",
+            FilmPictureChoice::Copy => "copy",
+            FilmPictureChoice::Encode => "encode",
+        }
+        .to_owned();
+        self.film_quality = match values.quality {
+            FilmQualityChoice::High => "high",
+            FilmQualityChoice::Standard => "standard",
+            FilmQualityChoice::Small => "small",
+        }
+        .to_owned();
+        self.film_sound = match values.sound {
+            FilmSoundChoice::Aac => "aac",
+            FilmSoundChoice::Pcm => "pcm",
+        }
+        .to_owned();
+        self.film_aac_kbps = values.aac;
+        self.film_own_audio = values.own_audio;
+        self
+    }
+
+    /// These prefs with the film choices of `other` (the audio export rebuilds the prefs from its
+    /// own values and keeps what the film export chose).
+    pub fn with_film_of(self, other: &Self) -> Self {
+        self.with_film(&other.film_values())
+    }
+
+    /// The values the film panel starts with: what this build does not know is the default.
+    pub fn film_values(&self) -> FilmValues {
+        let default = FilmValues::default();
+        FilmValues {
+            cover: match self.film_cover.as_str() {
+                "span" => FilmCover::Span,
+                "song" => FilmCover::Song,
+                _ => default.cover,
+            },
+            picture: match self.film_picture.as_str() {
+                "auto" => FilmPictureChoice::Auto,
+                "copy" => FilmPictureChoice::Copy,
+                "encode" => FilmPictureChoice::Encode,
+                _ => default.picture,
+            },
+            quality: match self.film_quality.as_str() {
+                "high" => FilmQualityChoice::High,
+                "standard" => FilmQualityChoice::Standard,
+                "small" => FilmQualityChoice::Small,
+                _ => default.quality,
+            },
+            sound: match self.film_sound.as_str() {
+                "aac" => FilmSoundChoice::Aac,
+                "pcm" => FilmSoundChoice::Pcm,
+                _ => default.sound,
+            },
+            aac: Some(self.film_aac_kbps)
+                .filter(|k| AAC_BITRATES.contains(k))
+                .unwrap_or(default.aac),
+            own_audio: self.film_own_audio,
         }
     }
 
@@ -305,6 +395,64 @@ mod tests {
         let v = ExportPrefs::load(&path).values();
         assert_eq!((v.file, v.depth), (ExportFile::Flac, ExportDepth::Pcm16));
         assert_eq!(v.mp3, default.mp3);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_film_choices_are_remembered_and_survive_an_audio_export() {
+        let d = dir("film");
+        let path = d.join(EXPORT_FILE);
+        assert_eq!(ExportPrefs::default().film_values(), FilmValues::default());
+        let film = FilmValues {
+            cover: FilmCover::Song,
+            picture: FilmPictureChoice::Encode,
+            quality: FilmQualityChoice::Small,
+            sound: FilmSoundChoice::Pcm,
+            aac: 256,
+            own_audio: true,
+        };
+        let prefs = ExportPrefs::default().with_film(&film);
+        prefs.save(&path).unwrap();
+        let back = ExportPrefs::load(&path);
+        assert_eq!(back, prefs);
+        assert_eq!(back.film_values(), film);
+        // The audio export builds new prefs from its own values: the film choices stay.
+        let audio = ExportValues {
+            file: ExportFile::Flac,
+            depth: ExportDepth::Pcm16,
+            ..ExportValues::default()
+        };
+        let after = ExportPrefs::from_values(&audio, None).with_film_of(&back);
+        assert_eq!(after.film_values(), film);
+        assert_eq!(after.values(), audio);
+        // The audio choices do not move the film ones.
+        assert_eq!(back.values(), ExportValues::default());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn unknown_film_values_are_the_defaults_and_an_old_file_has_the_default_film() {
+        let d = dir("film-lenient");
+        let path = d.join(EXPORT_FILE);
+        std::fs::write(&path, r#"{"file":"mp3"}"#).unwrap();
+        assert_eq!(
+            ExportPrefs::load(&path).film_values(),
+            FilmValues::default()
+        );
+        std::fs::write(
+            &path,
+            r#"{"film_cover":"x","film_picture":"y","film_quality":"z","film_sound":"w","film_aac_kbps":7,"film_own_audio":true}"#,
+        )
+        .unwrap();
+        let v = ExportPrefs::load(&path).film_values();
+        assert_eq!(
+            FilmValues {
+                own_audio: false,
+                ..v
+            },
+            FilmValues::default()
+        );
+        assert!(v.own_audio, "a known boolean is kept");
         let _ = std::fs::remove_dir_all(&d);
     }
 

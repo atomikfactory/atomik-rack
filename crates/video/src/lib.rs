@@ -18,6 +18,9 @@
 //!   cancel) for the song to import;
 //! - [`encode`]: compressed audio export, a WAV file to MP3, AAC or Opus through the same tool,
 //!   with the song's title and author as tags, progress and cancel, and no partial file;
+//! - [`film`]: film export, the song's mix and the picture of the song's film written as a new
+//!   film (picture copied or re-encoded, the mix as AAC or PCM, optionally the film's own sound as a
+//!   second track), with progress and cancel and no partial file;
 //! - the viewer's side ([`decode`], [`frames`], [`timeline`]): a pure-Rust JPEG decoder, the
 //!   [`FrameDecoder`] worker with its [`FrameCache`], and the exact arithmetic from a song time to
 //!   a frame and a timecode ([`timeline::locate`], [`Timecode`]);
@@ -35,6 +38,7 @@ pub mod discover;
 pub mod encode;
 mod error;
 pub mod fake;
+pub mod film;
 pub mod frames;
 pub mod jpeg;
 pub mod prepare;
@@ -54,6 +58,10 @@ pub use encode::{
     EncodeJob, EncodeSpec, LossyCodec, LossyQuality, Tags, encode_args, encode_audio,
 };
 pub use error::VideoError;
+pub use film::{
+    FilmContainer, FilmCut, FilmJob, FilmPicture, FilmQuality, FilmSound, FilmSpec, PictureChoice,
+    export_film, film_args, plan_picture,
+};
 pub use frames::{Event as FrameEvent, FrameCache, FrameDecoder};
 pub use prepare::{Control, Prepared, prepare, probe as probe_file};
 pub use probe::{AudioStream, ProbeInfo, Rational, VideoStream, parse_probe};

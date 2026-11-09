@@ -10,6 +10,7 @@
 //! is modal while it is open; the song keeps playing underneath.
 
 use super::*;
+use crate::app_core::file_extension;
 use crate::export_prefs::{ExportPrefs, export_path};
 use atomik_ui::{ExportAction, ExportScope, ExportValues, ExportView};
 
@@ -47,13 +48,21 @@ impl<B: AudioBackend> Shell<B> {
             || "project".to_owned(),
             |n| n.to_string_lossy().into_owned(),
         );
+        // The format is chosen after the dialog: propose the one used last, so the name the dialog
+        // asks about is the one the file gets.
+        let ext = self.export_audio_extension();
         match scope {
-            ExportScope::Song => format!("{stem}.wav"),
-            ExportScope::Loop => format!("{stem} loop.wav"),
-            ExportScope::Selection => format!("{stem} selection.wav"),
+            ExportScope::Song => format!("{stem}.{ext}"),
+            ExportScope::Loop => format!("{stem} loop.{ext}"),
+            ExportScope::Selection => format!("{stem} selection.{ext}"),
             // The folder the stems go into, made inside the one the dialog picks.
             ExportScope::Stems => atomik_render::stems::stems_folder_name(&stem),
         }
+    }
+
+    /// The extension the file dialog proposes: the one of the format the last export used.
+    pub fn export_audio_extension(&self) -> &'static str {
+        file_extension(&self.export_prefs.values())
     }
 
     /// The folder the dialog starts in: where the last export went, else the project's folder.
@@ -89,6 +98,7 @@ impl<B: AudioBackend> Shell<B> {
         );
         self.export = Some(view);
         self.export_target = Some((scope, path.to_path_buf()));
+        self.export_replace = None;
         self.repaint = true;
     }
 
@@ -109,9 +119,23 @@ impl<B: AudioBackend> Shell<B> {
                     self.export = None;
                     return;
                 };
+                // The dialog asked about the name it picked; the file gets the extension of the
+                // format chosen since. A file at that name would be replaced unasked: say so, and
+                // let a second EXPORT confirm.
+                let file = self.core.export_file_for(scope, &path, &values);
+                if file != path && file.exists() && self.export_replace.as_ref() != Some(&file) {
+                    let warning = replace_warning(&file, "format");
+                    self.export_replace = Some(file);
+                    if let Some(view) = &mut self.export {
+                        view.set_warning(Some(warning));
+                    }
+                    self.repaint = true;
+                    return;
+                }
                 match self.core.start_audio_export(scope, path.clone(), values) {
                     Ok(()) => {
-                        self.export_prefs = ExportPrefs::from_values(&values, path.parent());
+                        self.export_prefs = ExportPrefs::from_values(&values, path.parent())
+                            .with_film_of(&self.export_prefs);
                         if let Some(prefs_path) = &self.export_prefs_path
                             && let Err(e) = self.export_prefs.save(prefs_path)
                         {
@@ -166,4 +190,13 @@ impl<B: AudioBackend> Shell<B> {
     pub(super) fn export_prefs_file(settings_path: Option<&Path>) -> Option<PathBuf> {
         settings_path.map(export_path)
     }
+}
+
+/// The line under the options when the export would replace `file` (the extension of the format
+/// chosen after the dialog is not the one the dialog asked about).
+pub(super) fn replace_warning(file: &Path, choice: &str) -> String {
+    let name = file
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    format!("{name} already exists: press EXPORT again to replace it, or change the {choice}.")
 }

@@ -169,7 +169,7 @@ use atomik_ui::{
 };
 use atomik_ui::{
     BlindAction, BlindView, BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView,
-    ColorTarget, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key,
+    ColorTarget, ConsoleButton, ExportScope, ExportView, FileBrowserView, FilmView, Flip, Key,
     KickBassAction, KickBassView, MacrosAction, MacrosView, MaskingAction, MaskingView,
     MidiMapsAction, MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView,
     Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView,
@@ -239,6 +239,10 @@ pub enum ShellRequest {
     /// named by [`Shell::export_audio_name`], starting in [`Shell::export_audio_dir`], then call
     /// [`Shell::export_audio_to`] with the scope and the path.
     PickExportAudio(ExportScope),
+    /// Show a save dialog for a film (File > Export > Film with Mix): an MP4 or MOV file named by
+    /// [`Shell::export_film_name`], starting in [`Shell::export_audio_dir`], then call
+    /// [`Shell::export_film_to`] with the path.
+    PickExportFilm,
     /// Show a save dialog for a MIDI file (File > Export MIDI), then call
     /// [`Shell::export_midi_to`] with the scope and the path.
     PickExportMidi(MidiExport),
@@ -538,6 +542,14 @@ pub struct Shell<B: AudioBackend> {
     export: Option<ExportView>,
     /// What the panel exports and where: the scope and the file the dialog picked.
     export_target: Option<(ExportScope, PathBuf)>,
+    /// The film export panel (File > Export > Film with Mix) while it is open.
+    film: Option<FilmView>,
+    /// Where the film goes: the file the dialog picked.
+    film_target: Option<PathBuf>,
+    /// The file an export would replace without the dialog having asked (the extension of the
+    /// format chosen after the dialog is not the one it picked): the user has been warned about
+    /// it, and pressing EXPORT again confirms.
+    export_replace: Option<PathBuf>,
     /// The remembered export choices (`export.json`).
     export_prefs: ExportPrefs,
     /// Where they are saved (next to the settings file).
@@ -755,6 +767,9 @@ impl<B: AudioBackend> Shell<B> {
             relink: None,
             export: None,
             export_target: None,
+            film: None,
+            film_target: None,
+            export_replace: None,
             export_prefs: export_prefs_path
                 .as_deref()
                 .map(ExportPrefs::load)
@@ -3322,6 +3337,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.export {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.film {
+            v.set_theme(theme.clone());
+        }
         if let Some(v) = &mut self.midi_maps {
             v.set_theme(theme.clone());
         }
@@ -3718,6 +3736,7 @@ impl<B: AudioBackend> Shell<B> {
             video_audio_keep: self.core.video_audio_kept() == Some(true),
             video_import_audio: self.ui.video_import_audio,
             video_missing: self.core.video_missing(),
+            export_film: self.core.can_export_film(),
             collect_busy: self.core.collect_busy(),
             default_song: self.workflow.default_song.is_some(),
             midi_clip: self.core.can_export_midi(MidiExport::Clip),
@@ -3955,6 +3974,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.export.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.export {
+                v.set_bounds(rect);
+            }
+        }
+        if self.film.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.film {
                 v.set_bounds(rect);
             }
         }
@@ -4908,6 +4933,21 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::Export(a) = action {
                     self.export_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.film.is_some() {
+            // The film export panel takes every event; Esc closes it (or stops the job).
+            self.repaint = true;
+            let actions = self
+                .film
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Film(a) = action {
+                    self.film_action(a);
                 }
             }
             return Vec::new();
@@ -7271,6 +7311,7 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::ExportLoopAudio => self.export_audio_request(ExportScope::Loop),
             AppCommand::ExportSelectionAudio => self.export_audio_request(ExportScope::Selection),
             AppCommand::ExportStems => self.export_audio_request(ExportScope::Stems),
+            AppCommand::ExportFilm => self.export_film_request(),
             AppCommand::QuantizeApply => {
                 let pane = self.live_pane(self.focus);
                 self.apply_last_quantize(pane);
@@ -8736,6 +8777,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_video_ui();
         self.sync_relink();
         self.sync_export();
+        self.sync_film();
         self.sync_masking();
         self.sync_bass_read();
         self.sync_delivery();
@@ -9557,6 +9599,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.export {
             view.paint(canvas);
         }
+        if let Some(view) = &self.film {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.midi_maps {
             view.paint(canvas);
         }
@@ -9785,6 +9830,9 @@ fn pointer_pos(event: &UiEvent) -> Option<Point> {
     }
 }
 
+#[path = "shell_film.rs"]
+mod film_impl;
+
 #[path = "shell_export.rs"]
 mod export_impl;
 
@@ -9987,6 +10035,10 @@ mod library_tests;
 #[cfg(test)]
 #[path = "shell_export_tests.rs"]
 mod export_tests;
+
+#[cfg(test)]
+#[path = "shell_film_tests.rs"]
+mod film_tests;
 
 #[cfg(test)]
 #[path = "shell_save_tests.rs"]

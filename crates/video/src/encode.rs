@@ -128,7 +128,7 @@ pub fn clean_tag(text: &str) -> Option<String> {
 }
 
 /// The bitrate as FFmpeg writes it: `192k`, clamped to what the format takes.
-fn bitrate_arg(codec: LossyCodec, kbps: u32) -> String {
+pub(crate) fn bitrate_arg(codec: LossyCodec, kbps: u32) -> String {
     let (low, high) = codec.bitrates();
     format!("{}k", kbps.clamp(low, high))
 }
@@ -233,9 +233,21 @@ pub fn partial_path(path: &Path) -> PathBuf {
 }
 
 /// Removes the file unless the job ended well.
-struct Partial<'a> {
+pub(crate) struct Partial<'a> {
     path: &'a Path,
     armed: bool,
+}
+
+impl<'a> Partial<'a> {
+    /// Removes `path` when dropped, unless [`Partial::disarm`] was called.
+    pub(crate) fn new(path: &'a Path) -> Self {
+        Self { path, armed: true }
+    }
+
+    /// The job ended well: the file stays.
+    pub(crate) fn disarm(&mut self) {
+        self.armed = false;
+    }
 }
 
 impl Drop for Partial<'_> {

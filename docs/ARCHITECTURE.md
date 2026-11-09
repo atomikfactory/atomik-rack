@@ -40,7 +40,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk, dsp | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`), the reference voice (`reference.rs`, after the master chain) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
-| `atomik-video` | [crates/video](../crates/video) | none (serde_json, sha2, thiserror, log, zune-jpeg) | none | The foundation of video tracks, pure and headless, with no codec of its own: finding the FFmpeg the user installed (Settings folder, then `PATH`, version check; `discover.rs`), the one `VideoTool` trait every `ffmpeg` and `ffprobe` call goes through (`SystemTool` with no shell, a list of arguments, no console window and a kill on cancel; a fake for the tests), the `ffprobe` parser (`probe.rs`), the proxy file of small independent JPEG frames with a frame index (`proxy.rs`, `jpeg.rs`), the build of it from the piped frames with progress and cancel (`prepare.rs`), the per-user proxy cache (`cache.rs`), and what the viewer reads it with: the pure-Rust JPEG decode to RGBA (`decode.rs`), the decode worker and its byte-limited frame cache (`frames.rs`) and the exact song-time to frame and timecode arithmetic (`timeline.rs`) |
+| `atomik-video` | [crates/video](../crates/video) | none (serde_json, sha2, thiserror, log, zune-jpeg) | none | The foundation of video tracks, pure and headless, with no codec of its own: finding the FFmpeg the user installed (Settings folder, then `PATH`, version check; `discover.rs`), the one `VideoTool` trait every `ffmpeg` and `ffprobe` call goes through (`SystemTool` with no shell, a list of arguments, no console window and a kill on cancel; a fake for the tests), the `ffprobe` parser (`probe.rs`), the proxy file of small independent JPEG frames with a frame index (`proxy.rs`, `jpeg.rs`), the build of it from the piped frames with progress and cancel (`prepare.rs`), the per-user proxy cache (`cache.rs`), and what the viewer reads it with: the pure-Rust JPEG decode to RGBA (`decode.rs`), the decode worker and its byte-limited frame cache (`frames.rs`) and the exact song-time to frame and timecode arithmetic (`timeline.rs`), and the film export that puts the song's mix and the picture of its film together (`film.rs`) |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v44), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
@@ -1030,6 +1030,31 @@ AIFF or FLAC only).
   true-peak limiter of the mastering suite. The panel's bit depth and dither rows are greyed for these
   formats. `export.json` keeps the format, the MP3 quality and the AAC and Opus bitrates. The tests use the
   fake tool; one ignored test runs the real FFmpeg.
+- **Not replacing unasked.** The native save dialog confirms an overwrite of the name it picked, but the
+  container is chosen afterwards, so the file gets the extension of the format (`export_file`). The dialog
+  proposes the extension of the format used last (`Shell::export_audio_extension`), and `export_action` in
+  [shell_export.rs](../crates/app/src/shell_export.rs) compares the picked name with the file the export
+  would write: when they differ and the file exists, nothing starts, `ExportView::set_warning` says so under
+  the options, and a second EXPORT on the same file confirms. A changed choice clears the line.
+- **Film with mix** ([app_core_film.rs](../crates/app/src/app_core_film.rs),
+  [video/src/film.rs](../crates/video/src/film.rs)). File > Export > Film with Mix (`file.export_film`) opens the
+  film panel (`FilmView`, a modal of its own with the same options and progress modes as the export panel) and
+  `AppCore::start_film_export` starts the same export worker with a `Film` step instead of `Lossy`. `film_plan`
+  turns the film's start, trim and the song's tempo map into the range of the song the mix covers (an
+  `ExportSpan::Range` under the film, or `ExportSpan::Song` for the whole song) and `FilmCut::layout` into
+  integer microseconds: the part of the film that plays, the black before and after (whole song only, a stretch
+  under half a frame is dropped), how long the mix waits (a film that begins before the song, or a mix that starts
+  a tick after the film) and the length of the result. The worker checks FFmpeg, probes the film, decides the
+  picture with `plan_picture` (a refusal comes before the render), renders the mix to a temporary float WAV file at
+  the rate the sound codec holds, and `export_film` runs one FFmpeg call built by `film_args`: the film is
+  the first input with the trim as input options (frame accurate when the picture is re-encoded), the mix the
+  second, delayed in samples with `adelay` and padded, black pictures from the `color` source joined to the film
+  with `concat`, the picture copied or encoded to H.264, the mix as AAC in MP4 or 24-bit PCM in MOV, the film's own
+  first audio track as a second one, and the output cut to the length of the cut. Copy is automatic only for a
+  cut at the film's start and a codec the container holds (a copy cuts at keyframes, so any other cut is
+  re-encoded unless the user asks for the copy). Progress is the render (40 %) and then FFmpeg's `out_time_us`;
+  a cancel kills FFmpeg and, like a failure, leaves no partial file and no temporary mix. The tests use the fake
+  tool; the ignored test in `crates/video/tests/real_ffmpeg.rs` runs the real FFmpeg for every mode.
 - **Loudness report.** `write_export` measures the audio it writes with
   [render/src/loudness.rs](../crates/render/src/loudness.rs): integrated loudness, loudness range
   (3 s short-term windows, -70 LUFS absolute and -20 LU relative gates, 10th to 95th percentile),
@@ -2618,6 +2643,9 @@ Without FFmpeg the video features are off and nothing else changes. This section
 - **Compressed audio export.** The same seam also encodes the audio export to MP3, AAC or Opus
   (`encode_audio` in `crates/video/src/encode.rs`, see section 2.7a): a WAV file in, a tagged file out, with progress,
   cancel and no partial file.
+- **Film export.** The same seam makes a new film from the song's mix and the picture of its film
+  (`export_film` in `crates/video/src/film.rs`, see section 2.7a): the picture copied or re-encoded, the mix as AAC
+  or PCM, optionally the film's own sound as a second track, with progress, cancel and no partial file.
 - **Probe.** `ffprobe -v error -print_format json -show_format -show_streams` is parsed by `parse_probe`: length,
   size, rotation (display matrix or the old `rotate` tag), the nominal frame rate (the average rate, snapped to the
   standard rates within 0.02 %; the container's rate when there is no average; `variable_rate` when the two differ
@@ -5003,7 +5031,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (517) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (518) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

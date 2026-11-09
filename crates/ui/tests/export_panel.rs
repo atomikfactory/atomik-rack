@@ -564,3 +564,23 @@ fn the_panel_with_six_formats_and_a_quality_row_fits_in_its_width() {
         );
     }
 }
+
+#[test]
+fn a_warning_shows_under_the_options_until_a_choice_changes() {
+    let mut v = view(ExportScope::Song);
+    v.set_warning(Some(
+        "song.mp3 already exists: press EXPORT again to replace it".to_owned(),
+    ));
+    assert!(has(&texts(&v), "already exists"));
+    assert!(v.warning().is_some());
+    // EXPORT keeps the line: the app decides what a second press means.
+    click(&mut v, "EXPORT");
+    assert!(v.warning().is_some());
+    click(&mut v, "AIFF");
+    assert!(v.warning().is_none());
+    assert!(!has(&texts(&v), "already exists"));
+    // Opening the panel again starts without one.
+    v.set_warning(Some("x".to_owned()));
+    v.open(ExportScope::Song, "a.wav", 48_000, ExportValues::default());
+    assert!(v.warning().is_none());
+}
