@@ -131,8 +131,9 @@ may break APIs and the patch and project formats.
   Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z or Ctrl+Y redoes, a run of letters is one step and 50 steps are kept. While a
   field has the keyboard these chords edit the field and never run the song's Undo; with no field, Ctrl+Z is the
   song's Undo as before. Number fields refuse other characters. In the plugin parameter pane, whose search field
-  always has the keys, Undo is the field's only while it has typing to take back. The right-click menu of a field
-  is not done. Format unchanged (44), command count unchanged.
+  always has the keys, Undo is the field's only while it has typing to take back. A right-click on a name, search,
+  comment or macro field opens a small menu (Undo, Redo, Cut, Copy, Paste, Delete, Select All, dimmed when they have
+  nothing to do) that edits that field only. Format unchanged (44), command count unchanged.
 - **Bigger drum pads.** The pad grid of the drum machine panel uses the room between the pads and the knob
   columns, and the sample name and the pad number are drawn larger.
 - **A click on an empty automation lane selects the lane.** With the Select tool a click on empty lane space picks
