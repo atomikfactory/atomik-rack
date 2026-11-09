@@ -64,6 +64,7 @@ fn song_input(s1: DeviceInstanceId, s2: DeviceInstanceId, variant: u8) -> SongIn
                         pt(3 * PPQ, cutoff.min, lin),
                     ],
                 }],
+                expression: Vec::new(),
             },
             SongTrack {
                 device: s2,
@@ -72,6 +73,7 @@ fn song_input(s1: DeviceInstanceId, s2: DeviceInstanceId, variant: u8) -> SongIn
                 notes: bass,
                 controllers: Vec::new(),
                 automation: Vec::new(),
+                expression: Vec::new(),
             },
         ],
         // Tempo change inside the loop [PPQ, 3 PPQ).

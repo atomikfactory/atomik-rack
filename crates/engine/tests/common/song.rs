@@ -43,6 +43,7 @@ pub fn strack(device: DeviceInstanceId, notes: Vec<SongNote>) -> SongTrack {
         notes,
         controllers: Vec::new(),
         automation: Vec::new(),
+        expression: Vec::new(),
     }
 }
 

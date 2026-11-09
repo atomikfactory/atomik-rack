@@ -47,6 +47,7 @@ fn e3_2_song(devices: &[atomik_engine::DeviceInstanceId]) -> SongInput {
                         .collect(),
                 })
                 .collect(),
+            expression: Vec::new(),
         })
         .collect();
     let map: Vec<(i64, f64)> = (0..BARS / 8)

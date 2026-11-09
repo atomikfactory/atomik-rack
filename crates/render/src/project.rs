@@ -37,20 +37,21 @@ use crate::plugins::{MissingPlugins, PluginHost};
 use crate::samples::{build_sample_map, finish_map, song_asset_buffer};
 use crate::warp::WarpStore;
 use crate::{RenderError, Rendered};
-use atomik_core::{BATCH, PPQ, Tempo, Ticks};
+use atomik_core::{BATCH, ExprKind, PPQ, Tempo, Ticks};
 use atomik_device_sdk::{
     DeviceDescriptor, Direction, Registry, RunMode, SampleMapRef, SocketId, SocketKind,
 };
 use atomik_engine::{
     AssetId, DeviceInstanceId, EngineOptions, HotEdit, Knot, OfflineJob, SongAsset,
     SongAudioRegion, SongAudioTrack, SongAutomation, SongController, SongControllerKind, SongCurve,
-    SongFadeCurve, SongInput, SongNote, SongPoint, SongSnapshot, SongTempo, SongTrack, TimedEdit,
-    TransportCommand, WorkerConfig, compile_song, new_engine_with_options,
+    SongExprPoint, SongExpression, SongFadeCurve, SongInput, SongNote, SongPoint, SongSnapshot,
+    SongTempo, SongTrack, TimedEdit, TransportCommand, WorkerConfig, compile_song,
+    new_engine_with_options,
 };
 use atomik_model::console::{SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM, VCA_SOLO_PARAM};
 use atomik_model::song::{
-    effective_tracks, flatten_audio, flatten_automation, flatten_controllers, flatten_param_lanes,
-    flatten_track_notes,
+    effective_tracks, flatten_audio, flatten_automation, flatten_controllers, flatten_expression,
+    flatten_param_lanes, flatten_track_notes,
 };
 use atomik_model::{
     AutomationPoint, ControllerKind, Curve, DeviceKey, ExpandedRack, FadeCurve, LaneKind,
@@ -177,6 +178,7 @@ fn push_macro_lane(
             notes: Vec::new(),
             automation: vec![lane],
             controllers: Vec::new(),
+            expression: Vec::new(),
         }),
     }
 }
@@ -237,6 +239,7 @@ fn push_track(tracks: &mut Vec<SongTrack>, track: SongTrack) {
         return;
     };
     first.notes.extend(track.notes);
+    first.expression.extend(track.expression);
     for lane in track.controllers {
         if !first.controllers.iter().any(|c| c.kind == lane.kind) {
             first.controllers.push(lane);
@@ -247,6 +250,35 @@ fn push_track(tracks: &mut Vec<SongTrack>, track: SongTrack) {
             first.automation.push(lane);
         }
     }
+}
+
+/// The engine curves of a track's flattened note expression: one per curve of each note.
+fn song_expression(flat: &[atomik_model::song::FlatExpression]) -> Vec<SongExpression> {
+    let mut out = Vec::new();
+    for f in flat {
+        for (kind, points) in [
+            (ExprKind::Tuning, &f.pitch),
+            (ExprKind::Pressure, &f.pressure),
+            (ExprKind::Slide, &f.timbre),
+        ] {
+            if points.is_empty() {
+                continue;
+            }
+            out.push(SongExpression {
+                tick: Ticks(f.tick),
+                key: f.key,
+                kind,
+                points: points
+                    .iter()
+                    .map(|&(tick, value)| SongExprPoint {
+                        tick: Ticks(tick),
+                        value,
+                    })
+                    .collect(),
+            });
+        }
+    }
+    out
 }
 
 /// Where the notes of `track` go when they do not enter its own device: the Notes input of the
@@ -396,6 +428,7 @@ fn song_input_inner(
                 velocity,
             })
             .collect();
+        let expression = song_expression(&flatten_expression(song, track));
         let mut automation = Vec::new();
         for (i, lane) in track.lanes.iter().enumerate() {
             let LaneKind::Automation(key) = &lane.kind else {
@@ -495,6 +528,7 @@ fn song_input_inner(
                             notes: Vec::new(),
                             automation,
                             controllers: Vec::new(),
+                            expression: Vec::new(),
                         },
                     );
                 }
@@ -507,6 +541,7 @@ fn song_input_inner(
                         notes,
                         automation: Vec::new(),
                         controllers,
+                        expression,
                     },
                 );
             }
@@ -519,6 +554,7 @@ fn song_input_inner(
                     notes,
                     automation,
                     controllers,
+                    expression,
                 },
             ),
         }

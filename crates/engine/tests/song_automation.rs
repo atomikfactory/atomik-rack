@@ -87,6 +87,7 @@ fn ac_s4_automation_matches_the_curve_at_every_batch_start() {
                 points: vec![point(PPQ / 2, -5.0, lin), point(3 * PPQ / 2, 5.0, lin)],
             },
         ],
+        expression: Vec::new(),
     };
     let input = SongInput {
         tracks: vec![track],

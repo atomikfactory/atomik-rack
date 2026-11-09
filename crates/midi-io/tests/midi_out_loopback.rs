@@ -99,6 +99,7 @@ fn rig(notes: Vec<SongNote>, channel: u8) -> Rig {
             notes,
             controllers: Vec::new(),
             automation: Vec::new(),
+            expression: Vec::new(),
         }],
         tempo: vec![SongTempo {
             tick: Ticks(0),

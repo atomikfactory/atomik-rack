@@ -46,6 +46,11 @@
 //!   semitones (default 2) and the mod wheel (CC 1) adds up to one semitone of LFO vibrato
 //!   ([`WHEEL_VIBRATO`]); both survive `AllOff` and `reset` clears them. Sustain pedal, volume,
 //!   expression and pressure are kept by a [`ControllerState`].
+//! * **Per-note expression** ([`atomik_core::NoteKind::NoteExpr`], see [`crate::controller_state`]):
+//!   a note's tuning adds its semitones to that voice's pitch (next to the bend), its slide adds to
+//!   the frame position of both oscillators (clamped to 0..=1) and its pressure raises that voice's
+//!   gain by up to 6 dB (a gain of `1 + pressure`, followed at the control rate). A note without
+//!   expression sounds as it always did.
 //! * **Output:** sum of voices · 0.5 · master gain (5 ms smoothing), then the poly synth's soft
 //!   limiter (|x| < 4 for every param combination); with the pan CV cabled the stereo pair is
 //!   balanced by it.
@@ -66,7 +71,9 @@ use atomik_dsp::{
     sin_cycles,
 };
 
-use crate::controller_state::{ControllerState, DEFAULT_BEND_RANGE, Effect, MAX_BEND_RANGE};
+use crate::controller_state::{
+    ControllerState, DEFAULT_BEND_RANGE, Effect, KeyExpression, MAX_BEND_RANGE,
+};
 use crate::cv_in::{clean, db_gain};
 use crate::poly_synth::{derive_seed, soft_limit};
 
@@ -794,6 +801,8 @@ const CV_LEVEL_RANGE_DB: f32 = 24.0;
 const WHEEL_VIBRATO: f32 = 1.0;
 /// Per-voice output gain before the master stage.
 const VOICE_GAIN: f32 = 0.5;
+/// How far a voice's pressure gain moves towards its target at each control step.
+const EXPR_GAIN_FOLLOW: f32 = 0.2;
 /// Glide time for velocity changes on retrigger.
 const VELOCITY_GLIDE_MS: f32 = 2.0;
 /// Master gain smoothing time.
@@ -1002,6 +1011,10 @@ struct Voice {
     k: f32,
     k_target: f32,
     k_step: f32,
+    /// The per-note expression of the voice's key (all zero without it), set per render segment,
+    /// and the gain its pressure asks for, followed at the control rate.
+    expr: KeyExpression,
+    expr_gain: f32,
 }
 
 impl Voice {
@@ -1035,6 +1048,8 @@ impl Voice {
             k: 1.0,
             k_target: 1.0,
             k_step: 0.0,
+            expr: KeyExpression::default(),
+            expr_gain: 1.0,
         }
     }
 
@@ -1117,6 +1132,7 @@ impl Voice {
         let env = self.menv.level();
         let pitch = c.lfo * (p.lfo_to_pitch + p.wheel * WHEEL_VIBRATO)
             + p.bend
+            + self.expr.pitch
             + env * p.env_to_pitch
             + p.cv_pitch_amount * clean(c.pitch);
         let max_hz = MAX_FREQ_RATIO * p.sample_rate;
@@ -1136,8 +1152,9 @@ impl Voice {
             let target = (p.base_position[o]
                 + env * p.env_to_position[o]
                 + c.lfo * p.lfo_to_position[o]
-                + p.cv_position_amount * clean(c.position))
-            .clamp(0.0, 1.0);
+                + p.cv_position_amount * clean(c.position)
+                + self.expr.slide)
+                .clamp(0.0, 1.0);
             // Land exactly on the previous target (no drift), then ramp towards the new one.
             self.position[o] = if self.snap {
                 target
@@ -1149,6 +1166,7 @@ impl Voice {
         }
         self.sub_step =
             f64::from(note_to_hz(key + pitch - 12.0, p.tune_cents).min(max_hz) / p.sample_rate);
+        self.expr_gain += (1.0 + self.expr.pressure - self.expr_gain) * EXPR_GAIN_FOLLOW;
 
         let octaves = p.env_amount * 6.0 * env
             + p.key_track * (key - 60.0) / 12.0
@@ -1278,7 +1296,8 @@ impl Voice {
                 (yl, yr) = (0.0, 0.0);
             }
             self.menv.next_sample();
-            let gain = self.amp.next_sample() * self.vel_gain.next_value() * VOICE_GAIN;
+            let gain =
+                self.amp.next_sample() * self.vel_gain.next_value() * VOICE_GAIN * self.expr_gain;
             *lo += yl * gain;
             *ro += yr * gain;
             if !self.amp.is_active() {
@@ -1684,6 +1703,7 @@ impl Device for WavetableSynth {
             };
             let user = self.samples.as_deref().and_then(imported_of);
             for v in self.voices.iter_mut().filter(|v| v.is_active()) {
+                v.expr = self.ctl.note_expr(v.key);
                 v.render(&mut left[start..end], &mut right[start..end], &m, &p, user);
             }
             self.ctl.fill_gain(&mut ctl_gain[start..end]);
@@ -2090,6 +2110,62 @@ mod tests {
         assert!((freq(1.0) - up).abs() < 1.5, "{}", freq(1.0));
         assert!((freq(-0.5) - down).abs() < 1.0, "{}", freq(-0.5));
         assert!((freq(5.0) - up).abs() < 1.5, "out of range is clamped");
+    }
+
+    #[test]
+    fn note_tuning_moves_the_pitch_of_its_own_key_only() {
+        use atomik_core::ExprKind;
+        let freq = |tuning: f32, key: u8| {
+            let (mut h, _) = synth();
+            pure_sine(&mut h);
+            h.push_note("notes_in", on(0, 57, 1.0)); // 220 Hz
+            push(
+                &mut h,
+                1,
+                NoteKind::NoteExpr {
+                    key,
+                    kind: ExprKind::Tuning,
+                    value: tuning,
+                },
+            );
+            let o = h.render(seconds(0.5), &OUT).remove(0);
+            dominant_frequency(&o[4_800..24_000], SR)
+        };
+        assert!((freq(12.0, 57) - 440.0).abs() < 2.0, "{}", freq(12.0, 57));
+        assert!((freq(-12.0, 57) - 110.0).abs() < 1.0);
+        assert!(
+            (freq(12.0, 58) - 220.0).abs() < 1.0,
+            "another key is not touched"
+        );
+    }
+
+    #[test]
+    fn note_slide_moves_the_frame_and_pressure_raises_the_gain() {
+        use atomik_core::ExprKind;
+        let render = |kind: ExprKind, value: f32| {
+            let (mut h, _) = synth();
+            pure_sine(&mut h);
+            h.push_note("notes_in", on(0, 45, 1.0));
+            push(
+                &mut h,
+                1,
+                NoteKind::NoteExpr {
+                    key: 45,
+                    kind,
+                    value,
+                },
+            );
+            h.render(seconds(0.5), &OUT).remove(0)
+        };
+        let rest = render(ExprKind::Slide, 0.0);
+        let slid = render(ExprKind::Slide, 1.0);
+        assert!(
+            brightness(&slid[9_600..24_000]) > 2.0 * brightness(&rest[9_600..24_000]),
+            "the saw end of the table is brighter than the sine"
+        );
+        let pressed = render(ExprKind::Pressure, 1.0);
+        let ratio = peak(&pressed[9_600..24_000]) / peak(&rest[9_600..24_000]);
+        assert!((ratio - 2.0).abs() < 0.1, "{ratio}");
     }
 
     #[test]

@@ -43,6 +43,11 @@
 //! * **Modulation index.** `index` scales every modulator at once; the mod wheel (CC 1,
 //!   `wheel.to_index`), the LFO (`lfo.to_index`) and the index CV (`cv.index_amount`) add to it. The total is
 //!   clamped to `0..=3`.
+//! * **Per-note expression** ([`atomik_core::NoteKind::NoteExpr`], see [`crate::controller_state`]):
+//!   a note's tuning adds its semitones to that voice's pitch (next to the bend), its slide adds up
+//!   to [`EXPR_SLIDE_INDEX`] to the modulation index (before the clamp to `0..=3`) and its pressure
+//!   raises that voice's gain by up to 6 dB (a gain of `1 + pressure`, ramped over a control
+//!   step). A note without expression sounds as it always did.
 //! * **Aliasing.** A modulation index puts partials out to about `(index + 1)` times the
 //!   modulator's frequency; what passes Nyquist folds back. Every control step (16 samples) the
 //!   voice asks [`fm::limits`] for the scales that keep the highest partial of every operator under
@@ -108,7 +113,9 @@ use atomik_dsp::{
     sin_cycles,
 };
 
-use crate::controller_state::{ControllerState, DEFAULT_BEND_RANGE, Effect, MAX_BEND_RANGE};
+use crate::controller_state::{
+    ControllerState, DEFAULT_BEND_RANGE, Effect, KeyExpression, MAX_BEND_RANGE,
+};
 use crate::cv_in::{clean, db_gain};
 use crate::poly_synth::soft_limit;
 
@@ -803,6 +810,8 @@ const OVERSAMPLE_REACH: f32 = 1.25;
 const KEY_SCALE_DB: f32 = 0.4;
 /// The most the modulation index can be (the sum of `index` and its modulations).
 const MAX_TOTAL_INDEX: f32 = 3.0;
+/// Modulation index a note's full slide (per-note timbre) adds.
+const EXPR_SLIDE_INDEX: f32 = 1.0;
 /// How far the keys pan at full `spread`: middle C is centre, this many semitones away is the edge.
 const PAN_SPAN: f32 = 36.0;
 /// `-20 dB` per decade in a `2^x` exponent: `x = db * DB_TO_LOG2`.
@@ -1024,6 +1033,8 @@ struct Voice {
     pan: [(f32, f32); UNISON_MAX],
     countdown: u32,
     snap: bool,
+    /// The per-note expression of the voice's key (all zero without it), set per render segment.
+    expr: KeyExpression,
 }
 
 impl Voice {
@@ -1053,6 +1064,7 @@ impl Voice {
             pan: [(1.0, 1.0); UNISON_MAX],
             countdown: 0,
             snap: true,
+            expr: KeyExpression::default(),
         }
     }
 
@@ -1166,6 +1178,7 @@ impl Voice {
         self.pitch_env *= p.pitch_env_coef;
         let semis = self.pitch
             + p.bend
+            + self.expr.pitch
             + self.pitch_env
             + c.lfo * p.lfo_to_pitch
             + p.cv_pitch_amount * clean(c.pitch);
@@ -1200,7 +1213,11 @@ impl Voice {
             self.level[op].aim(level[op], snap);
         }
         // The total modulation index, then what the bandwidth allows of it.
-        let index = (p.index + p.wheel * p.wheel_to_index + c.lfo * p.lfo_to_index + c.index)
+        let index = (p.index
+            + p.wheel * p.wheel_to_index
+            + c.lfo * p.lfo_to_index
+            + c.index
+            + self.expr.slide * EXPR_SLIDE_INDEX)
             .clamp(0.0, MAX_TOTAL_INDEX);
         let depth: [f32; OPERATORS] = std::array::from_fn(|op| level[op] * index * MAX_INDEX_RAD);
         let lim = fm::limits(
@@ -1218,7 +1235,8 @@ impl Voice {
             snap,
         );
         self.trem.aim(
-            1.0 - p.lfo_to_amp * 0.5 * (1.0 - c.lfo.clamp(-1.0, 1.0)),
+            (1.0 - p.lfo_to_amp * 0.5 * (1.0 - c.lfo.clamp(-1.0, 1.0)))
+                * (1.0 + self.expr.pressure),
             snap,
         );
         let key_pan = p.spread * ((self.target - 60.0) / PAN_SPAN).clamp(-1.0, 1.0);
@@ -1982,6 +2000,7 @@ impl Device for FmSynth {
             };
             let (lo, hi) = (start << shift, end << shift);
             for v in self.voices.iter_mut().filter(|v| v.is_active(p.algorithm)) {
+                v.expr = self.ctl.note_expr(v.key);
                 v.render(&mut hi_l[lo..hi], &mut hi_r[lo..hi], &m, &p);
             }
             self.ctl.fill_gain(&mut ctl_gain[start..end]);
