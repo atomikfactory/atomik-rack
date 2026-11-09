@@ -40,6 +40,10 @@ impl RackView {
             self.player_meter_feed(i, values);
             return;
         }
+        if self.devices[i].spec.drum.is_some() {
+            self.drum_meter_feed(i, values);
+            return;
+        }
         if self.devices[i].spec.modsrc.is_some() {
             self.modsrc_meter_feed(i, values);
             return;

@@ -208,8 +208,45 @@ impl FileBrowserView {
             "Search  (#tag, fav)",
             self.search_focused && self.focused,
         );
+        if lay.level.width() > 0.0 {
+            self.paint_level(c, lay.level);
+        }
         self.paint_toggle(c, lay.recursive_btn, self.recursive, Some("Sub"));
         self.paint_toggle(c, lay.preview_btn, self.auto_preview, None);
+    }
+
+    /// The preview level control: a bar filled up to the level, its value written on it.
+    fn paint_level(&self, c: &mut dyn Canvas, rect: Rect) {
+        let t = &self.theme;
+        let shape = RoundedRect::from_rect(rect, 5.0);
+        c.fill_with(shape, t.lcd);
+        let fill = Rect::new(
+            rect.x0,
+            rect.y0,
+            rect.x0 + rect.width() * lay::level_fraction(self.preview_db),
+            rect.y1,
+        );
+        c.push_clip(&shape.into());
+        c.fill_with(fill, t.focus.with_alpha(0.35));
+        // A tick at 0 dB, where a double-click returns to.
+        let zero = rect.x0 + rect.width() * lay::level_fraction(0.0);
+        c.fill_with(
+            Rect::new(zero - 0.5, rect.y0 + 4.0, zero + 0.5, rect.y1 - 4.0),
+            t.text_muted.with_alpha(0.5),
+        );
+        c.pop_clip();
+        let hot = self.gesture == Gesture::Level;
+        c.stroke_with(shape, 1.0, if hot { t.focus } else { t.section_line });
+        c.text(
+            &TextRun::new(
+                lay::level_text(self.preview_db),
+                pt(rect.center().x, baseline(rect, SMALL_FONT)),
+                SMALL_FONT,
+                t.text,
+            )
+            .align(Align::Center)
+            .weight(600),
+        );
     }
 
     fn paint_scroll_thumb(&self, c: &mut dyn Canvas, track: Rect, content: f64, scroll: f64) {

@@ -637,6 +637,9 @@ const DRUM_CV: [(&str, &str); 2] = [
     ("level_cv_in", "master.level_cv_trim"),
     ("pitch_cv_in", "pitch_cv_trim"),
 ];
+/// The meter values a drum machine publishes: a hit counter per pad, then a last velocity per
+/// pad (the pad lights, see `RackView::pad_light`).
+pub const DRUM_METERS: usize = 32;
 /// Width of the trim knob cell on the drum back (narrower than a front knob).
 const DRUM_TRIM_W: f64 = 40.0;
 /// Width of one knob column of the selected pad's section.
@@ -645,7 +648,7 @@ const DRUM_COL_W: f64 = 64.0;
 /// two columns beside the pad grid).
 const DRUM_KNOB_COLS: usize = 2;
 /// Gap between the pad grid and the knob columns.
-const DRUM_GAP: f64 = 16.0;
+const DRUM_GAP: f64 = 8.0;
 /// Left edge of the knob columns: they end at the right edge of the content area.
 const DRUM_KNOBS_X: f64 = CONTENT_X.1 - DRUM_KNOB_COLS as f64 * DRUM_COL_W;
 /// Width of the pad grid: what the content area leaves left of the knob columns.

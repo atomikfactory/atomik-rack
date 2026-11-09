@@ -1069,6 +1069,38 @@ fn preview_starts_the_stream_at_once_and_the_decoder_opens_the_file() {
     );
 }
 
+/// The gain of the one preview start in `c`'s sink calls.
+fn started_gain(c: &AppCore<RecordingSink>) -> f32 {
+    let starts: Vec<f32> = preview_calls(c)
+        .into_iter()
+        .filter_map(|call| match call {
+            SinkCall::PreviewStart { gain } => Some(gain),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(starts.len(), 1, "{starts:?}");
+    starts[0]
+}
+
+#[test]
+fn the_preview_level_sets_the_gain_of_the_next_preview() {
+    let lib = library("level");
+    let mut c = core();
+    assert_eq!(c.preview_db(), 0.0);
+    c.browse(BrowseAction::SetPreviewLevel(-6.0));
+    assert_eq!(c.preview_db(), -6.0);
+    c.browse(BrowseAction::Preview(lib.path("kick 2.wav")));
+    assert!((started_gain(&c) - 0.501_187).abs() < 1e-4);
+    // Out of range is clamped to the control's ends.
+    let mut c = core();
+    c.set_preview_db(-200.0);
+    assert_eq!(c.preview_db(), -60.0);
+    c.set_preview_db(30.0);
+    assert_eq!(c.preview_db(), 6.0);
+    c.browse(BrowseAction::Preview(lib.path("kick 2.wav")));
+    assert!((started_gain(&c) - 1.995_262).abs() < 1e-4);
+}
+
 #[test]
 fn stop_preview_stops_the_engine_and_clears_the_panel() {
     let lib = library("stop");

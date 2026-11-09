@@ -25,6 +25,12 @@ impl FileBrowserView {
                 "Also list the files of the sub-folders",
             ));
         }
+        if l.level.width() > 0.0 && l.level.contains(pos) {
+            return Some(Help::new(
+                l.level,
+                "Preview level: drag to set it, double-click for 0 dB",
+            ));
+        }
         if l.preview_btn.contains(pos) {
             return Some(Help::new(
                 l.preview_btn,
