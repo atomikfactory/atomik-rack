@@ -478,6 +478,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("edit.duplicate", "Duplicate", G::Edit, C::Global)
         .decline()
         .menu(),
+    cmd("edit.history", "Undo History", G::Edit, C::Global).menu(),
     cmd("edit.paste", "Paste", G::Edit, C::Global)
         .decline()
         .menu(),

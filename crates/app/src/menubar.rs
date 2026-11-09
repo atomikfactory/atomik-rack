@@ -904,6 +904,7 @@ mod tests {
             file_browser: false,
             piano_keys: false,
             track_panel: false,
+            history_panel: false,
             rack_sort: atomik_model::RackSort::Free,
             single_column: false,
             can_undo: false,

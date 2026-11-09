@@ -69,6 +69,15 @@
 //! its left edge. A window too narrow to leave the rest [`MIN_REST_WIDTH`] hides it. It follows
 //! the track selected in the arrangement and its choice is not saved.
 //!
+//! # Undo History hosting
+//!
+//! Edit ▸ Undo History (`edit.history`) docks the Undo History panel ([`Pane::History`]) as a
+//! column on the right of the window, left of the Track Panel column when both show
+//! ([`Layout::history`]); the rack, divider, transport bar and lower pane end at its left edge.
+//! A window too narrow to leave the rest [`MIN_REST_WIDTH`] hides it. Whether it shows is not
+//! saved. A click on a row, or Up and Down with the panel focused, goes through the history
+//! with [`AppCore::undo`] and [`AppCore::redo`].
+//!
 //! # File browser hosting
 //!
 //! View ▸ File Browser (`view.toggle_file_browser`, F4) docks the file browser panel
@@ -173,15 +182,15 @@ use atomik_ui::{
 use atomik_ui::{
     BlindAction, BlindView, BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView,
     ColorTarget, CommandPaletteView, ConsoleButton, ExportScope, ExportView, FileBrowserView,
-    FilmView, Flip, Key, KickBassAction, KickBassView, MacrosAction, MacrosView, MaskingAction,
-    MaskingView, MidiMapsAction, MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction,
-    ModMatrixView, Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, PaletteAction,
-    ParamSearchAction, ParamSearchView, Place, PluginBannerView, PluginSettingsView, PointerButton,
-    QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView,
-    RepetitionAction, RepetitionView, ScaleAction, ScaleView, SilenceAction, SilenceValues,
-    SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent,
-    VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues, WarpView, ZoneAction,
-    ZoneView,
+    FilmView, Flip, HISTORY_PANEL_WIDTH, Key, KickBassAction, KickBassView, MacrosAction,
+    MacrosView, MaskingAction, MaskingView, MidiMapsAction, MidiMapsView, MixCheckAction,
+    MixCheckView, ModMatrixAction, ModMatrixView, Modifiers, NotesAction, NotesValues, NotesView,
+    NumpadKey, PaletteAction, ParamSearchAction, ParamSearchView, Place, PluginBannerView,
+    PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction,
+    RelinkEntry, RelinkView, RepetitionAction, RepetitionView, ScaleAction, ScaleView,
+    SilenceAction, SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH,
+    TextRun, UiAction, UiEvent, VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues,
+    WarpView, ZoneAction, ZoneView,
 };
 use atomik_ui::{ReverbSendAction, ReverbSendValues, ReverbSendView};
 use atomik_ui::{WavetableAction, WavetableView};
@@ -209,6 +218,8 @@ pub const MIN_REST_WIDTH: f64 = 400.0;
 pub const MIN_PANE_HEIGHT: f64 = 80.0;
 /// The narrowest the Track Panel column is drawn; a window with less room hides it.
 pub const MIN_TRACK_PANEL_WIDTH: f64 = 160.0;
+/// The narrowest the Undo History column is drawn; a window with less room hides it.
+pub const MIN_HISTORY_PANEL_WIDTH: f64 = 160.0;
 
 /// What a film picked in the dialog of [`ShellRequest::PickVideoFile`] is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -447,6 +458,9 @@ pub struct Layout {
     /// The Track Panel column (only while it shows): on the right of the window, between the
     /// menu bar and the status bar.
     pub track_panel: Option<Rect>,
+    /// The Undo History column (only while it shows): on the right of the window, left of the
+    /// Track Panel column when both show.
+    pub history: Option<Rect>,
 }
 
 /// A drag of files that left the file browser: the shell owns it until the release.
@@ -3770,7 +3784,8 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::PluginParams
             | Pane::SpectrumEq
             | Pane::Video
-            | Pane::TrackPanel => ContextStack::global(),
+            | Pane::TrackPanel
+            | Pane::History => ContextStack::global(),
         }
     }
 
@@ -3786,6 +3801,7 @@ impl<B: AudioBackend> Shell<B> {
             file_browser: self.ui.file_browser_visible,
             piano_keys: self.detached(WindowKind::PianoKeys),
             track_panel: self.core.track_panel_visible(),
+            history_panel: self.core.history_visible(),
             rack_sort: self.core.doc().sort_mode,
             single_column: view.single_column(),
             can_undo: self.core.document().can_undo(),
@@ -3924,6 +3940,21 @@ impl<B: AudioBackend> Shell<B> {
             .then(|| Rect::new(self.size().width - width, top, self.size().width, bottom))
     }
 
+    /// The Undo History column, when it shows: on the right of the window, left of the Track
+    /// Panel column, narrower when the window leaves the rest less than [`MIN_REST_WIDTH`].
+    fn history_rect(&self) -> Option<Rect> {
+        if !self.core.history_visible() {
+            return None;
+        }
+        let left = self.file_browser_rect().map_or(0.0, |r| r.x1);
+        let right = self.track_panel_rect().map_or(self.size().width, |r| r.x0);
+        let top = self.top();
+        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let room = (right - left - MIN_REST_WIDTH).max(0.0);
+        let width = HISTORY_PANEL_WIDTH.min(room);
+        (width >= MIN_HISTORY_PANEL_WIDTH).then(|| Rect::new(right - width, top, right, bottom))
+    }
+
     /// The file browser column, when it shows: the full height below the menu bar. Its width is
     /// the panel's own (it resizes by drag), kept so the rest of the window keeps
     /// [`MIN_REST_WIDTH`].
@@ -3943,8 +3974,10 @@ impl<B: AudioBackend> Shell<B> {
     pub fn layout(&self) -> Layout {
         let fb = self.file_browser_rect();
         let tp = self.track_panel_rect();
+        let hp = self.history_rect();
         let x0 = fb.map_or(0.0, |r| r.x1);
-        let w = (tp.map_or(self.size().width, |r| r.x0) - x0).max(1.0);
+        let right = hp.or(tp).map_or(self.size().width, |r| r.x0);
+        let w = (right - x0).max(1.0);
         let x1 = x0 + w;
         let top = self.top();
         let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
@@ -3957,6 +3990,7 @@ impl<B: AudioBackend> Shell<B> {
                 song: Some(Rect::new(x0, top, x1, transport_top)),
                 file_browser: fb,
                 track_panel: tp,
+                history: hp,
             };
         }
         if !self.ui.show_song {
@@ -3968,6 +4002,7 @@ impl<B: AudioBackend> Shell<B> {
                 song: None,
                 file_browser: fb,
                 track_panel: tp,
+                history: hp,
             };
         }
         if !self.rack_in_main() {
@@ -3984,6 +4019,7 @@ impl<B: AudioBackend> Shell<B> {
                 )),
                 file_browser: fb,
                 track_panel: tp,
+                history: hp,
             };
         }
         let avail = (bottom - top - TRANSPORT_HEIGHT - DIVIDER_HEIGHT).max(2.0);
@@ -4003,6 +4039,7 @@ impl<B: AudioBackend> Shell<B> {
             )),
             file_browser: fb,
             track_panel: tp,
+            history: hp,
         }
     }
 
@@ -4040,6 +4077,9 @@ impl<B: AudioBackend> Shell<B> {
         }
         if let Some(panel) = l.track_panel {
             self.core.track_panel_mut().set_bounds(panel);
+        }
+        if let Some(panel) = l.history {
+            self.core.history_mut().set_bounds(panel);
         }
         self.browser_edge = l.file_browser.map_or(0.0, |r| r.x1);
         if let Some(song) = l.song {
@@ -4315,6 +4355,7 @@ impl<B: AudioBackend> Shell<B> {
             Pane::FileBrowser if !self.ui.file_browser_visible => self.live_pane(Pane::Rack),
             Pane::PianoKeys if !self.detached(WindowKind::PianoKeys) => self.live_pane(Pane::Rack),
             Pane::TrackPanel if !self.core.track_panel_visible() => self.live_pane(Pane::Rack),
+            Pane::History if !self.core.history_visible() => self.live_pane(Pane::Rack),
             Pane::Rack if self.maximised() => Pane::Console,
             Pane::Rack if !self.rack_in_main() => self.song_pane(),
             other => other,
@@ -4388,7 +4429,9 @@ impl<B: AudioBackend> Shell<B> {
             return rect.contains(pos).then_some(Ok(pane));
         }
         let l = self.layout();
-        if l.track_panel.is_some_and(|r| r.contains(pos)) {
+        if l.history.is_some_and(|r| r.contains(pos)) {
+            Some(Ok(Pane::History))
+        } else if l.track_panel.is_some_and(|r| r.contains(pos)) {
             Some(Ok(Pane::TrackPanel))
         } else if l.file_browser.is_some_and(|r| r.contains(pos)) {
             Some(Ok(Pane::FileBrowser))
@@ -7854,6 +7897,16 @@ impl<B: AudioBackend> Shell<B> {
                 self.repaint = true;
                 Vec::new()
             }
+            AppCommand::ToggleHistory => {
+                let visible = !self.core.history_visible();
+                self.core.set_history_visible(visible);
+                if !visible && self.focus == Pane::History {
+                    self.set_focus(Pane::Rack);
+                }
+                self.layout_view();
+                self.repaint = true;
+                Vec::new()
+            }
             AppCommand::SetRackSort(mode) => {
                 // A rejection (the rack is sorted that way already) is reported in the view.
                 let _ = self.core.apply_command(Command::SetRackSort(mode));
@@ -8864,7 +8917,10 @@ impl<B: AudioBackend> Shell<B> {
         let size = self.size();
         let layout = self.layout();
         let x0 = layout.file_browser.map_or(0.0, |r| r.x1);
-        let x1 = layout.track_panel.map_or(size.width, |r| r.x0);
+        let x1 = layout
+            .history
+            .or(layout.track_panel)
+            .map_or(size.width, |r| r.x0);
         Rect::new(
             x0,
             self.bar_height(),
@@ -9996,6 +10052,7 @@ impl<B: AudioBackend> Shell<B> {
                 && !self.browser_detached()
                 && self.core.file_browser().needs_repaint())
             || (self.core.track_panel_visible() && self.core.track_panel().needs_repaint())
+            || (self.core.history_visible() && self.core.history().needs_repaint())
             || (self.ui.show_song
                 && match self.song_pane() {
                     Pane::PianoRoll => self.core.piano_roll().needs_repaint(),
@@ -10063,6 +10120,10 @@ impl<B: AudioBackend> Shell<B> {
         if l.track_panel.is_some() {
             self.core.sync_track_panel();
             self.core.paint_pane(Pane::TrackPanel, canvas);
+        }
+        if l.history.is_some() {
+            self.core.sync_history();
+            self.core.paint_pane(Pane::History, canvas);
         }
         if l.song.is_some() {
             let pane = self.song_pane();
@@ -10609,3 +10670,7 @@ mod guide_tests;
 #[cfg(test)]
 #[path = "shell_palette_tests.rs"]
 mod palette_tests;
+
+#[cfg(test)]
+#[path = "shell_history_tests.rs"]
+mod history_tests;

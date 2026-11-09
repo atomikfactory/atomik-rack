@@ -380,6 +380,7 @@ ToggleEnergyLane | Energy Lane
 ToggleFileBrowser | File Browser
 ToggleFlip | Back of Rack
 ToggleFolder | Collapse Folder
+ToggleHistory | Undo History
 ToggleInspector | Inspector
 ToggleLaneMute | Mute Lane
 ToggleMarkerList | Marker List

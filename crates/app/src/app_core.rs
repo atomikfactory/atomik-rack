@@ -97,6 +97,8 @@ pub enum Pane {
     PianoKeys,
     /// The Track Panel, docked on the right of the window.
     TrackPanel,
+    /// The Undo History panel, docked on the right of the window (left of the Track Panel).
+    History,
     /// The Spectrum EQ window: it fills a window of its own.
     SpectrumEq,
     /// The Video window: it fills a window of its own.
@@ -452,6 +454,14 @@ pub struct AppCore<S: EngineSink> {
     track_panel: atomik_ui::TrackPanelView,
     track_panel_on: bool,
     track_panel_stamp: Option<(u64, Option<DeviceKey>)>,
+    /// The Undo History panel, whether it shows (this session only), the revision and time it
+    /// was built for, and when the steps were made.
+    history: atomik_ui::HistoryView,
+    history_on: bool,
+    history_stamp: Option<(u64, u64, bool)>,
+    history_times: history_core::StepTimes,
+    history_clock: history_core::HistoryClock,
+    history_opened: f64,
     /// The Spectrum EQ window: its view and what the analyser feed remembers.
     spectrum_eq: atomik_ui::spectrum_eq::SpectrumEqView,
     video_win: atomik_ui::VideoView,
@@ -645,6 +655,12 @@ impl<S: EngineSink> AppCore<S> {
             track_panel: atomik_ui::TrackPanelView::new(Theme::dark()),
             track_panel_on: false,
             track_panel_stamp: None,
+            history: atomik_ui::HistoryView::new(Theme::dark()),
+            history_on: false,
+            history_stamp: None,
+            history_times: history_core::StepTimes::default(),
+            history_clock: history_core::HistoryClock::start(),
+            history_opened: 0.0,
             spectrum_eq: atomik_ui::spectrum_eq::SpectrumEqView::new(Theme::dark()),
             video_win: atomik_ui::VideoView::new(Theme::dark()),
             viewer: video_view::ViewerState::default(),
@@ -1003,6 +1019,7 @@ impl<S: EngineSink> AppCore<S> {
                     self.workflow_post(&w, pre);
                 }
                 self.colour_new_tracks(tracks_before);
+                self.note_history_times();
                 if !moved_notes.is_empty() {
                     self.report(moved_notes.join(" "));
                 }
@@ -1047,6 +1064,9 @@ impl<S: EngineSink> AppCore<S> {
                 self.crossfade_length_step(later, delta);
             }
             UiAction::CrossfadeEnd { commit } => self.end_stretch(commit),
+            UiAction::HistoryGoto(row) => {
+                self.history_goto(row);
+            }
             UiAction::EndMerge => {
                 if let Some(id) = self.keep_pending.take() {
                     self.complete_note_edit(id);
@@ -1256,6 +1276,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::FileBrowser => self.file_browser.help_at(pos),
             Pane::PianoKeys => self.piano_keys.help_at(pos),
             Pane::TrackPanel => self.track_panel.help_at(pos),
+            Pane::History => self.history.help_at(pos),
             Pane::SpectrumEq => self.spectrum_eq.help_at(pos),
             Pane::Video => self.video_win.help_at(pos),
         }
@@ -1292,6 +1313,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::FileBrowser => self.file_browser.handle(event),
             Pane::PianoKeys => self.piano_keys.handle(event),
             Pane::TrackPanel => self.track_panel.handle(event),
+            Pane::History => self.history.handle(event),
             Pane::SpectrumEq => self.spectrum_eq.handle(event),
             Pane::Video => self.video_win.handle(event),
         };
@@ -1433,6 +1455,7 @@ impl<S: EngineSink> AppCore<S> {
         self.transport_bar.sync(doc, &self.registry);
         self.console.sync(doc, &self.registry);
         self.sync_track_panel();
+        self.sync_history();
         // The sampler was removed: the arrangement shows again.
         if self.sample_editor.device().is_some() && !self.sample_editor.is_present() {
             self.close_sample_editor();
@@ -1589,6 +1612,8 @@ impl<S: EngineSink> AppCore<S> {
         self.end_patch_browse_for_new_document();
         self.document = Document::new(doc);
         self.file = file;
+        self.history_opened = self.history_clock.now();
+        self.history_stamp = None;
         self.rejection = None;
         self.auto_armed.clear();
         self.mki = None;
@@ -3028,6 +3053,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::FileBrowser => self.file_browser.paint(canvas),
             Pane::PianoKeys => self.piano_keys.paint(canvas),
             Pane::TrackPanel => self.track_panel.paint(canvas),
+            Pane::History => self.history.paint(canvas),
             Pane::SpectrumEq => self.spectrum_eq.paint(canvas),
             Pane::Video => self.video_win.paint(canvas),
         }
@@ -3899,6 +3925,9 @@ mod keys;
 
 #[path = "app_core_track_panel.rs"]
 mod track_panel_core;
+
+#[path = "app_core_history.rs"]
+mod history_core;
 
 #[path = "app_core_containers.rs"]
 mod containers;

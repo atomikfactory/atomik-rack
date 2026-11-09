@@ -191,6 +191,7 @@ impl<B: AudioBackend> Shell<B> {
             Pane::Transport => Some(l.transport),
             Pane::FileBrowser => l.file_browser,
             Pane::TrackPanel => l.track_panel,
+            Pane::History => l.history,
             Pane::Console => (self.lower_pane() == Pane::Console)
                 .then_some(l.song)
                 .flatten(),
@@ -390,6 +391,7 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 self.core.piano_keys_mut().set_scale(scale);
                 self.core.track_panel_mut().set_scale(scale);
+                self.core.history_mut().set_scale(scale);
                 // The panes that sit in the main window while attached.
                 if !self.rack_detached() {
                     self.core.handle_event(&UiEvent::ScaleChanged(scale));
