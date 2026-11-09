@@ -1289,9 +1289,10 @@ mod tests {
             walk_section(&dir, LibrarySection::Patches),
             ["one.atomikpatch", "top.atomikpatch", "two.ATOMIKPATCH"]
         );
+        // Clips lists audio loops as well as note clips.
         assert_eq!(
             walk_section(&dir, LibrarySection::Clips),
-            ["top.atomikclip"]
+            ["kick.wav", "top.atomikclip"]
         );
         assert!(walk_section(&dir.join("missing"), LibrarySection::Patches).is_empty());
         let _ = std::fs::remove_dir_all(dir);
