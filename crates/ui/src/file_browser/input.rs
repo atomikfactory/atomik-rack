@@ -206,6 +206,13 @@ impl FileBrowserView {
                 self.clamp_scrolls();
                 self.info_dirty = true;
             }
+            Gesture::Level => {
+                let db = lay::preview_level_at(lay.level, pos.x);
+                if db.to_bits() != self.preview_db.to_bits() {
+                    self.set_preview_db(db);
+                    emit(out, BrowseAction::SetPreviewLevel(self.preview_db));
+                }
+            }
             Gesture::Splitter => {
                 let avail = (self.bounds.y1 - lay.header.y1).max(1.0);
                 self.set_tree_fraction((pos.y - lay::SPLIT_H / 2.0 - lay.header.y1) / avail);
@@ -303,6 +310,18 @@ impl FileBrowserView {
         } else if lay.preview_btn.contains(pos) {
             self.auto_preview = !self.auto_preview;
             emit(out, BrowseAction::SetAutoPreview(self.auto_preview));
+        } else if lay.level.width() > 0.0 && lay.level.contains(pos) {
+            // A double-click puts the level back to 0 dB; a press and drag sets it.
+            let db = if clicks >= 2 {
+                0.0
+            } else {
+                self.gesture = Gesture::Level;
+                lay::preview_level_at(lay.level, pos.x)
+            };
+            if db.to_bits() != self.preview_db.to_bits() {
+                self.set_preview_db(db);
+                emit(out, BrowseAction::SetPreviewLevel(self.preview_db));
+            }
         } else if lay.splitter.contains(pos) {
             self.gesture = Gesture::Splitter;
         } else if lay.tree.contains(pos) {
