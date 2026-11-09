@@ -21,8 +21,9 @@
 use crate::midi_control::ControlHub;
 use crate::record::RecordTap;
 use crate::target::{NoteRouter, NoteTarget, Target};
-use atomik_core::NoteKind;
+use atomik_core::{MpeZones, NoteKind};
 use atomik_engine::{EngineError, FrameClock, LiveNoteSender, ScheduledNote};
+use atomik_midi_io::mpe::{Events, MpeInput};
 use atomik_midi_io::{MidiError, RunningStatus, event_frame, parse, parse_message, parse_mmc};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -93,6 +94,9 @@ pub struct MidiLink {
     pub hub: Arc<ControlHub>,
     /// The port's notes play the target (a keyboard). Off: the port feeds the mappings only.
     pub plays_notes: bool,
+    /// The port plays MPE (one note per channel) with these zones until the controller sends
+    /// others; `None` reads the port as ordinary MIDI.
+    pub mpe: Option<MpeZones>,
 }
 
 impl MidiLink {
@@ -115,6 +119,7 @@ impl MidiLink {
             tap,
             hub,
             plays_notes: true,
+            mpe: None,
         }
     }
 
@@ -122,6 +127,14 @@ impl MidiLink {
     pub fn with_plays_notes(&self, plays_notes: bool) -> Self {
         Self {
             plays_notes,
+            ..self.clone()
+        }
+    }
+
+    /// This link for a port that plays MPE with `zones` (`None`: ordinary MIDI).
+    pub fn with_mpe(&self, zones: Option<MpeZones>) -> Self {
+        Self {
+            mpe: zones,
             ..self.clone()
         }
     }
@@ -193,6 +206,8 @@ pub struct NoteForwarder {
     state: RunningStatus,
     router: NoteRouter,
     last_frame: u64,
+    /// The MPE reader of the port, when it plays MPE (it has its own running status).
+    mpe: Option<MpeInput>,
 }
 
 impl Default for NoteForwarder {
@@ -208,7 +223,22 @@ impl NoteForwarder {
             state: RunningStatus::default(),
             router: NoteRouter::new(),
             last_frame: 0,
+            mpe: None,
         }
+    }
+
+    /// A forwarder that reads the port as MPE with `zones` (`None`: ordinary MIDI).
+    pub fn with_mpe(zones: Option<MpeZones>) -> Self {
+        Self {
+            mpe: zones.map(MpeInput::new),
+            ..Self::new()
+        }
+    }
+
+    /// The MPE zones in force on the port (the ones it was opened with, or the last the controller
+    /// announced); `None` when the port is read as ordinary MIDI.
+    pub fn mpe_zones(&self) -> Option<MpeZones> {
+        self.mpe.as_ref().map(MpeInput::zones)
     }
 
     /// Handles one message received at `at`: parses it, timestamps it jitter-free from
@@ -252,9 +282,16 @@ impl NoteForwarder {
         consumed: bool,
         mut emit: impl FnMut(ScheduledNote),
     ) {
-        let Some(kind) = parse(bytes, &mut self.state) else {
-            return;
+        let events = match self.mpe.as_mut() {
+            Some(mpe) => mpe.feed(bytes),
+            None => match parse(bytes, &mut self.state) {
+                Some(kind) => Events::one(kind),
+                None => return,
+            },
         };
+        if events.is_empty() {
+            return;
+        }
         let mapped = clock.map_or(0, |(frame, clock_at)| {
             event_frame(frame, clock_at, at, sample_rate, latency_frames)
         });
@@ -264,15 +301,17 @@ impl NoteForwarder {
         if consumed {
             return;
         }
-        self.router
-            .route(kind, target.get(), |(device, socket), kind| {
-                emit(ScheduledNote {
-                    frame,
-                    device,
-                    socket,
-                    kind,
+        for &kind in events.as_slice() {
+            self.router
+                .route(kind, target.get(), |(device, socket), kind| {
+                    emit(ScheduledNote {
+                        frame,
+                        device,
+                        socket,
+                        kind,
+                    });
                 });
-            });
+        }
     }
 }
 
@@ -292,7 +331,7 @@ impl PortInput {
     /// The input of port `port` feeding the engine through `link`.
     pub fn new(port: &str, link: MidiLink) -> Self {
         Self {
-            forwarder: NoteForwarder::new(),
+            forwarder: NoteForwarder::with_mpe(link.mpe),
             control_state: RunningStatus::default(),
             port: Arc::from(port),
             link,
@@ -494,6 +533,59 @@ mod tests {
                 },
             }]
         );
+    }
+
+    #[test]
+    fn an_mpe_port_routes_each_notes_expression_to_the_device_holding_the_note() {
+        use atomik_core::{ExprKind, ZoneSide};
+        let base = timing::now();
+        let mut f = NoteForwarder::with_mpe(Some(MpeZones::one(ZoneSide::Lower, 4)));
+        let t = NoteTarget::new();
+        t.set(Some((DeviceInstanceId(3), SocketId(9))));
+        // Two notes on two member channels: the first note-on goes to device 3.
+        let on1 = run(&mut f, &[0x91, 60, 100], base, Some((0, base)), &t);
+        assert_eq!(on1.len(), 1);
+        // The target moves; the second note plays on device 4.
+        t.set(Some((DeviceInstanceId(4), SocketId(9))));
+        run(&mut f, &[0x92, 64, 100], base, Some((0, base)), &t);
+        // A bend on channel 2 is key 60's tuning and follows the device that holds key 60; the
+        // frames are the clock's, all alike.
+        let bend = run(&mut f, &[0xE1, 0x00, 0x60], base, Some((0, base)), &t);
+        assert_eq!(
+            bend,
+            vec![ScheduledNote {
+                frame: 256,
+                device: DeviceInstanceId(3),
+                socket: SocketId(9),
+                kind: NoteKind::NoteExpr {
+                    key: 60,
+                    kind: ExprKind::Tuning,
+                    value: 24.0,
+                },
+            }]
+        );
+        let press = run(&mut f, &[0xD2, 127], base, Some((0, base)), &t);
+        assert_eq!(press[0].device, DeviceInstanceId(4));
+        assert_eq!(
+            press[0].kind,
+            NoteKind::NoteExpr {
+                key: 64,
+                kind: ExprKind::Pressure,
+                value: 1.0,
+            }
+        );
+        assert_eq!(f.mpe_zones(), Some(MpeZones::one(ZoneSide::Lower, 4)));
+    }
+
+    #[test]
+    fn a_port_that_is_not_mpe_ignores_the_channel() {
+        let base = timing::now();
+        let mut f = NoteForwarder::new();
+        let t = target(3);
+        run(&mut f, &[0x91, 60, 100], base, Some((0, base)), &t);
+        let bend = run(&mut f, &[0xE1, 0x00, 0x60], base, Some((0, base)), &t);
+        assert_eq!(bend[0].kind, NoteKind::PitchBend { value: 0.5 });
+        assert_eq!(f.mpe_zones(), None);
     }
 
     #[test]

@@ -765,3 +765,143 @@ fn controllers_with_notes_stay_in_the_clip_whatever_the_take_asks() {
     assert_eq!(done.clips.len(), 1);
     assert_eq!(done.clips[0].1.controllers.len(), 1);
 }
+
+// ------------------------------------------------------------------------------------ MPE
+
+fn expr(key: u8, kind: atomik_core::ExprKind, value: f32, frame: u64) -> RecordedNote {
+    RecordedNote {
+        device: DEV,
+        kind: NoteKind::NoteExpr { key, kind, value },
+        frame,
+    }
+}
+
+#[test]
+fn the_expression_of_a_held_note_is_recorded_with_the_note() {
+    use atomik_core::ExprKind;
+    let snap = snapshot(120.0);
+    let st = state(None);
+    let mut t = take(None);
+    let start = PPQ;
+    let events = [
+        on(60, frame_at(&snap, start, 0, 0)),
+        // The first values come with the note on, the rest while it is held.
+        expr(60, ExprKind::Tuning, 0.5, frame_at(&snap, start, 0, 0)),
+        expr(60, ExprKind::Pressure, 0.25, frame_at(&snap, start, 0, 0)),
+        expr(
+            60,
+            ExprKind::Tuning,
+            2.0,
+            frame_at(&snap, start + PPQ / 4, 0, 0),
+        ),
+        expr(
+            60,
+            ExprKind::Slide,
+            0.75,
+            frame_at(&snap, start + PPQ / 2, 0, 0),
+        ),
+        off(60, frame_at(&snap, start + PPQ, 0, 0)),
+        // A second note, never touched.
+        on(64, frame_at(&snap, 2 * PPQ, 0, 0)),
+        off(64, frame_at(&snap, 3 * PPQ, 0, 0)),
+        // Expression for a key that is not held belongs to no note.
+        expr(
+            60,
+            ExprKind::Tuning,
+            7.0,
+            frame_at(&snap, 3 * PPQ + 50, 0, 0),
+        ),
+    ];
+    feed(&mut t, &snap, &st, &events);
+    let clips = t.finish(
+        stop(&snap, &st, frame_at(&snap, BAR, 0, 0)),
+        InputQuantize::OFF,
+    );
+    let clip = &clips[0].1;
+    assert_eq!(notes(clip).len(), 2);
+    let e = clip
+        .midi
+        .expression_of(notes(clip)[0].tick, 60)
+        .expect("the first note has expression");
+    assert_eq!(e.pitch.len(), 2, "{e:?}");
+    assert_eq!(e.pitch[0].value, 0.5);
+    assert!(near(e.pitch[1].tick, PPQ / 4), "{}", e.pitch[1].tick);
+    assert_eq!(e.pitch[1].value, 2.0);
+    assert_eq!(e.pressure.len(), 1);
+    assert_eq!(e.timbre.len(), 1);
+    assert!(near(e.timbre[0].tick, PPQ / 2));
+    assert!(
+        clip.midi.expression_of(notes(clip)[1].tick, 64).is_none(),
+        "a note without expression gets no entry"
+    );
+    assert_eq!(clip.midi.expression.len(), 1);
+}
+
+#[test]
+fn input_quantize_moves_the_note_and_its_curves_together() {
+    use atomik_core::ExprKind;
+    let snap = snapshot(120.0);
+    let st = state(None);
+    let mut t = take(None);
+    let played = PPQ / 4 + 300;
+    let events = [
+        on(60, frame_at(&snap, played, 0, 0)),
+        expr(
+            60,
+            ExprKind::Pressure,
+            0.5,
+            frame_at(&snap, played + 40, 0, 0),
+        ),
+        off(60, frame_at(&snap, played + PPQ, 0, 0)),
+    ];
+    feed(&mut t, &snap, &st, &events);
+    let clips = t.finish(
+        stop(&snap, &st, frame_at(&snap, BAR, 0, 0)),
+        InputQuantize::SIXTEENTH,
+    );
+    let clip = &clips[0].1;
+    let n = notes(clip)[0];
+    assert_eq!(n.tick, PPQ / 4);
+    let e = clip
+        .midi
+        .expression_of(n.tick, 60)
+        .expect("moved with the note");
+    assert!(near(e.pressure[0].tick, 40));
+    assert!(clip.midi.check(atomik_model::MAX_TICK).is_ok());
+}
+
+#[test]
+fn a_loop_wrap_ends_the_expression_with_the_held_note() {
+    use atomik_core::ExprKind;
+    let snap = snapshot(120.0);
+    let lap = 2 * BAR;
+    let st = state(Some((0, lap)));
+    let mut t = take(Some((0, lap)));
+    let events = [
+        on(48, frame_at(&snap, lap - PPQ, 0, lap)),
+        expr(
+            48,
+            ExprKind::Tuning,
+            1.0,
+            frame_at(&snap, lap - PPQ / 2, 0, lap),
+        ),
+        // After the wrap: the note was cut at the loop end, this belongs to no note.
+        expr(48, ExprKind::Tuning, 9.0, frame_at(&snap, PPQ, 1, lap)),
+        off(48, frame_at(&snap, 2 * PPQ, 1, lap)),
+    ];
+    let mut st2 = st;
+    feed(&mut t, &snap, &st, &events[..2]);
+    st2.loop_count = 1;
+    feed(&mut t, &snap, &st2, &events[2..]);
+    let clips = t.finish(
+        stop(&snap, &st2, frame_at(&snap, 3 * PPQ, 1, lap)),
+        InputQuantize::OFF,
+    );
+    let first = &clips[0].1;
+    let e = first
+        .midi
+        .expression_of(notes(first)[0].tick, 48)
+        .expect("expression");
+    assert_eq!(e.pitch.len(), 1);
+    assert_eq!(e.pitch[0].value, 1.0);
+}

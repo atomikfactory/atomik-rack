@@ -51,16 +51,19 @@
 //! `<name> (end)` after a marker named `<name>` closes that marker into a range, which is how
 //! the export writes a range. Ticks are rescaled from the file's division with rounding.
 
-use atomik_core::PPQ;
+use atomik_core::mpe::MEMBER_BEND_RANGE;
+use atomik_core::{ChannelRole, MpeZones, PPQ};
 use atomik_midi_io::smf::{SmfError, SmfEvent, SmfFile, SmfMessage, SmfTrack, read};
 use atomik_model::midi_data::{MAX_PROGRAM_CHANGES, MAX_SYSEX_BYTES, MAX_SYSEX_EVENTS};
+use atomik_model::note_expression::MAX_EXPRESSION_POINTS;
 use atomik_model::song::{
-    AutomationPoint, Clip, ClipContent, ClipId, Curve, Lane, MAX_MARKER_NAME, MAX_TICK, MeterEvent,
-    Note, Song, TempoEvent, Track, bar_ticks, flatten_controllers, flatten_midi_data,
-    flatten_notes_with, flatten_track_notes,
+    AutomationPoint, Clip, ClipContent, ClipId, Curve, FlatExpression, Lane, MAX_MARKER_NAME,
+    MAX_TICK, MeterEvent, Note, Song, TempoEvent, Track, bar_ticks, flatten_controllers,
+    flatten_expression, flatten_midi_data, flatten_notes_with, flatten_track_notes,
 };
 use atomik_model::{
-    ControllerKind, ControllerLane, DeviceKey, MidiData, ProgramChange, SysexEvent,
+    ControllerKind, ControllerLane, DeviceKey, ExpressionKind, ExpressionPoint, MidiData,
+    NoteExpression, ProgramChange, SysexEvent,
 };
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -240,6 +243,15 @@ fn conductor_events(song: &Song) -> Vec<Timed> {
 /// Note-on and note-off events of flattened notes `(tick, length, key, velocity)` on `channel`,
 /// at `res` (each tick is a whole file tick; see the module docs for notes that get short).
 fn note_events(notes: &[(i64, i64, u8, f32)], channel: u8, res: MidiResolution) -> Vec<Timed> {
+    note_events_on(notes, &vec![channel; notes.len()], res)
+}
+
+/// [`note_events`] with a channel of its own for each note (`channels[i]` for `notes[i]`).
+fn note_events_on(
+    notes: &[(i64, i64, u8, f32)],
+    channels: &[u8],
+    res: MidiResolution,
+) -> Vec<Timed> {
     let d = res.divisor();
     let starts: Vec<i64> = notes.iter().map(|n| res.scale(n.0)).collect();
     // Overlapping notes of one key are cut at the next one's start.
@@ -269,7 +281,7 @@ fn note_events(notes: &[(i64, i64, u8, f32)], channel: u8, res: MidiResolution) 
             start * d,
             4,
             SmfMessage::NoteOn {
-                channel,
+                channel: channels[i],
                 key: n.2,
                 velocity: velocity7(n.3),
             },
@@ -278,11 +290,119 @@ fn note_events(notes: &[(i64, i64, u8, f32)], channel: u8, res: MidiResolution) 
             end * d,
             2,
             SmfMessage::NoteOff {
-                channel,
+                channel: channels[i],
                 key: n.2,
                 velocity: 0,
             },
         ));
+    }
+    out
+}
+
+/// The semitones a member channel's pitch bend spans each way in an exported MPE track (the MPE
+/// default, announced with RPN 0 on every member channel used).
+const MPE_BEND_RANGE: f32 = MEMBER_BEND_RANGE;
+
+/// The notes of an MPE track and their expression as events: an MPE Configuration Message (RPN 6
+/// on channel 1) and the bend range (RPN 0) of each member channel used at the start, every note
+/// on a member channel that is free when it starts (the one free longest; when none is free and
+/// all 15 are used, the one whose note ends first), and the curves of a note as pitch bend (the
+/// semitones over 48, 14 bit), channel pressure and CC 74 on its channel: the value at the start
+/// just before the note on, then each point, then the channel back to rest after the note off.
+fn mpe_events(
+    notes: &[(i64, i64, u8, f32)],
+    expression: &[FlatExpression],
+    res: MidiResolution,
+) -> Vec<Timed> {
+    // Channels, assigned in order of the starts (the notes are sorted by tick and key).
+    let mut busy_until: Vec<i64> = Vec::new();
+    let mut channels = Vec::with_capacity(notes.len());
+    for n in notes {
+        let free = (0..busy_until.len())
+            .filter(|&c| busy_until[c] <= n.0)
+            .min_by_key(|&c| busy_until[c]);
+        let c = match free {
+            Some(c) => c,
+            None if busy_until.len() < usize::from(atomik_core::mpe::MAX_MEMBERS) => {
+                busy_until.push(0);
+                busy_until.len() - 1
+            }
+            None => (0..busy_until.len())
+                .min_by_key(|&c| busy_until[c])
+                .unwrap_or(0),
+        };
+        busy_until[c] = n.0 + n.1.max(1);
+        channels.push(1 + c as u8);
+    }
+    let members = busy_until.len().max(1) as u8;
+    let mut out = Vec::new();
+    let controller = |channel: u8, controller: u8, value: u8| SmfMessage::Controller {
+        channel,
+        controller,
+        value,
+    };
+    // The announcement: the zone, then the bend range of each member channel used.
+    for (c, v) in [(101, 0), (100, 6), (6, members)] {
+        out.push(timed(0, 1, controller(0, c, v)));
+    }
+    for ch in 1..=members {
+        for (c, v) in [
+            (101, 0),
+            (100, 0),
+            (6, MPE_BEND_RANGE as u8),
+            (38, 0),
+            (101, 127),
+            (100, 127),
+        ] {
+            out.push(timed(0, 1, controller(ch, c, v)));
+        }
+    }
+    out.extend(note_events_on(notes, &channels, res));
+    let d = res.divisor();
+    for (i, n) in notes.iter().enumerate() {
+        let Some(x) = expression.iter().find(|x| (x.tick, x.key) == (n.0, n.2)) else {
+            continue;
+        };
+        let channel = channels[i];
+        let start = res.scale(n.0);
+        let end = res.scale(n.0 + n.1.max(1)).max(start + 1);
+        type Make = fn(u8, f32) -> SmfMessage;
+        let curves: [(&[(i64, f32)], Make); 3] = [
+            (&x.pitch, |channel, v| SmfMessage::PitchBend {
+                channel,
+                value: bend14(v / MPE_BEND_RANGE),
+            }),
+            (&x.pressure, |channel, v| SmfMessage::ChannelPressure {
+                channel,
+                pressure: level7(v),
+            }),
+            (&x.timbre, |channel, v| SmfMessage::Controller {
+                channel,
+                controller: 74,
+                value: level7(v),
+            }),
+        ];
+        for (points, make) in curves {
+            let Some(first) = points.first() else {
+                continue;
+            };
+            // The value a note starts with, sent before its note on.
+            out.push(timed(start * d, 3, make(channel, first.1)));
+            let mut last = make(channel, first.1);
+            for &(tick, value) in points.iter().filter(|p| p.0 > n.0) {
+                let at = res.scale(tick);
+                if at >= end {
+                    break;
+                }
+                let message = make(channel, value);
+                if message != last {
+                    out.push(timed(at * d, 3, message.clone()));
+                    last = message;
+                }
+            }
+            // Back to rest once the note has ended, for the next note on the channel.
+            out.push(timed(end * d, 3, make(channel, 0.0)));
+        }
     }
     out
 }
@@ -369,7 +489,17 @@ fn play_events(track: &Track, channel: u8, song: Option<&Song>, res: MidiResolut
         Some(song) => flatten_track_notes(song, track),
         None => flatten_notes_with(track, false),
     };
-    let mut out = note_events(&notes, channel, res);
+    let expression = match song {
+        Some(song) => flatten_expression(song, track),
+        None => flatten_expression(&atomik_model::empty_song(120.0), track),
+    };
+    // A track with per-note expression is written as MPE: its notes on the member channels of a
+    // lower zone, everything else on the zone's master channel (channel 1).
+    let (mut out, channel) = if expression.is_empty() {
+        (note_events(&notes, channel, res), channel)
+    } else {
+        (mpe_events(&notes, &expression, res), 0)
+    };
     out.extend(controller_events(&flatten_controllers(track), channel));
     let extra = flatten_midi_data(track);
     for p in extra.programs {
@@ -544,6 +674,77 @@ struct Channel {
     /// The bank select bytes (`CC 0`, `CC 32`) last seen, with their tick: a program change at
     /// that tick takes them.
     bank: Option<(i64, Option<u8>, Option<u8>)>,
+    /// The expression of the notes of an MPE zone's member channels, by note start and key.
+    expr: BTreeMap<(i64, u8), Curves>,
+}
+
+/// The expression points of one imported note: `(ticks after the note start, value)` in file
+/// order.
+#[derive(Default, Clone)]
+struct Curves {
+    pitch: Vec<(i64, f32)>,
+    pressure: Vec<(i64, f32)>,
+    timbre: Vec<(i64, f32)>,
+}
+
+/// What an MPE member channel holds while a file is read.
+#[derive(Clone, Copy)]
+struct Member {
+    /// The note sounding on the channel: key and start tick.
+    note: Option<(u8, i64)>,
+    bend: f32,
+    pressure: f32,
+    slide: Option<f32>,
+    /// The registered parameter the select controllers name, and the bend range entered for it.
+    rpn: [u8; 2],
+    semitones: u8,
+    cents: u8,
+}
+
+impl Member {
+    const fn new() -> Self {
+        Self {
+            note: None,
+            bend: 0.0,
+            pressure: 0.0,
+            slide: None,
+            rpn: [127, 127],
+            semitones: MEMBER_BEND_RANGE as u8,
+            cents: 0,
+        }
+    }
+
+    fn range(&self) -> f32 {
+        f32::from(self.semitones) + f32::from(self.cents) * 0.01
+    }
+}
+
+/// The MPE zones a track announces: its MPE Configuration Messages (RPN 6 on a master channel),
+/// applied in file order.
+fn announced_zones(events: &[SmfEvent]) -> MpeZones {
+    let mut zones = MpeZones::default();
+    let mut rpn = [[127u8; 2]; 16];
+    for e in events {
+        let SmfMessage::Controller {
+            channel,
+            controller,
+            value,
+        } = &e.message
+        else {
+            continue;
+        };
+        let r = &mut rpn[usize::from(*channel & 0x0F)];
+        match *controller {
+            101 => r[0] = *value,
+            100 => r[1] = *value,
+            98 | 99 => *r = [127, 127],
+            6 if *r == [0, 6] => {
+                zones.config(*channel, *value);
+            }
+            _ => {}
+        }
+    }
+    zones
 }
 
 impl Channel {
@@ -646,10 +847,28 @@ impl Channel {
             .into_iter()
             .map(|(kind, points)| ControllerLane::new(kind, points))
             .collect();
+        let expression = self
+            .expr
+            .into_iter()
+            .filter(|(at, _)| notes.binary_search_by_key(at, |n| (n.tick, n.key)).is_ok())
+            .map(|((tick, key), c)| {
+                let mut e = NoteExpression::new(tick, key);
+                let curve = |raw: Vec<(i64, f32)>, kind: ExpressionKind| {
+                    raw.into_iter()
+                        .map(|(t, v)| ExpressionPoint::new(t, kind.clamp(v)))
+                        .take(MAX_EXPRESSION_POINTS)
+                        .collect()
+                };
+                e.pitch = curve(c.pitch, ExpressionKind::Pitch);
+                e.pressure = curve(c.pressure, ExpressionKind::Pressure);
+                e.timbre = curve(c.timbre, ExpressionKind::Timbre);
+                e
+            })
+            .collect();
         let programs = MidiData {
             programs: self.programs,
             sysex: Vec::new(),
-            ..Default::default()
+            expression,
         };
         Some((notes, lanes, programs))
     }
@@ -703,8 +922,20 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
         let mut channels: BTreeMap<u8, Channel> = BTreeMap::new();
         let mut sysex: Vec<SysexEvent> = Vec::new();
         let mut title = None;
+        // An MPE track: the zones it announces, and what each member channel holds.
+        let zones = announced_zones(&t.events);
+        let mut members = [Member::new(); 16];
         for e in &t.events {
             let tick = model_tick(e.tick, ppq);
+            if !zones.is_empty()
+                && member_message(&zones, &e.message, tick, &mut channels, &mut members)
+            {
+                continue;
+            }
+            let eff = |channel: u8| match zones.role(channel) {
+                ChannelRole::Member(side) => side.master(),
+                _ => channel,
+            };
             match &e.message {
                 SmfMessage::NoteOn {
                     channel,
@@ -718,13 +949,13 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
                 }
                 SmfMessage::NoteOn { channel, key, .. }
                 | SmfMessage::NoteOff { channel, key, .. } => {
-                    channels.entry(*channel).or_default().close(*key, tick);
+                    channels.entry(eff(*channel)).or_default().close(*key, tick);
                 }
                 SmfMessage::PolyPressure {
                     channel,
                     key,
                     pressure,
-                } => channels.entry(*channel).or_default().point(
+                } => channels.entry(eff(*channel)).or_default().point(
                     ControllerKind::PolyPressure(*key),
                     tick,
                     level(*pressure),
@@ -734,7 +965,7 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
                     controller,
                     value,
                 } if !skipped_controller(*controller) => {
-                    let c = channels.entry(*channel).or_default();
+                    let c = channels.entry(eff(*channel)).or_default();
                     if matches!(*controller, 0 | 32) {
                         c.bank_byte(*controller, tick, *value);
                     }
@@ -745,7 +976,7 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
                     .or_default()
                     .point(ControllerKind::ChannelPressure, tick, level(*pressure)),
                 SmfMessage::PitchBend { channel, value } => {
-                    channels.entry(*channel).or_default().point(
+                    channels.entry(eff(*channel)).or_default().point(
                         ControllerKind::PitchBend,
                         tick,
                         ((f32::from(*value) - 8192.0) / 8192.0).clamp(-1.0, 1.0),
@@ -876,6 +1107,93 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
         ranges,
         skipped,
     })
+}
+
+/// Handles the messages of a track that belong to an MPE member channel's own state: its notes
+/// (they join the notes of the zone's master channel), the bend, pressure and CC 74 that are those
+/// notes' expression, and the registered parameters of the channel. `true` when `message` was one
+/// of them (anything else is read as on the master channel).
+fn member_message(
+    zones: &MpeZones,
+    message: &SmfMessage,
+    tick: i64,
+    channels: &mut BTreeMap<u8, Channel>,
+    members: &mut [Member; 16],
+) -> bool {
+    let channel = match message {
+        SmfMessage::NoteOn { channel, .. }
+        | SmfMessage::NoteOff { channel, .. }
+        | SmfMessage::PitchBend { channel, .. }
+        | SmfMessage::ChannelPressure { channel, .. }
+        | SmfMessage::Controller { channel, .. } => *channel,
+        _ => return false,
+    };
+    let ChannelRole::Member(side) = zones.role(channel) else {
+        return false;
+    };
+    let master = channels.entry(side.master()).or_default();
+    let m = &mut members[usize::from(channel & 0x0F)];
+    // The curves of the note sounding on the channel (the point is `tick` after its start).
+    let push = |m: &Member,
+                master: &mut Channel,
+                pick: fn(&mut Curves) -> &mut Vec<(i64, f32)>,
+                v: f32| {
+        if let Some((key, start)) = m.note {
+            pick(master.expr.entry((start, key)).or_default()).push((tick - start, v));
+        }
+    };
+    match message {
+        SmfMessage::NoteOn { key, velocity, .. } if *velocity > 0 => {
+            master.open_note(*key, tick, level(*velocity));
+            m.note = Some((*key, tick));
+            let (bend, range) = (m.bend, m.range());
+            if bend != 0.0 {
+                push(m, master, |c| &mut c.pitch, bend * range);
+            }
+            if m.pressure != 0.0 {
+                push(m, master, |c| &mut c.pressure, m.pressure);
+            }
+            if let Some(slide) = m.slide.filter(|s| *s != 0.0) {
+                push(m, master, |c| &mut c.timbre, slide);
+            }
+        }
+        SmfMessage::NoteOn { key, .. } | SmfMessage::NoteOff { key, .. } => {
+            master.close(*key, tick);
+            if m.note.is_some_and(|(k, _)| k == *key) {
+                m.note = None;
+            }
+        }
+        SmfMessage::PitchBend { value, .. } => {
+            m.bend = ((f32::from(*value) - 8192.0) / 8192.0).clamp(-1.0, 1.0);
+            let v = m.bend * m.range();
+            push(m, master, |c| &mut c.pitch, v);
+        }
+        SmfMessage::ChannelPressure { pressure, .. } => {
+            m.pressure = level(*pressure);
+            let v = m.pressure;
+            push(m, master, |c| &mut c.pressure, v);
+        }
+        SmfMessage::Controller {
+            controller, value, ..
+        } => match *controller {
+            74 => {
+                let v = level(*value);
+                m.slide = Some(v);
+                push(m, master, |c| &mut c.timbre, v);
+            }
+            101 => m.rpn[0] = *value,
+            100 => m.rpn[1] = *value,
+            98 | 99 => m.rpn = [127, 127],
+            6 if m.rpn == [0, 0] => m.semitones = (*value).min(96),
+            38 if m.rpn == [0, 0] => m.cents = (*value).min(99),
+            // Data entry for a registered parameter other than the bend range, and the other
+            // controllers: the zone's master channel takes them.
+            6 | 38 => {}
+            _ => return false,
+        },
+        _ => return false,
+    }
+    true
 }
 
 /// The suffix the export gives the marker that ends a range.

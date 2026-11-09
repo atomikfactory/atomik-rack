@@ -14,7 +14,7 @@ use crate::audio_record::record_offset_frames;
 use crate::midi::{MidiConnection, MidiLink};
 use crate::midi_control::ControlHub;
 use crate::record::{RecordTap, RecordedNote};
-use crate::settings::{AudioSettings, HostChoice, LastGood, MidiInputRole};
+use crate::settings::{AudioSettings, HostChoice, LastGood, MidiInputRole, MpeSetting};
 use crate::sink::EngineSink;
 use crate::status::{AudioStatus, SyncStatus};
 use crate::target::{NoteTarget, Target};
@@ -302,6 +302,8 @@ struct OpenInput<M> {
     wanted: String,
     /// What the port was opened as.
     role: MidiInputRole,
+    /// The MPE mode it was opened with.
+    mpe: MpeSetting,
     port: M,
 }
 
@@ -798,17 +800,16 @@ impl<B: AudioBackend> LiveSession<B> {
         let Some(r) = &mut self.running else {
             return;
         };
-        let wanted: Vec<(String, MidiInputRole)> = self
+        let wanted: Vec<(String, MidiInputRole, MpeSetting)> = self
             .settings
             .enabled_midi_inputs()
-            .map(|i| (i.name.clone(), i.role))
+            .map(|i| (i.name.clone(), i.role, i.mpe))
             .collect();
         let mut keep = Vec::with_capacity(r.midi.len());
         for open in std::mem::take(&mut r.midi) {
-            if wanted
-                .iter()
-                .any(|(name, role)| *name == open.wanted && *role == open.role)
-            {
+            if wanted.iter().any(|(name, role, mpe)| {
+                *name == open.wanted && *role == open.role && *mpe == open.mpe
+            }) {
                 keep.push(open);
             } else {
                 open.port.close();
@@ -817,7 +818,7 @@ impl<B: AudioBackend> LiveSession<B> {
         let mut errors = Vec::new();
         let listed = self.backend.list_midi().ok();
         if let Some(link) = &r.link {
-            for (name, role) in &wanted {
+            for (name, role, mpe) in &wanted {
                 if keep.iter().any(|o| o.wanted == *name) {
                     continue;
                 }
@@ -829,11 +830,14 @@ impl<B: AudioBackend> LiveSession<B> {
                 if full.is_some_and(|f| keep.iter().any(|o| o.port.port_name() == f)) {
                     continue;
                 }
-                let link = link.with_plays_notes(*role == MidiInputRole::Keyboard);
+                let link = link
+                    .with_plays_notes(*role == MidiInputRole::Keyboard)
+                    .with_mpe(mpe.zones());
                 match self.backend.open_midi(name, link) {
                     Ok(port) => keep.push(OpenInput {
                         wanted: name.clone(),
                         role: *role,
+                        mpe: *mpe,
                         port,
                     }),
                     Err(e) => errors.push(e.to_string()),
@@ -841,7 +845,7 @@ impl<B: AudioBackend> LiveSession<B> {
             }
         }
         // Settings order, so the status lists the ports the way the dialog does.
-        keep.sort_by_key(|o| wanted.iter().position(|(name, _)| *name == o.wanted));
+        keep.sort_by_key(|o| wanted.iter().position(|(name, _, _)| *name == o.wanted));
         r.midi = keep;
         self.status.midi_port = (!r.midi.is_empty()).then(|| {
             r.midi

@@ -20,12 +20,15 @@
 //! - [`clock`] turns the realtime messages of a MIDI clock (Clock, Start, Continue, Stop, Song
 //!   Position Pointer) into the state the song player follows.
 //! - [`mmc`] reads MIDI Machine Control (play, stop, record, locate) from SysEx.
+//! - [`mpe`] turns the messages of an MPE controller (one note per channel) into per-note
+//!   expression events.
 //! - [`ports`] opens raw input (SysEx included) and output ports for control surfaces.
 //! - [`surface`] holds the control-surface drivers (pure: bytes in, actions out, bytes out).
 //! - [`smf`] reads and writes Standard MIDI Files (format 0 and 1), pure bytes in and out.
 
 pub mod clock;
 pub mod mmc;
+pub mod mpe;
 pub mod out;
 pub mod ports;
 pub mod smf;
@@ -69,6 +72,12 @@ pub struct RunningStatus {
 /// channels reach the focused or armed instrument. Never panics.
 pub fn parse(bytes: &[u8], state: &mut RunningStatus) -> Option<NoteKind> {
     let (status, d0, d1) = frame(bytes, state)?;
+    kind_of(status, d0, d1)
+}
+
+/// The note event of a framed message (`parse` without the framing): `None` for a message the
+/// note path does not use.
+pub(crate) fn kind_of(status: u8, d0: u8, d1: u8) -> Option<NoteKind> {
     match status & 0xF0 {
         0xA0 => Some(NoteKind::PolyPressure {
             key: d0,
@@ -118,7 +127,7 @@ pub fn parse_message(bytes: &[u8], state: &mut RunningStatus) -> Option<ChannelM
 
 /// Frames one message: its status byte (running status applied) and two data bytes (the second
 /// is 0 for the one-byte messages). `None` when malformed or not a channel message.
-fn frame(bytes: &[u8], state: &mut RunningStatus) -> Option<(u8, u8, u8)> {
+pub(crate) fn frame(bytes: &[u8], state: &mut RunningStatus) -> Option<(u8, u8, u8)> {
     let mut status = 0u8;
     let mut data = [0u8; 2];
     let mut len = 0usize;

@@ -1514,3 +1514,234 @@ fn the_tracks_own_lanes_move_with_the_import_start_and_merge_into_a_single_clip(
     assert_eq!(m.controllers.len(), 1);
     assert_eq!(m.controllers[0].kind, ControllerKind::PitchBend);
 }
+
+// ------------------------------------------------------------------------------------ MPE
+
+fn exp_point(tick: i64, value: f32) -> atomik_model::ExpressionPoint {
+    atomik_model::ExpressionPoint::new(tick, value)
+}
+
+/// Three notes, two of them at once, two with expression.
+fn mpe_clip() -> Clip {
+    let mut first = atomik_model::NoteExpression::new(0, 60);
+    first.pitch = vec![
+        exp_point(0, 0.5),
+        exp_point(PPQ / 2, 2.0),
+        exp_point(PPQ, -1.0),
+    ];
+    first.pressure = vec![exp_point(0, vel(32)), exp_point(PPQ / 2, vel(100))];
+    first.timbre = vec![exp_point(0, vel(64))];
+    let mut third = atomik_model::NoteExpression::new(2 * PPQ, 67);
+    third.pitch = vec![exp_point(0, -3.0)];
+    let mut c = clip(
+        0,
+        BAR,
+        vec![
+            note(0, 2 * PPQ, 60, 100),
+            note(PPQ / 2, PPQ, 64, 90),
+            note(2 * PPQ, PPQ, 67, 80),
+        ],
+        Vec::new(),
+    );
+    c.midi = MidiData {
+        expression: vec![first, third],
+        ..Default::default()
+    }
+    .into();
+    c
+}
+
+#[test]
+fn a_clip_with_expression_is_written_as_mpe_and_read_back_whole() {
+    let song = empty_song(120.0);
+    let original = mpe_clip();
+    let bytes = clip_file(&song, &original, "Strip", MidiResolution::Native);
+    let events = events_of(&bytes);
+    // The zone is announced on channel 1: RPN 6 with the two member channels the notes need.
+    let controller = |c: u8, n: u8, v: u8| SmfMessage::Controller {
+        channel: c,
+        controller: n,
+        value: v,
+    };
+    assert!(events.iter().any(|e| e.message == controller(0, 6, 2)));
+    // The notes sit on member channels 2 and 3 (indexes 1 and 2), never on the master.
+    let channels: Vec<u8> = events
+        .iter()
+        .filter_map(|e| match e.message {
+            SmfMessage::NoteOn { channel, .. } => Some(channel),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(channels.len(), 3);
+    assert!(channels.iter().all(|c| (1..=2).contains(c)), "{channels:?}");
+    assert_ne!(channels[0], channels[1], "two notes at once, two channels");
+    // The first note's bend: half a semitone before the note on, 2 semitones half a beat in.
+    let first_on = events
+        .iter()
+        .position(|e| matches!(e.message, SmfMessage::NoteOn { key: 60, .. }))
+        .unwrap();
+    let bend_before = events[..first_on]
+        .iter()
+        .rev()
+        .find_map(|e| match e.message {
+            SmfMessage::PitchBend { channel, value } if channel == channels[0] => Some(value),
+            _ => None,
+        });
+    assert_eq!(bend_before, Some(bend14(0.5 / 48.0)));
+
+    let imported = read_song(&bytes).unwrap();
+    assert_eq!(
+        imported.tracks.len(),
+        1,
+        "the member channels make one track"
+    );
+    let track = &imported.tracks[0];
+    assert_eq!(track.notes, notes_of(&original));
+    let kept = &track.midi.expression;
+    let want = &original.midi.expression;
+    assert_eq!(kept.len(), want.len());
+    for (k, w) in kept.iter().zip(want) {
+        assert_eq!((k.tick, k.key), (w.tick, w.key));
+        // A 14-bit bend and 7-bit levels: the values come back within their steps.
+        assert_eq!(k.pitch.len(), w.pitch.len(), "{k:?}");
+        for (a, b) in k.pitch.iter().zip(&w.pitch) {
+            assert_eq!(a.tick, b.tick);
+            assert!((a.value - b.value).abs() < 0.01, "{a:?} {b:?}");
+        }
+        assert_eq!(k.pressure.len(), w.pressure.len());
+        for (a, b) in k.pressure.iter().zip(&w.pressure) {
+            assert!((a.value - b.value).abs() < 0.01);
+        }
+        assert_eq!(k.timbre.len(), w.timbre.len());
+    }
+}
+
+#[test]
+fn a_clip_without_expression_is_written_exactly_as_before() {
+    let song = empty_song(120.0);
+    let bytes = clip_file(&song, &busy_clip(), "Busy", MidiResolution::Native);
+    let events = events_of(&bytes);
+    assert!(events.iter().all(|e| !matches!(
+        e.message,
+        SmfMessage::Controller {
+            controller: 101 | 100,
+            ..
+        }
+    )));
+    assert!(
+        events
+            .iter()
+            .filter_map(|e| match e.message {
+                SmfMessage::NoteOn { channel, .. } => Some(channel),
+                _ => None,
+            })
+            .all(|c| c == 0)
+    );
+}
+
+#[test]
+fn an_mpe_file_from_a_controller_becomes_notes_with_their_own_expression() {
+    // Lower zone of four members announced on channel 1; two notes on channels 2 and 3.
+    let cc = |ch: u8, n: u8, v: u8| {
+        ev(
+            0,
+            SmfMessage::Controller {
+                channel: ch,
+                controller: n,
+                value: v,
+            },
+        )
+    };
+    let bytes = smf(
+        480,
+        vec![vec![
+            cc(0, 101, 0),
+            cc(0, 100, 6),
+            cc(0, 6, 4),
+            // A bend range of 12 semitones on channel 2.
+            cc(1, 101, 0),
+            cc(1, 100, 0),
+            cc(1, 6, 12),
+            ev(
+                0,
+                SmfMessage::PitchBend {
+                    channel: 1,
+                    value: 8192 + 4096,
+                },
+            ),
+            ev(0, on(1, 60, 100)),
+            ev(0, on(2, 64, 100)),
+            ev(
+                120,
+                SmfMessage::ChannelPressure {
+                    channel: 1,
+                    pressure: 127,
+                },
+            ),
+            ev(
+                120,
+                SmfMessage::PitchBend {
+                    channel: 2,
+                    value: 8192 + 8191,
+                },
+            ),
+            ev(240, off(1, 60)),
+            ev(480, off(2, 64)),
+            // A wheel on the master channel is the track's own controller.
+            ev(
+                10,
+                SmfMessage::Controller {
+                    channel: 0,
+                    controller: 1,
+                    value: 64,
+                },
+            ),
+        ]],
+    );
+    let song = read_song(&bytes).unwrap();
+    assert_eq!(song.tracks.len(), 1);
+    let t = &song.tracks[0];
+    assert_eq!(t.notes.len(), 2);
+    let e60 = t.midi.expression.iter().find(|e| e.key == 60).unwrap();
+    // The first bend (half the range of 12 semitones: 6) comes with the note, pressure at the
+    // eighth of a beat after it.
+    assert!((e60.pitch[0].value - 6.0).abs() < 0.01, "{:?}", e60.pitch);
+    assert_eq!(e60.pitch[0].tick, 0);
+    assert_eq!(e60.pressure[0].tick, 120 * (PPQ / 480));
+    assert_eq!(e60.pressure[0].value, 1.0);
+    // Channel 3 keeps the 48 semitones range: nearly all of it.
+    let e64 = t.midi.expression.iter().find(|e| e.key == 64).unwrap();
+    assert!((e64.pitch[0].value - 48.0 * 8191.0 / 8192.0).abs() < 0.01);
+    // The master channel's controller is a lane of the track, not expression.
+    assert!(
+        t.controllers
+            .iter()
+            .any(|l| l.kind == ControllerKind::Cc(1))
+    );
+}
+
+#[test]
+fn a_file_without_an_mpe_announcement_reads_the_bend_as_a_lane() {
+    let bytes = smf(
+        480,
+        vec![vec![
+            ev(0, on(1, 60, 100)),
+            ev(
+                10,
+                SmfMessage::PitchBend {
+                    channel: 1,
+                    value: 12000,
+                },
+            ),
+            ev(240, off(1, 60)),
+        ]],
+    );
+    let song = read_song(&bytes).unwrap();
+    assert!(song.tracks[0].midi.expression.is_empty());
+    assert!(
+        song.tracks[0]
+            .controllers
+            .iter()
+            .any(|l| l.kind == ControllerKind::PitchBend)
+    );
+}

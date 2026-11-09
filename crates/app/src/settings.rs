@@ -18,7 +18,8 @@
 //!   "buffer_frames": 256,
 //!   "midi_inputs": [
 //!     { "name": "Example Keyboard", "enabled": true, "role": "keyboard" },
-//!     { "name": "Example Pads", "enabled": true, "role": "mapping" }
+//!     { "name": "Example Pads", "enabled": true, "role": "mapping" },
+//!     { "name": "Example Strip", "mpe": { "enabled": true, "side": "lower", "members": 15 } }
 //!   ],
 //!   "workers": 2,
 //!   "workers_auto": true,
@@ -46,7 +47,10 @@
 //! Every field is optional (missing fields take their defaults; unknown fields are ignored).
 //! `output_device: null` is the host's default output, `midi_inputs: []` is no MIDI input (every
 //! enabled port is open at once; an older file with one `midi_input` name loads as that input,
-//! enabled, and is saved in the new form),
+//! enabled, and is saved in the new form; an input with `mpe.enabled` plays MPE: one note per
+//! channel, the pitch bend, pressure and CC 74 of a member channel become that note's expression,
+//! in the zone `side` (`lower` or `upper`) with `members` member channels until the controller
+//! sends an MPE Configuration Message, and the key is left out of a file while it is the default),
 //! `workers_auto: true` starts one worker per physical core but the audio thread's own (at most 8)
 //! and ignores `workers`; a file with `workers` and no `workers_auto` keeps its count,
 //! `worker_linger_spins: 0` is the engine default. `input_device: null` is the device named like
@@ -324,6 +328,113 @@ impl MidiInputRole {
     }
 }
 
+/// Which end of the channels an MPE zone sits at (see [`atomik_core::mpe`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MpeSide {
+    /// Master on channel 1, members after it.
+    #[default]
+    Lower,
+    /// Master on channel 16, members before it.
+    Upper,
+}
+
+/// The zones a click on an MPE input cycles through: the side and the member channel count.
+pub const MPE_ZONE_CHOICES: [(MpeSide, u8); 6] = [
+    (MpeSide::Lower, 15),
+    (MpeSide::Lower, 7),
+    (MpeSide::Lower, 4),
+    (MpeSide::Upper, 15),
+    (MpeSide::Upper, 7),
+    (MpeSide::Upper, 4),
+];
+
+/// Whether an input plays MPE (one note per channel, per-note expression) and the zone it starts
+/// with. A controller that sends an MPE Configuration Message replaces the zone while it is
+/// connected; the zone here is the one set by hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MpeSetting {
+    /// MPE mode.
+    pub enabled: bool,
+    /// The zone set by hand.
+    pub side: MpeSide,
+    /// Member channels of the zone set by hand, `1..=15`.
+    pub members: u8,
+}
+
+impl Default for MpeSetting {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            side: MpeSide::Lower,
+            members: 15,
+        }
+    }
+}
+
+impl MpeSetting {
+    /// True for a setting that is the default (not saved).
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The zones to open the input with: `None` when MPE mode is off.
+    pub fn zones(&self) -> Option<atomik_core::MpeZones> {
+        self.enabled.then(|| {
+            atomik_core::MpeZones::one(
+                match self.side {
+                    MpeSide::Lower => atomik_core::ZoneSide::Lower,
+                    MpeSide::Upper => atomik_core::ZoneSide::Upper,
+                },
+                self.members.clamp(1, atomik_core::mpe::MAX_MEMBERS),
+            )
+        })
+    }
+
+    /// The next setting in the click cycle: off, then each of [`MPE_ZONE_CHOICES`], then off
+    /// again (a zone that is none of them, from a file, goes to off).
+    pub fn cycled(self) -> Self {
+        if !self.enabled {
+            let (side, members) = MPE_ZONE_CHOICES[0];
+            return Self {
+                enabled: true,
+                side,
+                members,
+            };
+        }
+        let at = MPE_ZONE_CHOICES
+            .iter()
+            .position(|c| *c == (self.side, self.members));
+        match at {
+            Some(i) if i + 1 < MPE_ZONE_CHOICES.len() => {
+                let (side, members) = MPE_ZONE_CHOICES[i + 1];
+                Self {
+                    enabled: true,
+                    side,
+                    members,
+                }
+            }
+            _ => Self {
+                enabled: false,
+                ..self
+            },
+        }
+    }
+
+    /// How the setting reads in the dialog: `off`, or the zone.
+    pub fn label(&self) -> String {
+        if !self.enabled {
+            return "off".to_owned();
+        }
+        let side = match self.side {
+            MpeSide::Lower => "lower",
+            MpeSide::Upper => "upper",
+        };
+        format!("{side} zone, {} member channels", self.members)
+    }
+}
+
 /// One MIDI input port of the settings: its name, whether it is open, and what it is for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -334,6 +445,9 @@ pub struct MidiInputSetting {
     pub enabled: bool,
     /// What the port is for.
     pub role: MidiInputRole,
+    /// MPE mode of the port (one note per channel, per-note expression).
+    #[serde(skip_serializing_if = "MpeSetting::is_default")]
+    pub mpe: MpeSetting,
 }
 
 impl Default for MidiInputSetting {
@@ -342,6 +456,7 @@ impl Default for MidiInputSetting {
             name: String::new(),
             enabled: true,
             role: MidiInputRole::Keyboard,
+            mpe: MpeSetting::default(),
         }
     }
 }
@@ -726,6 +841,14 @@ impl AudioSettings {
             Some(input) => input.enabled = enabled,
             None if enabled => self.midi_inputs.push(MidiInputSetting::enabled(name)),
             None => {}
+        }
+    }
+
+    /// Steps the MPE setting of the port `name` through off and the zones (see
+    /// [`MpeSetting::cycled`]); a port that is not listed is left alone.
+    pub fn cycle_midi_input_mpe(&mut self, name: &str) {
+        if let Some(input) = self.midi_inputs.iter_mut().find(|i| i.name == name) {
+            input.mpe = input.mpe.cycled();
         }
     }
 
@@ -1272,6 +1395,7 @@ mod tests {
                 name: "Example Keyboard".into(),
                 enabled: true,
                 role: MidiInputRole::Keyboard,
+                ..Default::default()
             }]
         );
         assert_eq!(s.buffer_frames, 128);
@@ -1312,6 +1436,7 @@ mod tests {
                     name: "Pads".into(),
                     enabled: false,
                     role: MidiInputRole::Mapping,
+                    ..Default::default()
                 },
             ],
             "a repeated or empty name is dropped, the stale single name is ignored"
@@ -1319,6 +1444,48 @@ mod tests {
         let names: Vec<&str> = s.enabled_midi_inputs().map(|i| i.name.as_str()).collect();
         assert_eq!(names, ["Keys"]);
         assert_eq!(AudioSettings::from_json(&s.to_json()).unwrap(), s);
+    }
+
+    #[test]
+    fn the_mpe_mode_of_an_input_cycles_saves_and_stays_out_of_a_file_while_off() {
+        let mut s = AudioSettings::default();
+        s.set_midi_input_enabled("Strip", true);
+        assert!(!s.to_json().contains("mpe"), "{}", s.to_json());
+        let mut seen = Vec::new();
+        for _ in 0..7 {
+            s.cycle_midi_input_mpe("Strip");
+            seen.push(s.midi_inputs[0].mpe.label());
+        }
+        assert_eq!(
+            seen[..],
+            [
+                "lower zone, 15 member channels",
+                "lower zone, 7 member channels",
+                "lower zone, 4 member channels",
+                "upper zone, 15 member channels",
+                "upper zone, 7 member channels",
+                "upper zone, 4 member channels",
+                "off",
+            ]
+        );
+        // Off again keeps the zone, and a zone other than the choices goes to off.
+        assert_eq!(s.midi_inputs[0].mpe.zones(), None);
+        s.cycle_midi_input_mpe("Strip");
+        let saved = s.to_json();
+        assert!(saved.contains("\"mpe\""), "{saved}");
+        let back = AudioSettings::from_json(&saved).unwrap();
+        assert_eq!(back, s);
+        assert!(back.midi_inputs[0].mpe.zones().is_some());
+        let odd =
+            r#"{ "midi_inputs": [ { "name": "A", "mpe": { "enabled": true, "members": 9 } } ] }"#;
+        let odd = AudioSettings::from_json(odd).unwrap();
+        assert_eq!(odd.midi_inputs[0].mpe.members, 9);
+        let mut odd = odd;
+        odd.cycle_midi_input_mpe("A");
+        assert!(!odd.midi_inputs[0].mpe.enabled);
+        // An old file has no mpe key and loads with MPE off.
+        let old = AudioSettings::from_json(r#"{ "midi_inputs": [ { "name": "A" } ] }"#).unwrap();
+        assert!(old.midi_inputs[0].mpe.is_default());
     }
 
     #[test]

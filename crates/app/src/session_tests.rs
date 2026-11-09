@@ -427,6 +427,7 @@ fn inputs(entries: &[(&str, bool, MidiInputRole)]) -> Vec<MidiInputSetting> {
             name: (*name).into(),
             enabled: *enabled,
             role: *role,
+            ..Default::default()
         })
         .collect()
 }
