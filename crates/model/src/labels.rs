@@ -13,13 +13,37 @@ use std::collections::VecDeque;
 /// The name of a step whose command has no entry in the table.
 pub const DEFAULT_LABEL: &str = "Edit";
 
+/// One step of the history as the history list shows it: its name and a stamp that identifies
+/// it. Stamps rise with every step the documents of the process record (a step keeps its stamp
+/// through undo and redo, a joined or merged step keeps the first one), so the app can attach
+/// the time it saw a step made without the model reading a clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryStep {
+    /// The name of the step (`"Move Device"`, `"Add Clip"`).
+    pub label: &'static str,
+    /// The stamp of the step.
+    pub stamp: u64,
+}
+
+static STEP_STAMPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+impl HistoryStep {
+    /// A new step called `label`, with the next stamp.
+    pub(crate) fn new(label: &'static str) -> Self {
+        Self {
+            label,
+            stamp: STEP_STAMPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+}
+
 /// The names of the undo, redo and trial steps, in the order of the steps they belong to.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Labels {
-    pub(crate) undo: VecDeque<&'static str>,
-    pub(crate) redo: Vec<&'static str>,
-    pub(crate) trial: Vec<&'static str>,
-    pub(crate) trial_redo: Vec<&'static str>,
+    pub(crate) undo: VecDeque<HistoryStep>,
+    pub(crate) redo: Vec<HistoryStep>,
+    pub(crate) trial: Vec<HistoryStep>,
+    pub(crate) trial_redo: Vec<HistoryStep>,
 }
 
 impl Command {

@@ -234,3 +234,76 @@ fn a_trial_is_named_after_its_first_step_and_a_cancel_keeps_the_redo_names() {
     assert_eq!(d.undo_label(), Some("Change Tempo"));
     assert_eq!(d.redo_label(), None);
 }
+
+#[test]
+fn the_history_lists_every_step_oldest_first_and_tracks_the_position() {
+    let r = registry();
+    let mut d = Document::new(empty_doc());
+    assert_eq!(d.history().count(), 0);
+    assert_eq!((d.history_position(), d.history_len()), (0, 0));
+    run(
+        &mut d,
+        &r,
+        [
+            add(0, SYNTH, Some("a")),
+            add(1, DELAY, Some("b")),
+            Command::MoveDevice {
+                key: key("b"),
+                to: 0,
+            },
+        ],
+    );
+    let names = |d: &Document| d.history().map(|s| s.label).collect::<Vec<_>>();
+    assert_eq!(names(&d), ["Add Device", "Add Device", "Move Device"]);
+    assert_eq!((d.history_position(), d.history_len()), (3, 3));
+    d.undo().unwrap();
+    d.undo().unwrap();
+    assert_eq!(
+        names(&d),
+        ["Add Device", "Add Device", "Move Device"],
+        "an undone step stays in the list, after the position"
+    );
+    assert_eq!((d.history_position(), d.history_len()), (1, 3));
+    d.redo().unwrap();
+    assert_eq!((d.history_position(), d.history_len()), (2, 3));
+    // A new edit drops what could have been redone.
+    run(&mut d, &r, [Command::SetTempo(90.0)]);
+    assert_eq!(names(&d), ["Add Device", "Add Device", "Change Tempo"]);
+    assert_eq!((d.history_position(), d.history_len()), (3, 3));
+}
+
+#[test]
+fn a_step_keeps_its_stamp_through_undo_and_redo_and_stamps_rise() {
+    let r = registry();
+    let mut d = Document::new(empty_doc());
+    run(
+        &mut d,
+        &r,
+        [add(0, SYNTH, Some("a")), add(1, DELAY, Some("b"))],
+    );
+    let before: Vec<u64> = d.history().map(|s| s.stamp).collect();
+    assert!(before[0] < before[1]);
+    d.undo().unwrap();
+    d.undo().unwrap();
+    d.redo().unwrap();
+    d.redo().unwrap();
+    let after: Vec<u64> = d.history().map(|s| s.stamp).collect();
+    assert_eq!(before, after);
+    run(&mut d, &r, [Command::SetTempo(100.0)]);
+    assert!(d.history().last().unwrap().stamp > before[1]);
+}
+
+#[test]
+fn a_merged_drag_is_one_history_row() {
+    let r = registry();
+    let mut d = Document::new(empty_doc());
+    run(&mut d, &r, [add(0, SYNTH, Some("a"))]);
+    let drag = |value: f32| Command::SetParam {
+        key: key("a"),
+        param: "osc1.wave".into(),
+        value,
+        merge: Some(7),
+    };
+    run(&mut d, &r, [drag(1.0), drag(2.0), drag(3.0)]);
+    assert_eq!(d.history_len(), 2);
+}

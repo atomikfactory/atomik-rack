@@ -259,8 +259,8 @@ pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};
 pub use history::InvariantError;
 use history::{Edit, Swap, song_end_growth};
-pub use labels::DEFAULT_LABEL;
 use labels::Labels;
+pub use labels::{DEFAULT_LABEL, HistoryStep};
 pub use library_io::{ItemKind, ItemSummary, load_device_item, save_device_item, summarize_item};
 pub use midi_data::{MidiData, ProgramChange, SysexEvent};
 pub use note_expression::{ExpressionKind, ExpressionPoint, NoteExpression};
@@ -1310,30 +1310,34 @@ impl Document {
 
     /// Records `edit`, named `label`, as the latest undo step and forgets the oldest steps
     /// beyond the limits.
-    fn push_undo(&mut self, edit: Edit, label: &'static str) {
+    fn push_undo(&mut self, edit: Edit, step: HistoryStep) {
         self.undo_bytes += edit.approx_bytes();
         self.undo.push_back(edit);
-        self.labels.undo.push_back(label);
+        self.labels.undo.push_back(step);
         self.trim_undo();
     }
 
     /// Takes the latest undo step, with its name, off the history.
-    fn pop_undo(&mut self) -> Option<(Edit, &'static str)> {
+    fn pop_undo(&mut self) -> Option<(Edit, HistoryStep)> {
         let edit = self.undo.pop_back()?;
-        let label = self.labels.undo.pop_back().unwrap_or(DEFAULT_LABEL);
+        let step = self
+            .labels
+            .undo
+            .pop_back()
+            .unwrap_or_else(|| HistoryStep::new(DEFAULT_LABEL));
         self.undo_bytes = self.undo_bytes.saturating_sub(edit.approx_bytes());
-        Some((edit, label))
+        Some((edit, step))
     }
 
     /// The name of the step [`Document::undo`] would undo (`"Move Device"`, `"Add Clip"`; a
     /// step of several drag-merged commands has the name of the first), `None` without one.
     pub fn undo_label(&self) -> Option<&'static str> {
-        self.labels.undo.back().copied()
+        self.labels.undo.back().map(|s| s.label)
     }
 
     /// The name of the step [`Document::redo`] would redo, `None` without one.
     pub fn redo_label(&self) -> Option<&'static str> {
-        self.labels.redo.last().copied()
+        self.labels.redo.last().map(|s| s.label)
     }
 
     /// Accounts for the latest undo step having changed from `before` estimated bytes (a merged
@@ -1724,7 +1728,7 @@ impl Document {
             }
             _ => {
                 pushed = true;
-                self.push_undo(edit, label);
+                self.push_undo(edit, HistoryStep::new(label));
             }
         }
         if merged && !pushed {
@@ -1817,18 +1821,21 @@ impl Document {
         self.trial_redo.clear();
         self.labels.trial_redo.clear();
         let labels = std::mem::take(&mut self.labels.trial);
-        let label = labels.first().copied().unwrap_or(DEFAULT_LABEL);
+        let step_name = labels
+            .first()
+            .copied()
+            .unwrap_or_else(|| HistoryStep::new(DEFAULT_LABEL));
         match self.trial.len() {
             0 => {}
             1 => {
                 let steps = std::mem::take(&mut self.trial);
                 steps
                     .into_iter()
-                    .for_each(|step| self.push_undo(step, label));
+                    .for_each(|step| self.push_undo(step, step_name));
             }
             _ => {
                 let steps = std::mem::take(&mut self.trial);
-                self.push_undo(Edit::Compound(steps), label);
+                self.push_undo(Edit::Compound(steps), step_name);
             }
         }
     }
@@ -1918,7 +1925,11 @@ impl Document {
         let Some(edit) = self.redo.pop() else {
             return Ok(None);
         };
-        let label = self.labels.redo.pop().unwrap_or(DEFAULT_LABEL);
+        let label = self
+            .labels
+            .redo
+            .pop()
+            .unwrap_or_else(|| HistoryStep::new(DEFAULT_LABEL));
         match edit.perform(&mut self.doc) {
             Ok(ops) => {
                 self.push_undo(edit, label);
@@ -1968,6 +1979,28 @@ impl Document {
     #[doc(hidden)]
     pub fn undo_depth(&self) -> usize {
         self.undo.len()
+    }
+
+    /// Every step of the history, oldest first: the steps undo would undo (the last one first)
+    /// and, after them, the ones redo would redo (the next one first). Read-only, nothing is
+    /// cloned; [`Document::history_position`] says where the document stands in it.
+    pub fn history(&self) -> impl DoubleEndedIterator<Item = HistoryStep> + '_ {
+        self.labels
+            .undo
+            .iter()
+            .copied()
+            .chain(self.labels.redo.iter().rev().copied())
+    }
+
+    /// How many steps of [`Document::history`] are applied now: the history is at its newest
+    /// step when this equals the number of steps, and every undo moves it back by one.
+    pub fn history_position(&self) -> usize {
+        self.labels.undo.len()
+    }
+
+    /// The number of steps [`Document::history`] lists.
+    pub fn history_len(&self) -> usize {
+        self.labels.undo.len() + self.labels.redo.len()
     }
 
     /// Whether undo is possible.
