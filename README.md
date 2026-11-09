@@ -80,7 +80,8 @@ steps: add an instrument, play or draw some notes, loop them, add a drum pattern
 effect), save, and export. Each step says what to do and moves on by itself when the song shows it is done; the
 control it talks about is outlined where there is one. Back, Skip, Move (to the other side of the window) and Close
 are always there, the panel never takes the keyboard and you can use the song as usual while it is open. A check box
-at the foot of the start screen turns the card off.
+at the foot of the start screen turns the card off. To find any command by name, press Ctrl+Shift+K (Cmd+Shift+K on
+macOS) or choose Help > Command Palette, type a few letters, and press Enter.
 
 ## Building
 
