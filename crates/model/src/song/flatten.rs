@@ -54,6 +54,9 @@
 //!   join into one list per kind. Between pieces the value holds. The track's own controller
 //!   lanes ([`Track::controllers`], song ticks, no pieces) join the lists by tick, winning an
 //!   equal tick.
+//! - **Note expression.** [`flatten_expression`] finds the notes the same way as the notes and gives
+//!   the curves of each note that has some (the clip's `midi` data) in song ticks, after the note's
+//!   swing and live groove.
 //! - **Program changes and SysEx.** [`flatten_midi_data`] windows each clip's `midi` data like a
 //!   controller lane (same pieces, offsets, loops and hiding): the program in force at the start
 //!   of a piece is repeated there, the messages inside the piece keep their place. Only a MIDI
@@ -216,6 +219,80 @@ pub fn flatten_track_notes(song: &Song, track: &Track) -> Vec<(i64, i64, u8, f32
     }
     // Stable: equal `(tick, key)` keep the order of the groups above.
     out.sort_by_key(|&(t, _, k, _)| (t, k));
+    out
+}
+
+/// The per-note expression of one flattened note: the note's song tick (as
+/// [`flatten_track_notes`] gives it, swing and live groove included) and key, and each curve as
+/// `(song tick, value)` points in time order (pitch in semitones, pressure and timbre `0..=1`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FlatExpression {
+    /// Song tick of the note's start.
+    pub tick: i64,
+    /// Key of the note.
+    pub key: u8,
+    /// Pitch offset points, semitones.
+    pub pitch: Vec<(i64, f32)>,
+    /// Pressure points.
+    pub pressure: Vec<(i64, f32)>,
+    /// Timbre (slide) points.
+    pub timbre: Vec<(i64, f32)>,
+}
+
+/// The expression of the notes a track's played note lanes play (the notes of
+/// [`flatten_track_notes`]): for each played note with curves in its clip's
+/// [`crate::MidiData`], the curves moved to song ticks. A note is found like the notes
+/// themselves (the same audible pieces, offsets, loops, swing and mutes), so a note a later clip
+/// hides, a muted note and a note outside the loop window carry no expression either; the start
+/// tick follows the live groove that applies to the note's clip. The entries come in lane and clip
+/// order, not sorted. Empty when no clip carries any.
+pub fn flatten_expression(song: &Song, track: &Track) -> Vec<FlatExpression> {
+    let mut out = Vec::new();
+    for lane in track.played_note_lanes() {
+        for (clip, s, e, cs) in audible_pieces(lane) {
+            let ClipContent::Notes(notes) = &clip.content else {
+                continue;
+            };
+            if clip.midi.expression.is_empty() {
+                continue;
+            }
+            let groove = clip
+                .groove
+                .as_deref()
+                .or(track.groove.as_ref())
+                .and_then(|g| Some((song.groove(&g.name)?, g.strength)));
+            let ce = cs + (e - s);
+            let from = notes.partition_point(|n| n.tick < cs);
+            for n in notes[from..].iter().take_while(|n| n.tick < ce) {
+                let swung = clip.grid.map_or(n.tick, |g| g.swung(n.tick));
+                if n.muted || swung >= ce {
+                    continue;
+                }
+                let Some(x) = clip.midi.expression_of(n.tick, n.key) else {
+                    continue;
+                };
+                let mut tick = s + (swung - cs);
+                if let Some((groove, strength)) = &groove {
+                    let moved = crate::groove::groove_notes(
+                        vec![(tick, n.length, n.key, n.velocity)],
+                        groove,
+                        *strength,
+                    );
+                    tick = moved.first().map_or(tick, |m| m.0);
+                }
+                let at = |c: &[crate::ExpressionPoint]| {
+                    c.iter().map(|p| (tick + p.tick, p.value)).collect()
+                };
+                out.push(FlatExpression {
+                    tick,
+                    key: n.key,
+                    pitch: at(&x.pitch),
+                    pressure: at(&x.pressure),
+                    timbre: at(&x.timbre),
+                });
+            }
+        }
+    }
     out
 }
 

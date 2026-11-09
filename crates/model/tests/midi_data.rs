@@ -34,6 +34,7 @@ fn data() -> MidiData {
     MidiData {
         programs: vec![prog(0, 5), prog(PPQ, 9)],
         sysex: vec![sysex(PPQ / 2, &[0x7E, 0x7F, 0x09, 0x01])],
+        ..Default::default()
     }
 }
 
@@ -56,6 +57,7 @@ fn a_clip_keeps_its_data_sorted_and_a_plain_clip_writes_nothing() {
     let shuffled = MidiData {
         programs: vec![prog(PPQ, 9), prog(0, 5), prog(PPQ, 11)],
         sysex: vec![sysex(PPQ, &[2]), sysex(0, &[1])],
+        ..Default::default()
     };
     let d = with_data(&reg, 2 * BAR, shuffled);
     let m = midi_of(&d, 1);
@@ -197,6 +199,7 @@ fn a_join_keeps_the_sysex_limit_so_the_project_still_loads() {
     let many = |at: i64| MidiData {
         programs: Vec::new(),
         sysex: (0..600).map(|i| sysex(at + i, &[1])).collect(),
+        ..Default::default()
     };
     let mut d = with_data(&reg, PPQ * 2, many(0));
     let mut second = notes_clip(2 * PPQ, 2 * PPQ, vec![note(0, PPQ, 62, 0.8)]);
@@ -225,6 +228,7 @@ fn a_join_and_a_loop_conversion_carry_the_data() {
     second.midi = MidiData {
         programs: vec![prog(PPQ / 4, 40)],
         sysex: vec![sysex(1, &[3])],
+        ..Default::default()
     }
     .into();
     d.apply(add_clip("synth", 0, second), &reg).unwrap();
@@ -292,6 +296,7 @@ fn a_bank_select_travels_with_its_program_change_and_saves_as_four_values() {
     let midi = MidiData {
         programs: vec![prog(0, 5), banked, half],
         sysex: Vec::new(),
+        ..Default::default()
     };
     let d = with_data(&reg, 4 * BAR, midi);
     let text = save_project(d.doc());
@@ -328,6 +333,7 @@ fn set_clip_midi_replaces_the_data_in_one_undo_step() {
             prog(0, 2),
         ],
         sysex: vec![sysex(5, &[1, 2, 3])],
+        ..Default::default()
     };
     let set = |midi: MidiData, merge| {
         sc(SongCommand::SetClipMidi {
@@ -357,6 +363,7 @@ fn set_clip_midi_replaces_the_data_in_one_undo_step() {
                 MidiData {
                     programs: vec![prog(t, 1)],
                     sysex: Vec::new(),
+                    ..Default::default()
                 },
                 Some(77),
             ),
@@ -369,6 +376,7 @@ fn set_clip_midi_replaces_the_data_in_one_undo_step() {
     let bad = MidiData {
         programs: vec![prog(0, 200)],
         sysex: Vec::new(),
+        ..Default::default()
     };
     assert!(d.apply(set(bad, None), &reg).is_err());
     let unknown = sc(SongCommand::SetClipMidi {

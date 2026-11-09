@@ -1,5 +1,8 @@
 //! Program changes and SysEx messages carried by a note clip.
 //!
+//! It also carries the per-note expression a clip recorded or imported (see
+//! [`crate::note_expression`]), which the player does act on.
+//!
 //! A clip imported from a MIDI file keeps the messages the engine does not play but a MIDI file
 //! export must write back: program changes (the instrument a channel switches to; the bank
 //! select that goes with one rides in the same event, see [`ProgramChange::bank_msb`]; a clip from
@@ -12,6 +15,7 @@
 //! data existed load unchanged and an older reader may drop it (the saved fields are
 //! optional).
 
+use crate::note_expression::{self, NoteExpression};
 use crate::song::MAX_TICK;
 
 /// The most program changes one clip keeps.
@@ -61,18 +65,21 @@ pub struct SysexEvent {
 }
 
 /// The program changes and SysEx messages of a note clip (module docs).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct MidiData {
     /// Sorted by tick, at most one per tick.
     pub programs: Vec<ProgramChange>,
     /// Sorted by tick (messages at one tick keep their order).
     pub sysex: Vec<SysexEvent>,
+    /// The curves of the notes that have some, sorted by `(tick, key)`: the start tick and key of
+    /// the note an entry belongs to.
+    pub expression: Vec<NoteExpression>,
 }
 
 impl MidiData {
-    /// True when the clip carries no program change and no SysEx message.
+    /// True when the clip carries no program change, no SysEx message and no note expression.
     pub fn is_empty(&self) -> bool {
-        self.programs.is_empty() && self.sysex.is_empty()
+        self.programs.is_empty() && self.sysex.is_empty() && self.expression.is_empty()
     }
 
     /// `programs` and `sysex` in canonical form: sorted by tick, the last program change of a
@@ -89,6 +96,7 @@ impl MidiData {
         self.programs = programs;
         self.sysex.retain(|s| !s.data.is_empty());
         self.sysex.sort_by_key(|s| s.tick);
+        self.expression = note_expression::canonical_list(self.expression);
         self
     }
 
@@ -146,7 +154,58 @@ impl MidiData {
                 ));
             }
         }
+        if self.expression.len() > note_expression::MAX_EXPRESSION_NOTES {
+            return Err(format!(
+                "a clip keeps note expression for at most {} notes",
+                note_expression::MAX_EXPRESSION_NOTES
+            ));
+        }
+        for (i, e) in self.expression.iter().enumerate() {
+            e.check(max_tick)?;
+            if i > 0 {
+                let before = &self.expression[i - 1];
+                if (before.tick, before.key) >= (e.tick, e.key) {
+                    return Err(format!(
+                        "note expression must be sorted by note without duplicates (entry {i})"
+                    ));
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// The expression of the note at `tick` on `key`, if it has any.
+    pub fn expression_of(&self, tick: i64, key: u8) -> Option<&NoteExpression> {
+        note_expression::find(&self.expression, tick, key)
+    }
+
+    /// The data with the expression of the note at `tick` on `key` removed; `None` when the note
+    /// had none.
+    pub fn without_expression(&self, tick: i64, key: u8) -> Option<MidiData> {
+        let i = self
+            .expression
+            .binary_search_by_key(&(tick, key), |e| (e.tick, e.key))
+            .ok()?;
+        let mut out = self.clone();
+        out.expression.remove(i);
+        Some(out)
+    }
+
+    /// The data with `entry` set for its note (replacing the one it had); an entry without
+    /// points removes it. Refused (`None`) beyond the limit of notes.
+    pub fn with_expression(&self, entry: NoteExpression) -> Option<MidiData> {
+        let mut out = self.clone();
+        match out
+            .expression
+            .binary_search_by_key(&(entry.tick, entry.key), |e| (e.tick, e.key))
+        {
+            Ok(i) => out.expression[i] = entry,
+            Err(_) if out.expression.len() >= note_expression::MAX_EXPRESSION_NOTES => {
+                return None;
+            }
+            Err(i) => out.expression.insert(i, entry),
+        }
+        Some(out.canonical())
     }
 
     /// The part inside the content window `[from, to)`, relative to `from` and moved by
@@ -171,7 +230,17 @@ impl MidiData {
             .filter(|s| (from..to).contains(&s.tick))
             .cloned()
             .collect();
-        let mut out = MidiData { programs, sysex };
+        let expression = self
+            .expression
+            .iter()
+            .filter(|e| (from..to).contains(&e.tick))
+            .cloned()
+            .collect();
+        let mut out = MidiData {
+            programs,
+            sysex,
+            expression,
+        };
         out.shift_by(shift - from);
         out
     }
@@ -196,6 +265,14 @@ impl MidiData {
                     data: s.data.clone(),
                 })
                 .collect(),
+            expression: self
+                .expression
+                .iter()
+                .map(|e| NoteExpression {
+                    tick: f(e.tick),
+                    ..e.clone()
+                })
+                .collect(),
         }
         .canonical()
     }
@@ -207,6 +284,7 @@ impl MidiData {
     pub fn append(&mut self, other: MidiData) {
         self.programs.extend(other.programs);
         self.sysex.extend(other.sysex);
+        self.expression.extend(other.expression);
         *self = std::mem::take(self).canonical();
         self.programs.truncate(MAX_PROGRAM_CHANGES);
         self.sysex.truncate(MAX_SYSEX_EVENTS);
@@ -296,6 +374,9 @@ impl MidiData {
         for s in &mut self.sysex {
             s.tick += delta;
         }
+        for e in &mut self.expression {
+            e.tick += delta;
+        }
     }
 }
 
@@ -344,6 +425,7 @@ mod tests {
         let d = MidiData {
             programs: vec![prog(50, 3), prog(10, 1), prog(50, 9)],
             sysex: vec![sx(20, &[1]), sx(5, &[]), sx(10, &[2])],
+            ..Default::default()
         }
         .canonical();
         assert_eq!(d.programs, [prog(10, 1), prog(50, 9)]);
@@ -355,6 +437,7 @@ mod tests {
         let ok = MidiData {
             programs: vec![prog(0, 1), prog(10, 2)],
             sysex: vec![sx(0, &[0x7E, 0x7F]), sx(0, &[1])],
+            ..Default::default()
         };
         assert!(ok.check(100).is_ok());
         let bad = |d: MidiData| d.check(100).unwrap_err();
@@ -407,6 +490,7 @@ mod tests {
         let d = MidiData {
             programs: vec![prog(0, 4), prog(100, 5), prog(300, 6)],
             sysex: vec![sx(50, &[1]), sx(120, &[2]), sx(400, &[3])],
+            ..Default::default()
         };
         let w = d.window(80, 200, 1000);
         assert_eq!(w.programs, [prog(1000, 4), prog(1020, 5)]);
@@ -423,12 +507,14 @@ mod tests {
         let d = MidiData {
             programs: vec![prog(10, 1), prog(11, 2)],
             sysex: vec![sx(10, &[1])],
+            ..Default::default()
         };
         let half = d.map_ticks(|t| t / 4);
         assert_eq!(half.programs, [prog(2, 2)], "ties keep the later change");
         let mut a = MidiData {
             programs: vec![prog(0, 9)],
             sysex: Vec::new(),
+            ..Default::default()
         };
         a.append(d);
         assert_eq!(a.programs, [prog(0, 9), prog(10, 1), prog(11, 2)]);
@@ -442,6 +528,7 @@ mod tests {
                 .map(|i| prog(at + i as i64, 1))
                 .collect(),
             sysex: (0..n).map(|i| sx(at + i as i64, &[1])).collect(),
+            ..Default::default()
         };
         let mut a = many(MAX_SYSEX_EVENTS - 2, 0);
         a.append(many(MAX_SYSEX_EVENTS - 2, 100_000));
@@ -456,6 +543,7 @@ mod tests {
         let d = MidiData {
             programs: vec![prog(0, 4), prog(100, 5)],
             sysex: vec![sx(50, &[1])],
+            ..Default::default()
         };
         let banked = ProgramChange {
             bank_msb: Some(2),

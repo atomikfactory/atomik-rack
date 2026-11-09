@@ -47,6 +47,7 @@ fn rig() -> (Engine, EngineHandle, DeviceInstanceId, ParamEvents) {
                 points(ParamLog::A, &[(0, 0.5), (8 * PPQ, 0.5)]),
                 points(ParamLog::B, &[(0, -4.0), (8 * PPQ, 4.0)]),
             ],
+            expression: Vec::new(),
         }],
         tempo: tempo(&[(0, 120.0)]),
         meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],

@@ -1834,6 +1834,32 @@ Hand checks, not automated (they need two MIDI controllers):
 - Click MAN REC in the arrangement corner: selecting tracks no longer arms them. M and S clear all
   mutes and solos; Edit > Undo takes each back in one step.
 
+## Per-note expression (MPE)
+
+`crates/core/src/mpe.rs` and `crates/midi-io/src/mpe.rs` test the zones (lower and upper, 15 members, two zones
+sharing 14, the newer winning) and the input: a member channel's bend, pressure and CC 74 as the expression of its
+note, two notes on two channels, what a channel holds starting the next note, the master channel and channels
+outside the zones read as before, the configuration message (and not on a member channel), RPN 0 per channel,
+running status. `crates/app/src/midi.rs` routes the events to the device that holds the key, `settings.rs` and the
+dialog tests cover the per-input switch, `record_tests.rs` the capture (held notes only, input quantize, loop
+wraps), `crates/model/tests/note_expression.rs` the data (file round trip, an older project unchanged, flattening
+with offset, loop, mutes and hiding, joins, layering, one undo step to clear), `crates/engine/tests/song_expression.rs`
+the player (frames, the note's end, seeks, block sizes, no allocation), the three instruments their own tests, and
+`crates/render/tests/note_expression.rs` a bounce whose pitch follows a curve at every block size.
+`crates/app/src/midi_file_tests.rs` writes and reads an MPE track.
+
+Hand checks, not automated (they need an MPE controller):
+
+- Switch the controller's port to MPE in Audio Settings > MIDI inputs with MPE (a click steps through the zones)
+  and play a chord on the poly synth, bending and pressing each finger: only that finger's note bends and
+  brightens. With MPE off the same controller bends every note together.
+- A controller that sends the MPE Configuration Message needs no setting of the zone: play, and the zone it
+  announced is the one in use (a lower zone of 7 members on channels 2 to 8, say).
+- Arm the track and record a chord with moving fingers: the clip's notes show a strip under the selected note with
+  three curves; undo and redo the clear button; play it back and compare with the live sound.
+- Export the clip as a MIDI file and import it again: the notes come back with their curves; open the file in
+  another MPE aware program and check that the notes bend one by one.
+
 ## MIDI Out
 
 `crates/device-sdk/src/midi_tap.rs` tests the queue (order, wrap-around, the slots kept for note

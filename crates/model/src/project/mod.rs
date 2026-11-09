@@ -436,7 +436,12 @@
 //! the song lacks is dropped on load. A VCA group may carry `"bus"` and `"routed"` the same way (see
 //! [`crate::console_group_bus`]): the console bus its members play into and the members the route put
 //! there; the cables carry the routing, so both are ignorable, and `"routed"` needs a `"bus"` and lists
-//! members only. Saving always writes version 44.
+//! members only. A note clip may also carry `"expression"` after its `"sysex"` (see
+//! [`crate::note_expression`]): one `[tick, key, pitch, pressure, timbre]` per note that has per-note
+//! expression, `tick` and `key` naming the note, each curve a list of `[ticks after the note start, value]`
+//! (pitch in semitones, pressure and timbre `0..=1`). It is written only while the clip has some, for notes
+//! the clip still has, and it is ignorable: a reader that drops it plays the notes without the expression.
+//! Saving always writes version 44.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,

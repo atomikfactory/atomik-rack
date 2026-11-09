@@ -25,8 +25,8 @@
 use crate::controllers::{CtlLane, SongController, expand, validate};
 use crate::graph::DeviceInstanceId;
 use atomik_core::{
-    BATCH, MapError, MeterEvent, MeterMap, MeterSegment, NoteKind, ParamId, Tempo, TempoMap,
-    TempoPoint, TempoSegment, Ticks, compile_meter, compile_tempo,
+    BATCH, ExprKind, MapError, MeterEvent, MeterMap, MeterSegment, NoteKind, ParamId, Tempo,
+    TempoMap, TempoPoint, TempoSegment, Ticks, compile_meter, compile_tempo,
 };
 use atomik_device_sdk::SocketId;
 
@@ -42,6 +42,34 @@ pub struct SongNote {
     pub key: u8,
     /// Velocity in (0, 1].
     pub velocity: f32,
+}
+
+/// One point of a note's expression curve, in song ticks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SongExprPoint {
+    /// Song tick.
+    pub tick: Ticks,
+    /// The value: tuning in semitones, pressure and slide `0..=1`.
+    pub value: f32,
+}
+
+/// One expression curve of one note of a track: per-note tuning, pressure or slide
+/// ([`ExprKind`]) that the song plays as [`NoteKind::NoteExpr`] events for the note's key.
+///
+/// The note is the one of the track that starts at `tick` on `key` (a curve whose note is not in
+/// the track plays nothing). Each point is sent at its own tick while the note sounds (points at
+/// or after the note's end are ignored); the value holds until the next point. A seek into the
+/// note sends the value in force there with the chased note.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SongExpression {
+    /// Song tick where the note starts.
+    pub tick: Ticks,
+    /// The note's key.
+    pub key: u8,
+    /// Which expression the curve carries.
+    pub kind: ExprKind,
+    /// Points in time order (equal ticks: the later wins).
+    pub points: Vec<SongExprPoint>,
 }
 
 /// Interpolation from one automation point to the next.
@@ -96,6 +124,9 @@ pub struct SongTrack {
     /// (see [`crate::SongController`]). At most one lane per kind. Unlike notes they are always
     /// chased: a seek restores each controller's value at the position.
     pub controllers: Vec<SongController>,
+    /// Per-note expression curves, sent to the same input while their notes sound (see
+    /// [`SongExpression`]).
+    pub expression: Vec<SongExpression>,
 }
 
 /// A tempo change at a tick: a step, or with `ramp` a linear ramp (in BPM, over ticks) to the
@@ -199,6 +230,9 @@ pub(crate) struct CompiledTrack {
     pub(crate) events: Vec<SeqEvent>,
     /// The controller lanes (expanded), for the chase of controller values on a seek.
     pub(crate) ctl: Vec<CtlLane>,
+    /// The expression curves of the notes, grouped by note in `notes` order (see
+    /// [`ChaseNote::expr`]), for the chase of a note's expression on a seek.
+    pub(crate) expr: Vec<ExprLane>,
     /// Notes sorted by start tick (per-key overlaps resolved), for chase and for the keys a
     /// swapped track still covers.
     pub(crate) notes: Vec<ChaseNote>,
@@ -219,6 +253,16 @@ pub(crate) struct ChaseNote {
     pub(crate) end: i64,
     pub(crate) key: u8,
     pub(crate) velocity: f32,
+    /// The curves of this note: `expr[from..to]` of the track's [`CompiledTrack::expr`].
+    pub(crate) expr: (u32, u32),
+}
+
+/// One expression curve of one note: its points as ticks and values, for the chase.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ExprLane {
+    pub(crate) kind: ExprKind,
+    pub(crate) ticks: Vec<i64>,
+    pub(crate) values: Vec<f32>,
 }
 
 /// One automated parameter, points sorted by tick (stable).
@@ -388,7 +432,66 @@ fn compile_track(track: &SongTrack) -> Result<CompiledTrack, SongError> {
         ctl.push(expand(c));
     }
     ctl.sort_by_key(|l| l.kind);
-    let mut events = Vec::with_capacity(kept.len() * 2);
+    // The expression curves, per kept note (matched by start and key), as lanes and events.
+    let mut by_note: Vec<Vec<&SongExpression>> = vec![Vec::new(); kept.len()];
+    for x in &track.expression {
+        let valid = x.tick.0 >= 0
+            && x.key <= 127
+            && x.points.iter().all(|p| {
+                let (lo, hi) = expr_range(x.kind);
+                p.tick.0 >= 0 && p.value.is_finite() && (lo..=hi).contains(&p.value)
+            });
+        if !valid {
+            return Err(SongError::BadEvent(format!(
+                "note expression at tick {} on key {}",
+                x.tick.0, x.key
+            )));
+        }
+        if let Ok(i) = kept.binary_search_by_key(&(x.tick.0, x.key), |k| (k.0, k.2)) {
+            by_note[i].push(x);
+        }
+    }
+    let mut expr: Vec<ExprLane> = Vec::new();
+    let mut expr_range_of: Vec<(u32, u32)> = Vec::with_capacity(kept.len());
+    let mut expr_events: Vec<SeqEvent> = Vec::new();
+    for (&(start, end, key, _), curves) in kept.iter().zip(&by_note) {
+        let first = expr.len() as u32;
+        for x in curves {
+            let mut points = x.points.clone();
+            points.sort_by_key(|p| p.tick); // stable: equal ticks keep their order
+            let mut lane = ExprLane {
+                kind: x.kind,
+                ticks: Vec::with_capacity(points.len()),
+                values: Vec::with_capacity(points.len()),
+            };
+            for p in points.iter().filter(|p| p.tick.0 < end) {
+                // A point before the note starts holds from the start.
+                let tick = p.tick.0.max(start);
+                if lane.ticks.last() == Some(&tick) {
+                    if let Some(v) = lane.values.last_mut() {
+                        *v = p.value;
+                    }
+                    continue;
+                }
+                lane.ticks.push(tick);
+                lane.values.push(p.value);
+            }
+            for (&tick, &value) in lane.ticks.iter().zip(&lane.values) {
+                expr_events.push(SeqEvent {
+                    tick,
+                    kind: NoteKind::NoteExpr {
+                        key,
+                        kind: x.kind,
+                        value,
+                    },
+                });
+            }
+            expr.push(lane);
+        }
+        expr_range_of.push((first, expr.len() as u32));
+    }
+    let mut events = Vec::with_capacity(kept.len() * 2 + expr_events.len());
+    events.extend(expr_events);
     for &(start, end, key, velocity) in &kept {
         events.push(SeqEvent {
             tick: start,
@@ -412,9 +515,10 @@ fn compile_track(track: &SongTrack) -> Result<CompiledTrack, SongError> {
     events.sort_by_key(|e| match e.kind {
         NoteKind::Off { key } => (e.tick, 0, key),
         NoteKind::On { key, .. } => (e.tick, 2, key),
-        NoteKind::AllOff => (e.tick, 3, 0),
-        // PitchBend, Cc, ChannelPressure and PolyPressure; per-note expressions never come
-        // from the song.
+        // A note's expression comes after its note-on (the note must sound to take it).
+        NoteKind::NoteExpr { key, .. } => (e.tick, 3, key),
+        NoteKind::AllOff => (e.tick, 4, 0),
+        // PitchBend, Cc, ChannelPressure and PolyPressure.
         _ => (e.tick, 1, 0),
     });
     let mut hash = mix(
@@ -428,11 +532,13 @@ fn compile_track(track: &SongTrack) -> Result<CompiledTrack, SongError> {
     // `kept` is already sorted by (start, key).
     let notes: Vec<ChaseNote> = kept
         .iter()
-        .map(|&(start, end, key, velocity)| ChaseNote {
+        .zip(&expr_range_of)
+        .map(|(&(start, end, key, velocity), &range)| ChaseNote {
             start,
             end,
             key,
             velocity,
+            expr: range,
         })
         .collect();
     let mut latest = i64::MIN;
@@ -448,6 +554,7 @@ fn compile_track(track: &SongTrack) -> Result<CompiledTrack, SongError> {
         socket: track.notes_socket,
         events,
         ctl,
+        expr,
         notes,
         max_end,
         chase: track.chase,
@@ -461,6 +568,15 @@ fn mix(hash: u64, value: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)
+}
+
+/// The lowest and highest value of an expression kind.
+fn expr_range(kind: ExprKind) -> (f32, f32) {
+    match kind {
+        ExprKind::Tuning => (-96.0, 96.0),
+        ExprKind::Pan => (-1.0, 1.0),
+        _ => (0.0, 1.0),
+    }
 }
 
 fn encode(kind: NoteKind) -> u64 {
@@ -754,6 +870,7 @@ mod tests {
             notes,
             automation: Vec::new(),
             controllers: Vec::new(),
+            expression: Vec::new(),
         }
     }
 

@@ -42,16 +42,23 @@
 //!   [`ControllerPass`], the lanes in song ticks with the time the lap covers, and the app lays
 //!   it over the track's own controller lanes (`Track::controllers`), replacing what the lanes
 //!   held in that time.
+//! - **Per-note expression (MPE).** A note's pitch (semitones), pressure and slide events that reach
+//!   an armed device while the note is held are kept with the note and written to the clip as its
+//!   per-note expression (see [`atomik_model::note_expression`]): a burst closer than about 5 ms
+//!   keeps its last value, a point that repeats the value before it is dropped, and a note keeps at
+//!   most 1024 points per curve. Input quantize moves the note and its curves together; a loop
+//!   pass that wraps a held note ends its expression with the note.
 //! - **Input quantize** ([`InputQuantize`]): note starts snap to the nearest 1/8 or 1/16
 //!   before the clip is made; lengths are kept.
 //! - Notes still held at stop are closed at the stop position.
 
-use atomik_core::{MeterTable, NoteKind, PPQ};
+use atomik_core::{ExprKind, MeterTable, NoteKind, PPQ};
 use atomik_engine::{DeviceInstanceId, ScheduledNote, SongPosition, TransportState};
 use atomik_model::controller::canonical;
+use atomik_model::note_expression::record_curve;
 use atomik_model::{
     AutomationPoint, Clip, ClipContent, ClipId, ControllerKind, ControllerLane, Curve, DeviceKey,
-    Note,
+    ExpressionKind, MidiData, Note, NoteExpression,
 };
 use atomik_ui::quantize_panel::GRIDS;
 use serde::{Deserialize, Serialize};
@@ -271,13 +278,36 @@ fn record_points(raw: &[(i64, f32)], start: i64) -> Vec<AutomationPoint> {
         .collect()
 }
 
+/// The per-note expression events of one note being recorded, as `(ticks after the note start,
+/// value)` in arrival order: tuning in semitones, pressure and slide `0..=1`.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct NoteCurves {
+    pitch: Vec<(i64, f32)>,
+    pressure: Vec<(i64, f32)>,
+    timbre: Vec<(i64, f32)>,
+}
+
+impl NoteCurves {
+    fn push(&mut self, kind: ExprKind, after: i64, value: f32) {
+        match kind {
+            ExprKind::Tuning => self.pitch.push((after, value)),
+            ExprKind::Pressure => self.pressure.push((after, value)),
+            ExprKind::Slide => self.timbre.push((after, value)),
+            // Volume and pan are not recorded.
+            ExprKind::Volume | ExprKind::Pan => {}
+        }
+    }
+}
+
 /// A note being recorded or finished, in song ticks.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct TakeNote {
     tick: i64,
     length: i64,
     key: u8,
     velocity: f32,
+    /// What the note's channel did while it sounded (MPE).
+    expr: NoteCurves,
 }
 
 /// A note of a running take, for display.
@@ -313,6 +343,8 @@ pub struct Take {
     /// `(tick, loop_count)` of the first playing state.
     origin: Option<(i64, u64)>,
     held: BTreeMap<(DeviceInstanceId, u8), (u64, i64, f32)>,
+    /// The expression events of each held note.
+    held_expr: BTreeMap<(DeviceInstanceId, u8), NoteCurves>,
     notes: BTreeMap<(DeviceInstanceId, u64), Vec<TakeNote>>,
     /// Controller events by device and lap.
     controllers: BTreeMap<(DeviceInstanceId, u64), CtlTake>,
@@ -346,6 +378,7 @@ impl Take {
             meter,
             origin: None,
             held: BTreeMap::new(),
+            held_expr: BTreeMap::new(),
             notes: BTreeMap::new(),
             controllers: BTreeMap::new(),
             pending: Vec::new(),
@@ -436,6 +469,7 @@ impl Take {
     /// stays; events still waiting for the transport are dropped too.
     pub fn discard_notes(&mut self) {
         self.held.clear();
+        self.held_expr.clear();
         self.notes.clear();
         self.controllers.clear();
         self.pending.clear();
@@ -502,11 +536,13 @@ impl Take {
             (true, Some((_, le))) => le,
             _ => end,
         };
+        let expr = self.held_expr.remove(&(device, key)).unwrap_or_default();
         self.notes.entry((device, lap)).or_default().push(TakeNote {
             tick,
             length: (end - tick).max(1),
             key,
             velocity,
+            expr,
         });
     }
 
@@ -538,8 +574,20 @@ impl Take {
                     self.close(device, key, lap, tick);
                 }
             }
-            // Pitch bend, aftertouch and CC become controller points; per-note expressions are
-            // not recorded.
+            // A note's expression joins the note it belongs to (the note held on that key in this
+            // lap); one for a key that is not held, or that began in an earlier lap, is dropped.
+            NoteKind::NoteExpr { key, kind, value } => {
+                if let Some(&(held_lap, start, _)) = self.held.get(&(device, key))
+                    && held_lap == lap
+                {
+                    self.held_expr.entry((device, key)).or_default().push(
+                        kind,
+                        (tick - start).max(0),
+                        value,
+                    );
+                }
+            }
+            // Pitch bend, aftertouch and CC become controller points.
             other => {
                 if let Some((kind, value)) = ControllerKind::from_note(other) {
                     self.controllers
@@ -642,6 +690,16 @@ impl Take {
                 .iter()
                 .map(|n| Note::new(n.tick - start, n.length.max(1), n.key, n.velocity))
                 .collect();
+            let expression = notes
+                .iter()
+                .map(|n| {
+                    let mut e = NoteExpression::new(n.tick - start, n.key);
+                    e.pitch = record_curve(ExpressionKind::Pitch, &n.expr.pitch);
+                    e.pressure = record_curve(ExpressionKind::Pressure, &n.expr.pressure);
+                    e.timbre = record_curve(ExpressionKind::Timbre, &n.expr.timbre);
+                    e
+                })
+                .collect();
             let controllers = canonical(
                 ctl.into_iter()
                     .map(|(kind, raw)| ControllerLane::new(kind, record_points(&raw, start)))
@@ -661,7 +719,13 @@ impl Take {
                     scale: None,
                     controllers,
                     param_lanes: Vec::new(),
-                    midi: Default::default(),
+                    midi: std::sync::Arc::new(
+                        MidiData {
+                            expression,
+                            ..Default::default()
+                        }
+                        .canonical(),
+                    ),
                     groove: None,
                     grid: None,
                     content: ClipContent::Notes(content),

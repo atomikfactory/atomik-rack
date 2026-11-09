@@ -23,6 +23,11 @@
 //!   that `AllOff` leaves alone (as a hardware synth does) and `reset` clears. The sustain pedal
 //!   (CC 64), volume (CC 7), expression (CC 11) and pressure are kept by a
 //!   [`ControllerState`]; other controllers are ignored.
+//! * Per-note expression ([`atomik_core::NoteKind::NoteExpr`], see [`crate::controller_state`]):
+//!   a note's tuning adds its semitones to that voice's pitch (next to the bend), its pressure is
+//!   the voice's `Pressure` modulation source (with channel and key pressure) and its slide opens
+//!   that voice's filter cutoff by up to [`EXPR_SLIDE_OCTAVES`] octaves. A note without expression
+//!   sounds as it always did.
 //! * Randomness (noise, sample & hold LFO, `drift`) comes from `Rng`s derived from
 //!   `PrepareInfo::seed`.
 //!
@@ -71,7 +76,9 @@ use atomik_dsp::{
     Waveform, balance_gains, exp2_det, note_to_hz,
 };
 
-use crate::controller_state::{ControllerState, DEFAULT_BEND_RANGE, Effect, MAX_BEND_RANGE};
+use crate::controller_state::{
+    ControllerState, DEFAULT_BEND_RANGE, Effect, KeyExpression, MAX_BEND_RANGE,
+};
 use crate::cv_in::{clean, db_gain};
 
 /// Number of preallocated voices.
@@ -948,6 +955,8 @@ const TARGET_LEVEL: u16 = 2;
 const MOD_CUTOFF_OCTAVES: f32 = 6.0;
 /// Semitones of pitch a full slot adds (the range of the pitch CV).
 const MOD_PITCH_SEMITONES: f32 = 24.0;
+/// Octaves of cutoff a note's full slide (per-note timbre) adds.
+const EXPR_SLIDE_OCTAVES: f32 = 3.0;
 
 /// The poly synth's modulation matrix (also the mono bass's: the same voice code).
 pub static MOD_TABLES: ModTables = ModTables {
@@ -1292,6 +1301,8 @@ struct Voice {
     /// of the modulation slots. The pressure is set per render segment while a slot is in use.
     vel: f32,
     pressure: f32,
+    /// The per-note expression of the voice's key (all zero without it), set per render segment.
+    expr: KeyExpression,
 }
 
 impl Voice {
@@ -1340,6 +1351,7 @@ impl Voice {
             gr: 1.0,
             vel: 0.0,
             pressure: 0.0,
+            expr: KeyExpression::default(),
         }
     }
 
@@ -1503,6 +1515,7 @@ impl Voice {
                 key + offset
                     + lfo * (p.lfo_to_pitch + p.wheel * WHEEL_VIBRATO)
                     + p.bend
+                    + self.expr.pitch
                     + cv_pitch
                     + extra
                     + drift
@@ -1524,6 +1537,7 @@ impl Voice {
         if let Some((cutoff, _, _)) = slots {
             octaves += cutoff * MOD_CUTOFF_OCTAVES;
         }
+        octaves += self.expr.slide * EXPR_SLIDE_OCTAVES;
         let scale = if p.ladder {
             exp2_det(octaves)
         } else {
@@ -2343,6 +2357,7 @@ impl PolySynth {
                 if slots_on {
                     v.pressure = self.ctl.pressure(v.key);
                 }
+                v.expr = self.ctl.note_expr(v.key);
                 v.render(&mut mix[start..end], &mut mix_r[start..end], &m, &p);
             }
             self.ctl.fill_gain(&mut ctl_gain[start..end]);
@@ -2880,6 +2895,80 @@ mod tests {
         assert!((freq(-0.5) - down).abs() < 1.0, "{}", freq(-0.5));
         // Out-of-range input is clamped to the range.
         assert!((freq(5.0) - up).abs() < 1.5);
+    }
+
+    fn expr(key: u8, kind: atomik_core::ExprKind, value: f32) -> NoteKind {
+        NoteKind::NoteExpr { key, kind, value }
+    }
+
+    #[test]
+    fn note_tuning_moves_the_pitch_of_its_own_key_only() {
+        use atomik_core::ExprKind;
+        let freq = |tuning: f32, key: u8| {
+            let (mut h, _) = synth();
+            pure_sine(&mut h);
+            h.push_note("notes_in", on(0, 57, 1.0)); // 220 Hz
+            push(&mut h, 1, expr(key, ExprKind::Tuning, tuning));
+            let o = h.render(seconds(0.5), &OUT).remove(0);
+            dominant_frequency(&o[4_800..24_000], SR)
+        };
+        assert!((freq(12.0, 57) - 440.0).abs() < 2.0, "{}", freq(12.0, 57));
+        assert!((freq(-12.0, 57) - 110.0).abs() < 1.0);
+        assert!(
+            (freq(12.0, 58) - 220.0).abs() < 1.0,
+            "another key is not touched"
+        );
+    }
+
+    #[test]
+    fn a_new_note_starts_without_the_expression_of_the_one_before() {
+        use atomik_core::ExprKind;
+        let (mut h, _) = synth();
+        pure_sine(&mut h);
+        h.push_note("notes_in", on(0, 57, 1.0));
+        push(&mut h, 1, expr(57, ExprKind::Tuning, 12.0));
+        push(&mut h, 2, NoteKind::AllOff);
+        h.push_note("notes_in", on(3, 57, 1.0));
+        let o = h.render(seconds(0.5), &OUT).remove(0);
+        let f = dominant_frequency(&o[4_800..24_000], SR);
+        assert!((f - 220.0).abs() < 1.0, "{f}");
+    }
+
+    #[test]
+    fn note_slide_opens_the_filter_of_its_voice() {
+        use atomik_core::ExprKind;
+        let bright = |slide: f32| {
+            let (mut h, _) = synth();
+            h.set_param("osc1.wave", 0.0);
+            h.set_param("osc.mix", 0.0);
+            h.set_param("filter.cutoff", 300.0);
+            h.set_param("filter.env_amount", 0.0);
+            h.set_param("filter.key_track", 0.0);
+            h.set_param("filter.resonance", 0.0);
+            h.push_note("notes_in", on(0, 45, 1.0));
+            push(&mut h, 1, expr(45, ExprKind::Slide, slide));
+            let o = h.render(seconds(0.5), &OUT).remove(0);
+            brightness(&o[9_600..24_000])
+        };
+        assert!(
+            bright(1.0) > 2.0 * bright(0.0),
+            "{} {}",
+            bright(1.0),
+            bright(0.0)
+        );
+    }
+
+    #[test]
+    fn note_pressure_is_the_pressure_source_of_its_key() {
+        use atomik_core::ExprKind;
+        let mut s = PolySynth::new();
+        s.handle(expr(60, ExprKind::Pressure, 0.5));
+        assert_eq!((s.ctl.pressure(60), s.ctl.pressure(61)), (0.5, 0.0));
+        s.handle(NoteKind::On {
+            key: 60,
+            velocity: 0.5,
+        });
+        assert_eq!(s.ctl.pressure(60), 0.0, "a new note starts at rest");
     }
 
     #[test]

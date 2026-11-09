@@ -484,6 +484,30 @@ fn pitch_bend_and_pitch_cv_move_the_pitch() {
 }
 
 #[test]
+fn note_expression_tunes_brightens_and_swells_its_voice() {
+    use atomik_core::ExprKind;
+    let render = |key: u8, kind: ExprKind, value: f32, note: u8| {
+        let (mut h, _) = synth();
+        pure(&mut h);
+        h.push_note("notes_in", on(0, note, 1.0));
+        push(&mut h, 1, NoteKind::NoteExpr { key, kind, value });
+        h.render(seconds(1.0), &OUT)
+    };
+    let f = |o: &Vec<Vec<f32>>| dominant_frequency(&o[0][4_800..4_800 + 32_768], SR);
+    let up = render(57, ExprKind::Tuning, 12.0, 57);
+    assert!((f(&up) - 440.0).abs() < 1.5, "{}", f(&up));
+    let other = render(58, ExprKind::Tuning, 12.0, 57);
+    assert!(
+        (f(&other) - 220.0).abs() < 1.0,
+        "another key is not touched"
+    );
+    let rest = render(57, ExprKind::Pressure, 0.0, 57);
+    let pressed = render(57, ExprKind::Pressure, 1.0, 57);
+    let ratio = peak(&pressed[0][4_800..20_000]) / peak(&rest[0][4_800..20_000]);
+    assert!((ratio - 2.0).abs() < 0.1, "{ratio}");
+}
+
+#[test]
 fn the_pitch_envelope_falls_to_the_note() {
     let (mut h, _) = synth();
     pure(&mut h);

@@ -6,6 +6,7 @@
 pub mod bend;
 mod meter_map;
 mod midi;
+pub mod mpe;
 mod note;
 mod param;
 pub mod rt_guard;
@@ -18,6 +19,7 @@ pub use meter_map::{
     meter_ok,
 };
 pub use midi::{ChannelMessage, MessageKind};
+pub use mpe::{ChannelRole, MpeZones, ZoneSide};
 pub use note::{BufferFull, ExprKind, NoteBuffer, NoteEvent, NoteKind};
 pub use param::{
     ParamDescriptor, ParamId, REC_CLIP_SAFE_PARAM, REC_GAIN_MAX_DB, REC_GAIN_MIN_DB,

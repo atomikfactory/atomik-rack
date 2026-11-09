@@ -108,6 +108,8 @@ pub enum Choice {
     /// What an enabled MIDI input is for: a click switches it between playing notes (a keyboard)
     /// and feeding the mappings only.
     MidiMappingOnly(String),
+    /// The MPE mode of an enabled keyboard input: a click steps through off and the zones.
+    MidiMpe(String),
     /// Makes the surface at this index the one the Surfaces tab edits.
     SurfaceSelect(usize),
     /// Adds a surface (an empty one, edited next).
@@ -676,6 +678,16 @@ impl SettingsDialog {
             .enabled_midi_inputs()
             .map(|i| (i.name.clone(), Choice::MidiMappingOnly(i.name.clone())))
             .collect();
+        let mpe_inputs: Vec<(String, Choice)> = d
+            .enabled_midi_inputs()
+            .filter(|i| i.role == MidiInputRole::Keyboard)
+            .map(|i| {
+                (
+                    format!("{}: MPE {}", i.name, i.mpe.label()),
+                    Choice::MidiMpe(i.name.clone()),
+                )
+            })
+            .collect();
         let with_current = |values: &[u64], current: u64| {
             let mut v = values.to_vec();
             if !v.contains(&current) {
@@ -813,6 +825,22 @@ impl SettingsDialog {
                 Section {
                     title: "MIDI inputs for mappings only",
                     options: mapping_only,
+                    chips: false,
+                },
+            );
+        }
+        if !mpe_inputs.is_empty() {
+            // After the lists of inputs (and the mapping-only one when it is there).
+            let at = if sections[5].title == "MIDI inputs for mappings only" {
+                6
+            } else {
+                5
+            };
+            sections.insert(
+                at,
+                Section {
+                    title: "MIDI inputs with MPE (click to change the zone)",
+                    options: mpe_inputs,
                     chips: false,
                 },
             );
@@ -1136,6 +1164,7 @@ impl SettingsDialog {
                 .midi_inputs
                 .iter()
                 .any(|i| i.name == *p && i.role == MidiInputRole::Mapping),
+            Choice::MidiMpe(p) => d.midi_inputs.iter().any(|i| i.name == *p && i.mpe.enabled),
             Choice::SurfaceSelect(i) => self.surface_sel == *i,
             Choice::SurfaceAdd
             | Choice::SurfaceRemove
@@ -1199,6 +1228,7 @@ impl SettingsDialog {
                 };
                 self.draft.set_midi_input_role(&p, role);
             }
+            Choice::MidiMpe(p) => self.draft.cycle_midi_input_mpe(&p),
             Choice::SetUpController | Choice::ExportController | Choice::ImportController => {}
             Choice::SurfaceSelect(i) => self.surface_sel = i,
             Choice::SurfaceAdd => self.add_surface(),
@@ -1605,7 +1635,10 @@ impl SettingsDialog {
                 );
             } else {
                 let c = Point::new(r.x0 + 12.0, r.center().y);
-                if matches!(choice, Choice::MidiInput(_) | Choice::MidiMappingOnly(_)) {
+                if matches!(
+                    choice,
+                    Choice::MidiInput(_) | Choice::MidiMappingOnly(_) | Choice::MidiMpe(_)
+                ) {
                     // Several can be on at once: a square box, not a radio dot.
                     let b = Rect::new(c.x - 5.0, c.y - 5.0, c.x + 5.0, c.y + 5.0);
                     canvas.stroke_with(RoundedRect::from_rect(b, 1.5), 1.2, theme.text_muted);

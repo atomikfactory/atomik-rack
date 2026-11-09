@@ -98,6 +98,11 @@ chain, a switch for the insert area and the output display, and a back with only
 return and the output; the insert effects stacked under the panel; and a compact master section panel with the
 master fader, the meter, the insert switches and eight send rows, its own insert area and the shared send effects
 grouped under it),
+per-note expression (a MIDI input switched to MPE with its zone set by hand or announced by the
+controller, the pitch bend, pressure and CC 74 of each member channel recorded as the pitch, pressure and timbre
+curves of the note and saved with the clip, played by the poly synth, the wavetable synth and the FM synth with a
+destination for each curve, written to and read from MIDI files as MPE tracks, and drawn as a small curve under the
+selected note in the piano roll with a button that clears it),
 the optional update check (a question at the first start, one request a day for the list of releases that sends
 only the program name and version, a notice with What's new, Skip this version and Later, and Help > Check for Updates;
 nothing is downloaded or installed),
@@ -125,9 +130,9 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 ## Phase 2: The sequencer
 
 - **Automation recording follow-ups.** A touch that starts at the press instead of the first move (needs a press and release signal from every control, plugin windows included).
-- **MIDI controller data follow-ups.** MPE (per-note expression) lanes, the CC badge on a compact track row (the badge needs a row of 52 px or more), and snapping of the points of the track lanes to the bar lines of a changing meter (the Bar and Beat snap counts from the first meter).
+- **MIDI controller data follow-ups.** Editing the per-note expression curves by hand (drawing and moving their points in the piano roll; today they are recorded, played, cleared and kept in MIDI files), expression for the other instruments (the grain sampler, the sampler, the semi-modular synth and the organ take a note's pressure as their pressure source and ignore its pitch and slide), MPE member channels to plugins that take MPE MIDI and to the MIDI Out device (CLAP and VST3 plugins already get per-note expression events), an expression that follows its note when the note is moved or retuned (it is kept by the note's start and key), the zone an MPE controller announced shown in Audio Settings, the CC badge on a compact track row (the badge needs a row of 52 px or more), and snapping of the points of the track lanes to the bar lines of a changing meter (the Bar and Beat snap counts from the first meter).
 - **Quantize and groove follow-ups.** A groove from an audio loop, device-parameter lanes and a track's own controller lanes that move with the notes of a quantize (only the lanes of a note clip do today), and a quantize of the note lengths to a length grid (the grid per note picks the start grid from each note's length).
-- **MIDI file follow-ups.** Per-note expression (MPE) kept, and typing the bytes of a SysEx message (the piano roll adds General MIDI System On, moves, deletes and clears messages).
+- **MIDI file follow-ups.** Typing the bytes of a SysEx message (the piano roll adds General MIDI System On, moves, deletes and clears messages).
 - **Note lane follow-ups.** An S button on the chip of lane 0 (the chip shares the header's second line with the track's own buttons and has no room for a third control: use the Solo Lane menu item), a click on the record dot of a lane header to arm it (the dot shows the armed state; the Record to Lane menu item arms it today), and splitting the incoming notes between armed lanes by a rule (every armed lane gets the whole take today).
 
 ## Phase 3: Audio

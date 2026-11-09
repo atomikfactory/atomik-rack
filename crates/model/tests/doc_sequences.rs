@@ -731,6 +731,7 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                         tick: 0,
                         data: vec![0x7E, 0x7F, 0x09, 0x01],
                     }],
+                    ..Default::default()
                 },
                 merge: None,
             }),

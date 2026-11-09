@@ -201,6 +201,49 @@ fn write_midi_data(w: &mut String, c: &Clip, indent: &str) {
             );
         });
     }
+    write_expression(w, c, indent);
+}
+
+/// Writes a note clip's `"expression"`: one `[tick, key, pitch, pressure, timbre]` per note that
+/// has curves and still exists in the clip (an entry of a note moved or deleted since is left out),
+/// each curve a list of `[ticks after the note start, value]` (`[]` for a curve without points).
+fn write_expression(w: &mut String, c: &Clip, indent: &str) {
+    let ClipContent::Notes(notes) = &c.content else {
+        return;
+    };
+    let kept: Vec<&crate::NoteExpression> = c
+        .midi
+        .expression
+        .iter()
+        .filter(|e| {
+            !e.is_empty()
+                && notes
+                    .binary_search_by_key(&(e.tick, e.key), |n| (n.tick, n.key))
+                    .is_ok()
+        })
+        .collect();
+    if kept.is_empty() {
+        return;
+    }
+    let _ = write!(
+        w,
+        ",
+{indent}\"expression\": "
+    );
+    list_each(w, indent, &kept, |w, e| {
+        let _ = write!(w, "[{}, {}", e.tick, e.key);
+        for kind in crate::ExpressionKind::ALL {
+            let _ = write!(w, ", [");
+            for (i, p) in e.curve(kind).iter().enumerate() {
+                let sep = if i == 0 { "" } else { ", " };
+                let _ = write!(w, "{sep}[{}, ", p.tick);
+                write_f32(w, p.value);
+                let _ = write!(w, "]");
+            }
+            let _ = write!(w, "]");
+        }
+        let _ = write!(w, "]");
+    });
 }
 
 /// Writes a note clip's `"groove"` (and `"groove_strength"` unless it is 100).

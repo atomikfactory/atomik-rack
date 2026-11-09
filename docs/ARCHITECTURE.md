@@ -1887,7 +1887,8 @@ of them touching the engine or the audio thread.
   through an `Arc`): saved as the optional, ignorable `"programs"` (`[tick, program]`, or
   `[tick, program, bank MSB, bank LSB]` with `null` for a byte not sent) and `"sysex"`
   (`[tick, "7E 7F 09 01"]`) fields of a note clip under format 43, kept by moves, splits, duplicates,
-  loops, joins, loop conversion and tempo scaling, and played by nothing. `SongCommand::SetClipMidi
+  loops, joins, loop conversion and tempo scaling, and played by nothing (a later field of the same data, the
+  per-note `"expression"`, is played: see "Per-note expression"). `SongCommand::SetClipMidi
   { clip, midi, merge }` replaces the whole data in one undo step (a drag shares a merge id); the pure
   edits (add, move, delete, step) are methods of `MidiData` and the functions of
   [midi_lane.rs](../crates/ui/src/midi_lane.rs), which the piano roll's message lane uses (below).
@@ -2987,8 +2988,9 @@ start-up or in Apply, the session opens the remembered one instead and `Shell` s
 never saved. Without a remembered configuration audio stays off with the error and the file keeps
 the old devices.
 
-**Several MIDI inputs.** `settings.json` holds `midi_inputs`, a list of `{name, enabled, role}`
-(`MidiInputSetting`); every enabled port is open at once. `role` is `keyboard` (its notes play the
+**Several MIDI inputs.** `settings.json` holds `midi_inputs`, a list of `{name, enabled, role, mpe}`
+(`MidiInputSetting`; `mpe` is `{enabled, side, members}`, left out of the file while it is the default, see
+"6p. Per-note expression"); every enabled port is open at once. `role` is `keyboard` (its notes play the
 selected device and feed the mappings) or `mapping` (it feeds the mappings only, its notes play
 nothing). A file with the old single `midi_input` and no `midi_inputs` loads as that input,
 enabled, and is saved in the new form. The engine has one live note queue with one producer, so
@@ -6675,6 +6677,58 @@ result never touches the document (no command, no undo step); `AppCore::zone_dat
 `ZoneView` draws, and says when the song changed since the render started (`Document::revision`). The same
 measurement is the `zone` entry of the MCP audio report. The panel opens with `mixer.reference_panel`.
 
+## 6p. Per-note expression (MPE)
+
+A controller that gives every sounding note a MIDI channel of its own sends the bend, the pressure and CC 74 of
+each note on that note's channel. Atomik keeps that as data of the note and plays it per voice.
+
+- **Zones** ([mpe.rs](../crates/core/src/mpe.rs)). `MpeZones { lower, upper }` holds the member channel counts of the
+  lower zone (master on channel 1, members 2, 3, ...) and the upper zone (master on channel 16, members 15, 14, ...);
+  two zones share at most 14 members and the one set last wins a conflict. `MpeZones::config` takes an MPE
+  Configuration Message (RPN 6 on a master channel; the data entry is the member count, 0 removes the zone).
+- **Live input** ([mpe.rs](../crates/midi-io/src/mpe.rs)). A port with `mpe.enabled` is opened with `MidiLink::mpe`
+  set to its zones (`MpeSetting::zones`); its `NoteForwarder` reads the bytes with an `MpeInput` instead of `parse`.
+  On a member channel the note on and off are ordinary notes, and the pitch bend (times the channel's range, 48
+  semitones until RPN 0 on that channel changes it), the channel pressure and CC 74 become `NoteKind::NoteExpr`
+  events for the key sounding on that channel (tuning in semitones, pressure and slide `0..=1`). A channel keeps
+  what it last held and sends it right after the next note on there. Master channels, channels outside the zones
+  and every port without `mpe.enabled` read as before, and the registered-parameter messages of a member channel
+  are the input's own. The events go through the usual `NoteRouter` (an expression follows the device holding its
+  key), one message gives at most four events and nothing allocates.
+- **Model** ([note_expression.rs](../crates/model/src/note_expression.rs)). `MidiData::expression` holds one
+  `NoteExpression { tick, key, pitch, pressure, timbre }` per note that has curves, found by the note's start tick
+  and key (a clip never holds two notes there); a curve is points `(ticks after the note start, value)`, linear
+  between points, held at both ends, at most 1024 points per curve and 16 384 notes with curves per clip. It
+  lives in the clip's `midi` data, so splits, joins, loop conversion, tempo scaling and clip copies carry it. A
+  note moved or retuned in the editors no longer finds its entry (it is found by the note's start and key), and
+  the saved file leaves out the entries that no note matches. The file field is `"expression"` of a note clip
+  after `"sysex"`, written only while some note has curves and ignorable under format 44: `[tick, key, pitch, pressure, timbre]` with each curve a list
+  of `[ticks, value]`. `flatten_expression` finds the notes like `flatten_track_notes` does (offset, loop, swing,
+  mutes, hiding, live groove) and gives song-tick curves. `layered_clip` and `merge_laps` keep the entries of the
+  notes they keep and give a replaced note the take's.
+- **Recording** ([record.rs](../crates/app/src/record.rs)). The tap offers `NoteExpr` events like any other; a take
+  collects those of the note held on their key in the same lap and writes them as the note's curves
+  (`record_curve`: a burst closer than about 5 ms keeps its last value, a repeated value is dropped, 1024 points at
+  most). Input quantize moves the note and its curves together.
+- **Playback.** `render` turns the flattened curves into `SongTrack::expression` (`SongExpression`: the note's
+  start tick and key, the kind and points in song ticks). `compile_track` matches each to its note, drops points
+  at or after the note's end and expands them to `NoteExpr` events sorted after the note on of their tick; the RT
+  player sends them only for a key it holds, and a seek or a loop wrap into a note sends each curve's value in
+  force with the chased note. Nothing is allocated on the audio thread and a bounce does not depend on the block
+  size. `ControllerState` keeps a fixed array per key (tuning, pressure, slide), cleared by that key's next note on;
+  the poly synth, the wavetable synth and the FM synth read it per voice (destinations in
+  [DEVICES.md](DEVICES.md#per-note-expression-mpe)).
+- **MIDI files** ([midi_file.rs](../crates/app/src/midi_file.rs)). A track with expression is exported as MPE: RPN 6 on
+  channel 1 with the number of member channels the notes need, RPN 0 (48 semitones) on each, every note on a member
+  channel that is free at its start, and the note's curves as pitch bend, channel pressure and CC 74 on its channel
+  (the value at the start just before the note on, then each point, then rest after the note off); the track's
+  controllers and program changes go to channel 1. An MPE track of a song file uses channels 1 to 16 of its own
+  MIDI track. The import reads RPN 6 on a master channel, merges the notes of the member channels into one track
+  (with the master channel's controllers) and keeps each note's bend, pressure and CC 74 as its curves.
+- **Piano roll** ([piano_roll.rs](../crates/ui/src/piano_roll.rs)). With one note selected that has expression, a strip
+  under it (above it at the bottom of the grid) draws the three curves over the note's length with a button that
+  clears them: one `SetClipMidi`, one undo step. There is no editing of the points by hand yet.
+
 ## 7. The UI crate
 
 `atomik-ui` has no window-system dependency and no time source. The app feeds `UiEvent`s and applies
@@ -7012,13 +7066,16 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   `SetTempoMap` that joins the last tempo edit's undo step. The take does not retime itself.
 - **MIDI controller data.** Controller lanes belong to note clips or, outside clips, to a note track
   (Track > Edit Track Controllers, 2.12); a track's own lanes are shown only in the roll's track mode, not in the
-  arrangement (its header has a CC badge). There is no per-note expression (MPE) data, and a recorded lane is
-  one `Step` point per burst of events, not a smooth curve. A ramp is played as steps of 40 ticks. Pressure is kept as a
+  arrangement (its header has a CC badge). Per-note expression (MPE) is not a lane: it is kept by note (see
+  "6p. Per-note expression"), cannot be edited by hand yet and follows a note only while its start and key
+  stay; a recorded lane is one `Step` point per burst of events, not a smooth curve. A ramp is played as steps
+  of 40 ticks. Pressure is kept as a
   modulation source in five instruments but no parameter reads it yet, and the only registered
   parameter is RPN 0 (the bend range); there is no NRPN. Points are selected, copied and thinned
   one lane at a time: there is no selection across lanes and no duplicate of points.
-- **MIDI files.** Type 2 files and SMPTE divisions are refused, RPN and NRPN data and per-note
-  expression are not kept, and a tempo ramp is exported as a staircase and imported as steps. A song
+- **MIDI files.** Type 2 files and SMPTE divisions are refused, RPN and NRPN data are not kept (the bend range
+  of an MPE member channel and the zone message are read and written for MPE tracks only), and a tempo ramp
+  is exported as a staircase and imported as steps. A song
   file does not carry audio tracks or automation lanes. The bytes of a SysEx message cannot be typed
   yet (the piano roll adds General MIDI System On, moves, deletes and clears messages). A
   file imported as one clip merges all its tracks and channels into that clip's controller lanes
@@ -7123,7 +7180,8 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   shown until the state is captured, pins default to the first eight params (not the plugin's
   remote-controls page), CLAP presets and VST3 program lists are not listed (only `.vstpreset`
   files), the Windows DPI choice per plugin is not offered, recovery snapshots hold the project
-  file without its audio bundle, and surround, multi-output and MPE are not supported.
+  file without its audio bundle, and surround and multi-output are not supported. A plugin gets per-note
+  expression as note expression events (CLAP and VST3); MPE MIDI on member channels is not sent to plugins.
 - **File browser.** Tags and favourites are keyed by path, so moving or renaming a file outside the
   app loses them. A preview plays at 0 dB with no level control and no cue output, and the browser
   shows no waveform. The tree does not expand to reveal the folder shown in the list. Folders are

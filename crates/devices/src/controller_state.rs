@@ -16,6 +16,11 @@
 //! * **Pressure.** Channel pressure and the polyphonic pressure of each key are kept as
 //!   modulation sources: [`ControllerState::pressure`] is the larger of the channel value and
 //!   the value of one key, `0..=1`.
+//! * **Per-note expression.** A [`NoteKind::NoteExpr`] for a key is kept for that key's note
+//!   ([`ControllerState::note_expr`]): tuning in semitones (clamped to 96 either way), pressure and
+//!   slide `0..=1`. A note-on of the key clears all three (the next note starts from rest, and its
+//!   own expression follows the note-on), `reset` clears every key. The note's pressure also
+//!   counts in [`ControllerState::pressure`]. Volume and pan expressions are not used here.
 //! * **Pitch bend and its range.** The bend is kept as `-1..=1`; its range in semitones starts at
 //!   the `bend.range` param (default 2) and the registered parameter 0 (RPN 0, CC 101/100 select,
 //!   CC 6/38 enter the semitones and cents) changes it on the fly. [`reset`](ControllerState::reset)
@@ -24,7 +29,7 @@
 //! All of it is plain arrays and scalars (nothing is allocated, the hold list is two words), and
 //! every change happens at the frame of its event, so renders do not depend on the block size.
 
-use atomik_core::NoteKind;
+use atomik_core::{ExprKind, NoteKind};
 use atomik_dsp::Smoother;
 
 /// The pitch-bend range in semitones when nothing else is set.
@@ -35,6 +40,20 @@ pub const MAX_BEND_RANGE: f32 = 24.0;
 const GAIN_SMOOTH_MS: f32 = 5.0;
 /// Pedal controller value at which the pedal counts as down (MIDI 64).
 const PEDAL_DOWN: f32 = 0.5;
+
+/// The per-note expression of one key (see [`ControllerState::note_expr`]).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct KeyExpression {
+    /// Tuning of the note in semitones, `-96..=96`.
+    pub pitch: f32,
+    /// Pressure on the note, `0..=1`.
+    pub pressure: f32,
+    /// Slide (the third MPE dimension), `0..=1`.
+    pub slide: f32,
+}
+
+/// The largest per-note tuning in semitones.
+pub const MAX_NOTE_TUNING: f32 = 96.0;
 
 /// What the device has to do after [`ControllerState::handle`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +86,8 @@ pub struct ControllerState {
     gain: Smoother,
     channel_pressure: f32,
     poly_pressure: [f32; 128],
+    /// The per-note expression of each key.
+    note: [KeyExpression; 128],
     /// Pitch bend, `-1..=1`.
     bend: f32,
     /// The range the `bend.range` param asks for, in semitones.
@@ -97,6 +118,7 @@ impl ControllerState {
             gain: Smoother::new(1.0, GAIN_SMOOTH_MS, 48_000.0),
             channel_pressure: 0.0,
             poly_pressure: [0.0; 128],
+            note: [KeyExpression::default(); 128],
             bend: 0.0,
             range_param: DEFAULT_BEND_RANGE,
             range: DEFAULT_BEND_RANGE,
@@ -122,6 +144,7 @@ impl ControllerState {
         self.gain.set_immediate(1.0);
         self.channel_pressure = 0.0;
         self.poly_pressure = [0.0; 128];
+        self.note = [KeyExpression::default(); 128];
         self.bend = 0.0;
         self.range = self.range_param;
         self.rpn = Rpn::None;
@@ -155,10 +178,17 @@ impl ControllerState {
     }
 
     /// The channel and key pressure as one modulation source: the larger of the channel
-    /// pressure and the pressure of `key`, `0..=1`.
+    /// pressure, the polyphonic pressure of `key` and the pressure of its note, `0..=1`.
     pub fn pressure(&self, key: u8) -> f32 {
+        let k = usize::from(key & 0x7f);
         self.channel_pressure
-            .max(self.poly_pressure[usize::from(key & 0x7f)])
+            .max(self.poly_pressure[k])
+            .max(self.note[k].pressure)
+    }
+
+    /// The per-note expression of the note on `key` (all zero for a note that has none).
+    pub fn note_expr(&self, key: u8) -> KeyExpression {
+        self.note[usize::from(key & 0x7f)]
     }
 
     /// The channel pressure alone, `0..=1`.
@@ -175,6 +205,7 @@ impl ControllerState {
     /// A note starts on `key`: the key is down again, so a held-back release is forgotten.
     pub fn note_on(&mut self, key: u8) {
         self.held[usize::from(key >> 6 & 1)] &= !(1u64 << (key & 63));
+        self.note[usize::from(key & 0x7f)] = KeyExpression::default();
     }
 
     /// A note-off for `key`. True when the voice must be released now; false when the pedal is
@@ -214,6 +245,17 @@ impl ControllerState {
             NoteKind::ChannelPressure { value } => self.channel_pressure = value.clamp(0.0, 1.0),
             NoteKind::PolyPressure { key, value } => {
                 self.poly_pressure[usize::from(key & 0x7f)] = value.clamp(0.0, 1.0);
+            }
+            // A value that is not finite is dropped.
+            NoteKind::NoteExpr { value, .. } if !value.is_finite() => {}
+            NoteKind::NoteExpr { key, kind, value } => {
+                let n = &mut self.note[usize::from(key & 0x7f)];
+                match kind {
+                    ExprKind::Tuning => n.pitch = value.clamp(-MAX_NOTE_TUNING, MAX_NOTE_TUNING),
+                    ExprKind::Pressure => n.pressure = value.clamp(0.0, 1.0),
+                    ExprKind::Slide => n.slide = value.clamp(0.0, 1.0),
+                    ExprKind::Volume | ExprKind::Pan => {}
+                }
             }
             NoteKind::Cc { controller, value } => {
                 return self.cc(controller, value.clamp(0.0, 1.0));

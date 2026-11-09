@@ -189,6 +189,7 @@ mod tests {
                 tick: 50,
                 data: vec![1, 2, 3],
             }],
+            ..Default::default()
         }
     }
 

@@ -349,6 +349,7 @@ fn covering(
     t: &CompiledTrack,
     pos: u64,
     velocity: &mut [f32; 128],
+    note: &mut [u32; 128],
 ) -> u128 {
     let started = t
         .notes
@@ -362,6 +363,7 @@ fn covering(
         if map.song_frame(n.end, sr) > pos {
             keys |= 1u128 << n.key;
             velocity[usize::from(n.key)] = n.velocity;
+            note[usize::from(n.key)] = i as u32;
         }
     }
     keys
@@ -405,12 +407,13 @@ fn chase(
     em: &mut Emitter<'_>,
 ) {
     let mut velocity = [0.0f32; 128];
+    let mut note = [0u32; 128];
     for (t, c) in tracks.iter().zip(cursors) {
         chase_controllers(map, sr, t, pos, offset, em);
         if !t.chase {
             continue;
         }
-        let mut keys = covering(map, sr, t, pos, &mut velocity);
+        let mut keys = covering(map, sr, t, pos, &mut velocity, &mut note);
         while keys != 0 {
             let key = keys.trailing_zeros() as u8;
             keys &= keys - 1;
@@ -420,8 +423,47 @@ fn chase(
             };
             if em.push(offset, t.device, t.socket, kind) {
                 c.held |= 1u128 << key;
+                chase_expression(map, sr, t, note[usize::from(key)], pos, offset, em);
             }
         }
+    }
+}
+
+/// Sends the expression a chased note has at song frame `pos`: for each curve of the note
+/// `t.notes[index]` the last value set strictly before `pos` (one set at `pos` is played by the
+/// normal walk), or the curve's first value when `pos` is before its first point. No allocation.
+fn chase_expression(
+    map: TempoMap<'_>,
+    sr: f64,
+    t: &CompiledTrack,
+    index: u32,
+    pos: u64,
+    offset: usize,
+    em: &mut Emitter<'_>,
+) {
+    let Some(n) = t.notes.get(index as usize) else {
+        return;
+    };
+    let (from, to) = n.expr;
+    for lane in t.expr.get(from as usize..to as usize).unwrap_or(&[]) {
+        let k = lane.ticks.partition_point(|&k| map.song_frame(k, sr) < pos);
+        let value = match k.checked_sub(1) {
+            Some(i) => lane.values[i],
+            None => match lane.values.first() {
+                Some(&v) => v,
+                None => continue,
+            },
+        };
+        em.push(
+            offset,
+            t.device,
+            t.socket,
+            NoteKind::NoteExpr {
+                key: n.key,
+                kind: lane.kind,
+                value,
+            },
+        );
     }
 }
 
@@ -480,8 +522,15 @@ fn emit_notes(
                 | NoteKind::PolyPressure { .. } => {
                     em.push(offset, t.device, t.socket, ev.kind);
                 }
-                // A song track never holds `AllOff` or per-note expressions.
-                NoteKind::AllOff | NoteKind::NoteExpr { .. } => {}
+                // A note's expression: sent for a key that sounds (a note the device refused or a
+                // pedal-held key aside, the device ignores it for a key that does not).
+                NoteKind::NoteExpr { key, .. } => {
+                    if c.held & (1u128 << key) != 0 {
+                        em.push(offset, t.device, t.socket, ev.kind);
+                    }
+                }
+                // A song track never holds `AllOff`.
+                NoteKind::AllOff => {}
             }
             c.next += 1;
         }
@@ -764,7 +813,14 @@ impl Player {
                     // A changed track keeps the keys its new content still covers at the
                     // position (no retrigger, chase or not); the rest is released below.
                     let mut velocity = [0.0f32; 128];
-                    let covered = covering(new_map, sr, &new.tracks[j], self.pos, &mut velocity);
+                    let covered = covering(
+                        new_map,
+                        sr,
+                        &new.tracks[j],
+                        self.pos,
+                        &mut velocity,
+                        &mut [0u32; 128],
+                    );
                     new.cursors[j].held = held & covered;
                     held &= !covered;
                 }

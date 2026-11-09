@@ -9,6 +9,29 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **MPE: per-note expression.** A MIDI input can be switched to MPE in Settings > Audio > MIDI inputs with MPE
+  (a click steps through off and a lower or upper zone of 15, 7 or 4 member channels). The zone is the one set
+  there until the controller sends an MPE Configuration Message, which then replaces it (a zone of 0 members
+  removes it). On a member channel the note on and off are ordinary notes, and the pitch bend (48 semitones until
+  RPN 0 says otherwise), the channel pressure and CC 74 of that channel are the expression of the note sounding
+  there, not of every note: what a channel holds before the note on starts the next note. Recording keeps them
+  with the note as three curves, pitch in semitones, pressure and timbre, a burst closer than about 5 ms folded
+  into one point and at most 1024 points per curve; Layer mode, loop passes, input quantize, splits, joins and
+  loop conversion carry them with the notes. The poly synth (and so the mono bass and the dual layer), the
+  wavetable synth and the FM synth play them: the tuning moves that voice's pitch, the pressure raises its gain by
+  up to 6 dB (it is the pressure source of the poly synth's modulation slots), and the timbre opens the cutoff of
+  the poly synth by up to three octaves, moves the frame position of the wavetable synth and adds up to one to
+  the modulation index of the FM synth (the other instruments take a note's pressure as their pressure source and
+  ignore the rest). A note with no expression sounds exactly as before. Seeks and loop wraps inside a note send
+  the value in force, and a bounce is the same at every block size. MIDI files keep it: a clip or track with
+  expression is written as an MPE track (the zone announced on channel 1, the notes on member channels, each
+  note's bend, pressure and CC 74 on its own channel) and a file that announces a zone is read back into notes
+  with their expression. In the piano roll the selected note shows its curves in a small strip under it with a
+  button that clears them (one undo step). **No project format change**: a note clip may carry an optional,
+  ignorable `"expression"` field (under format 44), written only while a note has curves. Not done yet: editing
+  the curves by hand, expression for the other instruments, MPE member channels to plugins that take MPE MIDI and
+  to the MIDI Out device (CLAP and VST3 plugins already get note expression events), and an expression that
+  follows a note when the note is moved or retuned (it is kept by the note's start and key).
 - **Controllers that just work.** Settings > Controllers > Set Up Controller... walks through a controller:
   pick its MIDI input port, then move knob 1 to 8, fader 1 to 8, the master fader and press Play, Stop,
   Record, Loop and the two bank keys, with Skip, Skip Group, Back and Finish for what the keyboard lacks. It

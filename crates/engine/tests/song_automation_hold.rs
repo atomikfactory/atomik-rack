@@ -42,6 +42,7 @@ fn a_held_lane_is_skipped_and_the_others_play_until_it_is_released() {
             notes: Vec::new(),
             controllers: Vec::new(),
             automation: vec![lane(ParamLog::A, 0.1, 0.9), lane(ParamLog::B, -4.0, 4.0)],
+            expression: Vec::new(),
         }],
         tempo: tempo(&[(0, 120.0)]),
         meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],
