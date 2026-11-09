@@ -4,6 +4,7 @@ use super::{Hit, Item, PluginParamsView, Row, Widget};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::paint::fit_label;
 use crate::seq_paint as sp;
+use crate::text_field::FieldColors;
 use crate::theme::mix;
 use vello::kurbo::{Affine, Circle, Rect, RoundedRect};
 use vello::peniko::Color;
@@ -146,20 +147,24 @@ fn chrome(v: &PluginParamsView, c: &mut dyn Canvas) {
             Some(v.accent)
         },
     );
-    let (text, color) = if v.query.is_empty() {
-        ("Search name, module or key".to_string(), t.text_muted)
+    if v.query.is_empty() {
+        sp::label(
+            c,
+            &fit_label("Search name, module or key", field.width() - 14.0, 10.0),
+            field.x0 + 8.0,
+            field.y0 + 15.0,
+            10.0,
+            t.text_muted,
+            Align::Start,
+        );
     } else {
-        (format!("{}|", v.query), t.text)
-    };
-    sp::label(
-        c,
-        &fit_label(&text, field.width() - 14.0, 10.0),
-        field.x0 + 8.0,
-        field.y0 + 15.0,
-        10.0,
-        color,
-        Align::Start,
-    );
+        let colors = FieldColors {
+            text: t.text,
+            caret: t.text,
+            selection: t.focus.with_alpha(0.35),
+        };
+        v.query.paint(c, field, 10.0, 16.0, colors, true);
+    }
     sp::label(
         c,
         &format!("{} of {} params", v.shown_count(), v.total_count()),

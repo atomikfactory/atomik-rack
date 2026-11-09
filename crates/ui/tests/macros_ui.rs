@@ -744,6 +744,25 @@ const CTRL: Modifiers = Modifiers {
 };
 
 #[test]
+fn ctrl_a_selects_the_whole_query_and_typing_replaces_it() {
+    let mut v = search_view(5);
+    for c in "lead".chars() {
+        press(&mut v, Key::Char(c), Modifiers::NONE);
+    }
+    assert!(press(&mut v, Key::Char('a'), CTRL).is_empty());
+    assert_eq!(v.query(), "lead", "selecting changes nothing");
+    assert_eq!(
+        press(&mut v, Key::Char('x'), Modifiers::NONE),
+        [ParamSearchAction::Query("x".into())]
+    );
+    press(&mut v, Key::Char('a'), CTRL);
+    assert_eq!(
+        press(&mut v, Key::Backspace, Modifiers::NONE),
+        [ParamSearchAction::Query(String::new())]
+    );
+}
+
+#[test]
 fn typing_edits_the_query_and_asks_for_new_rows() {
     let mut v = search_view(5);
     assert_eq!(

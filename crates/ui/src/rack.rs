@@ -18,6 +18,7 @@ use crate::mix_panel::MixButton;
 use crate::paint::{self, CableLook, PanelInfo, Ring};
 use crate::plugin_data::{PluginDeviceStatus, PluginEntryInfo};
 use crate::plugin_panel::{PluginButton, PluginInfo};
+use crate::search_field::SearchKey;
 use crate::seq_panel::{self, PlayerInfo, SeqButton};
 use crate::sidechain::{self, ScEntry, ScSource};
 use crate::theme::Theme;
@@ -2789,6 +2790,17 @@ impl RackView {
         self.rename.is_some() || (self.browser.visible && self.browser.focused)
     }
 
+    /// The device browser's search text.
+    pub fn browser_query(&self) -> &str {
+        self.browser.query()
+    }
+
+    /// Whether the device browser's search field has the keyboard: Select All, Copy, Cut and
+    /// Paste then work on its text, not on the rack's devices.
+    pub fn search_has_focus(&self) -> bool {
+        self.browser.visible && self.browser.focused
+    }
+
     /// Shows or hides the device browser (showing it focuses its search field). Either way it
     /// is the normal browser afterwards, not the create mode.
     pub fn set_browser_visible(&mut self, visible: bool) {
@@ -2808,7 +2820,7 @@ impl RackView {
         self.browser.focused = true;
         self.browser.create = Some(kind);
         self.set_insert(None);
-        self.browser.query.clear();
+        self.browser.clear_query();
         self.browser.scroll = 0.0;
         self.browser.highlighted = Browser::first_selectable(&self.browser.list(registry));
         self.clamp_scroll();
@@ -3747,6 +3759,10 @@ impl RackView {
         }
         if self.in_browser(pos) {
             self.browser.focused = true;
+            if button == PointerButton::Primary && Browser::in_search(pos) {
+                self.browser.search_press(pos, clicks, modifiers.shift);
+                return;
+            }
             let rows = self.browser.list(registry);
             if let Some(i) = self.browser.row_at(pos, rows.len())
                 && rows[i].selectable()
@@ -4615,25 +4631,23 @@ impl RackView {
         if self.browser.visible && self.browser.focused {
             let rows = self.browser.list(registry);
             match key {
-                Key::Char(c) => {
-                    self.browser.query.push(*c);
-                    self.browser.query_changed(registry);
+                Key::Escape | Key::Enter | Key::Up | Key::Down => {}
+                // Text, caret moves and deletes: the search field's.
+                _ => {
+                    if self.browser.search.key(key, modifiers) == SearchKey::Edited {
+                        self.browser.query_changed(registry);
+                    }
+                    return;
                 }
-                Key::Space => {
-                    self.browser.query.push(' ');
-                    self.browser.query_changed(registry);
-                }
-                Key::Backspace => {
-                    self.browser.query.pop();
-                    self.browser.query_changed(registry);
-                }
+            }
+            match key {
                 // Create mode: Esc cancels and closes, nothing is removed.
                 Key::Escape if self.browser.create.is_some() || self.inserting() => {
                     self.set_browser_visible(false)
                 }
-                Key::Escape if self.browser.query.is_empty() => self.browser.focused = false,
+                Key::Escape if self.browser.search.is_empty() => self.browser.focused = false,
                 Key::Escape => {
-                    self.browser.query.clear();
+                    self.browser.clear_query();
                     self.browser.query_changed(registry);
                 }
                 Key::Down if !rows.is_empty() => {
@@ -4742,6 +4756,16 @@ impl RackView {
         doc: &RackDoc,
         registry: &Registry,
     ) -> CommandOutcome {
+        // With the search field focused, Select All, Copy, Cut and Paste are the field's.
+        if self.search_has_focus()
+            && let Some(changed) = self.browser.search.command(id)
+        {
+            if changed {
+                self.browser.query_changed(registry);
+            }
+            self.repaint = true;
+            return CommandOutcome::Handled(Vec::new());
+        }
         // The selection holds keys local to the scope: work on the scope's view of the
         // document and lift the actions out, as `handle` does.
         let view = self.prepare(doc, registry);

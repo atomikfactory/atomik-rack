@@ -2,6 +2,8 @@
 
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::plugin_data::{FailedFileInfo, PluginEntryInfo, PluginEntryStatus, format_badge};
+use crate::search_field::SearchField;
+use crate::text_field::FieldColors;
 use crate::theme::Theme;
 use atomik_device_sdk::{DeviceDescriptor, DeviceKind, PluginKindHint, Registry};
 use atomik_library::{FileKind, FileRow, ItemInfo};
@@ -131,8 +133,8 @@ pub struct Browser {
     pub insert: bool,
     /// Shown.
     pub visible: bool,
-    /// Search text.
-    pub query: String,
+    /// The search field (text, caret, selection); [`Browser::query`] reads the text.
+    pub search: SearchField,
     /// The search field has keyboard focus.
     pub focused: bool,
     /// Highlighted row.
@@ -341,7 +343,7 @@ impl Browser {
             .filter_map(|id| registry.get(id).map(|f| f.descriptor))
             .filter(|d| is_offered(d, self.show_console, self.scope_depth))
             .filter(|d| self.create.is_none_or(|k| k.accepts(d)))
-            .filter(|d| matches(d, &self.query))
+            .filter(|d| matches(d, self.query()))
             .collect();
         rows.sort_by_key(|d| group_of(d.type_id));
         rows
@@ -358,7 +360,7 @@ impl Browser {
             .into_iter()
             .map(BrowserRow::Device)
             .collect();
-        let q = self.query.trim().to_lowercase();
+        let q = self.query().trim().to_lowercase();
         let shown: Vec<(usize, &PluginEntryInfo)> = self
             .plugins
             .iter()
@@ -499,15 +501,36 @@ impl Browser {
         (0..rows).find(|&i| self.row_rect(i).contains(p))
     }
 
+    /// The search text.
+    pub fn query(&self) -> &str {
+        self.search.text()
+    }
+
+    /// Replaces the search text (the caret goes to the end). The list is not refreshed: call
+    /// [`Browser::query_changed`] after.
+    pub fn set_query(&mut self, text: &str) {
+        self.search.set_text(text);
+    }
+
+    /// Empties the search text.
+    pub fn clear_query(&mut self) {
+        self.search.clear();
+    }
+
+    /// A press in the search field places the caret there.
+    pub fn search_press(&mut self, p: Point, clicks: u8, extend: bool) {
+        self.search.press(p, clicks, extend);
+    }
+
     /// True when `p` is in the search field.
     pub fn in_search(p: Point) -> bool {
         SEARCH.contains(p)
     }
 
     /// Paints the panel at the left of a view of height `height`.
-    pub fn paint<C: Canvas + ?Sized>(
+    pub fn paint(
         &self,
-        c: &mut C,
+        c: &mut dyn Canvas,
         theme: &Theme,
         registry: &Registry,
         height: f64,
@@ -544,22 +567,23 @@ impl Browser {
             theme.section_line
         };
         c.stroke_with(field, 1.0, border);
-        let (text, color) = if self.query.is_empty() {
-            ("Search".to_string(), theme.text_muted)
-        } else {
-            (self.query.clone(), theme.text)
-        };
-        let shown = if self.focused {
-            format!("{text}|")
-        } else {
-            text
-        };
-        c.text(&TextRun::new(
-            shown,
-            pt(SEARCH.x0 + 9.0, SEARCH.y0 + 17.0),
-            11.0,
-            color,
-        ));
+        if self.search.is_empty() {
+            c.text(&TextRun::new(
+                "Search",
+                pt(SEARCH.x0 + 9.0, SEARCH.y0 + 17.0),
+                11.0,
+                theme.text_muted,
+            ));
+        }
+        if !self.search.is_empty() || self.focused {
+            let colors = FieldColors {
+                text: theme.text,
+                caret: theme.text,
+                selection: theme.focus.with_alpha(0.35),
+            };
+            self.search
+                .paint(c, SEARCH, 11.0, 18.0, colors, self.focused);
+        }
         if let Some(hint) = self.hint() {
             c.text(&TextRun::new(hint, pt(14.0, 70.0), 8.0, theme.text_muted));
         }
@@ -728,7 +752,7 @@ mod tests {
             .filter(|t| !is_modulator(t))
             .collect();
         assert!(before.windows(2).all(|w| w[0] < w[1]));
-        browser.query = "player".into();
+        browser.set_query("player");
         assert_eq!(ids(&browser), PLAYER_TYPE_IDS.to_vec());
     }
 
@@ -746,11 +770,11 @@ mod tests {
         assert!(all[..m].iter().all(|t| !is_modulator(t) && !is_player(t)));
         assert!(m < p, "modulators come before the players: {all:?}");
         assert_eq!(p - m, MODULATOR_TYPE_IDS.len());
-        browser.query = "modulator".into();
+        browser.set_query("modulator");
         assert_eq!(ids(&browser), MODULATOR_TYPE_IDS.to_vec());
         // The Create Effect browser lists them too (they are utilities), and the instrument
         // browser does not.
-        browser.query.clear();
+        browser.clear_query();
         browser.create = Some(CreateKind::Effect);
         assert!(ids(&browser).contains(&"atomik.mod-source"));
         browser.create = Some(CreateKind::Instrument);
@@ -772,9 +796,9 @@ mod tests {
         let ids = |b: &Browser| -> Vec<&str> { b.rows(&reg).iter().map(|d| d.type_id).collect() };
         assert!(ids(&browser).contains(&CONTAINER_TYPE));
         assert!(!ids(&browser).contains(&"atomik.note-split"));
-        browser.query = "container".into();
+        browser.set_query("container");
         assert_eq!(ids(&browser), [CONTAINER_TYPE]);
-        browser.query = "atomik.note-split".into();
+        browser.set_query("atomik.note-split");
         assert!(ids(&browser).is_empty());
     }
 
@@ -875,11 +899,11 @@ mod tests {
             |b: &Browser| -> Vec<&str> { b.rows(&reg).iter().map(|d| d.type_id).collect() };
         assert!(!listed(&browser).contains(&AUDIO_TRACK_TYPE));
         // Neither a search for it nor the console toggle shows it.
-        browser.query = "audio".into();
+        browser.set_query("audio");
         assert!(!listed(&browser).contains(&AUDIO_TRACK_TYPE));
-        browser.query = "atomik.audio-track".into();
+        browser.set_query("atomik.audio-track");
         assert!(listed(&browser).is_empty());
-        browser.query.clear();
+        browser.clear_query();
         browser.show_console = true;
         assert!(!listed(&browser).contains(&AUDIO_TRACK_TYPE));
         assert!(!listed(&browser).is_empty());
@@ -899,7 +923,7 @@ mod tests {
         browser.show_console = true;
         assert!(listed(&browser).contains(&"atomik.channel"));
         assert!(!listed(&browser).contains(&"atomik.bus"));
-        browser.query = "bus".into();
+        browser.set_query("bus");
         assert!(!listed(&browser).contains(&"atomik.bus"));
     }
 
@@ -954,13 +978,13 @@ mod tests {
             ..Browser::default()
         };
         for q in ["ser", "SER", " Ser ", "serum", "rum 2"] {
-            browser.query = q.into();
+            browser.set_query(q);
             let found = listed_plugins(&browser, &reg);
             assert!(found.contains(&"Serum 2".to_string()), "{q:?}: {found:?}");
             assert!(!found.contains(&"Surge XT".to_string()), "{q:?}: {found:?}");
         }
         // The effect create list offers the effect only, the instrument list the synth only.
-        browser.query = "ser".into();
+        browser.set_query("ser");
         browser.create = Some(CreateKind::Instrument);
         assert_eq!(listed_plugins(&browser, &reg), ["Serum 2"]);
         browser.create = Some(CreateKind::Effect);
@@ -980,7 +1004,7 @@ mod tests {
             highlighted: 40,
             ..Browser::default()
         };
-        browser.query = "ser".into();
+        browser.set_query("ser");
         browser.query_changed(&reg);
         assert_eq!(
             browser.scroll, 0.0,

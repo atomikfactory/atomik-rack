@@ -63,6 +63,7 @@ use crate::canvas::Canvas;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::pick_list::CompactList;
 use crate::plugin_panel::{MAX_FEATURED, featured_pins, param_id_of, param_key};
+use crate::search_field::{SearchField, SearchKey};
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
 use crate::tooltip::Help;
@@ -245,7 +246,7 @@ pub struct PluginParamsView {
     /// Prefix sums of the item heights: `offsets[i]` is the top of item `i`.
     offsets: Vec<f64>,
     content_h: f64,
-    query: String,
+    query: SearchField,
     scroll: f64,
     /// The values of the device as of the last sync (param key to plain value).
     values: BTreeMap<String, f32>,
@@ -318,7 +319,7 @@ impl PluginParamsView {
             items: Vec::new(),
             offsets: vec![0.0],
             content_h: 0.0,
-            query: String::new(),
+            query: SearchField::default(),
             scroll: 0.0,
             values: BTreeMap::new(),
             shown: Default::default(),
@@ -420,13 +421,13 @@ impl PluginParamsView {
 
     /// The search text.
     pub fn query(&self) -> &str {
-        &self.query
+        self.query.text()
     }
 
     /// Sets the search text (the host may pre-fill it).
     pub fn set_query(&mut self, q: &str) {
-        if self.query != q {
-            self.query = q.to_string();
+        if self.query.text() != q {
+            self.query.set_text(q);
             self.rebuild_items();
             self.scroll = 0.0;
             self.repaint = true;
@@ -827,7 +828,7 @@ impl PluginParamsView {
     }
 
     fn rebuild_items(&mut self) {
-        let q = self.query.trim().to_lowercase();
+        let q = self.query.text().trim().to_lowercase();
         let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
         let mut at: BTreeMap<&str, usize> = BTreeMap::new();
         for (i, r) in self.rows.iter().enumerate() {
@@ -1229,7 +1230,10 @@ impl PluginParamsView {
         if button != PointerButton::Primary {
             return;
         }
-        let _ = modifiers;
+        if hit == Hit::Search {
+            self.query.press(pos, clicks, modifiers.shift);
+            return;
+        }
         match hit {
             Hit::None
             | Hit::Search
@@ -1514,6 +1518,14 @@ impl PluginParamsView {
         self.scroll = (self.scroll - dy * 3.0 * ROW_HEIGHT).clamp(0.0, self.max_scroll());
     }
 
+    /// A key for the search text; the list follows when the text changed.
+    fn search_key(&mut self, key: &Key, modifiers: Modifiers) {
+        if self.query.key(key, modifiers) == SearchKey::Edited {
+            self.rebuild_items();
+            self.scroll = 0.0;
+        }
+    }
+
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.repaint = true;
         if modifiers.command() {
@@ -1524,6 +1536,10 @@ impl PluginParamsView {
                     UiAction::Undo
                 }),
                 Key::Char(c) if c.eq_ignore_ascii_case(&'y') => out.push(UiAction::Redo),
+                // Select All, Copy, Cut and Paste work on the search text.
+                Key::Char(c) if matches!(c.to_ascii_lowercase(), 'a' | 'c' | 'x' | 'v') => {
+                    self.search_key(key, modifiers);
+                }
                 _ => {}
             }
             return;
@@ -1545,20 +1561,8 @@ impl PluginParamsView {
                     out.push(UiAction::ClosePluginParams);
                 }
             }
-            Key::Char(c) if !c.is_control() => {
-                self.query.push(*c);
-                self.rebuild_items();
-                self.scroll = 0.0;
-            }
-            Key::Space => {
-                self.query.push(' ');
-                self.rebuild_items();
-                self.scroll = 0.0;
-            }
-            Key::Backspace => {
-                self.query.pop();
-                self.rebuild_items();
-                self.scroll = 0.0;
+            Key::Char(_) | Key::Space | Key::Backspace | Key::Left | Key::Right => {
+                self.search_key(key, modifiers);
             }
             Key::Home => self.scroll = 0.0,
             Key::End => self.scroll = self.max_scroll(),

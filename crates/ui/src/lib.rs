@@ -427,6 +427,7 @@ pub mod reverb_send_panel;
 pub mod sample_editor;
 pub mod scale_panel;
 pub mod scene_canvas;
+pub mod search_field;
 pub mod segment_field;
 pub mod seq_edit;
 pub mod seq_editor;
@@ -536,6 +537,7 @@ pub use reverb_send_panel::{ReverbSendAction, ReverbSendRow, ReverbSendValues, R
 pub use sample_editor::SampleEditorView;
 pub use scale_panel::{ScaleAction, ScaleView, parse_percent};
 pub use scene_canvas::{SceneCache, SceneCanvas};
+pub use search_field::{SEARCH_MAX_CHARS, SearchField, SearchKey};
 pub use seq_editor::SeqEditorView;
 pub use seq_paint::SeqTheme;
 pub use seq_panel::SeqButton;
