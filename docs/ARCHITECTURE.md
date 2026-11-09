@@ -5076,7 +5076,17 @@ creation chain in the **Creation chain** bullet.
   Start Screen opens it at any time. A template under the pointer or the keys has a card with its
   `TemplatePreview` (`AppCore::template_preview` loads the file without opening it, once per
   template while the box is open), and a pin button on a recent row returns `StartOutcome::TogglePin`.
-  The headless and MCP sessions never call `start_without_project`, so they never show it.
+  The headless and MCP sessions never call `start_without_project`, so they never show it. The shell
+  gives the box a strip of cards (`StartScreen::with_cards`): the factory examples
+  (`AppCore::examples`, the projects of the factory `Projects` folder with a line each, opened by
+  `AppCommand::OpenExample` through `AppCore::open_template` as unsaved songs) and a guide card that runs
+  `AppCommand::GuidedTour`; the `show_guide_card` flag (`workflow.json`) is the second check box of the box.
+  The guided first song ([app/src/guide.rs](../crates/app/src/guide.rs), `Guide`) is a floating
+  panel of the main window, not a modal: `Shell::guide_event` hands it only the pointer events inside its
+  rectangle and never a key, and nothing of it is saved. `Progress::read` reads the song (tracks, note
+  clips, the loop switch, a drum machine, a moved channel fader, an effect, the file and
+  `AppCore::exports_finished`) each frame (`Shell::sync_guide`) and `Guide::update` moves on when the step on
+  show turns from not done to done.
 - **Settings tabs** ([app/src/settings_dialog.rs](../crates/app/src/settings_dialog.rs),
   `keyboard_tab.rs`, `workflow_tab.rs`). Audio (unchanged), Keyboard (a `KeymapEditor`: list by
   area, search, learn by pressing, add, clear, reset one or all, the conflict box with Swap,
