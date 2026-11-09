@@ -1,6 +1,6 @@
 //! Three lane fixes of the arrangement: Delete on a picked lane removes the lane and not its
-//! track, a click on empty automation lane draws a clip with a point (one undo step), and the
-//! followed lane folds when its chevron is clicked.
+//! track, a click on empty automation lane selects it (a double-click draws a clip with a point, one
+//! undo step), and the followed lane folds when its chevron is clicked.
 
 mod support;
 
@@ -126,9 +126,8 @@ fn delete_on_a_picked_extra_note_lane_removes_the_lane_not_the_track() {
     );
 }
 
-#[test]
-fn a_click_on_empty_automation_lane_draws_a_clip_with_a_point() {
-    let (mut d, reg, mut v) = setup();
+/// A point inside the third bar of the `RESO` lane of the bass track, a beat in, near the top.
+fn empty_lane_point(d: &Document, v: &ArrangementView) -> (usize, Point) {
     let lane = d
         .doc()
         .song
@@ -137,9 +136,49 @@ fn a_click_on_empty_automation_lane_draws_a_clip_with_a_point() {
         .automation_lane(RESO)
         .unwrap();
     let r = v.lane_rect(&key("bass"), lane).unwrap();
-    // Inside the third bar, a beat in, near the top of the lane.
-    let p = Point::new(v.tick_to_x(2 * BAR + PPQ), r.y0 + 10.0);
+    (lane, Point::new(v.tick_to_x(2 * BAR + PPQ), r.y0 + 10.0))
+}
+
+#[test]
+fn a_click_on_empty_automation_lane_selects_the_lane_and_adds_nothing() {
+    let (d, reg, mut v) = setup();
+    let (_, p) = empty_lane_point(&d, &v);
     let a = click(&d, &reg, &mut v, p);
+    assert!(a.is_empty(), "a click only selects: {a:?}");
+    assert_eq!(
+        v.picked_automation_lane(),
+        Some(&(key("bass"), RESO.to_string()))
+    );
+    assert_eq!(v.selected_track(), Some(&key("bass")));
+}
+
+#[test]
+fn the_pencil_still_draws_on_empty_automation_lane() {
+    let (d, reg, mut v) = setup();
+    v.set_tool(atomik_ui::Tool::Pencil);
+    let (lane, p) = empty_lane_point(&d, &v);
+    let a = click(&d, &reg, &mut v, p);
+    let songs = song_commands(&a);
+    assert_eq!(songs.len(), 1, "{songs:?}");
+    assert!(
+        matches!(&songs[0], SongCommand::AddClip { device, lane: l, .. }
+        if device == &key("bass") && *l == lane)
+    );
+}
+
+#[test]
+fn a_double_click_on_empty_automation_lane_draws_a_clip_with_a_point() {
+    let (mut d, reg, mut v) = setup();
+    let (lane, p) = empty_lane_point(&d, &v);
+    let a = run(
+        |e| v.handle(e, d.doc(), &reg),
+        &[
+            down(p),
+            up(p),
+            down_with(p, atomik_ui::PointerButton::Primary, 2),
+            up(p),
+        ],
+    );
     let songs = song_commands(&a);
     assert_eq!(songs.len(), 1, "one command, so one undo step: {songs:?}");
     let SongCommand::AddClip {

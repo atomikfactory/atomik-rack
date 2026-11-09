@@ -59,6 +59,7 @@ mod jacks;
 mod live_panels;
 mod macro_drag;
 mod navigator;
+mod pad_lights;
 pub use jacks::{JackChoice, JackGroup, JackMenu, JackOp, JackPeer};
 pub use navigator::NAVIGATOR_WIDTH;
 mod master_input;
@@ -646,6 +647,8 @@ pub struct RackView {
     context_slot: Option<RackSlot>,
     /// The clock of the last auto-scroll tick, while one is running.
     tick_clock: Option<f64>,
+    /// The clock of the last pad light fade, while a light is on.
+    lights_clock: Option<f64>,
     /// The slot a "+" handle was pressed on: the browser opened by it adds there.
     insert_at: Option<RackSlot>,
     /// The container and index a "+" handle inside an unfolded container was pressed on.
@@ -982,6 +985,7 @@ impl RackView {
             column_target: 0,
             context_slot: None,
             tick_clock: None,
+            lights_clock: None,
             insert_at: None,
             insert_in: None,
             plus: None,
@@ -1262,6 +1266,23 @@ impl RackView {
                 if let Some(n) = self.tree.find(|h| *h == Hit::Device(i + 1)) {
                     self.tree.mark_dirty(n);
                 }
+                self.repaint = true;
+            }
+            // The pad names follow the zones and the pool: a drop adds zones to a device that
+            // keeps its place, so the panel is not rebuilt for it.
+            let v = &mut self.devices[i + 1];
+            let names = if v.spec.drum.is_some() {
+                Some(drum_pad_names(d, doc))
+            } else if v.spec.drum_gen.is_some() {
+                Some(linked_pad_names(d, doc))
+            } else {
+                None
+            };
+            if let Some(names) = names
+                && v.pad_names != names
+            {
+                v.pad_names = names;
+                v.revision += 1;
                 self.repaint = true;
             }
             // The strip's text also follows the pool (an asset registered or renamed).
@@ -4233,7 +4254,7 @@ impl RackView {
                 };
                 let target = self.drop_target().map(|g| g.end.clone());
                 self.drag = Drag::None;
-                self.cable_up(&anchor, target, detached, modifiers, doc, out);
+                self.cable_up(&anchor, target, detached, modifiers, (doc, registry), out);
             }
             Drag::Move {
                 dev,

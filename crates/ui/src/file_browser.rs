@@ -125,10 +125,17 @@ enum Pane {
     List,
 }
 
+/// The quietest level of the preview level control, in dB.
+pub const PREVIEW_DB_MIN: f32 = -60.0;
+/// The loudest level of the preview level control, in dB.
+pub const PREVIEW_DB_MAX: f32 = 6.0;
+
 /// The pointer gesture in progress.
 #[derive(Debug, Clone, PartialEq)]
 enum Gesture {
     None,
+    /// Dragging the preview level control.
+    Level,
     /// Dragging the right edge.
     Resize,
     /// Dragging the tree/list splitter.
@@ -200,6 +207,8 @@ pub struct FileBrowserView {
     width: f64,
     tree_fraction: f64,
     auto_preview: bool,
+    /// The level previews play at, in dB ([`PREVIEW_DB_MIN`]..=[`PREVIEW_DB_MAX`]).
+    preview_db: f32,
     recursive: bool,
     // Tree.
     places: PlacesData,
@@ -281,6 +290,7 @@ impl FileBrowserView {
             width: Self::DEFAULT_WIDTH,
             tree_fraction: 0.4,
             auto_preview: true,
+            preview_db: 0.0,
             recursive: false,
             places: PlacesData::default(),
             children: BTreeMap::new(),
@@ -397,6 +407,19 @@ impl FileBrowserView {
     /// Restores the persisted auto-preview flag (default on).
     pub fn set_auto_preview(&mut self, on: bool) {
         self.auto_preview = on;
+        self.dirty = true;
+    }
+
+    /// The level previews play at, in dB (default 0).
+    pub fn preview_db(&self) -> f32 {
+        self.preview_db
+    }
+
+    /// Sets the preview level, clamped to [`PREVIEW_DB_MIN`]..=[`PREVIEW_DB_MAX`] and rounded to
+    /// a whole dB (the saved level comes back through here).
+    pub fn set_preview_db(&mut self, db: f32) {
+        let db = if db.is_finite() { db } else { 0.0 };
+        self.preview_db = db.clamp(PREVIEW_DB_MIN, PREVIEW_DB_MAX).round() + 0.0;
         self.dirty = true;
     }
 

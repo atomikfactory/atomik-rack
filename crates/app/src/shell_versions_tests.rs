@@ -360,3 +360,23 @@ fn a_comparison_that_cannot_be_made_is_reported_and_the_list_stays() {
     assert!(s.versions_open());
     assert!(!s.versions_view().unwrap().report_open());
 }
+
+#[test]
+fn the_preview_level_is_saved_in_the_settings_and_comes_back_next_time() {
+    let t = Tmp::new("preview-level");
+    let mut s = shell(&t);
+    assert_eq!(s.core().preview_db(), 0.0);
+    // The control moved in the browser: the core applies it, the shell saves it.
+    let action = atomik_ui::BrowseAction::SetPreviewLevel(-9.0);
+    s.core_mut().browse(action.clone());
+    s.pane_actions(&[UiAction::Browse(action)]);
+    assert_eq!(s.core().preview_db(), -9.0);
+    assert_eq!(s.workflow().preview_db, -9.0);
+    let text =
+        std::fs::read_to_string(keymap_store::workflow_path(&t.path("settings.json"))).unwrap();
+    assert!(text.contains("\"preview_db\": -9.0"), "{text}");
+    // A new session reads it back into the core and onto the control.
+    let again = shell(&t);
+    assert_eq!(again.core().preview_db(), -9.0);
+    assert_eq!(again.core().file_browser().preview_db(), -9.0);
+}

@@ -308,6 +308,22 @@ pub(crate) fn is_noop(edit: &Edit) -> bool {
     }
 }
 
+/// Rewrites the `old` side of every [`Edit::Layout`] in `edits` to the order the devices really
+/// have when it runs. A planner computed it with the new device at its own place; once the
+/// device goes to another index the recorded order no longer matches, and undoing the layout
+/// would leave the device where the removal does not expect it. The `new` side is kept.
+fn restate_layouts(doc: &RackDoc, edits: &mut [Edit]) {
+    let mut scratch = doc.clone();
+    for edit in edits.iter_mut() {
+        if let Edit::Layout { old, .. } = edit {
+            *old = layout_of(&scratch);
+        }
+        if edit.perform(&mut scratch).is_err() {
+            return;
+        }
+    }
+}
+
 /// Puts the new device of a creation `edit` (its first `Insert`) at the resolved `slot`:
 /// sets the flat index and the column, and prepends the new column when the slot adds one. An
 /// edit that holds no insert (a successful creation always does) is returned as it is.
@@ -323,6 +339,7 @@ pub(crate) fn place_new_device(doc: &RackDoc, slot: ResolvedSlot, edit: Edit) ->
     let Some((index, device)) = first else {
         return Edit::Compound(edits);
     };
+    let moved = *index != slot.index;
     *index = slot.index;
     device.column = slot.column;
     if slot.adds_column {
@@ -333,6 +350,9 @@ pub(crate) fn place_new_device(doc: &RackDoc, slot: ResolvedSlot, edit: Edit) ->
                 new: doc.columns + 1,
             }),
         );
+    }
+    if moved {
+        restate_layouts(doc, &mut edits);
     }
     match <[Edit; 1]>::try_from(edits) {
         Ok([only]) => only,

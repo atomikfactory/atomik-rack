@@ -3052,7 +3052,10 @@ params per pad (291 params; ids follow the order):
   columns leave it (pad 1 bottom left, 16 top right). A pad with samples is lit in the accent
   colour and shows its sample's file name (without the extension) on up to two lines, with the pad
   number small in a corner; an empty pad is dark and says "empty". The selected pad has an accent
-  outline, and a file dragged over a pad lights that pad. Under the grid a readout shows the
+  outline, and a file dragged over a pad lights that pad. A pad also flashes when it plays, whatever
+  sent the note (a harder hit flashes brighter, and it fades out in a quarter of a second): the device
+  publishes a hit counter and the last velocity of each pad as display values, 32 in all, and counts
+  only hits that start a sound. Under the grid a readout shows the
   selected pad, its note and its file name, beside the EDIT, SAMPLE and TO CH buttons. The 18 knobs
   of the selected pad and the master level run down two columns at the right. A pad on a synthesised
   module shows the module name in place of the file name.
