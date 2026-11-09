@@ -550,7 +550,7 @@ impl<S: EngineSink> AppCore<S> {
         feed.set_source_rate(rate);
         let monitor = stream.monitor();
         self.sink
-            .preview_start(stream, 1.0)
+            .preview_start(stream, self.preview_gain())
             .map_err(|e| format!("preview: {e}"))?;
         let (send, failures) = channel();
         let root = path.with_extension("");
@@ -956,6 +956,18 @@ mod tests {
         assert_eq!(previews(&c).last(), Some(&SinkCall::PreviewStop));
         assert_eq!(c.preview_path(), None);
         assert_eq!(c.document().revision(), revision);
+    }
+
+    #[test]
+    fn a_patch_preview_plays_at_the_preview_level() {
+        let text = item_text(&project_of(&[SYNTH]), &["d0"]);
+        let (mut c, path) = core_with_item(&text, "atomikpatch");
+        c.set_preview_db(6.0);
+        c.browse(BrowseAction::Preview(path));
+        let [SinkCall::PreviewStart { gain }] = previews(&c)[..] else {
+            panic!("{:?}", previews(&c))
+        };
+        assert!((gain - 1.995_262).abs() < 1e-4, "{gain}");
     }
 
     #[test]

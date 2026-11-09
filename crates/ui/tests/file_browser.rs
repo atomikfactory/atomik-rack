@@ -826,6 +826,111 @@ fn toolbar_toggles_emit_and_report_state() {
     assert!(!v.auto_preview());
 }
 
+// ----- preview level -----------------------------------------------------------------------------
+
+// The level control sits left of the toggles at width 300: x 167..221, y 6..28.
+const LEVEL_X0: f64 = 167.0;
+const LEVEL_X1: f64 = 221.0;
+
+fn level_pt(fraction: f64) -> Point {
+    Point::new(LEVEL_X0 + (LEVEL_X1 - LEVEL_X0) * fraction, 17.0)
+}
+
+#[test]
+fn the_preview_level_starts_at_0_db_and_a_press_sets_it() {
+    let mut v = settled(view());
+    assert_eq!(v.preview_db(), 0.0);
+    // The far left is the quietest level, the far right the loudest.
+    assert_eq!(
+        run(&mut v, &[down(level_pt(0.0)), up(level_pt(0.0))]),
+        vec![BrowseAction::SetPreviewLevel(-60.0)]
+    );
+    assert_eq!(v.preview_db(), -60.0);
+    assert_eq!(
+        run(&mut v, &[down(level_pt(0.999)), up(level_pt(0.999))]),
+        vec![BrowseAction::SetPreviewLevel(6.0)]
+    );
+    assert_eq!(v.preview_db(), 6.0);
+}
+
+#[test]
+fn dragging_the_preview_level_follows_the_pointer_and_reports_each_change_once() {
+    let mut v = settled(view());
+    let mid = level_pt(0.5);
+    let got = run(&mut v, &[down(mid), mv(level_pt(0.25)), mv(level_pt(0.25))]);
+    assert_eq!(got.len(), 2, "{got:?}");
+    // The press at the middle is -27 dB; a quarter of the way is -43.5, rounded to -44.
+    assert_eq!(got[0], BrowseAction::SetPreviewLevel(-27.0));
+    assert_eq!(got[1], BrowseAction::SetPreviewLevel(-44.0));
+    // Past the ends the level stops at the ends.
+    run(&mut v, &[mv(Point::new(LEVEL_X0 - 40.0, 17.0))]);
+    assert_eq!(v.preview_db(), -60.0);
+    run(&mut v, &[mv(Point::new(LEVEL_X1 + 5.0, 90.0))]);
+    assert_eq!(v.preview_db(), 6.0);
+    run(&mut v, &[up(Point::new(LEVEL_X1, 17.0))]);
+    assert!(!v.is_dragging());
+    // The drag never touched the other toggles.
+    assert!(!v.recursive() && v.auto_preview());
+}
+
+#[test]
+fn a_double_click_on_the_preview_level_puts_it_back_to_0_db() {
+    let mut v = settled(view());
+    v.set_preview_db(-20.0);
+    let at = level_pt(0.2);
+    let got = run(&mut v, &[down_with(at, Modifiers::NONE, 2), up(at)]);
+    assert_eq!(got, vec![BrowseAction::SetPreviewLevel(0.0)]);
+    assert_eq!(v.preview_db(), 0.0);
+    // Already at 0 dB: nothing to report.
+    assert!(run(&mut v, &[down_with(at, Modifiers::NONE, 2), up(at)]).is_empty());
+}
+
+#[test]
+fn the_saved_preview_level_is_clamped_and_whole() {
+    let mut v = view();
+    v.set_preview_db(-100.0);
+    assert_eq!(v.preview_db(), -60.0);
+    v.set_preview_db(40.0);
+    assert_eq!(v.preview_db(), 6.0);
+    v.set_preview_db(-3.4);
+    assert_eq!(v.preview_db(), -3.0);
+    v.set_preview_db(f32::NAN);
+    assert_eq!(v.preview_db(), 0.0);
+}
+
+#[test]
+fn the_preview_level_shows_its_value_and_has_a_tooltip() {
+    let mut v = settled(view());
+    let texts = |v: &mut FileBrowserView| {
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl);
+        dl.texts()
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert!(texts(&mut v).iter().any(|t| t == "0 dB"));
+    v.set_preview_db(-12.0);
+    assert!(texts(&mut v).iter().any(|t| t == "-12 dB"));
+    v.set_preview_db(3.0);
+    assert!(texts(&mut v).iter().any(|t| t == "+3 dB"));
+    let help = v.help_at(level_pt(0.5)).unwrap();
+    assert!(help.text.contains("Preview level"), "{}", help.text);
+}
+
+#[test]
+fn a_narrow_panel_leaves_the_search_field_its_room_and_drops_the_level_control() {
+    let mut v = settled(view());
+    v.set_width(200.0);
+    v.set_bounds(Rect::new(0.0, 0.0, 200.0, 600.0));
+    // At 200 px the field would shrink below a usable width: the control gives way, so a
+    // press where it would be lands in the search field.
+    let at = Point::new(100.0, 17.0);
+    let got = run(&mut v, &[down(at), up(at)]);
+    assert!(got.is_empty(), "{got:?}");
+    assert_eq!(v.preview_db(), 0.0);
+}
+
 // ----- resize and splitter ----------------------------------------------------------------------
 
 #[test]

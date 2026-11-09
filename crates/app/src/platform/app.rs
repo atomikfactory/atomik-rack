@@ -1904,6 +1904,7 @@ impl ApplicationHandler for App {
                     || s.tooltip_pending()
                     || s.core().view().is_auto_scrolling()
                     || s.core().view().unfold_pending()
+                    || s.core().view().pad_lights_active()
                     || s.core().snapshot_morphing()
                     || s.core().macro_gliding()
                     || !s.core().plugins_ready()

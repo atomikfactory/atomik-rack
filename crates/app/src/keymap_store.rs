@@ -76,6 +76,9 @@ pub struct WorkflowPrefs {
     /// The start screen (new song, templates, recent songs) shows when the app starts with no
     /// project to open (default on).
     pub show_start_screen: bool,
+    /// The "Make your first song" card shows in the strip of the start screen (default on;
+    /// Help > Guided Tour starts the guide either way).
+    pub show_guide_card: bool,
     /// Stop returns the playhead to where playback started; a second Stop goes to the start
     /// (default off).
     pub return_to_start_on_stop: bool,
@@ -118,6 +121,9 @@ pub struct WorkflowPrefs {
     /// How many automatic versions of a project a save keeps (1 to [`MAX_KEEP_VERSIONS`],
     /// default 20; named and protected versions are never pruned).
     pub keep_versions: u32,
+    /// The level the file browser's previews play at, in dB ([`MIN_PREVIEW_DB`] to
+    /// [`MAX_PREVIEW_DB`], default 0): audio files, patches and clips.
+    pub preview_db: f32,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
 }
@@ -126,6 +132,10 @@ pub struct WorkflowPrefs {
 pub const DEFAULT_KEEP_VERSIONS: u32 = 20;
 /// The most automatic versions the preference may ask for.
 pub const MAX_KEEP_VERSIONS: u32 = 1000;
+/// The quietest preview level, in dB.
+pub const MIN_PREVIEW_DB: f32 = atomik_ui::PREVIEW_DB_MIN;
+/// The loudest preview level, in dB.
+pub const MAX_PREVIEW_DB: f32 = atomik_ui::PREVIEW_DB_MAX;
 
 /// How Reverse Clips treats notes when the command names no mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -201,6 +211,7 @@ impl Default for WorkflowPrefs {
             autosave_minutes: 5,
             open_last_project: false,
             show_start_screen: true,
+            show_guide_card: true,
             return_to_start_on_stop: false,
             record_mode: RecordMode::default(),
             keep_events: KeepEvents::default(),
@@ -218,6 +229,7 @@ impl Default for WorkflowPrefs {
             ffmpeg_folder: None,
             reverse_mode: ReverseMode::default(),
             keep_versions: DEFAULT_KEEP_VERSIONS,
+            preview_db: 0.0,
             extra: BTreeMap::new(),
         }
     }
@@ -265,6 +277,7 @@ impl WorkflowPrefs {
                 .map_or(defaults.autosave_minutes, |m| m.min(240) as u32),
             open_last_project: flag("open_last_project", defaults.open_last_project),
             show_start_screen: flag("show_start_screen", defaults.show_start_screen),
+            show_guide_card: flag("show_guide_card", defaults.show_guide_card),
             return_to_start_on_stop: flag(
                 "return_to_start_on_stop",
                 defaults.return_to_start_on_stop,
@@ -329,6 +342,13 @@ impl WorkflowPrefs {
                 .map_or(defaults.keep_versions, |n| {
                     n.clamp(1, u64::from(MAX_KEEP_VERSIONS)) as u32
                 }),
+            preview_db: obj
+                .get("preview_db")
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite())
+                .map_or(defaults.preview_db, |v| {
+                    (v as f32).clamp(MIN_PREVIEW_DB, MAX_PREVIEW_DB).round()
+                }),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -345,6 +365,7 @@ impl WorkflowPrefs {
                             | "autosave_minutes"
                             | "open_last_project"
                             | "show_start_screen"
+                            | "show_guide_card"
                             | "return_to_start_on_stop"
                             | "record_mode"
                             | "keep_events"
@@ -362,6 +383,7 @@ impl WorkflowPrefs {
                             | "ffmpeg_folder"
                             | "reverse_mode"
                             | "keep_versions"
+                            | "preview_db"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -400,6 +422,7 @@ impl WorkflowPrefs {
             "show_start_screen".into(),
             Value::Bool(self.show_start_screen),
         );
+        map.insert("show_guide_card".into(), Value::Bool(self.show_guide_card));
         map.insert(
             "return_to_start_on_stop".into(),
             Value::Bool(self.return_to_start_on_stop),
@@ -441,6 +464,7 @@ impl WorkflowPrefs {
             Value::String(self.midi_resolution.id().into()),
         );
         map.insert("keep_versions".into(), Value::from(self.keep_versions));
+        map.insert("preview_db".into(), Value::from(f64::from(self.preview_db)));
         if let Some(folder) = &self.library_folder {
             map.insert(
                 "library_folder".into(),
@@ -797,6 +821,38 @@ mod tests {
         assert_eq!(high.keep_versions, MAX_KEEP_VERSIONS);
         let bad = WorkflowPrefs::from_json(r#"{"keep_versions": "many"}"#).unwrap();
         assert_eq!(bad.keep_versions, 20);
+    }
+
+    #[test]
+    fn the_preview_level_is_saved_clamped_and_whole() {
+        assert_eq!(WorkflowPrefs::default().preview_db, 0.0);
+        let w = WorkflowPrefs {
+            preview_db: -18.0,
+            ..WorkflowPrefs::default()
+        };
+        let text = w.to_json();
+        assert!(text.contains("\"preview_db\": -18.0"), "{text}");
+        assert_eq!(WorkflowPrefs::from_json(&text).unwrap().preview_db, -18.0);
+        for (text, want) in [
+            (r#"{"preview_db": -300}"#, -60.0),
+            (r#"{"preview_db": 40}"#, 6.0),
+            (r#"{"preview_db": -3.4}"#, -3.0),
+            (r#"{"preview_db": "loud"}"#, 0.0),
+            (r#"{}"#, 0.0),
+        ] {
+            assert_eq!(
+                WorkflowPrefs::from_json(text).unwrap().preview_db,
+                want,
+                "{text}"
+            );
+        }
+        // A known field is not kept among the unknown ones.
+        assert!(
+            !WorkflowPrefs::from_json(r#"{"preview_db": 2}"#)
+                .unwrap()
+                .extra
+                .contains_key("preview_db")
+        );
     }
 
     #[test]
