@@ -229,7 +229,9 @@ impl VideoClip {
     }
 }
 
-fn tick_at_us(song: &Song, us: i64) -> i64 {
+/// The tick `us` microseconds of song time fall on under the song's tempo map (negative before
+/// the song's start).
+pub fn tick_at_us(song: &Song, us: i64) -> i64 {
     crate::audio_trim::TempoMap::new(&song.tempo)
         .tick_at_seconds(us as f64 / 1e6)
         .round() as i64

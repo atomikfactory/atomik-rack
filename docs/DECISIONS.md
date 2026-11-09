@@ -371,3 +371,42 @@ from the film's state each time. Importing the film's audio is one undo step wit
 **Decision.** Option 2. A profile is a JSON file in the settings folder, found by its MIDI port name, and a surface of the settings runs it (`profile:<name>`). The project format does not change.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## S. The update check
+
+**Question.** How does the program learn that a newer version exists without sending anything about the user or the
+machine, without a heavy network stack, and without ever installing anything by itself?
+
+**Options.**
+
+1. No check: the user looks at the project page.
+2. A menu item that only opens the releases page in the browser: the program makes no request of its own.
+3. An optional check with a small HTTPS client inside the program: one request for the list of releases, a notice
+   when a newer version exists, nothing downloaded or installed.
+
+For the client: `reqwest` (an asynchronous framework with its own runtime), `ureq` (blocking, small, rustls), or
+`rustls` used by hand with a hand-written HTTP exchange. For the cryptography under rustls: `ring` (small, widely
+used, a few C and assembly files) or `aws-lc-rs` (a C library and a heavier build). For the root certificates: the
+bundled `webpki-roots` (the same on every platform, a data licence of its own) or the system store through a
+platform verifier (one code path per platform, more crates).
+
+**Implications.** Option 1 and 2 keep the promise that the program never touches the network, at the price that
+few users ever learn about a release. Option 3 is the only network code in the program, so it has to be easy to audit:
+one fixed address, a User-Agent that is only the program name and version, no cookie, no query, no redirect, a
+timeout and a size limit, behind a trait with a fake so that no test can reach the network. Consent has to come
+first: until the user has answered the question, nothing is sent, and Help > Check for Updates shows the question
+instead of making a request. A runtime or an asynchronous framework would be a large dependency for one request a day
+on a worker thread. `ureq` with rustls does exactly that with a handful of crates, all pure Rust except `ring`'s
+small native part. The bundled
+roots make the behaviour the same on the three platforms and need no system call; their licence (CDLA-Permissive-2.0,
+a permissive data licence) is added to the allowed ones in `deny.toml`. The cost is that a certificate authority
+removed from the bundle is trusted until the next release: acceptable for a request that carries nothing private.
+
+**Decision.** Option 3: `ureq` 3 with rustls on `ring` and the bundled roots, HTTPS only, in `crates/update` behind
+the `HttpGet` trait. The address is the list of releases of the project's own repository; a pre-release is offered
+only to a pre-release build; a draft never; the release page opened by "What's new" is made from the checked tag,
+not taken from the answer. At most one request a day after a Yes; a check by hand never waits. A failure is silent
+(logged at debug level) unless the user asked. The answer is the workflow preference `update_check` and the time of
+the last request and the skipped version are in `updates.json`.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

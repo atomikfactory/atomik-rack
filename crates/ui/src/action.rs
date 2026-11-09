@@ -651,6 +651,9 @@ pub enum UiAction {
     /// The audio export panel ([`crate::ExportView`]) asks for something: start the export with its
     /// options, or cancel (close the options, stop the render).
     Export(crate::export_panel::ExportAction),
+    /// The film export panel ([`crate::FilmView`]) asks for something: start the export with its
+    /// options, or cancel (close the options, stop the job).
+    Film(crate::film_panel::FilmAction),
     /// The click-level slider of the transport bar moved: the metronome level, 0..=1.
     SetMetronomeGain(f32),
     /// The Q Rec switch or its grid changed: snap recorded note starts to a grid of this many

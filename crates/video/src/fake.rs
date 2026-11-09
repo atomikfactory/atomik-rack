@@ -169,7 +169,7 @@ impl VideoTool for FakeTool {
             args: args.to_vec(),
         };
         let (is_version, is_probe) = (call.has("-version"), call.has("-show_streams"));
-        let is_audio = call.has("-vn");
+        let is_audio = call.has("-vn") || call.has("-progress");
         let out_path = call.args.last().cloned();
         let (version, version_fails, probe, frames, chunk, stream_fails, on_frame, audio) = {
             let mut s = self.lock();

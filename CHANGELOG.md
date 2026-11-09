@@ -62,6 +62,38 @@ may break APIs and the patch and project formats.
   hand on the control. Profiles are exported and imported from the same tab to share them, and several
   controllers work at once, each with its own profile, bank and lock. No project format change (profiles
   live with the settings, not the project).
+- **An optional check for a newer version.** The first time the program starts it asks "Check for new versions once a
+  day?" in a small notice in the lower left corner (over the start screen too); until you answer Yes nothing is sent.
+  A Yes asks the project page once a day, at the start, for its list of releases; Help > Check for Updates asks at once
+  (and shows the question first while it is open). The request is one HTTPS GET of a fixed address with the User-Agent
+  `atomik-rack/<version>` and nothing else: no identifier, no cookie, no query, no redirect, a short timeout. It runs
+  on a worker, and a failure is silent unless you asked. A newer version (release candidates in the right order; a
+  pre-release only for a pre-release build; never a draft) shows a notice with What's new (its release page in the
+  browser), Skip this version (a later version still shows) and Later. Nothing is downloaded or installed. The answer
+  is in Settings > Video & updates (`update_check` in `workflow.json`), the time of the last request and the skipped
+  version are in `updates.json`. The README and `SECURITY.md` say what is sent; the client is the new crate
+  `atomik-update` (ureq on rustls with the bundled root certificates; `CDLA-Permissive-2.0` joins the allowed
+  licences). The project format stays 44.
+- **Film with Mix.** File > Export > Film with Mix... writes a new film made of the song's film and the song's mix,
+  through the FFmpeg you installed. The film's span is exactly the part of the song under the film after its trim and
+  start (a film that begins before the song gets silence in front of the mix); the whole song renders from the start
+  to the End with black pictures before and after the film. The mix's first sample sits at the first exported frame.
+  The picture is copied without re-encoding when the cut is at the film's start (AUTO), always (COPY, which cuts at
+  keyframes: the dialog says so, and RE-ENCODE cuts exactly) or re-encoded to H.264 at a high, standard or small
+  quality; black before or after the film needs a re-encode. The mix goes in as AAC at 128 to 320 kbit/s in an MP4
+  file or as 24-bit PCM in a MOV file, and the film's own sound can stay as a second track. It runs on the export
+  worker with progress and a cancel that leaves no partial file (an existing film is replaced only by a complete
+  one), and the menu item is greyed with the reason in the toast when the song has no video, the film's file is
+  missing or FFmpeg cannot be used. The choices are remembered in `export.json`. The project format stays 44.
+- **MP3, AAC and Opus export.** The export panel has MP3, AAC (`.m4a`) and Opus buttons next to WAV, AIFF and FLAC
+  and a QUALITY row: MP3 at 128, 192, 256 or 320 kbit/s or variable quality V0, V2 or V4, AAC at 128 to 320 and Opus
+  at 64 to 192 kbit/s. They encode through the FFmpeg you installed, so no codec ships: the song, the loop and the
+  selection are rendered to a temporary WAV file and FFmpeg encodes it on the export worker, with progress and a
+  cancel that removes the temporary and partial files (an existing file is replaced only by a complete one). The
+  song's title and author go into the file's tags as arguments, never through a shell. Without FFmpeg the three
+  buttons are greyed with a line that says to set its folder in Settings > Video or put it on your `PATH`; stems stay
+  WAV, AIFF or FLAC. The loudness in the toast is measured before encoding, so leave about 1 dB of true-peak
+  headroom. The last format and quality are remembered in `export.json`. The project format stays 44.
 - **A start screen that teaches.** A strip of cards sits above the lists of the start screen: the three factory
   example songs, each with a line about what it is for (a click opens one as a new unsaved song, like a template),
   and a Make your first song card. A check box at the foot of the box turns that card off; Help > Guided Tour starts
@@ -103,6 +135,13 @@ may break APIs and the patch and project formats.
   to Crashed now wait on that state against a generous deadline instead of a fixed number of batches.
 - **Cables that would close a loop through the console.** Dropping a cable from a console output onto a channel
   input (or its stereo pair) used to send a cable the project refuses; the drop is now ignored up front.
+
+### Fixed
+- **A compressed or renamed export no longer replaces a file unasked.** The save dialog picks a name before the
+  format is chosen in the export panel, and the file gets the extension of the format, so an existing `.mp3`, `.m4a`,
+  `.opus`, `.aiff` or `.flac` (or the `.mov` of a film) at that name was overwritten without a question. The dialog now
+  proposes the extension of the format used last, and an export whose format changes the name to a file that exists
+  says so under the options and starts only when EXPORT is pressed again.
 
 ## [0.4.0-rc.1] - 2026-11-08
 

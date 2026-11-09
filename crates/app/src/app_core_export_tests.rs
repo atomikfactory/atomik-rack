@@ -2,13 +2,14 @@
 //! writes the file the options describe, the live engine is not touched, a cancel leaves no
 //! file, one export runs at a time, and the panel values map to the render request and format.
 
+use super::export::{export_format_at, file_extension};
 use super::*;
 use crate::sink::{RecordingSink, SinkCall};
 use atomik_core::PPQ;
 use atomik_model::{
     Clip, ClipContent, CreateOptions, CreateSource, Note, WorkflowCommand, new_project_doc,
 };
-use atomik_render::export::{BitDepth, ExportSpan};
+use atomik_render::export::{BitDepth, ExportContainer, ExportSpan};
 use atomik_ui::{EXPORT_RATES, ExportDepth, ExportDither, ExportFile, ExportScope, ExportValues};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -487,4 +488,421 @@ fn stems_can_be_exported_for_the_selection_and_say_so_when_there_is_none() {
     // The selection is not part of what is remembered between sessions.
     let prefs = crate::export_prefs::ExportPrefs::from_values(&chosen, None);
     assert!(!prefs.values().selection);
+}
+
+// ---------------------------------------------------------------------- compressed formats
+
+use atomik_ui::{EncoderState, ExportQuality};
+use atomik_video::Platform;
+use atomik_video::fake::FakeTool;
+
+impl Tmp {
+    /// A folder holding stand-ins for the two FFmpeg programs.
+    fn programs(&self) -> PathBuf {
+        let dir = self.file("ffmpeg-folder");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["ffmpeg", "ffprobe"] {
+            std::fs::write(dir.join(Platform::current().exe_name(name)), b"x").unwrap();
+        }
+        dir
+    }
+}
+
+/// A core whose FFmpeg is `tool` (it "encodes" by writing its canned bytes).
+fn lossy_core(t: &Tmp, tool: &Arc<FakeTool>) -> AppCore<RecordingSink> {
+    let mut c = core();
+    c.set_video_tool(Arc::clone(tool) as Arc<dyn atomik_video::VideoTool>);
+    c.set_video_folder(Some(t.programs()));
+    c
+}
+
+fn encoder() -> Arc<FakeTool> {
+    Arc::new(FakeTool::new().audio(b"ENCODED".to_vec()))
+}
+
+fn lossy(file: ExportFile) -> ExportValues {
+    ExportValues {
+        file,
+        ..ExportValues::default()
+    }
+}
+
+/// The calls that encode (not the version check).
+fn encodes(tool: &FakeTool) -> Vec<atomik_video::fake::Call> {
+    tool.calls().into_iter().filter(|c| c.has("-vn")).collect()
+}
+
+fn tags_of(call: &atomik_video::fake::Call) -> Vec<String> {
+    let args: Vec<String> = call
+        .args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    args.windows(2)
+        .filter(|w| w[0] == "-metadata")
+        .map(|w| w[1].clone())
+        .collect()
+}
+
+#[test]
+fn a_song_is_exported_as_mp3_through_ffmpeg_with_the_song_information_as_tags() {
+    let t = Tmp::new();
+    let tool = encoder();
+    let mut c = lossy_core(&t, &tool);
+    c.apply_command(Command::SetSongInfo(atomik_model::SongInfo {
+        title: "Night \"Drive\"; take=2".to_owned(),
+        author: "Zoe".to_owned(),
+        ..atomik_model::SongInfo::default()
+    }))
+    .unwrap();
+    let dirty = c.is_dirty();
+    let chosen = ExportValues {
+        mp3: ExportQuality::Cbr(256),
+        ..lossy(ExportFile::Mp3)
+    };
+    // The dialog proposed a .wav name: the file gets the extension of the format.
+    c.start_audio_export(ExportScope::Song, t.file("song.wav"), chosen)
+        .unwrap();
+    c.wait_background();
+    let out = t.file("song.mp3");
+    assert_eq!(std::fs::read(&out).unwrap(), b"ENCODED");
+    assert!(!t.file("song.wav").exists());
+    assert!(
+        !atomik_video::encode::partial_path(&out).exists(),
+        "no partial file"
+    );
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("Exported song.mp3") && message.contains("MP3 256 kbps"),
+        "{message}"
+    );
+    assert!(
+        message.contains("LUFS"),
+        "the loudness is reported: {message}"
+    );
+    let calls = encodes(&tool);
+    assert_eq!(calls.len(), 1, "one encoding call");
+    let call = &calls[0];
+    assert_eq!(call.after("-c:a").unwrap(), "libmp3lame");
+    assert_eq!(call.after("-b:a").unwrap(), "256k");
+    assert_eq!(
+        tags_of(call),
+        ["title=Night \"Drive\"; take=2", "artist=Zoe"],
+        "title and author, each one argument"
+    );
+    // The input is the temporary WAV the render wrote: it is gone with its folder.
+    let input = call.after("-i").unwrap().to_string_lossy().into_owned();
+    let wav = PathBuf::from(input.strip_prefix("file:").unwrap());
+    assert!(!wav.exists(), "the temporary WAV was removed");
+    assert!(!wav.parent().unwrap().exists());
+    assert_eq!(c.is_dirty(), dirty, "the project is untouched");
+    assert!(c.sink_mut().take().is_empty(), "the engine was not touched");
+}
+
+#[test]
+fn aac_and_opus_use_their_own_containers_extensions_and_bitrates() {
+    let t = Tmp::new();
+    let tool = encoder();
+    let mut c = lossy_core(&t, &tool);
+    c.start_audio_export(
+        ExportScope::Song,
+        t.file("a.wav"),
+        ExportValues {
+            aac: 320,
+            ..lossy(ExportFile::Aac)
+        },
+    )
+    .unwrap();
+    c.wait_background();
+    assert!(t.file("a.m4a").is_file());
+    c.start_audio_export(
+        ExportScope::Song,
+        t.file("b.wav"),
+        ExportValues {
+            opus: 96,
+            ..lossy(ExportFile::Opus)
+        },
+    )
+    .unwrap();
+    c.wait_background();
+    assert!(t.file("b.opus").is_file());
+    let calls = encodes(&tool);
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].after("-c:a").unwrap(), "aac");
+    assert_eq!(calls[0].after("-b:a").unwrap(), "320k");
+    assert_eq!(calls[0].after("-f").unwrap(), "ipod");
+    assert_eq!(calls[1].after("-c:a").unwrap(), "libopus");
+    assert_eq!(calls[1].after("-b:a").unwrap(), "96k");
+    assert_eq!(calls[1].after("-f").unwrap(), "opus");
+    // A song without information writes no tags.
+    assert!(tags_of(&calls[0]).is_empty());
+}
+
+#[test]
+fn a_loop_and_a_selection_are_compressed_through_the_same_path() {
+    let t = Tmp::new();
+    let tool = encoder();
+    let mut c = lossy_core(&t, &tool);
+    c.apply_command(Command::Song(SongCommand::SetLoop {
+        range: (BAR, BAR + BAR / 2),
+        enabled: true,
+    }))
+    .unwrap();
+    c.start_audio_export(
+        ExportScope::Loop,
+        t.file("loop.wav"),
+        lossy(ExportFile::Mp3),
+    )
+    .unwrap();
+    c.wait_background();
+    assert!(t.file("loop.mp3").is_file());
+    c.arrangement_mut()
+        .set_lane_range(key("lead"), 0, BAR, BAR + BAR / 2);
+    c.start_audio_export(
+        ExportScope::Selection,
+        t.file("sel.wav"),
+        lossy(ExportFile::Opus),
+    )
+    .unwrap();
+    c.wait_background();
+    assert!(t.file("sel.opus").is_file());
+    assert_eq!(encodes(&tool).len(), 2);
+}
+
+#[test]
+fn the_rate_is_one_the_format_holds_and_the_wav_is_float() {
+    let mut v = lossy(ExportFile::Mp3);
+    let f = export_format_at(&v, 44_100);
+    assert_eq!(f.container, ExportContainer::Wav);
+    assert_eq!(f.bit_depth, BitDepth::Float32);
+    assert_eq!(f.dither, atomik_dsp::DitherMode::None);
+    assert_eq!(
+        f.sample_rate,
+        Some(44_100),
+        "the song rate when none is asked"
+    );
+    v.rate = Some(96_000);
+    assert_eq!(export_format_at(&v, 44_100).sample_rate, Some(48_000));
+    v.file = ExportFile::Opus;
+    v.rate = None;
+    assert_eq!(export_format_at(&v, 44_100).sample_rate, Some(48_000));
+    v.file = ExportFile::Aac;
+    v.rate = Some(96_000);
+    assert_eq!(export_format_at(&v, 44_100).sample_rate, Some(96_000));
+    // A lossless format is the plain format of the panel.
+    let wav = ExportValues {
+        depth: ExportDepth::Pcm16,
+        ..ExportValues::default()
+    };
+    assert_eq!(export_format_at(&wav, 44_100), export_format(&wav));
+    assert_eq!(file_extension(&wav), "wav");
+    assert_eq!(file_extension(&lossy(ExportFile::Aac)), "m4a");
+}
+
+#[test]
+fn a_cancel_before_the_encoder_runs_leaves_no_file_and_no_temporary_wav() {
+    let t = Tmp::new();
+    let tool = encoder();
+    let mut c = lossy_core(&t, &tool);
+    let hold = crate::export_worker::hold::next_export();
+    c.start_audio_export(
+        ExportScope::Song,
+        t.file("song.wav"),
+        lossy(ExportFile::Mp3),
+    )
+    .unwrap();
+    c.cancel_audio_export();
+    drop(hold);
+    c.wait_background();
+    assert!(!t.file("song.mp3").exists());
+    assert!(encodes(&tool).is_empty(), "the encoder never started");
+    assert!(c.last_rejection().unwrap().contains("cancelled"));
+}
+
+#[test]
+fn a_cancel_while_the_encoder_runs_removes_the_partial_file_and_the_temporary_wav() {
+    use std::sync::mpsc::channel;
+    let t = Tmp::new();
+    let (at_step, reached) = channel::<()>();
+    let (release, wait) = channel::<()>();
+    let wait = std::sync::Mutex::new(wait);
+    let at_step = std::sync::Mutex::new(at_step);
+    let tool = Arc::new(FakeTool::new().audio(b"HALF".to_vec()).on_frame(move |n| {
+        if n == 1 {
+            let _ = at_step.lock().unwrap().send(());
+            let _ = wait
+                .lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(30));
+        }
+    }));
+    let mut c = lossy_core(&t, &tool);
+    c.start_audio_export(
+        ExportScope::Song,
+        t.file("song.wav"),
+        lossy(ExportFile::Mp3),
+    )
+    .unwrap();
+    // The encoder has written part of its file: stop the export.
+    reached
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .unwrap();
+    c.cancel_audio_export();
+    release.send(()).unwrap();
+    c.wait_background();
+    assert!(!c.audio_export_busy());
+    let out = t.file("song.mp3");
+    assert!(!out.exists(), "no result file");
+    assert!(
+        !atomik_video::encode::partial_path(&out).exists(),
+        "no partial file"
+    );
+    let call = &encodes(&tool)[0];
+    let input = call.after("-i").unwrap().to_string_lossy().into_owned();
+    let wav = PathBuf::from(input.strip_prefix("file:").unwrap());
+    assert!(!wav.exists(), "the temporary WAV was removed");
+    assert!(c.last_rejection().unwrap().contains("cancelled"));
+}
+
+#[test]
+fn a_failing_encoder_says_why_and_leaves_nothing_but_an_old_file() {
+    let t = Tmp::new();
+    let tool = Arc::new(
+        FakeTool::new()
+            .audio(b"HALF".to_vec())
+            .stream_fails("Unknown encoder 'libopus'"),
+    );
+    let mut c = lossy_core(&t, &tool);
+    std::fs::write(t.file("song.opus"), b"old").unwrap();
+    c.start_audio_export(
+        ExportScope::Song,
+        t.file("song.wav"),
+        lossy(ExportFile::Opus),
+    )
+    .unwrap();
+    c.wait_background();
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("Export of song.opus failed") && message.contains("libopus"),
+        "{message}"
+    );
+    assert_eq!(std::fs::read(t.file("song.opus")).unwrap(), b"old");
+    assert!(!atomik_video::encode::partial_path(&t.file("song.opus")).exists());
+}
+
+#[test]
+fn without_ffmpeg_the_compressed_formats_are_refused_and_the_panel_is_told() {
+    let t = Tmp::new();
+    // No real tools in this core (a headless run).
+    let mut c = core();
+    let err = c
+        .start_audio_export(ExportScope::Song, t.file("a.wav"), lossy(ExportFile::Mp3))
+        .unwrap_err();
+    assert!(err.contains("FFmpeg"), "{err}");
+    assert!(!c.audio_export_busy());
+    // Tools, but no FFmpeg in the folder named in Settings.
+    let empty = t.file("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let mut c = core();
+    c.set_video_tool(Arc::new(FakeTool::new()));
+    c.set_video_folder(Some(empty));
+    assert_eq!(c.export_encoder(), EncoderState::Checking);
+    c.check_ffmpeg().unwrap();
+    c.wait_background();
+    let EncoderState::Missing(why) = c.export_encoder() else {
+        panic!("{:?}", c.export_encoder());
+    };
+    assert!(
+        why.contains("Settings > Video") && why.contains("PATH"),
+        "{why}"
+    );
+    assert!(why.len() <= 90, "short enough for a tooltip: {why}");
+    let err = c
+        .start_audio_export(ExportScope::Song, t.file("a.wav"), lossy(ExportFile::Aac))
+        .unwrap_err();
+    assert_eq!(err, why);
+    assert!(!t.file("a.m4a").exists());
+    // WAV still works in the same core.
+    c.start_audio_export(
+        ExportScope::Song,
+        t.file("a.wav"),
+        values(ExportDepth::Pcm16),
+    )
+    .unwrap();
+    c.wait_background();
+    assert!(t.file("a.wav").is_file());
+}
+
+#[test]
+fn ffmpeg_found_makes_the_encoder_ready() {
+    let t = Tmp::new();
+    let tool = encoder();
+    let mut c = lossy_core(&t, &tool);
+    assert_eq!(c.export_encoder(), EncoderState::Checking);
+    c.check_ffmpeg().unwrap();
+    c.wait_background();
+    assert_eq!(c.export_encoder(), EncoderState::Ready);
+}
+
+#[test]
+fn stems_are_not_compressed() {
+    let t = Tmp::new();
+    let tool = encoder();
+    let mut c = lossy_core(&t, &tool);
+    let err = c
+        .start_audio_export(ExportScope::Stems, t.file("stems"), lossy(ExportFile::Mp3))
+        .unwrap_err();
+    assert!(err.contains("WAV, AIFF or FLAC"), "{err}");
+    assert!(encodes(&tool).is_empty());
+    assert!(!c.audio_export_busy());
+}
+
+#[test]
+fn the_export_choices_for_a_compressed_format_survive_a_restart() {
+    let t = Tmp::new();
+    let chosen = ExportValues {
+        file: ExportFile::Mp3,
+        mp3: ExportQuality::Vbr(2),
+        aac: 256,
+        opus: 160,
+        ..ExportValues::default()
+    };
+    let path = t.file("export.json");
+    crate::export_prefs::ExportPrefs::from_values(&chosen, None)
+        .save(&path)
+        .unwrap();
+    assert_eq!(
+        crate::export_prefs::ExportPrefs::load(&path).values(),
+        chosen
+    );
+}
+
+/// The real FFmpeg, when it is installed: one MP3 export of the starter project. Run with
+/// `cargo test -p atomik-app --lib real_ffmpeg -- --ignored`.
+#[test]
+#[ignore = "needs a real FFmpeg"]
+fn real_ffmpeg_exports_an_mp3_of_the_song() {
+    let t = Tmp::new();
+    let mut c = core();
+    c.set_video_tool(Arc::new(atomik_video::SystemTool));
+    c.check_ffmpeg().unwrap();
+    c.wait_background();
+    if c.export_encoder() != EncoderState::Ready {
+        println!("no FFmpeg here: {:?}", c.export_encoder());
+        return;
+    }
+    c.start_audio_export(
+        ExportScope::Song,
+        t.file("real.wav"),
+        lossy(ExportFile::Mp3),
+    )
+    .unwrap();
+    c.wait_background();
+    let message = c.last_rejection().unwrap().to_owned();
+    println!("{message}");
+    let decoded = atomik_audio_file::decode_file(&t.file("real.mp3"));
+    assert!(message.contains("Exported real.mp3"), "{message}");
+    if let Ok(audio) = decoded {
+        assert!(audio.frames() > 1000);
+    }
 }

@@ -7,7 +7,8 @@ use atomik_core::PPQ;
 use atomik_model::{
     Clip, ClipContent, Command, CreateOptions, CreateSource, Note, SongCommand, WorkflowCommand,
 };
-use atomik_ui::{ExportDepth, ExportDither};
+use atomik_ui::{ExportDepth, ExportDither, ExportFile};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const BAR: i64 = 4 * PPQ;
@@ -342,4 +343,90 @@ fn export_selection_waits_for_a_selected_range_and_has_its_own_command_and_name(
         s.execute(AppCommand::ExportSelectionAudio),
         vec![ShellRequest::PickExportAudio(ExportScope::Selection)]
     );
+}
+
+/// A shell whose FFmpeg is a fake that "encodes" by writing a few bytes.
+fn shell_with_ffmpeg(t: &Tmp) -> (Shell<NullBackend>, Arc<atomik_video::fake::FakeTool>) {
+    let programs = t.file("ffmpeg-folder");
+    std::fs::create_dir_all(&programs).unwrap();
+    for name in ["ffmpeg", "ffprobe"] {
+        std::fs::write(
+            programs.join(atomik_video::Platform::current().exe_name(name)),
+            b"x",
+        )
+        .unwrap();
+    }
+    let tool = Arc::new(atomik_video::fake::FakeTool::new().audio(b"ENCODED".to_vec()));
+    let mut s = shell(&t.0);
+    s.core_mut()
+        .set_video_tool(Arc::clone(&tool) as Arc<dyn atomik_video::VideoTool>);
+    s.core_mut().set_video_folder(Some(programs));
+    (s, tool)
+}
+
+#[test]
+fn the_panel_exports_mp3_once_ffmpeg_is_found_and_remembers_the_format_and_quality() {
+    let t = Tmp::new();
+    let (mut s, tool) = shell_with_ffmpeg(&t);
+    let path = t.file("mix.wav");
+    s.export_audio_to(ExportScope::Song, &path);
+    // FFmpeg is being looked for: the choice can be made but EXPORT waits for the answer.
+    press(&mut s, "MP3");
+    press(&mut s, "EXPORT");
+    assert!(!s.core().audio_export_busy());
+    assert!(s.export_open());
+    s.core_mut().wait_background();
+    s.frame();
+    press(&mut s, "V2");
+    press(&mut s, "EXPORT");
+    assert!(s.core().audio_export_busy());
+    s.core_mut().wait_background();
+    s.frame();
+    assert!(!s.export_open());
+    assert_eq!(std::fs::read(t.file("mix.mp3")).unwrap(), b"ENCODED");
+    assert!(
+        s.core()
+            .last_rejection()
+            .unwrap()
+            .contains("Exported mix.mp3"),
+    );
+    let calls: Vec<_> = tool.calls().into_iter().filter(|c| c.has("-vn")).collect();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].after("-q:a").unwrap(), "2");
+    // The format and the quality are remembered, in the file and for the next panel.
+    let saved = std::fs::read_to_string(t.file("export.json")).unwrap();
+    assert!(saved.contains("\"file\": \"mp3\""), "{saved}");
+    assert!(saved.contains("\"mp3\": \"v2\""), "{saved}");
+    s.export_audio_to(ExportScope::Loop, &t.file("loop.wav"));
+    let v = s.export_view().unwrap().values();
+    assert_eq!(
+        (v.file, v.mp3),
+        (ExportFile::Mp3, atomik_ui::ExportQuality::Vbr(2))
+    );
+    let s2 = shell(&t.0);
+    assert_eq!(s2.export_values().file, ExportFile::Mp3);
+}
+
+#[test]
+fn without_ffmpeg_the_panel_greys_the_compressed_formats_and_says_how_to_set_it_up() {
+    let t = Tmp::new();
+    // No FFmpeg tools in this shell: the panel finds that out and greys the formats.
+    let mut s = shell(&t.0);
+    s.export_audio_to(ExportScope::Song, &t.file("mix.wav"));
+    s.core_mut().wait_background();
+    s.frame();
+    press(&mut s, "MP3");
+    assert_eq!(s.export_view().unwrap().values().file, ExportFile::Wav);
+    let mut dl = atomik_ui::DisplayList::new();
+    s.paint(&mut dl);
+    assert!(
+        dl.texts().iter().any(|t| t.contains("Settings > Video")),
+        "{:?}",
+        dl.texts()
+    );
+    // A WAV export still goes through.
+    press(&mut s, "EXPORT");
+    s.core_mut().wait_background();
+    s.frame();
+    assert!(t.file("mix.wav").is_file());
 }

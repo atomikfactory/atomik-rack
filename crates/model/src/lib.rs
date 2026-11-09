@@ -206,7 +206,9 @@ pub use steps::{
     MAX_CV_PATTERNS, MAX_DRUM_PATTERNS, MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PATTERN_PARAM,
     PatternDoc, SeqResolution, StepDoc, StepSeqDoc, pattern_cap, player_data_for,
 };
-pub use video::{AudioLink, MAX_LEAD_US, VideoClip, VideoCommand, VideoFacts, check_video};
+pub use video::{
+    AudioLink, MAX_LEAD_US, VideoClip, VideoCommand, VideoFacts, check_video, tick_at_us,
+};
 pub use video_audio::{AudioPlacement, placement as video_audio_placement};
 pub use workflow::{
     ClipEntry, ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, TakeSnapshot,

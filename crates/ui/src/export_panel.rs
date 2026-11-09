@@ -7,7 +7,8 @@
 //!   BIT DEPTH   [ 16-BIT ] [ 24-BIT ] [ 32-BIT FLOAT ]
 //!   DITHER      [ NONE ] [ TPDF ] [ SHAPED ]
 //!   SAMPLE RATE [ PROJECT ] [ 44.1 kHz ] [ 48 kHz ] [ 88.2 kHz ] [ 96 kHz ]
-//!   FILE FORMAT [ WAV ] [ AIFF ] [ FLAC ]
+//!   FILE FORMAT [ WAV ] [ AIFF ] [ FLAC ] [ MP3 ] [ AAC ] [ OPUS ]
+//!   QUALITY     [ 128 kbps ] [ 192 kbps ] [ 256 kbps ] [ 320 kbps ] [ V0 ] [ V2 ] [ V4 ]
 //!   TAIL        [ KEEP EFFECT TAIL ]
 //!   Renders to the End marker, then keeps the tail while it is audible.
 //!                                                          [ EXPORT ] [ CANCEL ]
@@ -19,7 +20,11 @@
 //! [`ExportAction::Cancel`]. The dither applies to 16-bit files only, so its row is greyed at the
 //! other depths; the tail applies to a song and to stems (which also have a CHANNELS row: after the
 //! strip or dry, and a RANGE row: the whole song, only what lies between the locators, or the time
-//! range selected on the lanes). FLAC
+//! range selected on the lanes). MP3, AAC and Opus are encoded by the user's FFmpeg: the app says
+//! through [`ExportView::set_encoder`] whether it can be used, and without it the three buttons
+//! are greyed with a line that says how to set FFmpeg up (stems are always WAV, AIFF or FLAC). A
+//! compressed file has no bit depth or dither, so those rows grey out, and its QUALITY row
+//! offers the bitrates of the format (MP3 also three variable-bitrate qualities). FLAC
 //! holds 16-bit and 24-bit audio, so the 32-bit float button is inert while FLAC is chosen (and
 //! choosing FLAC at 32-bit float moves the depth to 24-bit). In the **progress** mode
 //! ([`ExportView::show_progress`]) a bar shows the fraction the app feeds with
@@ -48,6 +53,16 @@ const MAX_WIDTH: f64 = 540.0;
 const BTN_H: f64 = 22.0;
 const BTN_GAP: f64 = 6.0;
 const LABEL_W: f64 = 104.0;
+/// The width of a button of the file format row (six of them share the row).
+const FILE_BTN_W: f64 = 62.0;
+
+/// The width of a quality button: a bitrate is wider than a VBR quality.
+fn quality_width(quality: ExportQuality) -> f64 {
+    match quality {
+        ExportQuality::Cbr(_) => 58.0,
+        ExportQuality::Vbr(_) => 44.0,
+    }
+}
 
 /// What is exported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +87,49 @@ pub enum ExportFile {
     Aiff,
     /// A FLAC file (16-bit and 24-bit only).
     Flac,
+    /// An MP3 file (encoded by the user's FFmpeg).
+    Mp3,
+    /// An AAC file in an `.m4a` container (encoded by the user's FFmpeg).
+    Aac,
+    /// An Opus file (encoded by the user's FFmpeg).
+    Opus,
+}
+
+impl ExportFile {
+    /// True for the formats that FFmpeg encodes (they have a quality, no bit depth or dither).
+    pub fn is_lossy(self) -> bool {
+        matches!(self, Self::Mp3 | Self::Aac | Self::Opus)
+    }
+}
+
+/// How hard a compressed format squeezes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportQuality {
+    /// A constant bitrate in kilobits per second.
+    Cbr(u16),
+    /// A variable bitrate by quality, `0` (best) to `9`; MP3 only.
+    Vbr(u8),
+}
+
+/// The constant bitrates the panel offers for MP3, in kilobits per second.
+pub const MP3_BITRATES: [u16; 4] = [128, 192, 256, 320];
+/// The variable-bitrate qualities the panel offers for MP3 (`0` is the best).
+pub const MP3_VBR: [u8; 3] = [0, 2, 4];
+/// The bitrates the panel offers for AAC, in kilobits per second.
+pub const AAC_BITRATES: [u16; 4] = [128, 192, 256, 320];
+/// The bitrates the panel offers for Opus, in kilobits per second.
+pub const OPUS_BITRATES: [u16; 5] = [64, 96, 128, 160, 192];
+
+/// Whether FFmpeg, which encodes the compressed formats, can be used now.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum EncoderState {
+    /// FFmpeg is found.
+    #[default]
+    Ready,
+    /// FFmpeg is being looked for.
+    Checking,
+    /// FFmpeg cannot be used; the text says how to set it up.
+    Missing(String),
 }
 
 /// The bit depth of the file.
@@ -120,6 +178,24 @@ pub struct ExportValues {
     /// Stems only: export just the time range selected on the lanes (no tail). It wins over
     /// `locators`. It is not remembered between sessions.
     pub selection: bool,
+    /// The quality of an MP3 file.
+    pub mp3: ExportQuality,
+    /// The bitrate of an AAC file in kilobits per second.
+    pub aac: u16,
+    /// The bitrate of an Opus file in kilobits per second.
+    pub opus: u16,
+}
+
+impl ExportValues {
+    /// The quality of the compressed format chosen, `None` for a lossless one.
+    pub fn quality(&self) -> Option<ExportQuality> {
+        match self.file {
+            ExportFile::Mp3 => Some(self.mp3),
+            ExportFile::Aac => Some(ExportQuality::Cbr(self.aac)),
+            ExportFile::Opus => Some(ExportQuality::Cbr(self.opus)),
+            _ => None,
+        }
+    }
 }
 
 impl Default for ExportValues {
@@ -133,6 +209,9 @@ impl Default for ExportValues {
             dry: false,
             locators: false,
             selection: false,
+            mp3: ExportQuality::Cbr(192),
+            aac: 192,
+            opus: 128,
         }
     }
 }
@@ -161,6 +240,7 @@ enum Hit {
     Dither(ExportDither),
     Rate(Option<u32>),
     File(ExportFile),
+    Quality(ExportQuality),
     Tail,
     Dry(bool),
     Range(RangeChoice),
@@ -185,6 +265,8 @@ pub struct ExportView {
     file: String,
     project_rate: u32,
     values: ExportValues,
+    encoder: EncoderState,
+    warning: Option<String>,
     mode: Mode,
     hover: Option<Point>,
     repaint: bool,
@@ -207,6 +289,8 @@ impl ExportView {
             file: String::new(),
             project_rate: 48_000,
             values: ExportValues::default(),
+            encoder: EncoderState::Ready,
+            warning: None,
             mode: Mode::Options,
             hover: None,
             repaint: true,
@@ -240,8 +324,50 @@ impl ExportView {
         self.file = file.to_owned();
         self.project_rate = project_rate;
         self.values = values;
+        self.warning = None;
         self.mode = Mode::Options;
+        self.settle_file();
         self.repaint = true;
+    }
+
+    /// Shows a line under the options (the app says why it did not start, or what to confirm: a
+    /// file that the export would replace); it goes away when a button changes a choice.
+    pub fn set_warning(&mut self, text: Option<String>) {
+        if text != self.warning {
+            self.warning = text;
+            self.repaint = true;
+        }
+    }
+
+    /// The line shown under the options, if any.
+    pub fn warning(&self) -> Option<&str> {
+        self.warning.as_deref()
+    }
+
+    /// Tells the panel whether FFmpeg can encode the compressed formats. Without it their
+    /// buttons are greyed and a line says how to set FFmpeg up; a compressed format chosen
+    /// before that was known is dropped for WAV when FFmpeg turns out to be missing.
+    pub fn set_encoder(&mut self, state: EncoderState) {
+        if state != self.encoder {
+            self.encoder = state;
+            self.settle_file();
+            self.repaint = true;
+        }
+    }
+
+    /// The compressed formats cannot be chosen for stems or without FFmpeg: the choice falls back
+    /// to WAV.
+    fn settle_file(&mut self) {
+        let unusable =
+            self.scope == ExportScope::Stems || matches!(self.encoder, EncoderState::Missing(_));
+        if self.values.file.is_lossy() && unusable {
+            self.values.file = ExportFile::Wav;
+        }
+    }
+
+    /// Whether the compressed formats can be pressed now.
+    fn lossy_enabled(&self) -> bool {
+        self.scope != ExportScope::Stems && !matches!(self.encoder, EncoderState::Missing(_))
     }
 
     /// Switches to the progress bar (the render has started).
@@ -294,7 +420,13 @@ impl ExportView {
     /// The rows of the options, in order: bit depth, dither, sample rate and file format for
     /// every scope, then the tail (songs and stems), the strip and the range (stems).
     fn row_names(&self) -> Vec<&'static str> {
-        let mut rows = vec!["BIT DEPTH", "DITHER", "SAMPLE RATE", "FILE FORMAT"];
+        let mut rows = vec![
+            "BIT DEPTH",
+            "DITHER",
+            "SAMPLE RATE",
+            "FILE FORMAT",
+            "QUALITY",
+        ];
         if !matches!(self.scope, ExportScope::Loop | ExportScope::Selection) {
             rows.push("TAIL");
         }
@@ -307,6 +439,14 @@ impl ExportView {
 
     fn rows(&self) -> usize {
         self.row_names().len()
+    }
+
+    /// The index of the row called `name`.
+    fn row_of(&self, name: &str) -> usize {
+        self.row_names()
+            .iter()
+            .position(|n| *n == name)
+            .unwrap_or_default()
     }
 
     /// The panel box.
@@ -335,6 +475,40 @@ impl ExportView {
         let x = p.x0 + PAD + LABEL_W + offset;
         let y = self.row_top(row) + (ROW_H - BTN_H) / 2.0;
         Rect::new(x, y, x + width, y + BTN_H)
+    }
+
+    /// The quality buttons of the chosen compressed format with their labels; none for a lossless
+    /// format.
+    fn quality_choices(&self) -> Vec<(ExportQuality, String)> {
+        let cbr = |rates: &[u16]| -> Vec<(ExportQuality, String)> {
+            rates
+                .iter()
+                .map(|&k| (ExportQuality::Cbr(k), format!("{k} kbps")))
+                .collect()
+        };
+        match self.values.file {
+            ExportFile::Mp3 => {
+                let mut all = cbr(&MP3_BITRATES);
+                all.extend(
+                    MP3_VBR
+                        .iter()
+                        .map(|&q| (ExportQuality::Vbr(q), format!("V{q}"))),
+                );
+                all
+            }
+            ExportFile::Aac => cbr(&AAC_BITRATES),
+            ExportFile::Opus => cbr(&OPUS_BITRATES),
+            _ => Vec::new(),
+        }
+    }
+
+    /// How far right of the first button the quality button `index` starts.
+    fn quality_offset(&self, index: usize) -> f64 {
+        self.quality_choices()
+            .iter()
+            .take(index)
+            .map(|(q, _)| quality_width(*q) + BTN_GAP)
+            .sum()
     }
 
     fn footer_button(&self, from_right: usize) -> Rect {
@@ -378,17 +552,18 @@ impl ExportView {
         .into_iter()
         .enumerate()
         {
-            // FLAC has no 32-bit float.
-            let enabled = !(v.file == ExportFile::Flac && depth == ExportDepth::Float32);
+            // FLAC has no 32-bit float, and a compressed file has no bit depth.
+            let lossy = v.file.is_lossy();
+            let enabled = !lossy && !(v.file == ExportFile::Flac && depth == ExportDepth::Float32);
             out.push((
                 Hit::Depth(depth),
                 self.button(0, i, w),
                 label.to_owned(),
-                v.depth == depth,
+                !lossy && v.depth == depth,
                 enabled,
             ));
         }
-        let dither_on = v.depth == ExportDepth::Pcm16;
+        let dither_on = v.depth == ExportDepth::Pcm16 && !v.file.is_lossy();
         for (i, (dither, label)) in [
             (ExportDither::Off, "NONE"),
             (ExportDither::Tpdf, "TPDF"),
@@ -426,22 +601,36 @@ impl ExportView {
             (ExportFile::Wav, "WAV"),
             (ExportFile::Aiff, "AIFF"),
             (ExportFile::Flac, "FLAC"),
+            (ExportFile::Mp3, "MP3"),
+            (ExportFile::Aac, "AAC"),
+            (ExportFile::Opus, "OPUS"),
         ]
         .into_iter()
         .enumerate()
         {
             out.push((
                 Hit::File(file),
-                self.button(3, i, w),
+                self.button(3, i, FILE_BTN_W),
                 label.to_owned(),
                 v.file == file,
+                !file.is_lossy() || self.lossy_enabled(),
+            ));
+        }
+        for (i, (quality, label)) in self.quality_choices().into_iter().enumerate() {
+            let offset = self.quality_offset(i);
+            out.push((
+                Hit::Quality(quality),
+                self.button_at(4, offset, quality_width(quality)),
+                label,
+                v.quality() == Some(quality),
                 true,
             ));
         }
+        let tail_row = self.row_of("TAIL");
         if !matches!(self.scope, ExportScope::Loop | ExportScope::Selection) {
             out.push((
                 Hit::Tail,
-                self.button(4, 0, 150.0),
+                self.button(tail_row, 0, 150.0),
                 "KEEP EFFECT TAIL".to_owned(),
                 v.tail,
                 true,
@@ -454,7 +643,7 @@ impl ExportView {
             {
                 out.push((
                     Hit::Dry(dry),
-                    self.button(5, i, 110.0),
+                    self.button(self.row_of("CHANNELS"), i, 110.0),
                     label.to_owned(),
                     v.dry == dry,
                     true,
@@ -474,7 +663,7 @@ impl ExportView {
             ] {
                 out.push((
                     Hit::Range(choice),
-                    self.button_at(6, offset, width),
+                    self.button_at(self.row_of("RANGE"), offset, width),
                     label.to_owned(),
                     chosen == choice,
                     true,
@@ -549,7 +738,7 @@ impl ExportView {
                 pressed: true,
                 ..
             } if !self.in_progress() => {
-                out.push(UiAction::Export(ExportAction::Start(self.values)));
+                out.extend(self.start().map(UiAction::Export));
             }
             _ => {}
         }
@@ -567,23 +756,50 @@ impl ExportView {
                     self.values.depth = ExportDepth::Pcm24;
                 }
             }
+            Hit::Quality(q) => match (self.values.file, q) {
+                (ExportFile::Mp3, q) => self.values.mp3 = q,
+                (ExportFile::Aac, ExportQuality::Cbr(k)) => self.values.aac = k,
+                (ExportFile::Opus, ExportQuality::Cbr(k)) => self.values.opus = k,
+                _ => {}
+            },
             Hit::Tail => self.values.tail = !self.values.tail,
             Hit::Dry(d) => self.values.dry = d,
             Hit::Range(r) => {
                 self.values.locators = r == RangeChoice::Locators;
                 self.values.selection = r == RangeChoice::Selection;
             }
-            Hit::Start => return Some(ExportAction::Start(self.values)),
+            Hit::Start => return self.start(),
             Hit::Cancel => return Some(ExportAction::Cancel),
         }
+        // A changed choice is a new question: the old line no longer applies.
+        self.warning = None;
         None
+    }
+
+    /// EXPORT: the values, unless a compressed format waits for FFmpeg to be found.
+    fn start(&self) -> Option<ExportAction> {
+        let waiting = self.values.file.is_lossy() && self.encoder != EncoderState::Ready;
+        (!waiting).then_some(ExportAction::Start(self.values))
     }
 
     /// What the button under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let hit = self.hit(pos)?;
-        let rect = self.buttons().into_iter().find(|b| b.0 == hit)?.1;
+        // A greyed button still says why it is greyed.
+        let (hit, rect) = self
+            .buttons()
+            .into_iter()
+            .find(|b| b.1.contains(pos))
+            .map(|b| (b.0, b.1))?;
+        if let (Hit::File(file), EncoderState::Missing(why)) = (hit, &self.encoder)
+            && file.is_lossy()
+            && self.scope != ExportScope::Stems
+        {
+            return Some(Help::new(rect, why.clone()));
+        }
         let text = match hit {
+            Hit::Depth(_) | Hit::Dither(_) if self.values.file.is_lossy() => {
+                "Not used for a compressed file: the encoder decides the precision"
+            }
             Hit::Depth(ExportDepth::Pcm16) => {
                 "16-bit integer file, as a compact disc: dither it to keep quiet detail"
             }
@@ -605,6 +821,28 @@ impl ExportView {
             Hit::File(ExportFile::Aiff) => "Write AIFF files (AIFF-C for 32-bit float)",
             Hit::File(ExportFile::Flac) => {
                 "Write FLAC files: lossless and smaller, at 16 or 24 bits"
+            }
+            Hit::File(_) if self.scope == ExportScope::Stems => {
+                "Stems are written as WAV, AIFF or FLAC files"
+            }
+            Hit::File(ExportFile::Mp3) => {
+                "Write MP3 files with FFmpeg: small, plays everywhere, lossy"
+            }
+            Hit::File(ExportFile::Aac) => {
+                "Write AAC files (.m4a) with FFmpeg: small and clean at a modest bitrate, lossy"
+            }
+            Hit::File(_) => "Write Opus files with FFmpeg: the best sound for the size, lossy",
+            Hit::Quality(ExportQuality::Vbr(0)) => {
+                "Variable bitrate, best quality (about 245 kbps): the size follows the music"
+            }
+            Hit::Quality(ExportQuality::Vbr(2)) => {
+                "Variable bitrate, high quality (about 190 kbps): the size follows the music"
+            }
+            Hit::Quality(ExportQuality::Vbr(_)) => {
+                "Variable bitrate, good quality (about 165 kbps): the size follows the music"
+            }
+            Hit::Quality(ExportQuality::Cbr(_)) => {
+                "Constant bitrate in kilobits per second: higher is clearer and bigger"
             }
             Hit::Tail => {
                 "Keep what rings out after the End marker (reverb, delay) while it is audible"
@@ -762,7 +1000,9 @@ impl ExportView {
             }
             ExportScope::Stems => "One file per strip, in order, lined up with the master.",
         };
-        let note = if self.values.depth == ExportDepth::Pcm16 {
+        let note = if self.values.file.is_lossy() {
+            "Lossy encoding can add peaks: leave 1 dB of true-peak headroom.".to_owned()
+        } else if self.values.depth == ExportDepth::Pcm16 {
             hint.to_owned()
         } else if self.values.depth == ExportDepth::Pcm24 {
             format!("{hint} 24-bit needs no dither.")
@@ -778,6 +1018,25 @@ impl ExportView {
             t.text_muted,
             Align::Start,
         );
+        let encoder_line = match (&self.warning, &self.encoder) {
+            (Some(warning), _) => Some(warning.as_str()),
+            (None, EncoderState::Ready) => None,
+            (None, EncoderState::Checking) => {
+                Some("Looking for FFmpeg (MP3, AAC and Opus need it)...")
+            }
+            (None, EncoderState::Missing(why)) => Some(why.as_str()),
+        };
+        if let Some(line) = encoder_line {
+            sp::label(
+                c,
+                &fit_label(line, p.width() - 2.0 * PAD, 10.0),
+                p.x0 + PAD,
+                self.row_top(self.rows()) + 26.0,
+                10.0,
+                t.text_muted,
+                Align::Start,
+            );
+        }
         sp::label(
             c,
             &format!("Project rate {}", rate_label(self.project_rate)),

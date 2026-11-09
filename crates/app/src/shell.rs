@@ -150,6 +150,8 @@ use crate::start_screen::{ExampleCard, RecentRow, StartOutcome, StartScreen};
 use crate::status::{AudioStatus, OverloadStats, status_text};
 use crate::stress::{STRESS_CABLES, STRESS_DEVICES, stress_doc, stress_song_doc};
 use crate::ui_state::UiState;
+use crate::update_check::Updater;
+use crate::update_notice::UpdateNotice;
 use crate::windows::{DocId, WindowHit, WindowKind};
 use atomik_audio_io::StreamState;
 use atomik_model::{ClipId, Command, ConsoleCommand, DeviceKey};
@@ -169,7 +171,7 @@ use atomik_ui::{
 };
 use atomik_ui::{
     BlindAction, BlindView, BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView,
-    ColorTarget, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key,
+    ColorTarget, ConsoleButton, ExportScope, ExportView, FileBrowserView, FilmView, Flip, Key,
     KickBassAction, KickBassView, MacrosAction, MacrosView, MaskingAction, MaskingView,
     MidiMapsAction, MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView,
     Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView,
@@ -239,6 +241,10 @@ pub enum ShellRequest {
     /// named by [`Shell::export_audio_name`], starting in [`Shell::export_audio_dir`], then call
     /// [`Shell::export_audio_to`] with the scope and the path.
     PickExportAudio(ExportScope),
+    /// Show a save dialog for a film (File > Export > Film with Mix): an MP4 or MOV file named by
+    /// [`Shell::export_film_name`], starting in [`Shell::export_audio_dir`], then call
+    /// [`Shell::export_film_to`] with the path.
+    PickExportFilm,
     /// Show a save dialog for a MIDI file (File > Export MIDI), then call
     /// [`Shell::export_midi_to`] with the scope and the path.
     PickExportMidi(MidiExport),
@@ -351,6 +357,10 @@ pub enum ShellRequest {
     /// Open an address in the default browser (Help > Documentation, Report an Issue and the
     /// link of the About box). Only the project's own addresses are ever asked for.
     OpenUrl(&'static str),
+    /// Open the page of a newer release in the default browser (the update notice's "What's
+    /// new"). The address is made from a checked tag by `atomik-update`, never read from the
+    /// network answer as it is.
+    OpenRelease(String),
     /// Bring a window to the front and give it the keyboard focus (restoring it if it is
     /// minimised).
     FocusWindow(WindowKind),
@@ -481,6 +491,12 @@ pub struct Shell<B: AudioBackend> {
     start_screen: Option<StartScreen>,
     /// The controller set-up wizard, while it is open.
     controller_wizard: Option<crate::controller_wizard_view::ControllerWizardView>,
+    /// The update check: its worker, the daily throttle and what is kept (`updates.json`).
+    updater: Updater,
+    /// The question or the news of the update check, while it shows.
+    update_notice: Option<UpdateNotice>,
+    /// The newer release the news is about (what its buttons act on).
+    update_release: Option<atomik_update::Release>,
     /// The guided first song, while its panel is open (shell state: never saved in a song).
     guide: Option<Guide>,
     /// The operating system is set to a dark theme (what the System theme choice follows).
@@ -546,6 +562,14 @@ pub struct Shell<B: AudioBackend> {
     export: Option<ExportView>,
     /// What the panel exports and where: the scope and the file the dialog picked.
     export_target: Option<(ExportScope, PathBuf)>,
+    /// The film export panel (File > Export > Film with Mix) while it is open.
+    film: Option<FilmView>,
+    /// Where the film goes: the file the dialog picked.
+    film_target: Option<PathBuf>,
+    /// The file an export would replace without the dialog having asked (the extension of the
+    /// format chosen after the dialog is not the one it picked): the user has been warned about
+    /// it, and pressing EXPORT again confirms.
+    export_replace: Option<PathBuf>,
     /// The remembered export choices (`export.json`).
     export_prefs: ExportPrefs,
     /// Where they are saved (next to the settings file).
@@ -700,6 +724,10 @@ impl<B: AudioBackend> Shell<B> {
             .settings_path
             .as_deref()
             .map(keymap_store::workflow_path);
+        let updates_path = options
+            .settings_path
+            .as_deref()
+            .map(|p| p.with_file_name(atomik_update::FILE));
         let loaded_keymap = keymap_path.as_deref().map(keymap_store::load_user_keymap);
         let loaded_workflow = workflow_path.as_deref().map(keymap_store::load_workflow);
         let mut startup_notes: Vec<String> = ui_note.into_iter().collect();
@@ -763,6 +791,9 @@ impl<B: AudioBackend> Shell<B> {
             relink: None,
             export: None,
             export_target: None,
+            film: None,
+            film_target: None,
+            export_replace: None,
             export_prefs: export_prefs_path
                 .as_deref()
                 .map(ExportPrefs::load)
@@ -790,6 +821,9 @@ impl<B: AudioBackend> Shell<B> {
             wavetable: None,
             start_screen: None,
             controller_wizard: None,
+            updater: Updater::new(updates_path),
+            update_notice: None,
+            update_release: None,
             guide: None,
             color_picker: None,
             notes: None,
@@ -3331,6 +3365,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.export {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.film {
+            v.set_theme(theme.clone());
+        }
         if let Some(v) = &mut self.midi_maps {
             v.set_theme(theme.clone());
         }
@@ -3727,6 +3764,7 @@ impl<B: AudioBackend> Shell<B> {
             video_audio_keep: self.core.video_audio_kept() == Some(true),
             video_import_audio: self.ui.video_import_audio,
             video_missing: self.core.video_missing(),
+            export_film: self.core.can_export_film(),
             collect_busy: self.core.collect_busy(),
             default_song: self.workflow.default_song.is_some(),
             midi_clip: self.core.can_export_midi(MidiExport::Clip),
@@ -3964,6 +4002,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.export.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.export {
+                v.set_bounds(rect);
+            }
+        }
+        if self.film.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.film {
                 v.set_bounds(rect);
             }
         }
@@ -4806,6 +4850,10 @@ impl<B: AudioBackend> Shell<B> {
             self.forward_modifiers();
             return Vec::new();
         }
+        // The notice of the update check takes only the events that land on its card.
+        if let Some(requests) = self.update_notice_event(window, event) {
+            return requests;
+        }
         // The modals live in the main window: while one is open the other windows are inert, and
         // a press in one brings the main window forward.
         if window != WindowKind::Main && self.modal_open() {
@@ -4917,6 +4965,21 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::Export(a) = action {
                     self.export_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.film.is_some() {
+            // The film export panel takes every event; Esc closes it (or stops the job).
+            self.repaint = true;
+            let actions = self
+                .film
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Film(a) = action {
+                    self.film_action(a);
                 }
             }
             return Vec::new();
@@ -7291,6 +7354,7 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::ExportLoopAudio => self.export_audio_request(ExportScope::Loop),
             AppCommand::ExportSelectionAudio => self.export_audio_request(ExportScope::Selection),
             AppCommand::ExportStems => self.export_audio_request(ExportScope::Stems),
+            AppCommand::ExportFilm => self.export_film_request(),
             AppCommand::QuantizeApply => {
                 let pane = self.live_pane(self.focus);
                 self.apply_last_quantize(pane);
@@ -8280,6 +8344,10 @@ impl<B: AudioBackend> Shell<B> {
                 vec![ShellRequest::OpenUrl(crate::about_box::REPOSITORY_URL)]
             }
             AppCommand::ReportIssue => vec![ShellRequest::OpenUrl(crate::about_box::ISSUES_URL)],
+            AppCommand::CheckForUpdates => {
+                self.check_for_updates_command();
+                Vec::new()
+            }
             AppCommand::About => {
                 self.about = Some(AboutBox::new(crate::about_box::VERSION));
                 self.menubar.as_mut().map(MenuBar::close);
@@ -8756,6 +8824,8 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_video_ui();
         self.sync_relink();
         self.sync_export();
+        self.sync_film();
+        self.poll_updates();
         self.sync_masking();
         self.sync_bass_read();
         self.sync_delivery();
@@ -9796,6 +9866,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.export {
             view.paint(canvas);
         }
+        if let Some(view) = &self.film {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.midi_maps {
             view.paint(canvas);
         }
@@ -9914,6 +9987,11 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(wizard) = &self.controller_wizard {
             wizard.paint(canvas, &theme, self.size());
         }
+        if self.update_notice_reachable()
+            && let Some(notice) = &self.update_notice
+        {
+            notice.paint(canvas, &theme, self.size());
+        }
         canvas.pop_transform();
     }
 }
@@ -10026,6 +10104,12 @@ fn pointer_pos(event: &UiEvent) -> Option<Point> {
         _ => None,
     }
 }
+
+#[path = "shell_film.rs"]
+mod film_impl;
+
+#[path = "shell_update.rs"]
+mod update_impl;
 
 #[path = "shell_export.rs"]
 mod export_impl;
@@ -10229,6 +10313,14 @@ mod library_tests;
 #[cfg(test)]
 #[path = "shell_export_tests.rs"]
 mod export_tests;
+
+#[cfg(test)]
+#[path = "shell_film_tests.rs"]
+mod film_tests;
+
+#[cfg(test)]
+#[path = "shell_update_tests.rs"]
+mod update_tests;
 
 #[cfg(test)]
 #[path = "shell_save_tests.rs"]
