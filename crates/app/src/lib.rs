@@ -60,6 +60,7 @@ pub mod midi_file;
 pub mod mixcheck_worker;
 #[cfg(test)]
 pub(crate) mod offline_sink;
+pub mod palette;
 pub mod platform;
 pub mod plugin_setup;
 #[cfg(test)]

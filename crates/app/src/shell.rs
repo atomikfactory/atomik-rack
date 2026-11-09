@@ -143,6 +143,7 @@ use crate::export_prefs::ExportPrefs;
 use crate::guide::{Guide, GuideOutcome, Spot};
 use crate::keymap_store::{self, WorkflowPrefs};
 use crate::menubar::{MENU_BAR_HEIGHT, MenuBar, MenuBarOutcome};
+use crate::palette::Runner;
 use crate::session::{AudioBackend, LiveSession, SettingsChange};
 use crate::settings::{self, AudioSettings, LastGood, SurfaceSettings};
 use crate::settings_dialog::{DeviceLists, DialogOutcome, SettingsDialog};
@@ -161,7 +162,7 @@ use atomik_ui::browser::CreateKind;
 use atomik_ui::context_menu::{ContextMenu, MenuOutcome};
 use atomik_ui::keymap::{
     Context, ContextStack, GestureClass, KEYS_NOTE_ARGS, Keymap, KeymapEditor, Os, Profile,
-    Resolution, Role, Roles, Route, Router, UserKeymap,
+    Registry, Resolution, Role, Roles, Route, Router, UserKeymap,
 };
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
@@ -171,15 +172,16 @@ use atomik_ui::{
 };
 use atomik_ui::{
     BlindAction, BlindView, BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView,
-    ColorTarget, ConsoleButton, ExportScope, ExportView, FileBrowserView, FilmView, Flip, Key,
-    KickBassAction, KickBassView, MacrosAction, MacrosView, MaskingAction, MaskingView,
-    MidiMapsAction, MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView,
-    Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView,
-    Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
-    QuantizeView, RelinkAction, RelinkEntry, RelinkView, RepetitionAction, RepetitionView,
-    ScaleAction, ScaleView, SilenceAction, SilenceValues, SilenceView, SongInfoAction,
-    SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, VersionItem, VersionsAction,
-    VersionsView, WarpAction, WarpValues, WarpView, ZoneAction, ZoneView,
+    ColorTarget, CommandPaletteView, ConsoleButton, ExportScope, ExportView, FileBrowserView,
+    FilmView, Flip, Key, KickBassAction, KickBassView, MacrosAction, MacrosView, MaskingAction,
+    MaskingView, MidiMapsAction, MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction,
+    ModMatrixView, Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, PaletteAction,
+    ParamSearchAction, ParamSearchView, Place, PluginBannerView, PluginSettingsView, PointerButton,
+    QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView,
+    RepetitionAction, RepetitionView, ScaleAction, ScaleView, SilenceAction, SilenceValues,
+    SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent,
+    VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues, WarpView, ZoneAction,
+    ZoneView,
 };
 use atomik_ui::{ReverbSendAction, ReverbSendValues, ReverbSendView};
 use atomik_ui::{WavetableAction, WavetableView};
@@ -583,6 +585,13 @@ pub struct Shell<B: AudioBackend> {
     mod_matrix: Option<ModMatrixView>,
     /// The parameter search (View > Find Parameter) while it is open.
     param_search: Option<ParamSearchView>,
+    /// The command palette (Help > Command Palette) while it is open, with how to run each of
+    /// its entries.
+    palette: Option<(CommandPaletteView, Vec<Runner>)>,
+    /// The commands last run from the palette (their keys, newest first) and the file they are
+    /// kept in (`None`: not saved).
+    palette_recent: Vec<String>,
+    palette_path: Option<PathBuf>,
     /// The control a right click opened the MIDI menu for (what Learn MIDI and Forget MIDI act on).
     control_target: Option<(DeviceKey, String)>,
     /// The quantize panel (Edit > Quantize Options) while it is open.
@@ -728,6 +737,7 @@ impl<B: AudioBackend> Shell<B> {
             .settings_path
             .as_deref()
             .map(|p| p.with_file_name(atomik_update::FILE));
+        let palette_path = options.settings_path.as_deref().map(crate::palette::path);
         let loaded_keymap = keymap_path.as_deref().map(keymap_store::load_user_keymap);
         let loaded_workflow = workflow_path.as_deref().map(keymap_store::load_workflow);
         let mut startup_notes: Vec<String> = ui_note.into_iter().collect();
@@ -836,6 +846,9 @@ impl<B: AudioBackend> Shell<B> {
             macros_panel: None,
             mod_matrix: None,
             param_search: None,
+            palette: None,
+            palette_recent: Vec::new(),
+            palette_path,
             control_target: None,
             router: Router::new(built.keymap),
             modifiers: Modifiers::NONE,
@@ -1421,6 +1434,7 @@ impl<B: AudioBackend> Shell<B> {
     /// (composition windows, dead keys) to the window.
     pub fn wants_text_input(&self) -> bool {
         self.song_info.is_some()
+            || self.palette.is_some()
             || self.versions.is_some()
             || self.quantize.as_ref().is_some_and(QuantizeView::wants_text)
             || self.scale.is_some()
@@ -2844,6 +2858,72 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// Whether the command palette is open.
+    pub fn palette_open(&self) -> bool {
+        self.palette.is_some()
+    }
+
+    /// The command palette, while it is open.
+    pub fn palette_view(&self) -> Option<&CommandPaletteView> {
+        self.palette.as_ref().map(|(v, _)| v)
+    }
+
+    /// Opens the command palette on an empty query: every menu item as the menus show it now,
+    /// every other command of the registry, and the recent commands first.
+    fn open_palette(&mut self) {
+        // The keys are the ones the keymap file has now, as when a menu opens.
+        self.reload_keymap_file();
+        let menus = self.menu_model();
+        let (entries, runners) =
+            crate::palette::commands(&menus, &Registry::bundled(), self.router.keymap());
+        if let Some(path) = &self.palette_path {
+            self.palette_recent = crate::palette::load(path);
+        }
+        let theme = self.core.view().theme().clone();
+        let mut view = CommandPaletteView::new(theme, entries, self.palette_recent.clone());
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.palette = Some((view, runners));
+        self.repaint = true;
+    }
+
+    /// What the command palette asked for. A command runs after the palette has closed, through
+    /// the path of the menus and the keys, so it acts on the pane that had the focus.
+    fn palette_action(&mut self, action: PaletteAction) -> Vec<ShellRequest> {
+        let Some((view, runners)) = self.palette.take() else {
+            return Vec::new();
+        };
+        self.repaint = true;
+        let PaletteAction::Run(at) = action else {
+            return Vec::new();
+        };
+        let (Some(entry), Some(runner)) = (view.entries().get(at), runners.get(at)) else {
+            return Vec::new();
+        };
+        match &self.palette_path {
+            Some(path) => {
+                let (list, saved) = crate::palette::remember(path, &entry.key);
+                self.palette_recent = list;
+                if let Err(e) = saved {
+                    log::warn!("recent commands not saved: {e}");
+                }
+            }
+            None => {
+                self.palette_recent.retain(|k| *k != entry.key);
+                self.palette_recent.insert(0, entry.key.clone());
+                self.palette_recent.truncate(crate::palette::MAX_RECENT);
+            }
+        }
+        let name = entry.name.clone();
+        match runner.clone() {
+            Runner::Menu(command) => self.execute_command(command),
+            Runner::Registry(id) => self.run_command(id, None).unwrap_or_else(|| {
+                self.notify(format!("{name} is not available in this view"));
+                Vec::new()
+            }),
+        }
+    }
+
     /// Whether the parameter search is open.
     pub fn param_search_open(&self) -> bool {
         self.param_search.is_some()
@@ -3378,6 +3458,9 @@ impl<B: AudioBackend> Shell<B> {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.param_search {
+            v.set_theme(theme.clone());
+        }
+        if let Some((v, _)) = &mut self.palette {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.quantize {
@@ -4032,6 +4115,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.param_search.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.param_search {
+                v.set_bounds(rect);
+            }
+        }
+        if self.palette.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some((v, _)) = &mut self.palette {
                 v.set_bounds(rect);
             }
         }
@@ -4928,6 +5017,36 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
             return Vec::new();
+        }
+        if self.palette.is_some() {
+            // The command palette takes the keyboard (typing never reaches a shortcut), Esc and
+            // its own key close it, and a click outside it closes it too. The command a row
+            // runs starts after the palette is gone.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Char(c),
+                modifiers,
+                pressed: true,
+            } = event
+                && modifiers.command()
+                && modifiers.shift
+                && c.eq_ignore_ascii_case(&'k')
+            {
+                self.palette = None;
+                return Vec::new();
+            }
+            let actions = self
+                .palette
+                .as_mut()
+                .map(|(v, _)| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            let mut requests = Vec::new();
+            for action in actions {
+                if let UiAction::CommandPalette(a) = action {
+                    requests.extend(self.palette_action(a));
+                }
+            }
+            return requests;
         }
         if self.midi_maps.is_some() {
             // The MIDI Mappings panel takes every event; Esc closes it.
@@ -8299,6 +8418,14 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 Vec::new()
             }
+            AppCommand::CommandPalette => {
+                if self.palette.is_some() {
+                    self.palette = None;
+                } else {
+                    self.open_palette();
+                }
+                Vec::new()
+            }
             AppCommand::FindParameter => {
                 self.open_param_search();
                 Vec::new()
@@ -9881,6 +10008,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.param_search {
             view.paint(canvas);
         }
+        if let Some((view, _)) = &self.palette {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.quantize {
             view.paint(canvas);
         }
@@ -10389,3 +10519,7 @@ mod controller_tests;
 #[cfg(test)]
 #[path = "shell_guide_tests.rs"]
 mod guide_tests;
+
+#[cfg(test)]
+#[path = "shell_palette_tests.rs"]
+mod palette_tests;

@@ -2834,6 +2834,13 @@ const COMMANDS: &[CommandDef] = &[
         G::View,
         C::Global,
     ),
+    cmd(
+        "view.command_palette",
+        "Command Palette...",
+        G::View,
+        C::Global,
+    )
+    .menu(),
     cmd("view.detach_browser", "Detach Browser", G::View, C::Global).menu(),
     cmd("view.detach_console", "Detach Mixer", G::View, C::Global).menu(),
     cmd("view.detach_rack", "Detach Rack", G::View, C::Global).menu(),

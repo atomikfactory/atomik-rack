@@ -387,6 +387,7 @@ fn the_help_menu_lists_its_items_and_the_shortcut_list_shows_f1() {
     assert_eq!(
         labels,
         [
+            "Command Palette\u{2026}",
             "Guided Tour",
             "Keyboard Shortcuts",
             "Documentation",
@@ -397,7 +398,8 @@ fn the_help_menu_lists_its_items_and_the_shortcut_list_shows_f1() {
             "About Atomik Rack"
         ]
     );
-    assert_eq!(items[1].1.as_deref(), Some("F1"));
+    assert_eq!(items[2].1.as_deref(), Some("F1"));
+    assert_eq!(items[0].1.as_deref(), Some("Ctrl+Shift+K"));
 }
 
 #[test]

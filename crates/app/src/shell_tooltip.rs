@@ -132,6 +132,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &self.param_search {
             return v.help_at(pos);
         }
+        if let Some((v, _)) = &self.palette {
+            return v.help_at(pos);
+        }
         if let Some(v) = &self.midi_maps {
             return v.help_at(pos);
         }
