@@ -243,7 +243,8 @@ fn load_clip_groove(
 }
 
 /// Reads a note clip's optional `"programs"` (`[tick, program]`, or `[tick, program, msb, lsb]` with
-/// `null` for a missing bank byte) and `"sysex"` (`[tick, "hex"]`)
+/// `null` for a missing bank byte), `"sysex"` (`[tick, "hex"]`) and `"expression"` (`[tick, key,
+/// pitch, pressure, timbre]`, each curve a list of `[ticks after the note start, value]`)
 /// lists (see [`crate::midi_data`]).
 fn load_midi_data(
     obj: &serde_json::Map<String, Value>,
@@ -291,6 +292,39 @@ fn load_midi_data(
                 tick: tick(&a[0], &q.index(0))?,
                 data: bytes,
             });
+        }
+    }
+    if let Some(v) = obj.get("expression") {
+        let list = path.field("expression");
+        for (i, item) in array(v, &list)?.iter().enumerate() {
+            let q = list.index(i);
+            let a = tuple(
+                item,
+                &q,
+                5,
+                "a note expression [tick, key, pitch points, pressure points, timbre points]",
+            )?;
+            let mut entry = crate::NoteExpression::new(
+                tick(&a[0], &q.index(0))?,
+                uint(&a[1], &q.index(1), 127)? as u8,
+            );
+            for (n, kind) in crate::ExpressionKind::ALL.into_iter().enumerate() {
+                let at = q.index(2 + n);
+                let (lo, hi) = kind.range();
+                for (j, point) in array(&a[2 + n], &at)?.iter().enumerate() {
+                    let pp = at.index(j);
+                    let pa = tuple(point, &pp, 2, "a point [ticks after the note start, value]")?;
+                    let value = number(&pa[1], &pp.index(1))? as f32;
+                    if !value.is_finite() || !(lo..=hi).contains(&value) {
+                        return Err(pp.index(1).error(format!("{value} is outside {lo}..={hi}")));
+                    }
+                    entry.curve_mut(kind).push(crate::ExpressionPoint::new(
+                        tick(&pa[0], &pp.index(0))?,
+                        value,
+                    ));
+                }
+            }
+            data.expression.push(entry);
         }
     }
     data.check(crate::song::MAX_TICK)

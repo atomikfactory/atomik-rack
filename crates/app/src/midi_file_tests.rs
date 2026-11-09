@@ -1047,6 +1047,7 @@ fn midi_clip() -> Clip {
             tick: PPQ,
             data: vec![0x7E, 0x7F, 0x09, 0x01],
         }],
+        ..Default::default()
     }
     .into();
     c
@@ -1129,6 +1130,7 @@ fn banked_clip() -> Clip {
             tick: PPQ,
             data: vec![0x7E, 0x7F, 0x09, 0x01],
         }],
+        ..Default::default()
     }
     .into();
     c

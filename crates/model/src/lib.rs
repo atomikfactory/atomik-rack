@@ -63,6 +63,7 @@ mod midi_map_io;
 mod midi_out;
 mod midi_param;
 mod mod_matrix;
+pub mod note_expression;
 pub mod note_tools;
 pub mod organise;
 mod organise_cmd;
@@ -260,6 +261,7 @@ pub use labels::DEFAULT_LABEL;
 use labels::Labels;
 pub use library_io::{ItemKind, ItemSummary, load_device_item, save_device_item, summarize_item};
 pub use midi_data::{MidiData, ProgramChange, SysexEvent};
+pub use note_expression::{ExpressionKind, ExpressionPoint, NoteExpression};
 pub use note_tools::NoteTool;
 pub use organise::{
     MAX_GROUP_DEPTH, MAX_GROUP_NAME, MAX_GROUPS, MAX_TRACK_COMMENT, Organisation, OutlineEntry,

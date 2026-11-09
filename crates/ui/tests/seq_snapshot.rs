@@ -125,6 +125,7 @@ fn record_piano_roll_messages() -> DisplayList {
             tick: PPQ,
             data: vec![0x7E, 0x7F, 0x09, 0x01],
         }],
+        ..Default::default()
     }
     .into();
     let mut v = piano_roll(&doc, &reg);

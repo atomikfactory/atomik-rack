@@ -649,6 +649,7 @@ impl Channel {
         let programs = MidiData {
             programs: self.programs,
             sysex: Vec::new(),
+            ..Default::default()
         };
         Some((notes, lanes, programs))
     }
@@ -811,6 +812,7 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
                         midi: limited(MidiData {
                             programs: Vec::new(),
                             sysex,
+                            ..Default::default()
                         }),
                         track_controllers: Vec::new(),
                         end,
@@ -832,6 +834,7 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
                     midi: limited(MidiData {
                         programs: Vec::new(),
                         sysex: sysex.take().unwrap_or_default(),
+                        ..Default::default()
                     }),
                     track_controllers: lanes,
                     end,

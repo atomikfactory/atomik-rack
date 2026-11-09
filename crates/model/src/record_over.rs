@@ -113,6 +113,28 @@ fn merge_controllers(
     )
 }
 
+/// The expression of a layered clip: `old` with the entries of the notes `incoming` (notes of the
+/// take or pass `from`, `shift` ticks to the target's content) replaced by what `from` holds for
+/// them, moved by `shift`. A note that replaces another loses the other's expression even when it
+/// has none of its own.
+fn merge_expression<'a>(
+    old: Vec<crate::NoteExpression>,
+    from: &crate::MidiData,
+    incoming: impl Iterator<Item = &'a Note>,
+    shift: i64,
+) -> Vec<crate::NoteExpression> {
+    let mut map: BTreeMap<(i64, u8), crate::NoteExpression> =
+        old.into_iter().map(|e| ((e.tick, e.key), e)).collect();
+    for n in incoming {
+        let tick = n.tick + shift;
+        map.remove(&(tick, n.key));
+        if let Some(e) = from.expression_of(n.tick, n.key) {
+            map.insert((tick, n.key), crate::NoteExpression { tick, ..e.clone() });
+        }
+    }
+    crate::note_expression::canonical_list(map.into_values().collect())
+}
+
 /// `clip` with `take` merged in (module docs): the result keeps `clip`'s id, start, offset, grid
 /// and scale and is long enough to hold the take. `take` must be a note clip that starts inside
 /// `clip`; `clip` must be a non-looped note clip.
@@ -146,9 +168,17 @@ pub fn layered_clip(clip: &Clip, take: &Clip) -> Result<Clip, ModelError> {
         shift,
         (lo, lo + take.length),
     );
+    let mut midi = (*clip.midi).clone();
+    midi.expression = merge_expression(
+        std::mem::take(&mut midi.expression),
+        &take.midi,
+        new.iter().filter(|n| n.tick >= take.offset),
+        shift,
+    );
     Ok(Clip {
         length: clip.length.max(take.end() - clip.start),
         controllers,
+        midi: std::sync::Arc::new(midi),
         content: ClipContent::Notes(notes.into_values().collect()),
         ..clip.clone()
     })
@@ -168,6 +198,8 @@ pub fn merge_laps(laps: &[Clip]) -> Option<Clip> {
     let end = laps.iter().map(Clip::end).max()?;
     let mut notes: BTreeMap<(i64, u8), Note> = BTreeMap::new();
     let mut controllers: Vec<ControllerLane> = Vec::new();
+    let mut midi = (*first.midi).clone();
+    midi.expression = Vec::new();
     for lap in laps {
         let shift = lap.start - start - lap.offset;
         if let ClipContent::Notes(ns) = &lap.content {
@@ -175,6 +207,12 @@ pub fn merge_laps(laps: &[Clip]) -> Option<Clip> {
                 let tick = n.tick + shift;
                 notes.insert((tick, n.key), Note { tick, ..*n });
             }
+            midi.expression = merge_expression(
+                std::mem::take(&mut midi.expression),
+                &lap.midi,
+                ns.iter(),
+                shift,
+            );
         }
         let lo = lap.offset + shift;
         controllers =
@@ -187,6 +225,7 @@ pub fn merge_laps(laps: &[Clip]) -> Option<Clip> {
         loop_length: None,
         muted: false,
         controllers,
+        midi: std::sync::Arc::new(midi),
         content: ClipContent::Notes(notes.into_values().collect()),
         ..first.clone()
     })

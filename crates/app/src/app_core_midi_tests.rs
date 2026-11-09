@@ -658,6 +658,7 @@ fn program_changes_and_sysex_travel_through_a_song_file_and_back_into_clips() {
             tick: PPQ,
             data: vec![0x41, 0x10, 0x42],
         }],
+        ..Default::default()
     }
     .into();
     source
