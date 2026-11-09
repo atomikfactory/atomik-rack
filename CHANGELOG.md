@@ -8,6 +8,19 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Fixed
+- **Undo in the middle of a band selection.** Undoing while a rubber band was open in the arrangement left clips
+  in the selection that the undo had removed; the band now keeps only the clips that still exist, on release and
+  on cancel.
+- **Undo of an effect created inside a channel's insert chain.** Creating an effect at a rack slot above the
+  chain's end joins it to the chain and rearranges the rack in the same step; the step recorded the old order
+  from before the new effect moved, so undo could fail and leave the effect behind. The recorded order now
+  matches the rack as it really was.
+- **Sandbox crash tests on slow machines.** The tests that wait for a crashed plugin child to turn its device
+  to Crashed now wait on that state against a generous deadline instead of a fixed number of batches.
+- **Cables that would close a loop through the console.** Dropping a cable from a console output onto a channel
+  input (or its stereo pair) used to send a cable the project refuses; the drop is now ignored up front.
+
 ## [0.4.0-rc.1] - 2026-11-08
 
 ### Added
