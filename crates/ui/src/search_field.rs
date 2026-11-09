@@ -4,7 +4,7 @@
 //! Ctrl/Cmd+C, X and V copy, cut and paste, and typing over a selection replaces it.
 
 use crate::canvas::Canvas;
-use crate::event::{Key, Modifiers};
+use crate::event::{ImeEvent, Key, Modifiers};
 use crate::text_field::{FieldColors, TextField};
 use vello::kurbo::{Point, Rect};
 
@@ -88,21 +88,30 @@ impl SearchField {
         }
     }
 
-    /// Select all, copy, cut or paste by the command id the keymap resolves (`edit.select_all`,
-    /// `edit.copy`, `edit.cut`, `edit.paste`). `None` for any other id; `Some(true)` when the
-    /// text changed.
+    /// Select all, copy, cut, paste, undo or redo by the command id the keymap resolves
+    /// (`edit.select_all`, `edit.copy`, `edit.cut`, `edit.paste`, `edit.undo`, `edit.redo`).
+    /// `None` for any other id; `Some(true)` when the text changed.
     pub fn command(&mut self, id: &str) -> Option<bool> {
-        let (key, changed) = match id {
-            "edit.select_all" => ('a', false),
-            "edit.copy" => ('c', false),
-            "edit.cut" => ('x', true),
-            "edit.paste" => ('v', true),
-            _ => return None,
-        };
-        let mods = Modifiers::CTRL;
         let before = self.edit.text().to_string();
-        self.edit.handle_key(&Key::Char(key), mods);
-        Some(changed && self.edit.text() != before)
+        self.edit.command(id)?;
+        Some(self.edit.text() != before)
+    }
+
+    /// Whether the field has a typing step to undo.
+    pub fn can_undo(&self) -> bool {
+        self.edit.can_undo()
+    }
+
+    /// Whether the field has a step to redo.
+    pub fn can_redo(&self) -> bool {
+        self.edit.can_redo()
+    }
+
+    /// Applies an input-method event; true when the text changed.
+    pub fn ime(&mut self, event: &ImeEvent) -> bool {
+        let before = self.edit.text().to_string();
+        self.edit.handle_ime(event);
+        self.edit.text() != before
     }
 
     /// A press at `pos` places the caret (a double click selects a word).
