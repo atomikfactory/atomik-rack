@@ -4019,6 +4019,10 @@ pub use templates::{
     list_templates,
 };
 
+#[path = "app_core_guide.rs"]
+mod first_steps;
+pub use first_steps::{ExampleEntry, MAX_EXAMPLES};
+
 #[path = "app_core_masking.rs"]
 mod masking;
 pub use masking::DemaskReport;
