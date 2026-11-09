@@ -29,6 +29,7 @@ pub mod controller_detect;
 pub mod controller_driver;
 pub mod controller_profile;
 pub mod controller_wizard;
+pub mod controller_wizard_view;
 pub mod crash;
 pub mod cursor_art;
 pub mod delivery_worker;

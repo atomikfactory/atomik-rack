@@ -147,6 +147,12 @@ pub enum Choice {
     ClockInPort(Option<String>),
     /// Whether the transport follows the clock in.
     ClockFollow(bool),
+    /// Opens the controller set-up wizard (an action, not a setting).
+    SetUpController,
+    /// Writes the profile of the surface being edited to a file to share.
+    ExportController,
+    /// Reads a shared controller profile from a file.
+    ImportController,
 }
 
 /// The text of a master tune chip: `0`, `+5`, `-12.5`.
@@ -207,7 +213,7 @@ impl Tab {
             Tab::Keyboard => "Keyboard",
             Tab::Workflow => "Workflow",
             Tab::Interface => "Interface",
-            Tab::Surfaces => "Surfaces",
+            Tab::Surfaces => "Controllers",
             Tab::Sync => "Sync",
             Tab::Video => "Video",
         }
@@ -220,7 +226,7 @@ impl Tab {
             Tab::Keyboard => "Keyboard shortcuts",
             Tab::Workflow => "Workflow",
             Tab::Interface => "User interface",
-            Tab::Surfaces => "Control surfaces",
+            Tab::Surfaces => "Controllers",
             Tab::Sync => "MIDI clock",
             Tab::Video => "Video",
         }
@@ -281,6 +287,12 @@ pub enum DialogOutcome {
     PickScratchFolder,
     /// The Video tab asks for the folder holding FFmpeg (the dialog stays open).
     PickFfmpegFolder,
+    /// The Controllers tab asks for the set-up wizard (the dialog stays open).
+    SetUpController,
+    /// The Controllers tab asks for a file to export the controller profile to.
+    ExportController,
+    /// The Controllers tab asks for a controller profile file to import.
+    ImportController,
 }
 
 /// The settings modal.
@@ -569,7 +581,7 @@ impl SettingsDialog {
         let mut right = panel.x1 - PAD;
         let mut out = Vec::new();
         for tab in Tab::ALL.into_iter().rev() {
-            let w = text_width(tab.label()) + 14.0;
+            let w = text_width(tab.label()) + 12.0;
             out.push((
                 Rect::new(right - w, panel.y0 + 10.0, right, panel.y0 + 34.0),
                 tab,
@@ -937,10 +949,11 @@ impl SettingsDialog {
             )
         }));
         if let Some(saved) = s.driver.as_ref().filter(|d| !known(d)) {
-            drivers.push((
-                format!("{saved} (unknown driver)"),
-                Choice::SurfaceDriver(Some(saved.clone())),
-            ));
+            let label = match crate::controller_profile::slug_of_driver(saved) {
+                Some(slug) => format!("Controller profile ({slug})"),
+                None => format!("{saved} (unknown driver)"),
+            };
+            drivers.push((label, Choice::SurfaceDriver(Some(saved.clone()))));
         }
         let ports =
             |names: &[String], saved: &Option<String>, make: fn(Option<String>) -> Choice| {
@@ -981,7 +994,53 @@ impl SettingsDialog {
                 options: self.surface_list_options(),
                 chips: true,
             },
+            Section {
+                title: "Controller profiles",
+                options: self.controller_options(),
+                chips: true,
+            },
         ]
+    }
+
+    /// The chips of the controller profiles: set one up, share the one being edited, read one.
+    fn controller_options(&self) -> Vec<(String, Choice)> {
+        let mut v = vec![("Set Up Controller...".to_string(), Choice::SetUpController)];
+        if self.edited_profile().is_some() {
+            v.push(("Export Profile...".to_string(), Choice::ExportController));
+        }
+        v.push(("Import Profile...".to_string(), Choice::ImportController));
+        v
+    }
+
+    /// The slug of the controller profile the surface being edited runs, if it runs one.
+    pub fn edited_profile(&self) -> Option<String> {
+        self.surface()
+            .driver
+            .as_deref()
+            .and_then(crate::controller_profile::slug_of_driver)
+            .map(str::to_owned)
+    }
+
+    /// Adds a surface (or replaces the one of the same name) to the draft and edits it next: how a
+    /// controller that was just set up appears in the tab. Nothing is applied until Apply.
+    pub fn adopt_surface(&mut self, surface: SurfaceSettings) {
+        match self
+            .draft
+            .surfaces
+            .iter()
+            .position(|s| s.name == surface.name)
+        {
+            Some(i) => {
+                self.draft.surfaces[i] = surface;
+                self.surface_sel = i;
+            }
+            None if self.draft.surfaces.len() < MAX_SURFACES => {
+                self.draft.surfaces.push(surface);
+                self.surface_sel = self.draft.surfaces.len() - 1;
+            }
+            None => {}
+        }
+        self.tab = Tab::Surfaces;
     }
 
     /// The chips of the surface list: one per surface (the one being edited is checked), then
@@ -1076,7 +1135,11 @@ impl SettingsDialog {
                 .iter()
                 .any(|i| i.name == *p && i.role == MidiInputRole::Mapping),
             Choice::SurfaceSelect(i) => self.surface_sel == *i,
-            Choice::SurfaceAdd | Choice::SurfaceRemove => false,
+            Choice::SurfaceAdd
+            | Choice::SurfaceRemove
+            | Choice::SetUpController
+            | Choice::ExportController
+            | Choice::ImportController => false,
             Choice::SurfaceUse(on) => self.surface().enabled == *on,
             Choice::SurfaceDriver(n) => self.surface().driver == *n,
             Choice::SurfaceInput(n) => self.surface().input == *n,
@@ -1134,6 +1197,7 @@ impl SettingsDialog {
                 };
                 self.draft.set_midi_input_role(&p, role);
             }
+            Choice::SetUpController | Choice::ExportController | Choice::ImportController => {}
             Choice::SurfaceSelect(i) => self.surface_sel = i,
             Choice::SurfaceAdd => self.add_surface(),
             Choice::SurfaceRemove => self.remove_surface(),
@@ -1377,8 +1441,12 @@ impl SettingsDialog {
                 if l.cancel.contains(*pos) {
                     return DialogOutcome::Cancel;
                 }
-                if let Some(choice) = hit {
-                    self.choose(choice);
+                match hit {
+                    Some(Choice::SetUpController) => return DialogOutcome::SetUpController,
+                    Some(Choice::ExportController) => return DialogOutcome::ExportController,
+                    Some(Choice::ImportController) => return DialogOutcome::ImportController,
+                    Some(choice) => self.choose(choice),
+                    None => {}
                 }
             }
             _ => {}
