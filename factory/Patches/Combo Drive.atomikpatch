@@ -1,0 +1,52 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.organ",
+      "name": "Organ", "folded": false, "patch": "Combo Drive",
+      "params": {
+        "drawbar.1": 0,
+        "drawbar.16": 8,
+        "drawbar.1_1_3": 0,
+        "drawbar.1_3_5": 0,
+        "drawbar.2": 0,
+        "drawbar.2_2_3": 0,
+        "drawbar.4": 0,
+        "drawbar.5_1_3": 8,
+        "drawbar.8": 6,
+        "key.click": 0.4,
+        "out.drive": 0.6,
+        "out.level": -4,
+        "perc.mode": 0,
+        "scanner.rate": 5.8,
+        "scanner.type": 0
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.fm-synth",
+      "name": "FM Synth", "folded": false, "patch": "Hollow Flute",
+      "params": {
+        "algorithm": 0,
+        "feedback": 0.1,
+        "lfo.rate": 5,
+        "lfo.to_index": 0.05,
+        "master.level": 0,
+        "op1.attack": 70,
+        "op1.coarse": 1,
+        "op1.decay": 400,
+        "op1.level": 0.8,
+        "op1.release": 220,
+        "op1.sustain": 0.8,
+        "op1.velocity": 0.2,
+        "op2.attack": 90,
+        "op2.coarse": 2,
+        "op2.decay": 400,
+        "op2.level": 0.12,
+        "op2.release": 220,
+        "op2.sustain": 0.7,
+        "op2.velocity": 0.2,
+        "op3.attack": 60,
+        "op3.coarse": 1,
+        "op3.decay": 300,
+        "op3.level": 0.1,
+        "op3.release": 200,
+        "op3.sustain": 0.6,
+        "op3.velocity": 0.3,
+        "op4.attack": 80,
+        "op4.coarse": 3,
+        "op4.decay": 300,
+        "op4.level": 0.05,
+        "op4.release": 200,
+        "op4.sustain": 0.5,
+        "op4.velocity": 0.3,
+        "play.glide": 40,
+        "play.mode": 1
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

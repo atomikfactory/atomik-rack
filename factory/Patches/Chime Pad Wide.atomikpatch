@@ -1,0 +1,72 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.fm-synth",
+      "name": "FM Synth", "folded": false, "patch": "Chime Pad Wide",
+      "params": {
+        "algorithm": 8,
+        "chorus.mix": 0.35,
+        "index": 0.6,
+        "master.level": -2,
+        "op1.attack": 900,
+        "op1.coarse": 1,
+        "op1.decay": 1600,
+        "op1.level": 0.5,
+        "op1.release": 1600,
+        "op1.sustain": 0.8,
+        "op1.velocity": 0.2,
+        "op2.attack": 1000,
+        "op2.coarse": 2,
+        "op2.decay": 1600,
+        "op2.level": 0.3,
+        "op2.release": 1600,
+        "op2.sustain": 0.7,
+        "op2.velocity": 0.2,
+        "op3.attack": 1200,
+        "op3.coarse": 3,
+        "op3.decay": 1800,
+        "op3.level": 0.2,
+        "op3.release": 1600,
+        "op3.sustain": 0.6,
+        "op3.velocity": 0.3,
+        "op4.attack": 1400,
+        "op4.coarse": 1,
+        "op4.decay": 1800,
+        "op4.level": 0.1,
+        "op4.release": 1600,
+        "op4.sustain": 0.6,
+        "op4.velocity": 0.3,
+        "unison.detune": 9,
+        "unison.spread": 1,
+        "unison.voices": 2
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

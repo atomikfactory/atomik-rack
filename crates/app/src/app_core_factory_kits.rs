@@ -631,6 +631,784 @@ pub(in crate::app_core) const KITS: &[KitDef] = &[
             &[("threshold", -20.0), ("ratio", 2.0), ("attack", 2.0)],
         )],
     },
+    KitDef {
+        name: "Timber Kit",
+        category: "Drum Kit",
+        tags: &["drums", "acoustic", "natural", "woody"],
+        sound: "Acoustic-like: a short, round kick, a snare with a rattle, a soft clap, three tuned toms, a wood block and a bell, light hats and a long crash. Fourteen pads on keys 36 to 49.",
+        hits: &[
+            hit(
+                "Timber Kick",
+                1,
+                KICK,
+                &[
+                    ("body", 0.55),
+                    ("snap", 0.45),
+                    ("sweep", 0.3),
+                    ("tune", -1.0),
+                    ("decay", 280.0),
+                ],
+            ),
+            hit(
+                "Timber Rim",
+                2,
+                TONE,
+                &[
+                    ("body", 0.6),
+                    ("snap", 1.0),
+                    ("sweep", 0.0),
+                    ("tune", 19.0),
+                    ("decay", 50.0),
+                ],
+            )
+            .level(-4.0),
+            hit(
+                "Timber Snare",
+                3,
+                SNARE,
+                &[
+                    ("body", 0.55),
+                    ("snap", 0.7),
+                    ("tune", 0.0),
+                    ("decay", 200.0),
+                ],
+            ),
+            hit(
+                "Timber Clap",
+                4,
+                NOISE,
+                &[
+                    ("body", 0.5),
+                    ("snap", 0.4),
+                    ("sweep", 0.3),
+                    ("decay", 140.0),
+                ],
+            )
+            .level(-2.0)
+            .strikes(&[0.0, 10.0, 22.0]),
+            hit(
+                "Timber Ghost",
+                5,
+                SNARE,
+                &[("body", 0.4), ("snap", 0.5), ("tune", 4.0), ("decay", 90.0)],
+            )
+            .level(-6.0),
+            hit(
+                "Timber Low Tom",
+                6,
+                TOM,
+                &[
+                    ("body", 0.55),
+                    ("snap", 0.4),
+                    ("sweep", 0.35),
+                    ("tune", -2.0),
+                    ("decay", 360.0),
+                ],
+            )
+            .pan(-0.3),
+            hit(
+                "Timber Closed Hat",
+                7,
+                HAT,
+                &[("body", 0.6), ("snap", 0.6), ("tune", 2.0), ("decay", 45.0)],
+            )
+            .pan(0.25)
+            .level(-6.0)
+            .choke(1),
+            hit(
+                "Timber Block",
+                8,
+                TONE,
+                &[
+                    ("body", 0.5),
+                    ("snap", 0.8),
+                    ("sweep", 0.0),
+                    ("tune", 14.0),
+                    ("decay", 80.0),
+                ],
+            )
+            .pan(-0.2)
+            .level(-5.0),
+            hit(
+                "Timber Pedal Hat",
+                9,
+                HAT,
+                &[("body", 0.6), ("snap", 0.5), ("tune", 0.0), ("decay", 30.0)],
+            )
+            .pan(0.25)
+            .level(-8.0)
+            .choke(1),
+            hit(
+                "Timber Mid Tom",
+                10,
+                TOM,
+                &[
+                    ("body", 0.55),
+                    ("snap", 0.4),
+                    ("sweep", 0.35),
+                    ("tune", 5.0),
+                    ("decay", 320.0),
+                ],
+            ),
+            hit(
+                "Timber Open Hat",
+                11,
+                HAT,
+                &[
+                    ("body", 0.6),
+                    ("snap", 0.6),
+                    ("tune", 2.0),
+                    ("decay", 260.0),
+                ],
+            )
+            .pan(0.25)
+            .level(-7.0)
+            .choke(1),
+            hit(
+                "Timber High Tom",
+                12,
+                TOM,
+                &[
+                    ("body", 0.5),
+                    ("snap", 0.45),
+                    ("sweep", 0.3),
+                    ("tune", 11.0),
+                    ("decay", 280.0),
+                ],
+            )
+            .pan(0.3),
+            hit(
+                "Timber Crash",
+                13,
+                HAT,
+                &[
+                    ("body", 0.7),
+                    ("snap", 0.5),
+                    ("tune", -2.0),
+                    ("decay", 480.0),
+                ],
+            )
+            .pan(-0.25)
+            .level(-8.0),
+            hit(
+                "Timber Bell",
+                14,
+                TONE,
+                &[
+                    ("body", 0.8),
+                    ("snap", 0.4),
+                    ("sweep", 0.0),
+                    ("tune", 16.0),
+                    ("decay", 300.0),
+                ],
+            )
+            .pan(0.2)
+            .level(-7.0),
+        ],
+        effects: &[fx(
+            "glue",
+            COMPRESSOR,
+            &[("threshold", -20.0), ("ratio", 2.0), ("attack", 2.0)],
+        )],
+    },
+    KitDef {
+        name: "Circuit Kit",
+        category: "Drum Kit",
+        tags: &["drums", "electronic", "synthetic", "punchy"],
+        sound: "Electronic: a long kick with a deep pitch fall, a snappy snare, a layered clap, a noise snap, low toms that sweep, crisp hats, a blip, a zap and a sub boom. Fourteen pads on keys 36 to 49.",
+        hits: &[
+            hit(
+                "Circuit Kick",
+                1,
+                KICK,
+                &[
+                    ("body", 0.75),
+                    ("snap", 0.4),
+                    ("sweep", 0.7),
+                    ("tune", -3.0),
+                    ("decay", 480.0),
+                ],
+            ),
+            hit(
+                "Circuit Rim",
+                2,
+                TONE,
+                &[
+                    ("body", 0.5),
+                    ("snap", 0.9),
+                    ("sweep", 0.0),
+                    ("tune", 20.0),
+                    ("decay", 40.0),
+                ],
+            )
+            .level(-4.0),
+            hit(
+                "Circuit Snare",
+                3,
+                SNARE,
+                &[
+                    ("body", 0.45),
+                    ("snap", 0.8),
+                    ("tune", 2.0),
+                    ("decay", 180.0),
+                ],
+            ),
+            hit(
+                "Circuit Clap",
+                4,
+                NOISE,
+                &[
+                    ("body", 0.55),
+                    ("snap", 0.5),
+                    ("sweep", 0.5),
+                    ("decay", 150.0),
+                ],
+            )
+            .level(-2.0)
+            .strikes(&[0.0, 8.0, 17.0, 27.0]),
+            hit(
+                "Circuit Snap",
+                5,
+                NOISE,
+                &[
+                    ("body", 0.3),
+                    ("snap", 0.9),
+                    ("sweep", 0.2),
+                    ("decay", 70.0),
+                ],
+            )
+            .level(-4.0),
+            hit(
+                "Circuit Low Tom",
+                6,
+                TOM,
+                &[
+                    ("body", 0.45),
+                    ("snap", 0.5),
+                    ("sweep", 0.8),
+                    ("tune", -4.0),
+                    ("decay", 400.0),
+                ],
+            )
+            .pan(-0.3),
+            hit(
+                "Circuit Closed Hat",
+                7,
+                HAT,
+                &[
+                    ("body", 0.85),
+                    ("snap", 0.6),
+                    ("tune", 5.0),
+                    ("decay", 30.0),
+                ],
+            )
+            .pan(0.25)
+            .level(-6.0)
+            .choke(1),
+            hit(
+                "Circuit Blip",
+                8,
+                TONE,
+                &[
+                    ("body", 0.6),
+                    ("snap", 0.5),
+                    ("sweep", 0.05),
+                    ("tune", 9.0),
+                    ("decay", 220.0),
+                ],
+            )
+            .pan(-0.2)
+            .level(-5.0),
+            hit(
+                "Circuit Shaker",
+                9,
+                NOISE,
+                &[
+                    ("body", 0.7),
+                    ("snap", 0.2),
+                    ("sweep", 0.0),
+                    ("decay", 90.0),
+                ],
+            )
+            .pan(0.3)
+            .level(-9.0),
+            hit(
+                "Circuit Mid Tom",
+                10,
+                TOM,
+                &[
+                    ("body", 0.45),
+                    ("snap", 0.5),
+                    ("sweep", 0.8),
+                    ("tune", 3.0),
+                    ("decay", 360.0),
+                ],
+            ),
+            hit(
+                "Circuit Open Hat",
+                11,
+                HAT,
+                &[
+                    ("body", 0.85),
+                    ("snap", 0.6),
+                    ("tune", 5.0),
+                    ("decay", 200.0),
+                ],
+            )
+            .pan(0.25)
+            .level(-7.0)
+            .choke(1),
+            hit(
+                "Circuit High Tom",
+                12,
+                TOM,
+                &[
+                    ("body", 0.4),
+                    ("snap", 0.5),
+                    ("sweep", 0.8),
+                    ("tune", 10.0),
+                    ("decay", 300.0),
+                ],
+            )
+            .pan(0.3),
+            hit(
+                "Circuit Zap",
+                13,
+                TONE,
+                &[
+                    ("body", 0.7),
+                    ("snap", 0.6),
+                    ("sweep", 1.0),
+                    ("tune", 12.0),
+                    ("decay", 380.0),
+                ],
+            )
+            .pan(-0.25)
+            .level(-5.0),
+            hit(
+                "Circuit Boom",
+                14,
+                KICK,
+                &[
+                    ("body", 1.0),
+                    ("snap", 0.1),
+                    ("sweep", 0.3),
+                    ("tune", -9.0),
+                    ("decay", 520.0),
+                ],
+            )
+            .level(-2.0),
+        ],
+        effects: &[],
+    },
+    KitDef {
+        name: "Cassette Kit",
+        category: "Drum Kit",
+        tags: &["drums", "lo-fi", "warm", "boom-bap"],
+        sound: "Warm low-fidelity: soft, round sounds pushed through a bit crusher and a high cut, so the kick thumps, the snare is dull and the hats are a hush. Fourteen pads on keys 36 to 49.",
+        hits: &[
+            hit(
+                "Cassette Kick",
+                1,
+                KICK,
+                &[
+                    ("body", 0.7),
+                    ("snap", 0.25),
+                    ("sweep", 0.35),
+                    ("tune", -2.0),
+                    ("decay", 300.0),
+                ],
+            ),
+            hit(
+                "Cassette Rim",
+                2,
+                TONE,
+                &[
+                    ("body", 0.7),
+                    ("snap", 0.9),
+                    ("sweep", 0.0),
+                    ("tune", 16.0),
+                    ("decay", 55.0),
+                ],
+            )
+            .level(-4.0),
+            hit(
+                "Cassette Snare",
+                3,
+                SNARE,
+                &[
+                    ("body", 0.6),
+                    ("snap", 0.45),
+                    ("tune", -2.0),
+                    ("decay", 220.0),
+                ],
+            ),
+            hit(
+                "Cassette Clap",
+                4,
+                NOISE,
+                &[
+                    ("body", 0.5),
+                    ("snap", 0.35),
+                    ("sweep", 0.3),
+                    ("decay", 160.0),
+                ],
+            )
+            .level(-2.0)
+            .strikes(&[0.0, 11.0, 24.0]),
+            hit(
+                "Cassette Brush",
+                5,
+                NOISE,
+                &[
+                    ("body", 0.6),
+                    ("snap", 0.2),
+                    ("sweep", 0.0),
+                    ("decay", 130.0),
+                ],
+            )
+            .level(-7.0),
+            hit(
+                "Cassette Low Tom",
+                6,
+                TOM,
+                &[
+                    ("body", 0.6),
+                    ("snap", 0.3),
+                    ("sweep", 0.4),
+                    ("tune", -3.0),
+                    ("decay", 340.0),
+                ],
+            )
+            .pan(-0.3),
+            hit(
+                "Cassette Closed Hat",
+                7,
+                HAT,
+                &[
+                    ("body", 0.5),
+                    ("snap", 0.5),
+                    ("tune", 0.0),
+                    ("decay", 45.0),
+                    ("highcut", 11000.0),
+                ],
+            )
+            .pan(0.2)
+            .level(-6.0)
+            .choke(1),
+            hit(
+                "Cassette Keys Tick",
+                8,
+                TONE,
+                &[
+                    ("body", 0.6),
+                    ("snap", 0.6),
+                    ("sweep", 0.0),
+                    ("tune", 12.0),
+                    ("decay", 110.0),
+                ],
+            )
+            .pan(-0.2)
+            .level(-5.0),
+            hit(
+                "Cassette Pedal Hat",
+                9,
+                HAT,
+                &[
+                    ("body", 0.5),
+                    ("snap", 0.4),
+                    ("tune", -1.0),
+                    ("decay", 28.0),
+                    ("highcut", 11000.0),
+                ],
+            )
+            .pan(0.2)
+            .level(-8.0)
+            .choke(1),
+            hit(
+                "Cassette Mid Tom",
+                10,
+                TOM,
+                &[
+                    ("body", 0.6),
+                    ("snap", 0.3),
+                    ("sweep", 0.4),
+                    ("tune", 3.0),
+                    ("decay", 300.0),
+                ],
+            ),
+            hit(
+                "Cassette Open Hat",
+                11,
+                HAT,
+                &[
+                    ("body", 0.5),
+                    ("snap", 0.5),
+                    ("tune", 0.0),
+                    ("decay", 280.0),
+                    ("highcut", 11000.0),
+                ],
+            )
+            .pan(0.2)
+            .level(-7.0)
+            .choke(1),
+            hit(
+                "Cassette High Tom",
+                12,
+                TOM,
+                &[
+                    ("body", 0.55),
+                    ("snap", 0.3),
+                    ("sweep", 0.4),
+                    ("tune", 9.0),
+                    ("decay", 260.0),
+                ],
+            )
+            .pan(0.3),
+            hit(
+                "Cassette Dust",
+                13,
+                NOISE,
+                &[
+                    ("body", 0.4),
+                    ("snap", 0.1),
+                    ("sweep", 0.0),
+                    ("decay", 240.0),
+                ],
+            )
+            .pan(-0.25)
+            .level(-9.0),
+            hit(
+                "Cassette Pluck",
+                14,
+                TONE,
+                &[
+                    ("body", 0.8),
+                    ("snap", 0.3),
+                    ("sweep", 0.0),
+                    ("tune", 14.0),
+                    ("decay", 260.0),
+                ],
+            )
+            .pan(0.2)
+            .level(-7.0),
+        ],
+        effects: &[fx(
+            "crush",
+            DISTORTION,
+            &[
+                ("curve", 4.0),
+                ("drive", 2.0),
+                ("crush.bits", 8.0),
+                ("crush.rate", 14000.0),
+                ("cut.high", 6500.0),
+                ("mix", 1.0),
+            ],
+        )],
+    },
+    KitDef {
+        name: "Bazaar Kit",
+        category: "Drum Kit",
+        tags: &["drums", "percussion", "hand", "shakers"],
+        sound: "Hand percussion: two congas and two bongos, a clave, a wood block, a cowbell, a triangle, a palm clap, shakers, a tambourine and a frame drum. Fifteen pads on keys 36 to 50.",
+        hits: &[
+            hit(
+                "Bazaar Conga Low",
+                1,
+                TOM,
+                &[
+                    ("body", 0.6),
+                    ("snap", 0.5),
+                    ("sweep", 0.2),
+                    ("tune", 0.0),
+                    ("decay", 300.0),
+                ],
+            ),
+            hit(
+                "Bazaar Clave",
+                2,
+                TONE,
+                &[
+                    ("body", 0.3),
+                    ("snap", 0.8),
+                    ("sweep", 0.0),
+                    ("tune", 13.0),
+                    ("decay", 80.0),
+                ],
+            )
+            .level(-4.0),
+            hit(
+                "Bazaar Conga High",
+                3,
+                TOM,
+                &[
+                    ("body", 0.55),
+                    ("snap", 0.6),
+                    ("sweep", 0.2),
+                    ("tune", 8.0),
+                    ("decay", 240.0),
+                ],
+            ),
+            hit(
+                "Bazaar Palm Clap",
+                4,
+                NOISE,
+                &[
+                    ("body", 0.4),
+                    ("snap", 0.3),
+                    ("sweep", 0.2),
+                    ("decay", 110.0),
+                ],
+            )
+            .level(-2.0)
+            .strikes(&[0.0, 12.0]),
+            hit(
+                "Bazaar Conga Mute",
+                5,
+                TOM,
+                &[
+                    ("body", 0.5),
+                    ("snap", 0.6),
+                    ("sweep", 0.2),
+                    ("tune", 6.0),
+                    ("decay", 90.0),
+                ],
+            )
+            .pan(0.15),
+            hit(
+                "Bazaar Bongo Low",
+                6,
+                TOM,
+                &[
+                    ("body", 0.5),
+                    ("snap", 0.5),
+                    ("sweep", 0.15),
+                    ("tune", 6.0),
+                    ("decay", 180.0),
+                ],
+            )
+            .pan(-0.3),
+            hit(
+                "Bazaar Shaker",
+                7,
+                HAT,
+                &[("body", 0.9), ("snap", 0.3), ("tune", 6.0), ("decay", 60.0)],
+            )
+            .pan(0.25)
+            .level(-8.0)
+            .choke(1),
+            hit(
+                "Bazaar Cowbell",
+                8,
+                TONE,
+                &[
+                    ("body", 0.55),
+                    ("snap", 0.6),
+                    ("sweep", 0.0),
+                    ("tune", 11.0),
+                    ("decay", 260.0),
+                ],
+            )
+            .pan(-0.2)
+            .level(-5.0),
+            hit(
+                "Bazaar Maraca",
+                9,
+                NOISE,
+                &[
+                    ("body", 0.8),
+                    ("snap", 0.2),
+                    ("sweep", 0.0),
+                    ("decay", 50.0),
+                ],
+            )
+            .pan(0.3)
+            .level(-9.0),
+            hit(
+                "Bazaar Bongo High",
+                10,
+                TOM,
+                &[
+                    ("body", 0.45),
+                    ("snap", 0.5),
+                    ("sweep", 0.15),
+                    ("tune", 12.0),
+                    ("decay", 150.0),
+                ],
+            )
+            .pan(0.3),
+            hit(
+                "Bazaar Cabasa",
+                11,
+                HAT,
+                &[
+                    ("body", 0.8),
+                    ("snap", 0.3),
+                    ("tune", 4.0),
+                    ("decay", 140.0),
+                ],
+            )
+            .pan(0.25)
+            .level(-8.0)
+            .choke(1),
+            hit(
+                "Bazaar Wood Block",
+                12,
+                TONE,
+                &[
+                    ("body", 0.4),
+                    ("snap", 0.9),
+                    ("sweep", 0.0),
+                    ("tune", 18.0),
+                    ("decay", 60.0),
+                ],
+            )
+            .pan(-0.25)
+            .level(-5.0),
+            hit(
+                "Bazaar Tambourine",
+                13,
+                HAT,
+                &[
+                    ("body", 0.6),
+                    ("snap", 0.5),
+                    ("tune", 7.0),
+                    ("decay", 220.0),
+                ],
+            )
+            .pan(0.2)
+            .level(-8.0)
+            .strikes(&[0.0, 6.0]),
+            hit(
+                "Bazaar Triangle",
+                14,
+                TONE,
+                &[
+                    ("body", 0.9),
+                    ("snap", 0.2),
+                    ("sweep", 0.0),
+                    ("tune", 24.0),
+                    ("decay", 480.0),
+                ],
+            )
+            .pan(0.2)
+            .level(-8.0),
+            hit(
+                "Bazaar Frame Drum",
+                15,
+                KICK,
+                &[
+                    ("body", 0.55),
+                    ("snap", 0.5),
+                    ("sweep", 0.2),
+                    ("tune", 1.0),
+                    ("decay", 280.0),
+                ],
+            )
+            .level(-1.0),
+        ],
+        effects: &[],
+    },
 ];
 
 /// The key a pad plays on.

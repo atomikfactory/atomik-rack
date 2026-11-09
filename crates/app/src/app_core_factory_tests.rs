@@ -242,17 +242,18 @@ fn an_unreadable_manifest_still_opens_the_folder_without_marks() {
 
 use super::factory_build::examples::{EXAMPLES, ExampleDef, build_example, project_path};
 use super::factory_build::kits::{Built as KitBuilt, MAX_SECONDS, RATE, key_of, render_hit};
+use super::factory_build::loops::{LoopDef, clip_of, loop_frames, render_loop};
 use super::factory_build::tables::{TableDef, table_audio, table_keys};
 use super::factory_build::write_examples;
 use super::factory_build::{
-    AUTHOR, CLIPS, CONTAINERS, ClipDef, ContainerDef, DEFS, DUCK, Def, KITS, KitDef, TABLES,
-    clip_notes, clip_path, clip_text, container_path, container_text, item_text, manifest_text,
-    marks, patch_path, write_all,
+    AUTHOR, CLIPS, CONTAINERS, ClipDef, ContainerDef, DEFS, DUCK, Def, KITS, KitDef, LOOPS, TABLES,
+    clip_notes, clip_path, clip_text, container_path, container_text, item_text, loop_path,
+    manifest_text, marks, patch_path, write_all,
 };
 use super::patch_preview_ops::preview_doc;
 use atomik_audio_file::{AudioData, content_hash, read_wav_f32, write_wav_f32};
 use atomik_core::PPQ;
-use atomik_library::FileKind;
+use atomik_library::{AudioFormat, FileKind};
 use atomik_model::{
     ClipContent, ItemKind, ModelError, load_clip_file, load_device_item, summarize_item,
 };
@@ -364,9 +365,11 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
     );
     unique(CONTAINERS.iter().map(|c| c.name).collect());
     unique(CLIPS.iter().map(|c| c.name).collect());
-    assert!((20..=48).contains(&DEFS.len()), "{}", DEFS.len());
-    assert_eq!(KITS.len(), 4);
-    assert_eq!(CLIPS.len(), 12);
+    assert!((20..=80).contains(&DEFS.len()), "{}", DEFS.len());
+    assert_eq!(KITS.len(), 8);
+    assert_eq!(CLIPS.len(), 36);
+    assert_eq!(LOOPS.len(), 12);
+    unique(LOOPS.iter().map(|l| l.name).collect());
     let chains = CONTAINERS.iter().filter(|c| c.chain).count();
     assert_eq!(chains, 14, "effect chains");
     assert_eq!(CONTAINERS.len() - chains, 3, "modular containers");
@@ -409,6 +412,7 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
         .iter()
         .map(|c| format!("{}.atomikclip", c.name))
         .collect();
+    clips.extend(LOOPS.iter().map(|l| format!("{}.flac", l.name)));
     clips.sort();
     assert_eq!(names_in(&shipped().join("Clips")), clips);
     // The manifest on disk is the one the tables give, and marks every item.
@@ -427,7 +431,13 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
     let marks = marks();
     assert_eq!(
         marks.len(),
-        DEFS.len() + KITS.len() + TABLES.len() + CONTAINERS.len() + CLIPS.len() + EXAMPLES.len()
+        DEFS.len()
+            + KITS.len()
+            + TABLES.len()
+            + CONTAINERS.len()
+            + CLIPS.len()
+            + LOOPS.len()
+            + EXAMPLES.len()
     );
     for mark in marks {
         let (mut tags, mut categories, mut author) = (Vec::new(), Vec::new(), String::new());
@@ -454,6 +464,9 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
         assert!(!def.sound.is_empty());
     }
     for def in CLIPS {
+        assert!(!def.sound.is_empty());
+    }
+    for def in LOOPS {
         assert!(!def.sound.is_empty());
     }
 }
@@ -734,6 +747,11 @@ fn every_pad_of_a_kit_sounds_alone() {
         let snapshot = load_device_item(&text, &registry).unwrap();
         let root = shipped().join("Patches").join(kit.name);
         for hit in kit.hits {
+            // The preview phrase of a drum machine plays the keys 36 to 46 only; the other pads
+            // are heard through the hit render (levelled, audible) the item test checks.
+            if ![36, 37, 38, 39, 41, 42, 43, 45, 46].contains(&key_of(hit.pad)) {
+                continue;
+            }
             let mut one = snapshot.clone();
             // The preview's track plays the pad keys of its phrase; a copy of the kit with only
             // this pad's zone makes every other note silent.
@@ -876,6 +894,95 @@ fn every_factory_clip_is_a_note_clip_of_its_table_and_plays_audible_bounded_soun
             def.name,
             s.peak
         );
+    }
+}
+
+fn loop_file(def: &LoopDef) -> PathBuf {
+    shipped().join(loop_path(def.name))
+}
+
+#[test]
+fn every_factory_loop_is_a_stereo_flac_of_whole_bars_at_its_tagged_tempo() {
+    let factory = Factory::open(&shipped()).unwrap();
+    for def in LOOPS {
+        let clip = clip_of(def);
+        let data = atomik_audio_file::decode_file(&loop_file(def)).unwrap();
+        assert_eq!(data.sample_rate, RATE, "{}", def.name);
+        assert_eq!(data.channels.len(), 2, "{}", def.name);
+        assert_eq!(data.frames(), loop_frames(clip), "{}: whole bars", def.name);
+        let s = stats_of(&data.channels, data.sample_rate);
+        assert!(s.finite, "{}", def.name);
+        assert!(
+            (0.65..=0.72).contains(&s.peak),
+            "{}: peak {}",
+            def.name,
+            s.peak
+        );
+        assert!(s.rms_db > -35.0, "{}: {} dB RMS", def.name, s.rms_db);
+        // The tags carry the tempo of the clip and, for a pitched loop, a key.
+        let (mut tags, mut categories, mut author) = (Vec::new(), Vec::new(), String::new());
+        factory.merge(&loop_file(def), &mut tags, &mut categories, &mut author);
+        let tempo = format!("{} bpm", clip.bpm);
+        assert!(tags.contains(&tempo), "{}: {tags:?}", def.name);
+        assert!(def.tags.contains(&tempo.as_str()), "{}", def.name);
+        let pitched = clip.category != "Drums";
+        let keyed = def
+            .tags
+            .iter()
+            .any(|t| t.ends_with(" minor") || t.ends_with(" major") || t.ends_with(" dorian"));
+        assert_eq!(
+            keyed, pitched,
+            "{}: a key tag on pitched loops only",
+            def.name
+        );
+    }
+}
+
+#[test]
+fn a_factory_loop_is_the_render_the_generator_makes() {
+    // One loop is rendered again and compared with its file (the others would take as long
+    // again): the 24-bit file is the render up to the quantising step, and another platform's
+    // maths may differ in the last bits of a sample.
+    let def = LOOPS
+        .iter()
+        .find(|l| l.name == "Marimba Triplets Loop")
+        .unwrap();
+    let planes = render_loop(def);
+    let stored = atomik_audio_file::decode_file(&loop_file(def)).unwrap();
+    assert_eq!(stored.channels.len(), planes.len());
+    for (a, b) in stored.channels.iter().zip(&planes) {
+        assert_eq!(a.len(), b.len());
+        let worst = a
+            .iter()
+            .zip(b)
+            .fold(0.0f32, |m, (x, y)| m.max((x - y).abs()));
+        assert!(worst < 2.0e-3, "{}: {worst}", def.name);
+    }
+}
+
+#[test]
+fn the_factory_patches_are_spread_over_the_instruments_and_the_effects() {
+    let mut per_device = std::collections::BTreeMap::new();
+    for def in DEFS {
+        *per_device.entry(def.device).or_insert(0usize) += 1;
+    }
+    for instrument in [
+        "atomik.poly-synth",
+        "atomik.mono-bass",
+        "atomik.dual-layer",
+        "atomik.fm-synth",
+        "atomik.granular",
+        "atomik.wavetable-synth",
+        "atomik.organ",
+        "atomik.semi-modular",
+    ] {
+        let n = per_device.get(instrument).copied().unwrap_or(0);
+        assert!(n >= 5, "{instrument} has {n} factory patches");
+    }
+    assert!(per_device.len() >= 17, "{per_device:?}");
+    // The first four kits have nine pads; the later ones have a full set.
+    for kit in KITS.iter().skip(4) {
+        assert!((12..=16).contains(&kit.hits.len()), "{}", kit.name);
     }
 }
 
@@ -1056,7 +1163,7 @@ fn a_drawn_table_morph_keeps_its_level_where_the_plain_morph_would_dip() {
 #[test]
 fn the_factory_folder_stays_small() {
     let total: u64 = walk_sizes(&shipped());
-    assert!(total < 2 * 1024 * 1024, "{total} bytes");
+    assert!(total < 25 * 1024 * 1024, "{total} bytes");
     // The audio of the kits is nearly all of it: beside each kit, and in the example that plays one.
     let audio: u64 = KITS
         .iter()
@@ -1066,6 +1173,11 @@ fn the_factory_folder_stays_small() {
                 .iter()
                 .map(|t| walk_sizes(&shipped().join("Patches").join(t.name))),
         )
+        .chain(LOOPS.iter().map(|l| {
+            std::fs::metadata(shipped().join(loop_path(l.name)))
+                .unwrap()
+                .len()
+        }))
         .chain(EXAMPLES.iter().filter_map(|e| {
             let audio = example_root(e).join("Audio");
             audio.is_dir().then(|| walk_sizes(&audio))
@@ -1073,7 +1185,7 @@ fn the_factory_folder_stays_small() {
         .sum();
     assert!(audio < total, "{audio} of {total} bytes");
     assert!(
-        total - audio < 512 * 1024,
+        total - audio < 768 * 1024,
         "{} bytes of items",
         total - audio
     );
@@ -1132,6 +1244,11 @@ fn the_factory_items_list_from_the_shipped_folder_with_their_categories() {
             CLIPS
                 .iter()
                 .map(|d| (format!("{}.atomikclip", d.name), d.category))
+                .chain(
+                    LOOPS
+                        .iter()
+                        .map(|l| (format!("{}.flac", l.name), l.category)),
+                )
                 .collect(),
             FileKind::Clip,
         ),
@@ -1154,7 +1271,16 @@ fn the_factory_items_list_from_the_shipped_folder_with_their_categories() {
             let row = row_named(&listed, &name);
             assert_eq!(row.categories, [category], "{name}");
             assert_eq!(row.author, AUTHOR);
-            assert_eq!(row.kind, kind, "{name}");
+            if name.ends_with(".flac") {
+                assert_eq!(row.kind, FileKind::Audio(AudioFormat::Flac), "{name}");
+                assert!(
+                    row.tags.iter().any(|t| t.ends_with(" bpm")),
+                    "{name}: {:?}",
+                    row.tags
+                );
+            } else {
+                assert_eq!(row.kind, kind, "{name}");
+            }
         }
     }
 }

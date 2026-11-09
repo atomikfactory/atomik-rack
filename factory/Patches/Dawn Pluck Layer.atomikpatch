@@ -1,0 +1,58 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.dual-layer",
+      "name": "Dual Layer", "folded": false, "patch": "Dawn Pluck Layer",
+      "params": {
+        "a.env.amp.attack": 2,
+        "a.env.amp.decay": 350,
+        "a.env.amp.release": 300,
+        "a.env.amp.sustain": 0.1,
+        "a.filter.cutoff": 3500,
+        "a.osc.mix": 0.5,
+        "a.osc1.wave": 1,
+        "a.osc2.fine": 7,
+        "a.osc2.wave": 1,
+        "b.env.amp.attack": 4,
+        "b.env.amp.decay": 600,
+        "b.env.amp.release": 600,
+        "b.env.amp.sustain": 0.2,
+        "b.filter.cutoff": 6500,
+        "b.osc.mix": 0.4,
+        "b.osc1.octave": 1,
+        "b.osc1.wave": 2,
+        "b.osc2.wave": 2,
+        "layer.mode": 0,
+        "master.level": -4,
+        "spread": 0.4
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}
