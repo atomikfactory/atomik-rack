@@ -243,7 +243,10 @@ pub fn record_curve(kind: ExpressionKind, raw: &[(i64, f32)]) -> Vec<ExpressionP
                 last.value = value;
             }
             _ => {
-                if out.last().is_some_and(|l| l.value.to_bits() == value.to_bits()) {
+                if out
+                    .last()
+                    .is_some_and(|l| l.value.to_bits() == value.to_bits())
+                {
                     continue;
                 }
                 if out.len() >= MAX_EXPRESSION_POINTS {
