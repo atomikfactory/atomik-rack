@@ -463,7 +463,8 @@ impl TransportBar {
         self.repaint = true;
     }
 
-    fn button_rect(&self, b: TransportButton) -> Rect {
+    /// The rectangle of a button.
+    pub fn button_rect(&self, b: TransportButton) -> Rect {
         let i = BUTTONS.iter().position(|x| *x == b).unwrap_or(0);
         // The buttons in a row, 4 px apart; the loop and the metronome stand a little apart.
         let before: f64 = BUTTONS[..i].iter().map(|x| button_width(*x) + 4.0).sum();

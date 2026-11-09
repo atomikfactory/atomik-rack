@@ -668,6 +668,12 @@ pub enum AppCommand {
     /// Help ▸ Export Diagnostics…: one report (settings, plugin state, counters, the last crash
     /// and the log) to attach to an issue.
     ExportDiagnostics,
+    /// Help ▸ Guided Tour: a new song and the floating panel that walks through making a first
+    /// song (asks about unsaved changes).
+    GuidedTour,
+    /// A factory example project: a new unsaved song from the example at this place of the start
+    /// screen's list of examples (asks about unsaved changes). Pointer only: it has no id.
+    OpenExample(usize),
     /// Help ▸ Keyboard Shortcuts (F1): the shortcut list, with search and remapping.
     KeyboardShortcuts,
     /// Help ▸ Documentation: the project page with the documentation, in the browser.
@@ -1157,6 +1163,8 @@ impl AppCommand {
             AppCommand::RescanMidi => ("audio.rescan_midi", None),
             AppCommand::RestartAudio => ("audio.restart", None),
             AppCommand::ExportDiagnostics => ("help.export_diagnostics", None),
+            AppCommand::GuidedTour => ("help.guided_tour", None),
+            AppCommand::OpenExample(_) => return None,
             AppCommand::KeyboardShortcuts => ("help.keyboard_shortcuts", None),
             AppCommand::Documentation => ("help.documentation", None),
             AppCommand::ReportIssue => ("help.report_issue", None),
@@ -1585,6 +1593,7 @@ impl AppCommand {
             ("audio.rescan_midi", None) => AppCommand::RescanMidi,
             ("audio.restart", None) => AppCommand::RestartAudio,
             ("help.export_diagnostics", None) => AppCommand::ExportDiagnostics,
+            ("help.guided_tour", None) => AppCommand::GuidedTour,
             ("help.keyboard_shortcuts", None) => AppCommand::KeyboardShortcuts,
             ("help.documentation", None) => AppCommand::Documentation,
             ("help.report_issue", None) => AppCommand::ReportIssue,
@@ -4145,6 +4154,7 @@ pub fn menus_with_songs(
         Menu {
             title: "Help",
             entries: vec![
+                item("Guided Tour", AppCommand::GuidedTour),
                 item("Keyboard Shortcuts", AppCommand::KeyboardShortcuts),
                 item("Documentation", AppCommand::Documentation),
                 item("Report an Issue", AppCommand::ReportIssue),
@@ -4601,6 +4611,7 @@ mod tests {
             AppCommand::RestartAudio,
             AppCommand::ExportDiagnostics,
             AppCommand::ExportDeviceInfo,
+            AppCommand::GuidedTour,
             AppCommand::KeyboardShortcuts,
             AppCommand::Documentation,
             AppCommand::ReportIssue,
@@ -5138,6 +5149,7 @@ mod tests {
         assert_eq!(
             labels(11),
             [
+                "Guided Tour",
                 "Keyboard Shortcuts",
                 "Documentation",
                 "Report an Issue",

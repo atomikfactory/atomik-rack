@@ -1004,6 +1004,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("help.guided_tour", "Guided Tour", G::Global, C::Global).menu(),
     cmd(
         "help.keyboard_shortcuts",
         "Keyboard Shortcuts",
