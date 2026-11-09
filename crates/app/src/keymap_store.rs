@@ -118,6 +118,9 @@ pub struct WorkflowPrefs {
     /// How many automatic versions of a project a save keeps (1 to [`MAX_KEEP_VERSIONS`],
     /// default 20; named and protected versions are never pruned).
     pub keep_versions: u32,
+    /// The answer to "Check for new versions once a day?": `None` until the user answers (the
+    /// program then makes no request), `Some(true)` for Yes, `Some(false)` for No.
+    pub update_check: Option<bool>,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
 }
@@ -218,6 +221,7 @@ impl Default for WorkflowPrefs {
             ffmpeg_folder: None,
             reverse_mode: ReverseMode::default(),
             keep_versions: DEFAULT_KEEP_VERSIONS,
+            update_check: None,
             extra: BTreeMap::new(),
         }
     }
@@ -329,6 +333,7 @@ impl WorkflowPrefs {
                 .map_or(defaults.keep_versions, |n| {
                     n.clamp(1, u64::from(MAX_KEEP_VERSIONS)) as u32
                 }),
+            update_check: obj.get("update_check").and_then(Value::as_bool),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -362,6 +367,7 @@ impl WorkflowPrefs {
                             | "ffmpeg_folder"
                             | "reverse_mode"
                             | "keep_versions"
+                            | "update_check"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -441,6 +447,9 @@ impl WorkflowPrefs {
             Value::String(self.midi_resolution.id().into()),
         );
         map.insert("keep_versions".into(), Value::from(self.keep_versions));
+        if let Some(answer) = self.update_check {
+            map.insert("update_check".into(), Value::Bool(answer));
+        }
         if let Some(folder) = &self.library_folder {
             map.insert(
                 "library_folder".into(),
@@ -1092,6 +1101,35 @@ mod packaging_tests {
         assert_eq!(back, set);
         assert!(back.extra.is_empty(), "known fields are not kept as extra");
         assert_eq!(back.to_json(), text, "the text is canonical");
+    }
+
+    #[test]
+    fn the_update_check_answer_is_unasked_until_the_user_answers() {
+        assert_eq!(WorkflowPrefs::default().update_check, None);
+        assert_eq!(WorkflowPrefs::from_json("{}").unwrap().update_check, None);
+        assert!(!WorkflowPrefs::default().to_json().contains("update_check"));
+        for answer in [true, false] {
+            let set = WorkflowPrefs {
+                update_check: Some(answer),
+                ..WorkflowPrefs::default()
+            };
+            let text = set.to_json();
+            assert!(
+                text.contains(&format!("\"update_check\": {answer}")),
+                "{text}"
+            );
+            let back = WorkflowPrefs::from_json(&text).unwrap();
+            assert_eq!(back, set);
+            assert!(back.extra.is_empty());
+            assert_eq!(back.to_json(), text);
+        }
+        for bad in [
+            r#"{"update_check": "yes"}"#,
+            r#"{"update_check": 1}"#,
+            r#"{"update_check": null}"#,
+        ] {
+            assert_eq!(WorkflowPrefs::from_json(bad).unwrap().update_check, None);
+        }
     }
 
     #[test]
