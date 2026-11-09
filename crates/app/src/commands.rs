@@ -149,6 +149,8 @@ pub enum AppCommand {
     ExportSelectionAudio,
     /// File ▸ Export Stems as Audio Files…: one file per mixer strip, in a folder.
     ExportStems,
+    /// File ▸ Export ▸ Film with Mix…: the song's film with the mix of the song as its sound.
+    ExportFilm,
     /// Help ▸ Export Device Parameter List…: a text table of every built-in device parameter.
     ExportDeviceInfo,
     /// File ▸ Stress Rack: 100 devices, 300 cables.
@@ -862,6 +864,7 @@ impl AppCommand {
             AppCommand::ExportLoopAudio => ("file.export_loop_audio", None),
             AppCommand::ExportSelectionAudio => ("file.export_selection_audio", None),
             AppCommand::ExportStems => ("file.export_stems", None),
+            AppCommand::ExportFilm => ("file.export_film", None),
             AppCommand::ExportDeviceInfo => ("file.export_device_info", None),
             AppCommand::StressRack => ("file.stress_rack", None),
             AppCommand::StressSong => ("file.stress_song", None),
@@ -1242,6 +1245,7 @@ impl AppCommand {
             ("file.export_loop_audio", None) => AppCommand::ExportLoopAudio,
             ("file.export_selection_audio", None) => AppCommand::ExportSelectionAudio,
             ("file.export_stems", None) => AppCommand::ExportStems,
+            ("file.export_film", None) => AppCommand::ExportFilm,
             ("file.export_device_info", None) => AppCommand::ExportDeviceInfo,
             ("file.stress_rack", None) => AppCommand::StressRack,
             ("file.stress_song", None) => AppCommand::StressSong,
@@ -2144,6 +2148,9 @@ pub struct MenuState {
     /// The console has strips and no export runs (File > Export Stems as Audio Files is
     /// available).
     pub export_stems: bool,
+    /// The song has a film that can be exported with the mix: its file is there, FFmpeg can be
+    /// used and no export runs (File > Export > Film with Mix is available).
+    pub export_film: bool,
     /// What the selected tracks and folder allow (the Track menu).
     pub org: OrgMenu,
     /// What the selected note lane allows (the lane items of the Track menu).
@@ -2674,6 +2681,11 @@ pub fn menus_with_songs(
                             "Export Stems as Audio Files\u{2026}",
                             AppCommand::ExportStems,
                             state.export_stems,
+                        ),
+                        enabled(
+                            "Film with Mix\u{2026}",
+                            AppCommand::ExportFilm,
+                            state.export_film,
                         ),
                         MenuEntry::Separator,
                         enabled(
@@ -4342,6 +4354,7 @@ mod tests {
             video_audio_keep: false,
             video_import_audio: false,
             video_missing: false,
+            export_film: false,
             collect_busy: false,
             default_song: false,
             midi_clip: false,
@@ -4419,6 +4432,7 @@ mod tests {
             AppCommand::ExportLoopAudio,
             AppCommand::ExportSelectionAudio,
             AppCommand::ExportStems,
+            AppCommand::ExportFilm,
             AppCommand::DeliveryTargets,
             AppCommand::StressRack,
             AppCommand::StressSong,
@@ -5450,6 +5464,7 @@ mod tests {
                 video_audio_keep: false,
                 video_import_audio: false,
                 video_missing: false,
+                export_film: false,
                 collect_busy: false,
                 default_song: false,
                 midi_clip: true,

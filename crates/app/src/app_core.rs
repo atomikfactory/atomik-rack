@@ -3975,7 +3975,7 @@ mod notes;
 
 #[path = "app_core_export.rs"]
 mod export;
-pub use export::{export_format, export_request};
+pub use export::{export_format, export_request, file_extension};
 
 #[path = "app_core_freeze.rs"]
 mod freeze;
@@ -4142,6 +4142,10 @@ mod tuner_tests;
 #[cfg(test)]
 #[path = "app_core_export_tests.rs"]
 mod export_tests;
+
+#[cfg(test)]
+#[path = "app_core_film_tests.rs"]
+mod film_tests;
 
 #[cfg(test)]
 #[path = "app_core_masking_tests.rs"]

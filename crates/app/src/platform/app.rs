@@ -1197,7 +1197,10 @@ impl App {
                             atomik_ui::ExportScope::Selection => "Export selection as audio file",
                             _ => "Export song as audio file",
                         })
-                        .add_filter("Audio file", &["wav", "aif", "aiff", "flac"])
+                        .add_filter(
+                            "Audio file",
+                            &["wav", "aif", "aiff", "flac", "mp3", "m4a", "opus"],
+                        )
                         .set_file_name(self.shell.export_audio_name(scope));
                     if let Some(dir) = self.shell.export_audio_dir() {
                         dialog = dialog.set_directory(dir);
@@ -1207,9 +1210,27 @@ impl App {
                     }
                     if let Some(mut path) = dialog.save_file() {
                         if path.extension().is_none() {
-                            path.set_extension("wav");
+                            path.set_extension(self.shell.export_audio_extension());
                         }
                         self.shell.export_audio_to(scope, &path);
+                    }
+                }
+                ShellRequest::PickExportFilm => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Export film with mix")
+                        .add_filter("Film", &["mp4", "mov"])
+                        .set_file_name(self.shell.export_film_name());
+                    if let Some(dir) = self.shell.export_audio_dir() {
+                        dialog = dialog.set_directory(dir);
+                    }
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension("mp4");
+                        }
+                        self.shell.export_film_to(&path);
                     }
                 }
                 ShellRequest::PickLoadSamples => {

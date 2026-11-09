@@ -29,6 +29,11 @@
 //! Without FFmpeg the three formats are refused ([`AppCore::export_encoder`] says how to set it
 //! up); stems are WAV, AIFF or FLAC only.
 //!
+//! **Film with Mix** (File > Export > Film with Mix, [`AppCore::start_film_export`], in
+//! `app_core_film.rs`) is the same export once more: the mix of the part of the song the film
+//! covers goes through the same temporary WAV file and FFmpeg puts it together with the picture of
+//! the song's film (copied or re-encoded), with the same worker, progress, cancel and cleanup.
+//!
 //! The shell asks for the file, then for the options (its panel), then calls
 //! [`AppCore::start_audio_export`]; progress and **Cancel** are [`AppCore::audio_export_progress`]
 //! and [`AppCore::cancel_audio_export`]. A cancelled or failed export leaves no file (the worker
@@ -50,12 +55,18 @@ use atomik_ui::{
 use atomik_video::{FfmpegStatus, LossyCodec, LossyQuality, Tags};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+#[path = "app_core_film.rs"]
+pub(crate) mod film;
+use film::FilmRun;
+
 /// The export that runs.
 struct Running {
     job: u64,
     scope: ExportScope,
     file: String,
     values: ExportValues,
+    /// The film export that runs (`values` and `scope` mean nothing then).
+    film: Option<FilmRun>,
     cancel: Arc<AtomicBool>,
     progress: Arc<AtomicU32>,
 }
@@ -109,6 +120,15 @@ pub fn lossy_quality(values: &ExportValues) -> Option<LossyQuality> {
         ExportQuality::Cbr(kbps) => LossyQuality::Cbr(u32::from(kbps)),
         ExportQuality::Vbr(q) => LossyQuality::Vbr(q),
     })
+}
+
+/// The file the export of `scope` writes when the dialog picked `path`: the name the dialog gave
+/// it, with the extension of the container the panel chose (stems go to a folder of that name).
+pub fn export_file(scope: ExportScope, path: &Path, values: &ExportValues) -> PathBuf {
+    match scope {
+        ExportScope::Stems => path.to_path_buf(),
+        _ => path.with_extension(file_extension(values)),
+    }
 }
 
 /// The file extension of the format chosen, without the dot.
@@ -334,6 +354,16 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// The file an export of `scope` to `path` writes with these `values` (see [`export_file`]).
+    pub fn export_file_for(
+        &self,
+        scope: ExportScope,
+        path: &Path,
+        values: &ExportValues,
+    ) -> PathBuf {
+        export_file(scope, path, values)
+    }
+
     /// The sample rate of the project in Hz (the rate of an export that does not convert).
     pub fn project_sample_rate(&self) -> u32 {
         self.doc().sample_rate
@@ -343,6 +373,9 @@ impl<S: EngineSink> AppCore<S> {
     pub fn audio_export_progress(&self) -> Option<(f32, String)> {
         let running = self.audio.export.running.as_ref()?;
         let fraction = f32::from_bits(running.progress.load(Ordering::Relaxed)).clamp(0.0, 1.0);
+        if running.film.is_some() {
+            return Some((fraction, "Making the film".to_owned()));
+        }
         let what = match running.scope {
             ExportScope::Song => "Rendering the song",
             ExportScope::Loop => "Rendering the loop",
@@ -396,10 +429,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         // The file keeps the name the dialog gave it, with the extension of the container; the
         // stems go to a folder of that name.
-        let path = match scope {
-            ExportScope::Stems => path,
-            _ => path.with_extension(file_extension(&values)),
-        };
+        let path = export_file(scope, &path, &values);
         let file = path
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
@@ -429,6 +459,7 @@ impl<S: EngineSink> AppCore<S> {
                 isolation: self.plugins.freeze_isolation.clone(),
             },
             lossy: self.lossy_job(&values),
+            film: None,
         };
         let started = export_worker::spawn(
             self.audio.tx.clone(),
@@ -444,6 +475,7 @@ impl<S: EngineSink> AppCore<S> {
                     scope,
                     file,
                     values,
+                    film: None,
                     cancel,
                     progress,
                 });
@@ -501,6 +533,11 @@ impl<S: EngineSink> AppCore<S> {
                     })
                 };
                 let message = match done {
+                    Done::Film(report, picture) => {
+                        log::info!("exported {}: {}", running.file, report.loudness.summary());
+                        film::describe_film(&report, picture, running.film.as_ref())
+                            + &against(&report.loudness)
+                    }
                     Done::File(report) => {
                         log::info!("exported {}: {}", running.file, report.loudness.summary());
                         describe(&report, &running.values, rate) + &against(&report.loudness)
