@@ -339,6 +339,12 @@ pub enum ShellRequest {
     /// Show an open-file dialog for a keymap (the Keyboard tab's Import), then call
     /// [`Shell::import_keymap_from`].
     PickImportKeymap,
+    /// Show a save-file dialog for a controller profile (the Controllers tab's Export Profile),
+    /// then call [`Shell::export_controller_to`].
+    PickExportController,
+    /// Show an open-file dialog for a controller profile (the Controllers tab's Import Profile),
+    /// then call [`Shell::import_controller_from`].
+    PickImportController,
     /// Show an open-file dialog for a MIDI file (the quantize panel's GROOVE FROM MIDI FILE),
     /// then call [`Shell::groove_from_midi_file`] with the picked path.
     PickGrooveMidi,
@@ -483,6 +489,8 @@ pub struct Shell<B: AudioBackend> {
     about: Option<AboutBox>,
     /// The start screen, while it is open.
     start_screen: Option<StartScreen>,
+    /// The controller set-up wizard, while it is open.
+    controller_wizard: Option<crate::controller_wizard_view::ControllerWizardView>,
     /// The update check: its worker, the daily throttle and what is kept (`updates.json`).
     updater: Updater,
     /// The question or the news of the update check, while it shows.
@@ -812,6 +820,7 @@ impl<B: AudioBackend> Shell<B> {
             sound_analyst: None,
             wavetable: None,
             start_screen: None,
+            controller_wizard: None,
             updater: Updater::new(updates_path),
             update_notice: None,
             update_release: None,
@@ -5467,6 +5476,10 @@ impl<B: AudioBackend> Shell<B> {
             self.sync_quantize();
             return requests;
         }
+        if self.controller_wizard.is_some() {
+            self.repaint = true;
+            return self.controller_wizard_event(event);
+        }
         if self.start_screen.is_some() {
             self.repaint = true;
             return self.start_screen_event(event);
@@ -5505,6 +5518,13 @@ impl<B: AudioBackend> Shell<B> {
                 DialogOutcome::PickLibraryFolder => return vec![ShellRequest::PickLibraryFolder],
                 DialogOutcome::PickScratchFolder => return vec![ShellRequest::PickScratchFolder],
                 DialogOutcome::PickFfmpegFolder => return vec![ShellRequest::PickFfmpegFolder],
+                DialogOutcome::SetUpController => self.open_controller_wizard(),
+                DialogOutcome::ExportController => {
+                    return vec![ShellRequest::PickExportController];
+                }
+                DialogOutcome::ImportController => {
+                    return vec![ShellRequest::PickImportController];
+                }
             }
             return Vec::new();
         }
@@ -8891,6 +8911,11 @@ impl<B: AudioBackend> Shell<B> {
         let heard = self.core.midi_received();
         self.core.midi_control_frame(now_seconds);
         self.core.surface_frame(now_seconds);
+        if let Some(wizard) = &mut self.controller_wizard
+            && wizard.poll()
+        {
+            self.repaint = true;
+        }
         if self.core.midi_received() != heard {
             self.repaint = true;
         }
@@ -8919,9 +8944,12 @@ impl<B: AudioBackend> Shell<B> {
             let Some(id) = s.driver.as_deref() else {
                 continue;
             };
-            let Some(driver) = atomik_midi_io::surface::driver_by_id(id) else {
-                self.notify(format!("unknown control surface {id:?}"));
-                continue;
+            let driver = match self.surface_driver(id) {
+                Ok(driver) => driver,
+                Err(problem) => {
+                    self.notify(format!("{}: {problem}", s.name));
+                    continue;
+                }
             };
             let (link, problems) =
                 crate::surface::SystemLink::open(s.input.as_deref(), s.output.as_deref());
@@ -8936,6 +8964,217 @@ impl<B: AudioBackend> Shell<B> {
             }
         }
         self.core.set_surfaces(hosts);
+    }
+
+    /// The driver a surface runs: one of the built-in drivers, or the controller profile
+    /// `profile:<name>` read from the profile folder next to the settings.
+    ///
+    /// # Errors
+    /// What is wrong: an unknown driver, or a profile that is missing or damaged.
+    pub fn surface_driver(
+        &self,
+        id: &str,
+    ) -> Result<Box<dyn atomik_midi_io::surface::SurfaceDriver>, String> {
+        if let Some(slug) = crate::controller_profile::slug_of_driver(id) {
+            let dir = crate::controller_profile::profile_dir(self.settings_path.as_deref())
+                .ok_or_else(|| "there is no settings folder for controller profiles".to_owned())?;
+            let profile = crate::controller_profile::load(&dir, slug)
+                .map_err(|e| format!("controller profile {slug:?}: {e}"))?;
+            return Ok(Box::new(crate::controller_driver::ProfileDriver::new(
+                profile,
+            )));
+        }
+        atomik_midi_io::surface::driver_by_id(id)
+            .ok_or_else(|| format!("unknown control surface {id:?}"))
+    }
+
+    /// The controller wizard, while it is open.
+    pub fn controller_wizard(
+        &self,
+    ) -> Option<&crate::controller_wizard_view::ControllerWizardView> {
+        self.controller_wizard.as_ref()
+    }
+
+    /// Opens the controller set-up wizard on the list of MIDI input ports. The surfaces let go of
+    /// their ports while it runs (a port is usually open once only); they come back when it
+    /// closes.
+    pub fn open_controller_wizard(&mut self) {
+        let session = self.core.sink();
+        let lists = DeviceLists::query(session.backend());
+        self.begin_controller_wizard(lists.midi_ports, lists.midi_outputs);
+    }
+
+    /// Opens the wizard with these port lists (what [`Self::open_controller_wizard`] does after
+    /// asking the backend).
+    pub fn begin_controller_wizard(&mut self, inputs: Vec<String>, outputs: Vec<String>) {
+        self.core.set_surfaces(Vec::new());
+        self.surface_applied = Vec::new();
+        self.controller_wizard = Some(crate::controller_wizard_view::ControllerWizardView::new(
+            inputs, outputs,
+        ));
+        self.repaint = true;
+    }
+
+    /// Opens the wizard on `link` for the controller on `input` without listing ports (tests and
+    /// the headless session).
+    pub fn begin_controller_wizard_on(
+        &mut self,
+        link: Box<dyn crate::surface::SurfaceLink>,
+        input: &str,
+        outputs: Vec<String>,
+    ) {
+        self.begin_controller_wizard(vec![input.to_owned()], outputs);
+        if let Some(w) = &mut self.controller_wizard {
+            w.begin(link, input);
+        }
+    }
+
+    fn close_controller_wizard(&mut self) {
+        self.controller_wizard = None;
+        self.surface_applied = Vec::new();
+        self.configure_surface();
+        self.repaint = true;
+    }
+
+    fn controller_wizard_event(&mut self, event: &UiEvent) -> Vec<ShellRequest> {
+        use crate::controller_wizard_view::WizardOutcome;
+        let size = self.size();
+        let outcome = match &mut self.controller_wizard {
+            Some(w) => w.handle(event, size),
+            None => return Vec::new(),
+        };
+        match outcome {
+            WizardOutcome::Open => {}
+            WizardOutcome::Close => self.close_controller_wizard(),
+            WizardOutcome::PickPort(name) => {
+                let (link, problems) = crate::surface::SystemLink::open(Some(&name), None);
+                if let Some(w) = &mut self.controller_wizard {
+                    if link.is_open() {
+                        w.begin(Box::new(link), &name);
+                    } else {
+                        w.fail(
+                            problems
+                                .into_iter()
+                                .next()
+                                .unwrap_or_else(|| format!("{name} could not be opened")),
+                        );
+                    }
+                }
+            }
+            WizardOutcome::Save(profile) => {
+                self.save_controller_profile(profile);
+                self.close_controller_wizard();
+            }
+        }
+        Vec::new()
+    }
+
+    /// Saves a profile the wizard (or an import) produced and sets the controller up as a
+    /// surface: into the open settings dialog's draft, else applied and saved at once. A profile
+    /// that would take the name of the profile of another port is renamed (`Name 2`).
+    fn save_controller_profile(
+        &mut self,
+        mut profile: crate::controller_profile::ControllerProfile,
+    ) {
+        use crate::controller_profile as cp;
+        let Some(dir) = cp::profile_dir(self.settings_path.as_deref()) else {
+            self.notify("There is no settings folder to save the controller profile in");
+            return;
+        };
+        let base = profile.name.clone();
+        let mut n = 1;
+        while cp::load(&dir, &cp::slug(&profile.name))
+            .is_ok_and(|other| other.input != profile.input)
+        {
+            n += 1;
+            profile.name = format!("{base} {n}");
+        }
+        if let Err(e) = cp::save(&dir, &profile) {
+            self.notify(format!("The controller was not saved: {e}"));
+            return;
+        }
+        let surface = SurfaceSettings {
+            name: profile.name.clone(),
+            enabled: true,
+            driver: Some(profile.driver_id()),
+            input: Some(profile.input.clone()),
+            output: profile.output.clone(),
+        };
+        if let Some(dialog) = &mut self.dialog {
+            dialog.adopt_surface(surface);
+            self.notify(format!(
+                "{} is set up: press Apply to start using it",
+                profile.name
+            ));
+        } else {
+            let mut settings = self.core.sink().settings().clone();
+            match settings
+                .surfaces
+                .iter()
+                .position(|s| s.name == surface.name)
+            {
+                Some(i) => settings.surfaces[i] = surface,
+                None => settings.surfaces.push(surface),
+            }
+            let settings = settings.sanitized();
+            self.apply_settings(settings);
+            self.notify(format!("{} is set up", profile.name));
+        }
+    }
+
+    /// Writes the controller profile the settings dialog is editing to `path` (Export Profile).
+    pub fn export_controller_to(&mut self, path: &Path) {
+        use crate::controller_profile as cp;
+        let slug = self
+            .dialog
+            .as_ref()
+            .and_then(SettingsDialog::edited_profile);
+        let Some(slug) = slug else {
+            self.notify("Pick a surface that runs a controller profile to export");
+            return;
+        };
+        let result = cp::profile_dir(self.settings_path.as_deref())
+            .ok_or_else(|| cp::ProfileError::Io("no settings folder".to_owned()))
+            .and_then(|dir| cp::load(&dir, &slug))
+            .and_then(|profile| cp::export(&profile, path));
+        match result {
+            Ok(()) => self.notify(format!("Controller profile exported to {}", path.display())),
+            Err(e) => self.notify(format!("The profile was not exported: {e}")),
+        }
+        self.repaint = true;
+    }
+
+    /// Reads the controller profile file `path` (Import Profile) and sets the controller up like
+    /// the wizard does. A file that is not a profile is refused with a message.
+    pub fn import_controller_from(&mut self, path: &Path) {
+        use crate::controller_profile as cp;
+        let Some(dir) = cp::profile_dir(self.settings_path.as_deref()) else {
+            self.notify("There is no settings folder to import the controller profile into");
+            return;
+        };
+        match cp::import(&dir, path) {
+            Ok(profile) => {
+                let surface = SurfaceSettings {
+                    name: profile.name.clone(),
+                    enabled: true,
+                    driver: Some(profile.driver_id()),
+                    input: Some(profile.input.clone()),
+                    output: profile.output.clone(),
+                };
+                if let Some(dialog) = &mut self.dialog {
+                    dialog.adopt_surface(surface);
+                } else {
+                    let mut settings = self.core.sink().settings().clone();
+                    settings.surfaces.retain(|s| s.name != surface.name);
+                    settings.surfaces.push(surface);
+                    let settings = settings.sanitized();
+                    self.apply_settings(settings);
+                }
+                self.notify(format!("Controller profile {} imported", profile.name));
+            }
+            Err(e) => self.notify(format!("{}: {e}", path.display())),
+        }
+        self.repaint = true;
     }
 
     /// The click-level slider changed the metronome level: keep it in `settings.json` once the
@@ -9745,6 +9984,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(start) = &self.start_screen {
             start.paint(canvas, &theme, self.size());
         }
+        if let Some(wizard) = &self.controller_wizard {
+            wizard.paint(canvas, &theme, self.size());
+        }
         if self.update_notice_reachable()
             && let Some(notice) = &self.update_notice
         {
@@ -10139,6 +10381,10 @@ mod edit_keys_tests;
 #[cfg(test)]
 #[path = "shell_start_screen_tests.rs"]
 mod start_screen_tests;
+
+#[cfg(test)]
+#[path = "shell_controller_tests.rs"]
+mod controller_tests;
 
 #[cfg(test)]
 #[path = "shell_guide_tests.rs"]

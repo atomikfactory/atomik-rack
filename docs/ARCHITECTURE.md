@@ -3897,6 +3897,31 @@ fast forward move a bar and the jog wheel a sixteenth per detent.
   hears that surface only; a source without one hears every surface and every port, so older
   projects map as they did. Two surfaces can drive two devices at the same time with the same
   controller numbers.
+- **Controller profiles.** `ProfileDriver` ([controller_driver.rs](../crates/app/src/controller_driver.rs),
+  surface driver id `profile:<name>`) is a surface driver whose layout is a `ControllerProfile`
+  ([controller_profile.rs](../crates/app/src/controller_profile.rs)), so any controller set up with the
+  wizard works the same way. A profile is `controllers/<name>.json` next to `settings.json`:
+  `{ "format": 1, "name", "input", "output" (optional), "controls": [ ... ] }`, each control
+  `{ "role", "index" (knob and fader, 1 to 8), "message", "number", "channel" (from 1), "mode",
+  "feedback" }`. Roles are `knob`, `fader`, `master`, `play`, `stop`, `record`, `loop`, `bank_left` and
+  `bank_right`; messages `cc`, `cc14` (the MSB controller 0 to 31, the LSB is 32 above), `nrpn`, `note` and
+  `pitchbend`; modes `absolute`, `relative_twos`, `relative_offset`, `relative_sign` and `button`. A file is
+  read strictly (an unknown role, message or mode, two controls on one message, a key that is not a button
+  or a file of a newer format is an error, never a silent drop), capped at 64 controls and 64 KiB.
+  The driver turns the messages into the usual `SurfaceAction`s plus `SurfaceAction::Knob`, which the app
+  applies to the first eight parameters of `AppCore::followed_device` (the locked device, else the selected
+  one; hidden parameters, plugin CV rows and `bypass` are skipped) as a `SetParam` with a gesture merge id;
+  a stepped parameter moves one step per click of an encoder. `SurfaceState::knobs` carries the values for
+  the feedback. Faders are the strips of the driver's bank (bank keys move eight, the last page starts at the
+  last multiple of eight). Feedback sends only what changed (CC, a 14 bit pair, NRPN, pitch bend or a note,
+  by the control's own message) and leaves a control alone for about half a second after the hand moved it.
+  The wizard is a state machine without I/O ([controller_wizard.rs](../crates/app/src/controller_wizard.rs))
+  over a `Capture` ([controller_detect.rs](../crates/app/src/controller_detect.rs)) that tells a control from
+  its messages: an encoder sends a handful of values clustered in one of three codings in both directions, a
+  knob sweeps a range; it is tested from fake message streams. The screen is
+  [controller_wizard_view.rs](../crates/app/src/controller_wizard_view.rs); while it is open the surfaces
+  let go of their ports. A saved profile also adds a surface (name, driver, input, output) to
+  `settings.json`; `Shell::surface_driver` builds the driver from the id.
 - **Several surfaces and the focused device.** `settings.json` `"surfaces"` is a list (name, `use`,
   driver, ports; at most eight); each enabled one runs its own driver and link in
   `AppCore::surface_frame`, in settings order, and an older file with one `"surface"` loads as a

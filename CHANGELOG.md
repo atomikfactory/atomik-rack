@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Controllers that just work.** Settings > Controllers > Set Up Controller... walks through a controller:
+  pick its MIDI input port, then move knob 1 to 8, fader 1 to 8, the master fader and press Play, Stop,
+  Record, Loop and the two bank keys, with Skip, Skip Group, Back and Finish for what the keyboard lacks. It
+  tells 7 bit and 14 bit controllers, NRPN, notes and pitch bend apart and whether a knob reports its position
+  or is an encoder (three codings), asks to be turned both ways when it cannot tell, and ignores a control it
+  already has. The result is a controller profile, a small JSON file in the `controllers` folder next to
+  `settings.json` (the format is in the architecture notes), remembered by the MIDI port name, and set up as a
+  surface of its own. The first eight knobs drive the first eight parameters of the selected device (or the
+  device the surface is locked to) and follow the selection, the faders are the levels of the eight visible
+  mixer strips and bank left and right move eight at a time, the keys are play, stop, record and loop. When the
+  controller has an output port the wizard asks whether its knobs, faders and keys show values, and the
+  profile then sends them back (LED rings, motorised faders, lit keys), only what changed and never against a
+  hand on the control. Profiles are exported and imported from the same tab to share them, and several
+  controllers work at once, each with its own profile, bank and lock. No project format change (profiles
+  live with the settings, not the project).
 - **An optional check for a newer version.** The first time the program starts it asks "Check for new versions once a
   day?" in a small notice in the lower left corner (over the start screen too); until you answer Yes nothing is sent.
   A Yes asks the project page once a day, at the start, for its list of releases; Help > Check for Updates asks at once

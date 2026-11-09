@@ -1324,7 +1324,8 @@ fn the_surfaces_tab_offers_a_driver_and_the_two_ports() {
             "Surface MIDI input",
             "Surface MIDI output",
             "MIDI Out device port",
-            "Surfaces"
+            "Surfaces",
+            "Controller profiles"
         ]
     );
     let sections = d.sections();
@@ -1457,8 +1458,9 @@ fn the_other_tabs_do_not_show_the_surface_sections_and_back_to_audio_shows_the_a
     d.paint(&mut list, &Theme::dark(), VIEW);
     let texts = list.texts();
     for t in [
-        "Control surfaces",
+        "Controllers",
         "Surfaces",
+        "Controller profiles",
         "Surface MIDI input",
         "Example Surface",
     ] {
@@ -1637,4 +1639,69 @@ fn the_sync_tab_paints_its_titles_and_the_other_tabs_do_not_show_its_sections() 
     }
     goto(&mut d, Tab::Audio);
     assert!(d.sections().iter().all(|s| s.title != "MIDI clock out"));
+}
+
+#[test]
+fn the_controller_chips_ask_the_shell_for_the_wizard_and_the_files() {
+    let mut d = surfaces_dialog(AudioSettings::default());
+    goto(&mut d, Tab::Surfaces);
+    let labels: Vec<String> = d
+        .sections()
+        .iter()
+        .find(|s| s.title == "Controller profiles")
+        .unwrap()
+        .options
+        .iter()
+        .map(|(l, _)| l.clone())
+        .collect();
+    // There is no profile to export while the surface runs none.
+    assert_eq!(labels, ["Set Up Controller...", "Import Profile..."]);
+    let at = option_at(&d, "Controller profiles", "Set Up Controller...");
+    assert_eq!(down(&mut d, at), DialogOutcome::SetUpController);
+    let at = option_at(&d, "Controller profiles", "Import Profile...");
+    assert_eq!(down(&mut d, at), DialogOutcome::ImportController);
+    // The dialog stays open and unchanged.
+    assert!(d.draft().surfaces.is_empty());
+}
+
+#[test]
+fn a_controller_that_was_set_up_joins_the_draft_and_can_be_exported() {
+    let mut d = surfaces_dialog(AudioSettings::default());
+    goto(&mut d, Tab::Audio);
+    d.adopt_surface(SurfaceSettings {
+        name: "Desk In".to_owned(),
+        enabled: true,
+        driver: Some("profile:desk-in".to_owned()),
+        input: Some("Example Surface".to_owned()),
+        output: None,
+    });
+    assert_eq!(d.tab(), Tab::Surfaces, "the tab shows what was added");
+    assert_eq!(d.edited_profile().as_deref(), Some("desk-in"));
+    let at = option_at(&d, "Controller profiles", "Export Profile...");
+    assert_eq!(down(&mut d, at), DialogOutcome::ExportController);
+    // The driver chip names the profile instead of calling it unknown.
+    let sections = d.sections();
+    let drivers = &sections
+        .iter()
+        .find(|s| s.title == "Control surface")
+        .unwrap();
+    assert!(
+        drivers
+            .options
+            .iter()
+            .any(|(l, _)| l == "Controller profile (desk-in)")
+    );
+    // The same name replaces, another name is added.
+    d.adopt_surface(SurfaceSettings {
+        name: "Desk In".to_owned(),
+        enabled: false,
+        driver: Some("profile:desk-in".to_owned()),
+        input: None,
+        output: None,
+    });
+    assert_eq!(d.draft().surfaces.len(), 1);
+    assert!(!d.draft().surfaces[0].enabled);
+    d.adopt_surface(SurfaceSettings::named("Other"));
+    assert_eq!(d.draft().surfaces.len(), 2);
+    assert_eq!(d.edited_profile(), None);
 }

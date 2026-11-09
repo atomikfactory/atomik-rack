@@ -1313,6 +1313,32 @@ impl App {
                         self.shell.import_keymap_from(&path);
                     }
                 }
+                ShellRequest::PickExportController => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Export controller profile")
+                        .add_filter("Controller profile", &["json"])
+                        .set_file_name("controller.json");
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension("json");
+                        }
+                        self.shell.export_controller_to(&path);
+                    }
+                }
+                ShellRequest::PickImportController => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Import controller profile")
+                        .add_filter("Controller profile", &["json"]);
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(path) = dialog.pick_file() {
+                        self.shell.import_controller_from(&path);
+                    }
+                }
                 ShellRequest::PickGrooveMidi => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Make a groove from a MIDI file")

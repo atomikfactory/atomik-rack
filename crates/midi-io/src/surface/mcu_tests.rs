@@ -27,6 +27,7 @@ fn state(n: usize) -> SurfaceState {
             ticks: 0,
             seconds: 0.0,
         },
+        knobs: Vec::new(),
     }
 }
 
