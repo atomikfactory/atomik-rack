@@ -208,7 +208,7 @@ impl RackView {
         self.browser.visible = true;
         self.browser.focused = true;
         self.browser.create = None;
-        self.browser.query.clear();
+        self.browser.clear_query();
         self.browser.scroll = 0.0;
         self.browser.highlighted =
             crate::browser::Browser::first_selectable(&self.browser.list(registry));

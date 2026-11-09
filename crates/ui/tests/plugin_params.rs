@@ -144,6 +144,29 @@ fn opens_on_the_device_and_groups_the_params_by_module_in_plugin_order() {
 }
 
 #[test]
+fn ctrl_a_selects_the_whole_search_text_and_typing_replaces_it() {
+    let d = plugin_rack();
+    let mut v = pane_on(d.doc(), "synth");
+    type_text(&mut v, d.doc(), "cutoff");
+    let ctrl = Modifiers {
+        ctrl: true,
+        ..Modifiers::NONE
+    };
+    let _ = feed(
+        &mut v,
+        d.doc(),
+        UiEvent::Key {
+            key: Key::Char('a'),
+            modifiers: ctrl,
+            pressed: true,
+        },
+    );
+    assert_eq!(v.query(), "cutoff");
+    type_text(&mut v, d.doc(), "o");
+    assert_eq!(v.query(), "o");
+}
+
+#[test]
 fn the_search_field_owns_the_keyboard_while_the_pane_shows_a_plugin() {
     // every letter, digit and Space is typed into the search, none is a command.
     let d = plugin_rack();

@@ -122,6 +122,9 @@ may break APIs and the patch and project formats.
   tool still draws.
 
 ### Fixed
+- **Select All in the search boxes.** Ctrl+A (Cmd+A on a Mac) in the device browser's search, the parameter
+  search and the plugin parameter search now selects the text you typed, instead of the devices in the rack. These
+  boxes now have a caret you can move or click into place, and Ctrl+C, X and V copy, cut and paste their text.
 - **A dropped sample names its drum pad at once.** The panel kept saying "empty" for a pad that had just received
   a sample until something else rebuilt it; the pad names now follow the zones the moment they change.
 - **Undo in the middle of a band selection.** Undoing while a rubber band was open in the arrangement left clips

@@ -31,7 +31,9 @@ use crate::action::UiAction;
 use crate::canvas::{Align, Canvas};
 use crate::event::{Key, PointerButton, UiEvent};
 use crate::paint::fit_label;
+use crate::search_field::{SearchField, SearchKey};
 use crate::seq_paint::{self as sp, SeqTheme};
+use crate::text_field::FieldColors;
 use crate::theme::Theme;
 use crate::tooltip::Help;
 use vello::kurbo::{Affine, Point, Rect};
@@ -117,7 +119,7 @@ pub struct ParamSearchView {
     st: SeqTheme,
     bounds: Rect,
     scale: f64,
-    query: String,
+    query: SearchField,
     rows: Vec<ParamSearchRow>,
     total: usize,
     selected: usize,
@@ -139,7 +141,7 @@ impl ParamSearchView {
             st: SeqTheme::from_theme(&theme),
             bounds: Rect::new(0.0, 0.0, 1000.0, 600.0),
             scale: 1.0,
-            query: String::new(),
+            query: SearchField::with_limit(MAX_QUERY_CHARS),
             rows: Vec::new(),
             total: 0,
             selected: 0,
@@ -166,7 +168,7 @@ impl ParamSearchView {
 
     /// The query text.
     pub fn query(&self) -> &str {
-        &self.query
+        self.query.text()
     }
 
     /// Replaces the rows (the best matches, in order) and the number of matches they were cut
@@ -276,6 +278,17 @@ impl ParamSearchView {
         Rect::new(x, y, x + 80.0, y + BTN_H)
     }
 
+    /// The query field.
+    fn query_rect(&self) -> Rect {
+        let p = self.panel();
+        Rect::new(
+            p.x0 + PAD,
+            p.y0 + HEADER_H + 4.0,
+            p.x1 - PAD,
+            p.y0 + HEADER_H + FIELD_H - 4.0,
+        )
+    }
+
     fn hit(&self, pos: Point) -> Option<Hit> {
         if self.close_rect().contains(pos) {
             return Some(Hit::Close);
@@ -351,9 +364,13 @@ impl ParamSearchView {
                 pos,
                 button: PointerButton::Primary,
                 clicks,
-                ..
+                modifiers,
             } => {
                 self.repaint = true;
+                if self.query_rect().contains(*pos) {
+                    self.query.press(*pos, *clicks, modifiers.shift);
+                    return out;
+                }
                 match self.hit(*pos) {
                     Some(Hit::Close) => out.push(act(ParamSearchAction::Close)),
                     Some(Hit::Row(i) | Hit::Value(i)) => {
@@ -408,7 +425,7 @@ impl ParamSearchView {
         self.selected = 0;
         self.scroll = 0.0;
         self.repaint = true;
-        act(ParamSearchAction::Query(self.query.clone()))
+        act(ParamSearchAction::Query(self.query.text().to_owned()))
     }
 
     fn key(&mut self, key: &Key, m: crate::event::Modifiers) -> Vec<UiAction> {
@@ -448,6 +465,13 @@ impl ParamSearchView {
                     'l' => Some(ParamSearchAction::Lane),
                     'm' => Some(ParamSearchAction::Assign),
                     'e' => Some(ParamSearchAction::Learn),
+                    // Select All, Copy, Cut and Paste work on the query.
+                    'a' | 'c' | 'x' | 'v' => {
+                        return match self.query.key(key, m) {
+                            SearchKey::Edited => vec![self.query_changed()],
+                            _ => Vec::new(),
+                        };
+                    }
                     _ => None,
                 };
                 return make
@@ -455,18 +479,8 @@ impl ParamSearchView {
                     .into_iter()
                     .collect();
             }
-            Key::Char(c) if !m.ctrl && !m.meta && !c.is_control() => {
-                if self.query.chars().count() < MAX_QUERY_CHARS {
-                    self.query.push(*c);
-                    return vec![self.query_changed()];
-                }
-            }
-            Key::Space if self.query.chars().count() < MAX_QUERY_CHARS => {
-                self.query.push(' ');
-                return vec![self.query_changed()];
-            }
-            Key::Backspace => {
-                if self.query.pop().is_some() {
+            Key::Char(_) | Key::Space | Key::Backspace | Key::Left | Key::Right => {
+                if self.query.key(key, m) == SearchKey::Edited {
                     return vec![self.query_changed()];
                 }
             }
@@ -508,32 +522,31 @@ impl ParamSearchView {
         let close = self.close_rect();
         sp::button(c, st, close, "CLOSE", None, hovered(close));
         // The query field.
-        let field = Rect::new(
-            p.x0 + PAD,
-            p.y0 + HEADER_H + 4.0,
-            p.x1 - PAD,
-            p.y0 + HEADER_H + FIELD_H - 4.0,
-        );
+        let field = self.query_rect();
         sp::rect(c, field, st.header);
-        let shown = if self.query.is_empty() {
-            "Type a track, device, param or unit: lead cutoff, drums > fader, hz".to_owned()
+        if self.query.is_empty() {
+            sp::label(
+                c,
+                &fit_label(
+                    "Type a track, device, param or unit: lead cutoff, drums > fader, hz",
+                    field.width() - 130.0,
+                    10.5,
+                ),
+                field.x0 + 8.0,
+                field.y0 + 15.0,
+                10.5,
+                t.text_muted,
+                Align::Start,
+            );
         } else {
-            format!("{}|", self.query)
-        };
-        let colour = if self.query.is_empty() {
-            t.text_muted
-        } else {
-            t.text
-        };
-        sp::label(
-            c,
-            &fit_label(&shown, field.width() - 130.0, 10.5),
-            field.x0 + 8.0,
-            field.y0 + 15.0,
-            10.5,
-            colour,
-            Align::Start,
-        );
+            let colors = FieldColors {
+                text: t.text,
+                caret: t.text,
+                selection: t.focus.with_alpha(0.35),
+            };
+            let inner = Rect::new(field.x0, field.y0, field.x1 - 130.0, field.y1);
+            self.query.paint(c, inner, 10.5, 16.0, colors, true);
+        }
         let count = if self.total > self.rows.len() {
             format!("{} of {}", self.rows.len(), self.total)
         } else {
