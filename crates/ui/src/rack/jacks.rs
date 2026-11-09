@@ -491,7 +491,7 @@ impl RackView {
         target: Option<SocketEnd>,
         detached: Option<Cable>,
         modifiers: Modifiers,
-        doc: &RackDoc,
+        (doc, registry): (&RackDoc, &Registry),
         out: &mut Vec<UiAction>,
     ) {
         let cable = target.as_ref().map(|t| cables::orient(anchor, t));
@@ -511,6 +511,24 @@ impl RackView {
             let existing = doc.cables.iter().find(|c| {
                 c.to == cable.to && Some(*c) != detached.as_ref() && (!summing || *c == cable)
             });
+            // The model's own rules, judged as if the cables this drop gives up were gone: a
+            // drop it would refuse (a loop through the console, say) is ignored.
+            let lifted = Cable {
+                from: self.up_socket(&cable.from),
+                to: self.up_socket(&cable.to),
+            };
+            if [&lifted.from, &lifted.to]
+                .iter()
+                .all(|s| doc.device(&s.device).is_some())
+            {
+                let mut scratch = doc.clone();
+                scratch
+                    .cables
+                    .retain(|c| Some(c) != detached.as_ref() && Some(c) != existing);
+                if !scratch.cable_fits(registry, &lifted, None) {
+                    return;
+                }
+            }
             match existing {
                 Some(e) if e == cable => {}
                 Some(_) => {
@@ -526,7 +544,23 @@ impl RackView {
                 && !matches!(existing, Some(e) if e == cable)
                 && let Some(partner) = self.stereo_partner(cable)
             {
-                cmds.push(Command::Connect(partner));
+                let fits = |scratch: &RackDoc| {
+                    let lifted = Cable {
+                        from: self.up_socket(&partner.from),
+                        to: self.up_socket(&partner.to),
+                    };
+                    [&lifted.from, &lifted.to]
+                        .iter()
+                        .any(|s| doc.device(&s.device).is_none())
+                        || scratch.cable_fits(registry, &lifted, None)
+                };
+                let mut scratch = doc.clone();
+                scratch
+                    .cables
+                    .retain(|c| Some(c) != detached.as_ref() && c.to != partner.to);
+                if fits(&scratch) {
+                    cmds.push(Command::Connect(partner));
+                }
             }
         }
         match cmds.len() {
