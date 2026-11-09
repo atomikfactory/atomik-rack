@@ -21,6 +21,7 @@ use crate::plugin_panel::{PluginButton, PluginInfo};
 use crate::search_field::SearchKey;
 use crate::seq_panel::{self, PlayerInfo, SeqButton};
 use crate::sidechain::{self, ScEntry, ScSource};
+use crate::text_field::TextField;
 use crate::theme::Theme;
 use crate::tree::ViewTree;
 use crate::widget::{self, ValueDrag};
@@ -811,7 +812,7 @@ enum RenameKind {
 struct Rename {
     dev: usize,
     index: u8,
-    text: String,
+    field: TextField,
     kind: RenameKind,
 }
 
@@ -3251,7 +3252,16 @@ impl RackView {
                 self.clamp_scroll();
                 self.repaint = true;
             }
-            UiEvent::Ime(_) => {}
+            UiEvent::Ime(ime) => {
+                if let Some(r) = &mut self.rename {
+                    r.field.handle_ime(ime);
+                    let dev = r.dev;
+                    self.bump(dev);
+                } else if self.search_has_focus() && self.browser.search.ime(ime) {
+                    self.browser.query_changed(registry);
+                    self.repaint = true;
+                }
+            }
             UiEvent::ScaleChanged(s) => {
                 self.scale = s.max(0.1);
                 self.repaint = true;
@@ -4287,7 +4297,11 @@ impl RackView {
             }
             Drag::Browser {
                 row, active: true, ..
-            } => self.browser_drop(&row, doc, registry, modifiers, out),
+            } => {
+                self.browser_drop(&row, doc, registry, modifiers, out);
+                // The drop is done with the search: Ctrl+Z is the document's undo again.
+                self.browser.focused = false;
+            }
             Drag::Browser { .. } => {}
         }
         self.drag = Drag::None;
@@ -4612,13 +4626,15 @@ impl RackView {
     ) {
         self.repaint = true;
         self.context_slot = None;
+        // A name or a search being typed takes the letter chords (undo, copy, paste, ...) itself.
+        let typing_chord = self.is_text_owner() && matches!(key, Key::Char(_));
         // Chords with the primary modifier are commands (undo, duplicate, ...): the shell
         // resolves them through the keymap and offers them to `command`.
-        if modifiers.command() {
+        if modifiers.command() && !typing_chord {
             return;
         }
         if self.rename.is_some() {
-            self.rename_key_press(key, out);
+            self.rename_key_press(key, modifiers, out);
             return;
         }
         // Escape drops a device being dragged out of the browser, whatever has the focus.
@@ -4893,7 +4909,7 @@ impl RackView {
                 .rename
                 .as_ref()
                 .filter(|r| r.dev == i && r.kind == RenameKind::Device)
-                .map(|r| r.text.as_str()),
+                .map(|r| &r.field),
             caption: &d.caption,
             accent: d.accent,
             desc: d.desc.as_ref(),
@@ -4925,7 +4941,7 @@ impl RackView {
                     .rename
                     .as_ref()
                     .filter(|r| r.dev == i && r.kind == RenameKind::Pattern)
-                    .map(|r| r.text.as_str()),
+                    .map(|r| &r.field),
             },
             plugin: PluginInfo {
                 status: &d.plugin_status,
@@ -4937,7 +4953,7 @@ impl RackView {
                     .rename
                     .as_ref()
                     .filter(|r| r.dev == i && r.kind == RenameKind::Macro)
-                    .map(|r| (usize::from(r.index), r.text.as_str())),
+                    .map(|r| (usize::from(r.index), &r.field)),
                 has_channel: d.has_channel,
             },
             driven: &d.driven,

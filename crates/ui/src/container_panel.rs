@@ -230,10 +230,7 @@ pub fn split_color(i: usize) -> Color {
 }
 
 /// The label of a macro knob: the name being edited (with a caret), else the macro's name.
-pub fn macro_label(device: &RackDevice, index: usize, editing: Option<&str>) -> String {
-    if let Some(t) = editing {
-        return format!("{t}|");
-    }
+pub fn macro_label(device: &RackDevice, index: usize) -> String {
     match &device.inner {
         Some(inner) => inner.macros[index].display_name(index),
         None => format!("Macro {}", index + 1),
@@ -254,7 +251,7 @@ pub fn mapped_count(device: &RackDevice, index: usize) -> usize {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ContainerInfo<'a> {
     /// The macro name being edited: (macro index, text).
-    pub rename: Option<(usize, &'a str)>,
+    pub rename: Option<(usize, &'a crate::text_field::TextField)>,
     /// The container already feeds a console channel (TO CH is dim).
     pub has_channel: bool,
 }
@@ -310,20 +307,21 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
             c.fill_with(RoundedRect::from_rect(r.inset(1.0), 2.0), theme.lcd);
             c.stroke_with(RoundedRect::from_rect(r.inset(1.0), 2.0), 1.0, accent);
         }
-        let label = macro_label(device, i, editing);
-        c.text(
-            &TextRun::new(
-                fit_label(&label, r.width() + 2.0, theme.label_size),
-                pt(r.center().x, r.y0 + 9.0),
-                theme.label_size,
-                if editing.is_some() {
-                    theme.text
-                } else {
-                    theme.text_muted
-                },
-            )
-            .align(Align::Center),
-        );
+        if let Some(field) = editing {
+            let typed = Rect::new(r.x0 - 4.0, r.y0 - 1.0, r.x1 + 4.0, r.y0 + 13.0);
+            crate::seq_panel::paint_name_field(c, typed, field, theme.label_size, theme.text);
+        } else {
+            let label = macro_label(device, i);
+            c.text(
+                &TextRun::new(
+                    fit_label(&label, r.width() + 2.0, theme.label_size),
+                    pt(r.center().x, r.y0 + 9.0),
+                    theme.label_size,
+                    theme.text_muted,
+                )
+                .align(Align::Center),
+            );
+        }
         if n > 0 {
             let at = pt(r.center().x + 19.0, r.y0 - 36.0);
             c.fill_with(Circle::new(at, 5.5), accent.with_alpha(0.85));

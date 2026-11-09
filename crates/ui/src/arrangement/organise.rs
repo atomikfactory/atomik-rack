@@ -171,11 +171,10 @@ pub(super) enum EditTarget {
 #[derive(Debug, Clone)]
 pub(super) struct TextEdit {
     target: EditTarget,
-    text: String,
     /// The text the edit started with: committing it unchanged does nothing.
     original: String,
-    /// The editor of a comment (`text` follows it).
-    field: Option<TextField>,
+    /// The editor (several lines for a comment).
+    field: TextField,
     /// A pointer drag is selecting in `field`.
     dragging: bool,
 }
@@ -873,7 +872,7 @@ impl ArrangementView {
 
     /// The text being typed in the track list (a folder name or a comment), if any.
     pub fn org_edit_text(&self) -> Option<&str> {
-        self.og.edit.as_ref().map(|e| e.text.as_str())
+        self.og.edit.as_ref().map(|e| e.field.text())
     }
 
     /// Input-method and drag events of a comment being typed. True when the event is used up.
@@ -882,14 +881,10 @@ impl ArrangementView {
         let Some(e) = &mut self.og.edit else {
             return false;
         };
-        let Some(field) = &mut e.field else {
-            return false;
-        };
+        let field = &mut e.field;
         match event {
             UiEvent::Ime(ime) => {
-                if field.handle_ime(ime) {
-                    e.text = field.text().to_owned();
-                }
+                field.handle_ime(ime);
                 self.repaint = true;
                 true
             }
@@ -937,11 +932,6 @@ impl ArrangementView {
         }
         let text = self.song.track_comment(device).to_owned();
         self.start_edit(EditTarget::Comment(device.clone()), text);
-        if let Some(e) = &mut self.og.edit {
-            let mut field = TextField::new(&e.text, MAX_TRACK_COMMENT, true);
-            field.set_caret(usize::MAX);
-            e.field = Some(field);
-        }
         true
     }
 
@@ -960,11 +950,17 @@ impl ArrangementView {
     }
 
     fn start_edit(&mut self, target: EditTarget, text: String) {
+        let (max, multiline) = match target {
+            EditTarget::Folder(_) => (MAX_GROUP_NAME, false),
+            EditTarget::Comment(_) => (MAX_TRACK_COMMENT, true),
+            EditTarget::Lane(..) => (MAX_LANE_NAME_CHARS, false),
+            EditTarget::Track(_) => (MAX_TRACK_NAME_CHARS, false),
+            EditTarget::Clip(_) => (MAX_CLIP_NAME_CHARS, false),
+        };
         self.og.edit = Some(TextEdit {
             target,
-            original: text.clone(),
-            text,
-            field: None,
+            field: TextField::new(&text, max, multiline),
+            original: text,
             dragging: false,
         });
         self.drag = Drag::None;
@@ -986,10 +982,11 @@ impl ArrangementView {
             return;
         };
         self.repaint = true;
-        if !commit || e.text == e.original {
+        let text = e.field.text();
+        if !commit || text == e.original {
             return;
         }
-        let text = e.text.trim();
+        let text = text.trim();
         match e.target {
             EditTarget::Folder(group) => {
                 let name: String = text.chars().take(MAX_GROUP_NAME).collect();
@@ -1054,59 +1051,22 @@ impl ArrangementView {
         modifiers: Modifiers,
         out: &mut Vec<UiAction>,
     ) {
-        if self.og.edit.as_ref().is_some_and(|e| e.field.is_some()) {
-            match key {
-                Key::Escape => self.finish_edit(false, out),
-                Key::Enter if !modifiers.shift => self.finish_edit(true, out),
-                _ => {
-                    if let Some(e) = &mut self.og.edit
-                        && let Some(field) = &mut e.field
-                    {
-                        let used = match key {
-                            Key::Enter => field.insert(
-                                "
-",
-                            ),
-                            _ => field.handle_key(key, modifiers).handled(),
-                        };
-                        if used {
-                            e.text = field.text().to_owned();
-                        }
-                    }
-                }
-            }
-            self.repaint = true;
-            return;
-        }
+        let multiline = self
+            .og
+            .edit
+            .as_ref()
+            .is_some_and(|e| matches!(e.target, EditTarget::Comment(_)));
         match key {
-            Key::Enter => self.finish_edit(true, out),
             Key::Escape => self.finish_edit(false, out),
-            _ if modifiers.command() => {}
-            Key::Backspace => {
+            // A comment takes Shift+Enter as a line break; Enter ends every edit.
+            Key::Enter if !(multiline && modifiers.shift) => self.finish_edit(true, out),
+            _ => {
                 if let Some(e) = &mut self.og.edit {
-                    e.text.pop();
+                    e.field.handle_key(key, modifiers);
                 }
             }
-            Key::Space => self.edit_push(' '),
-            Key::Char(c) if !c.is_control() => self.edit_push(*c),
-            _ => {}
         }
         self.repaint = true;
-    }
-
-    fn edit_push(&mut self, c: char) {
-        if let Some(e) = &mut self.og.edit {
-            let max = match e.target {
-                EditTarget::Folder(_) => MAX_GROUP_NAME,
-                EditTarget::Comment(_) => MAX_TRACK_COMMENT,
-                EditTarget::Lane(..) => MAX_LANE_NAME_CHARS,
-                EditTarget::Track(_) => MAX_TRACK_NAME_CHARS,
-                EditTarget::Clip(_) => MAX_CLIP_NAME_CHARS,
-            };
-            if e.text.chars().count() < max {
-                e.text.push(c);
-            }
-        }
     }
 
     /// A press while a text is typed: inside the field it keeps typing, anywhere else it
@@ -1122,12 +1082,11 @@ impl ArrangementView {
             return false;
         }
         if self.edit_rect().is_some_and(|r| r.contains(pos)) {
-            if let Some(e) = &mut self.og.edit
-                && let Some(field) = &mut e.field
-            {
-                field.press(pos, clicks, shift);
+            if let Some(e) = &mut self.og.edit {
+                e.field.press(pos, clicks, shift);
                 e.dragging = true;
             }
+            self.repaint = true;
             return true;
         }
         self.finish_edit(true, out);
@@ -1594,18 +1553,14 @@ impl ArrangementView {
         self.paint_lane_drop(c);
         self.paint_header_band(c);
         if let (Some(e), Some(r)) = (&self.og.edit, self.edit_rect()) {
-            if let Some(field) = &e.field {
+            if matches!(e.target, EditTarget::Comment(_)) {
                 let t = &self.st.base;
                 c.fill_with(RoundedRect::from_rect(r, 2.0), t.lcd);
                 c.stroke_with(RoundedRect::from_rect(r, 2.0), 1.2, t.focus);
-                let colors = FieldColors {
-                    text: t.text,
-                    caret: t.text,
-                    selection: mix(t.lcd, t.focus, 0.5),
-                };
-                field.paint(c, r, 10.0, COMMENT_LINE_H, colors, true);
+                e.field
+                    .paint(c, r, 10.0, COMMENT_LINE_H, FieldColors::of(t), true);
             } else {
-                super::markers::name_field(c, &self.st, r, &e.text);
+                super::markers::name_field(c, &self.st, r, &e.field);
             }
         } else if let Some(text) = self.comment_tooltip()
             && let Some(Hit::Comment(track)) = self.hover

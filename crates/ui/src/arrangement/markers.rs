@@ -20,6 +20,7 @@ use crate::marker_edit::{self as edit, MarkSel, RangePart};
 use crate::paint::{estimate_width, fit_label};
 use crate::seq_edit;
 use crate::seq_paint as sp;
+use crate::text_field::{FieldColors, TextField};
 use crate::theme::mix;
 use crate::timeline::{Quant, format_bbt};
 use crate::viewport::Tool;
@@ -71,9 +72,11 @@ struct ListRow {
 #[derive(Debug, Clone)]
 pub(super) struct Rename {
     target: MarkSel,
-    text: String,
+    field: TextField,
     /// The field sits in the list, not in the strip.
     in_list: bool,
+    /// A pointer drag is selecting in `field`.
+    dragging: bool,
 }
 
 /// The gesture of a marker or range drag (the view's `Drag` only says that one is going on).
@@ -227,7 +230,7 @@ impl ArrangementView {
 
     /// The name being typed, if an edit is open.
     pub fn marker_rename_text(&self) -> Option<&str> {
-        self.mk.rename.as_ref().map(|r| r.text.as_str())
+        self.mk.rename.as_ref().map(|r| r.field.text())
     }
 
     /// Starts typing the name of a marker or range in the strip. False when it does not exist.
@@ -585,8 +588,9 @@ impl ArrangementView {
         };
         self.mk.rename = Some(Rename {
             target: sel,
-            text: name,
+            field: TextField::new(&name, MAX_MARKER_NAME, false),
             in_list,
+            dragging: false,
         });
         self.mk.drag = None;
         self.drag = Drag::None;
@@ -602,15 +606,16 @@ impl ArrangementView {
             return;
         };
         self.repaint = true;
-        if !commit || self.mark_name(r.target) == edit::clean_name(&r.text).as_deref() {
+        let text = r.field.text();
+        if !commit || self.mark_name(r.target) == edit::clean_name(text).as_deref() {
             return;
         }
         let action = match r.target {
             MarkSel::Marker(id) => {
-                edit::rename_marker(&self.song.markers, id, &r.text).map(|l| self.set_markers(l))
+                edit::rename_marker(&self.song.markers, id, text).map(|l| self.set_markers(l))
             }
             MarkSel::Range(id) => {
-                edit::rename_range(&self.song.ranges, id, &r.text).map(|l| self.set_ranges(l))
+                edit::rename_range(&self.song.ranges, id, text).map(|l| self.set_ranges(l))
             }
         };
         out.extend(action);
@@ -620,25 +625,34 @@ impl ArrangementView {
         match key {
             Key::Enter => self.finish_rename(true, out),
             Key::Escape => self.finish_rename(false, out),
-            _ if modifiers.command() => {}
-            Key::Backspace => {
+            _ => {
                 if let Some(r) = &mut self.mk.rename {
-                    r.text.pop();
+                    r.field.handle_key(key, modifiers);
                 }
             }
-            Key::Space => self.rename_push(' '),
-            Key::Char(c) if !c.is_control() => self.rename_push(*c),
-            _ => {}
         }
         self.repaint = true;
     }
 
-    fn rename_push(&mut self, c: char) {
-        if let Some(r) = &mut self.mk.rename
-            && r.text.chars().count() < MAX_MARKER_NAME
-        {
-            r.text.push(c);
+    /// Input-method and drag events of a name being typed. True when the event is used up.
+    pub(super) fn rename_event(&mut self, event: &crate::event::UiEvent) -> bool {
+        use crate::event::UiEvent;
+        let Some(r) = &mut self.mk.rename else {
+            return false;
+        };
+        match event {
+            UiEvent::Ime(ime) => {
+                r.field.handle_ime(ime);
+            }
+            UiEvent::PointerMove { pos, .. } if r.dragging => r.field.drag(*pos),
+            UiEvent::PointerUp { .. } if r.dragging => {
+                r.dragging = false;
+                return true;
+            }
+            _ => return false,
         }
+        self.repaint = true;
+        true
     }
 
     /// The rectangle of the name field being typed in.
@@ -661,11 +675,22 @@ impl ArrangementView {
 
     /// A press while a name is typed: inside the field it keeps typing, anywhere else it
     /// commits the name. True when the press was inside the field (and is used up).
-    pub(super) fn rename_press(&mut self, pos: Point, out: &mut Vec<UiAction>) -> bool {
+    pub(super) fn rename_press(
+        &mut self,
+        pos: Point,
+        clicks: u8,
+        shift: bool,
+        out: &mut Vec<UiAction>,
+    ) -> bool {
         if self.mk.rename.is_none() {
             return false;
         }
         if self.rename_rect().is_some_and(|r| r.contains(pos)) {
+            if let Some(r) = &mut self.mk.rename {
+                r.field.press(pos, clicks, shift);
+                r.dragging = true;
+            }
+            self.repaint = true;
             return true;
         }
         self.finish_rename(true, out);
@@ -1339,7 +1364,7 @@ impl ArrangementView {
         if let Some(rect) = self.rename_rect().filter(|_| renaming.is_some())
             && let Some(rn) = &self.mk.rename
         {
-            name_field(c, st, rect, &rn.text);
+            name_field(c, st, rect, &rn.field);
         }
         let x = self.axis.tick_to_x(self.playhead);
         let color = if self.recording {
@@ -1504,23 +1529,19 @@ impl ArrangementView {
         if let Some(rect) = self.rename_rect().filter(|_| renaming.is_some())
             && let Some(rn) = &self.mk.rename
         {
-            name_field(c, st, rect, &rn.text);
+            name_field(c, st, rect, &rn.field);
         }
         c.pop_clip();
         c.pop_clip();
     }
 }
 
-/// The text field drawn over a label while its name is typed: the end of the text that fits,
-/// and a caret.
-pub(super) fn name_field(c: &mut dyn Canvas, st: &sp::SeqTheme, r: Rect, text: &str) {
+/// The text field drawn over a label while its name is typed: the text, the selection and the
+/// caret of the shared field.
+pub(super) fn name_field(c: &mut dyn Canvas, st: &sp::SeqTheme, r: Rect, field: &TextField) {
     let t = &st.base;
     c.fill_with(RoundedRect::from_rect(r, 2.0), t.lcd);
     c.stroke_with(RoundedRect::from_rect(r, 2.0), 1.2, t.focus);
-    let room = r.width() - 10.0;
-    let shown = crate::paint::tail_fit(c, text, room, 9.5, 600);
-    let baseline = r.center().y + 3.5;
-    c.text(&TextRun::new(shown, pt(r.x0 + 5.0, baseline), 9.5, t.text).weight(600));
-    let cx = r.x0 + 5.0 + crate::paint::measure(c, shown, 9.5, 600);
-    sp::line(c, cx + 1.0, r.y0 + 3.0, cx + 1.0, r.y1 - 3.0, t.focus);
+    let line_h = (r.height() - 6.0).max(8.0);
+    field.paint(c, r, 9.5, line_h, FieldColors::of(t), true);
 }

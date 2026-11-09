@@ -12,6 +12,7 @@ use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::step_drag::{PX_PER_STEP, StepDrag, step_index, wheel_steps};
+use crate::text_field::TextField;
 use crate::theme::{Theme, mix};
 use crate::timeline::{Bars, format_bbt, format_time, tick_to_seconds};
 use crate::tooltip::Help;
@@ -205,11 +206,11 @@ pub struct TransportBar {
     click_gain: f32,
     /// The second cluster: wind buttons, locators, click level, Q Rec.
     cl: ClusterState,
-    editing: Option<(String, bool)>,
+    editing: Option<TextField>,
     /// The tempo event the typed value goes to (fixed when the entry starts).
     edit_event: usize,
     /// The signature being typed (`3/4`) and whether the text is still the untouched original.
-    meter_editing: Option<(String, bool)>,
+    meter_editing: Option<TextField>,
     /// The meter change the typed signature goes to (fixed when the entry starts).
     meter_edit_event: usize,
     hover: Option<TransportButton>,
@@ -314,12 +315,12 @@ impl TransportBar {
 
     /// The signature text being typed.
     pub fn meter_text(&self) -> Option<&str> {
-        self.meter_editing.as_ref().map(|(s, _)| s.as_str())
+        self.meter_editing.as_ref().map(|f| f.text())
     }
 
     /// The tempo text being typed.
     pub fn tempo_text(&self) -> Option<&str> {
-        self.editing.as_ref().map(|(s, _)| s.as_str())
+        self.editing.as_ref().map(|f| f.text())
     }
 
     /// True when something changed since the last [`Self::paint`].
@@ -436,7 +437,11 @@ impl TransportBar {
         self.edit_event = event
             .filter(|i| *i < self.tempo.len())
             .unwrap_or_else(|| self.event_at_playhead());
-        self.editing = Some((format_bpm(self.event_bpm(self.edit_event)), true));
+        self.editing = Some(TextField::entry(
+            &format_bpm(self.event_bpm(self.edit_event)),
+            TEMPO_TEXT_MAX,
+            |c| c.is_ascii_digit() || c == '.',
+        ));
         self.repaint = true;
     }
 
@@ -459,7 +464,11 @@ impl TransportBar {
             .meter
             .get(self.meter_edit_event)
             .map_or((4, 4), |e| (e.num, e.den));
-        self.meter_editing = Some((format!("{num}/{den}"), true));
+        self.meter_editing = Some(TextField::entry(
+            &format!("{num}/{den}"),
+            METER_TEXT_MAX,
+            |c| c.is_ascii_digit() || c == '/',
+        ));
         self.repaint = true;
     }
 
@@ -657,15 +666,15 @@ impl TransportBar {
     }
 
     fn commit_meter(&mut self, out: &mut Vec<UiAction>) {
-        if let Some((text, _)) = self.meter_editing.take() {
-            out.extend(self.meter_cmd(self.meter_edit_event, &text));
+        if let Some(field) = self.meter_editing.take() {
+            out.extend(self.meter_cmd(self.meter_edit_event, field.text()));
         }
         self.repaint = true;
     }
 
     fn commit(&mut self, out: &mut Vec<UiAction>) {
-        if let Some((text, _)) = self.editing.take()
-            && let Ok(v) = text.trim().parse::<f64>()
+        if let Some(field) = self.editing.take()
+            && let Ok(v) = field.text().trim().parse::<f64>()
         {
             out.extend(self.tempo_cmd(self.edit_event, v));
         }
@@ -854,53 +863,31 @@ impl TransportBar {
 
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         if self.cl.edit.is_some() {
-            self.readout_key(key, out);
+            self.readout_key(key, modifiers, out);
             return;
         }
         if self.insp.is_editing() {
-            self.inspector_key(key, out);
+            self.inspector_key(key, modifiers, out);
             return;
         }
-        if let Some((text, fresh)) = &mut self.meter_editing {
+        if let Some(field) = &mut self.meter_editing {
             match key {
-                Key::Char(c) if c.is_ascii_digit() || *c == '/' => {
-                    if *fresh {
-                        text.clear();
-                        *fresh = false;
-                    }
-                    if text.len() < METER_TEXT_MAX {
-                        text.push(*c);
-                    }
-                }
-                Key::Backspace => {
-                    *fresh = false;
-                    text.pop();
-                }
                 Key::Enter => self.commit_meter(out),
                 Key::Escape => self.meter_editing = None,
-                _ => {}
+                _ => {
+                    field.handle_key(key, modifiers);
+                }
             }
             self.repaint = true;
             return;
         }
-        if let Some((text, fresh)) = &mut self.editing {
+        if let Some(field) = &mut self.editing {
             match key {
-                Key::Char(c) if c.is_ascii_digit() || *c == '.' => {
-                    if *fresh {
-                        text.clear();
-                        *fresh = false;
-                    }
-                    if text.len() < TEMPO_TEXT_MAX {
-                        text.push(*c);
-                    }
-                }
-                Key::Backspace => {
-                    *fresh = false;
-                    text.pop();
-                }
                 Key::Enter => self.commit(out),
                 Key::Escape => self.editing = None,
-                _ => {}
+                _ => {
+                    field.handle_key(key, modifiers);
+                }
             }
             self.repaint = true;
             return;
@@ -971,17 +958,19 @@ impl TransportBar {
         // While the count-in runs the readout shows its beat; the position holds.
         let bbt = if counting {
             self.state.count_in.to_string()
-        } else if let Some(s) = self.readout_typing(Readout::Pos) {
-            format!("{s}_")
         } else {
             bbt
         };
-        c.text(
-            &TextRun::new(bbt, pt(pos_r.x1 - 8.0, pos_r.y1 - 7.0), 13.0, lcd_text)
-                .weight(600)
-                .align(Align::End)
-                .spacing(0.5),
-        );
+        if let Some(field) = self.readout_typing(Readout::Pos).filter(|_| !counting) {
+            field.paint_lcd(c, pos_r, 13.0, t);
+        } else {
+            c.text(
+                &TextRun::new(bbt, pt(pos_r.x1 - 8.0, pos_r.y1 - 7.0), 13.0, lcd_text)
+                    .weight(600)
+                    .align(Align::End)
+                    .spacing(0.5),
+            );
+        }
         sp::lcd(c, st, time_r, None);
         sp::label(
             c,
@@ -1004,15 +993,15 @@ impl TransportBar {
                 Align::Center,
             );
         }
-        let time = match self.readout_typing(Readout::Time) {
-            Some(s) => format!("{s}_"),
-            None => time,
-        };
-        c.text(
-            &TextRun::new(time, pt(time_r.x1 - 8.0, time_r.y1 - 7.0), 12.0, lcd_text)
-                .weight(600)
-                .align(Align::End),
-        );
+        if let Some(field) = self.readout_typing(Readout::Time) {
+            field.paint_lcd(c, time_r, 12.0, t);
+        } else {
+            c.text(
+                &TextRun::new(time, pt(time_r.x1 - 8.0, time_r.y1 - 7.0), 12.0, lcd_text)
+                    .weight(600)
+                    .align(Align::End),
+            );
+        }
         let editing = self.editing.as_ref();
         sp::lcd(c, st, tempo_r, editing.map(|_| t.focus));
         sp::label(
@@ -1024,36 +1013,36 @@ impl TransportBar {
             t.text_muted,
             Align::Start,
         );
-        let tempo_text = match editing {
-            Some((s, _)) => format!("{s}_"),
-            None => format!("{:.2}", self.bpm()),
-        };
-        c.text(
-            &TextRun::new(
-                tempo_text,
-                pt(tempo_r.x1 - LCD_PAD, tempo_r.y1 - 7.0),
-                TEMPO_SIZE,
-                lcd_text,
-            )
-            .weight(600)
-            .align(Align::End),
-        );
+        if let Some(field) = editing {
+            field.paint_lcd(c, tempo_r, TEMPO_SIZE, t);
+        } else {
+            c.text(
+                &TextRun::new(
+                    format!("{:.2}", self.bpm()),
+                    pt(tempo_r.x1 - LCD_PAD, tempo_r.y1 - 7.0),
+                    TEMPO_SIZE,
+                    lcd_text,
+                )
+                .weight(600)
+                .align(Align::End),
+            );
+        }
         let meter_edit = self.meter_editing.as_ref();
         sp::lcd(c, st, meter_r, meter_edit.map(|_| t.focus));
-        let meter_text = match meter_edit {
-            Some((s, _)) => format!("{s}_"),
-            None => self.bars.meter_at(self.state.position).label(),
-        };
-        c.text(
-            &TextRun::new(
-                meter_text,
-                pt(meter_r.center().x, meter_r.y1 - 9.0),
-                12.0,
-                lcd_text,
-            )
-            .weight(600)
-            .align(Align::Center),
-        );
+        if let Some(field) = meter_edit {
+            field.paint_lcd(c, meter_r, 12.0, t);
+        } else {
+            c.text(
+                &TextRun::new(
+                    self.bars.meter_at(self.state.position).label(),
+                    pt(meter_r.center().x, meter_r.y1 - 9.0),
+                    12.0,
+                    lcd_text,
+                )
+                .weight(600)
+                .align(Align::Center),
+            );
+        }
         self.paint_cluster(c);
         self.paint_inspector(c, doc);
         self.paint_rec_input(c);

@@ -1206,3 +1206,20 @@ fn the_new_controls_have_tooltips() {
     let t = v.tab_rect(ContainerTab::MoreMacros).center();
     assert!(v.help_at(t).unwrap().text.contains("9 to 16"));
 }
+
+#[test]
+fn ctrl_a_then_typing_replaces_the_macro_name() {
+    let d = layered();
+    let mut v = macros_view(&d);
+    let p = v.macro_name_rect(0).center();
+    let _ = click_with(&mut v, d.doc(), p, 2, Modifiers::NONE);
+    assert_eq!(v.renaming(), Some("Cutoff"));
+    let ctrl_a = UiEvent::Key {
+        key: Key::Char('a'),
+        modifiers: Modifiers::CTRL,
+        pressed: true,
+    };
+    let _ = feed(&mut v, d.doc(), ctrl_a);
+    let _ = press(&mut v, d.doc(), Key::Char('Z'));
+    assert_eq!(v.renaming(), Some("Z"));
+}

@@ -32,7 +32,9 @@ use atomik_audio_io::HostInfo;
 use atomik_ui::keymap::{KeymapEditor, UserKeymap};
 use atomik_ui::kurbo::{Circle, Point, Rect, RoundedRect, Size, Vec2};
 use atomik_ui::peniko::Color;
-use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, UiEvent};
+use atomik_ui::{
+    Align, Canvas, CanvasExt, FieldColors, Key, PointerButton, TextField, TextRun, Theme, UiEvent,
+};
 use std::path::PathBuf;
 
 /// The audio hosts, devices and MIDI ports the dialog offers.
@@ -307,7 +309,7 @@ pub struct SettingsDialog {
     tab: Tab,
     prefs: Option<Prefs>,
     /// The digits typed into the buffer field, while it has the focus.
-    buffer_edit: Option<String>,
+    buffer_edit: Option<TextField>,
     /// The surface the Surfaces tab edits (an index into the draft's list).
     surface_sel: usize,
 }
@@ -347,10 +349,16 @@ impl SettingsDialog {
         &mut self.draft.surfaces[self.surface_sel]
     }
 
+    /// The size being typed in the buffer field.
+    #[cfg(test)]
+    fn buffer_text(&self) -> Option<&str> {
+        self.buffer_edit.as_ref().map(|f| f.text())
+    }
+
     /// Ends the typing in the buffer field: a size typed so far becomes the draft's (clamped).
     fn commit_buffer_edit(&mut self) {
-        if let Some(text) = self.buffer_edit.take()
-            && let Ok(frames) = text.parse::<u32>()
+        if let Some(field) = self.buffer_edit.take()
+            && let Ok(frames) = field.text().parse::<u32>()
         {
             self.draft.buffer_frames = frames.clamp(MIN_BUFFER, MAX_BUFFER);
         }
@@ -358,21 +366,15 @@ impl SettingsDialog {
 
     /// Keys while the buffer field has the focus; every press is consumed.
     fn buffer_key(&mut self, key: &Key, modifiers: atomik_ui::Modifiers) {
-        let Some(text) = &mut self.buffer_edit else {
+        let Some(field) = &mut self.buffer_edit else {
             return;
         };
         match key {
-            Key::Char(c) if c.is_ascii_digit() && !modifiers.ctrl && !modifiers.meta => {
-                if text.len() < 4 {
-                    text.push(*c);
-                }
-            }
-            Key::Backspace => {
-                text.pop();
-            }
             Key::Enter => self.commit_buffer_edit(),
             Key::Escape => self.buffer_edit = None,
-            _ => {}
+            _ => {
+                field.handle_key(key, modifiers);
+            }
         }
     }
 
@@ -737,7 +739,7 @@ impl SettingsDialog {
                     .map(|b| (b.to_string(), Choice::Buffer(*b as u32)))
                     .chain(std::iter::once((
                         match &self.buffer_edit {
-                            Some(text) => format!("size {text}|"),
+                            Some(_) => "size".to_string(),
                             None => "Type a size".to_string(),
                         },
                         Choice::BufferField,
@@ -1215,7 +1217,10 @@ impl SettingsDialog {
                 self.draft.buffer_frames = b;
             }
             Choice::BufferField if self.buffer_edit.is_some() => self.commit_buffer_edit(),
-            Choice::BufferField => self.buffer_edit = Some(String::new()),
+            Choice::BufferField => {
+                self.buffer_edit =
+                    Some(TextField::new("", 4, false).with_filter(|c| c.is_ascii_digit()));
+            }
             Choice::WorkersAuto => self.draft.workers_auto = true,
             Choice::MidiInput(p) => {
                 let on = self.draft.enabled_midi_inputs().any(|i| i.name == p);
@@ -1454,7 +1459,8 @@ impl SettingsDialog {
             UiEvent::PointerDown {
                 pos,
                 button: PointerButton::Primary,
-                ..
+                modifiers,
+                clicks,
             } => {
                 let l = self.layout(view);
                 let hit = l
@@ -1463,6 +1469,13 @@ impl SettingsDialog {
                     .find(|(r, ..)| r.contains(*pos))
                     .map(|(_, _, choice)| choice)
                     .filter(|_| l.content.contains(*pos));
+                // A click on the field being typed in places the caret.
+                if hit == Some(Choice::BufferField)
+                    && let Some(field) = &mut self.buffer_edit
+                {
+                    field.press(*pos, *clicks, modifiers.shift);
+                    return DialogOutcome::Open;
+                }
                 // A click anywhere but on the field ends the typing and keeps the size.
                 if hit != Some(Choice::BufferField) {
                     self.commit_buffer_edit();
@@ -1622,7 +1635,18 @@ impl SettingsDialog {
             } else if hovered {
                 canvas.fill_with(shape, theme.browser_row);
             }
-            if chip {
+            if chip
+                && *choice == Choice::BufferField
+                && let Some(field) = &self.buffer_edit
+            {
+                canvas.stroke_with(shape, 1.0, theme.focus);
+                let colors = FieldColors {
+                    text: theme.text,
+                    caret: theme.text,
+                    selection: theme.focus.with_alpha(0.35),
+                };
+                field.paint(canvas, *r, 13.0, 22.0, colors, true);
+            } else if chip {
                 canvas.stroke_with(shape, 1.0, theme.section_line);
                 canvas.text(
                     &TextRun::new(

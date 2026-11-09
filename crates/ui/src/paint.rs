@@ -340,7 +340,7 @@ pub struct PanelInfo<'a> {
     /// Display name.
     pub name: &'a str,
     /// The name being typed in place on the plate (a field with a caret replaces the name).
-    pub editing_name: Option<&'a str>,
+    pub editing_name: Option<&'a crate::text_field::TextField>,
     /// Small caption under the name (descriptor name, upper case).
     pub caption: &'a str,
     /// Device accent.
@@ -478,27 +478,18 @@ fn folded_caption_x(height: f64, has_bypass: bool, has_preview: bool) -> f64 {
     }
 }
 
-/// The field of a name being typed: the tail of `text` that fits `rect`, then the caret.
+/// The field of a name being typed: the shared field (text, selection and caret) in `rect`.
 fn name_field<C: Canvas + ?Sized>(
     c: &mut C,
     theme: &Theme,
     rect: Rect,
-    text: &str,
+    field: &crate::text_field::TextField,
     accent: Color,
     size: f32,
 ) {
     c.fill_with(RoundedRect::from_rect(rect, 3.0), theme.lcd);
     c.stroke_with(RoundedRect::from_rect(rect.inset(-0.5), 3.5), 1.0, accent);
-    let room = ((rect.width() - 8.0) / (f64::from(size) * 0.56)).floor() as usize;
-    let shown = format!("{text}|");
-    let skip = shown.chars().count().saturating_sub(room.max(2));
-    let tail: String = shown.chars().skip(skip).collect();
-    c.text(&TextRun::new(
-        tail,
-        pt(rect.x0 + 4.0, rect.center().y + f64::from(size) * 0.36),
-        size,
-        accent,
-    ));
+    crate::seq_panel::paint_name_field(c, rect, field, size, accent);
 }
 
 /// The BYPASS switch of an effect's name strip, in panel coordinates: under the name and the
@@ -788,10 +779,10 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
     if info.folded {
         let x = fold.x + 14.0;
         let caption_x = folded_caption_x(info.height, has_bypass, has_preview);
-        if let Some(text) = info.editing_name {
+        if let Some(edit) = info.editing_name {
             let field = name_rect_for(info.height, true, has_bypass, has_preview);
             let field = Rect::new(field.x0, field.y0 + 4.0, field.x1, field.y1 - 4.0);
-            name_field(c, theme, field, text, info.accent, theme.name_size - 2.0);
+            name_field(c, theme, field, edit, info.accent, theme.name_size - 2.0);
         } else {
             c.text(
                 &TextRun::new(
@@ -826,10 +817,10 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
         }
         return;
     }
-    if let Some(text) = info.editing_name {
+    if let Some(edit) = info.editing_name {
         let field = name_rect_for(info.height, false, has_bypass, has_preview);
         let field = Rect::new(field.x0, field.y0, field.x1, field.y0 + 18.0);
-        name_field(c, theme, field, text, info.accent, 9.0);
+        name_field(c, theme, field, edit, info.accent, 9.0);
         plate_foot(c, theme, info, r);
         return;
     }

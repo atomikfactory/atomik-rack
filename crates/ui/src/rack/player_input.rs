@@ -200,7 +200,7 @@ impl RackView {
     /// The pattern name being edited in place on the panel of `key`.
     pub fn renaming(&self, key: &DeviceKey) -> Option<&str> {
         let r = self.rename.as_ref()?;
-        (self.devices.get(r.dev)?.key == *key).then_some(r.text.as_str())
+        (self.devices.get(r.dev)?.key == *key).then_some(r.field.text())
     }
 
     /// The held-key count and the next notes an arpeggiator panel shows (from the published
@@ -343,7 +343,7 @@ impl RackView {
                     self.rename = Some(Rename {
                         dev: i,
                         index: n as u8,
-                        text: p.name,
+                        field: seq_panel::name_field(&p.name),
                         kind: RenameKind::Pattern,
                     });
                     self.bump(i);
@@ -410,23 +410,28 @@ impl RackView {
 
     // ------------------------------------------------------------------ rename
 
-    pub(super) fn rename_key_press(&mut self, key: &Key, out: &mut Vec<UiAction>) {
+    pub(super) fn rename_key_press(
+        &mut self,
+        key: &Key,
+        modifiers: Modifiers,
+        out: &mut Vec<UiAction>,
+    ) {
         let Some(mut r) = self.rename.take() else {
             return;
         };
         if r.kind == RenameKind::Macro {
-            self.macro_rename_key(r, key);
+            self.macro_rename_key(r, key, modifiers);
             return;
         }
         if r.kind == RenameKind::Device {
-            self.device_rename_key(r, key, out);
+            self.device_rename_key(r, key, modifiers, out);
             return;
         }
         if self.devices[r.dev].spec.drum_gen.is_some() {
-            self.drum_rename_key(r, key, out);
+            self.drum_rename_key(r, key, modifiers, out);
             return;
         }
-        match seq_panel::rename_key(&mut r.text, key) {
+        match seq_panel::rename_key(&mut r.field, key, modifiers) {
             RenameKey::Editing => {
                 let dev = r.dev;
                 self.rename = Some(r);
@@ -435,7 +440,7 @@ impl RackView {
             RenameKey::Commit => {
                 self.bump(r.dev);
                 let target = self.pattern_of(r.dev, usize::from(r.index));
-                if let Some(p) = target.and_then(|t| seq_panel::renamed(&t, &r.text)) {
+                if let Some(p) = target.and_then(|t| seq_panel::renamed(&t, r.field.text())) {
                     let device = self.devices[r.dev].key.clone();
                     out.push(set_pattern(&device, usize::from(r.index), p));
                 }

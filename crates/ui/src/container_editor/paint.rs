@@ -436,23 +436,27 @@ fn macros(v: &ContainerEditorView, c: &mut dyn Canvas) {
             v.hover == Hit::MacroRow(i),
         );
         let nr = v.macro_name_rect(i);
-        let editing = selected.then_some(v.rename.as_deref()).flatten();
+        let editing = selected.then_some(v.rename.as_ref()).flatten();
         sp::lcd(c, st, nr, editing.map(|_| v.accent));
         let stored = &v.inner.macros[i].name;
-        let (text, col) = match editing {
-            Some(e) => (format!("{e}|"), t.text),
-            None if stored.is_empty() => (format!("Macro {}", i + 1), t.text_muted),
-            None => (stored.clone(), t.text),
-        };
-        sp::label(
-            c,
-            &fit_label(&text, nr.width() - 12.0, 10.0),
-            nr.x0 + 7.0,
-            nr.y0 + 13.5,
-            10.0,
-            col,
-            Align::Start,
-        );
+        if let Some(field) = editing {
+            crate::seq_panel::paint_name_field(c, nr, field, 10.0, t.text);
+        } else {
+            let (text, col) = if stored.is_empty() {
+                (format!("Macro {}", i + 1), t.text_muted)
+            } else {
+                (stored.clone(), t.text)
+            };
+            sp::label(
+                c,
+                &fit_label(&text, nr.width() - 12.0, 10.0),
+                nr.x0 + 7.0,
+                nr.y0 + 13.5,
+                10.0,
+                col,
+                Align::Start,
+            );
+        }
         // The value knob.
         let kr = v.macro_knob_rect(i);
         let value =

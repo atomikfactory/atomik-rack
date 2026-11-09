@@ -263,7 +263,7 @@ fn the_signature_being_typed_is_painted() {
     );
     let mut dl = DisplayList::new();
     v.paint(&mut dl, &doc, &reg);
-    assert!(dl.texts().contains(&"6_"), "{:?}", dl.texts());
+    assert!(dl.texts().contains(&"6"), "{:?}", dl.texts());
 }
 
 #[test]
@@ -607,4 +607,30 @@ fn the_override_lamp_shows_only_while_a_lane_is_held_and_a_click_clears_it() {
     let a = run(|e| v.handle(e, &doc, &reg), &[down(p), up(p)]);
     assert_eq!(a, vec![UiAction::Transport(TransportAction::ClearOverride)]);
     assert!(v.help_at(p).is_some());
+}
+
+#[test]
+fn ctrl_a_then_typing_replaces_the_tempo_text_and_ctrl_z_undoes_it() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = transport_bar(&doc, &reg);
+    let t = v.tempo_center();
+    run(
+        |e| v.handle(e, &doc, &reg),
+        &[down_mods(t, Modifiers::NONE, 2), up(t)],
+    );
+    assert_eq!(v.tempo_text(), Some("120"));
+    for c in "13".chars() {
+        v.handle(&press(Key::Char(c), Modifiers::NONE), &doc, &reg);
+    }
+    v.handle(&press(Key::Char('a'), Modifiers::CTRL), &doc, &reg);
+    for c in "95".chars() {
+        v.handle(&press(Key::Char(c), Modifiers::NONE), &doc, &reg);
+    }
+    assert_eq!(v.tempo_text(), Some("95"));
+    // Letters are refused by the field's filter.
+    v.handle(&press(Key::Char('q'), Modifiers::NONE), &doc, &reg);
+    assert_eq!(v.tempo_text(), Some("95"));
+    v.handle(&press(Key::Char('z'), Modifiers::CTRL), &doc, &reg);
+    assert_eq!(v.tempo_text(), Some("13"));
+    assert!(v.is_editing_tempo());
 }

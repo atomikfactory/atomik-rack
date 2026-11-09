@@ -227,3 +227,21 @@ fn the_name_has_a_tooltip_and_the_editor_matches_golden() {
         &paint_rack(&mut v, &doc).to_json(),
     );
 }
+
+#[test]
+fn ctrl_a_then_typing_replaces_the_device_name_and_ctrl_z_undoes_inside_it() {
+    let doc = reference_doc();
+    let mut v = plain_view(&doc, &registry());
+    let _ = double_click_name(&mut v, &doc, "delay");
+    let chord = |k: char| UiEvent::Key {
+        key: Key::Char(k),
+        modifiers: Modifiers::CTRL,
+        pressed: true,
+    };
+    let _ = v.handle(&chord('a'), &doc, &registry());
+    type_text(&mut v, &doc, "Echo");
+    assert_eq!(v.renaming_device(&key("delay")), Some("Echo"));
+    let _ = v.handle(&chord('z'), &doc, &registry());
+    assert_eq!(v.renaming_device(&key("delay")), Some("Stereo Delay"));
+    assert!(v.is_text_owner());
+}

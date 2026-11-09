@@ -13,6 +13,7 @@ use crate::console::{FADER_UNITY_POS, fader, lcd_text, small_button, strip_backg
 use crate::console_layout::{BUTTON_H, LCD_H, PAD, STRIP_W};
 use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
+use crate::text_field::{FieldColors, TextField};
 use crate::theme::mix;
 use atomik_core::{ParamDescriptor, ParamId, Taper, Unit, VCA_MAX_DB, VCA_MIN_DB};
 use atomik_model::VcaGroup;
@@ -201,7 +202,7 @@ pub fn paint_strip(
     top: f64,
     height: f64,
     v: &VcaView,
-    rename: Option<&str>,
+    rename: Option<&TextField>,
     drop_target: bool,
     selected_members: bool,
 ) {
@@ -237,7 +238,7 @@ pub fn paint_strip(
         RoundedRect::new(plate.x0, plate.y0, plate.x1, plate.y0 + 4.0, 2.0),
         v.color,
     );
-    if let Some(text) = rename {
+    if let Some(edit) = rename {
         let field = Rect::new(
             plate.x0 + 3.0,
             plate.y0 + 6.0,
@@ -245,12 +246,7 @@ pub fn paint_strip(
             plate.y0 + 24.0,
         );
         sp::lcd(c, st, field, Some(t.focus));
-        c.text(&TextRun::new(
-            format!("{text}|"),
-            pt(field.x0 + 4.0, field.center().y + 3.6),
-            10.0,
-            t.text,
-        ));
+        edit.paint(c, field, 10.0, 12.0, FieldColors::of(t), true);
     } else {
         c.text(
             &TextRun::new(

@@ -60,6 +60,7 @@ use crate::container_edit::{self as ce, Bound, Edge};
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::seq_paint::SeqTheme;
 use crate::seq_panel::{self, RenameKey};
+use crate::text_field::TextField;
 use crate::theme::Theme;
 use crate::tooltip::Help;
 use crate::widget::{self, ValueDrag};
@@ -261,7 +262,7 @@ pub struct ContainerEditorView {
     selected_split: Option<usize>,
     selected_macro: usize,
     scroll: f64,
-    rename: Option<String>,
+    rename: Option<TextField>,
     drag: Drag,
     hover: Hit,
     next_merge: u64,
@@ -436,7 +437,7 @@ impl ContainerEditorView {
 
     /// The macro name being edited in place.
     pub fn renaming(&self) -> Option<&str> {
-        self.rename.as_deref()
+        self.rename.as_ref().map(|f| f.text())
     }
 
     /// Whether the view owns the keyboard as a text field (a macro name is being edited): the
@@ -1043,6 +1044,12 @@ impl ContainerEditorView {
                 modifiers,
                 pressed: true,
             } => self.key(key, *modifiers, &mut out),
+            UiEvent::Ime(ime) => {
+                if let Some(f) = &mut self.rename {
+                    f.handle_ime(ime);
+                    self.repaint = true;
+                }
+            }
             _ => {}
         }
         out
@@ -1145,7 +1152,11 @@ impl ContainerEditorView {
             Hit::MacroName(i) => {
                 self.select_macro(i);
                 if clicks >= 2 {
-                    self.rename = Some(self.inner.macros[i].name.clone());
+                    self.rename = Some(TextField::new(
+                        &self.inner.macros[i].name,
+                        MAX_MACRO_NAME_CHARS,
+                        false,
+                    ));
                 }
             }
             Hit::MacroKnob(i) => {
@@ -1390,18 +1401,11 @@ impl ContainerEditorView {
 
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.repaint = true;
-        // Command chords (undo, redo, clipboard) are registry commands the shell resolves;
-        // what no command took is not a key of the view.
-        if modifiers.command() {
-            return;
-        }
-        if let Some(mut text) = self.rename.take() {
-            match seq_panel::rename_key(&mut text, key) {
-                RenameKey::Editing => {
-                    self.rename = Some(text.chars().take(MAX_MACRO_NAME_CHARS).collect());
-                }
+        if let Some(mut field) = self.rename.take() {
+            match seq_panel::rename_key(&mut field, key, modifiers) {
+                RenameKey::Editing => self.rename = Some(field),
                 RenameKey::Commit => {
-                    let name = text.trim().to_string();
+                    let name = field.text().trim().to_string();
                     if name != self.inner.macros[self.selected_macro].name {
                         out.push(UiAction::Command(Command::Container(
                             ContainerCommand::RenameMacro {
@@ -1414,6 +1418,11 @@ impl ContainerEditorView {
                 }
                 RenameKey::Cancel => {}
             }
+            return;
+        }
+        // Command chords (undo, redo, clipboard) are registry commands the shell resolves;
+        // what no command took is not a key of the view.
+        if modifiers.command() {
             return;
         }
         if *key == Key::Escape {

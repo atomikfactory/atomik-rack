@@ -153,7 +153,7 @@ impl ArrangementView {
 
     /// The text being typed into a point field.
     pub fn inspector_point_text(&self) -> Option<&str> {
-        self.pts.edit.as_ref().map(|(_, e)| e.text.as_str())
+        self.pts.edit.as_ref().map(|(_, e)| e.text())
     }
 
     fn pt_widget(&self) -> SegmentField {
@@ -342,9 +342,11 @@ impl ArrangementView {
                 true
             }
             UiEvent::Key {
-                key, pressed: true, ..
+                key,
+                modifiers,
+                pressed: true,
             } if self.pts.editing() => {
-                self.pt_key(key, out);
+                self.pt_key(key, *modifiers, out);
                 true
             }
             _ => false,
@@ -434,17 +436,17 @@ impl ArrangementView {
         self.repaint = true;
         let Some(ctx) = self.pt_ctx() else { return };
         let base = Self::pt_base(&ctx, field);
-        if let Some(new) = self.pt_parse(&ctx, field, edit.part, base, &edit.text) {
+        if let Some(new) = self.pt_parse(&ctx, field, edit.part, base, edit.text()) {
             self.pt_set(field, new, out);
         }
     }
 
-    fn pt_key(&mut self, key: &Key, out: &mut Vec<UiAction>) {
+    fn pt_key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         let Some((field, mut edit)) = self.pts.edit.take() else {
             return;
         };
         self.repaint = true;
-        match edit.key(key) {
+        match edit.key(key, modifiers) {
             EditKey::Commit => {
                 self.pts.edit = Some((field, edit));
                 self.pt_commit(out);
@@ -530,7 +532,7 @@ impl ArrangementView {
                 FieldLook {
                     label: "POSITION",
                     part,
-                    typing: editing.map(|(_, e)| e.text.as_str()),
+                    typing: editing.map(|(_, e)| &e.field),
                     enabled: true,
                 },
             );
@@ -552,7 +554,7 @@ impl ArrangementView {
                 r,
                 "VALUE",
                 &text,
-                editing.map(|(_, e)| e.text.as_str()),
+                editing.map(|(_, e)| &e.field),
                 true,
             );
         }

@@ -120,7 +120,7 @@ fn toolbars(v: &SeqEditorView, c: &mut dyn Canvas, p: &PatternDoc) {
             sp::rect(c, r, st.header.with_alpha(0.55));
         }
     }
-    if let Some(text) = v.renaming() {
+    if let Some(field) = v.renaming_field() {
         let r = Rect::new(
             l.patterns.x1 - 250.0,
             l.patterns.y0 + 4.0,
@@ -128,15 +128,7 @@ fn toolbars(v: &SeqEditorView, c: &mut dyn Canvas, p: &PatternDoc) {
             l.patterns.y0 + 24.0,
         );
         sp::lcd(c, st, r, Some(v.accent));
-        sp::label(
-            c,
-            &format!("{}|", fit_label(text, r.width() - 12.0, 9.5)),
-            r.x0 + 6.0,
-            r.y0 + 14.0,
-            9.5,
-            v.accent,
-            Align::Start,
-        );
+        crate::seq_panel::paint_name_field(c, r, field, 9.5, v.accent);
     }
     // Settings row.
     label(c, "LENGTH", l.settings, x0);

@@ -16,9 +16,10 @@
 //! length is at least one tick).
 
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
-use crate::event::Key;
+use crate::event::{Key, Modifiers};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::step_drag::{PX_PER_STEP, StepDrag};
+use crate::text_field::{FieldColors, FieldKey, TextField};
 use crate::theme::mix;
 use crate::timeline::{Bars, PPQ};
 use vello::kurbo::Rect;
@@ -307,58 +308,80 @@ pub enum EditKey {
     Move(i32),
 }
 
-/// Typing into one part.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Typing into one part: a [`TextField`] holding the part all selected, so the first character
+/// replaces it, with the keys that step or move between parts on top.
+#[derive(Debug, Clone)]
 pub struct SegmentEdit {
     /// The part typed into.
     pub part: usize,
     /// The text so far.
-    pub text: String,
-    /// The text is still the untouched original: the next character replaces it.
-    pub fresh: bool,
+    pub field: TextField,
+}
+
+/// The characters a part takes: digits, dots and signs.
+fn part_char(c: char) -> bool {
+    c.is_ascii_digit() || matches!(c, '.' | '+' | '-')
+}
+
+/// The characters a note name takes besides those of a part: letters and `#`.
+fn note_char(c: char) -> bool {
+    part_char(c) || c.is_ascii_alphabetic() || c == '#'
 }
 
 impl SegmentEdit {
     /// Typing starts on `part` showing `text`.
     pub fn new(part: usize, text: String) -> Self {
+        Self::with_letters(part, text, false)
+    }
+
+    /// Typing starts on `part` showing `text`; with `letters` the text also takes the letters
+    /// and `#` of a note name.
+    pub fn with_letters(part: usize, text: String, letters: bool) -> Self {
+        let accept: fn(char) -> bool = if letters { note_char } else { part_char };
         Self {
             part,
-            text,
-            fresh: true,
+            field: TextField::entry(&text, TEXT_MAX, accept),
         }
     }
 
-    /// Applies a key.
-    pub fn key(&mut self, key: &Key) -> EditKey {
-        self.key_with(key, |_| false)
+    /// The text so far.
+    pub fn text(&self) -> &str {
+        self.field.text()
     }
 
-    /// Applies a key, taking the characters `extra` accepts besides digits, dots and signs (a
-    /// note name takes letters and `#`).
-    pub fn key_with(&mut self, key: &Key, extra: impl Fn(char) -> bool) -> EditKey {
+    /// Whether an arrow in direction `d` (`-1` left) leaves the text: the caret is already at
+    /// that end, or the whole text is still selected (nothing typed yet).
+    fn at_edge(&self, d: i32) -> bool {
+        let len = self.field.len();
+        match self.field.selection() {
+            Some((0, n)) => n == len,
+            Some(_) => false,
+            None if d < 0 => self.field.caret() == 0,
+            None => self.field.caret() == len,
+        }
+    }
+
+    /// Applies a key: Enter, Escape, Up and Down are the host's; Left and Right move the caret
+    /// and, at the end of the text, to the neighbouring part; everything else is the field's.
+    pub fn key(&mut self, key: &Key, modifiers: Modifiers) -> EditKey {
         match key {
-            Key::Char(c) if c.is_ascii_digit() || matches!(c, '.' | '+' | '-') || extra(*c) => {
-                if self.fresh {
-                    self.text.clear();
-                    self.fresh = false;
-                }
-                if self.text.len() < TEXT_MAX {
-                    self.text.push(*c);
-                }
-                EditKey::Typed
-            }
-            Key::Backspace => {
-                self.fresh = false;
-                self.text.pop();
-                EditKey::Typed
-            }
             Key::Enter => EditKey::Commit,
             Key::Escape => EditKey::Cancel,
             Key::Up => EditKey::Step(1),
             Key::Down => EditKey::Step(-1),
-            Key::Left => EditKey::Move(-1),
-            Key::Right => EditKey::Move(1),
-            _ => EditKey::Ignored,
+            Key::Left | Key::Right => {
+                let d = if *key == Key::Left { -1 } else { 1 };
+                if !modifiers.shift && !modifiers.command() && self.at_edge(d) {
+                    EditKey::Move(d)
+                } else {
+                    self.field.handle_key(key, modifiers);
+                    EditKey::Typed
+                }
+            }
+            _ => match self.field.handle_key(key, modifiers) {
+                FieldKey::Ignored => EditKey::Ignored,
+                _ => EditKey::Typed,
+            },
         }
     }
 }
@@ -370,8 +393,8 @@ pub struct FieldLook<'a> {
     pub label: &'a str,
     /// The part highlighted (pressed or typed into).
     pub part: Option<usize>,
-    /// The text being typed into `part`.
-    pub typing: Option<&'a str>,
+    /// The field being typed into `part`.
+    pub typing: Option<&'a TextField>,
     /// The field can be edited (otherwise it is dimmed).
     pub enabled: bool,
 }
@@ -410,11 +433,19 @@ pub fn paint<C: Canvas + ?Sized>(
         if look.part == Some(i) {
             c.fill_with(seg.inset((-1.0, 0.0, -1.0, 0.0)), mix(t.lcd, t.focus, 0.3));
         }
-        let text = match (look.typing.filter(|_| look.part == Some(i)), &texts, value) {
-            (Some(s), _, _) => format!("{s}_"),
-            (None, Some(texts), _) => texts[i].clone(),
-            (None, None, FieldValue::Mixed) => "\u{2014}".to_owned(),
-            (None, None, _) => String::new(),
+        if let Some(field) = look.typing.filter(|_| look.part == Some(i)) {
+            let colors = FieldColors {
+                text: color,
+                caret: color,
+                selection: mix(t.lcd, t.focus, 0.5),
+            };
+            field.paint_padded(c, *seg, 12.0, 14.0, colors, true, 2.0);
+            continue;
+        }
+        let text = match (&texts, value) {
+            (Some(texts), _) => texts[i].clone(),
+            (None, FieldValue::Mixed) => "\u{2014}".to_owned(),
+            (None, _) => String::new(),
         };
         c.text(
             &TextRun::new(text, pt(seg.x1, seg.y1 - 6.0), 12.0, color)
@@ -443,7 +474,7 @@ pub fn paint_scalar<C: Canvas + ?Sized>(
     r: Rect,
     label: &str,
     text: &str,
-    typing: Option<&str>,
+    typing: Option<&TextField>,
     enabled: bool,
 ) {
     let t = &st.base;
@@ -458,9 +489,12 @@ pub fn paint_scalar<C: Canvas + ?Sized>(
         Align::Start,
     );
     let color = if enabled { t.highlight } else { t.text_muted };
-    let shown = typing.map_or_else(|| text.to_owned(), |s| format!("{s}_"));
+    if let Some(field) = typing {
+        field.paint_lcd(c, r, 12.0, t);
+        return;
+    }
     c.text(
-        &TextRun::new(shown, pt(r.x1 - PAD, r.y1 - 7.0), 12.0, color)
+        &TextRun::new(text, pt(r.x1 - PAD, r.y1 - 7.0), 12.0, color)
             .weight(600)
             .align(Align::End),
     );

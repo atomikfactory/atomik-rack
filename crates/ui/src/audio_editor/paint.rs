@@ -67,13 +67,10 @@ fn top_bar(v: &AudioEditorView, c: &mut dyn Canvas) {
         .spacing(1.2),
     );
     if v.present {
-        if let Some(text) = &v.rename {
+        if let Some(field) = &v.rename {
             sp::lcd(c, st, l.title, Some(t.focus));
-            let text = format!("{text}|");
-            let text = fit_label(&text, l.title.width() - 12.0, 11.0);
-            c.text(
-                &TextRun::new(text, pt(l.title.x0 + 8.0, r.y0 + 18.5), 11.0, t.text).weight(600),
-            );
+            let line_h = (l.title.height() - 6.0).max(8.0);
+            field.paint(c, l.title, 11.0, line_h, crate::FieldColors::of(t), true);
         } else {
             let name = v
                 .meta

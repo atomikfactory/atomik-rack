@@ -73,11 +73,10 @@ pub(super) enum Readout {
 }
 
 /// A typed entry in a readout.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(super) struct ReadoutEdit {
     pub which: Readout,
-    pub text: String,
-    pub fresh: bool,
+    pub field: crate::text_field::TextField,
 }
 
 /// A held Rewind or Forward.
@@ -698,7 +697,7 @@ impl TransportBar {
                 .edit
                 .as_ref()
                 .filter(|e| e.which == which)
-                .map(|e| e.text.as_str());
+                .map(|e| &e.field);
             sp::lcd(c, st, r, typing.map(|_| t.focus));
             sp::label(
                 c,
@@ -709,22 +708,23 @@ impl TransportBar {
                 t.text_muted,
                 Align::Start,
             );
-            let text = match typing {
-                Some(s) => format!("{s}_"),
-                None => format_bbt(
+            if let Some(field) = typing {
+                field.paint_lcd(c, r, 11.0, t);
+            } else {
+                let text = format_bbt(
                     if which == Readout::Left {
                         self.loop_range.0
                     } else {
                         self.loop_range.1
                     },
                     &self.bars,
-                ),
-            };
-            c.text(
-                &TextRun::new(text, pt(r.x1 - 6.0, r.y1 - 7.0), 11.0, t.highlight)
-                    .weight(600)
-                    .align(Align::End),
-            );
+                );
+                c.text(
+                    &TextRun::new(text, pt(r.x1 - 6.0, r.y1 - 7.0), 11.0, t.highlight)
+                        .weight(600)
+                        .align(Align::End),
+                );
+            }
         }
     }
 }

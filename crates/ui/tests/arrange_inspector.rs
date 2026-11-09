@@ -95,19 +95,49 @@ fn typing_replaces_a_part_adds_ticks_or_sets_the_whole_field() {
 
 #[test]
 fn an_edit_takes_digits_signs_and_the_arrow_keys() {
+    let none = Modifiers::NONE;
     let mut e = SegmentEdit::new(0, "3".into());
-    assert_eq!(e.key(&Key::Char('+')), EditKey::Typed);
-    assert_eq!(e.text, "+", "the first character replaces the shown value");
-    e.key(&Key::Char('2'));
-    e.key(&Key::Char('4'));
-    e.key(&Key::Char('x'));
-    assert_eq!(e.text, "+24");
-    e.key(&Key::Backspace);
-    assert_eq!(e.text, "+2");
-    assert_eq!(e.key(&Key::Up), EditKey::Step(1));
-    assert_eq!(e.key(&Key::Left), EditKey::Move(-1));
-    assert_eq!(e.key(&Key::Enter), EditKey::Commit);
-    assert_eq!(e.key(&Key::Escape), EditKey::Cancel);
+    assert_eq!(e.key(&Key::Char('+'), none), EditKey::Typed);
+    assert_eq!(
+        e.text(),
+        "+",
+        "the first character replaces the shown value"
+    );
+    e.key(&Key::Char('2'), none);
+    e.key(&Key::Char('4'), none);
+    e.key(&Key::Char('x'), none);
+    assert_eq!(e.text(), "+24");
+    e.key(&Key::Backspace, none);
+    assert_eq!(e.text(), "+2");
+    assert_eq!(e.key(&Key::Up, none), EditKey::Step(1));
+    // The arrows move the caret inside the text and leave it, to the next part, at its end.
+    assert_eq!(e.key(&Key::Left, none), EditKey::Typed);
+    assert_eq!(e.key(&Key::Left, none), EditKey::Typed);
+    assert_eq!(e.key(&Key::Left, none), EditKey::Move(-1));
+    assert_eq!(e.key(&Key::Right, none), EditKey::Typed);
+    assert_eq!(e.key(&Key::Enter, none), EditKey::Commit);
+    assert_eq!(e.key(&Key::Escape, none), EditKey::Cancel);
+}
+
+#[test]
+fn an_untouched_edit_moves_to_the_next_part_at_once_and_has_its_own_undo() {
+    let none = Modifiers::NONE;
+    let e = &mut SegmentEdit::new(1, "3".into());
+    assert_eq!(e.key(&Key::Left, none), EditKey::Move(-1));
+    assert_eq!(e.key(&Key::Right, none), EditKey::Move(1));
+    e.key(&Key::Char('7'), none);
+    e.key(&Key::Char('8'), none);
+    assert_eq!(e.text(), "78");
+    let ctrl = Modifiers::CTRL;
+    assert_eq!(e.key(&Key::Char('z'), ctrl), EditKey::Typed);
+    assert_eq!(e.text(), "3", "Ctrl+Z takes the typing back");
+    // Letters need a note field.
+    assert_eq!(e.key(&Key::Char('q'), none), EditKey::Typed);
+    assert_eq!(e.text(), "3");
+    let mut n = SegmentEdit::with_letters(0, "C4".into(), true);
+    n.key(&Key::Char('d'), none);
+    n.key(&Key::Char('#'), none);
+    assert_eq!(n.text(), "d#");
 }
 
 #[test]

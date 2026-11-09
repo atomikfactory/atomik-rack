@@ -13,7 +13,10 @@ use atomik_ui::keymap::{
 };
 use atomik_ui::kurbo::{Point, Rect, RoundedRect, Vec2};
 use atomik_ui::peniko::Color;
-use atomik_ui::{Align, Canvas, CanvasExt, Key, Modifiers, PointerButton, TextRun, Theme, UiEvent};
+use atomik_ui::{
+    Align, Canvas, CanvasExt, FieldColors, Key, Modifiers, PointerButton, SearchField, SearchKey,
+    TextRun, Theme, UiEvent,
+};
 
 pub(crate) const PAD: f64 = 20.0;
 pub(crate) const TITLE: f64 = 44.0;
@@ -186,7 +189,7 @@ struct Pending {
 #[derive(Debug, Clone)]
 pub struct KeyboardTab {
     editor: KeymapEditor,
-    search: String,
+    search: SearchField,
     scroll: f64,
     learn: Option<(RowKey, Slot)>,
     role_learn: Option<(Role, Mods)>,
@@ -205,7 +208,7 @@ impl KeyboardTab {
         let message = editor.report().summary();
         Self {
             editor,
-            search: String::new(),
+            search: SearchField::default(),
             scroll: 0.0,
             learn: None,
             role_learn: None,
@@ -232,7 +235,7 @@ impl KeyboardTab {
 
     /// Sets the search text (the list shows the commands that match).
     pub fn set_search(&mut self, text: &str) {
-        self.search = text.to_string();
+        self.search.set_text(text);
         self.scroll = 0.0;
     }
 
@@ -342,7 +345,7 @@ impl KeyboardTab {
         let chip_x = [inner * 0.35, inner * 0.55];
         let ctx_x = inner * 0.76;
         let reset_w = 52.0;
-        for row in self.editor.rows(&self.search) {
+        for row in self.editor.rows(self.search.text()) {
             if group != Some(row.group) {
                 group = Some(row.group);
                 if !items.is_empty() {
@@ -398,7 +401,7 @@ impl KeyboardTab {
             });
             y += ROW_PITCH;
         }
-        if self.search.trim().is_empty() {
+        if self.search.text().trim().is_empty() {
             if !items.is_empty() {
                 y += SECTION_GAP;
             }
@@ -495,8 +498,15 @@ impl KeyboardTab {
             UiEvent::PointerDown {
                 pos,
                 button: PointerButton::Primary,
-                ..
-            } => return self.click(*pos, panel),
+                modifiers,
+                clicks,
+            } => {
+                if self.layout(panel).search.contains(*pos) {
+                    self.search.press(*pos, *clicks, modifiers.shift);
+                    return TabOutcome::Open;
+                }
+                return self.click(*pos, panel);
+            }
             _ => {}
         }
         TabOutcome::Open
@@ -546,21 +556,14 @@ impl KeyboardTab {
                 self.scroll = 0.0;
             }
             Key::Enter => return TabOutcome::Apply,
-            Key::Backspace => {
-                self.search.pop();
-                self.scroll = 0.0;
-            }
-            Key::Space => {
-                self.search.push(' ');
-                self.scroll = 0.0;
-            }
-            Key::Char(c) if !c.is_control() && !modifiers.ctrl && !modifiers.meta => {
-                self.search.push(*c);
-                self.scroll = 0.0;
-            }
             Key::PageDown => self.scroll += 300.0,
             Key::PageUp => self.scroll = (self.scroll - 300.0).max(0.0),
-            _ => {}
+            // Text, caret moves, deletes and the clipboard chords: the search field's.
+            _ => {
+                if self.search.key(key, modifiers) == SearchKey::Edited {
+                    self.scroll = 0.0;
+                }
+            }
         }
         TabOutcome::Open
     }
@@ -743,17 +746,21 @@ impl KeyboardTab {
         let field = RoundedRect::from_rect(l.search, 5.0);
         canvas.fill_with(field, theme.background);
         canvas.stroke_with(field, 1.0, theme.focus);
-        let (text, color) = if self.search.is_empty() {
-            ("Search commands".to_string(), theme.text_muted)
-        } else {
-            (format!("{}|", self.search), theme.text)
+        if self.search.is_empty() {
+            canvas.text(&TextRun::new(
+                "Search commands",
+                Point::new(l.search.x0 + 8.0, l.search.y0 + 17.5),
+                13.0,
+                theme.text_muted,
+            ));
+        }
+        let colors = FieldColors {
+            text: theme.text,
+            caret: theme.text,
+            selection: theme.focus.with_alpha(0.35),
         };
-        canvas.text(&TextRun::new(
-            text,
-            Point::new(l.search.x0 + 8.0, l.search.y0 + 17.5),
-            13.0,
-            color,
-        ));
+        self.search
+            .paint(canvas, l.search, 13.0, 20.0, colors, true);
         for (r, profile, label) in &l.profiles {
             let on = self.editor.profile() == *profile;
             let shape = RoundedRect::from_rect(*r, 5.0);

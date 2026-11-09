@@ -569,3 +569,21 @@ fn the_speaker_tool_in_the_arrangement_auditions_an_audio_clip_while_held() {
     assert!(a.is_empty(), "{a:?}");
     assert!(arr.handle(&up(q), d.doc(), &reg).is_empty());
 }
+
+#[test]
+fn ctrl_a_then_typing_replaces_the_asset_name() {
+    let (mut d, reg, mut v) = setup();
+    let c = v.title_center();
+    feed(&mut v, &mut d, &reg, &dbl(c));
+    feed(
+        &mut v,
+        &mut d,
+        &reg,
+        &[
+            press(Key::Char('a'), Modifiers::CTRL),
+            press(Key::Char('L'), Modifiers::NONE),
+            press(Key::Char('p'), Modifiers::NONE),
+        ],
+    );
+    assert_eq!(v.rename_text(), Some("Lp"));
+}

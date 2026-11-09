@@ -18,6 +18,7 @@ use crate::console::small_button;
 use crate::console_vca::color_of;
 use crate::paint::{self, fit_label};
 use crate::seq_paint::{self as sp, SeqTheme};
+use crate::text_field::{FieldColors, TextField};
 use atomik_model::RackDoc;
 use vello::kurbo::{Rect, RoundedRect};
 
@@ -246,7 +247,7 @@ pub struct Paint<'a> {
     /// The first visible chip.
     pub first: usize,
     /// The chip whose name (or, with the flag, note) is being typed, and the text.
-    pub editing: Option<(u32, &'a str, bool)>,
+    pub editing: Option<(u32, &'a TextField, bool)>,
 }
 
 /// Paints the bar into `bar`.
@@ -274,10 +275,10 @@ pub fn paint(c: &mut dyn Canvas, bar: Rect, p: &Paint<'_>) {
     );
     for (i, r) in &l.chips {
         let s = &p.snaps[*i];
-        if let Some((id, text, note)) = p.editing
+        if let Some((id, field, note)) = p.editing
             && id == s.id
         {
-            edit_field(c, p.st, *r, text, if note { NOTE_FIELD_W } else { 96.0 });
+            edit_field(c, p.st, *r, field, if note { NOTE_FIELD_W } else { 96.0 });
             continue;
         }
         let is_current = p.current == Some(s.id);
@@ -353,19 +354,18 @@ pub fn paint(c: &mut dyn Canvas, bar: Rect, p: &Paint<'_>) {
 }
 
 /// The text field drawn over a chip while its name is typed, at least `width` wide.
-fn edit_field(c: &mut dyn Canvas, st: &SeqTheme, chip: Rect, text: &str, width: f64) {
+fn edit_field(c: &mut dyn Canvas, st: &SeqTheme, chip: Rect, field: &TextField, width: f64) {
     let t = &st.base;
     let r = Rect::new(chip.x0, chip.y0, chip.x0 + chip.width().max(width), chip.y1);
     c.fill_with(RoundedRect::from_rect(r, 3.0), t.lcd);
     c.stroke_with(RoundedRect::from_rect(r, 3.0), 1.2, t.focus);
-    let room = r.width() - 12.0;
-    let shown = paint::tail_fit(c, text, room, 9.0, 700);
-    c.text(&TextRun::new(shown, pt(r.x0 + 5.0, r.center().y + 3.2), 9.0, t.text).weight(700));
-    let cx = r.x0 + 5.0 + paint::measure(c, shown, 9.0, 700);
-    c.stroke_with(
-        vello::kurbo::Line::new(pt(cx + 1.0, r.y0 + 4.0), pt(cx + 1.0, r.y1 - 4.0)),
-        1.2,
-        t.focus,
+    field.paint(
+        c,
+        r,
+        9.0,
+        (r.height() - 6.0).max(8.0),
+        FieldColors::of(t),
+        true,
     );
 }
 

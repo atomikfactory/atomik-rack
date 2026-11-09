@@ -1446,7 +1446,7 @@ impl<B: AudioBackend> Shell<B> {
     /// fields (the browser's search and name entries) has the keys.
     fn ime_target(&self) -> Option<Pane> {
         let focus = self.live_pane(self.focus);
-        (focus == Pane::FileBrowser && self.core.file_browser().is_text_owner()).then_some(focus)
+        self.context_stack().is_text().then_some(focus)
     }
 
     /// The song information panel, while it is open.
@@ -5708,6 +5708,13 @@ impl<B: AudioBackend> Shell<B> {
                 Route::RepeatIgnored => {}
                 Route::Commands(list) => {
                     for resolved in &list {
+                        // A text field with the keyboard takes undo, redo, select all, copy,
+                        // cut and paste for its own text: the key goes to it, and the
+                        // document's command does not run.
+                        if stack.is_text() && atomik_ui::is_text_command(&resolved.command) {
+                            self.route_key(event);
+                            return Vec::new();
+                        }
                         if resolved.command.starts_with("keys.") {
                             if self.keys_command(key, &resolved.command, resolved.arg.as_deref()) {
                                 return Vec::new();

@@ -1201,3 +1201,66 @@ fn a_run_of_clicks_writes_the_window_state_once_and_the_rest_waits_for_the_flush
     s.shutdown();
     assert_eq!(saved(&path)["file_browser_visible"], true);
 }
+
+fn add_a_device(s: &mut Shell<NullBackend>) {
+    s.core_mut()
+        .apply_command(atomik_model::Command::AddDevice {
+            index: 0,
+            type_id: "atomik.stereo-delay".into(),
+            key: Some(atomik_model::DeviceKey("echo".into())),
+        })
+        .unwrap();
+}
+
+#[test]
+fn undo_in_a_focused_text_field_edits_the_field_and_never_the_document() {
+    for os in [Os::Windows, Os::Mac] {
+        let mut s = shell_with(os, true);
+        add_a_device(&mut s);
+        assert!(s.core().document().can_undo());
+        s.core_mut().view_mut().set_browser_visible(true);
+        assert!(s.core().view().is_text_owner());
+        for key in ["B", "A", "S", "S"] {
+            tap(&mut s, os, key);
+        }
+        assert_eq!(s.core().view().browser_query(), "bass", "{os:?}");
+        tap(&mut s, os, "Cmd+Z");
+        assert_eq!(
+            s.core().view().browser_query(),
+            "",
+            "{os:?}: the typing is one step"
+        );
+        assert_eq!(
+            s.core().doc().devices.len(),
+            1,
+            "{os:?}: the device is still there"
+        );
+        // With nothing left to undo in the field the document still keeps its edit.
+        tap(&mut s, os, "Cmd+Z");
+        assert_eq!(s.core().doc().devices.len(), 1, "{os:?}");
+        tap(&mut s, os, "Cmd+Shift+Z");
+        assert_eq!(s.core().view().browser_query(), "bass", "{os:?}: redo");
+        assert_eq!(s.core().doc().devices.len(), 1, "{os:?}");
+        if os == Os::Windows {
+            tap(&mut s, os, "Cmd+Z");
+            tap(&mut s, os, "Ctrl+Y");
+            assert_eq!(s.core().view().browser_query(), "bass", "Ctrl+Y redoes too");
+        }
+    }
+}
+
+#[test]
+fn without_a_text_field_ctrl_z_is_the_documents_undo() {
+    for os in [Os::Windows, Os::Mac] {
+        let mut s = shell_with(os, true);
+        add_a_device(&mut s);
+        s.core_mut().view_mut().set_browser_visible(false);
+        assert!(!s.core().view().is_text_owner());
+        tap(&mut s, os, "Cmd+Z");
+        assert_eq!(
+            s.core().doc().devices.len(),
+            0,
+            "{os:?}: the document edit is undone"
+        );
+    }
+}

@@ -1419,3 +1419,15 @@ fn a_folder_clip_is_one_undo_step_when_muted_through_the_selection() {
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(muted, ids.into_iter().collect());
 }
+
+#[test]
+fn ctrl_a_then_typing_replaces_a_folder_name() {
+    let (d, reg, mut v) = grouped();
+    assert!(v.begin_folder_rename(1));
+    type_text(&d, &reg, &mut v, "abc");
+    v.handle(&press(Key::Char('a'), Modifiers::CTRL), d.doc(), &reg);
+    type_text(&d, &reg, &mut v, "z");
+    assert_eq!(v.org_edit_text(), Some("z"));
+    v.handle(&press(Key::Char('z'), Modifiers::CTRL), d.doc(), &reg);
+    assert!(v.is_text_owner(), "undo stays inside the field");
+}

@@ -1095,6 +1095,13 @@ impl PluginParamsView {
                 modifiers,
                 pressed: true,
             } => self.key(key, *modifiers, &mut out),
+            UiEvent::Ime(ime) => {
+                if self.query.ime(ime) {
+                    self.rebuild_items();
+                    self.scroll = 0.0;
+                }
+                self.repaint = true;
+            }
             _ => {}
         }
         let wanted = self.take_text_requests();
@@ -1530,12 +1537,32 @@ impl PluginParamsView {
         self.repaint = true;
         if modifiers.command() {
             match key {
-                Key::Char(c) if c.eq_ignore_ascii_case(&'z') => out.push(if modifiers.shift {
-                    UiAction::Redo
-                } else {
-                    UiAction::Undo
-                }),
-                Key::Char(c) if c.eq_ignore_ascii_case(&'y') => out.push(UiAction::Redo),
+                // Undo and Redo are the search text's while it has typing to take back (or
+                // bring back); with none, they are the document's, so parameter edits can
+                // still be undone from this pane.
+                Key::Char(c) if c.eq_ignore_ascii_case(&'z') => {
+                    let own = if modifiers.shift {
+                        self.query.can_redo()
+                    } else {
+                        self.query.can_undo()
+                    };
+                    if own {
+                        self.search_key(key, modifiers);
+                    } else {
+                        out.push(if modifiers.shift {
+                            UiAction::Redo
+                        } else {
+                            UiAction::Undo
+                        });
+                    }
+                }
+                Key::Char(c) if c.eq_ignore_ascii_case(&'y') => {
+                    if self.query.can_redo() {
+                        self.search_key(key, modifiers);
+                    } else {
+                        out.push(UiAction::Redo);
+                    }
+                }
                 // Select All, Copy, Cut and Paste work on the search text.
                 Key::Char(c) if matches!(c.to_ascii_lowercase(), 'a' | 'c' | 'x' | 'v') => {
                     self.search_key(key, modifiers);

@@ -98,6 +98,7 @@ use crate::keymap::{CommandOutcome, GestureClass, Role, Roles};
 use crate::paint::{self, fit_label};
 use crate::pick_list::PickList;
 use crate::seq_paint::{self as sp, SeqTheme};
+use crate::text_field::{FieldColors, TextField};
 use crate::theme::{Theme, mix};
 use crate::widget::{self, ValueDrag};
 use atomik_core::{ParamDescriptor, Taper, Unit};
@@ -800,7 +801,7 @@ struct RenameState {
     snapshot: Option<u32>,
     /// With `snapshot`: the text is the note (`SetSnapshotNote`) rather than the name.
     note: bool,
-    text: String,
+    field: TextField,
 }
 
 /// The console view. See the module documentation for hosting.
@@ -1033,7 +1034,7 @@ impl ConsoleView {
 
     /// The name being typed, if an edit is open.
     pub fn rename_text(&self) -> Option<&str> {
-        self.rename.as_ref().map(|r| r.text.as_str())
+        self.rename.as_ref().map(|r| r.field.text())
     }
 
     /// Starts typing the name of the strip `strip` (a channel or a bus): a channel renames the
@@ -2550,7 +2551,12 @@ impl ConsoleView {
                 modifiers,
                 pressed: true,
             } => self.key(key, *modifiers, &mut out),
-            UiEvent::Ime(_) => {}
+            UiEvent::Ime(ime) => {
+                if let Some(r) = &mut self.rename {
+                    r.field.handle_ime(ime);
+                    self.repaint = true;
+                }
+            }
             UiEvent::Key { .. } => {}
         }
         out
@@ -3102,7 +3108,7 @@ impl ConsoleView {
             vca: None,
             snapshot: Some(id),
             note: false,
-            text: s.name.clone(),
+            field: TextField::new(&s.name, MAX_BUS_NAME_CHARS, false),
         });
         self.drag = Drag::None;
         self.menu = None;
@@ -3122,7 +3128,7 @@ impl ConsoleView {
             vca: None,
             snapshot: Some(id),
             note: true,
-            text: s.note.clone(),
+            field: TextField::new(&s.note, MAX_SNAPSHOT_NOTE_CHARS, false),
         });
         self.drag = Drag::None;
         self.menu = None;
@@ -3668,7 +3674,7 @@ impl ConsoleView {
             vca: Some(v.id),
             snapshot: None,
             note: false,
-            text: v.name.clone(),
+            field: TextField::new(&v.name, MAX_BUS_NAME_CHARS, false),
         });
         self.drag = Drag::None;
         self.menu = None;
@@ -3783,7 +3789,7 @@ impl ConsoleView {
             vca: None,
             snapshot: None,
             note: false,
-            text: s.name.clone(),
+            field: TextField::new(&s.name, MAX_BUS_NAME_CHARS, false),
         });
         self.drag = Drag::None;
         self.menu = None;
@@ -3799,7 +3805,7 @@ impl ConsoleView {
         if !commit {
             return;
         }
-        let name = r.text.trim();
+        let name = r.field.text().trim();
         if let (Some(id), true) = (r.snapshot, r.note) {
             let current = self
                 .snaps
@@ -3874,30 +3880,13 @@ impl ConsoleView {
         match key {
             Key::Enter => self.finish_rename(true, out),
             Key::Escape => self.finish_rename(false, out),
-            _ if modifiers.command() => {}
-            Key::Backspace => {
+            _ => {
                 if let Some(r) = &mut self.rename {
-                    r.text.pop();
+                    r.field.handle_key(key, modifiers);
                 }
             }
-            Key::Space => self.rename_push(' '),
-            Key::Char(c) if !c.is_control() => self.rename_push(*c),
-            _ => {}
         }
         self.repaint = true;
-    }
-
-    fn rename_push(&mut self, c: char) {
-        if let Some(r) = &mut self.rename
-            && r.text.chars().count()
-                < if r.note {
-                    MAX_SNAPSHOT_NOTE_CHARS
-                } else {
-                    MAX_BUS_NAME_CHARS
-                }
-        {
-            r.text.push(c);
-        }
     }
 
     /// A click on a name plate: select the strip (Ctrl/Cmd toggles it, Shift selects the range
@@ -4816,7 +4805,7 @@ impl ConsoleView {
                 stereo_meter(c, &self.st, r, self.meters.get(&s.key), s.silenced);
             }
             if let Some(r) = self.rename.as_ref().filter(|r| r.strip == s.key) {
-                rename_field(c, &self.st, l.name, &r.text);
+                rename_field(c, &self.st, l.name, &r.field);
             }
             self.focus_ring(c, Target::Strip(i), true, l);
             c.pop_transform();
@@ -4877,7 +4866,7 @@ impl ConsoleView {
                 .rename
                 .as_ref()
                 .filter(|r| r.vca == Some(v.id))
-                .map(|r| r.text.as_str());
+                .map(|r| &r.field);
             cv::paint_strip(
                 c,
                 &self.st,
@@ -5193,7 +5182,7 @@ impl ConsoleView {
         let editing = self
             .rename
             .as_ref()
-            .and_then(|r| r.snapshot.map(|id| (id, r.text.as_str(), r.note)));
+            .and_then(|r| r.snapshot.map(|id| (id, &r.field, r.note)));
         cs::paint(
             c,
             self.snapshot_bar(),
@@ -5967,22 +5956,14 @@ fn output_selector(c: &mut dyn Canvas, st: &SeqTheme, r: Rect, text: &str, swatc
     c.fill_with(tri, t.text_muted);
 }
 
-/// The text field drawn over a bus name plate while its name is edited: the end of the text
-/// that fits, and a caret.
-fn rename_field(c: &mut dyn Canvas, st: &SeqTheme, plate: Rect, text: &str) {
+/// The text field drawn over a bus name plate while its name is edited: the text, the
+/// selection and the caret of the shared field.
+fn rename_field(c: &mut dyn Canvas, st: &SeqTheme, plate: Rect, field: &TextField) {
     let t = &st.base;
     let r = plate.inset((-2.0, -2.0));
     c.fill_with(RoundedRect::from_rect(r, 3.0), t.lcd);
     c.stroke_with(RoundedRect::from_rect(r, 3.0), 1.2, t.focus);
-    let room = r.width() - 12.0;
-    let shown = paint::tail_fit(c, text, room, 10.0, 700);
-    c.text(&TextRun::new(shown, pt(r.x0 + 5.0, r.y0 + 17.0), 10.0, t.text).weight(700));
-    let cx = r.x0 + 5.0 + paint::measure(c, shown, 10.0, 700);
-    c.stroke_with(
-        Line::new(pt(cx + 1.0, r.y0 + 7.0), pt(cx + 1.0, r.y0 + 20.0)),
-        1.2,
-        t.focus,
-    );
+    field.paint(c, r, 10.0, 16.0, FieldColors::of(t), true);
 }
 
 #[allow(clippy::too_many_arguments, reason = "a plate is drawn from its parts")]

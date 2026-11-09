@@ -170,6 +170,33 @@ impl TextField {
         f
     }
 
+    /// A field for a typed number or time on an LCD: it holds `text` all selected, so the first
+    /// character typed replaces it, takes at most `limit` characters and only those `accept`
+    /// says yes to.
+    pub fn entry(text: &str, limit: usize, accept: fn(char) -> bool) -> Self {
+        let mut f = Self::new(text, limit, false).with_filter(accept);
+        f.select_all();
+        f
+    }
+
+    /// Paints the field in the lower part of the LCD box `rect` of `theme` (the label sits in the
+    /// band above): the LCD text colour, the shared caret and selection.
+    pub fn paint_lcd<C: Canvas + ?Sized>(
+        &self,
+        c: &mut C,
+        rect: Rect,
+        size: f32,
+        theme: &crate::theme::Theme,
+    ) {
+        let band = Rect::new(rect.x0, rect.y0 + 11.0, rect.x1, rect.y1);
+        let colors = FieldColors {
+            text: theme.highlight,
+            caret: theme.highlight,
+            selection: crate::theme::mix(theme.lcd, theme.focus, 0.5),
+        };
+        self.paint(c, band, size, (band.height() - 6.0).max(8.0), colors, true);
+    }
+
     /// The field takes only the characters `accept` says yes to (typing, paste, composition and
     /// the text it holds now).
     #[must_use]
@@ -352,12 +379,13 @@ impl TextField {
     }
 
     fn insert_raw(&mut self, text: &str) -> bool {
-        let removed = self.delete_selection();
-        let used = self.len();
-        let clean = self.clean(text, used);
+        let selected = self.selection().map_or(0, |(a, b)| b - a);
+        let clean = self.clean(text, self.len() - selected);
+        // Text the field refuses (a letter in a number field) leaves the selection alone.
         if clean.is_empty() {
-            return removed;
+            return false;
         }
+        self.delete_selection();
         let at = self.byte(self.caret);
         self.text.insert_str(at, &clean);
         self.caret += clean.chars().count();
@@ -763,7 +791,22 @@ impl TextField {
         colors: FieldColors,
         focused: bool,
     ) {
-        let pad = 8.0;
+        self.paint_padded(c, rect, size, line_h, colors, focused, 8.0);
+    }
+
+    /// [`Self::paint`] with `pad` pixels between the box and the text (a narrow cell of a
+    /// segmented field takes less than the usual 8).
+    #[allow(clippy::too_many_arguments, reason = "the paint inputs, as in `paint`")]
+    pub fn paint_padded<C: Canvas + ?Sized>(
+        &self,
+        c: &mut C,
+        rect: Rect,
+        size: f32,
+        line_h: f64,
+        colors: FieldColors,
+        focused: bool,
+        pad: f64,
+    ) {
         let shown = self.display();
         let lines: Vec<&str> = shown.text.split('\n').collect();
         let rows = if self.multiline {
@@ -1158,7 +1201,11 @@ mod tests {
         assert_eq!(f.text(), "abc");
         assert_eq!(key(&mut f, Key::Char('z'), CTRL), FieldKey::Edited);
         assert_eq!(f.text(), "", "a run of letters is one step");
-        assert_eq!(key(&mut f, Key::Char('z'), CTRL), FieldKey::Moved, "nothing left, still used");
+        assert_eq!(
+            key(&mut f, Key::Char('z'), CTRL),
+            FieldKey::Moved,
+            "nothing left, still used"
+        );
         assert_eq!(key(&mut f, Key::Char('z'), CTRL_SHIFT), FieldKey::Edited);
         assert_eq!(f.text(), "abc");
         assert_eq!(f.caret(), 3, "the caret comes back with the text");
@@ -1203,7 +1250,11 @@ mod tests {
         type_str(&mut f, "y");
         assert_eq!(f.text(), "xy");
         f.undo();
-        assert_eq!(f.text(), "hello", "the replaced selection and the letters after it are one");
+        assert_eq!(
+            f.text(),
+            "hello",
+            "the replaced selection and the letters after it are one"
+        );
         key(&mut f, Key::End, NONE);
         crate::clipboard::write("PASTE");
         key(&mut f, Key::Char('v'), CTRL);
@@ -1259,7 +1310,11 @@ mod tests {
         f.handle_ime(&ImeEvent::Commit("zz".into()));
         assert_eq!(f.text(), "12345678");
         let mut g = TextField::new("", 8, false).with_filter(digits);
-        assert_eq!(key(&mut g, Key::Char('q'), NONE), FieldKey::Moved, "a refused letter is still used");
+        assert_eq!(
+            key(&mut g, Key::Char('q'), NONE),
+            FieldKey::Moved,
+            "a refused letter is still used"
+        );
         assert!(g.text().is_empty());
         assert!(!g.can_undo(), "a refused letter is no step");
     }

@@ -840,3 +840,22 @@ fn vca_items(v: &ConsoleView) -> Vec<String> {
     );
     items[..items.len() - SETTINGS_ITEMS.len()].to_vec()
 }
+
+#[test]
+fn ctrl_a_then_typing_replaces_a_bus_name() {
+    let (doc, reg, mut v) = setup();
+    let p = name_at(&v, "bus");
+    v.handle(&down_with(p, PointerButton::Primary, 2), &doc, &reg);
+    type_text(&mut v, &doc, &reg, "x");
+    v.handle(
+        &UiEvent::Key {
+            key: Key::Char('a'),
+            modifiers: Modifiers::CTRL,
+            pressed: true,
+        },
+        &doc,
+        &reg,
+    );
+    type_text(&mut v, &doc, &reg, "Kit");
+    assert_eq!(v.rename_text(), Some("Kit"));
+}

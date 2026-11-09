@@ -34,8 +34,9 @@ use crate::autolayout::{
     SOCKET_CELL, Section, TITLE_H, back_groups, cell_size, choose_widget, fit_with,
 };
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
-use crate::event::Key;
+use crate::event::{Key, Modifiers};
 use crate::paint::{edit_button, fit_label};
+use crate::text_field::{FieldColors, TextField};
 use crate::theme::{Theme, mix};
 use atomik_device_sdk::{ControlKind, DeviceDescriptor, RACK_UNIT};
 use atomik_model::{
@@ -520,25 +521,39 @@ pub enum RenameKey {
     Cancel,
 }
 
-/// Applies one key to the name being edited (at most [`MAX_NAME_CHARS`] characters).
-pub fn rename_key(text: &mut String, key: &Key) -> RenameKey {
+/// A field for a pattern or device name being edited (at most [`MAX_NAME_CHARS`] characters).
+pub fn name_field(text: &str) -> TextField {
+    TextField::new(text, MAX_NAME_CHARS, false)
+}
+
+/// Applies one key to the name being edited: Enter and Escape end it, every other key is the
+/// field's.
+pub fn rename_key(field: &mut TextField, key: &Key, modifiers: Modifiers) -> RenameKey {
     match key {
         Key::Enter => return RenameKey::Commit,
         Key::Escape => return RenameKey::Cancel,
-        Key::Backspace => {
-            text.pop();
+        _ => {
+            field.handle_key(key, modifiers);
         }
-        Key::Space => push_char(text, ' '),
-        Key::Char(c) if !c.is_control() => push_char(text, *c),
-        _ => {}
     }
     RenameKey::Editing
 }
 
-fn push_char(text: &mut String, c: char) {
-    if text.chars().count() < MAX_NAME_CHARS {
-        text.push(c);
-    }
+/// Paints a name being edited in `rect`, a box of the panel's own style: the shared field with
+/// the panel's accent for the text, the caret and the selection.
+pub fn paint_name_field<C: Canvas + ?Sized>(
+    c: &mut C,
+    rect: Rect,
+    field: &TextField,
+    size: f32,
+    accent: Color,
+) {
+    let colors = FieldColors {
+        text: accent,
+        caret: accent,
+        selection: accent.with_alpha(0.3),
+    };
+    field.paint(c, rect, size, (rect.height() - 6.0).max(8.0), colors, true);
 }
 
 /// `p` with its name replaced by the edited `text`; `None` when the name is empty after
@@ -614,7 +629,7 @@ pub struct PlayerInfo<'a> {
     /// The Mod Source scope history (Mod Source panel).
     pub scope: Option<&'a crate::modsrc_panel::Scope>,
     /// The pattern name being edited, if any.
-    pub rename: Option<&'a str>,
+    pub rename: Option<&'a TextField>,
     /// The visible page of steps (drum generator panel), 0-based.
     pub page: usize,
     /// What the cells of the drum generator panel edit: 0 velocity, 1 flam, 2 ratchet.
@@ -694,26 +709,26 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
         info.rename.map_or(theme.ink.with_alpha(0.07), |_| accent),
     );
     let pattern = doc.patterns.get(edit);
-    let (text, col) = match (info.rename, pattern) {
-        (Some(t), _) => (format!("{t}|"), accent),
-        (None, Some(p)) => (
-            format!(
+    if let Some(field) = info.rename {
+        paint_name_field(c, panel.name, field, 9.0, accent);
+    } else {
+        let text = match pattern {
+            Some(p) => format!(
                 "{}  ·  {} x {}  ·  swing {} %",
                 p.name,
                 p.length,
                 resolution_label(p.resolution),
                 p.swing
             ),
+            None => String::new(),
+        };
+        c.text(&TextRun::new(
+            fit_label(&text, panel.name.width() - 12.0, 9.0),
+            pt(panel.name.x0 + 6.0, panel.name.y0 + 11.5),
+            9.0,
             theme.text,
-        ),
-        (None, None) => (String::new(), theme.text),
-    };
-    c.text(&TextRun::new(
-        fit_label(&text, panel.name.width() - 12.0, 9.0),
-        pt(panel.name.x0 + 6.0, panel.name.y0 + 11.5),
-        9.0,
-        col,
-    ));
+        ));
+    }
     // Preview.
     if let Some(p) = pattern {
         paint_preview(

@@ -1009,3 +1009,15 @@ fn a_command_chord_is_never_typed_into_the_pattern_name() {
     }
     assert_eq!(v.renaming().map(str::to_string), before);
 }
+
+#[test]
+fn ctrl_a_then_typing_replaces_the_pattern_name() {
+    let (d, reg, mut v) = setup();
+    let _ = click_with!(v, &d, &reg, v.slot_center(1), 2);
+    assert_eq!(v.renaming(), Some("Fill"));
+    let _ = v.handle(&press(Key::Char('a'), Modifiers::CTRL), d.doc(), &reg);
+    let _ = v.handle(&press(Key::Char('R'), Modifiers::NONE), d.doc(), &reg);
+    assert_eq!(v.renaming(), Some("R"));
+    let _ = v.handle(&press(Key::Char('z'), Modifiers::CTRL), d.doc(), &reg);
+    assert_eq!(v.renaming(), Some("Fill"), "undo is the field's own");
+}
