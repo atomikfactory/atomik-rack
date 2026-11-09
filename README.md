@@ -81,7 +81,9 @@ effect), save, and export. Each step says what to do and moves on by itself when
 control it talks about is outlined where there is one. Back, Skip, Move (to the other side of the window) and Close
 are always there, the panel never takes the keyboard and you can use the song as usual while it is open. A check box
 at the foot of the start screen turns the card off. To find any command by name, press Ctrl+Shift+K (Cmd+Shift+K on
-macOS) or choose Help > Command Palette, type a few letters, and press Enter.
+macOS) or choose Help > Command Palette, type a few letters, and press Enter. Edit > Undo History lists every edit
+made to the song: click a row to go back (or forward) to the song as it was after that edit, or press Up and Down in
+the list.
 
 ## Building
 

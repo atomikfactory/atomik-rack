@@ -9,6 +9,16 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Undo History panel.** Edit > Undo History (the command `edit.history`, no default key) docks a list of the edits
+  made to the song on the right of the window, left of the Track Panel when both show. The first row is the state the
+  song started in ("Opened", or "New song"), each row after it is one undo step with its name and how long ago it was
+  made ("2 min ago"), oldest at the top. The row the song stands on is highlighted and the steps after it, the ones
+  Redo would bring back, are dimmed. A click on a row undoes or redoes as many steps as it takes to reach the state
+  right after that step, through the same Undo and Redo the keys run; a click on the first row undoes everything. With
+  the list focused, Up and Down step one undo or redo, and Home and End go to the first and the last row. The list
+  scrolls and keeps the current row in view, follows every edit, undo and redo (also the ones made with the keys while
+  it is open) and starts again with a new or opened song; each song window has its own. Whether it shows is kept for
+  the session. The times are not saved. Format unchanged (44), command count 521.
 - **Command palette.** Help > Command Palette (Ctrl+Shift+K, Cmd+Shift+K on macOS) opens a floating panel with a search
   field and a list of every command: the menu items as the menus show them now, with their menu path, and the other
   commands the keys reach, under their group. The search takes several words and matches the name, the menu path and
