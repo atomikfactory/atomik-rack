@@ -32,7 +32,7 @@ fn shell() -> Shell<NullBackend> {
         },
     );
     s.handle(&UiEvent::ScaleChanged(1.0));
-    s.handle(&UiEvent::Resize(Size::new(1200.0, 900.0)));
+    s.handle(&UiEvent::Resize(Size::new(1200.0, 1100.0)));
     for k in ["a", "b", "c", "d"] {
         s.core_mut()
             .apply_command(Command::AddDevice {
@@ -161,6 +161,10 @@ fn the_track_menu_follows_the_selection() {
             "Pattern Lane to Notes",
             "Edit Track Controllers",
             "Add Reverb Send\u{2026}",
+            "Duck from\u{2026}",
+            "Duck from (Pre-Fader)\u{2026}",
+            "Gentle Pump",
+            "Remove Ducking",
             "Tail Repeat",
             "Reverb Tail",
             "0.5 s",

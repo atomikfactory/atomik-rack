@@ -139,6 +139,8 @@ DetachRack | Detach Rack
 DetectKey | Detect Song Key
 DirectRecord | Direct Record
 Documentation | Documentation
+DuckFrom | Duck from…
+DuckFromPre | Duck from (Pre-Fader)…
 Duplicate | Duplicate
 EditTrackControllers | Edit Track Controllers
 EndCompare | End Compare
@@ -170,6 +172,7 @@ FreezeStrip | Freeze with Strip
 FreezeTail | Freeze with Tail
 FreezeTrack | Freeze Track
 FreezeTrackToDevice | Freeze Track up to Selected Device
+GentlePump | Gentle Pump
 GroupTracks | Group Tracks
 GuidedTour | Guided Tour
 ImportArchive | Import Project Archive…
@@ -317,6 +320,7 @@ RelinkAudio | Relink Missing Audio…
 RelinkVideo | Relink Video…
 RemoveBars | Remove Bars at Locators
 RemoveChannel | Delete Channel
+RemoveDucking | Remove Ducking
 RemoveFromVca | Remove from VCA
 RemoveReference | Remove Reference Track
 RemoveVideo | Remove Video

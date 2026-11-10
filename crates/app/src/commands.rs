@@ -607,6 +607,15 @@ pub enum AppCommand {
     /// Track > Add Reverb Send...: opens the wizard that gives the selected track a send to a new
     /// FX return with an EQ and a keyed Space Reverb.
     AddReverbSend,
+    /// Track > Duck from...: a pop-up of the other tracks; the one chosen is the key of a
+    /// compressor that ducks the selected track (the key is taken after the source's fader).
+    DuckFrom,
+    /// Track > Duck from (Pre-Fader)...: the same, with the key taken before the source's fader.
+    DuckFromPre,
+    /// Track > Gentle Pump: a quarter-note pump on the selected track, with no key.
+    GentlePump,
+    /// Track > Remove Ducking: takes the ducking devices off the selected track.
+    RemoveDucking,
     /// Track > Rumble Maker: a rumble layer from the selected kick track on a new track, its tail
     /// made one of two ways.
     RumbleMaker(RumbleChoice),
@@ -1165,6 +1174,10 @@ impl AppCommand {
             AppCommand::BypassPlayers => ("sequencer.bypass_players", None),
             AppCommand::AddPatternLane => ("sequencer.add_pattern_lane", None),
             AppCommand::AddReverbSend => ("sequencer.add_reverb_send", None),
+            AppCommand::DuckFrom => ("sequencer.duck_from", None),
+            AppCommand::DuckFromPre => ("sequencer.duck_from_pre", None),
+            AppCommand::GentlePump => ("sequencer.gentle_pump", None),
+            AppCommand::RemoveDucking => ("sequencer.remove_ducking", None),
             AppCommand::RumbleMaker(c) => ("sequencer.rumble_maker", Some(c.arg())),
             AppCommand::AddTransition(c) => ("sequencer.add_transition", Some(c.arg())),
             AppCommand::ReverseReverbPrint(l) => ("sequencer.reverse_reverb_print", Some(l.arg())),
@@ -1594,6 +1607,10 @@ impl AppCommand {
             ("sequencer.bypass_players", None) => AppCommand::BypassPlayers,
             ("sequencer.add_pattern_lane", None) => AppCommand::AddPatternLane,
             ("sequencer.add_reverb_send", None) => AppCommand::AddReverbSend,
+            ("sequencer.duck_from", None) => AppCommand::DuckFrom,
+            ("sequencer.duck_from_pre", None) => AppCommand::DuckFromPre,
+            ("sequencer.gentle_pump", None) => AppCommand::GentlePump,
+            ("sequencer.remove_ducking", None) => AppCommand::RemoveDucking,
             ("sequencer.add_transition", Some(arg)) => {
                 return TransitionChoice::from_arg(arg).map(AppCommand::AddTransition);
             }
@@ -2149,6 +2166,8 @@ pub struct MenuState {
     /// A track with a console channel is selected and a send/return slot is free: Add Reverb Send
     /// works.
     pub can_reverb_send: bool,
+    /// Which quick sidechain items work on the track a command would take.
+    pub duck: DuckGate,
     /// The translation lens of the live output.
     pub lens: atomik_engine::LensSettings,
     /// The arrangement area is shown.
@@ -2488,6 +2507,17 @@ pub struct VcaMenu {
     pub can_route_folder: bool,
     /// The selected track folder plays into a bus: Stop Routing Folder works.
     pub can_unroute_folder: bool,
+}
+
+/// Which quick sidechain items of the Track menu can be chosen now.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DuckGate {
+    /// A track is selected and another track exists to duck from (Duck from).
+    pub can_duck: bool,
+    /// A track is selected that has no gentle pump yet (Gentle Pump).
+    pub can_pump: bool,
+    /// The selected track has a ducker or a gentle pump (Remove Ducking).
+    pub has_ducking: bool,
 }
 
 /// What the Track menu and the context menus need to know to freeze, unfreeze and bounce.
@@ -3945,6 +3975,27 @@ pub fn menus_with_songs(
                     state.can_reverb_send,
                 ),
                 MenuEntry::Submenu(Submenu {
+                    label: "Quick Sidechain",
+                    entries: vec![
+                        enabled(
+                            "Duck from\u{2026}",
+                            AppCommand::DuckFrom,
+                            state.duck.can_duck,
+                        ),
+                        enabled(
+                            "Duck from (Pre-Fader)\u{2026}",
+                            AppCommand::DuckFromPre,
+                            state.duck.can_duck,
+                        ),
+                        enabled("Gentle Pump", AppCommand::GentlePump, state.duck.can_pump),
+                        enabled(
+                            "Remove Ducking",
+                            AppCommand::RemoveDucking,
+                            state.duck.has_ducking,
+                        ),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
                     label: "Rumble Maker",
                     entries: RumbleChoice::ALL
                         .into_iter()
@@ -4496,6 +4547,7 @@ mod tests {
             can_uncombine: false,
             can_split_sub: false,
             can_reverb_send: false,
+            duck: DuckGate::default(),
             lens: Default::default(),
             song_visible: true,
             piano_roll: false,
@@ -4799,6 +4851,10 @@ mod tests {
             AppCommand::PatternLaneToNotes,
             AppCommand::EditTrackControllers,
             AppCommand::AddReverbSend,
+            AppCommand::DuckFrom,
+            AppCommand::DuckFromPre,
+            AppCommand::GentlePump,
+            AppCommand::RemoveDucking,
             AppCommand::FoldLanes(true),
             AppCommand::FoldLanes(false),
             AppCommand::AudioReverse,
@@ -5632,6 +5688,7 @@ mod tests {
                 can_uncombine: false,
                 can_split_sub: false,
                 can_reverb_send: false,
+                duck: DuckGate::default(),
                 lens: Default::default(),
                 song_visible: false,
                 piano_roll: true,

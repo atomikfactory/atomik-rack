@@ -443,6 +443,11 @@ Track
   Pattern Lane to Notes
   Edit Track Controllers
   Add Reverb Send…
+  Quick Sidechain >
+    Duck from…
+    Duck from (Pre-Fader)…
+    Gentle Pump
+    Remove Ducking
   Rumble Maker >
     Tail Repeat
     Reverb Tail

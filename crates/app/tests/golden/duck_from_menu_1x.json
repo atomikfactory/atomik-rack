@@ -1,0 +1,12 @@
+{"ops":[
+{"fill":{"rrect":[22.00,23.00,222.00,136.00,6.00]},"brush":"#0000005a"},
+{"fill":{"rrect":[20.00,20.00,220.00,133.00,6.00]},"brush":"#16181bff"},
+{"stroke":{"rrect":[20.00,20.00,220.00,133.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"fill":{"rrect":[32.00,31.00,42.00,41.00,2.00]},"brush":"#dc463cff"},
+{"text":"Kick","at":[52.00,40.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"fill":{"rrect":[32.00,55.00,42.00,65.00,2.00]},"brush":"#3c78dcff"},
+{"text":"Bass (ducking)","at":[52.00,64.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Pad","at":[52.00,88.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"fill":{"rect":[30.00,100.00,210.00,101.00]},"brush":"#ffffff1c"},
+{"text":"More...","at":[52.00,121.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"}
+]}
