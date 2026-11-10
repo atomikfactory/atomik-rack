@@ -479,3 +479,34 @@ the Flatpak by `flatpak-builder` against `org.freedesktop.Platform` 25.08; both 
 workflows, and pull requests check the scripts, the manifest and the metadata without building.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+---
+
+## V. The Markdown reader of the built-in manual
+
+**Question.** The built-in manual shows the user documents of `docs/` inside the app. Which Markdown reader draws
+them, and which files does the manual hold?
+
+**Options.** For the reader: (1) a pure-Rust Markdown crate with a permissive licence (pulldown-cmark is MIT and pure
+Rust); (2) a small reader of the subset the documents use, written in the project. For the files: (a) the user
+documents only (`docs/README.md` and the generated `docs/KEYBOARD.md`); (b) every document of `docs/`.
+
+**Implications.** A crate reads all of CommonMark, and the manual would still need its own layout, because the app
+draws everything itself: the events of the crate would be turned into the same blocks and styled runs either way, so
+the crate saves only the parsing, a few hundred lines that a fixture test pins down. It adds a dependency to the UI
+crate, a licence and advisory line to keep, and behaviour (HTML blocks, reference links, nesting rules) that the
+documents do not use and the layout does not draw. The in-house reader covers headings with GitHub-style anchors,
+paragraphs, lists, fenced code, tables, quotes, rules, bold, italic, code, links and images (shown as their alt text),
+and reads anything else as plain text; it never fails. Its cost is that a document that starts to use a Markdown
+feature it does not read shows it as text until the reader learns it; the coverage tests parse the real documents, so a
+heading or a link that does not resolve fails the build. For the files, the manual of the architecture, the tests and
+the decision log is for contributors and would triple the compiled-in text for little use inside the app, and the
+device reference alone is longer than all the user documents together; the sections that explain the app are in
+`README.md`, which says where the reference is and links to it on the project page.
+
+**Decision.** Option 2 and (a). The reader is `atomik_ui::manual::markdown`, the manual and its search are in
+`atomik_ui::manual`, and the app compiles the two files in with `include_str!` (`app/src/manual.rs`), so the manual
+and the documentation are one text. A link to a file the manual does not hold opens the page of the repository it names,
+one request to a fixed address like Help > Documentation, and nothing else is ever opened from the text.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

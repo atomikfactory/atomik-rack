@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A built-in manual.** Help > Manual (`help.manual`, Ctrl+F1, Cmd+Alt+F1 on macOS) opens the user documentation in a
+  large panel that works offline: a table of contents built from the headings on the left, the page on the right with
+  headings, paragraphs, bold and italic text, code, lists, tables and links between sections (a picture shows its
+  description), a search field with ranked results (a heading match above a body match) and a line around each match
+  with the matched words in bold, and Back and Forward buttons (Alt+Left and Alt+Right). The text is `docs/README.md`
+  and `docs/KEYBOARD.md` compiled in, so the manual and the documentation are one source; a new Manual section and a
+  Devices section in `README.md` describe it. The More link of Help Mode now opens the manual at its section instead of
+  the browser, the command palette lists "Manual: <heading>" for every section, and a link to a page the manual does not
+  hold (the device reference, the other documents) opens that page on the project site, one request to a fixed address.
+  Help > Documentation still opens the project page. The Markdown reader is written in the project (decision V).
+  The project format is unchanged.
 - **Backup copies in a second folder.** Settings > Backup has a Backup folder (None by default, with Choose... and
   None), Keep (the copies of each project that stay, 1 to 50, default 10) and Include audio (default on). Every
   successful save also copies the project to `<backup folder>/<name>/<name> <YYYY-MM-DD HHMMSS>.atomik` (UTC) and, with

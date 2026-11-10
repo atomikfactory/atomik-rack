@@ -5139,7 +5139,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (552) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (553) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5321,9 +5321,23 @@ creation chain in the **Creation chain** bullet.
   type), and `help::resolve` turns a `Help` into a `HelpCard`: a parameter card is built from its descriptor and the
   about line of its device, an id with an entry is that entry with the live shortcut, and anything else falls back to
   its tooltip text. A docked strip above the status line shows it (`Shell::content_bottom` moves the bottom of every
-  pane up by `HELP_PANEL_HEIGHT`), and only a press on its "More" link is taken: it is a `ShellRequest::OpenUrl` to
-  the section of `docs/README.md`. Tests check that every id a view names has an entry, that no entry is stale, that
+  pane up by `HELP_PANEL_HEIGHT`), and only a press on its "More" link is taken: it opens the built-in manual at
+  that section (`Resolved::manual`; a section the manual does not hold falls back to a `ShellRequest::OpenUrl`).
+  Tests check that every id a view names has an entry, that no entry is stale, that
   every device type has an about line, and list the controls of a window that still fall back to their tooltip.
+- **The manual** (`help.manual`, Help > Manual, Ctrl+F1; [app/src/manual.rs](../crates/app/src/manual.rs),
+  [app/src/shell_manual.rs](../crates/app/src/shell_manual.rs), [ui/src/manual/](../crates/ui/src/manual)). The app
+  compiles `docs/README.md` and `docs/KEYBOARD.md` in with `include_str!`, so the manual and the documentation are one
+  text. `atomik_ui::manual::markdown` reads the subset the documents use (decision V: written in the project, no
+  crate); `Manual::new` cuts each document into pages at its headings of level one and two, builds the table of
+  contents and the GitHub-style anchors (`Manual::resolve` reads `#anchor`, `FILE.md#anchor` and addresses), and
+  `Manual::search` ranks one hit per section (a heading match above a body match) with a snippet and the matched
+  ranges. `ManualView` lays a page out once per width on the canvas it paints on (`layout.rs`, measured text), keeps
+  the history for Back and Forward, and takes every event like the command palette. A link that leaves the manual is
+  `ManualAction::Open`; the shell opens the fixed address of the file (`manual::outside_url`) or says it is not part of
+  the manual. The command palette lists a "Manual: <heading>" row per heading (`palette::manual_entries`). Tests parse
+  the real documents: every `more` section of the help text, every anchor of `SECTIONS` and every link of the documents
+  must resolve.
 - **Revision, dirty flag and repaints** ([model/src/lib.rs](../crates/model/src/lib.rs)
   `Document::revision`, [app/src/app_core.rs](../crates/app/src/app_core.rs),
   [app/src/shell.rs](../crates/app/src/shell.rs)). `Document::revision()` takes a new process-wide
