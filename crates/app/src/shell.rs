@@ -500,6 +500,9 @@ enum Capture {
 pub struct Shell<B: AudioBackend> {
     core: AppCore<LiveSession<B>>,
     menubar: Option<MenuBar>,
+    /// The menu bars of the detached windows that have one (see `shell_windows`): each window
+    /// has its own bar state over the one menu model, and only one bar is open at a time.
+    window_bars: BTreeMap<WindowKind, MenuBar>,
     /// The open context menu (a right click) and the pane it belongs to.
     context_menu: Option<OpenContextMenu>,
     /// The window point of the last right-press (where a text field menu opens).
@@ -782,6 +785,7 @@ impl<B: AudioBackend> Shell<B> {
         let mut shell = Self {
             core,
             menubar: options.in_window_menu.then(MenuBar::new),
+            window_bars: BTreeMap::new(),
             context_menu: None,
             secondary_at: Point::ORIGIN,
             dialog: None,
@@ -3429,7 +3433,7 @@ impl<B: AudioBackend> Shell<B> {
             dialog.show_tab(tab);
         }
         self.dialog = Some(dialog);
-        self.menubar.as_mut().map(MenuBar::close);
+        self.close_menubars();
     }
 
     /// The theme in use: the preference, with the System choice following the operating system.
@@ -3705,6 +3709,8 @@ impl<B: AudioBackend> Shell<B> {
     /// The window lost focus: the key releases will never arrive, so forget the held keys and
     /// the modifier state (a hold-style role must not stay on).
     pub fn focus_lost(&mut self) {
+        // An open menu closes when its window loses the focus.
+        self.close_menubars();
         self.router.clear_held();
         let released = self.core.piano_keys_mut().release_all();
         for action in released {
@@ -3915,11 +3921,7 @@ impl<B: AudioBackend> Shell<B> {
     }
 
     fn bar_height(&self) -> f64 {
-        if self.menubar.is_some() {
-            MENU_BAR_HEIGHT
-        } else {
-            0.0
-        }
+        self.bar_height_in(WindowKind::Main)
     }
 
     /// The top of everything below the menu bar and the plugin banner.
@@ -5747,7 +5749,7 @@ impl<B: AudioBackend> Shell<B> {
         if self.context_menu.is_some() {
             return self.context_menu_event(window, event);
         }
-        let bar_open = self.menubar.as_ref().is_some_and(MenuBar::is_open);
+        let bar_open = self.any_bar_open();
         // The guide panel takes the pointer inside its own rectangle and nothing else: never a
         // key, so the song keeps the keyboard.
         if window == WindowKind::Main
@@ -5864,6 +5866,9 @@ impl<B: AudioBackend> Shell<B> {
             return Vec::new();
         }
         if window != WindowKind::Main {
+            if let Some(requests) = self.menu_bar_event(window, event) {
+                return requests;
+            }
             return self.pointer_in_detached(window, event);
         }
         // The plugin banner takes the pointer inside its strip (below the menu bar).
@@ -5883,42 +5888,8 @@ impl<B: AudioBackend> Shell<B> {
                 return Vec::new();
             }
         }
-        let model = self.menu_model();
-        let window_size = self.size();
-        if let Some(bar) = &mut self.menubar {
-            bar.set_window(window_size);
-            let before = (bar.look(), bar.deep_look());
-            let was_open = bar.is_open();
-            let outcome = bar.handle(event, &model);
-            // A menu that opens shows the keys as the file has them now.
-            let opened = !was_open && bar.is_open();
-            if opened {
-                self.reload_keymap_file();
-            }
-            let Some(bar) = &mut self.menubar else {
-                return Vec::new();
-            };
-            match outcome {
-                MenuBarOutcome::Ignored => {}
-                MenuBarOutcome::Consumed => {
-                    // A move that leaves the bar as it was (the pointer inside one title)
-                    // shows nothing new, and one that changes it only repaints the main
-                    // window, where the bar is.
-                    let moved = matches!(event, UiEvent::PointerMove { .. });
-                    let changed = (bar.look(), bar.deep_look()) != before;
-                    if !moved {
-                        self.repaint = true;
-                    } else if changed && let Some(w) = self.win_mut(WindowKind::Main) {
-                        w.dirty = true;
-                    }
-                    self.leave_hover();
-                    return Vec::new();
-                }
-                MenuBarOutcome::Command(command) => {
-                    self.repaint = true;
-                    return self.execute_command(command);
-                }
-            }
+        if let Some(requests) = self.menu_bar_event(window, event) {
+            return requests;
         }
         if matches!(event, UiEvent::PointerLeave) {
             self.leave_hover();
@@ -7527,22 +7498,22 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::SaveVersion => {
                 self.open_versions(false);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::MaskingMap => {
                 self.open_masking();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::CheckMix => {
                 self.open_mixcheck();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::Versions => {
                 self.open_versions(true);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::ExportArchive => self.export_archive_request(),
@@ -7628,7 +7599,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::ClearRecent => {
                 self.core.clear_recent();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::Save => match self.core.save_interactive() {
@@ -7664,18 +7635,18 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::QuantizeApply => {
                 let pane = self.live_pane(self.focus);
                 self.apply_last_quantize(pane);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::QuantizeOptions => {
                 self.open_quantize();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             // The Track menu: the arrangement's commands, whatever pane has the focus.
             AppCommand::ScaleTempo(ScaleStep::Other) => {
                 self.open_scale();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::GroupTracks
@@ -7706,7 +7677,7 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::AutomationIntoClip
             | AppCommand::ClearParamLanes => {
                 self.track_command(command);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             // The freeze commands render on a worker and edit the document when it is done.
@@ -7738,7 +7709,7 @@ impl<B: AudioBackend> Shell<B> {
                     AppCommand::BounceClipDry => self.core.bounce_clips_dry(),
                     _ => self.core.bounce_in_place(true),
                 }
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             // The player stack commands act on the selected tracks and are one undo step each.
@@ -7756,7 +7727,7 @@ impl<B: AudioBackend> Shell<B> {
                     AppCommand::PatternLaneToNotes => self.core.pattern_lane_to_notes(),
                     _ => self.core.bypass_all_players(),
                 }
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::AudioReverse
@@ -7769,67 +7740,67 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::AudioFades(_)
             | AppCommand::AudioClearEnvelope => {
                 self.audio_command(command);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::AudioNormalise => {
                 self.core.normalise_audio();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::AudioNormaliseTo(target) => {
                 self.core.normalise_audio_with(target.params());
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::AudioStripSilence => {
                 self.open_silence();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::AddReverbSend => {
                 self.open_reverb_send();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::RumbleMaker(choice) => {
                 self.core.rumble_maker(choice.mode());
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::ReverseReverbPrint(length) => {
                 self.core.reverse_reverb_print(length.seconds());
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::AddTransition(choice) => {
                 self.core.add_transition(choice);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::AudioToNotes => {
                 self.open_notes();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::AudioQuantize => {
                 self.quantize_audio();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::AudioWarpTempo => {
                 self.core.warp_to_song_tempo();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::AudioWarpBars(bars) => {
                 self.core.warp_bars(bars);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::AudioWarpPanel => {
                 self.open_warp();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::CollectFiles => {
@@ -7843,7 +7814,7 @@ impl<B: AudioBackend> Shell<B> {
                     }
                     Err(e) => self.notify(e.to_string()),
                 }
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::CollectPreview => {
@@ -7857,16 +7828,16 @@ impl<B: AudioBackend> Shell<B> {
                     }
                     Err(e) => self.notify(e.to_string()),
                 }
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::CancelCollect => {
                 self.core.cancel_collect();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::MoveProject => {
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 if self.core.file().is_none() {
                     self.notify(
                         "Save the song first: Move Project needs a project file to move".to_owned(),
@@ -7877,7 +7848,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::RelinkAudio => {
                 self.open_relink();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::Undo => {
@@ -7894,7 +7865,7 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some((id, arg)) = command.command_id() {
                     self.run_shell_command(id, arg);
                 }
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             // The Edit menu: the same commands the keys run, offered to the focused pane.
@@ -8064,7 +8035,7 @@ impl<B: AudioBackend> Shell<B> {
                 } else {
                     self.notify("no note track to edit: add or select a note track");
                 }
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::TogglePianoRoll => {
@@ -8191,7 +8162,7 @@ impl<B: AudioBackend> Shell<B> {
                 let mut settings = self.core.sink().settings().clone();
                 settings.pre_count_bars = self.core.pre_count_toggled();
                 self.apply_settings(settings);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::ToggleClockOut => {
@@ -8201,14 +8172,14 @@ impl<B: AudioBackend> Shell<B> {
                     self.notify("MIDI clock out has no port yet: choose one in Settings > Sync");
                 }
                 self.apply_settings(settings);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::ToggleClockWhileStopped => {
                 let mut settings = self.core.sink().settings().clone();
                 settings.sync.send_while_stopped = !settings.sync.send_while_stopped;
                 self.apply_settings(settings);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::ToggleClockIn => {
@@ -8218,7 +8189,7 @@ impl<B: AudioBackend> Shell<B> {
                     self.notify("MIDI clock in has no port yet: choose one in Settings > Sync");
                 }
                 self.apply_settings(settings);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::Quantize(q) => {
@@ -8276,59 +8247,59 @@ impl<B: AudioBackend> Shell<B> {
                 if self.core.arrangement().energy_lane_visible() {
                     let _ = self.core.start_energy();
                 }
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::SoundAnalyst => {
                 self.open_sound_analyst();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::BassRead => {
                 self.open_bass_read();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::DeliveryTargets => {
                 self.open_delivery(DeliveryPage::Targets);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::PeakSurgeon => {
                 self.open_delivery(DeliveryPage::Peaks);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::LensHeadphones => {
                 self.core.lens_off();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::LensSmallSpeaker => {
                 self.core
                     .set_lens_voicing(atomik_engine::LensVoicing::SmallSpeaker);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::LensClubSub => {
                 self.core
                     .set_lens_voicing(atomik_engine::LensVoicing::ClubSub);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::LensMono => {
                 self.core.toggle_lens_mono();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::SplitSub => {
                 self.core.split_sub();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::FindRepetition => {
                 self.open_repetition();
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::ToggleMarkerStrip => {
@@ -8726,7 +8697,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::About => {
                 self.about = Some(AboutBox::new(crate::about_box::VERSION));
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::SetTheme(choice) => {
@@ -8767,7 +8738,7 @@ impl<B: AudioBackend> Shell<B> {
                 view.set_data(self.core.plugin_settings_data());
                 view.set_focused(true);
                 self.plugin_settings = Some(view);
-                self.menubar.as_mut().map(MenuBar::close);
+                self.close_menubars();
                 Vec::new()
             }
             AppCommand::RescanMidi => {
@@ -9270,13 +9241,17 @@ impl<B: AudioBackend> Shell<B> {
         self.core.piano_roll_tick(now_seconds);
         self.tick_tooltip(now_seconds);
         // A pointer resting on a scroll strip of a menu bar list scrolls it.
-        if self.menubar.as_ref().is_some_and(MenuBar::is_open) {
+        if self.any_bar_open() {
             let model = self.menu_model();
-            let window_size = self.size();
-            if let Some(bar) = &mut self.menubar {
-                bar.set_window(window_size);
-                if bar.tick(now_seconds, &model) {
-                    self.repaint = true;
+            for window in self.bar_windows() {
+                let size = self.window_size(window).unwrap_or_else(|| self.size());
+                if let Some(bar) = self.bar_mut(window)
+                    && bar.is_open()
+                {
+                    bar.set_window(size);
+                    if bar.tick(now_seconds, &model) {
+                        self.repaint = true;
+                    }
                 }
             }
         }
@@ -10532,6 +10507,10 @@ mod repaint_tests;
 #[cfg(test)]
 #[path = "shell_windows_tests.rs"]
 mod windows_tests;
+
+#[cfg(test)]
+#[path = "shell_window_menu_tests.rs"]
+mod window_menu_tests;
 
 #[cfg(test)]
 #[path = "shell_song_tests.rs"]

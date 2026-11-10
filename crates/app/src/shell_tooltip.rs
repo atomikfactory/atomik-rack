@@ -97,7 +97,7 @@ impl<B: AudioBackend> Shell<B> {
             || self.context_menu.is_some()
             || self.capture.is_some()
             || self.file_drag.is_some()
-            || self.menubar.as_ref().is_some_and(MenuBar::is_open)
+            || self.any_bar_open()
         {
             return None;
         }

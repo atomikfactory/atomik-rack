@@ -659,15 +659,17 @@ impl App {
                 .map_or(DETACHED_SIZE, |s| (s.width, s.height)),
         };
         let saved = self.shell.saved_geom(kind);
+        // A window with the menu bar is never narrower than the bar.
+        let min_size = (MIN_SIZE.0.max(self.shell.menu_bar_width(kind)), MIN_SIZE.1);
         let placement = if kind == WindowKind::Main {
-            windows::place(saved.as_ref(), default, MIN_SIZE, &monitors, primary)
+            windows::place(saved.as_ref(), default, min_size, &monitors, primary)
         } else {
             // A detached window with nothing saved goes to a monitor the app is not on yet.
             let occupied = self.desktop_rects(doc).unwrap_or_default();
             windows::place_detached(
                 saved.as_ref(),
                 default,
-                MIN_SIZE,
+                min_size,
                 &monitors,
                 primary,
                 &occupied,
@@ -676,7 +678,7 @@ impl App {
         let mut attributes = Window::default_attributes()
             .with_title(self.shell.title_in(kind))
             .with_inner_size(LogicalSize::new(placement.size.0, placement.size.1))
-            .with_min_inner_size(LogicalSize::new(MIN_SIZE.0, MIN_SIZE.1))
+            .with_min_inner_size(LogicalSize::new(min_size.0, min_size.1))
             .with_maximized(placement.maximised)
             .with_window_icon(window_logic::window_icon());
         if let Some(pos) = placement.pos {
