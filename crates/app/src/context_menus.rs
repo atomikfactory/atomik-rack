@@ -553,6 +553,7 @@ fn type_rows(command: &str, types: &[(&'static str, &'static str)]) -> Vec<Entry
             shortcut: None,
             enabled: true,
             checked: None,
+            swatch: None,
         })
     };
     if types.len() <= MAX_ROWS {
@@ -1180,6 +1181,7 @@ pub fn jack_entries(menu: &JackMenu) -> Vec<Entry> {
             shortcut: None,
             enabled,
             checked: None,
+            swatch: None,
         })
     };
     let submenu = |label: &str, entries: Vec<Entry>| {
@@ -1258,6 +1260,7 @@ pub fn midi_out_entries(ports: &[String], current: Option<&str>) -> Vec<Entry> {
             shortcut: None,
             enabled: true,
             checked: Some(on),
+            swatch: None,
         })
     };
     let mut rows = vec![item(
@@ -1290,6 +1293,7 @@ pub fn video_audio_entries(tracks: &[(u32, String)]) -> Vec<Entry> {
                 shortcut: None,
                 enabled: true,
                 checked: None,
+                swatch: None,
             })
         })
         .collect()
@@ -1313,6 +1317,7 @@ pub fn patch_entries(
             shortcut: None,
             enabled: true,
             checked: None,
+            swatch: None,
         })
     };
     let head = clean_up.then(|| action("rack.clean_up_bass", "Clean Up Bass"));
@@ -1329,6 +1334,7 @@ pub fn patch_entries(
                 shortcut: None,
                 enabled: true,
                 checked: Some(current == Some(i)),
+                swatch: None,
             })
         }))
         .collect()

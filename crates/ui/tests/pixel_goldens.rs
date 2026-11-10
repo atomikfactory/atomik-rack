@@ -128,6 +128,7 @@ fn item(label: &str, shortcut: Option<&str>, enabled: bool, checked: Option<bool
         shortcut: shortcut.map(str::to_owned),
         enabled,
         checked,
+        swatch: None,
     })
 }
 

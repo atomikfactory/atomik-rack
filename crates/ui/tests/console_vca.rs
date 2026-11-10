@@ -618,7 +618,12 @@ fn vca_items(v: &ConsoleView) -> Vec<String> {
         items.ends_with(&SETTINGS_ITEMS.map(str::to_owned)),
         "{items:?}"
     );
-    items[..items.len() - SETTINGS_ITEMS.len()].to_vec()
+    // The quick sidechain rows of a channel strip are not VCA entries.
+    items[..items.len() - SETTINGS_ITEMS.len()]
+        .iter()
+        .filter(|i| !i.starts_with("Duck from") && *i != "Gentle pump" && *i != "Remove ducking")
+        .cloned()
+        .collect()
 }
 
 // ---------------------------------------------------------------- link faders
