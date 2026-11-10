@@ -263,6 +263,45 @@ pub(crate) fn failed_log_line(device: &str, reason: &str) -> String {
     format!("plugin [{device}] failed: {reason}")
 }
 
+/// The app log line of an editor that was asked for: the device key, the instance id and the
+/// plugin's process (`again`: the app already knew the editor as open or opening).
+pub(crate) fn editor_requested_line(
+    device: &str,
+    instance: InstanceId,
+    process: Option<usize>,
+    again: bool,
+) -> String {
+    let process = process.map_or_else(|| "none".to_string(), |p| p.to_string());
+    let again = if again {
+        " (already open or opening)"
+    } else {
+        ""
+    };
+    format!(
+        "plugin [{device}] editor requested: instance {}, process {process}{again}",
+        instance.0
+    )
+}
+
+/// The app log line of an editor that is open.
+pub(crate) fn editor_opened_line(device: &str, instance: InstanceId) -> String {
+    format!("plugin [{device}] editor opened: instance {}", instance.0)
+}
+
+/// The app log line of an editor that did not open.
+pub(crate) fn editor_failed_line(device: &str, instance: InstanceId, reason: &str) -> String {
+    format!(
+        "plugin [{device}] editor did not open: instance {}: {reason}",
+        instance.0
+    )
+}
+
+/// The app log line of an editor that closed.
+pub(crate) fn editor_closed_line(device: &str, instance: Option<InstanceId>) -> String {
+    let instance = instance.map_or_else(|| "none".to_string(), |i| i.0.to_string());
+    format!("plugin [{device}] editor closed: instance {instance}")
+}
+
 /// The app log line of something a plugin (or its host process) said at warning level or worse.
 /// A panic of the plugin in its host process reads `plugin [<key>] panicked in the plugin host
 /// during <op>: <message> at <file>:<line>:<col>`, followed by the child's last stderr lines.
@@ -1182,13 +1221,26 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             ManagerEvent::EditorOpened(instance) => {
-                if let Some(key) = self.plugins.keys.get(&instance).cloned()
-                    && self.plugins.windows.get(&key) == Some(&EditorWindow::ExternalOpening)
-                {
-                    self.plugins
-                        .windows
-                        .insert(key.clone(), EditorWindow::External);
-                    self.plugins.log(format!("[{key}] editor opened"));
+                if let Some(key) = self.plugins.keys.get(&instance).cloned() {
+                    match self.plugins.windows.get(&key) {
+                        Some(EditorWindow::ExternalOpening) => {
+                            self.plugins
+                                .windows
+                                .insert(key.clone(), EditorWindow::External);
+                            self.plugins.log(format!("[{key}] editor opened"));
+                            log::info!("{}", editor_opened_line(&key.0, instance));
+                        }
+                        None => {
+                            // The editor was closed while the plugin still opened it: the
+                            // editor that just appeared is closed again, not left open unseen.
+                            log::info!(
+                                "plugin [{key}] editor opened after it was closed: instance {}, closing it",
+                                instance.0
+                            );
+                            let _ = self.plugins.host.manager().close_gui(instance);
+                        }
+                        Some(_) => {}
+                    }
                 }
             }
             ManagerEvent::EditorFailed { instance, reason } => {
@@ -1198,6 +1250,7 @@ impl<S: EngineSink> AppCore<S> {
                     self.plugins.windows.remove(&key);
                     self.plugins
                         .log(format!("[{key}] editor did not open: {reason}"));
+                    log::info!("{}", editor_failed_line(&key.0, instance, &reason));
                     self.reject(format!("cannot open the plugin editor: {reason}"));
                 }
             }
@@ -2906,6 +2959,9 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         let owner = self.plugins.editor_owner;
+        let process = self.plugins.host.manager_ref().native_handle(id);
+        let again = self.plugins.windows.contains_key(device);
+        log::info!("{}", editor_requested_line(&device.0, id, process, again));
         match self
             .plugins
             .host
@@ -2916,6 +2972,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.plugins
                     .windows
                     .insert(device.clone(), EditorWindow::External);
+                log::info!("{}", editor_opened_line(&device.0, id));
             }
             Ok(false) => {
                 self.plugins
@@ -2923,7 +2980,10 @@ impl<S: EngineSink> AppCore<S> {
                     .insert(device.clone(), EditorWindow::ExternalOpening);
                 self.reject(EDITOR_WAITING.to_string());
             }
-            Err(e) => self.reject(format!("cannot open the plugin editor: {e}")),
+            Err(e) => {
+                log::info!("{}", editor_failed_line(&device.0, id, &e.to_string()));
+                self.reject(format!("cannot open the plugin editor: {e}"));
+            }
         }
     }
 
@@ -3102,6 +3162,15 @@ impl<S: EngineSink> AppCore<S> {
                 window,
                 EditorWindow::External | EditorWindow::ExternalOpening
             );
+        if matches!(
+            window,
+            EditorWindow::External | EditorWindow::ExternalOpening
+        ) {
+            log::info!(
+                "{}",
+                editor_closed_line(&device.0, self.plugins.instances.get(device).copied())
+            );
+        }
         if let Some(id) = self.plugins.instances.get(device).copied() {
             match self.plugins.host.manager().close_gui(id) {
                 Ok(Some(blob)) if !self.plugins.no_capture.contains(device) => {

@@ -763,3 +763,185 @@ fn the_mode_plugins_really_run_in_is_shown_and_a_missing_sandbox_is_said_once() 
     }));
     assert_eq!(core.plugin_mode(), None);
 }
+
+// ------------------------------------------------------------------ two instances of one plugin
+
+/// A core with two instances of the test plugin ("echo" and "echo2"), both with an external
+/// editor.
+fn two_instances() -> (AppCore<OfflineSink>, Arc<NullStats>, DeviceKey, DeviceKey) {
+    let (mut core, stats, a) = lost_core();
+    add_plugin(&mut core, GAIN, "echo2");
+    core.frame();
+    stats.set_external_editor(true);
+    core.frame();
+    (core, stats, a, key("echo2"))
+}
+
+fn open_gui(core: &mut AppCore<OfflineSink>, device: &DeviceKey) {
+    core.handle_action(UiAction::OpenPluginGui {
+        device: device.clone(),
+    });
+}
+
+/// The editors of two instances of one plugin, both slow to open, are opened one request each:
+/// the second does not wait for, repeat or answer for the first.
+#[test]
+fn two_slow_editors_of_one_plugin_open_once_each() {
+    let (mut core, stats, a, b) = two_instances();
+    stats.set_external_editor_delay(3);
+    open_gui(&mut core, &a);
+    assert!(core.plugin_gui_opening(&a));
+    assert!(!core.plugin_gui_opening(&b), "B was not asked");
+    open_gui(&mut core, &b);
+    assert!(core.plugin_gui_opening(&a) && core.plugin_gui_opening(&b));
+    assert_eq!(stats.external_opens(), 0);
+    for _ in 0..10 {
+        core.frame();
+    }
+    assert_eq!(
+        stats.external_opens(),
+        2,
+        "one open per instance, no repeats"
+    );
+    assert!(!core.plugin_gui_opening(&a) && !core.plugin_gui_opening(&b));
+    assert!(core.plugin_gui_open(&a) && core.plugin_gui_open(&b));
+    assert_eq!(core.take_plugin_window_requests(), vec![]);
+}
+
+/// B is asked while A still opens: A's pending open is not asked again, B's opens by itself.
+#[test]
+fn asking_for_b_while_a_opens_neither_repeats_a_nor_waits_for_it() {
+    let (mut core, stats, a, b) = two_instances();
+    stats.set_external_editor_delay(3);
+    open_gui(&mut core, &a);
+    core.frame();
+    open_gui(&mut core, &b);
+    // A is asked again while it opens: only the toast, no second open.
+    open_gui(&mut core, &a);
+    assert_eq!(core.last_rejection(), Some(EDITOR_WAITING));
+    for _ in 0..10 {
+        core.frame();
+    }
+    assert_eq!(stats.external_opens(), 2);
+    assert!(core.plugin_gui_open(&a) && core.plugin_gui_open(&b));
+}
+
+/// A fast editor A is open; B is slow: A stays open and can be raised while B opens.
+#[test]
+fn a_slow_second_editor_does_not_disturb_the_open_first() {
+    let (mut core, stats, a, b) = two_instances();
+    open_gui(&mut core, &a);
+    assert_eq!(stats.external_opens(), 1);
+    stats.set_external_editor_delay(3);
+    open_gui(&mut core, &b);
+    assert!(core.plugin_gui_opening(&b));
+    assert!(!core.plugin_gui_opening(&a));
+    assert!(core.plugin_gui_open(&a));
+    core.frame();
+    assert!(core.plugin_gui_open(&a), "A stays open while B opens");
+    for _ in 0..5 {
+        core.frame();
+    }
+    assert_eq!(stats.external_opens(), 2);
+    assert!(core.plugin_gui_open(&b) && !core.plugin_gui_opening(&b));
+}
+
+/// OPEN GUI of an editor that is open raises it: one more request for that instance, none for
+/// the other.
+#[test]
+fn open_gui_of_an_open_editor_raises_it_and_leaves_the_other_alone() {
+    let (mut core, stats, a, b) = two_instances();
+    open_gui(&mut core, &a);
+    open_gui(&mut core, &b);
+    assert_eq!(stats.external_opens(), 2);
+    open_gui(&mut core, &b);
+    assert_eq!(stats.external_opens(), 3, "B raised, A untouched");
+    core.frame();
+    core.frame();
+    assert_eq!(stats.external_opens(), 3, "no request without a click");
+    assert!(core.plugin_gui_open(&a) && core.plugin_gui_open(&b));
+}
+
+/// What one plugin says about its editor is routed to its own device: A closing its editor
+/// leaves B open, and B closing leaves A open.
+#[test]
+fn an_editor_closing_in_one_instance_leaves_the_other_open() {
+    let (mut core, _stats, a, b) = two_instances();
+    open_gui(&mut core, &a);
+    open_gui(&mut core, &b);
+    post(&mut core, &a, PluginMessage::GuiClosed);
+    core.frame();
+    assert!(!core.plugin_gui_open(&a));
+    assert!(core.plugin_gui_open(&b), "B stays open");
+    open_gui(&mut core, &a);
+    assert!(core.plugin_gui_open(&a));
+    post(&mut core, &b, PluginMessage::GuiClosed);
+    core.frame();
+    assert!(core.plugin_gui_open(&a), "A stays open");
+    assert!(!core.plugin_gui_open(&b));
+}
+
+/// Closing A from the app (a removed device) closes A's editor only.
+#[test]
+fn removing_a_device_closes_its_editor_and_not_the_others() {
+    let (mut core, stats, a, b) = two_instances();
+    open_gui(&mut core, &a);
+    open_gui(&mut core, &b);
+    core.close_plugin_gui(&a);
+    assert_eq!(stats.external_closes(), 1);
+    assert!(!core.plugin_gui_open(&a));
+    assert!(core.plugin_gui_open(&b));
+    apply(&mut core, Command::RemoveDevice { key: a.clone() });
+    assert!(core.plugin_gui_open(&b));
+}
+
+/// The editor that opens after the user closed its device's editor is closed again: it is
+/// not left open without the app knowing.
+#[test]
+fn an_editor_that_opens_after_it_was_closed_is_closed_again() {
+    let (mut core, stats, a, b) = two_instances();
+    stats.set_external_editor_delay(3);
+    open_gui(&mut core, &a);
+    open_gui(&mut core, &b);
+    core.close_plugin_gui(&a);
+    assert!(!core.plugin_gui_open(&a));
+    for _ in 0..10 {
+        core.frame();
+    }
+    assert!(!core.plugin_gui_open(&a), "A is closed");
+    assert!(core.plugin_gui_open(&b), "B opened as asked");
+    assert!(
+        stats.external_closes() == 2,
+        "A closed by the user, then its late editor closed again"
+    );
+}
+
+/// The lines that tell a real run which editor was asked for, opened, failed and closed.
+#[test]
+fn the_editor_log_lines_carry_the_device_key_the_instance_and_the_process() {
+    use crate::app_core::plugins::{
+        editor_closed_line, editor_failed_line, editor_opened_line, editor_requested_line,
+    };
+    use atomik_plugin_host::InstanceId;
+    let id = InstanceId(4);
+    assert_eq!(
+        editor_requested_line("echo2", id, Some(1234), false),
+        "plugin [echo2] editor requested: instance 4, process 1234"
+    );
+    assert_eq!(
+        editor_requested_line("echo2", id, None, true),
+        "plugin [echo2] editor requested: instance 4, process none (already open or opening)"
+    );
+    assert_eq!(
+        editor_opened_line("echo2", id),
+        "plugin [echo2] editor opened: instance 4"
+    );
+    assert_eq!(
+        editor_failed_line("echo2", id, "busy"),
+        "plugin [echo2] editor did not open: instance 4: busy"
+    );
+    assert_eq!(
+        editor_closed_line("echo2", Some(id)),
+        "plugin [echo2] editor closed: instance 4"
+    );
+}

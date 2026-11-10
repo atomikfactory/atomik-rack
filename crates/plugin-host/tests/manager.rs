@@ -694,6 +694,43 @@ fn a_slow_external_editor_is_reported_when_open_and_holds_restarts_back() {
     assert_eq!(stats.activated(), 2);
 }
 
+/// Two instances of one plugin open their editors on their own: each is reported once, for
+/// its own id, and the one that opens first does not report or release the other.
+#[test]
+fn two_instances_of_one_plugin_report_their_own_editor_opening() {
+    let (mut m, stats) = manager();
+    stats.set_external_editor(true);
+    stats.set_external_editor_delay(3);
+    let (ha, hb) = (
+        m.instantiate(&request("null.fx")).unwrap(),
+        m.instantiate(&request("null.fx")).unwrap(),
+    );
+    let (a, b) = (ha.id, hb.id);
+    assert_ne!(a, b);
+    assert!(!m.begin_open_external_editor(a, None).unwrap());
+    assert!(m.is_editor_opening(a));
+    assert!(!m.is_editor_opening(b), "B was not asked");
+    m.poll();
+    assert!(!m.begin_open_external_editor(b, None).unwrap());
+    assert!(m.is_editor_opening(a) && m.is_editor_opening(b));
+    let mut seen = Vec::new();
+    for _ in 0..8 {
+        seen.extend(m.poll());
+    }
+    assert_eq!(
+        seen,
+        vec![ManagerEvent::EditorOpened(a), ManagerEvent::EditorOpened(b)],
+        "each id once, A first (it began first)"
+    );
+    assert!(!m.is_editor_opening(a) && !m.is_editor_opening(b));
+    assert_eq!(stats.external_opens(), 2);
+    // Closing A leaves B open and asks nothing more of either.
+    m.close_gui(a).unwrap();
+    assert_eq!(stats.external_closes(), 1);
+    assert!(m.poll().is_empty());
+    assert_eq!(stats.external_opens(), 2);
+}
+
 #[test]
 fn presets_are_listed_and_loaded_through_the_manager() {
     let (mut m, stats) = manager();

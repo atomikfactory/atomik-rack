@@ -616,6 +616,7 @@ pub struct NullStats {
     lost: AtomicBool,
     external_editor: AtomicBool,
     external_opens: AtomicUsize,
+    external_closes: AtomicUsize,
     external_delay: AtomicUsize,
     presets: AtomicBool,
     deactivate_delay: AtomicUsize,
@@ -696,6 +697,10 @@ impl NullStats {
     /// How many times an external editor was opened.
     pub fn external_opens(&self) -> usize {
         self.external_opens.load(Ordering::Relaxed)
+    }
+    /// How many times an open external editor was closed.
+    pub fn external_closes(&self) -> usize {
+        self.external_closes.load(Ordering::Relaxed)
     }
 }
 
@@ -947,7 +952,11 @@ impl PluginInstance for NullInstance {
         ))
     }
 
-    fn close_gui(&mut self) {}
+    fn close_gui(&mut self) {
+        if self.editor_kind() == EditorKind::External {
+            self.stats.external_closes.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 
     fn poll(&mut self) {}
 
