@@ -10,6 +10,14 @@
 //! <name>/Audio/<hash>.wav       one entry per audio asset the project uses
 //! ```
 //!
+//! A shared archive ([`ArchiveExtras`]) holds up to three more kinds of entry, all optional:
+//!
+//! ```text
+//! <name>/credits.txt            who made the song and what it needs (text, 1 MiB at most)
+//! <name>/preview.mp3            a listening copy of the whole song (or `preview.wav`)
+//! <name>/stems/<file>.wav       one entry per stem
+//! ```
+//!
 //! Entries over 4 GiB, more than 65 534 entries and archives over 4 GiB use the ZIP64 fields, so
 //! a multi-gigabyte project archives like a small one: both directions stream through a fixed
 //! buffer and never hold a file in memory.
@@ -24,7 +32,7 @@
 //! # Reading
 //!
 //! [`extract_archive`] never trusts the archive. It reads the central directory, and accepts
-//! only the two entry shapes above (an entry with any other name, a path component that is `..`,
+//! only the entry shapes above (an entry with any other name, a path component that is `..`,
 //! empty, absolute, a drive, or holds a backslash, a colon or a control character, a duplicate, a
 //! second project, a compressed or encrypted entry) and refuses the archive before it writes a
 //! byte. [`ArchiveLimits`] bound the entry count, each entry, the total and the project text; an
@@ -45,6 +53,12 @@ pub const ARCHIVE_EXTENSION: &str = "atomikz";
 /// The extension of the project file inside an archive.
 const PROJECT_EXTENSION: &str = "atomik";
 const AUDIO_DIR: &str = "Audio";
+const STEMS_DIR: &str = "stems";
+const CREDITS_FILE: &str = "credits.txt";
+/// The names a preview can have.
+const PREVIEW_FILES: [&str; 2] = ["preview.mp3", "preview.wav"];
+/// The most bytes of the credits text.
+pub const MAX_CREDITS_BYTES: u64 = 1 << 20;
 const PART_SUFFIX: &str = ".part";
 const BUFFER: usize = 1 << 20;
 
@@ -113,6 +127,9 @@ pub enum ArchiveError {
     /// The destination exists already.
     #[error("{} exists already", .0.display())]
     Exists(PathBuf),
+    /// A step before the archive failed (the render of a preview or of the stems of a share).
+    #[error("{0}")]
+    Failed(String),
 }
 
 fn io_at(path: &Path) -> impl FnOnce(io::Error) -> ArchiveError + '_ {
@@ -129,8 +146,64 @@ pub struct ArchiveReport {
     pub project_bytes: u64,
     /// Audio files.
     pub audio_files: usize,
+    /// Files of a shared archive besides the project and its audio: the credits, the preview and
+    /// the stems.
+    pub extra_files: usize,
     /// Bytes of all files.
     pub bytes: u64,
+}
+
+/// What a shared archive holds besides the project and its audio.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArchiveExtras {
+    /// The text of `credits.txt`.
+    pub credits: Option<String>,
+    /// The listening copy: a `.mp3` or `.wav` file, stored as `preview.mp3` or `preview.wav`.
+    pub preview: Option<PathBuf>,
+    /// The stems: WAV files, stored under `stems/` with their own file names.
+    pub stems: Vec<PathBuf>,
+}
+
+impl ArchiveExtras {
+    /// The `(entry name, path)` of every file of the extras (the credits are not a file).
+    fn files(&self, name: &str) -> Result<Vec<(String, &Path)>, ArchiveError> {
+        let mut out = Vec::new();
+        if let Some(preview) = &self.preview {
+            let ext = preview
+                .extension()
+                .map(|e| e.to_string_lossy().to_ascii_lowercase())
+                .unwrap_or_default();
+            let file = format!("preview.{ext}");
+            if !PREVIEW_FILES.contains(&file.as_str()) {
+                return Err(ArchiveError::Unsafe(format!(
+                    "{} is not an mp3 or wav preview",
+                    preview.display()
+                )));
+            }
+            out.push((format!("{name}/{file}"), preview.as_path()));
+        }
+        let mut seen = Vec::new();
+        for stem in &self.stems {
+            let file = stem
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if !is_stem_file(&file) || seen.contains(&file) {
+                return Err(ArchiveError::Unsafe(format!(
+                    "{file:?} is not a usable stem name"
+                )));
+            }
+            out.push((format!("{name}/{STEMS_DIR}/{file}"), stem.as_path()));
+            seen.push(file);
+        }
+        Ok(out)
+    }
+}
+
+/// True for the file name of a stem an archive can hold: a safe name ending in `.wav`.
+pub fn is_stem_file(file: &str) -> bool {
+    file.strip_suffix(".wav")
+        .is_some_and(|stem| !stem.is_empty() && is_safe_component(file))
 }
 
 /// What an extraction made.
@@ -237,10 +310,16 @@ pub fn is_safe_component(name: &str) -> bool {
 /// What an entry of an archive is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Kind {
-    /// A folder entry (`root/` or `root/Audio/`): nothing to extract.
+    /// A folder entry (`root/`, `root/Audio/` or `root/stems/`): nothing to extract.
     Folder,
     Project,
     Audio(String),
+    /// `credits.txt`.
+    Credits,
+    /// `preview.mp3` or `preview.wav`, by its file name.
+    Preview(String),
+    /// A stem, by its file name.
+    Stem(String),
 }
 
 /// Classifies the entry `name` of an archive whose root is `root` (`None` while the first
@@ -270,7 +349,10 @@ fn classify(name: &str, root: &mut Option<String>) -> Result<Kind, String> {
     }
     match (parts.as_slice(), folder) {
         ([_], true) => Ok(Kind::Folder),
-        ([_, AUDIO_DIR], true) => Ok(Kind::Folder),
+        ([_, AUDIO_DIR | STEMS_DIR], true) => Ok(Kind::Folder),
+        ([_, CREDITS_FILE], false) => Ok(Kind::Credits),
+        ([_, file], false) if PREVIEW_FILES.contains(file) => Ok(Kind::Preview((*file).to_owned())),
+        ([_, STEMS_DIR, file], false) if is_stem_file(file) => Ok(Kind::Stem((*file).to_owned())),
         ([r, file], false) if *file == format!("{r}.{PROJECT_EXTENSION}") => Ok(Kind::Project),
         ([_, AUDIO_DIR, file], false) => match file.strip_suffix(".wav") {
             Some(hash) if is_valid_hash(hash) => Ok(Kind::Audio(hash.to_owned())),
@@ -484,12 +566,17 @@ fn crc_of(
 /// The total of [`write_archive`]'s progress counter for these files: every byte is counted
 /// twice (the CRC pass and the copy).
 pub fn archive_work(project_bytes: u64, audio: &[PathBuf]) -> u64 {
-    let audio: u64 = audio
-        .iter()
-        .filter_map(|p| fs::metadata(p).ok())
-        .map(|m| m.len())
-        .sum();
-    2 * (project_bytes + audio)
+    archive_work_with(project_bytes, audio, &ArchiveExtras::default())
+}
+
+/// [`archive_work`] for an archive with `extras`.
+pub fn archive_work_with(project_bytes: u64, audio: &[PathBuf], extras: &ArchiveExtras) -> u64 {
+    let size = |p: &PathBuf| fs::metadata(p).map_or(0, |m| m.len());
+    let audio: u64 = audio.iter().map(size).sum();
+    let extra: u64 = extras.preview.iter().map(size).sum::<u64>()
+        + extras.stems.iter().map(size).sum::<u64>()
+        + extras.credits.as_ref().map_or(0, |c| c.len() as u64);
+    2 * (project_bytes + audio + extra)
 }
 
 /// Writes the archive `dest` of the project `name` (its text `project`, which is stored byte for
@@ -508,6 +595,31 @@ pub fn write_archive(
     cancel: &AtomicBool,
     progress: &AtomicU64,
 ) -> Result<ArchiveReport, ArchiveError> {
+    write_archive_with(
+        dest,
+        name,
+        (project, audio),
+        &ArchiveExtras::default(),
+        cancel,
+        progress,
+    )
+}
+
+/// [`write_archive`] with the credits, the preview and the stems of `extras` as well. Every
+/// extra is checked before the first byte is written.
+///
+/// # Errors
+/// As [`write_archive`]; [`ArchiveError::Unsafe`] also for a preview that is not an mp3 or wav
+/// file, a stem that is not a WAV file with a usable name (or is there twice), and
+/// [`ArchiveError::TooLarge`] for credits over [`MAX_CREDITS_BYTES`].
+pub fn write_archive_with(
+    dest: &Path,
+    name: &str,
+    (project, audio): (&[u8], &[(String, PathBuf)]),
+    extras: &ArchiveExtras,
+    cancel: &AtomicBool,
+    progress: &AtomicU64,
+) -> Result<ArchiveReport, ArchiveError> {
     if !is_safe_component(name) {
         return Err(ArchiveError::Unsafe(format!(
             "{name:?} is not a usable project name"
@@ -516,8 +628,18 @@ pub fn write_archive(
     if let Some((hash, _)) = audio.iter().find(|(h, _)| !is_valid_hash(h)) {
         return Err(ArchiveError::Unsafe(format!("{hash:?} is not an asset id")));
     }
+    if let Some(c) = &extras.credits
+        && c.len() as u64 > MAX_CREDITS_BYTES
+    {
+        return Err(ArchiveError::TooLarge(format!(
+            "the credits are {} bytes, at most {MAX_CREDITS_BYTES} are allowed",
+            c.len()
+        )));
+    }
+    // Checked before anything is written.
+    extras.files(name)?;
     let part = part_path(dest);
-    let result = write_part(&part, name, project, audio, cancel, progress);
+    let result = write_part(&part, name, (project, audio), extras, cancel, progress);
     match result {
         Ok(report) => {
             if let Err(e) = fs::rename(&part, dest) {
@@ -542,8 +664,8 @@ fn part_path(target: &Path) -> PathBuf {
 fn write_part(
     part: &Path,
     name: &str,
-    project: &[u8],
-    audio: &[(String, PathBuf)],
+    (project, audio): (&[u8], &[(String, PathBuf)]),
+    extras: &ArchiveExtras,
     cancel: &AtomicBool,
     progress: &AtomicU64,
 ) -> Result<ArchiveReport, ArchiveError> {
@@ -552,6 +674,7 @@ fn write_part(
     let mut report = ArchiveReport {
         project_bytes: project.len() as u64,
         audio_files: 0,
+        extra_files: 0,
         bytes: project.len() as u64,
     };
     let mut crc = Crc::new();
@@ -566,32 +689,27 @@ fn write_part(
     progress.fetch_add(2 * project.len() as u64, Ordering::Relaxed);
     let mut buf = vec![0u8; BUFFER];
     for (hash, path) in audio {
-        check_cancel(cancel)?;
-        let (crc, size) = crc_of(path, cancel, progress)?;
-        zip.begin(&format!("{name}/{AUDIO_DIR}/{hash}.wav"), crc, size)
-            .map_err(io_at(part))?;
-        let mut source = File::open(path).map_err(io_at(path))?;
-        let mut copied = 0u64;
-        let mut check = Crc::new();
-        loop {
-            check_cancel(cancel)?;
-            let n = source.read(&mut buf).map_err(io_at(path))?;
-            if n == 0 {
-                break;
-            }
-            copied += n as u64;
-            check.update(&buf[..n]);
-            zip.write(&buf[..n]).map_err(io_at(part))?;
-            progress.fetch_add(n as u64, Ordering::Relaxed);
-        }
-        if copied != size || check.value() != crc {
-            return Err(ArchiveError::Corrupt(format!(
-                "{} changed while it was archived",
-                path.display()
-            )));
-        }
+        let entry = format!("{name}/{AUDIO_DIR}/{hash}.wav");
+        report.bytes += copy_file(&mut zip, part, (&entry, path), (cancel, progress), &mut buf)?;
         report.audio_files += 1;
-        report.bytes += size;
+    }
+    if let Some(credits) = &extras.credits {
+        let mut crc = Crc::new();
+        crc.update(credits.as_bytes());
+        zip.begin(
+            &format!("{name}/{CREDITS_FILE}"),
+            crc.value(),
+            credits.len() as u64,
+        )
+        .and_then(|()| zip.write(credits.as_bytes()))
+        .map_err(io_at(part))?;
+        progress.fetch_add(2 * credits.len() as u64, Ordering::Relaxed);
+        report.bytes += credits.len() as u64;
+        report.extra_files += 1;
+    }
+    for (entry, path) in extras.files(name)? {
+        report.bytes += copy_file(&mut zip, part, (&entry, path), (cancel, progress), &mut buf)?;
+        report.extra_files += 1;
     }
     let writer = zip.finish().map_err(io_at(part))?;
     let file = writer
@@ -599,6 +717,41 @@ fn write_part(
         .map_err(|e| io_at(part)(e.into_error()))?;
     file.sync_all().map_err(io_at(part))?;
     Ok(report)
+}
+
+/// Copies the file `path` into `zip` as the entry `entry` (two passes: the CRC, then the data);
+/// returns its size.
+fn copy_file<W: Write>(
+    zip: &mut ZipOut<W>,
+    part: &Path,
+    (entry, path): (&str, &Path),
+    (cancel, progress): (&AtomicBool, &AtomicU64),
+    buf: &mut [u8],
+) -> Result<u64, ArchiveError> {
+    check_cancel(cancel)?;
+    let (crc, size) = crc_of(path, cancel, progress)?;
+    zip.begin(entry, crc, size).map_err(io_at(part))?;
+    let mut source = File::open(path).map_err(io_at(path))?;
+    let mut copied = 0u64;
+    let mut check = Crc::new();
+    loop {
+        check_cancel(cancel)?;
+        let n = source.read(buf).map_err(io_at(path))?;
+        if n == 0 {
+            break;
+        }
+        copied += n as u64;
+        check.update(&buf[..n]);
+        zip.write(&buf[..n]).map_err(io_at(part))?;
+        progress.fetch_add(n as u64, Ordering::Relaxed);
+    }
+    if copied != size || check.value() != crc {
+        return Err(ArchiveError::Corrupt(format!(
+            "{} changed while it was archived",
+            path.display()
+        )));
+    }
+    Ok(size)
 }
 
 // ------------------------------------------------------------------------------------- reading
@@ -784,7 +937,14 @@ fn read_directory<R: Read + Seek>(
                     )));
                 }
             }
-            Kind::Audio(_) => {
+            Kind::Credits => {
+                if size > MAX_CREDITS_BYTES {
+                    return Err(ArchiveError::TooLarge(format!(
+                        "the credits are {size} bytes, at most {MAX_CREDITS_BYTES} are allowed"
+                    )));
+                }
+            }
+            Kind::Audio(_) | Kind::Preview(_) | Kind::Stem(_) => {
                 if size > limits.max_entry_bytes {
                     return Err(ArchiveError::TooLarge(format!(
                         "{name:?} is {size} bytes, at most {} are allowed",
@@ -812,6 +972,15 @@ fn read_directory<R: Read + Seek>(
         return Err(ArchiveError::Unsafe(format!(
             "an archive holds one project, this one has {projects}"
         )));
+    }
+    let previews = entries
+        .iter()
+        .filter(|e| matches!(e.kind, Kind::Preview(_)))
+        .count();
+    if previews > 1 {
+        return Err(ArchiveError::Unsafe(
+            "an archive holds one preview".to_owned(),
+        ));
     }
     Ok(entries)
 }
@@ -952,6 +1121,7 @@ fn extract_entries<R: Read + Seek>(
     let mut report = ArchiveReport {
         project_bytes: 0,
         audio_files: 0,
+        extra_files: 0,
         bytes: 0,
     };
     let mut buf = vec![0u8; BUFFER];
@@ -960,6 +1130,13 @@ fn extract_entries<R: Read + Seek>(
             Kind::Folder => continue,
             Kind::Project => part.join(project_name),
             Kind::Audio(hash) => part.join(AUDIO_DIR).join(format!("{hash}.wav")),
+            Kind::Credits => part.join(CREDITS_FILE),
+            Kind::Preview(file) => part.join(file),
+            Kind::Stem(file) => {
+                let folder = part.join(STEMS_DIR);
+                fs::create_dir_all(&folder).map_err(io_at(&folder))?;
+                folder.join(file)
+            }
         };
         let start = data_start(file, path, entry)?;
         file.seek(SeekFrom::Start(start)).map_err(io_at(path))?;
@@ -987,7 +1164,8 @@ fn extract_entries<R: Read + Seek>(
         report.bytes += entry.size;
         match entry.kind {
             Kind::Project => report.project_bytes = entry.size,
-            _ => report.audio_files += 1,
+            Kind::Audio(_) => report.audio_files += 1,
+            _ => report.extra_files += 1,
         }
     }
     Ok(report)

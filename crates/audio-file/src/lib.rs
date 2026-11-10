@@ -25,8 +25,9 @@ mod versions;
 mod wav;
 
 pub use archive::{
-    ARCHIVE_EXTENSION, ArchiveError, ArchiveLimits, ArchiveReport, Extracted, archive_size,
-    archive_work, extract_archive, is_safe_component, read_archive_project, write_archive,
+    ARCHIVE_EXTENSION, ArchiveError, ArchiveExtras, ArchiveLimits, ArchiveReport, Extracted,
+    MAX_CREDITS_BYTES, archive_size, archive_work, archive_work_with, extract_archive,
+    is_safe_component, is_stem_file, read_archive_project, write_archive, write_archive_with,
 };
 pub use bundle::{
     AssetInfo, Bundle, CollectPlan, CollectProgress, CollectReport, is_valid_hash,
