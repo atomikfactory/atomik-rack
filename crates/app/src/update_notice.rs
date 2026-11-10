@@ -8,7 +8,8 @@
 //!   asked of the network before the answer;
 //! - the **news** when a newer version exists: "What's new" opens its release page in the
 //!   browser, "Skip this version" keeps the daily check quiet about exactly this version, "Later"
-//!   closes the notice. Nothing is downloaded or installed.
+//!   closes the notice. Nothing is downloaded or installed. In a Flatpak the news also says to
+//!   update with the software centre ([`store_managed`]).
 
 use atomik_ui::kurbo::{Point, Rect, RoundedRect, Size};
 use atomik_ui::{Align, Canvas, CanvasExt, Help, PointerButton, TextRun, Theme, UiEvent};
@@ -98,11 +99,23 @@ pub enum NoticeOutcome {
     Chose(Choice),
 }
 
+/// Whether this build runs inside a Flatpak, whose updates come from the software centre: the
+/// sandbox sets `FLATPAK_ID`. An AppImage has no store, so it keeps the release page.
+pub fn store_managed() -> bool {
+    store_from(|name| std::env::var(name).ok())
+}
+
+/// [`store_managed`] with the environment given (tests): a non-empty `FLATPAK_ID`.
+pub fn store_from(get: impl Fn(&str) -> Option<String>) -> bool {
+    get("FLATPAK_ID").is_some_and(|id| !id.is_empty())
+}
+
 /// The notice and the pointer over it.
 #[derive(Debug, Clone)]
 pub struct UpdateNotice {
     notice: Notice,
     hover: Option<Point>,
+    store: bool,
 }
 
 impl UpdateNotice {
@@ -111,7 +124,15 @@ impl UpdateNotice {
         Self {
             notice,
             hover: None,
+            store: false,
         }
+    }
+
+    /// The same notice for a build whose updates come from a software centre: the news says to
+    /// update there.
+    pub fn in_store(mut self, store: bool) -> Self {
+        self.store = store;
+        self
     }
 
     /// What it says.
@@ -128,7 +149,11 @@ impl UpdateNotice {
             ],
             Notice::News { version, running } => [
                 format!("Atomik Rack {version} is available"),
-                format!("You have {running}. Nothing is downloaded or installed."),
+                if self.store {
+                    format!("You have {running}. Update with your software centre.")
+                } else {
+                    format!("You have {running}. Nothing is downloaded or installed.")
+                },
             ],
         }
     }
@@ -384,6 +409,35 @@ mod tests {
         let [title, detail] = news().lines();
         assert!(title.contains("0.5.0"));
         assert!(detail.contains("0.4.0") && detail.contains("Nothing is downloaded"));
+    }
+
+    #[test]
+    fn in_a_flatpak_the_news_points_to_the_software_centre() {
+        let [title, detail] = news().in_store(true).lines();
+        assert!(title.contains("0.5.0"));
+        assert_eq!(detail, "You have 0.4.0. Update with your software centre.");
+        assert!(!detail.contains("downloaded"));
+        // The question is the same everywhere.
+        assert_eq!(ask().in_store(true).lines(), ask().lines());
+    }
+
+    #[test]
+    fn the_flatpak_is_found_by_its_id_and_nothing_else_counts() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| v.to_string())
+            }
+        };
+        assert!(store_from(env(&[(
+            "FLATPAK_ID",
+            "io.github.atomikfactory.AtomikRack"
+        )])));
+        assert!(!store_from(env(&[("FLATPAK_ID", "")])));
+        assert!(!store_from(env(&[("APPIMAGE", "/tmp/atomik.AppImage")])));
+        assert!(!store_from(env(&[])));
     }
 
     #[test]
