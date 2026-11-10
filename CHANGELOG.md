@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Backup copies in a second folder.** Settings > Backup has a Backup folder (None by default, with Choose... and
+  None), Keep (the copies of each project that stay, 1 to 50, default 10) and Include audio (default on). Every
+  successful save also copies the project to `<backup folder>/<name>/<name> <YYYY-MM-DD HHMMSS>.atomik` (UTC) and, with
+  audio, the audio files it uses to `<backup folder>/<name>/Audio/`, once each by content hash. The copy runs on its own
+  worker after the save is confirmed, never delays or fails a save, and a failure shows `Backup failed: <reason>` once
+  per session (later ones go to the log). Autosave snapshots make no backup. Only the newest Keep copies stay; an audio
+  file goes only when no kept copy names it (every project file of the folder is read first, and an unreadable one keeps
+  all the audio), and files that are not copies are never touched. File > Restore from Backup lists the copies of the
+  open project with their date and size and opens the chosen one as a new unsaved song, after the question about
+  unsaved changes. The command is `file.restore_backup` (no default key); the settings are `backup_folder`,
+  `backup_keep` and `backup_audio` in `workflow.json`. The project format is unchanged.
 - **Share a project as one file.** File > Share Project opens a small panel with the title, the author and a note (they
   go into the song information as one undo step when you changed them) and three check boxes: Include a preview (an
   MP3 of the whole song at -14 LUFS, or a 16-bit WAV file when FFmpeg is not set up), Include stems (one 24-bit WAV
