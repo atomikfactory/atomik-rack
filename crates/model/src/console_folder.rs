@@ -19,6 +19,11 @@
 //! One route per folder; several folders may share a bus. The commands are
 //! `RouteFolderToBus`, `RouteFolderToNewBus` and `UnrouteFolder`, each one undo step on one
 //! [`Edit::ConsoleFolderRoutes`] plus the cable edits.
+//!
+//! **Stop routing.** `UnrouteFolder` also removes the bus Route Folder to New Bus made for the
+//! folder (see [`RackDoc::folder_bus_name`]) when nothing else uses it any more: no strip plays
+//! into it, no other route or group points at it, and it has no inserts, no parallel channels,
+//! no setting of its own and still plays into the master.
 
 use crate::console::{ConsoleCommand, OutputDest, output_dest};
 use crate::console_bus::{check_dest, create_bus, set_output};
@@ -108,6 +113,45 @@ impl RackDoc {
             .find(|n| self.console.bus_by_name(n).is_none())
             .expect("a free name exists")
     }
+
+    /// True when the bus called `bus_name` is one Route Folder to New Bus could have made for
+    /// `folder` (its name, with or without the number, or just the folder's name as older
+    /// projects have it).
+    fn is_folder_bus_name(&self, folder: u32, bus_name: &str) -> bool {
+        let Some(group) = self.song.org.group(folder) else {
+            return false;
+        };
+        let name = group.name.trim();
+        let stem = bus_stem(name);
+        // Bus names are unique ignoring case, so they are compared that way.
+        let (bus_name, stem, name) = (
+            bus_name.to_lowercase(),
+            stem.to_lowercase(),
+            name.to_lowercase(),
+        );
+        let numbered = bus_name == stem
+            || bus_name
+                .strip_prefix(&stem)
+                .and_then(|r| r.strip_prefix(' '))
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+        !name.is_empty() && (numbered || bus_name == name)
+    }
+
+    /// True when nothing but the folder routes in `routes` could miss the bus `bus`: no strip
+    /// plays into it, no group is routed to it, and it holds no insert, no parallel channel, no
+    /// setting of its own and plays into the master.
+    fn bus_is_idle(&self, bus: &DeviceKey, routes: &[FolderRoute], registry: &Registry) -> bool {
+        let console = &self.console;
+        let fed = console
+            .strip_keys()
+            .any(|k| k != bus && output_dest(self, k) == OutputDest::Bus(bus.clone()));
+        !fed && routes.iter().all(|r| r.bus != *bus)
+            && console.vcas.iter().all(|v| v.bus.as_ref() != Some(bus))
+            && console.parallels_of(bus).next().is_none()
+            && crate::console_insert::insert_chain(self, registry, bus).is_empty()
+            && output_dest(self, bus) == OutputDest::Master
+            && self.device(bus).is_some_and(|d| d.params.is_empty())
+    }
 }
 
 fn edit_routes(p: &mut Planner<'_>, new: Vec<FolderRoute>) {
@@ -183,13 +227,13 @@ fn route(p: &mut Planner<'_>, folder: u32, bus: &DeviceKey) -> Result<(), ModelE
 }
 
 /// Takes `folder` off its bus: the strips that still play into the bus go back to the master and
-/// the route is forgotten (the bus stays).
+/// the route is forgotten; the bus goes too when it is the folder's own and idle.
 fn unroute(p: &mut Planner<'_>, folder: u32) -> Result<(), ModelError> {
     let Some(r) = p.doc().console.folder_route(folder).cloned() else {
         return Err(bad(format!("folder {folder} is not routed to a bus")));
     };
     back_to_master(p, &r.bus, &r.members)?;
-    let new = p
+    let new: Vec<FolderRoute> = p
         .doc()
         .console
         .folder_routes
@@ -197,7 +241,19 @@ fn unroute(p: &mut Planner<'_>, folder: u32) -> Result<(), ModelError> {
         .filter(|x| x.folder != folder)
         .cloned()
         .collect();
-    edit_routes(p, new);
+    edit_routes(p, new.clone());
+    // The bus Route Folder to New Bus made goes with the route when nothing else uses it.
+    let name = {
+        let console = &p.doc().console;
+        console
+            .bus_index(&r.bus)
+            .map(|i| console.buses[i].name.clone())
+    };
+    if name.is_some_and(|n| p.doc().is_folder_bus_name(folder, &n))
+        && p.doc().bus_is_idle(&r.bus, &new, p.registry)
+    {
+        crate::console_bus::delete_bus(p, &r.bus)?;
+    }
     Ok(())
 }
 
