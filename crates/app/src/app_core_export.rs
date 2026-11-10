@@ -505,38 +505,7 @@ impl<S: EngineSink> AppCore<S> {
         let progress = Arc::new(AtomicU32::new(0.0f32.to_bits()));
         let job = self.audio.export.next_job;
         self.audio.export.next_job += 1;
-        let path_for_extra = path.clone();
-        let work = Work {
-            doc: self.doc().clone(),
-            request: export_request(scope, &values, self.export_selection()),
-            format: export_format_at(&values, self.doc().sample_rate),
-            target: match scope {
-                ExportScope::Stems => Target::Stems {
-                    folder: path,
-                    strip: if values.dry {
-                        StemStrip::Dry
-                    } else {
-                        StemStrip::Full
-                    },
-                },
-                _ => Target::File(path),
-            },
-            bundle_root: self.bundle_root().map(Path::to_path_buf),
-            plugins: PluginEnv {
-                cache: self.plugins.cache.clone(),
-                settings: self.plugins.settings.clone(),
-                isolation: self.plugins.freeze_isolation.clone(),
-            },
-            lossy: self.lossy_job(&values),
-            film: None,
-            finish: if scope == ExportScope::Stems {
-                Finish::default()
-            } else {
-                finish_for(values.mono, values.loudness)
-            },
-            also: extra_file(scope, &path_for_extra, &values)
-                .and_then(|extra| Some((self.mp3_job(&values)?, extra))),
-        };
+        let work = self.export_work(scope, path, &values);
         let started = export_worker::spawn(
             self.audio.tx.clone(),
             (self.audio.generation, job),
@@ -563,6 +532,48 @@ impl<S: EngineSink> AppCore<S> {
                 self.reject(why.clone());
                 Err(why)
             }
+        }
+    }
+
+    /// The work of the export of `scope` to `path` (already named for its container) with
+    /// `values`: a copy of the document and everything the worker needs.
+    pub(super) fn export_work(
+        &self,
+        scope: ExportScope,
+        path: PathBuf,
+        values: &ExportValues,
+    ) -> Work {
+        let path_for_extra = path.clone();
+        Work {
+            doc: self.doc().clone(),
+            request: export_request(scope, values, self.export_selection()),
+            format: export_format_at(values, self.doc().sample_rate),
+            target: match scope {
+                ExportScope::Stems => Target::Stems {
+                    folder: path,
+                    strip: if values.dry {
+                        StemStrip::Dry
+                    } else {
+                        StemStrip::Full
+                    },
+                },
+                _ => Target::File(path),
+            },
+            bundle_root: self.bundle_root().map(Path::to_path_buf),
+            plugins: PluginEnv {
+                cache: self.plugins.cache.clone(),
+                settings: self.plugins.settings.clone(),
+                isolation: self.plugins.freeze_isolation.clone(),
+            },
+            lossy: self.lossy_job(values),
+            film: None,
+            finish: if scope == ExportScope::Stems {
+                Finish::default()
+            } else {
+                finish_for(values.mono, values.loudness)
+            },
+            also: extra_file(scope, &path_for_extra, values)
+                .and_then(|extra| Some((self.mp3_job(values)?, extra))),
         }
     }
 

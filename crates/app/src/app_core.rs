@@ -4154,6 +4154,12 @@ pub use versions::{VersionComparison, VersionRow};
 #[path = "app_core_archive.rs"]
 mod archive;
 
+#[path = "app_core_share.rs"]
+mod share;
+pub use share::{
+    PluginCredit, SHARE_WARN_BYTES, SHARED_FOLDER, SharePreview, ShareSize, share_credits,
+};
+
 #[path = "app_core_video.rs"]
 mod video;
 
