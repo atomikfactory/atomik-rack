@@ -172,6 +172,49 @@ fn reads_every_channel_message() {
 }
 
 #[test]
+fn a_program_change_with_no_program_is_dropped_and_the_track_reads_on() {
+    // As some exporters write it: a program change with its data byte missing, so the next
+    // byte (above 127) is the first byte of the following delta time.
+    let track = [
+        0x00, 0xC0, // program change, no program
+        0xBF, 0x00, // delta 8064
+        0xE0, 0x00, 0x40, // pitch bend centre
+        0xBC, 0x80, 0x00, // delta
+        0x90, 0x1B, 0x7F, // note on
+        0x87, 0x40, 0x80, 0x1B, 0x00, // note off
+    ];
+    let f = read(&file(1, 15_360, &[&track])).unwrap();
+    assert_eq!(
+        f.tracks[0].events,
+        vec![
+            ev(
+                8064,
+                SmfMessage::PitchBend {
+                    channel: 0,
+                    value: 8192
+                }
+            ),
+            ev(
+                8064 + (0x3C << 14),
+                SmfMessage::NoteOn {
+                    channel: 0,
+                    key: 0x1B,
+                    velocity: 0x7F
+                }
+            ),
+            ev(
+                8064 + (0x3C << 14) + (7 << 7 | 0x40),
+                SmfMessage::NoteOff {
+                    channel: 0,
+                    key: 0x1B,
+                    velocity: 0
+                }
+            ),
+        ]
+    );
+}
+
+#[test]
 fn skips_unknown_chunks_and_reads_a_riff_wrapped_file() {
     let mut bytes = header(0, 1, 96);
     bytes.extend(chunk(b"XFIH", &[1, 2, 3]));
@@ -233,10 +276,11 @@ fn malformed_files_are_errors_not_panics() {
         read(&file(0, 96, &[&[0x00, 0x90, 0x3C, 0x40, 0x00, 0x90, 0x3C]])).map(|f| f.tracks.len()),
         Ok(1)
     ));
-    assert!(matches!(
-        read(&file(0, 96, &[&[0x00, 0xB0, 0x07, 0x80, 0x00]])),
-        Err(SmfError::BadEvent { .. })
-    ));
+    // A controller cut short by a status byte is dropped; the byte starts the next delta.
+    assert_eq!(
+        read(&file(0, 96, &[&[0x00, 0xB0, 0x07, 0x80, 0x00]])).map(|f| f.tracks[0].events.len()),
+        Ok(0)
+    );
     // A delta of five bytes.
     assert!(matches!(
         read(&file(
