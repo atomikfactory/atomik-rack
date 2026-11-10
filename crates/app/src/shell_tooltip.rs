@@ -185,6 +185,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &self.song_info {
             return v.help_at(pos);
         }
+        if let Some(v) = &self.share {
+            return v.help_at(pos);
+        }
         if let Some(v) = &self.harmony_picker {
             return v.help_at(pos);
         }

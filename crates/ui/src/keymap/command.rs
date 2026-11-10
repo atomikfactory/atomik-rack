@@ -1026,6 +1026,7 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("file.save_version", "Save Version", G::Global, C::Global).menu(),
+    cmd("file.share_project", "Share Project", G::Global, C::Global).menu(),
     cmd(
         "file.show_templates",
         "Show Template Folder",

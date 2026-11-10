@@ -383,6 +383,7 @@ SetSongKey | Song Key…
 SetTheme(Dark) | Dark
 SetTheme(Light) | Light
 SetTheme(System) | Same as System
+ShareProject | Share Project…
 ShowParamLane | Show Automation Lane
 ShowTemplateFolder | Show Template Folder
 SnapshotEffects | Snapshot Includes Effects

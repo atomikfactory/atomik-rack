@@ -65,6 +65,9 @@ pub enum AppCommand {
     Versions,
     /// File ▸ Export Project Archive…: the project and its audio as one `.atomikz` file.
     ExportArchive,
+    /// File ▸ Share Project…: the project, its audio, a preview, the stems and the credits as one
+    /// `.atomikz` file (the share panel).
+    ShareProject,
     /// File ▸ Import Project Archive…: unpack an archive beside itself and open the project.
     ImportArchive,
     /// File ▸ Cancel Project Archive: stop the archive that is being written or unpacked.
@@ -891,6 +894,7 @@ impl AppCommand {
             AppCommand::SaveVersion => ("file.save_version", None),
             AppCommand::Versions => ("file.versions", None),
             AppCommand::ExportArchive => ("file.export_archive", None),
+            AppCommand::ShareProject => ("file.share_project", None),
             AppCommand::ImportArchive => ("file.import_archive", None),
             AppCommand::CancelArchive => ("file.cancel_archive", None),
             AppCommand::CheckFfmpeg => ("video.check_ffmpeg", None),
@@ -1298,6 +1302,7 @@ impl AppCommand {
             ("file.save_version", None) => AppCommand::SaveVersion,
             ("file.versions", None) => AppCommand::Versions,
             ("file.export_archive", None) => AppCommand::ExportArchive,
+            ("file.share_project", None) => AppCommand::ShareProject,
             ("file.import_archive", None) => AppCommand::ImportArchive,
             ("file.cancel_archive", None) => AppCommand::CancelArchive,
             ("video.check_ffmpeg", None) => AppCommand::CheckFfmpeg,
@@ -2962,6 +2967,7 @@ pub fn menus_with_songs(
                         item("Move Project\u{2026}", AppCommand::MoveProject),
                         MenuEntry::Separator,
                         item("Export Project Archive\u{2026}", AppCommand::ExportArchive),
+                        item("Share Project\u{2026}", AppCommand::ShareProject),
                         item("Import Project Archive\u{2026}", AppCommand::ImportArchive),
                         enabled(
                             "Cancel Project Archive",
@@ -4700,6 +4706,7 @@ mod tests {
             AppCommand::SaveVersion,
             AppCommand::Versions,
             AppCommand::ExportArchive,
+            AppCommand::ShareProject,
             AppCommand::ImportArchive,
             AppCommand::CancelArchive,
             AppCommand::CheckFfmpeg,

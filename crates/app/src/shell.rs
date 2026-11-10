@@ -190,10 +190,10 @@ use atomik_ui::{
     Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, PaletteAction, ParamSearchAction,
     ParamSearchView, PickerValue, Place, PluginBannerView, PluginSettingsView, PointerButton,
     QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView,
-    RepetitionAction, RepetitionView, ScaleAction, ScaleView, SilenceAction, SilenceValues,
-    SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent,
-    VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues, WarpView, ZoneAction,
-    ZoneView,
+    RepetitionAction, RepetitionView, ScaleAction, ScaleView, ShareAction, ShareView,
+    SilenceAction, SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH,
+    TextRun, UiAction, UiEvent, VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues,
+    WarpView, ZoneAction, ZoneView,
 };
 use atomik_ui::{PluginManagerAction, PluginManagerView};
 use atomik_ui::{ReverbSendAction, ReverbSendValues, ReverbSendView};
@@ -289,6 +289,21 @@ pub enum ShellRequest {
     /// Show an open dialog for a project archive (File > Import Project Archive), then call
     /// [`Shell::import_archive_from`] with the path.
     PickImportArchive,
+    /// Show a save dialog for a share (the share panel's SHARE): an `.atomikz` file named `name`,
+    /// then call [`Shell::share_to`] with the path.
+    PickShareFile {
+        /// The suggested file name, with its extension.
+        name: String,
+    },
+    /// Show a folder dialog for opening a shared archive (File > Open or a drop), starting in
+    /// `start`, then call [`Shell::share_open_to`] with the archive and the folder picked: the
+    /// project goes into a folder of its own name inside it.
+    PickShareFolder {
+        /// The shared archive.
+        archive: PathBuf,
+        /// The folder the dialog starts in (the `Shared` folder beside the library).
+        start: Option<PathBuf>,
+    },
     /// Show an open dialog for a film (File > Video > Import Video, Relink Video or Prepare
     /// Video), then call [`Shell::video_picked`] with the same [`VideoPick`] and the path.
     PickVideoFile(VideoPick),
@@ -651,6 +666,8 @@ pub struct Shell<B: AudioBackend> {
     silence: Option<SilenceView>,
     /// The song information panel (File > Song Information) while it is open.
     song_info: Option<SongInfoView>,
+    /// The share panel (File > Share Project) while it is open.
+    share: Option<ShareView>,
     /// The key and chord picker (a double click in the key or chord lane, the transport bar's Key
     /// field) while it is open.
     harmony_picker: Option<HarmonyPickerView>,
@@ -889,6 +906,7 @@ impl<B: AudioBackend> Shell<B> {
             blind: None,
             silence: None,
             song_info: None,
+            share: None,
             harmony_picker: None,
             reverb_send: None,
             reverb_send_values: ReverbSendValues::default(),
@@ -1517,10 +1535,21 @@ impl<B: AudioBackend> Shell<B> {
         self.song_info.is_some()
     }
 
+    /// Whether the share panel is open.
+    pub fn share_open(&self) -> bool {
+        self.share.is_some()
+    }
+
+    /// The share panel, while it is open.
+    pub fn share_view(&self) -> Option<&ShareView> {
+        self.share.as_ref()
+    }
+
     /// Whether a text field has the keys, so the window system should offer its input method
     /// (composition windows, dead keys) to the window.
     pub fn wants_text_input(&self) -> bool {
         self.song_info.is_some()
+            || self.share.is_some()
             || self
                 .harmony_picker
                 .as_ref()
@@ -1555,6 +1584,111 @@ impl<B: AudioBackend> Shell<B> {
         view.set_bounds(self.plugin_modal_rect());
         self.song_info = Some(view);
         self.repaint = true;
+    }
+
+    /// Opens the share panel with the song's title, author and note, unless an archive job runs.
+    fn open_share(&mut self) {
+        if self.core.archive_busy() {
+            self.notify("A project archive is already being made".to_owned());
+            return;
+        }
+        // FFmpeg decides whether the preview is an MP3: look for it now, quietly.
+        self.core.refresh_ffmpeg_status();
+        let theme = self.core.view().theme().clone();
+        let mut view = ShareView::new(theme, self.core.share_defaults());
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.share = Some(view);
+        self.refresh_share_size();
+        self.repaint = true;
+    }
+
+    /// Tells the share panel what the share would weigh and what its preview would be.
+    fn refresh_share_size(&mut self) {
+        let Some(view) = &self.share else {
+            return;
+        };
+        let size = self.core.share_size(view.values());
+        let hint = match self.core.share_preview_kind() {
+            crate::app_core::SharePreview::Wav => "WAV of the whole song (FFmpeg is not set up)",
+            _ => "MP3 of the whole song at -14 LUFS",
+        };
+        if let Some(view) = &mut self.share {
+            view.set_size(size.text(), size.is_big());
+            view.set_preview_hint(hint.to_owned());
+        }
+    }
+
+    /// What the share panel asked for: SHARE asks for the file (the panel stays until it is
+    /// picked), a check box works the size out again, CLOSE closes it.
+    fn share_action(&mut self, action: ShareAction) {
+        match action {
+            ShareAction::Close => self.share = None,
+            ShareAction::Changed => self.refresh_share_size(),
+            ShareAction::Share => {
+                if let Some(view) = &self.share {
+                    let name = self.core.share_file_name(&view.values().title);
+                    self.pending.push(ShellRequest::PickShareFile { name });
+                }
+            }
+        }
+        self.repaint = true;
+    }
+
+    /// Makes the share the dialog picked a file for, with the panel's choices (see
+    /// [`AppCore::start_share`]); the panel closes. The extension is added when the name has none.
+    pub fn share_to(&mut self, path: &Path) {
+        let mut path = path.to_path_buf();
+        if path.extension().is_none() {
+            path.set_extension(atomik_audio_file::ARCHIVE_EXTENSION);
+        }
+        let values = self
+            .share
+            .take()
+            .map_or_else(|| self.core.share_defaults(), |v| v.values().clone());
+        // The core says why in a toast when it refuses.
+        let _ = self.core.start_share(path, &values);
+        self.repaint = true;
+    }
+
+    /// Unpacks the shared archive into a new folder of `parent` and opens the project when that is
+    /// done (see [`AppCore::start_share_open`]).
+    pub fn share_open_to(&mut self, archive: &Path, parent: &Path) {
+        let _ = self.core.start_share_open(archive.to_path_buf(), parent);
+        self.repaint = true;
+    }
+
+    /// Asks which folder a shared archive is unpacked into.
+    fn open_share_file(&mut self, archive: &Path) {
+        if self.core.archive_busy() {
+            self.notify("A project archive is already being made".to_owned());
+            return;
+        }
+        self.pending.push(ShellRequest::PickShareFolder {
+            archive: archive.to_path_buf(),
+            start: self.core.shared_dir(),
+        });
+    }
+
+    /// Says what a share that was just opened holds: its credits are in the Song Information.
+    fn show_share_credits(&mut self) {
+        let info = self.core.song_info().clone();
+        let title = if info.title.trim().is_empty() {
+            "a shared song".to_owned()
+        } else {
+            info.title.trim().to_owned()
+        };
+        let by = if info.author.trim().is_empty() {
+            String::new()
+        } else {
+            format!(" by {}", info.author.trim())
+        };
+        self.notify(format!(
+            "Opened {title}{by}: the credits are in credits.txt beside the project"
+        ));
+        if !info.is_empty() {
+            self.open_song_info();
+        }
     }
 
     /// The key and chord picker, while it is open.
@@ -3699,6 +3833,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.song_info {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.share {
+            v.set_theme(theme.clone());
+        }
         if let Some(v) = &mut self.harmony_picker {
             v.set_theme(theme.clone());
         }
@@ -4433,6 +4570,12 @@ impl<B: AudioBackend> Shell<B> {
                 v.set_bounds(rect);
             }
         }
+        if self.share.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.share {
+                v.set_bounds(rect);
+            }
+        }
         if self.harmony_picker.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.harmony_picker {
@@ -4839,6 +4982,11 @@ impl<B: AudioBackend> Shell<B> {
                     paths.iter().cloned().partition(|p| is_project_item(p));
                 if let Some(project) = projects.into_iter().next() {
                     self.open_project_request(project);
+                }
+                let (shares, rest): (Vec<PathBuf>, Vec<PathBuf>) =
+                    rest.into_iter().partition(|p| is_share_item(p));
+                if let Some(share) = shares.into_iter().next() {
+                    self.open_share_file(&share);
                 }
                 let (midi, rest): (Vec<PathBuf>, Vec<PathBuf>) = rest
                     .into_iter()
@@ -5562,6 +5710,30 @@ impl<B: AudioBackend> Shell<B> {
                 .map(|v| v.handle(&text_form(event)))
                 .unwrap_or_default();
             self.scale_actions(actions);
+            return Vec::new();
+        }
+        if self.share.is_some() {
+            // The share panel takes every event (typed text included); Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.share = None;
+                return Vec::new();
+            }
+            let actions = self
+                .share
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Share(a) = action {
+                    self.share_action(a);
+                }
+            }
             return Vec::new();
         }
         if self.song_info.is_some() {
@@ -7838,6 +8010,11 @@ impl<B: AudioBackend> Shell<B> {
                 self.open_song_info();
                 Vec::new()
             }
+            AppCommand::ShareProject => {
+                self.open_share();
+                self.close_menubars();
+                Vec::new()
+            }
             AppCommand::KickBassCheck => {
                 self.open_kick_bass();
                 Vec::new()
@@ -9520,8 +9697,18 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Opens a project or patch file (errors are shown in the view).
     pub fn open_file(&mut self, path: &Path) {
-        if let Err(e) = self.core.open(path) {
-            self.notify(e.to_string());
+        if is_share_item(path) {
+            self.open_share_file(path);
+            self.repaint = true;
+            return;
+        }
+        match self.core.open(path) {
+            Ok(()) => {
+                if self.core.take_share_credits(path).is_some() {
+                    self.show_share_credits();
+                }
+            }
+            Err(e) => self.notify(e.to_string()),
         }
         self.repaint = true;
     }
@@ -10733,6 +10920,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.song_info {
             view.paint(canvas);
         }
+        if let Some(view) = &self.share {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.harmony_picker {
             view.paint(canvas);
         }
@@ -10938,6 +11128,12 @@ fn is_library_item(path: &Path) -> bool {
 /// Whether `path` is a note clip item.
 fn is_clip_item(path: &Path) -> bool {
     atomik_library::classify(path, false) == Some(atomik_library::FileKind::Clip)
+}
+
+/// Whether `path` is a shared project archive (`.atomikz`).
+fn is_share_item(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case(atomik_audio_file::ARCHIVE_EXTENSION))
 }
 
 /// Whether `path` is a project file (`.atomik`).

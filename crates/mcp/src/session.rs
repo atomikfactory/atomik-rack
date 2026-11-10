@@ -390,7 +390,10 @@ fn request_json(r: ShellRequest) -> Value {
             "pick_move_folder",
             "a folder dialog: a headless session cannot show it (Move Project is covered by the app tests)",
         ),
-        ShellRequest::PickExportArchive { .. } | ShellRequest::PickImportArchive => (
+        ShellRequest::PickExportArchive { .. }
+        | ShellRequest::PickImportArchive
+        | ShellRequest::PickShareFile { .. }
+        | ShellRequest::PickShareFolder { .. } => (
             "pick_archive",
             "a file dialog: a headless session cannot show it (project archives are covered by the app tests)",
         ),
