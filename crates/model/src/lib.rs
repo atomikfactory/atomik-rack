@@ -179,7 +179,8 @@ pub use mod_matrix::{ModSlot, amount_param, engine_params};
 pub use param_search::{MAX_RESULTS, ParamEntry, ParamIndex, SearchTarget, unit_label};
 pub use plugin::{
     MAX_LAYOUT_PARAMS, MAX_PINNED_PARAMS, MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES,
-    PLUGIN_GESTURE_MERGE_BASE, PluginCommand, PluginDoc, register_stand_ins,
+    PLUGIN_GESTURE_MERGE_BASE, PluginCommand, PluginDoc, cables_off_layout, map_plugin_layouts,
+    register_stand_ins,
 };
 pub use plugin_files::{PluginFileRef, rewrite_paths};
 pub use project::{

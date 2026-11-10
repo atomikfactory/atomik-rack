@@ -438,6 +438,10 @@ pub(crate) fn stand_in_registry(
         }
     }
     for t in registry.plugin_type_ids() {
+        if missing.iter().any(|(m, _)| m == t) {
+            // Replaced below by the saved layout.
+            continue;
+        }
         let desc = registry.descriptor(t).expect("listed types are registered");
         copy.register_plugin(t.to_owned(), desc).map_err(fail)?;
     }
@@ -470,11 +474,29 @@ fn collect_missing(
         let Some(o) = d.as_object() else { continue };
         if let Some(type_id) = o.get("type").and_then(Value::as_str)
             && is_plugin_type_id(type_id)
-            && registry.get(type_id).is_none()
             && let Some(plugin) = o.get("plugin")
         {
             let po = object(plugin, &p.field("plugin"), PLUGIN_FIELDS, PLUGIN_REQUIRED)?;
             let header = load_header(po, &p.field("plugin"), type_id)?;
+            // Unknown to the registry, or known with fewer sockets than the file saved (the
+            // plugin changed its buses after the scan): the saved layout builds the type.
+            let known = registry
+                .get(type_id)
+                .and_then(|_| registry.descriptor(type_id));
+            if known.is_some_and(|d| {
+                !crate::plugin::saved_has_more_sockets(d, &header.plugin, &header.layout)
+            }) {
+                if let Some(inner) = o.get("inner").and_then(|v| v.get("devices")) {
+                    collect_missing(
+                        inner,
+                        &p.field("inner").field("devices"),
+                        registry,
+                        depth + 1,
+                        out,
+                    )?;
+                }
+                continue;
+            }
             // Each instance saved only the rows it uses: the type gets the union.
             match out.iter_mut().find(|(t, _)| t == type_id) {
                 Some((_, first)) => crate::plugin::merge_rows(&mut first.layout, &header.layout),

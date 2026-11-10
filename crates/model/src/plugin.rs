@@ -532,13 +532,35 @@ pub(crate) fn merge_rows(into: &mut PluginLayout, from: &PluginLayout) {
     into.params.sort_by_key(|r| r.id);
 }
 
+/// True when the saved layout implies sockets the registered descriptor of the same plugin lacks:
+/// the project was saved after the plugin changed its buses and the scan has not seen it yet.
+pub(crate) fn saved_has_more_sockets(
+    desc: &DeviceDescriptor,
+    plugin: &PluginRef,
+    saved: &PluginLayout,
+) -> bool {
+    descriptor_for(plugin, saved).is_ok_and(|saved| {
+        saved
+            .sockets
+            .iter()
+            .any(|s| desc.socket_by_key(s.key).is_none())
+    })
+}
+
 /// The type ids of the plugin devices of `doc` that `registry` does not know, from the saved
-/// layouts, as `(type id, plugin, layout)`, sorted by type id.
+/// layouts, as `(type id, plugin, layout)`, sorted by type id. A known plugin whose saved layout
+/// has sockets the registered one lacks counts too (its saved layout wins until the plugin
+/// itself says what it has now).
 fn missing_types(doc: &RackDoc, registry: &Registry) -> Vec<(String, PluginRef, PluginLayout)> {
     let mut found: BTreeMap<String, (PluginRef, PluginLayout)> = BTreeMap::new();
     for (_, d) in doc.plugin_devices() {
         let Some(p) = &d.plugin else { continue };
-        if registry.get(&d.type_id).is_none() {
+        let known = registry
+            .descriptor(&d.type_id)
+            .filter(|_| registry.get(&d.type_id).is_some());
+        let stale =
+            known.is_some_and(|desc| saved_has_more_sockets(desc, &p.plugin_ref(), &p.layout));
+        if known.is_none() || stale {
             // Every instance saved only the rows it uses, so the type's stand-in descriptor is
             // the union of the rows of all its instances (the first instance's other fields win).
             found
@@ -568,12 +590,117 @@ pub fn register_stand_ins(
             .map_err(|f| ModelError::BadPlugin(format!("{type_id}: {}", f.message)))?;
         let desc = descriptor_for(&plugin, &layout)
             .map_err(|e| ModelError::BadPlugin(format!("{type_id}: {e}")))?;
+        // A known type whose scan lacks sockets the project uses is replaced.
+        let _ = registry.unregister_plugin(&type_id);
         registry
             .register_plugin(type_id.clone(), desc)
             .map_err(|e| ModelError::BadPlugin(format!("{type_id}: {e}")))?;
         added.push(type_id);
     }
     Ok(added)
+}
+
+/// Calls `f` on the plugin reference and layout of every plugin a command names: the plugin
+/// adds, relinks and replacements, creations from a plugin, and the commands of a batch. The app
+/// uses it to hand a command the freshest layout it knows before the command is planned.
+pub fn map_plugin_layouts(
+    command: &mut crate::Command,
+    f: &mut dyn FnMut(&PluginRef, &mut PluginLayout),
+) {
+    use crate::{Command, WorkflowCommand};
+    fn source(source: &mut crate::CreateSource, f: &mut dyn FnMut(&PluginRef, &mut PluginLayout)) {
+        if let crate::CreateSource::Plugin { plugin, layout, .. } = source {
+            f(plugin, layout);
+        }
+    }
+    match command {
+        Command::Plugin(
+            PluginCommand::Add { plugin, layout, .. }
+            | PluginCommand::AddAt { plugin, layout, .. }
+            | PluginCommand::Relink { plugin, layout, .. },
+        ) => f(plugin, layout),
+        Command::Workflow(
+            WorkflowCommand::CreateInstrument { source: s, .. }
+            | WorkflowCommand::CreateInstrumentAt { source: s, .. }
+            | WorkflowCommand::CreateEffect { source: s, .. }
+            | WorkflowCommand::CreateEffectAt { source: s, .. }
+            | WorkflowCommand::ReplaceDevice { source: s, .. },
+        ) => source(s, f),
+        Command::Batch(commands) => {
+            for c in commands {
+                map_plugin_layouts(c, f);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The cables of `doc`, at any depth, with an end on a device of type `type_id` whose socket
+/// `desc` does not have: the cables that go when the plugin's layout changed and a port vanished.
+/// Each is returned with the path key of its container (`None` at the top level).
+pub fn cables_off_layout(
+    doc: &RackDoc,
+    type_id: &str,
+    desc: &DeviceDescriptor,
+) -> Vec<(Option<DeviceKey>, crate::Cable)> {
+    fn scope(
+        devices: &[RackDevice],
+        cables: &[crate::Cable],
+        container: Option<DeviceKey>,
+        type_id: &str,
+        desc: &DeviceDescriptor,
+        out: &mut Vec<(Option<DeviceKey>, crate::Cable)>,
+    ) {
+        let gone = |end: &crate::SocketRef| {
+            devices
+                .iter()
+                .any(|d| d.key == end.device && d.type_id == type_id)
+                && desc.socket_by_key(&end.socket).is_none()
+        };
+        for c in cables {
+            if gone(&c.from) || gone(&c.to) {
+                out.push((container.clone(), c.clone()));
+            }
+        }
+        for d in devices {
+            if let Some(inner) = &d.inner {
+                let path = match &container {
+                    Some(c) => DeviceKey(format!("{}/{}", c.0, d.key.0)),
+                    None => d.key.clone(),
+                };
+                scope(
+                    &inner.devices,
+                    &inner.cables,
+                    Some(path),
+                    type_id,
+                    desc,
+                    out,
+                );
+            }
+        }
+    }
+    let mut out = Vec::new();
+    scope(&doc.devices, &doc.cables, None, type_id, desc, &mut out);
+    out
+}
+
+/// Removes the cables [`cables_off_layout`] lists; returns how many went.
+pub(crate) fn drop_cables_off_layout(
+    doc: &mut RackDoc,
+    type_id: &str,
+    desc: &DeviceDescriptor,
+) -> usize {
+    let off = cables_off_layout(doc, type_id, desc);
+    for (container, cable) in &off {
+        let cables = match container {
+            None => Some(&mut doc.cables),
+            Some(path) => doc.inner_mut(path).map(|i| &mut i.cables),
+        };
+        if let Some(cables) = cables {
+            cables.retain(|c| c != cable);
+        }
+    }
+    off.len()
 }
 
 /// The channel layout name used in the project text.

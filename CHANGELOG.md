@@ -325,6 +325,16 @@ may break APIs and the patch and project formats.
   tool still draws.
 
 ### Fixed
+- **Plugins that take long to restart, change their buses or replace a built-in device.** A plugin that was busy
+  while the host deactivated it for a restart (just after a sign-in in its own window, for example) was stopped after
+  2 seconds; deactivation is now waited for as long as an activation, and a restart polls it instead of holding the
+  window, so a busy plugin that is alive is no longer stopped (a plugin that never answers still is). A plugin that
+  gains or loses buses at run time (aux outputs, a sidechain) now updates the scan cache (`plugins.json`), the device
+  browser and the registry together, so adding it again, opening a project saved after the change and dragging its
+  row from a browser that predates it all work; the cables on ports that remain are kept, and only those on ports
+  that vanished are removed, with a message. Dropping a plugin on a built-in instrument or effect to replace it now
+  creates the plugin like a normal add instead of leaving a MISSING stand-in with audio off; undo brings the
+  built-in device back.
 - **Select All in the search boxes.** Ctrl+A (Cmd+A on a Mac) in the device browser's search, the parameter
   search and the plugin parameter search now selects the text you typed, instead of the devices in the rack. These
   boxes now have a caret you can move or click into place, and Ctrl+C, X and V copy, cut and paste their text.
