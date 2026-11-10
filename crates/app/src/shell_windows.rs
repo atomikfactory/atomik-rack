@@ -398,6 +398,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some((v, _)) = &mut self.color_picker {
                     v.set_scale(scale);
                 }
+                if let Some(v) = &mut self.theme_editor {
+                    v.set_scale(scale);
+                }
                 if let Some(v) = &mut self.notes {
                     v.set_scale(scale);
                 }
@@ -640,6 +643,7 @@ impl<B: AudioBackend> Shell<B> {
             || self.sound_analyst.is_some()
             || self.wavetable.is_some()
             || self.color_picker.is_some()
+            || self.theme_editor.is_some()
             || self.notes.is_some()
             || self.warp.is_some()
     }

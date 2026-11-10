@@ -153,7 +153,8 @@ fn the_tab_strip_exists_only_with_preferences_and_switches_the_tab() {
             Tab::Surfaces,
             Tab::Sync,
             Tab::Video,
-            Tab::Backup
+            Tab::Backup,
+            Tab::Themes
         ]
     );
     assert_eq!(d.tab(), Tab::Audio);
@@ -2047,4 +2048,238 @@ fn the_language_section_changes_the_draft() {
         d.preferences().unwrap().1.language,
         atomik_ui::LanguageChoice::Is(atomik_ui::Lang::French)
     );
+}
+
+// ------------------------------------------------------------------ the Themes tab
+
+fn theme_rows() -> Vec<crate::themes_tab::ThemeRow> {
+    crate::themes::ThemeLibrary::builtin_only()
+        .entries()
+        .iter()
+        .map(crate::themes_tab::ThemeRow::of)
+        .collect()
+}
+
+fn themed_dialog() -> SettingsDialog {
+    dialog().with_themes(theme_rows(), true)
+}
+
+fn user_row(name: &str) -> crate::themes_tab::ThemeRow {
+    let mut row = theme_rows().remove(2);
+    row.id = format!("user:{}", name.to_lowercase());
+    row.name = name.to_string();
+    row.builtin = false;
+    row
+}
+
+#[test]
+fn the_themes_tab_lists_the_builtin_themes_with_the_one_in_use_marked() {
+    let mut d = themed_dialog();
+    goto(&mut d, Tab::Themes);
+    let t = d.themes_tab().unwrap();
+    let names: Vec<_> = t.rows().iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["Dark", "Light", "Synthwave"]);
+    assert!(t.rows().iter().all(|r| r.builtin));
+    assert_eq!(t.active(), "dark");
+    let l = d.themes_layout(VIEW).unwrap();
+    assert_eq!(l.rows.len(), 3);
+    assert_eq!(l.buttons.len(), 7);
+    // The strip and the tab's own parts stay inside the panel.
+    let panel = d.panel(VIEW);
+    for (_, r) in &l.buttons {
+        assert!(panel.contains(r.center()));
+    }
+    let strip = d.tab_strip(VIEW);
+    assert_eq!(strip.len(), 9);
+    for pair in strip.windows(2) {
+        assert!(pair[0].0.x1 <= pair[1].0.x0, "tabs do not overlap");
+    }
+}
+
+/// A click on a theme asks the shell to use it, and the drafts follow: Dark and Light are the
+/// choices, any other theme is the theme id.
+#[test]
+fn a_click_on_a_theme_uses_it_and_the_drafts_follow() {
+    let mut d = themed_dialog();
+    goto(&mut d, Tab::Themes);
+    let l = d.themes_layout(VIEW).unwrap();
+    let out = down(&mut d, l.rows[2].center());
+    assert_eq!(
+        out,
+        DialogOutcome::Theme(crate::themes_tab::ThemeAction::Use("synthwave".into()))
+    );
+    let wf = d.preferences().unwrap().1;
+    assert_eq!(wf.theme_id, "synthwave");
+    assert_eq!(d.themes_tab().unwrap().active(), "synthwave");
+    // The Interface row names it.
+    goto(&mut d, Tab::Interface);
+    let rows = d.interface_layout(VIEW).unwrap().rows;
+    assert_eq!(rows[0].value, "Synthwave");
+    // Stepping the row there goes back to the choices.
+    let b = rows[0].button.center();
+    down(&mut d, b);
+    let wf = d.preferences().unwrap().1;
+    assert_eq!(wf.theme_id, "");
+    assert_eq!(wf.theme, atomik_ui::ThemeChoice::Light);
+    assert_eq!(d.themes_tab().unwrap().active(), "light");
+    // Light and Dark in the list are the choices.
+    goto(&mut d, Tab::Themes);
+    let l = d.themes_layout(VIEW).unwrap();
+    down(&mut d, l.rows[0].center());
+    let wf = d.preferences().unwrap().1;
+    assert_eq!(
+        (wf.theme_id.as_str(), wf.theme),
+        ("", atomik_ui::ThemeChoice::Dark)
+    );
+}
+
+fn hit(d: &mut SettingsDialog, b: crate::themes_tab::Button) -> DialogOutcome {
+    let at = d
+        .themes_layout(VIEW)
+        .unwrap()
+        .buttons
+        .iter()
+        .find(|(x, _)| *x == b)
+        .unwrap()
+        .1
+        .center();
+    down(d, at)
+}
+
+/// Rename, Delete and Edit work on a user theme only; Rename types in the row, Delete asks first.
+#[test]
+fn the_buttons_work_on_user_themes_and_ask_before_deleting() {
+    use crate::themes_tab::{Button, ThemeAction};
+    let mut rows = theme_rows();
+    rows.push(user_row("Night drive"));
+    let mut d = dialog().with_themes(rows, true);
+    goto(&mut d, Tab::Themes);
+    // A built-in theme: Duplicate works, the others say why not.
+    assert_eq!(
+        hit(&mut d, Button::Duplicate),
+        DialogOutcome::Theme(ThemeAction::Duplicate("dark".into()))
+    );
+    for b in [Button::Rename, Button::Delete, Button::Edit] {
+        assert_eq!(hit(&mut d, b), DialogOutcome::Open, "{b:?}");
+        assert!(!d.themes_tab().unwrap().is_renaming());
+        assert!(!d.themes_tab().unwrap().is_confirming());
+    }
+    assert!(!d.themes_tab().unwrap().enabled(Button::Delete));
+    assert!(d.themes_tab().unwrap().enabled(Button::Export));
+
+    // Select the user theme.
+    let l = d.themes_layout(VIEW).unwrap();
+    down(&mut d, l.rows[3].center());
+    assert_eq!(
+        d.themes_tab().unwrap().selected().unwrap().name,
+        "Night drive"
+    );
+    assert_eq!(
+        hit(&mut d, Button::Edit),
+        DialogOutcome::Theme(ThemeAction::Edit("user:night drive".into()))
+    );
+    assert_eq!(
+        hit(&mut d, Button::Export),
+        DialogOutcome::Theme(ThemeAction::Export("user:night drive".into()))
+    );
+    // Rename: the name is typed in the row; Esc keeps it, Enter hands it over.
+    hit(&mut d, Button::Rename);
+    assert_eq!(d.themes_tab().unwrap().rename_text(), Some("Night drive"));
+    assert_eq!(press(&mut d, "Escape", Os::Windows), DialogOutcome::Open);
+    assert!(!d.themes_tab().unwrap().is_renaming());
+    hit(&mut d, Button::Rename);
+    type_text(&mut d, "Drive 2");
+    assert_eq!(d.themes_tab().unwrap().rename_text(), Some("Drive 2"));
+    assert_eq!(
+        press(&mut d, "Enter", Os::Windows),
+        DialogOutcome::Theme(ThemeAction::Rename(
+            "user:night drive".into(),
+            "Drive 2".into()
+        ))
+    );
+    // Delete asks; Keep leaves it, Delete goes ahead.
+    hit(&mut d, Button::Delete);
+    assert!(d.themes_tab().unwrap().is_confirming());
+    // While the question shows, the second button is Keep.
+    assert_eq!(hit(&mut d, Button::Duplicate), DialogOutcome::Open);
+    assert!(!d.themes_tab().unwrap().is_confirming());
+    hit(&mut d, Button::Delete);
+    assert_eq!(press(&mut d, "Escape", Os::Windows), DialogOutcome::Open);
+    assert!(!d.themes_tab().unwrap().is_confirming());
+    hit(&mut d, Button::Delete);
+    assert_eq!(
+        hit(&mut d, Button::Delete),
+        DialogOutcome::Theme(ThemeAction::Delete("user:night drive".into()))
+    );
+    // Import, Export of a built-in theme and the folder.
+    assert_eq!(
+        hit(&mut d, Button::Import),
+        DialogOutcome::Theme(ThemeAction::Import)
+    );
+    assert_eq!(
+        hit(&mut d, Button::OpenFolder),
+        DialogOutcome::Theme(ThemeAction::OpenFolder)
+    );
+}
+
+#[test]
+fn an_old_settings_file_with_dark_gives_dark_and_the_dialog_keeps_the_drafts() {
+    let prefs = WorkflowPrefs::from_json(r#"{"theme": "dark", "auto_route": false}"#).unwrap();
+    let mut d = SettingsDialog::new(AudioSettings::default(), DeviceLists::default())
+        .with_preferences(
+            KeymapEditor::new(Os::Windows, Profile::Standard, UserKeymap::default()),
+            prefs,
+        )
+        .with_themes(theme_rows(), true);
+    let wf = d.preferences().unwrap().1;
+    assert_eq!(wf.theme, atomik_ui::ThemeChoice::Dark);
+    assert_eq!(wf.theme_id, "");
+    assert!(!wf.auto_route);
+    goto(&mut d, Tab::Themes);
+    assert_eq!(d.themes_tab().unwrap().active(), "dark");
+}
+
+#[test]
+fn golden_themes() {
+    let mut d = themed_dialog();
+    goto(&mut d, Tab::Themes);
+    golden("settings_themes", &d);
+    let l = d.themes_layout(VIEW).unwrap();
+    down(&mut d, l.rows[2].center());
+    golden("settings_themes_synthwave", &d);
+}
+
+#[test]
+fn golden_themes_with_a_user_theme_and_a_message() {
+    let mut rows = theme_rows();
+    rows.push(user_row("Night drive"));
+    let mut d = dialog().with_themes(rows.clone(), true);
+    goto(&mut d, Tab::Themes);
+    let l = d.themes_layout(VIEW).unwrap();
+    down(&mut d, l.rows[3].center());
+    d.set_themes(
+        rows,
+        Some("user:night drive"),
+        "A theme named Dark exists already".into(),
+    );
+    golden("settings_themes_user", &d);
+}
+
+#[test]
+fn golden_settings_in_the_synthwave_theme() {
+    let mut d = themed_dialog();
+    goto(&mut d, Tab::Interface);
+    let mut list = DisplayList::new();
+    d.paint(&mut list, &Theme::synthwave(), VIEW);
+    let actual = list.to_json();
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden/settings_interface_synthwave_1x.json");
+    if std::env::var_os("ATOMIK_UPDATE_GOLDEN").is_some_and(|v| v == "1") {
+        std::fs::write(&path, &actual).unwrap();
+        return;
+    }
+    let expected = std::fs::read_to_string(&path)
+        .unwrap_or_else(|_| panic!("missing golden {}", path.display()))
+        .replace("\r\n", "\n");
+    assert!(expected == actual, "{} differs", path.display());
 }

@@ -194,6 +194,9 @@ Affichage
     Sombre
     Clair
     Comme le système
+    ---
+    Thème suivant
+    Gestionnaire de thèmes…
   ---
   Panneaux >
     Navigateur d'appareils [F3]

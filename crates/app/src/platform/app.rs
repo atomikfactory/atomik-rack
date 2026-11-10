@@ -524,6 +524,19 @@ fn reveal(path: &std::path::Path) {
     }
 }
 
+/// Shows a folder in the file manager.
+fn open_folder(dir: &std::path::Path) {
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("explorer.exe").arg(dir).spawn();
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(dir).spawn();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open").arg(dir).spawn();
+    if let Err(e) = result {
+        log::warn!("could not open {}: {e}", dir.display());
+    }
+}
+
 fn monitors(event_loop: &ActiveEventLoop) -> (Vec<MonitorInfo>, usize) {
     let handles: Vec<_> = event_loop.available_monitors().collect();
     let infos = handles
@@ -1338,6 +1351,33 @@ impl App {
                         self.shell.import_keymap_from(&path);
                     }
                 }
+                ShellRequest::PickExportTheme(name) => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Export theme")
+                        .add_filter("Atomik theme", &["json"])
+                        .set_file_name(name);
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension("json");
+                        }
+                        self.shell.export_theme_to(&path);
+                    }
+                }
+                ShellRequest::PickImportTheme => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Import theme")
+                        .add_filter("Atomik theme", &["json"]);
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(path) = dialog.pick_file() {
+                        self.shell.import_theme_from(&path);
+                    }
+                }
+                ShellRequest::OpenFolder(dir) => open_folder(&dir),
                 ShellRequest::PickExportController => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Export controller profile")

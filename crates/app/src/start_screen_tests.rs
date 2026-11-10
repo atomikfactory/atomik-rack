@@ -349,6 +349,11 @@ fn golden_start_screen_light() {
     golden("start_screen_light", &Theme::light());
 }
 
+#[test]
+fn golden_start_screen_synthwave() {
+    golden("start_screen_synthwave", &Theme::synthwave());
+}
+
 fn row_rect(s: &StartScreen, target: Target) -> Rect {
     s.rows(VIEW)
         .into_iter()

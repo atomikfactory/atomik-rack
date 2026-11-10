@@ -145,13 +145,29 @@ pub fn step_zoom(percent: u16, back: bool) -> u16 {
 #[derive(Debug, Clone)]
 pub struct InterfaceTab {
     prefs: UiPrefs,
+    /// The name of the theme in use when it is neither Dark nor Light nor System.
+    custom: Option<String>,
     hover: Option<Point>,
 }
 
 impl InterfaceTab {
     /// A tab editing `prefs`.
     pub fn new(prefs: UiPrefs) -> Self {
-        Self { prefs, hover: None }
+        Self {
+            prefs,
+            custom: None,
+            hover: None,
+        }
+    }
+
+    /// Names the theme in use when it is one of the Themes tab's (shown on the Theme row).
+    pub fn set_custom(&mut self, name: Option<String>) {
+        self.custom = name;
+    }
+
+    /// Replaces the edited preferences.
+    pub(crate) fn set_prefs(&mut self, prefs: UiPrefs) {
+        self.prefs = prefs;
     }
 
     /// The edited preferences.
@@ -169,8 +185,10 @@ impl InterfaceTab {
             (
                 UiRow::Theme,
                 "Theme",
-                "Dark, light, or the system's setting. Applies as soon as you press Apply.",
-                self.prefs.theme.label().to_string(),
+                "Dark, light, or the system's setting. More themes are in the Themes tab.",
+                self.custom
+                    .clone()
+                    .unwrap_or_else(|| self.prefs.theme.label().to_string()),
                 false,
             ),
             (
