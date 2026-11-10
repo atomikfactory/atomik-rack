@@ -1707,6 +1707,62 @@ fn a_controller_that_was_set_up_joins_the_draft_and_can_be_exported() {
 }
 
 #[test]
+fn the_controllers_tab_shows_the_switches_of_the_profile_being_edited() {
+    use crate::controller_profile::ProfileOptions;
+    let switches = |d: &SettingsDialog| {
+        d.sections()
+            .iter()
+            .any(|s| s.title.starts_with("Pick up values"))
+    };
+    let mut d = surfaces_dialog(AudioSettings::default());
+    d.set_profile_options(
+        [("desk-in".to_owned(), ProfileOptions::default())]
+            .into_iter()
+            .collect(),
+    );
+    goto(&mut d, Tab::Surfaces);
+    assert!(!switches(&d), "no controller profile is edited");
+    d.adopt_surface(SurfaceSettings {
+        name: "Desk In".to_owned(),
+        enabled: true,
+        driver: Some("profile:desk-in".to_owned()),
+        input: Some("Example Surface".to_owned()),
+        output: None,
+    });
+    assert!(switches(&d));
+    // A new profile picks values up and keeps no page per device.
+    assert!(d.is_selected(&Choice::ProfilePickup(true)));
+    assert!(d.is_selected(&Choice::ProfileKeepPage(false)));
+    assert!(d.profile_changes().is_empty());
+    d.pick(Choice::ProfilePickup(false));
+    d.pick(Choice::ProfileKeepPage(true));
+    assert!(d.is_selected(&Choice::ProfilePickup(false)));
+    assert!(d.is_selected(&Choice::ProfileKeepPage(true)));
+    assert_eq!(
+        d.profile_changes(),
+        [(
+            "desk-in".to_owned(),
+            ProfileOptions {
+                pickup: false,
+                keep_page: true
+            }
+        )]
+    );
+    // Putting them back is no change; a controller with no saved profile has no switches.
+    d.pick(Choice::ProfilePickup(true));
+    d.pick(Choice::ProfileKeepPage(false));
+    assert!(d.profile_changes().is_empty());
+    d.adopt_surface(SurfaceSettings {
+        name: "Other".to_owned(),
+        enabled: true,
+        driver: Some("profile:missing".to_owned()),
+        input: None,
+        output: None,
+    });
+    assert!(!switches(&d));
+}
+
+#[test]
 fn the_keyboard_search_selects_all_replaces_and_undoes_inside_the_field() {
     let mut d = dialog();
     goto(&mut d, Tab::Keyboard);

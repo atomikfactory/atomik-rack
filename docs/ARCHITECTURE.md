@@ -3941,18 +3941,29 @@ fast forward move a bar and the jog wheel a sixteenth per detent.
   wizard works the same way. A profile is `controllers/<name>.json` next to `settings.json`:
   `{ "format": 1, "name", "input", "output" (optional), "controls": [ ... ] }`, each control
   `{ "role", "index" (knob and fader, 1 to 8), "message", "number", "channel" (from 1), "mode",
-  "feedback" }`. Roles are `knob`, `fader`, `master`, `play`, `stop`, `record`, `loop`, `bank_left` and
-  `bank_right`; messages `cc`, `cc14` (the MSB controller 0 to 31, the LSB is 32 above), `nrpn`, `note` and
-  `pitchbend`; modes `absolute`, `relative_twos`, `relative_offset`, `relative_sign` and `button`. A file is
+  "feedback" }`. Roles are `knob`, `fader`, `master`, `play`, `stop`, `record`, `loop`, `bank_left`,
+  `bank_right`, `page_down` and `page_up`; the optional root fields `pickup` (default true) and `keep_page`
+  (default false) are written only when they differ, so an older file reads as the defaults; messages `cc`,
+  `cc14` (the MSB controller 0 to 31, the LSB is 32 above), `nrpn`, `note` and `pitchbend`; modes `absolute`, `relative_twos`, `relative_offset`, `relative_sign` and `button`. A file is
   read strictly (an unknown role, message or mode, two controls on one message, a key that is not a button
   or a file of a newer format is an error, never a silent drop), capped at 64 controls and 64 KiB.
   The driver turns the messages into the usual `SurfaceAction`s plus `SurfaceAction::Knob`, which the app
-  applies to the first eight parameters of `AppCore::followed_device` (the locked device, else the selected
+  applies to a parameter of `AppCore::followed_device` (the locked device, else the selected
   one; hidden parameters, plugin CV rows and `bypass` are skipped) as a `SetParam` with a gesture merge id;
-  a stepped parameter moves one step per click of an encoder. `SurfaceState::knobs` carries the values for
-  the feedback. Faders are the strips of the driver's bank (bank keys move eight, the last page starts at the
-  last multiple of eight). Feedback sends only what changed (CC, a 14 bit pair, NRPN, pitch bend or a note,
-  by the control's own message) and leaves a control alone for about half a second after the hand moved it.
+  a stepped parameter moves one step per click of an encoder. `SurfaceState::knobs` carries the value of every
+  remote parameter of the followed device (at most 128) and `SurfaceState::remote` its identity, name and the
+  parameter names, so the driver, which owns the knob page, shows eight at a time: `SurfaceAction::Knob` carries
+  the index over all of them, the page keys and `SurfaceDriver::knob_page` (the commands
+  `controller.knob_page_next` and `controller.knob_page_prev`, `AppCore::knob_page`) move the page with
+  wrapping, and a change of the followed device resets it unless the profile keeps a page per device. The
+  soft takeover of an absolute knob or fader is `MapState::take_over`
+  ([midi_map.rs](../crates/model/src/midi_map.rs)), the rule MIDI learn uses, with a 2 percent window and one
+  `MapState` per control, rearmed on a device, page or bank change; encoders, stepped parameters and faders with
+  feedback never wait. `SurfaceAction::Notice` carries the status line text ("Knobs: Filter 9-16", "Turn knob 3
+  up to pick up Cutoff"). After a page change the knobs are sent again at the next feedback pass. Faders are the
+  strips of the driver's bank (bank keys move eight, the last page starts at the last multiple of eight).
+  Feedback sends only what changed (CC, a 14 bit pair, NRPN, pitch bend or a note, by the control's own message)
+  and leaves a control alone for about half a second after the hand moved it.
   The wizard is a state machine without I/O ([controller_wizard.rs](../crates/app/src/controller_wizard.rs))
   over a `Capture` ([controller_detect.rs](../crates/app/src/controller_detect.rs)) that tells a control from
   its messages: an encoder sends a handful of values clustered in one of three codings in both directions, a
@@ -5096,7 +5107,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (547) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (549) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

@@ -1,7 +1,8 @@
 //! The screen of the controller wizard (Settings > Controllers > Set Up Controller...): a modal
 //! that first lists the MIDI input ports, then walks through the controls ("Move knob 1", ...,
 //! "Press Play") with Skip, Skip Group, Back and Finish, asks whether the controller shows values
-//! back, and ends with Save.
+//! back, and ends with Save. The last page also has two check boxes: pick up values, and keep
+//! the knob page per device.
 //!
 //! Everything that decides something is in [`crate::controller_wizard`]; this view owns the
 //! port's link (opened by the shell when a port is picked), polls it every frame and draws.
@@ -17,7 +18,7 @@ use atomik_ui::peniko::Color;
 use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, UiEvent};
 
 const WIDTH: f64 = 560.0;
-const HEIGHT: f64 = 380.0;
+const HEIGHT: f64 = 420.0;
 const PAD: f64 = 24.0;
 const ROW: f64 = 28.0;
 const BUTTON: (f64, f64) = (104.0, 28.0);
@@ -42,6 +43,10 @@ pub enum Target {
     Yes,
     /// Answer no to the question.
     No,
+    /// Turn "pick up values" over (the last page).
+    Pickup,
+    /// Turn "keep the knob page per device" over (the last page).
+    KeepPage,
     /// Save the profile.
     Save,
     /// Close without saving.
@@ -269,6 +274,38 @@ impl ControllerWizardView {
         v
     }
 
+    /// The check boxes of the last page: what they set, their labels and whether they are on.
+    fn switches(&self) -> Vec<(Target, &'static str, bool)> {
+        let Phase::Learning(l) = &self.phase else {
+            return Vec::new();
+        };
+        if l.wizard.stage() != Stage::Done {
+            return Vec::new();
+        }
+        let options = l.wizard.options();
+        vec![
+            (Target::Pickup, "Pick up values", options.pickup),
+            (
+                Target::KeepPage,
+                "Keep the knob page per device",
+                options.keep_page,
+            ),
+        ]
+    }
+
+    /// The check boxes of the last page with their places.
+    fn toggles(&self, view: Size) -> Vec<(Target, Rect, &'static str, bool)> {
+        let r = self.rect(view);
+        self.switches()
+            .into_iter()
+            .enumerate()
+            .map(|(i, (t, label, on))| {
+                let y = r.y0 + 292.0 + i as f64 * 28.0;
+                (t, Rect::new(r.x0 + PAD, y, r.x1 - PAD, y + 24.0), label, on)
+            })
+            .collect()
+    }
+
     /// The middle of the button or port row `target` for a window of size `view`, when it is on
     /// the screen now (tests and the headless session click it).
     pub fn center_of(&self, view: Size, target: Target) -> Option<Point> {
@@ -280,6 +317,7 @@ impl ControllerWizardView {
         ports
             .into_iter()
             .chain(self.buttons(view).into_iter().map(|(t, r, _)| (t, r)))
+            .chain(self.toggles(view).into_iter().map(|(t, r, ..)| (t, r)))
             .find(|(t, _)| *t == target)
             .map(|(_, r)| r.center())
     }
@@ -293,6 +331,7 @@ impl ControllerWizardView {
         ports
             .into_iter()
             .chain(self.buttons(view).into_iter().map(|(t, r, _)| (t, r)))
+            .chain(self.toggles(view).into_iter().map(|(t, r, ..)| (t, r)))
             .find(|(_, r)| r.contains(p))
             .map(|(t, _)| t)
     }
@@ -326,6 +365,8 @@ impl ControllerWizardView {
             Target::Finish => l.wizard.finish_now(),
             Target::Yes => l.wizard.answer(true),
             Target::No => l.wizard.answer(false),
+            Target::Pickup => l.wizard.set_pickup(!l.wizard.options().pickup),
+            Target::KeepPage => l.wizard.set_keep_page(!l.wizard.options().keep_page),
             Target::Save => {
                 let name = profile_name(l.wizard.input());
                 if let Some(profile) = l.wizard.profile(&name) {
@@ -423,6 +464,9 @@ impl ControllerWizardView {
                 lines.push(format!("{} controls set up", l.wizard.count()));
                 if l.wizard.stage() == Stage::Done {
                     lines.push(format!("Name: {}", profile_name(l.wizard.input())));
+                    for (_, label, on) in self.switches() {
+                        lines.push(format!("[{}] {label}", if on { "x" } else { " " }));
+                    }
                 }
             }
         }
@@ -558,6 +602,23 @@ impl ControllerWizardView {
         }
         if let Some(p) = &self.problem {
             text(canvas, p, r.y1 - 70.0, 12.5, theme.text);
+        }
+        for (target, rect, label, on) in self.toggles(view) {
+            let hot = self.hover == Some(target);
+            if hot {
+                canvas.fill_with(RoundedRect::from_rect(rect, 6.0), theme.selection);
+            }
+            let boxed = Rect::new(rect.x0 + 4.0, rect.y0 + 4.0, rect.x0 + 20.0, rect.y0 + 20.0);
+            canvas.stroke_with(RoundedRect::from_rect(boxed, 3.0), 1.0, theme.section_line);
+            if on {
+                canvas.fill_with(RoundedRect::from_rect(boxed, 3.0), theme.focus);
+            }
+            canvas.text(&TextRun::new(
+                label,
+                Point::new(rect.x0 + 30.0, rect.y0 + 17.0),
+                13.0,
+                theme.text,
+            ));
         }
         for (target, rect, label) in self.buttons(view) {
             let shape = RoundedRect::from_rect(rect, 6.0);

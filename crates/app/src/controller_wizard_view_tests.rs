@@ -206,3 +206,43 @@ fn a_profile_name_comes_from_the_port() {
     assert_eq!(profile_name("***"), "Controller");
     assert_eq!(profile_name(&"x".repeat(200)).chars().count(), 64);
 }
+
+fn toggle(v: &ControllerWizardView, t: Target) -> Point {
+    v.center_of(VIEW, t)
+        .unwrap_or_else(|| panic!("no {t:?} check box"))
+}
+
+#[test]
+fn the_last_page_has_the_two_switches() {
+    let (mut v, pad) = learning();
+    // The check boxes are not on the earlier pages.
+    assert!(v.center_of(VIEW, Target::Pickup).is_none());
+    turn_knob(&pad, &mut v, 21);
+    let finish = button(&v, Target::Finish);
+    click(&mut v, finish);
+    key(&mut v, Key::Char('n'));
+    assert_eq!(v.wizard().unwrap().stage(), Stage::Done);
+    assert!(v.lines().contains(&"[x] Pick up values".to_owned()));
+    assert!(
+        v.lines()
+            .contains(&"[ ] Keep the knob page per device".to_owned())
+    );
+    // A click turns each over, and the saved profile carries them.
+    let pickup = toggle(&v, Target::Pickup);
+    click(&mut v, pickup);
+    let keep = toggle(&v, Target::KeepPage);
+    click(&mut v, keep);
+    assert!(v.lines().contains(&"[ ] Pick up values".to_owned()));
+    assert!(
+        v.lines()
+            .contains(&"[x] Keep the knob page per device".to_owned())
+    );
+    let save = button(&v, Target::Save);
+    let WizardOutcome::Save(p) = click(&mut v, save) else {
+        panic!("not saved");
+    };
+    assert!(!p.options.pickup && p.options.keep_page);
+    // The box and the check boxes fit the window and paint.
+    let mut canvas = atomik_ui::DisplayList::new();
+    v.paint(&mut canvas, &Theme::default(), VIEW);
+}

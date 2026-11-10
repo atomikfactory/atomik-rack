@@ -462,6 +462,18 @@ const COMMANDS: &[CommandDef] = &[
     cmd("browser.move_down", "Browser Down", G::Browser, C::Browser).rep(),
     cmd("browser.move_up", "Browser Up", G::Browser, C::Browser).rep(),
     cmd(
+        "controller.knob_page_next",
+        "Controller Knobs: Next Page",
+        G::Mixer,
+        C::Global,
+    ),
+    cmd(
+        "controller.knob_page_prev",
+        "Controller Knobs: Previous Page",
+        G::Mixer,
+        C::Global,
+    ),
+    cmd(
         "create.audio_track",
         "Create Audio Track",
         G::Create,
@@ -3230,7 +3242,7 @@ mod tests {
                 Group::Rack => &["rack"],
                 Group::Sequencer => &["sequencer"],
                 Group::Editor => &["editor"],
-                Group::Mixer => &["mixer", "midi", "macro", "automation"],
+                Group::Mixer => &["mixer", "midi", "macro", "automation", "controller"],
                 Group::Browser => &["browser"],
                 Group::Files => &["files"],
                 Group::Keys => &["keys"],

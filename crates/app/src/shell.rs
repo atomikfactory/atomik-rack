@@ -3578,6 +3578,7 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(tab) = tab {
             dialog.show_tab(tab);
         }
+        dialog.set_profile_options(self.profile_options());
         self.dialog = Some(dialog);
         self.close_menubars();
     }
@@ -5960,7 +5961,9 @@ impl<B: AudioBackend> Shell<B> {
                 DialogOutcome::Cancel => self.dialog = None,
                 DialogOutcome::Apply(settings) => {
                     let prefs = dialog.preferences();
+                    let profiles = dialog.profile_changes();
                     self.dialog = None;
+                    self.save_profile_options(profiles);
                     self.apply_preferences(prefs);
                     self.apply_settings(settings);
                 }
@@ -6245,6 +6248,8 @@ impl<B: AudioBackend> Shell<B> {
                     self.core.clear_lane_static(&device, &param);
                 }
             }
+            ("controller.knob_page_next", None) => self.core.knob_page(1),
+            ("controller.knob_page_prev", None) => self.core.knob_page(-1),
             ("midi.learn_control", None) => {
                 if let Some((device, param)) = self.control_target.clone() {
                     self.core
@@ -9627,6 +9632,49 @@ impl<B: AudioBackend> Shell<B> {
             }
         }
         self.core.set_surfaces(hosts);
+    }
+
+    /// The switches (pick up values, keep the knob page) of every saved controller profile, by
+    /// slug.
+    fn profile_options(
+        &self,
+    ) -> std::collections::BTreeMap<String, crate::controller_profile::ProfileOptions> {
+        use crate::controller_profile as cp;
+        let Some(dir) = cp::profile_dir(self.settings_path.as_deref()) else {
+            return Default::default();
+        };
+        cp::list(&dir)
+            .into_iter()
+            .filter_map(|(slug, p)| Some((slug, p.ok()?.options)))
+            .collect()
+    }
+
+    /// Writes the switches the Settings dialog changed into their profile files, and has the
+    /// surfaces start again on them.
+    fn save_profile_options(
+        &mut self,
+        changes: Vec<(String, crate::controller_profile::ProfileOptions)>,
+    ) {
+        use crate::controller_profile as cp;
+        if changes.is_empty() {
+            return;
+        }
+        let Some(dir) = cp::profile_dir(self.settings_path.as_deref()) else {
+            return;
+        };
+        for (slug, options) in changes {
+            match cp::load(&dir, &slug) {
+                Ok(mut profile) => {
+                    profile.options = options;
+                    if let Err(e) = cp::save(&dir, &profile) {
+                        self.notify(format!("The controller profile was not saved: {e}"));
+                    }
+                }
+                Err(e) => self.notify(format!("Controller profile {slug:?}: {e}")),
+            }
+        }
+        // The drivers read their profile when they are set up.
+        self.surface_applied = Vec::new();
     }
 
     /// The driver a surface runs: one of the built-in drivers, or the controller profile

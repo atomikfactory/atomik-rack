@@ -16,6 +16,7 @@
 //! when [`DialogOutcome::Apply`] arrives and saves `keymap.json` and `workflow.json`. Without
 //! preferences the dialog is the audio-only dialog it always was.
 
+use crate::controller_profile::ProfileOptions;
 use crate::interface_tab::{InterfaceLayout, InterfaceTab, UiPrefs};
 use crate::keyboard_tab::{FOOTER, KeyboardLayout, KeyboardTab, PAD, TITLE, TabOutcome};
 use crate::keymap_store::WorkflowPrefs;
@@ -35,6 +36,7 @@ use atomik_ui::peniko::Color;
 use atomik_ui::{
     Align, Canvas, CanvasExt, FieldColors, Key, PointerButton, TextField, TextRun, Theme, UiEvent,
 };
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// The audio hosts, devices and MIDI ports the dialog offers.
@@ -157,6 +159,10 @@ pub enum Choice {
     ExportController,
     /// Reads a shared controller profile from a file.
     ImportController,
+    /// The "pick up values" switch of the controller profile being edited.
+    ProfilePickup(bool),
+    /// The "keep the knob page per device" switch of the controller profile being edited.
+    ProfileKeepPage(bool),
 }
 
 /// The text of a master tune chip: `0`, `+5`, `-12.5`.
@@ -312,6 +318,10 @@ pub struct SettingsDialog {
     buffer_edit: Option<TextField>,
     /// The surface the Surfaces tab edits (an index into the draft's list).
     surface_sel: usize,
+    /// The switches of the controller profiles, by profile name, as the dialog edits them.
+    profiles: BTreeMap<String, ProfileOptions>,
+    /// The same as they were saved when the dialog opened.
+    profiles_saved: BTreeMap<String, ProfileOptions>,
 }
 
 impl SettingsDialog {
@@ -326,7 +336,36 @@ impl SettingsDialog {
             prefs: None,
             buffer_edit: None,
             surface_sel: 0,
+            profiles: BTreeMap::new(),
+            profiles_saved: BTreeMap::new(),
         }
+    }
+
+    /// Gives the dialog the switches of the saved controller profiles (by slug) so the Controllers
+    /// tab can show and change them.
+    pub fn set_profile_options(&mut self, profiles: BTreeMap<String, ProfileOptions>) {
+        self.profiles_saved = profiles.clone();
+        self.profiles = profiles;
+    }
+
+    /// The profiles whose switches the dialog changed: slug and the new switches.
+    pub fn profile_changes(&self) -> Vec<(String, ProfileOptions)> {
+        self.profiles
+            .iter()
+            .filter(|(slug, now)| self.profiles_saved.get(*slug) != Some(*now))
+            .map(|(slug, now)| (slug.clone(), *now))
+            .collect()
+    }
+
+    fn edited_options_mut(&mut self) -> Option<&mut ProfileOptions> {
+        let slug = self.edited_profile()?;
+        self.profiles.get_mut(&slug)
+    }
+
+    /// The switches of the profile the tab edits, when it runs one the dialog knows.
+    fn edited_options(&self) -> Option<ProfileOptions> {
+        self.edited_profile()
+            .and_then(|slug| self.profiles.get(&slug).copied())
     }
 
     /// The surface the Surfaces tab edits (an empty one while there is none).
@@ -996,7 +1035,7 @@ impl SettingsDialog {
                 }
                 v
             };
-        vec![
+        let mut sections = vec![
             Section {
                 title: "Control surface",
                 options: drivers,
@@ -1031,7 +1070,26 @@ impl SettingsDialog {
                 options: self.controller_options(),
                 chips: true,
             },
-        ]
+        ];
+        if self.edited_options().is_some() {
+            sections.push(Section {
+                title: "Pick up values (a knob or fader waits until it reaches the value)",
+                options: vec![
+                    ("Off".to_string(), Choice::ProfilePickup(false)),
+                    ("On".to_string(), Choice::ProfilePickup(true)),
+                ],
+                chips: true,
+            });
+            sections.push(Section {
+                title: "Keep the knob page for each device",
+                options: vec![
+                    ("Off".to_string(), Choice::ProfileKeepPage(false)),
+                    ("On".to_string(), Choice::ProfileKeepPage(true)),
+                ],
+                chips: true,
+            });
+        }
+        sections
     }
 
     /// The chips of the controller profiles: set one up, share the one being edited, read one.
@@ -1173,6 +1231,10 @@ impl SettingsDialog {
             | Choice::SetUpController
             | Choice::ExportController
             | Choice::ImportController => false,
+            Choice::ProfilePickup(on) => self.edited_options().is_some_and(|o| o.pickup == *on),
+            Choice::ProfileKeepPage(on) => {
+                self.edited_options().is_some_and(|o| o.keep_page == *on)
+            }
             Choice::SurfaceUse(on) => self.surface().enabled == *on,
             Choice::SurfaceDriver(n) => self.surface().driver == *n,
             Choice::SurfaceInput(n) => self.surface().input == *n,
@@ -1241,6 +1303,16 @@ impl SettingsDialog {
             }
             Choice::MidiMpe(p) => self.draft.cycle_midi_input_mpe(&p),
             Choice::SetUpController | Choice::ExportController | Choice::ImportController => {}
+            Choice::ProfilePickup(on) => {
+                if let Some(o) = self.edited_options_mut() {
+                    o.pickup = on;
+                }
+            }
+            Choice::ProfileKeepPage(on) => {
+                if let Some(o) = self.edited_options_mut() {
+                    o.keep_page = on;
+                }
+            }
             Choice::SurfaceSelect(i) => self.surface_sel = i,
             Choice::SurfaceAdd => self.add_surface(),
             Choice::SurfaceRemove => self.remove_surface(),

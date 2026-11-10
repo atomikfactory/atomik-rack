@@ -277,3 +277,35 @@ fn the_wizard_swallows_the_keys_and_the_surfaces_come_back_when_it_closes() {
     });
     assert!(!s.modal_open());
 }
+
+#[test]
+fn the_switches_of_a_profile_are_kept_in_its_file_when_the_settings_are_applied() {
+    let d = Folder::new("switches");
+    let mut s = shell(&d);
+    learn_one(&mut s, "Desk In");
+    let dir = crate::controller_profile::profile_dir(Some(&d.0.join("settings.json"))).unwrap();
+    let saved = crate::controller_profile::load(&dir, "desk-in").unwrap();
+    assert!(saved.options.pickup && !saved.options.keep_page);
+    s.open_settings(Some(Tab::Surfaces));
+    let size = s.size();
+    for choice in [Choice::ProfilePickup(false), Choice::ProfileKeepPage(true)] {
+        let options = s.dialog().unwrap().layout(size).options;
+        let (rect, ..) = options
+            .iter()
+            .find(|(_, _, c)| *c == choice)
+            .unwrap_or_else(|| panic!("{choice:?} is on the tab"));
+        click_at(&mut s, rect.center());
+    }
+    // Nothing is written until Apply.
+    let unchanged = crate::controller_profile::load(&dir, "desk-in").unwrap();
+    assert!(unchanged.options.pickup);
+    s.handle(&UiEvent::Key {
+        key: Key::Enter,
+        modifiers: Modifiers::NONE,
+        pressed: true,
+    });
+    assert!(s.dialog().is_none());
+    let now = crate::controller_profile::load(&dir, "desk-in").unwrap();
+    assert!(!now.options.pickup && now.options.keep_page);
+    assert_eq!(now.controls, saved.controls, "only the switches changed");
+}
