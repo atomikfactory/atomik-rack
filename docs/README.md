@@ -92,6 +92,32 @@ and a few tools. Nothing here changes how the song sounds.
 - **Saving.** The key, the key changes and the chords are saved only when set, as optional fields that an older
   version of the program drops with a warning (project format 45).
 
+## Ducking
+
+To make one track duck under another (a bass under a kick, a pad under a vocal), right-click the track's header and
+choose **Duck from**, then the track to listen to. The same submenu is in the right-click menu of the track's device
+in the rack and in the strip menu of the mixer (Duck from...), and in Track > Quick Sidechain.
+
+- **What it does.** A Compressor named "Duck from Kick" is added at the end of the ducked track's insert effects.
+  Its key (the sidechain input) is the Kick's output after its fader, so the bass dips as the kick is mixed. It is set
+  to a 4:1 ratio, 5 ms attack, 120 ms release and a -24 dB threshold. The toast says which knob to turn: Threshold on
+  the Compressor. A lower threshold ducks deeper, and a longer release lets the bass come back later. One undo takes
+  the compressor and the key cable away.
+- **Pre-fader.** Duck from (pre-fader) takes the key before the source's fader and pan (its parallel output), so the
+  ducking does not change when you turn the source down. A muted source gives no key either way.
+- **The list.** The other tracks are listed by name, each with its colour; folders are flattened. A track that is
+  already a source is marked "(ducking)". With more than thirty tracks the list stops there and More... opens a
+  pop-up with all of them.
+- **Again.** Ducking from a track the track already ducks from adds nothing: the compressor is selected in the rack and
+  the toast says "Already ducking from Kick". Ducking from several tracks adds one compressor for each.
+- **Loops.** A track cannot duck from one it feeds, such as a bus it plays into: the key would loop back. The status
+  line says so and nothing changes.
+- **Remove Ducking.** Takes off every compressor made this way (they are found by their name and their key cable, so
+  renaming a track does not break it) and the key cables, in one step. Renaming the compressor so it no longer starts
+  with "Duck from" makes it an ordinary insert that Remove Ducking leaves alone.
+- **Gentle Pump.** A different, shallower way to make a track breathe: a Sidechain Tool in pump mode on quarter notes,
+  with no key and no other track. It follows the song position and tempo.
+
 ## CPU use
 
 The program times every device in the rack on the audio thread all the time; the cost is small (about half a percent

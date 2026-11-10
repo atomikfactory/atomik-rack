@@ -92,6 +92,22 @@ fn the_most_common_commands_have_their_own_names() {
             "Add Reverb Send",
         ),
         (
+            wf(WorkflowCommand::DuckFrom {
+                target: key("a"),
+                source: key("b"),
+                pre_fader: false,
+            }),
+            "Duck from Track",
+        ),
+        (
+            wf(WorkflowCommand::GentlePump { target: key("a") }),
+            "Add Gentle Pump",
+        ),
+        (
+            wf(WorkflowCommand::RemoveDucking { target: key("a") }),
+            "Remove Ducking",
+        ),
+        (
             wf(WorkflowCommand::AddRumble {
                 kick: key("a"),
                 start: 0,

@@ -483,6 +483,8 @@ struct OpenContextMenu {
     window: WindowKind,
     /// The menu of a text field: its commands edit that field, not the song.
     field: bool,
+    /// The track the quick sidechain rows of the menu work on.
+    duck: Option<DeviceKey>,
 }
 
 /// What holds the pointer between a press and its release.
@@ -586,6 +588,8 @@ pub struct Shell<B: AudioBackend> {
     patch_menu: Option<DeviceKey>,
     /// The MIDI Out device whose port pop-up is open.
     midi_out_menu: Option<DeviceKey>,
+    /// The track whose quick sidechain menu item is running (set while that command runs).
+    duck_menu: Option<DeviceKey>,
     /// The plugin banner above the rack: the project uses plugins, or the last run
     /// ended unexpectedly.
     banner: PluginBannerView,
@@ -838,6 +842,7 @@ impl<B: AudioBackend> Shell<B> {
             patch_device: None,
             patch_menu: None,
             midi_out_menu: None,
+            duck_menu: None,
             banner,
             plugin_settings: None,
             relink: None,
@@ -3962,6 +3967,7 @@ impl<B: AudioBackend> Shell<B> {
             can_uncombine,
             can_split_sub: self.core.split_sub_menu(),
             can_reverb_send: self.core.reverb_send_menu(),
+            duck: self.core.duck_gate(),
             lens: self.core.lens(),
             song_visible: self.ui.show_song,
             piano_roll: self.core.piano_roll_open(),
@@ -5069,6 +5075,41 @@ impl<B: AudioBackend> Shell<B> {
             }
             None => self.core.report("Select a MIDI Out device first"),
         }
+    }
+
+    /// Opens the pop-up of every track `target` (the selected track when `None`) can duck from,
+    /// at the last right click; a choice runs `sequencer.duck_from_pick`. With `pre_fader` the
+    /// key is taken before the source's fader.
+    fn open_duck_picker(&mut self, target: Option<DeviceKey>, pre_fader: bool) {
+        let Some(target) = target.or_else(|| self.core.duck_target()) else {
+            self.core.report("Select a track to make it duck");
+            return;
+        };
+        let menu = self.core.duck_menu(&target);
+        if menu.sources.is_empty() {
+            self.core.report("There is no other track to duck from");
+            return;
+        }
+        let entries = context_menus::duck_entries(&menu.sources, pre_fader, None, "");
+        let pane = self.live_pane(self.focus);
+        let (window, size) = self.menu_window(pane);
+        let menu = ContextMenu::from_entries(entries, self.secondary_at, size);
+        self.show_context_menu(pane, window, menu);
+        if let Some(open) = &mut self.context_menu {
+            open.duck = Some(target);
+        }
+    }
+
+    /// A track chosen in a quick sidechain list: `arg` is `post:` or `pre:` and the track's
+    /// device key.
+    fn pick_duck_source(&mut self, arg: &str) {
+        let target = self.duck_menu.take();
+        let Some((tap, source)) = arg.split_once(':') else {
+            self.core.report("That is not a track to duck from");
+            return;
+        };
+        self.core
+            .duck_from(target, &DeviceKey(source.to_owned()), tap == "pre");
     }
 
     /// A patch chosen in the pop-up of a patch name (see [`Self::open_patch_siblings`]).
@@ -6298,6 +6339,7 @@ impl<B: AudioBackend> Shell<B> {
                 None => self.core.report("Select a MIDI Out device first"),
             },
             ("rack.midi_out_pick", Some(port)) => self.pick_midi_out_port(port),
+            ("sequencer.duck_from_pick", Some(arg)) => self.pick_duck_source(arg),
             ("video.import_audio_pick", Some(stream)) => match stream.parse::<u32>() {
                 // The core says why in a toast when it refuses.
                 Ok(stream) => {
@@ -6983,6 +7025,15 @@ impl<B: AudioBackend> Shell<B> {
         if pane == Pane::Rack {
             specs = context_menus::with_device_menus(target, specs, &self.core.device_menus());
         }
+        // The track and device menus list the tracks a track can duck from.
+        let duck = match target {
+            ContextTarget::TrackHeader => self.core.duck_arranged_target(),
+            ContextTarget::Device => self.core.duck_rack_target(),
+            _ => None,
+        };
+        if let Some(track) = &duck {
+            specs = context_menus::with_duck_menus(target, specs, &self.core.duck_menu(track));
+        }
         // It opens in the window that shows the pane, sized to that window.
         let (window, size) = self.menu_window(pane);
         let menu = ContextMenu::build(
@@ -6993,6 +7044,9 @@ impl<B: AudioBackend> Shell<B> {
             size,
         );
         self.show_context_menu(pane, window, menu);
+        if let Some(open) = &mut self.context_menu {
+            open.duck = duck;
+        }
     }
 
     /// Opens the pop-up menu of jack `jack` at the window point `at`: the rows come from the
@@ -7086,6 +7140,7 @@ impl<B: AudioBackend> Shell<B> {
             pane,
             window,
             field: false,
+            duck: None,
         });
         // The pointer press that opened it must not keep a drag alive.
         self.capture = None;
@@ -7158,6 +7213,7 @@ impl<B: AudioBackend> Shell<B> {
         match open.menu.handle(event) {
             MenuOutcome::Run { command, arg } => {
                 let field = open.field;
+                self.duck_menu = open.duck.take();
                 self.context_menu = None;
                 self.repaint = true;
                 if field {
@@ -7165,8 +7221,9 @@ impl<B: AudioBackend> Shell<B> {
                     return Vec::new();
                 }
                 self.set_focus(pane);
-                self.run_command(&command, arg.as_deref())
-                    .unwrap_or_default()
+                let ran = self.run_command(&command, arg.as_deref());
+                self.duck_menu = None;
+                ran.unwrap_or_default()
             }
             MenuOutcome::Consumed | MenuOutcome::Ignored => {
                 if open.menu.look() != before {
@@ -8461,6 +8518,30 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::SplitSub => {
                 self.core.split_sub();
+                self.close_menubars();
+                Vec::new()
+            }
+            AppCommand::DuckFrom => {
+                let target = self.duck_menu.take();
+                self.open_duck_picker(target, false);
+                self.close_menubars();
+                Vec::new()
+            }
+            AppCommand::DuckFromPre => {
+                let target = self.duck_menu.take();
+                self.open_duck_picker(target, true);
+                self.close_menubars();
+                Vec::new()
+            }
+            AppCommand::GentlePump => {
+                let target = self.duck_menu.take();
+                self.core.gentle_pump(target);
+                self.close_menubars();
+                Vec::new()
+            }
+            AppCommand::RemoveDucking => {
+                let target = self.duck_menu.take();
+                self.core.remove_ducking(target);
                 self.close_menubars();
                 Vec::new()
             }
@@ -11004,3 +11085,7 @@ mod history_tests;
 #[cfg(test)]
 #[path = "shell_launcher_tests.rs"]
 mod launcher_tests;
+
+#[cfg(test)]
+#[path = "shell_duck_from_tests.rs"]
+mod duck_from_tests;

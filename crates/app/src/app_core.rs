@@ -4117,6 +4117,9 @@ pub use masking::DemaskReport;
 mod bass_read;
 #[path = "app_core_delivery.rs"]
 mod delivery;
+#[path = "app_core_duck_from.rs"]
+mod duck_from;
+pub use duck_from::DuckMenu;
 #[path = "app_core_energy.rs"]
 mod energy;
 #[path = "app_core_harmony.rs"]
@@ -4267,6 +4270,9 @@ mod harmony_tests;
 #[path = "app_core_translation_tests.rs"]
 mod translation_tests;
 
+#[cfg(test)]
+#[path = "app_core_duck_from_tests.rs"]
+mod duck_from_tests;
 #[cfg(test)]
 #[path = "app_core_reverb_send_tests.rs"]
 mod reverb_send_tests;

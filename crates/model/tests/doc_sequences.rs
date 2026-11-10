@@ -64,6 +64,10 @@ enum WfOp {
     /// The reverb send wizard on a top-level device (the first value picks it), with one of four
     /// option sets: plain, a vocal, no duck and pre-fader, and one with an option out of range.
     ReverbSend(usize, u8),
+    /// Quick sidechain: a track (the first value) ducks from another top-level device (the
+    /// second), pre-fader or not, or (the kind 2) gets a gentle pump, or (the kind 3) loses its
+    /// ducking.
+    Duck(usize, usize, u8),
     /// A rumble track after a track (the second value: the start in beats and a choice of options).
     Rumble(usize, u8),
     /// A transition (the kind 0 filter down, 1 silence, 2 fill) at a boundary of bars 1 to 5 on a
@@ -315,6 +319,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (sel(), any::<bool>()).prop_map(|(s, f)| WfOp::FoldMany(s, f)),
         (0usize..12, 0u8..4).prop_map(|(d, f)| WfOp::SplitSub(d, f)),
         (0usize..12, 0u8..4).prop_map(|(d, o)| WfOp::ReverbSend(d, o)),
+        (0usize..12, 0usize..12, 0u8..4).prop_map(|(t, s, k)| WfOp::Duck(t, s, k)),
         (0usize..12, 0u8..8).prop_map(|(d, o)| WfOp::Rumble(d, o)),
         (0u8..3, 1u8..6, 0usize..12).prop_map(|(k, b, d)| WfOp::Transition(k, b, d)),
         (0usize..12, 0usize..12, any::<bool>()).prop_map(|(a, b, r)| WfOp::ApplyPatch(a, b, r)),
@@ -563,6 +568,18 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 track: pick(&top, *i)?,
                 options,
             })
+        }
+        WfOp::Duck(t, s, kind) => {
+            let target = pick(&top, *t)?;
+            match kind {
+                2 => wf(WorkflowCommand::GentlePump { target }),
+                3 => wf(WorkflowCommand::RemoveDucking { target }),
+                kind => wf(WorkflowCommand::DuckFrom {
+                    target,
+                    source: pick(&top, *s)?,
+                    pre_fader: *kind == 1,
+                }),
+            }
         }
         WfOp::Rumble(i, o) => {
             let defaults = atomik_model::rumble::RumbleTrackOptions::default();

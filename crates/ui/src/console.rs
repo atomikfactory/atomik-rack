@@ -3565,6 +3565,17 @@ impl ConsoleView {
             };
             items.push((label, MenuItem::StripCompare(id, key.clone())));
         }
+        // Quick sidechain: a channel can duck under another track (the shell lists the tracks).
+        if i < self.n_channels {
+            for (label, id) in [
+                ("Duck from...", "sequencer.duck_from"),
+                ("Duck from (pre-fader)...", "sequencer.duck_from_pre"),
+                ("Gentle pump", "sequencer.gentle_pump"),
+                ("Remove ducking", "sequencer.remove_ducking"),
+            ] {
+                items.push((label.to_string(), MenuItem::Run(id)));
+            }
+        }
         // The channel settings commands act on the selection; the strip clicked joins it first
         // when it is not in it.
         for (label, id) in [

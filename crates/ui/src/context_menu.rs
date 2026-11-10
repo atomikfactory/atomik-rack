@@ -160,6 +160,9 @@ pub struct MenuItemDef {
     pub enabled: bool,
     /// `Some(checked)` for a check item.
     pub checked: Option<bool>,
+    /// A colour chip drawn before the label (a track's colour in a list of tracks); the chip
+    /// takes the place of the check mark.
+    pub swatch: Option<[u8; 3]>,
 }
 
 /// A submenu row as shown.
@@ -305,6 +308,7 @@ fn build_entries(specs: &[Spec], registry: &Registry, keymap: &Keymap) -> Vec<En
                     shortcut: keymap.shortcut_text(command, *arg),
                     enabled: *enabled,
                     checked: *checked,
+                    swatch: None,
                 }));
             }
             Spec::Submenu {
@@ -977,6 +981,19 @@ impl ContextMenu {
                             FONT,
                             color,
                         ));
+                    }
+                    if let Some([red, green, blue]) = item.swatch {
+                        let alpha = if item.enabled { 255 } else { 110 };
+                        let chip = Rect::new(
+                            r.x0 + 8.0,
+                            r.center().y - 5.0,
+                            r.x0 + 18.0,
+                            r.center().y + 5.0,
+                        );
+                        canvas.fill_with(
+                            RoundedRect::from_rect(chip, 2.0),
+                            Color::from_rgba8(red, green, blue, alpha),
+                        );
                     }
                     canvas.text(&TextRun::new(
                         &item.label,
@@ -1846,6 +1863,7 @@ mod tests {
                     shortcut: None,
                     enabled: true,
                     checked: None,
+                    swatch: None,
                 })
             })
             .collect()
@@ -2049,6 +2067,45 @@ mod tests {
         assert!(
             child.y0 <= row.y && row.y <= child.y1,
             "level with its scrolled row"
+        );
+    }
+    #[test]
+    fn an_item_with_a_swatch_draws_a_chip_in_its_colour_before_the_label() {
+        let item = |label: &str, swatch: Option<[u8; 3]>, enabled: bool| {
+            Entry::Item(MenuItemDef {
+                command: "edit.copy".into(),
+                arg: None,
+                label: label.into(),
+                shortcut: None,
+                enabled,
+                checked: None,
+                swatch,
+            })
+        };
+        let m = ContextMenu::from_entries(
+            vec![
+                item("Kick", Some([220, 70, 60]), true),
+                item("Pad", None, true),
+                item("Muted", Some([60, 120, 220]), false),
+            ],
+            Point::new(10.0, 10.0),
+            Size::new(400.0, 300.0),
+        );
+        let mut list = crate::DisplayList::new();
+        m.paint(&mut list, &Theme::dark());
+        let json = list.to_json();
+        assert!(
+            json.contains("#dc463cff"),
+            "the chip of the first row: {json}"
+        );
+        assert_eq!(
+            json.matches("\"rrect\":[").count(),
+            3 + 2,
+            "the panel (shadow, fill, outline) and two chips"
+        );
+        assert!(
+            json.contains("#3c78dc6e"),
+            "a dimmed chip on a disabled row"
         );
     }
 }

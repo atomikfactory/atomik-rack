@@ -197,6 +197,34 @@ pub enum WorkflowCommand {
         /// The choices of the wizard.
         options: crate::reverb_send::ReverbSendOptions,
     },
+    /// Quick sidechain (see [`crate::duck_from`]): the track `target` gets a Compressor at the end
+    /// of its insert chain, named "Duck from <source>", keyed from the console strip of `source`
+    /// (its post-fader output, or with `pre_fader` the tap before its fader) and set to duck
+    /// (4:1, 5 ms attack, 120 ms release), in one undo step. A target that is not a top-level
+    /// track with a console channel, a source that is not a track with a channel (or a bus), the
+    /// target itself, a source the target already ducks from, a full insert chain and a source
+    /// that the target feeds (the key would loop) are rejected.
+    DuckFrom {
+        /// The track that ducks.
+        target: DeviceKey,
+        /// The track (or bus) whose signal is the key.
+        source: DeviceKey,
+        /// Take the key before the source's fader.
+        pre_fader: bool,
+    },
+    /// A sidechain-free pump on the track `target` (see [`crate::duck_from`]): a Sidechain Tool in
+    /// pump mode at quarter notes, named "Gentle Pump", at the end of its insert chain, in one
+    /// undo step. A target that already has one is rejected.
+    GentlePump {
+        /// The track that pumps.
+        target: DeviceKey,
+    },
+    /// Removes every ducker and gentle pump the target has (see [`crate::duck_from`]), with the
+    /// key cables, in one undo step. A target with none is rejected.
+    RemoveDucking {
+        /// The track whose ducking goes.
+        target: DeviceKey,
+    },
     /// The track of a printed rumble layer (see [`crate::rumble`]): a new audio track right after
     /// the kick's, with one clip of the rendered rumble (already in the pool), a Sidechain Tool
     /// keyed by the kick's channel and an EQ with a high-pass and a low-pass on its channel, in
@@ -955,6 +983,19 @@ pub(crate) fn plan(
         }
         WorkflowCommand::AddReverbSend { track, options } => {
             plain(crate::reverb_send::plan(doc, registry, &track, &options))
+        }
+        WorkflowCommand::DuckFrom {
+            target,
+            source,
+            pre_fader,
+        } => plain(crate::duck_from::plan_duck_from(
+            doc, registry, &target, &source, pre_fader,
+        )),
+        WorkflowCommand::GentlePump { target } => {
+            plain(crate::duck_from::plan_gentle_pump(doc, registry, &target))
+        }
+        WorkflowCommand::RemoveDucking { target } => {
+            plain(crate::duck_from::plan_remove(doc, registry, &target))
         }
         WorkflowCommand::AddTransition { at, edit } => {
             plain(crate::transition::plan(doc, registry, at, &edit))

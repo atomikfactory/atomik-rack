@@ -1984,6 +1984,26 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.duck_from",
+        "Duck from...",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu(),
+    cmd(
+        "sequencer.duck_from_pick",
+        "Pick Duck Source",
+        G::Sequencer,
+        C::Sequencer,
+    ),
+    cmd(
+        "sequencer.duck_from_pre",
+        "Duck from (Pre-Fader)...",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu(),
+    cmd(
         "sequencer.explode_notes",
         "Explode Notes to Lanes",
         G::Sequencer,
@@ -2089,6 +2109,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu()
     .decline(),
+    cmd(
+        "sequencer.gentle_pump",
+        "Gentle Pump",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu(),
     cmd(
         "sequencer.group_tracks",
         "Group Tracks",
@@ -2348,6 +2375,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu()
     .decline(),
+    cmd(
+        "sequencer.remove_ducking",
+        "Remove Ducking",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu(),
     cmd(
         "sequencer.rename_clip",
         "Rename Clip...",

@@ -402,6 +402,7 @@ impl ModMatrixView {
                 shortcut: None,
                 enabled: true,
                 checked: Some(on),
+                swatch: None,
             }));
         };
         row(0, "None", current.is_none());

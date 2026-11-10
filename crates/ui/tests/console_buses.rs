@@ -623,6 +623,46 @@ fn right_click_on_a_channel_name_opens_only_the_vca_menu() {
     assert_eq!(vca_items(&v), ["New VCA..."]);
 }
 
+#[test]
+fn a_channel_strip_menu_has_the_quick_sidechain_rows_and_a_bus_strip_menu_has_none() {
+    let (doc, reg, mut v) = setup();
+    let ducking = [
+        "Duck from...",
+        "Duck from (pre-fader)...",
+        "Gentle pump",
+        "Remove ducking",
+    ];
+    let p = name_at(&v, "ch-lead");
+    v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
+    let items = v.menu_items();
+    let at = items
+        .iter()
+        .position(|i| i == ducking[0])
+        .expect("the rows");
+    assert_eq!(items[at..at + 4], ducking.map(str::to_owned));
+    assert_eq!(
+        items[at + 4],
+        "Cut strip",
+        "before the channel settings rows"
+    );
+    // A row runs its command on the strip, the shell finds the track.
+    let a = pick(&mut v, &doc, &reg, "Duck from...");
+    assert!(
+        a.iter().any(|x| matches!(
+            x,
+            UiAction::RunCommand { id, arg: None } if id == "sequencer.duck_from"
+        )),
+        "{a:?}"
+    );
+    let p = name_at(&v, "bus");
+    v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
+    let items = v.menu_items();
+    assert!(
+        ducking.iter().all(|d| !items.iter().any(|i| i == d)),
+        "a bus is not a track: {items:?}"
+    );
+}
+
 // ---------------------------------------------------------------- reordering
 
 fn drag_name(
@@ -838,7 +878,12 @@ fn vca_items(v: &ConsoleView) -> Vec<String> {
         items.ends_with(&SETTINGS_ITEMS.map(str::to_owned)),
         "{items:?}"
     );
-    items[..items.len() - SETTINGS_ITEMS.len()].to_vec()
+    // The quick sidechain rows of a channel strip are not VCA entries.
+    items[..items.len() - SETTINGS_ITEMS.len()]
+        .iter()
+        .filter(|i| !i.starts_with("Duck from") && *i != "Gentle pump" && *i != "Remove ducking")
+        .cloned()
+        .collect()
 }
 
 #[test]

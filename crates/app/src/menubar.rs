@@ -918,6 +918,7 @@ mod tests {
             can_uncombine: false,
             can_split_sub: false,
             can_reverb_send: false,
+            duck: Default::default(),
             lens: Default::default(),
             song_visible: true,
             piano_roll: false,

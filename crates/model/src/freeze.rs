@@ -627,6 +627,9 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                     device_frozen(device).or_else(|| track_frozen(device))
                 }
                 WorkflowCommand::AddReverbSend { track, .. }
+                | WorkflowCommand::DuckFrom { target: track, .. }
+                | WorkflowCommand::GentlePump { target: track }
+                | WorkflowCommand::RemoveDucking { target: track }
                 | WorkflowCommand::AddRumble { kick: track, .. } => {
                     device_frozen(track).or_else(|| track_frozen(track))
                 }

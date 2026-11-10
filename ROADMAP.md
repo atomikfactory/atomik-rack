@@ -206,6 +206,16 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
   with the project (it is view state today and every area opens shown), cutting and copying a channel together with
   its stack, and a send group that takes a drop (a send effect is made by selecting the master, or by "Use as Send
   Effect", which now brings the effect under the master).
+- **Quick sidechain.** Done: Duck from, in the right-click menu of a track header, in the rack menu of a track's
+  device and in the mixer's strip menu (and Track > Quick Sidechain): the other tracks are listed by name and colour
+  (at most thirty, then More... opens a pop-up with all of them), and choosing one puts a Compressor named "Duck from
+  <track>" at the end of the track's insert chain, keyed from the source's post-fader output (or the tap before its
+  fader with Duck from (pre-fader)) with ratio 4:1, attack 5 ms, release 120 ms and threshold -24 dB, in one undo
+  step with a toast that names the knob to turn. Choosing the same pair again selects the device instead of adding
+  a second one, a key that would loop back (a bus the track plays into) is refused in plain words, Remove Ducking
+  takes the devices and the key cables off again, and Gentle Pump puts a quarter-note pump with no key on the track.
+  Still to come: a threshold measured from the key (it is fixed at -24 dB, so a very quiet source ducks little), a
+  tempo-synced release and a Depth macro on the device.
 - **Console editing follow-ups.** A remote-control base for the strip surface, and sorting the selected device groups.
 - **Channel strip upgrades follow-ups.** A delay-compensated `insert.bypass` on the strip itself (the console now bypasses the effects instead; the strip would need to be told the latency of its insert return), a pre-insert tap that stays aligned when the inserts add latency (today it is aligned only without insert latency), a bypassed container that keeps the latency of its inside, and an EQ or saturation on the parallel path.
 - **Snapshots follow-ups.** Still to come: a bounce that recalls at markers and lane points, snapshots that add or remove the effects of a chain (today a recall moves cables between the devices the rack has), a snapshot lane for ids past 64, and a lane value that shows the snapshot's colour.

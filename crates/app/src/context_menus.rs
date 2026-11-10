@@ -3,6 +3,7 @@
 //! widget takes the label from the registry and the shortcut from the active keymap, so a key
 //! and a menu item cannot differ.
 
+use crate::app_core::DuckMenu;
 use crate::commands::{ChopStep, FreezeMenu, ScaleStep};
 use atomik_model::ThinLevel;
 use atomik_model::theory::{ChordKind, DiatonicSize, PITCH_NAMES, ScaleKind};
@@ -553,6 +554,7 @@ fn type_rows(command: &str, types: &[(&'static str, &'static str)]) -> Vec<Entry
             shortcut: None,
             enabled: true,
             checked: None,
+            swatch: None,
         })
     };
     if types.len() <= MAX_ROWS {
@@ -627,6 +629,106 @@ pub fn with_device_menus(
                 }
             }
             other => out.push(other),
+        }
+    }
+    out
+}
+
+/// The rows listing `sources` for the quick sidechain: one item per track, in its colour, each
+/// running `sequencer.duck_from_pick` with `post:` or `pre:` (the tap of the key) and the track's
+/// device key as its argument. A track the target already ducks from says so. With `limit` rows
+/// at most are listed, followed by a More item (`more`, the command that opens the pop-up of every
+/// track).
+pub fn duck_entries(
+    sources: &[atomik_model::duck_from::DuckSource],
+    pre_fader: bool,
+    limit: Option<usize>,
+    more: &str,
+) -> Vec<Entry> {
+    let tap = if pre_fader { "pre" } else { "post" };
+    let shown = limit.map_or(sources.len(), |l| l.min(sources.len()));
+    let mut rows: Vec<Entry> = sources[..shown]
+        .iter()
+        .map(|s| {
+            Entry::Item(MenuItemDef {
+                command: "sequencer.duck_from_pick".to_string(),
+                arg: Some(format!("{tap}:{}", s.device.0)),
+                label: if s.current {
+                    format!("{} (ducking)", s.name)
+                } else {
+                    s.name.clone()
+                },
+                shortcut: None,
+                enabled: true,
+                checked: None,
+                swatch: s.color,
+            })
+        })
+        .collect();
+    if shown < sources.len() {
+        rows.push(Entry::Separator);
+        rows.push(Entry::Item(MenuItemDef {
+            command: more.to_string(),
+            arg: None,
+            label: "More...".to_string(),
+            shortcut: None,
+            enabled: true,
+            checked: None,
+            swatch: None,
+        }));
+    }
+    rows
+}
+
+/// The `specs` of a track header menu or a rack device menu with the quick sidechain items of
+/// `menu` added: a Duck from submenu and a Duck from (pre-fader) submenu listing the other tracks
+/// (the first [`DuckMenu::ROWS`], then More), Gentle Pump and Remove Ducking. They go below the edit
+/// rows of a track header menu and after Go to Track in a device menu. Nothing is added to other menus.
+pub fn with_duck_menus(target: ContextTarget, specs: Vec<Spec>, menu: &DuckMenu) -> Vec<Spec> {
+    let block = || {
+        let mut v = Vec::new();
+        if !menu.sources.is_empty() {
+            for (label, pre, more) in [
+                ("Duck from", false, "sequencer.duck_from"),
+                ("Duck from (pre-fader)", true, "sequencer.duck_from_pre"),
+            ] {
+                let rows = duck_entries(&menu.sources, pre, Some(DuckMenu::ROWS), more);
+                v.push(Spec::submenu(label, vec![Spec::Rows(rows)]));
+            }
+        }
+        v.push(item("sequencer.gentle_pump", menu.can_pump));
+        v.push(item("sequencer.remove_ducking", menu.has_ducking));
+        v
+    };
+    let mut out = Vec::with_capacity(specs.len() + 6);
+    for spec in specs {
+        let first = matches!(
+            (&spec, target),
+            (
+                Spec::Item {
+                    command: "sequencer.toggle_chase",
+                    ..
+                },
+                ContextTarget::TrackHeader
+            )
+        );
+        let last = matches!(
+            (&spec, target),
+            (
+                Spec::Item {
+                    command: "rack.go_to_track",
+                    ..
+                },
+                ContextTarget::Device
+            )
+        );
+        if first {
+            out.extend(block());
+            out.push(Spec::Separator);
+        }
+        out.push(spec);
+        if last {
+            out.extend(block());
         }
     }
     out
@@ -1180,6 +1282,7 @@ pub fn jack_entries(menu: &JackMenu) -> Vec<Entry> {
             shortcut: None,
             enabled,
             checked: None,
+            swatch: None,
         })
     };
     let submenu = |label: &str, entries: Vec<Entry>| {
@@ -1258,6 +1361,7 @@ pub fn midi_out_entries(ports: &[String], current: Option<&str>) -> Vec<Entry> {
             shortcut: None,
             enabled: true,
             checked: Some(on),
+            swatch: None,
         })
     };
     let mut rows = vec![item(
@@ -1290,6 +1394,7 @@ pub fn video_audio_entries(tracks: &[(u32, String)]) -> Vec<Entry> {
                 shortcut: None,
                 enabled: true,
                 checked: None,
+                swatch: None,
             })
         })
         .collect()
@@ -1313,6 +1418,7 @@ pub fn patch_entries(
             shortcut: None,
             enabled: true,
             checked: None,
+            swatch: None,
         })
     };
     let head = clean_up.then(|| action("rack.clean_up_bass", "Clean Up Bass"));
@@ -1329,6 +1435,7 @@ pub fn patch_entries(
                 shortcut: None,
                 enabled: true,
                 checked: Some(current == Some(i)),
+                swatch: None,
             })
         }))
         .collect()
