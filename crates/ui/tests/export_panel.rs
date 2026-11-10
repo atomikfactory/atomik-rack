@@ -118,7 +118,8 @@ fn stems_have_a_folder_a_tail_a_format_and_a_strip_choice() {
     // The strip choice is for stems only; the format is for every scope.
     assert!(view(ExportScope::Song).button_rect("DRY SOURCE").is_none());
     assert!(view(ExportScope::Loop).button_rect("AIFF").is_some());
-    assert!(v.panel().height() > view(ExportScope::Song).panel().height());
+    assert!(v.button_rect("WHOLE SONG").is_some());
+    assert!(view(ExportScope::Song).button_rect("WHOLE SONG").is_none());
     click(&mut v, "AIFF");
     click(&mut v, "DRY SOURCE");
     assert_eq!(v.values().file, atomik_ui::ExportFile::Aiff);

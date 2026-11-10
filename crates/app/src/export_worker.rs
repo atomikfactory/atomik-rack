@@ -15,8 +15,10 @@ use atomik_device_sdk::RunMode;
 use atomik_model::RackDoc;
 use atomik_render::RenderError;
 use atomik_render::export::{
-    ExportFormat, ExportReport, ExportRequest, export_audio_file, render_export, write_export,
+    BitDepth, ExportContainer, ExportFormat, ExportRender, ExportReport, ExportRequest,
+    export_audio_file, render_export, write_export,
 };
+use atomik_render::normalise::{Finish, NormaliseReport, finish_render};
 use atomik_render::plugin_pass::RenderControl;
 use atomik_render::plugins::MissingPlugins;
 use atomik_render::project::{PluginBounce, ProjectOptions};
@@ -111,6 +113,12 @@ pub(crate) struct Work {
     /// Make a film with FFmpeg after the render (the format is then the temporary WAV file);
     /// `None` for an audio export.
     pub film: Option<Film>,
+    /// The mono mix-down and the loudness target applied to the render before it is written
+    /// (not to stems).
+    pub finish: Finish,
+    /// Also encode the finished render to a second file next to the first (a file the program
+    /// writes itself plus an MP3): the encoding and the path of that file.
+    pub also: Option<(Lossy, PathBuf)>,
 }
 
 /// The share of an export's progress that is the render; the encoding is the rest.
@@ -157,18 +165,16 @@ impl MixFile {
     }
 }
 
-/// Renders the export and writes it to a temporary WAV file (float, at the rate of `format`: the
-/// encoder is the only step that loses anything). The render's progress is `share` of
-/// `control`'s. `None`: the control stopped it.
-fn render_mix(
+/// Renders the export and finishes it: the mono mix-down and the loudness target of `finish`.
+/// The render's progress is `share` of `control`'s. `None`: the control stopped it.
+fn render_finished(
     (doc, registry): (&RackDoc, &atomik_device_sdk::Registry),
     project: (&ProjectOptions, Option<&Path>),
     bounce: &mut PluginBounce<'_>,
-    (request, format): (&ExportRequest, &ExportFormat),
+    (request, finish): (&ExportRequest, &Finish),
     control: RenderControl<'_>,
     share: f32,
-) -> Result<Option<MixFile>, RenderError> {
-    let failed = |e: &dyn std::fmt::Display| RenderError::Project(e.to_string());
+) -> Result<Option<(ExportRender, Option<NormaliseReport>)>, RenderError> {
     let outer = control.progress;
     let render_progress = |p: f32| {
         if let Some(outer) = outer {
@@ -180,13 +186,25 @@ fn render_mix(
         progress: Some(&render_progress),
     };
     let render = render_export(doc, registry, project, bounce, request, rendering)?;
-    let Some(render) = render.filter(|_| !control.cancelled()) else {
+    let Some(mut render) = render.filter(|_| !control.cancelled()) else {
         return Ok(None);
     };
+    let normalise = finish_render(&mut render, finish);
+    Ok(Some((render, normalise)))
+}
+
+/// Writes a finished render to a temporary WAV file (float, at the rate of `format`: the encoder
+/// is the only step that loses anything). `None`: the control stopped it.
+fn write_mix(
+    render: &ExportRender,
+    format: &ExportFormat,
+    control: RenderControl<'_>,
+) -> Result<Option<MixFile>, RenderError> {
+    let failed = |e: &dyn std::fmt::Display| RenderError::Project(e.to_string());
     let folder = TempFolder(temp_folder());
     std::fs::create_dir_all(&folder.0).map_err(|e| failed(&e))?;
     let wav = folder.0.join("mix.wav");
-    let report = write_export(&wav, &render, format)?;
+    let report = write_export(&wav, render, format)?;
     if control.cancelled() {
         return Ok(None);
     }
@@ -198,34 +216,39 @@ fn render_mix(
     }))
 }
 
-/// The compressed export: render, write the audio to a temporary WAV file, encode it, and report
-/// the loudness of the audio that went in. Cancelling at any step removes the temporary file and
-/// leaves no result file.
-fn export_lossy(
-    (doc, registry): (&RackDoc, &atomik_device_sdk::Registry),
+/// [`render_finished`] and [`write_mix`]: the finished mix as a temporary WAV file. The report
+/// of the file says what finishing did.
+fn render_mix(
+    docs: (&RackDoc, &atomik_device_sdk::Registry),
     project: (&ProjectOptions, Option<&Path>),
     bounce: &mut PluginBounce<'_>,
-    (request, format): (&ExportRequest, &ExportFormat),
-    (path, lossy): (&Path, &Lossy),
+    (request, format, finish): (&ExportRequest, &ExportFormat, &Finish),
     control: RenderControl<'_>,
-) -> Result<Option<ExportReport>, RenderError> {
-    let failed = |e: &dyn std::fmt::Display| RenderError::Project(e.to_string());
-    let status = crate::video_worker::search(&*lossy.tool, lossy.folder.as_deref());
-    let Some(ffmpeg) = status.tools() else {
-        return Err(failed(&status.message()));
-    };
-    let outer = control.progress;
-    let Some(mix) = render_mix(
-        (doc, registry),
-        project,
-        bounce,
-        (request, format),
-        control,
-        RENDER_SHARE,
-    )?
+    share: f32,
+) -> Result<Option<MixFile>, RenderError> {
+    let Some((render, normalise)) =
+        render_finished(docs, project, bounce, (request, finish), control, share)?
     else {
         return Ok(None);
     };
+    let Some(mut mix) = write_mix(&render, format, control)? else {
+        return Ok(None);
+    };
+    mix.report.normalise = normalise;
+    Ok(Some(mix))
+}
+
+/// Encodes the temporary WAV file of `mix` to `path` with `lossy`'s codec, its progress running
+/// from `from` to 1 of `control`'s. `None`: the control stopped it.
+fn encode_mix(
+    ffmpeg: &atomik_video::Ffmpeg,
+    lossy: &Lossy,
+    (mix, path): (&MixFile, &Path),
+    control: RenderControl<'_>,
+    from: f32,
+) -> Result<Option<()>, RenderError> {
+    let failed = |e: &dyn std::fmt::Display| RenderError::Project(e.to_string());
+    let outer = control.progress;
     let job = EncodeJob {
         source: &mix.wav,
         out: path,
@@ -242,16 +265,99 @@ fn export_lossy(
     let cancel = control.cancel.unwrap_or(&never);
     let encoded = encode_audio(&*lossy.tool, ffmpeg, &job, cancel, &|p| {
         if let Some(outer) = outer {
-            outer(RENDER_SHARE + p * (1.0 - RENDER_SHARE));
+            outer(from + p * (1.0 - from));
         }
     });
     match encoded {
-        Ok(()) => {}
-        Err(VideoError::Cancelled) => return Ok(None),
-        Err(e) => return Err(failed(&e)),
+        Ok(()) => Ok(Some(())),
+        Err(VideoError::Cancelled) => Ok(None),
+        Err(e) => Err(failed(&e)),
+    }
+}
+
+/// The compressed export: render, write the audio to a temporary WAV file, encode it, and report
+/// the loudness of the audio that went in. Cancelling at any step removes the temporary file and
+/// leaves no result file.
+fn export_lossy(
+    docs: (&RackDoc, &atomik_device_sdk::Registry),
+    project: (&ProjectOptions, Option<&Path>),
+    bounce: &mut PluginBounce<'_>,
+    (request, format, finish): (&ExportRequest, &ExportFormat, &Finish),
+    (path, lossy): (&Path, &Lossy),
+    control: RenderControl<'_>,
+) -> Result<Option<ExportReport>, RenderError> {
+    let status = crate::video_worker::search(&*lossy.tool, lossy.folder.as_deref());
+    let Some(ffmpeg) = status.tools() else {
+        return Err(RenderError::Project(status.message()));
+    };
+    let Some(mix) = render_mix(
+        docs,
+        project,
+        bounce,
+        (request, format, finish),
+        control,
+        RENDER_SHARE,
+    )?
+    else {
+        return Ok(None);
+    };
+    if encode_mix(ffmpeg, lossy, (&mix, path), control, RENDER_SHARE)?.is_none() {
+        return Ok(None);
     }
     let mut report = mix.report.clone();
     path.clone_into(&mut report.path);
+    Ok(Some(report))
+}
+
+/// The export of a file the program writes itself, finished as `finish` says, and, with
+/// `also`, an MP3 encoded from the same finished render. Cancelling at any step removes the
+/// temporary files and leaves no new file.
+fn export_plain(
+    docs: (&RackDoc, &atomik_device_sdk::Registry),
+    project: (&ProjectOptions, Option<&Path>),
+    bounce: &mut PluginBounce<'_>,
+    (request, format, finish): (&ExportRequest, &ExportFormat, &Finish),
+    (path, also): (&Path, Option<&(Lossy, PathBuf)>),
+    control: RenderControl<'_>,
+) -> Result<Option<ExportReport>, RenderError> {
+    let ffmpeg_status =
+        also.map(|(lossy, _)| crate::video_worker::search(&*lossy.tool, lossy.folder.as_deref()));
+    let ffmpeg = match &ffmpeg_status {
+        Some(status) => Some(
+            status
+                .tools()
+                .ok_or_else(|| RenderError::Project(status.message()))?,
+        ),
+        None => None,
+    };
+    let share = if also.is_some() { RENDER_SHARE } else { 1.0 };
+    let Some((render, normalise)) =
+        render_finished(docs, project, bounce, (request, finish), control, share)?
+    else {
+        return Ok(None);
+    };
+    if control.cancelled() {
+        return Ok(None);
+    }
+    let mut report = write_export(path, &render, format)?;
+    report.normalise = normalise;
+    if let (Some((lossy, extra)), Some(ffmpeg)) = (also, ffmpeg) {
+        let rate = format.sample_rate.unwrap_or(render.audio.sample_rate);
+        let wav = ExportFormat {
+            container: ExportContainer::Wav,
+            bit_depth: BitDepth::Float32,
+            dither: atomik_dsp::DitherMode::None,
+            sample_rate: Some(lossy.codec.output_rate(rate)),
+        };
+        let Some(mix) = write_mix(&render, &wav, control)? else {
+            let _ = std::fs::remove_file(path);
+            return Ok(None);
+        };
+        if encode_mix(ffmpeg, lossy, (&mix, extra), control, RENDER_SHARE)?.is_none() {
+            let _ = std::fs::remove_file(path);
+            return Ok(None);
+        }
+    }
     Ok(Some(report))
 }
 
@@ -263,7 +369,7 @@ fn export_film_file(
     (doc, registry): (&RackDoc, &atomik_device_sdk::Registry),
     project: (&ProjectOptions, Option<&Path>),
     bounce: &mut PluginBounce<'_>,
-    (request, format): (&ExportRequest, &ExportFormat),
+    (request, format, finish): (&ExportRequest, &ExportFormat, &Finish),
     (path, film): (&Path, &Film),
     control: RenderControl<'_>,
 ) -> Result<Option<(ExportReport, FilmPicture)>, RenderError> {
@@ -289,7 +395,7 @@ fn export_film_file(
         (doc, registry),
         project,
         bounce,
-        (request, format),
+        (request, format, finish),
         control,
         FILM_RENDER_SHARE,
     )?
@@ -337,6 +443,8 @@ fn run(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String> {
         plugins,
         lossy,
         film,
+        finish,
+        also,
     } = work;
     let mut registry = atomik_render::default_registry();
     let mut host = plugin_host(&doc, plugins, &mut registry, "an export")?;
@@ -357,7 +465,7 @@ fn run(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String> {
                 (&doc, &registry),
                 (&options, bundle_root.as_deref()),
                 &mut bounce,
-                (&request, &format),
+                (&request, &format, &finish),
                 (&path, film),
                 control,
             )
@@ -366,18 +474,27 @@ fn run(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String> {
                 (&doc, &registry),
                 (&options, bundle_root.as_deref()),
                 &mut bounce,
-                (&request, &format),
+                (&request, &format, &finish),
                 (&path, lossy),
                 control,
             )
             .map(|r| r.map(Done::File)),
-            (None, None) => export_audio_file(
+            (None, None) if finish.is_noop() && also.is_none() => export_audio_file(
                 &doc,
                 &registry,
                 (&options, bundle_root.as_deref()),
                 &mut bounce,
                 (&request, &format),
                 (&path, control),
+            )
+            .map(|r| r.map(Done::File)),
+            (None, None) => export_plain(
+                (&doc, &registry),
+                (&options, bundle_root.as_deref()),
+                &mut bounce,
+                (&request, &format, &finish),
+                (&path, also.as_ref()),
+                control,
             )
             .map(|r| r.map(Done::File)),
         },

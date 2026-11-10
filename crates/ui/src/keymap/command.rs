@@ -201,6 +201,12 @@ pub const RECENT_ARGS: &[&str] = &["0", "1", "2", "3", "4", "5", "6", "7"];
 pub const TEMPLATE_ARGS: &[&str] = &[
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
 ];
+/// The values of `file.export_for`: the place in the list of export presets, 0 the first (the
+/// built-in presets come first, then the user's).
+pub const EXPORT_FOR_ARGS: &[&str] = &[
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
+    "17", "18", "19", "20",
+];
 /// The values of `file.new_rate` and `file.convert_rate`: the project sample rate in Hz.
 pub const RATE_ARGS: &[&str] = &["44100", "48000", "96000"];
 /// The values of `file.midi_resolution`: the ticks per quarter note of an exported MIDI file
@@ -876,6 +882,14 @@ const COMMANDS: &[CommandDef] = &[
         G::Global,
         C::Global,
     )
+    .menu(),
+    cmd(
+        "file.export_for",
+        "Export for a Purpose",
+        G::Global,
+        C::Global,
+    )
+    .arg(EXPORT_FOR_ARGS)
     .menu(),
     cmd(
         "file.export_loop_audio",

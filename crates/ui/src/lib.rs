@@ -495,8 +495,9 @@ pub use delivery_panel::{
 pub use display_list::{DisplayList, Op};
 pub use event::{ImeEvent, Key, Modifiers, NumpadKey, PointerButton, UiEvent};
 pub use export_panel::{
-    AAC_BITRATES, EXPORT_RATES, EncoderState, ExportAction, ExportDepth, ExportDither, ExportFile,
-    ExportQuality, ExportScope, ExportValues, ExportView, MP3_BITRATES, MP3_VBR, OPUS_BITRATES,
+    AAC_BITRATES, ALSO_MP3_KBPS, EXPORT_RATES, EncoderState, ExportAction, ExportDepth,
+    ExportDither, ExportFile, ExportLoudness, ExportQuality, ExportScope, ExportValues, ExportView,
+    MP3_BITRATES, MP3_VBR, OPUS_BITRATES, PresetChoice,
 };
 pub use file_browser::{
     DetailData, FileBrowserView, PREVIEW_DB_MAX, PREVIEW_DB_MIN, PlacesData, TreeChild,

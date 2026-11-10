@@ -47,10 +47,12 @@ use atomik_render::export::{
     BitDepth, DEFAULT_TAIL_SECONDS, ExportContainer, ExportFormat, ExportReport, ExportRequest,
     ExportSpan, span_frames,
 };
+use atomik_render::normalise::{Finish, Loudness};
 use atomik_render::stems::StemStrip;
 use atomik_ui::export_panel::rate_label;
 use atomik_ui::{
-    EncoderState, ExportDepth, ExportDither, ExportFile, ExportQuality, ExportScope, ExportValues,
+    ALSO_MP3_KBPS, EncoderState, ExportDepth, ExportDither, ExportFile, ExportLoudness,
+    ExportQuality, ExportScope, ExportValues,
 };
 use atomik_video::{FfmpegStatus, LossyCodec, LossyQuality, Tags};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -137,6 +139,34 @@ pub fn export_file(scope: ExportScope, path: &Path, values: &ExportValues) -> Pa
         ExportScope::Stems => path.to_path_buf(),
         _ => path.with_extension(file_extension(values)),
     }
+}
+
+/// What is done to the render before it is written, for the panel's mix-down and loudness
+/// choices.
+pub fn finish_for(mono: bool, loudness: ExportLoudness) -> Finish {
+    Finish {
+        mono,
+        loudness: match loudness {
+            ExportLoudness::Off => Loudness::Off,
+            ExportLoudness::Target(lufs) => Loudness::Target {
+                lufs: f32::from(lufs),
+                ceiling_dbtp: ExportLoudness::CEILING_DBTP,
+            },
+            ExportLoudness::Guide(lufs) => Loudness::Guide {
+                lufs: f32::from(lufs),
+            },
+        },
+    }
+}
+
+/// Whether the values ask for an MP3 next to the file: only a lossless file of the mix has one.
+pub fn wants_extra_mp3(scope: ExportScope, values: &ExportValues) -> bool {
+    values.also_mp3 && scope != ExportScope::Stems && !values.file.is_lossy()
+}
+
+/// The extra MP3 an export of `scope` to the file `file` writes with these `values`, if any.
+pub fn extra_file(scope: ExportScope, file: &Path, values: &ExportValues) -> Option<PathBuf> {
+    wants_extra_mp3(scope, values).then(|| file.with_extension(LossyCodec::Mp3.extension()))
 }
 
 /// The file extension of the format chosen, without the dot.
@@ -295,12 +325,32 @@ fn describe(report: &ExportReport, values: &ExportValues, project_rate: u32) -> 
         0 => String::new(),
         n => format!(" ({n} warning{})", if n == 1 { "" } else { "s" }),
     };
+    let also = if values.also_mp3 && !values.file.is_lossy() {
+        let name = report
+            .path
+            .with_extension(LossyCodec::Mp3.extension())
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        format!(", and {name} (MP3 {ALSO_MP3_KBPS} kbps)")
+    } else {
+        String::new()
+    };
     format!(
-        "Exported {file}: {depth}, {}, {}{tail}{warnings}; {}",
+        "Exported {file}{also}: {depth}, {}, {}{tail}{warnings}; {}{}",
         rate_label(report.sample_rate),
         clock(seconds),
-        report.loudness.summary()
+        report.loudness.summary(),
+        normalised(report),
     )
+}
+
+/// What finishing the render did, as the end of the toast: `; was -18.2 LUFS, -3.1 dBTP; turned
+/// up 4.2 dB`.
+pub(crate) fn normalised(report: &ExportReport) -> String {
+    report
+        .normalise
+        .as_ref()
+        .map_or_else(String::new, |n| format!("; {}", n.summary()))
 }
 
 impl<S: EngineSink> AppCore<S> {
@@ -423,6 +473,16 @@ impl<S: EngineSink> AppCore<S> {
                     return Some(why);
                 }
             }
+            if wants_extra_mp3(scope, &values) {
+                if self.video_tool_and_folder().is_none() {
+                    return Some(
+                        "The extra MP3 needs FFmpeg, which is not available here".to_owned(),
+                    );
+                }
+                if let EncoderState::Missing(why) = self.export_encoder() {
+                    return Some(why);
+                }
+            }
             if scope == ExportScope::Stems && values.selection && self.export_selection().is_none()
             {
                 return Some("Select a time range on a lane to export it".to_owned());
@@ -445,6 +505,7 @@ impl<S: EngineSink> AppCore<S> {
         let progress = Arc::new(AtomicU32::new(0.0f32.to_bits()));
         let job = self.audio.export.next_job;
         self.audio.export.next_job += 1;
+        let path_for_extra = path.clone();
         let work = Work {
             doc: self.doc().clone(),
             request: export_request(scope, &values, self.export_selection()),
@@ -468,6 +529,13 @@ impl<S: EngineSink> AppCore<S> {
             },
             lossy: self.lossy_job(&values),
             film: None,
+            finish: if scope == ExportScope::Stems {
+                Finish::default()
+            } else {
+                finish_for(values.mono, values.loudness)
+            },
+            also: extra_file(scope, &path_for_extra, &values)
+                .and_then(|extra| Some((self.mp3_job(&values)?, extra))),
         };
         let started = export_worker::spawn(
             self.audio.tx.clone(),
@@ -515,6 +583,22 @@ impl<S: EngineSink> AppCore<S> {
         })
     }
 
+    /// The encoding step of the extra MP3 next to a lossless file.
+    fn mp3_job(&self, _values: &ExportValues) -> Option<export_worker::Lossy> {
+        let (tool, folder) = self.video_tool_and_folder()?;
+        let info = &self.doc().info;
+        Some(export_worker::Lossy {
+            tool,
+            folder,
+            codec: LossyCodec::Mp3,
+            quality: LossyQuality::Cbr(u32::from(ALSO_MP3_KBPS)),
+            tags: Tags {
+                title: info.title.clone(),
+                author: info.author.clone(),
+            },
+        })
+    }
+
     /// Stops the running export; nothing is written.
     pub fn cancel_audio_export(&mut self) {
         match &self.audio.export.running {
@@ -545,6 +629,7 @@ impl<S: EngineSink> AppCore<S> {
                     Done::Film(report, picture) => {
                         log::info!("exported {}: {}", running.file, report.loudness.summary());
                         film::describe_film(&report, picture, running.film.as_ref())
+                            + &normalised(&report)
                             + &against(&report.loudness)
                     }
                     Done::File(report) => {

@@ -36,6 +36,7 @@ impl<B: AudioBackend> Shell<B> {
     /// File > Export > Film with Mix: asks for the file unless the export is refused (the toast
     /// says why).
     pub(super) fn export_film_request(&mut self) -> Vec<ShellRequest> {
+        self.export_run = None;
         match self.core.film_export_refusal() {
             None => vec![ShellRequest::PickExportFilm],
             Some(why) => {
@@ -57,6 +58,10 @@ impl<B: AudioBackend> Shell<B> {
 
     /// The file dialog picked `path`: shows the options for exporting the film to it.
     pub fn export_film_to(&mut self, path: &Path) {
+        if let Some(preset) = self.export_run.take() {
+            self.run_film_preset(path, &preset);
+            return;
+        }
         let name = path
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
@@ -125,8 +130,45 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// File > Export for > Video with a film in the song: the film with the mix at the preset's
+    /// loudness and AAC bitrate, started at once, with the progress bar.
+    fn run_film_preset(&mut self, path: &Path, preset: &atomik_ui::PresetChoice) {
+        let values = FilmValues {
+            aac: preset.values.aac,
+            ..FilmValues::default()
+        };
+        let file = self.core.film_file_for(path, &values);
+        if file != path && file.exists() {
+            let name = file
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+            self.notify(format!("{name} already exists: pick another name"));
+            return;
+        }
+        let started =
+            self.core
+                .start_film_export_with(path.to_path_buf(), values, preset.values.loudness);
+        if started.is_ok() {
+            let name = file
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+            let mut view = FilmView::new(self.core.view().theme().clone());
+            view.set_scale(self.scale());
+            view.set_bounds(self.plugin_modal_rect());
+            view.set_encoder(self.core.film_encoder());
+            view.open(&name, self.core.film_has_audio(), values);
+            view.show_progress();
+            self.film = Some(view);
+            self.film_target = Some(path.to_path_buf());
+            self.export_prefs.folder = path.parent().map(|f| f.to_string_lossy().into_owned());
+            self.save_export_prefs();
+            self.sync_film();
+        }
+        self.repaint = true;
+    }
+
     /// Writes the remembered export choices next to the settings.
-    fn save_export_prefs(&mut self) {
+    pub(super) fn save_export_prefs(&mut self) {
         if let Some(prefs_path) = &self.export_prefs_path
             && let Err(e) = ExportPrefs::save(&self.export_prefs, prefs_path)
         {

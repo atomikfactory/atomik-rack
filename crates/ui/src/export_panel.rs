@@ -4,12 +4,16 @@
 //! ```text
 //! EXPORT SONG AS AUDIO FILE
 //! my song.wav
+//!   PRESET      [ (NONE)            v ] [ SAVE PRESET... ] [ DELETE PRESET ]
 //!   BIT DEPTH   [ 16-BIT ] [ 24-BIT ] [ 32-BIT FLOAT ]
 //!   DITHER      [ NONE ] [ TPDF ] [ SHAPED ]
 //!   SAMPLE RATE [ PROJECT ] [ 44.1 kHz ] [ 48 kHz ] [ 88.2 kHz ] [ 96 kHz ]
 //!   FILE FORMAT [ WAV ] [ AIFF ] [ FLAC ] [ MP3 ] [ AAC ] [ OPUS ]
 //!   QUALITY     [ 128 kbps ] [ 192 kbps ] [ 256 kbps ] [ 320 kbps ] [ V0 ] [ V2 ] [ V4 ]
 //!   TAIL        [ KEEP EFFECT TAIL ]
+//!   MIX DOWN    [ STEREO ] [ MONO ]
+//!   LOUDNESS    [ OFF ] [ -16 LUFS ] [ -14 LUFS ] [ -9 GUIDE ]
+//!   EXTRA FILE  [ ONE FILE ] [ MP3 320 kbps ]
 //!   Renders to the End marker, then keeps the tail while it is audible.
 //!                                                          [ EXPORT ] [ CANCEL ]
 //! ```
@@ -26,19 +30,29 @@
 //! compressed file has no bit depth or dither, so those rows grey out, and its QUALITY row
 //! offers the bitrates of the format (MP3 also three variable-bitrate qualities). FLAC
 //! holds 16-bit and 24-bit audio, so the 32-bit float button is inert while FLAC is chosen (and
-//! choosing FLAC at 32-bit float moves the depth to 24-bit). In the **progress** mode
+//! choosing FLAC at 32-bit float moves the depth to 24-bit).
+//!
+//! The **Preset** row ([`ExportView::set_presets`]) lists the presets the app gives it: choosing
+//! one fills every field ([`ExportView::choose_preset`]), a preset of stems turns the panel into a
+//! stems export, and a field touched afterwards shows `(changed)` after the name
+//! ([`ExportView::preset_changed`]). SAVE PRESET... swaps the row for a name entry and emits
+//! [`ExportAction::SavePreset`] on Enter; DELETE PRESET (a preset of the user's only) emits
+//! [`ExportAction::DeletePreset`]. A preset that needs FFmpeg is disabled without it. The
+//! MIX DOWN, LOUDNESS and EXTRA FILE rows are for the mix, not for stems. In the **progress** mode
 //! ([`ExportView::show_progress`]) a bar shows the fraction the app feeds with
 //! [`ExportView::set_progress`], and CANCEL (or Esc) emits [`ExportAction::Cancel`] to stop the
 //! render. The view never closes itself: the app drops it when the export is over.
 
 use crate::action::UiAction;
-use crate::canvas::{Align, Canvas};
+use crate::canvas::{Align, Canvas, CanvasExt};
 use crate::event::{Key, PointerButton, UiEvent};
 use crate::paint::fit_label;
+use crate::pick_list::{self, PickList};
 use crate::seq_paint::{self as sp, SeqTheme};
+use crate::text_field::{FieldColors, TextField};
 use crate::theme::Theme;
 use crate::tooltip::Help;
-use vello::kurbo::{Affine, Point, Rect};
+use vello::kurbo::{Affine, Point, Rect, RoundedRect};
 
 const PAD: f64 = 14.0;
 const HEADER_H: f64 = 34.0;
@@ -157,6 +171,42 @@ pub enum ExportDither {
 /// The sample rates the panel offers besides the project's, in Hz.
 pub const EXPORT_RATES: [u32; 4] = [44_100, 48_000, 88_200, 96_000];
 
+/// What an export does about loudness. A whole number of LUFS is all the presets and the panel
+/// need; the true-peak ceiling of a target is [`ExportLoudness::CEILING_DBTP`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExportLoudness {
+    /// Leave the level as the song has it.
+    #[default]
+    Off,
+    /// Bring the integrated loudness to this many LUFS with the true peak under the ceiling
+    /// (limiting if the gain needs it).
+    Target(i8),
+    /// Only a guide: measure, report the distance and warn when the peaks clip; change nothing.
+    Guide(i8),
+}
+
+impl ExportLoudness {
+    /// The true-peak ceiling of a loudness target, in dBTP.
+    pub const CEILING_DBTP: f32 = -1.0;
+
+    /// The choices the panel offers, in order.
+    pub const CHOICES: [Self; 4] = [
+        Self::Off,
+        Self::Target(-16),
+        Self::Target(-14),
+        Self::Guide(-9),
+    ];
+
+    /// The button label: `OFF`, `-14 LUFS`, `-9 GUIDE`.
+    pub fn label(self) -> String {
+        match self {
+            Self::Off => "OFF".to_owned(),
+            Self::Target(l) => format!("{l} LUFS"),
+            Self::Guide(l) => format!("{l} GUIDE"),
+        }
+    }
+}
+
 /// What the panel sets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExportValues {
@@ -184,7 +234,17 @@ pub struct ExportValues {
     pub aac: u16,
     /// The bitrate of an Opus file in kilobits per second.
     pub opus: u16,
+    /// Mix every channel into one before writing.
+    pub mono: bool,
+    /// What to do about the loudness of the mix (not for stems).
+    pub loudness: ExportLoudness,
+    /// Also write an MP3 at [`ALSO_MP3_KBPS`] next to a lossless file, from the same render (not
+    /// for stems).
+    pub also_mp3: bool,
 }
+
+/// The bitrate of the extra MP3 file, in kilobits per second.
+pub const ALSO_MP3_KBPS: u16 = 320;
 
 impl ExportValues {
     /// The quality of the compressed format chosen, `None` for a lossless one.
@@ -212,7 +272,30 @@ impl Default for ExportValues {
             mp3: ExportQuality::Cbr(192),
             aac: 192,
             opus: 128,
+            mono: false,
+            loudness: ExportLoudness::Off,
+            also_mp3: false,
         }
+    }
+}
+
+/// A preset the panel can fill its fields from: what the app lists in the Preset row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresetChoice {
+    /// The name shown in the list.
+    pub name: String,
+    /// The preset exports stems (one file per strip) instead of the mix.
+    pub stems: bool,
+    /// The panel's fields.
+    pub values: ExportValues,
+    /// A preset of the user's (it can be deleted), not a built-in one.
+    pub user: bool,
+}
+
+impl PresetChoice {
+    /// Whether the preset writes a compressed file, which FFmpeg encodes.
+    pub fn needs_ffmpeg(&self) -> bool {
+        !self.stems && (self.values.file.is_lossy() || self.values.also_mp3)
     }
 }
 
@@ -223,6 +306,11 @@ pub enum ExportAction {
     Start(ExportValues),
     /// Close the options, or stop the render that runs.
     Cancel,
+    /// Keep the panel's settings as a preset under the name typed
+    /// ([`ExportView::preset_name_entry`]).
+    SavePreset,
+    /// Delete the user preset the panel shows ([`ExportView::preset`]).
+    DeletePreset,
 }
 
 /// The range of a stems export.
@@ -244,6 +332,14 @@ enum Hit {
     Tail,
     Dry(bool),
     Range(RangeChoice),
+    Mono(bool),
+    Loudness(ExportLoudness),
+    Extra(bool),
+    PresetList,
+    PresetSave,
+    PresetDelete,
+    NameOk,
+    NameCancel,
     Start,
     Cancel,
 }
@@ -270,6 +366,15 @@ pub struct ExportView {
     mode: Mode,
     hover: Option<Point>,
     repaint: bool,
+    presets: Vec<PresetChoice>,
+    /// The preset the fields were last filled from, and what it said.
+    preset: Option<String>,
+    base: (bool, ExportValues),
+    /// The scope the panel was opened with (a mix preset brings a stems panel back to it).
+    home: ExportScope,
+    list: Option<PickList>,
+    naming: Option<TextField>,
+    selecting: bool,
 }
 
 impl ExportView {
@@ -294,6 +399,13 @@ impl ExportView {
             mode: Mode::Options,
             hover: None,
             repaint: true,
+            presets: Vec::new(),
+            preset: None,
+            base: (false, ExportValues::default()),
+            home: ExportScope::Song,
+            list: None,
+            naming: None,
+            selecting: false,
         }
     }
 
@@ -321,11 +433,19 @@ impl ExportView {
         values: ExportValues,
     ) {
         self.scope = scope;
+        self.home = if scope == ExportScope::Stems {
+            ExportScope::Song
+        } else {
+            scope
+        };
         self.file = file.to_owned();
         self.project_rate = project_rate;
         self.values = values;
         self.warning = None;
         self.mode = Mode::Options;
+        self.preset = None;
+        self.list = None;
+        self.naming = None;
         self.settle_file();
         self.repaint = true;
     }
@@ -410,6 +530,117 @@ impl ExportView {
         self.scope
     }
 
+    // ------------------------------------------------------------------ presets
+
+    /// Sets the presets the Preset row lists (the built-in ones, then the user's). The preset
+    /// shown stays when it is still in the list.
+    pub fn set_presets(&mut self, presets: Vec<PresetChoice>) {
+        self.presets = presets;
+        if self
+            .preset
+            .as_ref()
+            .is_some_and(|name| !self.presets.iter().any(|p| &p.name == name))
+        {
+            self.preset = None;
+        }
+        self.list = None;
+        self.repaint = true;
+    }
+
+    /// The presets the Preset row lists.
+    pub fn presets(&self) -> &[PresetChoice] {
+        &self.presets
+    }
+
+    /// The name of the preset the fields were filled from, if any (see [`Self::preset_changed`]).
+    pub fn preset(&self) -> Option<&str> {
+        self.preset.as_deref()
+    }
+
+    /// Whether the fields differ from what the preset shown said.
+    pub fn preset_changed(&self) -> bool {
+        self.preset.is_some() && (self.scope == ExportScope::Stems, self.values) != self.base
+    }
+
+    /// The text of the Preset row's drop-down: the name, with `(changed)` after it when a field
+    /// was touched since; `(NONE)` when no preset was chosen.
+    pub fn preset_label(&self) -> String {
+        match &self.preset {
+            None => "(NONE)".to_owned(),
+            Some(name) if self.preset_changed() => format!("{name} (changed)"),
+            Some(name) => name.clone(),
+        }
+    }
+
+    /// Whether the preset shown is one of the user's (so it can be deleted).
+    pub fn preset_is_user(&self) -> bool {
+        self.preset
+            .as_ref()
+            .is_some_and(|n| self.presets.iter().any(|p| &p.name == n && p.user))
+    }
+
+    /// Whether a preset can be chosen now: one that writes a compressed file needs FFmpeg.
+    pub fn preset_usable(&self, preset: &PresetChoice) -> bool {
+        !(preset.needs_ffmpeg() && matches!(self.encoder, EncoderState::Missing(_)))
+    }
+
+    /// Fills the fields from the preset called `name`, as choosing it in the list does. A preset
+    /// of stems makes this a stems export, a preset of the mix brings a stems panel back to the
+    /// scope it was opened with. Returns false for a name that is not listed or a preset that
+    /// cannot be used (it needs FFmpeg).
+    pub fn choose_preset(&mut self, name: &str) -> bool {
+        let Some(preset) = self.presets.iter().find(|p| p.name == name).cloned() else {
+            return false;
+        };
+        if !self.preset_usable(&preset) || self.in_progress() {
+            return false;
+        }
+        self.values = preset.values;
+        self.scope = if preset.stems {
+            ExportScope::Stems
+        } else if self.scope == ExportScope::Stems {
+            self.home
+        } else {
+            self.scope
+        };
+        self.warning = None;
+        self.list = None;
+        self.settle_file();
+        self.preset = Some(preset.name);
+        self.base = (self.scope == ExportScope::Stems, self.values);
+        self.repaint = true;
+        true
+    }
+
+    /// The app kept the fields as the preset `name`: the panel shows it, unchanged, and leaves
+    /// the name entry.
+    pub fn preset_saved(&mut self, name: &str) {
+        self.preset = Some(name.to_owned());
+        self.base = (self.scope == ExportScope::Stems, self.values);
+        self.naming = None;
+        self.repaint = true;
+    }
+
+    /// Whether the name of a new preset is being typed.
+    pub fn is_naming(&self) -> bool {
+        self.naming.is_some()
+    }
+
+    /// The name typed so far, while one is being typed.
+    pub fn preset_name_entry(&self) -> Option<&str> {
+        self.naming.as_ref().map(TextField::text)
+    }
+
+    /// Whether a text field has the keys (the name of a preset).
+    pub fn wants_text(&self) -> bool {
+        self.naming.is_some()
+    }
+
+    /// Whether the preset list is open.
+    pub fn list_open(&self) -> bool {
+        self.list.is_some()
+    }
+
     /// True when something changed since the last [`Self::paint`].
     pub fn needs_repaint(&self) -> bool {
         self.repaint
@@ -417,10 +648,12 @@ impl ExportView {
 
     // ------------------------------------------------------------------ geometry
 
-    /// The rows of the options, in order: bit depth, dither, sample rate and file format for
-    /// every scope, then the tail (songs and stems), the strip and the range (stems).
+    /// The rows of the options, in order: the preset, then bit depth, dither, sample rate, file
+    /// format and quality for every scope, the tail (songs and stems), then the strip and the
+    /// range (stems) or the mix-down, the loudness and the extra file (the rest).
     fn row_names(&self) -> Vec<&'static str> {
         let mut rows = vec![
+            "PRESET",
             "BIT DEPTH",
             "DITHER",
             "SAMPLE RATE",
@@ -433,6 +666,10 @@ impl ExportView {
         if self.scope == ExportScope::Stems {
             rows.push("CHANNELS");
             rows.push("RANGE");
+        } else {
+            rows.push("MIX DOWN");
+            rows.push("LOUDNESS");
+            rows.push("EXTRA FILE");
         }
         rows
     }
@@ -511,6 +748,36 @@ impl ExportView {
             .sum()
     }
 
+    /// The preset drop-down button.
+    fn preset_rect(&self) -> Rect {
+        self.button_at(0, 0.0, 180.0)
+    }
+
+    /// Where the open preset list goes: under the drop-down.
+    fn list_at(&self) -> PickList {
+        let r = self.preset_rect();
+        let mut list = PickList::new(
+            Point::new(r.x0, r.y1 + 2.0),
+            240.0,
+            10,
+            self.presets.len(),
+            0,
+        );
+        if let Some(name) = &self.preset
+            && let Some(i) = self.presets.iter().position(|p| &p.name == name)
+        {
+            list.top = (i + 1)
+                .saturating_sub(list.max_rows)
+                .min(list.len.saturating_sub(list.max_rows));
+        }
+        list
+    }
+
+    /// The name field of a new preset.
+    fn name_rect(&self) -> Rect {
+        self.button_at(0, 0.0, 230.0)
+    }
+
     fn footer_button(&self, from_right: usize) -> Rect {
         let p = self.panel();
         let x1 = p.x1 - PAD - from_right as f64 * (96.0 + BTN_GAP);
@@ -543,6 +810,51 @@ impl ExportView {
             ));
             return out;
         }
+        let (depth_row, dither_row, rate_row, file_row, quality_row) = (
+            self.row_of("BIT DEPTH"),
+            self.row_of("DITHER"),
+            self.row_of("SAMPLE RATE"),
+            self.row_of("FILE FORMAT"),
+            self.row_of("QUALITY"),
+        );
+        if self.naming.is_some() {
+            out.push((
+                Hit::NameOk,
+                self.button_at(0, 236.0, 60.0),
+                "SAVE".to_owned(),
+                false,
+                self.name_ok(),
+            ));
+            out.push((
+                Hit::NameCancel,
+                self.button_at(0, 302.0, 70.0),
+                "CANCEL".to_owned(),
+                false,
+                true,
+            ));
+        } else {
+            out.push((
+                Hit::PresetList,
+                self.preset_rect(),
+                fit_label(&self.preset_label(), 150.0, 9.5),
+                false,
+                !self.presets.is_empty(),
+            ));
+            out.push((
+                Hit::PresetSave,
+                self.button_at(0, 186.0, 110.0),
+                "SAVE PRESET...".to_owned(),
+                false,
+                true,
+            ));
+            out.push((
+                Hit::PresetDelete,
+                self.button_at(0, 302.0, 100.0),
+                "DELETE PRESET".to_owned(),
+                false,
+                self.preset_is_user(),
+            ));
+        }
         let w = 92.0;
         for (i, (depth, label)) in [
             (ExportDepth::Pcm16, "16-BIT"),
@@ -557,7 +869,7 @@ impl ExportView {
             let enabled = !lossy && !(v.file == ExportFile::Flac && depth == ExportDepth::Float32);
             out.push((
                 Hit::Depth(depth),
-                self.button(0, i, w),
+                self.button(depth_row, i, w),
                 label.to_owned(),
                 !lossy && v.depth == depth,
                 enabled,
@@ -574,7 +886,7 @@ impl ExportView {
         {
             out.push((
                 Hit::Dither(dither),
-                self.button(1, i, w),
+                self.button(dither_row, i, w),
                 label.to_owned(),
                 dither_on && v.dither == dither,
                 dither_on,
@@ -583,7 +895,7 @@ impl ExportView {
         let rw = 76.0;
         out.push((
             Hit::Rate(None),
-            self.button(2, 0, rw),
+            self.button(rate_row, 0, rw),
             "PROJECT".to_owned(),
             v.rate.is_none(),
             true,
@@ -591,7 +903,7 @@ impl ExportView {
         for (i, rate) in EXPORT_RATES.into_iter().enumerate() {
             out.push((
                 Hit::Rate(Some(rate)),
-                self.button(2, i + 1, rw),
+                self.button(rate_row, i + 1, rw),
                 rate_label(rate),
                 v.rate == Some(rate),
                 true,
@@ -610,7 +922,7 @@ impl ExportView {
         {
             out.push((
                 Hit::File(file),
-                self.button(3, i, FILE_BTN_W),
+                self.button(file_row, i, FILE_BTN_W),
                 label.to_owned(),
                 v.file == file,
                 !file.is_lossy() || self.lossy_enabled(),
@@ -620,7 +932,7 @@ impl ExportView {
             let offset = self.quality_offset(i);
             out.push((
                 Hit::Quality(quality),
-                self.button_at(4, offset, quality_width(quality)),
+                self.button_at(quality_row, offset, quality_width(quality)),
                 label,
                 v.quality() == Some(quality),
                 true,
@@ -670,6 +982,51 @@ impl ExportView {
                 ));
             }
         }
+        if self.scope != ExportScope::Stems {
+            let mix_row = self.row_of("MIX DOWN");
+            for (i, (mono, label)) in [(false, "STEREO"), (true, "MONO")].into_iter().enumerate() {
+                out.push((
+                    Hit::Mono(mono),
+                    self.button(mix_row, i, 80.0),
+                    label.to_owned(),
+                    v.mono == mono,
+                    true,
+                ));
+            }
+            let loud_row = self.row_of("LOUDNESS");
+            let mut offset = 0.0;
+            for choice in ExportLoudness::CHOICES {
+                let width = if choice == ExportLoudness::Off {
+                    58.0
+                } else {
+                    80.0
+                };
+                out.push((
+                    Hit::Loudness(choice),
+                    self.button_at(loud_row, offset, width),
+                    choice.label(),
+                    v.loudness == choice,
+                    true,
+                ));
+                offset += width + BTN_GAP;
+            }
+            let extra_row = self.row_of("EXTRA FILE");
+            let extra_on = !v.file.is_lossy() && self.lossy_enabled();
+            out.push((
+                Hit::Extra(false),
+                self.button(extra_row, 0, 76.0),
+                "ONE FILE".to_owned(),
+                !v.also_mp3 || !extra_on,
+                true,
+            ));
+            out.push((
+                Hit::Extra(true),
+                self.button_at(extra_row, 76.0 + BTN_GAP, 130.0),
+                format!("MP3 {ALSO_MP3_KBPS} kbps"),
+                v.also_mp3 && extra_on,
+                extra_on,
+            ));
+        }
         out.push((
             Hit::Start,
             self.footer_button(1),
@@ -685,6 +1042,13 @@ impl ExportView {
             true,
         ));
         out
+    }
+
+    /// Whether the name typed can be saved: it is not blank.
+    fn name_ok(&self) -> bool {
+        self.naming
+            .as_ref()
+            .is_some_and(|f| !f.text().trim().is_empty())
     }
 
     /// The button labelled `label` (`"EXPORT"`, `"24-BIT"`, `"44.1 kHz"`), for tests and for the
@@ -712,21 +1076,84 @@ impl ExportView {
             UiEvent::ScaleChanged(s) => self.set_scale(*s),
             UiEvent::PointerMove { pos, .. } => {
                 self.hover = Some(*pos);
+                if let Some(list) = &mut self.list {
+                    list.hover = list.row_at(*pos);
+                }
+                if self.selecting
+                    && let Some(field) = &mut self.naming
+                {
+                    field.drag(*pos);
+                }
                 self.repaint = true;
             }
             UiEvent::PointerLeave => {
                 self.hover = None;
                 self.repaint = true;
             }
+            UiEvent::PointerUp {
+                button: PointerButton::Primary,
+                ..
+            } => self.selecting = false,
+            UiEvent::Wheel { delta, .. } => {
+                if let Some(list) = &mut self.list
+                    && list.wheel(delta.y)
+                {
+                    self.repaint = true;
+                }
+            }
             UiEvent::PointerDown {
                 pos,
                 button: PointerButton::Primary,
-                ..
+                modifiers,
+                clicks,
             } => {
                 self.repaint = true;
-                if let Some(hit) = self.hit(*pos) {
+                if self.list.is_some() {
+                    self.press_list(*pos);
+                } else if self.naming.is_some() && self.name_rect().contains(*pos) {
+                    if let Some(field) = &mut self.naming {
+                        field.press(*pos, *clicks, modifiers.shift);
+                        self.selecting = true;
+                    }
+                } else if let Some(hit) = self.hit(*pos) {
                     out.extend(self.press(hit).map(UiAction::Export));
                 }
+            }
+            UiEvent::Ime(ime) => {
+                if let Some(field) = &mut self.naming
+                    && field.handle_ime(ime)
+                {
+                    self.repaint = true;
+                }
+            }
+            UiEvent::Key {
+                key,
+                modifiers,
+                pressed: true,
+            } if self.naming.is_some() => {
+                self.repaint = true;
+                let used = self
+                    .naming
+                    .as_mut()
+                    .map(|f| f.handle_key(key, *modifiers))
+                    .is_some_and(|u| u.handled());
+                if !used {
+                    match key {
+                        Key::Escape => self.naming = None,
+                        Key::Enter if self.name_ok() => {
+                            out.push(UiAction::Export(ExportAction::SavePreset));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } if self.list.is_some() => {
+                self.list = None;
+                self.repaint = true;
             }
             UiEvent::Key {
                 key: Key::Escape,
@@ -737,7 +1164,7 @@ impl ExportView {
                 key: Key::Enter,
                 pressed: true,
                 ..
-            } if !self.in_progress() => {
+            } if !self.in_progress() && self.list.is_none() => {
                 out.extend(self.start().map(UiAction::Export));
             }
             _ => {}
@@ -745,8 +1172,48 @@ impl ExportView {
         out
     }
 
+    /// A press while the preset list is open: a row chooses that preset (one that cannot be used
+    /// leaves the list open), anything else closes the list.
+    fn press_list(&mut self, pos: Point) {
+        let Some(list) = self.list.clone() else {
+            return;
+        };
+        match list.row_at(pos) {
+            Some(i) => {
+                if let Some(name) = self.presets.get(i).map(|p| p.name.clone()) {
+                    self.choose_preset(&name);
+                }
+            }
+            None => self.list = None,
+        }
+    }
+
     fn press(&mut self, hit: Hit) -> Option<ExportAction> {
         match hit {
+            Hit::PresetList => {
+                self.list = Some(self.list_at());
+                return None;
+            }
+            Hit::PresetSave => {
+                let text = if self.preset_is_user() {
+                    self.preset.clone().unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                let mut field = TextField::new(&text, 40, false);
+                field.select_all();
+                self.naming = Some(field);
+                return None;
+            }
+            Hit::PresetDelete => return Some(ExportAction::DeletePreset),
+            Hit::NameOk => return self.name_ok().then_some(ExportAction::SavePreset),
+            Hit::NameCancel => {
+                self.naming = None;
+                return None;
+            }
+            Hit::Mono(m) => self.values.mono = m,
+            Hit::Loudness(l) => self.values.loudness = l,
+            Hit::Extra(e) => self.values.also_mp3 = e,
             Hit::Depth(d) => self.values.depth = d,
             Hit::Dither(d) => self.values.dither = d,
             Hit::Rate(r) => self.values.rate = r,
@@ -779,7 +1246,17 @@ impl ExportView {
     /// EXPORT: the values, unless a compressed format waits for FFmpeg to be found.
     fn start(&self) -> Option<ExportAction> {
         let waiting = self.values.file.is_lossy() && self.encoder != EncoderState::Ready;
-        (!waiting).then_some(ExportAction::Start(self.values))
+        let mut values = self.values;
+        // What a row that is not shown or not usable says does not count.
+        if self.scope == ExportScope::Stems {
+            values.mono = false;
+            values.loudness = ExportLoudness::Off;
+            values.also_mp3 = false;
+        }
+        if values.file.is_lossy() {
+            values.also_mp3 = false;
+        }
+        (!waiting).then_some(ExportAction::Start(values))
     }
 
     /// What the button under `pos` does, for its tooltip.
@@ -862,6 +1339,26 @@ impl ExportView {
             }
             Hit::Range(RangeChoice::Selection) => {
                 "Only the time range selected on the lanes, with no tail"
+            }
+            Hit::PresetList => {
+                "Fill the options for a purpose: streaming, podcast, video, stems, club or your own"
+            }
+            Hit::PresetSave => "Keep the options as a preset of your own under a name you type",
+            Hit::PresetDelete => "Delete the preset shown (only presets you saved)",
+            Hit::NameOk => "Save the options as a preset under this name",
+            Hit::NameCancel => "Go back without saving a preset",
+            Hit::Mono(false) => "Keep the channels of the project's output",
+            Hit::Mono(true) => "Mix every channel into one before writing",
+            Hit::Loudness(ExportLoudness::Off) => "Leave the level as the song has it",
+            Hit::Loudness(ExportLoudness::Target(_)) => {
+                "Set the loudness to this target; a limiter keeps the peaks under -1 dBTP"
+            }
+            Hit::Loudness(ExportLoudness::Guide(_)) => {
+                "A guide only: report the distance and warn on clipping, change nothing"
+            }
+            Hit::Extra(false) => "Write the one file",
+            Hit::Extra(true) => {
+                "Also write an MP3 from the same render, next to the file (needs FFmpeg)"
             }
             Hit::Start if self.scope == ExportScope::Stems => "Render and write the files",
             Hit::Start => "Render and write the file",
@@ -969,8 +1466,63 @@ impl ExportView {
                 );
             }
         }
+        self.paint_presets(c);
         c.pop_clip();
         c.pop_transform();
+    }
+
+    /// The name field, the drop-down's arrow and the open list of the Preset row.
+    fn paint_presets(&self, c: &mut dyn Canvas) {
+        if self.in_progress() {
+            return;
+        }
+        let st = &self.st;
+        let t = &st.base;
+        if let Some(field) = &self.naming {
+            let r = self.name_rect();
+            sp::lcd(c, st, r, Some(t.focus));
+            field.paint(c, r, 10.5, 14.0, FieldColors::of(t), true);
+        } else {
+            let r = self.preset_rect();
+            let (x, y) = (r.x1 - 10.0, r.center().y);
+            sp::line(c, x - 3.5, y - 1.5, x, y + 2.0, t.text_muted);
+            sp::line(c, x, y + 2.0, x + 3.5, y - 1.5, t.text_muted);
+        }
+        let Some(list) = &self.list else {
+            return;
+        };
+        list.paint_frame(c, st);
+        for i in list.visible() {
+            let (Some(rr), Some(preset)) = (list.row_rect(i), self.presets.get(i)) else {
+                continue;
+            };
+            let usable = self.preset_usable(preset);
+            if list.hover == Some(i) && usable {
+                c.fill_with(RoundedRect::from_rect(rr, 3.0), t.browser_row);
+            }
+            let text = if usable {
+                preset.name.clone()
+            } else {
+                format!("{} (Needs FFmpeg)", preset.name)
+            };
+            let color = if !usable {
+                t.text_muted
+            } else if self.preset.as_deref() == Some(preset.name.as_str()) {
+                t.highlight
+            } else {
+                t.text
+            };
+            sp::label(
+                c,
+                &fit_label(&text, list.width - 2.0 * pick_list::PAD - 14.0, 10.0),
+                rr.x0 + 6.0,
+                rr.y0 + 14.0,
+                10.0,
+                color,
+                Align::Start,
+            );
+        }
+        list.paint_scrollbar(c, st);
     }
 
     fn paint_options(&self, c: &mut dyn Canvas, p: Rect) {

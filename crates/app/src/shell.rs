@@ -150,6 +150,7 @@ use crate::commands::{AppCommand, Menu, MenuState, ScaleStep, SongList, menus_wi
 use crate::context_menus::{self, MenuEnable};
 use crate::cpu_hint::CpuHintCard;
 use crate::export_prefs::ExportPrefs;
+use crate::export_presets::{PresetStore, presets_path};
 use crate::guide::{Guide, GuideOutcome, Spot};
 use crate::keymap_store::{self, WorkflowPrefs};
 use crate::menubar::{MENU_BAR_HEIGHT, MenuBar, MenuBarOutcome};
@@ -611,6 +612,12 @@ pub struct Shell<B: AudioBackend> {
     export_prefs: ExportPrefs,
     /// Where they are saved (next to the settings file).
     export_prefs_path: Option<PathBuf>,
+    /// The user's export presets (`export_presets.json`).
+    export_presets: PresetStore,
+    /// Where they are saved (next to the settings file).
+    export_presets_path: Option<PathBuf>,
+    /// The preset File > Export for runs, until its file dialog is answered.
+    export_run: Option<atomik_ui::PresetChoice>,
     /// The relink panel (File > Relink Missing Audio) while it is open.
     relink: Option<RelinkView>,
     /// The MIDI Mappings panel (Mixer > MIDI Mappings) while it is open.
@@ -797,6 +804,7 @@ impl<B: AudioBackend> Shell<B> {
         startup_notes.extend(built.report.summary());
         let keymap_stamp = keymap_path.as_deref().and_then(stamp_of);
         let export_prefs_path = Self::export_prefs_file(options.settings_path.as_deref());
+        let export_presets_path = options.settings_path.as_deref().map(presets_path);
         let options_library_path = options.library_path.clone();
         // The first start: the settings file is written when the setup is done or skipped (or
         // when Audio Settings applies), so a missing one means nothing was ever chosen here.
@@ -856,6 +864,12 @@ impl<B: AudioBackend> Shell<B> {
                 .map(ExportPrefs::load)
                 .unwrap_or_default(),
             export_prefs_path,
+            export_presets: export_presets_path
+                .as_deref()
+                .map(PresetStore::load)
+                .unwrap_or_default(),
+            export_presets_path,
+            export_run: None,
 
             quantize: None,
             quantize_values: QuantizeValues::default(),
@@ -1497,6 +1511,7 @@ impl<B: AudioBackend> Shell<B> {
             || self.quantize.as_ref().is_some_and(QuantizeView::wants_text)
             || self.scale.is_some()
             || self.color_picker.is_some()
+            || self.export.as_ref().is_some_and(ExportView::wants_text)
             || self.ime_target().is_some()
     }
 
@@ -3818,6 +3833,7 @@ impl<B: AudioBackend> Shell<B> {
             .enumerate()
             .map(|(i, b)| (i as u32 + 1, b.name.clone()))
             .collect();
+        let presets = self.export_menu_rows();
         menus_with_songs(
             &self.menu_state(),
             self.router.keymap(),
@@ -3828,6 +3844,7 @@ impl<B: AudioBackend> Shell<B> {
                 current: self.song_at,
                 vcas: &vcas,
                 buses: &buses,
+                presets: &presets,
             },
         )
     }
@@ -7856,6 +7873,7 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::ExportSelectionAudio => self.export_audio_request(ExportScope::Selection),
             AppCommand::ExportStems => self.export_audio_request(ExportScope::Stems),
             AppCommand::ExportFilm => self.export_film_request(),
+            AppCommand::ExportFor(index) => self.export_for_request(index),
             AppCommand::QuantizeApply => {
                 let pane = self.live_pane(self.focus);
                 self.apply_last_quantize(pane);

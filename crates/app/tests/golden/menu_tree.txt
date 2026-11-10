@@ -73,6 +73,12 @@ File
       480 per quarter
     ---
     Export Patch…
+  Export for >
+    Streaming
+    Podcast
+    Video
+    Stems for mixing
+    Club
   Project Files >
     Relink Missing Audio…
     Collect Files…

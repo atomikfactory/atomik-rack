@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Export presets.** One choice exports for a purpose. The export panel has a Preset row (a drop-down, Save Preset
+  and Delete Preset) and File > Export for runs a preset at once: Streaming (a 24-bit WAV and an MP3 at 320 kbps at
+  -14 LUFS, true peaks under -1 dBTP), Podcast (a mono MP3 at 128 kbps at -16 LUFS), Video (AAC at 256 kbps and
+  48 kHz at -14 LUFS, or the film with that mix when the song has one), Stems for mixing (a 24-bit WAV per strip,
+  no loudness change, no dither) and Club (a 24-bit WAV with -9 LUFS as a guide only, no limiter added, and a
+  warning in the report if the peaks clip). Choosing a preset fills the panel's fields, which stay editable (the
+  name shows "(changed)"); Save Preset keeps them under a name of your own in `export_presets.json`. The panel has
+  new rows for the mono mix-down, the loudness (off, -16 or -14 LUFS, or a -9 guide) and an extra MP3 next to a
+  lossless file. A loudness target measures the render, turns it up or down and, when the peaks would pass the
+  ceiling, holds them with the true-peak limiter of the Mastering device; the toast says the level before, what
+  was done and any limiting. The presets that write MP3, AAC or Opus are greyed with "Needs FFmpeg" without it.
+  A mono MP3 is now written as one channel.
 - **Quick sidechain: Duck from.** One step makes a track duck under another, such as a bass under a kick or a pad
   under a vocal. The right-click menu of a track header, the rack menu of a track's device and the mixer's strip menu
   have a Duck from submenu (and Track > Quick Sidechain has Duck from...) that lists the other tracks by name and in

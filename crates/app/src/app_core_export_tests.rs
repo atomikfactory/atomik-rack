@@ -906,3 +906,326 @@ fn real_ffmpeg_exports_an_mp3_of_the_song() {
         assert!(audio.frames() > 1000);
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Export presets: the mix-down, the loudness target and the extra MP3.
+
+use atomik_render::loudness::measure;
+use atomik_ui::ExportLoudness;
+
+fn measured(
+    path: &Path,
+) -> (
+    atomik_audio_file::AudioData,
+    atomik_render::loudness::LoudnessReport,
+) {
+    let audio = atomik_audio_file::decode_file(path).unwrap();
+    let report = measure(&audio);
+    (audio, report)
+}
+
+/// The Streaming preset without its MP3: the WAV-only form, which needs no FFmpeg.
+fn streaming_wav() -> ExportValues {
+    ExportValues {
+        also_mp3: false,
+        ..crate::export_presets::builtin()[0].values
+    }
+}
+
+#[test]
+fn the_streaming_preset_brings_a_wav_export_to_minus_14_with_the_peaks_under_minus_1() {
+    let t = Tmp::new();
+    let mut c = core();
+    c.start_audio_export(ExportScope::Song, t.file("song.wav"), streaming_wav())
+        .unwrap();
+    c.wait_background();
+    let (audio, after) = measured(&t.file("song.wav"));
+    assert_eq!(audio.channels.len(), 2);
+    let lufs = after.integrated_lufs.expect("the song is audible");
+    assert!((lufs + 14.0).abs() <= 0.5, "{after:?}");
+    assert!(after.true_peak_dbtp.unwrap() <= -1.0, "{after:?}");
+    // The report says what was measured before and what was done.
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("Exported song.wav")
+            && message.contains("; was ")
+            && message.contains("LUFS"),
+        "{message}"
+    );
+    assert!(
+        message.contains("turned up") || message.contains("turned down"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_peaky_song_stays_under_the_ceiling_and_the_report_names_any_limiting() {
+    let t = Tmp::new();
+    let mut c = core();
+    // Very short loud notes: peaks that a gain towards the target would push past the ceiling.
+    c.apply_command(Command::Song(SongCommand::AddClip {
+        device: key("lead"),
+        lane: 0,
+        clip: Clip {
+            id: ClipId(1),
+            start: 2 * BAR,
+            length: 2 * BAR,
+            offset: 0,
+            loop_length: None,
+            muted: false,
+            scale: None,
+            param_lanes: Vec::new(),
+            midi: Default::default(),
+            groove: None,
+            controllers: Vec::new(),
+            name: None,
+            color: None,
+            grid: None,
+            content: ClipContent::Notes(
+                (0..16)
+                    .map(|i| Note::new(i * PPQ / 2, PPQ / 64, 40, 1.0))
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+        },
+    }))
+    .unwrap();
+    let loud = ExportValues {
+        loudness: ExportLoudness::Target(-6),
+        ..streaming_wav()
+    };
+    c.start_audio_export(ExportScope::Song, t.file("peaky.wav"), loud)
+        .unwrap();
+    c.wait_background();
+    let (_, after) = measured(&t.file("peaky.wav"));
+    assert!(after.true_peak_dbtp.unwrap() <= -1.0, "{after:?}");
+    let message = c.last_rejection().unwrap();
+    assert!(message.contains("Exported peaky.wav"), "{message}");
+    if message.contains("limited") {
+        assert!(message.contains("under -1.0 dBTP"), "{message}");
+    }
+}
+
+#[test]
+fn a_guide_changes_nothing_and_a_mono_export_has_one_channel() {
+    let t = Tmp::new();
+    let mut c = core();
+    c.start_audio_export(
+        ExportScope::Song,
+        t.file("plain.wav"),
+        values(ExportDepth::Pcm24),
+    )
+    .unwrap();
+    c.wait_background();
+    let guide = ExportValues {
+        loudness: ExportLoudness::Guide(-9),
+        ..values(ExportDepth::Pcm24)
+    };
+    c.start_audio_export(ExportScope::Song, t.file("club.wav"), guide)
+        .unwrap();
+    c.wait_background();
+    let (plain, _) = measured(&t.file("plain.wav"));
+    let (club, _) = measured(&t.file("club.wav"));
+    assert_eq!(
+        plain.channels, club.channels,
+        "a guide adds no gain and no limiter"
+    );
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("-9 LUFS guide") && message.contains("nothing changed"),
+        "{message}"
+    );
+
+    let mono = ExportValues {
+        mono: true,
+        ..values(ExportDepth::Pcm24)
+    };
+    c.start_audio_export(ExportScope::Song, t.file("mono.wav"), mono)
+        .unwrap();
+    c.wait_background();
+    let (m, _) = measured(&t.file("mono.wav"));
+    assert_eq!(m.channels.len(), 1);
+    assert_eq!(m.frames(), plain.frames());
+}
+
+#[test]
+fn stems_ignore_the_loudness_and_the_mix_down() {
+    let t = Tmp::new();
+    let mut c = core();
+    let stems = ExportValues {
+        mono: true,
+        loudness: ExportLoudness::Target(-14),
+        also_mp3: true,
+        ..values(ExportDepth::Pcm24)
+    };
+    c.start_audio_export(ExportScope::Stems, t.file("stems"), stems)
+        .unwrap();
+    c.wait_background();
+    let message = c.last_rejection().unwrap();
+    assert!(message.starts_with("Exported"), "{message}");
+    let files: Vec<_> = std::fs::read_dir(t.file("stems"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert!(!files.is_empty());
+    for f in files {
+        assert_eq!(f.extension().unwrap(), "wav", "no extra MP3 for stems");
+        assert_eq!(measured(&f).0.channels.len(), 2, "stems stay stereo");
+    }
+}
+
+#[test]
+fn an_extra_mp3_is_encoded_from_the_same_finished_render_next_to_the_wav() {
+    let t = Tmp::new();
+    let tool = encoder();
+    let mut c = lossy_core(&t, &tool);
+    let both = ExportValues {
+        also_mp3: true,
+        ..streaming_wav()
+    };
+    c.start_audio_export(ExportScope::Song, t.file("song.wav"), both)
+        .unwrap();
+    c.wait_background();
+    assert!(t.file("song.wav").is_file());
+    let mp3 = t.file("song.mp3");
+    assert_eq!(std::fs::read(&mp3).unwrap(), b"ENCODED");
+    assert!(!atomik_video::encode::partial_path(&mp3).exists());
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("Exported song.wav, and song.mp3 (MP3 320 kbps)"),
+        "{message}"
+    );
+    let calls = encodes(&tool);
+    assert_eq!(calls.len(), 1, "one encoding call");
+    assert_eq!(calls[0].after("-c:a").unwrap(), "libmp3lame");
+    assert_eq!(calls[0].after("-b:a").unwrap(), "320k");
+    // The temporary WAV it read is gone with its folder.
+    let input = calls[0].after("-i").unwrap().to_string_lossy().into_owned();
+    let wav = PathBuf::from(input.strip_prefix("file:").unwrap());
+    assert!(!wav.exists() && !wav.parent().unwrap().exists());
+}
+
+#[test]
+fn the_extra_mp3_needs_ffmpeg_and_a_cancel_leaves_no_file() {
+    let t = Tmp::new();
+    let mut c = core();
+    let both = ExportValues {
+        also_mp3: true,
+        ..streaming_wav()
+    };
+    let why = c
+        .start_audio_export(ExportScope::Song, t.file("song.wav"), both)
+        .unwrap_err();
+    assert!(why.contains("FFmpeg"), "{why}");
+    assert!(!t.file("song.wav").exists());
+
+    // Cancelled before the render starts: nothing is written, not the WAV and not the MP3.
+    let tool = encoder();
+    let mut c = lossy_core(&t, &tool);
+    let hold = crate::export_worker::hold::next_export();
+    c.start_audio_export(ExportScope::Song, t.file("song.wav"), both)
+        .unwrap();
+    c.cancel_audio_export();
+    drop(hold);
+    c.wait_background();
+    assert!(!t.file("song.wav").exists() && !t.file("song.mp3").exists());
+}
+
+#[test]
+fn the_extra_file_and_the_finish_follow_the_values() {
+    use super::export::{extra_file, finish_for, wants_extra_mp3};
+    let v = ExportValues {
+        also_mp3: true,
+        ..ExportValues::default()
+    };
+    assert_eq!(
+        extra_file(ExportScope::Song, Path::new("d/song.wav"), &v),
+        Some(PathBuf::from("d/song.mp3"))
+    );
+    assert!(extra_file(ExportScope::Stems, Path::new("d/stems"), &v).is_none());
+    assert!(!wants_extra_mp3(ExportScope::Song, &lossy(ExportFile::Mp3)));
+    assert!(finish_for(false, ExportLoudness::Off).is_noop());
+    let f = finish_for(true, ExportLoudness::Target(-16));
+    assert!(f.mono);
+    assert_eq!(
+        f.loudness,
+        atomik_render::normalise::Loudness::Target {
+            lufs: -16.0,
+            ceiling_dbtp: -1.0
+        }
+    );
+}
+
+#[test]
+#[ignore = "needs a real FFmpeg"]
+fn real_ffmpeg_writes_the_streaming_preset_as_a_wav_and_an_mp3() {
+    let t = Tmp::new();
+    let mut c = core();
+    c.set_video_tool(Arc::new(atomik_video::SystemTool));
+    c.check_ffmpeg().unwrap();
+    c.wait_background();
+    if c.export_encoder() != EncoderState::Ready {
+        println!("no FFmpeg here: {:?}", c.export_encoder());
+        return;
+    }
+    let streaming = crate::export_presets::builtin()[0].values;
+    c.start_audio_export(ExportScope::Song, t.file("stream.wav"), streaming)
+        .unwrap();
+    c.wait_background();
+    let message = c.last_rejection().unwrap().to_owned();
+    println!("{message}");
+    let (_, wav) = measured(&t.file("stream.wav"));
+    assert!(
+        (wav.integrated_lufs.unwrap() + 14.0).abs() <= 0.5,
+        "{wav:?}"
+    );
+    assert!(wav.true_peak_dbtp.unwrap() <= -1.0, "{wav:?}");
+    if let Ok(audio) = atomik_audio_file::decode_file(&t.file("stream.mp3")) {
+        let heard = measure(&audio);
+        assert!(
+            (heard.integrated_lufs.unwrap() + 14.0).abs() <= 1.0,
+            "{heard:?}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs a real FFmpeg"]
+fn real_ffmpeg_writes_the_podcast_preset_as_a_mono_mp3_at_minus_16() {
+    let t = Tmp::new();
+    let mut c = core();
+    c.set_video_tool(Arc::new(atomik_video::SystemTool));
+    c.check_ffmpeg().unwrap();
+    c.wait_background();
+    if c.export_encoder() != EncoderState::Ready {
+        println!("no FFmpeg here: {:?}", c.export_encoder());
+        return;
+    }
+    let podcast = crate::export_presets::builtin()[1].values;
+    c.start_audio_export(ExportScope::Song, t.file("pod.wav"), podcast)
+        .unwrap();
+    c.wait_background();
+    let message = c.last_rejection().unwrap().to_owned();
+    println!("{message}");
+    assert!(message.contains("Exported pod.mp3"), "{message}");
+    // The file holds one channel (asked of ffprobe, which is installed with FFmpeg).
+    if let Ok(out) = std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "a:0", "-show_entries"])
+        .args(["stream=channels", "-of", "csv=p=0"])
+        .arg(t.file("pod.mp3"))
+        .output()
+    {
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "1",
+            "a mono file"
+        );
+    }
+    if let Ok(audio) = atomik_audio_file::decode_file(&t.file("pod.mp3")) {
+        let heard = measure(&audio);
+        assert!(
+            (heard.integrated_lufs.unwrap() + 16.0).abs() <= 1.0,
+            "{heard:?}"
+        );
+    }
+}

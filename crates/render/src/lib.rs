@@ -5,6 +5,7 @@
 //! - [`flat`]: the expanded rack (containers compiled away) as a patch.
 //! - [`export`]: the song or the loop as an audio file (16/24-bit PCM with dither, or float; WAV
 //!   or AIFF).
+//! - [`normalise`]: the mono mix-down and the loudness target an export preset asks for.
 //! - [`aiff`]: the AIFF writer behind the export's second container.
 //! - [`stems`]: the strips of the console (channels, buses, returns, master) rendered to files of
 //!   their own, aligned with each other and with the master.
@@ -43,6 +44,7 @@ pub mod freeze;
 pub mod loudness;
 pub mod masking;
 pub mod mixcheck;
+pub mod normalise;
 pub mod patch;
 pub mod players;
 pub mod plugin_pass;

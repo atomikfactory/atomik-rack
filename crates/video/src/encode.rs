@@ -163,6 +163,10 @@ pub fn encode_args(source: &Path, out: &Path, spec: &EncodeSpec, tags: &Tags) ->
     );
     if spec.channels > 2 {
         args.extend(["-ac", "2"].map(os));
+    } else if spec.channels == 1 {
+        // A mono WAV file carries the layout "front left" only, which the MP3 encoder would turn
+        // into two channels: say one.
+        args.extend(["-ac", "1"].map(os));
     }
     match spec.codec {
         LossyCodec::Mp3 => {
@@ -474,6 +478,19 @@ mod tests {
             &Tags::default(),
         ));
         assert!(has(&a, ["-ac", "2"]));
+    }
+
+    #[test]
+    fn one_channel_stays_one_channel() {
+        let mut s = spec(LossyCodec::Mp3, LossyQuality::Cbr(128));
+        s.channels = 1;
+        let a = strings(&encode_args(
+            Path::new("a.wav"),
+            Path::new("b.mp3"),
+            &s,
+            &Tags::default(),
+        ));
+        assert!(has(&a, ["-ac", "1"]), "{a:?}");
     }
 
     #[test]

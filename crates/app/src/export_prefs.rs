@@ -12,7 +12,10 @@
 //! `"aac"` or `"opus"`; FLAC has no `"32f"`), `mp3` is the MP3 quality (`"cbr128"`, `"cbr192"`,
 //! `"cbr256"`, `"cbr320"`, `"v0"`, `"v2"` or `"v4"`), `aac_kbps` and `opus_kbps` are the bitrates
 //! of those formats in kilobits per second, `dry` takes the channels of a stems export before their strips, `locators`
-//! exports stems only between the locators, and `folder` is where the last export went. The film
+//! exports stems only between the locators, `mono` mixes every channel into one, `loudness` is
+//! `"off"`, `"target-14"` (a loudness target in LUFS, with a true-peak ceiling) or `"guide-9"`
+//! (a guide only), `also_mp3` writes an MP3 next to a lossless file, and `folder` is where the
+//! last export went. The film
 //! export (File > Export > Film with Mix) keeps its choices in the `film_*` fields: `film_cover`
 //! (`"span"` or `"song"`), `film_picture` (`"auto"`, `"copy"` or `"encode"`), `film_quality`
 //! (`"high"`, `"standard"` or `"small"`), `film_sound` (`"aac"` or `"pcm"`), `film_aac_kbps`
@@ -22,9 +25,9 @@
 //! unchanged choice writes identical bytes. These are app preferences, not part of the project.
 
 use atomik_ui::{
-    AAC_BITRATES, EXPORT_RATES, ExportDepth, ExportDither, ExportFile, ExportQuality, ExportValues,
-    FilmCover, FilmPictureChoice, FilmQualityChoice, FilmSoundChoice, FilmValues, MP3_BITRATES,
-    MP3_VBR, OPUS_BITRATES,
+    AAC_BITRATES, EXPORT_RATES, ExportDepth, ExportDither, ExportFile, ExportLoudness,
+    ExportQuality, ExportValues, FilmCover, FilmPictureChoice, FilmQualityChoice, FilmSoundChoice,
+    FilmValues, MP3_BITRATES, MP3_VBR, OPUS_BITRATES,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -61,6 +64,12 @@ pub struct ExportPrefs {
     pub dry: bool,
     /// Stems only: just the range between the locators.
     pub locators: bool,
+    /// Mix every channel into one.
+    pub mono: bool,
+    /// `"off"`, `"target-14"` or `"guide-9"`: the loudness choice.
+    pub loudness: String,
+    /// Also write an MP3 next to a lossless file.
+    pub also_mp3: bool,
     /// The folder the last export went to.
     pub folder: Option<String>,
     /// Film export: `"span"` or `"song"`.
@@ -118,6 +127,13 @@ impl ExportPrefs {
             opus_kbps: values.opus,
             dry: values.dry,
             locators: values.locators,
+            mono: values.mono,
+            loudness: match values.loudness {
+                ExportLoudness::Off => "off".to_owned(),
+                ExportLoudness::Target(l) => format!("target{l}"),
+                ExportLoudness::Guide(l) => format!("guide{l}"),
+            },
+            also_mp3: values.also_mp3,
             folder: folder.map(|f| f.to_string_lossy().into_owned()),
             film_cover: "span".to_owned(),
             film_picture: "auto".to_owned(),
@@ -236,6 +252,22 @@ impl ExportPrefs {
                 .unwrap_or(default.opus),
             // The time selection is not remembered: it belongs to the song that is open.
             selection: false,
+            mono: self.mono,
+            loudness: self.loudness_choice(),
+            also_mp3: self.also_mp3,
+        }
+    }
+
+    /// The loudness choice the text names, when this build offers it (else off).
+    fn loudness_choice(&self) -> ExportLoudness {
+        let text = self.loudness.as_str();
+        let level = |rest: &str| rest.parse::<i8>().ok().filter(|l| (-50..=0).contains(l));
+        if let Some(l) = text.strip_prefix("target").and_then(level) {
+            ExportLoudness::Target(l)
+        } else if let Some(l) = text.strip_prefix("guide").and_then(level) {
+            ExportLoudness::Guide(l)
+        } else {
+            ExportLoudness::Off
         }
     }
 

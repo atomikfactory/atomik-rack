@@ -1059,6 +1059,25 @@ AIFF or FLAC only).
   re-encoded unless the user asks for the copy). Progress is the render (40 %) and then FFmpeg's `out_time_us`;
   a cancel kills FFmpeg and, like a failure, leaves no partial file and no temporary mix. The tests use the fake
   tool; the ignored test in `crates/video/tests/real_ffmpeg.rs` runs the real FFmpeg for every mode.
+- **Presets and the loudness target** ([app/src/export_presets.rs](../crates/app/src/export_presets.rs),
+  [render/src/normalise.rs](../crates/render/src/normalise.rs)). An export preset is a name and the export
+  panel's fields (`PresetChoice`: `stems` says one file per strip, `values` is an `ExportValues`, which has
+  gained `mono`, `loudness` (`ExportLoudness`: off, a target in LUFS, or a guide) and `also_mp3`). The built-in
+  presets (`builtin`: Streaming, Podcast, Video, Stems for mixing, Club) are in code; the user's live in
+  `export_presets.json` beside `settings.json` (`PresetStore`, a `version` field, a missing or corrupt file is
+  no presets, at most 16, names unique and never a built-in name). The panel's Preset row fills its fields from
+  a preset and shows `(changed)` once a field differs (`ExportView::preset_changed`); a preset of stems turns
+  the panel into a stems export. File > Export for (`file.export_for`, the preset's place in the list as its
+  argument) asks for the file and starts the preset at once with the progress panel (`Shell::run_preset`); the
+  Video preset with a film in the song runs the film export instead (`AppCore::start_film_export_with`).
+  The export worker finishes the render before it is written (`Work::finish`, `finish_render`): `Finish::mono`
+  mixes every channel into one, and `Loudness::Target` measures the render with `loudness::measure` (the
+  delivery targets meter), applies one gain, and when the true peak would pass the ceiling runs the Mastering
+  device's look-ahead true-peak `Limiter` offline and raises the gain again until the limited result is within
+  0.1 LU of the target (`NormaliseReport` says the loudness before and after, the gain and the limiting;
+  `ExportReport::normalise`). `Loudness::Guide` changes nothing and only warns when samples reach full scale.
+  Stems are never finished. `Work::also` encodes an MP3 at 320 kbps from the same finished render next to a
+  lossless file.
 - **Loudness report.** `write_export` measures the audio it writes with
   [render/src/loudness.rs](../crates/render/src/loudness.rs): integrated loudness, loudness range
   (3 s short-term windows, -70 LUFS absolute and -20 LU relative gates, 10th to 95th percentile),
@@ -5077,7 +5096,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (543) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (544) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

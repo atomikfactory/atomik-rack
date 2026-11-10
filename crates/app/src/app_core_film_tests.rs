@@ -726,6 +726,7 @@ fn the_toast_of_a_copy_names_nothing_it_did_not_do() {
         tail_frames: 0,
         warnings: Vec::new(),
         loudness: Default::default(),
+        normalise: None,
     };
     let copied = describe_film(&report, FilmPicture::Copy, None);
     assert!(
@@ -863,4 +864,33 @@ fn real_ffmpeg_makes_a_film_of_a_generated_film_and_the_song() {
         duration(&text) >= 4.0 - 0.1,
         "black before and the film: {text}"
     );
+}
+
+#[test]
+fn a_film_export_can_bring_the_mix_to_a_loudness_target() {
+    let t = Tmp::new();
+    let tool = maker();
+    let mut c = film_core(&t, &tool);
+    c.start_film_export_with(
+        t.file("out film.mp4"),
+        FilmValues {
+            aac: 256,
+            ..values()
+        },
+        atomik_ui::ExportLoudness::Target(-14),
+    )
+    .unwrap();
+    c.wait_background();
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("Exported out film.mp4") && message.contains("AAC 256 kbps"),
+        "{message}"
+    );
+    assert!(
+        message.contains("; was ")
+            && (message.contains("turned up") || message.contains("turned down")),
+        "the report says what was done to the level: {message}"
+    );
+    let calls = makes(&tool);
+    assert!(has(&texts(&calls[0]), ["-b:a", "256k"]));
 }
