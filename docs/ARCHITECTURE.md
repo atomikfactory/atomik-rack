@@ -4321,6 +4321,17 @@ and the native menu. Audio adds:
   (`Msg::Archived`), with a progress counter and a cancel flag (File > Project Files > Cancel Project Archive);
   an unpacked project is handed to the shell like a library project (`take_open_request`), which asks
   about unsaved changes before opening it.
+- [`app_core_share.rs`](../crates/app/src/app_core_share.rs): File > Share Project, and opening a share. A share
+  is the same `.atomikz` archive with three more kinds of entry, all optional and each checked by shape like the
+  rest (`ArchiveExtras`: `<name>/credits.txt` of at most 1 MiB, `<name>/preview.mp3` or `preview.wav`, one at most,
+  and `<name>/stems/<file>.wav`; a name that is anything else is refused, so a `../` entry never gets as far as a
+  path). The worker (`Job::Share`) renders the preview and the stems with the export worker's own `run` into a
+  temporary folder that is removed whatever the end, then packs everything; one progress counter and one cancel flag
+  cover the three steps, and a cancel or a failure leaves no archive. The preview is an MP3 when the encoder state is
+  ready and a 16-bit WAV file otherwise, at -14 LUFS. The panel's texts become the song information (one undo
+  step) before the job starts, and the audio is found in the places Collect Files looks (`collect_sources`). Opening
+  one is an import into a folder the user picked (`start_share_open`); `take_share_credits` tells the shell to say
+  so after the project is open. The panel is [`share_panel.rs`](../crates/ui/src/share_panel.rs).
 - [`stream_source.rs`](../crates/app/src/stream_source.rs): the 64 MiB streaming threshold and the
   engine's `StreamSource` over a WAV reader (a read error plays as silence and is counted).
 - [`audio_record.rs`](../crates/app/src/audio_record.rs): the pure recording rules (compensation, laps, placement).
@@ -5111,7 +5122,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (550) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (551) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
