@@ -323,6 +323,7 @@ pub fn rescan(
                             format: *format,
                             stamp: *stamp,
                             scanner_version: SCANNER_VERSION,
+                            scanned_secs: crate::cache::now_secs(),
                             plugins: result.plugins,
                         });
                     }

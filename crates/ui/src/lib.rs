@@ -421,6 +421,7 @@ pub mod piano_roll;
 pub mod pick_list;
 pub mod plugin_banner;
 pub mod plugin_data;
+pub mod plugin_manager;
 pub mod plugin_panel;
 pub mod plugin_params;
 pub mod plugin_settings;
@@ -535,6 +536,9 @@ pub use piano_keys::{
 };
 pub use piano_roll::{NOTE_INSPECTOR_HEIGHT, NoteField, PianoRollView};
 pub use plugin_banner::{BannerKind, PluginBannerView};
+pub use plugin_manager::{
+    PluginManagerAction, PluginManagerData, PluginManagerRow, PluginManagerView, StatusFilter,
+};
 pub use plugin_params::{PluginGestureMerger, PluginParamsView};
 pub use plugin_settings::PluginSettingsView;
 pub use quantize_panel::{GrooveEntry, QuantizeAction, QuantizeRow, QuantizeValues, QuantizeView};

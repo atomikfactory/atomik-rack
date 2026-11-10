@@ -45,6 +45,7 @@ pub use backend::{
 };
 pub use cache::{
     BlacklistEntry, CACHE_VERSION, CachedFile, FileStamp, LoadStatus, PluginCache, SCANNER_VERSION,
+    now_secs,
 };
 pub use catalog::{FailedFile, PluginCatalog, PluginEntry, PluginStatus, RegisterReport};
 pub use child::{ChildScanner, MAX_SCAN_OUTPUT, STDERR_REASON_BYTES, ScannerCommand};

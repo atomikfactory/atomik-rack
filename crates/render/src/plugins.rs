@@ -394,6 +394,7 @@ pub fn scan_in_process(files: &[PathBuf]) -> PluginCache {
             format,
             stamp,
             scanner_version: SCANNER_VERSION,
+            scanned_secs: 0,
             plugins,
         });
     }

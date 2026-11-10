@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A plugin manager.** Options > Plugin Manager opens a table of every plugin the scan found: its name, vendor,
+  format (VST3 or CLAP), category (instrument, effect or note effect), status (OK, Failed with the reason,
+  Quarantined, Disabled, Unsupported), file and when it was last scanned, with the files that failed to scan as rows
+  of their own. Click a column head to sort (again to reverse it); the search field matches the name, vendor, path and
+  tags, and four buttons filter by format, status, category and tag. The star of a row marks a favourite: the device
+  browser lists favourites first, in a Favourites group of their own and at the top of their kind. Tag the chosen
+  plugins from the small field (the same tags as the file browser: no `#`, no comma, 32 characters at most) and find
+  them in the browser by typing `#` and the tag in its search field. Disable hides the chosen plugins from the
+  browser and the menus; a project that uses one still loads it. A plugin whose process ends, or that fails to
+  load, three times in a row is quarantined (hidden like a disabled one, with a message once); a working instance, or
+  a load that works after a failed one, starts the count again, and Try Again clears the quarantine. Rescan All and
+  Rescan Selected run on the scan worker with a progress line and a Cancel button, and Show in Folder opens the file
+  manager at the file. Favourites, tags, disabled plugins and the quarantine are kept by the plugin's id (so a plugin
+  that moved keeps them) in `plugins_user.json` in the settings folder; a missing or damaged file reads as empty.
+  The scan cache now also keeps when each file was scanned. The command is `options.plugin_manager` (no default key).
 - **Soft takeover and knob pages for controllers.** An absolute knob or fader of a controller set up with the wizard
   no longer makes a parameter jump: when it is not where its parameter is (after another device is selected, a page
   or bank change, or an edit with the mouse), moving it does nothing until it comes within 2 percent of the value or

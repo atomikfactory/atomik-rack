@@ -186,6 +186,9 @@ impl BrowserRow {
 /// The heading of the plugin group.
 pub const PLUGINS_HEADING: &str = "PLUGINS";
 
+/// The heading of the starred plugins, the first group of the plugin section.
+pub const FAVOURITES_HEADING: &str = "Favourites";
+
 /// Case-insensitive match on the type id, the name or the kind.
 fn matches(desc: &DeviceDescriptor, query: &str) -> bool {
     let q = query.trim().to_lowercase();
@@ -395,7 +398,7 @@ impl Browser {
                 .collect::<Vec<usize>>()
         };
         let offered = |hint: PluginKindHint| self.create.is_none_or(|k| k.accepts_plugin(hint));
-        let groups = [
+        let mut groups = [
             ("Instruments", usable(PluginKindHint::Instrument)),
             ("Effects", usable(PluginKindHint::Effect)),
             ("Note effects", usable(PluginKindHint::NoteEffect)),
@@ -408,6 +411,16 @@ impl Browser {
             };
             (name, if offered(hint) { idx } else { Vec::new() })
         });
+        // The starred plugins come first, in a group of their own and at the top of their kind.
+        let starred = |i: &usize| self.plugins[*i].marks.favourite;
+        let favourites: Vec<usize> = groups
+            .iter()
+            .flat_map(|(_, v)| v.iter().copied())
+            .filter(starred)
+            .collect();
+        for (_, idx) in &mut groups {
+            idx.sort_by_key(|i| !starred(i));
+        }
         let any = groups.iter().any(|(_, v)| !v.is_empty())
             || unsupported > 0
             || !failed_entries.is_empty()
@@ -416,6 +429,10 @@ impl Browser {
             return out;
         }
         out.push(BrowserRow::Heading(PLUGINS_HEADING.into()));
+        if !favourites.is_empty() {
+            out.push(BrowserRow::Heading(FAVOURITES_HEADING.into()));
+            out.extend(favourites.into_iter().map(BrowserRow::Plugin));
+        }
         for (name, idx) in groups {
             if idx.is_empty() {
                 continue;
@@ -953,7 +970,125 @@ mod tests {
                 aux_out: 0,
                 params: Vec::new(),
             },
+            marks: crate::plugin_data::PluginMarks::default(),
         }
+    }
+
+    fn marked(mut e: PluginEntryInfo, favourite: bool, tags: &[&str]) -> PluginEntryInfo {
+        e.marks.favourite = favourite;
+        e.marks.tags = tags.iter().map(|t| (*t).to_owned()).collect();
+        e
+    }
+
+    /// The plugin section as text: headings and plugin names, in order.
+    fn section(b: &Browser, reg: &Registry) -> Vec<String> {
+        b.list(reg)
+            .into_iter()
+            .skip_while(|r| !matches!(r, BrowserRow::Heading(h) if h == PLUGINS_HEADING))
+            .filter_map(|r| match r {
+                BrowserRow::Heading(h) => Some(format!("# {h}")),
+                BrowserRow::Plugin(i) => Some(b.plugins[i].name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn starred_browser() -> Browser {
+        Browser {
+            plugins: vec![
+                plugin("Example Bell", "Example Vendor", PluginKindHint::Instrument),
+                marked(
+                    plugin("Example Pad", "Example Vendor", PluginKindHint::Instrument),
+                    true,
+                    &["pads", "Warm"],
+                ),
+                plugin("Example Echo", "Example Vendor", PluginKindHint::Effect),
+                marked(
+                    plugin("Example Verb", "Example Vendor", PluginKindHint::Effect),
+                    true,
+                    &["warm"],
+                ),
+            ],
+            ..Browser::default()
+        }
+    }
+
+    #[test]
+    fn the_favourites_come_first_in_a_group_of_their_own_and_in_their_kind() {
+        let reg = registry();
+        let browser = starred_browser();
+        assert_eq!(
+            section(&browser, &reg),
+            [
+                "# PLUGINS",
+                "# Favourites",
+                "Example Pad",
+                "Example Verb",
+                "# Instruments",
+                "Example Pad",
+                "Example Bell",
+                "# Effects",
+                "Example Verb",
+                "Example Echo",
+            ]
+        );
+        // Without a star there is no such group.
+        let plain = Browser {
+            plugins: starred_browser()
+                .plugins
+                .into_iter()
+                .map(|e| marked(e, false, &[]))
+                .collect(),
+            ..Browser::default()
+        };
+        assert!(!section(&plain, &reg).contains(&"# Favourites".to_owned()));
+    }
+
+    #[test]
+    fn a_hash_in_the_search_filters_by_tag_and_plain_text_finds_tags_too() {
+        let reg = registry();
+        let mut browser = starred_browser();
+        browser.set_query("#warm");
+        let found = listed_plugins(&browser, &reg);
+        assert!(found.contains(&"Example Pad".to_owned()));
+        assert!(found.contains(&"Example Verb".to_owned()));
+        assert!(!found.contains(&"Example Bell".to_owned()), "{found:?}");
+        assert!(
+            browser.rows(&reg).is_empty(),
+            "a tag filter lists no device type"
+        );
+        browser.set_query("#pa");
+        assert_eq!(
+            listed_plugins(&browser, &reg)
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>(),
+            std::collections::BTreeSet::from(["Example Pad".to_owned()]),
+            "a tag filter takes a prefix"
+        );
+        browser.set_query("#");
+        assert!(
+            listed_plugins(&browser, &reg).is_empty(),
+            "no tag, no match"
+        );
+        browser.set_query("warm");
+        assert!(listed_plugins(&browser, &reg).contains(&"Example Verb".to_owned()));
+    }
+
+    #[test]
+    fn disabled_and_quarantined_plugins_are_not_listed_but_stay_in_the_catalog() {
+        let reg = registry();
+        let mut browser = starred_browser();
+        browser.plugins[1].status = PluginEntryStatus::Disabled;
+        browser.plugins[3].status = PluginEntryStatus::Quarantined;
+        let found = listed_plugins(&browser, &reg);
+        assert!(!found.contains(&"Example Pad".to_owned()), "{found:?}");
+        assert!(!found.contains(&"Example Verb".to_owned()), "{found:?}");
+        assert!(found.contains(&"Example Bell".to_owned()));
+        assert!(
+            !section(&browser, &reg).contains(&"# Favourites".to_owned()),
+            "a hidden favourite does not make the group"
+        );
+        assert_eq!(browser.plugins.len(), 4, "the entries are still there");
     }
 
     fn listed_plugins(b: &Browser, reg: &Registry) -> Vec<String> {

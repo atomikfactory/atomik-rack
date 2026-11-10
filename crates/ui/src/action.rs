@@ -722,6 +722,9 @@ pub enum UiAction {
     /// The versions panel ([`crate::VersionsView`]) asks for something: keep a named version,
     /// restore one, protect one, or close.
     Versions(crate::versions_panel::VersionsAction),
+    /// The plugin manager ([`crate::PluginManagerView`]) asks for something: mark a favourite,
+    /// disable, tag, rescan, try again, show a file in its folder, or close.
+    PluginManager(crate::plugin_manager::PluginManagerAction),
     /// The masking map panel ([`crate::MaskingView`]) asks for something: analyse the song, stop
     /// the analysis, locate a clash, de-mask a band, or close.
     Masking(crate::masking_panel::MaskingAction),

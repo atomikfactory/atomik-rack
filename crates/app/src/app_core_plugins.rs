@@ -83,6 +83,7 @@
 //! that a run did not quit cleanly, which shows the banner for any project, plugins or not.
 
 use super::AppCore;
+use crate::plugins_user::PluginsUser;
 use crate::recovery::{RecoveryWriter, SessionMarker};
 use crate::sink::EngineSink;
 use crate::ui_state::PluginWindowGeom;
@@ -102,8 +103,8 @@ use atomik_plugin_host::{
 use atomik_render::plugins::{PluginHost, PluginIsolation};
 use atomik_ui::plugin_data::{
     FailedFileInfo, PluginBannerAction, PluginDeviceStatus, PluginEntryInfo, PluginEntryStatus,
-    PluginRescan, PluginSettingsAction, PluginSettingsData, PresetItem, ScanProgressInfo,
-    SettingsPluginRow,
+    PluginMarks, PluginRescan, PluginSettingsAction, PluginSettingsData, PresetItem,
+    ScanProgressInfo, SettingsPluginRow,
 };
 use atomik_ui::{BannerKind, PluginGestureMerger, PluginParamsView, UiAction};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -366,6 +367,14 @@ pub(super) struct PluginState {
     editor_owner: Option<NativeParent>,
     settings_changed: bool,
     folder_dialog: bool,
+    /// What the user decided about each plugin: stars, tags, disabled, quarantine.
+    pub(super) user: PluginsUser,
+    /// `user` changed since the shell last saved it.
+    user_changed: bool,
+    /// Plugins whose last failure was a failed load: a load that works ends the streak.
+    load_failed: BTreeSet<String>,
+    /// Instances that crashed or failed: their end is not a success.
+    bad: BTreeSet<InstanceId>,
 }
 
 impl PluginState {
@@ -422,6 +431,10 @@ impl PluginState {
             editor_owner: None,
             settings_changed: false,
             folder_dialog: false,
+            user: PluginsUser::default(),
+            user_changed: false,
+            load_failed: BTreeSet::new(),
+            bad: BTreeSet::new(),
         }
     }
 
@@ -476,19 +489,34 @@ fn entry_status(status: &PluginStatus) -> PluginEntryStatus {
     }
 }
 
-fn entry_infos(catalog: &PluginCatalog) -> Vec<PluginEntryInfo> {
+/// What the browser and the menus show of the catalog: a usable plugin the user disabled or that
+/// is quarantined is listed as such (so they hide it), and the star and tags come along. The
+/// catalog itself is not touched: a project that uses the plugin still loads it.
+fn entry_infos(catalog: &PluginCatalog, user: &PluginsUser) -> Vec<PluginEntryInfo> {
     catalog
         .entries()
         .iter()
-        .map(|e| PluginEntryInfo {
-            plugin: e.plugin.clone(),
-            name: e.name.clone(),
-            vendor: e.vendor.clone(),
-            version: e.version.clone(),
-            kind: e.kind,
-            status: entry_status(&e.status),
-            path: Some(e.path.to_string_lossy().into_owned()),
-            layout: e.layout.clone(),
+        .map(|e| {
+            let id = e.plugin.type_id();
+            let status = match entry_status(&e.status) {
+                PluginEntryStatus::Ok if user.is_quarantined(&id) => PluginEntryStatus::Quarantined,
+                PluginEntryStatus::Ok if user.is_disabled(&id) => PluginEntryStatus::Disabled,
+                status => status,
+            };
+            PluginEntryInfo {
+                plugin: e.plugin.clone(),
+                name: e.name.clone(),
+                vendor: e.vendor.clone(),
+                version: e.version.clone(),
+                kind: e.kind,
+                status,
+                path: Some(e.path.to_string_lossy().into_owned()),
+                layout: e.layout.clone(),
+                marks: PluginMarks {
+                    favourite: user.is_favourite(&id),
+                    tags: user.tags_of(&id).to_vec(),
+                },
+            }
         })
         .collect()
 }
@@ -1038,7 +1066,7 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    fn plugin_event(&mut self, event: ManagerEvent) {
+    pub(super) fn plugin_event(&mut self, event: ManagerEvent) {
         match event {
             ManagerEvent::ParamEdit {
                 instance,
@@ -1052,6 +1080,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             ManagerEvent::Restarted(_) | ManagerEvent::LatencyChanged { .. } => {}
             ManagerEvent::RestartFailed { instance, reason } => {
+                self.plugins.bad.insert(instance);
                 if let Some(key) = self.plugins.keys.get(&instance).cloned() {
                     self.plugins.failed.insert(key, reason);
                 }
@@ -1062,6 +1091,7 @@ impl<S: EngineSink> AppCore<S> {
                 if self.plugins.host.manager_ref().is_lost(instance) {
                     return;
                 }
+                self.plugins.bad.insert(instance);
                 if let Some(key) = self.plugins.keys.get(&instance).cloned() {
                     self.plugins.log(format!("[{key}] failed: {reason}"));
                     self.plugins.failed.insert(key, reason);
@@ -1089,6 +1119,9 @@ impl<S: EngineSink> AppCore<S> {
                         // Kept in the settings: CRASHED in the plugin list until RETRY.
                         self.plugins.settings.mark_crashed(&type_id, &reason);
                         self.plugins.settings_changed = true;
+                        // Three in a row quarantine it (see the plugin manager).
+                        self.plugins.bad.insert(instance);
+                        self.plugin_failed_in_a_row(&type_id);
                     }
                     let hung = reason.starts_with(HUNG);
                     self.plugins.crashed.insert(key.clone(), reason);
@@ -1166,11 +1199,17 @@ impl<S: EngineSink> AppCore<S> {
                 self.plugins.log(format!("[{name}] {level:?}: {text}"));
             }
             ManagerEvent::Destroyed(id) => {
-                if let Some(info) = self.plugins.loaded.remove(&id)
-                    && !self.plugins.host.is_sandboxed()
-                    && let Some(journal) = &mut self.plugins.journal
-                {
-                    let _ = journal.unloaded(&info);
+                let ended_well = !self.plugins.bad.remove(&id);
+                if let Some(info) = self.plugins.loaded.remove(&id) {
+                    if ended_well {
+                        // An instance that lived and ended without a fault is a success.
+                        self.plugin_worked(&info.plugin.type_id());
+                    }
+                    if !self.plugins.host.is_sandboxed()
+                        && let Some(journal) = &mut self.plugins.journal
+                    {
+                        let _ = journal.unloaded(&info);
+                    }
                 }
                 if let Some(key) = self.plugins.keys.remove(&id) {
                     // Destroyed while the document still lists it (the engine dropped the
@@ -1224,6 +1263,9 @@ impl<S: EngineSink> AppCore<S> {
                 let message = e.to_string();
                 self.plugins.log(format!("[{key}] cannot load: {message}"));
                 self.plugins.failed.insert(key, message);
+                let type_id = plugin.type_id();
+                self.plugins.load_failed.insert(type_id.clone());
+                self.plugin_failed_in_a_row(&type_id);
             }
         }
     }
@@ -1323,6 +1365,10 @@ impl<S: EngineSink> AppCore<S> {
     /// into the engine in place of the stand-in.
     fn attach_instance(&mut self, key: &DeviceKey, plugin: &PluginRef, handle: PluginHandle) {
         let type_id = plugin.type_id();
+        if self.plugins.load_failed.remove(&type_id) {
+            // It loads now: the failures before were not a streak.
+            self.plugin_worked(&type_id);
+        }
         let PluginHandle {
             id,
             device,
@@ -2158,7 +2204,7 @@ impl<S: EngineSink> AppCore<S> {
         if self.plugins.catalog_dirty {
             self.plugins.catalog_dirty = false;
             let catalog = self.plugins.host.catalog();
-            let infos = entry_infos(catalog);
+            let infos = entry_infos(catalog, &self.plugins.user);
             let failed: Vec<FailedFileInfo> = catalog
                 .failed()
                 .iter()
@@ -2978,6 +3024,9 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 }
+
+#[path = "app_core_plugin_manager.rs"]
+mod manager;
 
 /// Most failed files named one by one in the plugin log after a scan (the FAILED FILES list has
 /// them all).

@@ -4898,6 +4898,10 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   missing or disabled plugins opens with **stand-ins** that keep cables, channel, song track,
   automation, macro targets, pins and the state blob byte for byte, and RELOAD or a rescan swaps the
   real plugin in.
+- **Plugin manager.** What the user decides about a plugin (a star, tags, hidden by Disable, the quarantine after
+  three failures in a row) is kept by plugin id in `plugins_user.json` beside the settings, apart from the scan cache
+  and the catalog, which it never touches: the browser and the menus hide a disabled or quarantined plugin, while a
+  project that uses it still resolves it and loads it. The scan cache keeps when each file was scanned.
 - **State and undo.** The plugin state is an opaque byte blob (`state.save` into a buffer), captured
   before every save, when the editor closes, a quiet second after `state.mark_dirty`, before an
   engine restart and before the device is removed; it lives in the document as `PluginDoc::state`
@@ -5107,7 +5111,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (549) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (550) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

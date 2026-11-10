@@ -139,12 +139,19 @@ update notice of a Flatpak pointing at the software centre),
 and export presets (Streaming, Podcast, Video, Stems for mixing and Club in the export panel and File > Export for,
 presets of your own, a mono mix-down, a loudness target held under a true-peak ceiling by the limiter of the
 Mastering device or a guide only, an extra MP3 next to a lossless file, and the level before and after in the
-report).
+report),
+and a plugin manager (Options > Plugin Manager: a sortable table of every plugin with its vendor, format, category,
+status, path and last scan, a search and filters by format, status, category and tag, a star for favourites that
+the device browser lists first in a group of their own, tags of your own that the browser filters with `#tag` in its
+search, Disable to hide a plugin while projects that use it still load it, an automatic quarantine after three
+crashes or failed loads in a row with Try Again, Rescan all or only the chosen files with progress and cancel on the
+scan worker, and Show in Folder; the choices are kept by plugin id in `plugins_user.json`).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
 
 - **Sync follow-ups.** Audio clips stretched to the followed tempo (they play at their own rate and are re-synchronised at each clip start, locate and loop wrap, so a clip of many bars drifts when the two tempos differ), streamed audio while following (silent today), a lock for a sender that sends no Start or Song Position Pointer (the song runs on the measured tempo alone), and a setting for how tightly the song is held to the clock.
+- **Plugin manager follow-ups.** Done: the table, the filters, favourites, tags, Disable, the quarantine and the rescan. Still to come: a category read from the plugin's own feature list (a plugin that only analyses is listed as an effect), the quarantine reason in the table, keeping a quarantined plugin out of the projects that use it, and a tag cloud in the browser instead of the `#tag` search.
 - **Plugin sandbox follow-ups.** Run the sandbox on Linux and macOS for real (the wake-up and stdout redirection are compile-checked only), optional grouping of several instances in one process, and embedding sandboxed editors where the platform allows it.
 - **Linux packages follow-ups.** The AppImage and the Flatpak bundle are built by the release and nightly workflows and
   checked on a runner, but not yet run on real machines of several distributions (see the checklist in
