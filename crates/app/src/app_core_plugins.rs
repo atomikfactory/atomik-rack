@@ -130,6 +130,18 @@ const STATE_MERGE_BASE: u64 = PLUGIN_GESTURE_MERGE_BASE + (1 << 38);
 const STATE_STEP_GAP_SECS: f64 = 5.0;
 /// How many times in a row a plugin that stopped answering audio is reloaded without the user.
 const MAX_AUTO_RELOADS: u8 = 2;
+/// An instance is created again for a port mismatch at most once per this long, per plugin and
+/// port shape (a guard against a recreate loop).
+const RECREATE_WINDOW_SECS: u64 = 30;
+
+/// True when both descriptors have the same sockets (the port shape; params are not compared).
+fn same_shape(a: &DeviceDescriptor, b: &DeviceDescriptor) -> bool {
+    std::ptr::eq(a, b)
+        || a.sockets
+            .iter()
+            .map(|s| s.key)
+            .eq(b.sockets.iter().map(|s| s.key))
+}
 
 /// The files the plugin machinery keeps in the config directory.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -374,6 +386,9 @@ pub(super) struct PluginState {
     no_capture: BTreeSet<DeviceKey>,
     /// The descriptor each live device was inserted with.
     live_desc: BTreeMap<DeviceKey, &'static DeviceDescriptor>,
+    /// When each instance was last created again for a port mismatch, by device, plugin and port
+    /// shape.
+    recreated: BTreeMap<(DeviceKey, String, String), u64>,
     /// Devices whose instance was created while no engine ran: it lives parked (editor and
     /// params work) and is attached to the engine as soon as one exists.
     offline: BTreeSet<DeviceKey>,
@@ -455,6 +470,7 @@ impl PluginState {
             auto_reloads: BTreeMap::new(),
             no_capture: BTreeSet::new(),
             live_desc: BTreeMap::new(),
+            recreated: BTreeMap::new(),
             offline: BTreeSet::new(),
             paint_first: false,
             shown: BTreeMap::new(),
@@ -782,16 +798,14 @@ impl<S: EngineSink> AppCore<S> {
                 rebuild = true;
             } else if live {
                 // Same plugin, maybe a new descriptor (the plugin changed since the last scan).
-                let now = self
-                    .registry
-                    .get(&plugin.type_id())
-                    .map(|f| f.descriptor as *const DeviceDescriptor);
-                let then = self
-                    .plugins
-                    .live_desc
-                    .get(&key)
-                    .map(|d| *d as *const DeviceDescriptor);
-                if now != then {
+                let now = self.registry.get(&plugin.type_id()).map(|f| f.descriptor);
+                let then = self.plugins.live_desc.get(&key).copied();
+                let alike = match (now, then) {
+                    (Some(a), Some(b)) => same_shape(a, b),
+                    (None, None) => true,
+                    _ => false,
+                };
+                if !alike {
                     rebuild = true;
                 }
             } else if installed && !self.plugins.pending.contains(&key) {
@@ -835,7 +849,8 @@ impl<S: EngineSink> AppCore<S> {
                 .manager_ref()
                 .layout(id)
                 .and_then(|l| atomik_device_sdk::descriptor_for(&plugin, l).ok())
-                .is_some_and(|d| current.is_some_and(|c| std::ptr::eq(c, d)));
+                .is_some_and(|d| current.is_some_and(|c| same_shape(c, d)));
+            let fits = fits || self.keep_despite_mismatch(&plugin, key, id, current);
             let same = fits
                 && self
                     .plugins
@@ -878,6 +893,43 @@ impl<S: EngineSink> AppCore<S> {
             self.plugins.batch_total += 1;
         }
         Some((standin, descriptor))
+    }
+
+    /// Loop guard: the instance `id` of `key` has other ports than the registry holds, so it would
+    /// be created again. The first time per plugin, device and port shape that is allowed (false);
+    /// a second one within [`RECREATE_WINDOW_SECS`] is refused with a warning (true: keep it).
+    fn keep_despite_mismatch(
+        &mut self,
+        plugin: &PluginRef,
+        key: &DeviceKey,
+        id: InstanceId,
+        current: Option<&'static DeviceDescriptor>,
+    ) -> bool {
+        let Some(current) = current else {
+            return false;
+        };
+        if self.plugins.host.manager_ref().layout(id).is_none() {
+            return false;
+        }
+        let shape = current
+            .sockets
+            .iter()
+            .map(|s| s.key)
+            .collect::<Vec<_>>()
+            .join(",");
+        let entry = (key.clone(), plugin.type_id(), shape);
+        let now = unix_seconds();
+        if let Some(at) = self.plugins.recreated.get(&entry)
+            && now.saturating_sub(*at) < RECREATE_WINDOW_SECS
+        {
+            log::warn!(
+                "[{key}] {} was already created again for the ports it has now: kept as it is",
+                entry.1
+            );
+            return true;
+        }
+        self.plugins.recreated.insert(entry, now);
+        false
     }
 
     /// Makes `descriptor` the registry's descriptor of `type_id` when the live plugin's layout
@@ -1480,7 +1532,13 @@ impl<S: EngineSink> AppCore<S> {
         let scan_is_stale = self
             .registry
             .get(&type_id)
-            .is_none_or(|f| !std::ptr::eq(f.descriptor, descriptor));
+            .is_none_or(|f| !same_shape(f.descriptor, descriptor))
+            || self
+                .plugins
+                .host
+                .catalog()
+                .entry(plugin)
+                .is_some_and(|e| !e.layout.same_ports(&layout));
         if scan_is_stale {
             self.report_cables_off(plugin, &layout);
         }
@@ -1998,6 +2056,15 @@ impl<S: EngineSink> AppCore<S> {
         let Some(plugin) = self.plugins.loaded.get(&instance).map(|i| i.plugin.clone()) else {
             return;
         };
+        // The document already holds exactly this layout: nothing changed for the engine.
+        if self
+            .doc()
+            .resolve(&key)
+            .and_then(|d| d.plugin.as_deref())
+            .is_some_and(|p| p.layout == layout)
+        {
+            return;
+        }
         self.report_cables_off(&plugin, &layout);
         let _ = self.sync_silent(Command::Plugin(PluginCommand::SyncLayout {
             device: key,
@@ -2112,7 +2179,7 @@ impl<S: EngineSink> AppCore<S> {
             let want = atomik_device_sdk::descriptor_for(plugin, &entry.layout).ok();
             let have = registry.get(&plugin.type_id()).map(|f| f.descriptor);
             if let (Some(w), Some(h)) = (want, have) {
-                stale |= !std::ptr::eq(w, h);
+                stale |= !same_shape(w, h);
             }
         });
         if stale {

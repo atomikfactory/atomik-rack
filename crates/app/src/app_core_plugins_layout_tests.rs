@@ -451,3 +451,107 @@ fn selecting_a_built_in_instrument_in_the_rack_moves_the_notes_input_to_it() {
     select_in_rack(&mut core, "b");
     assert_eq!(notes_go_to(&core), "b");
 }
+
+// ------------------------------------------------------------------ no recreate loop
+
+/// The same ports with another param table: the params renamed and `extra` more of them, as a
+/// plugin does after the patch changed.
+fn reshaped(layout: &PluginLayout, round: usize, extra: usize) -> PluginLayout {
+    let mut out = layout.clone();
+    out.params.clear();
+    for i in 0..(1 + extra as u32) {
+        out.params.push(atomik_device_sdk::PluginParamInfo {
+            id: 100 + i,
+            name: format!("Patch {round} knob {i}"),
+            module: String::new(),
+            min: 0.0,
+            max: 1.0,
+            default: 0.5,
+            stepped: false,
+            steps: 0,
+        });
+    }
+    out.name = format!("{} {round}", layout.name);
+    out.version = format!("1.{round}");
+    out
+}
+
+/// Posts a restart to `device` and runs frames until the instances are quiet.
+fn restart_quiet(core: &mut AppCore<OfflineSink>, device: &str) {
+    post(core, &key(device), PluginMessage::RequestRestart);
+    for _ in 0..30 {
+        settle(core);
+    }
+    core.wait_plugins();
+    settle(core);
+}
+
+fn ids(
+    core: &AppCore<OfflineSink>,
+) -> (
+    Option<atomik_plugin_host::InstanceId>,
+    Option<atomik_plugin_host::InstanceId>,
+) {
+    (
+        core.plugin_instance(&key("a")),
+        core.plugin_instance(&key("b")),
+    )
+}
+
+#[test]
+fn a_restart_with_another_param_table_recreates_nothing_and_never_loops() {
+    let base = scanned_gain().layout;
+    let (mut core, stats) = null_core(base.clone(), base.clone());
+    add_plugin(&mut core, GAIN, "a");
+    add_plugin(&mut core, GAIN, "b");
+    core.wait_plugins();
+    settle(&mut core);
+    let before = ids(&core);
+    assert!(before.0.is_some() && before.1.is_some());
+    let created = stats.created();
+    assert_eq!(stats.destroyed(), 0);
+    for round in 1..=20 {
+        stats.change_layout(reshaped(&base, round, round % 4));
+        restart_quiet(&mut core, "b");
+        assert_eq!(ids(&core), before, "round {round}: the instance ids moved");
+        assert_eq!(stats.created(), created, "round {round}: a new instance");
+        assert_eq!(stats.destroyed(), 0, "round {round}: an instance was lost");
+    }
+    assert!(core.last_rejection().is_none());
+    // The scan cache keeps the ports (and nothing else is learned from the params).
+    let plugin = PluginRef::from_type_id(GAIN).unwrap();
+    assert!(
+        core.plugin_cache()
+            .layout_of(&plugin)
+            .unwrap()
+            .same_ports(&base)
+    );
+}
+
+#[test]
+fn a_port_shape_that_really_grows_is_learned_once_and_then_stays_stable() {
+    let base = scanned_gain().layout;
+    let (mut core, stats) = null_core(base.clone(), base.clone());
+    add_plugin(&mut core, GAIN, "a");
+    add_plugin(&mut core, GAIN, "b");
+    core.wait_plugins();
+    settle(&mut core);
+    let created = stats.created();
+    stats.change_layout(with_aux(&base));
+    restart_until(&mut core, "b", |c| registered_has(c, "out_aux_1_l"));
+    for _ in 0..30 {
+        settle(&mut core);
+    }
+    // The other instance is created again at most once for the new shape.
+    let after = stats.created();
+    assert!(after <= created + 1, "{after} instances after {created}");
+    let settled = ids(&core);
+    assert!(settled.0.is_some() && settled.1.is_some());
+    // More restarts with the same ports (and other params) change nothing at all.
+    for round in 1..=5 {
+        stats.change_layout(reshaped(&with_aux(&base), round, 2));
+        restart_quiet(&mut core, "b");
+        assert_eq!(ids(&core), settled, "round {round}");
+        assert_eq!(stats.created(), after, "round {round}");
+    }
+}

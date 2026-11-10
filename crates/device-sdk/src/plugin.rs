@@ -303,6 +303,18 @@ fn channels_code(c: Option<Channels>) -> u64 {
 }
 
 impl PluginLayout {
+    /// True when `other` has the same port shape: the same main buses, sidechain, note ports and
+    /// aux outputs (what gives the device its sockets). Names, vendor, version and the param
+    /// table are not compared: a plugin may rename or reshape its params per patch.
+    pub fn same_ports(&self, other: &Self) -> bool {
+        self.main_in == other.main_in
+            && self.main_out == other.main_out
+            && self.sidechain == other.sidechain
+            && self.notes_in == other.notes_in
+            && self.notes_out == other.notes_out
+            && self.aux_out == other.aux_out
+    }
+
     /// A deterministic 64-bit FNV-1a hash over every field, in order (no `std` hasher).
     pub fn layout_hash(&self) -> u64 {
         let mut h = Fnv::new();

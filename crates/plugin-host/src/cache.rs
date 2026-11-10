@@ -191,7 +191,9 @@ impl PluginCache {
     }
 
     /// Replaces the layout of `plugin` in every file that lists it, with what the live plugin
-    /// reported (it changed its buses or params after the scan). True when something changed.
+    /// reported when its ports changed after the scan. A different param table, name, vendor or
+    /// version alone changes nothing (plugins reshape their params per patch). True when
+    /// something changed.
     pub fn update_layout(&mut self, plugin: &PluginRef, layout: &PluginLayout) -> bool {
         let mut changed = false;
         for p in self
@@ -200,7 +202,7 @@ impl PluginCache {
             .flat_map(|f| f.plugins.iter_mut())
             .filter(|p| &p.plugin == plugin)
         {
-            if &p.layout != layout {
+            if !p.layout.same_ports(layout) {
                 p.layout = layout.clone();
                 changed = true;
             }
