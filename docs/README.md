@@ -14,14 +14,15 @@
 ## Launcher
 
 The Launcher is a second way to make music next to the arrangement: a grid of looping clips that you start and stop
-live, and that can be written into the arrangement. View > Launcher (F10) shows it in the lower pane in place of the
-arrangement; the same command hides it again.
+live, and that can be written into the arrangement. View > Launcher (F10) shows it where the rack is, with the
+arrangement still below it; the same command hides it again. While the rack is not in the main window the launcher
+takes the lower pane instead.
 
-- **The grid.** Each note track is a column, in the order and the colours of the arrangement's track list; each row is
-  a scene. A slot holds one note clip: its name, a small picture of its notes and a play triangle. The scene column on
+- **The grid.** Each note or audio track is a column, in the order and the colours of the arrangement's track list; each row is
+  a scene. A slot holds one clip: its name, a small picture of its notes or waveform and a play triangle. The scene column on
   the right has a launch button and the scene's name (double click to rename it); the row under the grid has a stop
   square for each track and STOP ALL. A slot that plays has a bar along its bottom edge that follows the loop, and a
-  slot that waits for its moment is outlined and blinks. Slots belong to note tracks; audio tracks do not have any yet.
+  slot that waits for its moment is outlined and blinks. Slots belong to note tracks and audio tracks.
 - **Making clips.** Double click an empty slot to make a one-bar note clip and open it in the piano roll; double click
   a clip to open it. Drag a slot to another to move it, with Ctrl (Cmd on macOS) held to copy it. The right-click list
   of a slot renames it, colours it, sets its loop length (1 to 32 bars), sets its launch quantize and duplicates or
@@ -45,9 +46,12 @@ arrangement; the same command hides it again.
   at the song position where it really started, as long as it played, looped when it ran longer than the slot. The
   whole pass is one undo step. No track needs to be armed; with armed tracks the notes you play are recorded as usual
   next to it. Press BACK TO ARRANGEMENT afterwards to hear the recording.
-- **Not done yet.** Audio clips in slots, dragging clips between the arrangement, the browser and the launcher, launching
-  from a MIDI controller, follow actions, and scene tempos that change the song tempo. The notes of a launched slot go
-  to the track's instrument like any other notes, so a MIDI keyboard still plays it.
+- **Audio and drags.** An audio slot holds an audio clip (its file, gain and fades) and plays it unwarped, looped over
+  the length of the slot. Drop an audio file on an audio slot, or a MIDI file on a note slot, to make its clip; drag an
+  arrangement clip onto a slot to copy it in, and a slot onto an arrangement lane to write a clip there.
+- **Not done yet.** Warped audio in slots, launching from a MIDI controller, follow actions, and scene tempos that
+  change the song tempo. The notes of a launched slot go to the track's instrument like any other notes, so a MIDI
+  keyboard still plays it.
 
 ## Privacy
 

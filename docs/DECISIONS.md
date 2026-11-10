@@ -436,3 +436,10 @@ starts the transport (c) from where it stands; the engine itself keeps a request
 need no order. The launcher is saved as an optional, ignorable field of the song, so the format stays as it is.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+*Note, 2026-11-09.* Format 45 is a batched bump made so that a reader of 44 can open what this build saves. The reader
+of 44 only honours `"compat"` and `"ignorable"` in a file whose version is above its own, and refuses an unknown field
+in a file of version 44, so the fields added after the 44 reader shipped (the clip launcher and the per-note expression)
+could not be skipped under 44. Their rows are now `since` 45 and `ignorable`, the writer says `"compat": 44`, and a
+reader of 44 opens a 45 file and drops those parts with a warning each. Every file saved now carries the two header
+fields; a file before version 37 that carries them is read as the older file it says.

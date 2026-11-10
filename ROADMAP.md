@@ -132,16 +132,16 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 2: The sequencer
 
-- **Clip launcher follow-ups.** Done: a Launcher view in the lower pane (View > Launcher, F10) with a grid of note-track
-  slots and scenes, launches and stops that wait for a launch quantize (exact through tempo ramps and meter changes),
-  slots that override their track's arrangement until they stop, Back to Arrangement, scene launches that can stop empty
-  tracks, and Record Launches into the arrangement as one undo step. Still to come: audio clips in slots (the model, the
-  asset bookkeeping and the warped and streamed playback of an audio slot), dragging arrangement clips into slots and
-  slots onto the arrangement and dropping a file from the browser into a slot (Clip to Launcher and Launcher Clip to
-  Arrangement do the same by command), launching from a controller and a launcher MIDI mapping, follow actions (play the
-  next slot, a random one or stop after some cycles), a legato launch that starts the next clip at the position of the
-  one it replaces, notes that span a locate starting inside a slot (a slot starts its notes at their next note-on), and
-  scene tempos that change the song tempo when the scene launches (a scene keeps a tempo, nothing applies it yet).
+- **Clip launcher follow-ups.** Done: a Launcher view in the place of the rack (View > Launcher, F10) with a grid of
+  note and audio track slots and scenes, launches and stops that wait for a launch quantize (exact through tempo ramps
+  and meter changes), slots that override their track's arrangement until they stop, Back to Arrangement, scene
+  launches that can stop empty tracks, Record Launches into the arrangement as one undo step, audio slots (unwarped),
+  files dropped on slots and clips dragged between the arrangement and the slots. Still to come: warped and streamed
+  audio in slots (an audio slot plays its file at the file's own tempo, in memory), launching from a controller and a
+  launcher MIDI mapping, follow actions (play the next slot, a random one or stop after some cycles), a legato launch
+  that starts the next clip at the position of the one it replaces, notes that span a locate starting inside a slot (a
+  slot starts its notes at their next note-on), and scene tempos that change the song tempo when the scene launches (a
+  scene keeps a tempo, nothing applies it yet).
 - **Automation recording follow-ups.** A touch that starts at the press instead of the first move (needs a press and release signal from every control, plugin windows included).
 - **MIDI controller data follow-ups.** Editing the per-note expression curves by hand (drawing and moving their points in the piano roll; today they are recorded, played, cleared and kept in MIDI files), expression for the other instruments (the grain sampler, the sampler, the semi-modular synth and the organ take a note's pressure as their pressure source and ignore its pitch and slide), MPE member channels to plugins that take MPE MIDI and to the MIDI Out device (CLAP and VST3 plugins already get per-note expression events), an expression that follows its note when the note is moved or retuned (it is kept by the note's start and key), the zone an MPE controller announced shown in Audio Settings, the CC badge on a compact track row (the badge needs a row of 52 px or more), and snapping of the points of the track lanes to the bar lines of a changing meter (the Bar and Beat snap counts from the first meter).
 - **Quantize and groove follow-ups.** A groove from an audio loop, device-parameter lanes and a track's own controller lanes that move with the notes of a quantize (only the lanes of a note clip do today), and a quantize of the note lengths to a length grid (the grid per note picks the start grid from each note's length).
