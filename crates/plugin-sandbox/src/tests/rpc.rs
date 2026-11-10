@@ -405,6 +405,26 @@ fn a_begun_deactivate_returns_at_once_and_is_polled_to_the_end_without_killing_a
 }
 
 #[test]
+fn a_bounce_waits_for_a_deactivate_even_when_the_plugin_is_told_realtime() {
+    let mut timeouts = test_timeouts();
+    timeouts.bounce = true;
+    timeouts.create = Duration::from_secs(5);
+    let started = start_with(busy_deactivate(Duration::from_millis(200)), timeouts);
+    let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let processor = instance
+        .activate(&cfg(48_000.0, RunMode::Realtime))
+        .map_err(|e| e.to_string())
+        .unwrap();
+    let t = now();
+    assert!(
+        instance.begin_deactivate(processor),
+        "a bounce is done when the call returns"
+    );
+    assert!(now().saturating_duration_since(t) >= Duration::from_millis(150));
+    assert!(!instance.is_lost());
+}
+
+#[test]
 fn a_begun_deactivate_of_a_child_that_dies_ends_the_wait() {
     let started = start_with(
         FakeOptions::default().script(|req, _| {

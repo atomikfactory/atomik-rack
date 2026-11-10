@@ -323,6 +323,12 @@ impl PluginInstance for RemoteInstance {
     }
 
     fn begin_deactivate(&mut self, processor: Box<dyn PluginProcessor>) -> bool {
+        if self.timeouts().bounce {
+            // A bounce finishes a restart at the same batch as in process, whatever mode the
+            // plugin was told: it waits for the child.
+            self.deactivate(processor);
+            return true;
+        }
         drop(processor);
         self.offline_active = false;
         if self
