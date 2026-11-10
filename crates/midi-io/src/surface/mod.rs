@@ -99,9 +99,26 @@ pub struct SurfaceState {
     pub transport: TransportLeds,
     /// The play position.
     pub position: PositionState,
-    /// The value of each remote knob, 0..=1 (`None` when the knob has no parameter): the first
-    /// parameters of the device the surface follows. Empty for a surface with no knobs.
+    /// The value of each remote parameter, 0..=1 (`None` when it cannot be read): every
+    /// parameter the remote knobs can address on the device the surface follows, in order. The
+    /// driver shows them eight at a time (a page). Empty for a surface with no knobs.
     pub knobs: Vec<Option<f32>>,
+    /// What the remote knobs address: the device and its parameters.
+    pub remote: RemoteDevice,
+}
+
+/// The device a surface's remote knobs follow, as far as a driver needs to know it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RemoteDevice {
+    /// Tells one device from another (`None` when nothing is followed). Only compared.
+    pub id: Option<String>,
+    /// The device's name, for messages.
+    pub name: String,
+    /// The name of each remote parameter, in the order of [`SurfaceState::knobs`].
+    pub params: Vec<String>,
+    /// Which of the parameters are stepped (a choice or a switch): they jump by steps, so the
+    /// soft takeover leaves them alone.
+    pub stepped: Vec<bool>,
 }
 
 /// A transport key.
@@ -132,7 +149,7 @@ pub enum KnobMove {
 }
 
 /// What the user did on the surface. A strip is an index into [`SurfaceState::strips`].
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SurfaceAction {
     /// A fader was moved to `value`, 0..=1.
     Fader {
@@ -179,6 +196,9 @@ pub enum SurfaceAction {
         /// How it moved.
         change: KnobMove,
     },
+    /// A short message for the status line (a knob page that changed, a control that waits to
+    /// pick up a value).
+    Notice(String),
 }
 
 /// A control-surface protocol.
@@ -209,6 +229,11 @@ pub trait SurfaceDriver: Send {
     /// Appends the messages that make the surface show `state`, **only what differs** from what
     /// was sent before (calling it twice with the same state sends nothing the second time).
     fn feedback(&mut self, state: &SurfaceState, out: &mut Vec<Vec<u8>>);
+
+    /// A command asked the knobs to move `delta` pages (positive is the next page, wrapping):
+    /// appends what the user should be told to `actions`. A driver with no knob pages ignores it.
+    fn knob_page(&mut self, _delta: i32, _state: &SurfaceState, _actions: &mut Vec<SurfaceAction>) {
+    }
 
     /// The surface is going away: appends what to send to let it go offline.
     fn disconnect(&mut self, out: &mut Vec<Vec<u8>>);

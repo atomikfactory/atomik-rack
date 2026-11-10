@@ -4,7 +4,9 @@
 
 use super::*;
 use crate::controller_driver::ProfileDriver;
-use crate::controller_profile::{ControlMode, ControlSpec, ControllerProfile, Role};
+use crate::controller_profile::{
+    ControlMode, ControlSpec, ControllerProfile, ProfileOptions, Role,
+};
 use crate::sink::RecordingSink;
 use crate::surface::LoopbackSurface;
 use atomik_model::{RelativeKind, SourceKind};
@@ -26,7 +28,8 @@ fn spec(role: Role, source: SourceKind, mode: ControlMode, feedback: bool) -> Co
 }
 
 /// A controller with eight knobs on CC 21..=28 (the second one an encoder), two faders on CC 1
-/// and 2, the transport on notes 90..=93 and the bank keys on notes 94 and 95.
+/// and 2, the transport on notes 90..=93, the bank keys on notes 94 and 95 and the page keys on
+/// notes 96 and 97. Values are not picked up (see [`picking`]).
 fn profile(name: &str, cc_base: u8, feedback: bool) -> ControllerProfile {
     let mut controls = Vec::new();
     for n in 1..=8u8 {
@@ -57,6 +60,8 @@ fn profile(name: &str, cc_base: u8, feedback: bool) -> ControllerProfile {
         (Role::Loop, 93),
         (Role::BankLeft, 94),
         (Role::BankRight, 95),
+        (Role::PageDown, 96),
+        (Role::PageUp, 97),
     ] {
         controls.push(spec(
             role,
@@ -70,6 +75,18 @@ fn profile(name: &str, cc_base: u8, feedback: bool) -> ControllerProfile {
         input: format!("{name} In"),
         output: Some(format!("{name} Out")),
         controls,
+        options: ProfileOptions {
+            pickup: false,
+            keep_page: false,
+        },
+    }
+}
+
+/// [`profile`] with the soft takeover on, as a new profile has it.
+fn picking(name: &str, cc_base: u8, feedback: bool) -> ControllerProfile {
+    ControllerProfile {
+        options: ProfileOptions::default(),
+        ..profile(name, cc_base, feedback)
     }
 }
 
@@ -337,4 +354,188 @@ fn two_controllers_work_at_once_each_on_its_own_device() {
     a.feed(&note(95));
     t.frame(&mut c);
     assert_eq!(c.surfaces().len(), 2);
+}
+
+/// Sets remote parameter `n` of `device` to the normalised value `norm`.
+fn set_remote(c: &mut AppCore<RecordingSink>, device: &str, n: usize, norm: f32) {
+    let (param, _) = remote(c, device, n);
+    let d = c.doc().resolve(&key(device)).unwrap();
+    let desc = *c
+        .registry()
+        .get(&d.type_id)
+        .unwrap()
+        .descriptor
+        .param_by_key(param)
+        .unwrap();
+    c.apply_command(Command::SetParam {
+        key: key(device),
+        param: param.to_owned(),
+        value: desc.from_normalized(norm),
+        merge: None,
+    })
+    .unwrap();
+}
+
+fn device_name(c: &AppCore<RecordingSink>, device: &str) -> String {
+    c.doc().device(&key(device)).unwrap().name.clone()
+}
+
+#[test]
+fn the_page_commands_move_the_knobs_to_the_next_parameters() {
+    let mut c = core(1);
+    let pad = attach(&mut c, profile("Pad", 0, false));
+    let mut t = Clock(0.0);
+    t.frame(&mut c);
+    c.select(Some(key("s1")));
+    t.frame(&mut c);
+    let name = device_name(&c, "s1");
+    // Page 2: knob 1 drives the ninth parameter and leaves the first alone.
+    let first = remote(&c, "s1", 0).1;
+    c.knob_page(1);
+    assert_eq!(c.last_rejection(), Some(&*format!("Knobs: {name} 9-16")));
+    pad.feed(&cc(21, 127));
+    t.frame(&mut c);
+    assert!(
+        near(remote(&c, "s1", 8).1, 1.0),
+        "{:?}",
+        remote(&c, "s1", 8)
+    );
+    assert!(near(remote(&c, "s1", 0).1, first));
+    // Back to page 1 (the previous page), and the first knob is the first parameter again.
+    c.knob_page(-1);
+    assert_eq!(c.last_rejection(), Some(&*format!("Knobs: {name} 1-8")));
+    pad.feed(&cc(21, 0));
+    t.frame(&mut c);
+    assert!(near(remote(&c, "s1", 0).1, 0.0));
+    // From the first page, Previous wraps to the last page of the device.
+    c.knob_page(-1);
+    let message = c.last_rejection().unwrap().to_owned();
+    assert!(message.starts_with(&format!("Knobs: {name} ")), "{message}");
+    assert!(!message.ends_with(" 1-8"), "{message}");
+}
+
+#[test]
+fn the_page_keys_of_the_controller_do_the_same() {
+    let mut c = core(1);
+    let pad = attach(&mut c, profile("Pad", 0, false));
+    let mut t = Clock(0.0);
+    t.frame(&mut c);
+    c.select(Some(key("s1")));
+    t.frame(&mut c);
+    let name = device_name(&c, "s1");
+    pad.feed(&note(97));
+    t.frame(&mut c);
+    assert_eq!(c.last_rejection(), Some(&*format!("Knobs: {name} 9-16")));
+    pad.feed(&note(96));
+    t.frame(&mut c);
+    assert_eq!(c.last_rejection(), Some(&*format!("Knobs: {name} 1-8")));
+}
+
+#[test]
+fn the_page_returns_to_the_first_when_the_selection_moves_to_another_device() {
+    let mut c = core(2);
+    let pad = attach(&mut c, profile("Pad", 0, false));
+    let mut t = Clock(0.0);
+    t.frame(&mut c);
+    c.select(Some(key("s1")));
+    t.frame(&mut c);
+    c.knob_page(1);
+    c.select(Some(key("s2")));
+    t.frame(&mut c);
+    pad.feed(&cc(21, 127));
+    t.frame(&mut c);
+    assert!(near(remote(&c, "s2", 0).1, 1.0), "page 1 of the new device");
+}
+
+#[test]
+fn a_page_change_sends_the_new_values_to_the_lit_knobs() {
+    let mut c = core(1);
+    let pad = attach(&mut c, profile("Pad", 0, true));
+    let mut t = Clock(0.0);
+    c.select(Some(key("s1")));
+    // Parameter 9 stands where parameter 1 does not.
+    let to = if remote(&c, "s1", 0).1 < 0.5 {
+        1.0
+    } else {
+        0.0
+    };
+    set_remote(&mut c, "s1", 8, to);
+    t.frame(&mut c);
+    let _ = pad.take_sent();
+    t.frame(&mut c);
+    assert!(pad.take_sent().is_empty());
+    c.knob_page(1);
+    t.frame(&mut c);
+    let sent = pad.take_sent();
+    assert!(
+        sent.contains(&vec![0xB0, 21, (to * 127.0).round() as u8]),
+        "{sent:?}"
+    );
+    // Only knobs whose value differs are sent: the keys and the faders are not.
+    assert!(sent.iter().all(|m| (21..=28).contains(&m[1])), "{sent:?}");
+    // Nothing more once they are shown.
+    t.frame(&mut c);
+    assert!(pad.take_sent().is_empty());
+}
+
+/// The first knob of the first page that is an absolute control of a continuous parameter of
+/// `device` (a stepped parameter is never waited for, and knob 2 of the test profile is an encoder).
+fn absolute_knob(c: &AppCore<RecordingSink>, device: &str) -> usize {
+    let d = c.doc().resolve(&key(device)).unwrap();
+    c.registry()
+        .get(&d.type_id)
+        .unwrap()
+        .descriptor
+        .params
+        .iter()
+        .filter(|p| !atomik_model::console::is_hidden_param(p.key) && p.key != "bypass")
+        .take(8)
+        .enumerate()
+        .find(|(i, p)| *i != 1 && !p.discrete)
+        .map(|(i, _)| i)
+        .expect("a continuous absolute knob on the first page")
+}
+
+#[test]
+fn an_absolute_knob_waits_for_the_parameter_after_a_device_change_or_an_edit() {
+    let mut c = core(2);
+    let pad = attach(&mut c, picking("Pad", 0, false));
+    let mut t = Clock(0.0);
+    t.frame(&mut c);
+    c.select(Some(key("s1")));
+    let k = absolute_knob(&c, "s1");
+    let cc_of = 21 + k as u8;
+    set_remote(&mut c, "s1", k, 0.5);
+    t.frame(&mut c);
+    // Far below the value: nothing moves, and the status line says which way to turn.
+    pad.feed(&cc(cc_of, 10));
+    t.frame(&mut c);
+    assert!(near(remote(&c, "s1", k).1, 0.5));
+    let message = c.last_rejection().unwrap().to_owned();
+    assert!(
+        message.starts_with(&format!("Turn knob {} up to pick up ", k + 1)),
+        "{message}"
+    );
+    // Reaching the value takes over; from then on the knob moves it.
+    pad.feed(&cc(cc_of, 64));
+    pad.feed(&cc(cc_of, 100));
+    t.frame(&mut c);
+    assert!(near(remote(&c, "s1", k).1, 100.0 / 127.0));
+    // The mouse edits the parameter: the knob has to catch it again.
+    set_remote(&mut c, "s1", k, 0.2);
+    pad.feed(&cc(cc_of, 102));
+    t.frame(&mut c);
+    assert!(near(remote(&c, "s1", k).1, 0.2));
+    // Another device is followed: its parameter is not where the knob is either.
+    set_remote(&mut c, "s2", k, 0.1);
+    c.select(Some(key("s2")));
+    t.frame(&mut c);
+    pad.feed(&cc(cc_of, 127));
+    t.frame(&mut c);
+    assert!(near(remote(&c, "s2", k).1, 0.1));
+    assert!(near(remote(&c, "s1", k).1, 0.2));
+    // Sweeping down through the value catches it.
+    pad.feed(&cc(cc_of, 0));
+    t.frame(&mut c);
+    assert!(near(remote(&c, "s2", k).1, 0.0));
 }

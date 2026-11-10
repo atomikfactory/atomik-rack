@@ -1,5 +1,6 @@
 use super::*;
-use atomik_midi_io::surface::{MasterState, StripState, TransportLeds};
+use crate::controller_profile::ProfileOptions;
+use atomik_midi_io::surface::{MasterState, RemoteDevice, StripState, TransportLeds};
 use atomik_model::RelativeKind;
 
 fn spec(role: Role, source: SourceKind, mode: ControlMode) -> ControlSpec {
@@ -23,7 +24,36 @@ fn profile(controls: Vec<ControlSpec>, output: bool) -> ControllerProfile {
         input: "In".to_owned(),
         output: output.then(|| "Out".to_owned()),
         controls,
+        // The older tests read the controls without the soft takeover; the new ones turn it on.
+        options: ProfileOptions {
+            pickup: false,
+            keep_page: false,
+        },
     }
+}
+
+/// A driver whose profile keeps the defaults: values are picked up.
+fn picking(controls: Vec<ControlSpec>) -> ProfileDriver {
+    let mut p = profile(controls, false);
+    p.options = ProfileOptions::default();
+    ProfileDriver::new(p)
+}
+
+/// A state whose followed device `id` has `n` remote parameters, each at 0.5.
+fn paged(n: usize, id: &str) -> SurfaceState {
+    let mut s = state(4);
+    s.knobs = vec![Some(0.5); n];
+    s.remote = RemoteDevice {
+        id: Some(id.to_owned()),
+        name: "Synth".to_owned(),
+        params: (1..=n).map(|i| format!("Param {i}")).collect(),
+        stepped: vec![false; n],
+    };
+    s
+}
+
+fn notice(text: &str) -> SurfaceAction {
+    SurfaceAction::Notice(text.to_owned())
 }
 
 fn layout() -> Vec<ControlSpec> {
@@ -436,4 +466,331 @@ fn feedback_messages_read_back_as_the_same_control() {
         };
         assert!((v - 0.5).abs() < 0.01, "{source:?}: {v}");
     }
+}
+
+fn knob(knob: usize, v: f32) -> SurfaceAction {
+    SurfaceAction::Knob {
+        knob,
+        change: KnobMove::To(v),
+    }
+}
+
+#[test]
+fn an_absolute_knob_waits_below_the_value_and_takes_over_at_it() {
+    let mut d = picking(layout());
+    let s = paged(8, "synth");
+    // Far below 0.5: nothing happens, and the user is told which way to turn, once.
+    assert_eq!(
+        send(&mut d, &s, &[0xB0, 21, 10]),
+        [notice("Turn knob 1 up to pick up Param 1")]
+    );
+    assert!(send(&mut d, &s, &[0xB0, 21, 20]).is_empty());
+    assert!(send(&mut d, &s, &[0xB0, 21, 40]).is_empty());
+    // Within 2 percent of the value (62 / 127 = 0.488): it takes over.
+    assert_eq!(send(&mut d, &s, &[0xB0, 21, 62]), [knob(0, 62.0 / 127.0)]);
+    // And stays taken over: every move now goes through.
+    assert_eq!(send(&mut d, &s, &[0xB0, 21, 100]), [knob(0, 100.0 / 127.0)]);
+}
+
+#[test]
+fn a_knob_above_the_value_is_told_to_turn_down() {
+    let mut d = picking(layout());
+    let s = paged(8, "synth");
+    assert_eq!(
+        send(&mut d, &s, &[0xB0, 21, 120]),
+        [notice("Turn knob 1 down to pick up Param 1")]
+    );
+    assert_eq!(send(&mut d, &s, &[0xB0, 21, 66]), [knob(0, 66.0 / 127.0)]);
+}
+
+#[test]
+fn a_knob_that_jumps_across_the_value_between_two_messages_takes_over() {
+    let mut d = picking(layout());
+    let s = paged(8, "synth");
+    send(&mut d, &s, &[0xB0, 21, 10]);
+    // 10 to 120 skips the window around 0.5, but it went through the value.
+    assert_eq!(send(&mut d, &s, &[0xB0, 21, 120]), [knob(0, 120.0 / 127.0)]);
+}
+
+#[test]
+fn a_knob_waits_again_when_the_parameter_was_moved_elsewhere() {
+    let mut d = picking(layout());
+    let mut s = paged(8, "synth");
+    send(&mut d, &s, &[0xB0, 21, 64]);
+    assert_eq!(send(&mut d, &s, &[0xB0, 21, 66]), [knob(0, 66.0 / 127.0)]);
+    // The mouse moves the parameter to 0.9: the knob has to catch it.
+    s.knobs[0] = Some(0.9);
+    assert_eq!(
+        send(&mut d, &s, &[0xB0, 21, 68]),
+        [notice("Turn knob 1 up to pick up Param 1")]
+    );
+    assert_eq!(send(&mut d, &s, &[0xB0, 21, 115]), [knob(0, 115.0 / 127.0)]);
+}
+
+#[test]
+fn relative_encoders_stepped_parameters_and_the_option_never_wait() {
+    // An encoder turns from where the parameter is.
+    let mut d = picking(layout());
+    let s = paged(8, "synth");
+    assert_eq!(
+        send(&mut d, &s, &[0xB0, 22, 65]),
+        [SurfaceAction::Knob {
+            knob: 1,
+            change: KnobMove::By(DEFAULT_SENSITIVITY)
+        }]
+    );
+    // A stepped parameter jumps by steps: nothing to catch.
+    let mut stepped = paged(8, "synth");
+    stepped.remote.stepped[0] = true;
+    assert_eq!(
+        send(&mut d, &stepped, &[0xB0, 21, 10]),
+        [knob(0, 10.0 / 127.0)]
+    );
+    // A parameter that cannot be read has no value to wait for.
+    let mut unknown = paged(8, "synth");
+    unknown.knobs[0] = None;
+    assert_eq!(
+        send(&mut d, &unknown, &[0xB0, 21, 10]),
+        [knob(0, 10.0 / 127.0)]
+    );
+    // With the option off the knob just sets the value.
+    let mut off = ProfileDriver::new(profile(layout(), false));
+    assert_eq!(send(&mut off, &s, &[0xB0, 21, 10]), [knob(0, 10.0 / 127.0)]);
+}
+
+#[test]
+fn a_fader_waits_for_its_strip_and_a_motorised_fader_does_not() {
+    let mut d = picking(layout());
+    let mut s = state(20);
+    s.strips[1].fader = 0.5;
+    s.strips[1].name = "Bass".to_owned();
+    assert_eq!(
+        send(&mut d, &s, &[0xB0, 2, 0]),
+        [notice("Turn fader 2 up to pick up Bass")]
+    );
+    assert_eq!(
+        send(&mut d, &s, &[0xB0, 2, 64]),
+        [SurfaceAction::Fader {
+            strip: 1,
+            value: 64.0 / 127.0
+        }]
+    );
+    // The master fader waits too.
+    s.master = Some(MasterState { fader: 0.9 });
+    assert_eq!(
+        send(&mut d, &s, &[0xB0, 3, 0]),
+        [notice("Turn master fader up to pick up the master")]
+    );
+    // A motorised fader receives the value as feedback, so it is already in place.
+    let mut motor = picking(vec![fb(spec(
+        Role::Fader(1),
+        SourceKind::Cc(1),
+        ControlMode::Absolute,
+    ))]);
+    assert_eq!(
+        send(&mut motor, &s, &[0xB0, 1, 127]),
+        [SurfaceAction::Fader {
+            strip: 0,
+            value: 1.0
+        }]
+    );
+}
+
+#[test]
+fn a_bank_change_makes_the_faders_wait_again() {
+    let mut d = picking(layout());
+    let s = state(20);
+    // Strip 0 sits at 0.0: the fader takes over at once.
+    assert_eq!(
+        send(&mut d, &s, &[0xB0, 1, 0]),
+        [SurfaceAction::Fader {
+            strip: 0,
+            value: 0.0
+        }]
+    );
+    send(&mut d, &s, &[0x90, 92, 100]);
+    assert_eq!(d.bank(), 8);
+    // Strip 8 is at 0.08 and the fader at 1.0: it waits.
+    assert_eq!(
+        send(&mut d, &s, &[0xB0, 1, 127]),
+        [notice("Turn fader 1 down to pick up Ch9")]
+    );
+}
+
+fn paging() -> Vec<ControlSpec> {
+    let mut v = layout();
+    v.push(spec(
+        Role::PageDown,
+        SourceKind::Note(96),
+        ControlMode::Button,
+    ));
+    v.push(spec(
+        Role::PageUp,
+        SourceKind::Note(97),
+        ControlMode::Button,
+    ));
+    v
+}
+
+#[test]
+fn the_page_keys_move_the_knobs_over_the_parameters_and_wrap() {
+    let mut d = ProfileDriver::new(profile(paging(), false));
+    let s = paged(20, "synth");
+    assert_eq!(d.page(), 0);
+    assert_eq!(send(&mut d, &s, &[0xB0, 21, 5]), [knob(0, 5.0 / 127.0)]);
+    // Page up: parameters 9 to 16.
+    assert_eq!(
+        send(&mut d, &s, &[0x90, 97, 100]),
+        [notice("Knobs: Synth 9-16")]
+    );
+    assert_eq!(d.page(), 1);
+    assert_eq!(send(&mut d, &s, &[0xB0, 21, 5]), [knob(8, 5.0 / 127.0)]);
+    // The last page holds what is left (17 to 20); then it wraps to the first.
+    assert_eq!(
+        send(&mut d, &s, &[0x90, 97, 100]),
+        [notice("Knobs: Synth 17-20")]
+    );
+    assert_eq!(send(&mut d, &s, &[0xB0, 21, 5]), [knob(16, 5.0 / 127.0)]);
+    assert_eq!(
+        send(&mut d, &s, &[0x90, 97, 100]),
+        [notice("Knobs: Synth 1-8")]
+    );
+    // Page down from the first page wraps to the last.
+    assert_eq!(
+        send(&mut d, &s, &[0x90, 96, 100]),
+        [notice("Knobs: Synth 17-20")]
+    );
+    assert_eq!(d.page(), 2);
+    // A relative encoder follows the page too.
+    assert_eq!(
+        send(&mut d, &s, &[0xB0, 22, 65]),
+        [SurfaceAction::Knob {
+            knob: 17,
+            change: KnobMove::By(DEFAULT_SENSITIVITY)
+        }]
+    );
+}
+
+#[test]
+fn a_device_with_one_page_stays_on_it() {
+    let mut d = ProfileDriver::new(profile(paging(), false));
+    let s = paged(5, "synth");
+    assert_eq!(
+        send(&mut d, &s, &[0x90, 97, 100]),
+        [notice("Knobs: Synth 1-5")]
+    );
+    assert_eq!(d.page(), 0);
+    // Nothing followed: the key says so.
+    let none = state(4);
+    assert_eq!(
+        send(&mut d, &none, &[0x90, 97, 100]),
+        [notice("No device with knobs is selected")]
+    );
+}
+
+#[test]
+fn the_commands_turn_the_page_like_the_keys() {
+    let mut d = ProfileDriver::new(profile(layout(), false));
+    let s = paged(20, "synth");
+    let mut actions = Vec::new();
+    d.knob_page(1, &s, &mut actions);
+    assert_eq!(actions, [notice("Knobs: Synth 9-16")]);
+    actions.clear();
+    d.knob_page(-1, &s, &mut actions);
+    assert_eq!(actions, [notice("Knobs: Synth 1-8")]);
+    assert_eq!(d.page(), 0);
+}
+
+#[test]
+fn the_page_starts_again_when_the_followed_device_changes() {
+    let mut d = ProfileDriver::new(profile(paging(), false));
+    let a = paged(20, "a");
+    send(&mut d, &a, &[0x90, 97, 100]);
+    assert_eq!(d.page(), 1);
+    // Another device: page 1 again.
+    let b = paged(20, "b");
+    assert_eq!(send(&mut d, &b, &[0xB0, 21, 5]), [knob(0, 5.0 / 127.0)]);
+    assert_eq!(d.page(), 0);
+    // And back: it does not remember.
+    send(&mut d, &a, &[0xB0, 21, 5]);
+    assert_eq!(d.page(), 0);
+}
+
+#[test]
+fn the_page_is_kept_per_device_when_the_profile_says_so() {
+    let mut p = profile(paging(), false);
+    p.options.keep_page = true;
+    let mut d = ProfileDriver::new(p);
+    let a = paged(30, "a");
+    let b = paged(30, "b");
+    send(&mut d, &a, &[0x90, 97, 100]);
+    send(&mut d, &a, &[0x90, 97, 100]);
+    assert_eq!(d.page(), 2);
+    send(&mut d, &b, &[0x90, 97, 100]);
+    assert_eq!(d.page(), 1, "a new device starts on page 1, then moves on");
+    // Back to the first device: page 3, where it was left.
+    assert_eq!(send(&mut d, &a, &[0xB0, 21, 5]), [knob(16, 5.0 / 127.0)]);
+    assert_eq!(d.page(), 2);
+    // The second one kept its page too.
+    send(&mut d, &b, &[0xB0, 21, 5]);
+    assert_eq!(d.page(), 1);
+}
+
+#[test]
+fn a_page_that_no_longer_exists_falls_back_to_the_last_one() {
+    let mut d = ProfileDriver::new(profile(paging(), false));
+    send(&mut d, &paged(30, "a"), &[0x90, 97, 100]);
+    send(&mut d, &paged(30, "a"), &[0x90, 97, 100]);
+    assert_eq!(d.page(), 2);
+    // The device lost parameters (a different mode): the last page it still has.
+    send(&mut d, &paged(12, "a"), &[0xB0, 99, 0]);
+    assert_eq!(d.page(), 1);
+}
+
+#[test]
+fn a_page_change_sends_the_new_values_to_lit_knobs_and_nothing_else() {
+    let controls = vec![
+        fb(spec(
+            Role::Knob(1),
+            SourceKind::Cc(21),
+            ControlMode::Absolute,
+        )),
+        fb(spec(
+            Role::Knob(2),
+            SourceKind::Cc(22),
+            ControlMode::Absolute,
+        )),
+        spec(Role::PageUp, SourceKind::Note(97), ControlMode::Button),
+    ];
+    let mut d = ProfileDriver::new(profile(controls, true));
+    let mut s = paged(16, "synth");
+    s.knobs = (0..16)
+        .map(|i| Some(if i < 8 { 0.5 } else { 1.0 }))
+        .collect();
+    let mut out = Vec::new();
+    d.connect(&s, &mut out);
+    assert_eq!(out, vec![vec![0xB0, 21, 64], vec![0xB0, 22, 64]]);
+    assert!(out_of(&mut d, &s).is_empty());
+    // The page changes; the next feedback pass shows the second page on both knobs.
+    send(&mut d, &s, &[0x90, 97, 100]);
+    assert_eq!(
+        out_of(&mut d, &s),
+        vec![vec![0xB0, 21, 127], vec![0xB0, 22, 127]]
+    );
+    assert!(out_of(&mut d, &s).is_empty());
+}
+
+#[test]
+fn a_page_change_makes_the_knobs_wait_for_the_new_parameters() {
+    let mut d = picking(paging());
+    let mut s = paged(16, "synth");
+    s.knobs[8] = Some(0.9);
+    send(&mut d, &s, &[0xB0, 21, 64]);
+    assert_eq!(send(&mut d, &s, &[0xB0, 21, 66]), [knob(0, 66.0 / 127.0)]);
+    send(&mut d, &s, &[0x90, 97, 100]);
+    // On page 2 knob 1 drives parameter 9, which stands at 0.9.
+    assert_eq!(
+        send(&mut d, &s, &[0xB0, 21, 66]),
+        [notice("Turn knob 1 up to pick up Param 9")]
+    );
 }
