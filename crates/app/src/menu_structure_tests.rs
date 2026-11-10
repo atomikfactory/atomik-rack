@@ -22,6 +22,7 @@ fn full_model() -> Vec<Menu> {
         current: 0,
         vcas: &vcas,
         buses: &buses,
+        presets: &[],
     };
     menus_with_songs(&state(), &keymap, &recent, &templates, &list)
 }

@@ -14,7 +14,7 @@ use atomik_model::{FadeCurve, ThinLevel, WarpMode};
 use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
 use atomik_ui::big_meter::MeterMode;
 use atomik_ui::keymap::{
-    APP_ZOOM_ARGS, INPUT_CHANNEL_ARGS, Keymap, MAP_COMMAND_ARGS, MORPH_TIME_ARGS,
+    APP_ZOOM_ARGS, EXPORT_FOR_ARGS, INPUT_CHANNEL_ARGS, Keymap, MAP_COMMAND_ARGS, MORPH_TIME_ARGS,
     OUTPUT_CHANNEL_ARGS, RATE_ARGS, RECENT_ARGS, REFERENCE_BAND_ARGS, REFERENCE_CUE_ARGS,
     REFERENCE_SELECT_ARGS, REFERENCE_SOLO_ARGS, SONG_ARGS, TEMPLATE_ARGS,
 };
@@ -149,6 +149,10 @@ pub enum AppCommand {
     ExportSelectionAudio,
     /// File ▸ Export Stems as Audio Files…: one file per mixer strip, in a folder.
     ExportStems,
+    /// File ▸ Export for ▸ a preset: the export of a purpose (streaming, podcast, video, stems for
+    /// mixing, club or a preset of the user's), by place in the list of presets; a dialog asks
+    /// for the file (a folder for stems).
+    ExportFor(usize),
     /// File ▸ Export ▸ Film with Mix…: the song's film with the mix of the song as its sound.
     ExportFilm,
     /// Help ▸ Export Device Parameter List…: a text table of every built-in device parameter.
@@ -920,6 +924,7 @@ impl AppCommand {
             AppCommand::ExportSelectionAudio => ("file.export_selection_audio", None),
             AppCommand::ExportStems => ("file.export_stems", None),
             AppCommand::ExportFilm => ("file.export_film", None),
+            AppCommand::ExportFor(i) => ("file.export_for", Some(EXPORT_FOR_ARGS.get(*i)?)),
             AppCommand::ExportDeviceInfo => ("file.export_device_info", None),
             AppCommand::StressRack => ("file.stress_rack", None),
             AppCommand::StressSong => ("file.stress_song", None),
@@ -1324,6 +1329,9 @@ impl AppCommand {
             ("file.export_selection_audio", None) => AppCommand::ExportSelectionAudio,
             ("file.export_stems", None) => AppCommand::ExportStems,
             ("file.export_film", None) => AppCommand::ExportFilm,
+            ("file.export_for", Some(n)) => {
+                AppCommand::ExportFor(EXPORT_FOR_ARGS.iter().position(|a| *a == n)?)
+            }
             ("file.export_device_info", None) => AppCommand::ExportDeviceInfo,
             ("file.stress_rack", None) => AppCommand::StressRack,
             ("file.stress_song", None) => AppCommand::StressSong,
@@ -2671,6 +2679,10 @@ pub struct SongList<'a> {
     /// name (at most [`MAX_NAMED_VCAS`] are listed), for the Mixer menu's Route Folder to Bus
     /// submenu.
     pub buses: &'a [(u32, String)],
+    /// The export presets of the File menu's Export for submenu: the label of each and whether it
+    /// can be used now (a preset that needs FFmpeg cannot without it); at most
+    /// [`EXPORT_FOR_ARGS`]'s length are listed. Empty lists the built-in presets.
+    pub presets: &'a [(String, bool)],
 }
 
 /// The most rows (separators and submenu entries included) a top-level menu has.
@@ -2770,6 +2782,33 @@ pub fn menus_with_songs(
                     state.default_song,
                 ),
             ])
+            .collect(),
+    });
+    // The presets of Export for: the shell's list, else the built-in ones (usable when a song can
+    // be exported at all).
+    let preset_rows: Vec<(String, bool)> = if songs.presets.is_empty() {
+        crate::export_presets::builtin()
+            .into_iter()
+            .map(|p| (p.name, state.export_song))
+            .collect()
+    } else {
+        songs.presets.to_vec()
+    };
+    let export_for = MenuEntry::Submenu(Submenu {
+        label: "Export for",
+        entries: preset_rows
+            .iter()
+            .take(EXPORT_FOR_ARGS.len())
+            .enumerate()
+            .map(|(i, (name, usable))| {
+                MenuEntry::Item(MenuItem {
+                    label: Cow::Owned(name.clone()),
+                    command: AppCommand::ExportFor(i),
+                    shortcut: None,
+                    checked: None,
+                    enabled: *usable,
+                })
+            })
             .collect(),
     });
     let mut menus = vec![
@@ -2894,6 +2933,7 @@ pub fn menus_with_songs(
                         item("Export Patch\u{2026}", AppCommand::ExportPatch),
                     ],
                 }),
+                export_for,
                 MenuEntry::Submenu(Submenu {
                     label: "Project Files",
                     entries: vec![
@@ -4682,6 +4722,8 @@ mod tests {
             AppCommand::ExportSelectionAudio,
             AppCommand::ExportStems,
             AppCommand::ExportFilm,
+            AppCommand::ExportFor(0),
+            AppCommand::ExportFor(20),
             AppCommand::DeliveryTargets,
             AppCommand::StressRack,
             AppCommand::StressSong,
@@ -5101,6 +5143,7 @@ mod tests {
             current: 0,
             vcas: &[],
             buses: &[],
+            presets: &[],
         };
         let model = menus_with_songs(&state(), &keymap, &recent, &templates, &list);
         let in_menu: Vec<AppCommand> = model
@@ -5466,6 +5509,7 @@ mod tests {
             current: 1,
             vcas: &[],
             buses: &[],
+            presets: &[],
         };
         let m = menus_with_songs(&state(), &legacy(Os::Windows), &[], &[], &songs);
         let window = m.iter().find(|m| m.title == "Window").unwrap();
@@ -5499,6 +5543,7 @@ mod tests {
             current: 0,
             vcas: &[],
             buses: &[],
+            presets: &[],
         };
         let m = menus_with_songs(&state(), &legacy(Os::Windows), &[], &[], &songs);
         let window = m.iter().find(|m| m.title == "Window").unwrap();

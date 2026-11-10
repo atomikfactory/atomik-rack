@@ -30,7 +30,8 @@
 use super::*;
 use atomik_render::export::BitDepth;
 use atomik_ui::{
-    ExportScope, FilmCover, FilmPictureChoice, FilmQualityChoice, FilmSoundChoice, FilmValues,
+    ExportLoudness, ExportScope, FilmCover, FilmPictureChoice, FilmQualityChoice, FilmSoundChoice,
+    FilmValues,
 };
 use atomik_video::{FilmCut, FilmPicture, FilmQuality, FilmSound, PictureChoice, Rational};
 
@@ -243,6 +244,20 @@ impl<S: EngineSink> AppCore<S> {
     /// The export is refused (see [`Self::film_export_refusal`]), nothing of the song plays under
     /// the film, or the worker cannot start; the message is also shown as the toast.
     pub fn start_film_export(&mut self, path: PathBuf, values: FilmValues) -> Result<(), String> {
+        self.start_film_export_with(path, values, ExportLoudness::Off)
+    }
+
+    /// [`Self::start_film_export`], with the loudness of the mix set first (an export preset's
+    /// target, with its limiter under the ceiling).
+    ///
+    /// # Errors
+    /// As [`Self::start_film_export`].
+    pub fn start_film_export_with(
+        &mut self,
+        path: PathBuf,
+        values: FilmValues,
+        loudness: ExportLoudness,
+    ) -> Result<(), String> {
         let plan = match self.film_export_refusal() {
             Some(why) => Err(why),
             None if values.own_audio && !self.film_has_audio() => {
@@ -310,6 +325,8 @@ impl<S: EngineSink> AppCore<S> {
             },
             lossy: None,
             film: Some(film),
+            finish: finish_for(false, loudness),
+            also: None,
         };
         let started = export_worker::spawn(
             self.audio.tx.clone(),

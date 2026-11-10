@@ -42,6 +42,7 @@ pub mod diagnostics;
 pub mod drag_cursor;
 pub mod energy_worker;
 pub mod export_prefs;
+pub mod export_presets;
 pub mod export_worker;
 pub mod factory;
 pub mod freeze_worker;

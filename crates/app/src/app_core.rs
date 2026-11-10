@@ -4064,7 +4064,7 @@ mod notes;
 
 #[path = "app_core_export.rs"]
 mod export;
-pub use export::{export_format, export_request, file_extension};
+pub use export::{export_format, export_request, extra_file, file_extension};
 
 #[path = "app_core_freeze.rs"]
 mod freeze;
