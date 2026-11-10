@@ -9,6 +9,16 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Quick sidechain: Duck from.** One step makes a track duck under another, such as a bass under a kick or a pad
+  under a vocal. The right-click menu of a track header, the rack menu of a track's device and the mixer's strip menu
+  have a Duck from submenu (and Track > Quick Sidechain has Duck from...) that lists the other tracks by name and in
+  their colour, at most thirty and then More... for a pop-up with all of them. Choosing a track puts a Compressor
+  named "Duck from <track>" at the end of the ducked track's insert chain, with its key cabled from the source's
+  post-fader output (Duck from (pre-fader) takes it before the fader) and set to 4:1, 5 ms attack, 120 ms release
+  and -24 dB threshold, in one undo step; the toast says "Bass ducks under Kick. Adjust: Threshold on the
+  Compressor." Choosing the same pair again selects the device ("Already ducking from Kick"), a source that the
+  track feeds is refused as a loop, Remove Ducking takes every ducker off in one step, and Gentle Pump puts a
+  quarter-note pump with no key on the track. Nothing is added to the project file: the device name marks the ducker.
 - **AppImage and Flatpak for Linux.** The release and nightly builds now also produce
   `atomik-rack-<version>-x86_64.AppImage` and `atomik-rack-<version>.flatpak` (a single-file bundle), each with a
   checksum in `SHA256SUMS`, beside the `.tar.gz` and the `.deb`. All four hold the same programs. One desktop entry,
