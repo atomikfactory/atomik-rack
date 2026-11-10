@@ -246,6 +246,31 @@ fn a_restart_hands_the_processor_back_reactivates_it_and_the_device_resumes() {
 }
 
 #[test]
+fn a_slow_deactivation_is_polled_without_waiting_and_the_restart_ends_when_it_is_done() {
+    let (mut m, stats) = manager();
+    stats.set_deactivate_delay(5);
+    let (mut h, id) = harness_of(m.instantiate(&request("null.fx")).unwrap());
+    *h.input_mut("in_l") = [1.0; BATCH];
+    run(&mut h, 2);
+    m.restart(id).unwrap();
+    h.process(); // hands the processor back
+    // The plugin is busy deactivating: each poll returns at once, with nothing to report yet,
+    // and the plugin is not activated again until it is done.
+    for _ in 0..3 {
+        assert!(m.poll().is_empty());
+        assert_eq!(stats.activated(), 1, "not activated while deactivating");
+    }
+    let mut events = Vec::new();
+    for _ in 0..4 {
+        events.extend(m.poll());
+    }
+    assert_eq!(events, vec![ManagerEvent::Restarted(id)]);
+    assert_eq!((stats.activated(), stats.deactivated()), (2, 1));
+    run(&mut h, 2);
+    assert_eq!(h.output("out_l")[0], 0.5, "the plugin is back");
+}
+
+#[test]
 fn a_new_sample_rate_restarts_every_instance_at_that_rate() {
     let (mut m, stats) = manager();
     let (mut h1, id1) = harness_of(m.instantiate(&request("null.fx")).unwrap());

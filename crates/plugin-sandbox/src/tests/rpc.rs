@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::clock::now;
-use crate::fake::{Action, FAKE_PID, fake_layout, start_with, test_timeouts};
+use crate::fake::{Action, FAKE_PID, FakeOptions, fake_layout, start_with, test_timeouts};
 use atomik_device_sdk::PluginStateBlob;
 use atomik_plugin_host::{EditorKind, NativeParent, PluginInstance};
 use atomik_plugin_ipc::{FromChild, ToChild, WireErrorKind, WireParent};
@@ -319,10 +319,38 @@ fn opening_the_editor_waits_for_the_load_timeout_and_not_the_call_timeout() {
     assert!(instance.is_lost());
 }
 
+fn busy_deactivate(delay: Duration) -> FakeOptions {
+    FakeOptions::default().script(move |req, _| {
+        matches!(req, ToChild::Deactivate { id } if *id > 0).then(|| {
+            let ToChild::Deactivate { id } = req else {
+                unreachable!()
+            };
+            Action::Delayed(delay, vec![(FromChild::Ok { id: *id }, None)])
+        })
+    })
+}
+
 #[test]
-fn the_other_calls_use_the_call_timeout() {
+fn a_slow_deactivate_is_waited_for_like_an_activation_and_not_stopped_at_the_call_timeout() {
     let mut timeouts = test_timeouts();
-    timeouts.call = Duration::from_millis(150);
+    timeouts.call = Duration::from_millis(100);
+    timeouts.create = Duration::from_secs(5);
+    let started = start_with(busy_deactivate(Duration::from_millis(400)), timeouts);
+    let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let processor = instance
+        .activate(&cfg(48_000.0, RunMode::Realtime))
+        .map_err(|e| e.to_string())
+        .unwrap();
+    instance.deactivate(processor);
+    assert!(!instance.is_lost());
+    assert!(!started.fake.ctl.was_killed());
+}
+
+#[test]
+fn a_deactivate_that_never_answers_still_stops_the_child_at_the_create_timeout() {
+    let mut timeouts = test_timeouts();
+    timeouts.call = Duration::from_secs(30);
+    timeouts.create = Duration::from_millis(150);
     let started = start_with(
         FakeOptions::default()
             .script(|req, _| matches!(req, ToChild::Deactivate { .. }).then_some(Action::Silent)),
@@ -342,6 +370,62 @@ fn the_other_calls_use_the_call_timeout() {
     );
     assert!(instance.is_lost());
     assert!(started.fake.ctl.was_killed());
+}
+
+#[test]
+fn a_begun_deactivate_returns_at_once_and_is_polled_to_the_end_without_killing_a_busy_child() {
+    let mut timeouts = test_timeouts();
+    timeouts.call = Duration::from_millis(100);
+    timeouts.create = Duration::from_millis(100);
+    timeouts.load = Duration::from_secs(5);
+    let started = start_with(busy_deactivate(Duration::from_millis(500)), timeouts);
+    let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let processor = instance
+        .activate(&cfg(48_000.0, RunMode::Realtime))
+        .map_err(|e| e.to_string())
+        .unwrap();
+    let t = now();
+    assert!(!instance.begin_deactivate(processor), "not done yet");
+    assert!(now().saturating_duration_since(t) < Duration::from_millis(100));
+    // Well past the call and create timeouts: the child is busy, not hung.
+    let mut polls = 0;
+    while !instance.poll_deactivate() {
+        polls += 1;
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(polls < 2000, "never done");
+    }
+    assert!(polls > 10, "it did wait: {polls}");
+    assert!(!instance.is_lost());
+    assert!(!started.fake.ctl.was_killed());
+    // The instance is usable again: it activates once more.
+    instance
+        .activate(&cfg(48_000.0, RunMode::Realtime))
+        .map_err(|e| e.to_string())
+        .unwrap();
+}
+
+#[test]
+fn a_begun_deactivate_of_a_child_that_dies_ends_the_wait() {
+    let started = start_with(
+        FakeOptions::default().script(|req, _| {
+            matches!(req, ToChild::Deactivate { .. })
+                .then(|| Action::Exit("the plugin process exited with code 1 (0x1)".to_string()))
+        }),
+        test_timeouts(),
+    );
+    let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let processor = instance
+        .activate(&cfg(48_000.0, RunMode::Realtime))
+        .map_err(|e| e.to_string())
+        .unwrap();
+    assert!(!instance.begin_deactivate(processor));
+    let mut polls = 0;
+    while !instance.poll_deactivate() {
+        polls += 1;
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(polls < 1000, "never done");
+    }
+    assert!(instance.is_lost());
 }
 
 #[test]

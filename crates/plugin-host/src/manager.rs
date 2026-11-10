@@ -202,6 +202,9 @@ enum Phase {
     Running,
     /// A stop was requested; the processor is on its way back.
     Stopping,
+    /// The processor is back and the plugin is deactivating (it may take a while: it is
+    /// polled, not waited for); it activates again when it is done.
+    Deactivating,
     /// The plugin is inactive and the device has no processor (a failed re-activation).
     Inactive,
 }
@@ -723,7 +726,7 @@ impl PluginManager {
                 m.end.request_stop();
                 m.phase = Phase::Stopping;
             }
-            Phase::Stopping => {}
+            Phase::Stopping | Phase::Deactivating => {}
             Phase::Inactive => {
                 // The plugin is inactive and the device has no processor: activate now.
                 let mut events = Vec::new();
@@ -978,7 +981,13 @@ impl PluginManager {
         if m.phase == Phase::Stopping
             && let Some(processor) = m.end.take_processor()
         {
-            m.instance.deactivate(processor);
+            if m.instance.begin_deactivate(processor) {
+                Self::activate_and_resume(id, m, events);
+            } else {
+                m.phase = Phase::Deactivating;
+            }
+        }
+        if m.phase == Phase::Deactivating && m.instance.poll_deactivate() {
             Self::activate_and_resume(id, m, events);
         }
     }

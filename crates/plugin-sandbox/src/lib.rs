@@ -74,7 +74,7 @@ pub struct SandboxConfig {
     /// dialog, a firewall prompt), so this is long, see [`LOAD_TIMEOUT`]; the app polls these
     /// waits and stays responsive.
     pub load_timeout: Duration,
-    /// Activate, capture and restore state.
+    /// Activate, deactivate, capture and restore state.
     pub create_timeout: Duration,
     /// Every other main-thread call.
     pub call_timeout: Duration,

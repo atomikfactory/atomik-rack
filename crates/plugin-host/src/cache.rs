@@ -9,7 +9,7 @@
 
 use crate::backend::ScannedPlugin;
 use crate::wire::{BlacklistDto, CacheDto, FileDto, PluginDto, format_name, parse_format};
-use atomik_device_sdk::PluginFormat;
+use atomik_device_sdk::{PluginFormat, PluginLayout, PluginRef};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -179,6 +179,33 @@ impl PluginCache {
     /// One blacklist entry.
     pub fn blacklisted(&self, path: &Path) -> Option<&BlacklistEntry> {
         self.blacklist.get(path)
+    }
+
+    /// The layout the cache holds for `plugin`.
+    pub fn layout_of(&self, plugin: &PluginRef) -> Option<&PluginLayout> {
+        self.files
+            .values()
+            .flat_map(|f| f.plugins.iter())
+            .find(|p| &p.plugin == plugin)
+            .map(|p| &p.layout)
+    }
+
+    /// Replaces the layout of `plugin` in every file that lists it, with what the live plugin
+    /// reported (it changed its buses or params after the scan). True when something changed.
+    pub fn update_layout(&mut self, plugin: &PluginRef, layout: &PluginLayout) -> bool {
+        let mut changed = false;
+        for p in self
+            .files
+            .values_mut()
+            .flat_map(|f| f.plugins.iter_mut())
+            .filter(|p| &p.plugin == plugin)
+        {
+            if &p.layout != layout {
+                p.layout = layout.clone();
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Records a successful scan (and clears a blacklist entry of the same file).
