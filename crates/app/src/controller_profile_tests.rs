@@ -34,6 +34,7 @@ fn sample() -> ControllerProfile {
             spec(Role::Play, SourceKind::Note(94), ControlMode::Button),
             spec(Role::Loop, SourceKind::Cc(115), ControlMode::Button),
         ],
+        options: ProfileOptions::default(),
     }
 }
 
@@ -205,4 +206,45 @@ fn driver_ids_and_slugs() {
         Some(PathBuf::from("/x/y/controllers"))
     );
     assert_eq!(profile_dir(None), None);
+}
+
+#[test]
+fn a_profile_without_the_new_fields_reads_as_the_defaults() {
+    // The file of an older build: no page keys, no options.
+    let text = sample().to_json();
+    assert!(!text.contains("pickup") && !text.contains("keep_page"));
+    let back = ControllerProfile::from_json(&text).unwrap();
+    assert_eq!(back.options, ProfileOptions::default());
+    assert!(back.options.pickup && !back.options.keep_page);
+}
+
+#[test]
+fn the_options_and_the_page_keys_round_trip() {
+    let mut p = sample();
+    p.options = ProfileOptions {
+        pickup: false,
+        keep_page: true,
+    };
+    p.controls.push(spec(
+        Role::PageDown,
+        SourceKind::Note(96),
+        ControlMode::Button,
+    ));
+    p.controls.push(spec(
+        Role::PageUp,
+        SourceKind::Note(97),
+        ControlMode::Button,
+    ));
+    let text = p.to_json();
+    assert!(text.contains("\"page_down\"") && text.contains("\"page_up\""));
+    assert!(text.contains("\"pickup\": false") && text.contains("\"keep_page\": true"));
+    assert_eq!(ControllerProfile::from_json(&text).unwrap(), p);
+    // A page key is a button like the others.
+    let mut bad = sample();
+    bad.controls.push(spec(
+        Role::PageUp,
+        SourceKind::Cc(30),
+        ControlMode::Absolute,
+    ));
+    assert!(bad.validate().is_err());
 }

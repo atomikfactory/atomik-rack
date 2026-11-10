@@ -139,6 +139,34 @@ and a few tools. Nothing here changes how the song sounds.
 - **Saving.** The key, the key changes and the chords are saved only when set, as optional fields that an older
   version of the program drops with a warning (project format 45).
 
+## Controllers
+
+Settings > Controllers > Set Up Controller... learns a hardware controller from the messages it sends: move each knob
+and fader, press each key, and skip what the controller lacks. The wizard asks for eight knobs, eight faders, the
+master fader, Play, Stop, Record, Loop, Bank Left, Bank Right and, last, Page Down and Page Up. If the controller has a
+MIDI output the wizard also asks whether its knobs, faders and keys show values back (LED rings, motors, lit keys).
+The result is a profile, remembered by the controller's port name, and the controller works the next time it is
+plugged in.
+
+- **Knobs and pages.** The eight knobs drive eight parameters of the selected device (or of the device the surface is
+  locked to), in the order of the device's panel, leaving out the bypass switch. Page 1 is parameters 1 to 8, page 2 is
+  9 to 16, and so on as far as the device goes; after the last page it wraps to the first. Page Up shows the next page
+  and Page Down the previous one. Both are optional in the wizard. The commands `controller.knob_page_next` and
+  `controller.knob_page_prev` do the same and have no default key (give them one in Settings > Keyboard). The status
+  line names the page when it changes ("Knobs: Filter 9-16"). The page goes back to 1 when another device is
+  selected, unless the profile keeps a page for each device (see below). A controller with a motor or LED ring
+  receives the values of the new page at once.
+- **Pick up values.** When a knob or fader is not where its parameter is (you selected another device, changed the
+  page or the bank, or moved the parameter with the mouse), moving it does nothing until it comes within 2 percent of
+  the value or sweeps through it, and then it takes over, so the sound never jumps. While a control waits, the status
+  line says which way to turn it ("Turn knob 3 up to pick up Cutoff"). It is the same rule as MIDI learn. A relative
+  encoder has nothing to catch, a parameter that steps through choices is set at once, and a fader that receives its
+  value as feedback (a motorised fader) is already in place, so none of them wait.
+- **The two options.** Pick up values (on for a new profile) and Keep the knob page for each device (off for a new
+  profile, on remembers the page of every device for the session) are check boxes on the last page of the wizard and
+  chips in Settings > Controllers while the surface runs a profile. They are saved in the profile file; a profile from
+  an earlier version reads as the defaults.
+
 ## Ducking
 
 To make one track duck under another (a bass under a kick, a pad under a vocal), right-click the track's header and

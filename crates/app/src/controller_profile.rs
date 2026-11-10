@@ -20,15 +20,20 @@
 //! ```
 //!
 //! `role` is `knob` or `fader` (with `index` 1..=8), `master`, `play`, `stop`, `record`, `loop`,
-//! `bank_left` or `bank_right`. `message` is `cc`, `cc14` (a pair, `number` is the MSB controller
+//! `bank_left`, `bank_right`, `page_down` or `page_up`. `message` is `cc`, `cc14` (a pair, `number` is the MSB controller
 //! 0..=31), `nrpn`, `note` or `pitchbend` (no `number`); `channel` counts from 1. `mode` is
 //! `absolute`, `relative_twos`, `relative_offset`, `relative_sign` (encoders) or `button`.
 //! `feedback` (default false) says the control accepts values back (a motorised fader, an LED
 //! ring, a lit button); it only has an effect when `output` names a port.
 //!
-//! The knobs drive the first eight parameters of the selected device, the faders the levels of
-//! the eight visible mixer strips (bank left and right move the eight), the buttons the
-//! transport. A file is read strictly: a message or role this build does not know is an error
+//! Two optional switches sit beside `controls`: `pickup` (default true) makes an absolute knob or
+//! fader that is not where its parameter is wait until it reaches the value, and `keep_page`
+//! (default false) remembers the knob page of every device it has followed. A file without them
+//! reads as the defaults.
+//!
+//! The knobs drive eight parameters of the selected device at a time (page down and page up
+//! move to the next eight), the faders the levels of the eight visible mixer strips (bank left
+//! and right move the eight), the buttons the transport. A file is read strictly: a message or role this build does not know is an error
 //! (never silently dropped), a file from a newer format is left alone.
 
 use atomik_model::{MAX_PORT_NAME_CHARS, RelativeKind, SourceKind};
@@ -75,6 +80,10 @@ pub enum Role {
     BankLeft,
     /// One bank of strips to the right.
     BankRight,
+    /// The knobs show the previous eight parameters.
+    PageDown,
+    /// The knobs show the next eight parameters.
+    PageUp,
 }
 
 impl Role {
@@ -95,6 +104,8 @@ impl Role {
             Role::Loop => "loop",
             Role::BankLeft => "bank_left",
             Role::BankRight => "bank_right",
+            Role::PageDown => "page_down",
+            Role::PageUp => "page_up",
         }
     }
 
@@ -127,6 +138,8 @@ impl Role {
             "loop" => Ok(Role::Loop),
             "bank_left" => Ok(Role::BankLeft),
             "bank_right" => Ok(Role::BankRight),
+            "page_down" => Ok(Role::PageDown),
+            "page_up" => Ok(Role::PageUp),
             other => Err(ProfileError::Invalid(format!("unknown role {other:?}"))),
         }
     }
@@ -143,6 +156,8 @@ impl Role {
             Role::Loop => "Loop".to_owned(),
             Role::BankLeft => "Bank left".to_owned(),
             Role::BankRight => "Bank right".to_owned(),
+            Role::PageDown => "Page down".to_owned(),
+            Role::PageUp => "Page up".to_owned(),
         }
     }
 }
@@ -215,6 +230,26 @@ impl ControlSpec {
     }
 }
 
+/// The switches of a profile that are not controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProfileOptions {
+    /// An absolute knob or fader waits until it reaches the parameter's value before it takes
+    /// over (not for a relative encoder or a motorised fader).
+    pub pickup: bool,
+    /// The knob page is remembered for each device (otherwise it starts at page 1 whenever the
+    /// followed device changes).
+    pub keep_page: bool,
+}
+
+impl Default for ProfileOptions {
+    fn default() -> Self {
+        Self {
+            pickup: true,
+            keep_page: false,
+        }
+    }
+}
+
 /// A controller as the wizard learned it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControllerProfile {
@@ -226,6 +261,8 @@ pub struct ControllerProfile {
     pub output: Option<String>,
     /// The controls, in the order the wizard learned them.
     pub controls: Vec<ControlSpec>,
+    /// The switches: pick up values, keep the page per device.
+    pub options: ProfileOptions,
 }
 
 /// Why a profile was not used.
@@ -309,6 +346,13 @@ impl ControllerProfile {
             root.insert("output".into(), json!(out));
         }
         root.insert("controls".into(), Value::Array(controls));
+        // Written only when they differ from the defaults, so a plain profile stays as it was.
+        if !self.options.pickup {
+            root.insert("pickup".into(), json!(false));
+        }
+        if self.options.keep_page {
+            root.insert("keep_page".into(), json!(true));
+        }
         let mut text = serde_json::to_string_pretty(&Value::Object(root)).unwrap_or_default();
         text.push('\n');
         text
@@ -349,6 +393,13 @@ impl ControllerProfile {
             input: text_of("input").ok_or_else(|| bad("no input port"))?,
             output: text_of("output"),
             controls,
+            options: ProfileOptions {
+                pickup: root.get("pickup").and_then(Value::as_bool).unwrap_or(true),
+                keep_page: root
+                    .get("keep_page")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            },
         };
         profile.validate()?;
         Ok(profile)

@@ -210,9 +210,9 @@ fn a_whole_controller_is_learned_from_a_message_stream() {
         }
         assert!(accepted, "fader {}", ch + 1);
     }
-    // No master fader; the four transport keys and the two bank keys on notes.
+    // No master fader; the four transport keys, the two bank keys and the two page keys on notes.
     w.skip();
-    for key in 90..96u8 {
+    for key in 90..98u8 {
         assert!(matches!(press(&mut w, key), Progress::Accepted(_)), "{key}");
     }
     assert!(matches!(w.stage(), Stage::Ask(Group::Knobs)));
@@ -220,14 +220,63 @@ fn a_whole_controller_is_learned_from_a_message_stream() {
         w.answer(true);
     }
     let p = w.profile("Desk Controller").unwrap();
-    assert_eq!(p.controls.len(), 8 + 8 + 6);
+    assert_eq!(p.controls.len(), 8 + 8 + 8);
     assert_eq!(
         p.control(Role::BankRight).unwrap().source,
         SourceKind::Note(95)
+    );
+    assert_eq!(
+        p.control(Role::PageDown).unwrap().source,
+        SourceKind::Note(96)
+    );
+    assert_eq!(
+        p.control(Role::PageUp).unwrap().source,
+        SourceKind::Note(97)
     );
     assert!(p.validate().is_ok());
     assert_eq!(
         crate::controller_profile::ControllerProfile::from_json(&p.to_json()).unwrap(),
         p
     );
+}
+
+#[test]
+fn the_page_keys_are_asked_for_last_and_can_be_skipped() {
+    let steps = steps();
+    let n = steps.len();
+    assert_eq!(steps[n - 2..], [Role::PageDown, Role::PageUp]);
+    let mut w = Wizard::new("Desk In", None);
+    assert!(matches!(sweep(&mut w, 0, 21), Progress::Accepted(_)));
+    // Leave everything else out, up to the page keys.
+    while !matches!(w.stage(), Stage::Control(Role::PageDown)) {
+        w.skip();
+    }
+    assert_eq!(w.prompt(), "Press Page Down (previous knobs)");
+    w.skip();
+    assert_eq!(w.prompt(), "Press Page Up (next knobs)");
+    assert!(matches!(press(&mut w, 97), Progress::Accepted(_)));
+    assert_eq!(w.stage(), Stage::Done);
+    let p = w.profile("Desk").unwrap();
+    assert!(p.control(Role::PageDown).is_none());
+    assert_eq!(
+        p.control(Role::PageUp).unwrap().source,
+        SourceKind::Note(97)
+    );
+}
+
+#[test]
+fn the_profile_gets_the_switches_of_the_last_page() {
+    let mut w = Wizard::new("Desk In", None);
+    assert!(matches!(sweep(&mut w, 0, 21), Progress::Accepted(_)));
+    w.finish_now();
+    // By default values are picked up and the page is not kept.
+    let options = w.profile("Desk").unwrap().options;
+    assert!(options.pickup && !options.keep_page);
+    w.set_pickup(false);
+    w.set_keep_page(true);
+    let p = w.profile("Desk").unwrap();
+    assert!(!p.options.pickup && p.options.keep_page);
+    // They survive the file.
+    let back = crate::controller_profile::ControllerProfile::from_json(&p.to_json()).unwrap();
+    assert_eq!(back.options, p.options);
 }

@@ -1,7 +1,9 @@
 //! The eight-fader surface driver: every message in both directions, with exact bytes.
 
 use super::*;
-use crate::surface::{MasterState, PositionState, StripKind, StripState, TransportLeds};
+use crate::surface::{
+    MasterState, PositionState, RemoteDevice, StripKind, StripState, TransportLeds,
+};
 
 fn strip(name: &str) -> StripState {
     StripState {
@@ -28,6 +30,7 @@ fn state(n: usize) -> SurfaceState {
             seconds: 0.0,
         },
         knobs: Vec::new(),
+        remote: RemoteDevice::default(),
     }
 }
 

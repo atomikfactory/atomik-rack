@@ -7,13 +7,17 @@
 //! controls already set up are not heard again, so a knob that is still turning does not answer
 //! the next question. Back takes the last answer back. When there is an output port the wizard
 //! asks, per group (the knobs, the faders, the keys), whether the controller shows values back
-//! (LED rings, motorised faders, lit keys); the answer goes into the profile.
+//! (LED rings, motorised faders, lit keys); the answer goes into the profile. On the last page
+//! the two switches of a profile can be turned over: pick up values, keep the knob page per
+//! device ([`Wizard::set_pickup`], [`Wizard::set_keep_page`]).
 //!
 //! The shell owns the port and the screen ([`crate::controller_wizard_view`]); everything that
 //! decides something is here and is tested from fake message streams.
 
 use crate::controller_detect::{Capture, Detection, Verdict, Want};
-use crate::controller_profile::{ControlSpec, ControllerProfile, FADERS, KNOBS, Role};
+use crate::controller_profile::{
+    ControlSpec, ControllerProfile, FADERS, KNOBS, ProfileOptions, Role,
+};
 use atomik_core::ChannelMessage;
 
 /// A group of controls the feedback question is asked about.
@@ -33,7 +37,7 @@ impl Group {
             Role::Knob(_) => Some(Group::Knobs),
             Role::Fader(_) | Role::MasterFader => Some(Group::Faders),
             Role::Play | Role::Stop | Role::Record | Role::Loop => Some(Group::Keys),
-            Role::BankLeft | Role::BankRight => None,
+            Role::BankLeft | Role::BankRight | Role::PageDown | Role::PageUp => None,
         }
     }
 
@@ -94,6 +98,7 @@ pub struct Wizard {
     asks: Vec<Group>,
     /// The groups answered yes.
     shows: Vec<Group>,
+    options: ProfileOptions,
     done: bool,
 }
 
@@ -109,6 +114,8 @@ pub fn steps() -> Vec<Role> {
         Role::Loop,
         Role::BankLeft,
         Role::BankRight,
+        Role::PageDown,
+        Role::PageUp,
     ]);
     v
 }
@@ -128,6 +135,7 @@ impl Wizard {
             heard: None,
             asks: Vec::new(),
             shows: Vec::new(),
+            options: ProfileOptions::default(),
             done: false,
         };
         w.renew();
@@ -168,10 +176,27 @@ impl Wizard {
                 Role::Loop => "Press Loop (cycle)".to_owned(),
                 Role::BankLeft => "Press Bank Left (previous strips)".to_owned(),
                 Role::BankRight => "Press Bank Right (next strips)".to_owned(),
+                Role::PageDown => "Press Page Down (previous knobs)".to_owned(),
+                Role::PageUp => "Press Page Up (next knobs)".to_owned(),
             },
             Stage::Ask(group) => group.question().to_owned(),
             Stage::Done => "Done".to_owned(),
         }
+    }
+
+    /// The switches the profile will get.
+    pub fn options(&self) -> ProfileOptions {
+        self.options
+    }
+
+    /// Turns "pick up values" on or off.
+    pub fn set_pickup(&mut self, on: bool) {
+        self.options.pickup = on;
+    }
+
+    /// Turns "keep the knob page per device" on or off.
+    pub fn set_keep_page(&mut self, on: bool) {
+        self.options.keep_page = on;
     }
 
     /// How far the wizard is: `(controls answered, controls asked)`.
@@ -358,6 +383,7 @@ impl Wizard {
             input: self.input.clone(),
             output: self.output.clone(),
             controls,
+            options: self.options,
         })
     }
 }

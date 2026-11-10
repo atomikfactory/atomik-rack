@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Soft takeover and knob pages for controllers.** An absolute knob or fader of a controller set up with the wizard
+  no longer makes a parameter jump: when it is not where its parameter is (after another device is selected, a page
+  or bank change, or an edit with the mouse), moving it does nothing until it comes within 2 percent of the value or
+  sweeps through it, using the same rule as MIDI learn, and the status line says which way to turn it ("Turn knob 3
+  up to pick up Cutoff"). Relative encoders, stepped parameters and faders that receive their value as feedback do
+  not wait. The eight knobs now have pages: Page Down and Page Up (two optional keys the wizard asks for last), or
+  the commands Controller Knobs: Next Page and Previous Page (`controller.knob_page_next` and
+  `controller.knob_page_prev`, no default keys), move over the parameters of the followed device eight at a time and
+  wrap round; the status line names the page ("Knobs: Filter 9-16") and motorised or LED controls receive the new
+  values. The page goes back to 1 when another device is followed, unless the profile keeps the page for each device.
+  Pick up values (on by default) and Keep the knob page for each device (off by default) are check boxes on the last
+  page of the wizard and chips in Settings > Controllers; they are saved in the profile file, and older profiles
+  read as the defaults.
 - **Editing note expression by hand, and MPE out.** The strip beside the selected note in the piano roll is now an
   editor for its pitch, pressure and timbre curves. A tab picks the curve; a click on empty space adds a point, a
   drag moves it (Shift moves finely, Ctrl snaps a pitch to a semitone; time stays inside the note and the value

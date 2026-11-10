@@ -645,6 +645,44 @@ impl MapState {
     pub fn is_picked_up(&self) -> bool {
         self.picked_up
     }
+
+    /// The soft takeover for a control that now asks for `out` while the target stands at `cur`
+    /// (both fractions of the range): true when the control may set the target. Until it comes
+    /// within `window` of the target, or moves through it between two messages, nothing is set. A
+    /// target that moved since the control last set it (a mouse drag, automation, a recall) has
+    /// to be caught again. Every controller that reads absolute positions uses this one rule.
+    pub fn take_over(&mut self, out: f32, cur: f32, window: f32) -> bool {
+        if self.picked_up
+            && self
+                .last_applied
+                .is_some_and(|applied| (applied - cur).abs() > window)
+        {
+            self.picked_up = false;
+        }
+        if !self.picked_up {
+            let near = (out - cur).abs() <= window;
+            let crossed = self
+                .last_out
+                .is_some_and(|prev| (prev - cur) * (out - cur) <= 0.0);
+            self.last_out = Some(out);
+            if !(near || crossed) {
+                return false;
+            }
+            self.picked_up = true;
+        }
+        self.last_out = Some(out);
+        self.last_applied = Some(out);
+        true
+    }
+
+    /// Which way the control has to turn to catch a target at `cur`: `Some(true)` is up. `None`
+    /// when the control has caught it, or has not been moved yet.
+    pub fn turn_to_catch(&self, cur: f32) -> Option<bool> {
+        if self.picked_up {
+            return None;
+        }
+        self.last_out.map(|out| cur > out)
+    }
 }
 
 impl MidiMapping {
@@ -834,27 +872,9 @@ impl MidiMapping {
         let out = o.min + r * (o.max - o.min);
         if o.pickup
             && let Some(cur) = current
+            && !state.take_over(out, cur, PICKUP_WINDOW)
         {
-            // The target moved since the mapping last set it (a mouse drag, automation, a
-            // recall): the control has to catch it again.
-            if state.picked_up
-                && state
-                    .last_applied
-                    .is_some_and(|applied| (applied - cur).abs() > PICKUP_WINDOW)
-            {
-                state.picked_up = false;
-            }
-            if !state.picked_up {
-                let near = (out - cur).abs() <= PICKUP_WINDOW;
-                let crossed = state
-                    .last_out
-                    .is_some_and(|prev| (prev - cur) * (out - cur) <= 0.0);
-                state.last_out = Some(out);
-                if !(near || crossed) {
-                    return None;
-                }
-                state.picked_up = true;
-            }
+            return None;
         }
         state.last_out = Some(out);
         state.last_applied = Some(out);
@@ -1674,6 +1694,23 @@ mod tests {
             set(m.feed(&mut st, &cc(0, 1, 120), Some(0.5))),
             120.0 / 127.0
         ));
+    }
+
+    #[test]
+    fn take_over_is_the_rule_any_absolute_control_can_use() {
+        let mut st = MapState::default();
+        // Far below the target: nothing is taken, and the control must turn up.
+        assert!(!st.take_over(0.1, 0.5, 0.02));
+        assert_eq!(st.turn_to_catch(0.5), Some(true));
+        // Within the window: taken.
+        assert!(st.take_over(0.49, 0.5, 0.02));
+        assert_eq!(st.turn_to_catch(0.5), None);
+        // The target moved elsewhere: the control has to catch it again, from above this time.
+        assert!(!st.take_over(0.9, 0.2, 0.02));
+        assert_eq!(st.turn_to_catch(0.2), Some(false));
+        // A forgotten takeover starts again.
+        st.rearm();
+        assert_eq!(st.turn_to_catch(0.2), None);
     }
 
     #[test]

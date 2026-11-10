@@ -24,14 +24,16 @@ use crate::app_core::midimap::{GestureKey, Resolved};
 use crate::surface::SurfaceHost;
 use atomik_core::PPQ;
 use atomik_midi_io::surface::{
-    KnobMove, MasterState, PositionState, StripKind, StripState, SurfaceAction, SurfaceDriver,
-    SurfaceState, TransportButton, TransportLeds,
+    KnobMove, MasterState, PositionState, RemoteDevice, StripKind, StripState, SurfaceAction,
+    SurfaceDriver, SurfaceState, TransportButton, TransportLeds,
 };
 use atomik_ui::timeline::tick_to_seconds;
 
-/// How many remote knobs a surface has: the knobs drive this many parameters of the device the
-/// surface follows.
+/// How many remote knobs a surface has: a page of the parameters of the device the surface
+/// follows.
 pub const REMOTE_KNOBS: usize = crate::controller_profile::KNOBS as usize;
+/// The most parameters of one device the remote knobs reach (sixteen pages).
+pub const MAX_REMOTE_PARAMS: usize = 16 * REMOTE_KNOBS;
 
 /// True for a parameter the remote knobs may address.
 fn is_remote_param(key: &str) -> bool {
@@ -302,16 +304,18 @@ impl<S: EngineSink> AppCore<S> {
                 },
                 position,
                 knobs: Vec::new(),
+                remote: RemoteDevice::default(),
             },
             refs,
         )
     }
 
-    /// The surface `id`'s view of the project: [`Self::surface_view`] plus the value of each
-    /// remote knob (the first parameters of the device the surface follows).
+    /// The surface `id`'s view of the project: [`Self::surface_view`] plus the value of every
+    /// remote parameter of the device the surface follows (the driver shows them a page at a
+    /// time).
     pub(super) fn surface_view_of(&self, id: &str) -> (SurfaceState, Vec<StripRef>) {
         let (mut state, refs) = self.surface_view();
-        state.knobs = self.remote_knobs(id);
+        (state.knobs, state.remote) = self.remote_knobs(id);
         (state, refs)
     }
 
@@ -329,9 +333,9 @@ impl<S: EngineSink> AppCore<S> {
             .find(|k| fits(k))
     }
 
-    /// The remote parameter `knob` (0-based) of `device`: the knobs address the first
-    /// [`REMOTE_KNOBS`] parameters of the device in descriptor order, leaving out the hidden ones,
-    /// the plugin CV rows and the bypass switch.
+    /// The remote parameter `knob` (0-based) of `device`: the knobs address the parameters of the
+    /// device in descriptor order (a page of [`REMOTE_KNOBS`] at a time), leaving out the hidden
+    /// ones, the plugin CV rows and the bypass switch.
     pub(super) fn remote_param(&self, device: &DeviceKey, knob: usize) -> Option<Resolved> {
         let d = self.doc().resolve(device)?;
         let desc = self
@@ -348,14 +352,60 @@ impl<S: EngineSink> AppCore<S> {
         })
     }
 
-    fn remote_knobs(&self, id: &str) -> Vec<Option<f32>> {
-        let device = self.followed_device(id);
-        (0..REMOTE_KNOBS)
-            .map(|knob| {
-                let r = self.remote_param(device.as_ref()?, knob)?;
+    /// The value of every remote parameter of the device the surface `id` follows, and what the
+    /// driver needs to know about the device (see [`RemoteDevice`]).
+    fn remote_knobs(&self, id: &str) -> (Vec<Option<f32>>, RemoteDevice) {
+        let Some(device) = self.followed_device(id) else {
+            return (Vec::new(), RemoteDevice::default());
+        };
+        let Some(d) = self.doc().resolve(&device) else {
+            return (Vec::new(), RemoteDevice::default());
+        };
+        let Some(entry) = self.registry.get(&d.type_id) else {
+            return (Vec::new(), RemoteDevice::default());
+        };
+        let params: Vec<_> = entry
+            .descriptor
+            .params
+            .iter()
+            .filter(|p| is_remote_param(p.key))
+            .take(MAX_REMOTE_PARAMS)
+            .collect();
+        let values = params
+            .iter()
+            .map(|desc| {
+                let r = Resolved::Param {
+                    key: device.clone(),
+                    desc,
+                };
                 self.target_value(&r)
             })
-            .collect()
+            .collect();
+        let remote = RemoteDevice {
+            id: Some(device.0.clone()),
+            name: d.name.clone(),
+            params: params.iter().map(|p| p.name.to_owned()).collect(),
+            stepped: params.iter().map(|p| p.discrete).collect(),
+        };
+        (values, remote)
+    }
+
+    /// Moves the knobs of every control surface `delta` pages on (the next page when positive,
+    /// the previous when negative, wrapping round) and shows where they are in the status line.
+    /// A surface with no knob pages ignores it. The surface shows the new values at its next
+    /// feedback pass.
+    pub fn knob_page(&mut self, delta: i32) {
+        let mut hosts = std::mem::take(&mut self.surfaces);
+        for host in &mut hosts {
+            let (state, refs) = self.surface_view_of(&host.id);
+            let mut actions = Vec::new();
+            host.driver.knob_page(delta, &state, &mut actions);
+            for action in actions {
+                self.apply_surface_action(action, &refs, &host.id);
+            }
+            host.next_feedback = 0.0;
+        }
+        self.surfaces = hosts;
     }
 
     fn surface_knob(&mut self, id: &str, knob: usize, change: KnobMove) {
@@ -555,6 +605,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             SurfaceAction::Transport(button) => self.surface_transport(button),
             SurfaceAction::Knob { knob, change } => self.surface_knob(id, knob, change),
+            SurfaceAction::Notice(message) => self.reject(message),
             SurfaceAction::Jog(detents) => {
                 let step = PPQ / 4;
                 let tick = (self.position + i64::from(detents) * step).max(0);
