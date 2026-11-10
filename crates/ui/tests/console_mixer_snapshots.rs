@@ -144,7 +144,7 @@ fn the_plus_button_stores_the_mix_under_the_next_default_name() {
     let a = click_button(&mut v, d.doc(), &reg, ConsoleButton::StoreSnapshot);
     assert_eq!(
         console_cmds(&a),
-        [ConsoleCommand::StoreSnapshot { name: "1".into() }]
+        [ConsoleCommand::StoreSnapshot { name: "C".into() }]
     );
 }
 

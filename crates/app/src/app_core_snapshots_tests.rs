@@ -66,12 +66,12 @@ fn two_snapshots() -> AppCore<RecordingSink> {
 }
 
 #[test]
-fn store_names_the_snapshots_a_b_then_numbers_and_refuses_a_taken_name() {
+fn store_names_the_snapshots_a_b_c_and_refuses_and_refuses_a_taken_name() {
     let mut c = core();
     for _ in 0..3 {
         assert!(c.store_snapshot(None));
     }
-    assert_eq!(names(&c), ["A", "B", "1"]);
+    assert_eq!(names(&c), ["A", "B", "C"]);
     assert!(c.store_snapshot(Some("  Verse ".into())));
     assert_eq!(names(&c).last().unwrap(), "Verse");
     assert!(!c.store_snapshot(Some("verse".into())));
@@ -172,7 +172,7 @@ fn next_and_previous_walk_the_list_and_wrap() {
     let mut c = two_snapshots();
     set(&mut c, "channel", "fader", 0.5);
     assert!(c.store_snapshot(None));
-    // The mix is "1" (the last stored); next wraps to A, previous goes back to 1.
+    // The mix is "C" (the last stored); next wraps to A, previous goes back to C.
     assert_eq!(c.current_snapshot(), Some(3));
     assert!(c.recall_adjacent(true));
     assert_eq!(c.current_snapshot(), Some(1));

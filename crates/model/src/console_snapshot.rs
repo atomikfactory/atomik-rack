@@ -267,12 +267,21 @@ impl Console {
             .map_or(1, |m| m + 1)
     }
 
-    /// The name the UI proposes for a new snapshot: `A`, `B`, then `1`, `2`, ... the first one
-    /// that is free.
+    /// The name the UI proposes for a new snapshot: the next free letter, `A` to `Z`, then
+    /// `1`, `2`, ... It goes on after the last name of that run that is in use and after as many
+    /// names as there are snapshots, so renaming `A` does not bring `A` back for the next one.
     pub fn default_snapshot_name(&self) -> String {
-        ["A".to_owned(), "B".to_owned()]
-            .into_iter()
-            .chain((1usize..).map(|n| n.to_string()))
+        let name_at = |i: usize| match u8::try_from(i) {
+            Ok(i) if i < 26 => char::from(b'A' + i).to_string(),
+            _ => (i - 25).to_string(),
+        };
+        let used = (0usize..)
+            .take(26 + self.snapshots.len() + 1)
+            .filter(|i| self.snapshot_by_name(&name_at(*i)).is_some())
+            .max()
+            .map_or(0, |i| i + 1);
+        (used.max(self.snapshots.len())..)
+            .map(name_at)
             .find(|n| self.snapshot_by_name(n).is_none())
             .expect("a free name exists")
     }
@@ -1137,7 +1146,7 @@ mod tests {
     }
 
     #[test]
-    fn default_names_run_a_b_then_numbers() {
+    fn default_names_run_a_to_z_then_numbers_and_never_go_back_to_a_renamed_name() {
         let mut c = Console::default();
         assert_eq!(c.default_snapshot_name(), "A");
         for (i, n) in ["A", "B", "1"].iter().enumerate() {
@@ -1151,7 +1160,12 @@ mod tests {
             });
         }
         assert_eq!(c.default_snapshot_name(), "2");
-        c.snapshots.remove(0);
-        assert_eq!(c.default_snapshot_name(), "A");
+        c.snapshots.truncate(2);
+        assert_eq!(c.default_snapshot_name(), "C");
+        // The first one renamed: the next is not `A` again.
+        c.snapshots[0].name = "Verse".into();
+        assert_eq!(c.default_snapshot_name(), "C");
+        c.snapshots.truncate(1);
+        assert_eq!(c.default_snapshot_name(), "B");
     }
 }
