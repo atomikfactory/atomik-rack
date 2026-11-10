@@ -88,7 +88,13 @@ fn a_newer_file_needs_its_compat_version_to_be_readable() {
 }
 
 #[test]
-fn the_current_format_writes_no_compat_fields() {
+fn the_current_format_writes_compat_44_and_the_newest_fields_as_ignorable() {
     let text = save_project(&load_project(&current().to_string(), &console_registry()).unwrap());
-    assert!(!text.contains("\"compat\"") && !text.contains("\"ignorable\""));
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["compat"], 44);
+    assert_eq!(v["ignorable"]["song.launcher"], 45);
+    assert_eq!(
+        v["ignorable"]["song.tracks[].lanes[].clips[].expression"],
+        45
+    );
 }

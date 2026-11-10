@@ -304,7 +304,7 @@ fn at_version(text: &str, n: u32) -> String {
 #[test]
 fn the_project_version_is_thirty_six_and_a_plain_lane_writes_neither_field() {
     let reg = registry();
-    assert_eq!(PROJECT_VERSION, 44);
+    assert_eq!(PROJECT_VERSION, 45);
     let text = save_project(lead(&reg).doc());
     assert!(!text.contains("\"static\""));
     assert!(!text.contains("\"muted\": true"));

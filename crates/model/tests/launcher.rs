@@ -51,7 +51,7 @@ fn a_song_starts_without_a_launcher() {
     let reg = registry();
     let d = doc(&reg);
     assert!(d.doc().song.launcher.is_default());
-    assert!(!save_project(d.doc()).contains("launcher"));
+    assert!(!save_project(d.doc()).contains("\"launcher\": {"));
 }
 
 #[test]
@@ -368,7 +368,7 @@ fn the_launcher_round_trips_and_is_written_only_when_set() {
     cleared.song_mut().launcher = Default::default();
     cleared.song_mut().next_clip_id = d.doc().song.next_clip_id;
     let stripped = save_project(&cleared);
-    assert!(!stripped.contains("launcher"));
+    assert!(!stripped.contains("\"launcher\": {"));
     assert!(plain.len() <= stripped.len());
 }
 
@@ -377,7 +377,7 @@ fn a_file_without_a_launcher_opens_with_an_empty_one() {
     let reg = registry();
     let d = doc(&reg);
     let text = save_project(d.doc());
-    assert!(!text.contains("launcher"));
+    assert!(!text.contains("\"launcher\": {"));
     assert!(
         load_project(&text, &reg)
             .unwrap()
@@ -388,26 +388,6 @@ fn a_file_without_a_launcher_opens_with_an_empty_one() {
 }
 
 #[test]
-fn a_reader_that_does_not_know_the_field_drops_it() {
-    // Version 45 file that says an older reader may skip the launcher.
-    let reg = registry();
-    let mut d = doc(&reg);
-    new_clip(&mut d, &reg, "synth", 0);
-    let text = save_project(d.doc());
-    let newer = text.replacen(
-        "\"version\": 44,",
-        "\"version\": 45,\n  \"compat\": 44,\n  \"ignorable\": {\"song.launcher\": 45, \"future\": 45},",
-        1,
-    );
-    let loaded = load_project(&newer, &reg);
-    // This reader knows the launcher: the field is a normal one and the file is newer than it,
-    // so only the "ignorable" machinery applies; it must not be misread as a launcher.
-    match loaded {
-        Ok(doc) => assert!(doc.song.launcher.is_default()),
-        Err(e) => panic!("{e}"),
-    }
-}
-
 #[test]
 fn bad_launchers_name_their_path() {
     let reg = registry();
@@ -473,4 +453,39 @@ fn pasting_a_ready_clip_gives_it_a_new_id() {
     assert_eq!(s.quantize, Some(LaunchQuantize::None));
     assert!(s.clip.id.0 < d.doc().song.next_clip_id);
     d.doc().validate().unwrap();
+}
+
+#[test]
+fn a_newer_file_that_allows_skipping_keeps_the_launcher_this_reader_knows() {
+    // A file of version 46 that a reader of 45 may open: the launcher is a field of 45, so it is
+    // read, and what is unknown to this reader (listed as ignorable) is dropped.
+    let reg = registry();
+    let mut d = doc(&reg);
+    new_clip(&mut d, &reg, "synth", 0);
+    let text = save_project(d.doc());
+    let newer = text
+        .replacen("\"version\": 45", "\"version\": 46", 1)
+        .replacen("\"compat\": 44", "\"compat\": 45", 1)
+        .replacen(
+            "\"ignorable\": {",
+            "\"ignorable\": {\n    \"song.future\": 46,",
+            1,
+        );
+    let loaded = load_project(&newer, &reg).unwrap();
+    assert_eq!(loaded.song.launcher, d.doc().song.launcher);
+}
+
+#[test]
+fn a_version_45_file_without_a_launcher_reads_as_before() {
+    let reg = registry();
+    let d = doc(&reg);
+    let text = save_project(d.doc());
+    assert!(text.contains("\"version\": 45,") && text.contains("\"compat\": 44,"));
+    assert!(
+        text.contains("\"song.launcher\": 45"),
+        "listed for older readers"
+    );
+    let loaded = load_project(&text, &reg).unwrap();
+    assert!(loaded.song.launcher.is_default());
+    assert_eq!(&loaded, d.doc());
 }

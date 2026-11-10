@@ -389,19 +389,19 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Song, "track_heights", 15),
     field(Song, "grooves", 21),
     field(Song, "groups", 22),
-    field(Song, "launcher", 44).ignorable(),
+    field(Song, "launcher", 45).ignorable(),
     field(Song, "tracks", 1).req(),
-    field(Launcher, "quantize", 44).ignorable(),
-    field(Launcher, "stop_empty", 44).ignorable(),
-    field(Launcher, "scenes", 44).ignorable(),
-    field(Launcher, "slots", 44).ignorable(),
-    field(LauncherScene, "name", 44).ignorable(),
-    field(LauncherScene, "color", 44).ignorable(),
-    field(LauncherScene, "tempo", 44).ignorable(),
-    field(LauncherSlot, "track", 44).ignorable().req(),
-    field(LauncherSlot, "row", 44).ignorable().req(),
-    field(LauncherSlot, "quantize", 44).ignorable(),
-    field(LauncherSlot, "clip", 44).ignorable().req(),
+    field(Launcher, "quantize", 45).ignorable(),
+    field(Launcher, "stop_empty", 45).ignorable(),
+    field(Launcher, "scenes", 45).ignorable(),
+    field(Launcher, "slots", 45).ignorable(),
+    field(LauncherScene, "name", 45).ignorable(),
+    field(LauncherScene, "color", 45).ignorable(),
+    field(LauncherScene, "tempo", 45).ignorable(),
+    field(LauncherSlot, "track", 45).ignorable().req(),
+    field(LauncherSlot, "row", 45).ignorable().req(),
+    field(LauncherSlot, "quantize", 45).ignorable(),
+    field(LauncherSlot, "clip", 45).ignorable().req(),
     field(TempoEvent, "tick", 1).req(),
     field(TempoEvent, "bpm", 1).req(),
     field(TempoEvent, "ramp", 13),
@@ -488,7 +488,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(NoteClip, "param_lanes", 41),
     field(NoteClip, "programs", 43).ignorable(),
     field(NoteClip, "sysex", 43).ignorable(),
-    field(NoteClip, "expression", 44).ignorable(),
+    field(NoteClip, "expression", 45).ignorable(),
     field(NoteClip, "groove", 43).ignorable(),
     field(NoteClip, "groove_strength", 43).ignorable(),
     field(NoteClip, "notes", 1).req(),
@@ -660,6 +660,13 @@ pub(crate) fn admit_newer(
     };
     let version = match obj.get("version").and_then(Value::as_u64) {
         Some(v) if v > u64::from(PROJECT_VERSION) => v,
+        Some(v) if v < 37 => {
+            // A file of a version before the two fields existed cannot carry them: one that does
+            // (a current file with its version lowered by hand) reads as the older file it says.
+            obj.remove("compat");
+            obj.remove("ignorable");
+            return Ok(false);
+        }
         _ => return Ok(false),
     };
     if obj.get("format").and_then(Value::as_str) != Some(super::PROJECT_FORMAT) {
@@ -831,8 +838,8 @@ mod tests {
             "a removed field is not skippable"
         );
         assert_eq!(compat_version(&specs, 5), 3);
-        // Today's table has no ignorable row, so the current version is its own compat.
-        assert_eq!(compat_version(SPECS, PROJECT_VERSION), PROJECT_VERSION);
+        // The newest rows (the launcher, note expression) are ignorable: a reader of 44 opens it.
+        assert_eq!(compat_version(SPECS, PROJECT_VERSION), 44);
     }
 
     #[test]

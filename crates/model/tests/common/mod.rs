@@ -236,8 +236,21 @@ pub fn container_doc(reg: &Registry) -> Document {
 /// `from` becomes the current one and the single `"meter": [n, d]` pair becomes the version 13
 /// list of changes. (The rest of a file only differs when the format changed.)
 pub fn as_current(file: &str, from: u32) -> String {
-    let version = |n: u32| format!("\"version\": {n}");
-    let file = file.replacen(&version(from), &version(atomik_model::PROJECT_VERSION), 1);
+    // The lines the writer puts after the version: the compat version and the ignorable list.
+    let header = {
+        let text = atomik_model::save_project(&empty_doc());
+        let a = text.find("\"version\"").expect("a version line");
+        let b = text.find("\"sample_rate\"").expect("a rate line");
+        text[a..b].to_owned()
+    };
+    // A current save with its version lowered by hand still carries its compat lines: drop them.
+    let file = match (file.find("\"version\""), file.find("\"sample_rate\"")) {
+        (Some(a), Some(b)) if a < b => {
+            format!("{}\"version\": {from},\n  {}", &file[..a], &file[b..])
+        }
+        _ => file.to_owned(),
+    };
+    let file = file.replacen(&format!("\"version\": {from},\n  "), &header, 1);
     let Some(start) = file.find("\"meter\": [") else {
         return file;
     };
@@ -257,8 +270,13 @@ pub fn as_current(file: &str, from: u32) -> String {
 /// The inverse of [`as_current`] for a single-meter file: today's save as the version `to` file
 /// (for regenerating the frozen fixtures).
 pub fn as_old(text: &str, to: u32) -> String {
-    let version = |n: u32| format!("\"version\": {n}");
-    let text = text.replacen(&version(atomik_model::PROJECT_VERSION), &version(to), 1);
+    // Back to the old file: the version line, without the compat and ignorable lines.
+    let text = {
+        let a = text.find("\"version\"").expect("a version line");
+        let b = text.find("\"sample_rate\"").expect("a rate line");
+        let head = format!("\"version\": {to},\n  ");
+        format!("{}{head}{}", &text[..a], &text[b..])
+    };
     let Some(start) = text.find("\"meter\": [\n") else {
         return text;
     };

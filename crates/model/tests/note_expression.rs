@@ -52,7 +52,7 @@ fn a_plain_clip_writes_nothing_and_a_clip_with_expression_round_trips() {
     let reg = registry();
     let plain = with_data(&reg, 2 * BAR, MidiData::default());
     let text = save_project(plain.doc());
-    assert!(!text.contains("expression"), "{text}");
+    assert!(!text.contains("\"expression\": ["), "{text}");
 
     let d = with_data(&reg, 2 * BAR, data());
     let text = save_project(d.doc());
@@ -68,7 +68,7 @@ fn a_plain_clip_writes_nothing_and_a_clip_with_expression_round_trips() {
             [[PPQ / 4, 0.5], [PPQ / 2, 0.75]]
         ]])
     );
-    assert_eq!(v["version"], 44, "no format bump");
+    assert_eq!(v["version"], 45);
     let (loaded, warnings) = load_project_with_warnings(&text, &reg).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(&loaded, d.doc());
@@ -99,7 +99,7 @@ fn an_entry_for_a_note_the_clip_no_longer_has_is_not_saved() {
         },
     );
     let text = save_project(d.doc());
-    assert!(!text.contains("expression"), "{text}");
+    assert!(!text.contains("\"expression\": ["), "{text}");
 }
 
 #[test]
