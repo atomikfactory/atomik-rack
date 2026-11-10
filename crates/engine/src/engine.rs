@@ -460,6 +460,8 @@ pub struct Engine {
     preview: crate::preview::PreviewVoice,
     /// Whether the preview voice is sounding, published once per batch.
     preview_active: Arc<AtomicBool>,
+    /// The loudest host input and output samples, published once per batch.
+    io_peaks: Arc<crate::IoPeaks>,
     /// The reference voice (after the master chain, outside the graph).
     reference: crate::reference::ReferenceVoice,
     /// The translation lens (after the reference, before the click).
@@ -499,6 +501,8 @@ pub struct EngineHandle {
     streams: StreamControl,
     /// Whether the preview voice is sounding (published by the engine each batch).
     preview_active: Arc<AtomicBool>,
+    /// The loudest host input and output samples (published by the engine each batch).
+    io_peaks: Arc<crate::IoPeaks>,
     /// What the reference voice publishes.
     reference: Arc<crate::ReferenceShared>,
     /// The clip launcher's published states.
@@ -597,6 +601,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
     let meters = Arc::new(Meters::new(caps.arena));
     let latencies = Arc::new(Latencies::new(caps.arena));
     let preview_active = Arc::new(AtomicBool::new(false));
+    let io_peaks = Arc::new(crate::IoPeaks::default());
     let reference = Arc::new(crate::ReferenceShared::default());
     let engine = Engine {
         config: cfg,
@@ -634,6 +639,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         tap: None,
         preview: crate::preview::PreviewVoice::new(cfg.sample_rate.hz()),
         preview_active: Arc::clone(&preview_active),
+        io_peaks: Arc::clone(&io_peaks),
         reference: crate::reference::ReferenceVoice::new(
             cfg.sample_rate.hz(),
             Arc::clone(&reference),
@@ -662,6 +668,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         latencies,
         streams: StreamControl::new(stream_stats, request_rx),
         preview_active,
+        io_peaks,
         reference,
         launch_cell,
         launch_rx,
@@ -958,6 +965,13 @@ impl EngineHandle {
     /// reference is loaded. Never blocks.
     pub fn reference_shared(&self) -> Arc<crate::ReferenceShared> {
         Arc::clone(&self.reference)
+    }
+
+    /// The loudest host input and output samples the engine saw (read them with
+    /// [`crate::IoPeaks::take_input`] and [`crate::IoPeaks::take_output`]). The output is what
+    /// leaves the engine at the end of the batch, the preview voice and the click included.
+    pub fn io_peaks(&self) -> Arc<crate::IoPeaks> {
+        Arc::clone(&self.io_peaks)
     }
 
     /// True while a preview voice is sounding (including its fade-out). Never blocks.
@@ -1576,6 +1590,8 @@ impl Engine {
         self.preview.mix(&mut self.out_fifo);
         self.preview_active
             .store(self.preview.is_active(), Ordering::Relaxed);
+        self.io_peaks.publish_input(&self.in_fifo);
+        self.io_peaks.publish_output(&self.out_fifo);
         self.frame += BATCH as u64;
     }
 

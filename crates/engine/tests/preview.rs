@@ -492,3 +492,32 @@ fn the_monitor_mirrors_the_feed_and_outlives_it() {
     assert!(m2.is_done() && from_stream.is_done());
     assert_eq!(m.frames_played(), 1_000);
 }
+
+#[test]
+fn the_io_peaks_see_the_preview_tone_and_the_host_input() {
+    let mut p = Played::new(48_000.0, 2);
+    let peaks = p.handle.io_peaks();
+    p.render(500);
+    assert_eq!(peaks.take_output(), 0.0, "silence before the preview");
+    let (mut feed, stream) = atomik_engine::preview_channel();
+    feed.set_source_rate(48_000);
+    feed_all(&mut feed, &[sine(440.0, 48_000.0, 0.125, 4800)]);
+    feed.finish();
+    p.handle.preview_start(stream, 1.0).unwrap();
+    p.render(2_000);
+    let out = peaks.take_output();
+    assert!(
+        (out - 0.125).abs() < 0.01,
+        "the tone peaks near 0.125: {out}"
+    );
+    p.render(8_000);
+    peaks.take_output();
+    p.render(500);
+    assert_eq!(peaks.take_output(), 0.0, "the tone has ended");
+
+    let (mut engine, handle) = new_engine(cfg(1, 2));
+    let input = vec![vec![0.3_f32; 256]];
+    render_block(&mut engine, &input, 2, 256);
+    render_block(&mut engine, &input, 2, 256);
+    assert!((handle.io_peaks().take_input() - 0.3).abs() < 1e-6);
+}
