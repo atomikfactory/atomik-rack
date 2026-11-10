@@ -39,8 +39,16 @@ fn lists() -> DeviceLists {
     }
 }
 
+/// Settings on the same fixed host as `lists`, so the saved host is listed on every OS.
+fn settings() -> AudioSettings {
+    AudioSettings {
+        host: HostChoice::Wasapi,
+        ..AudioSettings::default()
+    }
+}
+
 fn panel() -> AudioSetup {
-    AudioSetup::new(AudioSettings::default(), lists())
+    AudioSetup::new(settings(), lists())
 }
 
 fn running() -> AudioStatus {
@@ -379,7 +387,7 @@ fn the_midi_page_has_the_controller_wizard_button_and_says_when_there_is_no_port
     );
     assert!(s.lines(VIEW).contains(&"Set Up Controller...".to_owned()));
     let empty = AudioSetup::new(
-        AudioSettings::default(),
+        settings(),
         DeviceLists {
             midi_ports: Vec::new(),
             ..lists()
@@ -402,7 +410,7 @@ fn a_long_list_scrolls_with_the_wheel() {
     many.hosts[0].devices = (0..12)
         .map(|i| device(&format!("Card {i}"), 0, 2))
         .collect();
-    let mut s = AudioSetup::new(AudioSettings::default(), many);
+    let mut s = AudioSetup::new(settings(), many);
     let shown = |s: &AudioSetup| -> Vec<String> {
         s.widgets(VIEW)
             .into_iter()
