@@ -325,6 +325,15 @@ may break APIs and the patch and project formats.
   tool still draws.
 
 ### Fixed
+- **A plugin that answers a busy result no longer shows FAILED.** A VST3 plugin that returned something other than OK
+  from its audio call (many do while they load content, sign in or change their buses) failed its device for good with
+  "the plugin returned an error status", and the instrument made no sound. That block is now silent (dry for an
+  effect), counted and reported once in the plugin log, and the device keeps playing; only a crash, a panic or a lost
+  plugin process fails a device. A plugin whose buses moved without a restart request is given matching buses when it
+  is activated, and a bounce waits for a restart to finish so its pre-roll is the same everywhere.
+- **The notes input follows the rack selection.** Selecting an instrument in the rack (built-in or plugin) now arms its
+  track and sends the keyboard to it, as clicking its channel strip in the mixer does, instead of leaving the input on
+  the instrument that was armed before.
 - **Plugins that take long to restart, change their buses or replace a built-in device.** A plugin that was busy
   while the host deactivated it for a restart (just after a sign-in in its own window, for example) was stopped after
   2 seconds; deactivation is now waited for as long as an activation, and a restart polls it instead of holding the
