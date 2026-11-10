@@ -291,3 +291,78 @@ fn a_port_that_vanishes_takes_only_its_own_cables_and_says_so() {
     );
     assert_eq!(core.plugin_instance_count(), 2);
 }
+
+// ------------------------------------------------------------------ note lanes on creation
+
+/// A plugin instrument as a strict commercial one reports itself (stereo main in and out, a
+/// sidechain, notes in and out, seven aux output pairs) or a plain one (no audio input).
+fn instrument_layout(strict: bool) -> PluginLayout {
+    use atomik_device_sdk::{Channels, PluginKindHint};
+    let mut l = scanned_gain().layout;
+    l.kind_hint = PluginKindHint::Instrument;
+    l.notes_in = true;
+    l.main_out = Some(Channels::Stereo);
+    l.aux_out = 7;
+    l.main_in = strict.then_some(Channels::Stereo);
+    l.sidechain = strict;
+    l.notes_out = strict;
+    l
+}
+
+/// Adding one plugin instrument makes one note track with one note lane and one mixer channel,
+/// whatever its buses are: sidechain, notes out and aux outputs add no lane, track or channel
+/// (the aux pairs are sockets on the device, not strips).
+#[test]
+fn adding_a_plugin_instrument_makes_one_track_with_one_note_lane_whatever_its_layout() {
+    for strict in [true, false] {
+        let l = instrument_layout(strict);
+        let (mut core, _stats) = null_core(l.clone(), l);
+        for name in ["one", "two"] {
+            let source = source_of(&core, GAIN);
+            apply(
+                &mut core,
+                Command::Workflow(WorkflowCommand::CreateInstrument {
+                    index: usize::MAX,
+                    source,
+                    key: Some(key(name)),
+                    options: CreateOptions::default(),
+                }),
+            );
+        }
+        core.wait_plugins();
+        settle(&mut core);
+        let doc = core.doc();
+        let shape: Vec<(String, usize)> = doc
+            .song
+            .tracks
+            .iter()
+            .map(|t| (t.device.0.clone(), t.note_lane_count()))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![("one".to_string(), 1), ("two".to_string(), 1)],
+            "strict {strict}"
+        );
+        assert_eq!(doc.console.channels.len(), 2, "strict {strict}");
+        assert!(core.plugin_instance(&key("one")).is_some());
+    }
+}
+
+/// The plain add of a plugin followed by auto-route gives the same single track and lane.
+#[test]
+fn a_plugin_instrument_added_plainly_and_auto_routed_gets_one_note_lane() {
+    let l = instrument_layout(true);
+    let (mut core, _stats) = null_core(l.clone(), l);
+    add_plugin(&mut core, GAIN, "p");
+    apply(
+        &mut core,
+        Command::Workflow(WorkflowCommand::AutoRoute {
+            devices: vec![key("p")],
+            options: CreateOptions::default(),
+        }),
+    );
+    settle(&mut core);
+    let t = core.doc().song.track(&key("p")).expect("a track");
+    assert_eq!(t.note_lane_count(), 1);
+    assert_eq!(core.doc().song.tracks.len(), 1);
+}
