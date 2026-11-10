@@ -981,7 +981,15 @@ impl PluginManager {
         if m.phase == Phase::Stopping
             && let Some(processor) = m.end.take_processor()
         {
-            if m.instance.begin_deactivate(processor) {
+            // An offline render (a bounce's pre-roll) must see the restart done at the same
+            // batch in every process: it waits for the plugin; only a live restart is polled.
+            let done = if m.cfg.mode == RunMode::Offline {
+                m.instance.deactivate(processor);
+                true
+            } else {
+                m.instance.begin_deactivate(processor)
+            };
+            if done {
                 Self::activate_and_resume(id, m, events);
             } else {
                 m.phase = Phase::Deactivating;
