@@ -726,6 +726,7 @@ fn the_toast_of_a_copy_names_nothing_it_did_not_do() {
         tail_frames: 0,
         warnings: Vec::new(),
         loudness: Default::default(),
+        normalise: None,
     };
     let copied = describe_film(&report, FilmPicture::Copy, None);
     assert!(

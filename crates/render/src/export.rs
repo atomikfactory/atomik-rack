@@ -38,6 +38,7 @@
 //! [`RenderControl`]; a stopped export returns `None`.
 
 use crate::loudness::{LoudnessReport, measure};
+use crate::normalise::NormaliseReport;
 use crate::plugin_pass::RenderControl;
 use crate::project::{Extra, PluginBounce, ProjectOptions, render_core};
 use crate::wav::{SampleFormat, write_wav_file_with};
@@ -175,6 +176,9 @@ pub struct ExportReport {
     pub warnings: Vec<Warning>,
     /// The loudness of the audio that was written ([`crate::loudness`]).
     pub loudness: LoudnessReport,
+    /// What finishing the render did to its level ([`crate::normalise`]), when a loudness target
+    /// was asked for.
+    pub normalise: Option<NormaliseReport>,
 }
 
 /// The audio of an export, before it is written.
@@ -367,6 +371,7 @@ pub fn write_export(
         tail_frames: render.tail_frames,
         warnings: render.warnings.clone(),
         loudness: measure(audio),
+        normalise: None,
     })
 }
 
