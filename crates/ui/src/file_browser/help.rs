@@ -20,22 +20,25 @@ impl FileBrowserView {
         }
         let l = self.lay();
         if l.recursive_btn.contains(pos) {
-            return Some(Help::new(
-                l.recursive_btn,
-                "Also list the files of the sub-folders",
-            ));
+            return Some(
+                Help::new(l.recursive_btn, "Also list the files of the sub-folders")
+                    .id("browser.recursive"),
+            );
         }
         if l.level.width() > 0.0 && l.level.contains(pos) {
-            return Some(Help::new(
-                l.level,
-                "Preview level: drag to set it, double-click for 0 dB",
-            ));
+            return Some(
+                Help::new(
+                    l.level,
+                    "Preview level: drag to set it, double-click for 0 dB",
+                )
+                .id("browser.preview_level"),
+            );
         }
         if l.preview_btn.contains(pos) {
-            return Some(Help::new(
-                l.preview_btn,
-                "Play an audio file when you select it",
-            ));
+            return Some(
+                Help::new(l.preview_btn, "Play an audio file when you select it")
+                    .id("browser.preview"),
+            );
         }
         if l.colhdr.contains(pos) {
             let cols = lay::columns(l.colhdr.x0, l.colhdr.x1, self.bounds.width());
@@ -47,43 +50,52 @@ impl FileBrowserView {
             ];
             for (c, key) in sorts.into_iter().flatten() {
                 if col(c).contains(pos) {
-                    return Some(Help::new(
-                        col(c),
-                        match key {
-                            SortKey::Name => "Sort by name: click again to reverse",
-                            SortKey::Duration => "Sort by length: click again to reverse",
-                            _ => "Sort by size: click again to reverse",
-                        },
-                    ));
+                    return Some(
+                        Help::new(
+                            col(c),
+                            match key {
+                                SortKey::Name => "Sort by name: click again to reverse",
+                                SortKey::Duration => "Sort by length: click again to reverse",
+                                _ => "Sort by size: click again to reverse",
+                            },
+                        )
+                        .id("browser.sort"),
+                    );
                 }
             }
         }
         if l.back_btn.contains(pos) {
-            return Some(Help::new(
-                l.back_btn,
-                if self.back_place().is_some() {
-                    "Go back to the previous place"
-                } else {
-                    "Nothing to go back to yet"
-                },
-            ));
+            return Some(
+                Help::new(
+                    l.back_btn,
+                    if self.back_place().is_some() {
+                        "Go back to the previous place"
+                    } else {
+                        "Nothing to go back to yet"
+                    },
+                )
+                .id("browser.back"),
+            );
         }
         if l.fwd_btn.contains(pos) {
-            return Some(Help::new(
-                l.fwd_btn,
-                if self.forward_place().is_some() {
-                    "Go forward again"
-                } else {
-                    "Nothing to go forward to"
-                },
-            ));
+            return Some(
+                Help::new(
+                    l.fwd_btn,
+                    if self.forward_place().is_some() {
+                        "Go forward again"
+                    } else {
+                        "Nothing to go forward to"
+                    },
+                )
+                .id("browser.forward"),
+            );
         }
         if l.path.contains(pos)
             && let Some(Place::Folder(path)) = &self.location
         {
             let bar = lay::path_segments(path, l.path_text);
             if let Some(seg) = bar.segments.iter().find(|s| s.rect.contains(pos)) {
-                return Some(Help::new(seg.rect, "Go to this folder"));
+                return Some(Help::new(seg.rect, "Go to this folder").id("browser.path"));
             }
         }
         None

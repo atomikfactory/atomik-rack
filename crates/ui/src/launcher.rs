@@ -649,6 +649,19 @@ impl LauncherView {
     /// The hover help under `pos`.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
         let spot = self.spot_at(pos)?;
+        let id = match spot {
+            Spot::Back => "launcher.back",
+            Spot::Record => "launcher.record",
+            Spot::StopEmpty => "launcher.stop_empty",
+            Spot::Quantize => "launcher.quantize",
+            Spot::StopAll => "launcher.stop_all",
+            Spot::Stop(_) => "launcher.stop",
+            Spot::Head(_) => "launcher.track",
+            Spot::SlotPlay(..) => "launcher.slot_play",
+            Spot::Slot(..) => "launcher.slot",
+            Spot::SceneLaunch(_) => "launcher.scene_launch",
+            Spot::Scene(_) => "launcher.scene",
+        };
         let (rect, text) = match spot {
             Spot::Back => (
                 self.back_rect(),
@@ -690,7 +703,7 @@ impl LauncherView {
             ),
             Spot::Scene(r) => (self.scene_rect(r)?, "Double click to rename the scene"),
         };
-        Some(Help::new(rect, text))
+        Some(Help::new(rect, text).id(id))
     }
 
     fn slot_ref(&self, col: usize, row: usize) -> Option<(DeviceKey, usize)> {

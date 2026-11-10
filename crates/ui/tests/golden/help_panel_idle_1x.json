@@ -1,0 +1,6 @@
+{"ops":[
+{"fill":{"rect":[0.00,700.00,1000.00,792.00]},"brush":"#16181bff"},
+{"fill":{"rect":[0.00,700.00,1000.00,701.00]},"brush":"#ffffff1c"},
+{"text":"Help Mode","at":[14.00,721.00],"size":12.50,"weight":700,"align":"start","color":"#ece8e1ff"},
+{"text":"Point at any control to read about it here. Clicks still work as usual.","at":[14.00,740.00],"size":11.50,"weight":400,"align":"start","color":"#ece8e1ff"}
+]}

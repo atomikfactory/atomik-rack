@@ -12,7 +12,19 @@ use vello::kurbo::{Point, Rect, Vec2};
 
 /// The help of a toolbar, snapshot bar or master button.
 fn button(b: ConsoleButton, rect: Rect) -> Help {
-    let help = |text: &'static str| Help::new(rect, text);
+    let id = match b {
+        ConsoleButton::FoldAll => "console.fold_all",
+        ConsoleButton::AddChannel => "console.add_channel",
+        ConsoleButton::Compensation => "console.compensation",
+        ConsoleButton::Arrange => "console.arrange",
+        ConsoleButton::Maximise => "console.maximise",
+        ConsoleButton::ClearSolos => "console.clear_solos",
+        ConsoleButton::ClearMutes => "console.clear_mutes",
+        ConsoleButton::StoreSnapshot => "console.store_snapshot",
+        ConsoleButton::Compare => "console.compare",
+        ConsoleButton::EndCompare => "console.end_compare",
+    };
+    let help = |text: &'static str| Help::new(rect, text).id(id);
     match b {
         ConsoleButton::FoldAll => help("Fold every section of the strips, or unfold them all"),
         ConsoleButton::AddChannel => {
@@ -67,9 +79,12 @@ impl ConsoleView {
                     .filter(|n| !n.is_empty())
                 {
                     Some(note) => Some(Help::new(rect, note.to_owned())),
-                    None => help(
-                        rect,
-                        "Recall this snapshot: double-click to rename, right-click for more",
+                    None => Some(
+                        Help::new(
+                            rect,
+                            "Recall this snapshot: double-click to rename, right-click for more",
+                        )
+                        .id("console.snapshot"),
                     ),
                 }
             }
@@ -107,16 +122,22 @@ impl ConsoleView {
                 } else {
                     -self.scroll.y
                 };
-                help(
-                    sec.header + Vec2::new(x, top + dy),
-                    "Fold or unfold this section of every strip",
+                Some(
+                    Help::new(
+                        sec.header + Vec2::new(x, top + dy),
+                        "Fold or unfold this section of every strip",
+                    )
+                    .id("console.section"),
                 )
             }
             Hit::OutputSel(i) => {
                 let l = self.layout_of(self.strips.get(i)?.desc)?;
-                help(
-                    l.output? + Vec2::new(self.strip_x(i), top),
-                    "Where this strip's output goes: click to choose",
+                Some(
+                    Help::new(
+                        l.output? + Vec2::new(self.strip_x(i), top),
+                        "Where this strip's output goes: click to choose",
+                    )
+                    .id("console.output"),
                 )
             }
             Hit::PeakReset => {
@@ -141,9 +162,12 @@ impl ConsoleView {
                     "Choose the effect for this return",
                 )
             }
-            Hit::Insert(t, slot) => help(
-                self.slot_rect(t, slot)?,
-                "Insert slot: click to select the effect or to add one, drag to reorder",
+            Hit::Insert(t, slot) => Some(
+                Help::new(
+                    self.slot_rect(t, slot)?,
+                    "Insert slot: click to select the effect or to add one, drag to reorder",
+                )
+                .id("console.insert"),
             ),
             Hit::InsertEdit(t, slot) => {
                 let has_bypass = self
@@ -176,7 +200,7 @@ impl ConsoleView {
                     VcaPart::Readout => (l.lcd, "Group level offset: double-click to reset"),
                     VcaPart::Fader => return None,
                 };
-                help(r + off, text)
+                Some(Help::new(r + off, text).id("console.group"))
             }
             Hit::Plate(i) => {
                 let l = self.layout_of(self.strips.get(i)?.desc)?;

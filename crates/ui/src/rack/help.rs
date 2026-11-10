@@ -7,6 +7,7 @@ use crate::autolayout;
 use crate::breadcrumb::{self, CrumbHit};
 use crate::container_panel::ContainerButton;
 use crate::drum_gen_panel::DrumButton;
+use crate::mix_panel::MixButton;
 use crate::plugin_panel::PluginButton;
 use crate::resonance_marks::ResonanceBtn;
 use crate::seq_panel::SeqButton;
@@ -86,6 +87,51 @@ fn plugin_button(b: PluginButton) -> &'static str {
     }
 }
 
+/// The stable id of a rack button (the key of its long help in Help Mode).
+fn id_of(hit: Hit) -> Option<&'static str> {
+    Some(match hit {
+        Hit::Name(_) => "rack.name",
+        Hit::Fold(_) => "rack.fold",
+        Hit::Edit(_) => "rack.edit_samples",
+        Hit::ToChannel(_) => "rack.to_channel",
+        Hit::Sample(_) => "rack.sample",
+        Hit::SliceBtn(_) => "rack.slice",
+        Hit::ToTrack(_) => "rack.slices_to_track",
+        Hit::ScButton(_) => "rack.sidechain",
+        Hit::Resonance(_, ResonanceBtn::Find) => "rack.resonance_find",
+        Hit::Resonance(_, ResonanceBtn::Cut) => "rack.resonance_cut",
+        Hit::DuckLearn(_) => "rack.duck_learn",
+        Hit::TableEdit(_) => "rack.table_edit",
+        Hit::DuckPlot(_) => "rack.duck_plot",
+        Hit::TunerButton(_) => "rack.tuner",
+        Hit::Preview(_) => "rack.preview_player",
+        Hit::Container(_, ContainerButton::Fold) => "rack.container_fold",
+        Hit::Container(_, ContainerButton::Open) => "rack.container_open",
+        Hit::Container(_, ContainerButton::Edit) => "rack.container_edit",
+        Hit::Container(_, ContainerButton::ToChannel) => "rack.to_channel",
+        Hit::Plugin(_, b) => match b {
+            PluginButton::Power => "rack.plugin_power",
+            PluginButton::Bypass => "rack.plugin_bypass",
+            PluginButton::AudioThread => "rack.plugin_audio_thread",
+            PluginButton::OpenGui => "rack.plugin_gui",
+            PluginButton::Params => "rack.plugin_params",
+            PluginButton::ToChannel => "rack.to_channel",
+            PluginButton::Reload => "rack.plugin_reload",
+            PluginButton::Relink => "rack.plugin_relink",
+            PluginButton::Cv(_) => "rack.plugin_cv",
+        },
+        Hit::Player(_, PlayerBtn::Seq(_) | PlayerBtn::Drum(_)) => "rack.pattern",
+        Hit::Player(_, PlayerBtn::Mode(_) | PlayerBtn::Rate(_) | PlayerBtn::Step(_)) => {
+            "rack.arpeggio"
+        }
+        Hit::Player(_, PlayerBtn::OctaveDec | PlayerBtn::OctaveInc) => "rack.arpeggio",
+        Hit::Player(_, PlayerBtn::FromClip) => "rack.scale_from_clip",
+        Hit::Mix(_, MixButton::BypassInserts) => "rack.bypass_inserts",
+        Hit::Mix(_, MixButton::ShowInserts) => "rack.show_inserts",
+        _ => return None,
+    })
+}
+
 /// The text of a rack button, or `None` for a hit that is no button (or has its own tooltip).
 fn text(hit: Hit) -> Option<Cow<'static, str>> {
     let s = |t: &'static str| Some(Cow::Borrowed(t));
@@ -156,6 +202,13 @@ impl RackView {
     /// gesture, while a name is typed, and away from any button). A toggle or choice control
     /// says what it switches.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
+        self.help_at_with(pos, false)
+    }
+
+    /// [`Self::help_at`], and with `knobs` the controls that show a value tooltip of their own
+    /// (knobs, faders and sliders) answer too: the long help of Help Mode wants every control.
+    /// A parameter's id is `param:<device type>:<param key>`.
+    pub fn help_at_with(&self, pos: Point, knobs: bool) -> Option<Help> {
         if !matches!(self.drag, Drag::None)
             || self.rename.is_some()
             || !self.rack_area().contains(pos)
@@ -188,58 +241,78 @@ impl RackView {
             if self.driven_by(i, p.key).is_some() {
                 return None;
             }
+            let param_id = || {
+                self.devices[i]
+                    .desc
+                    .map(|d| format!("param:{}:{}", d.type_id, p.key))
+            };
+            let with_id = |h: Help| match param_id() {
+                Some(id) => h.id(id),
+                None => h,
+            };
             // The guitar amp explains each of its controls.
             if self.devices[i].fx == Some(crate::fx::FxKind::GuitarAmp)
                 && let Some(text) = crate::fx::amp_help(p.key)
             {
-                return Some(Help::new(rect, text));
+                return Some(with_id(Help::new(rect, text)));
             }
             if self.devices[i].fx == Some(crate::fx::FxKind::DynamicEq)
                 && let Some(text) = crate::fx::dyneq_help(p.key)
             {
-                return Some(Help::new(rect, text));
+                return Some(with_id(Help::new(rect, text)));
             }
             if self.devices[i].fx == Some(crate::fx::FxKind::Duck)
                 && let Some(text) = crate::duck_panel::duck_help(p.key)
             {
-                return Some(Help::new(rect, text));
+                return Some(with_id(Help::new(rect, text)));
             }
             if self.devices[i]
                 .desc
                 .is_some_and(|d| d.type_id == crate::fm_panel::FM_TYPE)
                 && let Some(text) = crate::fm_panel::fm_help(p.key)
             {
-                return Some(Help::new(rect, text));
+                return Some(with_id(Help::new(rect, text)));
             }
             if self.devices[i]
                 .desc
                 .is_some_and(|d| d.type_id == crate::granular_panel::GRANULAR_TYPE)
                 && let Some(text) = crate::granular_panel::granular_help(p.key)
             {
-                return Some(Help::new(rect, text));
+                return Some(with_id(Help::new(rect, text)));
             }
             let label = autolayout::control_label(p);
             return match kind {
-                ControlKind::Toggle => Some(Help::new(
+                ControlKind::Toggle => Some(with_id(Help::new(
                     rect,
                     Cow::Owned(format!("{label}: click to switch on or off")),
-                )),
-                ControlKind::Choice if crate::master_panel::is_pick_list(p) => Some(Help::new(
-                    rect,
-                    Cow::Owned(format!(
-                        "{label}: click to pick from the list, right-click for the previous"
-                    )),
-                )),
-                ControlKind::Choice => Some(Help::new(
+                ))),
+                ControlKind::Choice if crate::master_panel::is_pick_list(p) => {
+                    Some(with_id(Help::new(
+                        rect,
+                        Cow::Owned(format!(
+                            "{label}: click to pick from the list, right-click for the previous"
+                        )),
+                    )))
+                }
+                ControlKind::Choice => Some(with_id(Help::new(
                     rect,
                     Cow::Owned(format!("{label}: click to step through the choices")),
-                )),
+                ))),
+                _ if knobs => Some(with_id(Help::new(rect, Cow::Owned(label.to_string())))),
                 _ => None,
             };
         }
         if let Hit::Mix(i, b) = hit {
-            return Some(Help::new(rect, self.mix_button_help(i, b)));
+            let help = Help::new(rect, self.mix_button_help(i, b));
+            return Some(match id_of(hit) {
+                Some(id) => help.id(id),
+                None => help,
+            });
         }
-        Some(Help::new(rect, text(hit)?))
+        let help = Help::new(rect, text(hit)?);
+        Some(match id_of(hit) {
+            Some(id) => help.id(id),
+            None => help,
+        })
     }
 }

@@ -1,0 +1,9 @@
+{"ops":[
+{"fill":{"rect":[0.00,700.00,1000.00,792.00]},"brush":"#f2f3f5ff"},
+{"fill":{"rect":[0.00,700.00,1000.00,701.00]},"brush":"#0000002e"},
+{"text":"Shortcut: Space","at":[986.00,721.00],"size":11.50,"weight":600,"align":"end","color":"#4d545eff"},
+{"text":"Play","at":[14.00,721.00],"size":12.50,"weight":700,"align":"start","color":"#1b1e23ff"},
+{"text":"Starts the song from the playhead. While the song is playing the same button stops it. The lit button means the song is running.","at":[14.00,740.00],"size":11.50,"weight":400,"align":"start","color":"#1b1e23ff"},
+{"text":"More: The main window","at":[14.00,783.00],"size":11.00,"weight":600,"align":"start","color":"#0a5fc2ff"},
+{"fill":{"rect":[14.00,785.00,149.98,786.00]},"brush":"#0a5fc2ff"}
+]}
