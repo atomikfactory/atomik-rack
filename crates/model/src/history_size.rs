@@ -47,6 +47,13 @@ impl Edit {
                 Edit::MeterMap { old, new } => {
                     (old.len() + new.len()) * size_of::<crate::MeterEvent>()
                 }
+                Edit::Harmony { old, new } => {
+                    let size = |h: &crate::harmony::Harmony| {
+                        h.chords.len() * size_of::<crate::harmony::ChordEvent>()
+                            + h.changes.len() * size_of::<crate::harmony::KeyChange>()
+                    };
+                    size(old) + size(new)
+                }
                 Edit::Markers { old, new } => (old.len() + new.len()) * size_of::<crate::Marker>(),
                 Edit::Ranges { old, new } => {
                     (old.len() + new.len()) * size_of::<crate::RangeMarker>()

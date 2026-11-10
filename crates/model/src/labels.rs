@@ -123,6 +123,7 @@ fn song_label(c: &SongCommand) -> &'static str {
         SongCommand::SetClipMeta { .. } => "Rename Clip",
         SongCommand::SetTempoMap(_) | SongCommand::DragTempoMap { .. } => "Edit Tempo Map",
         SongCommand::SetMarkers(_) | SongCommand::DragMarkers { .. } => "Edit Markers",
+        SongCommand::SetHarmony(_) | SongCommand::DragHarmony { .. } => "Edit Key and Chords",
         SongCommand::SetLoop { .. } => "Set Loop",
         SongCommand::SetSongEnd(_) => "Set Song End",
         SongCommand::Launcher(c) => crate::launcher::label(c),

@@ -149,6 +149,11 @@ pub(crate) enum Edit {
         old: Vec<MeterEvent>,
         new: Vec<MeterEvent>,
     },
+    /// The song key, the key changes and the chord lane.
+    Harmony {
+        old: Box<crate::harmony::Harmony>,
+        new: Box<crate::harmony::Harmony>,
+    },
     /// The whole marker list.
     Markers {
         old: Vec<Marker>,
@@ -707,6 +712,7 @@ impl Edit {
             Edit::Grooves { old, new } => Edit::Grooves { old: new, new: old },
             Edit::TrackHeights { old, new } => Edit::TrackHeights { old: new, new: old },
             Edit::Launcher { old, new } => Edit::Launcher { old: new, new: old },
+            Edit::Harmony { old, new } => Edit::Harmony { old: new, new: old },
             Edit::Organise { old, new } => Edit::Organise { old: new, new: old },
             Edit::Loop { old, new } => Edit::Loop { old: new, new: old },
             Edit::SongEnd { old, new } => Edit::SongEnd { old: new, new: old },
@@ -1154,6 +1160,10 @@ impl Edit {
             Edit::Launcher { new, .. } => {
                 doc.song_mut().launcher.clone_from(new);
                 vec![SyncOp::SongChanged]
+            }
+            Edit::Harmony { new, .. } => {
+                doc.song_mut().harmony.clone_from(new);
+                vec![SyncOp::ViewChanged]
             }
             Edit::TrackHeights { new, .. } => {
                 doc.song_mut().track_heights.clone_from(new);

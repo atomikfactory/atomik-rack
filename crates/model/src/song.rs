@@ -803,6 +803,10 @@ pub struct Song {
     /// Empty by default, and written only when it holds something (project format 44, an
     /// optional field older readers skip).
     pub launcher: crate::launcher::Launcher,
+    /// The song key, the key changes and the chord lane (see [`crate::harmony`]). Empty by
+    /// default, and written only when it holds something (project format 45, optional fields
+    /// an older reader skips).
+    pub harmony: crate::harmony::Harmony,
 }
 
 /// A named point in the song. The id is only for telling markers apart while editing; files do
@@ -1244,6 +1248,17 @@ pub enum SongCommand {
     DragMeterMap {
         /// New map.
         map: Vec<MeterEvent>,
+        /// Drag-merge group.
+        merge: u64,
+    },
+    /// Replace the song's harmony: the song key, the key changes and the chord lane (see
+    /// [`crate::harmony`]; [`Harmony::check`](crate::harmony::Harmony::check) must pass). One undo
+    /// step. Reports [`crate::SyncOp::ViewChanged`] only: the harmony never reaches the engine.
+    SetHarmony(crate::harmony::Harmony),
+    /// [`SongCommand::SetHarmony`] for a drag: commands with the same `merge` id are one undo step.
+    DragHarmony {
+        /// The new harmony.
+        harmony: crate::harmony::Harmony,
         /// Drag-merge group.
         merge: u64,
     },
@@ -1790,6 +1805,7 @@ pub fn empty_song(bpm: f64) -> Song {
         org: Organisation::default(),
         tails: false,
         launcher: crate::launcher::Launcher::default(),
+        harmony: crate::harmony::Harmony::default(),
     }
 }
 

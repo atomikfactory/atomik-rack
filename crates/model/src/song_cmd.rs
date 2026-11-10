@@ -1832,6 +1832,13 @@ pub(crate) fn plan(
                 new: map,
             }
         }
+        SongCommand::SetHarmony(harmony) | SongCommand::DragHarmony { harmony, .. } => {
+            harmony.check().map_err(range)?;
+            Edit::Harmony {
+                old: Box::new(song.harmony.clone()),
+                new: Box::new(harmony),
+            }
+        }
         SongCommand::SetMarkers(markers) | SongCommand::DragMarkers { markers, .. } => {
             let markers = check_markers(markers)?;
             Edit::Markers {

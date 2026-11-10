@@ -14,6 +14,8 @@ pub mod audio_trim;
 mod audition;
 pub mod automation_rec;
 mod automation_view;
+mod chord_fit;
+pub mod chord_symbol;
 mod clip_io;
 mod clip_lanes;
 mod clip_transform;
@@ -46,8 +48,10 @@ mod expand;
 pub mod freeze;
 pub mod groove;
 mod groove_cmd;
+pub mod harmony;
 mod history;
 mod history_size;
+pub mod key_detect;
 mod labels;
 mod lane_cmd;
 pub mod launcher;
@@ -236,6 +240,8 @@ pub use audio_notes::{BEND_RANGE_SEMITONES, FoundBend, FoundNote, NoteOptions, n
 pub use audition::{AuditionSpan, audition_span};
 pub use automation_rec::{ThinLevel, WriteMode};
 pub use automation_view::{AutomationCurves, ShownValues};
+pub use chord_fit::fit_to_chords;
+pub use chord_symbol::{ChordSymbol, ChordSymbolError, format_chord, parse_chord};
 pub use clip_io::{CLIP_FORMAT, CLIP_VERSION, ClipFile, load_clip_file, save_clip_file};
 pub use console::{
     Console, ConsoleBus, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOTS, InsertEffect,
@@ -258,8 +264,10 @@ pub use console_snapshot_lane::{SNAPSHOT_LANE_KEY, SNAPSHOT_LANE_PARAM, lane_sna
 pub use console_snapshot_wiring::SnapshotWiring;
 pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};
+pub use harmony::{ChordEvent, Harmony, Key, KeyChange, MAX_CHORDS, MAX_KEY_CHANGES};
 pub use history::InvariantError;
 use history::{Edit, Swap, song_end_growth};
+pub use key_detect::{KeyGuess, detect_key, detect_song_key, song_note_weights};
 use labels::Labels;
 pub use labels::{DEFAULT_LABEL, HistoryStep};
 pub use launcher::{
@@ -897,6 +905,7 @@ pub enum Command {
 /// | `RenameAsset` | `ViewChanged` |
 /// | tempo map (`SongCommand::SetTempoMap` and `DragTempoMap`, also set `tempo_bpm`) | `TempoChanged(first bpm)`, `SongChanged` |
 /// | meter (`SetMeter`, `SetMeterMap`, `DragMeterMap`) | `SongChanged` |
+/// | key and chords (`SetHarmony`, `DragHarmony`; also undo/redo) | `ViewChanged` |
 /// | markers and ranges (`SetMarkers`, `DragMarkers`, `SetRanges`, `DragRanges`; also undo/redo) | `ViewChanged` |
 /// | quantize (`ApplyQuantize`, `QuantizeNotes`) | `SongChanged` |
 /// | note tools (`ApplyNoteTool`) | `SongChanged` |
@@ -1247,6 +1256,8 @@ enum MergeKey {
     TempoMap(u64),
     /// `DragMeterMap`.
     MeterMap(u64),
+    /// `DragHarmony`.
+    Harmony(u64),
     /// `DragMarkers`.
     Markers(u64),
     /// `DragRanges`.
@@ -1463,6 +1474,9 @@ impl Document {
             ) => Some(MergeKey::Video(*m)),
             Command::Song(SongCommand::DragTempoMap { merge, .. }) => {
                 Some(MergeKey::TempoMap(*merge))
+            }
+            Command::Song(SongCommand::DragHarmony { merge, .. }) => {
+                Some(MergeKey::Harmony(*merge))
             }
             Command::Song(SongCommand::DragMeterMap { merge, .. }) => {
                 Some(MergeKey::MeterMap(*merge))
@@ -1718,6 +1732,9 @@ impl Document {
                 new.clone_from(latest);
             }
             (Some(Edit::MeterMap { new, .. }), Edit::MeterMap { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::Harmony { new, .. }), Edit::Harmony { new: latest, .. }) if merged => {
                 new.clone_from(latest);
             }
             (Some(Edit::Markers { new, .. }), Edit::Markers { new: latest, .. }) if merged => {

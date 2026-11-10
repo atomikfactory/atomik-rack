@@ -413,6 +413,7 @@ pub(super) fn load_song(
             ..Organisation::default()
         },
         launcher: Default::default(),
+        harmony: read_harmony::load_harmony(obj, path, version)?,
         tails: match obj.get("tails") {
             None => false,
             Some(Value::Bool(true)) => true,
