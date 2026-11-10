@@ -661,7 +661,7 @@ mod tests {
             assert_eq!(Stamp::from_id(s.id()), Some(s), "{}", s.id());
             assert!(!s.label().is_empty() && !s.short().is_empty());
         }
-        assert_eq!(Stamp::all().len(), 1 + 21 + 3);
+        assert_eq!(Stamp::all().len(), 1 + 21 + 1 + 3);
         assert_eq!(Stamp::from_id("nope"), None);
         let major = Stamp::Chord(ChordKind::Major);
         assert_eq!(major.keys(60, None, 0), [60, 64, 67]);
