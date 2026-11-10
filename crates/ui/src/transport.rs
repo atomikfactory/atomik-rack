@@ -836,23 +836,32 @@ impl TransportBar {
         if let Some(r) = self.override_rect()
             && r.contains(pos)
         {
-            return Some(Help::new(
-                r,
-                "Some lanes hold a value you moved while the song plays: click to let them play again",
-            ));
+            return Some(
+                Help::new(
+                    r,
+                    "Some lanes hold a value you moved while the song plays: click to let them play again",
+                )
+                .id("transport.override"),
+            );
         }
         let [_, _, tempo, meter] = self.lcd_rects();
         if tempo.contains(pos) {
-            return Some(Help::new(
-                tempo,
-                "Tempo in BPM: drag or scroll to change (Shift: fine), double-click to type",
-            ));
+            return Some(
+                Help::new(
+                    tempo,
+                    "Tempo in BPM: drag or scroll to change (Shift: fine), double-click to type",
+                )
+                .id("transport.tempo"),
+            );
         }
         if meter.contains(pos) {
-            return Some(Help::new(
-                meter,
-                "Time signature: drag or scroll a number, double-click to type",
-            ));
+            return Some(
+                Help::new(
+                    meter,
+                    "Time signature: drag or scroll a number, double-click to type",
+                )
+                .id("transport.meter"),
+            );
         }
         self.cluster_help(pos)
             .or_else(|| self.rec_help(pos))
@@ -860,8 +869,18 @@ impl TransportBar {
     }
 
     fn button_help(b: TransportButton, rect: Rect) -> Help {
-        let help =
-            |text: &'static str, command: &'static str| Help::new(rect, text).with_command(command);
+        let id = match b {
+            TransportButton::ReturnToZero => "transport.go_start",
+            TransportButton::Stop => "transport.stop",
+            TransportButton::Play => "transport.play",
+            TransportButton::Record => "transport.record",
+            TransportButton::AutoLanes => "transport.auto_lanes",
+            TransportButton::Loop => "transport.loop",
+            TransportButton::Metronome => "transport.metronome",
+        };
+        let help = |text: &'static str, command: &'static str| {
+            Help::new(rect, text).with_command(command).id(id)
+        };
         match b {
             TransportButton::ReturnToZero => help("Return to the start", "transport.go_start"),
             TransportButton::Stop => help("Stop", "transport.stop"),

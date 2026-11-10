@@ -11,7 +11,18 @@ use vello::kurbo::{Point, Rect};
 
 /// The help of a track header button.
 fn track_button(b: TrackButton, rect: Rect) -> Help {
-    let help = |text: &'static str| Help::new(rect, text);
+    let id = match b {
+        TrackButton::Mute => "arrangement.track_mute",
+        TrackButton::Solo => "arrangement.track_solo",
+        TrackButton::Arm => "arrangement.track_arm",
+        TrackButton::Expand => "arrangement.track_expand",
+        TrackButton::AddLane => "arrangement.add_lane",
+        TrackButton::Input => "arrangement.track_input",
+        TrackButton::Monitor => "arrangement.track_monitor",
+        TrackButton::Controllers => "arrangement.track_controllers",
+        TrackButton::Keys => "arrangement.track_keys",
+    };
+    let help = |text: &'static str| Help::new(rect, text).id(id);
     match b {
         TrackButton::Mute => help("Mute this track"),
         TrackButton::Solo => help("Solo this track: only soloed tracks are heard"),
@@ -31,18 +42,28 @@ fn track_button(b: TrackButton, rect: Rect) -> Help {
 
 /// The help of an automation or note lane header button.
 fn lane_button(b: LaneButton, rect: Rect) -> Help {
-    let help = |text: &'static str| Help::new(rect, text);
+    let id = match b {
+        LaneButton::Mute => "arrangement.lane_mute",
+        LaneButton::Solo => "arrangement.lane_solo",
+        LaneButton::Delete => "arrangement.lane_delete",
+        LaneButton::Fold => "arrangement.lane_fold",
+        LaneButton::Arm => "arrangement.lane_arm",
+        LaneButton::Mode => "arrangement.lane_mode",
+    };
+    let help = |text: &'static str| Help::new(rect, text).id(id);
     match b {
         LaneButton::Mute => Help::new(
             rect,
             "Mute this lane (an automation lane holds the value its parameter has)",
         )
-        .with_command("sequencer.toggle_lane_mute"),
+        .with_command("sequencer.toggle_lane_mute")
+        .id(id),
         LaneButton::Solo => Help::new(
             rect,
             "Solo this lane: while a lane is soloed, only the soloed lanes of the track play",
         )
-        .with_command("sequencer.toggle_lane_solo"),
+        .with_command("sequencer.toggle_lane_solo")
+        .id(id),
         LaneButton::Delete => help("Delete this automation lane and its clips"),
         LaneButton::Fold => help("Fold the lane to a thin strip, or unfold it"),
         LaneButton::Arm => help("Arm this lane for automation recording"),
@@ -52,6 +73,16 @@ fn lane_button(b: LaneButton, rect: Rect) -> Help {
 
 /// The help of a corner button.
 fn corner_button(b: CornerButton, rect: Rect) -> Help {
+    let id = match b {
+        CornerButton::ClearMutes => "arrangement.clear_mutes",
+        CornerButton::ClearSolos => "arrangement.clear_solos",
+        CornerButton::Quantize => "arrangement.quantize",
+        CornerButton::ManualRec => "arrangement.manual_rec",
+    };
+    corner_help(b, rect).id(id)
+}
+
+fn corner_help(b: CornerButton, rect: Rect) -> Help {
     match b {
         CornerButton::ClearMutes => {
             Help::new(rect, "Clear every mute").with_command("sequencer.clear_mutes")
@@ -88,7 +119,17 @@ fn tool(t: Tool, rect: Rect) -> Help {
         }
         Tool::Hand => "Hand tool: drag to scroll the view",
     };
-    Help::new(rect, text).with_command(t.command_id())
+    let id = match t {
+        Tool::Select => "arrangement.tool_select",
+        Tool::Pencil => "arrangement.tool_pencil",
+        Tool::Eraser => "arrangement.tool_eraser",
+        Tool::Razor => "arrangement.tool_razor",
+        Tool::Speaker => "arrangement.tool_speaker",
+        Tool::Mute => "arrangement.tool_mute",
+        Tool::Magnifier => "arrangement.tool_magnifier",
+        Tool::Hand => "arrangement.tool_hand",
+    };
+    Help::new(rect, text).with_command(t.command_id()).id(id)
 }
 
 impl ArrangementView {
@@ -105,9 +146,12 @@ impl ArrangementView {
             |track: usize, lane: usize| self.row_of(track, lane).map(|r| self.row_rect(r));
         let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
         match self.hit_base(pos) {
-            Hit::Snap => help(
-                self.snap_rect(),
-                "Snap grid: click to step to the next value, drag or scroll to choose",
+            Hit::Snap => Some(
+                Help::new(
+                    self.snap_rect(),
+                    "Snap grid: click to step to the next value, drag or scroll to choose",
+                )
+                .id("arrangement.snap"),
             ),
             Hit::Tool(t) => Some(tool(t, self.tool_rect(t))),
             Hit::CornerButton(b) => Some(corner_button(b, self.corner_button_rect(b))),
@@ -154,16 +198,22 @@ impl ArrangementView {
             }
             Hit::AddTrack(device) => {
                 let rr = self.add_track_row(&device)?;
-                help(
-                    Rect::new(self.bounds.x0, rr.y0, self.axis.x0, rr.y1),
-                    "Add a song track for this device",
+                Some(
+                    Help::new(
+                        Rect::new(self.bounds.x0, rr.y0, self.axis.x0, rr.y1),
+                        "Add a song track for this device",
+                    )
+                    .id("arrangement.add_track"),
                 )
             }
             Hit::AddAudio => {
                 let rr = self.add_audio_row()?;
-                help(
-                    Rect::new(self.bounds.x0, rr.y0, self.axis.x0, rr.y1),
-                    "Add an audio track",
+                Some(
+                    Help::new(
+                        Rect::new(self.bounds.x0, rr.y0, self.axis.x0, rr.y1),
+                        "Add an audio track",
+                    )
+                    .id("arrangement.add_audio"),
                 )
             }
             Hit::TakeToggle(g) => {

@@ -571,7 +571,20 @@ impl TransportBar {
             if !r.contains(pos) {
                 continue;
             }
-            return Some(match part {
+            let id = match part {
+                ClusterPart::Rewind => "transport.rewind",
+                ClusterPart::Forward => "transport.forward",
+                ClusterPart::Tap => "transport.tap_tempo",
+                ClusterPart::GoLeft => "transport.go_left",
+                ClusterPart::GoRight => "transport.go_right",
+                ClusterPart::Click => "transport.click_level",
+                ClusterPart::QRec => "transport.q_rec",
+                ClusterPart::Grid => "transport.q_rec_grid",
+                ClusterPart::Quantize => "transport.quantize",
+                ClusterPart::Key => "transport.song_key",
+                ClusterPart::More => "transport.more",
+            };
+            let found = match part {
                 ClusterPart::Rewind => help(
                     *r,
                     "Rewind by bars: hold to repeat, faster the longer it is held",
@@ -613,21 +626,28 @@ impl TransportBar {
                     Some("transport.set_song_key"),
                 ),
                 ClusterPart::More => help(*r, "More transport controls", None),
-            });
+            };
+            return Some(found.id(id));
         }
         if let Some(r) = l.left.filter(|r| r.contains(pos)) {
-            return Some(help(
-                r,
-                "Left locator: double-click to type a position (bar.beat.tick)",
-                None,
-            ));
+            return Some(
+                help(
+                    r,
+                    "Left locator: double-click to type a position (bar.beat.tick)",
+                    None,
+                )
+                .id("transport.left_locator"),
+            );
         }
         if let Some(r) = l.right.filter(|r| r.contains(pos)) {
-            return Some(help(
-                r,
-                "Right locator: double-click to type a position (bar.beat.tick)",
-                None,
-            ));
+            return Some(
+                help(
+                    r,
+                    "Right locator: double-click to type a position (bar.beat.tick)",
+                    None,
+                )
+                .id("transport.right_locator"),
+            );
         }
         None
     }

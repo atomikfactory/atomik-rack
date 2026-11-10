@@ -1922,7 +1922,26 @@ impl PianoRollView {
 
     fn top_help(&self, item: TopItem) -> Help {
         let rect = self.top_rect(item);
-        let help = |text: &'static str| Help::new(rect, text);
+        let id = match item {
+            TopItem::Snap => "roll.snap",
+            TopItem::Quantize => "roll.quantize",
+            TopItem::QuantizeOptions => "roll.quantize_options",
+            TopItem::Close => "roll.close",
+            TopItem::Tool(Tool::Select) => "roll.tool_select",
+            TopItem::Tool(Tool::Pencil) => "roll.tool_pencil",
+            TopItem::Tool(Tool::Eraser) => "roll.tool_eraser",
+            TopItem::Tool(Tool::Razor) => "roll.tool_razor",
+            TopItem::Tool(_) => "roll.tool_other",
+            TopItem::ScaleRoot => "roll.scale_root",
+            TopItem::ScaleKind => "roll.scale_kind",
+            TopItem::ScaleDetect => "roll.scale_detect",
+            TopItem::ScaleSnap => "roll.scale_snap",
+            TopItem::Fold => "roll.fold_keys",
+            TopItem::Chord => "roll.chord",
+            TopItem::Inversion => "roll.inversion",
+            TopItem::Controllers => "roll.controllers",
+        };
+        let help = |text: &'static str| Help::new(rect, text).id(id);
         match item {
             TopItem::Snap => {
                 help("Snap grid: click to step to the next value, drag or scroll to choose")

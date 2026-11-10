@@ -90,7 +90,9 @@ are always there, the panel never takes the keyboard and you can use the song as
 at the foot of the start screen turns the card off. To find any command by name, press Ctrl+Shift+K (Cmd+Shift+K on
 macOS) or choose Help > Command Palette, type a few letters, and press Enter. Edit > Undo History lists every edit
 made to the song: click a row to go back (or forward) to the song as it was after that edit, or press Up and Down in
-the list.
+the list. To learn what a control does, press Shift+F1 (F1 opens the list of keyboard shortcuts) or choose Help >
+Help Mode: a Help panel opens above the status line and explains the control under the pointer, in more words
+than its tooltip, with its shortcut and a link into this documentation. The controls keep working while it is on.
 
 ## Building
 

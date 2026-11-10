@@ -725,6 +725,8 @@ pub struct Shell<B: AudioBackend> {
     file_drag: Option<FileDrag>,
     /// The help tooltip: what the pointer rests on and whether it shows yet.
     tips: Tips,
+    /// Help Mode: the Help panel and the control it explains.
+    help_mode: HelpMode,
     /// Another song of the workspace has the audio: this one runs without a stream, a MIDI
     /// input or a control surface until it is focused ([`Self::claim_audio`]).
     silent: bool,
@@ -932,6 +934,7 @@ impl<B: AudioBackend> Shell<B> {
             browser_edge: 0.0,
             file_drag: None,
             tips: Tips::default(),
+            help_mode: HelpMode::default(),
             silent: false,
             songs: Vec::new(),
             song_at: 0,
@@ -3971,6 +3974,7 @@ impl<B: AudioBackend> Shell<B> {
             piano_keys: self.detached(WindowKind::PianoKeys),
             track_panel: self.core.track_panel_visible(),
             history_panel: self.core.history_visible(),
+            help_mode: self.help_mode.on,
             launcher: self.launcher_menu(),
             rack_sort: self.core.doc().sort_mode,
             single_column: view.single_column(),
@@ -4102,7 +4106,7 @@ impl<B: AudioBackend> Shell<B> {
         }
         let left = self.file_browser_rect().map_or(0.0, |r| r.x1);
         let top = self.top();
-        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let bottom = self.content_bottom().max(top + 1.0);
         let room = (self.size().width - left - MIN_REST_WIDTH).max(0.0);
         let width = TRACK_PANEL_WIDTH.min(room);
         (width >= MIN_TRACK_PANEL_WIDTH)
@@ -4118,7 +4122,7 @@ impl<B: AudioBackend> Shell<B> {
         let left = self.file_browser_rect().map_or(0.0, |r| r.x1);
         let right = self.track_panel_rect().map_or(self.size().width, |r| r.x0);
         let top = self.top();
-        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let bottom = self.content_bottom().max(top + 1.0);
         let room = (right - left - MIN_REST_WIDTH).max(0.0);
         let width = HISTORY_PANEL_WIDTH.min(room);
         (width >= MIN_HISTORY_PANEL_WIDTH).then(|| Rect::new(right - width, top, right, bottom))
@@ -4132,7 +4136,7 @@ impl<B: AudioBackend> Shell<B> {
             return None;
         }
         let top = self.bar_height();
-        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let bottom = self.content_bottom().max(top + 1.0);
         let most = (self.size().width - MIN_REST_WIDTH).max(0.0);
         let least = FileBrowserView::MIN_WIDTH.min(most);
         let width = self.core.file_browser().width().clamp(least, most);
@@ -4149,7 +4153,7 @@ impl<B: AudioBackend> Shell<B> {
         let w = (right - x0).max(1.0);
         let x1 = x0 + w;
         let top = self.top();
-        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let bottom = self.content_bottom().max(top + 1.0);
         if self.maximised() {
             let transport_top = (bottom - TRANSPORT_HEIGHT).max(top + 1.0);
             return Layout {
@@ -4683,6 +4687,7 @@ impl<B: AudioBackend> Shell<B> {
         let modal = self.modal_open();
         let mut requests = self.handle_event_inner(window, event, under);
         self.track_tooltip(window, event);
+        self.track_help(window, event);
         self.sync_library_ui();
         self.save_zoom_state();
         requests.append(&mut self.pending);
@@ -5236,6 +5241,10 @@ impl<B: AudioBackend> Shell<B> {
         }
         // The freeze hint is the same kind of card: only the clicks on it are its own.
         if let Some(requests) = self.cpu_hint_event(window, event) {
+            return requests;
+        }
+        // The Help panel takes only the click on its "More" link.
+        if let Some(requests) = self.help_link_event(window, event) {
             return requests;
         }
         // The modals live in the main window: while one is open the other windows are inert, and
@@ -6652,7 +6661,7 @@ impl<B: AudioBackend> Shell<B> {
 
     fn drag_divider(&mut self, pos: Point, grab: f64, released: bool) {
         let top = self.top();
-        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let bottom = self.content_bottom().max(top + 1.0);
         let avail = (bottom - top - TRANSPORT_HEIGHT - DIVIDER_HEIGHT).max(2.0);
         let rack_h = (pos.y - grab - top).clamp(0.0, avail);
         let lo = MIN_PANE_HEIGHT.min(avail / 2.0);
@@ -8977,6 +8986,11 @@ impl<B: AudioBackend> Shell<B> {
                 self.open_audio_setup();
                 Vec::new()
             }
+            AppCommand::HelpMode => {
+                self.toggle_help_mode();
+                self.close_menubars();
+                Vec::new()
+            }
             AppCommand::KeyboardShortcuts => {
                 self.open_settings(Some(crate::settings_dialog::Tab::Keyboard));
                 Vec::new()
@@ -9300,7 +9314,7 @@ impl<B: AudioBackend> Shell<B> {
             x0,
             self.bar_height(),
             x1.max(x0 + 1.0),
-            (size.height - STATUS_BAR_HEIGHT).max(self.bar_height() + 1.0),
+            self.content_bottom().max(self.bar_height() + 1.0),
         )
     }
 
@@ -10637,6 +10651,7 @@ impl<B: AudioBackend> Shell<B> {
             12.0,
             theme.text_muted,
         ));
+        self.paint_help_panel(canvas, &theme);
         if let Some(menubar) = &self.menubar {
             let model = self.menu_model();
             menubar.paint(canvas, &theme, &model, Size::new(w, h));
@@ -10804,6 +10819,10 @@ mod export_impl;
 mod windows_impl;
 use windows_impl::{MAIN_SIZE, WinState};
 
+#[path = "shell_help.rs"]
+mod help_impl;
+use help_impl::HelpMode;
+
 #[path = "shell_tooltip.rs"]
 mod tooltip_impl;
 use tooltip_impl::Tips;
@@ -10816,6 +10835,10 @@ mod tests;
 #[cfg(test)]
 #[path = "shell_tooltip_tests.rs"]
 mod tooltip_tests;
+
+#[cfg(test)]
+#[path = "shell_help_tests.rs"]
+mod help_tests;
 
 #[cfg(test)]
 #[path = "shell_repaint_tests.rs"]

@@ -43,6 +43,9 @@ pub struct Help {
     pub command: Option<&'static str>,
     /// The argument of that command (`view.cables` + `show`).
     pub arg: Option<&'static str>,
+    /// The stable id of the control, the key of its long help text in Help Mode (`None`: the
+    /// help is looked up by the command, or falls back to the tooltip text).
+    pub id: Option<Cow<'static, str>>,
 }
 
 impl Help {
@@ -53,7 +56,15 @@ impl Help {
             text: text.into(),
             command: None,
             arg: None,
+            id: None,
         }
+    }
+
+    /// The same, with the stable `id` of the control (`transport.play`).
+    #[must_use]
+    pub fn id(mut self, id: impl Into<Cow<'static, str>>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
     /// The same, saying that the button runs keymap command `command`.

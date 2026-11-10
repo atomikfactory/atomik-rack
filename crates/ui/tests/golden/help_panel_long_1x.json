@@ -1,0 +1,9 @@
+{"ops":[
+{"fill":{"rect":[0.00,700.00,1000.00,792.00]},"brush":"#16181bff"},
+{"fill":{"rect":[0.00,700.00,1000.00,701.00]},"brush":"#ffffff1c"},
+{"text":"Tempo","at":[14.00,721.00],"size":12.50,"weight":700,"align":"start","color":"#ece8e1ff"},
+{"text":"The speed of the song in beats per minute. Drag or scroll the number to change it, hold Shift for fine steps, or double-click to type a value.","at":[14.00,740.00],"size":11.50,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Tempo changes along the song live in the tempo lane, and the transport bar always shows the tempo at the playhead.","at":[14.00,754.50],"size":11.50,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"More: The main window","at":[14.00,783.00],"size":11.00,"weight":600,"align":"start","color":"#7cc4ffff"},
+{"fill":{"rect":[14.00,785.00,149.98,786.00]},"brush":"#7cc4ffff"}
+]}

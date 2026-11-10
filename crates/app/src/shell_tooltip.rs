@@ -92,8 +92,17 @@ impl<B: AudioBackend> Shell<B> {
     /// What the button under `pos` of `window` does, `None` where there is none or no tooltip
     /// may show (switched off, a gesture or a menu in progress).
     fn help_at(&self, window: WindowKind, pos: Point) -> Option<Help> {
-        if !self.workflow.show_tooltips
-            || self.dialog.is_some()
+        // Help Mode shows the long help in the panel instead.
+        if !self.workflow.show_tooltips || self.help_mode.on {
+            return None;
+        }
+        self.help_lookup(window, pos, false)
+    }
+
+    /// What the control under `pos` of `window` says about itself; with `knobs` (Help Mode) the
+    /// controls that only show a value tooltip answer too.
+    pub(super) fn help_lookup(&self, window: WindowKind, pos: Point, knobs: bool) -> Option<Help> {
+        if self.dialog.is_some()
             || self.context_menu.is_some()
             || self.capture.is_some()
             || self.file_drag.is_some()
@@ -239,11 +248,11 @@ impl<B: AudioBackend> Shell<B> {
             // rack area.
             let (_, area) = self.pane_rect(Pane::Rack)?;
             let origin = area.origin().to_vec2();
-            let mut help = self.core.help_in_pane(pane, pos - origin)?;
+            let mut help = self.core.help_in_pane_with(pane, pos - origin, knobs)?;
             help.rect = help.rect + origin;
             return Some(help);
         }
-        self.core.help_in_pane(pane, pos)
+        self.core.help_in_pane_with(pane, pos, knobs)
     }
 
     /// Paints the tooltip of `window` over everything else (logical pixels, the canvas scaled).

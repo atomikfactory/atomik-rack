@@ -1271,8 +1271,14 @@ impl<S: EngineSink> AppCore<S> {
     /// What the button at `pos` of `pane` does, for its tooltip (`pos` in the coordinates the
     /// pane's events use; the rack's are relative to the rack's own origin, so is its answer).
     pub fn help_in_pane(&self, pane: Pane, pos: Point) -> Option<Help> {
+        self.help_in_pane_with(pane, pos, false)
+    }
+
+    /// [`Self::help_in_pane`]; with `knobs` the rack also answers for its knobs and faders (Help
+    /// Mode explains every control, the tooltips leave those to their value readout).
+    pub fn help_in_pane_with(&self, pane: Pane, pos: Point, knobs: bool) -> Option<Help> {
         match pane {
-            Pane::Rack => self.view.help_at(pos),
+            Pane::Rack => self.view.help_at_with(pos, knobs),
             Pane::Transport => self.transport_bar.help_at(pos),
             Pane::Arrangement => self.arrangement.help_at(pos),
             Pane::PianoRoll => self.piano_roll.help_at(pos),
