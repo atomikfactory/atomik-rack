@@ -21,6 +21,7 @@ use crate::plugin_panel::{PluginButton, PluginInfo};
 use crate::search_field::SearchKey;
 use crate::seq_panel::{self, PlayerInfo, SeqButton};
 use crate::sidechain::{self, ScEntry, ScSource};
+use crate::text_field::TextField;
 use crate::theme::Theme;
 use crate::tree::ViewTree;
 use crate::widget::{self, ValueDrag};
@@ -724,6 +725,8 @@ pub struct RackView {
     fx_modes: BTreeMap<DeviceKey, u8>,
     /// The pattern name (or macro name) being edited on a panel.
     rename: Option<Rename>,
+    /// A pointer drag is selecting in the name being typed.
+    rename_drag: bool,
     /// The hover tooltips of the BYPASS and EDIT buttons show (the "Show tooltips" setting).
     button_tips: bool,
     /// Hovering a control shows its name and value, not only while it is automated or driven.
@@ -811,7 +814,7 @@ enum RenameKind {
 struct Rename {
     dev: usize,
     index: u8,
-    text: String,
+    field: TextField,
     kind: RenameKind,
 }
 
@@ -1022,6 +1025,7 @@ impl RackView {
             pages: BTreeMap::new(),
             fx_modes: BTreeMap::new(),
             rename: None,
+            rename_drag: false,
             button_tips: true,
             value_tips: false,
             knob_range: widget::KnobRange::default(),
@@ -3251,7 +3255,16 @@ impl RackView {
                 self.clamp_scroll();
                 self.repaint = true;
             }
-            UiEvent::Ime(_) => {}
+            UiEvent::Ime(ime) => {
+                if let Some(r) = &mut self.rename {
+                    r.field.handle_ime(ime);
+                    let dev = r.dev;
+                    self.bump(dev);
+                } else if self.search_has_focus() && self.browser.search.ime(ime) {
+                    self.browser.query_changed(registry);
+                    self.repaint = true;
+                }
+            }
             UiEvent::ScaleChanged(s) => {
                 self.scale = s.max(0.1);
                 self.repaint = true;
@@ -3597,6 +3610,9 @@ impl RackView {
 
     fn pointer_move(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.pointer = pos;
+        if self.rename_field_drag(pos) {
+            return;
+        }
         let rp = self.view_to_rack(pos);
         if self.sc_menu.is_some() {
             self.sc_hover(pos);
@@ -3763,6 +3779,9 @@ impl RackView {
                 self.browser.search_press(pos, clicks, modifiers.shift);
                 return;
             }
+            if button == PointerButton::Secondary && self.browser.search.right_click(pos) {
+                return;
+            }
             let rows = self.browser.list(registry);
             if let Some(i) = self.browser.row_at(pos, rows.len())
                 && rows[i].selectable()
@@ -3786,6 +3805,9 @@ impl RackView {
             return;
         }
         self.browser.focused = false;
+        if self.rename_field_press(pos, clicks, modifiers.shift, button) {
+            return;
+        }
         if self.device_rename_press(pos, out) {
             return;
         }
@@ -4241,6 +4263,9 @@ impl RackView {
         out: &mut Vec<UiAction>,
     ) {
         self.pointer = pos;
+        if std::mem::take(&mut self.rename_drag) {
+            return;
+        }
         // A device drop is worked out in the layout of the drag (which may show the new-column
         // zone), so that drag ends after it.
         let drag = if matches!(self.drag, Drag::Move { .. } | Drag::Browser { .. }) {
@@ -4287,7 +4312,11 @@ impl RackView {
             }
             Drag::Browser {
                 row, active: true, ..
-            } => self.browser_drop(&row, doc, registry, modifiers, out),
+            } => {
+                self.browser_drop(&row, doc, registry, modifiers, out);
+                // The drop is done with the search: Ctrl+Z is the document's undo again.
+                self.browser.focused = false;
+            }
             Drag::Browser { .. } => {}
         }
         self.drag = Drag::None;
@@ -4612,13 +4641,15 @@ impl RackView {
     ) {
         self.repaint = true;
         self.context_slot = None;
+        // A name or a search being typed takes the letter chords (undo, copy, paste, ...) itself.
+        let typing_chord = self.is_text_owner() && matches!(key, Key::Char(_));
         // Chords with the primary modifier are commands (undo, duplicate, ...): the shell
         // resolves them through the keymap and offers them to `command`.
-        if modifiers.command() {
+        if modifiers.command() && !typing_chord {
             return;
         }
         if self.rename.is_some() {
-            self.rename_key_press(key, out);
+            self.rename_key_press(key, modifiers, out);
             return;
         }
         // Escape drops a device being dragged out of the browser, whatever has the focus.
@@ -4893,7 +4924,7 @@ impl RackView {
                 .rename
                 .as_ref()
                 .filter(|r| r.dev == i && r.kind == RenameKind::Device)
-                .map(|r| r.text.as_str()),
+                .map(|r| &r.field),
             caption: &d.caption,
             accent: d.accent,
             desc: d.desc.as_ref(),
@@ -4925,7 +4956,7 @@ impl RackView {
                     .rename
                     .as_ref()
                     .filter(|r| r.dev == i && r.kind == RenameKind::Pattern)
-                    .map(|r| r.text.as_str()),
+                    .map(|r| &r.field),
             },
             plugin: PluginInfo {
                 status: &d.plugin_status,
@@ -4937,7 +4968,7 @@ impl RackView {
                     .rename
                     .as_ref()
                     .filter(|r| r.dev == i && r.kind == RenameKind::Macro)
-                    .map(|r| (usize::from(r.index), r.text.as_str())),
+                    .map(|r| (usize::from(r.index), &r.field)),
                 has_channel: d.has_channel,
             },
             driven: &d.driven,

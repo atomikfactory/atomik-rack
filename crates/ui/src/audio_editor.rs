@@ -68,6 +68,7 @@ use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::keymap::{CommandOutcome, GestureClass, Os, Role, Roles};
 use crate::sample_editor::TOP_BAR_HEIGHT;
 use crate::seq_paint::SeqTheme;
+use crate::text_field::TextField;
 use crate::theme::Theme;
 use crate::timeline::{Bars, MAX_PX_PER_TICK, TimeAxis};
 use crate::tooltip::Help;
@@ -283,7 +284,9 @@ pub struct AudioEditorView {
     drag: Drag,
     hover: Hit,
     pointer: Option<Point>,
-    rename: Option<String>,
+    rename: Option<TextField>,
+    /// A pointer drag is selecting in the name being typed.
+    rename_drag: bool,
     status: String,
     next_merge: u64,
     focused: bool,
@@ -333,6 +336,7 @@ impl AudioEditorView {
             hover: Hit::None,
             pointer: None,
             rename: None,
+            rename_drag: false,
             status: String::new(),
             next_merge: MERGE_BASE,
             focused: false,
@@ -447,7 +451,7 @@ impl AudioEditorView {
 
     /// The asset name being typed.
     pub fn rename_text(&self) -> Option<&str> {
-        self.rename.as_deref()
+        self.rename.as_ref().map(|f| f.text())
     }
 
     /// True when something changed since the last [`Self::paint`].
@@ -987,6 +991,12 @@ impl AudioEditorView {
         }
         match event {
             UiEvent::PointerMove { pos, modifiers } => {
+                if self.rename_drag
+                    && let Some(f) = &mut self.rename
+                {
+                    f.drag(*pos);
+                    self.repaint = true;
+                }
                 self.pointer_move(*pos, *modifiers, &mut out)
             }
             UiEvent::PointerDown {
@@ -995,7 +1005,10 @@ impl AudioEditorView {
                 modifiers,
                 clicks,
             } => self.pointer_down(*pos, *button, *modifiers, *clicks, doc, &mut out),
-            UiEvent::PointerUp { .. } => self.pointer_up(&mut out),
+            UiEvent::PointerUp { .. } => {
+                self.rename_drag = false;
+                self.pointer_up(&mut out)
+            }
             UiEvent::PointerLeave => {
                 self.hover = Hit::None;
                 self.pointer = None;
@@ -1011,6 +1024,12 @@ impl AudioEditorView {
                 modifiers,
                 pressed: true,
             } => self.key(key, *modifiers, doc, &mut out),
+            UiEvent::Ime(ime) => {
+                if let Some(f) = &mut self.rename {
+                    f.handle_ime(ime);
+                    self.repaint = true;
+                }
+            }
             _ => {}
         }
         out
@@ -1020,16 +1039,25 @@ impl AudioEditorView {
         &mut self,
         pos: Point,
         button: PointerButton,
-        _modifiers: Modifiers,
+        modifiers: Modifiers,
         clicks: u8,
         doc: &RackDoc,
         out: &mut Vec<UiAction>,
     ) {
         self.repaint = true;
         let hit = self.hit(pos);
-        // A click anywhere but on the name being typed commits it.
+        if button == PointerButton::Secondary
+            && self.rename.as_ref().is_some_and(|f| f.right_click(pos))
+        {
+            return;
+        }
+        // A click anywhere but on the name being typed commits it; on it, it places the caret.
         if self.rename.is_some() && hit != Hit::Title {
             self.finish_rename(true, out);
+        } else if let Some(f) = &mut self.rename {
+            f.press(pos, clicks, modifiers.shift);
+            self.rename_drag = true;
+            return;
         }
         if !matches!(self.drag, Drag::None) || button != PointerButton::Primary {
             return;
@@ -1234,7 +1262,8 @@ impl AudioEditorView {
 
     fn begin_rename(&mut self) {
         if let Some(m) = &self.meta {
-            self.rename = Some(m.original_name.clone());
+            self.rename = Some(TextField::new(&m.original_name, NAME_MAX_CHARS, false));
+            self.rename_drag = false;
             self.drag = Drag::None;
         }
     }
@@ -1243,36 +1272,21 @@ impl AudioEditorView {
         match key {
             Key::Enter => self.finish_rename(true, out),
             Key::Escape => self.finish_rename(false, out),
-            Key::Backspace => {
-                if let Some(t) = &mut self.rename {
-                    t.pop();
+            _ => {
+                if let Some(f) = &mut self.rename {
+                    f.handle_key(key, modifiers);
                 }
             }
-            Key::Char(c) if !modifiers.command() && !c.is_control() => {
-                if let Some(t) = &mut self.rename
-                    && t.chars().count() < NAME_MAX_CHARS
-                {
-                    t.push(*c);
-                }
-            }
-            Key::Space => {
-                if let Some(t) = &mut self.rename
-                    && t.chars().count() < NAME_MAX_CHARS
-                {
-                    t.push(' ');
-                }
-            }
-            _ => {}
         }
     }
 
     /// Ends the rename: committing emits `RenameAsset` when the name is not empty and changed.
     fn finish_rename(&mut self, commit: bool, out: &mut Vec<UiAction>) {
-        let Some(text) = self.rename.take() else {
+        let Some(field) = self.rename.take() else {
             return;
         };
         self.repaint = true;
-        let name = text.trim();
+        let name = field.text().trim();
         if let (true, Some(info), Some(meta)) = (commit, &self.info, &self.meta)
             && !name.is_empty()
             && name != meta.original_name

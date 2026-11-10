@@ -20,6 +20,7 @@ use crate::container_panel::ContainerButton;
 use crate::event::{Modifiers, PointerButton};
 use crate::pick_list::CompactList;
 use crate::seq_panel::{self, RenameKey};
+use crate::text_field::TextField;
 use atomik_device_sdk::{ControlKind, DeviceKind, PluginKindHint, RACK_WIDTH, Registry};
 use atomik_model::{
     Cable, Command, Console, ConsoleCommand, ContainerCommand, DeviceKey, MACRO_COUNT,
@@ -859,7 +860,7 @@ impl RackView {
             .rename
             .as_ref()
             .filter(|r| r.kind == RenameKind::Macro)?;
-        (self.devices.get(r.dev)?.key == self.local_key(key)).then_some((r.index, r.text.as_str()))
+        (self.devices.get(r.dev)?.key == self.local_key(key)).then_some((r.index, r.field.text()))
     }
 
     pub(super) fn container_down(&mut self, i: usize, b: ContainerButton, out: &mut Vec<UiAction>) {
@@ -914,7 +915,7 @@ impl RackView {
             self.rename = Some(Rename {
                 dev: i,
                 index: n,
-                text,
+                field: TextField::new(&text, MAX_MACRO_NAME_CHARS, false),
                 kind: RenameKind::Macro,
             });
             self.bump(i);
@@ -922,17 +923,21 @@ impl RackView {
     }
 
     /// One key press while a macro name is edited.
-    pub(super) fn macro_rename_key(&mut self, mut r: Rename, key: &crate::event::Key) {
-        match seq_panel::rename_key(&mut r.text, key) {
+    pub(super) fn macro_rename_key(
+        &mut self,
+        mut r: Rename,
+        key: &crate::event::Key,
+        modifiers: crate::event::Modifiers,
+    ) {
+        match seq_panel::rename_key(&mut r.field, key, modifiers) {
             RenameKey::Editing => {
-                r.text = r.text.chars().take(MAX_MACRO_NAME_CHARS).collect();
                 let dev = r.dev;
                 self.rename = Some(r);
                 self.bump(dev);
             }
             RenameKey::Commit => {
                 self.bump(r.dev);
-                let name = r.text.trim().to_string();
+                let name = r.field.text().trim().to_string();
                 let current = self.devices[r.dev]
                     .device
                     .as_ref()

@@ -626,6 +626,22 @@ pub fn with_device_menus(
     out
 }
 
+/// The menu of a text field: its own Undo, Redo, Cut, Copy, Paste, Delete and Select All, each
+/// dimmed when it has nothing to work on.
+pub fn field_specs(s: atomik_ui::FieldMenuState) -> Vec<Spec> {
+    vec![
+        item("edit.undo", s.can_undo),
+        item("edit.redo", s.can_redo),
+        Spec::Separator,
+        item("edit.cut", s.has_selection),
+        item("edit.copy", s.has_selection),
+        item("edit.paste", s.can_paste),
+        item("edit.delete", s.has_selection),
+        Spec::Separator,
+        item("edit.select_all", s.has_text),
+    ]
+}
+
 /// The items of the menu opened on `target`.
 pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
     let edit = |label: Option<(&'static str, &'static str)>| {

@@ -215,7 +215,7 @@ impl PianoRollView {
 
     /// The text being typed into the strip, if any.
     pub fn inspector_text(&self) -> Option<&str> {
-        self.insp.edit.as_ref().map(|(_, e)| e.text.as_str())
+        self.insp.edit.as_ref().map(|(_, e)| e.text())
     }
 
     /// Whether the view owns the keyboard as a text field: a value of the strip is being typed.
@@ -406,9 +406,11 @@ impl PianoRollView {
                 true
             }
             UiEvent::Key {
-                key, pressed: true, ..
+                key,
+                modifiers,
+                pressed: true,
             } if self.insp.editing() => {
-                self.insp_key(key, out);
+                self.insp_key(key, *modifiers, out);
                 true
             }
             _ => false,
@@ -426,7 +428,10 @@ impl PianoRollView {
         };
         if clicks >= 2 {
             let text = self.note_edit_text(field, part, base);
-            self.insp.edit = Some((field, SegmentEdit::new(part, text)));
+            self.insp.edit = Some((
+                field,
+                SegmentEdit::with_letters(part, text, field == NoteField::Pitch),
+            ));
             return;
         }
         let merge = self.merge_id();
@@ -491,18 +496,17 @@ impl PianoRollView {
         let Some(base) = self.note_base(field) else {
             return;
         };
-        if let Some(new) = self.note_parse(field, edit.part, base, &edit.text) {
+        if let Some(new) = self.note_parse(field, edit.part, base, edit.text()) {
             self.note_set(field, new, out);
         }
     }
 
-    fn insp_key(&mut self, key: &Key, out: &mut Vec<UiAction>) {
+    fn insp_key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         let Some((field, mut edit)) = self.insp.edit.take() else {
             return;
         };
         self.repaint = true;
-        let letters = field == NoteField::Pitch;
-        match edit.key_with(key, |c| letters && (c.is_ascii_alphabetic() || c == '#')) {
+        match edit.key(key, modifiers) {
             EditKey::Commit => {
                 self.insp.edit = Some((field, edit));
                 self.insp_commit(out);
@@ -515,14 +519,21 @@ impl PianoRollView {
                     let new = base.saturating_add(i64::from(n) * unit);
                     self.note_set(field, new, out);
                     let shown = field.value(&field.set(&Note::new(0, 1, 60, 0.5), new));
-                    edit =
-                        SegmentEdit::new(edit.part, self.note_edit_text(field, edit.part, shown));
+                    edit = SegmentEdit::with_letters(
+                        edit.part,
+                        self.note_edit_text(field, edit.part, shown),
+                        field == NoteField::Pitch,
+                    );
                 }
             }
             EditKey::Move(d) if field.segmented() => {
                 let part = (edit.part as i32 + d).clamp(0, SEGMENTS as i32 - 1) as usize;
                 let base = self.note_base(field).unwrap_or(0);
-                edit = SegmentEdit::new(part, self.note_edit_text(field, part, base));
+                edit = SegmentEdit::with_letters(
+                    part,
+                    self.note_edit_text(field, part, base),
+                    field == NoteField::Pitch,
+                );
             }
             _ => {}
         }
@@ -594,7 +605,7 @@ impl PianoRollView {
                     FieldLook {
                         label: field.label(),
                         part,
-                        typing: editing.map(|(_, e)| e.text.as_str()),
+                        typing: editing.map(|(_, e)| &e.field),
                         enabled,
                     },
                 );
@@ -613,7 +624,7 @@ impl PianoRollView {
                     r,
                     field.label(),
                     &text,
-                    editing.map(|(_, e)| e.text.as_str()),
+                    editing.map(|(_, e)| &e.field),
                     enabled,
                 );
             }

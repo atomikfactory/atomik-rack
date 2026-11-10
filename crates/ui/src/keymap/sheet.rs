@@ -263,6 +263,10 @@ The places that take a finer step from the modifier on their own (the clip inspe
 
 Many European keyboard layouts report AltGr as `Ctrl+Alt` (the default of Disable snap outside macOS): typing a character with AltGr while dragging switches snapping off. Remap Disable snap in Settings, Keyboard if that gets in the way. In a text field AltGr always types its character and never runs a shortcut.
 
+## Text fields
+
+Every place where you type text (names, searches, numbers and times, comments) is the same field. A click places the caret, a drag selects, a double click selects a word and a triple click everything. Left and Right move by a character, with `Ctrl` (`Opt` on macOS) by a word, `Home` and `End` go to the ends of the line, and `Shift` with any of them selects. `Ctrl+A` selects all; `Ctrl+C`, `Ctrl+X` and `Ctrl+V` copy, cut and paste (`Cmd` on macOS). `Ctrl+Z` undoes inside the field, `Ctrl+Shift+Z` (and `Ctrl+Y` outside macOS) redoes; a run of letters is one step and each field keeps its last 50. While a field has the keyboard these chords belong to it and never run the song's Undo; with no field, `Ctrl+Z` is the song's Undo. A right-click on a field opens its own menu (Undo, Redo, Cut, Copy, Paste, Delete, Select All). Input methods compose inside the field. Enter and Esc end the edit as the panel says. Fields that take numbers refuse other characters.
+
 ## Tooltips
 
 Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip under it that says what the button does, with the shortcut of its command when it has one (printed as the menus print it, so a key you rebind in Settings, Keyboard shows at once). The tooltip hides on a press, a key, the wheel, or when the pointer leaves the button. Settings, Workflow, **Show tooltips** (on by default) switches them off; the value readout shown while a knob or fader is dragged stays.

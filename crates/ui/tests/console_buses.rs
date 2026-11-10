@@ -840,3 +840,41 @@ fn vca_items(v: &ConsoleView) -> Vec<String> {
     );
     items[..items.len() - SETTINGS_ITEMS.len()].to_vec()
 }
+
+#[test]
+fn ctrl_a_then_typing_replaces_a_bus_name() {
+    let (doc, reg, mut v) = setup();
+    let p = name_at(&v, "bus");
+    v.handle(&down_with(p, PointerButton::Primary, 2), &doc, &reg);
+    type_text(&mut v, &doc, &reg, "x");
+    v.handle(
+        &UiEvent::Key {
+            key: Key::Char('a'),
+            modifiers: Modifiers::CTRL,
+            pressed: true,
+        },
+        &doc,
+        &reg,
+    );
+    type_text(&mut v, &doc, &reg, "Kit");
+    assert_eq!(v.rename_text(), Some("Kit"));
+}
+
+#[test]
+fn a_click_in_a_bus_name_field_places_the_caret_and_a_triple_click_selects_all() {
+    let (doc, reg, mut v) = setup();
+    let p = name_at(&v, "bus");
+    v.handle(&down_with(p, PointerButton::Primary, 2), &doc, &reg);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    let p = name_at(&v, "bus");
+    v.handle(&down_with(p, PointerButton::Primary, 3), &doc, &reg);
+    assert!(v.is_text_owner(), "the press keeps the edit");
+    type_text(&mut v, &doc, &reg, "Q");
+    assert_eq!(v.rename_text(), Some("Q"));
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    let _ = atomik_ui::take_field_menu();
+    v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
+    assert!(atomik_ui::take_field_menu().is_some());
+}

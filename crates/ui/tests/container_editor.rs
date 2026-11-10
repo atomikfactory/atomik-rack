@@ -1206,3 +1206,48 @@ fn the_new_controls_have_tooltips() {
     let t = v.tab_rect(ContainerTab::MoreMacros).center();
     assert!(v.help_at(t).unwrap().text.contains("9 to 16"));
 }
+
+#[test]
+fn ctrl_a_then_typing_replaces_the_macro_name() {
+    let d = layered();
+    let mut v = macros_view(&d);
+    let p = v.macro_name_rect(0).center();
+    let _ = click_with(&mut v, d.doc(), p, 2, Modifiers::NONE);
+    assert_eq!(v.renaming(), Some("Cutoff"));
+    let ctrl_a = UiEvent::Key {
+        key: Key::Char('a'),
+        modifiers: Modifiers::CTRL,
+        pressed: true,
+    };
+    let _ = feed(&mut v, d.doc(), ctrl_a);
+    let _ = press(&mut v, d.doc(), Key::Char('Z'));
+    assert_eq!(v.renaming(), Some("Z"));
+}
+
+#[test]
+fn a_triple_click_in_the_macro_name_selects_all_and_a_right_click_asks_for_the_menu() {
+    let d = layered();
+    let mut v = macros_view(&d);
+    let p = v.macro_name_rect(0).center();
+    let _ = click_with(&mut v, d.doc(), p, 2, Modifiers::NONE);
+    let mut dl = atomik_ui::DisplayList::new();
+    v.paint(&mut dl, d.doc(), &registry());
+    let at = v.renaming_rect().expect("painted").center();
+    let _ = click_with(&mut v, d.doc(), at, 3, Modifiers::NONE);
+    let _ = press(&mut v, d.doc(), Key::Char('Z'));
+    assert_eq!(v.renaming(), Some("Z"));
+    let mut dl = atomik_ui::DisplayList::new();
+    v.paint(&mut dl, d.doc(), &registry());
+    let _ = atomik_ui::take_field_menu();
+    let _ = feed(
+        &mut v,
+        d.doc(),
+        UiEvent::PointerDown {
+            pos: at,
+            button: PointerButton::Secondary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        },
+    );
+    assert!(atomik_ui::take_field_menu().is_some());
+}

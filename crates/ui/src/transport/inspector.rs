@@ -296,7 +296,7 @@ pub(super) struct Inspector {
     /// The unit the fades are shown, dragged and typed in.
     unit: FadeUnit,
     /// The field being typed into, its text and whether the text is still the untouched original.
-    editing: Option<(InspectorField, String, bool)>,
+    editing: Option<(InspectorField, TextField)>,
 }
 
 /// Where the inspector's boxes are.
@@ -587,7 +587,7 @@ impl TransportBar {
 
     /// The text being typed into the inspector.
     pub fn inspector_text(&self) -> Option<&str> {
-        self.insp.editing.as_ref().map(|(_, s, _)| s.as_str())
+        self.insp.editing.as_ref().map(|(_, f)| f.text())
     }
 
     /// The fields the inspector shows now (fewer on a narrow bar), left to right.
@@ -758,7 +758,18 @@ impl TransportBar {
                 _ => String::new(),
             };
             self.insp.drag = None;
-            self.insp.editing = Some((field, text, true));
+            let signed = matches!(
+                field,
+                InspectorField::TransposeWhole
+                    | InspectorField::TransposeCents
+                    | InspectorField::Gain
+            );
+            let accept: fn(char) -> bool = if signed {
+                |c| c.is_ascii_digit() || matches!(c, '.' | '-' | '+')
+            } else {
+                |c| c.is_ascii_digit() || c == '.'
+            };
+            self.insp.editing = Some((field, TextField::entry(&text, TEXT_MAX, accept)));
             return Vec::new();
         }
         let value = self.insp.base(slot);
@@ -834,9 +845,9 @@ impl TransportBar {
 
     /// Commits the typed value.
     pub(super) fn inspector_commit(&mut self, out: &mut Vec<UiAction>) {
-        if let Some((field, text, _)) = self.insp.editing.take() {
+        if let Some((field, text)) = self.insp.editing.take() {
             let slot = field.slot();
-            if let Some(v) = parse_text(slot, &text) {
+            if let Some(v) = parse_text(slot, text.text()) {
                 out.extend(self.insp.one_step(slot, v));
             }
         }
@@ -844,33 +855,21 @@ impl TransportBar {
     }
 
     /// A key while a value is being typed.
-    pub(super) fn inspector_key(&mut self, key: &Key, out: &mut Vec<UiAction>) {
-        let Some((field, text, fresh)) = &mut self.insp.editing else {
+    pub(super) fn inspector_key(
+        &mut self,
+        key: &Key,
+        modifiers: Modifiers,
+        out: &mut Vec<UiAction>,
+    ) {
+        let Some((_, field)) = &mut self.insp.editing else {
             return;
         };
-        let signed = matches!(
-            field,
-            InspectorField::TransposeWhole | InspectorField::TransposeCents | InspectorField::Gain
-        );
         match key {
-            Key::Char(c)
-                if c.is_ascii_digit() || *c == '.' || (signed && matches!(c, '-' | '+')) =>
-            {
-                if *fresh {
-                    text.clear();
-                    *fresh = false;
-                }
-                if text.len() < TEXT_MAX {
-                    text.push(*c);
-                }
-            }
-            Key::Backspace => {
-                *fresh = false;
-                text.pop();
-            }
             Key::Enter => return self.inspector_commit(out),
             Key::Escape => self.insp.editing = None,
-            _ => {}
+            _ => {
+                field.handle_key(key, modifiers);
+            }
         }
         self.repaint = true;
     }
@@ -978,11 +977,7 @@ impl TransportBar {
                 sp::button(c, st, r, slot.label(), lit.filter(|_| !off), false);
                 continue;
             }
-            let editing = self
-                .insp
-                .editing
-                .as_ref()
-                .filter(|(f, _, _)| f.slot() == slot);
+            let editing = self.insp.editing.as_ref().filter(|(f, _)| f.slot() == slot);
             sp::lcd(c, st, r, editing.map(|_| t.focus));
             sp::label(
                 c,
@@ -1004,11 +999,14 @@ impl TransportBar {
                     Align::End,
                 );
             }
-            let text = match (editing, shown) {
-                (Some((_, s, _)), _) => format!("{s}_"),
-                (None, Shown::Value(v)) => value_text(slot, v, self.insp.unit),
-                (None, Shown::Mixed) => MIXED.to_owned(),
-                (None, Shown::Empty) => String::new(),
+            if let Some((_, field)) = editing {
+                field.paint_lcd(c, r, VALUE_SIZE, t);
+                continue;
+            }
+            let text = match shown {
+                Shown::Value(v) => value_text(slot, v, self.insp.unit),
+                Shown::Mixed => MIXED.to_owned(),
+                Shown::Empty => String::new(),
             };
             let color = if off { t.text_muted } else { t.highlight };
             c.text(

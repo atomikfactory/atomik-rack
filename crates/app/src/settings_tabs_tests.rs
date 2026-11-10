@@ -1705,3 +1705,22 @@ fn a_controller_that_was_set_up_joins_the_draft_and_can_be_exported() {
     assert_eq!(d.draft().surfaces.len(), 2);
     assert_eq!(d.edited_profile(), None);
 }
+
+#[test]
+fn the_keyboard_search_selects_all_replaces_and_undoes_inside_the_field() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Keyboard);
+    type_text(&mut d, "split");
+    let all = kb(&d).items.len();
+    press(&mut d, "Cmd+A", Os::Windows);
+    type_text(&mut d, "zzzzzz");
+    assert!(
+        !kb(&d).items.iter().any(|i| matches!(i, Item::Row { .. })),
+        "the typing replaced the selected text"
+    );
+    press(&mut d, "Cmd+Z", Os::Windows);
+    assert_eq!(kb(&d).items.len(), all, "undo brought `split` back");
+    press(&mut d, "Cmd+A", Os::Windows);
+    press(&mut d, "Backspace", Os::Windows);
+    assert!(kb(&d).items.len() > 90, "everything is listed again");
+}

@@ -214,7 +214,7 @@ impl ArrangementView {
 
     /// The text being typed into the inspector, if any.
     pub fn inspector_text(&self) -> Option<&str> {
-        self.insp.edit.as_ref().map(|(_, e)| e.text.as_str())
+        self.insp.edit.as_ref().map(|(_, e)| e.text())
     }
 
     // ------------------------------------------------------------------ model
@@ -432,9 +432,11 @@ impl ArrangementView {
                 true
             }
             UiEvent::Key {
-                key, pressed: true, ..
+                key,
+                modifiers,
+                pressed: true,
             } if self.insp.editing() => {
-                self.insp_key(key, out);
+                self.insp_key(key, *modifiers, out);
                 true
             }
             _ => false,
@@ -553,18 +555,18 @@ impl ArrangementView {
         };
         self.repaint = true;
         let (_, base) = self.insp_origs(field);
-        if let Some(new) = self.insp_widget(field).parse(base, edit.part, &edit.text) {
+        if let Some(new) = self.insp_widget(field).parse(base, edit.part, edit.text()) {
             out.extend(self.insp_set(field, new));
         }
     }
 
     /// A key while a value is being typed.
-    pub(super) fn insp_key(&mut self, key: &Key, out: &mut Vec<UiAction>) {
+    pub(super) fn insp_key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         let Some((field, mut edit)) = self.insp.edit.take() else {
             return;
         };
         self.repaint = true;
-        match edit.key(key) {
+        match edit.key(key, modifiers) {
             EditKey::Commit => {
                 self.insp.edit = Some((field, edit));
                 self.insp_commit(out);
@@ -670,7 +672,7 @@ impl ArrangementView {
                 FieldLook {
                     label: field.label(),
                     part,
-                    typing: editing.map(|(_, e)| e.text.as_str()),
+                    typing: editing.map(|(_, e)| &e.field),
                     enabled: self.insp_enabled(field),
                 },
             );

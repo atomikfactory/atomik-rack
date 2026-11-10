@@ -745,13 +745,13 @@ fn a_command_chord_no_binding_took_is_not_typed_into_a_console_name() {
     let channel = first_channel(&s);
     assert!(s.core_mut().console_mut().begin_rename(&channel));
     let before = s.core().console().rename_text().unwrap().to_string();
-    // Ctrl+Alt+Q has no binding in any profile.
+    // Ctrl+Shift+Q has no binding in any profile (Ctrl+Alt is AltGr, which types).
     tap(
         &mut s,
         Key::Char('q'),
         Modifiers {
             ctrl: true,
-            alt: true,
+            shift: true,
             ..Modifiers::NONE
         },
     );

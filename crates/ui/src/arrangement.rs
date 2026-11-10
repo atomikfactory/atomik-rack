@@ -2914,7 +2914,7 @@ impl ArrangementView {
         if self.insp.visible && self.insp_event(event, &mut out) {
             return out;
         }
-        if self.org_edit_event(event) {
+        if self.org_edit_event(event) || self.rename_event(event) {
             return out;
         }
         match event {
@@ -3118,7 +3118,10 @@ impl ArrangementView {
             }
             h => h,
         };
-        if self.rename_press(pos, out) {
+        if button == PointerButton::Secondary && self.field_right_click(pos) {
+            return;
+        }
+        if self.rename_press(pos, clicks, modifiers.shift, out) {
             return;
         }
         if self.org_edit_press(pos, clicks, modifiers.shift, out) {

@@ -697,17 +697,20 @@ fn paint_name<C: Canvas + ?Sized>(
         1.0,
         info.rename.map_or(theme.ink.with_alpha(0.07), |_| accent),
     );
-    let (text, col) = match (info.rename, pattern) {
-        (Some(t), _) => (format!("{t}|"), accent),
-        (None, Some(p)) => (format!("{}  ·  {} steps", p.name, p.length), theme.text),
-        (None, None) => (String::new(), theme.text),
-    };
-    c.text(&TextRun::new(
-        fit_label(&text, panel.name.width() - 12.0, 8.5),
-        pt(panel.name.x0 + 6.0, panel.name.y0 + 10.0),
-        8.5,
-        col,
-    ));
+    if let Some(field) = info.rename {
+        crate::seq_panel::paint_name_field(c, panel.name, field, 8.5, accent);
+    } else {
+        let text = match pattern {
+            Some(p) => format!("{}  ·  {} steps", p.name, p.length),
+            None => String::new(),
+        };
+        c.text(&TextRun::new(
+            fit_label(&text, panel.name.width() - 12.0, 8.5),
+            pt(panel.name.x0 + 6.0, panel.name.y0 + 10.0),
+            8.5,
+            theme.text,
+        ));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

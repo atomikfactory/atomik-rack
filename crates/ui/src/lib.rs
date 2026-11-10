@@ -553,7 +553,10 @@ pub use sound_analyst_panel::{
 };
 pub use step_editor::{StepEditorView, ToolButton, ToolKind, VelocityLevel};
 pub use text::{ShapedGlyph, ShapedRun, SharedText, TextEngine};
-pub use text_field::{FieldColors, FieldKey, TextField};
+pub use text_field::{
+    FieldColors, FieldKey, FieldMenuState, HISTORY_LIMIT, TEXT_COMMANDS, TextField,
+    is_text_command, take_field_menu,
+};
 pub use theme::{Theme, ThemeChoice};
 pub use tooltip::{HELP_DELAY, Help, TipTracker};
 pub use track_panel::{TRACK_PANEL_WIDTH, TrackPanelView};

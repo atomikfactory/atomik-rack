@@ -328,7 +328,7 @@ fn a_double_click_renames_in_place_and_enter_sends_rename_vca() {
     for c in "Kit".chars() {
         v.handle(&key_event(Key::Char(c)), &doc, &reg);
     }
-    assert!(texts(&mut v, &doc, &reg).iter().any(|s| s == "Kit|"));
+    assert!(texts(&mut v, &doc, &reg).iter().any(|s| s == "Kit"));
     let a = v.handle(&key_event(Key::Enter), &doc, &reg);
     assert_eq!(
         console_cmds(&a),

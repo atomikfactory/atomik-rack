@@ -56,6 +56,7 @@ use crate::canvas::Canvas;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::seq_paint::SeqTheme;
 use crate::seq_panel::{self, PlayState, RenameKey};
+use crate::text_field::TextField;
 use crate::theme::Theme;
 use crate::tooltip::Help;
 use atomik_device_sdk::Registry;
@@ -287,7 +288,9 @@ struct Layout {
 /// An in-place rename of the edited pattern.
 #[derive(Debug, Clone)]
 struct Rename {
-    text: String,
+    field: TextField,
+    /// A pointer drag is selecting in the field.
+    dragging: bool,
 }
 
 /// The sequencer grid editor. See the module documentation.
@@ -512,7 +515,17 @@ impl SeqEditorView {
 
     /// The pattern name being edited in place.
     pub fn renaming(&self) -> Option<&str> {
-        self.rename.as_ref().map(|r| r.text.as_str())
+        self.rename.as_ref().map(|r| r.field.text())
+    }
+
+    /// Where the pattern name being typed was painted (for tests and tooltips).
+    pub fn renaming_rect(&self) -> Option<Rect> {
+        self.rename.as_ref().map(|r| r.field.painted_rect())
+    }
+
+    /// The field of the pattern name being typed.
+    pub(crate) fn renaming_field(&self) -> Option<&TextField> {
+        self.rename.as_ref().map(|r| &r.field)
     }
 
     /// Whether the view owns the keyboard as a text field (a pattern name is being edited):
@@ -1043,6 +1056,12 @@ impl SeqEditorView {
         if self.device.is_none() {
             return out;
         }
+        if let Some(r) = &mut self.rename
+            && r.field.pointer_event(&mut r.dragging, event)
+        {
+            self.repaint = true;
+            return out;
+        }
         match event {
             UiEvent::PointerMove { pos, modifiers } => {
                 self.pointer_move(*pos, *modifiers, &mut out)
@@ -1068,6 +1087,12 @@ impl SeqEditorView {
                 modifiers,
                 pressed: true,
             } => self.key(key, *modifiers, &mut out),
+            UiEvent::Ime(ime) => {
+                if let Some(r) = &mut self.rename {
+                    r.field.handle_ime(ime);
+                    self.repaint = true;
+                }
+            }
             _ => {}
         }
         out
@@ -1159,7 +1184,8 @@ impl SeqEditorView {
         }
         if clicks >= 2 {
             self.rename = Some(Rename {
-                text: self.patterns[i].name.clone(),
+                field: seq_panel::name_field(&self.patterns[i].name),
+                dragging: false,
             });
         }
     }
@@ -1570,21 +1596,24 @@ impl SeqEditorView {
 
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.repaint = true;
-        // Command chords (undo, redo, clipboard) are registry commands the shell resolves;
-        // what no command took is not a key of the view.
-        if modifiers.command() {
-            return;
-        }
         if let Some(mut r) = self.rename.take() {
-            match seq_panel::rename_key(&mut r.text, key) {
+            match seq_panel::rename_key(&mut r.field, key, modifiers) {
                 RenameKey::Editing => self.rename = Some(r),
                 RenameKey::Commit => {
-                    if let Some(q) = self.pattern().and_then(|p| seq_panel::renamed(p, &r.text)) {
+                    if let Some(q) = self
+                        .pattern()
+                        .and_then(|p| seq_panel::renamed(p, r.field.text()))
+                    {
                         out.extend(self.set(q, None));
                     }
                 }
                 RenameKey::Cancel => {}
             }
+            return;
+        }
+        // Command chords (undo, redo, clipboard) are registry commands the shell resolves;
+        // what no command took is not a key of the view.
+        if modifiers.command() {
             return;
         }
         if *key == Key::Escape {

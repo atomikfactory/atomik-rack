@@ -41,9 +41,11 @@ use crate::canvas::{Align, Canvas};
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
+use crate::text_field::{FieldColors, TextField};
 use crate::theme::Theme;
 use crate::tooltip::Help;
 use atomik_model::{DeviceKey, MAX_MACRO_NAME_CHARS, MacroCurve};
+use std::cell::Cell;
 use vello::kurbo::{Affine, Point, Rect};
 
 const PAD: f64 = 14.0;
@@ -314,23 +316,21 @@ impl Item {
 }
 
 /// A name being edited in place.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 struct Rename {
     index: u8,
-    text: String,
+    field: TextField,
 }
 
 /// A range value being typed in place.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 struct RangeEntry {
     /// The assignment.
     id: u32,
     /// MAX (true) or MIN.
     max: bool,
-    /// The text so far.
-    text: String,
-    /// Nothing typed yet: the first character replaces the text.
-    fresh: bool,
+    /// The text so far (all selected at first: the first character replaces it).
+    field: TextField,
 }
 
 /// A press on MIN or MAX that may become a drag.
@@ -369,6 +369,10 @@ pub struct MacrosView {
     rename: Option<Rename>,
     range_drag: Option<RangeDrag>,
     entry: Option<RangeEntry>,
+    /// Where the name or value being typed was painted (a press inside it places the caret).
+    field_rect: Cell<Rect>,
+    /// A pointer drag is selecting in the field being typed.
+    field_drag: bool,
     drags: u64,
     repaint: bool,
 }
@@ -398,6 +402,8 @@ impl MacrosView {
             rename: None,
             range_drag: None,
             entry: None,
+            field_rect: Cell::new(Rect::ZERO),
+            field_drag: false,
             drags: 0,
             repaint: true,
         }
@@ -732,9 +738,17 @@ impl MacrosView {
             UiEvent::PointerMove { pos, modifiers } => {
                 self.hover = Some(*pos);
                 self.repaint = true;
+                if self.field_drag {
+                    match (&mut self.rename, &mut self.entry) {
+                        (Some(r), _) => r.field.drag(*pos),
+                        (None, Some(e)) => e.field.drag(*pos),
+                        _ => {}
+                    }
+                }
                 out.extend(self.drag_move(pos.x, modifiers.shift));
             }
             UiEvent::PointerUp { .. } => {
+                self.field_drag = false;
                 if let Some(d) = self.range_drag.take() {
                     self.repaint = true;
                     match (d.moved, d.click) {
@@ -748,8 +762,36 @@ impl MacrosView {
                 self.hover = None;
                 self.repaint = true;
             }
-            UiEvent::PointerDown { pos, button, .. } => {
+            UiEvent::PointerDown {
+                pos,
+                button,
+                modifiers,
+                clicks,
+            } => {
                 self.repaint = true;
+                if *button == PointerButton::Secondary && self.field_rect.get().contains(*pos) {
+                    let field = match (&self.rename, &self.entry) {
+                        (Some(r), _) => Some(&r.field),
+                        (None, Some(e)) => Some(&e.field),
+                        _ => None,
+                    };
+                    if field.is_some_and(|f| f.right_click(*pos)) {
+                        return out;
+                    }
+                }
+                // A press on the name or value being typed places the caret.
+                if *button == PointerButton::Primary && self.field_rect.get().contains(*pos) {
+                    let field = match (&mut self.rename, &mut self.entry) {
+                        (Some(r), _) => Some(&mut r.field),
+                        (None, Some(e)) => Some(&mut e.field),
+                        _ => None,
+                    };
+                    if let Some(field) = field {
+                        field.press(*pos, *clicks, modifiers.shift);
+                        self.field_drag = true;
+                        return out;
+                    }
+                }
                 // A press anywhere keeps an edited name (a click elsewhere is "done").
                 if self.rename.is_some() {
                     out.extend(self.finish_rename(true));
@@ -774,6 +816,17 @@ impl MacrosView {
                 modifiers,
                 pressed: true,
             } => out.extend(self.key(key, *modifiers)),
+            UiEvent::Ime(ime) => {
+                let field = match (&mut self.rename, &mut self.entry) {
+                    (Some(r), _) => Some(&mut r.field),
+                    (None, Some(e)) => Some(&mut e.field),
+                    _ => None,
+                };
+                if let Some(field) = field {
+                    field.handle_ime(ime);
+                    self.repaint = true;
+                }
+            }
             _ => {}
         }
         out
@@ -893,7 +946,7 @@ impl MacrosView {
                 if let Some(m) = self.macro_row(n) {
                     self.rename = Some(Rename {
                         index: n,
-                        text: m.name.clone(),
+                        field: TextField::new(&m.name, MAX_MACRO_NAME_CHARS, false),
                     });
                 }
                 Vec::new()
@@ -995,11 +1048,16 @@ impl MacrosView {
     /// Starts typing the MIN or MAX value of assignment `j` of macro `n`.
     fn open_entry(&mut self, n: u8, j: usize, max: bool) {
         let Some(a) = self.assign(n, j) else { return };
+        let mut field = TextField::new(
+            &a.unit.text(if max { a.max } else { a.min }),
+            ENTRY_CHARS,
+            false,
+        );
+        field.select_all();
         self.entry = Some(RangeEntry {
             id: a.id,
             max,
-            text: a.unit.text(if max { a.max } else { a.min }),
-            fresh: true,
+            field,
         });
         self.repaint = true;
     }
@@ -1017,7 +1075,7 @@ impl MacrosView {
         let Some(a) = self.assign_by_id(e.id) else {
             return Vec::new();
         };
-        let Some(typed) = a.unit.parse(&e.text) else {
+        let Some(typed) = a.unit.parse(e.field.text()) else {
             return Vec::new();
         };
         let value = nudge(typed, 0.0, a);
@@ -1046,14 +1104,16 @@ impl MacrosView {
         let (Some(bank), true) = (self.bank(), keep) else {
             return Vec::new();
         };
-        let unchanged = self.macro_row(r.index).is_some_and(|m| m.name == r.text);
+        let unchanged = self
+            .macro_row(r.index)
+            .is_some_and(|m| m.name == r.field.text());
         if unchanged {
             return Vec::new();
         }
         vec![UiAction::Macros(MacrosAction::Rename {
             bank: bank.key.clone(),
             index: r.index,
-            name: r.text,
+            name: r.field.text().to_owned(),
         })]
     }
 
@@ -1063,16 +1123,9 @@ impl MacrosView {
             match key {
                 Key::Enter => return self.finish_rename(true),
                 Key::Escape => return self.finish_rename(false),
-                Key::Backspace => {
-                    r.text.pop();
+                _ => {
+                    r.field.handle_key(key, modifiers);
                 }
-                Key::Char(c) if !modifiers.ctrl && !modifiers.meta && !c.is_control() => {
-                    if r.text.chars().count() < MAX_MACRO_NAME_CHARS {
-                        r.text.push(*c);
-                    }
-                }
-                Key::Space if r.text.chars().count() < MAX_MACRO_NAME_CHARS => r.text.push(' '),
-                _ => {}
             }
             return Vec::new();
         }
@@ -1080,24 +1133,9 @@ impl MacrosView {
             match key {
                 Key::Enter => return self.finish_entry(true),
                 Key::Escape => return self.finish_entry(false),
-                Key::Backspace => {
-                    if e.fresh {
-                        e.text.clear();
-                    } else {
-                        e.text.pop();
-                    }
-                    e.fresh = false;
+                _ => {
+                    e.field.handle_key(key, modifiers);
                 }
-                Key::Char(c) if !modifiers.ctrl && !modifiers.meta && !c.is_control() => {
-                    if e.fresh {
-                        e.text.clear();
-                    }
-                    e.fresh = false;
-                    if e.text.chars().count() < ENTRY_CHARS {
-                        e.text.push(*c);
-                    }
-                }
-                _ => {}
             }
             return Vec::new();
         }
@@ -1245,14 +1283,14 @@ impl MacrosView {
         let name_cell = self.cell(row, (col.name.0 + 28.0, col.name.1));
         if let Some(r) = self.rename.as_ref().filter(|r| r.index == n) {
             sp::rect(c, name_cell, st.background);
-            sp::label(
+            self.field_rect.set(name_cell);
+            r.field.paint(
                 c,
-                &format!("{}|", r.text),
-                name_cell.x0 + 4.0,
-                text_y,
+                name_cell,
                 10.5,
-                t.text,
-                Align::Start,
+                (name_cell.height() - 6.0).max(8.0),
+                FieldColors::of(t),
+                true,
             );
         } else {
             let colour = if hovered(name_cell) {
@@ -1337,12 +1375,22 @@ impl MacrosView {
                 sp::rect(c, r, st.background);
                 sp::label(
                     c,
-                    &fit_label(&format!("{name} {}|", e.text), r.width() - 6.0, 10.5),
+                    name,
                     r.x0 + 4.0,
                     text_y,
                     10.5,
-                    t.text,
+                    t.text_muted,
                     Align::Start,
+                );
+                let typed = Rect::new(r.x0 + 26.0, r.y0, r.x1, r.y1);
+                self.field_rect.set(typed);
+                e.field.paint(
+                    c,
+                    typed,
+                    10.5,
+                    (typed.height() - 6.0).max(8.0),
+                    FieldColors::of(t),
+                    true,
                 );
             } else {
                 sp::button(c, st, r, &format!("{name} {text}"), None, hovered(r));

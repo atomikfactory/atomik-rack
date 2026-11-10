@@ -571,7 +571,7 @@ fn a_typed_buffer_size_is_clamped_and_kept_with_enter() {
         assert_eq!(pick(&mut d, "Type a size"), DialogOutcome::Open);
         assert!(d.is_selected(&Choice::BufferField));
         type_digits(&mut d, typed);
-        assert!(labels(&d, "Buffer size (frames)").contains(&format!("size {typed}|")));
+        assert_eq!(d.buffer_text(), Some(typed));
         assert_eq!(d.handle(&key(Key::Enter), VIEW), DialogOutcome::Open);
         assert_eq!(d.draft().buffer_frames, want, "typed {typed}");
         assert!(!d.is_selected(&Choice::BufferField));
@@ -588,7 +588,7 @@ fn typing_into_the_buffer_field_edits_and_escape_drops_it() {
     d.handle(&key(Key::Backspace), VIEW);
     type_digits(&mut d, "1234567");
     // Four digits at most; letters are ignored.
-    assert!(labels(&d, "Buffer size (frames)").contains(&"size 71234|".replace("71234", "7123")));
+    assert_eq!(d.buffer_text(), Some("7123"));
     assert_eq!(d.handle(&key(Key::Escape), VIEW), DialogOutcome::Open);
     assert_eq!(
         d.draft().buffer_frames,
@@ -664,4 +664,23 @@ fn the_master_tune_chips_set_the_draft_and_offer_a_value_that_is_none_of_the_ste
     assert_eq!(chips.len(), 16);
     assert!(chips.contains(&"+7.5".to_string()), "{chips:?}");
     assert!(d.is_selected(&Choice::Tune(7.5)));
+}
+
+#[test]
+fn the_buffer_field_selects_all_and_undoes_like_every_text_field() {
+    let mut d = SettingsDialog::new(current(), lists());
+    pick(&mut d, "Type a size");
+    type_digits(&mut d, "512");
+    let chord = |k: char| UiEvent::Key {
+        key: Key::Char(k),
+        modifiers: atomik_ui::Modifiers::CTRL,
+        pressed: true,
+    };
+    d.handle(&chord('a'), VIEW);
+    type_digits(&mut d, "96");
+    assert_eq!(d.buffer_text(), Some("96"), "typing replaced the selection");
+    d.handle(&chord('z'), VIEW);
+    assert_eq!(d.buffer_text(), Some("512"));
+    assert_eq!(d.handle(&key(Key::Enter), VIEW), DialogOutcome::Open);
+    assert_eq!(d.draft().buffer_frames, 512);
 }

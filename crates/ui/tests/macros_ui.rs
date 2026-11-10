@@ -1316,7 +1316,7 @@ fn a_middle_click_on_min_types_the_value_in_place() {
     let mut dl = DisplayList::new();
     v.paint(&mut dl);
     assert!(
-        texts(&dl).iter().any(|t| t == "MIN 200|"),
+        texts(&dl).iter().any(|t| t == "MIN") && texts(&dl).iter().any(|t| t == "200"),
         "{:?}",
         texts(&dl)
     );
@@ -1324,7 +1324,7 @@ fn a_middle_click_on_min_types_the_value_in_place() {
     type_text(&mut v, "1.5k");
     let mut dl = DisplayList::new();
     v.paint(&mut dl);
-    assert!(texts(&dl).iter().any(|t| t == "MIN 1.5k|"));
+    assert!(texts(&dl).iter().any(|t| t == "1.5k"));
     assert_eq!(
         key_event(&mut v, Key::Enter, Modifiers::NONE),
         [MacrosAction::SetRange {
@@ -1412,4 +1412,18 @@ fn typed_text_means_a_value_in_the_unit_of_the_param() {
     assert_eq!(EntryUnit::Percent.text(0.125), "12.5");
     assert_eq!(EntryUnit::Hz.text(1500.0), "1500");
     assert_eq!(EntryUnit::Number.text(-6.0), "-6");
+}
+
+#[test]
+fn ctrl_a_then_typing_replaces_the_value_being_typed() {
+    let mut v = macros_view(vec![bank_row("bank", "Macro Bank", true)]);
+    open_entry_on(&mut v, "min");
+    type_text(&mut v, "12");
+    key_event(&mut v, Key::Char('a'), Modifiers::CTRL);
+    type_text(&mut v, "7");
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl);
+    assert!(texts(&dl).iter().any(|t| t == "7"), "{:?}", texts(&dl));
+    key_event(&mut v, Key::Char('z'), Modifiers::CTRL);
+    assert!(v.is_editing(), "undo stays in the field");
 }

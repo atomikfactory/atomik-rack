@@ -199,7 +199,7 @@ impl RackView {
                     self.rename = Some(Rename {
                         dev: i,
                         index: n as u8,
-                        text: p.name,
+                        field: seq_panel::name_field(&p.name),
                         kind: RenameKind::Pattern,
                     });
                     self.bump(i);
@@ -438,8 +438,14 @@ impl RackView {
     }
 
     /// One key press while a drum pattern's name is being edited.
-    pub(super) fn drum_rename_key(&mut self, mut r: Rename, key: &Key, out: &mut Vec<UiAction>) {
-        match seq_panel::rename_key(&mut r.text, key) {
+    pub(super) fn drum_rename_key(
+        &mut self,
+        mut r: Rename,
+        key: &Key,
+        modifiers: Modifiers,
+        out: &mut Vec<UiAction>,
+    ) {
+        match seq_panel::rename_key(&mut r.field, key, modifiers) {
             RenameKey::Editing => {
                 let dev = r.dev;
                 self.rename = Some(r);
@@ -447,7 +453,7 @@ impl RackView {
             }
             RenameKey::Commit => {
                 self.bump(r.dev);
-                let name = r.text.trim().to_string();
+                let name = r.field.text().trim().to_string();
                 let target = self.drum_pattern_of(r.dev, usize::from(r.index));
                 if let Some(t) = target.filter(|t| !name.is_empty() && name != t.name) {
                     let device = self.devices[r.dev].key.clone();

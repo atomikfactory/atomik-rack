@@ -1153,3 +1153,18 @@ fn without_a_menu_the_selected_marker_or_range_is_the_boundary() {
     v.set_selected_marker(Some(MarkSel::Range(2)));
     assert_eq!(v.take_transition_boundary(), Some(4 * BAR));
 }
+
+#[test]
+fn ctrl_a_then_typing_replaces_the_marker_name() {
+    let doc = marked();
+    let mut v = with_strip(&doc);
+    assert!(v.begin_marker_rename(MarkSel::Marker(1)));
+    handle(&mut v, &doc, &typed("zzz"));
+    handle(&mut v, &doc, &[press(Key::Char('a'), Modifiers::CTRL)]);
+    handle(&mut v, &doc, &typed("q"));
+    assert_eq!(v.marker_rename_text(), Some("q"));
+    // Ctrl+Z takes the typing back inside the field and does not leave it.
+    handle(&mut v, &doc, &[press(Key::Char('z'), Modifiers::CTRL)]);
+    assert!(v.is_text_owner());
+    assert!(v.marker_rename_text().unwrap().ends_with("zzz"));
+}

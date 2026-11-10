@@ -16,6 +16,13 @@
 //! * **Input methods.** [`UiEvent::Ime`] events drive [`TextField::handle_ime`]: while the user
 //!   composes, the pre-edit text shows inside the field with an underline and is not part of the
 //!   text; the commit inserts the final text at the caret.
+//! * **Undo.** Each field keeps a small history of its own ([`HISTORY_LIMIT`] steps): Ctrl+Z
+//!   (Cmd+Z) undoes, Ctrl+Shift+Z (Cmd+Shift+Z, and Ctrl+Y on Windows and Linux) redoes. Typing
+//!   a run of letters, or a run of Backspace or Delete presses, is one step; a paste, a cut, a
+//!   word delete, a replaced selection and an input-method commit are one step each. A field
+//!   that has the keyboard takes these chords whether or not it has anything to undo.
+//! * **Filter.** [`TextField::with_filter`] limits the characters a field takes (digits only,
+//!   for instance), for typing, pasting and input methods alike.
 //! * **AltGr.** On Windows AltGr arrives as Ctrl+Alt: a character typed with both is text, not a
 //!   shortcut.
 //!
@@ -26,6 +33,7 @@
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::event::{ImeEvent, Key, Modifiers};
 use std::cell::Cell;
+use std::collections::VecDeque;
 use vello::kurbo::{Point, Rect};
 use vello::peniko::Color;
 
@@ -58,11 +66,85 @@ pub struct FieldColors {
     pub selection: Color,
 }
 
+impl FieldColors {
+    /// The colours of a field sitting on an LCD-style box of `theme` (a name or number being
+    /// typed over a label): the theme's text, caret and a focus-tinted selection.
+    pub fn of(theme: &crate::theme::Theme) -> Self {
+        Self {
+            text: theme.text,
+            caret: theme.text,
+            selection: crate::theme::mix(theme.lcd, theme.focus, 0.5),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Preedit {
     text: String,
     /// The composition's own cursor, a byte range of `text`.
     cursor: Option<(usize, usize)>,
+}
+
+/// What the right-click menu of a field needs to know: which of its items can work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldMenuState {
+    /// There is a step to undo.
+    pub can_undo: bool,
+    /// There is a step to redo.
+    pub can_redo: bool,
+    /// Some text is selected (Cut, Copy and Delete).
+    pub has_selection: bool,
+    /// The clipboard holds text (Paste).
+    pub can_paste: bool,
+    /// The field holds text (Select All).
+    pub has_text: bool,
+}
+
+thread_local! {
+    static MENU_REQUEST: Cell<Option<FieldMenuState>> = const { Cell::new(None) };
+}
+
+/// The right-click on a field the views reported since the last call, if any: the shell opens
+/// the field menu where the pointer is.
+pub fn take_field_menu() -> Option<FieldMenuState> {
+    MENU_REQUEST.with(Cell::take)
+}
+
+/// How many undo steps a field keeps.
+pub const HISTORY_LIMIT: usize = 50;
+
+/// The command ids a field with the keyboard takes (see [`TextField::command`]).
+pub const TEXT_COMMANDS: [&str; 6] = [
+    "edit.undo",
+    "edit.redo",
+    "edit.select_all",
+    "edit.copy",
+    "edit.cut",
+    "edit.paste",
+];
+
+/// Whether `id` is one of the [`TEXT_COMMANDS`].
+pub fn is_text_command(id: &str) -> bool {
+    TEXT_COMMANDS.contains(&id)
+}
+
+/// What an edit was, to decide whether it joins the step before it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditKind {
+    /// One typed character (`true`: a letter or digit, `false`: anything else).
+    Typed(bool),
+    Backspace,
+    Delete,
+    /// Never joins another edit.
+    Other,
+}
+
+/// The text and the selection at one moment of the history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Snap {
+    text: String,
+    caret: usize,
+    anchor: usize,
 }
 
 /// A text being edited. See the module documentation.
@@ -83,6 +165,16 @@ pub struct TextField {
     origin: Cell<(f64, f64, f64)>,
     /// First line shown (multi-line fields).
     first_line: Cell<usize>,
+    /// The characters the field takes (`None`: any).
+    filter: Option<fn(char) -> bool>,
+    undo: VecDeque<Snap>,
+    redo: VecDeque<Snap>,
+    /// The last edit and where the caret was left, so the next one can join it.
+    last: Option<(EditKind, usize)>,
+    /// Where a one-line text sits in the box when it is shorter than the box.
+    align: Align,
+    /// The box the field was painted in, for the pointer.
+    rect: Cell<Rect>,
 }
 
 impl TextField {
@@ -98,9 +190,62 @@ impl TextField {
             char_width: Cell::new(6.0),
             origin: Cell::new((0.0, 0.0, 14.0)),
             first_line: Cell::new(0),
+            filter: None,
+            undo: VecDeque::new(),
+            redo: VecDeque::new(),
+            last: None,
+            align: Align::Start,
+            rect: Cell::new(Rect::ZERO),
         };
         f.set_text(text);
         f
+    }
+
+    /// A field for a typed number or time on an LCD: it holds `text` all selected, so the first
+    /// character typed replaces it, takes at most `limit` characters and only those `accept`
+    /// says yes to.
+    pub fn entry(text: &str, limit: usize, accept: fn(char) -> bool) -> Self {
+        let mut f = Self::new(text, limit, false)
+            .with_filter(accept)
+            .aligned(Align::End);
+        f.select_all();
+        f
+    }
+
+    /// A one-line text shorter than its box sits at the start (the default), the centre or the
+    /// end of it, as an LCD readout does.
+    #[must_use]
+    pub fn aligned(mut self, align: Align) -> Self {
+        self.align = align;
+        self
+    }
+
+    /// Paints the field in the lower part of the LCD box `rect` of `theme` (the label sits in the
+    /// band above): the LCD text colour, the shared caret and selection.
+    pub fn paint_lcd<C: Canvas + ?Sized>(
+        &self,
+        c: &mut C,
+        rect: Rect,
+        size: f32,
+        theme: &crate::theme::Theme,
+    ) {
+        let band = Rect::new(rect.x0, rect.y0 + 11.0, rect.x1, rect.y1);
+        let colors = FieldColors {
+            text: theme.highlight,
+            caret: theme.highlight,
+            selection: crate::theme::mix(theme.lcd, theme.focus, 0.5),
+        };
+        self.paint(c, band, size, (band.height() - 6.0).max(8.0), colors, true);
+    }
+
+    /// The field takes only the characters `accept` says yes to (typing, paste, composition and
+    /// the text it holds now).
+    #[must_use]
+    pub fn with_filter(mut self, accept: fn(char) -> bool) -> Self {
+        self.filter = Some(accept);
+        let text = std::mem::take(&mut self.text);
+        self.set_text(&text);
+        self
     }
 
     /// The text (the composition in progress is not part of it).
@@ -114,6 +259,9 @@ impl TextField {
         self.caret = self.len();
         self.anchor = self.caret;
         self.preedit = None;
+        self.undo.clear();
+        self.redo.clear();
+        self.last = None;
     }
 
     /// The caret, a character index.
@@ -152,12 +300,14 @@ impl TextField {
     pub fn set_caret(&mut self, at: usize) {
         self.caret = at.min(self.len());
         self.anchor = self.caret;
+        self.last = None;
     }
 
     /// Selects everything.
     pub fn select_all(&mut self) {
         self.anchor = 0;
         self.caret = self.len();
+        self.last = None;
     }
 
     fn byte(&self, char_index: usize) -> usize {
@@ -180,6 +330,7 @@ impl TextField {
                 c if c.is_control() => None,
                 c => Some(c),
             })
+            .filter(|c| self.filter.is_none_or(|accept| accept(*c)))
             .take(room)
             .collect()
     }
@@ -188,12 +339,94 @@ impl TextField {
 
     /// Types `text` at the caret, replacing the selection. Returns whether anything changed.
     pub fn insert(&mut self, text: &str) -> bool {
-        let removed = self.delete_selection();
-        let used = self.len();
-        let clean = self.clean(text, used);
-        if clean.is_empty() {
-            return removed;
+        let mut chars = text.chars();
+        let kind = match (chars.next(), chars.next()) {
+            (Some(c), None) if !c.is_control() => EditKind::Typed(c.is_alphanumeric()),
+            _ => EditKind::Other,
+        };
+        self.edit(kind, |f| f.insert_raw(text))
+    }
+
+    /// Runs one edit and records it in the history: it joins the step before it when `kind`
+    /// says it continues the same run at the same place, else it opens a new step.
+    fn edit(&mut self, kind: EditKind, change: impl FnOnce(&mut Self) -> bool) -> bool {
+        let before = self.snap();
+        let joins = kind != EditKind::Other
+            && self.selection().is_none()
+            && self.last == Some((kind, self.caret));
+        if !change(self) {
+            return false;
         }
+        if !joins {
+            self.undo.push_back(before);
+            if self.undo.len() > HISTORY_LIMIT {
+                self.undo.pop_front();
+            }
+        }
+        self.redo.clear();
+        self.last = Some((kind, self.caret));
+        true
+    }
+
+    fn snap(&self) -> Snap {
+        Snap {
+            text: self.text.clone(),
+            caret: self.caret,
+            anchor: self.anchor,
+        }
+    }
+
+    fn restore(&mut self, snap: Snap) {
+        self.text = snap.text;
+        self.caret = snap.caret.min(self.len());
+        self.anchor = snap.anchor.min(self.len());
+        self.preedit = None;
+        self.last = None;
+    }
+
+    /// Undoes the last step; false when there is none.
+    pub fn undo(&mut self) -> bool {
+        let Some(prev) = self.undo.pop_back() else {
+            return false;
+        };
+        self.redo.push_back(self.snap());
+        self.restore(prev);
+        true
+    }
+
+    /// Redoes the step the last undo took back; false when there is none.
+    pub fn redo(&mut self) -> bool {
+        let Some(next) = self.redo.pop_back() else {
+            return false;
+        };
+        self.undo.push_back(self.snap());
+        self.restore(next);
+        true
+    }
+
+    /// Whether there is a step to undo.
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    /// Whether there is a step to redo.
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
+    /// How many steps the history holds.
+    pub fn history_len(&self) -> usize {
+        self.undo.len()
+    }
+
+    fn insert_raw(&mut self, text: &str) -> bool {
+        let selected = self.selection().map_or(0, |(a, b)| b - a);
+        let clean = self.clean(text, self.len() - selected);
+        // Text the field refuses (a letter in a number field) leaves the selection alone.
+        if clean.is_empty() {
+            return false;
+        }
+        self.delete_selection();
         let at = self.byte(self.caret);
         self.text.insert_str(at, &clean);
         self.caret += clean.chars().count();
@@ -225,28 +458,42 @@ impl TextField {
 
     /// Backspace: the selection, else the character (or word) before the caret.
     pub fn backspace(&mut self, word: bool) -> bool {
-        if self.delete_selection() {
-            return true;
-        }
-        let from = if word {
-            self.word_left(self.caret)
+        let kind = if word || self.selection().is_some() {
+            EditKind::Other
         } else {
-            self.caret.saturating_sub(1)
+            EditKind::Backspace
         };
-        self.delete_range(from, self.caret)
+        self.edit(kind, |f| {
+            if f.delete_selection() {
+                return true;
+            }
+            let from = if word {
+                f.word_left(f.caret)
+            } else {
+                f.caret.saturating_sub(1)
+            };
+            f.delete_range(from, f.caret)
+        })
     }
 
     /// Delete: the selection, else the character (or word) after the caret.
     pub fn delete(&mut self, word: bool) -> bool {
-        if self.delete_selection() {
-            return true;
-        }
-        let to = if word {
-            self.word_right(self.caret)
+        let kind = if word || self.selection().is_some() {
+            EditKind::Other
         } else {
-            (self.caret + 1).min(self.len())
+            EditKind::Delete
         };
-        self.delete_range(self.caret, to)
+        self.edit(kind, |f| {
+            if f.delete_selection() {
+                return true;
+            }
+            let to = if word {
+                f.word_right(f.caret)
+            } else {
+                (f.caret + 1).min(f.len())
+            };
+            f.delete_range(f.caret, to)
+        })
     }
 
     fn chars(&self) -> Vec<char> {
@@ -327,6 +574,7 @@ impl TextField {
     }
 
     fn move_to(&mut self, to: usize, select: bool) {
+        self.last = None;
         self.caret = to.min(self.len());
         if !select {
             self.anchor = self.caret;
@@ -348,13 +596,13 @@ impl TextField {
 
     /// Cuts the selection to the clipboard.
     pub fn cut(&mut self) -> bool {
-        self.copy() && self.delete_selection()
+        self.copy() && self.edit(EditKind::Other, Self::delete_selection)
     }
 
     /// Pastes the clipboard at the caret.
     pub fn paste(&mut self) -> bool {
         match crate::clipboard::read() {
-            Some(t) => self.insert(&t),
+            Some(t) => self.edit(EditKind::Other, |f| f.insert_raw(&t)),
             None => false,
         }
     }
@@ -390,6 +638,9 @@ impl TextField {
                 }
                 'x' => edited(self.cut()),
                 'v' => edited(self.paste()),
+                'z' if m.shift => edited(self.redo()),
+                'z' => edited(self.undo()),
+                'y' if !cfg!(target_os = "macos") && m.ctrl => edited(self.redo()),
                 _ => FieldKey::Ignored,
             },
             Key::Insert if m.ctrl => {
@@ -459,6 +710,27 @@ impl TextField {
         }
     }
 
+    /// Runs one of the [`TEXT_COMMANDS`] by its command id, the way the keymap resolves a
+    /// primary-modifier chord a view does not see as a key: `None` for any other id.
+    pub fn command(&mut self, id: &str) -> Option<FieldKey> {
+        let (letter, shift) = match id {
+            "edit.undo" => ('z', false),
+            "edit.redo" => ('z', true),
+            "edit.select_all" => ('a', false),
+            "edit.copy" => ('c', false),
+            "edit.cut" => ('x', false),
+            "edit.paste" => ('v', false),
+            "edit.delete" => return Some(self.handle_key(&Key::Delete, Modifiers::NONE)),
+            _ => return None,
+        };
+        let mods = Modifiers {
+            ctrl: true,
+            shift,
+            ..Modifiers::NONE
+        };
+        Some(self.handle_key(&Key::Char(letter), mods))
+    }
+
     /// Handles an input-method event; true when the text or the composition changed.
     pub fn handle_ime(&mut self, event: &ImeEvent) -> bool {
         match event {
@@ -480,9 +752,64 @@ impl TextField {
             }
             ImeEvent::Commit(text) => {
                 let had = self.preedit.take().is_some();
-                self.insert(text) || had
+                self.edit(EditKind::Other, |f| f.insert_raw(text)) || had
             }
             ImeEvent::Disabled => self.preedit.take().is_some(),
+        }
+    }
+
+    /// A right-click at `pos` (in the coordinates the field is painted in): when it is inside the
+    /// box, the field asks the shell for its menu (see [`take_field_menu`]) and this is true.
+    pub fn right_click(&self, pos: Point) -> bool {
+        if !self.rect.get().contains(pos) {
+            return false;
+        }
+        let state = FieldMenuState {
+            can_undo: self.can_undo(),
+            can_redo: self.can_redo(),
+            has_selection: self.selection().is_some(),
+            can_paste: crate::clipboard::read().is_some(),
+            has_text: !self.is_empty(),
+        };
+        MENU_REQUEST.with(|m| m.set(Some(state)));
+        true
+    }
+
+    /// The box the field was painted in last, in the coordinates it was painted in.
+    pub fn painted_rect(&self) -> Rect {
+        self.rect.get()
+    }
+
+    /// The pointer events of a field edited in place, in the coordinates it is painted in: a
+    /// press inside its box places the caret (a double click selects a word), a drag selects.
+    /// `dragging` is the caller's flag for a drag in progress. True when the event is used up.
+    pub fn pointer_event(&mut self, dragging: &mut bool, event: &crate::event::UiEvent) -> bool {
+        use crate::event::{PointerButton, UiEvent};
+        match event {
+            UiEvent::PointerDown {
+                pos,
+                button: PointerButton::Primary,
+                clicks,
+                modifiers,
+            } if self.rect.get().contains(*pos) => {
+                self.press(*pos, *clicks, modifiers.shift);
+                *dragging = true;
+                true
+            }
+            UiEvent::PointerDown {
+                pos,
+                button: PointerButton::Secondary,
+                ..
+            } if self.right_click(*pos) => true,
+            UiEvent::PointerMove { pos, .. } if *dragging => {
+                self.drag(*pos);
+                true
+            }
+            UiEvent::PointerUp { .. } if *dragging => {
+                *dragging = false;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -552,16 +879,31 @@ impl TextField {
     /// Paints the field in `rect` (the box; the text starts 8 px in) at `size`. `lines` is the
     /// number of lines the box shows; a multi-line field scrolls to keep the caret in view.
     /// `focused` draws the caret and the selection.
-    pub fn paint(
+    pub fn paint<C: Canvas + ?Sized>(
         &self,
-        c: &mut dyn Canvas,
+        c: &mut C,
         rect: Rect,
         size: f32,
         line_h: f64,
         colors: FieldColors,
         focused: bool,
     ) {
-        let pad = 8.0;
+        self.paint_padded(c, rect, size, line_h, colors, focused, 8.0);
+    }
+
+    /// [`Self::paint`] with `pad` pixels between the box and the text (a narrow cell of a
+    /// segmented field takes less than the usual 8).
+    #[allow(clippy::too_many_arguments, reason = "the paint inputs, as in `paint`")]
+    pub fn paint_padded<C: Canvas + ?Sized>(
+        &self,
+        c: &mut C,
+        rect: Rect,
+        size: f32,
+        line_h: f64,
+        colors: FieldColors,
+        focused: bool,
+        pad: f64,
+    ) {
         let shown = self.display();
         let lines: Vec<&str> = shown.text.split('\n').collect();
         let rows = if self.multiline {
@@ -577,12 +919,12 @@ impl TextField {
             first = caret_line + 1 - rows;
         }
         self.first_line.set(first);
-        let measure = |c: &mut dyn Canvas, s: &str| -> f64 {
+        let measure = |c: &mut C, s: &str| -> f64 {
             c.text_width(&TextRun::new(s, pt(0.0, 0.0), size, colors.text))
         };
         let width = rect.width() - 2.0 * pad;
         // Horizontal scroll of a one-line field: the caret stays inside the box.
-        let caret_prefix = |c: &mut dyn Canvas, line: usize, col: usize| {
+        let caret_prefix = |c: &mut C, line: usize, col: usize| {
             let l = lines.get(line).copied().unwrap_or("");
             let p: String = l.chars().take(col).collect();
             measure(c, &p)
@@ -594,7 +936,19 @@ impl TextField {
         } else {
             (caret_x - width + 2.0).max(0.0)
         };
-        let x0 = rect.x0 + pad - scroll;
+        let slack = if self.multiline || self.align == Align::Start {
+            0.0
+        } else {
+            let whole = lines.first().copied().unwrap_or("");
+            let room = (width - measure(c, whole)).max(0.0);
+            if self.align == Align::End {
+                room
+            } else {
+                room / 2.0
+            }
+        };
+        self.rect.set(rect);
+        let x0 = rect.x0 + pad + slack - scroll;
         let y0 = rect.y0 + 3.0;
         self.origin.set((x0, y0, line_h));
         let total: usize = lines.iter().map(|l| l.chars().count()).sum();
@@ -934,6 +1288,167 @@ mod tests {
         assert_eq!((f.caret(), f.selection()), (3, None));
         f.drag(Point::new(70.0, 5.0));
         assert_eq!(f.selection(), Some((3, 7)));
+    }
+
+    fn type_str(f: &mut TextField, s: &str) {
+        for c in s.chars() {
+            let k = if c == ' ' { Key::Space } else { Key::Char(c) };
+            key(f, k, NONE);
+        }
+    }
+
+    const CTRL_SHIFT: Modifiers = Modifiers {
+        ctrl: true,
+        shift: true,
+        ..Modifiers::NONE
+    };
+
+    #[test]
+    fn undo_and_redo_walk_the_history() {
+        let mut f = field("");
+        type_str(&mut f, "abc");
+        assert_eq!(f.text(), "abc");
+        assert_eq!(key(&mut f, Key::Char('z'), CTRL), FieldKey::Edited);
+        assert_eq!(f.text(), "", "a run of letters is one step");
+        assert_eq!(
+            key(&mut f, Key::Char('z'), CTRL),
+            FieldKey::Moved,
+            "nothing left, still used"
+        );
+        assert_eq!(key(&mut f, Key::Char('z'), CTRL_SHIFT), FieldKey::Edited);
+        assert_eq!(f.text(), "abc");
+        assert_eq!(f.caret(), 3, "the caret comes back with the text");
+        key(&mut f, Key::Char('z'), CTRL);
+        // Ctrl+Y redoes on Windows and Linux; macOS leaves it alone.
+        let redo = key(&mut f, Key::Char('y'), CTRL);
+        if cfg!(target_os = "macos") {
+            assert_eq!(redo, FieldKey::Ignored);
+            assert_eq!(f.text(), "");
+        } else {
+            assert_eq!(redo, FieldKey::Edited);
+            assert_eq!(f.text(), "abc");
+        }
+    }
+
+    #[test]
+    fn typing_joins_a_word_and_a_space_or_a_move_starts_a_new_step() {
+        let mut f = field("");
+        type_str(&mut f, "big kick");
+        assert_eq!(f.history_len(), 3, "big, the space, kick");
+        f.undo();
+        assert_eq!(f.text(), "big ");
+        f.undo();
+        assert_eq!(f.text(), "big");
+        f.undo();
+        assert_eq!(f.text(), "");
+        let mut f = field("");
+        type_str(&mut f, "ab");
+        key(&mut f, Key::Left, NONE);
+        key(&mut f, Key::Right, NONE);
+        type_str(&mut f, "cd");
+        assert_eq!(f.history_len(), 2, "moving the caret ends the run");
+        f.undo();
+        assert_eq!(f.text(), "ab");
+    }
+
+    #[test]
+    fn a_run_of_backspaces_is_one_step_and_a_paste_or_a_replaced_selection_is_its_own() {
+        let mut f = field("hello");
+        key(&mut f, Key::Backspace, NONE);
+        key(&mut f, Key::Backspace, NONE);
+        key(&mut f, Key::Backspace, NONE);
+        assert_eq!(f.text(), "he");
+        assert_eq!(f.history_len(), 1);
+        f.undo();
+        assert_eq!(f.text(), "hello");
+        f.select_all();
+        type_str(&mut f, "x");
+        type_str(&mut f, "y");
+        assert_eq!(f.text(), "xy");
+        f.undo();
+        assert_eq!(
+            f.text(),
+            "hello",
+            "the replaced selection and the letters after it are one"
+        );
+        key(&mut f, Key::End, NONE);
+        crate::clipboard::write("PASTE");
+        key(&mut f, Key::Char('v'), CTRL);
+        assert_eq!(f.text(), "helloPASTE");
+        type_str(&mut f, "!");
+        f.undo();
+        assert_eq!(f.text(), "helloPASTE", "a paste is a step of its own");
+        f.undo();
+        assert_eq!(f.text(), "hello");
+    }
+
+    #[test]
+    fn a_new_edit_drops_the_redo_steps_and_set_text_starts_a_new_history() {
+        let mut f = field("");
+        type_str(&mut f, "one");
+        f.undo();
+        assert!(f.can_redo());
+        type_str(&mut f, "two");
+        assert!(!f.can_redo());
+        assert!(!f.redo());
+        f.set_text("fresh");
+        assert!(!f.can_undo());
+        assert!(!f.undo());
+        assert_eq!(f.text(), "fresh");
+    }
+
+    #[test]
+    fn the_history_is_bounded() {
+        let mut f = TextField::new("", 500, false);
+        for i in 0..(HISTORY_LIMIT + 20) {
+            // Alternating a letter and a space makes one step per character.
+            type_str(&mut f, if i % 2 == 0 { "a" } else { " " });
+        }
+        assert_eq!(f.history_len(), HISTORY_LIMIT);
+        let mut steps = 0;
+        while f.undo() {
+            steps += 1;
+        }
+        assert_eq!(steps, HISTORY_LIMIT);
+        assert_eq!(f.len(), 20, "the oldest steps are gone");
+    }
+
+    #[test]
+    fn a_filter_limits_typing_paste_and_composition() {
+        let digits = |c: char| c.is_ascii_digit();
+        let mut f = TextField::new("12a3", 8, false).with_filter(digits);
+        assert_eq!(f.text(), "123", "the text it holds is filtered too");
+        type_str(&mut f, "4x5-");
+        assert_eq!(f.text(), "12345");
+        crate::clipboard::write("6 7a8\n9");
+        key(&mut f, Key::Char('v'), CTRL);
+        assert_eq!(f.text(), "12345678", "filtered, and the limit holds");
+        f.handle_ime(&ImeEvent::Commit("zz".into()));
+        assert_eq!(f.text(), "12345678");
+        let mut g = TextField::new("", 8, false).with_filter(digits);
+        assert_eq!(
+            key(&mut g, Key::Char('q'), NONE),
+            FieldKey::Moved,
+            "a refused letter is still used"
+        );
+        assert!(g.text().is_empty());
+        assert!(!g.can_undo(), "a refused letter is no step");
+    }
+
+    #[test]
+    fn commands_run_by_id_like_the_chords() {
+        let mut f = field("");
+        type_str(&mut f, "hi");
+        assert_eq!(f.command("edit.select_all"), Some(FieldKey::Moved));
+        assert_eq!(f.selection(), Some((0, 2)));
+        assert_eq!(f.command("edit.cut"), Some(FieldKey::Edited));
+        assert_eq!(f.text(), "");
+        assert_eq!(f.command("edit.undo"), Some(FieldKey::Edited));
+        assert_eq!(f.text(), "hi");
+        assert_eq!(f.command("edit.redo"), Some(FieldKey::Edited));
+        assert_eq!(f.text(), "");
+        assert_eq!(f.command("edit.duplicate"), None);
+        assert!(is_text_command("edit.undo") && !is_text_command("edit.delete"));
     }
 
     impl TextField {

@@ -76,7 +76,7 @@ impl TransportBar {
 
     /// The text being typed in a position, time or locator readout.
     pub fn readout_text(&self) -> Option<&str> {
-        self.cl.edit.as_ref().map(|e| e.text.as_str())
+        self.cl.edit.as_ref().map(|e| e.field.text())
     }
 
     fn readout_value_text(&self, which: Readout) -> String {
@@ -91,8 +91,9 @@ impl TransportBar {
     pub(super) fn begin_readout_edit(&mut self, which: Readout) {
         self.cl.edit = Some(ReadoutEdit {
             which,
-            text: self.readout_value_text(which),
-            fresh: true,
+            field: TextField::entry(&self.readout_value_text(which), TEXT_MAX, |c| {
+                c.is_ascii_digit() || matches!(c, '.' | ':')
+            }),
         });
         self.repaint = true;
     }
@@ -119,17 +120,17 @@ impl TransportBar {
         self.repaint = true;
         match edit.which {
             Readout::Pos => {
-                if let Some(tick) = parse_position(&edit.text, &self.bars) {
+                if let Some(tick) = parse_position(edit.field.text(), &self.bars) {
                     out.push(UiAction::Transport(TransportAction::Locate(tick)));
                 }
             }
             Readout::Time => {
-                if let Some(tick) = parse_time(&edit.text, &self.tempo) {
+                if let Some(tick) = parse_time(edit.field.text(), &self.tempo) {
                     out.push(UiAction::Transport(TransportAction::Locate(tick)));
                 }
             }
             Readout::Left | Readout::Right => {
-                let Some(tick) = parse_position(&edit.text, &self.bars) else {
+                let Some(tick) = parse_position(edit.field.text(), &self.bars) else {
                     return;
                 };
                 let (start, end) = self.loop_range;
@@ -149,38 +150,27 @@ impl TransportBar {
         }
     }
 
-    pub(super) fn readout_key(&mut self, key: &Key, out: &mut Vec<UiAction>) {
+    pub(super) fn readout_key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         let Some(edit) = &mut self.cl.edit else {
             return;
         };
         match key {
-            Key::Char(c) if c.is_ascii_digit() || matches!(c, '.' | ':') => {
-                if edit.fresh {
-                    edit.text.clear();
-                    edit.fresh = false;
-                }
-                if edit.text.len() < TEXT_MAX {
-                    edit.text.push(*c);
-                }
-            }
-            Key::Backspace => {
-                edit.fresh = false;
-                edit.text.pop();
-            }
             Key::Enter => self.commit_readout(out),
             Key::Escape => self.cl.edit = None,
-            _ => {}
+            _ => {
+                edit.field.handle_key(key, modifiers);
+            }
         }
         self.repaint = true;
     }
 
     /// The typed text and the readout's rectangle, for painting POS and TIME.
-    pub(super) fn readout_typing(&self, which: Readout) -> Option<&str> {
+    pub(super) fn readout_typing(&self, which: Readout) -> Option<&TextField> {
         self.cl
             .edit
             .as_ref()
             .filter(|e| e.which == which)
-            .map(|e| e.text.as_str())
+            .map(|e| &e.field)
     }
 }
 
