@@ -5096,7 +5096,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (544) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (545) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5269,6 +5269,18 @@ creation chain in the **Creation chain** bullet.
   help and are not gated. `crates/ui/tests/tooltips.rs` walks the button enums of the views through
   their `*_center` helpers and fails when a button has no text or names a command that is not in the
   registry.
+- **Help Mode** (`help.hover_help`, Help > Help Mode, Shift+F1; [app/src/help/](../crates/app/src/help),
+  [app/src/shell_help.rs](../crates/app/src/shell_help.rs),
+  [ui/src/help_panel.rs](../crates/ui/src/help_panel.rs)). It reuses the tooltip hit tests: a view gives
+  its `Help` a stable id (`Help::id`), and the knobs, which have no tooltip, answer through `help_at_with` with an id
+  `param:<device type>:<param key>`. `Shell::help_lookup` is `help_at` without the delay and the preference. The long
+  text is two data files compiled in (`controls.json`, one entry per id, and `devices.json`, one line per device
+  type), and `help::resolve` turns a `Help` into a `HelpCard`: a parameter card is built from its descriptor and the
+  about line of its device, an id with an entry is that entry with the live shortcut, and anything else falls back to
+  its tooltip text. A docked strip above the status line shows it (`Shell::content_bottom` moves the bottom of every
+  pane up by `HELP_PANEL_HEIGHT`), and only a press on its "More" link is taken: it is a `ShellRequest::OpenUrl` to
+  the section of `docs/README.md`. Tests check that every id a view names has an entry, that no entry is stale, that
+  every device type has an about line, and list the controls of a window that still fall back to their tooltip.
 - **Revision, dirty flag and repaints** ([model/src/lib.rs](../crates/model/src/lib.rs)
   `Document::revision`, [app/src/app_core.rs](../crates/app/src/app_core.rs),
   [app/src/shell.rs](../crates/app/src/shell.rs)). `Document::revision()` takes a new process-wide

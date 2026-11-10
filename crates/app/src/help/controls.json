@@ -1,0 +1,682 @@
+{
+  "transport.go_start": {
+    "title": "Return to start",
+    "text": "Moves the playhead to the beginning of the song.",
+    "more": "The main window"
+  },
+  "transport.stop": {
+    "title": "Stop",
+    "text": "Stops playback or recording. Where the playhead ends up follows the Return to start on stop preference of the Workflow settings.",
+    "more": "The main window"
+  },
+  "transport.play": {
+    "title": "Play",
+    "text": "Starts the song from the playhead. While the song is playing the same button stops it. The lit button means the song is running.",
+    "more": "The main window"
+  },
+  "transport.record": {
+    "title": "Record",
+    "text": "Records into the armed tracks: notes and audio you play, and the parameters you move when automation recording is on. Everything you record is one undo step.",
+    "more": "The main window"
+  },
+  "transport.auto_lanes": {
+    "title": "Auto-create lanes",
+    "text": "While it is lit, a take also records every parameter you move and adds an automation lane for it, so you do not have to make the lanes first.",
+    "more": "The main window"
+  },
+  "transport.loop": {
+    "title": "Loop",
+    "text": "Plays the range between the left and right locators over and over. Set the range with the locators.",
+    "more": "The main window"
+  },
+  "transport.metronome": {
+    "title": "Metronome",
+    "text": "Plays a click on every beat while the song plays or records. The click level is set with the Click level control.",
+    "more": "The main window"
+  },
+  "transport.override": {
+    "title": "Overridden lanes",
+    "text": "Some automation lanes hold a value you moved by hand while the song plays. Click to let all of them play their automation again.",
+    "more": "The main window"
+  },
+  "transport.tempo": {
+    "title": "Tempo",
+    "text": "The speed of the song in beats per minute. Drag or scroll the number to change it, hold Shift for fine steps, or double-click to type a value. Tempo changes along the song are drawn in the tempo lane.",
+    "more": "The main window"
+  },
+  "transport.meter": {
+    "title": "Time signature",
+    "text": "How many beats a bar has and which note value is a beat. Drag or scroll either number, or double-click to type.",
+    "more": "The main window"
+  },
+  "transport.rewind": {
+    "title": "Rewind",
+    "text": "Moves the playhead back by bars. Hold the button to repeat; the longer you hold it, the faster it goes.",
+    "more": "The main window"
+  },
+  "transport.forward": {
+    "title": "Fast forward",
+    "text": "Moves the playhead forward by bars. Hold the button to repeat; the longer you hold it, the faster it goes.",
+    "more": "The main window"
+  },
+  "transport.tap_tempo": {
+    "title": "Tap tempo",
+    "text": "Tap the beat on this button. The average of your last taps sets the tempo of the song.",
+    "more": "The main window"
+  },
+  "transport.go_left": {
+    "title": "Go to the left locator",
+    "text": "Moves the playhead to the left end of the loop range.",
+    "more": "The main window"
+  },
+  "transport.go_right": {
+    "title": "Go to the right locator",
+    "text": "Moves the playhead to the right end of the loop range.",
+    "more": "The main window"
+  },
+  "transport.left_locator": {
+    "title": "Left locator",
+    "text": "The start of the loop range, written as bar, beat and tick. Double-click to type a new position.",
+    "more": "The main window"
+  },
+  "transport.right_locator": {
+    "title": "Right locator",
+    "text": "The end of the loop range, written as bar, beat and tick. Double-click to type a new position.",
+    "more": "The main window"
+  },
+  "transport.click_level": {
+    "title": "Click level",
+    "text": "How loud the metronome is. Drag or scroll to change it, or double-click to go back to the default.",
+    "more": "The main window"
+  },
+  "transport.q_rec": {
+    "title": "Q Rec",
+    "text": "Quantizes the notes you record: each note snaps to the grid next to this button as it is played in. Off keeps your timing exactly.",
+    "more": "The main window"
+  },
+  "transport.q_rec_grid": {
+    "title": "Q Rec grid",
+    "text": "The grid the recorded notes snap to when Q Rec is on. Click, drag or scroll to change it.",
+    "more": "The main window"
+  },
+  "transport.quantize": {
+    "title": "Quantize",
+    "text": "Quantizes the selected clips or notes with the last settings of the quantize panel, so you can repeat the same quantize with one click.",
+    "more": "The main window"
+  },
+  "transport.song_key": {
+    "title": "Song key",
+    "text": "The key of the song at the playhead. Click to set it; the piano roll, the browser and the chord tools follow it.",
+    "more": "The main window"
+  },
+  "transport.more": {
+    "title": "More transport controls",
+    "text": "The bar has no room for every control in a narrow window. This menu holds the ones that did not fit.",
+    "more": "The main window"
+  },
+  "arrangement.track_mute": {
+    "title": "Mute track",
+    "text": "Silences this track. A muted track keeps its clips and its place in the mix.",
+    "more": "The main window"
+  },
+  "arrangement.track_solo": {
+    "title": "Solo track",
+    "text": "Plays only this track and the other soloed tracks. Click again to bring the rest of the song back.",
+    "more": "The main window"
+  },
+  "arrangement.track_arm": {
+    "title": "Arm for recording",
+    "text": "Arms the track: the next recording writes the notes or audio you play into it. More than one track can be armed.",
+    "more": "The main window"
+  },
+  "arrangement.track_expand": {
+    "title": "Show lanes",
+    "text": "Shows or hides the automation lanes of this track under its clips.",
+    "more": "The main window"
+  },
+  "arrangement.add_lane": {
+    "title": "Add a lane",
+    "text": "Adds an automation lane for a parameter of the track's device, chosen from a list. The lane draws how the parameter moves over the song.",
+    "more": "The main window"
+  },
+  "arrangement.track_input": {
+    "title": "Audio input",
+    "text": "The audio input this track records from. Click to choose one of the inputs of the audio interface.",
+    "more": "The main window"
+  },
+  "arrangement.track_monitor": {
+    "title": "Input monitoring",
+    "text": "Whether you hear the input while you record. Click to step through off, auto (while recording or stopped) and always on.",
+    "more": "The main window"
+  },
+  "arrangement.track_controllers": {
+    "title": "Controller lanes",
+    "text": "This track holds controller lanes of its own, such as mod wheel or pedal. Click to edit them in the piano roll.",
+    "more": "The main window"
+  },
+  "arrangement.track_keys": {
+    "title": "Master keyboard",
+    "text": "The arrow marks the track that your MIDI keyboard plays. In the separated keyboard mode, click it to choose another track.",
+    "more": "The main window"
+  },
+  "arrangement.lane_mute": {
+    "title": "Mute lane",
+    "text": "Silences this lane. A muted automation lane leaves its parameter at the value it holds.",
+    "more": "The main window"
+  },
+  "arrangement.lane_solo": {
+    "title": "Solo lane",
+    "text": "While a lane is soloed, only the soloed lanes of the track play.",
+    "more": "The main window"
+  },
+  "arrangement.lane_delete": {
+    "title": "Delete lane",
+    "text": "Removes this automation lane and all the clips and points on it. You can undo it.",
+    "more": "The main window"
+  },
+  "arrangement.lane_fold": {
+    "title": "Fold lane",
+    "text": "Shrinks the lane to a thin strip to save room, or opens it again.",
+    "more": "The main window"
+  },
+  "arrangement.lane_arm": {
+    "title": "Arm lane",
+    "text": "Arms this automation lane: moving its parameter while recording writes the movement into the lane.",
+    "more": "The main window"
+  },
+  "arrangement.lane_mode": {
+    "title": "Write mode",
+    "text": "How automation recording writes. Overwrite replaces the lane while it records, touch writes only while you hold a control, latch keeps writing after you let go.",
+    "more": "The main window"
+  },
+  "arrangement.clear_mutes": {
+    "title": "Clear all mutes",
+    "text": "Un-mutes every track and lane at once.",
+    "more": "The main window"
+  },
+  "arrangement.clear_solos": {
+    "title": "Clear all solos",
+    "text": "Turns every solo off at once, so the whole song plays again.",
+    "more": "The main window"
+  },
+  "arrangement.quantize": {
+    "title": "Quantize",
+    "text": "Quantizes the selected clips with the last settings of the quantize panel. Right-click to open the panel.",
+    "more": "The main window"
+  },
+  "arrangement.manual_rec": {
+    "title": "Manual Rec",
+    "text": "When it is on, selecting a track no longer arms it. Arm tracks yourself with their R buttons.",
+    "more": "The main window"
+  },
+  "arrangement.snap": {
+    "title": "Snap grid",
+    "text": "The grid that clips and points snap to while you draw and move them. Click to step to the next value, or drag or scroll to choose.",
+    "more": "The main window"
+  },
+  "arrangement.tool_select": {
+    "title": "Select tool",
+    "text": "The tool for everyday work: click to select, drag to move or resize, and drag on an empty place to box-select.",
+    "more": "The main window"
+  },
+  "arrangement.tool_pencil": {
+    "title": "Pencil tool",
+    "text": "Click on a lane to draw a clip, or an automation point on an automation lane. Drag to draw a longer clip.",
+    "more": "The main window"
+  },
+  "arrangement.tool_eraser": {
+    "title": "Eraser tool",
+    "text": "Click a clip or a point to delete it. Drag across several to delete them all.",
+    "more": "The main window"
+  },
+  "arrangement.tool_razor": {
+    "title": "Razor tool",
+    "text": "Click a clip to split it at the snapped position, or click in a take row to cut the comp there.",
+    "more": "The main window"
+  },
+  "arrangement.tool_speaker": {
+    "title": "Speaker tool",
+    "text": "Press on an audio clip to hear it as it is in its file, release to stop. It does not move the playhead.",
+    "more": "The main window"
+  },
+  "arrangement.tool_mute": {
+    "title": "Mute tool",
+    "text": "Click a clip to mute or unmute it. A muted clip stays where it is and plays silently.",
+    "more": "The main window"
+  },
+  "arrangement.tool_magnifier": {
+    "title": "Magnifier tool",
+    "text": "Click to zoom in, Shift-click to zoom out, or drag a rectangle to zoom to it.",
+    "more": "The main window"
+  },
+  "arrangement.tool_hand": {
+    "title": "Hand tool",
+    "text": "Drag to scroll the view in any direction.",
+    "more": "The main window"
+  },
+  "console.fold_all": {
+    "title": "Fold sections",
+    "text": "Folds every section of every strip to its header, or unfolds them all again.",
+    "more": "The main window"
+  },
+  "console.add_channel": {
+    "title": "Add channel",
+    "text": "Adds an empty mix channel, or a channel for an instrument that has none yet.",
+    "more": "The main window"
+  },
+  "console.compensation": {
+    "title": "Delay compensation",
+    "text": "Lines the strips up by their latency, so a plugin that delays its sound does not make that track late.",
+    "more": "The main window"
+  },
+  "console.arrange": {
+    "title": "Back to the arrangement",
+    "text": "Closes the mixer and shows the arrangement again.",
+    "more": "The main window"
+  },
+  "console.maximise": {
+    "title": "Maximise the mixer",
+    "text": "Gives the mixer the whole window, or brings the rack and the arrangement back.",
+    "more": "The main window"
+  },
+  "console.clear_solos": {
+    "title": "Clear all solos",
+    "text": "Turns every solo off at once.",
+    "more": "The main window"
+  },
+  "console.clear_mutes": {
+    "title": "Clear all mutes",
+    "text": "Un-mutes every strip at once.",
+    "more": "The main window"
+  },
+  "console.store_snapshot": {
+    "title": "Store a snapshot",
+    "text": "Stores the whole mix as a snapshot chip. Click the chip later to recall that mix.",
+    "more": "The main window"
+  },
+  "console.compare": {
+    "title": "Compare",
+    "text": "Flips between the live mix and the snapshot, so you can hear what changed.",
+    "more": "The main window"
+  },
+  "console.end_compare": {
+    "title": "End compare",
+    "text": "Ends the comparison and keeps the live mix as it is.",
+    "more": "The main window"
+  },
+  "console.section": {
+    "title": "Strip section",
+    "text": "The header of a section of the strips, such as EQ or sends. Click to fold or unfold that section on every strip.",
+    "more": "The main window"
+  },
+  "console.output": {
+    "title": "Output",
+    "text": "Where this strip's sound goes: the master, a bus or another channel. Click to choose.",
+    "more": "The main window"
+  },
+  "console.insert": {
+    "title": "Insert slot",
+    "text": "An effect that sits in the strip's signal path, before the fader. Click to select it or to add one, and drag to change the order.",
+    "more": "The main window"
+  },
+  "console.snapshot": {
+    "title": "Snapshot",
+    "text": "A stored mix. Click to recall it, double-click to rename it, and right-click for more.",
+    "more": "The main window"
+  },
+  "console.group": {
+    "title": "Group",
+    "text": "A group moves several strips with one fader. The plate selects the members; right-click it for more.",
+    "more": "The main window"
+  },
+  "browser.recursive": {
+    "title": "Include sub-folders",
+    "text": "Lists the files of the folder and of every folder inside it in one list.",
+    "more": "The main window"
+  },
+  "browser.preview_level": {
+    "title": "Preview level",
+    "text": "How loud the browser plays a file when you preview it. Drag to set it, double-click to go back to 0 dB.",
+    "more": "The main window"
+  },
+  "browser.preview": {
+    "title": "Preview",
+    "text": "When it is on, selecting an audio file plays it so you can hear it before you use it.",
+    "more": "The main window"
+  },
+  "browser.sort": {
+    "title": "Sort",
+    "text": "Sorts the list by this column. Click the same column again to reverse the order.",
+    "more": "The main window"
+  },
+  "browser.back": {
+    "title": "Back",
+    "text": "Goes back to the place you looked at before.",
+    "more": "The main window"
+  },
+  "browser.forward": {
+    "title": "Forward",
+    "text": "Goes forward again after going back.",
+    "more": "The main window"
+  },
+  "browser.path": {
+    "title": "Path",
+    "text": "The folder you are in. Click any part of the path to go to that folder.",
+    "more": "The main window"
+  },
+  "roll.snap": {
+    "title": "Snap grid",
+    "text": "The grid that notes snap to while you draw and move them. Click to step to the next value, or drag or scroll to choose.",
+    "more": "The main window"
+  },
+  "roll.quantize": {
+    "title": "Quantize",
+    "text": "Quantizes the selected notes with the last settings of the quantize panel.",
+    "more": "The main window"
+  },
+  "roll.quantize_options": {
+    "title": "Quantize options",
+    "text": "Opens the quantize panel: the grid, the strength, swing, groove and what else the quantize changes.",
+    "more": "The main window"
+  },
+  "roll.close": {
+    "title": "Close the piano roll",
+    "text": "Closes the piano roll and shows the arrangement again.",
+    "more": "The main window"
+  },
+  "roll.tool_select": {
+    "title": "Select tool",
+    "text": "Click to select notes, drag to move or resize them, and drag on an empty place to box-select.",
+    "more": "The main window"
+  },
+  "roll.tool_pencil": {
+    "title": "Pencil tool",
+    "text": "Click to draw a note at the snapped position. Drag to draw a longer one.",
+    "more": "The main window"
+  },
+  "roll.tool_eraser": {
+    "title": "Eraser tool",
+    "text": "Click a note to delete it. Drag across several to delete them all.",
+    "more": "The main window"
+  },
+  "roll.tool_razor": {
+    "title": "Razor tool",
+    "text": "Click a note to split it in two at the snapped position.",
+    "more": "The main window"
+  },
+  "roll.tool_other": {
+    "title": "Tool of the arrangement",
+    "text": "This tool works in the arrangement. The piano roll offers the select, pencil, eraser and razor tools.",
+    "more": "The main window"
+  },
+  "roll.scale_root": {
+    "title": "Scale root",
+    "text": "The note the scale starts on. Click to choose it.",
+    "more": "The main window"
+  },
+  "roll.scale_kind": {
+    "title": "Scale",
+    "text": "The kind of scale, such as major or minor. Click to choose it.",
+    "more": "The main window"
+  },
+  "roll.scale_detect": {
+    "title": "Detect the scale",
+    "text": "Looks at the notes of the clip and picks the scale that fits them best.",
+    "more": "The main window"
+  },
+  "roll.scale_snap": {
+    "title": "Snap to scale",
+    "text": "When it is on, notes you draw or move jump to the nearest note of the scale.",
+    "more": "The main window"
+  },
+  "roll.fold_keys": {
+    "title": "Fold keys",
+    "text": "Hides the keys that are outside the scale or not used by any note, so the notes that matter get more room.",
+    "more": "The main window"
+  },
+  "roll.chord": {
+    "title": "Chord stamp",
+    "text": "With the pencil, a click drops a whole chord instead of one note. Click to choose which chord.",
+    "more": "The main window"
+  },
+  "roll.inversion": {
+    "title": "Chord inversion",
+    "text": "Turns the stamped chord upside down. Click for the next inversion, right-click for the previous.",
+    "more": "The main window"
+  },
+  "roll.controllers": {
+    "title": "Controller lanes",
+    "text": "Shows or hides the controller lanes (mod wheel, pedal, pitch bend) under the velocity lane.",
+    "more": "The main window"
+  },
+  "launcher.back": {
+    "title": "Back to arrangement",
+    "text": "Every track plays its own arrangement again, now. It is lit while any track plays a launcher clip.",
+    "more": "Launcher"
+  },
+  "launcher.record": {
+    "title": "Record launches",
+    "text": "When it is on and you record, everything you launch is written into the arrangement as clips at the song position where it really started.",
+    "more": "Launcher"
+  },
+  "launcher.stop_empty": {
+    "title": "Scene stops empty tracks",
+    "text": "When it is on, launching a scene also stops the tracks that play a clip but have none in that scene.",
+    "more": "Launcher"
+  },
+  "launcher.quantize": {
+    "title": "Launch quantize",
+    "text": "How long a launch waits for the next boundary, from none to four bars. Click for the next value.",
+    "more": "Launcher"
+  },
+  "launcher.stop_all": {
+    "title": "Stop all clips",
+    "text": "Stops every playing clip at the next launch boundary.",
+    "more": "Launcher"
+  },
+  "launcher.stop": {
+    "title": "Stop track",
+    "text": "Stops the clip this track plays at the next boundary. The track then plays its arrangement again.",
+    "more": "Launcher"
+  },
+  "launcher.track": {
+    "title": "Track",
+    "text": "A column of the grid is a track of the arrangement, in the same order and colour.",
+    "more": "Launcher"
+  },
+  "launcher.slot_play": {
+    "title": "Launch clip",
+    "text": "Starts this clip at the next launch boundary. It plays from its own start and loops until you stop it or launch another.",
+    "more": "Launcher"
+  },
+  "launcher.slot": {
+    "title": "Clip slot",
+    "text": "Holds one looping clip. Double-click an empty slot to make a clip, double-click a clip to edit it, drag it to move it, and drag with Ctrl held to copy it.",
+    "more": "Launcher"
+  },
+  "launcher.scene_launch": {
+    "title": "Launch scene",
+    "text": "Launches every clip of this row at once, at the next launch boundary.",
+    "more": "Launcher"
+  },
+  "launcher.scene": {
+    "title": "Scene",
+    "text": "A row of the grid. Double-click its name to rename it, and right-click for the list of scene commands.",
+    "more": "Launcher"
+  },
+  "rack.name": {
+    "title": "Device name",
+    "text": "The name of the device. Double-click to rename it.",
+    "more": "Devices"
+  },
+  "rack.fold": {
+    "title": "Fold device",
+    "text": "Folds the device to a thin strip to save room in the rack, or unfolds it again.",
+    "more": "Devices"
+  },
+  "rack.edit_samples": {
+    "title": "Edit samples",
+    "text": "Opens the sample editor on this device's samples, to trim, loop and slice them.",
+    "more": "Devices"
+  },
+  "rack.to_channel": {
+    "title": "Add a mixer channel",
+    "text": "Adds a console channel for this device and routes its sound into it.",
+    "more": "Devices"
+  },
+  "rack.sample": {
+    "title": "Sample",
+    "text": "Records from the audio input straight into this device. Click again to stop; right-click to choose the input.",
+    "more": "Devices"
+  },
+  "rack.slice": {
+    "title": "Slice",
+    "text": "Cuts the loop into slices at its transients. The knob next to it sets how many slices there are.",
+    "more": "Devices"
+  },
+  "rack.slices_to_track": {
+    "title": "Slices to track",
+    "text": "Lays the slices out as notes on a new track, in their original order, so the loop plays back as written.",
+    "more": "Devices"
+  },
+  "rack.sidechain": {
+    "title": "Sidechain source",
+    "text": "Chooses the signal this effect listens to. The effect reacts to that signal instead of its own input.",
+    "more": "Devices"
+  },
+  "rack.resonance_find": {
+    "title": "Find resonances",
+    "text": "Listens to the range between the locators at this device's input and marks the resonances that stick out.",
+    "more": "Devices"
+  },
+  "rack.resonance_cut": {
+    "title": "Cut resonances",
+    "text": "Cuts the marked resonances with the free bands. The cuts are dynamic: they act only while the peak sounds.",
+    "more": "Devices"
+  },
+  "rack.duck_learn": {
+    "title": "Learn the duck curve",
+    "text": "Listens to the range between the locators at the key and draws the duck curve from the shape of its hits.",
+    "more": "Devices"
+  },
+  "rack.table_edit": {
+    "title": "Table editor",
+    "text": "Opens the table editor: draw frames, set harmonics, morph between frames and clean up a sample.",
+    "more": "Devices"
+  },
+  "rack.duck_plot": {
+    "title": "Duck curve",
+    "text": "Drag a point or the line between two points. Click to add a point, and double-click a point to remove it.",
+    "more": "Devices"
+  },
+  "rack.tuner": {
+    "title": "Tuner",
+    "text": "Shows or hides the tuner. It reads the input of this track.",
+    "more": "Devices"
+  },
+  "rack.preview_player": {
+    "title": "Preview player",
+    "text": "Plays this player and the players after it while the song is stopped. Click again to stop.",
+    "more": "Devices"
+  },
+  "rack.container_fold": {
+    "title": "Fold container",
+    "text": "Shows the devices of the container under its panel, or folds them away.",
+    "more": "Devices"
+  },
+  "rack.container_open": {
+    "title": "Open container",
+    "text": "Shows the devices of the container in a view of their own, one level down.",
+    "more": "Devices"
+  },
+  "rack.container_edit": {
+    "title": "Container editor",
+    "text": "Opens the container editor, where you choose the sockets and macro knobs the container shows.",
+    "more": "Devices"
+  },
+  "rack.plugin_power": {
+    "title": "Plugin power",
+    "text": "Switches the plugin on or off. An off plugin uses no CPU and is silent.",
+    "more": "Devices"
+  },
+  "rack.plugin_bypass": {
+    "title": "Plugin bypass",
+    "text": "Bypasses the plugin: the dry signal passes through unchanged.",
+    "more": "Devices"
+  },
+  "rack.plugin_audio_thread": {
+    "title": "Run on the audio thread",
+    "text": "Runs this plugin on the audio thread instead of in its own process. It is faster but a crashing plugin can stop the sound, so it is off by default.",
+    "more": "Devices"
+  },
+  "rack.plugin_gui": {
+    "title": "Plugin editor",
+    "text": "Opens the plugin's own editor window.",
+    "more": "Devices"
+  },
+  "rack.plugin_params": {
+    "title": "Plugin parameters",
+    "text": "Opens the parameter pane, a list of every parameter of the plugin with search and automation.",
+    "more": "Devices"
+  },
+  "rack.plugin_reload": {
+    "title": "Reload plugin",
+    "text": "Creates the plugin again from its saved state. Use it after a plugin has crashed.",
+    "more": "Devices"
+  },
+  "rack.plugin_relink": {
+    "title": "Relink plugin",
+    "text": "Points this stand-in at another installed plugin when the original is missing.",
+    "more": "Devices"
+  },
+  "rack.plugin_cv": {
+    "title": "CV input",
+    "text": "A control voltage input of the plugin. Click it to choose the parameter it drives in the parameter pane.",
+    "more": "Devices"
+  },
+  "rack.pattern": {
+    "title": "Pattern controls",
+    "text": "The buttons of the pattern row: choose, add, copy, clear and edit the patterns of the player. Double-click the preview to open the step grid.",
+    "more": "Devices"
+  },
+  "rack.arpeggio": {
+    "title": "Arpeggio controls",
+    "text": "The order, rate, octaves and step row of the arpeggiator. Click a step to cycle rest, on, tie and accent.",
+    "more": "Devices"
+  },
+  "rack.scale_from_clip": {
+    "title": "Scale from clip",
+    "text": "Copies the scale of the clip that is open in the piano roll into this device.",
+    "more": "Devices"
+  },
+  "rack.bypass_inserts": {
+    "title": "Bypass insert effects",
+    "text": "Bypasses every insert effect of this strip at once. It is one undo step, and clicking again brings them all back.",
+    "more": "Devices"
+  },
+  "rack.show_inserts": {
+    "title": "Show insert effects",
+    "text": "Shows or hides the insert effects under this strip. The effects keep working while they are hidden.",
+    "more": "Devices"
+  },
+  "help.idle": {
+    "title": "Help Mode",
+    "text": "Point at any control to read about it here. Clicks still work as usual.",
+    "more": "Help Mode"
+  },
+  "arrangement.add_track": {
+    "title": "Add a track",
+    "text": "Adds a song track for this device, so that the notes of its clips play it. The new track comes with its own lanes.",
+    "more": "The main window"
+  },
+  "arrangement.add_audio": {
+    "title": "Add an audio track",
+    "text": "Adds a track for audio clips. Drop an audio file on it, or arm it and record from an audio input.",
+    "more": "The main window"
+  },
+  "status.load": {
+    "title": "Engine load",
+    "text": "The share of the time for each audio block that the engine uses, with its peak and the devices that use the most. When it nears 100 % the sound can drop out; freezing a heavy track lowers it.",
+    "more": "CPU use"
+  }
+}

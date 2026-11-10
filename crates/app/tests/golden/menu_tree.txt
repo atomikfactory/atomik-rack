@@ -586,6 +586,7 @@ Window
 Help
   Command Palette…
   Guided Tour
+  Help Mode
   Keyboard Shortcuts
   Documentation
   Report an Issue

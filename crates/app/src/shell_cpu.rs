@@ -58,7 +58,7 @@ impl<B: AudioBackend> Shell<B> {
             self.audio_status.dsp_peak * 100.0,
             &self.core.heaviest_devices(TOP_DEVICES),
         );
-        Some(Help::new(rect, text))
+        Some(Help::new(rect, text).id("status.load"))
     }
 
     /// Once per status poll: looks at the engine load and puts the card up when it is time. The

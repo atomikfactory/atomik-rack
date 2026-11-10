@@ -211,6 +211,7 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Command | Where | Windows | macOS | Linux |
 |---|---|---|---|---|
 | Close | global | `Ctrl+W` | `Cmd+W` | `Ctrl+W` |
+| Help Mode | global | `Shift+F1` | `Shift+F1` | `Shift+F1` |
 | Import Audio | global | `Ctrl+Shift+I` | `Cmd+Opt+I` | `Ctrl+Shift+I` |
 | Keyboard Shortcuts | global | `F1` | `F1` | `F1` |
 | New | global | `Ctrl+N` | `Cmd+N` | `Ctrl+N` |
@@ -518,6 +519,7 @@ Commands without a key in this profile (menus and Settings still reach them): In
 
 | Command | Where | Windows | macOS | Linux |
 |---|---|---|---|---|
+| Help Mode | global | `Shift+F1` | `Shift+F1` | `Shift+F1` |
 | Import Audio | global | `Ctrl+I` | `Cmd+I` | `Ctrl+I` |
 | Keyboard Shortcuts | global | `F1` | `F1` | `F1` |
 | New | global | `Ctrl+N` | `Cmd+N` | `Ctrl+N` |

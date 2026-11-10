@@ -68,6 +68,7 @@ files.select_all | files | Ctrl+A
 files.stop | files | Esc
 files.toggle_preview | files | Space
 files.up | files | Up
+help.hover_help | global | Shift+F1
 help.keyboard_shortcuts | global | F1
 keys.note a | keys | H
 keys.note a_sharp | keys | U

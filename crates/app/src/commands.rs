@@ -726,6 +726,8 @@ pub enum AppCommand {
     /// A factory example project: a new unsaved song from the example at this place of the start
     /// screen's list of examples (asks about unsaved changes). Pointer only: it has no id.
     OpenExample(usize),
+    /// Help ▸ Help Mode (Shift+F1): the Help panel explains the control under the pointer.
+    HelpMode,
     /// Help ▸ Keyboard Shortcuts (F1): the shortcut list, with search and remapping.
     KeyboardShortcuts,
     /// Help ▸ Documentation: the project page with the documentation, in the browser.
@@ -1242,6 +1244,7 @@ impl AppCommand {
             AppCommand::ExportDiagnostics => ("help.export_diagnostics", None),
             AppCommand::GuidedTour => ("help.guided_tour", None),
             AppCommand::OpenExample(_) => return None,
+            AppCommand::HelpMode => ("help.hover_help", None),
             AppCommand::KeyboardShortcuts => ("help.keyboard_shortcuts", None),
             AppCommand::Documentation => ("help.documentation", None),
             AppCommand::ReportIssue => ("help.report_issue", None),
@@ -1696,6 +1699,7 @@ impl AppCommand {
             ("audio.restart", None) => AppCommand::RestartAudio,
             ("help.export_diagnostics", None) => AppCommand::ExportDiagnostics,
             ("help.guided_tour", None) => AppCommand::GuidedTour,
+            ("help.hover_help", None) => AppCommand::HelpMode,
             ("help.keyboard_shortcuts", None) => AppCommand::KeyboardShortcuts,
             ("help.documentation", None) => AppCommand::Documentation,
             ("help.report_issue", None) => AppCommand::ReportIssue,
@@ -2147,6 +2151,8 @@ pub struct MenuState {
     pub track_panel: bool,
     /// The Undo History panel is shown.
     pub history_panel: bool,
+    /// Help Mode is on: the Help panel is docked.
+    pub help_mode: bool,
     /// What the Launcher menu shows.
     pub launcher: LauncherMenu,
     /// How the rack is sorted.
@@ -4440,6 +4446,7 @@ pub fn menus_with_songs(
             entries: vec![
                 item("Command Palette\u{2026}", AppCommand::CommandPalette),
                 item("Guided Tour", AppCommand::GuidedTour),
+                check("Help Mode", AppCommand::HelpMode, state.help_mode),
                 item("Keyboard Shortcuts", AppCommand::KeyboardShortcuts),
                 item("Documentation", AppCommand::Documentation),
                 item("Report an Issue", AppCommand::ReportIssue),
@@ -4574,6 +4581,7 @@ mod tests {
             piano_keys: false,
             track_panel: false,
             history_panel: false,
+            help_mode: false,
             launcher: LauncherMenu::default(),
             rack_sort: atomik_model::RackSort::Free,
             single_column: false,
@@ -4927,6 +4935,7 @@ mod tests {
             AppCommand::ExportDiagnostics,
             AppCommand::ExportDeviceInfo,
             AppCommand::GuidedTour,
+            AppCommand::HelpMode,
             AppCommand::KeyboardShortcuts,
             AppCommand::Documentation,
             AppCommand::ReportIssue,
@@ -5248,7 +5257,9 @@ mod tests {
                 .filter(|c| {
                     !matches!(
                         c,
-                        AppCommand::ToggleFileBrowser | AppCommand::KeyboardShortcuts
+                        AppCommand::ToggleFileBrowser
+                            | AppCommand::KeyboardShortcuts
+                            | AppCommand::HelpMode
                     )
                 }),
             _ => None,
@@ -5469,6 +5480,7 @@ mod tests {
             [
                 "Command Palette\u{2026}",
                 "Guided Tour",
+                "Help Mode",
                 "Keyboard Shortcuts",
                 "Documentation",
                 "Report an Issue",
@@ -5720,6 +5732,7 @@ mod tests {
                 piano_keys: false,
                 track_panel: false,
                 history_panel: false,
+                help_mode: false,
                 launcher: LauncherMenu::default(),
                 rack_sort: atomik_model::RackSort::Free,
                 single_column: false,
