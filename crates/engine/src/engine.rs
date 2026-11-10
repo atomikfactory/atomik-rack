@@ -71,6 +71,8 @@ pub const PLAN_QUEUE_CAPACITY: usize = 64;
 pub const RETIRE_QUEUE_CAPACITY: usize = 256;
 /// Capacity of the transport lane ([`EngineHandle::transport`]).
 pub const TRANSPORT_QUEUE_CAPACITY: usize = 64;
+/// Capacity of the queue of launcher events the app reads (each launch and stop is one).
+pub const LAUNCH_EVENT_CAPACITY: usize = 256;
 /// Capacity of the param message queue.
 pub const PARAM_QUEUE_CAPACITY: usize = 4096;
 /// Capacity of the scheduled note queue (4 × `MAX_EVENTS_PER_BATCH`).
@@ -499,6 +501,10 @@ pub struct EngineHandle {
     preview_active: Arc<AtomicBool>,
     /// What the reference voice publishes.
     reference: Arc<crate::ReferenceShared>,
+    /// The clip launcher's published states.
+    launch_cell: Arc<crate::launch::LaunchCell>,
+    /// What the launcher did: launches and stops with their song ticks.
+    launch_rx: Consumer<crate::launch::LaunchEvent>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -576,7 +582,14 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
     let fault = Arc::new(FaultState::default());
     let (request_tx, request_rx) = RingBuffer::new(REQUEST_CAPACITY);
     let stream_stats = Arc::new(StreamStats::default());
-    let player = Player::new(cfg.sample_rate.hz(), request_tx, Arc::clone(&stream_stats));
+    let (launch_tx, launch_rx) = RingBuffer::new(LAUNCH_EVENT_CAPACITY);
+    let player = Player::new(
+        cfg.sample_rate.hz(),
+        request_tx,
+        Arc::clone(&stream_stats),
+        launch_tx,
+    );
+    let launch_cell = player.launch_cell();
     let transport = player.shared();
     let hold = player.hold();
     let sync = player.sync_out();
@@ -650,6 +663,8 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         streams: StreamControl::new(stream_stats, request_rx),
         preview_active,
         reference,
+        launch_cell,
+        launch_rx,
     };
     (engine, handle)
 }
@@ -1204,6 +1219,19 @@ impl EngineHandle {
     /// before the first batch.
     pub fn transport_state(&self) -> crate::TransportState {
         self.transport.read()
+    }
+
+    /// The states of the clip launcher's tracks, as published by the last batch (lock-free).
+    /// `out` is cleared and filled, one entry per launch track in the order of the song's launch
+    /// list ([`crate::SongSnapshot::with_launch`]).
+    pub fn launch_states(&self, out: &mut Vec<crate::LaunchState>) {
+        self.launch_cell.read(out);
+    }
+
+    /// The next launch or stop the song player made, oldest first (lock-free). A recorder reads
+    /// them to put what was launched into the arrangement.
+    pub fn next_launch_event(&mut self) -> Option<crate::LaunchEvent> {
+        self.launch_rx.pop().ok()
     }
 
     /// The MIDI clock out of the song player: set what it sends with

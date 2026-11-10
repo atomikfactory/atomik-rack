@@ -63,7 +63,7 @@ fn own(d: &Document) -> Vec<ControllerLane> {
 
 #[test]
 fn the_project_version_is_forty_four() {
-    assert_eq!(PROJECT_VERSION, 44);
+    assert_eq!(PROJECT_VERSION, 45);
 }
 
 #[test]
@@ -309,7 +309,7 @@ fn the_lanes_round_trip_in_format_44_and_old_versions_refuse_them() {
     assert_eq!(loaded.song.tracks[0].controllers.len(), 2);
     assert_eq!(save_project(&loaded), text, "canonical");
     // A file older than the field does not know it.
-    let old = text.replace("\"version\": 44", "\"version\": 43");
+    let old = text.replace("\"version\": 45", "\"version\": 43");
     let e = load_project(&old, &reg).unwrap_err().to_string();
     assert!(e.contains("controllers"), "{e}");
 }

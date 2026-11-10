@@ -271,6 +271,27 @@ impl RackDoc {
                 }
             }
         }
+        if let Err(message) = song.launcher.check() {
+            found.add("song.launcher", message);
+        }
+        for (device, row, slot) in song.launcher.clips() {
+            let path = format!("song.launcher.slots[{device}][{row}]");
+            if slot.clip.id.0 >= song.next_clip_id {
+                found.add(&path, "the clip id is not below next_clip_id");
+            }
+            if song.clip(slot.clip.id).is_some() || song.take_clip(slot.clip.id).is_some() {
+                found.add(&path, "the clip id is also used on a lane");
+            }
+            if let Some(t) = song.track(device)
+                && t.is_audio() != slot.clip.content.is_audio()
+            {
+                found.add(
+                    &path,
+                    "the clip does not fit the track: notes need a note track",
+                );
+            }
+            validate_clip(&path, &slot.clip, found);
+        }
     }
 
     fn validate_params(&self, found: &mut Found) {

@@ -220,6 +220,22 @@ pub(crate) fn plan(
             }
         }
     }
+    // The audio clips in launcher slots are converted like the clips of a lane.
+    {
+        let old = &doc.song.launcher;
+        let mut new = old.clone();
+        for slot in new.slots.values_mut().flat_map(|l| l.iter_mut().flatten()) {
+            if let Some(c) = cx.clip(&slot.clip)? {
+                slot.clip = c;
+            }
+        }
+        if new != *old {
+            edits.push(Edit::Launcher {
+                old: Box::new(old.clone()),
+                new: Box::new(new),
+            });
+        }
+    }
     let mut zone_edits = Vec::new();
     cx.zone_edits(&doc.devices, None, &mut zone_edits)?;
     for edit in &zone_edits {

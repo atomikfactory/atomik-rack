@@ -88,6 +88,12 @@ impl RackDoc {
                 out.entry(f.audio.asset.clone()).or_default().frozen += 1;
             }
         }
+        // The audio clips in launcher slots use their files like clips on a lane.
+        for (_, _, slot) in self.song.launcher.clips() {
+            if let ClipContent::Audio(a) = &slot.clip.content {
+                out.entry(a.asset.clone()).or_default().clips += 1;
+            }
+        }
         for d in &self.devices {
             count_zones(d, &mut out);
         }

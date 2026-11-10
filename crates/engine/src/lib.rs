@@ -12,6 +12,7 @@ mod engine;
 mod fault;
 mod graph;
 mod interface;
+mod launch;
 mod lens;
 mod live;
 mod offline;
@@ -47,6 +48,10 @@ pub use engine::{
 };
 pub use graph::{Cable, DeviceInstanceId, Endpoint, EngineConfig, Graph, GraphError};
 pub use interface::{INTERFACE_TYPE_ID, MAX_INTERFACE_CHANNELS, interface_descriptor};
+pub use launch::{
+    LaunchAudioInput, LaunchCell, LaunchCommand, LaunchEvent, LaunchGrid, LaunchSlotInput,
+    LaunchState, LaunchTrackInput, MAX_LAUNCH_TRACKS,
+};
 pub use live::{EngineOptions, FrameClock, LIVE_RELEASE_HEADROOM, LiveNoteSender, WorkerConfig};
 pub use offline::{
     OfflineError, OfflineJob, render_offline, render_offline_scripted, render_offline_song,

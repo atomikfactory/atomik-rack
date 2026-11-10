@@ -410,3 +410,36 @@ not taken from the answer. At most one request a day after a Yes; a check by han
 the last request and the skipped version are in `updates.json`.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## T. The clip launcher: the override model and the transport rule
+
+**Question.** When a track plays a launcher slot, what happens to the clips the arrangement has for it, and what does
+a launch do while the transport is stopped?
+
+**Options.** For the arrangement: (1) a slot plays on top of it; (2) a slot replaces it for that track until the user
+gives the track back; (3) a slot replaces it only while it plays. For a launch with the transport stopped: (a) the
+launch is refused; (b) it waits for the user to press play; (c) it starts the transport.
+
+**Implications.** Option 1 makes a launched loop and the track's own clips sound together, which is never what the
+user wants from one instrument. Option 3 makes the arrangement jump in when a slot stops, so stopping a loop in a live
+set changes the music in a way nobody asked for; option 2 keeps the track silent until a clear gesture, but a track
+then needs a way back (Back to Arrangement, and stopping the slot). Launching is a performance gesture: a refusal
+(a) is a dead button, (b) hides the effect of the click until a second action, and (c) is what a producer expects from
+a play triangle. The launch still waits for its quantize boundary, so a position on a bar line launches at once and
+any other waits for the next one.
+
+**Decision.** Option 2 with a way back by two routes: Back to Arrangement gives every track back at the next tick, and
+stopping a slot (a track's stop square, Stop All, or a scene launch with Scene Stops Empty Tracks on) gives that track
+back at the next boundary of the launch quantize. A track has exactly two states, the arrangement and a slot, and the
+engine holds them in the song snapshot, so a song edit keeps a playing slot playing. A launch with the transport stopped
+starts the transport (c) from where it stands; the engine itself keeps a request until play, so the app's two messages
+need no order. The launcher is saved as an optional, ignorable field of the song, so the format stays as it is.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+*Note, 2026-11-09.* Format 45 is a batched bump made so that a reader of 44 can open what this build saves. The reader
+of 44 only honours `"compat"` and `"ignorable"` in a file whose version is above its own, and refuses an unknown field
+in a file of version 44, so the fields added after the 44 reader shipped (the clip launcher and the per-note expression)
+could not be skipped under 44. Their rows are now `since` 45 and `ignorable`, the writer says `"compat": 44`, and a
+reader of 44 opens a 45 file and drops those parts with a warning each. Every file saved now carries the two header
+fields; a file before version 37 that carries them is read as the older file it says.

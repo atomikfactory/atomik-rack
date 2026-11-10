@@ -189,6 +189,21 @@ InsertBars | Insert Bars at Locators
 KeepVideoAudio | Keep Audio with Video
 KeyboardShortcuts | Keyboard Shortcuts
 KickBassCheck | Kick and Bass Check…
+LauncherBack | Back to Arrangement
+LauncherFromArrangement | Clip to Launcher
+LauncherNewScene | New Scene
+LauncherQuantize(Bar) | 1 bar
+LauncherQuantize(Eighth) | 1/8
+LauncherQuantize(FourBars) | 4 bars
+LauncherQuantize(Half) | 1/2
+LauncherQuantize(None) | None
+LauncherQuantize(Quarter) | 1/4
+LauncherQuantize(Sixteenth) | 1/16
+LauncherQuantize(TwoBars) | 2 bars
+LauncherRecord | Record Launches
+LauncherStopAll | Stop All Clips
+LauncherStopEmpty | Scene Stops Empty Tracks
+LauncherToArrangement | Launcher Clip to Arrangement
 LensClubSub | Club Sub
 LensHeadphones | Headphones
 LensMono | Mono
@@ -383,6 +398,7 @@ ToggleFolder | Collapse Folder
 ToggleHistory | Undo History
 ToggleInspector | Inspector
 ToggleLaneMute | Mute Lane
+ToggleLauncher | Launcher
 ToggleMarkerList | Marker List
 ToggleMarkerStrip | Marker Strip
 TogglePianoKeys | Piano Keys

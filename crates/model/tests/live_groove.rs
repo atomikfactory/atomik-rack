@@ -290,7 +290,7 @@ fn the_live_groove_round_trips_in_format_43_and_a_full_strength_is_not_written()
     d.apply(set("synth", Some(live("Swing 55%", 40))), &reg)
         .unwrap();
     let text = save_project(d.doc());
-    assert_eq!(PROJECT_VERSION, 44);
+    assert_eq!(PROJECT_VERSION, 45);
     let v: Value = serde_json::from_str(&text).unwrap();
     let tracks = &v["song"]["tracks"];
     assert_eq!(tracks[0]["groove"], "Late");
@@ -329,7 +329,7 @@ fn a_file_with_a_missing_groove_a_stray_strength_or_an_old_version_is_refused() 
         load_project(&full, &reg).is_err(),
         "100 is written by omission"
     );
-    let old = text.replace("\"version\": 44", "\"version\": 42");
+    let old = text.replace("\"version\": 45", "\"version\": 42");
     let e = load_project(&old, &reg).unwrap_err().to_string();
     assert!(e.contains("groove"), "{e}");
 }

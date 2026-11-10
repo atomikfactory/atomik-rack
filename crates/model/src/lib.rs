@@ -50,6 +50,7 @@ mod history;
 mod history_size;
 mod labels;
 mod lane_cmd;
+pub mod launcher;
 mod library_io;
 mod loop_convert;
 mod macro_lane;
@@ -261,6 +262,10 @@ pub use history::InvariantError;
 use history::{Edit, Swap, song_end_growth};
 use labels::Labels;
 pub use labels::{DEFAULT_LABEL, HistoryStep};
+pub use launcher::{
+    LaunchQuantize, Launcher, LauncherClip, LauncherCommand, MAX_LOOP_TICKS, MAX_SCENES,
+    MIN_LOOP_TICKS, Scene, SlotRef,
+};
 pub use library_io::{ItemKind, ItemSummary, load_device_item, save_device_item, summarize_item};
 pub use midi_data::{MidiData, ProgramChange, SysexEvent};
 pub use note_expression::{ExpressionKind, ExpressionPoint, NoteExpression};
@@ -2515,6 +2520,16 @@ impl RackDoc {
                     .tracks
                     .iter()
                     .filter_map(|t| t.frozen.as_ref().map(|f| f.audio.asset.clone())),
+            )
+            // The audio clips in launcher slots.
+            .chain(
+                self.song
+                    .launcher
+                    .clips()
+                    .filter_map(|(_, _, s)| match &s.clip.content {
+                        ClipContent::Audio(a) => Some(a.asset.clone()),
+                        _ => None,
+                    }),
             )
             .collect::<BTreeSet<String>>()
             .into_iter()

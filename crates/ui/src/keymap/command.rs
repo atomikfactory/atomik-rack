@@ -168,6 +168,17 @@ pub const KEYS_VELOCITY_ARGS: &[&str] = &["1", "2", "3", "4", "5", "6", "7", "8"
 pub const CABLE_ARGS: &[&str] = &["show", "hover", "selected", "auto", "hide"];
 /// The values of `view.rack_sort`.
 pub const RACK_SORT_ARGS: &[&str] = &["free", "per_track", "auto_group"];
+/// The values of `launcher.quantize`: how long a launch waits.
+pub const LAUNCH_QUANTIZE_ARGS: &[&str] = &[
+    "none",
+    "sixteenth",
+    "eighth",
+    "quarter",
+    "half",
+    "bar",
+    "two_bars",
+    "four_bars",
+];
 /// The values of `view.theme`.
 pub const THEME_ARGS: &[&str] = &["dark", "light", "system"];
 /// The values of `view.app_zoom`: the zoom of every window in percent, or a step.
@@ -1032,6 +1043,64 @@ const COMMANDS: &[CommandDef] = &[
     cmd("keys.octave_down", "Octave Down", G::Keys, C::Keys).rep(),
     cmd("keys.octave_up", "Octave Up", G::Keys, C::Keys).rep(),
     cmd("keys.velocity", "Set Velocity", G::Keys, C::Keys).arg(KEYS_VELOCITY_ARGS),
+    cmd(
+        "launcher.back_to_arrangement",
+        "Back to Arrangement",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "launcher.from_arrangement",
+        "Clip to Launcher",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd("launcher.launch", "Launch Clip", G::Transport, C::Launcher),
+    cmd(
+        "launcher.launch_scene",
+        "Launch Scene",
+        G::Transport,
+        C::Launcher,
+    ),
+    cmd("launcher.new_scene", "New Scene", G::Transport, C::Global).menu(),
+    cmd(
+        "launcher.quantize",
+        "Launch Quantize",
+        G::Transport,
+        C::Global,
+    )
+    .arg(LAUNCH_QUANTIZE_ARGS)
+    .menu(),
+    cmd(
+        "launcher.record",
+        "Record Launches",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "launcher.stop_all",
+        "Stop All Clips",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "launcher.stop_empty",
+        "Scene Stops Empty Tracks",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "launcher.to_arrangement",
+        "Launcher Clip to Arrangement",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
     cmd(
         "macro.assign_control",
         "Assign to Macro",
@@ -2918,6 +2987,7 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("view.toggle_flip", "Back of Rack", G::View, C::Global).menu(),
     cmd("view.toggle_inspector", "Inspector", G::View, C::Global).menu(),
+    cmd("view.toggle_launcher", "Launcher", G::View, C::Global).menu(),
     cmd("view.toggle_marker_list", "Marker List", G::View, C::Global).menu(),
     cmd(
         "view.toggle_marker_strip",
@@ -3055,7 +3125,7 @@ mod tests {
             let prefix = d.id.split('.').next().unwrap();
             let expected: &[&str] = match d.group {
                 Group::Global => &["file", "audio", "help", "video"],
-                Group::Transport => &["transport", "sync"],
+                Group::Transport => &["transport", "sync", "launcher"],
                 Group::View => &["view", "window"],
                 Group::Edit => &["edit"],
                 Group::Rack => &["rack"],

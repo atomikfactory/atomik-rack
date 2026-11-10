@@ -412,6 +412,7 @@ pub(super) fn load_song(
             groups: load_groups(obj.get("groups"), &path.field("groups"))?,
             ..Organisation::default()
         },
+        launcher: Default::default(),
         tails: match obj.get("tails") {
             None => false,
             Some(Value::Bool(true)) => true,
@@ -446,6 +447,16 @@ pub(super) fn load_song(
         song.tracks.push(track);
     }
     song.lane_write = loose.lane_write;
+    if let Some(l) = obj.get("launcher") {
+        let loaded = read_launcher::load_launcher(
+            l,
+            &path.field("launcher"),
+            (doc, version),
+            &song,
+            &mut clip_first,
+        )?;
+        song.launcher = loaded;
+    }
     let groups = song
         .tracks
         .iter_mut()

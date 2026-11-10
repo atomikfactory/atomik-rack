@@ -17,6 +17,8 @@ pub enum Context {
     Editor,
     /// The console.
     Mixer,
+    /// The clip launcher (Enter launches the slot under the cursor).
+    Launcher,
     /// The device browser with its query focused.
     Browser,
     /// The file browser panel while it has the focus (the shell forwards its commands to it
@@ -31,12 +33,13 @@ pub enum Context {
 
 impl Context {
     /// Every context, `Global` first, in listing order.
-    pub const ALL: [Context; 9] = [
+    pub const ALL: [Context; 10] = [
         Context::Global,
         Context::Rack,
         Context::Sequencer,
         Context::Editor,
         Context::Mixer,
+        Context::Launcher,
         Context::Browser,
         Context::Files,
         Context::Keys,
@@ -51,6 +54,7 @@ impl Context {
             Context::Sequencer => "sequencer",
             Context::Editor => "editor",
             Context::Mixer => "mixer",
+            Context::Launcher => "launcher",
             Context::Browser => "browser",
             Context::Files => "files",
             Context::Keys => "keys",

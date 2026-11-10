@@ -133,6 +133,8 @@ struct Batch {
     names: BTreeMap<PathBuf, String>,
     /// Set when each file becomes a take of this take group instead of a clip.
     take: Option<u32>,
+    /// Set when the file becomes the clip of a launcher slot instead of a clip on a lane.
+    slot: Option<(DeviceKey, usize)>,
 }
 
 /// Everything audio of an open project.
@@ -406,6 +408,8 @@ impl<S: EngineSink> AppCore<S> {
         // The file is in the bundle after all (a re-import of a missing asset).
         self.audio.missing.retain(|m| m.hash != loaded.hash);
         self.arrangement
+            .set_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
+        self.launcher_view
             .set_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
         self.sample_editor
             .set_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
@@ -817,6 +821,88 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Imports an audio file into slot `row` of the audio track `track`: the same worker, scratch
+    /// bundle and peaks as [`Self::import_audio`]; the clip is one launcher slot, as long as the
+    /// file at the song's tempo.
+    pub fn import_slot(&mut self, path: PathBuf, track: DeviceKey, row: usize) {
+        let is_audio = self
+            .doc()
+            .song
+            .track(&track)
+            .is_some_and(atomik_model::Track::is_audio);
+        if !is_audio {
+            return self.reject("An audio file goes in the slot of an audio track".to_owned());
+        }
+        let Some(batch) = self.start_batch(vec![path], ImportTarget::NewTracks, 0, None, None)
+        else {
+            return;
+        };
+        if let Some(b) = self.audio.batches.get_mut(&batch) {
+            b.slot = Some((track, row));
+        }
+    }
+
+    /// Registers the asset of an imported file and puts it in a launcher slot.
+    fn place_slot(&mut self, loaded: &Loaded, track: &DeviceKey, row: usize) -> Result<(), String> {
+        let info = loaded
+            .info
+            .clone()
+            .ok_or_else(|| "not an imported asset".to_owned())?;
+        self.apply_command(Command::RegisterAsset {
+            hash: info.hash.clone(),
+            meta: atomik_model::AssetMeta {
+                channels: info.channels,
+                sample_rate: info.sample_rate,
+                frames: info.frames,
+                original_name: info.original_name.clone(),
+            },
+        })
+        .map_err(|e| e.to_string())?;
+        let rate = self.doc().sample_rate;
+        let length = ticks_for_frames(&self.doc().song, 0, info.frames, rate)
+            .clamp(atomik_model::MIN_LOOP_TICKS, atomik_model::MAX_LOOP_TICKS);
+        let clip = atomik_model::Clip {
+            id: atomik_model::ClipId(0),
+            start: 0,
+            length,
+            offset: 0,
+            loop_length: None,
+            muted: false,
+            grid: None,
+            scale: None,
+            param_lanes: Vec::new(),
+            midi: Default::default(),
+            groove: None,
+            controllers: Vec::new(),
+            name: Some(info.original_name.clone()).filter(|n| atomik_model::clip_name_ok(n)),
+            color: None,
+            content: atomik_model::ClipContent::Audio(atomik_model::AudioClipContent {
+                asset: info.hash,
+                source_offset: 0,
+                gain_db: 0.0,
+                fade_in: 0,
+                fade_out: 0,
+                fade_curve: atomik_model::FadeCurve::Linear,
+                fade_out_curve: None,
+                reverse: false,
+                envelope: Vec::new(),
+                xfade: None,
+                warp: Default::default(),
+            }),
+        };
+        self.apply_command(Command::Song(SongCommand::Launcher(
+            atomik_model::LauncherCommand::SetSlot {
+                device: track.clone(),
+                row,
+                clip: atomik_model::LauncherClip {
+                    clip,
+                    quantize: None,
+                },
+            },
+        )))
+        .map_err(|e| e.to_string())
+    }
+
     /// Registers the asset of an imported file and adds it as a new take of `group`.
     fn place_take(&mut self, loaded: &Loaded, group: u32) -> Result<(), String> {
         let info = loaded
@@ -1115,6 +1201,7 @@ impl<S: EngineSink> AppCore<S> {
                 relink,
                 names: BTreeMap::new(),
                 take: None,
+                slot: None,
             },
         );
         let rate = self.doc().sample_rate;
@@ -1163,6 +1250,10 @@ impl<S: EngineSink> AppCore<S> {
                 .is_some_and(|b| b.samples.is_some())
             {
                 self.register_sample(batch, &loaded)
+            } else if let Some((track, row)) =
+                self.audio.batches.get(&batch).and_then(|b| b.slot.clone())
+            {
+                self.place_slot(&loaded, &track, row)
             } else if let Some(group) = self.audio.batches.get(&batch).and_then(|b| b.take) {
                 self.place_take(&loaded, group)
             } else {

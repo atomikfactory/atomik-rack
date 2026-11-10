@@ -9,6 +9,30 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Clip launcher.** View > Launcher (F10) puts a grid where the rack was, the arrangement below it: one column per
+  note track, one row per scene, a launch triangle in each slot, a scene column with a launch button and the scene's
+  name, a stop square under each track and STOP ALL. A slot holds a note clip with its own loop length, name, colour and
+  launch quantize; a double click opens it in the piano roll (an empty slot gets a one-bar clip), a drag moves it and
+  Ctrl-drag copies it, and the right-click list renames, colours, sets the loop length and the quantize, duplicates and
+  deletes. A launch waits for the next boundary of the quantize (None, 1/16, 1/8, 1/4, 1/2, 1, 2 or 4 bars, 1 bar by
+  default, set for the song or per slot), exact through tempo ramps and meter changes, and then the clip loops from its
+  own start while its track's arrangement stays silent, until the slot stops or Back to Arrangement (at once) gives the
+  track back. Launching with the transport stopped plays; notes that are on when a slot stops or switches get their
+  note-offs. A scene launches every slot of its row and, with Scene Stops Empty Tracks on (the default), stops the
+  tracks that have nothing in it. Record Launches (a switch in the view and a command) makes the Record button write
+  what was launched into the arrangement, at the song ticks it played, as looped clips, and the whole pass is one undo
+  step; it needs no armed track. The Launcher menu under View has the commands, Clip to Launcher and Launcher Clip to
+  Arrangement move a clip between the two by command, and Enter and Shift+Enter launch the slot and the scene under the
+  cursor. Audio tracks have slots too: an audio clip (its file, gain and fades) plays unwarped, looped over the length
+  of the slot, with a small waveform in the slot; an audio file dropped on an audio slot (a MIDI file on a note slot)
+  makes its clip. A clip dragged from the arrangement into a slot copies it, and a slot dragged onto an arrangement lane
+  writes a clip there at the snapped tick (each one undo step). Not done yet: warped audio in slots (it plays at the
+  file's own tempo), launching from a controller, follow actions and scene tempos that change the song tempo. Command
+  count 532.
+- **Project format 45.** A reader of format 44 refuses a file of 44 that holds a field it does not know, so the
+  launcher and the per-note expression, added after 0.4.0-rc.1, could not be skipped by it. Files now say version 45
+  with `"compat": 44` and list those fields as ignorable: a 44 reader opens them, drops the launcher and the note
+  expression with a warning each, and plays the rest. The version-45 corpus file and demo fixture are added.
 - **Undo History panel.** Edit > Undo History (the command `edit.history`, no default key) docks a list of the edits
   made to the song on the right of the window, left of the Track Panel when both show. The first row is the state the
   song started in ("Opened", or "New song"), each row after it is one undo step with its name and how long ago it was

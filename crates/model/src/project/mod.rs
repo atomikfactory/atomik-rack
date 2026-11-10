@@ -47,6 +47,10 @@
 //!                                                                     (v21; written only when non-empty),
 //!             "groups"?: [{"id", "name", "parent"?, "collapsed"?, "color"?, "muted"? (v43), "solo"? (v43)}…]
 //!                                                                     (v22; written only when non-empty),
+//!             "launcher"?: {"quantize"? ("none", "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars"; omitted for
+//!                           "1 bar"), "stop_empty"? (`false` only), "scenes"?: [{"name"?, "color"?, "tempo"?}…],
+//!                           "slots"?: [{"track", "row", "quantize"?, "clip": a note clip with "start" 0 and
+//!                           "length" the loop length}…]}   (v45, ignorable; written only when it holds something),
 //!             "tracks": [{ "device", "muted", "solo", "armed", "no_chase"? (v17),
 //!                          "notes_to"? (v31, a device key: where the track's notes enter),
 //!                          "direct_record"? (v39, `true`: record the notes the players generate),
@@ -441,7 +445,11 @@
 //! expression, `tick` and `key` naming the note, each curve a list of `[ticks after the note start, value]`
 //! (pitch in semitones, pressure and timbre `0..=1`). It is written only while the clip has some, for notes
 //! the clip still has, and it is ignorable: a reader that drops it plays the notes without the expression.
-//! Saving always writes version 44.
+//! A song may also carry the clip launcher, `"launcher"` (see [`crate::launcher`]), after its `"groups"`:
+//! scenes, slots and the launch quantize, written only when it holds something and ignorable (a reader
+//! that drops it opens the song with its arrangement and no launcher). A slot is a note clip of a note
+//! track; its `"row"` is a scene index, and a slot of a device without a track is not written.
+//! Saving always writes version 45, with `"compat": 44` and the `"ignorable"` list (see [`schema`]): a reader of 44 opens the file and drops the launcher and the per-note expression, one warning each.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -498,6 +506,7 @@ use std::sync::Arc;
 mod read_clip;
 mod read_console;
 mod read_devices;
+mod read_launcher;
 mod read_legacy;
 mod read_song;
 mod read_track;
@@ -507,6 +516,7 @@ mod write;
 mod write_clip;
 mod write_console;
 mod write_devices;
+mod write_launcher;
 
 use read_clip::*;
 use read_console::*;
@@ -545,7 +555,7 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// information) and 39 (no send follow, no parallel channels) and 40 (no master tune) and 41 (no
 /// modulation slots) and 42 (no CV inputs, macro kinds or split pass flags on containers) and 43
 /// (no live track grooves) and 44 (no controller lanes outside note clips).
-pub const PROJECT_VERSION: u32 = 44;
+pub const PROJECT_VERSION: u32 = 45;
 
 fn int(v: &Value, path: &JsonPath) -> Result<i64, ModelError> {
     v.as_i64()

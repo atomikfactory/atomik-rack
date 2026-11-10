@@ -679,7 +679,8 @@ fn pointer_releases_outside_the_bounds_still_end_drags() {
     );
     assert!(v.is_dragging());
     let a = v.handle(&up(Point::new(p.x + 50.0, 2000.0)), &doc, &reg);
-    assert_eq!(a, vec![UiAction::EndMerge]);
+    assert!(a.contains(&UiAction::EndMerge));
+    assert!(a.iter().any(|x| matches!(x, UiAction::ClipsDragged { .. })));
     assert!(!v.is_dragging());
 }
 

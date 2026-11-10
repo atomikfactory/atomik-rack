@@ -84,6 +84,8 @@ fn reference_shadows_are_the_expected_notes() {
         [
             "sequencer Return sequencer.open_clip over transport.go_start",
             "sequencer Cmd+E view.toggle_editor over create.effect",
+            "launcher Return launcher.launch over transport.go_start",
+            "launcher Shift+Return launcher.launch_scene over transport.stop",
             "browser Return browser.create over transport.go_start",
             "files F files.favorite over sequencer.follow",
             "files Return files.open over transport.go_start",

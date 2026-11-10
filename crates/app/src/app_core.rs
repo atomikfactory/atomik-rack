@@ -99,6 +99,8 @@ pub enum Pane {
     TrackPanel,
     /// The Undo History panel, docked on the right of the window (left of the Track Panel).
     History,
+    /// The clip launcher (in place of the arrangement).
+    Launcher,
     /// The Spectrum EQ window: it fills a window of its own.
     SpectrumEq,
     /// The Video window: it fills a window of its own.
@@ -457,6 +459,9 @@ pub struct AppCore<S: EngineSink> {
     /// The Undo History panel, whether it shows (this session only), the revision and time it
     /// was built for, and when the steps were made.
     history: atomik_ui::HistoryView,
+    /// The clip launcher view and what the core keeps for it.
+    launcher_view: atomik_ui::LauncherView,
+    launch: launcher_core::LauncherCore,
     history_on: bool,
     history_stamp: Option<(u64, u64, bool)>,
     history_times: history_core::StepTimes,
@@ -656,6 +661,8 @@ impl<S: EngineSink> AppCore<S> {
             track_panel_on: false,
             track_panel_stamp: None,
             history: atomik_ui::HistoryView::new(Theme::dark()),
+            launcher_view: atomik_ui::LauncherView::new(Theme::dark()),
+            launch: launcher_core::LauncherCore::default(),
             history_on: false,
             history_stamp: None,
             history_times: history_core::StepTimes::default(),
@@ -1064,6 +1071,8 @@ impl<S: EngineSink> AppCore<S> {
                 self.crossfade_length_step(later, delta);
             }
             UiAction::CrossfadeEnd { commit } => self.end_stretch(commit),
+            UiAction::Launcher(action) => self.launcher_action(action),
+            UiAction::ClipsDragged { ids, pos } => self.clips_dragged(&ids, pos),
             UiAction::HistoryGoto(row) => {
                 self.history_goto(row);
             }
@@ -1277,6 +1286,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PianoKeys => self.piano_keys.help_at(pos),
             Pane::TrackPanel => self.track_panel.help_at(pos),
             Pane::History => self.history.help_at(pos),
+            Pane::Launcher => self.launcher_view.help_at(pos),
             Pane::SpectrumEq => self.spectrum_eq.help_at(pos),
             Pane::Video => self.video_win.help_at(pos),
         }
@@ -1314,6 +1324,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PianoKeys => self.piano_keys.handle(event),
             Pane::TrackPanel => self.track_panel.handle(event),
             Pane::History => self.history.handle(event),
+            Pane::Launcher => self.launcher_view.handle(event),
             Pane::SpectrumEq => self.spectrum_eq.handle(event),
             Pane::Video => self.video_win.handle(event),
         };
@@ -1456,6 +1467,7 @@ impl<S: EngineSink> AppCore<S> {
         self.console.sync(doc, &self.registry);
         self.sync_track_panel();
         self.sync_history();
+        self.sync_launcher();
         // The sampler was removed: the arrangement shows again.
         if self.sample_editor.device().is_some() && !self.sample_editor.is_present() {
             self.close_sample_editor();
@@ -1764,6 +1776,7 @@ impl<S: EngineSink> AppCore<S> {
             self.submit_routing();
         }
         self.drive_pending_play();
+        self.poll_launcher();
         // Auto monitoring follows the transport (stopped or recording).
         self.push_monitor_live();
         let state = self.sink.transport_state();
@@ -2086,9 +2099,23 @@ impl<S: EngineSink> AppCore<S> {
             self.audio.assets(),
             &self.audio.warps,
         );
-        match compile_song(&input) {
+        // The clip launcher's slots join the snapshot; the engine publishes their state in this
+        // order.
+        let plans = atomik_render::project::launch_input(
+            self.document.doc(),
+            &self.registry,
+            |k| ids.get(k).copied(),
+            self.audio.assets(),
+        );
+        let launch_inputs: Vec<_> = plans.iter().map(|p| p.input.clone()).collect();
+        let launch_tracks: Vec<_> = plans
+            .iter()
+            .map(|p| (p.track.clone(), p.input.device))
+            .collect();
+        match compile_song(&input).and_then(|s| s.with_launch(&launch_inputs)) {
             Ok(snapshot) => {
                 self.snapshot = Some(snapshot.clone());
+                self.set_launch_tracks(launch_tracks);
                 let result = self.sink.submit_song(&input, snapshot);
                 self.engine_result(result);
             }
@@ -3054,6 +3081,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PianoKeys => self.piano_keys.paint(canvas),
             Pane::TrackPanel => self.track_panel.paint(canvas),
             Pane::History => self.history.paint(canvas),
+            Pane::Launcher => self.launcher_view.paint(canvas),
             Pane::SpectrumEq => self.spectrum_eq.paint(canvas),
             Pane::Video => self.video_win.paint(canvas),
         }
@@ -3429,8 +3457,29 @@ impl<S: EngineSink> AppCore<S> {
             TransportAction::ToggleRecord if self.take.is_some() => {
                 let state = self.sink.transport_state();
                 self.finish_take(&state);
+                self.finish_launch_rec(state.tick);
             }
-            TransportAction::ToggleRecord => self.start_recording(),
+            TransportAction::ToggleRecord if self.launch.rec.is_some() => {
+                let state = self.sink.transport_state();
+                self.finish_launch_rec(state.tick);
+            }
+            // With Record Launches on, a pass of launches needs no armed track.
+            TransportAction::ToggleRecord
+                if self.launch.record
+                    && !self.doc().song.tracks.iter().any(|t| t.armed)
+                    && !self.has_armed_lanes() =>
+            {
+                self.begin_launch_rec();
+                if !self.playing {
+                    self.play();
+                }
+            }
+            TransportAction::ToggleRecord => {
+                self.start_recording();
+                if self.launch.record && self.take.is_some() {
+                    self.begin_launch_rec();
+                }
+            }
             TransportAction::ToggleMetronome => {
                 self.metronome = !self.metronome;
                 self.send_metronome();
@@ -3502,6 +3551,7 @@ impl<S: EngineSink> AppCore<S> {
         self.send_transport(TransportCommand::Stop);
         self.playing = false;
         self.finish_take(&state);
+        self.finish_launch_rec(state.tick);
         self.clear_override();
         if self.return_to_start_on_stop {
             // Stop goes back to where playback started; a second Stop goes to the start.
@@ -3928,6 +3978,9 @@ mod track_panel_core;
 
 #[path = "app_core_history.rs"]
 mod history_core;
+
+#[path = "app_core_launcher.rs"]
+mod launcher_core;
 
 #[path = "app_core_containers.rs"]
 mod containers;
@@ -4419,6 +4472,14 @@ mod sync_tests;
 #[cfg(test)]
 #[path = "app_core_tempo_tests.rs"]
 mod tempo_tests;
+
+#[cfg(test)]
+#[path = "app_core_launcher_drag_tests.rs"]
+mod launcher_drag_tests;
+
+#[cfg(test)]
+#[path = "app_core_launcher_tests.rs"]
+mod launcher_tests;
 
 #[cfg(test)]
 #[path = "app_core_marker_tests.rs"]

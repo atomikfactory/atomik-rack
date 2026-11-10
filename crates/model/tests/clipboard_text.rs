@@ -176,7 +176,9 @@ fn a_newer_project_text_is_refused_not_misread() {
     let keys = vec![key("synth")];
     let snapshot = DeviceSnapshot::capture(d.doc(), &keys, false).unwrap();
     let text = devices_to_text(&snapshot, 48_000, 120.0);
-    let newer = text.replacen("\"version\": 44", "\"version\": 9999", 1);
+    let newer = text
+        .replacen("\"version\": 45", "\"version\": 9999", 1)
+        .replacen("\"compat\": 44", "\"compat\": 9999", 1);
     let message = load_error(devices_from_text(&newer, &reg));
     assert!(message.contains("version"), "{message}");
 }

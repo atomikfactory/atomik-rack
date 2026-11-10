@@ -60,6 +60,8 @@ pub struct Bounce {
     pub threads: u16,
     pub loop_frames: Option<(i64, i64)>,
     pub edits: Vec<TimedEdit>,
+    /// Launcher tracks compiled into the song.
+    pub launch: Vec<atomik_engine::LaunchTrackInput>,
 }
 
 impl Bounce {
@@ -71,6 +73,7 @@ impl Bounce {
             threads: 0,
             loop_frames: None,
             edits: Vec::new(),
+            launch: Vec::new(),
         }
     }
 
@@ -108,7 +111,10 @@ impl Bounce {
             params: &[],
             inputs: &[],
         };
-        let song = compile_song(&self.input).unwrap();
+        let song = compile_song(&self.input)
+            .unwrap()
+            .with_launch(&self.launch)
+            .unwrap();
         let out = render_offline_song(&mut engine, &mut handle, &job, song, edits, |f| {
             assert_no_alloc(f)
         });

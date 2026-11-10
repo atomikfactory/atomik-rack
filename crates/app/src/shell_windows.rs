@@ -187,7 +187,8 @@ impl<B: AudioBackend> Shell<B> {
         }
         let l = self.layout();
         let rect = match pane {
-            Pane::Rack => self.rack_in_main().then_some(l.rack),
+            Pane::Launcher if self.launcher_on_top() => Some(l.rack),
+            Pane::Rack => (self.rack_in_main() && !self.launcher_on_top()).then_some(l.rack),
             Pane::Transport => Some(l.transport),
             Pane::FileBrowser => l.file_browser,
             Pane::TrackPanel => l.track_panel,

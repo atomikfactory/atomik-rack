@@ -271,6 +271,24 @@ pub enum AppCommand {
     /// View > Marker Strip: the strip of markers and ranges under the arrangement's ruler
     /// (saved with the view state).
     ToggleMarkerStrip,
+    /// View > Editors > Launcher: the clip launcher in the lower pane (not saved).
+    ToggleLauncher,
+    /// Launcher > Back to Arrangement: every track plays its arrangement again, now.
+    LauncherBack,
+    /// Launcher > Stop All Clips: every slot stops at the next launch boundary.
+    LauncherStopAll,
+    /// Launcher > Record Launches: what is launched while recording is written to the arrangement.
+    LauncherRecord,
+    /// Launcher > New Scene: a scene row at the end.
+    LauncherNewScene,
+    /// Launcher > Scene Stops Empty Tracks.
+    LauncherStopEmpty,
+    /// Launcher > Launch Quantize: how long a launch waits.
+    LauncherQuantize(atomik_model::LaunchQuantize),
+    /// Launcher > Clip to Launcher: the selected arrangement clip goes into a slot of the launcher.
+    LauncherFromArrangement,
+    /// Launcher > Launcher Clip to Arrangement: the slot under the cursor goes to the playhead.
+    LauncherToArrangement,
     /// View > Inspector: the strip under the arrangement's track lanes with the selected clips'
     /// position, length and loop as editable fields (saved with the view state).
     ToggleInspector,
@@ -962,6 +980,15 @@ impl AppCommand {
             AppCommand::FindRepetition => ("sequencer.find_repetition", None),
             AppCommand::ToggleMarkerStrip => ("view.toggle_marker_strip", None),
             AppCommand::ToggleInspector => ("view.toggle_inspector", None),
+            AppCommand::ToggleLauncher => ("view.toggle_launcher", None),
+            AppCommand::LauncherBack => ("launcher.back_to_arrangement", None),
+            AppCommand::LauncherStopAll => ("launcher.stop_all", None),
+            AppCommand::LauncherRecord => ("launcher.record", None),
+            AppCommand::LauncherNewScene => ("launcher.new_scene", None),
+            AppCommand::LauncherStopEmpty => ("launcher.stop_empty", None),
+            AppCommand::LauncherQuantize(q) => ("launcher.quantize", Some(quantize_word(*q))),
+            AppCommand::LauncherFromArrangement => ("launcher.from_arrangement", None),
+            AppCommand::LauncherToArrangement => ("launcher.to_arrangement", None),
             AppCommand::ToggleMarkerList => ("view.toggle_marker_list", None),
             AppCommand::AddMarker => ("transport.add_marker", None),
             AppCommand::AddRangeFromLoop => ("transport.add_range_from_loop", None),
@@ -1343,6 +1370,15 @@ impl AppCommand {
             ("sequencer.find_repetition", None) => AppCommand::FindRepetition,
             ("view.toggle_marker_strip", None) => AppCommand::ToggleMarkerStrip,
             ("view.toggle_inspector", None) => AppCommand::ToggleInspector,
+            ("view.toggle_launcher", None) => AppCommand::ToggleLauncher,
+            ("launcher.back_to_arrangement", None) => AppCommand::LauncherBack,
+            ("launcher.stop_all", None) => AppCommand::LauncherStopAll,
+            ("launcher.record", None) => AppCommand::LauncherRecord,
+            ("launcher.new_scene", None) => AppCommand::LauncherNewScene,
+            ("launcher.stop_empty", None) => AppCommand::LauncherStopEmpty,
+            ("launcher.quantize", Some(a)) => AppCommand::LauncherQuantize(quantize_from_word(a)?),
+            ("launcher.from_arrangement", None) => AppCommand::LauncherFromArrangement,
+            ("launcher.to_arrangement", None) => AppCommand::LauncherToArrangement,
             ("view.toggle_marker_list", None) => AppCommand::ToggleMarkerList,
             ("transport.add_marker", None) => AppCommand::AddMarker,
             ("transport.add_range_from_loop", None) => AppCommand::AddRangeFromLoop,
@@ -1998,6 +2034,52 @@ impl TransposeStep {
     }
 }
 
+/// What the Launcher menu shows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LauncherMenu {
+    /// The launcher view is shown.
+    pub shown: bool,
+    /// Record Launches is on.
+    pub record: bool,
+    /// A scene launch stops the tracks whose slot is empty.
+    pub stop_empty: bool,
+    /// The song's launch quantize.
+    pub quantize: atomik_model::LaunchQuantize,
+}
+
+impl Default for LauncherMenu {
+    fn default() -> Self {
+        Self {
+            shown: false,
+            record: false,
+            stop_empty: true,
+            quantize: atomik_model::LaunchQuantize::Bar,
+        }
+    }
+}
+
+/// The word `launcher.quantize` takes for a launch quantize.
+pub fn quantize_word(q: atomik_model::LaunchQuantize) -> &'static str {
+    use atomik_model::LaunchQuantize as Q;
+    match q {
+        Q::None => "none",
+        Q::Sixteenth => "sixteenth",
+        Q::Eighth => "eighth",
+        Q::Quarter => "quarter",
+        Q::Half => "half",
+        Q::Bar => "bar",
+        Q::TwoBars => "two_bars",
+        Q::FourBars => "four_bars",
+    }
+}
+
+/// The launch quantize a `launcher.quantize` word names.
+pub fn quantize_from_word(word: &str) -> Option<atomik_model::LaunchQuantize> {
+    atomik_model::LaunchQuantize::ALL
+        .into_iter()
+        .find(|q| quantize_word(*q) == word)
+}
+
 /// What the menus show as checked or enabled.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MenuState {
@@ -2015,6 +2097,8 @@ pub struct MenuState {
     pub track_panel: bool,
     /// The Undo History panel is shown.
     pub history_panel: bool,
+    /// What the Launcher menu shows.
+    pub launcher: LauncherMenu,
     /// How the rack is sorted.
     pub rack_sort: atomik_model::RackSort,
     /// The rack lays its columns out as one.
@@ -3103,6 +3187,44 @@ pub fn menus_with_songs(
                             AppCommand::ToggleSliceEditor,
                             state.slice_editor,
                         ),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Launcher",
+                    entries: vec![
+                        check("Launcher", AppCommand::ToggleLauncher, state.launcher.shown),
+                        item("Back to Arrangement", AppCommand::LauncherBack),
+                        item("Stop All Clips", AppCommand::LauncherStopAll),
+                        check(
+                            "Record Launches",
+                            AppCommand::LauncherRecord,
+                            state.launcher.record,
+                        ),
+                        item("New Scene", AppCommand::LauncherNewScene),
+                        check(
+                            "Scene Stops Empty Tracks",
+                            AppCommand::LauncherStopEmpty,
+                            state.launcher.stop_empty,
+                        ),
+                        item("Clip to Launcher", AppCommand::LauncherFromArrangement),
+                        item(
+                            "Launcher Clip to Arrangement",
+                            AppCommand::LauncherToArrangement,
+                        ),
+                        MenuEntry::Submenu(Submenu {
+                            label: "Launch Quantize",
+                            entries: atomik_model::LaunchQuantize::ALL
+                                .into_iter()
+                                .map(|q| {
+                                    make(
+                                        q.label(),
+                                        AppCommand::LauncherQuantize(q),
+                                        Some(state.launcher.quantize == q),
+                                        true,
+                                    )
+                                })
+                                .collect(),
+                        }),
                     ],
                 }),
                 MenuEntry::Submenu(Submenu {
@@ -4322,6 +4444,7 @@ mod tests {
             piano_keys: false,
             track_panel: false,
             history_panel: false,
+            launcher: LauncherMenu::default(),
             rack_sort: atomik_model::RackSort::Free,
             single_column: false,
             can_undo: true,
@@ -4507,6 +4630,15 @@ mod tests {
             AppCommand::ToggleVideoRow,
             AppCommand::ToggleMarkerStrip,
             AppCommand::ToggleInspector,
+            AppCommand::ToggleLauncher,
+            AppCommand::LauncherBack,
+            AppCommand::LauncherStopAll,
+            AppCommand::LauncherRecord,
+            AppCommand::LauncherNewScene,
+            AppCommand::LauncherStopEmpty,
+            AppCommand::LauncherQuantize(atomik_model::LaunchQuantize::Bar),
+            AppCommand::LauncherFromArrangement,
+            AppCommand::LauncherToArrangement,
             AppCommand::ToggleMarkerList,
             AppCommand::CommandPalette,
             AppCommand::FindParameter,
@@ -5440,6 +5572,7 @@ mod tests {
                 piano_keys: false,
                 track_panel: false,
                 history_panel: false,
+                launcher: LauncherMenu::default(),
                 rack_sort: atomik_model::RackSort::Free,
                 single_column: false,
                 can_undo: false,
