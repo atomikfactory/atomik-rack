@@ -276,7 +276,7 @@ pub const SCALE_ARGS: &[&str] = &[
     "phrygian_dominant",
     "hungarian_minor",
 ];
-/// The values of `editor.set_chord`: no chord, the chords and the diatonic chords.
+/// The values of `editor.set_chord`: no chord, the chords, the song chord and the diatonic chords.
 pub const CHORD_ARGS: &[&str] = &[
     "none",
     "major",
@@ -300,6 +300,7 @@ pub const CHORD_ARGS: &[&str] = &[
     "13",
     "power",
     "octave",
+    "lane",
     "diatonic_triad",
     "diatonic_seventh",
     "diatonic_ninth",
@@ -609,6 +610,12 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     )
     .decline(),
+    cmd(
+        "editor.fit_to_chords",
+        "Fit Notes to Chords",
+        G::Editor,
+        C::Editor,
+    ),
     cmd("editor.fold_set", "Set Fold", G::Editor, C::Editor).arg(FOLD_ARGS),
     cmd("editor.fold_toggle", "Fold", G::Editor, C::Editor),
     cmd("editor.join_notes", "Join Notes", G::Editor, C::Editor).decline(),
@@ -2727,6 +2734,13 @@ const COMMANDS: &[CommandDef] = &[
         G::Transport,
         C::Global,
     ),
+    cmd(
+        "transport.detect_key",
+        "Detect Song Key",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
     cmd("transport.dub", "Dub: New Layer", G::Transport, C::Global),
     cmd(
         "transport.forward_bar",
@@ -2824,6 +2838,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "transport.set_right_locator",
         "Set Right Locator at Playhead",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "transport.set_song_key",
+        "Song Key...",
         G::Transport,
         C::Global,
     )
@@ -2974,6 +2995,7 @@ const COMMANDS: &[CommandDef] = &[
         .menu(),
     cmd("view.toggle_big_meter", "Big Meter", G::View, C::Global).menu(),
     cmd("view.toggle_browser", "Device Browser", G::View, C::Global).menu(),
+    cmd("view.toggle_chord_lane", "Chord Lane", G::View, C::Global).menu(),
     cmd("view.toggle_console", "Console", G::View, C::Global).menu(),
     cmd(
         "view.toggle_console_links",
@@ -2994,6 +3016,7 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("view.toggle_flip", "Back of Rack", G::View, C::Global).menu(),
     cmd("view.toggle_inspector", "Inspector", G::View, C::Global).menu(),
+    cmd("view.toggle_key_lane", "Key Lane", G::View, C::Global).menu(),
     cmd("view.toggle_launcher", "Launcher", G::View, C::Global).menu(),
     cmd("view.toggle_marker_list", "Marker List", G::View, C::Global).menu(),
     cmd(

@@ -53,6 +53,45 @@ takes the lower pane instead.
   change the song tempo. The notes of a launched slot go to the track's instrument like any other notes, so a MIDI
   keyboard still plays it.
 
+## Key and chords
+
+The song can have a key and a chord lane. The rest of the app follows them: the piano roll, the browser, new chords
+and a few tools. Nothing here changes how the song sounds.
+
+- **The song key.** A root and a scale (major, minor, the modes, the pentatonic scales and the others of the piano
+  roll; never chromatic). Click the Key field in the transport bar, or choose Transport > Song Key..., to open the
+  picker and set it. The field shows the key at the playhead, so it also shows a key change once you pass one. On a
+  narrow bar the field drops out and the "..." list has a Song Key... row.
+- **Key changes.** The Key lane (View > Lanes and Markers > Key Lane) sits above the tracks, under the tempo and
+  energy lanes. A click on the empty lane adds a key change at the snapped time, with the key already in effect
+  there; a double click opens the picker on it (or a new one) so you can choose another. Drag a tag to move it. The
+  tag at the start is the song key. The key at a time is the last change at or before it, else the song key.
+- **The chord lane.** View > Lanes and Markers > Chord Lane. A click on the empty lane adds the tonic chord of the key
+  there (minor in a minor key), one bar long or less when the next chord is near; keep the button down and drag to set
+  the length. Drag a chord to move it, drag its right end to resize it, double click it to change it. Chords never
+  overlap: a move or a resize that would run into the next chord stops short. Escape puts a drag back, and every
+  gesture is one undo step. The right button on a chord or a tag lists Delete and Copy; on the empty lane it lists
+  Add Here and, after a Copy, Paste.
+- **The picker.** The Root row, the Quality rows (or the Scale rows for a key) and the Bass row pick a chord with the
+  mouse. The Chord field takes a symbol: a root letter (A to G, either case) with a sharp or a flat, a quality such as
+  m, min, -, maj7, M7, 7, m7b5, dim, dim7, aug, sus2, sus4, 6, m6, 9, maj9, m9, add9, 11, 13 or 5, and an optional bass
+  note after a slash: Am7, F#m7b5, Bbmaj7, Dsus4/A, C/G. The buttons and the field follow each other, and a symbol it
+  cannot read is explained under the field while Apply waits. Remove deletes the chord, the key change or the song key.
+- **The piano roll follows the key.** A clip that has no scale of its own shows the scale of the song key at the clip's
+  start: the scale highlighting, snap to scale and the fold work with it, and the scale bar shows it. A scale you set
+  on the clip still wins. A new note clip has no scale, so it follows the song until you give it one.
+- **Chords in the piano roll.** The Chord Stamp menu has Song Chord: the pencil drops the chord of the chord lane at the
+  place you draw (a single note where the lane has no chord), with its bass note below the chord. Fit Notes to Chords
+  (in the Chords menu) moves each selected note that falls outside the chord at its position to the nearest chord
+  tone, a tie going down, and never onto a note that is already there; it is one undo step.
+- **Detect Song Key.** Transport > Detect Song Key reads every note clip and sets the key it finds, as one undo
+  step: the longer a note, the more it counts. The status line says how clear the answer was; Undo puts the old key
+  back. It is a guess, and it only finds major and natural minor.
+- **The browser.** Type key:song in the file browser's search to see the loops tagged with the song key (the factory
+  loops carry a tag such as A minor). A song without a key filters nothing. key:minor finds the tags with that word.
+- **Saving.** The key, the key changes and the chords are saved only when set, as optional fields that an older
+  version of the program drops with a warning (project format 45).
+
 ## Windows
 
 The rack and the mixer can leave the main window (View > Panels > Detach Rack and Detach Mixer, or by closing their

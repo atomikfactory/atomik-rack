@@ -387,6 +387,7 @@ pub mod fx;
 pub mod fx_layout;
 pub mod fx_paint;
 pub mod granular_panel;
+pub mod harmony_picker;
 pub mod history_panel;
 pub mod interface;
 pub mod io_panel;
@@ -504,6 +505,7 @@ pub use film_panel::{
     FilmAction, FilmCover, FilmPictureChoice, FilmQualityChoice, FilmSoundChoice, FilmValues,
     FilmView,
 };
+pub use harmony_picker::{HarmonyPickerAction, HarmonyPickerView, HarmonyTarget, PickerValue};
 pub use history_panel::{HISTORY_PANEL_WIDTH, HistoryRow, HistoryView};
 pub use io_panel::IoSocketState;
 pub use kick_bass_panel::{

@@ -206,6 +206,7 @@ pub(super) fn write_song(w: &mut String, song: &Song) {
         );
         let _ = writeln!(w, ",");
     }
+    write_harmony::write_harmony(w, song);
     write_launcher::write_launcher(w, song);
     let _ = write!(w, "    \"tracks\": [");
     for (i, t) in song.tracks.iter().enumerate() {

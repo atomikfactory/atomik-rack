@@ -122,7 +122,10 @@ and a first-run audio and MIDI setup (a panel before the start screen on the ver
 MIDI Setup... any time: the audio host, device and buffer with a test chord whose output meter moves and the measured
 latency, an optional input with a live meter, and the MIDI keyboards with a lamp and a tone for each key and a button
 for the controller wizard; Skip and Done write the settings file so it never opens by itself again, and the update
-question waits behind it).
+question waits behind it),
+and a chord track and song key (a song key with key changes and a chord lane, a Key lane and a Chord lane above
+the tracks, a picker with a chord symbol field, a Key field in the transport bar, a piano roll that follows the
+song key, a Song Chord stamp, Fit Notes to Chords, Detect Song Key and a browser search for loops in the song key).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -149,6 +152,18 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
   that starts the next clip at the position of the one it replaces, notes that span a locate starting inside a slot (a
   slot starts its notes at their next note-on), and scene tempos that change the song tempo when the scene launches (a
   scene keeps a tempo, nothing applies it yet).
+- **Chord track and song key follow-ups.** Done: a song key (a root and a scale kind) with key changes along the song
+  and a chord lane of chords with a root, a quality, an optional bass note and a span, stored in the project as
+  optional fields of format 45; a Key lane and a Chord lane above the track lanes (View > Lanes and Markers) with
+  click to add, drag to move or resize, a double click that opens a picker with root, quality and bass and a chord
+  symbol field (`Am7`, `F#m7b5`, `C/G`), and a right-click list with Delete and Copy; a Key field in the transport bar
+  that sets the song key; a piano roll that follows the song key at the clip's start while the clip has no scale of its
+  own (highlighting, snap to scale and fold); a Song Chord stamp that drops the chord of the lane; Fit Notes to Chords;
+  Detect Song Key from the notes of every note clip; and a `key:song` search in the browser. Still to come: devices
+  that follow the chord lane (a key and chord device or an arpeggiator reading it), chords read from a MIDI file or
+  detected from audio, a preview before Fit Notes to Chords, a clip that opts out of the song key without a scale of
+  its own, a chord that sounds by itself, a Song Key button in the browser's search field and a keyboard command to
+  paste a copied chord.
 - **Automation recording follow-ups.** A touch that starts at the press instead of the first move (needs a press and release signal from every control, plugin windows included).
 - **MIDI controller data follow-ups.** Editing the per-note expression curves by hand (drawing and moving their points in the piano roll; today they are recorded, played, cleared and kept in MIDI files), expression for the other instruments (the grain sampler, the sampler, the semi-modular synth and the organ take a note's pressure as their pressure source and ignore its pitch and slide), MPE member channels to plugins that take MPE MIDI and to the MIDI Out device (CLAP and VST3 plugins already get per-note expression events), an expression that follows its note when the note is moved or retuned (it is kept by the note's start and key), the zone an MPE controller announced shown in Audio Settings, the CC badge on a compact track row (the badge needs a row of 52 px or more), and snapping of the points of the track lanes to the bar lines of a changing meter (the Bar and Beat snap counts from the first meter).
 - **Quantize and groove follow-ups.** A groove from an audio loop, device-parameter lanes and a track's own controller lanes that move with the notes of a quantize (only the lanes of a note clip do today), and a quantize of the note lengths to a length grid (the grid per note picks the start grid from each note's length).

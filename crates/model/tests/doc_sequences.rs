@@ -1329,6 +1329,77 @@ fn resolve_launcher(op: &LauncherOp, doc: &RackDoc) -> Option<Command> {
     })))
 }
 
+/// A harmony edit in abstract form: it builds the new harmony from the current one with the model's
+/// own helpers, so refusals (an overlap) simply skip the step.
+#[derive(Debug, Clone)]
+enum HarmonyOp {
+    Key(u8, usize),
+    NoKey,
+    Change(i64, u8, bool),
+    Chord(i64, i64, u8, usize, Option<u8>),
+    RemoveChord(usize),
+    MoveChord(usize, i64),
+    Drag(usize, i64),
+}
+
+fn harmony_op() -> impl Strategy<Value = HarmonyOp> {
+    prop_oneof![
+        (0u8..12, 0usize..14).prop_map(|(r, s)| HarmonyOp::Key(r, s)),
+        Just(HarmonyOp::NoKey),
+        (0i64..16, 0u8..12, any::<bool>()).prop_map(|(b, r, rm)| HarmonyOp::Change(b, r, rm)),
+        (
+            0i64..16,
+            1i64..4,
+            0u8..12,
+            0usize..21,
+            proptest::option::of(0u8..12)
+        )
+            .prop_map(|(b, l, r, q, bass)| HarmonyOp::Chord(b, l, r, q, bass)),
+        (0usize..8).prop_map(HarmonyOp::RemoveChord),
+        (0usize..8, 0i64..16).prop_map(|(i, b)| HarmonyOp::MoveChord(i, b)),
+        (0usize..8, 0i64..16).prop_map(|(i, b)| HarmonyOp::Drag(i, b)),
+    ]
+}
+
+fn resolve_harmony(op: &HarmonyOp, doc: &RackDoc) -> Option<Command> {
+    use atomik_model::theory::{ChordKind, ScaleKind};
+    use atomik_model::{ChordEvent, Key};
+    let h = &doc.song.harmony;
+    let scales: Vec<ScaleKind> = ScaleKind::ALL[1..].to_vec();
+    let (harmony, merge) = match op {
+        HarmonyOp::Key(r, s) => (
+            h.with_key(Some(Key::new(*r, scales[*s % scales.len()]))),
+            None,
+        ),
+        HarmonyOp::NoKey => (h.with_key(None), None),
+        HarmonyOp::Change(b, r, rm) => (
+            h.with_key_change(*b * BAR, (!rm).then(|| Key::new(*r, ScaleKind::Major))),
+            None,
+        ),
+        HarmonyOp::Chord(b, l, r, q, bass) => {
+            let mut c = ChordEvent::new(*b * BAR, *l * BAR, *r, ChordKind::ALL[*q % 21]);
+            c.bass = *bass;
+            (h.with_chord(c), None)
+        }
+        HarmonyOp::RemoveChord(i) => {
+            let at = h.chords.get(*i % h.chords.len().max(1))?.tick;
+            (Ok(h.without_chord(at)), None)
+        }
+        HarmonyOp::MoveChord(i, b) | HarmonyOp::Drag(i, b) => {
+            let old = *h.chords.get(*i % h.chords.len().max(1))?;
+            let mut c = old;
+            c.tick = *b * BAR;
+            let merge = matches!(op, HarmonyOp::Drag(..)).then_some(5);
+            (h.with_chord_replaced(old.tick, c), merge)
+        }
+    };
+    let harmony = harmony.ok()?;
+    Some(sc(match merge {
+        Some(merge) => SongCommand::DragHarmony { harmony, merge },
+        None => SongCommand::SetHarmony(harmony),
+    }))
+}
+
 /// One step of a run.
 #[derive(Debug, Clone)]
 enum Step {
@@ -1337,6 +1408,7 @@ enum Step {
     Audio(AudioOp),
     Wf(WfOp),
     Launcher(LauncherOp),
+    Harmony(HarmonyOp),
 }
 
 fn step() -> impl Strategy<Value = Step> {
@@ -1346,6 +1418,7 @@ fn step() -> impl Strategy<Value = Step> {
         2 => audio_op().prop_map(Step::Audio),
         4 => wf_op().prop_map(Step::Wf),
         2 => launcher_op().prop_map(Step::Launcher),
+        2 => harmony_op().prop_map(Step::Harmony),
     ]
 }
 
@@ -1393,6 +1466,7 @@ fn resolve(op: &Step, doc: &RackDoc, reg: &Registry) -> Option<Command> {
         Step::Audio(o) => resolve_audio(o, doc),
         Step::Wf(o) => resolve_wf(o, doc),
         Step::Launcher(o) => resolve_launcher(o, doc),
+        Step::Harmony(o) => resolve_harmony(o, doc),
     }
 }
 

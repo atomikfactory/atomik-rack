@@ -1026,7 +1026,7 @@ impl FileBrowserView {
 
     /// The query text changed: parse it once, filter, and drop the selection.
     fn query_changed(&mut self) {
-        self.query = Query::parse(self.search.text());
+        self.query = Query::parse(self.search.text()).with_song_key(&self.song_key_tags);
         self.query_empty = self.search.text().trim().is_empty();
         self.selection.clear();
         self.cursor = None;

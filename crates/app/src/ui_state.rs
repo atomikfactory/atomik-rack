@@ -98,6 +98,10 @@ pub struct UiState {
     pub show_tempo_lane: bool,
     /// The arrangement shows the energy lane under the tempo lane. An absent key means hidden.
     pub show_energy_lane: bool,
+    /// The arrangement shows the key lane above its track lanes. An absent key means hidden.
+    pub show_key_lane: bool,
+    /// The arrangement shows the chord lane above its track lanes. An absent key means hidden.
+    pub show_chord_lane: bool,
     /// The arrangement shows the video row above its lanes (when the song has a film). An absent
     /// key means shown.
     pub show_video_row: bool,
@@ -198,6 +202,8 @@ impl Default for UiState {
             show_console_links: false,
             show_tempo_lane: false,
             show_energy_lane: false,
+            show_key_lane: false,
+            show_chord_lane: false,
             show_video_row: true,
             video_row_collapsed: false,
             video_import_audio: false,
@@ -352,6 +358,8 @@ mod tests {
             show_console_links: true,
             show_tempo_lane: true,
             show_energy_lane: true,
+            show_key_lane: true,
+            show_chord_lane: true,
             show_video_row: false,
             video_row_collapsed: true,
             video_import_audio: true,
@@ -381,6 +389,10 @@ mod tests {
         assert!(!old.show_console_links);
         assert!(!old.show_tempo_lane, "an older file has no tempo lane");
         assert!(!old.show_energy_lane, "an older file has no energy lane");
+        assert!(
+            !old.show_key_lane && !old.show_chord_lane,
+            "nor key and chord lanes"
+        );
         assert!(old.show_video_row, "an older file shows the video row");
         assert!(!old.video_row_collapsed, "an older file has it open");
         assert!(

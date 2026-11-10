@@ -271,6 +271,9 @@ impl RackDoc {
                 }
             }
         }
+        if let Err(message) = song.harmony.check() {
+            found.add("song.harmony", message);
+        }
         if let Err(message) = song.launcher.check() {
             found.add("song.launcher", message);
         }

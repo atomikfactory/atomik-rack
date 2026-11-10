@@ -14,6 +14,10 @@ use crate::{AudioFormat, FileKind, FileRow};
 ///   of a library item or one that the user gave the file.
 /// - `author:x`: a case-insensitive substring of the author of the row.
 /// - `in:x`: a case-insensitive substring of the name of any folder the row lies in.
+/// - `key:x`: a case-insensitive substring of one of the tags of the row (loops carry their key as
+///   a tag such as `A minor`, so `key:minor` finds the minor ones; an underscore stands for a space).
+/// - `key:song`: the row has a tag naming the song's key ([`Query::with_song_key`]). A song
+///   without a key lets every row through.
 /// - anything else: a case-insensitive substring of the row name or, for a library item,
 ///   of its category.
 ///
@@ -36,6 +40,12 @@ pub struct Query {
     authors: Vec<String>,
     /// Folded `in:` values.
     folders: Vec<String>,
+    /// Folded `key:` values.
+    keys: Vec<String>,
+    /// A `key:song` token was present.
+    song_key: bool,
+    /// The folded tags that name the song's key (empty: the song has no key).
+    song_tags: Vec<String>,
 }
 
 /// The value of a `kind:` token.
@@ -148,6 +158,12 @@ impl Query {
                 if !v.is_empty() {
                     query.authors.push(fold(v));
                 }
+            } else if let Some(v) = field_value(token, "key") {
+                if v.eq_ignore_ascii_case("song") {
+                    query.song_key = true;
+                } else if !v.is_empty() {
+                    query.keys.push(fold(&v.replace('_', " ")));
+                }
             } else if let Some(v) = field_value(token, "in") {
                 if !v.is_empty() {
                     query.folders.push(fold(v));
@@ -159,9 +175,20 @@ impl Query {
         query
     }
 
+    /// The query with the tags that name the song's key, for a `key:song` token: any row with one
+    /// of them matches (compared without regard to case). No tags: the song has no key and the
+    /// token lets every row through.
+    #[must_use]
+    pub fn with_song_key(mut self, tags: &[String]) -> Self {
+        self.song_tags = tags.iter().map(|t| fold(t)).collect();
+        self
+    }
+
     /// True for the empty query.
     pub fn is_empty(&self) -> bool {
-        self.terms.is_empty()
+        self.keys.is_empty()
+            && !self.song_key
+            && self.terms.is_empty()
             && self.tags.is_empty()
             && !self.favorite
             && self.kinds.is_empty()
@@ -176,14 +203,27 @@ impl Query {
             && (self.favorite
                 || !self.tags.is_empty()
                 || !self.categories.is_empty()
-                || !self.authors.is_empty())
+                || !self.authors.is_empty()
+                || !self.keys.is_empty()
+                || (self.song_key && !self.song_tags.is_empty()))
         {
             return false;
         }
         if self.favorite && !row.favorite {
             return false;
         }
+        let song_key_ok = !self.song_key
+            || self.song_tags.is_empty()
+            || row
+                .tags
+                .iter()
+                .any(|have| self.song_tags.iter().any(|want| folded_eq(have, want)));
         self.kinds.iter().all(|k| k.matches(row.kind))
+            && song_key_ok
+            && self
+                .keys
+                .iter()
+                .all(|want| row.tags.iter().any(|have| contains_folded(have, want)))
             && self
                 .tags
                 .iter()
@@ -392,6 +432,46 @@ mod tests {
     fn lone_hash_is_ignored() {
         assert!(Query::parse("#").is_empty());
         assert!(m("# kick", &file("kick.wav", false, &[])));
+    }
+
+    #[test]
+    fn a_key_token_matches_a_substring_of_a_tag() {
+        let minor = file("Bass A.wav", false, &["loop", "A minor"]);
+        let major = file("Pad C.wav", false, &["loop", "C major"]);
+        let none = file("Kick.wav", false, &["loop"]);
+        assert!(m("key:minor", &minor));
+        assert!(!m("key:minor", &major));
+        assert!(!m("key:minor", &none));
+        assert!(m("key:A_minor", &minor), "an underscore is a space");
+        assert!(m("key:MINOR", &minor));
+        assert!(m("key:", &none), "no value, no filter");
+        assert!(!Query::parse("key:minor").is_empty());
+        assert!(!m("key:minor", &folder("Loops")), "a folder has no tags");
+    }
+
+    #[test]
+    fn the_song_key_token_follows_the_tags_the_host_gives() {
+        let minor = file("Bass A.wav", false, &["A minor"]);
+        let other = file("Pad D.wav", false, &["D dorian"]);
+        let none = file("Kick.wav", false, &[]);
+        let q = Query::parse("key:song").with_song_key(&["A minor".to_owned()]);
+        assert!(q.matches(&minor));
+        assert!(!q.matches(&other));
+        assert!(!q.matches(&none));
+        assert!(!q.matches(&folder("Loops")));
+        let flat = Query::parse("key:song").with_song_key(&["A# minor".into(), "Bb minor".into()]);
+        assert!(flat.matches(&file("x.wav", false, &["bb MINOR"])));
+        let keyless = Query::parse("key:song").with_song_key(&[]);
+        assert!(
+            keyless.matches(&other),
+            "a song without a key filters nothing"
+        );
+        assert!(keyless.matches(&folder("Loops")));
+        assert!(
+            Query::parse("key:song x")
+                .with_song_key(&[])
+                .matches(&file("x.wav", false, &[]))
+        );
     }
 
     #[test]

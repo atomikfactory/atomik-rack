@@ -18,6 +18,7 @@ use crate::timeline::{Bars, format_bbt, format_time, tick_to_seconds};
 use crate::tooltip::Help;
 use atomik_core::{BEAT_UNITS, MAX_BEATS_PER_BAR, TempoPoint, TempoTable};
 use atomik_device_sdk::Registry;
+use atomik_model::harmony::Harmony;
 use atomik_model::{Command, MeterEvent, RackDoc, SongCommand, TEMPO_MAX, TEMPO_MIN, TempoEvent};
 use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
@@ -198,6 +199,9 @@ pub struct TransportBar {
     state: TransportState,
     tempo: Vec<TempoEvent>,
     meter: Vec<MeterEvent>,
+    /// The song key and its changes (the chords are left out): the Key field shows the key at the
+    /// playhead.
+    keys: Harmony,
     bars: Bars,
     loop_enabled: bool,
     /// The song's loop range (the locators).
@@ -244,6 +248,7 @@ impl TransportBar {
                 num: 4,
                 den: 4,
             }],
+            keys: Harmony::default(),
             bars: Bars::default(),
             loop_enabled: false,
             loop_range: (0, 0),
@@ -386,6 +391,15 @@ impl TransportBar {
     /// Reads the tempo map, meter and loop flag from the document.
     pub fn sync(&mut self, doc: &RackDoc, _registry: &Registry) {
         let bars = Bars::of(&doc.song);
+        let h = &doc.song.harmony;
+        if self.keys.key != h.key || self.keys.changes != h.changes {
+            self.keys = Harmony {
+                key: h.key,
+                changes: h.changes.clone(),
+                chords: Vec::new(),
+            };
+            self.repaint = true;
+        }
         if self.tempo != doc.song.tempo
             || self.meter != doc.song.meter
             || self.bars != bars

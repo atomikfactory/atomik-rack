@@ -9,6 +9,31 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Chord track and song key.** The song can have a key and a chord lane that the rest of the app follows. A key is a
+  root and a scale kind (every kind of the piano roll but chromatic); key changes along the song work like meter
+  changes, and the key at a tick is the last change at or before it, else the song key. A chord has a root, a quality
+  (the 21 qualities of the chord stamp), an optional bass note and a span; chords never overlap. View > Lanes and
+  Markers > Key Lane and Chord Lane show two rows above the track lanes, under the tempo and energy lanes. A click on
+  the empty lane adds a key change (the key already in effect) or the tonic chord of the key there, a bar long, and a
+  drag from the press sets its length; a drag moves a tag or a chord, the right end of a chord resizes it and neither
+  runs into the next chord; a double click opens a picker with the root, the quality (or the scale) and the bass note
+  and a text field for a chord symbol such as `Am7`, `F#m7b5`, `C/G`, `Bbmaj7` or `Dsus4/A`, read by a small parser
+  that takes the common spellings (`m`, `min`, `-`, `maj7`, `M7`, `dim`, `sus`, `add9`, flats and sharps in letters or
+  signs) and says what it cannot read; the right button lists Delete and Copy, and Paste on the empty lane. Every
+  gesture is one undo step and Escape puts a drag back. The transport bar has a Key field with the key at the playhead
+  (a click sets the song key; it moves into the overflow list on a narrow bar, where Song Key... is a row) and
+  Transport > Song Key... and Detect Song Key do the same from the menu. A clip without a scale of its own follows the
+  song key at its start in the piano roll (highlighting, snap to scale and the fold), and a scale on the clip still
+  wins. The chord stamp has a Song Chord entry that drops the chord of the lane at the place drawn (with its bass note
+  below), and Fit Notes to Chords moves the selected notes that fall outside the chord at their position to the
+  nearest chord tone, a tie going down and never onto a note that is there already, in one undo step. Detect Song Key
+  reads a pitch-class histogram of every note clip (a note counts as much as it is long) against the standard major
+  and minor key profiles, sets the best of the 24 keys as one undo step and says in the status line how clear it was;
+  a toast holds no buttons, so Undo is the way back. In the browser, `key:song` in the search finds the loops tagged
+  with the song key (`A minor`, `D dorian`; flats match too, and a song without a key filters nothing), and
+  `key:minor` finds a part of a tag. Format 45, the song fields `key`, `key_changes` and `chords` are written only
+  when set and are ignorable, so the version and the compat stay; every saved file lists them in its `ignorable`
+  header, so the example projects, the factory files and the format fixtures were saved again. Command count 538.
 - **Audio and MIDI setup.** The first time Atomik Rack starts (no `settings.json` yet) a short panel opens before the
   start screen and gets sound working in three steps. Sound output lists the audio hosts, the output devices and the
   buffer sizes (the same lists as Audio Settings, with the hint "smaller = less delay, more CPU"), a Test button plays

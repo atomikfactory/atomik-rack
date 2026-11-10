@@ -708,6 +708,11 @@ pub enum UiAction {
     /// The song information panel ([`crate::SongInfoView`]) asks for something: make its texts the
     /// song information, or close.
     SongInfo(crate::song_info_panel::SongInfoAction),
+    /// Open the key and chord picker (see [`crate::HarmonyPickerView`]) on the song key, a key
+    /// change or a chord: a double click on a lane item, or a click on the transport bar's Key.
+    HarmonyPicker(crate::harmony_picker::HarmonyTarget),
+    /// The key and chord picker asks for something: set the value, delete the item or close.
+    Harmony(crate::harmony_picker::HarmonyPickerAction),
     /// The kick and bass check panel ([`crate::KickBassView`]) asks for something: pick a track,
     /// run or stop the check, apply a fix, or close.
     KickBass(crate::kick_bass_panel::KickBassAction),

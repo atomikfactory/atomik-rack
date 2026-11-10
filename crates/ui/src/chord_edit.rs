@@ -17,6 +17,7 @@
 
 use crate::seq_edit::{MAX_KEY, clamp_note};
 use atomik_model::Note;
+use atomik_model::harmony::ChordEvent;
 use atomik_model::theory::{ChordKind, DiatonicSize, Scale, chord_keys, diatonic_chord};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -33,6 +34,9 @@ pub enum Stamp {
     Chord(ChordKind),
     /// A chord of scale tones built from the key's scale degree (needs a scale).
     Diatonic(DiatonicSize),
+    /// The chord of the song's chord lane at the place being drawn (a single note where the lane
+    /// has no chord). Only the pencil uses it: chordify needs a shape of its own.
+    Lane,
 }
 
 impl Stamp {
@@ -40,6 +44,7 @@ impl Stamp {
     pub fn all() -> Vec<Stamp> {
         let mut v = vec![Stamp::None];
         v.extend(ChordKind::ALL.into_iter().map(Stamp::Chord));
+        v.push(Stamp::Lane);
         v.extend(DiatonicSize::ALL.into_iter().map(Stamp::Diatonic));
         v
     }
@@ -52,6 +57,7 @@ impl Stamp {
             Stamp::Diatonic(DiatonicSize::Triad) => "diatonic_triad",
             Stamp::Diatonic(DiatonicSize::Seventh) => "diatonic_seventh",
             Stamp::Diatonic(DiatonicSize::Ninth) => "diatonic_ninth",
+            Stamp::Lane => "lane",
         }
     }
 
@@ -68,6 +74,7 @@ impl Stamp {
             Stamp::Diatonic(DiatonicSize::Triad) => "Diatonic Triad",
             Stamp::Diatonic(DiatonicSize::Seventh) => "Diatonic 7th",
             Stamp::Diatonic(DiatonicSize::Ninth) => "Diatonic 9th",
+            Stamp::Lane => "Song Chord",
         }
     }
 
@@ -79,6 +86,7 @@ impl Stamp {
             Stamp::Diatonic(DiatonicSize::Triad) => "Dia 3",
             Stamp::Diatonic(DiatonicSize::Seventh) => "Dia 7",
             Stamp::Diatonic(DiatonicSize::Ninth) => "Dia 9",
+            Stamp::Lane => "Song",
         }
     }
 
@@ -86,9 +94,14 @@ impl Stamp {
     pub fn is_active(self, scale: Option<Scale>) -> bool {
         match self {
             Stamp::None => false,
-            Stamp::Chord(_) => true,
+            Stamp::Chord(_) | Stamp::Lane => true,
             Stamp::Diatonic(_) => scale.is_some(),
         }
+    }
+
+    /// Whether chordify can build chords with this stamp (the song chord has no shape of its own).
+    pub fn chordifies(self, scale: Option<Scale>) -> bool {
+        self != Stamp::Lane && self.is_active(scale)
     }
 
     /// The keys of the chord on `key`, ascending, in the given inversion; empty when the
@@ -98,6 +111,7 @@ impl Stamp {
         match (self, scale) {
             (Stamp::Chord(c), _) => chord_keys(key, c, inversion),
             (Stamp::Diatonic(size), Some(s)) => diatonic_chord(s, key, size, inversion),
+            // The lane's chord depends on where it is drawn: see `lane_chord_keys`.
             _ => Vec::new(),
         }
     }
@@ -280,6 +294,40 @@ pub fn unique(notes: Vec<Note>, tracked: &BTreeSet<usize>) -> (Vec<Note>, BTreeS
     (out.into_iter().map(|(n, _)| n).collect(), sel)
 }
 
+/// The key with pitch class `pc` nearest to `near` (a tie goes down), within the keyboard.
+fn nearest_with_class(near: u8, pc: u8) -> u8 {
+    for d in 0..12u8 {
+        if let Some(k) = near.checked_sub(d)
+            && k % 12 == pc % 12
+        {
+            return k;
+        }
+        let up = near.saturating_add(d);
+        if up <= MAX_KEY && up % 12 == pc % 12 {
+            return up;
+        }
+    }
+    near
+}
+
+/// The keys the pencil drops for the chord of the song's chord lane when it is pressed on `near`:
+/// the chord's root is the key of its pitch class nearest to `near` (a tie goes down), the
+/// chord is stacked above it in the given inversion, and a bass note that is not the root goes
+/// below the lowest key. Ascending.
+pub fn lane_chord_keys(chord: &ChordEvent, near: u8, inversion: u8) -> Vec<u8> {
+    let root = nearest_with_class(near, chord.root);
+    let mut keys = chord_keys(root, chord.quality, inversion);
+    if let Some(bass) = chord.bass
+        && let Some(low) = keys.first().copied()
+    {
+        let below = (0..low).rev().find(|k| k % 12 == bass % 12);
+        keys.extend(below);
+        keys.sort_unstable();
+        keys.dedup();
+    }
+    keys
+}
+
 /// Moves every selected note to the nearest in-scale key (a note that is in the scale stays;
 /// a tie goes down).
 pub fn conform(notes: &[Note], sel: &BTreeSet<usize>, scale: Scale) -> Vec<Note> {
@@ -343,7 +391,7 @@ pub fn chordify(
     inversion: u8,
     scale: Option<Scale>,
 ) -> Option<(Vec<Note>, BTreeSet<usize>)> {
-    if !stamp.is_active(scale) || sel.is_empty() {
+    if !stamp.chordifies(scale) || sel.is_empty() {
         return None;
     }
     let mut out: Vec<Note> = Vec::with_capacity(notes.len());
@@ -613,7 +661,7 @@ mod tests {
             assert_eq!(Stamp::from_id(s.id()), Some(s), "{}", s.id());
             assert!(!s.label().is_empty() && !s.short().is_empty());
         }
-        assert_eq!(Stamp::all().len(), 1 + 21 + 3);
+        assert_eq!(Stamp::all().len(), 1 + 21 + 1 + 3);
         assert_eq!(Stamp::from_id("nope"), None);
         let major = Stamp::Chord(ChordKind::Major);
         assert_eq!(major.keys(60, None, 0), [60, 64, 67]);

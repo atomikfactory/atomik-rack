@@ -47,6 +47,9 @@
 //!                                                                     (v21; written only when non-empty),
 //!             "groups"?: [{"id", "name", "parent"?, "collapsed"?, "color"?, "muted"? (v43), "solo"? (v43)}…]
 //!                                                                     (v22; written only when non-empty),
+//!             "key"?: {"root": 0..=11, "scale": a scale id but "chromatic"}, "key_changes"?: [{"tick", "root",
+//!                           "scale"}…], "chords"?: [{"tick", "length", "root", "quality": a chord id, "bass"?: 0..=11}…]
+//!                                                  (v45, ignorable; each written only when set),
 //!             "launcher"?: {"quantize"? ("none", "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars"; omitted for
 //!                           "1 bar"), "stop_empty"? (`false` only), "scenes"?: [{"name"?, "color"?, "tempo"?}…],
 //!                           "slots"?: [{"track", "row", "quantize"?, "clip": a note clip with "start" 0 and
@@ -449,6 +452,9 @@
 //! scenes, slots and the launch quantize, written only when it holds something and ignorable (a reader
 //! that drops it opens the song with its arrangement and no launcher). A slot is a note clip of a note
 //! track; its `"row"` is a scene index, and a slot of a device without a track is not written.
+//! The song may also carry its harmony (see [`crate::harmony`]) in three optional fields, `"key"`,
+//! `"key_changes"` and `"chords"`, written only when set and ignorable (a reader that drops them opens the
+//! song without a key or a chord lane). Chords are sorted by tick and never overlap.
 //! Saving always writes version 45, with `"compat": 44` and the `"ignorable"` list (see [`schema`]): a reader of 44 opens the file and drops the launcher and the per-note expression, one warning each.
 
 use crate::console::{
@@ -506,6 +512,7 @@ use std::sync::Arc;
 mod read_clip;
 mod read_console;
 mod read_devices;
+mod read_harmony;
 mod read_launcher;
 mod read_legacy;
 mod read_song;
@@ -516,6 +523,7 @@ mod write;
 mod write_clip;
 mod write_console;
 mod write_devices;
+mod write_harmony;
 mod write_launcher;
 
 use read_clip::*;

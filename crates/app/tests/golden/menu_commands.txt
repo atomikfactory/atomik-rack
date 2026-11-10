@@ -136,6 +136,7 @@ DeliveryTargets | Delivery Targets…
 DetachBrowser | Detach Browser
 DetachConsole | Detach Mixer
 DetachRack | Detach Rack
+DetectKey | Detect Song Key
 DirectRecord | Direct Record
 Documentation | Documentation
 Duplicate | Duplicate
@@ -367,6 +368,7 @@ SetRackSort(AutoGroup) | Auto-Group
 SetRackSort(Free) | No Grouping
 SetRackSort(PerTrack) | Rack per Track
 SetRightLocator | Set Right Locator at Playhead
+SetSongKey | Song Key…
 SetTheme(Dark) | Dark
 SetTheme(Light) | Light
 SetTheme(System) | Same as System
@@ -383,6 +385,7 @@ StressSong | Stress Song
 ToggleBigMeter | Big Meter
 ToggleBrowser | Device Browser
 ToggleChase | Chase Notes
+ToggleChordLane | Chord Lane
 ToggleClockIn | Follow MIDI Clock
 ToggleClockOut | MIDI Clock Out
 ToggleClockWhileStopped | Send Clock While Stopped
@@ -398,6 +401,7 @@ ToggleFlip | Back of Rack
 ToggleFolder | Collapse Folder
 ToggleHistory | Undo History
 ToggleInspector | Inspector
+ToggleKeyLane | Key Lane
 ToggleLaneMute | Mute Lane
 ToggleLauncher | Launcher
 ToggleMarkerList | Marker List

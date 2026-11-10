@@ -1442,6 +1442,7 @@ impl<S: EngineSink> AppCore<S> {
         self.arrangement.sync_at(doc, &self.registry, revision);
         self.piano_roll.sync_at(doc, &self.registry, revision);
         self.sync_roll_labels();
+        self.sync_song_key_filter();
         let doc = self.document.doc();
         self.view
             .set_clip_scale(self.piano_clip.and_then(|_| self.piano_roll.scale()));
@@ -4115,6 +4116,8 @@ mod bass_read;
 mod delivery;
 #[path = "app_core_energy.rs"]
 mod energy;
+#[path = "app_core_harmony.rs"]
+mod harmony;
 #[path = "app_core_lens.rs"]
 mod lens;
 #[path = "app_core_mixcheck.rs"]
@@ -4252,6 +4255,10 @@ mod delivery_tests;
 #[cfg(test)]
 #[path = "app_core_energy_tests.rs"]
 mod energy_tests;
+
+#[cfg(test)]
+#[path = "app_core_harmony_tests.rs"]
+mod harmony_tests;
 
 #[cfg(test)]
 #[path = "app_core_translation_tests.rs"]
