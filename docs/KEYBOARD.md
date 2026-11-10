@@ -214,6 +214,7 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Help Mode | global | `Shift+F1` | `Shift+F1` | `Shift+F1` |
 | Import Audio | global | `Ctrl+Shift+I` | `Cmd+Opt+I` | `Ctrl+Shift+I` |
 | Keyboard Shortcuts | global | `F1` | `F1` | `F1` |
+| Manual | global | `Ctrl+F1` | `Cmd+Opt+F1` | `Ctrl+F1` |
 | New | global | `Ctrl+N` | `Cmd+N` | `Ctrl+N` |
 | Open | global | `Ctrl+O` | `Cmd+O` | `Ctrl+O` |
 | Quit | global | `Ctrl+Q` | `Cmd+Q` | `Ctrl+Q` |
@@ -522,6 +523,7 @@ Commands without a key in this profile (menus and Settings still reach them): In
 | Help Mode | global | `Shift+F1` | `Shift+F1` | `Shift+F1` |
 | Import Audio | global | `Ctrl+I` | `Cmd+I` | `Ctrl+I` |
 | Keyboard Shortcuts | global | `F1` | `F1` | `F1` |
+| Manual | global | `Ctrl+F1` | `Cmd+Opt+F1` | `Ctrl+F1` |
 | New | global | `Ctrl+N` | `Cmd+N` | `Ctrl+N` |
 | Open | global | `Ctrl+O` | `Cmd+O` | `Ctrl+O` |
 | Quit | global | `Ctrl+Q` | `Cmd+Q` | `Ctrl+Q` |

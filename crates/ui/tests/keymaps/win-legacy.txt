@@ -49,6 +49,7 @@ files.toggle_preview | files | Space
 files.up | files | Up
 help.hover_help | global | Shift+F1
 help.keyboard_shortcuts | global | F1
+help.manual | global | Ctrl+F1
 keys.note a | keys | H
 keys.note a_sharp | keys | U
 keys.note b | keys | J

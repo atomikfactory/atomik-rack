@@ -737,6 +737,8 @@ pub enum AppCommand {
     HelpMode,
     /// Help ▸ Keyboard Shortcuts (F1): the shortcut list, with search and remapping.
     KeyboardShortcuts,
+    /// Help ▸ Manual: the built-in manual, searchable and offline.
+    Manual,
     /// Help ▸ Documentation: the project page with the documentation, in the browser.
     Documentation,
     /// Help ▸ Report an Issue: the project's issue forms, in the browser.
@@ -1256,6 +1258,7 @@ impl AppCommand {
             AppCommand::OpenExample(_) => return None,
             AppCommand::HelpMode => ("help.hover_help", None),
             AppCommand::KeyboardShortcuts => ("help.keyboard_shortcuts", None),
+            AppCommand::Manual => ("help.manual", None),
             AppCommand::Documentation => ("help.documentation", None),
             AppCommand::ReportIssue => ("help.report_issue", None),
             AppCommand::CheckForUpdates => ("help.check_for_updates", None),
@@ -1714,6 +1717,7 @@ impl AppCommand {
             ("help.guided_tour", None) => AppCommand::GuidedTour,
             ("help.hover_help", None) => AppCommand::HelpMode,
             ("help.keyboard_shortcuts", None) => AppCommand::KeyboardShortcuts,
+            ("help.manual", None) => AppCommand::Manual,
             ("help.documentation", None) => AppCommand::Documentation,
             ("help.report_issue", None) => AppCommand::ReportIssue,
             ("help.check_for_updates", None) => AppCommand::CheckForUpdates,
@@ -4464,6 +4468,7 @@ pub fn menus_with_songs(
                 item("Guided Tour", AppCommand::GuidedTour),
                 check("Help Mode", AppCommand::HelpMode, state.help_mode),
                 item("Keyboard Shortcuts", AppCommand::KeyboardShortcuts),
+                item("Manual", AppCommand::Manual),
                 item("Documentation", AppCommand::Documentation),
                 item("Report an Issue", AppCommand::ReportIssue),
                 item("Check for Updates", AppCommand::CheckForUpdates),
@@ -4956,6 +4961,7 @@ mod tests {
             AppCommand::GuidedTour,
             AppCommand::HelpMode,
             AppCommand::KeyboardShortcuts,
+            AppCommand::Manual,
             AppCommand::Documentation,
             AppCommand::ReportIssue,
             AppCommand::CheckForUpdates,
@@ -5279,6 +5285,7 @@ mod tests {
                         AppCommand::ToggleFileBrowser
                             | AppCommand::KeyboardShortcuts
                             | AppCommand::HelpMode
+                            | AppCommand::Manual
                     )
                 }),
             _ => None,
@@ -5502,6 +5509,7 @@ mod tests {
                 "Guided Tour",
                 "Help Mode",
                 "Keyboard Shortcuts",
+                "Manual",
                 "Documentation",
                 "Report an Issue",
                 "Check for Updates",

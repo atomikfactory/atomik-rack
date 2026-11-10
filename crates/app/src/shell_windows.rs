@@ -332,6 +332,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some((v, _)) = &mut self.palette {
                     v.set_scale(scale);
                 }
+                if let Some(v) = &mut self.manual {
+                    v.set_scale(scale);
+                }
                 if let Some(v) = &mut self.quantize {
                     v.set_scale(scale);
                 }
@@ -615,6 +618,7 @@ impl<B: AudioBackend> Shell<B> {
             || self.mod_matrix.is_some()
             || self.param_search.is_some()
             || self.palette.is_some()
+            || self.manual.is_some()
             || self.quantize.is_some()
             || self.scale.is_some()
             || self.blind.is_some()

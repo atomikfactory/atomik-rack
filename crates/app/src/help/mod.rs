@@ -13,8 +13,9 @@
 //! - anything else falls back to the tooltip text, split at its first colon into a title and a
 //!   line, so a control without an entry still answers (the coverage test lists these).
 //!
-//! The manual sections are the headings of `docs/README.md`; [`section_url`] maps a section to
-//! the address Help > Documentation style opens in the browser.
+//! The manual sections are the headings of `docs/README.md`, and the "More" link of a card opens
+//! the built-in manual ([`crate::manual`]) at that heading ([`Resolved::manual`]). A section the
+//! manual does not hold falls back to [`section_url`], the address of the page in the browser.
 
 use atomik_core::{ParamDescriptor, Unit};
 use atomik_device_sdk::Registry as Devices;
@@ -109,7 +110,8 @@ macro_rules! docs {
 }
 
 /// The manual sections the help text links to, with the address that opens each in the browser
-/// (the same way Help > Documentation opens the project page).
+/// (the same way Help > Documentation opens the project page). The built-in manual holds all of
+/// them; the address is where a section would open if it did not.
 const SECTIONS: [(&str, &str); 5] = [
     ("The main window", docs!("README.md#the-main-window")),
     ("CPU use", docs!("README.md#cpu-use")),
@@ -136,8 +138,21 @@ pub fn sections() -> impl Iterator<Item = &'static str> {
 pub struct Resolved {
     /// The card of the panel.
     pub card: HelpCard,
-    /// The address the "More" link opens (`None`: the card has no link).
+    /// The address the "More" link opens in the browser (`None`: it opens the manual, or the
+    /// card has no link).
     pub url: Option<&'static str>,
+    /// The manual heading the "More" link opens in the built-in manual.
+    pub manual: Option<String>,
+}
+
+/// Where the "More" link of `section` goes: the built-in manual when it has that heading, else
+/// the address of the page in the browser.
+fn link_of(section: &str) -> (Option<&'static str>, Option<String>) {
+    if crate::manual::manual().find_heading(section).is_some() {
+        (None, Some(section.to_owned()))
+    } else {
+        (section_url(section), None)
+    }
 }
 
 /// The card for the control `help` describes. `keymap` gives the live shortcut of its command
@@ -160,14 +175,18 @@ pub fn resolve(help: &Help, keymap: &Keymap, devices: &Devices) -> Resolved {
 
 fn entry_card(entry: &Entry, shortcut: Option<String>) -> Resolved {
     let mut card = HelpCard::new(entry.title.clone(), entry.text.clone()).with_shortcut(shortcut);
-    let mut url = None;
-    if let Some(section) = &entry.more
-        && let Some(found) = section_url(section)
-    {
-        card = card.with_more(section.clone());
-        url = Some(found);
+    let mut link = (None, None);
+    if let Some(section) = &entry.more {
+        link = link_of(section);
+        if link.0.is_some() || link.1.is_some() {
+            card = card.with_more(section.clone());
+        }
     }
-    Resolved { card, url }
+    Resolved {
+        card,
+        url: link.0,
+        manual: link.1,
+    }
 }
 
 /// The card of a control without an entry: the tooltip text, split at its first colon into a
@@ -181,6 +200,7 @@ fn fallback_card(help: &Help, shortcut: Option<String>) -> Resolved {
     Resolved {
         card: HelpCard::new(title, line).with_shortcut(shortcut),
         url: None,
+        manual: None,
     }
 }
 
@@ -215,12 +235,11 @@ fn param_card(
         sentences.push(format!("{}: {about}", desc.name));
     }
     let mut card = HelpCard::new(param.name, sentences.join(" "));
-    let mut url = None;
-    if let Some(found) = section_url("Devices") {
+    let (url, manual) = link_of("Devices");
+    if url.is_some() || manual.is_some() {
         card = card.with_more("Devices");
-        url = Some(found);
     }
-    Some(Resolved { card, url })
+    Some(Resolved { card, url, manual })
 }
 
 /// The unit and range of a parameter in a sentence ("From 20 Hz to 20.00 kHz, default 1.00 kHz.").

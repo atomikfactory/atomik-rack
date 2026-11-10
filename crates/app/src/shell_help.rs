@@ -4,8 +4,7 @@
 //! "More" link into the manual.
 //!
 //! The mode never blocks a control: pointer events go where they always go, and only a press on
-//! the panel's own link is taken (it opens the manual the way Help > Documentation opens the
-//! project page). The panel keeps the last control it explained while the pointer is over empty
+//! the panel's own link is taken (it opens the built-in manual at that section). The panel keeps the last control it explained while the pointer is over empty
 //! space or over the panel itself, so the link can be reached. The ordinary tooltips are off
 //! while the mode is on, because the panel replaces them. The mode is not saved: a new session
 //! starts with it off.
@@ -38,9 +37,19 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
-    /// Where the "More" link of the panel opens the manual (`None`: the card has no link).
+    /// The address the "More" link of the panel opens in the browser (`None`: it opens the
+    /// built-in manual, or the card has no link).
     pub fn help_link_url(&self) -> Option<&'static str> {
         self.help_mode.shown.as_ref().and_then(|r| r.url)
+    }
+
+    /// The manual section the "More" link of the panel opens in the built-in manual (`None`: the
+    /// card has no such link).
+    pub fn help_link_section(&self) -> Option<&str> {
+        self.help_mode
+            .shown
+            .as_ref()
+            .and_then(|r| r.manual.as_deref())
     }
 
     /// The docked panel, in the main window (`None` while the mode is off).
@@ -60,7 +69,7 @@ impl<B: AudioBackend> Shell<B> {
     /// The link of the panel: where a press opens the manual (`None` without a link).
     pub fn help_link_rect(&self) -> Option<Rect> {
         help_panel::link_rect(self.help_panel_rect()?, &self.help_card())
-            .filter(|_| self.help_link_url().is_some())
+            .filter(|_| self.help_link_url().is_some() || self.help_link_section().is_some())
     }
 
     /// The bottom edge of the song, rack and side panels: the top of the status line, or of the
@@ -144,9 +153,16 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
         let on_link = *button == PointerButton::Primary
             && self.help_link_rect().is_some_and(|r| r.contains(*pos));
-        match (on_link, self.help_link_url()) {
-            (true, Some(url)) => Some(vec![ShellRequest::OpenUrl(url)]),
-            _ => Some(Vec::new()),
+        if !on_link {
+            return Some(Vec::new());
+        }
+        if let Some(section) = self.help_link_section().map(str::to_owned) {
+            self.open_manual(Some(&section));
+            return Some(Vec::new());
+        }
+        match self.help_link_url() {
+            Some(url) => Some(vec![ShellRequest::OpenUrl(url)]),
+            None => Some(Vec::new()),
         }
     }
 

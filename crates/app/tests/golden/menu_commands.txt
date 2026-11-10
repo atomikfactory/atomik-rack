@@ -222,6 +222,7 @@ LensSmallSpeaker | Small Speaker
 LinkFaders | Link Faders
 LockSurfaces | Lock Surfaces to Selection
 MacroPanel | Macros…
+Manual | Manual
 MapCommand(Redo) | Redo
 MapCommand(SelectPreset { delta: -1 }) | Previous preset
 MapCommand(SelectPreset { delta: 1 }) | Next preset

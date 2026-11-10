@@ -32,6 +32,8 @@ pub enum Runner {
     Menu(AppCommand),
     /// A command of the registry without a menu item: the shell runs it like its key.
     Registry(&'static str),
+    /// A heading of the manual: the shell opens the manual there.
+    Manual(atomik_ui::manual::Location),
 }
 
 /// The entries of the palette and, for each, how to run it (same order).
@@ -66,6 +68,42 @@ pub fn commands(
         runners.push(Runner::Registry(def.id));
     }
     (entries, runners)
+}
+
+/// Adds a "Manual: <heading>" entry for every heading of the manual a person would look for:
+/// down to level three in the first document, level two in the others.
+pub fn manual_entries(
+    manual: &atomik_ui::Manual,
+    entries: &mut Vec<PaletteEntry>,
+    runners: &mut Vec<Runner>,
+) {
+    for (title, at, doc) in manual.headings(3) {
+        let Some((level, _, anchor)) = manual.heading_at(at) else {
+            continue;
+        };
+        if doc > 0 && level > 2 {
+            continue;
+        }
+        let file = &manual.docs()[doc].file;
+        let key = format!("manual:{file}#{anchor}");
+        if entries.iter().any(|e| e.key == key) {
+            continue;
+        }
+        let name = if doc == 0 {
+            format!("Manual: {title}")
+        } else {
+            format!("Manual: {}: {title}", manual.docs()[doc].name)
+        };
+        entries.push(PaletteEntry {
+            key,
+            id: "help.manual".to_owned(),
+            name,
+            path: "Help > Manual".to_owned(),
+            shortcut: None,
+            enabled: true,
+        });
+        runners.push(Runner::Manual(at));
+    }
 }
 
 fn walk(

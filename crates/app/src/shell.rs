@@ -182,7 +182,7 @@ use atomik_ui::{
     ColorPickerAction, ColorPickerView, ColorTarget, CommandPaletteView, ConsoleButton,
     ExportScope, ExportView, FileBrowserView, FilmView, Flip, HISTORY_PANEL_WIDTH,
     HarmonyPickerAction, HarmonyPickerView, HarmonyTarget, Key, KickBassAction, KickBassView,
-    MacrosAction, MacrosView, MaskingAction, MaskingView, MidiMapsAction, MidiMapsView,
+    MacrosAction, MacrosView, ManualView, MaskingAction, MaskingView, MidiMapsAction, MidiMapsView,
     MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView, Modifiers, NotesAction,
     NotesValues, NotesView, NumpadKey, PaletteAction, ParamSearchAction, ParamSearchView,
     PickerValue, Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction,
@@ -656,6 +656,8 @@ pub struct Shell<B: AudioBackend> {
     /// kept in (`None`: not saved).
     palette_recent: Vec<String>,
     palette_path: Option<PathBuf>,
+    /// The manual (Help > Manual) while it is open.
+    manual: Option<ManualView>,
     /// The control a right click opened the MIDI menu for (what Learn MIDI and Forget MIDI act on).
     control_target: Option<(DeviceKey, String)>,
     /// The quantize panel (Edit > Quantize Options) while it is open.
@@ -958,6 +960,7 @@ impl<B: AudioBackend> Shell<B> {
             palette: None,
             palette_recent: Vec::new(),
             palette_path,
+            manual: None,
             control_target: None,
             router: Router::new(built.keymap),
             modifiers: Modifiers::NONE,
@@ -1567,6 +1570,7 @@ impl<B: AudioBackend> Shell<B> {
                 .as_ref()
                 .is_some_and(HarmonyPickerView::is_text_owner)
             || self.palette.is_some()
+            || self.manual.is_some()
             || self.versions.is_some()
             || self.plugin_manager.is_some()
             || self.quantize.as_ref().is_some_and(QuantizeView::wants_text)
@@ -3330,8 +3334,9 @@ impl<B: AudioBackend> Shell<B> {
         // The keys are the ones the keymap file has now, as when a menu opens.
         self.reload_keymap_file();
         let menus = self.menu_model();
-        let (entries, runners) =
+        let (mut entries, mut runners) =
             crate::palette::commands(&menus, &Registry::bundled(), self.router.keymap());
+        crate::palette::manual_entries(&crate::manual::manual(), &mut entries, &mut runners);
         if let Some(path) = &self.palette_path {
             self.palette_recent = crate::palette::load(path);
         }
@@ -3373,6 +3378,10 @@ impl<B: AudioBackend> Shell<B> {
         let name = entry.name.clone();
         match runner.clone() {
             Runner::Menu(command) => self.execute_command(command),
+            Runner::Manual(at) => {
+                self.open_manual_at(at);
+                Vec::new()
+            }
             Runner::Registry(id) => self.run_command(id, None).unwrap_or_else(|| {
                 self.notify(format!("{name} is not available in this view"));
                 Vec::new()
@@ -3936,6 +3945,9 @@ impl<B: AudioBackend> Shell<B> {
             v.set_theme(theme.clone());
         }
         if let Some((v, _)) = &mut self.palette {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.manual {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.quantize {
@@ -4660,6 +4672,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.palette.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some((v, _)) = &mut self.palette {
+                v.set_bounds(rect);
+            }
+        }
+        if self.manual.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.manual {
                 v.set_bounds(rect);
             }
         }
@@ -5659,6 +5677,34 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
             return Vec::new();
+        }
+        if self.manual.is_some() {
+            // The manual takes the keyboard like the palette: typing never reaches a shortcut,
+            // Esc clears the search and then closes it, the key that opens it closes it, and a
+            // click outside it closes it too.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::F(1),
+                modifiers,
+                pressed: true,
+            } = event
+                && modifiers.command()
+            {
+                self.manual = None;
+                return Vec::new();
+            }
+            let actions = self
+                .manual
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            let mut requests = Vec::new();
+            for action in actions {
+                if let UiAction::Manual(a) = action {
+                    requests.extend(self.manual_action(a));
+                }
+            }
+            return requests;
         }
         if self.palette.is_some() {
             // The command palette takes the keyboard (typing never reaches a shortcut), Esc and
@@ -9368,6 +9414,11 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 Vec::new()
             }
+            AppCommand::Manual => {
+                self.toggle_manual();
+                self.close_menubars();
+                Vec::new()
+            }
             AppCommand::CommandPalette => {
                 if self.palette.is_some() {
                     self.palette = None;
@@ -11060,6 +11111,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some((view, _)) = &self.palette {
             view.paint(canvas);
         }
+        if let Some(view) = &self.manual {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.quantize {
             view.paint(canvas);
         }
@@ -11326,6 +11380,9 @@ mod export_impl;
 #[path = "shell_windows.rs"]
 mod windows_impl;
 use windows_impl::{MAIN_SIZE, WinState};
+
+#[path = "shell_manual.rs"]
+mod manual_impl;
 
 #[path = "shell_help.rs"]
 mod help_impl;
@@ -11634,6 +11691,10 @@ mod guide_tests;
 #[cfg(test)]
 #[path = "shell_palette_tests.rs"]
 mod palette_tests;
+
+#[cfg(test)]
+#[path = "shell_manual_tests.rs"]
+mod manual_tests;
 
 #[cfg(test)]
 #[path = "shell_history_tests.rs"]

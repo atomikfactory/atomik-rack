@@ -26,6 +26,10 @@ fn the_shipped_files_parse_and_name_real_manual_sections() {
         assert!(!entry.text.trim().is_empty(), "{id} has a text");
         if let Some(section) = &entry.more {
             assert!(section_url(section).is_some(), "{id}: no section {section}");
+            assert!(
+                crate::manual::manual().find_heading(section).is_some(),
+                "{id}: the manual has no section {section}"
+            );
         }
     }
     // The shipped copy is the one the program reads.
@@ -62,7 +66,8 @@ fn a_control_id_finds_its_entry_with_the_live_shortcut() {
     assert!(found.card.text.starts_with("Starts the song"));
     assert_eq!(found.card.shortcut.as_deref(), Some("Space"));
     assert_eq!(found.card.more.as_deref(), Some("The main window"));
-    assert_eq!(found.url, section_url("The main window"));
+    assert_eq!(found.url, None, "the link opens the built-in manual");
+    assert_eq!(found.manual.as_deref(), Some("The main window"));
     // A control with no command has no shortcut.
     let tempo = resolve(
         &help("Tempo in BPM").id("transport.tempo"),
@@ -275,4 +280,41 @@ fn every_id_a_view_gives_has_an_entry_and_no_entry_is_left_over() {
         .filter(|id| !matches!(*id, "help.idle" | "status.load") && !all.iter().any(|i| i == id))
         .collect();
     assert!(stale.is_empty(), "no view uses the entries {stale:?}");
+}
+
+#[test]
+fn every_anchor_the_help_text_links_to_exists_in_the_manual() {
+    let manual = crate::manual::manual();
+    for section in sections() {
+        let at = manual
+            .find_heading(section)
+            .unwrap_or_else(|| panic!("the manual has no section {section}"));
+        let (_, _, anchor) = manual.heading_at(at).expect("a heading");
+        // The address of the section in the browser names the same anchor as the manual's.
+        if let Some((_, tail)) = section_url(section).and_then(|u| u.split_once("README.md#")) {
+            assert_eq!(tail, anchor, "{section}");
+        }
+        assert_eq!(
+            manual.resolve(0, &format!("README.md#{anchor}")),
+            atomik_ui::manual::Link::Here(at),
+            "{section}"
+        );
+    }
+}
+
+#[test]
+fn the_more_link_of_a_card_opens_the_manual_not_the_browser() {
+    let found = resolve(
+        &help("Play").id("transport.play"),
+        &keymap(),
+        &default_registry(),
+    );
+    assert_eq!(found.url, None);
+    assert_eq!(found.manual.as_deref(), Some("The main window"));
+    let device = resolve(
+        &help("Bypass: click").id("param:atomik.compressor:bypass"),
+        &keymap(),
+        &default_registry(),
+    );
+    assert_eq!(device.manual.as_deref(), Some("Devices"));
 }

@@ -1094,6 +1094,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("help.manual", "Manual", G::Global, C::Global).menu(),
     cmd("help.report_issue", "Report an Issue", G::Global, C::Global).menu(),
     cmd("keys.note", "Play Note", G::Keys, C::Keys).arg(KEYS_NOTE_ARGS),
     cmd("keys.octave_down", "Octave Down", G::Keys, C::Keys).rep(),
