@@ -9,6 +9,12 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Genre templates.** Six songs to start from ship with the program and come first in File > New from Template and on
+  the start screen: Ambient, Hip-Hop Boom Bap, House, Lo-fi, Synthwave and Techno. Each has a tempo, a song key, eight
+  sections over 64 bars as ranges, six named and coloured tracks (kick, drums, bass, chords, lead and a texture) of
+  factory patches, kit pads and clips, a filled launcher, two sends (a space reverb and an echo), the strip EQ on the
+  bass, a duck from the kick, a glue compressor and a -1 dBTP limiter on the master aimed at -14 LUFS, and song
+  information. Your own templates follow them in the list.
 - **Export presets.** One choice exports for a purpose. The export panel has a Preset row (a drop-down, Save Preset
   and Delete Preset) and File > Export for runs a preset at once: Streaming (a 24-bit WAV and an MP3 at 320 kbps at
   -14 LUFS, true peaks under -1 dBTP), Podcast (a mono MP3 at 128 kbps at -16 LUFS), Video (AAC at 256 kbps and

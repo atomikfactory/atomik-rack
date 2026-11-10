@@ -279,6 +279,14 @@ and the files beside it), and every sound is rendered by the application's own d
   instrument patch. A loop plays its clip twice and keeps the second pass, so the loop repeats without a gap. The
   tags of a loop carry its tempo (`88 bpm`) and, when it is pitched, its key (`A minor`), which the browser's tag
   filter lists.
+- **Templates** (`Templates`): six genre songs written from the tables in `app_core_factory_templates.rs` (a tempo,
+  a key, the sections on an 8-bar grid, six tracks with their clips placed by bar, launcher scenes, the levels and the
+  master). A track names a factory patch or the pads of a factory kit, and a clip of the factory table or one of the
+  template's own; a drum clip can feed the kick track with its kick and the drums track with the rest. They hold no
+  audio and are listed first by File > New from Template and the start screen. `write_the_template_projects` writes
+  only them; `calibrate_the_template_levels` (ignored) tries the fader, trim and limiter input of each track and
+  prints the values to put in the table. The tests check the files against the tables, the shape of each song, the
+  level of each track (near -18 dBFS RMS) and the loudness of the master (near -14 LUFS).
 - **Rebuilding**: `ATOMIK_WRITE_FACTORY=1 cargo test -p atomik-app --lib write_the_factory_library -- --ignored`
   writes every file and `factory.json`; the tests then check that the files are what the tables describe, that
   every patch makes sound (a non-silent, bounded bounce of a built-in phrase), that every loop decodes at its tagged

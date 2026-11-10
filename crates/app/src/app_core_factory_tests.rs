@@ -1185,7 +1185,7 @@ fn the_factory_folder_stays_small() {
         .sum();
     assert!(audio < total, "{audio} of {total} bytes");
     assert!(
-        total - audio < 768 * 1024,
+        total - audio < 1280 * 1024,
         "{} bytes of items",
         total - audio
     );
@@ -1801,5 +1801,505 @@ fn the_factory_projects_list_and_a_pick_asks_the_shell_to_open_them() {
         assert_eq!(row.author, AUTHOR);
         c.load_library_item(&row.path, LoadTarget::Default);
         assert_eq!(c.take_open_request(), Some(row.path.clone()));
+    }
+}
+
+// ------------------------------------------------------------------------ the genre templates
+
+use super::factory_build::templates::{
+    BARS, TEMPLATE_AUTHOR, TEMPLATES, TemplateDef, build_template, build_with, template_path,
+};
+use super::factory_build::write_templates;
+use atomik_model::{StemKind, stem_sources};
+use atomik_render::export::{ExportRequest, ExportSpan, render_export};
+use atomik_render::loudness::{LoudnessReport, measure};
+use atomik_render::plugin_pass::RenderControl;
+use atomik_render::project::PluginBounce;
+use atomik_render::stems::{StemRequest, StemStrip, render_stems};
+
+fn template_file(def: &TemplateDef) -> PathBuf {
+    shipped().join(template_path(def.name))
+}
+
+fn load_template(def: &TemplateDef) -> atomik_model::RackDoc {
+    let text = std::fs::read_to_string(template_file(def)).unwrap();
+    atomik_model::load_project(&text, &default_registry())
+        .unwrap_or_else(|e| panic!("{}: {e}", def.name))
+}
+
+/// The tick where bar `bar` (the first is 1) starts, in 4/4.
+fn bar_ticks(bar: i64) -> i64 {
+    (bar - 1) * 4 * PPQ
+}
+
+/// Rewrites only the template projects of the shipped folder from the tables.
+#[test]
+#[ignore = "writes the factory folder: ATOMIK_WRITE_FACTORY=1"]
+fn write_the_template_projects() {
+    assert!(
+        std::env::var_os("ATOMIK_WRITE_FACTORY").is_some(),
+        "set ATOMIK_WRITE_FACTORY=1 to rewrite the factory folder"
+    );
+    write_templates(&shipped());
+}
+
+#[test]
+fn the_template_files_are_what_the_tables_build() {
+    assert_eq!(TEMPLATES.len(), 6);
+    for def in TEMPLATES {
+        let on_disk = std::fs::read_to_string(template_file(def)).unwrap();
+        assert_eq!(
+            on_disk,
+            build_template(def),
+            "{}: run write_the_template_projects",
+            def.name
+        );
+        // A template holds its project and nothing else: no audio of its own.
+        assert_eq!(
+            names_in(&shipped().join("Templates").join(def.name)),
+            [format!("{}.atomik", def.name)],
+            "{}",
+            def.name
+        );
+    }
+    let mut folders: Vec<String> = TEMPLATES.iter().map(|d| d.name.to_owned()).collect();
+    folders.sort();
+    assert_eq!(names_in(&shipped().join("Templates")), folders);
+    // The build is deterministic.
+    for def in TEMPLATES {
+        assert_eq!(build_template(def), build_template(def), "{}", def.name);
+    }
+}
+
+#[test]
+fn every_template_has_a_tempo_a_key_sections_tracks_scenes_a_mix_and_song_information() {
+    let registry = default_registry();
+    let names: Vec<&str> = TEMPLATES.iter().map(|d| d.name).collect();
+    assert_eq!(
+        names,
+        [
+            "Hip-Hop Boom Bap",
+            "House",
+            "Techno",
+            "Synthwave",
+            "Lo-fi",
+            "Ambient"
+        ]
+    );
+    for def in TEMPLATES {
+        let doc = load_template(def);
+        let name = def.name;
+        assert!(doc.validate().is_ok(), "{name}: {:?}", doc.validate());
+        // The tempo, the key and the length.
+        assert!((doc.tempo_bpm - def.bpm).abs() < 1e-9, "{name}");
+        assert_eq!(doc.song.end, bar_ticks(BARS + 1), "{name}");
+        let key = doc
+            .song
+            .harmony
+            .key
+            .unwrap_or_else(|| panic!("{name}: a key"));
+        assert_eq!((key.root, key.scale), def.key, "{name}");
+        // The sections: ranges on the 8-bar grid that follow each other to the end.
+        let ranges = &doc.song.ranges;
+        assert!(
+            (5..=8).contains(&ranges.len()),
+            "{name}: {} sections",
+            ranges.len()
+        );
+        let mut at = 0;
+        for r in ranges {
+            assert_eq!(r.start, at, "{name}: {}", r.name);
+            assert_eq!((r.end - r.start) % (8 * 4 * PPQ), 0, "{name}: {}", r.name);
+            assert!(
+                [
+                    "Intro", "Verse", "Build", "Chorus", "Drop", "Break", "Swell", "Outro"
+                ]
+                .contains(&r.name.as_str()),
+                "{name}: {}",
+                r.name
+            );
+            assert!(r.color.is_some(), "{name}");
+            at = r.end;
+        }
+        assert_eq!(at, bar_ticks(BARS + 1), "{name}");
+        assert_eq!(
+            ranges.first().map(|r| r.name.as_str()),
+            Some("Intro"),
+            "{name}"
+        );
+        assert_eq!(
+            ranges.last().map(|r| r.name.as_str()),
+            Some("Outro"),
+            "{name}"
+        );
+        assert!(ranges.iter().any(|r| r.name == "Break"), "{name}");
+        // The tracks: 4 to 7, named, coloured, each with clips, on built-in devices only.
+        let tracks = &doc.song.tracks;
+        assert!(
+            (4..=7).contains(&tracks.len()),
+            "{name}: {} tracks",
+            tracks.len()
+        );
+        for track in tracks {
+            let label = doc.device(&track.device).map(|d| d.name.clone()).unwrap();
+            assert!(label.len() > 1, "{name}");
+            assert!(
+                doc.song.shown_color(&track.device).is_some(),
+                "{name}: {label}"
+            );
+            assert!(
+                track.lanes.iter().any(|l| !l.clips.is_empty()),
+                "{name}: {label} has no clips"
+            );
+        }
+        for d in &doc.devices {
+            assert!(!holds_plugin(d), "{name}: {} is a plugin", d.name);
+            assert!(
+                registry.descriptor(&d.type_id).is_some(),
+                "{name}: {}",
+                d.type_id
+            );
+        }
+        // The drums are the drum machine, with no audio of its own.
+        let drum_machines = doc
+            .devices
+            .iter()
+            .filter(|d| d.type_id == "atomik.drum-machine")
+            .count();
+        assert_eq!(drum_machines, 2, "{name}: a kick and a kit");
+        assert!(doc.assets.is_empty(), "{name}: no audio");
+        // Nothing plays past the end, and every note clip holds notes.
+        for clip in all_clips(&doc) {
+            assert!(clip.start + clip.length <= doc.song.end, "{name}");
+            if let atomik_model::ClipContent::Notes(n) = &clip.content {
+                assert!(!n.is_empty(), "{name}");
+            }
+        }
+        // The sends: a space reverb and an echo on two returns, and tracks that send to them.
+        let returns: Vec<&str> = doc
+            .console
+            .returns
+            .iter()
+            .flatten()
+            .filter_map(|k| doc.device(k))
+            .map(|d| d.type_id.as_str())
+            .collect();
+        assert_eq!(returns, ["atomik.space-reverb", "atomik.echo"], "{name}");
+        let sending = |param: &str| {
+            doc.console
+                .channels
+                .iter()
+                .filter(|c| {
+                    doc.device(&c.channel)
+                        .is_some_and(|d| d.params.get(param).is_some_and(|v| *v > 0.5))
+                })
+                .count()
+        };
+        assert!(sending("send1.on") >= 3, "{name}");
+        assert!(sending("send2.on") >= 1, "{name}");
+        // The master: a glue compressor and a limiter at -1 dBTP.
+        let master = doc.console.master.clone().unwrap();
+        let chain = atomik_model::insert_chain(&doc, &registry, &master);
+        let types: Vec<&str> = chain
+            .iter()
+            .filter_map(|k| doc.device(k))
+            .map(|d| d.type_id.as_str())
+            .collect();
+        assert_eq!(types, ["atomik.compressor", "atomik.mastering"], "{name}");
+        let limiter = doc.device(&chain[1]).unwrap();
+        assert!((limiter.params["ceiling"] + 1.0).abs() < 1e-6, "{name}");
+        // The bass has the strip EQ on and ducks from the kick.
+        let by_name = |wanted: &str| {
+            doc.devices
+                .iter()
+                .find(|d| d.name == wanted)
+                .unwrap_or_else(|| panic!("{name}: no device named {wanted}"))
+        };
+        let bass = by_name(def.bass);
+        let channel = doc.console.channel_of(&bass.key).unwrap().channel.clone();
+        assert!(
+            doc.device(&channel).unwrap().params["eq.on"] > 0.5,
+            "{name}"
+        );
+        let duckers = atomik_model::duck_from::duckers_of(&doc, &registry, &bass.key);
+        assert_eq!(duckers.len(), 1, "{name}");
+        assert_eq!(
+            duckers[0].source.as_ref(),
+            Some(&by_name(def.kick).key),
+            "{name}"
+        );
+        // The launcher is filled: three scenes or more, each with slots, all named.
+        let launcher = &doc.song.launcher;
+        assert!(launcher.scenes.len() >= 3, "{name}");
+        for (row, scene) in launcher.scenes.iter().enumerate() {
+            assert!(!scene.name.is_empty(), "{name}");
+            assert!(
+                launcher.clips().any(|(_, r, _)| r == row),
+                "{name}: scene {row}"
+            );
+        }
+        // The song information.
+        assert_eq!(doc.info.title, def.name);
+        assert_eq!(doc.info.author, TEMPLATE_AUTHOR);
+        assert!(doc.info.notes.len() > 200, "{name}: a note");
+    }
+}
+
+/// The RMS in dBFS of the blocks of 50 ms of `audio` between the frames `from` and `to` that
+/// sound (above -60 dBFS), both channels together: the level of a track while it plays.
+fn sounding_rms_db(audio: &AudioData, from: usize, to: usize) -> f32 {
+    let block = (audio.sample_rate as usize / 20).max(1);
+    let (mut sum, mut blocks) = (0.0f64, 0usize);
+    let mut at = from;
+    while at + block <= to.min(audio.frames()) {
+        let power: f64 = audio
+            .channels
+            .iter()
+            .map(|c| {
+                c[at..at + block]
+                    .iter()
+                    .map(|s| f64::from(*s).powi(2))
+                    .sum::<f64>()
+            })
+            .sum::<f64>()
+            / (block * audio.channels.len()) as f64;
+        if power > 1e-6 {
+            sum += power;
+            blocks += 1;
+        }
+        at += block;
+    }
+    if blocks == 0 {
+        return -120.0;
+    }
+    (10.0 * (sum / blocks as f64).log10()) as f32
+}
+
+/// What the levels window of a template measured: the sounding level of each channel in the
+/// second half of the 16 bars, and the loudness of the master over all of them.
+struct Levels {
+    tracks: Vec<(String, f32)>,
+    master: LoudnessReport,
+}
+
+fn measure_levels(def: &TemplateDef) -> Levels {
+    measure_doc(def, &load_template(def))
+}
+
+fn measure_doc(def: &TemplateDef, doc: &atomik_model::RackDoc) -> Levels {
+    let doc = doc.clone();
+    let registry = default_registry();
+    let sources: Vec<_> = stem_sources(&doc, &registry)
+        .into_iter()
+        .filter(|s| matches!(s.kind, StemKind::Channel | StemKind::Master))
+        .collect();
+    let request = StemRequest {
+        span: ExportSpan::Range(bar_ticks(def.loud), bar_ticks(def.loud + 16)),
+        tail_seconds: 0.0,
+        strip: StemStrip::Full,
+        sources,
+    };
+    let mut stems = Vec::new();
+    render_stems(
+        &doc,
+        &registry,
+        (&ProjectOptions::default(), None),
+        &mut PluginBounce::default(),
+        &request,
+        (RenderControl::default(), &mut |stem| {
+            stems.push(stem);
+            Ok(())
+        }),
+    )
+    .unwrap()
+    .unwrap();
+    let mut tracks = Vec::new();
+    let mut master = LoudnessReport::default();
+    for stem in &stems {
+        assert!(
+            stem.audio.channels.iter().flatten().all(|s| s.is_finite()),
+            "{}: {}",
+            def.name,
+            stem.source.name
+        );
+        if stem.source.kind == StemKind::Master {
+            master = measure(&stem.audio);
+        } else {
+            let half = stem.audio.frames() / 2;
+            tracks.push((
+                stem.source.name.clone(),
+                sounding_rms_db(&stem.audio, half, stem.audio.frames()),
+            ));
+        }
+    }
+    Levels { tracks, master }
+}
+
+/// Where each track of a template (kick, drums, bass, chords, lead, texture) is aimed: near
+/// -18 dBFS RMS, the kick and the bass a little above, the texture a little below.
+const TARGETS: [f32; 6] = [-16.0, -19.0, -17.0, -19.0, -18.0, -21.0];
+/// Where the master of a template is aimed.
+const TARGET_LUFS: f32 = -14.0;
+
+/// Tries levels on every template and prints the `(fader, trim)` of every track and the limiter
+/// input that land on [`TARGETS`] and [`TARGET_LUFS`]: the numbers the tables are set from.
+#[test]
+#[ignore = "prints the levels of the templates: ATOMIK_CALIBRATE_ROUNDS=3"]
+fn calibrate_the_template_levels() {
+    let rounds: usize = std::env::var("ATOMIK_CALIBRATE_ROUNDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+    for def in TEMPLATES {
+        let mut mix: Vec<(f32, f32)> = def.tracks.iter().map(|t| (t.voice.level, t.trim)).collect();
+        let mut master = def.master_input;
+        for round in 0..=rounds {
+            let text = build_with(def, &mix, master);
+            let doc = atomik_model::load_project(&text, &default_registry()).unwrap();
+            let levels = measure_doc(def, &doc);
+            let lufs = levels.master.integrated_lufs.unwrap_or(-99.0);
+            eprintln!("{} round {round}: {}", def.name, levels.master.summary());
+            for (i, (name, db)) in levels.tracks.iter().enumerate() {
+                eprintln!(
+                    "    {name}: {db:.1} dBFS RMS (fader {:.1}, trim {:.1})",
+                    mix[i].0, mix[i].1
+                );
+            }
+            if round == rounds {
+                break;
+            }
+            for (i, (_, db)) in levels.tracks.iter().enumerate() {
+                let total = mix[i].0 + mix[i].1 + (TARGETS[i] - db);
+                let fader = total.clamp(-30.0, 0.0);
+                mix[i] = (fader, (total - fader).clamp(-24.0, 24.0));
+            }
+            master = (master + (TARGET_LUFS - lufs)).clamp(-24.0, 24.0);
+        }
+        eprintln!("RESULT {}: master_input {master:.1}", def.name);
+        for (track, (fader, trim)) in def.tracks.iter().zip(&mix) {
+            eprintln!(
+                "RESULT   {}: level {fader:.1} trim {trim:.1}",
+                track.voice.name
+            );
+        }
+    }
+}
+
+#[test]
+fn the_tracks_of_a_template_sit_near_minus_18_dbfs_and_the_master_near_minus_14_lufs() {
+    for def in TEMPLATES {
+        let levels = measure_levels(def);
+        let name = def.name;
+        for (track, db) in &levels.tracks {
+            assert!(
+                (-23.0..=-13.0).contains(db),
+                "{name}: {track} is at {db:.1} dBFS RMS"
+            );
+        }
+        let lufs = levels.master.integrated_lufs.unwrap_or(-99.0);
+        assert!(
+            (-20.0..=-10.0).contains(&lufs),
+            "{name}: {lufs:.1} LUFS ({})",
+            levels.master.summary()
+        );
+        assert!(
+            (-16.5..=-12.0).contains(&lufs),
+            "{name}: aimed at -14 LUFS, got {lufs:.1}"
+        );
+        let peak = levels.master.true_peak_dbtp.unwrap_or(0.0);
+        assert!(peak <= -0.9, "{name}: {peak:.2} dBTP");
+    }
+}
+
+#[test]
+fn every_template_renders_its_first_eight_bars_to_a_finite_audible_master() {
+    let registry = default_registry();
+    for def in TEMPLATES {
+        let doc = load_template(def);
+        let rendered = render_export(
+            &doc,
+            &registry,
+            (&ProjectOptions::default(), None),
+            &mut PluginBounce::default(),
+            &ExportRequest {
+                span: ExportSpan::Range(0, bar_ticks(9)),
+                tail_seconds: 0.0,
+            },
+            RenderControl::default(),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            rendered.warnings.is_empty(),
+            "{}: {:?}",
+            def.name,
+            rendered.warnings
+        );
+        let stats = stats_of(&rendered.audio.channels, rendered.audio.sample_rate);
+        assert!(stats.finite, "{}", def.name);
+        assert!(
+            stats.peak > 0.05 && stats.peak <= 1.0,
+            "{}: {}",
+            def.name,
+            stats.peak
+        );
+        assert!(stats.rms_db > -45.0, "{}: {} dB", def.name, stats.rms_db);
+        let seconds = 8.0 * 4.0 * 60.0 / def.bpm;
+        assert!(
+            (f64::from(stats.seconds) - seconds).abs() < 0.05,
+            "{}",
+            def.name
+        );
+    }
+}
+
+#[test]
+fn the_genre_templates_lead_the_template_list_and_open_as_new_songs() {
+    let tmp = Tmp::new("genre-list");
+    let mut c = core(&tmp);
+    assert!(c.templates().is_empty());
+    let root = std::fs::canonicalize(shipped()).unwrap();
+    c.set_factory_root(Some(root.clone()));
+    assert!(c.reload_templates());
+    let listed: Vec<String> = c.templates().iter().map(|t| t.name.clone()).collect();
+    assert_eq!(
+        listed,
+        [
+            "Ambient",
+            "Hip-Hop Boom Bap",
+            "House",
+            "Lo-fi",
+            "Synthwave",
+            "Techno"
+        ]
+    );
+    // A template of the user's own folder comes after them.
+    let dir = c.templates_dir().unwrap();
+    write(&dir.join("Mine.atomik"), &build_template(&TEMPLATES[1]));
+    assert!(c.reload_templates());
+    assert_eq!(c.templates().len(), 7);
+    assert_eq!(c.templates()[6].name, "Mine");
+    // Each shows its card and opens as a new, unsaved song with its six tracks.
+    let genre: Vec<TemplateEntry> = c.templates()[..6].to_vec();
+    for entry in genre {
+        let def = TEMPLATES.iter().find(|d| d.name == entry.name).unwrap();
+        let card = c.template_preview(&entry.path).unwrap();
+        assert_eq!(card.tracks.len(), 6, "{}", def.name);
+        assert!((card.tempo_bpm - def.bpm).abs() < 1e-9);
+        assert_eq!(card.meter, (4, 4));
+        if def.name == "Techno" {
+            // The card of the start screen golden.
+            assert_eq!(
+                card.tracks,
+                ["Kick", "Drums", "Acid Bass", "Stabs", "Lead", "Pulse"]
+            );
+        }
+        let before = std::fs::read(&entry.path).unwrap();
+        c.open_template(&entry.path).unwrap();
+        assert_eq!(c.file(), None);
+        assert_eq!(c.doc().song.tracks.len(), 6);
+        assert_eq!(c.doc().info.title, def.name);
+        assert!(matches!(c.save(), Err(AppError::NoPath)));
+        assert_eq!(std::fs::read(&entry.path).unwrap(), before);
     }
 }

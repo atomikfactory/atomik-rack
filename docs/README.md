@@ -118,6 +118,29 @@ in the rack and in the strip menu of the mixer (Duck from...), and in Track > Qu
 - **Gentle Pump.** A different, shallower way to make a track breathe: a Sidechain Tool in pump mode on quarter notes,
   with no key and no other track. It follows the song position and tempo.
 
+## Start screen and genre templates
+
+The start screen (File > Start Screen, and at start-up) lists New, Open, the templates and the recent songs. The first
+six templates ship with the program: **Ambient**, **Hip-Hop Boom Bap**, **House**, **Lo-fi**, **Synthwave** and
+**Techno**. Point at one to see its card (tempo, meter and tracks), click it to start a new song from it. File > New
+from Template lists the same templates, with your own after them (at most sixteen in all). A template opens as an
+untitled song, so Save asks for a place and the template itself is never changed.
+
+- **What is in one.** A tempo and a song key, eight sections on an 8-bar grid over 64 bars (Intro, Verse or Build,
+  Chorus or Drop, Break, Outro), shown as ranges in the arrangement. Six named, coloured tracks: a kick and the rest of
+  the drums (the drum machine with the pads of a factory kit), a bass, chords or a pad, a lead or arpeggio and a
+  texture. Their clips are the factory clips, or short patterns derived from them, laid out so the song plays from the
+  first bar to the last, with some sections left bare for your own parts.
+- **The launcher.** Four or five scenes hold the main loops (intro, groove, hook, break), so the launcher is full
+  the first time you open it with F10.
+- **The mix.** Each track sits near -18 dBFS RMS (the channel's input gain sets the level, the faders stay near
+  unity). The bass has the strip EQ on and ducks from the kick (Duck from, see Ducking). Two sends feed a space reverb
+  and an echo. The master has a glue compressor and a limiter with a -1 dBTP ceiling, set so the song lands near
+  -14 LUFS.
+- **The song information.** File > Song Information holds the title, the author (Atomik Rack factory) and a note on
+  how the template is built and what to try.
+- **No audio.** A template uses only the program's own devices, so it is small and plays on any machine.
+
 ## CPU use
 
 The program times every device in the rack on the audio thread all the time; the cost is small (about half a percent

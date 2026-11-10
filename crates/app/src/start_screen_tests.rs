@@ -770,3 +770,51 @@ fn golden_start_screen_cards_dark() {
 fn golden_start_screen_cards_light() {
     golden_cards("start_screen_cards_light", &Theme::light());
 }
+
+fn golden_genres(name: &str, theme: &Theme) {
+    let mut list = DisplayList::new();
+    let mut s = StartScreen::new(
+        [
+            "Ambient",
+            "Hip-Hop Boom Bap",
+            "House",
+            "Lo-fi",
+            "Synthwave",
+            "Techno",
+        ]
+        .map(String::from)
+        .to_vec(),
+        vec![RecentRow::new(
+            &PathBuf::from("/songs/demo/Night Drive.atomik"),
+            Some(1_700_000_000),
+        )],
+        false,
+        true,
+    );
+    s.set_preview(
+        5,
+        Some(TemplatePreview {
+            tracks: ["Kick", "Drums", "Acid Bass", "Stabs", "Lead", "Pulse"]
+                .map(String::from)
+                .to_vec(),
+            tempo_bpm: 132.0,
+            meter: (4, 4),
+        }),
+    );
+    for _ in 0..7 {
+        s.handle(&key(Key::Down), VIEW);
+    }
+    s.paint(&mut list, theme, VIEW);
+    assert_eq!(s.shown_template(), Some(5));
+    check_golden(name, &list.to_json());
+}
+
+#[test]
+fn golden_start_screen_genres_dark() {
+    golden_genres("start_screen_genres", &Theme::dark());
+}
+
+#[test]
+fn golden_start_screen_genres_light() {
+    golden_genres("start_screen_genres_light", &Theme::light());
+}
