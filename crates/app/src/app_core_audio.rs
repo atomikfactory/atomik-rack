@@ -1473,6 +1473,7 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.mixcheck.reset();
         self.audio.notes.reset();
         self.audio.buffers.clear();
+        self.cpu_reset();
         self.audio.ram_pending.clear();
         self.audio.missing.clear();
         self.audio.relinked.clear();

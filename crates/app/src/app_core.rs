@@ -423,7 +423,7 @@ pub struct AppCore<S: EngineSink> {
     pdc_misaligned: (usize, u32),
     /// The Audio I/O panel's metered endpoints.
     io_meters: io_ops::IoMeters,
-    /// The per-device CPU readout (View > CPU Meters).
+    /// The per-device CPU readout (View > Show Device CPU).
     cpu: cpu_ops::CpuMeters,
     /// The CV cables shown with an activity indicator on the back.
     cv_taps: io_ops::CvTaps,
@@ -714,6 +714,8 @@ impl<S: EngineSink> AppCore<S> {
             position: 0,
             recorded: Vec::new(),
         };
+        // The engine measures every device all the time; View > Show Device CPU only shows it.
+        core.sink.set_cpu_timing(true);
         core.audio_reset();
         core.rebuild_engine();
         core.audio_opened();
@@ -4087,6 +4089,7 @@ mod io_ops;
 
 #[path = "app_core_cpu.rs"]
 mod cpu_ops;
+pub use cpu_ops::{DeviceCpu, TrackCpu};
 
 #[path = "app_core_browser.rs"]
 mod browser;

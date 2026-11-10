@@ -360,6 +360,18 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Freezes the track on `device` through its whole chain, whatever is selected (the freeze
+    /// hint of the CPU readout uses it). A refusal is the toast the other freezes give.
+    pub fn freeze_track_of(&mut self, device: &DeviceKey) {
+        match self.plan_freeze(device, FreezeThrough::Track) {
+            Ok(job) => {
+                self.audio.freeze.queue.push_back(job);
+                self.start_next_job();
+            }
+            Err(why) => self.reject(why),
+        }
+    }
+
     /// Unfreezes the selected frozen tracks, one undo step each; with `keep_audio` the render
     /// also becomes a clip on a new audio track.
     pub fn unfreeze_tracks(&mut self, keep_audio: bool) {

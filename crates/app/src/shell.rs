@@ -148,6 +148,7 @@ use crate::about_box::{AboutBox, AboutOutcome};
 use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed};
 use crate::commands::{AppCommand, Menu, MenuState, ScaleStep, SongList, menus_with_songs};
 use crate::context_menus::{self, MenuEnable};
+use crate::cpu_hint::CpuHintCard;
 use crate::export_prefs::ExportPrefs;
 use crate::guide::{Guide, GuideOutcome, Spot};
 use crate::keymap_store::{self, WorkflowPrefs};
@@ -525,6 +526,8 @@ pub struct Shell<B: AudioBackend> {
     updater: Updater,
     /// The question or the news of the update check, while it shows.
     update_notice: Option<UpdateNotice>,
+    /// The suggestion to freeze the heaviest track, while it shows (shell state, never saved).
+    cpu_hint: Option<CpuHintCard>,
     /// The newer release the news is about (what its buttons act on).
     update_release: Option<atomik_update::Release>,
     /// The guided first song, while its panel is open (shell state: never saved in a song).
@@ -876,6 +879,7 @@ impl<B: AudioBackend> Shell<B> {
             start_screen_waiting: false,
             updater: Updater::new(updates_path),
             update_notice: None,
+            cpu_hint: None,
             update_release: None,
             guide: None,
             color_picker: None,
@@ -5170,6 +5174,10 @@ impl<B: AudioBackend> Shell<B> {
         }
         // The notice of the update check takes only the events that land on its card.
         if let Some(requests) = self.update_notice_event(window, event) {
+            return requests;
+        }
+        // The freeze hint is the same kind of card: only the clicks on it are its own.
+        if let Some(requests) = self.cpu_hint_event(window, event) {
             return requests;
         }
         // The modals live in the main window: while one is open the other windows are inert, and
@@ -10147,6 +10155,7 @@ impl<B: AudioBackend> Shell<B> {
         status.overload.late_sandbox_batches = late_batches;
         self.overload = status.overload;
         self.audio_status = status.clone();
+        self.sync_cpu_hint();
         self.log_overload();
         let context = crate::status::crash_context(&status);
         if context != self.crash_context {
@@ -10557,6 +10566,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(wizard) = &self.controller_wizard {
             wizard.paint(canvas, &theme, self.size());
         }
+        if let Some(card) = &self.cpu_hint {
+            card.paint(canvas, &theme, self.size());
+        }
         if self.update_notice_reachable()
             && let Some(notice) = &self.update_notice
         {
@@ -10681,6 +10693,8 @@ mod film_impl;
 #[path = "shell_audio_setup.rs"]
 mod audio_setup_impl;
 
+#[path = "shell_cpu.rs"]
+mod cpu_impl;
 #[path = "shell_update.rs"]
 mod update_impl;
 
@@ -10898,6 +10912,10 @@ mod export_tests;
 #[cfg(test)]
 #[path = "shell_film_tests.rs"]
 mod film_tests;
+
+#[cfg(test)]
+#[path = "shell_cpu_tests.rs"]
+mod cpu_tests;
 
 #[cfg(test)]
 #[path = "shell_update_tests.rs"]
