@@ -4,6 +4,7 @@
 //! row. The instances come from the `NullBackend`, so no process is started.
 
 use super::*;
+use crate::app_core::plugins::{EDITOR_WAITING, crash_log_line};
 use crate::offline_sink::OfflineSink;
 use crate::plugin_test_support::*;
 use atomik_model::empty_doc;
@@ -302,6 +303,48 @@ fn closing_an_external_editor_from_the_app_closes_it_and_removing_the_device_doe
     apply(&mut core, Command::RemoveDevice { key: dev.clone() });
     assert!(!core.plugin_gui_open(&dev));
     assert_eq!(core.take_plugin_window_requests(), vec![]);
+}
+
+/// An editor that takes long to open (an online licence check, the plugin's own dialogs) is
+/// waited for without blocking the app: the panel says so, OPEN GUI again only repeats it, and
+/// the editor counts as open once the plugin says so.
+#[test]
+fn a_slow_external_editor_is_waited_for_and_then_open() {
+    let (mut core, stats, dev) = lost_core();
+    stats.set_external_editor(true);
+    stats.set_external_editor_delay(3);
+    core.handle_action(UiAction::OpenPluginGui {
+        device: dev.clone(),
+    });
+    assert_eq!(core.last_rejection(), Some(EDITOR_WAITING));
+    assert_eq!(stats.external_opens(), 0, "not open yet");
+    assert!(core.plugin_gui_opening(&dev));
+    assert!(
+        core.plugin_gui_open(&dev),
+        "the panel knows it is on its way"
+    );
+    core.handle_action(UiAction::OpenPluginGui {
+        device: dev.clone(),
+    });
+    assert_eq!(core.last_rejection(), Some(EDITOR_WAITING));
+    for _ in 0..4 {
+        core.frame();
+    }
+    assert_eq!(stats.external_opens(), 1);
+    assert!(!core.plugin_gui_opening(&dev));
+    assert!(core.plugin_gui_open(&dev));
+    assert_eq!(core.take_plugin_window_requests(), vec![]);
+}
+
+#[test]
+fn a_crash_is_logged_with_its_reason_and_exit_code() {
+    let line = crash_log_line(
+        "rack.synth",
+        "the plugin process exited with code -1073741819 (0xc0000005): boom",
+    );
+    assert!(line.contains("rack.synth"), "{line}");
+    assert!(line.contains("0xc0000005"), "{line}");
+    assert!(line.contains("boom"), "{line}");
 }
 
 #[test]

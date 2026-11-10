@@ -472,6 +472,7 @@ impl FakeOptions {
 /// Timeouts short enough for tests, long enough for a busy CI machine.
 pub(crate) fn test_timeouts() -> Timeouts {
     Timeouts {
+        load: Duration::from_secs(5),
         create: Duration::from_secs(5),
         call: Duration::from_millis(600),
         text: Duration::from_millis(200),

@@ -104,6 +104,15 @@ mod os {
         }
     }
 
+    pub fn allow_foreground(pid: u32) -> bool {
+        if pid == 0 {
+            return false;
+        }
+        // SAFETY: a plain Win32 call on a process id; it fails harmlessly when this process
+        // may not grant the foreground or the id is not a process.
+        unsafe { windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(pid) != 0 }
+    }
+
     pub fn terminate_now() -> ! {
         // SAFETY: ends this process without running any exit code, which may be stuck.
         unsafe {
@@ -141,6 +150,10 @@ mod os {
         true
     }
 
+    pub fn allow_foreground(_pid: u32) -> bool {
+        false
+    }
+
     pub fn terminate_now() -> ! {
         // SAFETY: `_exit` ends the process at once, without atexit handlers that a stuck plugin
         // thread could block.
@@ -157,6 +170,14 @@ mod os {
 /// and still watches its parent.
 pub fn bind_child(child: &Child) -> io::Result<()> {
     os::bind_child(child)
+}
+
+/// Lets the process `pid` (a child) bring its windows to the front, as the app could: a plugin
+/// that shows a licence or sign-in dialog while it loads, or its editor, is then not hidden
+/// behind the app. Windows only (elsewhere there is nothing to grant); false when nothing was
+/// granted, which costs only the window's place.
+pub fn allow_foreground(pid: u32) -> bool {
+    os::allow_foreground(pid)
 }
 
 /// Child side: ends this process `grace` after `parent_pid` is gone, whatever any thread of it

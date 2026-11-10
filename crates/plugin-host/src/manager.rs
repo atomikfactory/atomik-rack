@@ -174,6 +174,17 @@ pub enum ManagerEvent {
         /// The exit code or signal and the last lines of the process's stderr.
         reason: String,
     },
+    /// The external editor that [`PluginManager::begin_open_external_editor`] started opening
+    /// is open.
+    EditorOpened(InstanceId),
+    /// The external editor that [`PluginManager::begin_open_external_editor`] started opening
+    /// could not open.
+    EditorFailed {
+        /// The instance.
+        instance: InstanceId,
+        /// Why.
+        reason: String,
+    },
 }
 
 /// Builds plugin devices; the app and the render tool use it through this trait.
@@ -205,6 +216,11 @@ struct Managed {
     phase: Phase,
     retained: bool,
     parked: bool,
+    /// An external editor is opening (see [`PluginManager::begin_open_external_editor`]): the
+    /// plugin's main thread is busy, so restarts wait until it is done.
+    editor_opening: bool,
+    /// A restart asked for while the editor was opening.
+    deferred_restart: bool,
 }
 
 /// A creation started by [`PluginManager::begin_create`].
@@ -450,6 +466,8 @@ impl PluginManager {
                 phase: Phase::Running,
                 retained: false,
                 parked: false,
+                editor_opening: false,
+                deferred_restart: false,
             },
         );
         Ok(PluginHandle {
@@ -595,6 +613,31 @@ impl PluginManager {
     ) -> Result<(), ManagerError> {
         assert_main_thread("PluginManager::open_external_editor");
         Ok(self.get(id)?.instance.open_external_gui(owner)?)
+    }
+
+    /// Starts opening (or raising) an [`EditorKind::External`] editor without waiting for it:
+    /// true when it is open already, false when [`PluginManager::poll`] will report
+    /// [`ManagerEvent::EditorOpened`] or [`ManagerEvent::EditorFailed`]. A plugin may show
+    /// licence or sign-in dialogs before its editor opens, which can take minutes.
+    ///
+    /// # Errors
+    /// An unknown instance, or what the plugin said.
+    pub fn begin_open_external_editor(
+        &mut self,
+        id: InstanceId,
+        owner: Option<NativeParent>,
+    ) -> Result<bool, ManagerError> {
+        assert_main_thread("PluginManager::begin_open_external_editor");
+        let m = self.get(id)?;
+        let open = m.instance.begin_open_external_gui(owner)?;
+        m.editor_opening = !open;
+        Ok(open)
+    }
+
+    /// True while an external editor is opening (see
+    /// [`PluginManager::begin_open_external_editor`]).
+    pub fn is_editor_opening(&self, id: InstanceId) -> bool {
+        self.instances.get(&id).is_some_and(|m| m.editor_opening)
     }
 
     /// True when the instance's process is gone (sandbox): it cannot be restarted, only
@@ -900,12 +943,32 @@ impl PluginManager {
                 }
             }
         }
+        if m.editor_opening
+            && let Some(answer) = m.instance.poll_open_external_gui()
+        {
+            m.editor_opening = false;
+            events.push(match answer {
+                Ok(()) => ManagerEvent::EditorOpened(id),
+                Err(e) => ManagerEvent::EditorFailed {
+                    instance: id,
+                    reason: e.to_string(),
+                },
+            });
+        }
         if m.instance.is_lost() {
+            m.editor_opening = false;
             // Nothing to restart: the process is gone. A processor the device handed back is
             // given to the instance, which only drops it.
             if let Some(processor) = m.end.take_processor() {
                 m.instance.deactivate(processor);
             }
+            return;
+        }
+        // While its editor opens the plugin answers nothing on its main thread: a restart
+        // waits for it, rather than fail.
+        restart |= std::mem::take(&mut m.deferred_restart);
+        if m.editor_opening {
+            m.deferred_restart = restart;
             return;
         }
         if restart && !m.parked && m.phase == Phase::Running {

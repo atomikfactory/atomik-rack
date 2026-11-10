@@ -476,6 +476,21 @@ pub trait PluginInstance {
             "this plugin's editor is embedded".to_string(),
         ))
     }
+    /// Starts [`PluginInstance::open_external_gui`] without waiting for the plugin: true when the
+    /// editor is open already, false when [`PluginInstance::poll_open_external_gui`] will tell.
+    /// An editor may take minutes to open (a licence check online, sign-in dialogs), and the
+    /// app must not wait for it. The default opens at once.
+    fn begin_open_external_gui(
+        &mut self,
+        owner: Option<NativeParent>,
+    ) -> Result<bool, BackendError> {
+        self.open_external_gui(owner).map(|()| true)
+    }
+    /// The outcome of the editor opening that [`PluginInstance::begin_open_external_gui`]
+    /// started, once (`None` while it goes on or when none is going on). Main thread.
+    fn poll_open_external_gui(&mut self) -> Option<Result<(), BackendError>> {
+        None
+    }
     /// True when the instance can no longer be used: its process is gone. Every other call
     /// then fails without doing anything; recovery is a new instance.
     fn is_lost(&self) -> bool {
@@ -583,6 +598,7 @@ pub struct NullStats {
     lost: AtomicBool,
     external_editor: AtomicBool,
     external_opens: AtomicUsize,
+    external_delay: AtomicUsize,
     presets: AtomicBool,
 }
 
@@ -630,6 +646,12 @@ impl NullStats {
     /// `preset:<id>`.
     pub fn set_presets(&self, on: bool) {
         self.presets.store(on, Ordering::Relaxed);
+    }
+    /// Makes an external editor take `polls` polls of the instance to open (a plugin that
+    /// checks its licence or shows its own dialogs first): `begin_open_external_gui` answers
+    /// "not yet" and `poll_open_external_gui` says when it is open.
+    pub fn set_external_editor_delay(&self, polls: usize) {
+        self.external_delay.store(polls, Ordering::Relaxed);
     }
     /// How many times an external editor was opened.
     pub fn external_opens(&self) -> usize {
@@ -708,6 +730,7 @@ impl PluginBackend for NullBackend {
             state: PluginStateBlob::default(),
             held: BTreeMap::new(),
             stats: Arc::clone(&self.stats),
+            opening: None,
         }))
     }
 }
@@ -719,6 +742,8 @@ struct NullInstance {
     state: PluginStateBlob,
     held: BTreeMap<u32, f64>,
     stats: Arc<NullStats>,
+    /// Polls left before a slow external editor is open.
+    opening: Option<usize>,
 }
 
 impl Drop for NullInstance {
@@ -858,6 +883,30 @@ impl PluginInstance for NullInstance {
         }
         self.stats.external_opens.fetch_add(1, Ordering::Relaxed);
         Ok(())
+    }
+
+    fn begin_open_external_gui(
+        &mut self,
+        owner: Option<NativeParent>,
+    ) -> Result<bool, BackendError> {
+        let delay = self.stats.external_delay.load(Ordering::Relaxed);
+        if delay == 0 || self.editor_kind() != EditorKind::External {
+            return self.open_external_gui(owner).map(|()| true);
+        }
+        if self.opening.is_none() {
+            self.opening = Some(delay);
+        }
+        Ok(false)
+    }
+
+    fn poll_open_external_gui(&mut self) -> Option<Result<(), BackendError>> {
+        let left = self.opening?.saturating_sub(1);
+        if left > 0 {
+            self.opening = Some(left);
+            return None;
+        }
+        self.opening = None;
+        Some(self.open_external_gui(None))
     }
 
     fn is_lost(&self) -> bool {

@@ -40,7 +40,13 @@ pub(crate) struct RemoteInstance {
     offline_active: bool,
     /// The last text the child gave for each param, shown while it is too busy to answer.
     texts: BTreeMap<u32, String>,
+    /// When the `OpenGui` that is still out was sent (see
+    /// [`PluginInstance::begin_open_external_gui`]).
+    opening_since: Option<std::time::Instant>,
 }
+
+/// The name of the editor request, in errors and the held-call guard.
+const OPEN_GUI: &str = "OpenGui";
 
 enum Stage {
     /// The Hello is out.
@@ -61,7 +67,7 @@ pub(crate) struct PendingRemote {
 
 impl PendingInstance for PendingRemote {
     fn poll(&mut self) -> Option<Result<Box<dyn PluginInstance>, BackendError>> {
-        let create = self.link.as_ref()?.timeouts().create;
+        let create = self.link.as_ref()?.timeouts().load;
         let link = self.link.as_mut()?;
         match self.stage {
             Stage::Greeting => {
@@ -75,6 +81,9 @@ impl PendingInstance for PendingRemote {
                 if let Some(port) = &self.port {
                     RemoteInstance::unlink_block(port, &self.warn);
                 }
+                // A plugin that shows a licence or sign-in dialog while it loads may bring it to
+                // the front.
+                atomik_plugin_ipc::lifetime::allow_foreground(link.shared().pid());
                 if let Err(e) = link.begin_call(|id| ToChild::Instantiate { id }) {
                     return Some(Err(link.explain(e)));
                 }
@@ -117,10 +126,11 @@ impl RemoteInstance {
         let warn = messenger.clone();
         let mut link = Link::start(transport, death, timeouts, messenger, live)?;
         Self::unlink_block(&port, &warn);
+        atomik_plugin_ipc::lifetime::allow_foreground(link.shared().pid());
         let reply = link
             .call(
                 "Instantiate",
-                timeouts.create,
+                timeouts.load,
                 |id| ToChild::Instantiate { id },
                 None,
             )
@@ -171,6 +181,7 @@ impl RemoteInstance {
             latency,
             offline_active: false,
             texts: BTreeMap::new(),
+            opening_since: None,
         })
     }
 
@@ -492,9 +503,43 @@ impl PluginInstance for RemoteInstance {
         EditorKind::External
     }
 
+    fn begin_open_external_gui(
+        &mut self,
+        owner: Option<NativeParent>,
+    ) -> Result<bool, BackendError> {
+        if self.link.held() == Some(OPEN_GUI) {
+            // Still opening: asking again changes nothing.
+            return Ok(false);
+        }
+        let owner = owner.map(WireParent::from);
+        self.link.begin_held_call(OPEN_GUI, |id| ToChild::OpenGui {
+            id,
+            owner,
+            scale: 1.0,
+        })?;
+        self.opening_since = Some(crate::clock::now());
+        // The user just asked for the editor: its window, and any dialog the plugin shows
+        // first, may come to the front.
+        atomik_plugin_ipc::lifetime::allow_foreground(self.link.shared().pid());
+        Ok(false)
+    }
+
+    fn poll_open_external_gui(&mut self) -> Option<Result<(), BackendError>> {
+        let since = self.opening_since?;
+        let wait = self.timeouts().load;
+        let answer = self.link.poll_reply(OPEN_GUI, since, wait)?;
+        self.opening_since = None;
+        Some(match answer {
+            Ok(reply) if Self::is_ok(&reply) => Ok(()),
+            Ok(reply) => Err(self.link.unexpected(OPEN_GUI, &reply.msg)),
+            Err(e) => Err(self.link.explain(e)),
+        })
+    }
+
     fn open_external_gui(&mut self, owner: Option<NativeParent>) -> Result<(), BackendError> {
-        // A heavy editor (Serum 2, Kontakt) can take seconds to build: as long as an instantiate.
-        let wait = self.timeouts().create;
+        // An editor may take minutes to open (licence or sign-in dialogs first): as long as a
+        // load.
+        let wait = self.timeouts().load;
         let owner = owner.map(WireParent::from);
         let reply = self.link.call(
             "OpenGui",

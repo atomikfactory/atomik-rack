@@ -244,6 +244,18 @@ enum EditorWindow {
     Open,
     /// The plugin's own process shows the window (an [`EditorKind::External`] editor).
     External,
+    /// The plugin's own process was asked to open its window and has not answered yet: it may
+    /// be checking its licence or showing its own dialogs first (minutes, not seconds).
+    ExternalOpening,
+}
+
+/// The toast while an external editor opens.
+pub(crate) const EDITOR_WAITING: &str = "waiting for the plugin to open its editor (it may show its own licence or sign-in dialogs first)";
+
+/// The app log line of a plugin process that ended on its own or was stopped: the reason holds
+/// why, the exit code and the last lines the process wrote to stderr.
+pub(crate) fn crash_log_line(device: &str, reason: &str) -> String {
+    format!("plugin [{device}] process ended: {reason}")
 }
 
 /// The recovery snapshot state.
@@ -1086,8 +1098,17 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             ManagerEvent::Crashed { instance, reason } => {
+                let name = self
+                    .plugins
+                    .keys
+                    .get(&instance)
+                    .map_or_else(|| "plugin".to_string(), |k| k.0.clone());
+                log::warn!("{}", crash_log_line(&name, &reason));
                 if let Some(key) = self.plugins.keys.get(&instance).cloned() {
                     self.plugins.log(format!("[{key}] crashed: {reason}"));
+                    if self.plugins.windows.get(&key) == Some(&EditorWindow::ExternalOpening) {
+                        self.plugins.windows.remove(&key);
+                    }
                     self.plugins.failed.remove(&key);
                     if let Some(type_id) = self
                         .doc()
@@ -1119,6 +1140,26 @@ impl<S: EngineSink> AppCore<S> {
                     self.plugins
                         .window_requests
                         .push(PluginWindowRequest::Resize { device: key, w, h });
+                }
+            }
+            ManagerEvent::EditorOpened(instance) => {
+                if let Some(key) = self.plugins.keys.get(&instance).cloned()
+                    && self.plugins.windows.get(&key) == Some(&EditorWindow::ExternalOpening)
+                {
+                    self.plugins
+                        .windows
+                        .insert(key.clone(), EditorWindow::External);
+                    self.plugins.log(format!("[{key}] editor opened"));
+                }
+            }
+            ManagerEvent::EditorFailed { instance, reason } => {
+                if let Some(key) = self.plugins.keys.get(&instance).cloned()
+                    && self.plugins.windows.get(&key) == Some(&EditorWindow::ExternalOpening)
+                {
+                    self.plugins.windows.remove(&key);
+                    self.plugins
+                        .log(format!("[{key}] editor did not open: {reason}"));
+                    self.reject(format!("cannot open the plugin editor: {reason}"));
                 }
             }
             ManagerEvent::GuiClosed(instance) => {
@@ -2676,13 +2717,32 @@ impl<S: EngineSink> AppCore<S> {
 
     /// OPEN GUI of an external editor: the plugin's own process shows its window, owned by the
     /// app window; asking again raises it. No host window is involved.
+    ///
+    /// The plugin may take minutes to answer (an online licence check, its own sign-in
+    /// dialogs): the request is started and [`ManagerEvent::EditorOpened`] or
+    /// [`ManagerEvent::EditorFailed`] finishes it, while the app stays responsive.
     fn open_external_editor(&mut self, device: &DeviceKey, id: InstanceId) {
+        if self.plugins.windows.get(device) == Some(&EditorWindow::ExternalOpening) {
+            self.reject(EDITOR_WAITING.to_string());
+            return;
+        }
         let owner = self.plugins.editor_owner;
-        match self.plugins.host.manager().open_external_editor(id, owner) {
-            Ok(()) => {
+        match self
+            .plugins
+            .host
+            .manager()
+            .begin_open_external_editor(id, owner)
+        {
+            Ok(true) => {
                 self.plugins
                     .windows
                     .insert(device.clone(), EditorWindow::External);
+            }
+            Ok(false) => {
+                self.plugins
+                    .windows
+                    .insert(device.clone(), EditorWindow::ExternalOpening);
+                self.reject(EDITOR_WAITING.to_string());
             }
             Err(e) => self.reject(format!("cannot open the plugin editor: {e}")),
         }
@@ -2858,7 +2918,11 @@ impl<S: EngineSink> AppCore<S> {
         self.commit_window_geometry(device);
         self.plugins.window_pos.remove(device);
         // An external editor is a window of the plugin's process: nothing to destroy here.
-        let destroy_window = destroy_window && window != EditorWindow::External;
+        let destroy_window = destroy_window
+            && !matches!(
+                window,
+                EditorWindow::External | EditorWindow::ExternalOpening
+            );
         if let Some(id) = self.plugins.instances.get(device).copied() {
             match self.plugins.host.manager().close_gui(id) {
                 Ok(Some(blob)) if !self.plugins.no_capture.contains(device) => {
@@ -2893,6 +2957,12 @@ impl<S: EngineSink> AppCore<S> {
     /// True when the editor window of `device` is open or opening.
     pub fn plugin_gui_open(&self, device: &DeviceKey) -> bool {
         self.plugins.windows.contains_key(device)
+    }
+
+    /// True while the plugin's own process is still opening its editor (see
+    /// [`ManagerEvent::EditorOpened`]).
+    pub fn plugin_gui_opening(&self, device: &DeviceKey) -> bool {
+        self.plugins.windows.get(device) == Some(&EditorWindow::ExternalOpening)
     }
 
     // ------------------------------------------------------------------ shutdown

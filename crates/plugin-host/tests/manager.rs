@@ -596,6 +596,39 @@ fn the_editor_kind_and_the_external_editor_route_to_the_instance() {
     assert_eq!(m.editor_kind(atomik_plugin_host::InstanceId(999)), None);
 }
 
+/// A plugin may check its licence online or show its own dialogs before its editor opens:
+/// the manager starts the opening, reports it when it is done, and holds a restart back
+/// meanwhile (the plugin's main thread answers nothing until then).
+#[test]
+fn a_slow_external_editor_is_reported_when_open_and_holds_restarts_back() {
+    let (mut m, stats) = manager();
+    stats.set_external_editor(true);
+    stats.set_external_editor_delay(3);
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let messenger = m.slot(handle.id).unwrap().messenger();
+    let (mut h, id) = harness_of(handle);
+    h.process();
+    assert!(!m.begin_open_external_editor(id, None).unwrap(), "not yet");
+    assert!(m.is_editor_opening(id));
+    assert!(
+        !m.begin_open_external_editor(id, None).unwrap(),
+        "asking again changes nothing"
+    );
+    messenger.post(PluginMessage::RequestRestart);
+    assert!(m.poll().is_empty());
+    run(&mut h, 2);
+    assert!(m.poll().is_empty(), "the restart waits for the editor");
+    assert_eq!(stats.activated(), 1);
+    assert_eq!(m.poll(), vec![ManagerEvent::EditorOpened(id)]);
+    assert!(!m.is_editor_opening(id));
+    assert_eq!(stats.external_opens(), 1);
+    // The held restart goes on now.
+    run(&mut h, 2);
+    let events = m.poll();
+    assert!(events.contains(&ManagerEvent::Restarted(id)), "{events:?}");
+    assert_eq!(stats.activated(), 2);
+}
+
 #[test]
 fn presets_are_listed_and_loaded_through_the_manager() {
     let (mut m, stats) = manager();
