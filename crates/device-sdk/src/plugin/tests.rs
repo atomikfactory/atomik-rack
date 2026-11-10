@@ -102,7 +102,7 @@ fn an_instrument_descriptor_has_the_sockets_of_the_rule_in_order() {
     assert_eq!(d.type_id, "clap.x.synth");
     assert_eq!(d.name, "Test");
     assert_eq!(d.kind, DeviceKind::Instrument);
-    assert_eq!(d.version, 2);
+    assert_eq!(d.version, 3);
     assert!(d.stages.is_empty());
     assert_eq!(keys(d), ["notes_in", "out_l", "out_r"]);
     assert_eq!(d.sockets[0].kind, SocketKind::Notes);
@@ -204,7 +204,7 @@ fn bypass_comes_first_then_the_plugin_params_in_the_plugins_own_order() {
         .map(|p| p.key)
         .filter(|k| !k.starts_with("cv."))
         .collect();
-    assert_eq!(k, ["bypass", "p42", "p7"]);
+    assert_eq!(k, ["bypass", "p42", "p7", "mpe.send"]);
     for (i, p) in d.params.iter().enumerate() {
         assert_eq!(p.id.0 as usize, i, "ParamId is the index");
     }
@@ -388,8 +388,8 @@ fn the_param_cap_refuses_a_longer_table() {
     let ok = descriptor_for(&clap("x.cap-ok"), &l).unwrap();
     assert_eq!(
         ok.params.len(),
-        MAX_PLUGIN_PARAMS + 1 + 2 * PLUGIN_CV_INPUTS,
-        "bypass, the cap and the CV programmer"
+        MAX_PLUGIN_PARAMS + 2 + 2 * PLUGIN_CV_INPUTS,
+        "bypass, the cap, the CV programmer and the MPE option"
     );
     l.params.push(param(99_999, "One too many"));
     assert_eq!(
@@ -659,7 +659,8 @@ fn every_plugin_descriptor_ends_its_sockets_with_the_cv_inputs() {
 fn the_cv_programmer_params_follow_the_plugin_params() {
     let d = descriptor_for(&clap("x.cv-params"), &layout(PluginKindHint::Effect)).unwrap();
     let tail: Vec<_> = d.params[3..].iter().map(|p| p.key).collect();
-    assert_eq!(tail.len(), 16);
+    assert_eq!(tail.len(), 17);
+    assert_eq!(tail[16], "mpe.send", "the MPE option is the last param");
     assert_eq!(
         &tail[..4],
         ["cv.dest_1", "cv.amount_1", "cv.dest_2", "cv.amount_2"]

@@ -46,7 +46,8 @@ use crate::plugin_data::{
 use crate::seq_panel::{back_layout, place_controls};
 use crate::theme::{Theme, mix};
 use atomik_device_sdk::{
-    CV_AMOUNT_KEYS, CV_DEST_KEYS, ControlKind, DeviceDescriptor, PLUGIN_CV_INPUTS, PluginKindHint,
+    CV_AMOUNT_KEYS, CV_DEST_KEYS, ControlKind, DeviceDescriptor, MPE_SEND_KEY, PLUGIN_CV_INPUTS,
+    PluginKindHint,
 };
 use atomik_model::{PluginDoc, RackDevice};
 use vello::kurbo::{Circle, Rect, RoundedRect};
@@ -86,13 +87,16 @@ pub enum PluginButton {
     Reload,
     /// Point a stand-in at another installed plugin.
     Relink,
+    /// Send the notes as MPE (the `mpe.send` param): shown for a plugin that takes notes, in the
+    /// place RELINK takes for a stand-in.
+    Mpe,
     /// The destination chip of CV input `k` (0-based): opens the parameter pane.
     Cv(u8),
 }
 
 impl PluginButton {
     /// Every button, in panel order (left to right, top to bottom).
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Power,
         Self::Bypass,
         Self::OpenGui,
@@ -101,6 +105,7 @@ impl PluginButton {
         Self::AudioThread,
         Self::Reload,
         Self::Relink,
+        Self::Mpe,
     ];
 
     fn label(self) -> &'static str {
@@ -113,6 +118,7 @@ impl PluginButton {
             Self::ToChannel => "TO CH",
             Self::Reload => "RELOAD",
             Self::Relink => "RELINK",
+            Self::Mpe => "MPE",
             Self::Cv(_) => "CV",
         }
     }
@@ -146,6 +152,8 @@ pub struct PluginPanel {
     pub reload: Rect,
     /// RELINK.
     pub relink: Rect,
+    /// MPE (shares the place of RELINK: a stand-in cannot send anything).
+    pub mpe: Rect,
     /// The destination chip of each CV input.
     pub cv: [Rect; PLUGIN_CV_INPUTS],
 }
@@ -162,6 +170,7 @@ impl PluginPanel {
             PluginButton::ToChannel => self.to_channel,
             PluginButton::Reload => self.reload,
             PluginButton::Relink => self.relink,
+            PluginButton::Mpe => self.mpe,
             PluginButton::Cv(k) => self.cv[usize::from(k).min(PLUGIN_CV_INPUTS - 1)],
         }
     }
@@ -247,6 +256,7 @@ pub fn plugin_layout(desc: &DeviceDescriptor, doc: &PluginDoc) -> PanelSpec {
         audio_thread: btn(2, 1),
         reload: btn(3, 0),
         relink: btn(3, 1),
+        mpe: btn(3, 1),
         cv: std::array::from_fn(|k| {
             let x = KNOBS_X + k as f64 * COL_W + 3.0;
             Rect::new(x, chips_y, x + COL_W - 6.0, chips_y + CHIP_H)
@@ -321,6 +331,7 @@ pub fn button_visible(b: PluginButton, doc: &PluginDoc, status: &PluginDeviceSta
         PluginButton::OpenGui => status.has_editor && status.missing.is_none(),
         PluginButton::ToChannel => doc.layout.kind_hint == PluginKindHint::Instrument,
         PluginButton::Relink => status.missing.is_some(),
+        PluginButton::Mpe => status.missing.is_none() && doc.layout.notes_in,
         _ => true,
     }
 }
@@ -588,6 +599,10 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
                 true,
                 accent,
             ),
+            PluginButton::Mpe => {
+                let on = device.params.get(MPE_SEND_KEY).is_some_and(|v| *v >= 0.5);
+                led_button(c, theme, r, b.label(), Some(on), true, accent)
+            }
             PluginButton::ToChannel => panel_button(c, theme, r, b.label(), !info.has_channel),
             PluginButton::Reload => panel_button(c, theme, r, b.label(), !info.status.loading),
             PluginButton::OpenGui | PluginButton::Params | PluginButton::Relink => {

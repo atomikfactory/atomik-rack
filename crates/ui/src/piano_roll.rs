@@ -30,6 +30,7 @@ use crate::theme::{Theme, mix};
 use crate::timeline::{Bars, Meter, PPQ, Snap, TimeAxis, snap_floor, snap_round};
 use crate::tooltip::Help;
 use crate::viewport::{Tool, ViewportState};
+mod expression;
 mod inspector;
 pub use inspector::{NOTE_INSPECTOR_HEIGHT, NoteField};
 
@@ -42,6 +43,7 @@ use atomik_model::{
     Clip, ClipContent, ClipId, Command, ControllerKind, ControllerLane, Curve, DeviceKey, Note,
     RackDoc, SongCommand, ThinLevel, WorkflowCommand,
 };
+use expression::{ExprDrag, ExprHit, ExprUi};
 use std::collections::BTreeSet;
 use vello::kurbo::{Affine, Point, Rect, RoundedRect};
 use vello::peniko::Color;
@@ -70,12 +72,6 @@ pub const KEY_ZOOM_STEP: f64 = 1.25;
 const HEADER_HEIGHT: f64 = TOP_BAR_HEIGHT + SCALE_BAR_HEIGHT;
 const VEL_PAD: f64 = 8.0;
 const EDGE_PX: f64 = 5.0;
-/// Height of the curve strip under a note that carries per-note expression.
-const EXPR_HEIGHT: f64 = 20.0;
-/// The narrowest the strip is drawn (a short note gets a strip wider than itself).
-const EXPR_MIN_WIDTH: f64 = 72.0;
-/// Side of the strip's clear button.
-const EXPR_CLEAR: f64 = 12.0;
 /// How far from the playhead's line a press still grabs it.
 const PLAYHEAD_GRAB: f64 = 3.0;
 const DRAG_THRESHOLD: f64 = 3.0;
@@ -196,10 +192,8 @@ enum Hit {
     CtlBody,
     /// The fold button of the controller area.
     CtlFold,
-    /// The curve strip under the selected note (its per-note expression).
-    Expression,
-    /// The button that clears the expression of the selected note.
-    ExpressionClear,
+    /// The expression strip beside the edited note (see `expression.rs`).
+    Expr(ExprHit),
     None,
 }
 
@@ -318,6 +312,8 @@ enum Drag {
         merge: u64,
         moved: bool,
     },
+    /// A gesture in the plot of the expression strip.
+    Expr(ExprDrag),
     /// A rubber band in the controller lane: the points inside join `base`.
     CtlBand {
         start: Point,
@@ -417,6 +413,8 @@ pub struct PianoRollView {
     ctl_focus: bool,
     /// How hard the THIN chip and `editor.thin_controllers` thin (a fraction of the range).
     ctl_thinning: f32,
+    /// The expression strip: its tab, scale and selected points.
+    expr: ExprUi,
     next_merge: u64,
     /// Counts the uses of the random note tools: each run is its own take.
     tool_seed: u32,
@@ -580,6 +578,7 @@ impl PianoRollView {
             msg_sel: None,
             ctl_focus: false,
             ctl_thinning: ThinLevel::Normal.fraction(),
+            expr: ExprUi::default(),
             next_merge: MERGE_BASE,
             tool_seed: 0,
             key_labels: None,
@@ -601,6 +600,7 @@ impl PianoRollView {
             self.ctl_sel.clear();
             self.msg_sel = None;
             self.ctl_focus = false;
+            self.expr.focus = false;
             self.latent = None;
         }
         self.clip_id = Some(id);
@@ -1832,13 +1832,8 @@ impl PianoRollView {
         if pos.x < g.x0 {
             return Hit::Keys(self.key_at(pos.y));
         }
-        if let Some((strip, clear)) = self.expression_rects() {
-            if clear.contains(pos) {
-                return Hit::ExpressionClear;
-            }
-            if strip.contains(pos) {
-                return Hit::Expression;
-            }
+        if let Some(h) = self.expr_hit(pos) {
+            return Hit::Expr(h);
         }
         for (i, n) in self.notes().iter().enumerate().rev() {
             let r = self.rect_of(n);
@@ -1874,15 +1869,7 @@ impl PianoRollView {
         }
         match self.hit(pos) {
             Hit::Top(Some(item)) => Some(self.top_help(item)),
-            Hit::ExpressionClear => self.expression_rects().map(|(_, clear)| {
-                Help::new(clear, "Clear this note's pitch, pressure and timbre curves")
-            }),
-            Hit::Expression => self.expression_rects().map(|(strip, _)| {
-                Help::new(
-                    strip,
-                    "Per-note expression: pitch, pressure and timbre over the note",
-                )
-            }),
+            Hit::Expr(h) => self.expr_help(h),
             Hit::CtlFold => {
                 let a = self.controller_area();
                 let rect = cl::fold_rect(a.x0, a.y0);
@@ -2204,6 +2191,9 @@ impl PianoRollView {
         if !matches!(hit, Hit::CtlBody | Hit::CtlChip(..)) {
             self.msg_sel = None;
         }
+        if !matches!(hit, Hit::Expr(_)) {
+            self.expr.focus = false;
+        }
         match hit {
             Hit::Top(Some(TopItem::Tool(t))) if primary => self.set_tool(t),
             Hit::Top(Some(TopItem::Snap)) if primary => {
@@ -2232,9 +2222,8 @@ impl PianoRollView {
                 self.set_controllers_open(!self.ctl.open);
             }
             Hit::CtlFold if primary => self.set_controllers_folded(!self.ctl.folded),
-            Hit::ExpressionClear if primary => self.clear_expression(out),
-            // The strip only shows: a press on it neither selects nor draws.
-            Hit::Expression => {}
+            // A press on the strip edits its curve; it neither selects nor draws notes.
+            Hit::Expr(h) => self.expr_down(h, pos, button, modifiers, clicks, out),
             Hit::CtlChip(Chip::Thin, _) if primary => {
                 if let Some(action) = self.thin_controllers(self.ctl_thinning) {
                     out.extend(action);
@@ -2782,59 +2771,6 @@ impl PianoRollView {
             .unwrap_or_default()
     }
 
-    /// The index of the selected note and its expression, when exactly one note is selected and
-    /// it carries some.
-    fn selected_expression(&self) -> Option<(usize, &atomik_model::NoteExpression)> {
-        if self.track.is_some() || self.selection.items().len() != 1 {
-            return None;
-        }
-        let clip = self.clip.as_ref()?;
-        let i = *self.selection.items().iter().next()?;
-        let n = self.notes().get(i)?;
-        clip.midi.expression_of(n.tick, n.key).map(|e| (i, e))
-    }
-
-    /// The curve strip under the selected note (above it when the note is at the bottom of the
-    /// grid) and its clear button, when the selected note carries per-note expression.
-    pub fn expression_rects(&self) -> Option<(Rect, Rect)> {
-        let (i, _) = self.selected_expression()?;
-        let g = self.grid_rect();
-        let r = self.rect_of(&self.notes()[i]);
-        let w = r.width().max(EXPR_MIN_WIDTH).min(g.width());
-        let y0 = if r.y1 + 2.0 + EXPR_HEIGHT <= g.y1 {
-            r.y1 + 2.0
-        } else {
-            r.y0 - 2.0 - EXPR_HEIGHT
-        };
-        let x0 = r.x0.clamp(g.x0, (g.x1 - w).max(g.x0));
-        let strip = Rect::new(x0, y0, x0 + w, y0 + EXPR_HEIGHT);
-        let clear = Rect::new(
-            strip.x1 - EXPR_CLEAR - 1.0,
-            strip.y0 + 1.0,
-            strip.x1 - 1.0,
-            strip.y0 + 1.0 + EXPR_CLEAR,
-        );
-        Some((strip, clear))
-    }
-
-    /// The middle of the strip's clear button (for tests and tours).
-    pub fn expression_clear_center(&self) -> Option<Point> {
-        self.expression_rects().map(|(_, clear)| clear.center())
-    }
-
-    /// Clears the per-note expression of the selected note: one `SetClipMidi`, one undo step.
-    fn clear_expression(&mut self, out: &mut Vec<UiAction>) {
-        let Some((i, _)) = self.selected_expression() else {
-            return;
-        };
-        let (n, Some(clip)) = (self.notes()[i], self.clip.as_ref()) else {
-            return;
-        };
-        if let Some(midi) = clip.midi.without_expression(n.tick, n.key) {
-            out.extend(self.midi_command(midi, None));
-        }
-    }
-
     /// One `SetClipMidi` for the open clip.
     fn midi_command(&self, midi: atomik_model::MidiData, merge: Option<u64>) -> Option<UiAction> {
         Some(UiAction::Command(Command::Song(SongCommand::SetClipMidi {
@@ -3027,6 +2963,10 @@ impl PianoRollView {
             self.ctl_band_move(pos);
             return;
         }
+        if matches!(self.drag, Drag::Expr(_)) {
+            self.expr_move(pos, modifiers, out);
+            return;
+        }
         if matches!(self.drag, Drag::Msg { .. }) {
             self.msg_move(pos, modifiers, out);
             return;
@@ -3091,6 +3031,7 @@ impl PianoRollView {
             Drag::None
             | Drag::Ctl { .. }
             | Drag::CtlBand { .. }
+            | Drag::Expr(_)
             | Drag::Msg { .. }
             | Drag::Playhead { .. }
             | Drag::Snap { .. } => {}
@@ -3359,6 +3300,7 @@ impl PianoRollView {
                 out.push(UiAction::EndMerge)
             }
             Drag::Ctl { .. } | Drag::Msg { .. } => {}
+            Drag::Expr(d) => self.expr_up(d, out),
         }
     }
 
@@ -3421,6 +3363,9 @@ impl PianoRollView {
         if let Some(tool) = Tool::from_command(id).filter(|t| Tool::NOTE.contains(t)) {
             self.set_tool(tool);
             return CommandOutcome::Handled(Vec::new());
+        }
+        if let Some(outcome) = self.expr_command(id) {
+            return outcome;
         }
         let step = self.step(Modifiers::NONE).unwrap_or(OFF_LENGTH);
         match id {
@@ -4168,6 +4113,7 @@ impl PianoRollView {
                 out.extend(self.ctl_command(original, Some(merge)));
                 out.push(UiAction::EndMerge);
             }
+            Drag::Expr(d) => self.expr_cancel(d, out),
             _ => {}
         }
     }
@@ -4344,67 +4290,6 @@ impl PianoRollView {
             );
         }
         c.pop_clip();
-    }
-
-    /// The curves of the selected note's per-note expression in a small strip under it: the pitch
-    /// (a line about the strip's middle, scaled to the largest bend, at least a semitone), the
-    /// pressure and the timbre (from the strip's foot up), over the length of the note.
-    fn paint_expression(&self, c: &mut dyn Canvas) {
-        let (Some((strip, clear)), Some((i, e))) =
-            (self.expression_rects(), self.selected_expression())
-        else {
-            return;
-        };
-        let st = &self.st;
-        let note = self.notes()[i];
-        sp::rect(c, strip, st.lane.with_alpha(0.92));
-        c.stroke_with(strip, 1.0, st.base.bevel_dark);
-        let len = note.length.max(1) as f64;
-        let (x0, x1) = (strip.x0 + 3.0, strip.x1 - EXPR_CLEAR - 5.0);
-        let (top, foot) = (strip.y0 + 3.0, strip.y1 - 3.0);
-        let reach = e.pitch.iter().fold(1.0f32, |m, p| m.max(p.value.abs())) as f64;
-        let curves = [
-            (&e.pitch, true, st.selection),
-            (&e.pressure, false, st.base.text),
-            (&e.timbre, false, st.base.text_muted),
-        ];
-        for (points, bipolar, color) in curves {
-            let Some(first) = points.first() else {
-                continue;
-            };
-            let at = |tick: i64, value: f32| {
-                let x = x0 + (tick as f64 / len).clamp(0.0, 1.0) * (x1 - x0);
-                let v = f64::from(value);
-                let y = if bipolar {
-                    (top + foot) / 2.0 - v / reach * (foot - top) / 2.0
-                } else {
-                    foot - v.clamp(0.0, 1.0) * (foot - top)
-                };
-                pt(x, y)
-            };
-            let mut path = vello::kurbo::BezPath::new();
-            // Held from the note's start to the first point and from the last point to its end.
-            path.move_to(at(0, first.value));
-            for p in points {
-                path.line_to(at(p.tick, p.value));
-            }
-            if let Some(last) = points.last() {
-                path.line_to(at(note.length, last.value));
-            }
-            c.stroke_with(path, 1.0, color);
-        }
-        let b = clear.inset(-3.0);
-        let col = st.base.text_muted;
-        c.stroke_with(
-            vello::kurbo::Line::new(pt(b.x0, b.y0), pt(b.x1, b.y1)),
-            1.2,
-            col,
-        );
-        c.stroke_with(
-            vello::kurbo::Line::new(pt(b.x0, b.y1), pt(b.x1, b.y0)),
-            1.2,
-            col,
-        );
     }
 
     fn paint_ruler(&self, c: &mut dyn Canvas) {

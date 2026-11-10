@@ -4,7 +4,7 @@
 
 use atomik_device_sdk::{
     AUX_OUT_KEYS, CV_AMOUNT_KEYS, CV_DEST_KEYS, CV_IN_KEYS, DeviceDescriptor, MAX_AUX_OUTPUTS,
-    MAX_PLUGIN_PARAMS, PLUGIN_CV_INPUTS, PluginLayout, SocketId,
+    MAX_PLUGIN_PARAMS, MPE_SEND_KEY, PLUGIN_CV_INPUTS, PluginLayout, SocketId,
 };
 
 /// The key of a plugin param: `p` and the plugin's own 32-bit id in decimal.
@@ -112,7 +112,11 @@ pub fn layout_matches(layout: &PluginLayout, descriptor: &DeviceDescriptor) -> b
     }
     let sockets_ok = descriptor.sockets.iter().map(|s| s.key).eq(want);
     let n = layout.params.len();
-    let params_ok = descriptor.params.len() == n + 1 + 2 * PLUGIN_CV_INPUTS
+    let params_ok = descriptor.params.len() == n + 2 + 2 * PLUGIN_CV_INPUTS
+        && descriptor
+            .params
+            .last()
+            .is_some_and(|p| p.key == MPE_SEND_KEY)
         && descriptor
             .params
             .iter()

@@ -110,6 +110,53 @@ fn record_piano_roll_controllers() -> DisplayList {
     dl
 }
 
+/// The piano roll with the expression strip beside the first note: all three curves, the
+/// pressure tab chosen and its second point selected.
+fn record_piano_roll_expression() -> DisplayList {
+    use atomik_model::{ExpressionPoint, MidiData, NoteExpression};
+    let (mut doc, reg) = (song_doc(), registry());
+    let pt = ExpressionPoint::new;
+    let clip = &mut doc.song_mut().tracks[0].lanes[0].clips[0];
+    let atomik_model::ClipContent::Notes(notes) = &clip.content else {
+        panic!("a note clip");
+    };
+    let mut e = NoteExpression::new(notes[0].tick, notes[0].key);
+    e.pitch = vec![pt(0, 0.0), pt(PPQ / 8, 12.0), pt(PPQ / 4, -7.0)];
+    e.pressure = vec![pt(0, 0.2), pt(PPQ / 6, 0.9), pt(PPQ / 3, 0.4)];
+    e.timbre = vec![pt(0, 0.5)];
+    clip.midi = MidiData {
+        expression: vec![e],
+        ..Default::default()
+    }
+    .into();
+    let mut v = piano_roll(&doc, &reg);
+    v.set_selected_notes(&[0]);
+    let tab = v
+        .expression_tab_center(atomik_model::ExpressionKind::Pressure)
+        .unwrap();
+    for e in [down(tab), up(tab)] {
+        v.handle(&e, &doc, &reg);
+    }
+    let p = v.expression_point_center(1).unwrap();
+    for e in [down(p), up(p)] {
+        v.handle(&e, &doc, &reg);
+    }
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    dl
+}
+
+/// The strip opened on a note without curves, with three notes selected (the apply button).
+fn record_piano_roll_expression_open() -> DisplayList {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    v.set_selected_notes(&[1, 0, 2]);
+    v.command("editor.edit_expression", None, &doc, &reg);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    dl
+}
+
 fn record_piano_roll_messages() -> DisplayList {
     let (mut doc, reg) = (song_doc(), registry());
     doc.song_mut().tracks[0].lanes[0].clips[0].midi = atomik_model::MidiData {
@@ -193,6 +240,22 @@ fn piano_roll_with_the_controller_area_matches_golden() {
     check(
         "piano_roll_controllers_1x.json",
         &record_piano_roll_controllers().to_json(),
+    );
+}
+
+#[test]
+fn piano_roll_with_the_expression_strip_matches_golden() {
+    check(
+        "piano_roll_expression_1x.json",
+        &record_piano_roll_expression().to_json(),
+    );
+}
+
+#[test]
+fn piano_roll_with_the_strip_opened_on_several_notes_matches_golden() {
+    check(
+        "piano_roll_expression_open_1x.json",
+        &record_piano_roll_expression_open().to_json(),
     );
 }
 

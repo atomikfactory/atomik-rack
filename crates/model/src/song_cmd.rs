@@ -1540,7 +1540,6 @@ pub(crate) fn plan(
                 old: Some(c.clone()),
                 new: Some(Clip {
                     midi: std::sync::Arc::new(midi),
-                    groove: None,
                     ..c.clone()
                 }),
             }

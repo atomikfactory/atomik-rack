@@ -9,6 +9,22 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Editing note expression by hand, and MPE out.** The strip beside the selected note in the piano roll is now an
+  editor for its pitch, pressure and timbre curves. A tab picks the curve; a click on empty space adds a point, a
+  drag moves it (Shift moves finely, Ctrl snaps a pitch to a semitone; time stays inside the note and the value
+  inside the range), Alt-click or a double click deletes it, a drag from empty space is a rubber band that selects
+  points to move or delete together, and with the Pencil tool a drag draws the curve freehand, thinned like Cleanup
+  Automation. A scale chip steps the pitch plot through 48, 24, 12 and 2 semitones. Apply copies the curve to the
+  other selected notes, stretched to each note's length. Every gesture is one undo step and a curve keeps its limit
+  of 1024 points. The command Edit Note Expression (`editor.edit_expression`, found in the command palette) shows
+  the strip for a note without curves and with several notes selected; Apply Curve to Selected Notes
+  (`editor.apply_expression_curve`) copies a curve. The MIDI Out device
+  has an MPE zone (off, lower or upper) and a member channel count: with it on, every note goes out on a member
+  channel (taken in turn, the one released longest ago first), its curves as that channel's pitch bend, pressure and
+  CC 74, the first values before the note on, and the MPE Configuration Message when the zone is set and at each
+  playback start; with it off the output is as before. A plugin device has a Send MPE option (the MPE button on its
+  panel) that sends a lower zone as raw MIDI on channels 2 to 16 to a plugin that takes plain MIDI; plugins that take
+  note expressions still get them as note expression events without it.
 - **Help Mode.** Help > Help Mode (Shift+F1; F1 is still the shortcut list) docks a Help panel above the status line
   that explains the control under the pointer: its title, one to four sentences, the shortcut of the command it runs
   (read from your keymap, so a rebound key shows) and a "More: <section>" link that opens the matching section of the

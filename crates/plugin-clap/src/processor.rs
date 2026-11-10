@@ -322,6 +322,10 @@ impl ClapProcessor {
                         false
                     }
                 }
+                // A member channel's message of the device's MPE output, as the plugin takes it.
+                PluginEventKind::Midi { bytes, .. } => {
+                    push_midi(&mut self.in_events, midi, t, bytes)
+                }
                 PluginEventKind::Param { id, value } => match ClapId::from_raw(id) {
                     Some(id) => {
                         self.in_events

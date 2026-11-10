@@ -63,6 +63,11 @@ pub const CV_AMOUNT_KEYS: [&str; PLUGIN_CV_INPUTS] = [
     "cv.amount_8",
 ];
 
+/// The key of the param that makes a plugin device send per-note expression as MPE (a lower zone
+/// on channels 2 to 16) to a plugin that takes plain MIDI. 0 is off, 1 is on. It is the last
+/// param of every plugin device, after the CV programmer's.
+pub const MPE_SEND_KEY: &str = "mpe.send";
+
 const CV_DEST_NAMES: [&str; PLUGIN_CV_INPUTS] = [
     "CV 1 dest",
     "CV 2 dest",
@@ -560,6 +565,18 @@ fn build_descriptor(
             discrete: false,
         });
     }
+    // MPE out for a plugin that takes plain MIDI: the last param.
+    params.push(ParamDescriptor {
+        id: ParamId(params.len() as u32),
+        key: MPE_SEND_KEY,
+        name: "Send MPE (channels 2-16)",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        taper: Taper::Linear,
+        unit: Unit::Toggle,
+        discrete: true,
+    });
     // The tables are checked on the heap; only a valid descriptor has its tables leaked.
     validate_parts(&params, &sockets, &[])?;
 
@@ -579,7 +596,7 @@ fn build_descriptor(
         type_id: leak_str(&plugin.type_id()),
         name: leak_str(&layout.name),
         kind,
-        version: 2,
+        version: 3,
         params: leaked(params.into_boxed_slice()),
         sockets: leaked(sockets.into_boxed_slice()),
         stages: &[],
@@ -661,7 +678,7 @@ static INTERNER: Interner = Interner::with_limit(MAX_INTERNED_DESCRIPTORS);
 /// `sc_in_l`, `sc_in_r`, `notes_in`, `out_l`, `out_r`, `notes_out`; then always the eight CV
 /// inputs `cv_in_1` to `cv_in_8`, then the aux output pairs `out_aux_<k>_l/r` the layout has.
 /// Params: `bypass` (id 0), `p<plugin id>` for every plugin param in the plugin's own order,
-/// then the CV programmer's `cv.dest_<k>` and `cv.amount_<k>` for k = 1 to 8.
+/// then the CV programmer's `cv.dest_<k>` and `cv.amount_<k>` for k = 1 to 8, then `mpe.send`.
 ///
 /// # Errors
 /// An invalid plugin id, more than [`MAX_PLUGIN_PARAMS`] params, a duplicate or non-finite

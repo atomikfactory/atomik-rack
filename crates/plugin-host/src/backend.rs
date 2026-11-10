@@ -92,6 +92,15 @@ pub enum PluginEventKind {
         /// The value.
         value: f32,
     },
+    /// A raw MIDI 1.0 channel message (status byte first, `len` of the three bytes used). Only
+    /// the device's MPE output sends these, to a plugin that takes MIDI: member channels carry
+    /// one note each (the note ids of the other events do not apply to them).
+    Midi {
+        /// Status, then the data bytes.
+        bytes: [u8; 3],
+        /// How many of the bytes are used, 2 or 3.
+        len: u8,
+    },
     /// A parameter change by the plugin's own id, in the format's plain value.
     Param {
         /// The plugin's param id.

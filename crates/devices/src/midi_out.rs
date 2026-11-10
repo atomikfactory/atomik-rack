@@ -27,6 +27,15 @@
 //! * **Releasing.** An `AllOff` (the engine sends one on stop, on a locate and at a loop wrap)
 //!   releases every note this device started, one note off each, then sends All Notes Off on the
 //!   channels it used. A `reset` does the same at the start of the next batch.
+//! * **MPE.** With `mpe.zone` set to a lower or an upper zone (`mpe.members` member channels),
+//!   every note goes out on a member channel of its own and the device speaks MPE: the pitch,
+//!   pressure and timbre curves of a note become that channel's pitch bend, channel pressure and
+//!   CC 74 (see [`MpeEncoder`]); the controllers, pitch bend, channel pressure and program
+//!   change that mean the whole device go to the zone's master channel; `channel` is not used.
+//!   The MPE Configuration Message goes out when the zone is set, when the device starts and each
+//!   time playback starts. Channels are taken in turn, the one released longest ago first. With
+//!   `mpe.zone` off (the default) the expression of a note is dropped and the output is exactly
+//!   what it always was.
 //! * **Offline.** A bounce never sends MIDI: nothing reads the tap offline (the queue just fills
 //!   and drops), and in [`RunMode::Offline`] the device stops queueing at all. It has no audio
 //!   output either way, so a project with and without it renders the same bits.
@@ -34,7 +43,11 @@
 //! The device reports no processing latency: it has no audio path, so there is nothing for the
 //! rest of the rack to compensate.
 
-use atomik_core::{BATCH, NoteKind, ParamDescriptor, ParamId, Taper, Unit};
+use atomik_core::mpe_out::{Initial, Out, mcm};
+use atomik_core::{
+    BATCH, ExprKind, MpeEncoder, NoteEvent, NoteKind, ParamDescriptor, ParamId, Taper, Unit,
+    ZoneSide,
+};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, MidiEvent, MidiTap,
     PrepareInfo, ProcessContext, RunMode, SocketDescriptor, SocketId, SocketKind, velocity_to_7bit,
@@ -103,6 +116,12 @@ const P_LATENCY: u32 = 4;
 const P_CC_BASE: u32 = 5;
 /// CV inputs, each mapped to one controller.
 pub const CC_SLOTS: usize = 8;
+/// The MPE zone param (0 off, 1 lower zone, 2 upper zone), after the CC params.
+const P_MPE_ZONE: u32 = P_CC_BASE + 3 * CC_SLOTS as u32;
+/// The number of member channels of the MPE zone.
+const P_MPE_MEMBERS: u32 = P_MPE_ZONE + 1;
+/// The names of the MPE zone choices.
+const MPE_ZONES: &[&str] = &["Off", "Lower zone", "Upper zone"];
 
 /// The controller each CV input starts on: modulation, volume, pan, expression, resonance,
 /// cutoff, reverb send and chorus send.
@@ -220,7 +239,7 @@ const CC8: [ParamDescriptor; 3] = cc_params!(
     "CC 8 offset"
 );
 
-static PARAMS: [ParamDescriptor; 5 + 3 * CC_SLOTS] = [
+static PARAMS: [ParamDescriptor; 5 + 3 * CC_SLOTS + 2] = [
     param(
         P_CHANNEL,
         "channel",
@@ -285,6 +304,22 @@ static PARAMS: [ParamDescriptor; 5 + 3 * CC_SLOTS] = [
     CC8[0],
     CC8[1],
     CC8[2],
+    param(
+        P_MPE_ZONE,
+        "mpe.zone",
+        "MPE",
+        (0.0, 2.0, 0.0),
+        Unit::Choice(MPE_ZONES),
+        true,
+    ),
+    param(
+        P_MPE_MEMBERS,
+        "mpe.members",
+        "MPE members",
+        (1.0, 15.0, 15.0),
+        Unit::None,
+        true,
+    ),
 ];
 
 /// Static description of the MIDI Out device.
@@ -349,6 +384,18 @@ pub struct MidiOut {
     program_pending: bool,
     /// Release everything at the start of the next batch (a `reset` while notes were held).
     flush: bool,
+    /// The MPE zone the params ask for (0 off, 1 lower, 2 upper) and its member channels.
+    mpe_zone: u8,
+    mpe_members: u8,
+    /// The zone the receiver was last told about (and the encoder that fills it).
+    mpe_active: Option<ZoneSide>,
+    mpe: MpeEncoder,
+    /// The zone params changed: release, switch the zone and announce it at the next batch.
+    mpe_dirty: bool,
+    /// Send the MPE Configuration Message at the start of the next batch.
+    mcm_pending: bool,
+    /// The transport was playing in the last batch.
+    was_playing: bool,
 }
 
 impl Default for MidiOut {
@@ -382,6 +429,13 @@ impl MidiOut {
             channels_used: 0,
             program_pending: true,
             flush: false,
+            mpe_zone: 0,
+            mpe_members: 15,
+            mpe_active: None,
+            mpe: MpeEncoder::new(ZoneSide::Lower, 15),
+            mpe_dirty: false,
+            mcm_pending: false,
+            was_playing: false,
         }
     }
 
@@ -392,13 +446,23 @@ impl MidiOut {
 
     /// Queues a message due `offset` frames into the batch that starts at `base`.
     fn send(&self, base: u64, offset: u16, bytes: &[u8]) {
-        let frame = (base as i64)
-            .saturating_add(i64::from(offset))
-            .saturating_add(self.latency_frames)
-            .max(0) as u64;
-        if let Some(event) = MidiEvent::new(frame, bytes) {
-            // A full queue counts the loss on the tap; there is nothing else to do here.
-            let _ = self.tap.push(event);
+        queue(&self.tap, self.latency_frames, base, offset, bytes);
+    }
+
+    /// The channel of the messages that mean the whole device: the master channel of the MPE
+    /// zone, else the channel param.
+    fn global_channel(&self) -> u8 {
+        match self.mpe_active {
+            Some(_) => self.mpe.master(),
+            None => self.channel,
+        }
+    }
+
+    /// Sends what an MPE call gave and notes the channels it used.
+    fn send_mpe(&mut self, base: u64, offset: u16, out: &Out) {
+        for m in out.as_slice() {
+            self.send(base, offset, m.bytes());
+            self.channels_used |= 1 << (m.bytes()[0] & 0x0F);
         }
     }
 
@@ -415,6 +479,10 @@ impl MidiOut {
         for key in 0..128u8 {
             self.note_off(base, offset, key);
         }
+        let (tap, latency) = (&self.tap, self.latency_frames);
+        self.mpe.release_all(|channel, key| {
+            queue(tap, latency, base, offset, &[0x80 | channel, key, 0]);
+        });
         for channel in 0..16u8 {
             if self.channels_used & (1 << channel) != 0 {
                 self.send(base, offset, &[0xB0 | channel, 123, 0]);
@@ -423,7 +491,100 @@ impl MidiOut {
         self.channels_used = 0;
     }
 
-    fn event(&mut self, base: u64, offset: u16, kind: NoteKind) {
+    /// The MPE Configuration Message of the zone the receiver was told about.
+    fn send_mcm(&mut self, base: u64) {
+        if let Some(side) = self.mpe_active {
+            for m in mcm(side, self.mpe.members()) {
+                self.send(base, 0, &m);
+            }
+            self.channels_used |= 1 << side.master();
+        }
+    }
+
+    /// Takes the zone the params ask for: releases the notes of the old way, switches the old zone
+    /// off at the receiver, and announces the new one.
+    fn apply_mpe(&mut self, base: u64) {
+        self.release_all(base, 0);
+        if let Some(old) = self.mpe_active.take() {
+            for m in mcm(old, 0) {
+                self.send(base, 0, &m);
+            }
+            self.channels_used |= 1 << old.master();
+        }
+        let side = match self.mpe_zone {
+            1 => Some(ZoneSide::Lower),
+            2 => Some(ZoneSide::Upper),
+            _ => None,
+        };
+        if let Some(side) = side {
+            self.mpe = MpeEncoder::new(side, self.mpe_members);
+            self.mpe_active = Some(side);
+            self.mcm_pending = true;
+        }
+    }
+
+    /// One note event while the device speaks MPE.
+    fn event_mpe(&mut self, base: u64, offset: u16, kind: NoteKind, rest: &[NoteEvent]) {
+        let master = self.mpe.master();
+        let mut out = Out::new();
+        match kind {
+            NoteKind::On { key, velocity } => {
+                let shifted = i32::from(key) + self.transpose;
+                if (0..=127).contains(&shifted) {
+                    let initial = Initial::of(key, offset, rest);
+                    self.mpe.note_on(
+                        key,
+                        shifted as u8,
+                        velocity_to_7bit(velocity),
+                        initial,
+                        &mut out,
+                    );
+                } else {
+                    self.mpe.note_off(key, &mut out);
+                }
+            }
+            NoteKind::Off { key } => {
+                self.mpe.note_off(key, &mut out);
+            }
+            NoteKind::AllOff => self.release_all(base, offset),
+            NoteKind::PitchBend { value } => {
+                let bend = (value * 8192.0 + 8192.0).round().clamp(0.0, 16383.0) as u16;
+                self.send(
+                    base,
+                    offset,
+                    &[0xE0 | master, (bend & 0x7F) as u8, (bend >> 7) as u8],
+                );
+                self.channels_used |= 1 << master;
+            }
+            NoteKind::Cc { controller, value } => {
+                self.send(
+                    base,
+                    offset,
+                    &[0xB0 | master, controller & 0x7F, to_7bit(value)],
+                );
+                self.channels_used |= 1 << master;
+            }
+            NoteKind::ChannelPressure { value } => {
+                self.send(base, offset, &[0xD0 | master, to_7bit(value)]);
+                self.channels_used |= 1 << master;
+            }
+            NoteKind::PolyPressure { key, value } => self.mpe.pressure(key, value, &mut out),
+            NoteKind::NoteExpr { key, kind, value } => match kind {
+                ExprKind::Tuning => self.mpe.tuning(key, value, &mut out),
+                ExprKind::Pressure => self.mpe.pressure(key, value, &mut out),
+                ExprKind::Slide => self.mpe.slide(key, value, &mut out),
+                // Volume and pan have no MPE message of their own.
+                ExprKind::Volume | ExprKind::Pan => {}
+            },
+        }
+        self.send_mpe(base, offset, &out);
+    }
+
+    fn event(&mut self, base: u64, offset: u16, kind: NoteKind, rest: &[NoteEvent]) {
+        if self.mpe_active.is_some() {
+            self.event_mpe(base, offset, kind, rest);
+            return;
+        }
         let channel = self.channel;
         let shifted = |key: u8, by: i32| {
             let k = i32::from(key) + by;
@@ -476,13 +637,13 @@ impl MidiOut {
                     self.channels_used |= 1 << channel;
                 }
             }
-            // Per-note expressions have no MIDI 1.0 message.
+            // Per-note expressions have no MIDI 1.0 message outside an MPE zone.
             NoteKind::NoteExpr { .. } => {}
         }
     }
 
     fn send_program(&mut self, base: u64) {
-        let channel = self.channel;
+        let channel = self.global_channel();
         if self.program < 0 {
             return;
         }
@@ -492,6 +653,19 @@ impl MidiOut {
         }
         self.send(base, 0, &[0xC0 | channel, self.program as u8]);
         self.channels_used |= 1 << channel;
+    }
+}
+
+/// Queues a message on `tap`, due `offset` frames into the batch that starts at `base`, moved by
+/// `latency` frames.
+fn queue(tap: &MidiTap, latency: i64, base: u64, offset: u16, bytes: &[u8]) {
+    let frame = (base as i64)
+        .saturating_add(i64::from(offset))
+        .saturating_add(latency)
+        .max(0) as u64;
+    if let Some(event) = MidiEvent::new(frame, bytes) {
+        // A full queue counts the loss on the tap; there is nothing else to do here.
+        let _ = tap.push(event);
     }
 }
 
@@ -512,12 +686,17 @@ impl Device for MidiOut {
         self.sample_rate = info.sample_rate.hz();
         self.update_latency();
         self.program_pending = true;
+        self.mcm_pending = self.mpe_active.is_some();
+        self.was_playing = false;
         self.reset();
     }
 
     fn reset(&mut self) {
         // Notes that were started are released by the next batch; the controllers send again.
-        self.flush = self.flush || self.held.iter().any(|h| h.active) || self.channels_used != 0;
+        self.flush = self.flush
+            || self.held.iter().any(|h| h.active)
+            || self.mpe.sounding() > 0
+            || self.channels_used != 0;
         for cc in &mut self.ccs {
             cc.last = -1;
             cc.cooldown = 0;
@@ -542,6 +721,16 @@ impl Device for MidiOut {
                 self.latency_ms = plain.clamp(-200.0, 200.0);
                 self.update_latency();
             }
+            P_MPE_ZONE => {
+                let zone = (plain.round() as i32).clamp(0, 2) as u8;
+                self.mpe_dirty |= zone != self.mpe_zone;
+                self.mpe_zone = zone;
+            }
+            P_MPE_MEMBERS => {
+                let members = (plain.round() as i32).clamp(1, 15) as u8;
+                self.mpe_dirty |= members != self.mpe_members && self.mpe_zone != 0;
+                self.mpe_members = members;
+            }
             n if (P_CC_BASE..P_CC_BASE + 3 * CC_SLOTS as u32).contains(&n) => {
                 let slot = &mut self.ccs[((n - P_CC_BASE) / 3) as usize];
                 match (n - P_CC_BASE) % 3 {
@@ -563,12 +752,27 @@ impl Device for MidiOut {
             self.flush = false;
             self.release_all(base, 0);
         }
+        if self.mpe_dirty {
+            self.mpe_dirty = false;
+            self.apply_mpe(base);
+        }
+        // Playback starting announces the zone again: the receiver may have been reset.
+        let playing = ctx.time.playing;
+        if playing && !self.was_playing && self.mpe_active.is_some() {
+            self.mcm_pending = true;
+        }
+        self.was_playing = playing;
+        if self.mcm_pending {
+            self.mcm_pending = false;
+            self.send_mcm(base);
+        }
         if self.program_pending {
             self.program_pending = false;
             self.send_program(base);
         }
-        for event in ctx.notes_in(NOTES_IN) {
-            self.event(base, event.offset, event.kind);
+        let events = ctx.notes_in(NOTES_IN);
+        for (i, event) in events.iter().enumerate() {
+            self.event(base, event.offset, event.kind, &events[i + 1..]);
         }
         // Controllers from the CV inputs: the value at the end of the batch.
         let interval = (CC_INTERVAL_S * self.sample_rate) as u64;
@@ -584,7 +788,8 @@ impl Device for MidiOut {
             if value != slot.last {
                 slot.last = value;
                 slot.cooldown = interval;
-                let (number, channel) = (slot.number, self.channel);
+                let number = slot.number;
+                let channel = self.global_channel();
                 self.channels_used |= 1 << channel;
                 self.send(
                     base,

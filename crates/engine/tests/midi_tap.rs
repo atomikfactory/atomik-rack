@@ -102,3 +102,51 @@ fn an_inserted_device_registers_and_a_removed_one_leaves() {
     handle.remove_device(id(1)).unwrap();
     assert!(handle.meters().midi_taps().is_empty());
 }
+
+#[test]
+fn an_mpe_zone_sends_the_notes_expression_as_bends_on_its_member_channel() {
+    use atomik_core::ExprKind;
+    let (mut engine, mut handle) = new_engine_with_arena(cfg(0, 2), Default::default(), 8);
+    let mut g = Graph::new(&cfg(0, 2));
+    let mut device = MidiOut::new();
+    let own = device.midi_tap().unwrap();
+    let zone = midi_out::DESCRIPTOR.param_by_key("mpe.zone").unwrap().id;
+    device.set_param(zone, 1.0);
+    let k = g.add_device(Box::new(device));
+    handle.submit_plan(g.compile().unwrap()).unwrap();
+    let kinds = [
+        (
+            200,
+            NoteKind::On {
+                key: 64,
+                velocity: 1.0,
+            },
+        ),
+        (
+            210,
+            NoteKind::NoteExpr {
+                key: 64,
+                kind: ExprKind::Tuning,
+                value: 12.0,
+            },
+        ),
+        (300, NoteKind::Off { key: 64 }),
+    ];
+    for (frame, kind) in kinds {
+        handle.send_note(note(frame, k, kind)).unwrap();
+    }
+    render_blocks(&mut engine, &[], 2, 6 * 64, 64);
+    let sent = drain(&own);
+    // The zone is announced first (five messages on the master channel), then the note on the
+    // first member channel with its bend and its release.
+    assert_eq!(sent.len(), 5 + 3, "{sent:?}");
+    assert!(sent[..5].iter().all(|(_, m)| m[0] == 0xB0));
+    assert_eq!(
+        &sent[5..],
+        &[
+            (200, vec![0x91, 64, 127]),
+            (210, vec![0xE1, 0x00, 0x50]),
+            (300, vec![0x81, 64, 0]),
+        ]
+    );
+}

@@ -46,6 +46,7 @@ mod drums_cmd;
 pub mod duck_from;
 pub mod energy_map;
 mod expand;
+pub mod expression_edit;
 pub mod freeze;
 pub mod groove;
 mod groove_cmd;
