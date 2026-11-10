@@ -271,6 +271,46 @@ fn a_slow_deactivation_is_polled_without_waiting_and_the_restart_ends_when_it_is
 }
 
 #[test]
+fn a_layout_growth_followed_by_a_restart_reports_the_layout_and_the_device_keeps_playing() {
+    let (mut m, stats) = manager();
+    stats.set_deactivate_delay(2);
+    let (mut h, id) = harness_of(m.instantiate(&request("null.fx")).unwrap());
+    *h.input_mut("in_l") = [1.0; BATCH];
+    run(&mut h, 2);
+    let mut grown = fx_layout();
+    grown.sidechain = true;
+    grown.aux_out = 2;
+    stats.change_layout(grown.clone());
+    m.restart(id).unwrap();
+    let mut events = Vec::new();
+    for _ in 0..8 {
+        h.process();
+        events.extend(m.poll());
+    }
+    assert!(events.contains(&ManagerEvent::Restarted(id)), "{events:?}");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            ManagerEvent::LayoutChanged { instance, layout } if *instance == id && *layout == grown
+        )),
+        "{events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, ManagerEvent::Failed { .. })),
+        "{events:?}"
+    );
+    assert_eq!(m.layout(id).unwrap(), &grown);
+    run(&mut h, 2);
+    assert_eq!(
+        h.output("out_l")[0],
+        0.5,
+        "the plugin plays after the growth"
+    );
+}
+
+#[test]
 fn a_new_sample_rate_restarts_every_instance_at_that_rate() {
     let (mut m, stats) = manager();
     let (mut h1, id1) = harness_of(m.instantiate(&request("null.fx")).unwrap());

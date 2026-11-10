@@ -477,6 +477,7 @@ impl ProbeShared {
                 ProcessStatus::Error => 4,
                 ProcessStatus::Late => 5,
                 ProcessStatus::Lost => 6,
+                ProcessStatus::Refused => 7,
             },
             Ordering::Relaxed,
         );
@@ -587,6 +588,7 @@ impl PluginProcessor for Probe {
             4 => ProcessStatus::Error,
             5 => ProcessStatus::Late,
             6 => ProcessStatus::Lost,
+            7 => ProcessStatus::Refused,
             _ => ProcessStatus::Continue,
         }
     }

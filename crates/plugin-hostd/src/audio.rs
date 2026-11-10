@@ -89,6 +89,8 @@ fn publish_info(port: &ChildPort, held: &Held) {
 fn serve(mut port: ChildPort, commands: &Receiver<Command>) {
     priority();
     let mut held: Option<Held> = None;
+    // What the thread already told stderr (which the parent shows with a lost process).
+    let (mut said_none, mut said_poisoned) = (false, false);
     loop {
         loop {
             match commands.try_recv() {
@@ -127,7 +129,25 @@ fn serve(mut port: ChildPort, commands: &Receiver<Command>) {
                         publish_info(&port, h);
                     }
                 }
-                _ => request.complete(|_| (ProcessStatus::Error, false)),
+                Some(_) => {
+                    if !std::mem::replace(&mut said_poisoned, true) {
+                        eprintln!(
+                            "atomik-plugin-host: the plugin panicked; every request is now answered with an error"
+                        );
+                    }
+                    request.complete(|_| (ProcessStatus::Error, false));
+                }
+                None => {
+                    // No processor right now (a restart is between its deactivation and its
+                    // activation, or an activation failed): the batch is refused, the device
+                    // keeps playing silence and does not fail.
+                    if !std::mem::replace(&mut said_none, true) {
+                        eprintln!(
+                            "atomik-plugin-host: a request came while the child holds no processor; refused"
+                        );
+                    }
+                    request.complete(|_| (ProcessStatus::Refused, false));
+                }
             }
         }
         if let Some(h) = held.as_ref()

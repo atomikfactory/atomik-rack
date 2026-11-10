@@ -380,6 +380,45 @@ pub(crate) fn negotiate(
     Ok(plan)
 }
 
+/// Whether the plugin still has the buses `plan` was made for: the same number of audio buses
+/// and event buses, and the same channel count on every audio bus. A plugin that changes its
+/// buses without a restart request (or whose request was lost) fails this; handing it a plan
+/// with another `numInputs`/`numOutputs` is what makes `process` answer a result other than OK.
+pub(crate) fn plan_is_current(
+    component: &ComPtr<IComponent>,
+    processor: &ComPtr<IAudioProcessor>,
+    plan: &AudioPlan,
+) -> bool {
+    // SAFETY: a live component.
+    let counts = unsafe {
+        (
+            component.getBusCount(K_AUDIO, K_INPUT),
+            component.getBusCount(K_AUDIO, K_OUTPUT),
+            component.getBusCount(K_EVENT, K_INPUT) > 0,
+            component.getBusCount(K_EVENT, K_OUTPUT) > 0,
+        )
+    };
+    if counts
+        != (
+            plan.inputs.len() as i32,
+            plan.outputs.len() as i32,
+            plan.event_in,
+            plan.event_out,
+        )
+    {
+        return false;
+    }
+    let same = |dir: BusDirection, buses: &[BusPlan]| {
+        buses.iter().enumerate().all(|(i, b)| {
+            let mut a: SpeakerArrangement = 0;
+            // SAFETY: a live processor and a valid out pointer.
+            let known = unsafe { processor.getBusArrangement(dir, i as i32, &mut a) } == kResultOk;
+            !known || speaker_channels(a) == b.channels
+        })
+    };
+    same(K_INPUT, &plan.inputs) && same(K_OUTPUT, &plan.outputs)
+}
+
 // ----- parameters and units ---------------------------------------------------------------------
 
 /// The `/`-joined names of the unit chain of `id` below the root (`""` for the root or an

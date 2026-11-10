@@ -492,6 +492,53 @@ fn an_error_status_marks_the_device_failed_dry_for_effects_and_posts_one_message
 }
 
 #[test]
+fn a_plugin_that_refuses_some_batches_keeps_playing_and_is_reported_once() {
+    let (probe, shared) = Probe::new();
+    shared.set_out(ProbeOut::Constant(0.5));
+    shared.set_status(ProcessStatus::Refused);
+    let (mut h, r) = harness(rig("st.refused-fx", &fx_layout(), Box::new(probe)));
+    *h.input_mut("in_l") = [0.75; BATCH];
+    for _ in 0..5 {
+        h.process();
+        assert!(
+            h.output("out_l").iter().all(|s| *s == 0.75),
+            "no wet signal while refused: the dry input"
+        );
+    }
+    assert_eq!(shared.calls(), 5, "called every batch, not given up on");
+    let msgs = drain_messages(&r.manager);
+    assert_eq!(
+        msgs,
+        vec![PluginMessage::Refused { batches: 1 }],
+        "reported once"
+    );
+    // The plugin is ready again: it plays at once, the device never failed.
+    shared.set_status(ProcessStatus::Continue);
+    h.process();
+    assert!(h.output("out_l").iter().all(|s| *s == 0.5), "wet again");
+    assert_eq!(shared.calls(), 6);
+    let mut m = [0.0f32; 5];
+    h.device().meter_values(&mut m);
+    assert_ne!(m[2], 3.0, "never failed");
+    assert!(drain_messages(&r.manager).is_empty());
+}
+
+#[test]
+fn a_refusing_instrument_is_silent_for_those_batches_only() {
+    let (probe, shared) = Probe::new();
+    shared.set_out(ProbeOut::Constant(0.5));
+    shared.set_status(ProcessStatus::Refused);
+    let (mut h, _r) = harness(rig("st.refused-synth", &synth_layout(), Box::new(probe)));
+    for _ in 0..3 {
+        h.process();
+        assert!(h.output("out_l").iter().all(|s| *s == 0.0));
+    }
+    shared.set_status(ProcessStatus::Continue);
+    h.process();
+    assert!(h.output("out_l").iter().all(|s| *s == 0.5));
+}
+
+#[test]
 fn a_failed_instrument_is_silent() {
     let (probe, shared) = Probe::new();
     shared.set_out(ProbeOut::Constant(0.5));

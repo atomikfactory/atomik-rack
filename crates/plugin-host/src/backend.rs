@@ -273,6 +273,11 @@ pub enum ProcessStatus {
     Sleep,
     /// The plugin failed: the device becomes FAILED.
     Error,
+    /// The plugin did not take this batch (a VST3 plugin answered a result other than OK, as
+    /// many do while they load content, sign in or change their buses; the child had no
+    /// processor for a moment). Not a failure: the device has no wet signal this batch, counts
+    /// it and carries on. Only a panic, a crash or a lost process fails a device.
+    Refused,
     /// Sandbox: the result did not come back in time for this batch. Not a failure: the
     /// device has no valid wet signal this batch (dry for effects, silence otherwise).
     Late,

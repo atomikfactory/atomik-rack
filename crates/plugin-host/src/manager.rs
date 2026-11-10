@@ -934,6 +934,13 @@ impl PluginManager {
                     level,
                     text,
                 }),
+                PluginMessage::Refused { batches } => events.push(ManagerEvent::Log {
+                    instance: id,
+                    level: LogLevel::Warning,
+                    text: format!(
+                        "the plugin did not take {batches} audio block(s) (it answered a non-OK result, as plugins do while they load or sign in); the device plays on, silent for those blocks"
+                    ),
+                }),
                 PluginMessage::Failed { reason } => events.push(ManagerEvent::Failed {
                     instance: id,
                     reason: reason.to_string(),

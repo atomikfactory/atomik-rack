@@ -185,6 +185,10 @@ impl Vst3Processor {
             };
         }
         self.out_data.fill([0.0; BATCH]);
+        // The host hands the plugin output buses that claim nothing is silent.
+        for bus in &mut self.out_buses {
+            bus.silenceFlags = 0;
+        }
         let _ = (self.in_ptrs.len(), self.out_ptrs.len());
     }
 
@@ -478,17 +482,19 @@ impl PluginProcessor for Vst3Processor {
         // the frame count is BATCH, and `&mut self` makes the output buffers exclusive.
         let result = unsafe { self.processor.process(&mut data) };
 
+        if result != kResultOk {
+            // Not a failure: hosts commonly ignore a result other than OK, and plugins answer
+            // it while they load content, sign in or change their buses. The buffers of a block the plugin did not take hold nothing to use: the device
+            // keeps the silence it prepared.
+            return ProcessStatus::Refused;
+        }
         self.collect_outputs(io);
         // SAFETY: a live processor.
         self.tail = match unsafe { self.processor.getTailSamples() } {
             n if n == kInfiniteTail => TailLength::Infinite,
             n => TailLength::Finite(n),
         };
-        if result == kResultOk {
-            ProcessStatus::Continue
-        } else {
-            ProcessStatus::Error
-        }
+        ProcessStatus::Continue
     }
 
     fn sleep_rule(&self) -> SleepRule {

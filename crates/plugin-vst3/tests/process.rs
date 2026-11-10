@@ -657,16 +657,35 @@ fn failed_state(format: Format, v: Variant) -> (Vec<PluginMessage>, [f32; BATCH]
 
 #[test]
 fn a_plugin_that_returns_an_error_status_becomes_failed_and_the_effect_goes_dry() {
-    for format in FORMATS {
-        let (msgs, out, state) = failed_state(format, Variant::Error);
-        assert_eq!(state, 3.0, "{}: failed", format.name());
-        assert!(out.iter().all(|s| *s == 0.25), "dry");
-        let failures = msgs
+    // CLAP: an error status is a failure.
+    let (msgs, out, state) = failed_state(Format::Clap, Variant::Error);
+    assert_eq!(state, 3.0, "clap: failed");
+    assert!(out.iter().all(|s| *s == 0.25), "dry");
+    let failures = msgs
+        .iter()
+        .filter(|m| matches!(m, PluginMessage::Failed { .. }))
+        .count();
+    assert_eq!(failures, 1, "one message: {msgs:?}");
+}
+
+#[test]
+fn a_vst3_plugin_that_answers_a_result_other_than_ok_does_not_fail_and_is_reported_once() {
+    // VST3: hosts commonly ignore a non-OK result (plugins give it while they load or sign
+    // in). The device plays dry/silence for those blocks, keeps going and says so once.
+    let (msgs, out, state) = failed_state(Format::Vst3, Variant::Error);
+    assert_ne!(state, 3.0, "not failed");
+    assert!(out.iter().all(|s| *s == 0.25), "dry");
+    assert!(
+        !msgs
             .iter()
-            .filter(|m| matches!(m, PluginMessage::Failed { .. }))
-            .count();
-        assert_eq!(failures, 1, "one message: {msgs:?}");
-    }
+            .any(|m| matches!(m, PluginMessage::Failed { .. })),
+        "{msgs:?}"
+    );
+    let refused: Vec<_> = msgs
+        .iter()
+        .filter(|m| matches!(m, PluginMessage::Refused { .. }))
+        .collect();
+    assert_eq!(refused.len(), 1, "reported once, not per block: {msgs:?}");
 }
 
 #[test]

@@ -283,7 +283,8 @@ fn a_plugin_that_adds_a_param_changes_the_layout_through_a_restart() {
 
 #[test]
 fn reload_after_a_failure_restarts_the_device() {
-    for format in FORMATS {
+    // Only a CLAP error status fails a device; a VST3 non-OK result is refused (see process.rs).
+    for format in [Format::Clap] {
         let k = kit_variants(format);
         let mut m = manager_for(format, std::slice::from_ref(&k.path));
         let (mut h, id, _) = open(&mut m, &k.variant(Variant::Error));

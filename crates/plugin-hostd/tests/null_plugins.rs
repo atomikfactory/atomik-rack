@@ -108,11 +108,11 @@ fn the_processor_info_is_written_at_activation() {
 }
 
 #[test]
-fn a_request_without_a_processor_is_answered_with_an_error_status() {
+fn a_request_without_a_processor_is_refused_not_failed_and_is_answered_again_after_a_restart() {
     let mut p = started("null.gain");
     p.instantiate();
     let out = p.process(&[ramp(1.0), ramp(1.0)], &[]);
-    assert_eq!(out.status, ProcessStatus::Error);
+    assert_eq!(out.status, ProcessStatus::Refused);
     assert!(!p.op(AudioOp::Start).ok);
     p.activate(false);
     let out = p.process(&[ramp(1.0), ramp(1.0)], &[]);
@@ -120,8 +120,15 @@ fn a_request_without_a_processor_is_answered_with_an_error_status() {
     p.deactivate();
     assert_eq!(
         p.process(&[ramp(1.0), ramp(1.0)], &[]).status,
-        ProcessStatus::Error,
+        ProcessStatus::Refused,
         "the processor went back to the main thread"
+    );
+    // The restart's activation gives the audio thread a processor again.
+    p.activate(false);
+    assert_eq!(
+        p.process(&[ramp(1.0), ramp(1.0)], &[]).status,
+        ProcessStatus::Continue,
+        "answered after the restart"
     );
 }
 
