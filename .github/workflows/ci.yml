@@ -103,8 +103,10 @@ jobs:
     name: test (${{ matrix.os }}, ${{ matrix.profile }})
     needs: changes
     runs-on: ${{ matrix.os }}
-    # The release leg compiles the whole workspace optimised with debug info; it needs longer.
-    timeout-minutes: ${{ matrix.profile == 'release' && 90 || 60 }}
+    # The release leg compiles the whole workspace optimised with debug info: on Windows that
+    # alone took 46 to 89 minutes (the cache holds the dependencies, not the workspace crates), so
+    # 90 cancelled green runs. The tests themselves take about 15 minutes.
+    timeout-minutes: ${{ matrix.profile == 'release' && 150 || 90 }}
     strategy:
       fail-fast: false
       matrix:
