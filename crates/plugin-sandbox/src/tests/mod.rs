@@ -1,5 +1,6 @@
 //! Unit tests of the private types over a fake child (and, for supervision, a real process).
 
+mod loading;
 mod lost;
 mod no_alloc;
 mod notifications;

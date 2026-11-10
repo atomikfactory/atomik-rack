@@ -135,7 +135,7 @@ fn a_child_that_exits_with_code_3_after_the_hello_is_reported_with_its_code_and_
 #[test]
 fn a_child_that_hangs_is_killed_when_its_call_times_out() {
     let mut timeouts = test_timeouts();
-    timeouts.create = Duration::from_millis(500);
+    timeouts.load = Duration::from_millis(500);
     let (instance, manager, live) = start_real("hang", timeouts);
     let err = instance.map(|_| ()).unwrap_err().to_string();
     assert!(err.contains("did not answer Instantiate"), "{err}");

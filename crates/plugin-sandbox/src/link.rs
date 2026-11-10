@@ -55,8 +55,12 @@ const MAX_HELD_EDITS: usize = 4096;
 /// The timeouts of the main-thread calls.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Timeouts {
-    /// Hello, instantiate, activate, capture and restore state: a call that is not answered in
-    /// time kills the child.
+    /// Loading: the Hello, `Instantiate` and opening the editor. A plugin may check its licence
+    /// online or show its own sign-in dialogs then (and a firewall may ask the user first), so
+    /// this is minutes, not seconds; the waits are polled, so the app stays responsive.
+    pub load: Duration,
+    /// Activate, capture and restore state: a call that is not answered in time kills the
+    /// child.
     pub create: Duration,
     /// Every other call that matters (deactivate, flush): killing as well.
     pub call: Duration,
@@ -361,7 +365,12 @@ impl Shared {
     }
 
     fn compose_reason(&self, status: String) -> String {
-        let head = lock(&self.kill_reason).take().unwrap_or(status);
+        // Why the app stopped the child (when it did) and how the process ended, both: the
+        // exit code tells a kill from a crash that came first.
+        let head = match lock(&self.kill_reason).take() {
+            Some(kill) => format!("{kill} ({status})"),
+            None => status,
+        };
         let tail = {
             let tail = lock(&self.stderr_tail);
             String::from_utf8_lossy(&tail).trim().to_string()
@@ -531,6 +540,10 @@ pub(crate) struct Link {
     shutdown_at: Option<std::time::Instant>,
     /// A request sent by [`Link::begin_call`] whose answer [`Link::finish_call`] has not taken.
     pending: bool,
+    /// A request sent by [`Link::begin_held_call`] whose answer may take minutes: until
+    /// [`Link::poll_reply`] has it, every other call fails at once without being sent, so it
+    /// neither abandons that request nor counts as a miss of a busy child.
+    held: Option<&'static str>,
 }
 
 impl Link {
@@ -603,6 +616,7 @@ impl Link {
             last_miss: None,
             shutdown_at: None,
             pending: false,
+            held: None,
         };
         if link.reader.is_none() || link.writer.is_none() {
             link.shared
@@ -629,7 +643,7 @@ impl Link {
     ) -> Result<Self, BackendError> {
         let mut link = Self::launch(transport, death, timeouts, messenger, live)?;
         let reply = link
-            .await_reply("Hello", timeouts.create)
+            .await_reply("Hello", timeouts.load)
             .map_err(|e| link.explain(e))?;
         link.check_hello(reply)?;
         Ok(link)
@@ -674,7 +688,37 @@ impl Link {
             None => return None,
         };
         self.pending = false;
+        self.held = None;
         Some(self.settle(waited, what, timeout))
+    }
+
+    /// The error of a call made while a held request is out (see [`Link::begin_held_call`]).
+    fn busy(&self, what: &str) -> Option<BackendError> {
+        self.held.map(|held| {
+            BackendError::Failed(format!(
+                "the plugin is busy with {held}; {what} was not sent"
+            ))
+        })
+    }
+
+    /// The name of the held request that is out, if any.
+    pub fn held(&self) -> Option<&'static str> {
+        self.held
+    }
+
+    /// Like [`Link::begin_call`] for a request whose answer may take minutes (an editor that
+    /// shows licence or sign-in dialogs before it opens): [`Link::poll_reply`] takes the
+    /// answer, and every other call fails at once until it has.
+    pub fn begin_held_call(
+        &mut self,
+        what: &'static str,
+        make: impl FnOnce(u64) -> ToChild,
+    ) -> Result<(), BackendError> {
+        self.begin_call(make)?;
+        // Taken by `poll_reply` only: a `finish_call` must not mistake it for its own.
+        self.pending = false;
+        self.held = Some(what);
+        Ok(())
     }
 
     /// For the errors of a call made while the child may be starting or ending: a lost link
@@ -756,6 +800,9 @@ impl Link {
     /// slowest child, not the sum. Any other call on this link before the finish abandons the
     /// request (its answer is dropped).
     pub fn begin_call(&mut self, make: impl FnOnce(u64) -> ToChild) -> Result<(), BackendError> {
+        if let Some(e) = self.busy("a request") {
+            return Err(e);
+        }
         self.pending = false;
         if self.shared.is_lost() {
             return Err(lost());
@@ -775,6 +822,9 @@ impl Link {
         what: &str,
         timeout: Duration,
     ) -> Option<Result<Reply, BackendError>> {
+        if let Some(e) = self.busy(what) {
+            return Some(Err(e));
+        }
         if !std::mem::take(&mut self.pending) {
             return None;
         }
@@ -790,6 +840,9 @@ impl Link {
         make: impl FnOnce(u64) -> ToChild,
         blob: Option<&[u8]>,
     ) -> Result<Reply, BackendError> {
+        if let Some(e) = self.busy(what) {
+            return Err(e);
+        }
         self.pending = false;
         if self.shared.is_lost() {
             return Err(lost());
@@ -814,6 +867,9 @@ impl Link {
         timeout: Duration,
         make: impl FnOnce(u64) -> ToChild,
     ) -> Result<Reply, BackendError> {
+        if let Some(e) = self.busy(what) {
+            return Err(e);
+        }
         self.pending = false;
         if self.shared.is_lost() {
             return Err(lost());
