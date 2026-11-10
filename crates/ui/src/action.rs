@@ -656,6 +656,8 @@ pub enum UiAction {
     ModMatrix(crate::mod_matrix_panel::ModMatrixAction),
     /// The command palette ([`crate::CommandPaletteView`]) asks to run a command or to close.
     CommandPalette(crate::command_palette::PaletteAction),
+    /// The manual ([`crate::ManualView`]) asks to close or to open something outside it.
+    Manual(crate::manual::ManualAction),
     /// The parameter search ([`crate::ParamSearchView`]) asks for something: a new query, an action
     /// on a result, or to close.
     ParamSearch(crate::param_search_panel::ParamSearchAction),

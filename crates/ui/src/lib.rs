@@ -407,6 +407,7 @@ pub mod launcher;
 mod library_drop;
 pub mod macro_marks;
 pub mod macros_panel;
+pub mod manual;
 pub mod marker_edit;
 pub mod masking_panel;
 pub mod master_panel;
@@ -528,6 +529,7 @@ pub use launcher::{LauncherAction, LauncherFeed, LauncherView, TrackLaunch};
 pub use macros_panel::{
     EntryUnit, MacroAssignRow, MacroBankRow, MacroRow, MacrosAction, MacrosView,
 };
+pub use manual::{Manual, ManualAction, ManualView};
 pub use marker_edit::MarkSel;
 pub use masking_panel::{MaskingAction, MaskingData, MaskingPair, MaskingView};
 pub use midi_maps_panel::{MidiMapRow, MidiMapsAction, MidiMapsView};

@@ -591,6 +591,7 @@ Help
   Guided Tour
   Help Mode
   Keyboard Shortcuts
+  Manual
   Documentation
   Report an Issue
   Check for Updates

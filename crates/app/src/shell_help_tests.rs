@@ -157,7 +157,7 @@ fn hovering_the_play_button_shows_its_help_and_a_click_still_plays() {
     assert_eq!(card.shortcut.as_deref(), Some("Space"));
     assert_eq!(card.more.as_deref(), Some("The main window"));
     assert!(card.text.contains("Starts the song"), "{}", card.text);
-    assert!(s.help_link_url().is_some_and(|u| u.starts_with("https://")));
+    assert_eq!(s.help_link_section(), Some("The main window"));
     // The mode does not block the control.
     assert!(!s.core().is_playing());
     press(&mut s, play);
@@ -219,13 +219,19 @@ fn the_more_link_opens_the_manual_and_the_rest_of_the_panel_takes_the_press() {
     s.execute(AppCommand::HelpMode);
     let play = play_button(&s);
     hover(&mut s, play);
-    let url = s.help_link_url().expect("the card links the manual");
+    assert_eq!(s.help_link_section(), Some("The main window"));
     let link = s
         .help_link_rect()
         .expect("and the link has a place")
         .center();
     assert!(s.help_panel_rect().unwrap().contains(link));
-    assert_eq!(press(&mut s, link), [ShellRequest::OpenUrl(url)]);
+    assert!(press(&mut s, link).is_empty(), "nothing leaves the app");
+    assert!(s.manual_open(), "the built-in manual opens");
+    assert_eq!(
+        s.manual_view().unwrap().title(),
+        "The main window",
+        "at the section the card names"
+    );
     assert!(!s.core().is_playing(), "the press did not reach a control");
     // A press elsewhere on the panel does nothing.
     let panel = s.help_panel_rect().unwrap();
@@ -250,7 +256,7 @@ fn a_knob_explains_its_range_and_its_device_and_a_press_still_turns_it() {
         card.text
     );
     assert_eq!(card.more.as_deref(), Some("Devices"));
-    assert!(s.help_link_url().is_some_and(|u| u.ends_with("DEVICES.md")));
+    assert_eq!(s.help_link_section(), Some("Devices"));
     // The mode does not block the knob: a drag changes the value.
     let before = s
         .core()

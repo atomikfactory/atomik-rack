@@ -50,13 +50,48 @@ Help panel sits above the status line and the song gives way to it. Point at a c
 - **The title and the text.** The name of the control and one to four sentences about it. A knob, a switch or a choice
   of a device shows its name, its range and unit, and a line about the device it belongs to.
 - **The shortcut.** The key of the command the control runs, read from your keymap, so a rebound key shows.
-- **More.** A link to the section of this documentation about it; click it to open the section in the browser. This
-  is the same way Help > Documentation opens the project page, and the same single request to a fixed address.
+- **More.** A link to the section of this documentation about it; click it to open the section in the built-in manual
+  (see [Manual](#manual)). Nothing is sent anywhere.
 
 Nothing is blocked: clicks, drags and keys work as usual, and the ordinary tooltips stay off while the mode is on. The
 panel keeps the last control it explained while the pointer is over empty space or over the panel itself, so the link
 can be reached. A control with no help text yet shows its tooltip text instead. The mode is not saved; each session
 starts with it off.
+
+## Manual
+
+Help > Manual (Ctrl+F1, or Cmd+Alt+F1 on macOS) opens this documentation inside the app. It works offline: the text is
+the same file the documentation on the project page shows, compiled into the program, so the two never differ. The
+command palette lists every section as "Manual: <heading>", and the More link of Help Mode opens the manual at its
+section.
+
+- **The table of contents.** On the left, built from the headings of the documents: this one, and the keyboard
+  reference after it. Click a row to go there; the wheel scrolls the list.
+- **The page.** On the right: headings, paragraphs, bold and italic text, code, lists, tables and links between
+  sections, drawn in the colours of the theme. A picture is shown as its description. Up and Down, Page Up and Page
+  Down, Home and End, the wheel and the scroll bar move through the page.
+- **Search.** Type in the field at the top: every word must occur in a heading, or in one paragraph, list item, table
+  or code block of a section. The results are ranked: a heading that equals what you typed comes first, then headings
+  that start with it, then other headings, then the sections where the words occur most. Each result shows a line
+  around the match with the matched words in bold. Up and Down choose a result, Enter or a click opens it, and Esc
+  clears the search (a second Esc closes the manual).
+- **Back and Forward.** The two buttons left of the search field, or Alt+Left and Alt+Right, step through the places
+  you have been, as in a web browser. A link, a row of the table of contents and a result each add a place.
+- **Links.** A link to a section of the manual moves there. A link to a page the manual does not hold (the device
+  reference, the other documents of the project) opens that page in the browser, the same single request to a fixed
+  address that Help > Documentation makes. Help > Documentation still opens the project page.
+
+Esc, a click outside the panel, or Ctrl+F1 again closes the manual.
+
+## Devices
+
+Every built-in device has a front panel in the rack, and the device browser lists them by kind: instruments, effects,
+players and mixers. Help Mode explains a device's knobs, switches and choices: point at one to read its range, its unit
+and a line about the device it belongs to. Plugins in the VST3 and CLAP formats sit in the rack the same way (see
+[Plugins](#plugins)).
+
+The reference of every built-in device is [DEVICES.md](DEVICES.md): its sockets, parameters, ranges, behaviour and
+limits. It is long, so the manual links to it on the project page instead of holding a copy.
 
 ## Launcher
 

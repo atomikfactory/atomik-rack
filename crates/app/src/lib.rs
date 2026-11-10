@@ -57,6 +57,7 @@ pub mod keymap_store;
 pub mod kick_bass;
 pub mod library_store;
 pub mod logging;
+pub mod manual;
 pub mod masking_worker;
 pub mod master_keyboard;
 pub use atomik_ui::menu_layout;
