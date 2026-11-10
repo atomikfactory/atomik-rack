@@ -92,6 +92,25 @@ and a few tools. Nothing here changes how the song sounds.
 - **Saving.** The key, the key changes and the chords are saved only when set, as optional fields that an older
   version of the program drops with a warning (project format 45).
 
+## CPU use
+
+The program times every device in the rack on the audio thread all the time; the cost is small (about half a percent
+of a 64-frame callback for a hundred devices) and it never changes the sound. What it shows is the share of the
+audio time a device uses: 100 % means the device alone takes as long as the audio it makes.
+
+- **On the devices.** View > Show Device CPU (off at the start, not saved) puts a small figure on the name plate of
+  every device in the rack, such as `3.2%` (one decimal below 10 %, whole percent above), averaged over about a second.
+  A container shows the sum of the devices inside it. A figure above 25 % turns the warning colour of the theme.
+- **On the mixer.** With the same switch on, each channel strip shows the total of its track in the top right corner of
+  the name plate: the instrument, the channel and its insert effects.
+- **The status line.** Rest the pointer on the status line at the foot of the window: the tooltip gives the engine load
+  and its peak, then the five heaviest devices with the track each one belongs to and its own peak (held for two
+  seconds). A plugin in its own process counts the time the program waits for it.
+- **The hint.** When the engine load stays above 70 % for five seconds while the song plays, a card above the status
+  line says which track uses the most CPU, such as "Track Bass uses the most CPU (41%). Freeze it?". Freeze runs Freeze
+  Track on it (Unfreeze undoes it); Not now closes the card. Each track is suggested at most once per song, and a frozen
+  track or one without clips is never suggested.
+
 ## Windows
 
 The rack and the mixer can leave the main window (View > Panels > Detach Rack and Detach Mixer, or by closing their
