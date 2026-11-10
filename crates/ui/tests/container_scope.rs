@@ -1100,3 +1100,28 @@ fn a_param_a_bank_drives_inside_a_container_wears_the_tag_and_shows_the_macro_va
         }
     }
 }
+
+#[test]
+fn the_macro_menu_opens_upward_when_it_does_not_fit_below_and_every_row_shows() {
+    use atomik_ui::UiEvent;
+    use atomik_ui::kurbo::Size;
+    let d = layered();
+    let reg = registry();
+    let mut v = scoped_view(d.doc(), &["layer"]);
+    // A window that ends just under the knob: the 16 rows (18 px each) do not fit below it.
+    let height = 900.0;
+    let _ = v.handle(&UiEvent::Resize(Size::new(1000.0, height)), d.doc(), &reg);
+    v.sync(d.doc(), &reg);
+    let p = v.control_center(&key("pad"), "filter.resonance").unwrap();
+    assert!(p.y < height && p.y + 16.0 * 18.0 > height, "{p:?}");
+    assert!(right_click(&mut v, d.doc(), p).is_empty());
+    let rows = v.macro_menu_rows();
+    assert_eq!(rows.len(), 16);
+    // Every row is wholly inside the window.
+    for (label, at) in &rows {
+        assert!(
+            at.y - 9.0 >= 0.0 && at.y + 9.0 <= height,
+            "{label} is at {at:?} in a window {height} high"
+        );
+    }
+}

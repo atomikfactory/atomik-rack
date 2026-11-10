@@ -1359,11 +1359,7 @@ impl PluginParamsView {
         let h = CompactList::height(entries.len(), MENU_ROW_H);
         let b = self.bounds;
         let x0 = (r.x1 - MENU_W).max(b.x0 + 4.0);
-        let y0 = if r.y1 + h > b.y1 {
-            r.y0 - h
-        } else {
-            r.y1 + 2.0
-        };
+        let y0 = CompactList::fit_y(r.y1 + 2.0, r.y0 - h, h, b.y0, b.y1);
         self.menu = Some(Menu {
             id,
             entries,
@@ -1402,11 +1398,7 @@ impl PluginParamsView {
         let h = CompactList::height(entries.len(), MENU_ROW_H);
         let b = self.bounds;
         let x0 = (r.x1 - MENU_W).max(b.x0 + 4.0);
-        let y0 = if r.y1 + h > b.y1 {
-            r.y0 - h
-        } else {
-            r.y1 + 2.0
-        };
+        let y0 = CompactList::fit_y(r.y1 + 2.0, r.y0 - h, h, b.y0, b.y1);
         self.menu = Some(Menu {
             id,
             entries,
