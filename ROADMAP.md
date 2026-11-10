@@ -115,7 +115,9 @@ Skip, Move and Close, never takes the keyboard and is not saved in the song; a c
 the guide card off),
 and a clip launcher (a Launcher view of looping note clips in slots by track and scene, launched live at the next
 bar or other quantize boundary, each slot overriding its track's arrangement until it stops, with Back to Arrangement and
-Record Launches, which writes what was launched into the arrangement as one undo step).
+Record Launches, which writes what was launched into the arrangement as one undo step),
+and the menu bar in every window (the detached rack and mixer windows carry the same menu bar as the main window, over
+the one menu model, and a command chosen there acts on the pane of that window).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms

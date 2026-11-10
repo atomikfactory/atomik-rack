@@ -53,6 +53,23 @@ takes the lower pane instead.
   change the song tempo. The notes of a launched slot go to the track's instrument like any other notes, so a MIDI
   keyboard still plays it.
 
+## Windows
+
+The rack and the mixer can leave the main window (View > Panels > Detach Rack and Detach Mixer, or by closing their
+window to put them back). The main menu bar is at the top of each of those windows, the same bar as in the main window:
+the same menus, the same check marks and the same dimmed items, so a command is always one click away from the window
+you work in.
+
+- **Which pane a command acts on.** A command that works on "the pane with the keys" works on the pane of the window
+  whose bar you used. Edit > Select All, Copy, Cut, Paste, Duplicate and Delete act on the rack devices in the rack
+  window and on the mixer strips in the mixer window. Keyboard shortcuts work in every window as before.
+- **One open menu.** Only one menu is open at a time. Opening a menu in one window closes the one open in another, and
+  a menu closes when its window loses the focus. While a menu is open the arrow keys, Home, End, Enter and Escape work
+  it, in whichever window it is; there are no Alt or letter shortcuts for the menu titles.
+- **Size.** A window with the bar is never narrower than the bar. The window's size and place are saved as before.
+- **No bar.** The small windows (Spectrum EQ, Piano Keys, Video) and the detached browser have no menu bar. On macOS the
+  menu bar is the system's, at the top of the screen, and the windows draw none.
+
 ## Privacy
 
 Atomik Rack sends nothing about the user or the computer. Its only network request is the optional check for a newer

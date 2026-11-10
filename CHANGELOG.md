@@ -157,6 +157,16 @@ may break APIs and the patch and project formats.
   back to 0 dB). It is saved with the Settings and applies to the next preview of every kind.
 
 ### Changed
+- **The menu bar in every window.** The detached rack window and the detached mixer window now show the same menu bar
+  as the main window (File, Edit, View and the rest), so every command is reachable from the window you work in. It
+  is one menu model: the same items, check marks and enabled states in all three windows, and a toggle chosen in one
+  shows its mark in the others. A command acts on the pane of the window whose bar you used: Edit > Select All, Copy
+  and the others work on the rack devices in the rack window and on the strips in the mixer window. Only one menu is
+  open at a time across the windows; it closes when another window takes the focus, when you press in another window
+  or when the app loses the focus. The pane starts below the bar, a window is never narrower than the bar, and
+  pointer positions, drags between windows and the saved window size are unchanged. The small windows (Spectrum EQ,
+  Piano Keys, Video and the detached browser) keep no bar, and on macOS the system's menu bar stays the only one.
+  Format unchanged, command count unchanged.
 - **One text field everywhere.** Every place where you type text (names of markers, folders, tracks, clips, lanes,
   buses, groups, snapshots, devices, patterns, macros and assets, the search boxes, comments, the tempo, signature,
   position, time, locator and clip inspector entries, the note and point fields, the macro range values and the
