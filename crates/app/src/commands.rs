@@ -682,6 +682,9 @@ pub enum AppCommand {
     AudioClearEnvelope,
     /// Audio ▸ Settings….
     AudioSettings,
+    /// Options ▸ Audio and MIDI Setup…: the first-run panel (device, test tone, latency, input
+    /// and MIDI keyboard).
+    AudioSetup,
     /// Audio ▸ Plugins…: the third-party plugin settings, scan and list.
     PluginSettings,
     /// Audio ▸ Rescan MIDI Ports: open the enabled MIDI inputs that are not open (a controller
@@ -1198,6 +1201,7 @@ impl AppCommand {
             AppCommand::AudioFades(false) => ("sequencer.audio_fades", Some("clear")),
             AppCommand::AudioClearEnvelope => ("sequencer.audio_envelope_clear", None),
             AppCommand::AudioSettings => ("audio.settings", None),
+            AppCommand::AudioSetup => ("options.audio_setup", None),
             AppCommand::PluginSettings => ("audio.plugins", None),
             AppCommand::RescanMidi => ("audio.rescan_midi", None),
             AppCommand::RestartAudio => ("audio.restart", None),
@@ -1641,6 +1645,7 @@ impl AppCommand {
             ("sequencer.audio_fades", Some("clear")) => AppCommand::AudioFades(false),
             ("sequencer.audio_envelope_clear", None) => AppCommand::AudioClearEnvelope,
             ("audio.settings", None) => AppCommand::AudioSettings,
+            ("options.audio_setup", None) => AppCommand::AudioSetup,
             ("audio.plugins", None) => AppCommand::PluginSettings,
             ("audio.rescan_midi", None) => AppCommand::RescanMidi,
             ("audio.restart", None) => AppCommand::RestartAudio,
@@ -4242,6 +4247,7 @@ pub fn menus_with_songs(
                 }),
                 MenuEntry::Separator,
                 item("Settings\u{2026}", AppCommand::AudioSettings),
+                item("Audio and MIDI Setup\u{2026}", AppCommand::AudioSetup),
             ],
         },
         Menu {
@@ -4777,6 +4783,7 @@ mod tests {
             AppCommand::AudioFades(false),
             AppCommand::AudioClearEnvelope,
             AppCommand::AudioSettings,
+            AppCommand::AudioSetup,
             AppCommand::PluginSettings,
             AppCommand::RescanMidi,
             AppCommand::RestartAudio,
@@ -5301,7 +5308,8 @@ mod tests {
                 "MIDI Clock Out",
                 "Send Clock While Stopped",
                 "Follow MIDI Clock",
-                "Settings\u{2026}"
+                "Settings\u{2026}",
+                "Audio and MIDI Setup\u{2026}"
             ]
         );
         assert_eq!(

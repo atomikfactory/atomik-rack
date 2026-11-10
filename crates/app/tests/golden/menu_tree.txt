@@ -550,6 +550,7 @@ Options
     Follow MIDI Clock
   ---
   Settings…
+  Audio and MIDI Setup…
 Window
   Main Window
   Rack Window

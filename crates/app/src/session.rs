@@ -441,6 +441,19 @@ impl<B: AudioBackend> LiveSession<B> {
         &self.status
     }
 
+    /// The loudest sample sent to the device and the loudest taken from it since the last call,
+    /// as `(input, output)`; `None` while no engine runs. The output includes the preview voice
+    /// (the audio setup's test tone), which the master meters do not.
+    pub fn io_peaks(&self) -> Option<(f32, f32)> {
+        let peaks = self.running.as_ref()?.handle.io_peaks();
+        Some((peaks.take_input(), peaks.take_output()))
+    }
+
+    /// The note-ons the MIDI inputs have sent since the start and the key of the last one.
+    pub fn note_activity(&self) -> (u64, Option<u8>) {
+        self.hub.note_activity()
+    }
+
     /// True if the running engine holds device `id` (in queue order).
     pub fn contains_device(&self, id: DeviceInstanceId) -> bool {
         self.running

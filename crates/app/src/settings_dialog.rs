@@ -1193,6 +1193,12 @@ impl SettingsDialog {
         }
     }
 
+    /// Makes `choice` the draft value (what a click on its option does): the audio setup panel
+    /// edits its own copy of the audio settings through the same rules.
+    pub fn pick(&mut self, choice: Choice) {
+        self.choose(choice);
+    }
+
     fn choose(&mut self, choice: Choice) {
         match choice {
             Choice::Host(h) => {

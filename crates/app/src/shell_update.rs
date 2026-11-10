@@ -80,9 +80,12 @@ impl<B: AudioBackend> Shell<B> {
     }
 
     /// Whether the notice takes events and paints: while nothing modal is open, and over the
-    /// start screen (where the question first shows).
+    /// start screen (where the question first shows). Never over the first-run audio setup: the
+    /// setup comes first and the question shows when it closes.
     pub(super) fn update_notice_reachable(&self) -> bool {
-        self.update_notice.is_some() && (self.start_screen.is_some() || !self.modal_open())
+        self.update_notice.is_some()
+            && self.audio_setup.is_none()
+            && (self.start_screen.is_some() || !self.modal_open())
     }
 
     /// Per-frame work: the answer of the request, and closing a question that was answered in
