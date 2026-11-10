@@ -462,6 +462,7 @@ pub mod tempo_lane;
 pub mod text;
 pub mod text_field;
 pub mod theme;
+pub mod theme_doc;
 pub mod timeline;
 pub mod tooltip;
 pub mod track_panel;

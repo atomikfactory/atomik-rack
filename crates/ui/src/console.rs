@@ -5700,11 +5700,11 @@ pub(crate) fn fader(
 
 fn meter_color(st: &SeqTheme, db: f32) -> Color {
     if db >= -0.5 {
-        st.record
+        st.meter_high
     } else if db >= -9.0 {
-        st.mute
+        st.meter_mid
     } else {
-        st.solo
+        st.meter_low
     }
 }
 

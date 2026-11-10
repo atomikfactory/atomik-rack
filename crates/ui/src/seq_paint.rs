@@ -61,6 +61,12 @@ pub struct SeqTheme {
     pub mute: Color,
     /// Solo button when active.
     pub solo: Color,
+    /// Level meter, quiet zone.
+    pub meter_low: Color,
+    /// Level meter, loud zone.
+    pub meter_mid: Color,
+    /// Level meter, peak zone.
+    pub meter_high: Color,
     /// Selection outline / selected notes.
     pub selection: Color,
     /// White piano key.
@@ -82,7 +88,6 @@ pub struct SeqTheme {
 impl SeqTheme {
     /// Derives the sequencer tokens from a rack theme.
     pub fn from_theme(t: &Theme) -> Self {
-        let white = |a: u8| t.ink.with_alpha(f32::from(a) / 255.0);
         Self {
             base: t.clone(),
             background: t.background,
@@ -93,9 +98,9 @@ impl SeqTheme {
             lane_alt: t.lane_alt,
             lane_auto: t.lane_auto,
             ruler: t.plate,
-            grid_bar: white(0x2e),
-            grid_beat: white(0x14),
-            grid_sub: white(0x09),
+            grid_bar: t.grid_bar,
+            grid_beat: t.grid_beat,
+            grid_sub: t.grid_sub,
             separator: t.bevel_dark,
             loop_on: t.highlight,
             loop_off: mix(t.text_muted, t.background, 0.45),
@@ -106,6 +111,9 @@ impl SeqTheme {
             record: t.cable_audio,
             mute: t.mute,
             solo: t.cable_notes,
+            meter_low: t.meter_low,
+            meter_mid: t.meter_mid,
+            meter_high: t.meter_high,
             selection: t.highlight,
             key_white: t.key_white,
             key_black: t.key_black,
