@@ -316,3 +316,39 @@ fn layering_a_take_keeps_the_old_expression_and_a_replaced_note_takes_the_new_on
     assert_eq!(m.expression_of(PPQ, 62), Some(&e62));
     assert_eq!(m.expression_of(2 * PPQ, 64), Some(&t64));
 }
+
+#[test]
+fn editing_the_midi_data_keeps_the_clips_groove() {
+    use atomik_model::TrackGroove;
+    let reg = registry();
+    let mut d = with_data(&reg, 2 * BAR, data());
+    let groove = TrackGroove {
+        name: "Swing 55%".to_owned(),
+        strength: 50,
+    };
+    d.apply(
+        Command::Song(SongCommand::SetClipGroove {
+            clips: vec![ClipId(1)],
+            groove: Some(groove.clone()),
+        }),
+        &reg,
+    )
+    .unwrap();
+    let mut e = bend_entry();
+    e.pitch.push(pt(PPQ, -1.0));
+    d.apply(
+        Command::Song(SongCommand::SetClipMidi {
+            clip: ClipId(1),
+            midi: MidiData {
+                expression: vec![e],
+                ..Default::default()
+            },
+            merge: None,
+        }),
+        &reg,
+    )
+    .unwrap();
+    let clip = d.doc().song.clip(ClipId(1)).unwrap().2.clone();
+    assert_eq!(clip.groove.as_deref(), Some(&groove), "the groove stays");
+    assert_eq!(clip.midi.expression[0].pitch.len(), 3);
+}
