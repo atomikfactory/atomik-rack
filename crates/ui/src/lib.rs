@@ -288,6 +288,9 @@
 //!   [`TextField`]s (caret, selection, clipboard, input-method composition): the host sends
 //!   [`UiEvent::Ime`] for the window system's input method and installs the system clipboard with
 //!   [`clipboard::install`] on the UI thread (without one the text stays inside the app).
+//! - **Restore from Backup.** [`BackupView`] is the modal list of the backup copies of the open
+//!   project (date and size, newest first); the host gives it the rows with
+//!   [`BackupView::set_rows`] and handles [`UiAction::Backup`] (`RESTORE`, `CLOSE`).
 //! - **Share.** [`ShareView`] is the modal panel of File > Share Project: the title, author and
 //!   note, three check boxes (preview, stems, plugin list) and the size the share would have; it
 //!   emits [`UiAction::Share`] (`SHARE`, a changed box, `CLOSE`).
@@ -350,6 +353,7 @@ pub mod arrangement;
 pub mod audio;
 pub mod audio_editor;
 pub mod autolayout;
+pub mod backup_panel;
 pub mod bass_read_panel;
 pub mod big_meter;
 pub mod blind_panel;
@@ -483,6 +487,7 @@ pub use arrangement::{
     PointField, PointShown, TrackButton, TrackLevel, TrackMeterInfo,
 };
 pub use audio_editor::{AudioEditorView, AudioMode};
+pub use backup_panel::{BackupAction, BackupItem, BackupView};
 pub use bass_read_panel::{BassLevel, BassReadAction, BassReadData, BassReadView, BassReadingRow};
 pub use blind_panel::{BlindAction, BlindInfo, BlindView};
 pub use browser::device_rows;

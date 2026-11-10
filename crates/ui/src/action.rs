@@ -708,6 +708,9 @@ pub enum UiAction {
     /// The song information panel ([`crate::SongInfoView`]) asks for something: make its texts the
     /// song information, or close.
     SongInfo(crate::song_info_panel::SongInfoAction),
+    /// The restore list ([`crate::BackupView`]) asks for something: open a backup copy as a new
+    /// song, or close.
+    Backup(crate::backup_panel::BackupAction),
     /// The share panel ([`crate::ShareView`]) asks for something: ask for the file and share, work
     /// out the size again after a check box, or close.
     Share(crate::share_panel::ShareAction),

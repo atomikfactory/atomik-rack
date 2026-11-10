@@ -1,0 +1,70 @@
+== looking
+panel 210.0 16.0 690.0 140.0
+RESTORE FROM BACKUP
+CLOSE
+Looking for backup copies...
+RESTORE
+Up and Down choose; Enter opens the copy as a new song
+RESTORE: 224.0 107.0 324.0 129.0
+CLOSE: 596.0 22.0 676.0 44.0
+== three copies
+panel 210.0 16.0 690.0 184.0
+RESTORE FROM BACKUP
+CLOSE
+3 copies, newest first
+2026-11-10 09:59:12
+12.0 KB
+2026-11-10 09:58:12
+11.1 KB
+2026-11-10 09:57:12
+10.2 KB
+RESTORE
+Up and Down choose; Enter opens the copy as a new song
+row 0: 224.0 74.0 676.0 96.0
+row 1: 224.0 96.0 676.0 118.0
+RESTORE: 224.0 151.0 324.0 173.0
+CLOSE: 596.0 22.0 676.0 44.0
+== none
+panel 210.0 16.0 690.0 140.0
+RESTORE FROM BACKUP
+CLOSE
+There are no backup copies of this project yet
+RESTORE
+Up and Down choose; Enter opens the copy as a new song
+RESTORE: 224.0 107.0 324.0 129.0
+CLOSE: 596.0 22.0 676.0 44.0
+== long list
+panel 210.0 16.0 690.0 382.0
+RESTORE FROM BACKUP
+CLOSE
+30 copies, newest first
+2026-11-10 09:59:12
+12.0 KB
+2026-11-10 09:58:12
+11.1 KB
+2026-11-10 09:57:12
+10.2 KB
+2026-11-10 09:56:12
+9.3 KB
+2026-11-10 09:55:12
+8.4 KB
+2026-11-10 09:54:12
+12.5 KB
+2026-11-10 09:53:12
+11.6 KB
+2026-11-10 09:52:12
+10.7 KB
+2026-11-10 09:51:12
+9.8 KB
+2026-11-10 09:50:12
+8.9 KB
+2026-11-10 09:49:12
+12.0 KB
+2026-11-10 09:48:12
+11.1 KB
+RESTORE
+Up and Down choose; Enter opens the copy as a new song
+row 0: 224.0 74.0 676.0 96.0
+row 1: 224.0 96.0 676.0 118.0
+RESTORE: 224.0 349.0 324.0 371.0
+CLOSE: 596.0 22.0 676.0 44.0
