@@ -216,6 +216,37 @@ untitled song, so Save asks for a place and the template itself is never changed
   how the template is built and what to try.
 - **No audio.** A template uses only the program's own devices, so it is small and plays on any machine.
 
+## Share a project
+
+File > Share Project (in the Project Files submenu, next to Export Project Archive) sends a song to a friend or a
+collaborator as one file that opens anywhere. The panel has the **Title**, the **Author** and a **Note** (they are the
+song information: SHARE writes them into it, as one undo step, when you changed them) and three check boxes:
+
+- **Include a preview.** A listening copy of the whole song at -14 LUFS, made through the same path as Export Song as
+  Audio File: an MP3 when FFmpeg is set up (Settings > Video), a 16-bit WAV file when it is not. The line after the box
+  says which.
+- **Include stems.** One 24-bit WAV file per mixer strip, from the stems export. It makes the share a good deal bigger.
+- **Include plugin list.** The plugins the song uses, with their vendor and format, in the credits.
+
+The line under the boxes says what the share will weigh ("This share will be about 12.3 MB"); it turns to the warning
+colour above 500 MB, and the message when the share starts says the size first. SHARE asks for a file name
+(`<title>.atomikz`) and writes the file on a worker, with progress in the status line and **File > Project Files >
+Cancel Project Archive** to stop it; a cancel or a failure leaves no file behind.
+
+The file is a project archive (the same stored ZIP as Export Project Archive, so any ZIP tool opens it) with more in
+it: the project and every audio file it uses (taken from the project's folder, so the receiver needs neither your audio
+folder nor your version of the factory library), `credits.txt` (title, author, note, the date, the version of the
+program and the plugins with vendor and format, so the receiver knows what is missing), `preview.mp3` or
+`preview.wav`, and the `stems` folder when asked for.
+
+**Opening a share.** File > Open (or a drop on the window) takes an `.atomikz` file: a folder dialog asks where to
+unpack it, starting in `Shared` beside the library folder (by default `Documents/Atomik Rack/Shared`), the project goes
+into a folder of its own name there (`Name 2` when that exists; nothing that exists is touched), opens after the
+question about unsaved changes, and the Song Information panel shows the title, author and note the sender wrote.
+`credits.txt` is in the folder. A plugin the song needs that you do not have is listed the way a missing plugin
+always is, and the song plays with a stand-in for it. A damaged archive, one with entries that leave its folder or
+that no share holds, or one over the size limits, is refused before anything is written.
+
 ## CPU use
 
 The program times every device in the rack on the audio thread all the time; the cost is small (about half a percent

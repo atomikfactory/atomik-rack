@@ -433,7 +433,7 @@ fn export_film_file(
 }
 
 /// Renders and writes `work`. `None`: the control stopped it (nothing was written).
-fn run(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String> {
+pub(crate) fn run(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String> {
     let Work {
         doc,
         request,

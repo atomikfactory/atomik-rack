@@ -601,7 +601,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// The bundle folders the audio a save lacks is looked for in: the bundle the session holds,
     /// then the folders a moved or shared project keeps its audio in.
-    fn collect_sources(&self) -> Vec<PathBuf> {
+    pub(crate) fn collect_sources(&self) -> Vec<PathBuf> {
         let mut sources: Vec<PathBuf> = Vec::new();
         if let Some(b) = &self.audio.bundle {
             sources.push(b.bundle.root().to_path_buf());

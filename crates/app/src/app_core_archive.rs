@@ -13,6 +13,8 @@
 //!   when that exists; nothing that exists is touched) and then asks the shell to open the
 //!   project, which first asks about unsaved changes like any Open. The unpacked folder is a
 //!   project folder, so it relinks and moves like one.
+//! * **Share** (`app_core_share.rs`) is an export that also holds a preview, the stems and the
+//!   credits; opening one is an import into a folder the user picked.
 //! * **Cancel** ([`AppCore::cancel_archive`]) stops the worker, which removes its part file or its
 //!   half-written folder; a failure does the same.
 
@@ -23,7 +25,7 @@ use atomik_audio_file::{archive_work, is_safe_component};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// The archive job that runs.
-struct Running {
+pub(super) struct Running {
     job: u64,
     what: What,
     /// The archive's file name, for the messages.
@@ -36,8 +38,10 @@ struct Running {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum What {
+pub(super) enum What {
     Export,
+    /// A share: an export with a preview, stems and credits.
+    Share,
     Import,
 }
 
@@ -47,6 +51,9 @@ enum What {
 pub(super) struct ArchiveState {
     running: Option<Running>,
     next_job: u64,
+    /// The project of an unpacked share and the text of its credits, until the shell has opened
+    /// the project and shown them ([`AppCore::take_share_credits`]).
+    shared: Option<(PathBuf, String)>,
 }
 
 impl ArchiveState {
@@ -56,6 +63,17 @@ impl ArchiveState {
             r.cancel.store(true, Ordering::Relaxed);
         }
     }
+}
+
+/// The credits of an unpacked share: `credits.txt` in its folder, when there is one.
+fn read_credits(root: &Path) -> Option<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(root.join("credits.txt")).ok()?;
+    let mut text = String::new();
+    file.take(atomik_audio_file::MAX_CREDITS_BYTES)
+        .read_to_string(&mut text)
+        .ok()?;
+    Some(text)
 }
 
 /// `1.5 GB` or `640 KB`: the size of an archive for a message.
@@ -88,6 +106,7 @@ impl<S: EngineSink> AppCore<S> {
         };
         let verb = match r.what {
             What::Export => "Writing",
+            What::Share => "Sharing",
             What::Import => "Unpacking",
         };
         Some((fraction, format!("{verb} {}", r.file)))
@@ -150,16 +169,30 @@ impl<S: EngineSink> AppCore<S> {
     /// An archive job runs already or the worker cannot start; the message is also shown as the
     /// toast.
     pub fn start_archive_import(&mut self, archive: PathBuf) -> Result<(), String> {
+        let parent = archive
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        self.start_archive_import_in(archive, &parent)
+    }
+
+    /// Starts unpacking the archive `archive` into a new folder of `parent`, named like the
+    /// archive (`Name 2` when that exists); the project opens when it is done.
+    ///
+    /// # Errors
+    /// As [`Self::start_archive_import`].
+    pub fn start_archive_import_in(
+        &mut self,
+        archive: PathBuf,
+        parent: &Path,
+    ) -> Result<(), String> {
         if self.archive.running.is_some() {
             return self.archive_refused("A project archive is already being made".to_owned());
         }
         if !archive.is_file() {
             return self.archive_refused(format!("{} is not a file", archive.display()));
         }
-        let parent = archive
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        let parent = parent.to_path_buf();
         let stem = super::templates::template_stem(
             &archive
                 .file_stem()
@@ -183,6 +216,15 @@ impl<S: EngineSink> AppCore<S> {
         self.spawn_archive(Job::Unpack { archive, dest }, What::Import, file, 0, 0)
     }
 
+    /// The credits of the share that was unpacked to the project `project`, once: the shell shows
+    /// them after it opened the project. `None` for any other project.
+    pub fn take_share_credits(&mut self, project: &Path) -> Option<String> {
+        self.archive
+            .shared
+            .take_if(|(path, _)| path == project)
+            .map(|(_, credits)| credits)
+    }
+
     /// Stops the running archive job; it leaves no part file or half-written folder.
     pub fn cancel_archive(&mut self) {
         match &self.archive.running {
@@ -191,12 +233,12 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    fn archive_refused(&mut self, why: String) -> Result<(), String> {
+    pub(super) fn archive_refused(&mut self, why: String) -> Result<(), String> {
         self.reject(why.clone());
         Err(why)
     }
 
-    fn spawn_archive(
+    pub(super) fn spawn_archive(
         &mut self,
         job: Job,
         what: What,
@@ -224,6 +266,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.audio.pending += 1;
                 let verb = match what {
                     What::Export => "Writing",
+                    What::Share => "Sharing",
                     What::Import => "Unpacking",
                 };
                 self.archive.running = Some(Running {
@@ -257,10 +300,14 @@ impl<S: EngineSink> AppCore<S> {
             (Err(atomik_audio_file::ArchiveError::Cancelled), What::Export) => {
                 self.reject(format!("Writing {file} cancelled"));
             }
+            (Err(atomik_audio_file::ArchiveError::Cancelled), What::Share) => {
+                self.reject(format!("Sharing {file} cancelled"));
+            }
             (Err(atomik_audio_file::ArchiveError::Cancelled), What::Import) => {
                 self.reject(format!("Unpacking {file} cancelled"));
             }
             (Err(e), What::Export) => self.reject(format!("Writing {file} failed: {e}")),
+            (Err(e), What::Share) => self.reject(format!("Sharing {file} failed: {e}")),
             (Err(e), What::Import) => self.reject(format!("Unpacking {file} failed: {e}")),
             (Ok(Done::Packed { report }), _) => {
                 let files = report.audio_files;
@@ -272,13 +319,23 @@ impl<S: EngineSink> AppCore<S> {
                         if n == 1 { "" } else { "s" }
                     ),
                 };
+                let shared = if running.what == What::Share {
+                    "Shared as"
+                } else {
+                    "Wrote"
+                };
                 self.reject(format!(
-                    "Wrote {file}: the project and {files} audio file{plural}, {}{lost}",
+                    "{shared} {file}: the project and {files} audio file{plural}, {}{lost}",
                     size_text(report.bytes)
                 ));
             }
             (Ok(Done::Unpacked(done)), _) => {
                 self.reject(format!("Unpacked {file} to {}", display_name(&done.root)));
+                // A share has its credits beside the project: the shell shows them once the
+                // project is open.
+                if let Some(credits) = read_credits(&done.root) {
+                    self.archive.shared = Some((done.project.clone(), credits));
+                }
                 self.request_open(done.project);
             }
         }

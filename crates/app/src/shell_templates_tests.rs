@@ -860,3 +860,166 @@ fn move_project_asks_for_a_folder_and_the_answer_moves_the_project() {
             .is_some_and(|m| m.starts_with("Save the song first"))
     );
 }
+
+// ------------------------------------------------------------------ share
+
+#[test]
+fn share_project_is_a_file_menu_row_next_to_the_archive_and_opens_the_panel() {
+    let t = Tmp::new("share-panel");
+    let mut s = shell(&t);
+    let labels: Vec<String> = s.menu_model()[0]
+        .items()
+        .map(|i| i.label.to_string())
+        .collect();
+    let archive = labels
+        .iter()
+        .position(|l| l.starts_with("Export Project Archive"))
+        .unwrap();
+    assert!(
+        labels[archive + 1].starts_with("Share Project"),
+        "{labels:?}"
+    );
+    assert_eq!(s.execute(AppCommand::ShareProject), vec![]);
+    assert!(s.share_open() && s.modal_open());
+    // The panel holds the song's texts and nothing is applied before SHARE.
+    s.set_song_info_for_test("Night Drive");
+    s.share = None;
+    s.execute(AppCommand::ShareProject);
+    assert_eq!(s.share_view().unwrap().values().title, "Night Drive");
+    type_text(&mut s, "!");
+    press(&mut s, Key::Tab);
+    type_text(&mut s, "Zoe");
+    assert_eq!(s.core().song_info().title, "Night Drive");
+    assert!(
+        s.share_view()
+            .unwrap()
+            .size_text()
+            .starts_with("This share will be about")
+    );
+    // Esc closes it without sharing; so does CLOSE.
+    press(&mut s, Key::Escape);
+    assert!(!s.share_open());
+    s.execute(AppCommand::ShareProject);
+    let close = s.share_view().unwrap().close_rect().center();
+    click(&mut s, close);
+    assert!(!s.share_open());
+    assert_eq!(s.core().song_info().title, "Night Drive");
+    assert!(!s.core().archive_busy());
+}
+
+#[test]
+fn typing_in_the_share_panel_never_reaches_the_shortcuts() {
+    let t = Tmp::new("share-keys");
+    let mut s = shell(&t);
+    s.execute(AppCommand::ShareProject);
+    type_text(&mut s, "tf !1");
+    assert_eq!(s.share_view().unwrap().values().title, "tf !1");
+    assert!(!s.core().is_dirty());
+}
+
+#[test]
+fn share_asks_for_the_file_and_the_file_makes_the_share_and_applies_the_texts() {
+    let t = Tmp::new("share-flow");
+    let mut s = shell(&t);
+    add(&mut s, "in-share");
+    s.execute(AppCommand::ShareProject);
+    type_text(&mut s, "Packed Up");
+    // The check boxes: the song has no notes to preview, so the preview goes.
+    let preview = s
+        .share_view()
+        .unwrap()
+        .box_row(atomik_ui::ShareBox::Preview)
+        .center();
+    let requests = click(&mut s, preview);
+    assert!(requests.is_empty());
+    assert!(!s.share_view().unwrap().values().preview);
+    let share = s.share_view().unwrap().share_rect().center();
+    let asked = click(&mut s, share);
+    assert_eq!(
+        asked,
+        vec![ShellRequest::PickShareFile {
+            name: "Packed Up.atomikz".into()
+        }]
+    );
+    assert!(s.share_open(), "the panel stays until the file is picked");
+    // The extension is added when the dialog's name has none.
+    s.share_to(&t.path("packed"));
+    assert!(!s.share_open());
+    s.core_mut().wait_background();
+    s.frame();
+    assert!(t.path("packed.atomikz").is_file());
+    assert_eq!(s.core().song_info().title, "Packed Up");
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.starts_with("Shared as packed.atomikz")),
+        "{:?}",
+        s.core().last_rejection()
+    );
+    // One undo step for the texts.
+    assert!(s.core_mut().undo());
+    assert!(s.core().song_info().is_empty());
+}
+
+#[test]
+fn an_atomikz_file_opens_through_file_open_and_a_drop_into_a_folder_the_user_picks() {
+    let t = Tmp::new("share-open");
+    let mut s = shell(&t);
+    add(&mut s, "in-share");
+    s.set_song_info_for_test("Packed");
+    s.execute(AppCommand::ShareProject);
+    let preview = s
+        .share_view()
+        .unwrap()
+        .box_row(atomik_ui::ShareBox::Preview)
+        .center();
+    click(&mut s, preview);
+    s.share_to(&t.path("packed.atomikz"));
+    s.core_mut().wait_background();
+    s.core_mut().new_document();
+    // File > Open of the file asks for the folder, starting in Shared beside the library.
+    s.open_file(&t.path("packed.atomikz"));
+    let want = ShellRequest::PickShareFolder {
+        archive: t.path("packed.atomikz"),
+        start: Some(t.path("Shared")),
+    };
+    assert_eq!(s.take_requests(), vec![want.clone()]);
+    // So does a drop on the window.
+    let dropped = s.handle(&UiEvent::FileDrop {
+        pos: atomik_ui::kurbo::Point::new(500.0, 400.0),
+        paths: vec![t.path("packed.atomikz")],
+    });
+    assert_eq!(dropped, vec![want]);
+    // The folder picked: the project goes into a folder of its own name, opens, and the credits show.
+    s.share_open_to(&t.path("packed.atomikz"), &t.path("Shared"));
+    s.core_mut().wait_background();
+    s.frame();
+    assert!(has(&s, "in-share"));
+    assert_eq!(
+        s.core().file(),
+        Some(
+            t.path("Shared")
+                .join("packed")
+                .join("packed.atomik")
+                .as_path()
+        )
+    );
+    assert!(
+        t.path("Shared")
+            .join("packed")
+            .join("credits.txt")
+            .is_file()
+    );
+    assert!(
+        s.song_info_open(),
+        "the song information shows what the sender wrote"
+    );
+    assert_eq!(s.song_info_view().unwrap().info().title, "Packed");
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.starts_with("Opened Packed") && m.contains("credits.txt")),
+        "{:?}",
+        s.core().last_rejection()
+    );
+}

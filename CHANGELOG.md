@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Share a project as one file.** File > Share Project opens a small panel with the title, the author and a note (they
+  go into the song information as one undo step when you changed them) and three check boxes: Include a preview (an
+  MP3 of the whole song at -14 LUFS, or a 16-bit WAV file when FFmpeg is not set up), Include stems (one 24-bit WAV
+  file per mixer strip) and Include plugin list. A line says what the share will weigh and turns to the warning
+  colour over 500 MB. SHARE asks for a file name (`<title>.atomikz`, the project archive extension) and writes, on a
+  worker with progress and cancel, one file with the project, every audio file it uses, `credits.txt` (title, author,
+  note, the date, the version of the program and the plugins with vendor and format), the preview and the stems.
+  A cancel or a failure leaves no file. File > Open and a drop on the window take an `.atomikz` file: a folder
+  dialog asks where to unpack it (it starts in `Shared` beside the library folder), the project opens and the Song
+  Information shows what the sender wrote. The archive reader accepts only the project, its audio, the credits, one
+  preview and the stems, and still refuses entries that leave the folder, duplicates and anything over its limits
+  before it writes a byte. The command is `file.share_project` (no default key). The project format is unchanged.
 - **A plugin manager.** Options > Plugin Manager opens a table of every plugin the scan found: its name, vendor,
   format (VST3 or CLAP), category (instrument, effect or note effect), status (OK, Failed with the reason,
   Quarantined, Disabled, Unsupported), file and when it was last scanned, with the files that failed to scan as rows

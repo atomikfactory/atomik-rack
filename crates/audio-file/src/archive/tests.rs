@@ -502,3 +502,237 @@ fn many_entries_use_the_zip64_end_record() {
         Err(ArchiveError::TooLarge(_))
     ));
 }
+
+fn shared(d: &Path) -> (PathBuf, ArchiveExtras) {
+    let preview = d.join("mix.mp3");
+    fs::write(&preview, b"MP3DATA").unwrap();
+    let a = d.join("Kick.wav");
+    let b = d.join("Bass.wav");
+    fs::write(&a, b"KICK").unwrap();
+    fs::write(&b, b"BASSBASS").unwrap();
+    let extras = ArchiveExtras {
+        credits: Some("Title: Night\nAuthor: Zoe\n".to_owned()),
+        preview: Some(preview),
+        stems: vec![a, b],
+    };
+    (d.join("song.atomikz"), extras)
+}
+
+#[test]
+fn a_shared_archive_holds_the_credits_the_preview_and_the_stems_and_unpacks_them() {
+    let d = dir("shared");
+    let audio = audio_files(&d, &[b"WAVEONE".to_vec()]);
+    let (archive, extras) = shared(&d);
+    let report = write_archive_with(
+        &archive,
+        "song",
+        (b"{}".as_slice(), &audio),
+        &extras,
+        &no_cancel(),
+        &AtomicU64::new(0),
+    )
+    .unwrap();
+    assert_eq!((report.audio_files, report.extra_files), (1, 4));
+    let out = d.join("out");
+    let done = unpack(&archive, &out).unwrap();
+    assert_eq!((done.report.audio_files, done.report.extra_files), (1, 4));
+    assert_eq!(fs::read(&done.project).unwrap(), b"{}");
+    assert_eq!(
+        fs::read_to_string(out.join("credits.txt")).unwrap(),
+        "Title: Night\nAuthor: Zoe\n"
+    );
+    assert_eq!(fs::read(out.join("preview.mp3")).unwrap(), b"MP3DATA");
+    assert_eq!(
+        fs::read(out.join("stems").join("Kick.wav")).unwrap(),
+        b"KICK"
+    );
+    assert_eq!(
+        fs::read(out.join("stems").join("Bass.wav")).unwrap(),
+        b"BASSBASS"
+    );
+    // The progress counter reaches the total the caller was told.
+    let progress = AtomicU64::new(0);
+    let again = d.join("again.atomikz");
+    write_archive_with(
+        &again,
+        "song",
+        (b"{}".as_slice(), &audio),
+        &extras,
+        &no_cancel(),
+        &progress,
+    )
+    .unwrap();
+    let paths: Vec<PathBuf> = audio.iter().map(|(_, p)| p.clone()).collect();
+    assert_eq!(
+        progress.load(Ordering::Relaxed),
+        archive_work_with(2, &paths, &extras)
+    );
+    // An archive without extras is the old archive, byte for byte.
+    let plain = d.join("plain.atomikz");
+    let same = d.join("same.atomikz");
+    for target in [&plain, &same] {
+        write_archive_with(
+            target,
+            "song",
+            (b"{}".as_slice(), &audio),
+            &ArchiveExtras::default(),
+            &no_cancel(),
+            &AtomicU64::new(0),
+        )
+        .unwrap();
+    }
+    assert_eq!(fs::read(&plain).unwrap(), fs::read(&same).unwrap());
+}
+
+#[test]
+fn extra_entry_names_are_classified_by_shape() {
+    let ok = |name: &str| classify(name, &mut None);
+    assert_eq!(ok("song/credits.txt"), Ok(Kind::Credits));
+    assert_eq!(
+        ok("song/preview.mp3"),
+        Ok(Kind::Preview("preview.mp3".to_owned()))
+    );
+    assert_eq!(
+        ok("song/preview.wav"),
+        Ok(Kind::Preview("preview.wav".to_owned()))
+    );
+    assert_eq!(ok("song/stems/"), Ok(Kind::Folder));
+    assert_eq!(
+        ok("song/stems/Kick.wav"),
+        Ok(Kind::Stem("Kick.wav".to_owned()))
+    );
+    for bad in [
+        "song/stems/../evil.wav",
+        "song/stems/..",
+        "song/stems/.wav",
+        "song/stems/Kick.mp3",
+        "song/stems/a/b.wav",
+        "song/stems/a:b.wav",
+        "song/stems/a b.wav.exe",
+        "song/stems/credits.txt/",
+        "song/preview.flac",
+        "song/preview.mp3/",
+        "song/credits.txt/",
+        "song/Credits.txt",
+        "song/stems/nul\u{0}.wav",
+        "song/stems/Kick.wav/x",
+        r"song/stems/..\evil.wav",
+    ] {
+        assert!(classify(bad, &mut None).is_err(), "{bad:?} must be refused");
+    }
+}
+
+#[test]
+fn an_archive_with_a_path_traversal_in_an_extra_entry_is_refused_before_a_byte_is_written() {
+    let d = dir("extra-traversal");
+    for name in [
+        "song/stems/../../evil.wav",
+        "song/../credits.txt",
+        "../song/preview.mp3",
+        r"song/stems/..\evil.wav",
+        "song/stems//evil.wav",
+        "/song/stems/evil.wav",
+        "song/stems/evil.wav/../../../x",
+    ] {
+        let file = raw_file(&d, &[("song/song.atomik", b"{}"), (name, b"x")]);
+        let out = d.join("out");
+        let e = unpack(&file, &out).unwrap_err();
+        assert!(matches!(e, ArchiveError::Unsafe(_)), "{name}: {e}");
+        assert!(!out.exists());
+        no_part_left(&d);
+    }
+    // Two previews are one too many.
+    let two = raw_file(
+        &d,
+        &[
+            ("song/song.atomik", b"{}"),
+            ("song/preview.mp3", b"a"),
+            ("song/preview.wav", b"b"),
+        ],
+    );
+    assert!(matches!(
+        unpack(&two, &d.join("out")),
+        Err(ArchiveError::Unsafe(_))
+    ));
+}
+
+#[test]
+fn credits_over_the_limit_are_refused_when_reading_and_when_writing() {
+    let d = dir("big-credits");
+    let big = vec![b'x'; MAX_CREDITS_BYTES as usize + 1];
+    let file = raw_file(
+        &d,
+        &[("song/song.atomik", b"{}"), ("song/credits.txt", &big)],
+    );
+    assert!(matches!(
+        unpack(&file, &d.join("out")),
+        Err(ArchiveError::TooLarge(_))
+    ));
+    let extras = ArchiveExtras {
+        credits: Some(String::from_utf8(big).unwrap()),
+        ..ArchiveExtras::default()
+    };
+    let target = d.join("w.atomikz");
+    let e = write_archive_with(
+        &target,
+        "song",
+        (b"{}".as_slice(), &[]),
+        &extras,
+        &no_cancel(),
+        &AtomicU64::new(0),
+    )
+    .unwrap_err();
+    assert!(matches!(e, ArchiveError::TooLarge(_)));
+    assert!(!target.exists());
+    no_part_left(&d);
+}
+
+#[test]
+fn the_writer_refuses_bad_extras_and_a_cancel_leaves_no_file() {
+    let d = dir("bad-extras");
+    let target = d.join("w.atomikz");
+    let write = |extras: &ArchiveExtras, cancel: &AtomicBool| {
+        write_archive_with(
+            &target,
+            "song",
+            (b"{}".as_slice(), &[]),
+            extras,
+            cancel,
+            &AtomicU64::new(0),
+        )
+    };
+    let flac = d.join("mix.flac");
+    fs::write(&flac, b"x").unwrap();
+    let bad_preview = ArchiveExtras {
+        preview: Some(flac),
+        ..ArchiveExtras::default()
+    };
+    assert!(matches!(
+        write(&bad_preview, &no_cancel()),
+        Err(ArchiveError::Unsafe(_))
+    ));
+    let mp3 = d.join("x.mp3");
+    fs::write(&mp3, b"x").unwrap();
+    let bad_stem = ArchiveExtras {
+        stems: vec![mp3.clone()],
+        ..ArchiveExtras::default()
+    };
+    assert!(matches!(
+        write(&bad_stem, &no_cancel()),
+        Err(ArchiveError::Unsafe(_))
+    ));
+    let (_, good) = shared(&d);
+    let twice = ArchiveExtras {
+        stems: vec![good.stems[0].clone(), good.stems[0].clone()],
+        ..good.clone()
+    };
+    assert!(matches!(
+        write(&twice, &no_cancel()),
+        Err(ArchiveError::Unsafe(_))
+    ));
+    assert!(!target.exists());
+    let stop = AtomicBool::new(true);
+    assert!(matches!(write(&good, &stop), Err(ArchiveError::Cancelled)));
+    assert!(!target.exists());
+    no_part_left(&d);
+}

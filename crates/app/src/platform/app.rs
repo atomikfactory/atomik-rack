@@ -1148,8 +1148,12 @@ impl App {
                 ShellRequest::PickOpenFile => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Open project or patch")
-                        .add_filter("Atomik Rack project or patch", &["atomik", "json"])
+                        .add_filter(
+                            "Atomik Rack project, share or patch",
+                            &["atomik", "atomikz", "json"],
+                        )
                         .add_filter("Atomik Rack project", &["atomik"])
+                        .add_filter("Atomik Rack shared project", &["atomikz"])
                         .add_filter("Atomik Rack patch", &["json"]);
                     if let Some(w) = self.parent_window() {
                         dialog = dialog.set_parent(w);
@@ -1521,6 +1525,32 @@ impl App {
                     }
                     if let Some(path) = dialog.save_file() {
                         self.shell.export_archive_to(&path);
+                    }
+                }
+                ShellRequest::PickShareFile { name } => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Share the project as one file")
+                        .add_filter("Atomik shared project", &["atomikz"])
+                        .set_file_name(name);
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(path) = dialog.save_file() {
+                        self.shell.share_to(&path);
+                    }
+                }
+                ShellRequest::PickShareFolder { archive, start } => {
+                    let mut dialog =
+                        rfd::FileDialog::new().set_title("Unpack the shared project into a folder");
+                    if let Some(start) = start {
+                        let _ = std::fs::create_dir_all(&start);
+                        dialog = dialog.set_directory(start);
+                    }
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(folder) = dialog.pick_folder() {
+                        self.shell.share_open_to(&archive, &folder);
                     }
                 }
                 ShellRequest::PickImportArchive => {

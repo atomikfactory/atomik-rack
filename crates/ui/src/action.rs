@@ -708,6 +708,9 @@ pub enum UiAction {
     /// The song information panel ([`crate::SongInfoView`]) asks for something: make its texts the
     /// song information, or close.
     SongInfo(crate::song_info_panel::SongInfoAction),
+    /// The share panel ([`crate::ShareView`]) asks for something: ask for the file and share, work
+    /// out the size again after a check box, or close.
+    Share(crate::share_panel::ShareAction),
     /// Open the key and chord picker (see [`crate::HarmonyPickerView`]) on the song key, a key
     /// change or a chord: a double click on a lane item, or a click on the transport bar's Key.
     HarmonyPicker(crate::harmony_picker::HarmonyTarget),
