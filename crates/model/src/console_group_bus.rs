@@ -145,7 +145,20 @@ fn unroute(p: &mut Planner<'_>, vca: u32) -> Result<(), ModelError> {
     Ok(())
 }
 
-/// Routes the `strips` that play into `bus` to the master (a strip that is gone is skipped).
+/// Where a strip goes when its group lets go of it: the bus of the routed folder that owns it,
+/// else the master (what the strip played into before the route is not kept in the project).
+fn home_dest(doc: &RackDoc, strip: &DeviceKey, leaving: &DeviceKey) -> OutputDest {
+    doc.console
+        .folder_routes
+        .iter()
+        .find(|r| r.members.contains(strip) && r.bus != *leaving)
+        .map(|r| OutputDest::Bus(r.bus.clone()))
+        .filter(|d| check_dest(doc, strip, d).is_ok())
+        .unwrap_or(OutputDest::Master)
+}
+
+/// Routes the `strips` that play into `bus` back where they belong, the bus of their folder or
+/// the master (a strip that is gone is skipped).
 fn back_to_master(
     p: &mut Planner<'_>,
     bus: &DeviceKey,
@@ -160,7 +173,8 @@ fn back_to_master(
             continue;
         }
         if output_dest(p.doc(), s) == OutputDest::Bus(bus.clone()) {
-            set_output(p, s, &OutputDest::Master)?;
+            let home = home_dest(p.doc(), s, bus);
+            set_output(p, s, &home)?;
         }
     }
     Ok(())
