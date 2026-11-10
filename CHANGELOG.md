@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Help Mode.** Help > Help Mode (Shift+F1; F1 is still the shortcut list) docks a Help panel above the status line
+  that explains the control under the pointer: its title, one to four sentences, the shortcut of the command it runs
+  (read from your keymap, so a rebound key shows) and a "More: <section>" link that opens the matching section of the
+  documentation in the browser. Clicks still reach the controls, the ordinary tooltips stay quiet while the mode is on,
+  and the panel keeps the last control it explained while the pointer is over empty space or over the panel, so the
+  link can be reached. Help text is written for the transport bar, the arrangement tools and lane buttons, the mixer
+  buttons and sections, the file browser, the piano roll tools, the launcher and the buttons of the rack panels. Every
+  knob, switch and choice of every device explains itself from its descriptor (its name, its range and unit) plus a
+  line about its device, and every device type has such a line. A control with no entry yet falls back to its tooltip
+  text. The text lives in two data files (`crates/app/src/help/`), and a test lists the controls that still lack an
+  entry.
 - **Genre templates.** Six songs to start from ship with the program and come first in File > New from Template and on
   the start screen: Ambient, Hip-Hop Boom Bap, House, Lo-fi, Synthwave and Techno. Each has a tempo, a song key, eight
   sections over 64 bars as ranges, six named and coloured tracks (kick, drums, bass, chords, lead and a texture) of
