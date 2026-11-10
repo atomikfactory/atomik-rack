@@ -203,6 +203,8 @@ pub enum AppCommand {
     TogglePianoKeys,
     /// Show or hide the Track Panel.
     ToggleTrackPanel,
+    /// Edit ▸ Undo History: show or hide the list of undo steps docked on the right.
+    ToggleHistory,
     /// Sort the rack (free, per track, auto group).
     SetRackSort(atomik_model::RackSort),
     /// Lay the rack columns out as one column (view only).
@@ -882,6 +884,7 @@ impl AppCommand {
             AppCommand::Quit => ("file.quit", None),
             AppCommand::Undo => ("edit.undo", None),
             AppCommand::Redo => ("edit.redo", None),
+            AppCommand::ToggleHistory => ("edit.history", None),
             AppCommand::Cut => ("edit.cut", None),
             AppCommand::Copy => ("edit.copy", None),
             AppCommand::Paste => ("edit.paste", None),
@@ -1267,6 +1270,7 @@ impl AppCommand {
             ("file.quit", None) => AppCommand::Quit,
             ("edit.undo", None) => AppCommand::Undo,
             ("edit.redo", None) => AppCommand::Redo,
+            ("edit.history", None) => AppCommand::ToggleHistory,
             ("edit.cut", None) => AppCommand::Cut,
             ("edit.copy", None) => AppCommand::Copy,
             ("edit.paste", None) => AppCommand::Paste,
@@ -2009,6 +2013,8 @@ pub struct MenuState {
     pub piano_keys: bool,
     /// The Track Panel is shown.
     pub track_panel: bool,
+    /// The Undo History panel is shown.
+    pub history_panel: bool,
     /// How the rack is sorted.
     pub rack_sort: atomik_model::RackSort,
     /// The rack lays its columns out as one.
@@ -2846,6 +2852,11 @@ pub fn menus_with_songs(
             entries: vec![
                 step("Undo", state.undo_label, AppCommand::Undo, state.can_undo),
                 step("Redo", state.redo_label, AppCommand::Redo, state.can_redo),
+                check(
+                    "Undo History",
+                    AppCommand::ToggleHistory,
+                    state.history_panel,
+                ),
                 MenuEntry::Separator,
                 enabled("Cut", AppCommand::Cut, state.can_edit),
                 enabled("Copy", AppCommand::Copy, state.can_edit),
@@ -4310,6 +4321,7 @@ mod tests {
             file_browser: false,
             piano_keys: false,
             track_panel: false,
+            history_panel: false,
             rack_sort: atomik_model::RackSort::Free,
             single_column: false,
             can_undo: true,
@@ -4460,6 +4472,7 @@ mod tests {
             AppCommand::Quit,
             AppCommand::Undo,
             AppCommand::Redo,
+            AppCommand::ToggleHistory,
             AppCommand::Cut,
             AppCommand::Copy,
             AppCommand::Paste,
@@ -5426,6 +5439,7 @@ mod tests {
                 file_browser: false,
                 piano_keys: false,
                 track_panel: false,
+                history_panel: false,
                 rack_sort: atomik_model::RackSort::Free,
                 single_column: false,
                 can_undo: false,

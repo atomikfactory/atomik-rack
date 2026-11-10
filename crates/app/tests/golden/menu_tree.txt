@@ -109,6 +109,7 @@ File
 Edit
   Undo
   Redo
+  Undo History
   ---
   Cut
   Copy

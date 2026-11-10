@@ -1,0 +1,18 @@
+{"ops":[
+{"transform":[1.00,0.00,0.00,1.00,0.00,0.00]},
+{"fill":{"rect":[0.00,0.00,236.00,220.00]},"brush":"#1c1e23ff"},
+{"fill":{"rect":[0.00,0.00,1.00,220.00]},"brush":"#0000008c"},
+{"text":"UNDO HISTORY","at":[8.00,17.00],"size":10.50,"weight":700,"align":"start","color":"#ece8e1ff"},
+{"text":"New song","at":[8.00,43.50],"size":10.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"10 min ago","at":[228.00,43.50],"size":9.00,"weight":400,"align":"end","color":"#8f96a0ff"},
+{"text":"Add Device","at":[8.00,63.50],"size":10.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"5 min ago","at":[228.00,63.50],"size":9.00,"weight":400,"align":"end","color":"#8f96a0ff"},
+{"fill":{"rrect":[4.00,70.00,232.00,90.00,3.00]},"brush":"#ffe08a59"},
+{"text":"Change Parameter","at":[8.00,83.50],"size":10.00,"weight":700,"align":"start","color":"#ece8e1ff"},
+{"text":"2 min ago","at":[228.00,83.50],"size":9.00,"weight":400,"align":"end","color":"#8f96a0ff"},
+{"text":"Move Device","at":[8.00,103.50],"size":10.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"40 s ago","at":[228.00,103.50],"size":9.00,"weight":400,"align":"end","color":"#8f96a0ff"},
+{"text":"Add Clip","at":[8.00,123.50],"size":10.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"just now","at":[228.00,123.50],"size":9.00,"weight":400,"align":"end","color":"#8f96a0ff"},
+{"pop_transform":true}
+]}
