@@ -81,6 +81,9 @@ fn plugin_button(b: PluginButton) -> &'static str {
         PluginButton::ToChannel => "Add a mixer channel for this instrument",
         PluginButton::Reload => "Recreate the plugin instance from its saved state",
         PluginButton::Relink => "Point this stand-in at another installed plugin",
+        PluginButton::Mpe => {
+            "Send the notes as MPE on channels 2 to 16 to a plugin that takes MIDI"
+        }
         PluginButton::Cv(_) => {
             "The parameter this CV input drives: click to choose it in the parameter pane"
         }
@@ -118,6 +121,7 @@ fn id_of(hit: Hit) -> Option<&'static str> {
             PluginButton::ToChannel => "rack.to_channel",
             PluginButton::Reload => "rack.plugin_reload",
             PluginButton::Relink => "rack.plugin_relink",
+            PluginButton::Mpe => "rack.plugin_mpe",
             PluginButton::Cv(_) => "rack.plugin_cv",
         },
         Hit::Player(_, PlayerBtn::Seq(_) | PlayerBtn::Drum(_)) => "rack.pattern",

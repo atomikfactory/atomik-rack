@@ -449,6 +449,31 @@
     "text": "Shows or hides the controller lanes (mod wheel, pedal, pitch bend) under the velocity lane.",
     "more": "The main window"
   },
+  "roll.expr_tab": {
+    "title": "Expression curve",
+    "text": "Picks which curve of the note you edit: pitch (in semitones), pressure or timbre. A tab name in bright text means that curve has points.",
+    "more": "The main window"
+  },
+  "roll.expr_range": {
+    "title": "Pitch scale",
+    "text": "How many semitones the pitch plot shows above and below its middle: 48, 24, 12 or 2. Click for the next, right-click for the last. A smaller scale makes small bends easier to draw.",
+    "more": "The main window"
+  },
+  "roll.expr_apply": {
+    "title": "Apply curve",
+    "text": "Copies this curve of the first selected note to the other selected notes, stretched to the length of each. One undo step.",
+    "more": "The main window"
+  },
+  "roll.expr_clear": {
+    "title": "Clear expression",
+    "text": "Removes the pitch, pressure and timbre curves of this note. One undo step.",
+    "more": "The main window"
+  },
+  "roll.expr_curve": {
+    "title": "Expression plot",
+    "text": "Click to add a point. Drag a point to move it (Shift moves finely, Ctrl snaps a pitch to a semitone). Alt-click or double-click a point to delete it. Drag from empty space to select several points, or with the Pencil tool to draw freehand.",
+    "more": "The main window"
+  },
   "launcher.back": {
     "title": "Back to arrangement",
     "text": "Every track plays its own arrangement again, now. It is lit while any track plays a launcher clip.",
@@ -627,6 +652,11 @@
   "rack.plugin_relink": {
     "title": "Relink plugin",
     "text": "Points this stand-in at another installed plugin when the original is missing.",
+    "more": "Devices"
+  },
+  "rack.plugin_mpe": {
+    "title": "Send MPE",
+    "text": "Sends the notes to this plugin as MPE: each note on a channel of its own from 2 to 16, with its pitch, pressure and timbre curves as that channel's pitch bend, pressure and CC 74. Use it for a plugin that takes plain MIDI; plugins that take note expressions already get the curves without it.",
     "more": "Devices"
   },
   "rack.plugin_cv": {

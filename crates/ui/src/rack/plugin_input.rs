@@ -10,7 +10,7 @@ use crate::plugin_data::{
     PluginEntryStatus,
 };
 use crate::plugin_panel::{self, PluginButton};
-use atomik_device_sdk::DeviceDescriptor;
+use atomik_device_sdk::{DeviceDescriptor, MPE_SEND_KEY};
 use atomik_model::{Command, ConsoleCommand, DeviceKey, PluginCommand, PluginDoc};
 use std::sync::Arc;
 use vello::kurbo::{Point, Rect, RoundedRect};
@@ -212,6 +212,19 @@ impl RackView {
                 }
             }
             PluginButton::Relink => self.plugin_menu_open(i, &doc, rp),
+            PluginButton::Mpe => {
+                let on = self.devices[i]
+                    .device
+                    .as_ref()
+                    .and_then(|d| d.params.get(MPE_SEND_KEY))
+                    .is_some_and(|v| *v >= 0.5);
+                out.push(param_cmd(
+                    &key,
+                    MPE_SEND_KEY,
+                    if on { 0.0 } else { 1.0 },
+                    None,
+                ));
+            }
         }
     }
 

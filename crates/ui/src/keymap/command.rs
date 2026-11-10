@@ -514,6 +514,13 @@ const COMMANDS: &[CommandDef] = &[
         .menu(),
     cmd("edit.undo", "Undo", G::Edit, C::Global).rep().menu(),
     cmd(
+        "editor.apply_expression_curve",
+        "Apply Curve to Selected Notes",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
         "editor.arpeggiate",
         "Arpeggiate Selection",
         G::Editor,
@@ -595,6 +602,13 @@ const COMMANDS: &[CommandDef] = &[
         G::Editor,
         C::Editor,
     ),
+    cmd(
+        "editor.edit_expression",
+        "Edit Note Expression",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
     cmd(
         "editor.extend_next_note",
         "Extend Selection to Next Note",
