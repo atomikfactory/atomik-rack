@@ -36,6 +36,7 @@ pub use inspector::{NOTE_INSPECTOR_HEIGHT, NoteField};
 use crate::midi_lane as ml;
 use atomik_device_sdk::Registry;
 use atomik_model::controller_edit;
+use atomik_model::harmony::{Harmony, Key as SongKey};
 use atomik_model::theory::{Scale, ScaleKind, detect_scale, pitch_name};
 use atomik_model::{
     Clip, ClipContent, ClipId, Command, ControllerKind, ControllerLane, Curve, DeviceKey, Note,
@@ -372,6 +373,9 @@ pub struct PianoRollView {
     inversion: u8,
     arp: ArpOptions,
     strum: StrumOptions,
+    /// The song's key and chord lane: a clip without a scale of its own follows the key at its
+    /// start, and the song chord stamp and Fit Notes to Chords read the chords.
+    harmony: Harmony,
     snap: Snap,
     vp: ViewportState,
     clip_id: Option<ClipId>,
@@ -551,6 +555,7 @@ impl PianoRollView {
             inversion: 0,
             arp: ArpOptions::default(),
             strum: StrumOptions::default(),
+            harmony: Harmony::default(),
             snap: Snap::default(),
             vp: ViewportState::new(),
             clip_id: None,
@@ -1200,9 +1205,40 @@ impl PianoRollView {
 
     // ------------------------------------------------------------------ scale and chords
 
-    /// The scale of the open clip (`None`: chromatic, no scale).
+    /// The scale the roll highlights and snaps to: the open clip's own, else the song key at the
+    /// clip's start (`None`: chromatic, no scale).
     pub fn scale(&self) -> Option<Scale> {
-        self.clip.as_ref().and_then(|c| c.scale)
+        let clip = self.clip.as_ref()?;
+        clip.scale.or_else(|| self.song_scale())
+    }
+
+    /// The scale of the song key at the open clip's start, which a clip without a scale of its
+    /// own follows. `None` without a song key, and in the track controller view.
+    pub fn song_scale(&self) -> Option<Scale> {
+        if self.track.is_some() {
+            return None;
+        }
+        let clip = self.clip.as_ref()?;
+        self.harmony.key_at(clip.start).map(SongKey::as_scale)
+    }
+
+    /// Whether the roll shows the song key's scale because the clip has none of its own.
+    pub fn follows_song_key(&self) -> bool {
+        self.clip.as_ref().is_some_and(|c| c.scale.is_none()) && self.song_scale().is_some()
+    }
+
+    /// Hands the roll the song's key and chords. The roll reads them from the document on every
+    /// sync; this is for a host (or a test) that has them without a document.
+    pub fn set_harmony(&mut self, harmony: &Harmony) {
+        if self.harmony == *harmony {
+            return;
+        }
+        let before = self.scale();
+        self.harmony.clone_from(harmony);
+        if self.scale() != before {
+            self.rows_dirty = true;
+        }
+        self.repaint = true;
     }
 
     /// Whether pencil-drawn notes and vertical drags land on in-scale keys only and the
@@ -1372,6 +1408,8 @@ impl PianoRollView {
             return;
         }
         self.clip_rev = revision.map(|rev| (rev, Some(id)));
+        // The song key and chords: a clip without a scale follows them.
+        self.set_harmony(&doc.song.harmony);
         // A take of a take group opens like a clip (its edits go to the take).
         let found = doc.song.clip_or_take(id);
         let masked = masked_spans(&doc.song, id);
@@ -1997,8 +2035,19 @@ impl PianoRollView {
         }
     }
 
-    /// The keys the pencil drops on `key`: the stamp's chord, or `key` alone.
-    fn stamp_keys(&self, key: u8) -> Vec<u8> {
+    /// The keys the pencil drops on `key` at content tick `tick`: the stamp's chord, or `key`
+    /// alone. The song chord is the chord of the chord lane at that place.
+    fn stamp_keys(&self, key: u8, tick: i64) -> Vec<u8> {
+        if self.stamp == Stamp::Lane {
+            let chord = self
+                .clip
+                .as_ref()
+                .and_then(|c| self.harmony.chord_at(c.start - c.offset + tick));
+            return chord.map_or_else(
+                || vec![key],
+                |c| chord_edit::lane_chord_keys(c, key, self.inversion),
+            );
+        }
         let keys = self.stamp.keys(key, self.scale(), self.inversion);
         if keys.is_empty() { vec![key] } else { keys }
     }
@@ -2334,7 +2383,7 @@ impl PianoRollView {
         let length = step.or(self.last_length).unwrap_or(OFF_LENGTH).max(1);
         let key = self.drawn_key(self.key_at(pos.y));
         let notes: Vec<Note> = self
-            .stamp_keys(key)
+            .stamp_keys(key, tick)
             .into_iter()
             .map(|k| seq_edit::clamp_note(Note::new(tick, length, k, DEFAULT_VELOCITY)))
             .collect();
@@ -3592,6 +3641,24 @@ impl PianoRollView {
                 let moved = chord_edit::conform(self.notes(), &sel, scale);
                 let result = chord_edit::unique(moved, &sel);
                 self.apply_edit(Some(result))
+            }
+            "editor.fit_to_chords" => {
+                if self.selection.is_empty() {
+                    return CommandOutcome::Declined;
+                }
+                let Some(clip) = &self.clip else {
+                    return CommandOutcome::Handled(Vec::new());
+                };
+                let sel = self.selection.items().clone();
+                let chosen: Vec<usize> = sel.iter().copied().collect();
+                let origin = clip.start - clip.offset;
+                let moved = atomik_model::fit_to_chords(
+                    self.notes(),
+                    &chosen,
+                    &self.harmony.chords,
+                    origin,
+                );
+                self.apply_edit(moved.map(|list| chord_edit::unique(list, &sel)))
             }
             "editor.set_chord" => match arg.and_then(Stamp::from_id) {
                 Some(stamp) => {

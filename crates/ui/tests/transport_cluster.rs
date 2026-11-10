@@ -70,7 +70,7 @@ fn wheel(pos: Point, dy: f64) -> UiEvent {
     }
 }
 
-const ALL_PARTS: [ClusterPart; 9] = [
+const ALL_PARTS: [ClusterPart; 10] = [
     ClusterPart::Rewind,
     ClusterPart::Forward,
     ClusterPart::Tap,
@@ -80,6 +80,7 @@ const ALL_PARTS: [ClusterPart; 9] = [
     ClusterPart::QRec,
     ClusterPart::Grid,
     ClusterPart::Quantize,
+    ClusterPart::Key,
 ];
 
 /// Every rectangle the cluster shows, with a name.
@@ -351,4 +352,73 @@ fn the_cluster_shows_its_labels_and_tooltips() {
     let r = b.cluster_rect(ClusterPart::Tap).unwrap();
     let h = b.help_at(r.center()).unwrap();
     assert_eq!(h.command, Some("transport.tap_tempo"));
+}
+
+// ---------------------------------------------------------------- the song key
+
+fn keyed_doc() -> RackDoc {
+    use atomik_model::harmony::{Harmony, Key as SongKey, KeyChange};
+    use atomik_model::theory::ScaleKind;
+    let mut doc = song_doc();
+    doc.song_mut().harmony = Harmony {
+        key: Some(SongKey::new(9, ScaleKind::NaturalMinor)),
+        changes: vec![KeyChange {
+            tick: 4 * BAR,
+            key: SongKey::new(0, ScaleKind::Major),
+        }],
+        chords: Vec::new(),
+    };
+    doc
+}
+
+fn texts_of(b: &mut TransportBar, doc: &RackDoc) -> Vec<String> {
+    let mut dl = DisplayList::new();
+    b.paint(&mut dl, doc, &registry());
+    dl.texts().into_iter().map(str::to_string).collect()
+}
+
+#[test]
+fn the_key_field_shows_the_song_key_at_the_playhead() {
+    let doc = keyed_doc();
+    let mut b = bar_of(1920.0, &doc);
+    assert!(b.cluster_rect(ClusterPart::Key).is_some());
+    let t = texts_of(&mut b, &doc);
+    assert!(
+        t.iter().any(|s| s == "KEY") && t.iter().any(|s| s == "Am"),
+        "{t:?}"
+    );
+    b.set_state(TransportState {
+        position: 5 * BAR,
+        ..TransportState::default()
+    });
+    let t = texts_of(&mut b, &doc);
+    assert!(t.iter().any(|s| s == "C"), "after the key change: {t:?}");
+    let plain = song_doc();
+    let mut b = bar_of(1920.0, &plain);
+    assert!(
+        texts_of(&mut b, &plain).iter().any(|s| s == "-"),
+        "no key: a dash"
+    );
+}
+
+#[test]
+fn a_click_on_the_key_field_opens_the_song_key_picker() {
+    let doc = keyed_doc();
+    let mut b = bar_of(1920.0, &doc);
+    let p = b.cluster_rect(ClusterPart::Key).unwrap().center();
+    let actions = click(&mut b, &doc, p);
+    assert!(
+        actions.contains(&UiAction::HarmonyPicker(atomik_ui::HarmonyTarget::SongKey)),
+        "{actions:?}"
+    );
+    let help = b.help_at(p).expect("a hint");
+    assert!(help.text.len() <= 90 && help.text.contains("song key"));
+}
+
+#[test]
+fn the_key_field_is_the_first_to_go_when_the_bar_is_narrow() {
+    let doc = keyed_doc();
+    let b = bar_of(1000.0, &doc);
+    assert!(b.cluster_rect(ClusterPart::Key).is_none());
+    assert!(b.cluster_rect(ClusterPart::More).is_some());
 }

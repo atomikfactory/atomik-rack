@@ -235,6 +235,8 @@ View
     Tempo Lane
     Energy Lane
     Refresh Energy Lane
+    Key Lane
+    Chord Lane
     Video Row
     Marker Strip
     Marker List
@@ -266,6 +268,9 @@ Transport
   Input Quantize: Off
   Input Quantize: 1/8
   Input Quantize: 1/16
+  ---
+  Song Key…
+  Detect Song Key
 Mixer
   Console
   Maximise Console

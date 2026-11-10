@@ -182,15 +182,16 @@ use atomik_ui::{
 use atomik_ui::{
     BlindAction, BlindView, BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView,
     ColorTarget, CommandPaletteView, ConsoleButton, ExportScope, ExportView, FileBrowserView,
-    FilmView, Flip, HISTORY_PANEL_WIDTH, Key, KickBassAction, KickBassView, MacrosAction,
-    MacrosView, MaskingAction, MaskingView, MidiMapsAction, MidiMapsView, MixCheckAction,
-    MixCheckView, ModMatrixAction, ModMatrixView, Modifiers, NotesAction, NotesValues, NotesView,
-    NumpadKey, PaletteAction, ParamSearchAction, ParamSearchView, Place, PluginBannerView,
-    PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction,
-    RelinkEntry, RelinkView, RepetitionAction, RepetitionView, ScaleAction, ScaleView,
-    SilenceAction, SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH,
-    TextRun, UiAction, UiEvent, VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues,
-    WarpView, ZoneAction, ZoneView,
+    FilmView, Flip, HISTORY_PANEL_WIDTH, HarmonyPickerAction, HarmonyPickerView, HarmonyTarget,
+    Key, KickBassAction, KickBassView, MacrosAction, MacrosView, MaskingAction, MaskingView,
+    MidiMapsAction, MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView,
+    Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, PaletteAction, ParamSearchAction,
+    ParamSearchView, PickerValue, Place, PluginBannerView, PluginSettingsView, PointerButton,
+    QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView,
+    RepetitionAction, RepetitionView, ScaleAction, ScaleView, SilenceAction, SilenceValues,
+    SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent,
+    VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues, WarpView, ZoneAction,
+    ZoneView,
 };
 use atomik_ui::{ReverbSendAction, ReverbSendValues, ReverbSendView};
 use atomik_ui::{WavetableAction, WavetableView};
@@ -635,6 +636,9 @@ pub struct Shell<B: AudioBackend> {
     silence: Option<SilenceView>,
     /// The song information panel (File > Song Information) while it is open.
     song_info: Option<SongInfoView>,
+    /// The key and chord picker (a double click in the key or chord lane, the transport bar's Key
+    /// field) while it is open.
+    harmony_picker: Option<HarmonyPickerView>,
     /// The reverb send wizard (Track > Add Reverb Send) while it is open.
     reverb_send: Option<ReverbSendView>,
     /// Its choices, kept between openings.
@@ -852,6 +856,7 @@ impl<B: AudioBackend> Shell<B> {
             blind: None,
             silence: None,
             song_info: None,
+            harmony_picker: None,
             reverb_send: None,
             reverb_send_values: ReverbSendValues::default(),
             kick_bass: None,
@@ -967,6 +972,8 @@ impl<B: AudioBackend> Shell<B> {
             let arrangement = self.core.arrangement_mut();
             arrangement.set_tempo_lane(self.ui.show_tempo_lane);
             arrangement.set_energy_lane(self.ui.show_energy_lane);
+            arrangement.set_key_lane(self.ui.show_key_lane);
+            arrangement.set_chord_lane(self.ui.show_chord_lane);
             arrangement.set_video_row(self.ui.show_video_row);
             arrangement.set_video_row_collapsed(self.ui.video_row_collapsed);
             arrangement.set_marker_strip(self.ui.show_marker_strip);
@@ -1472,6 +1479,10 @@ impl<B: AudioBackend> Shell<B> {
     /// (composition windows, dead keys) to the window.
     pub fn wants_text_input(&self) -> bool {
         self.song_info.is_some()
+            || self
+                .harmony_picker
+                .as_ref()
+                .is_some_and(HarmonyPickerView::is_text_owner)
             || self.palette.is_some()
             || self.versions.is_some()
             || self.quantize.as_ref().is_some_and(QuantizeView::wants_text)
@@ -1499,6 +1510,94 @@ impl<B: AudioBackend> Shell<B> {
         view.set_scale(self.scale());
         view.set_bounds(self.plugin_modal_rect());
         self.song_info = Some(view);
+        self.repaint = true;
+    }
+
+    /// The key and chord picker, while it is open.
+    pub fn harmony_picker_view(&self) -> Option<&HarmonyPickerView> {
+        self.harmony_picker.as_ref()
+    }
+
+    /// Opens the key and chord picker on `target`, showing what is there now (or a start value).
+    fn open_harmony_picker(&mut self, target: HarmonyTarget) {
+        let harmony = self.core.harmony().clone();
+        let bars = atomik_ui::timeline::Bars::of(&self.core.doc().song);
+        let bar = |tick: i64| bars.bar_of(tick).max(1);
+        let start_key = |tick: i64| {
+            harmony.key_at(tick).unwrap_or_else(|| {
+                atomik_model::Key::new(0, atomik_model::theory::ScaleKind::Major)
+            })
+        };
+        let (title, value, existing) = match target {
+            HarmonyTarget::SongKey => (
+                "SONG KEY".to_owned(),
+                PickerValue::Key(harmony.key.unwrap_or_else(|| start_key(0))),
+                harmony.key.is_some(),
+            ),
+            HarmonyTarget::KeyChange { tick } => {
+                let here = harmony.change_index(tick).map(|i| harmony.changes[i].key);
+                (
+                    format!("KEY CHANGE AT BAR {}", bar(tick)),
+                    PickerValue::Key(here.unwrap_or_else(|| start_key(tick))),
+                    here.is_some(),
+                )
+            }
+            HarmonyTarget::Chord { tick, length } => {
+                let here = harmony.chord_index(tick).map(|i| harmony.chords[i]);
+                let chord = here.unwrap_or_else(|| harmony.suggested_chord(tick, length));
+                (
+                    format!("CHORD AT BAR {}", bar(tick)),
+                    PickerValue::Chord {
+                        root: chord.root,
+                        quality: chord.quality,
+                        bass: chord.bass,
+                    },
+                    here.is_some(),
+                )
+            }
+        };
+        let theme = self.core.view().theme().clone();
+        let mut view = HarmonyPickerView::new(theme, target, title, value, existing);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.harmony_picker = Some(view);
+        self.repaint = true;
+    }
+
+    /// What the key and chord picker asked for: APPLY sets its value, REMOVE takes the key, key
+    /// change or chord away (one undo step each), and the picker closes. A refusal stays open with
+    /// the reason in the toast.
+    fn harmony_picker_action(&mut self, action: HarmonyPickerAction) {
+        if action != HarmonyPickerAction::Close
+            && let Some(view) = &self.harmony_picker
+        {
+            let apply = action == HarmonyPickerAction::Apply;
+            let result = match (view.target(), view.value()) {
+                (HarmonyTarget::SongKey, PickerValue::Key(k)) => {
+                    self.core.set_song_key(apply.then_some(k))
+                }
+                _ => {
+                    let current = self.core.harmony();
+                    let next = if apply {
+                        view.apply_to(current)
+                    } else {
+                        view.remove_from(current)
+                    };
+                    match next {
+                        Ok(h) => self.core.set_harmony(h),
+                        Err(e) => {
+                            self.core
+                                .report(format!("Cannot change the key and chords: {e}"));
+                            Err(e)
+                        }
+                    }
+                }
+            };
+            if result.is_err() {
+                return;
+            }
+        }
+        self.harmony_picker = None;
         self.repaint = true;
     }
 
@@ -3521,6 +3620,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.song_info {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.harmony_picker {
+            v.set_theme(theme.clone());
+        }
         if let Some(v) = &mut self.reverb_send {
             v.set_theme(theme.clone());
         }
@@ -3887,6 +3989,8 @@ impl<B: AudioBackend> Shell<B> {
             big_meter: view.big_meter_visible(),
             tempo_lane: self.core.arrangement().tempo_lane_visible(),
             energy_lane: self.core.arrangement().energy_lane_visible(),
+            key_lane: self.core.arrangement().key_lane_visible(),
+            chord_lane: self.core.arrangement().chord_lane_visible(),
             video_row: self.core.arrangement().video_row_visible(),
             marker_strip: self.core.arrangement().marker_strip_visible(),
             inspector: self.core.arrangement().inspector_visible(),
@@ -4240,6 +4344,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.song_info.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.song_info {
+                v.set_bounds(rect);
+            }
+        }
+        if self.harmony_picker.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.harmony_picker {
                 v.set_bounds(rect);
             }
         }
@@ -5338,6 +5448,30 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::SongInfo(a) = action {
                     self.song_info_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.harmony_picker.is_some() {
+            // The key and chord picker takes every event (typed text included); Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.harmony_picker = None;
+                return Vec::new();
+            }
+            let actions = self
+                .harmony_picker
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Harmony(a) = action {
+                    self.harmony_picker_action(a);
                 }
             }
             return Vec::new();
@@ -7121,6 +7255,7 @@ impl<B: AudioBackend> Shell<B> {
                     self.ui_changed();
                 }
                 UiAction::PickColor(target) => self.open_color_picker(target.clone()),
+                UiAction::HarmonyPicker(target) => self.open_harmony_picker(*target),
                 UiAction::EditWavetable(device) => self.open_wavetable_editor(device.clone()),
                 UiAction::OpenSampleEditor(_) => self.show_sample_editor(),
                 UiAction::CloseSampleEditor => {
@@ -8323,6 +8458,30 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::FindRepetition => {
                 self.open_repetition();
+                self.close_menubars();
+                Vec::new()
+            }
+            AppCommand::ToggleKeyLane => {
+                let show = !self.core.arrangement().key_lane_visible();
+                self.core.arrangement_mut().set_key_lane(show);
+                self.ui.show_key_lane = show;
+                self.ui_changed();
+                Vec::new()
+            }
+            AppCommand::ToggleChordLane => {
+                let show = !self.core.arrangement().chord_lane_visible();
+                self.core.arrangement_mut().set_chord_lane(show);
+                self.ui.show_chord_lane = show;
+                self.ui_changed();
+                Vec::new()
+            }
+            AppCommand::SetSongKey => {
+                self.open_harmony_picker(HarmonyTarget::SongKey);
+                self.close_menubars();
+                Vec::new()
+            }
+            AppCommand::DetectKey => {
+                self.core.detect_song_key();
                 self.close_menubars();
                 Vec::new()
             }
@@ -10301,6 +10460,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.song_info {
             view.paint(canvas);
         }
+        if let Some(view) = &self.harmony_picker {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.reverb_send {
             view.paint(canvas);
         }
@@ -10748,6 +10910,10 @@ mod save_tests;
 #[cfg(test)]
 #[path = "shell_templates_tests.rs"]
 mod templates_tests;
+
+#[cfg(test)]
+#[path = "shell_harmony_tests.rs"]
+mod harmony_tests;
 
 #[cfg(test)]
 #[path = "shell_video_tests.rs"]

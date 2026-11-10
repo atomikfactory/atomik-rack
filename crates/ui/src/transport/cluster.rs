@@ -31,6 +31,9 @@ const CLICK_W: f64 = 70.0;
 const QREC_W: f64 = 40.0;
 const GRID_W: f64 = 54.0;
 const QUANT_W: f64 = 58.0;
+const KEY_W: f64 = 56.0;
+/// How many groups the cluster has.
+const GROUPS: usize = 5;
 /// The seconds a held Rewind or Forward waits before it repeats.
 pub const REPEAT_DELAY: f64 = 0.4;
 /// The seconds between two repeats.
@@ -59,6 +62,8 @@ pub enum ClusterPart {
     Grid,
     /// Quantize the selection with the quantize panel's last settings.
     Quantize,
+    /// The song key at the playhead; a click sets the song key.
+    Key,
     /// The overflow button.
     More,
 }
@@ -140,13 +145,14 @@ fn grid_index(ticks: i64) -> Option<usize> {
     GRIDS.iter().position(|g| g.1 == ticks)
 }
 
-/// The group widths: helpers, locators, click level, quantize.
-fn group_widths() -> [f64; 4] {
+/// The group widths: helpers, locators, click level, quantize, key.
+fn group_widths() -> [f64; GROUPS] {
     [
         2.0 * SMALL_W + TAP_W + 2.0 * IN_GAP,
         2.0 * (GO_W + LOC_W) + 2.0 * IN_GAP + 2.0,
         CLICK_W,
         QREC_W + GRID_W + QUANT_W + 2.0 * IN_GAP,
+        KEY_W,
     ]
 }
 
@@ -168,13 +174,13 @@ impl TransportBar {
         let (x0, limit) = self.cluster_budget();
         let widths = group_widths();
         let budget = limit - x0;
-        let total: f64 = widths.iter().sum::<f64>() + GROUP_GAP * 3.0;
+        let total: f64 = widths.iter().sum::<f64>() + GROUP_GAP * (GROUPS as f64 - 1.0);
         let mut out = ClusterLayout {
             end: self.lcd_end(),
             ..ClusterLayout::default()
         };
         let shown = if budget >= total {
-            4
+            GROUPS
         } else {
             let mut n = 0;
             let mut used = MORE_W;
@@ -187,7 +193,7 @@ impl TransportBar {
             }
             n
         };
-        let more = shown < 4 && budget >= MORE_W;
+        let more = shown < GROUPS && budget >= MORE_W;
         if shown == 0 && !more {
             return out;
         }
@@ -223,6 +229,10 @@ impl TransportBar {
                     out.parts
                         .push((ClusterPart::Click, boxed(x, CLICK_W, 28.0)));
                     x += CLICK_W;
+                }
+                4 => {
+                    out.parts.push((ClusterPart::Key, boxed(x, KEY_W, 28.0)));
+                    x += KEY_W;
                 }
                 _ => {
                     for (part, w) in [
@@ -455,6 +465,9 @@ impl TransportBar {
             }
             ClusterPart::Grid => self.cl.grid_drag = Some(StepDrag::new(pos.y)),
             ClusterPart::Quantize => out.push(UiAction::Quantize(QuantizeAction::ApplyLast)),
+            ClusterPart::Key => out.push(UiAction::HarmonyPicker(
+                crate::harmony_picker::HarmonyTarget::SongKey,
+            )),
             ClusterPart::More => out.push(UiAction::ContextMenu {
                 target: crate::action::ContextTarget::TransportMore,
                 at: pos,
@@ -594,6 +607,11 @@ impl TransportBar {
                     "Quantize the selected clips or notes with the quantize panel's last settings",
                     None,
                 ),
+                ClusterPart::Key => help(
+                    *r,
+                    "Song key at the playhead: click to set the song key",
+                    Some("transport.set_song_key"),
+                ),
                 ClusterPart::More => help(*r, "More transport controls", None),
             });
         }
@@ -669,6 +687,38 @@ impl TransportBar {
                         .weight(600)
                         .align(Align::End),
                     );
+                }
+                ClusterPart::Key => {
+                    sp::lcd(c, st, *r, None);
+                    sp::label(
+                        c,
+                        "KEY",
+                        r.x0 + 6.0,
+                        r.y0 + 10.0,
+                        6.5,
+                        t.text_muted,
+                        Align::Start,
+                    );
+                    let key = self.keys.key_at(self.state.position.max(0));
+                    let (text, color) = match key {
+                        Some(k) => (k.short(), t.highlight),
+                        None => ("-".to_owned(), t.text_muted),
+                    };
+                    c.text(
+                        &TextRun::new(text, pt(r.x1 - 6.0, r.y1 - 6.0), 11.0, color)
+                            .weight(600)
+                            .align(Align::End),
+                    );
+                    if hover {
+                        sp::line(
+                            c,
+                            r.x0 + 2.0,
+                            r.y1 - 0.5,
+                            r.x1 - 2.0,
+                            r.y1 - 0.5,
+                            t.highlight,
+                        );
+                    }
                 }
                 ClusterPart::Click => {
                     sp::lcd(c, st, *r, None);

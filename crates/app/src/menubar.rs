@@ -949,6 +949,8 @@ mod tests {
             big_meter: false,
             tempo_lane: false,
             energy_lane: false,
+            key_lane: false,
+            chord_lane: false,
             video_row: false,
             marker_strip: false,
             inspector: false,

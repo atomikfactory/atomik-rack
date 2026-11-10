@@ -396,6 +396,12 @@ fn chord_items(t: &NoteTools) -> Vec<Spec> {
         choice("editor.set_chord", s.id(), c.label(), t.stamp == s)
     }));
     v.push(Spec::Separator);
+    v.push(choice(
+        "editor.set_chord",
+        Stamp::Lane.id(),
+        "Song Chord (from the Chord Lane)",
+        t.stamp == Stamp::Lane,
+    ));
     let has_scale = t.scale.is_some();
     v.push(
         Spec::submenu(
@@ -989,6 +995,8 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 quantize("eighth", "Input Quantize: 1/8"),
                 quantize("sixteenth", "Input Quantize: 1/16"),
                 Spec::Separator,
+                item("transport.set_song_key", true),
+                Spec::Separator,
                 lens(
                     "mixer.lens_small_speaker",
                     "Lens: Small Speaker",
@@ -1137,9 +1145,13 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 Spec::submenu("Chord Stamp", chord_items(t)),
                 {
                     let mut chords = vec![
-                        item("editor.chordify", e.selection && t.stamp.is_active(t.scale)),
+                        item(
+                            "editor.chordify",
+                            e.selection && t.stamp.chordifies(t.scale),
+                        ),
                         item("editor.arpeggiate", e.selection),
                         item("editor.strum", e.selection),
+                        item("editor.fit_to_chords", e.selection),
                         Spec::Separator,
                     ];
                     chords.extend(arp_strum_options(t));
@@ -2221,7 +2233,7 @@ mod tests {
         assert_eq!(
             args("editor.set_chord"),
             atomik_ui::keymap::CHORD_ARGS,
-            "none, 21 chords and the diatonic chords"
+            "none, 21 chords, the song chord and the diatonic chords"
         );
         assert_eq!(args("editor.set_chord_inversion").len(), 4);
         assert_eq!(args("editor.fold_set"), atomik_ui::keymap::FOLD_ARGS);
@@ -2237,6 +2249,7 @@ mod tests {
             "editor.chordify",
             "editor.arpeggiate",
             "editor.strum",
+            "editor.fit_to_chords",
         ] {
             assert!(all.iter().any(|(id, ..)| *id == c), "{c}");
         }

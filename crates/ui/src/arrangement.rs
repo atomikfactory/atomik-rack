@@ -60,6 +60,7 @@ mod energy_lane;
 mod folder_clips;
 mod folder_fader;
 mod ghost;
+mod harmony_lanes;
 mod header_band;
 mod header_drop;
 mod heights;
@@ -89,6 +90,7 @@ mod video_row;
 pub use audio_edit::AudioMenu;
 pub use energy_lane::ENERGY_LANE_HEIGHT;
 pub use ghost::TakeGhost;
+pub use harmony_lanes::{CHORD_LANE_HEIGHT, KEY_LANE_HEIGHT};
 pub use heights::{
     COMPACT_BELOW, MAX_ROW_HEIGHT, MAX_TRACK_ZOOM, MIN_ROW_HEIGHT, MIN_TRACK_ZOOM, TRACK_ZOOM_STEP,
     clamp_track_zoom, scaled_height,
@@ -377,6 +379,8 @@ enum Hit {
     TempoLane,
     /// The energy lane.
     EnergyLane,
+    /// The key or chord lane.
+    Harmony(harmony_lanes::HarmonyHit),
     /// The chevron in the video row header cell.
     VideoToggle,
     /// The video row header cell.
@@ -470,6 +474,8 @@ enum MenuKind {
     Input(Vec<InputSel>),
     /// Do the action of row `i` (the menu of a take row or comp strip, or the pattern menu).
     Takes(Vec<UiAction>),
+    /// Do the row of a key or chord lane menu (kept apart: it belongs to no track).
+    Harmony(Vec<harmony_lanes::HarmonyRow>),
 }
 
 impl Menu {
@@ -587,6 +593,8 @@ enum Drag {
     HeaderBand,
     /// The bottom edge of a track header is dragged (`HeightUi::drag` has the state).
     Height,
+    /// A key change or a chord is dragged (`HarmonyUi::drag` has the state).
+    Harmony,
     Move {
         start: Point,
         grabbed_start: i64,
@@ -974,6 +982,8 @@ pub struct ArrangementView {
     energy_lane: bool,
     /// What the energy lane draws.
     en: energy_lane::EnergyUi,
+    /// The key and chord lanes.
+    hl: harmony_lanes::HarmonyUi,
     /// The video row above the lanes.
     vid: video_row::VideoUi,
     /// The selected tempo point and meter change.
@@ -1108,6 +1118,7 @@ impl ArrangementView {
             tempo_lane: false,
             energy_lane: false,
             en: energy_lane::EnergyUi::default(),
+            hl: harmony_lanes::HarmonyUi::default(),
             vid: video_row::VideoUi::default(),
             tempo_sel: None,
             meter_sel: None,
@@ -2239,6 +2250,7 @@ impl ArrangementView {
             self.point_sel = None;
         }
         if let Some(m) = &self.menu
+            && !matches!(m.kind, MenuKind::Harmony(_))
             && !song.tracks.iter().any(|t| t.device == m.device)
         {
             self.menu = None;
@@ -2248,6 +2260,7 @@ impl ArrangementView {
         self.meter_sel = self.meter_sel.filter(|i| *i < meters);
         self.retain_envelope_selection();
         self.marker_sync();
+        self.harmony_synced();
         self.takes_sync();
         self.org_sync();
         self.clamp_scroll();
@@ -2292,7 +2305,7 @@ impl ArrangementView {
 
     /// The top of the track lanes: under the video row, which sits under the energy lane.
     fn lanes_top(&self) -> f64 {
-        self.energy_bottom() + self.video_row_height()
+        self.harmony_bottom() + self.video_row_height()
     }
 
     /// The tempo lane over the timeline (empty height when hidden).
@@ -2674,7 +2687,11 @@ impl ArrangementView {
             }
             return self.strip_hit(pos);
         }
-        if pos.y >= self.energy_bottom() && pos.y < self.lanes_top() {
+        if pos.y >= self.energy_bottom() && pos.y < self.harmony_bottom() {
+            // The key and chord lanes (only when they are shown).
+            return self.harmony_hit(pos);
+        }
+        if pos.y >= self.harmony_bottom() && pos.y < self.lanes_top() {
             // The video row (only when the song has a film and the row is on).
             return self.video_hit(pos);
         }
@@ -3145,6 +3162,11 @@ impl ArrangementView {
                             out.push(cmd.clone());
                         }
                     }
+                    MenuKind::Harmony(rows) => {
+                        if let Some(row) = rows.get(i) {
+                            self.harmony_row(row, out);
+                        }
+                    }
                     MenuKind::Input(options) => {
                         let (current, source) = self
                             .audio_header(&m.device)
@@ -3212,6 +3234,9 @@ impl ArrangementView {
         }
         if !matches!(hit, Hit::VideoBar(_) | Hit::VideoHeader) {
             self.video_deselect();
+        }
+        if !matches!(hit, Hit::Harmony(_)) {
+            self.harmony_deselect();
         }
         if !matches!(
             hit,
@@ -3282,6 +3307,7 @@ impl ArrangementView {
             Hit::Panel(h) => self.list_down(h, pos, button, clicks, out),
             Hit::TempoPoint(i) => self.tempo_point_down(i, button, pos, tool, out),
             Hit::TempoArm if primary => out.push(UiAction::ToggleTempoArm),
+            Hit::Harmony(part) => self.harmony_down(part, pos, button, modifiers, clicks, out),
             Hit::VideoToggle if primary => self.video_toggle(),
             Hit::VideoHeader => self.video_down(None, pos, button),
             Hit::VideoBar(part) => self.video_down(Some(part), pos, button),
@@ -4581,6 +4607,10 @@ impl ArrangementView {
             self.video_move(pos, modifiers, out);
             return;
         }
+        if matches!(self.drag, Drag::Harmony) {
+            self.harmony_move(pos, modifiers, out);
+            return;
+        }
         if matches!(self.drag, Drag::LaneMove) {
             self.lane_move_move(pos, modifiers);
             return;
@@ -4683,6 +4713,7 @@ impl ArrangementView {
             | Drag::TempoPoint { .. }
             | Drag::Height
             | Drag::Video
+            | Drag::Harmony
             | Drag::TrackMove
             | Drag::HeaderBand
             | Drag::LaneMove
@@ -5214,6 +5245,7 @@ impl ArrangementView {
             Drag::Audition => out.push(UiAction::StopAudition),
             Drag::Height => self.height_up(out),
             Drag::Video => self.video_up(out),
+            Drag::Harmony => self.harmony_up(out),
             Drag::TrackMove => self.track_move_up(out),
             Drag::HeaderBand => self.header_band_up(),
             Drag::LaneMove => self.lane_move_up(out),
@@ -5527,6 +5559,7 @@ impl ArrangementView {
                     self.og.group = None;
                     self.og.extra.clear();
                     self.video_deselect();
+                    self.harmony_deselect();
                 }
             }
             Key::Home => {
@@ -5564,6 +5597,9 @@ impl ArrangementView {
             return CommandOutcome::Handled(Vec::new());
         }
         if let Some(outcome) = self.video_command(id) {
+            return outcome;
+        }
+        if let Some(outcome) = self.harmony_command(id) {
             return outcome;
         }
         if let Some(outcome) = self.tempo_command(id, arg) {
@@ -6191,6 +6227,9 @@ impl ArrangementView {
         if matches!(self.drag, Drag::Video) {
             return self.video_cancel(out);
         }
+        if matches!(self.drag, Drag::Harmony) {
+            return self.harmony_cancel(out);
+        }
         if matches!(self.drag, Drag::LaneMove) {
             return self.lane_move_cancel();
         }
@@ -6348,6 +6387,7 @@ impl ArrangementView {
         self.paint_marker_strip(canvas);
         self.paint_tempo_lane(canvas);
         self.paint_energy_lane(canvas);
+        self.paint_harmony_lanes(canvas);
         self.paint_video_row(canvas);
         self.paint_ruler(canvas);
         let list = cache.headers(stamp, self.repaint || self.headers_dirty, |l| {

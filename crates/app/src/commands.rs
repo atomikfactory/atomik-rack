@@ -258,6 +258,17 @@ pub enum AppCommand {
     /// section and the flags of the energy map (saved with the view state). Turning it on measures
     /// the song when it has no result yet.
     ToggleEnergyLane,
+    /// View > Lanes and Markers > Key Lane: the row above the arrangement's track lanes with the
+    /// song key and its changes (saved with the view state).
+    ToggleKeyLane,
+    /// View > Lanes and Markers > Chord Lane: the row above the arrangement's track lanes with the
+    /// chords of the song (saved with the view state).
+    ToggleChordLane,
+    /// Transport > Song Key: opens the picker on the song key.
+    SetSongKey,
+    /// Transport > Detect Song Key: reads the key from the notes of every note clip and sets it
+    /// (one undo step).
+    DetectKey,
     /// View > Refresh Energy Lane: measures the master again (the lane shows an out-of-date
     /// result faded).
     RefreshEnergyLane,
@@ -978,6 +989,10 @@ impl AppCommand {
             AppCommand::ToggleBigMeter => ("view.toggle_big_meter", None),
             AppCommand::ToggleTempoLane => ("view.toggle_tempo_lane", None),
             AppCommand::ToggleEnergyLane => ("view.toggle_energy_lane", None),
+            AppCommand::ToggleKeyLane => ("view.toggle_key_lane", None),
+            AppCommand::ToggleChordLane => ("view.toggle_chord_lane", None),
+            AppCommand::SetSongKey => ("transport.set_song_key", None),
+            AppCommand::DetectKey => ("transport.detect_key", None),
             AppCommand::RefreshEnergyLane => ("view.refresh_energy_lane", None),
             AppCommand::ToggleVideoRow => ("view.toggle_video_row", None),
             AppCommand::FindRepetition => ("sequencer.find_repetition", None),
@@ -1369,6 +1384,10 @@ impl AppCommand {
             ("view.toggle_big_meter", None) => AppCommand::ToggleBigMeter,
             ("view.toggle_tempo_lane", None) => AppCommand::ToggleTempoLane,
             ("view.toggle_energy_lane", None) => AppCommand::ToggleEnergyLane,
+            ("view.toggle_key_lane", None) => AppCommand::ToggleKeyLane,
+            ("view.toggle_chord_lane", None) => AppCommand::ToggleChordLane,
+            ("transport.set_song_key", None) => AppCommand::SetSongKey,
+            ("transport.detect_key", None) => AppCommand::DetectKey,
             ("view.refresh_energy_lane", None) => AppCommand::RefreshEnergyLane,
             ("view.toggle_video_row", None) => AppCommand::ToggleVideoRow,
             ("sequencer.find_repetition", None) => AppCommand::FindRepetition,
@@ -2191,6 +2210,10 @@ pub struct MenuState {
     pub tempo_lane: bool,
     /// The arrangement shows the energy lane.
     pub energy_lane: bool,
+    /// The arrangement shows the key lane.
+    pub key_lane: bool,
+    /// The arrangement shows the chord lane.
+    pub chord_lane: bool,
     /// The arrangement shows the video row (when the song has a film).
     pub video_row: bool,
     /// The arrangement shows the marker strip.
@@ -3246,6 +3269,8 @@ pub fn menus_with_songs(
                             AppCommand::RefreshEnergyLane,
                             state.energy_lane,
                         ),
+                        check("Key Lane", AppCommand::ToggleKeyLane, state.key_lane),
+                        check("Chord Lane", AppCommand::ToggleChordLane, state.chord_lane),
                         check("Video Row", AppCommand::ToggleVideoRow, state.video_row),
                         check(
                             "Marker Strip",
@@ -3323,6 +3348,9 @@ pub fn menus_with_songs(
                 quantize("Input Quantize: Off", InputQuantize::OFF),
                 quantize("Input Quantize: 1/8", InputQuantize::EIGHTH),
                 quantize("Input Quantize: 1/16", InputQuantize::SIXTEENTH),
+                MenuEntry::Separator,
+                item("Song Key\u{2026}", AppCommand::SetSongKey),
+                item("Detect Song Key", AppCommand::DetectKey),
             ],
         },
         Menu {
@@ -4494,6 +4522,8 @@ mod tests {
             big_meter: false,
             tempo_lane: false,
             energy_lane: false,
+            key_lane: false,
+            chord_lane: false,
             video_row: false,
             marker_strip: false,
             inspector: false,
@@ -4633,6 +4663,10 @@ mod tests {
             AppCommand::ToggleTempoLane,
             AppCommand::ToggleEnergyLane,
             AppCommand::RefreshEnergyLane,
+            AppCommand::ToggleKeyLane,
+            AppCommand::ToggleChordLane,
+            AppCommand::SetSongKey,
+            AppCommand::DetectKey,
             AppCommand::ToggleVideoRow,
             AppCommand::ToggleMarkerStrip,
             AppCommand::ToggleInspector,
@@ -5624,6 +5658,8 @@ mod tests {
                 big_meter: false,
                 tempo_lane: false,
                 energy_lane: false,
+                key_lane: false,
+                chord_lane: false,
                 video_row: false,
                 marker_strip: false,
                 inspector: false,

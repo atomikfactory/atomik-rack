@@ -768,6 +768,54 @@ fn search_understands_tags_and_favourites() {
 }
 
 #[test]
+fn a_key_search_filters_by_the_tags_of_the_song_key() {
+    let mut rows = sample_rows();
+    rows[0].tags = vec!["loop".into(), "A minor".into()];
+    rows[1].tags = vec!["loop".into(), "D dorian".into()];
+    let mut v = settled(view());
+    v.set_rows(rows);
+    v.focus_search();
+    typed(&mut v, "key:song");
+    let t = paint(&mut v);
+    assert!(
+        t.texts().contains(&"hat.wav") && t.texts().contains(&"snare.wav"),
+        "a song without a key filters nothing: {:?}",
+        t.texts()
+    );
+    // The song gets a key: only the loops tagged with it stay.
+    v.set_song_key(vec!["A minor".into()]);
+    assert_eq!(v.song_key_tags(), ["A minor"]);
+    let t = paint(&mut v);
+    let names: Vec<&str> = t
+        .texts()
+        .into_iter()
+        .filter(|s| s.ends_with(".wav"))
+        .collect();
+    assert_eq!(names.len(), 1, "{names:?}");
+    // The key moves on: the list follows without typing again.
+    v.set_song_key(vec!["D dorian".into()]);
+    let t = paint(&mut v);
+    let now: Vec<&str> = t
+        .texts()
+        .into_iter()
+        .filter(|s| s.ends_with(".wav"))
+        .collect();
+    assert_eq!(now.len(), 1);
+    assert_ne!(now, names);
+    // A plain key word matches a part of the tag.
+    v.set_song_key(Vec::new());
+    run(&mut v, &[key_with(Key::Char('a'), Modifiers::CTRL)]);
+    typed(&mut v, "key:minor");
+    let t = paint(&mut v);
+    let minor: Vec<&str> = t
+        .texts()
+        .into_iter()
+        .filter(|s| s.ends_with(".wav"))
+        .collect();
+    assert_eq!(minor.len(), 1, "{minor:?}");
+}
+
+#[test]
 fn ctrl_backspace_deletes_a_word_and_ctrl_a_replaces() {
     let mut v = settled(view());
     v.focus_search();

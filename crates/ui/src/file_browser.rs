@@ -234,6 +234,8 @@ pub struct FileBrowserView {
     descending: bool,
     query: Query,
     query_empty: bool,
+    /// The tags that name the song's key, for a `key:song` search (empty: no song key).
+    song_key_tags: Vec<String>,
     selection: BTreeSet<PathBuf>,
     cursor: Option<u32>,
     anchor: Option<u32>,
@@ -310,6 +312,7 @@ impl FileBrowserView {
             descending: false,
             query: Query::default(),
             query_empty: true,
+            song_key_tags: Vec::new(),
             selection: BTreeSet::new(),
             cursor: None,
             anchor: None,
@@ -494,6 +497,25 @@ impl FileBrowserView {
         self.requested_detail = None;
         self.confirm = None;
         self.resort();
+    }
+
+    /// Hands the browser the tags that name the song's key (`A minor`, ...; empty when the song
+    /// has no key). A search with `key:song` shows the rows with one of them; the host sets this
+    /// whenever the key changes.
+    pub fn set_song_key(&mut self, tags: Vec<String>) {
+        if self.song_key_tags == tags {
+            return;
+        }
+        self.song_key_tags = tags;
+        if self.search.text().to_ascii_lowercase().contains("key:song") {
+            self.query = Query::parse(self.search.text()).with_song_key(&self.song_key_tags);
+            self.refilter();
+        }
+    }
+
+    /// The tags a `key:song` search matches (empty when the song has no key).
+    pub fn song_key_tags(&self) -> &[String] {
+        &self.song_key_tags
     }
 
     /// The row the info pane describes: the one selected file or library item (not a folder,

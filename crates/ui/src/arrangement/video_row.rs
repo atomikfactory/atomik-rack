@@ -202,7 +202,7 @@ impl ArrangementView {
     pub fn video_row_rect(&self) -> Rect {
         Rect::new(
             self.bounds.x0,
-            self.energy_bottom(),
+            self.harmony_bottom(),
             self.bounds.x1.max(self.axis.x0),
             self.lanes_top(),
         )
