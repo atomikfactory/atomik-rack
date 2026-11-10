@@ -462,6 +462,8 @@ pub mod tempo_lane;
 pub mod text;
 pub mod text_field;
 pub mod theme;
+pub mod theme_doc;
+pub mod theme_editor;
 pub mod timeline;
 pub mod tooltip;
 pub mod track_panel;
@@ -585,6 +587,7 @@ pub use text_field::{
     is_text_command, take_field_menu,
 };
 pub use theme::{Theme, ThemeChoice};
+pub use theme_editor::{ThemeEditorAction, ThemeEditorView};
 pub use tooltip::{HELP_DELAY, Help, TipTracker};
 pub use track_panel::{TRACK_PANEL_WIDTH, TrackPanelView};
 pub use transport::{

@@ -194,6 +194,9 @@ View
     Dark
     Light
     Same as System
+    ---
+    Next Theme
+    Theme Manager…
   ---
   Panels >
     Device Browser

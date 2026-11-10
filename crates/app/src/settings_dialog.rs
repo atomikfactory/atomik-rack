@@ -28,6 +28,7 @@ use crate::settings::{
     MASTER_TUNE_CHOICES, MAX_BUFFER, MAX_SURFACES, MIN_BUFFER, MidiInputRole, PRE_COUNT_CHOICES,
     RECORD_OFFSET_CHOICES, SurfaceSettings, WORKER_CHOICES,
 };
+use crate::themes_tab::{ThemeAction, ThemeRow, ThemesLayout, ThemesTab};
 use crate::video_tab::{VideoLayout, VideoTab};
 use crate::workflow_tab::{WorkflowLayout, WorkflowTab};
 use atomik_audio_io::HostInfo;
@@ -205,14 +206,16 @@ pub enum Tab {
     Video,
     /// The folder every saved project is also copied into.
     Backup,
+    /// The themes: use one, make your own.
+    Themes,
 }
 
 /// The size of the labels in the tab strip.
-const TAB_FONT: f32 = 12.0;
+const TAB_FONT: f32 = 11.0;
 
 impl Tab {
     /// Every tab, in strip order.
-    pub const ALL: [Tab; 8] = [
+    pub const ALL: [Tab; 9] = [
         Tab::Audio,
         Tab::Keyboard,
         Tab::Workflow,
@@ -221,6 +224,7 @@ impl Tab {
         Tab::Sync,
         Tab::Video,
         Tab::Backup,
+        Tab::Themes,
     ];
 
     /// The tab label.
@@ -234,6 +238,7 @@ impl Tab {
             Tab::Sync => "Sync",
             Tab::Video => "Video",
             Tab::Backup => "Backup",
+            Tab::Themes => "Themes",
         }
     }
 
@@ -248,8 +253,17 @@ impl Tab {
             Tab::Sync => "MIDI clock",
             Tab::Video => "Video & updates",
             Tab::Backup => "Backups",
+            Tab::Themes => "Themes",
         }
     }
+}
+
+/// The name of the theme `id` when it is one of the list but not a Dark / Light choice.
+fn custom_name(rows: &[ThemeRow], id: &str) -> Option<String> {
+    if id.is_empty() {
+        return None;
+    }
+    rows.iter().find(|r| r.id == id).map(|r| r.name.clone())
 }
 
 /// The drafts of the Keyboard, Workflow and Interface tabs.
@@ -260,6 +274,12 @@ struct Prefs {
     interface: InterfaceTab,
     video: VideoTab,
     backup: BackupTab,
+    themes: ThemesTab,
+    /// The theme in use when it is not a Dark / Light / System choice (see
+    /// [`WorkflowPrefs::theme_id`]).
+    theme_id: String,
+    /// Whether the system is set to a dark theme (the System choice follows it).
+    system_dark: bool,
 }
 
 /// Where everything is, for the current view size and scroll (logical units).
@@ -315,6 +335,9 @@ pub enum DialogOutcome {
     ExportController,
     /// The Controllers tab asks for a controller profile file to import.
     ImportController,
+    /// The Themes tab asks for something (use, duplicate, rename, delete, edit, import, export,
+    /// open the folder); the dialog stays open.
+    Theme(ThemeAction),
 }
 
 /// The settings modal.
@@ -442,9 +465,86 @@ impl SettingsDialog {
                 workflow.backup_keep,
                 workflow.backup_audio,
             ),
+            themes: ThemesTab::new(Vec::new(), String::new()),
+            theme_id: workflow.theme_id.clone(),
+            system_dark: true,
             workflow: WorkflowTab::new(workflow),
         });
         self
+    }
+
+    /// Fills the Themes tab: the list, which of them is in use, and whether the system is set to
+    /// a dark theme (the System choice follows it).
+    pub fn with_themes(mut self, rows: Vec<ThemeRow>, system_dark: bool) -> Self {
+        if let Some(p) = &mut self.prefs {
+            p.system_dark = system_dark;
+            let active =
+                crate::themes::active_id(&p.theme_id, p.interface.prefs().theme, system_dark);
+            p.interface.set_custom(custom_name(&rows, &p.theme_id));
+            p.themes = ThemesTab::new(rows, active);
+        }
+        self
+    }
+
+    /// The list of the Themes tab again (after an action), with a message about it; the row
+    /// `select` is the one the buttons work on.
+    pub fn set_themes(&mut self, rows: Vec<ThemeRow>, select: Option<&str>, message: String) {
+        if let Some(p) = &mut self.prefs {
+            let active =
+                crate::themes::active_id(&p.theme_id, p.interface.prefs().theme, p.system_dark);
+            p.interface.set_custom(custom_name(&rows, &p.theme_id));
+            p.themes.set_rows(rows, active, select);
+            p.themes.set_message(message);
+        }
+    }
+
+    /// Makes the theme `id` the one in use in the drafts: `dark` and `light` are the Dark and
+    /// Light choices, any other id is kept as the theme id (the shell has applied it already).
+    pub fn use_theme(&mut self, id: &str) {
+        let Some(p) = &mut self.prefs else { return };
+        let mut prefs = p.interface.prefs();
+        match id {
+            "dark" | "light" => {
+                prefs.theme = if id == "dark" {
+                    atomik_ui::ThemeChoice::Dark
+                } else {
+                    atomik_ui::ThemeChoice::Light
+                };
+                p.theme_id.clear();
+            }
+            _ => p.theme_id = id.to_string(),
+        }
+        p.interface.set_prefs(prefs);
+        p.interface
+            .set_custom(custom_name(p.themes.rows(), &p.theme_id));
+        p.themes.set_active(id.to_string());
+    }
+
+    /// The theme in use is not a custom one any more (it was deleted): Dark, Light or System.
+    pub fn forget_custom_theme(&mut self) {
+        let Some(p) = &mut self.prefs else { return };
+        p.theme_id.clear();
+        p.interface.set_custom(None);
+        p.themes.set_active(crate::themes::active_id(
+            "",
+            p.interface.prefs().theme,
+            p.system_dark,
+        ));
+    }
+
+    /// The Themes tab layout, while that tab shows.
+    pub fn themes_layout(&self, view: Size) -> Option<ThemesLayout> {
+        if self.tab != Tab::Themes {
+            return None;
+        }
+        self.prefs
+            .as_ref()
+            .map(|p| p.themes.layout(self.panel(view)))
+    }
+
+    /// The Themes tab, when the dialog has one.
+    pub fn themes_tab(&self) -> Option<&ThemesTab> {
+        self.prefs.as_ref().map(|p| &p.themes)
     }
 
     /// The ports and devices as last listed.
@@ -565,6 +665,7 @@ impl SettingsDialog {
             workflow.backup_folder = p.backup.folder().cloned();
             workflow.backup_keep = p.backup.keep();
             workflow.backup_audio = p.backup.audio();
+            workflow.theme_id = p.theme_id.clone();
             (p.keyboard.editor().user().clone(), workflow)
         })
     }
@@ -652,6 +753,17 @@ impl SettingsDialog {
                 let y0 = ((view.height - height) / 2.0).max(0.0);
                 Rect::new(x0, y0, x0 + width, y0 + height)
             }
+            Tab::Themes => {
+                let width = (view.width - 32.0).clamp(240.0, 640.0);
+                let content = self
+                    .prefs
+                    .as_ref()
+                    .map_or(0.0, |p| p.themes.content_height());
+                let height = (TITLE + content + 24.0 + FOOTER).min(view.height - 32.0);
+                let x0 = ((view.width - width) / 2.0).max(0.0);
+                let y0 = ((view.height - height) / 2.0).max(0.0);
+                Rect::new(x0, y0, x0 + width, y0 + height)
+            }
         }
     }
 
@@ -676,9 +788,9 @@ impl SettingsDialog {
         let mut right = panel.x1 - PAD;
         let mut out = Vec::new();
         for tab in Tab::ALL.into_iter().rev() {
-            // Eight tabs share the title row with the heading: a smaller label, little padding
+            // Nine tabs share the title row with the heading: a smaller label, little padding
             // and a hairline gap.
-            let w = text_width(atomik_ui::i18n::t(tab.label())) * f64::from(TAB_FONT) / 13.0 + 8.0;
+            let w = text_width(atomik_ui::i18n::t(tab.label())) * f64::from(TAB_FONT) / 13.0 + 6.0;
             out.push((
                 Rect::new(right - w, panel.y0 + 10.0, right, panel.y0 + 34.0),
                 tab,
@@ -1654,9 +1766,24 @@ impl SettingsDialog {
         let out = match tab {
             Tab::Keyboard => prefs.keyboard.handle(event, panel),
             Tab::Workflow => prefs.workflow.handle(event, panel),
-            Tab::Interface => prefs.interface.handle(event, panel),
+            Tab::Interface => {
+                let before = prefs.interface.prefs().theme;
+                let out = prefs.interface.handle(event, panel);
+                // Stepping the theme row goes back to the Dark, Light and System choices.
+                if prefs.interface.prefs().theme != before {
+                    prefs.theme_id.clear();
+                    prefs.interface.set_custom(None);
+                    prefs.themes.set_active(crate::themes::active_id(
+                        "",
+                        prefs.interface.prefs().theme,
+                        prefs.system_dark,
+                    ));
+                }
+                out
+            }
             Tab::Video => prefs.video.handle(event, panel),
             Tab::Backup => prefs.backup.handle(event, panel),
+            Tab::Themes => prefs.themes.handle(event, panel),
             Tab::Audio | Tab::Surfaces | Tab::Sync => TabOutcome::Open,
         };
         match out {
@@ -1669,6 +1796,12 @@ impl SettingsDialog {
             TabOutcome::PickScratchFolder => DialogOutcome::PickScratchFolder,
             TabOutcome::PickFfmpegFolder => DialogOutcome::PickFfmpegFolder,
             TabOutcome::PickBackupFolder => DialogOutcome::PickBackupFolder,
+            TabOutcome::Theme(action) => {
+                if let ThemeAction::Use(id) = &action {
+                    self.use_theme(id);
+                }
+                DialogOutcome::Theme(action)
+            }
         }
     }
 
@@ -1732,6 +1865,11 @@ impl SettingsDialog {
             }
             (Tab::Backup, Some(p)) => {
                 p.backup.paint(canvas, theme, panel_rect);
+                self.paint_buttons(canvas, theme, panel_rect);
+                return;
+            }
+            (Tab::Themes, Some(p)) => {
+                p.themes.paint(canvas, theme, panel_rect);
                 self.paint_buttons(canvas, theme, panel_rect);
                 return;
             }

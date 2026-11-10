@@ -375,6 +375,14 @@ pub enum ShellRequest {
     /// Show an open-file dialog for a keymap (the Keyboard tab's Import), then call
     /// [`Shell::import_keymap_from`].
     PickImportKeymap,
+    /// Show a save-file dialog for a theme (the Themes tab's Export...; the text is the file
+    /// name to suggest), then call [`Shell::export_theme_to`].
+    PickExportTheme(String),
+    /// Show an open-file dialog for a theme (the Themes tab's Import...), then call
+    /// [`Shell::import_theme_from`].
+    PickImportTheme,
+    /// Show this folder in the file manager (the Themes tab's Open Themes Folder).
+    OpenFolder(PathBuf),
     /// Show a save-file dialog for a controller profile (the Controllers tab's Export Profile),
     /// then call [`Shell::export_controller_to`].
     PickExportController,
@@ -739,6 +747,14 @@ pub struct Shell<B: AudioBackend> {
     /// `keymap.json` and `workflow.json` (next to `settings.json`; `None`: not saved).
     keymap_path: Option<PathBuf>,
     workflow_path: Option<PathBuf>,
+    /// The themes: the built-in ones and the user's (see `shell_themes`).
+    themes: crate::themes::ThemeLibrary,
+    /// The theme the theme editor previews in the whole interface while it is open.
+    theme_preview: Option<atomik_ui::Theme>,
+    /// The theme editor, while it is open.
+    theme_editor: Option<atomik_ui::ThemeEditorView>,
+    /// The theme the Themes tab is exporting (until the file dialog answers).
+    theme_export: Option<String>,
     /// The user's changes over the profile, as loaded or last applied.
     user_keymap: UserKeymap,
     /// The modifier roles with the user's overrides.
@@ -828,6 +844,18 @@ impl<B: AudioBackend> Shell<B> {
         let loaded_keymap = keymap_path.as_deref().map(keymap_store::load_user_keymap);
         let loaded_workflow = workflow_path.as_deref().map(keymap_store::load_workflow);
         let mut startup_notes: Vec<String> = ui_note.into_iter().collect();
+        let themes = crate::themes::ThemeLibrary::load(
+            options
+                .settings_path
+                .as_deref()
+                .map(crate::themes::folder_of),
+        );
+        if !themes.skipped().is_empty() {
+            startup_notes.push(format!(
+                "Theme files skipped: {}",
+                themes.skipped().join(", ")
+            ));
+        }
         let user_keymap = match loaded_keymap {
             Some(l) => {
                 startup_notes.extend(l.status);
@@ -971,6 +999,10 @@ impl<B: AudioBackend> Shell<B> {
             default_profile,
             keymap_path,
             workflow_path,
+            themes,
+            theme_preview: None,
+            theme_editor: None,
+            theme_export: None,
             user_keymap,
             roles: built.roles,
             workflow,
@@ -1579,6 +1611,7 @@ impl<B: AudioBackend> Shell<B> {
             || self.quantize.as_ref().is_some_and(QuantizeView::wants_text)
             || self.scale.is_some()
             || self.color_picker.is_some()
+            || self.theme_editor.is_some()
             || self.export.as_ref().is_some_and(ExportView::wants_text)
             || self.ime_target().is_some()
     }
@@ -2791,6 +2824,10 @@ impl<B: AudioBackend> Shell<B> {
                 .first()
                 .and_then(|d| self.core.doc().device(d))
                 .and_then(|d| d.color),
+            ColorTarget::ThemeToken(index) => self.theme_editor.as_ref().map(|e| {
+                let c = e.color(*index);
+                [c[0], c[1], c[2]]
+            }),
         };
         let theme = self.core.view().theme().clone();
         let mut view = ColorPickerView::new(theme, current.unwrap_or([0x3f, 0x8f, 0xd2]));
@@ -2805,7 +2842,15 @@ impl<B: AudioBackend> Shell<B> {
     fn color_picker_action(&mut self, action: ColorPickerAction) {
         if let (ColorPickerAction::Apply, Some((view, target))) = (action, &self.color_picker) {
             let color = Some(view.color());
+            if let ColorTarget::ThemeToken(index) = target {
+                let (index, rgb) = (*index, view.color());
+                self.color_picker = None;
+                self.theme_token_picked(index, rgb);
+                self.repaint = true;
+                return;
+            }
             let command = match target {
+                ColorTarget::ThemeToken(_) => return,
                 ColorTarget::Folder(group) => {
                     Command::Song(atomik_model::SongCommand::SetGroupColor {
                         group: *group,
@@ -3888,10 +3933,12 @@ impl<B: AudioBackend> Shell<B> {
         // The tune field edits the open project's tune; the saved default only changes with it.
         let mut current = session.settings().clone();
         current.master_tune_cents = self.core.doc().tune_cents;
-        let mut dialog = SettingsDialog::new(current, lists).with_preferences(
-            KeymapEditor::new(self.os, self.default_profile, self.user_keymap.clone()),
-            self.workflow.clone(),
-        );
+        let mut dialog = SettingsDialog::new(current, lists)
+            .with_preferences(
+                KeymapEditor::new(self.os, self.default_profile, self.user_keymap.clone()),
+                self.workflow.clone(),
+            )
+            .with_themes(self.theme_rows(), self.system_dark);
         if let Some(tab) = tab {
             dialog.show_tab(tab);
         }
@@ -3902,7 +3949,7 @@ impl<B: AudioBackend> Shell<B> {
 
     /// The theme in use: the preference, with the System choice following the operating system.
     pub fn theme(&self) -> atomik_ui::Theme {
-        self.workflow.theme.theme(self.system_dark)
+        self.current_theme()
     }
 
     /// Tells the shell whether the operating system is set to a dark theme (the platform calls it
@@ -4046,6 +4093,9 @@ impl<B: AudioBackend> Shell<B> {
             v.set_theme(theme.clone());
         }
         if let Some((v, _)) = &mut self.color_picker {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.theme_editor {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.notes {
@@ -4839,6 +4889,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.color_picker.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some((v, _)) = &mut self.color_picker {
+                v.set_bounds(rect);
+            }
+        }
+        if self.theme_editor.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.theme_editor {
                 v.set_bounds(rect);
             }
         }
@@ -6305,6 +6361,21 @@ impl<B: AudioBackend> Shell<B> {
             }
             return Vec::new();
         }
+        if self.theme_editor.is_some() {
+            // The theme editor takes every event (typed text included); it closes itself on Esc.
+            self.repaint = true;
+            let actions = self
+                .theme_editor
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::ThemeEditor(a) = action {
+                    self.theme_editor_action(a);
+                }
+            }
+            return Vec::new();
+        }
         if self.blind.is_some() {
             // The blind panel takes every event; Esc ends the test.
             self.repaint = true;
@@ -6461,6 +6532,7 @@ impl<B: AudioBackend> Shell<B> {
                 DialogOutcome::ImportController => {
                     return vec![ShellRequest::PickImportController];
                 }
+                DialogOutcome::Theme(action) => return self.theme_action(action),
             }
             return Vec::new();
         }
@@ -9529,8 +9601,17 @@ impl<B: AudioBackend> Shell<B> {
                 self.close_menubars();
                 Vec::new()
             }
+            AppCommand::NextTheme => {
+                self.next_theme();
+                Vec::new()
+            }
+            AppCommand::ThemeManager => {
+                self.open_settings(Some(crate::settings_dialog::Tab::Themes));
+                Vec::new()
+            }
             AppCommand::SetTheme(choice) => {
                 self.workflow.theme = choice;
+                self.workflow.theme_id.clear();
                 self.save_workflow();
                 self.apply_theme();
                 Vec::new()
@@ -11210,7 +11291,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some((view, _)) = &self.wavetable {
             view.paint(canvas);
         }
-        if let Some((view, _)) = &self.color_picker {
+        if let Some((view, target)) = &self.color_picker
+            && !matches!(target, ColorTarget::ThemeToken(_))
+        {
             view.paint(canvas);
         }
         if let Some(view) = &self.notes {
@@ -11259,6 +11342,14 @@ impl<B: AudioBackend> Shell<B> {
         }
         if let Some(dialog) = &self.dialog {
             dialog.paint(canvas, &theme, self.size());
+        }
+        // The theme editor sits over the settings dialog it was opened from, and so does the
+        // colour picker that serves it.
+        if let Some(view) = &self.theme_editor {
+            view.paint(canvas);
+            if let Some((picker, ColorTarget::ThemeToken(_))) = &self.color_picker {
+                picker.paint(canvas);
+            }
         }
         if let Some(about) = &self.about {
             about.paint(canvas, &theme, self.size());
@@ -11419,6 +11510,9 @@ use windows_impl::{MAIN_SIZE, WinState};
 
 #[path = "shell_manual.rs"]
 mod manual_impl;
+
+#[path = "shell_themes.rs"]
+mod themes_impl;
 
 #[path = "shell_help.rs"]
 mod help_impl;
@@ -11727,6 +11821,10 @@ mod controller_tests;
 #[cfg(test)]
 #[path = "shell_guide_tests.rs"]
 mod guide_tests;
+
+#[cfg(test)]
+#[path = "shell_themes_tests.rs"]
+mod themes_tests;
 
 #[cfg(test)]
 #[path = "shell_palette_tests.rs"]

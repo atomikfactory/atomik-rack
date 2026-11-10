@@ -592,6 +592,15 @@ fn the_view_in_french_matches_its_golden() {
 }
 
 #[test]
+fn the_view_in_the_synthwave_theme_matches_its_golden() {
+    let mut v = golden_view(1.0);
+    v.set_theme(Theme::synthwave());
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl);
+    check("launcher_view_synthwave_1x.json", &dl.to_json());
+}
+
+#[test]
 fn the_view_matches_its_golden_at_2x() {
     let v = golden_view(2.0);
     let mut dl = DisplayList::new();

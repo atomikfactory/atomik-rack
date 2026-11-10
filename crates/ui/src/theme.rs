@@ -8,6 +8,7 @@ use vello::peniko::Color;
 const fn c(r: u8, g: u8, b: u8) -> Color {
     Color::from_rgba8(r, g, b, 255)
 }
+#[cfg(test)]
 const fn ca(r: u8, g: u8, b: u8, a: u8) -> Color {
     Color::from_rgba8(r, g, b, a)
 }
@@ -150,6 +151,18 @@ pub struct Theme {
     pub on_dark: Color,
     /// Type drawn over the error toast.
     pub on_error: Color,
+    /// Arrangement grid line at a bar.
+    pub grid_bar: Color,
+    /// Arrangement grid line at a beat.
+    pub grid_beat: Color,
+    /// Arrangement grid line below a beat.
+    pub grid_sub: Color,
+    /// Level meter, the quiet zone (below -9 dB).
+    pub meter_low: Color,
+    /// Level meter, the loud zone (-9 dB up to -0.5 dB).
+    pub meter_mid: Color,
+    /// Level meter, the zone at the top (-0.5 dB and above).
+    pub meter_high: Color,
 }
 
 impl Default for Theme {
@@ -218,9 +231,11 @@ impl ThemeChoice {
     }
 }
 
+/// The two palettes as they were written in code before themes became data: the reference the
+/// built-in JSON files are checked against.
+#[cfg(test)]
 impl Theme {
-    /// The default dark theme: graphite panels, warm-white type, one accent hue per device.
-    pub fn dark() -> Self {
+    pub(crate) fn legacy_dark() -> Self {
         Self {
             background: c(0x0e, 0x10, 0x13),
             rail: c(0x2a, 0x2e, 0x34),
@@ -287,13 +302,16 @@ impl Theme {
             on_accent: c(0x17, 0x19, 0x1c),
             on_dark: c(0xec, 0xe8, 0xe1),
             on_error: c(0xff, 0xff, 0xff),
+            grid_bar: ca(0xff, 0xff, 0xff, 0x2e),
+            grid_beat: ca(0xff, 0xff, 0xff, 0x14),
+            grid_sub: ca(0xff, 0xff, 0xff, 0x09),
+            meter_low: c(0x9c, 0xd3, 0x5b),
+            meter_mid: c(0xe0, 0xa8, 0x3c),
+            meter_high: c(0xe8, 0x5d, 0x3f),
         }
     }
 
-    /// The light theme: pale grey panels, near-black type, the same one accent hue per device
-    /// (a little darker, to read on the light surfaces). Displays stay light too, so the type
-    /// on them is the panel type.
-    pub fn light() -> Self {
+    pub(crate) fn legacy_light() -> Self {
         Self {
             background: c(0xd4, 0xd8, 0xdd),
             rail: c(0xb3, 0xb8, 0xbf),
@@ -360,7 +378,33 @@ impl Theme {
             on_accent: c(0x1b, 0x1e, 0x23),
             on_dark: c(0xf4, 0xf1, 0xea),
             on_error: c(0x2a, 0x0a, 0x08),
+            grid_bar: ca(0x14, 0x18, 0x1e, 0x2e),
+            grid_beat: ca(0x14, 0x18, 0x1e, 0x14),
+            grid_sub: ca(0x14, 0x18, 0x1e, 0x09),
+            meter_low: c(0x4f, 0x8f, 0x14),
+            meter_mid: c(0xb8, 0x78, 0x00),
+            meter_high: c(0xc4, 0x3e, 0x1f),
         }
+    }
+}
+
+impl Theme {
+    /// The default dark theme: graphite panels, warm-white type, one accent hue per device.
+    /// Read from `themes/dark.json` like every other theme.
+    pub fn dark() -> Self {
+        crate::theme_doc::builtin(crate::theme_doc::Base::Dark).clone()
+    }
+
+    /// The light theme: pale grey panels, near-black type, the same one accent hue per device
+    /// (a little darker, to read on the light surfaces). Displays stay light too, so the type
+    /// on them is the panel type. Read from `themes/light.json`.
+    pub fn light() -> Self {
+        crate::theme_doc::builtin(crate::theme_doc::Base::Light).clone()
+    }
+
+    /// The built-in synthwave theme: a deep indigo night, neon magenta and cyan accents.
+    pub fn synthwave() -> Self {
+        crate::theme_doc::synthwave().clone()
     }
 
     /// `ink` at `alpha` (0 to 1): a faint line or highlight over a surface of this theme.
@@ -477,8 +521,12 @@ pub fn contrast_ratio(a: Color, b: Color) -> f32 {
 mod tests {
     use super::*;
 
-    fn both() -> [(&'static str, Theme); 2] {
-        [("dark", Theme::dark()), ("light", Theme::light())]
+    fn both() -> [(&'static str, Theme); 3] {
+        [
+            ("dark", Theme::dark()),
+            ("light", Theme::light()),
+            ("synthwave", Theme::synthwave()),
+        ]
     }
 
     /// The state colours of the Audio I/O lamps read against the window they
@@ -541,7 +589,7 @@ mod tests {
                 let r = contrast_ratio(t.text, bg);
                 assert!(r >= 7.0, "{name}: text on {what}: {r:.2}:1");
                 let r = contrast_ratio(t.text_muted, bg);
-                let floor = if t.dark { 3.0 } else { 4.5 };
+                let floor = if name == "dark" { 3.0 } else { 4.5 };
                 assert!(r >= floor, "{name}: muted text on {what}: {r:.2}:1");
             }
             for (what, bg) in [

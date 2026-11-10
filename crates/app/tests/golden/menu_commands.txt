@@ -272,6 +272,7 @@ NewSongWindow | New Song Window
 NextMarker | Next Marker
 NextReference | Next Reference Track
 NextSong | Next Song
+NextTheme | Next Theme
 Open | Open…
 OpenRecent(0) | song 0
 OpenRecent(1) | song 1
@@ -396,6 +397,7 @@ StartScreen | Start Screen…
 StoreSnapshot | Store Snapshot
 StressRack | Stress Rack
 StressSong | Stress Song
+ThemeManager | Theme Manager…
 ToggleBigMeter | Big Meter
 ToggleBrowser | Device Browser
 ToggleChase | Chase Notes

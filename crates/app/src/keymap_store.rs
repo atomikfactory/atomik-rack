@@ -92,6 +92,10 @@ pub struct WorkflowPrefs {
     pub master_keyboard: MasterKeyboard,
     /// The colour theme: dark, light, or whichever the operating system uses (default dark).
     pub theme: ThemeChoice,
+    /// The theme in use when it is not one of the three choices above: `synthwave`, or
+    /// `user:<file>` for a theme of the themes folder (empty: the choice above decides). A theme
+    /// that is gone falls back to the choice.
+    pub theme_id: String,
     /// The size of every window's content in percent: 75 to 200 in steps of 25 (default 100).
     pub app_zoom: u16,
     /// How far a knob or fader has to be dragged to sweep its range (default Normal).
@@ -233,6 +237,7 @@ impl Default for WorkflowPrefs {
             warp_imports: WarpImports::default(),
             master_keyboard: MasterKeyboard::default(),
             theme: ThemeChoice::default(),
+            theme_id: String::new(),
             app_zoom: 100,
             knob_range: KnobRange::default(),
             value_tooltips: false,
@@ -327,6 +332,12 @@ impl WorkflowPrefs {
                 .and_then(Value::as_str)
                 .and_then(ThemeChoice::from_id)
                 .unwrap_or(defaults.theme),
+            theme_id: obj
+                .get("theme_id")
+                .and_then(Value::as_str)
+                .filter(|id| id.len() <= 80 && !id.chars().any(char::is_control))
+                .map(str::to_owned)
+                .unwrap_or_default(),
             app_zoom: obj
                 .get("app_zoom")
                 .and_then(Value::as_u64)
@@ -405,6 +416,7 @@ impl WorkflowPrefs {
                             | "warp_imports"
                             | "master_keyboard"
                             | "theme"
+                            | "theme_id"
                             | "app_zoom"
                             | "knob_range"
                             | "value_tooltips"
@@ -482,6 +494,9 @@ impl WorkflowPrefs {
             Value::String(self.master_keyboard.id().into()),
         );
         map.insert("theme".into(), Value::String(self.theme.id().into()));
+        if !self.theme_id.is_empty() {
+            map.insert("theme_id".into(), Value::String(self.theme_id.clone()));
+        }
         map.insert("app_zoom".into(), Value::from(self.app_zoom));
         map.insert(
             "knob_range".into(),
@@ -817,6 +832,36 @@ mod tests {
         assert_eq!(WorkflowPrefs::from_json(&text).unwrap(), w);
         // Saving again is byte-identical.
         assert_eq!(WorkflowPrefs::from_json(&text).unwrap().to_json(), text);
+    }
+
+    /// An old file keeps working: `dark` gives Dark and no theme id; a theme id is kept only
+    /// when it is written and is plain text.
+    #[test]
+    fn an_old_theme_setting_still_gives_its_theme_and_a_theme_id_round_trips() {
+        let old = WorkflowPrefs::from_json(r#"{"theme": "dark"}"#).unwrap();
+        assert_eq!((old.theme, old.theme_id.as_str()), (ThemeChoice::Dark, ""));
+        let light = WorkflowPrefs::from_json(r#"{"theme": "light"}"#).unwrap();
+        assert_eq!(light.theme, ThemeChoice::Light);
+        assert!(
+            !old.to_json().contains("theme_id"),
+            "not written when empty"
+        );
+        let w = WorkflowPrefs {
+            theme_id: "user:night-drive".into(),
+            ..old
+        };
+        let text = w.to_json();
+        assert!(
+            text.contains("\"theme_id\": \"user:night-drive\""),
+            "{text}"
+        );
+        assert_eq!(WorkflowPrefs::from_json(&text).unwrap(), w);
+        assert_eq!(WorkflowPrefs::from_json(&text).unwrap().to_json(), text);
+        let odd = WorkflowPrefs::from_json(r#"{"theme_id": 5}"#).unwrap();
+        assert_eq!(odd.theme_id, "");
+        let odd = WorkflowPrefs::from_json(r#"{"theme_id": "a\nb"}"#).unwrap();
+        assert_eq!(odd.theme_id, "");
+        assert!(w.extra.is_empty(), "theme_id is a known field");
     }
 
     #[test]

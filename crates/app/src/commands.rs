@@ -750,6 +750,10 @@ pub enum AppCommand {
     About,
     /// View ▸ Theme: dark, light, or the operating system's.
     SetTheme(ThemeChoice),
+    /// View ▸ Theme ▸ Next Theme: the next theme of the list (built-in ones, then the user's).
+    NextTheme,
+    /// View ▸ Theme ▸ Theme Manager…: Settings, Themes tab.
+    ThemeManager,
     /// View ▸ Application Zoom: the size of every window's content.
     AppZoom(ZoomChange),
     /// Window ▸ a window: bring it forward.
@@ -1264,6 +1268,8 @@ impl AppCommand {
             AppCommand::CheckForUpdates => ("help.check_for_updates", None),
             AppCommand::About => ("help.about", None),
             AppCommand::SetTheme(t) => ("view.theme", Some(t.id())),
+            AppCommand::NextTheme => ("view.next_theme", None),
+            AppCommand::ThemeManager => ("view.theme_manager", None),
             AppCommand::AppZoom(z) => ("view.app_zoom", Some(z.arg()?)),
             AppCommand::FocusWindow(k) => ("view.focus_window", Some(window_arg(*k))),
             AppCommand::NewSongWindow => ("window.new_song", None),
@@ -1723,6 +1729,8 @@ impl AppCommand {
             ("help.check_for_updates", None) => AppCommand::CheckForUpdates,
             ("help.about", None) => AppCommand::About,
             ("view.theme", Some(a)) => AppCommand::SetTheme(ThemeChoice::from_id(a)?),
+            ("view.next_theme", None) => AppCommand::NextTheme,
+            ("view.theme_manager", None) => AppCommand::ThemeManager,
             ("view.app_zoom", Some(a)) => AppCommand::AppZoom(ZoomChange::from_arg(a)?),
             ("view.focus_window", Some("main")) => AppCommand::FocusWindow(WindowKind::Main),
             ("view.focus_window", Some("rack")) => AppCommand::FocusWindow(WindowKind::Rack),
@@ -3258,6 +3266,11 @@ fn menus_in_english(
                                 true,
                             )
                         })
+                        .chain([
+                            MenuEntry::Separator,
+                            item("Next Theme", AppCommand::NextTheme),
+                            item("Theme Manager\u{2026}", AppCommand::ThemeManager),
+                        ])
                         .collect(),
                 }),
                 MenuEntry::Separator,
@@ -5023,6 +5036,8 @@ mod tests {
         for t in ThemeChoice::ALL {
             v.push(AppCommand::SetTheme(t));
         }
+        v.push(AppCommand::NextTheme);
+        v.push(AppCommand::ThemeManager);
         for mode in [
             atomik_model::RackSort::Free,
             atomik_model::RackSort::PerTrack,

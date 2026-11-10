@@ -30,7 +30,7 @@ const SECTION_GAP: f64 = 10.0;
 const SCROLL_STEP: f64 = 40.0;
 
 /// What a handled event asks of the dialog.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TabOutcome {
     /// Nothing further.
     Open,
@@ -50,6 +50,8 @@ pub(crate) enum TabOutcome {
     PickFfmpegFolder,
     /// Ask the platform for the backup folder (the Backup tab's Choose).
     PickBackupFolder,
+    /// The Themes tab asks the shell for something.
+    Theme(crate::themes_tab::ThemeAction),
 }
 
 /// One chord chip of a row.

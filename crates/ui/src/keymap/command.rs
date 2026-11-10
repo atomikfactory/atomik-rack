@@ -3063,6 +3063,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("view.next_theme", "Next Theme", G::View, C::Global).menu(),
     cmd("view.rack_sort", "Rack Sorting", G::View, C::Global)
         .arg(RACK_SORT_ARGS)
         .menu(),
@@ -3084,6 +3085,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.theme", "Theme", G::View, C::Global)
         .arg(THEME_ARGS)
         .menu(),
+    cmd("view.theme_manager", "Theme Manager", G::View, C::Global).menu(),
     cmd("view.toggle_big_meter", "Big Meter", G::View, C::Global).menu(),
     cmd("view.toggle_browser", "Device Browser", G::View, C::Global).menu(),
     cmd("view.toggle_chord_lane", "Chord Lane", G::View, C::Global).menu(),

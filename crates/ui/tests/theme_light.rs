@@ -1,7 +1,8 @@
 //! The light theme: display-list goldens of the rack, the console, the arrangement and the piano
 //! roll; a live switch from one theme to the other leaves no stale colour behind (a view that
 //! was switched paints exactly what a view built with the theme paints); a pixel check on the
-//! CPU canvas that each theme is really light or dark. Regenerate the goldens with
+//! CPU canvas that each theme is really light or dark; the same goldens for the built-in synthwave
+//! theme. Regenerate the goldens with
 //! `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-ui --test theme_light`.
 
 mod support;
@@ -152,6 +153,75 @@ fn the_light_console_matches_its_golden() {
         "light_console_1x.json",
         &console_list(&mut con(Theme::light())),
     );
+}
+
+#[test]
+fn the_synthwave_rack_matches_its_golden() {
+    check(
+        "synthwave_rack_1x.json",
+        &rack_list(&mut rack(Theme::synthwave())),
+    );
+}
+
+#[test]
+fn the_synthwave_arrangement_matches_its_golden() {
+    check(
+        "synthwave_arrangement_1x.json",
+        &arrangement_list(&mut arr(Theme::synthwave())),
+    );
+}
+
+#[test]
+fn the_synthwave_piano_roll_matches_its_golden() {
+    check(
+        "synthwave_piano_roll_1x.json",
+        &roll_list(&mut roll(Theme::synthwave())),
+    );
+}
+
+#[test]
+fn the_synthwave_console_matches_its_golden() {
+    check(
+        "synthwave_console_1x.json",
+        &console_list(&mut con(Theme::synthwave())),
+    );
+}
+
+/// Switching to synthwave and back leaves no colour of the other theme behind.
+#[test]
+fn a_live_switch_to_synthwave_leaves_no_stale_colours() {
+    for (from, to) in [
+        (Theme::dark(), Theme::synthwave()),
+        (Theme::synthwave(), Theme::light()),
+    ] {
+        let mut a = arr(from.clone());
+        let _ = arrangement_list(&mut a);
+        a.set_theme(to.clone());
+        assert_eq!(
+            arrangement_list(&mut a),
+            arrangement_list(&mut arr(to.clone())),
+            "arrangement"
+        );
+        let mut c = con(from);
+        let _ = console_list(&mut c);
+        c.set_theme(to.clone());
+        assert_eq!(console_list(&mut c), console_list(&mut con(to)), "console");
+    }
+}
+
+/// The synthwave grid is magenta, with the bar lines brighter, and its meters run cyan, magenta
+/// and orange.
+#[test]
+fn synthwave_paints_a_magenta_grid_and_neon_meters() {
+    let list = arrangement_list(&mut arr(Theme::synthwave()));
+    assert_ne!(list, arrangement_list(&mut arr(Theme::dark())));
+    let s = Theme::synthwave();
+    let (low, mid, high) = (s.meter_low, s.meter_mid, s.meter_high);
+    assert!(low != mid && mid != high && low != high);
+    let d = Theme::dark();
+    assert_eq!(d.meter_low, d.cable_notes, "dark meters keep their colours");
+    assert_eq!(d.meter_mid, d.mute);
+    assert_eq!(d.meter_high, d.cable_audio);
 }
 
 /// A view painted with one theme, switched, paints what a view of the other theme paints: no
