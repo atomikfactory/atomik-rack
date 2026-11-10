@@ -4316,6 +4316,10 @@ mod loops_tests;
 mod plugins_tests;
 
 #[cfg(test)]
+#[path = "app_core_plugin_manager_tests.rs"]
+mod plugin_manager_tests;
+
+#[cfg(test)]
 #[path = "app_core_revision_tests.rs"]
 mod revision_tests;
 

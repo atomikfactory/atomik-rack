@@ -195,6 +195,7 @@ use atomik_ui::{
     VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues, WarpView, ZoneAction,
     ZoneView,
 };
+use atomik_ui::{PluginManagerAction, PluginManagerView};
 use atomik_ui::{ReverbSendAction, ReverbSendValues, ReverbSendView};
 use atomik_ui::{WavetableAction, WavetableView};
 use std::collections::BTreeMap;
@@ -664,6 +665,10 @@ pub struct Shell<B: AudioBackend> {
     zone: Option<ZoneView>,
     /// The versions panel, while it is open.
     versions: Option<VersionsView>,
+    /// The plugin manager (Options > Plugin Manager), while it is open.
+    plugin_manager: Option<PluginManagerView>,
+    /// `plugins_user.json` beside the settings file (`None`: the choices are not saved).
+    plugins_user_path: Option<PathBuf>,
     /// The masking map panel (Mixer > Masking Map), while it is open.
     masking: Option<MaskingView>,
     /// The mix check panel (Mixer > Check Mix), while it is open.
@@ -785,6 +790,10 @@ impl<B: AudioBackend> Shell<B> {
             .as_deref()
             .map(|p| p.with_file_name(atomik_update::FILE));
         let palette_path = options.settings_path.as_deref().map(crate::palette::path);
+        let plugins_user_path = options
+            .settings_path
+            .as_deref()
+            .map(crate::plugins_user::path);
         let loaded_keymap = keymap_path.as_deref().map(keymap_store::load_user_keymap);
         let loaded_workflow = workflow_path.as_deref().map(keymap_store::load_workflow);
         let mut startup_notes: Vec<String> = ui_note.into_iter().collect();
@@ -886,6 +895,8 @@ impl<B: AudioBackend> Shell<B> {
             kick_bass: None,
             zone: None,
             versions: None,
+            plugin_manager: None,
+            plugins_user_path,
             masking: None,
             mixcheck: None,
             repetition: None,
@@ -940,6 +951,11 @@ impl<B: AudioBackend> Shell<B> {
             song_at: 0,
         };
         shell.core.set_roles(&shell.roles);
+        if let Some(path) = &shell.plugins_user_path {
+            shell
+                .core
+                .set_plugins_user(crate::plugins_user::PluginsUser::load(path));
+        }
         shell.configure_surface();
         shell.core.set_reference_path(
             options_library_path
@@ -1511,6 +1527,7 @@ impl<B: AudioBackend> Shell<B> {
                 .is_some_and(HarmonyPickerView::is_text_owner)
             || self.palette.is_some()
             || self.versions.is_some()
+            || self.plugin_manager.is_some()
             || self.quantize.as_ref().is_some_and(QuantizeView::wants_text)
             || self.scale.is_some()
             || self.color_picker.is_some()
@@ -2259,6 +2276,40 @@ impl<B: AudioBackend> Shell<B> {
             view.focus_list();
         }
         self.versions = Some(view);
+        self.repaint = true;
+    }
+
+    /// Whether the plugin manager is open.
+    pub fn plugin_manager_open(&self) -> bool {
+        self.plugin_manager.is_some()
+    }
+
+    /// The plugin manager, while it is open.
+    pub fn plugin_manager_view(&self) -> Option<&PluginManagerView> {
+        self.plugin_manager.as_ref()
+    }
+
+    /// Options > Plugin Manager: opens the manager over the plugins the last scan found.
+    fn open_plugin_manager(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = PluginManagerView::new(theme, self.core.plugin_manager_data());
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.plugin_manager = Some(view);
+        self.close_menubars();
+        self.repaint = true;
+    }
+
+    /// What the plugin manager asked for: closing and showing a file are the shell's, the rest
+    /// is the core's, and the panel shows the answer on the next frame.
+    fn plugin_manager_action(&mut self, action: PluginManagerAction) {
+        match &action {
+            PluginManagerAction::Close => self.plugin_manager = None,
+            PluginManagerAction::ShowInFolder(path) => {
+                self.pending.push(ShellRequest::Reveal(PathBuf::from(path)));
+            }
+            _ => self.core.plugin_manager_action(&action),
+        }
         self.repaint = true;
     }
 
@@ -3663,6 +3714,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.versions {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.plugin_manager {
+            v.set_theme(theme.clone());
+        }
         if let Some(v) = &mut self.masking {
             v.set_theme(theme.clone());
         }
@@ -4406,6 +4460,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.versions.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.versions {
+                v.set_bounds(rect);
+            }
+        }
+        if self.plugin_manager.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.plugin_manager {
                 v.set_bounds(rect);
             }
         }
@@ -5770,6 +5830,30 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::Versions(a) = action {
                     self.versions_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.plugin_manager.is_some() {
+            // The plugin manager takes every event (typed text included); Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.plugin_manager = None;
+                return Vec::new();
+            }
+            let actions = self
+                .plugin_manager
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::PluginManager(a) = action {
+                    self.plugin_manager_action(a);
                 }
             }
             return Vec::new();
@@ -7604,6 +7688,21 @@ impl<B: AudioBackend> Shell<B> {
                 self.notify(message);
             }
         }
+        if let Some(user) = self.core.take_plugins_user_change()
+            && let Some(path) = &self.plugins_user_path
+            && let Err(e) = user.save(path)
+        {
+            self.notify(format!("plugin choices not saved: {e}"));
+        }
+        if self.plugin_manager.is_some() {
+            let data = self.core.plugin_manager_data();
+            if let Some(v) = &mut self.plugin_manager
+                && v.data() != &data
+            {
+                v.set_data(data);
+                self.repaint = true;
+            }
+        }
         if self.core.take_plugin_folder_request() {
             self.pending.push(ShellRequest::PickPluginFolder);
         }
@@ -8989,6 +9088,10 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::AudioSetup => {
                 self.open_audio_setup();
+                Vec::new()
+            }
+            AppCommand::PluginManager => {
+                self.open_plugin_manager();
                 Vec::new()
             }
             AppCommand::HelpMode => {
@@ -10645,6 +10748,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.versions {
             view.paint(canvas);
         }
+        if let Some(view) = &self.plugin_manager {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.masking {
             view.paint(canvas);
         }
@@ -11110,6 +11216,10 @@ mod video_tests;
 #[cfg(test)]
 #[path = "shell_versions_tests.rs"]
 mod versions_tests;
+
+#[cfg(test)]
+#[path = "shell_plugin_manager_tests.rs"]
+mod plugin_manager_tests;
 
 #[cfg(test)]
 #[path = "shell_masking_tests.rs"]

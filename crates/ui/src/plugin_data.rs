@@ -45,6 +45,8 @@ pub enum PluginEntryStatus {
     Failed(String),
     /// The plugin's process ended on its own while it was in use (the reason); RETRY clears it.
     Crashed(String),
+    /// It crashed or failed to load three times in a row and is hidden until TRY AGAIN.
+    Quarantined,
 }
 
 impl PluginEntryStatus {
@@ -56,6 +58,7 @@ impl PluginEntryStatus {
             Self::Disabled => "DISABLED",
             Self::Failed(_) => "COULD NOT LOAD",
             Self::Crashed(_) => "CRASHED",
+            Self::Quarantined => "QUARANTINED",
         }
     }
 
@@ -65,6 +68,24 @@ impl PluginEntryStatus {
             Self::Unsupported(r) | Self::Failed(r) | Self::Crashed(r) => Some(r),
             _ => None,
         }
+    }
+}
+
+/// What the user marked on a plugin: a star and tags (the plugin manager sets them, the browser
+/// reads them).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PluginMarks {
+    /// The plugin has a star: it is listed first.
+    pub favourite: bool,
+    /// The user's tags, in the order they were added.
+    pub tags: Vec<String>,
+}
+
+impl PluginMarks {
+    /// Whether one of the tags starts with `prefix` (ignoring case).
+    pub fn has_tag_with(&self, prefix: &str) -> bool {
+        let p = prefix.trim().to_lowercase();
+        !p.is_empty() && self.tags.iter().any(|t| t.to_lowercase().starts_with(&p))
     }
 }
 
@@ -88,6 +109,8 @@ pub struct PluginEntryInfo {
     pub path: Option<String>,
     /// The scanned layout: what `PluginCommand::Add` and `Relink` carry.
     pub layout: PluginLayout,
+    /// The user's star and tags.
+    pub marks: PluginMarks,
 }
 
 impl PluginEntryInfo {
@@ -105,14 +128,23 @@ impl PluginEntryInfo {
         }
     }
 
-    /// Case-insensitive match on name, vendor and format badge (`clap`, `vst3`); an empty query
-    /// matches everything.
+    /// Case-insensitive match on name, vendor, format badge (`clap`, `vst3`) and tags; an empty
+    /// query matches everything. A query that starts with `#` is a tag filter: it matches the
+    /// plugins that have a tag starting with the rest.
     pub fn matches(&self, query: &str) -> bool {
         let q = query.trim().to_lowercase();
+        if let Some(tag) = q.strip_prefix('#') {
+            return self.marks.has_tag_with(tag);
+        }
         q.is_empty()
             || self.name.to_lowercase().contains(&q)
             || self.vendor.to_lowercase().contains(&q)
             || format_badge(self.plugin.format).to_lowercase().contains(&q)
+            || self
+                .marks
+                .tags
+                .iter()
+                .any(|t| t.to_lowercase().contains(&q))
     }
 }
 

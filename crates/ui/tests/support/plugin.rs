@@ -199,6 +199,7 @@ pub fn entry(p: PluginRef, layout: PluginLayout, status: PluginEntryStatus) -> P
         status,
         path: Some("C:/Plugins/test.clap".into()),
         layout,
+        marks: Default::default(),
     }
 }
 
