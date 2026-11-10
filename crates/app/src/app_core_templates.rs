@@ -5,7 +5,8 @@
 //! The templates folder is `Templates` next to the library folder (`<library>/../Templates`, so
 //! `Documents/Atomik Rack/Templates` by default). A template is a project: a `.atomik` file in the
 //! folder, or `<name>/<name>.atomik` with its `Audio` folder, which is the layout Save As makes.
-//! [`AppCore::templates`] lists them by name (at most [`MAX_TEMPLATES`], sorted without regard to
+//! The genre templates that ship in the factory folder (`Templates` there, see
+//! [`crate::factory`]) are listed first. [`AppCore::templates`] lists them by name (at most [`MAX_TEMPLATES`], sorted without regard to
 //! case); the shell refreshes the list a few times a second while the app runs, so a project
 //! dropped into the folder shows in File > New from Template without a restart.
 //!
@@ -183,9 +184,17 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Looks at the templates folder now. True when the list changed.
     pub fn reload_templates(&mut self) -> bool {
-        let entries = self
-            .templates_dir()
+        // The genre templates of the factory folder come first, then the user's own; the menu
+        // lists at most MAX_TEMPLATES in all.
+        let mut entries = self
+            .factory_root()
+            .map(|root| root.join(crate::factory::TEMPLATES_FOLDER))
             .map_or_else(Vec::new, |dir| list_templates(&dir));
+        entries.extend(
+            self.templates_dir()
+                .map_or_else(Vec::new, |dir| list_templates(&dir)),
+        );
+        entries.truncate(MAX_TEMPLATES);
         let changed = entries != self.templates.entries;
         self.templates.entries = entries;
         changed

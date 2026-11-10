@@ -1,0 +1,1557 @@
+{
+  "format": "atomik-project",
+  "version": 45,
+  "compat": 44,
+  "ignorable": {
+    "song.chords": 45,
+    "song.chords[].bass": 45,
+    "song.chords[].length": 45,
+    "song.chords[].quality": 45,
+    "song.chords[].root": 45,
+    "song.chords[].tick": 45,
+    "song.key": 45,
+    "song.key.root": 45,
+    "song.key.scale": 45,
+    "song.key_changes": 45,
+    "song.key_changes[].root": 45,
+    "song.key_changes[].scale": 45,
+    "song.key_changes[].tick": 45,
+    "song.launcher": 45,
+    "song.launcher.quantize": 45,
+    "song.launcher.scenes": 45,
+    "song.launcher.scenes[].color": 45,
+    "song.launcher.scenes[].name": 45,
+    "song.launcher.scenes[].tempo": 45,
+    "song.launcher.slots": 45,
+    "song.launcher.slots[].clip": 45,
+    "song.launcher.slots[].quantize": 45,
+    "song.launcher.slots[].row": 45,
+    "song.launcher.slots[].track": 45,
+    "song.launcher.stop_empty": 45,
+    "song.tracks[].lanes[].clips[].expression": 45,
+    "song.tracks[].lanes[].take_groups[].takes[].expression": 45
+  },
+  "sample_rate": 48000,
+  "tempo_bpm": 88,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "master", "type": "atomik.master",
+      "name": "Master", "folded": false
+    },
+    {
+      "id": "glue-compressor", "type": "atomik.compressor",
+      "name": "Glue Compressor", "folded": false,
+      "params": {
+        "attack": 30,
+        "auto_makeup": 0,
+        "auto_release": 1,
+        "knee": 8,
+        "ratio": 2,
+        "threshold": -14
+      }
+    },
+    {
+      "id": "limiter", "type": "atomik.mastering",
+      "name": "Limiter", "folded": false,
+      "params": {
+        "ceiling": -1,
+        "input": 9.6,
+        "multiband.on": 0,
+        "softclip": 0
+      }
+    },
+    {
+      "id": "tight-chamber", "type": "atomik.space-reverb",
+      "name": "Space Reverb", "folded": false, "patch": "Tight Chamber",
+      "params": {
+        "algorithm": 0,
+        "decay": 1.4,
+        "mix": 0.25,
+        "predelay": 10
+      }
+    },
+    {
+      "id": "tape-repeat", "type": "atomik.echo",
+      "name": "Echo", "folded": false, "patch": "Tape Repeat",
+      "params": {
+        "color.drive": 0.3,
+        "color.high": 4500,
+        "feedback": 0.55,
+        "mix": 0.3,
+        "time.mode": 0,
+        "time.ms": 320,
+        "wobble.depth": 0.3
+      }
+    },
+    {
+      "id": "kick", "type": "atomik.drum-machine",
+      "name": "Kick", "folded": false,
+      "params": {
+        "master.level": -1,
+        "pad1.body": 0.7,
+        "pad1.choke": 0,
+        "pad1.decay": 300,
+        "pad1.level": 0,
+        "pad1.module": 1,
+        "pad1.pan": 0,
+        "pad1.snap": 0.25,
+        "pad1.sweep": 0.35,
+        "pad1.tune": -2,
+        "pad10.body": 0.6,
+        "pad10.choke": 0,
+        "pad10.decay": 300,
+        "pad10.level": 0,
+        "pad10.module": 4,
+        "pad10.pan": 0,
+        "pad10.snap": 0.3,
+        "pad10.sweep": 0.4,
+        "pad10.tune": 3,
+        "pad11.body": 0.5,
+        "pad11.choke": 1,
+        "pad11.decay": 280,
+        "pad11.highcut": 11000,
+        "pad11.level": -7,
+        "pad11.module": 3,
+        "pad11.pan": 0.2,
+        "pad11.snap": 0.5,
+        "pad11.tune": 0,
+        "pad12.body": 0.55,
+        "pad12.choke": 0,
+        "pad12.decay": 260,
+        "pad12.level": 0,
+        "pad12.module": 4,
+        "pad12.pan": 0.3,
+        "pad12.snap": 0.3,
+        "pad12.sweep": 0.4,
+        "pad12.tune": 9,
+        "pad13.body": 0.4,
+        "pad13.choke": 0,
+        "pad13.decay": 240,
+        "pad13.level": -9,
+        "pad13.module": 6,
+        "pad13.pan": -0.25,
+        "pad13.snap": 0.1,
+        "pad13.sweep": 0,
+        "pad14.body": 0.8,
+        "pad14.choke": 0,
+        "pad14.decay": 260,
+        "pad14.level": -7,
+        "pad14.module": 5,
+        "pad14.pan": 0.2,
+        "pad14.snap": 0.3,
+        "pad14.sweep": 0,
+        "pad14.tune": 14,
+        "pad2.body": 0.7,
+        "pad2.choke": 0,
+        "pad2.decay": 55,
+        "pad2.level": -4,
+        "pad2.module": 5,
+        "pad2.pan": 0,
+        "pad2.snap": 0.9,
+        "pad2.sweep": 0,
+        "pad2.tune": 16,
+        "pad3.body": 0.6,
+        "pad3.choke": 0,
+        "pad3.decay": 220,
+        "pad3.level": 0,
+        "pad3.module": 2,
+        "pad3.pan": 0,
+        "pad3.snap": 0.45,
+        "pad3.tune": -2,
+        "pad4.body": 0.5,
+        "pad4.choke": 0,
+        "pad4.decay": 160,
+        "pad4.level": -2,
+        "pad4.module": 6,
+        "pad4.pan": 0,
+        "pad4.snap": 0.35,
+        "pad4.sweep": 0.3,
+        "pad5.body": 0.6,
+        "pad5.choke": 0,
+        "pad5.decay": 130,
+        "pad5.level": -7,
+        "pad5.module": 6,
+        "pad5.pan": 0,
+        "pad5.snap": 0.2,
+        "pad5.sweep": 0,
+        "pad6.body": 0.6,
+        "pad6.choke": 0,
+        "pad6.decay": 340,
+        "pad6.level": 0,
+        "pad6.module": 4,
+        "pad6.pan": -0.3,
+        "pad6.snap": 0.3,
+        "pad6.sweep": 0.4,
+        "pad6.tune": -3,
+        "pad7.body": 0.5,
+        "pad7.choke": 1,
+        "pad7.decay": 45,
+        "pad7.highcut": 11000,
+        "pad7.level": -6,
+        "pad7.module": 3,
+        "pad7.pan": 0.2,
+        "pad7.snap": 0.5,
+        "pad7.tune": 0,
+        "pad8.body": 0.6,
+        "pad8.choke": 0,
+        "pad8.decay": 110,
+        "pad8.level": -5,
+        "pad8.module": 5,
+        "pad8.pan": -0.2,
+        "pad8.snap": 0.6,
+        "pad8.sweep": 0,
+        "pad8.tune": 12,
+        "pad9.body": 0.5,
+        "pad9.choke": 1,
+        "pad9.decay": 28,
+        "pad9.highcut": 11000,
+        "pad9.level": -8,
+        "pad9.module": 3,
+        "pad9.pan": 0.2,
+        "pad9.snap": 0.4,
+        "pad9.tune": -1
+      }
+    },
+    {
+      "id": "channel", "type": "atomik.channel",
+      "name": "Console Channel", "folded": false,
+      "params": {
+        "fader": 0.75,
+        "input.gain": 4.8,
+        "pan": 0
+      }
+    },
+    {
+      "id": "drums", "type": "atomik.drum-machine",
+      "name": "Drums", "folded": false,
+      "params": {
+        "master.level": -1,
+        "pad1.body": 0.7,
+        "pad1.choke": 0,
+        "pad1.decay": 300,
+        "pad1.level": 0,
+        "pad1.module": 1,
+        "pad1.pan": 0,
+        "pad1.snap": 0.25,
+        "pad1.sweep": 0.35,
+        "pad1.tune": -2,
+        "pad10.body": 0.6,
+        "pad10.choke": 0,
+        "pad10.decay": 300,
+        "pad10.level": 0,
+        "pad10.module": 4,
+        "pad10.pan": 0,
+        "pad10.snap": 0.3,
+        "pad10.sweep": 0.4,
+        "pad10.tune": 3,
+        "pad11.body": 0.5,
+        "pad11.choke": 1,
+        "pad11.decay": 280,
+        "pad11.highcut": 11000,
+        "pad11.level": -7,
+        "pad11.module": 3,
+        "pad11.pan": 0.2,
+        "pad11.snap": 0.5,
+        "pad11.tune": 0,
+        "pad12.body": 0.55,
+        "pad12.choke": 0,
+        "pad12.decay": 260,
+        "pad12.level": 0,
+        "pad12.module": 4,
+        "pad12.pan": 0.3,
+        "pad12.snap": 0.3,
+        "pad12.sweep": 0.4,
+        "pad12.tune": 9,
+        "pad13.body": 0.4,
+        "pad13.choke": 0,
+        "pad13.decay": 240,
+        "pad13.level": -9,
+        "pad13.module": 6,
+        "pad13.pan": -0.25,
+        "pad13.snap": 0.1,
+        "pad13.sweep": 0,
+        "pad14.body": 0.8,
+        "pad14.choke": 0,
+        "pad14.decay": 260,
+        "pad14.level": -7,
+        "pad14.module": 5,
+        "pad14.pan": 0.2,
+        "pad14.snap": 0.3,
+        "pad14.sweep": 0,
+        "pad14.tune": 14,
+        "pad2.body": 0.7,
+        "pad2.choke": 0,
+        "pad2.decay": 55,
+        "pad2.level": -4,
+        "pad2.module": 5,
+        "pad2.pan": 0,
+        "pad2.snap": 0.9,
+        "pad2.sweep": 0,
+        "pad2.tune": 16,
+        "pad3.body": 0.6,
+        "pad3.choke": 0,
+        "pad3.decay": 220,
+        "pad3.level": 0,
+        "pad3.module": 2,
+        "pad3.pan": 0,
+        "pad3.snap": 0.45,
+        "pad3.tune": -2,
+        "pad4.body": 0.5,
+        "pad4.choke": 0,
+        "pad4.decay": 160,
+        "pad4.level": -2,
+        "pad4.module": 6,
+        "pad4.pan": 0,
+        "pad4.snap": 0.35,
+        "pad4.sweep": 0.3,
+        "pad5.body": 0.6,
+        "pad5.choke": 0,
+        "pad5.decay": 130,
+        "pad5.level": -7,
+        "pad5.module": 6,
+        "pad5.pan": 0,
+        "pad5.snap": 0.2,
+        "pad5.sweep": 0,
+        "pad6.body": 0.6,
+        "pad6.choke": 0,
+        "pad6.decay": 340,
+        "pad6.level": 0,
+        "pad6.module": 4,
+        "pad6.pan": -0.3,
+        "pad6.snap": 0.3,
+        "pad6.sweep": 0.4,
+        "pad6.tune": -3,
+        "pad7.body": 0.5,
+        "pad7.choke": 1,
+        "pad7.decay": 45,
+        "pad7.highcut": 11000,
+        "pad7.level": -6,
+        "pad7.module": 3,
+        "pad7.pan": 0.2,
+        "pad7.snap": 0.5,
+        "pad7.tune": 0,
+        "pad8.body": 0.6,
+        "pad8.choke": 0,
+        "pad8.decay": 110,
+        "pad8.level": -5,
+        "pad8.module": 5,
+        "pad8.pan": -0.2,
+        "pad8.snap": 0.6,
+        "pad8.sweep": 0,
+        "pad8.tune": 12,
+        "pad9.body": 0.5,
+        "pad9.choke": 1,
+        "pad9.decay": 28,
+        "pad9.highcut": 11000,
+        "pad9.level": -8,
+        "pad9.module": 3,
+        "pad9.pan": 0.2,
+        "pad9.snap": 0.4,
+        "pad9.tune": -1
+      }
+    },
+    {
+      "id": "channel-2", "type": "atomik.channel",
+      "name": "Console Channel 2", "folded": false,
+      "params": {
+        "fader": 0.75,
+        "input.gain": 2.8,
+        "pan": 0,
+        "send1.level": -22,
+        "send1.on": 1
+      }
+    },
+    {
+      "id": "container", "type": "atomik.container",
+      "name": "Drum Punch", "folded": false, "patch": "Drum Punch",
+      "params": {
+        "macro1": 0.6923078,
+        "macro2": 0.4615385
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "shape", "type": "atomik.transient-shaper",
+            "name": "Transient Shaper", "folded": false,
+            "params": {
+              "attack": 0.6,
+              "output": -4.5,
+              "sustain": -0.2
+            }
+          },
+          {
+            "id": "comp", "type": "atomik.compressor",
+            "name": "Compressor", "folded": false,
+            "params": {
+              "attack": 15,
+              "auto_makeup": 1,
+              "ratio": 5,
+              "release": 90,
+              "threshold": -16
+            }
+          },
+          {
+            "id": "eq", "type": "atomik.eq",
+            "name": "EQ", "folded": false,
+            "params": {
+              "band2.freq": 90,
+              "band2.gain": 2,
+              "band5.freq": 9000,
+              "band5.gain": 2.5
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "shape:in_l"},
+          {"from": "boundary:in_r", "to": "shape:in_r"},
+          {"from": "comp:out_l", "to": "eq:in_l"},
+          {"from": "comp:out_r", "to": "eq:in_r"},
+          {"from": "eq:out_l", "to": "boundary:out_l"},
+          {"from": "eq:out_r", "to": "boundary:out_r"},
+          {"from": "shape:out_l", "to": "comp:in_l"},
+          {"from": "shape:out_r", "to": "comp:in_r"}
+        ],
+        "macros": [
+          {"name": "Punch", "targets": [
+            {"device": "shape", "param": "attack", "min": -0.3, "max": 1}
+          ]},
+          {"name": "Length", "targets": [
+            {"device": "shape", "param": "sustain", "min": -0.8, "max": 0.5}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    },
+    {
+      "id": "sub", "type": "atomik.mono-bass",
+      "name": "Sub", "folded": false, "patch": "Basalt Sub",
+      "params": {
+        "chorus.mix": 0,
+        "env.amp.attack": 3,
+        "env.amp.decay": 300,
+        "env.amp.release": 120,
+        "env.amp.sustain": 0.9,
+        "filter.cutoff": 380,
+        "filter.env_amount": 0.2,
+        "filter.key_track": 0.3,
+        "filter.resonance": 0.1,
+        "filter.type": 0,
+        "glide": 25,
+        "master.level": 5,
+        "osc.mix": 0.25,
+        "osc1.octave": -1,
+        "osc1.wave": 3,
+        "osc2.octave": -1,
+        "osc2.wave": 2
+      }
+    },
+    {
+      "id": "channel-3", "type": "atomik.channel",
+      "name": "Console Channel 3", "folded": false,
+      "params": {
+        "eq.hf.freq": 4500,
+        "eq.hf.gain": -4,
+        "eq.lf.freq": 60,
+        "eq.lf.gain": 1.5,
+        "eq.lmf.freq": 260,
+        "eq.lmf.gain": -3,
+        "eq.on": 1,
+        "fader": 0.6190531,
+        "pan": 0
+      }
+    },
+    {
+      "id": "compressor", "type": "atomik.compressor",
+      "name": "Duck from Kick", "folded": false,
+      "params": {
+        "attack": 5,
+        "release": 120,
+        "sc_enable": 1,
+        "threshold": -24
+      }
+    },
+    {
+      "id": "chords", "type": "atomik.poly-synth",
+      "name": "Chords", "folded": false, "patch": "Dusk Clavier",
+      "params": {
+        "chorus.mix": 0.2,
+        "env.amp.attack": 1,
+        "env.amp.decay": 450,
+        "env.amp.release": 150,
+        "env.amp.sustain": 0,
+        "env.filter.decay": 300,
+        "env.filter.sustain": 0,
+        "filter.cutoff": 1500,
+        "filter.env_amount": 0.5,
+        "filter.key_track": 0.8,
+        "filter.resonance": 0.45,
+        "master.level": -3,
+        "osc.mix": 0.3,
+        "osc1.table": 5,
+        "osc1.wave": 1,
+        "osc2.octave": 1,
+        "osc2.table": 3,
+        "osc2.wave": 1,
+        "velocity.amp": 0.8
+      }
+    },
+    {
+      "id": "channel-4", "type": "atomik.channel",
+      "name": "Console Channel 4", "folded": false,
+      "params": {
+        "fader": 0.65072066,
+        "pan": -0.2,
+        "send1.level": -14,
+        "send1.on": 1
+      }
+    },
+    {
+      "id": "container-2", "type": "atomik.container",
+      "name": "Tape Warmth", "folded": false, "patch": "Tape Warmth",
+      "params": {
+        "macro1": 0.2857143,
+        "macro2": 0.33333334
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "sat", "type": "atomik.distortion",
+            "name": "Distortion", "folded": false,
+            "params": {
+              "curve": 5,
+              "drive": 9,
+              "mix": 0.85,
+              "output": -5,
+              "tone": -0.2
+            }
+          },
+          {
+            "id": "eq", "type": "atomik.eq",
+            "name": "EQ", "folded": false,
+            "params": {
+              "band1.freq": 30,
+              "band1.on": 1,
+              "band5.freq": 9000,
+              "band5.gain": -2.5
+            }
+          },
+          {
+            "id": "comp", "type": "atomik.compressor",
+            "name": "Compressor", "folded": false,
+            "params": {
+              "attack": 25,
+              "auto_makeup": 1,
+              "ratio": 2.5,
+              "release": 220,
+              "threshold": -14
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "sat:in_l"},
+          {"from": "boundary:in_r", "to": "sat:in_r"},
+          {"from": "comp:out_l", "to": "boundary:out_l"},
+          {"from": "comp:out_r", "to": "boundary:out_r"},
+          {"from": "eq:out_l", "to": "comp:in_l"},
+          {"from": "eq:out_r", "to": "comp:in_r"},
+          {"from": "sat:out_l", "to": "eq:in_l"},
+          {"from": "sat:out_r", "to": "eq:in_r"}
+        ],
+        "macros": [
+          {"name": "Drive", "targets": [
+            {"device": "sat", "param": "drive", "min": 3, "max": 24}
+          ]},
+          {"name": "Tone", "targets": [
+            {"device": "sat", "param": "tone", "min": -0.6, "max": 0.6}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    },
+    {
+      "id": "lead", "type": "atomik.fm-synth",
+      "name": "Lead", "folded": false, "patch": "Pebble Mallet",
+      "params": {
+        "algorithm": 0,
+        "master.level": -5,
+        "op1.attack": 1,
+        "op1.coarse": 1,
+        "op1.decay": 700,
+        "op1.level": 0.8,
+        "op1.release": 200,
+        "op1.sustain": 0,
+        "op1.velocity": 0.4,
+        "op2.attack": 1,
+        "op2.coarse": 4,
+        "op2.decay": 80,
+        "op2.level": 0.35,
+        "op2.release": 80,
+        "op2.sustain": 0,
+        "op2.velocity": 0.8,
+        "spread": 0.3
+      }
+    },
+    {
+      "id": "channel-5", "type": "atomik.channel",
+      "name": "Console Channel 5", "folded": false,
+      "params": {
+        "fader": 0.75,
+        "input.gain": 10.4,
+        "pan": 0.25,
+        "send1.level": -10,
+        "send1.on": 1,
+        "send2.level": -9,
+        "send2.on": 1
+      }
+    },
+    {
+      "id": "dust", "type": "atomik.granular",
+      "name": "Dust", "folded": false, "patch": "Scatter Dust",
+      "params": {
+        "env.amp.attack": 5,
+        "env.amp.decay": 300,
+        "env.amp.release": 500,
+        "env.amp.sustain": 0.4,
+        "grain.density": 90,
+        "grain.reverse": 0.3,
+        "grain.size": 14,
+        "grain.spread": 1,
+        "grain.timing": 0.7,
+        "grain.window": 2,
+        "master.level": 4.5,
+        "pitch.random": 300,
+        "pos.position": 0.4,
+        "pos.spray": 0.5
+      }
+    },
+    {
+      "id": "channel-6", "type": "atomik.channel",
+      "name": "Console Channel 6", "folded": false,
+      "params": {
+        "fader": 0.75,
+        "input.gain": 13.2,
+        "pan": 0,
+        "send1.level": -8,
+        "send1.on": 1
+      }
+    }
+  ],
+  "cables": [
+    {"from": "channel:out_l", "to": "compressor:sc_in_l"},
+    {"from": "channel:out_l", "to": "master:bus_l"},
+    {"from": "channel:out_r", "to": "compressor:sc_in_r"},
+    {"from": "channel:out_r", "to": "master:bus_r"},
+    {"from": "channel:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-2:insert_send_l", "to": "container:in_l"},
+    {"from": "channel-2:insert_send_r", "to": "container:in_r"},
+    {"from": "channel-2:out_l", "to": "master:bus_l"},
+    {"from": "channel-2:out_r", "to": "master:bus_r"},
+    {"from": "channel-2:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-2:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-2:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-2:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-2:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-2:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-2:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-2:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-2:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-2:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-2:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-2:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-2:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-2:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-2:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-2:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-3:insert_send_l", "to": "compressor:in_l"},
+    {"from": "channel-3:insert_send_r", "to": "compressor:in_r"},
+    {"from": "channel-3:out_l", "to": "master:bus_l"},
+    {"from": "channel-3:out_r", "to": "master:bus_r"},
+    {"from": "channel-3:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-3:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-3:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-3:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-3:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-3:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-3:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-3:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-3:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-3:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-3:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-3:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-3:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-3:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-3:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-3:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-4:insert_send_l", "to": "container-2:in_l"},
+    {"from": "channel-4:insert_send_r", "to": "container-2:in_r"},
+    {"from": "channel-4:out_l", "to": "master:bus_l"},
+    {"from": "channel-4:out_r", "to": "master:bus_r"},
+    {"from": "channel-4:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-4:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-4:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-4:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-4:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-4:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-4:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-4:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-4:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-4:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-4:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-4:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-4:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-4:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-4:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-4:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-5:out_l", "to": "master:bus_l"},
+    {"from": "channel-5:out_r", "to": "master:bus_r"},
+    {"from": "channel-5:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-5:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-5:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-5:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-5:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-5:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-5:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-5:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-5:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-5:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-5:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-5:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-5:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-5:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-5:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-5:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-6:out_l", "to": "master:bus_l"},
+    {"from": "channel-6:out_r", "to": "master:bus_r"},
+    {"from": "channel-6:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-6:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-6:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-6:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-6:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-6:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-6:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-6:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-6:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-6:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-6:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-6:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-6:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-6:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-6:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-6:send8_r", "to": "master:send_bus8_r"},
+    {"from": "chords:out_l", "to": "channel-4:in_l"},
+    {"from": "chords:out_r", "to": "channel-4:in_r"},
+    {"from": "compressor:out_l", "to": "channel-3:insert_return_l"},
+    {"from": "compressor:out_r", "to": "channel-3:insert_return_r"},
+    {"from": "container:out_l", "to": "channel-2:insert_return_l"},
+    {"from": "container:out_r", "to": "channel-2:insert_return_r"},
+    {"from": "container-2:out_l", "to": "channel-4:insert_return_l"},
+    {"from": "container-2:out_r", "to": "channel-4:insert_return_r"},
+    {"from": "drums:out_l", "to": "channel-2:in_l"},
+    {"from": "drums:out_r", "to": "channel-2:in_r"},
+    {"from": "dust:out_l", "to": "channel-6:in_l"},
+    {"from": "dust:out_r", "to": "channel-6:in_r"},
+    {"from": "glue-compressor:out_l", "to": "limiter:in_l"},
+    {"from": "glue-compressor:out_r", "to": "limiter:in_r"},
+    {"from": "kick:out_l", "to": "channel:in_l"},
+    {"from": "kick:out_r", "to": "channel:in_r"},
+    {"from": "lead:out_l", "to": "channel-5:in_l"},
+    {"from": "lead:out_r", "to": "channel-5:in_r"},
+    {"from": "limiter:out_l", "to": "master:insert_return_l"},
+    {"from": "limiter:out_r", "to": "master:insert_return_r"},
+    {"from": "master:fx_send1_l", "to": "tight-chamber:in_l"},
+    {"from": "master:fx_send1_r", "to": "tight-chamber:in_r"},
+    {"from": "master:fx_send2_l", "to": "tape-repeat:in_l"},
+    {"from": "master:fx_send2_r", "to": "tape-repeat:in_r"},
+    {"from": "master:insert_send_l", "to": "glue-compressor:in_l"},
+    {"from": "master:insert_send_r", "to": "glue-compressor:in_r"},
+    {"from": "master:main_l", "to": "interface:out_1"},
+    {"from": "master:main_r", "to": "interface:out_2"},
+    {"from": "sub:out_l", "to": "channel-3:in_l"},
+    {"from": "sub:out_r", "to": "channel-3:in_r"},
+    {"from": "tape-repeat:out_l", "to": "master:return2_l"},
+    {"from": "tape-repeat:out_r", "to": "master:return2_r"},
+    {"from": "tight-chamber:out_l", "to": "master:return1_l"},
+    {"from": "tight-chamber:out_r", "to": "master:return1_r"}
+  ],
+  "console": {
+    "channels": [
+      {"channel": "channel", "source": "kick"},
+      {"channel": "channel-2", "source": "drums"},
+      {"channel": "channel-3", "source": "sub"},
+      {"channel": "channel-4", "source": "chords"},
+      {"channel": "channel-5", "source": "lead"},
+      {"channel": "channel-6", "source": "dust"}
+    ],
+    "master": "master",
+    "returns": ["tight-chamber", "tape-repeat", null, null, null, null, null, null],
+    "compensation": true,
+    "align_returns": true,
+    "send_follow": true
+  },
+  "info": {
+    "title": "Hip-Hop Boom Bap",
+    "author": "Atomik Rack factory",
+    "notes": "A laid-back boom-bap beat in A minor at 88 BPM: a warm, crushed drum kit with the kick on its own track, a round sub that ducks from the kick, jazzy seventh chords, a mallet hook and a dusty texture, with a small room and a tape echo. The verses have no lead: write a melody or a vocal there. Mute the kick track to hear the bass breathe back in, and launch scenes from the launcher to try the loops in a different order."
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 88}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 3932160,
+    "next_clip_id": 31,
+    "tails": true,
+    "ranges": [
+      {"start": 0, "end": 491520, "name": "Intro", "color": "#607da0"},
+      {"start": 491520, "end": 1474560, "name": "Verse", "color": "#589678"},
+      {"start": 1474560, "end": 1966080, "name": "Chorus", "color": "#c87850"},
+      {"start": 1966080, "end": 2457600, "name": "Break", "color": "#966eaa"},
+      {"start": 2457600, "end": 3440640, "name": "Chorus", "color": "#c87850"},
+      {"start": 3440640, "end": 3932160, "name": "Outro", "color": "#607da0"}
+    ],
+    "key": {"root": 9, "scale": "natural_minor"},
+    "launcher": {
+      "scenes": [
+        {"name": "Intro", "color": "#607da0"},
+        {"name": "Groove", "color": "#589678"},
+        {"name": "Hook", "color": "#c87850"},
+        {"name": "Break", "color": "#966eaa"}
+      ],
+      "slots": [
+        {"track": "chords", "row": 0, "clip":
+              {
+                "id": 17, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false, "name": "Seventh Changes",
+                "notes": [
+                  [0, 21888, 50, 0.7],
+                  [0, 21888, 53, 0.7],
+                  [0, 21888, 57, 0.7],
+                  [0, 21888, 60, 0.7],
+                  [23040, 36480, 50, 0.7],
+                  [23040, 36480, 53, 0.7],
+                  [23040, 36480, 57, 0.7],
+                  [23040, 36480, 60, 0.7],
+                  [61440, 21888, 43, 0.7],
+                  [61440, 21888, 47, 0.7],
+                  [61440, 21888, 50, 0.7],
+                  [61440, 21888, 53, 0.7],
+                  [84480, 36480, 43, 0.7],
+                  [84480, 36480, 47, 0.7],
+                  [84480, 36480, 50, 0.7],
+                  [84480, 36480, 53, 0.7],
+                  [122880, 21888, 48, 0.7],
+                  [122880, 21888, 52, 0.7],
+                  [122880, 21888, 55, 0.7],
+                  [122880, 21888, 59, 0.7],
+                  [145920, 36480, 48, 0.7],
+                  [145920, 36480, 52, 0.7],
+                  [145920, 36480, 55, 0.7],
+                  [145920, 36480, 59, 0.7],
+                  [184320, 21888, 45, 0.7],
+                  [184320, 21888, 52, 0.7],
+                  [184320, 21888, 55, 0.7],
+                  [184320, 21888, 60, 0.7],
+                  [207360, 36480, 45, 0.7],
+                  [207360, 36480, 52, 0.7],
+                  [207360, 36480, 55, 0.7],
+                  [207360, 36480, 60, 0.7]
+                ]
+              }},
+        {"track": "chords", "row": 1, "clip":
+              {
+                "id": 22, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false, "name": "Seventh Changes",
+                "notes": [
+                  [0, 21888, 50, 0.7],
+                  [0, 21888, 53, 0.7],
+                  [0, 21888, 57, 0.7],
+                  [0, 21888, 60, 0.7],
+                  [23040, 36480, 50, 0.7],
+                  [23040, 36480, 53, 0.7],
+                  [23040, 36480, 57, 0.7],
+                  [23040, 36480, 60, 0.7],
+                  [61440, 21888, 43, 0.7],
+                  [61440, 21888, 47, 0.7],
+                  [61440, 21888, 50, 0.7],
+                  [61440, 21888, 53, 0.7],
+                  [84480, 36480, 43, 0.7],
+                  [84480, 36480, 47, 0.7],
+                  [84480, 36480, 50, 0.7],
+                  [84480, 36480, 53, 0.7],
+                  [122880, 21888, 48, 0.7],
+                  [122880, 21888, 52, 0.7],
+                  [122880, 21888, 55, 0.7],
+                  [122880, 21888, 59, 0.7],
+                  [145920, 36480, 48, 0.7],
+                  [145920, 36480, 52, 0.7],
+                  [145920, 36480, 55, 0.7],
+                  [145920, 36480, 59, 0.7],
+                  [184320, 21888, 45, 0.7],
+                  [184320, 21888, 52, 0.7],
+                  [184320, 21888, 55, 0.7],
+                  [184320, 21888, 60, 0.7],
+                  [207360, 36480, 45, 0.7],
+                  [207360, 36480, 52, 0.7],
+                  [207360, 36480, 55, 0.7],
+                  [207360, 36480, 60, 0.7]
+                ]
+              }},
+        {"track": "chords", "row": 2, "clip":
+              {
+                "id": 26, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false, "name": "Seventh Changes",
+                "notes": [
+                  [0, 21888, 50, 0.7],
+                  [0, 21888, 53, 0.7],
+                  [0, 21888, 57, 0.7],
+                  [0, 21888, 60, 0.7],
+                  [23040, 36480, 50, 0.7],
+                  [23040, 36480, 53, 0.7],
+                  [23040, 36480, 57, 0.7],
+                  [23040, 36480, 60, 0.7],
+                  [61440, 21888, 43, 0.7],
+                  [61440, 21888, 47, 0.7],
+                  [61440, 21888, 50, 0.7],
+                  [61440, 21888, 53, 0.7],
+                  [84480, 36480, 43, 0.7],
+                  [84480, 36480, 47, 0.7],
+                  [84480, 36480, 50, 0.7],
+                  [84480, 36480, 53, 0.7],
+                  [122880, 21888, 48, 0.7],
+                  [122880, 21888, 52, 0.7],
+                  [122880, 21888, 55, 0.7],
+                  [122880, 21888, 59, 0.7],
+                  [145920, 36480, 48, 0.7],
+                  [145920, 36480, 52, 0.7],
+                  [145920, 36480, 55, 0.7],
+                  [145920, 36480, 59, 0.7],
+                  [184320, 21888, 45, 0.7],
+                  [184320, 21888, 52, 0.7],
+                  [184320, 21888, 55, 0.7],
+                  [184320, 21888, 60, 0.7],
+                  [207360, 36480, 45, 0.7],
+                  [207360, 36480, 52, 0.7],
+                  [207360, 36480, 55, 0.7],
+                  [207360, 36480, 60, 0.7]
+                ]
+              }},
+        {"track": "chords", "row": 3, "clip":
+              {
+                "id": 28, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false, "name": "Seventh Changes",
+                "notes": [
+                  [0, 21888, 50, 0.7],
+                  [0, 21888, 53, 0.7],
+                  [0, 21888, 57, 0.7],
+                  [0, 21888, 60, 0.7],
+                  [23040, 36480, 50, 0.7],
+                  [23040, 36480, 53, 0.7],
+                  [23040, 36480, 57, 0.7],
+                  [23040, 36480, 60, 0.7],
+                  [61440, 21888, 43, 0.7],
+                  [61440, 21888, 47, 0.7],
+                  [61440, 21888, 50, 0.7],
+                  [61440, 21888, 53, 0.7],
+                  [84480, 36480, 43, 0.7],
+                  [84480, 36480, 47, 0.7],
+                  [84480, 36480, 50, 0.7],
+                  [84480, 36480, 53, 0.7],
+                  [122880, 21888, 48, 0.7],
+                  [122880, 21888, 52, 0.7],
+                  [122880, 21888, 55, 0.7],
+                  [122880, 21888, 59, 0.7],
+                  [145920, 36480, 48, 0.7],
+                  [145920, 36480, 52, 0.7],
+                  [145920, 36480, 55, 0.7],
+                  [145920, 36480, 59, 0.7],
+                  [184320, 21888, 45, 0.7],
+                  [184320, 21888, 52, 0.7],
+                  [184320, 21888, 55, 0.7],
+                  [184320, 21888, 60, 0.7],
+                  [207360, 36480, 45, 0.7],
+                  [207360, 36480, 52, 0.7],
+                  [207360, 36480, 55, 0.7],
+                  [207360, 36480, 60, 0.7]
+                ]
+              }},
+        {"track": "drums", "row": 0, "clip":
+              {
+                "id": 16, "start": 0, "length": 122880, "offset": 0, "loop_length": null, "muted": false, "name": "Boom Bap Swing",
+                "notes": [
+                  [0, 1728, 42, 0.82],
+                  [7680, 1728, 42, 0.82],
+                  [15360, 1728, 42, 0.82],
+                  [23040, 1728, 42, 0.82],
+                  [30720, 1728, 38, 1],
+                  [30720, 1728, 42, 0.82],
+                  [38400, 1728, 42, 0.82],
+                  [46080, 1728, 42, 0.82],
+                  [53760, 1728, 37, 0.5],
+                  [53760, 1728, 42, 0.82],
+                  [61440, 1728, 42, 0.82],
+                  [69120, 1728, 42, 0.82],
+                  [76800, 1728, 42, 0.82],
+                  [84480, 1728, 42, 0.82],
+                  [92160, 1728, 38, 1],
+                  [92160, 1728, 42, 0.82],
+                  [99840, 1728, 37, 0.5],
+                  [99840, 1728, 42, 0.82],
+                  [107520, 1728, 42, 0.82],
+                  [115200, 1728, 42, 0.82],
+                  [119040, 1728, 42, 0.82]
+                ]
+              }},
+        {"track": "drums", "row": 1, "clip":
+              {
+                "id": 20, "start": 0, "length": 122880, "offset": 0, "loop_length": null, "muted": false, "name": "Boom Bap Swing",
+                "notes": [
+                  [0, 1728, 42, 0.82],
+                  [7680, 1728, 42, 0.82],
+                  [15360, 1728, 42, 0.82],
+                  [23040, 1728, 42, 0.82],
+                  [30720, 1728, 38, 1],
+                  [30720, 1728, 42, 0.82],
+                  [38400, 1728, 42, 0.82],
+                  [46080, 1728, 42, 0.82],
+                  [53760, 1728, 37, 0.5],
+                  [53760, 1728, 42, 0.82],
+                  [61440, 1728, 42, 0.82],
+                  [69120, 1728, 42, 0.82],
+                  [76800, 1728, 42, 0.82],
+                  [84480, 1728, 42, 0.82],
+                  [92160, 1728, 38, 1],
+                  [92160, 1728, 42, 0.82],
+                  [99840, 1728, 37, 0.5],
+                  [99840, 1728, 42, 0.82],
+                  [107520, 1728, 42, 0.82],
+                  [115200, 1728, 42, 0.82],
+                  [119040, 1728, 42, 0.82]
+                ]
+              }},
+        {"track": "drums", "row": 2, "clip":
+              {
+                "id": 24, "start": 0, "length": 122880, "offset": 0, "loop_length": null, "muted": false, "name": "Boom Bap Swing",
+                "notes": [
+                  [0, 1728, 42, 0.82],
+                  [7680, 1728, 42, 0.82],
+                  [15360, 1728, 42, 0.82],
+                  [23040, 1728, 42, 0.82],
+                  [30720, 1728, 38, 1],
+                  [30720, 1728, 42, 0.82],
+                  [38400, 1728, 42, 0.82],
+                  [46080, 1728, 42, 0.82],
+                  [53760, 1728, 37, 0.5],
+                  [53760, 1728, 42, 0.82],
+                  [61440, 1728, 42, 0.82],
+                  [69120, 1728, 42, 0.82],
+                  [76800, 1728, 42, 0.82],
+                  [84480, 1728, 42, 0.82],
+                  [92160, 1728, 38, 1],
+                  [92160, 1728, 42, 0.82],
+                  [99840, 1728, 37, 0.5],
+                  [99840, 1728, 42, 0.82],
+                  [107520, 1728, 42, 0.82],
+                  [115200, 1728, 42, 0.82],
+                  [119040, 1728, 42, 0.82]
+                ]
+              }},
+        {"track": "dust", "row": 0, "clip":
+              {
+                "id": 18, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false, "name": "Dust Holds",
+                "notes": [
+                  [0, 116736, 69, 0.5],
+                  [122880, 116736, 67, 0.5]
+                ]
+              }},
+        {"track": "dust", "row": 3, "clip":
+              {
+                "id": 30, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false, "name": "Dust Holds",
+                "notes": [
+                  [0, 116736, 69, 0.5],
+                  [122880, 116736, 67, 0.5]
+                ]
+              }},
+        {"track": "kick", "row": 1, "clip":
+              {
+                "id": 19, "start": 0, "length": 122880, "offset": 0, "loop_length": null, "muted": false, "name": "Boom Bap Swing",
+                "notes": [
+                  [0, 1728, 36, 1],
+                  [23040, 1728, 36, 0.82],
+                  [38400, 1728, 36, 0.82],
+                  [61440, 1728, 36, 1],
+                  [84480, 1728, 36, 0.82],
+                  [96000, 1728, 36, 0.82],
+                  [115200, 1728, 36, 0.82]
+                ]
+              }},
+        {"track": "kick", "row": 2, "clip":
+              {
+                "id": 23, "start": 0, "length": 122880, "offset": 0, "loop_length": null, "muted": false, "name": "Boom Bap Swing",
+                "notes": [
+                  [0, 1728, 36, 1],
+                  [23040, 1728, 36, 0.82],
+                  [38400, 1728, 36, 0.82],
+                  [61440, 1728, 36, 1],
+                  [84480, 1728, 36, 0.82],
+                  [96000, 1728, 36, 0.82],
+                  [115200, 1728, 36, 0.82]
+                ]
+              }},
+        {"track": "lead", "row": 2, "clip":
+              {
+                "id": 27, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false, "name": "Boom Bap Hook",
+                "notes": [
+                  [0, 6912, 69, 1],
+                  [15360, 6912, 72, 0.82],
+                  [30720, 6912, 74, 1],
+                  [46080, 6912, 72, 0.82],
+                  [53760, 6912, 69, 0.82],
+                  [76800, 6912, 67, 0.82],
+                  [92160, 6912, 69, 1],
+                  [122880, 6912, 72, 1],
+                  [138240, 6912, 74, 0.82],
+                  [153600, 6912, 76, 1],
+                  [168960, 6912, 74, 0.82],
+                  [176640, 6912, 72, 0.82],
+                  [199680, 6912, 69, 0.82],
+                  [215040, 6912, 67, 1]
+                ]
+              }},
+        {"track": "lead", "row": 3, "clip":
+              {
+                "id": 29, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false, "name": "Boom Bap Hook",
+                "notes": [
+                  [0, 6912, 69, 1],
+                  [15360, 6912, 72, 0.82],
+                  [30720, 6912, 74, 1],
+                  [46080, 6912, 72, 0.82],
+                  [53760, 6912, 69, 0.82],
+                  [76800, 6912, 67, 0.82],
+                  [92160, 6912, 69, 1],
+                  [122880, 6912, 72, 1],
+                  [138240, 6912, 74, 0.82],
+                  [153600, 6912, 76, 1],
+                  [168960, 6912, 74, 0.82],
+                  [176640, 6912, 72, 0.82],
+                  [199680, 6912, 69, 0.82],
+                  [215040, 6912, 67, 1]
+                ]
+              }},
+        {"track": "sub", "row": 1, "clip":
+              {
+                "id": 21, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false, "name": "Dub Sub Roots",
+                "notes": [
+                  [0, 15360, 33, 1],
+                  [30720, 15360, 33, 0.82],
+                  [61440, 15360, 33, 1],
+                  [92160, 15360, 36, 0.82],
+                  [122880, 15360, 38, 1],
+                  [153600, 15360, 38, 0.82],
+                  [184320, 15360, 31, 1],
+                  [215040, 15360, 33, 0.82]
+                ]
+              }},
+        {"track": "sub", "row": 2, "clip":
+              {
+                "id": 25, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false, "name": "Slow Fifths",
+                "notes": [
+                  [0, 30720, 33, 1],
+                  [30720, 30720, 40, 0.82],
+                  [61440, 30720, 36, 1],
+                  [92160, 30720, 43, 0.82],
+                  [122880, 30720, 38, 1],
+                  [153600, 30720, 45, 0.82],
+                  [184320, 30720, 31, 1],
+                  [215040, 30720, 38, 0.82]
+                ]
+              }}
+      ]
+    },
+    "tracks": [
+      {
+        "device": "kick", "muted": false, "solo": false, "armed": false, "color": "#d66054",
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 1, "start": 491520, "length": 1474560, "offset": 0, "loop_length": 122880, "muted": false, "name": "Boom Bap Swing",
+                "notes": [
+                  [0, 1728, 36, 1],
+                  [23040, 1728, 36, 0.82],
+                  [38400, 1728, 36, 0.82],
+                  [61440, 1728, 36, 1],
+                  [84480, 1728, 36, 0.82],
+                  [96000, 1728, 36, 0.82],
+                  [115200, 1728, 36, 0.82]
+                ]
+              },
+              {
+                "id": 2, "start": 2457600, "length": 983040, "offset": 0, "loop_length": 122880, "muted": false, "name": "Boom Bap Swing",
+                "notes": [
+                  [0, 1728, 36, 1],
+                  [23040, 1728, 36, 0.82],
+                  [38400, 1728, 36, 0.82],
+                  [61440, 1728, 36, 1],
+                  [84480, 1728, 36, 0.82],
+                  [96000, 1728, 36, 0.82],
+                  [115200, 1728, 36, 0.82]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "drums", "muted": false, "solo": false, "armed": false, "color": "#e29646",
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 3, "start": 245760, "length": 245760, "offset": 0, "loop_length": 122880, "muted": false, "name": "Boom Bap Swing",
+                "notes": [
+                  [0, 1728, 42, 0.82],
+                  [7680, 1728, 42, 0.82],
+                  [15360, 1728, 42, 0.82],
+                  [23040, 1728, 42, 0.82],
+                  [30720, 1728, 38, 1],
+                  [30720, 1728, 42, 0.82],
+                  [38400, 1728, 42, 0.82],
+                  [46080, 1728, 42, 0.82],
+                  [53760, 1728, 37, 0.5],
+                  [53760, 1728, 42, 0.82],
+                  [61440, 1728, 42, 0.82],
+                  [69120, 1728, 42, 0.82],
+                  [76800, 1728, 42, 0.82],
+                  [84480, 1728, 42, 0.82],
+                  [92160, 1728, 38, 1],
+                  [92160, 1728, 42, 0.82],
+                  [99840, 1728, 37, 0.5],
+                  [99840, 1728, 42, 0.82],
+                  [107520, 1728, 42, 0.82],
+                  [115200, 1728, 42, 0.82],
+                  [119040, 1728, 42, 0.82]
+                ]
+              },
+              {
+                "id": 4, "start": 491520, "length": 1474560, "offset": 0, "loop_length": 122880, "muted": false, "name": "Boom Bap Swing",
+                "notes": [
+                  [0, 1728, 42, 0.82],
+                  [7680, 1728, 42, 0.82],
+                  [15360, 1728, 42, 0.82],
+                  [23040, 1728, 42, 0.82],
+                  [30720, 1728, 38, 1],
+                  [30720, 1728, 42, 0.82],
+                  [38400, 1728, 42, 0.82],
+                  [46080, 1728, 42, 0.82],
+                  [53760, 1728, 37, 0.5],
+                  [53760, 1728, 42, 0.82],
+                  [61440, 1728, 42, 0.82],
+                  [69120, 1728, 42, 0.82],
+                  [76800, 1728, 42, 0.82],
+                  [84480, 1728, 42, 0.82],
+                  [92160, 1728, 38, 1],
+                  [92160, 1728, 42, 0.82],
+                  [99840, 1728, 37, 0.5],
+                  [99840, 1728, 42, 0.82],
+                  [107520, 1728, 42, 0.82],
+                  [115200, 1728, 42, 0.82],
+                  [119040, 1728, 42, 0.82]
+                ]
+              },
+              {
+                "id": 5, "start": 2334720, "length": 122880, "offset": 0, "loop_length": null, "muted": false, "name": "Boom Bap Swing",
+                "notes": [
+                  [0, 1728, 42, 0.82],
+                  [7680, 1728, 42, 0.82],
+                  [15360, 1728, 42, 0.82],
+                  [23040, 1728, 42, 0.82],
+                  [30720, 1728, 38, 1],
+                  [30720, 1728, 42, 0.82],
+                  [38400, 1728, 42, 0.82],
+                  [46080, 1728, 42, 0.82],
+                  [53760, 1728, 37, 0.5],
+                  [53760, 1728, 42, 0.82],
+                  [61440, 1728, 42, 0.82],
+                  [69120, 1728, 42, 0.82],
+                  [76800, 1728, 42, 0.82],
+                  [84480, 1728, 42, 0.82],
+                  [92160, 1728, 38, 1],
+                  [92160, 1728, 42, 0.82],
+                  [99840, 1728, 37, 0.5],
+                  [99840, 1728, 42, 0.82],
+                  [107520, 1728, 42, 0.82],
+                  [115200, 1728, 42, 0.82],
+                  [119040, 1728, 42, 0.82]
+                ]
+              },
+              {
+                "id": 6, "start": 2457600, "length": 983040, "offset": 0, "loop_length": 122880, "muted": false, "name": "Boom Bap Swing",
+                "notes": [
+                  [0, 1728, 42, 0.82],
+                  [7680, 1728, 42, 0.82],
+                  [15360, 1728, 42, 0.82],
+                  [23040, 1728, 42, 0.82],
+                  [30720, 1728, 38, 1],
+                  [30720, 1728, 42, 0.82],
+                  [38400, 1728, 42, 0.82],
+                  [46080, 1728, 42, 0.82],
+                  [53760, 1728, 37, 0.5],
+                  [53760, 1728, 42, 0.82],
+                  [61440, 1728, 42, 0.82],
+                  [69120, 1728, 42, 0.82],
+                  [76800, 1728, 42, 0.82],
+                  [84480, 1728, 42, 0.82],
+                  [92160, 1728, 38, 1],
+                  [92160, 1728, 42, 0.82],
+                  [99840, 1728, 37, 0.5],
+                  [99840, 1728, 42, 0.82],
+                  [107520, 1728, 42, 0.82],
+                  [115200, 1728, 42, 0.82],
+                  [119040, 1728, 42, 0.82]
+                ]
+              },
+              {
+                "id": 7, "start": 3440640, "length": 245760, "offset": 0, "loop_length": 122880, "muted": false, "name": "Boom Bap Swing",
+                "notes": [
+                  [0, 1728, 42, 0.82],
+                  [7680, 1728, 42, 0.82],
+                  [15360, 1728, 42, 0.82],
+                  [23040, 1728, 42, 0.82],
+                  [30720, 1728, 38, 1],
+                  [30720, 1728, 42, 0.82],
+                  [38400, 1728, 42, 0.82],
+                  [46080, 1728, 42, 0.82],
+                  [53760, 1728, 37, 0.5],
+                  [53760, 1728, 42, 0.82],
+                  [61440, 1728, 42, 0.82],
+                  [69120, 1728, 42, 0.82],
+                  [76800, 1728, 42, 0.82],
+                  [84480, 1728, 42, 0.82],
+                  [92160, 1728, 38, 1],
+                  [92160, 1728, 42, 0.82],
+                  [99840, 1728, 37, 0.5],
+                  [99840, 1728, 42, 0.82],
+                  [107520, 1728, 42, 0.82],
+                  [115200, 1728, 42, 0.82],
+                  [119040, 1728, 42, 0.82]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "sub", "muted": false, "solo": false, "armed": false, "color": "#4682c8",
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 8, "start": 491520, "length": 1474560, "offset": 0, "loop_length": 245760, "muted": false, "name": "Dub Sub Roots",
+                "notes": [
+                  [0, 15360, 33, 1],
+                  [30720, 15360, 33, 0.82],
+                  [61440, 15360, 33, 1],
+                  [92160, 15360, 36, 0.82],
+                  [122880, 15360, 38, 1],
+                  [153600, 15360, 38, 0.82],
+                  [184320, 15360, 31, 1],
+                  [215040, 15360, 33, 0.82]
+                ]
+              },
+              {
+                "id": 9, "start": 2457600, "length": 491520, "offset": 0, "loop_length": 245760, "muted": false, "name": "Dub Sub Roots",
+                "notes": [
+                  [0, 15360, 33, 1],
+                  [30720, 15360, 33, 0.82],
+                  [61440, 15360, 33, 1],
+                  [92160, 15360, 36, 0.82],
+                  [122880, 15360, 38, 1],
+                  [153600, 15360, 38, 0.82],
+                  [184320, 15360, 31, 1],
+                  [215040, 15360, 33, 0.82]
+                ]
+              },
+              {
+                "id": 10, "start": 2949120, "length": 491520, "offset": 0, "loop_length": 245760, "muted": false, "name": "Slow Fifths",
+                "notes": [
+                  [0, 30720, 33, 1],
+                  [30720, 30720, 40, 0.82],
+                  [61440, 30720, 36, 1],
+                  [92160, 30720, 43, 0.82],
+                  [122880, 30720, 38, 1],
+                  [153600, 30720, 45, 0.82],
+                  [184320, 30720, 31, 1],
+                  [215040, 30720, 38, 0.82]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "chords", "muted": false, "solo": false, "armed": false, "color": "#70aa6e",
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 11, "start": 0, "length": 3932160, "offset": 0, "loop_length": 245760, "muted": false, "name": "Seventh Changes",
+                "notes": [
+                  [0, 21888, 50, 0.7],
+                  [0, 21888, 53, 0.7],
+                  [0, 21888, 57, 0.7],
+                  [0, 21888, 60, 0.7],
+                  [23040, 36480, 50, 0.7],
+                  [23040, 36480, 53, 0.7],
+                  [23040, 36480, 57, 0.7],
+                  [23040, 36480, 60, 0.7],
+                  [61440, 21888, 43, 0.7],
+                  [61440, 21888, 47, 0.7],
+                  [61440, 21888, 50, 0.7],
+                  [61440, 21888, 53, 0.7],
+                  [84480, 36480, 43, 0.7],
+                  [84480, 36480, 47, 0.7],
+                  [84480, 36480, 50, 0.7],
+                  [84480, 36480, 53, 0.7],
+                  [122880, 21888, 48, 0.7],
+                  [122880, 21888, 52, 0.7],
+                  [122880, 21888, 55, 0.7],
+                  [122880, 21888, 59, 0.7],
+                  [145920, 36480, 48, 0.7],
+                  [145920, 36480, 52, 0.7],
+                  [145920, 36480, 55, 0.7],
+                  [145920, 36480, 59, 0.7],
+                  [184320, 21888, 45, 0.7],
+                  [184320, 21888, 52, 0.7],
+                  [184320, 21888, 55, 0.7],
+                  [184320, 21888, 60, 0.7],
+                  [207360, 36480, 45, 0.7],
+                  [207360, 36480, 52, 0.7],
+                  [207360, 36480, 55, 0.7],
+                  [207360, 36480, 60, 0.7]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "lead", "muted": false, "solo": false, "armed": false, "color": "#c86eaa",
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 12, "start": 1474560, "length": 491520, "offset": 0, "loop_length": 245760, "muted": false, "name": "Boom Bap Hook",
+                "notes": [
+                  [0, 6912, 69, 1],
+                  [15360, 6912, 72, 0.82],
+                  [30720, 6912, 74, 1],
+                  [46080, 6912, 72, 0.82],
+                  [53760, 6912, 69, 0.82],
+                  [76800, 6912, 67, 0.82],
+                  [92160, 6912, 69, 1],
+                  [122880, 6912, 72, 1],
+                  [138240, 6912, 74, 0.82],
+                  [153600, 6912, 76, 1],
+                  [168960, 6912, 74, 0.82],
+                  [176640, 6912, 72, 0.82],
+                  [199680, 6912, 69, 0.82],
+                  [215040, 6912, 67, 1]
+                ]
+              },
+              {
+                "id": 13, "start": 2211840, "length": 245760, "offset": 0, "loop_length": null, "muted": false, "name": "Boom Bap Hook",
+                "notes": [
+                  [0, 6912, 69, 1],
+                  [15360, 6912, 72, 0.82],
+                  [30720, 6912, 74, 1],
+                  [46080, 6912, 72, 0.82],
+                  [53760, 6912, 69, 0.82],
+                  [76800, 6912, 67, 0.82],
+                  [92160, 6912, 69, 1],
+                  [122880, 6912, 72, 1],
+                  [138240, 6912, 74, 0.82],
+                  [153600, 6912, 76, 1],
+                  [168960, 6912, 74, 0.82],
+                  [176640, 6912, 72, 0.82],
+                  [199680, 6912, 69, 0.82],
+                  [215040, 6912, 67, 1]
+                ]
+              },
+              {
+                "id": 14, "start": 2457600, "length": 983040, "offset": 0, "loop_length": 245760, "muted": false, "name": "Boom Bap Hook",
+                "notes": [
+                  [0, 6912, 69, 1],
+                  [15360, 6912, 72, 0.82],
+                  [30720, 6912, 74, 1],
+                  [46080, 6912, 72, 0.82],
+                  [53760, 6912, 69, 0.82],
+                  [76800, 6912, 67, 0.82],
+                  [92160, 6912, 69, 1],
+                  [122880, 6912, 72, 1],
+                  [138240, 6912, 74, 0.82],
+                  [153600, 6912, 76, 1],
+                  [168960, 6912, 74, 0.82],
+                  [176640, 6912, 72, 0.82],
+                  [199680, 6912, 69, 0.82],
+                  [215040, 6912, 67, 1]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "dust", "muted": false, "solo": false, "armed": false, "color": "#828c96",
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 15, "start": 0, "length": 3932160, "offset": 0, "loop_length": 245760, "muted": false, "name": "Dust Holds",
+                "notes": [
+                  [0, 116736, 69, 0.5],
+                  [122880, 116736, 67, 0.5]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

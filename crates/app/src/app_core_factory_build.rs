@@ -35,6 +35,8 @@ pub(in crate::app_core) mod kits;
 pub(in crate::app_core) mod loops;
 #[path = "app_core_factory_tables.rs"]
 pub(in crate::app_core) mod tables;
+#[path = "app_core_factory_templates.rs"]
+pub(in crate::app_core) mod templates;
 
 pub(in crate::app_core) use clips::{CLIPS, ClipDef, clip_notes, clip_text};
 pub(in crate::app_core) use examples::{EXAMPLES, write_examples};
@@ -43,6 +45,7 @@ pub(in crate::app_core) use kits::{
 };
 pub(in crate::app_core) use loops::{LOOPS, loop_path, write_loop};
 pub(in crate::app_core) use tables::{TABLES, build_table};
+pub(in crate::app_core) use templates::write_templates;
 
 pub(super) const POLY: &str = "atomik.poly-synth";
 pub(super) const BASS: &str = "atomik.mono-bass";
@@ -3649,5 +3652,6 @@ pub(super) fn write_all(root: &Path) {
         write_loop(root, def);
     }
     write_examples(root, &built_kits);
+    write_templates(root);
     std::fs::write(root.join("factory.json"), manifest_text()).expect("the manifest");
 }

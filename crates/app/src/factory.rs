@@ -20,6 +20,10 @@
 //! The paths are relative to the factory folder and use `/`. A tag or category that is not a
 //! valid tag name is skipped.
 //!
+//! `Templates/` holds the genre templates in the same layout (no `Audio/`: a template carries
+//! none). They are not a browser section: File > New from Template and the start screen list
+//! them first, before the templates of the user's own folder.
+//!
 //! A project of the folder opens as a new unsaved song (`AppCore::open_template`), so the factory
 //! copy is never the song's file and Save asks for a place.
 //!
@@ -44,6 +48,8 @@ use std::path::{Component, Path, PathBuf};
 pub const FACTORY_DIR_VAR: &str = "ATOMIK_FACTORY_DIR";
 /// The name of the folder beside the program, and of the folder in the source checkout.
 pub const FACTORY_FOLDER: &str = "factory";
+/// The folder of the genre templates in a factory folder.
+pub const TEMPLATES_FOLDER: &str = "Templates";
 /// The marks file of a factory folder.
 pub const MANIFEST: &str = "factory.json";
 /// The newest manifest version this build reads.
@@ -154,6 +160,13 @@ impl Factory {
             return None;
         }
         Some(self.root.join(section.folder_name()?))
+    }
+
+    /// The folder of the genre templates (`Templates`), when the factory has one: each is a
+    /// project `<name>/<name>.atomik`, listed by File > New from Template and the start screen.
+    pub fn templates(&self) -> Option<PathBuf> {
+        let folder = self.root.join(TEMPLATES_FOLDER);
+        folder.is_dir().then_some(folder)
     }
 
     /// Whether `path` is the factory folder or below it (a path with `..` never is).

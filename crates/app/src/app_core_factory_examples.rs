@@ -55,10 +55,63 @@ pub(in crate::app_core) struct Place {
     pub clip: &'static str,
     pub bar: i64,
     pub bars: i64,
+    /// Which notes of the clip play.
+    pub keys: Keys,
 }
 
-const fn place(clip: &'static str, bar: i64, bars: i64) -> Place {
-    Place { clip, bar, bars }
+/// The key of the kick in the factory drum clips (and the drum machine's first pad).
+pub(in crate::app_core) const KICK_KEY: u8 = 36;
+
+/// Which notes of a clip a [`Place`] plays: a drum clip can feed the kick and the rest of the kit
+/// to two tracks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app_core) enum Keys {
+    /// Every note.
+    All,
+    /// The kick only.
+    Kick,
+    /// Everything but the kick.
+    Rest,
+}
+
+impl Keys {
+    /// Whether a note of `key` plays.
+    pub(in crate::app_core) fn takes(self, key: u8) -> bool {
+        match self {
+            Keys::All => true,
+            Keys::Kick => key == KICK_KEY,
+            Keys::Rest => key != KICK_KEY,
+        }
+    }
+}
+
+pub(in crate::app_core) const fn place(clip: &'static str, bar: i64, bars: i64) -> Place {
+    Place {
+        clip,
+        bar,
+        bars,
+        keys: Keys::All,
+    }
+}
+
+/// [`place`] with the kick of the clip only.
+pub(in crate::app_core) const fn kick(clip: &'static str, bar: i64, bars: i64) -> Place {
+    Place {
+        clip,
+        bar,
+        bars,
+        keys: Keys::Kick,
+    }
+}
+
+/// [`place`] with the clip without its kick.
+pub(in crate::app_core) const fn rest(clip: &'static str, bar: i64, bars: i64) -> Place {
+    Place {
+        clip,
+        bar,
+        bars,
+        keys: Keys::Rest,
+    }
 }
 
 /// One track of an example: an instrument with its channel and its clips.
@@ -500,30 +553,30 @@ fn room_mix(b: &mut Build) {
 
 /// The project being built.
 pub(in crate::app_core) struct Build {
-    doc: Document,
-    registry: Registry,
-    item: &'static str,
+    pub(in crate::app_core) doc: Document,
+    pub(in crate::app_core) registry: Registry,
+    pub(in crate::app_core) item: &'static str,
     /// The audio of the sampled kits the project uses, by asset id.
-    audio: Vec<(String, AudioData)>,
+    pub(in crate::app_core) audio: Vec<(String, AudioData)>,
 }
 
-fn beats_ticks(beats: f64) -> i64 {
+pub(in crate::app_core) fn beats_ticks(beats: f64) -> i64 {
     #[allow(clippy::cast_possible_truncation)] // a few bars of beats
     let t = (beats * PPQ as f64).round() as i64;
     t
 }
 
 /// The tick where bar `bar` (the first is 1) starts, in 4/4.
-fn bar_tick(bar: f64) -> i64 {
+pub(in crate::app_core) fn bar_tick(bar: f64) -> i64 {
     beats_ticks((bar - 1.0) * 4.0)
 }
 
 impl Build {
-    fn run(&mut self, command: Command) {
+    pub(in crate::app_core) fn run(&mut self, command: Command) {
         run(&mut self.doc, &self.registry, self.item, command);
     }
 
-    fn keys(&self) -> Vec<DeviceKey> {
+    pub(in crate::app_core) fn keys(&self) -> Vec<DeviceKey> {
         self.doc
             .doc()
             .devices
@@ -533,7 +586,7 @@ impl Build {
     }
 
     /// The key of the instrument of the voice `name`.
-    fn key(&self, name: &str) -> DeviceKey {
+    pub(in crate::app_core) fn key(&self, name: &str) -> DeviceKey {
         self.doc
             .doc()
             .devices
@@ -543,7 +596,7 @@ impl Build {
             .unwrap_or_else(|| panic!("{}: no device named {name}", self.item))
     }
 
-    fn master(&self) -> DeviceKey {
+    pub(in crate::app_core) fn master(&self) -> DeviceKey {
         self.doc
             .doc()
             .console
@@ -553,7 +606,7 @@ impl Build {
     }
 
     /// The first channel that `source` feeds.
-    fn channel(&self, source: &DeviceKey) -> DeviceKey {
+    pub(in crate::app_core) fn channel(&self, source: &DeviceKey) -> DeviceKey {
         self.doc
             .doc()
             .console
@@ -562,7 +615,7 @@ impl Build {
             .unwrap_or_else(|| panic!("{}: {source} has no channel", self.item))
     }
 
-    fn last_channel(&self) -> DeviceKey {
+    pub(in crate::app_core) fn last_channel(&self) -> DeviceKey {
         self.doc
             .doc()
             .console
@@ -572,7 +625,7 @@ impl Build {
             .expect("a channel")
     }
 
-    fn last_bus(&self) -> DeviceKey {
+    pub(in crate::app_core) fn last_bus(&self) -> DeviceKey {
         self.doc
             .doc()
             .console
@@ -582,7 +635,7 @@ impl Build {
             .expect("a bus")
     }
 
-    fn last_vca(&self) -> u32 {
+    pub(in crate::app_core) fn last_vca(&self) -> u32 {
         self.doc
             .doc()
             .console
@@ -592,7 +645,7 @@ impl Build {
             .expect("a group")
     }
 
-    fn set_channel(&mut self, channel: &DeviceKey, db: f32, pan: f32) {
+    pub(in crate::app_core) fn set_channel(&mut self, channel: &DeviceKey, db: f32, pan: f32) {
         let fader = atomik_dsp::fader_pos_for_db(db);
         set_params(
             &mut self.doc,
@@ -605,7 +658,7 @@ impl Build {
     }
 
     /// Pastes the item `text` and returns the devices it added, in rack order.
-    fn paste(&mut self, text: &str, route: bool) -> Vec<DeviceKey> {
+    pub(in crate::app_core) fn paste(&mut self, text: &str, route: bool) -> Vec<DeviceKey> {
         let snapshot =
             load_device_item(text, &self.registry).unwrap_or_else(|e| panic!("{}: {e}", self.item));
         for (hash, meta) in &snapshot.assets {
@@ -630,7 +683,7 @@ impl Build {
     }
 
     /// The factory effect container `name`, added to the rack.
-    fn effect(&mut self, name: &str) -> DeviceKey {
+    pub(in crate::app_core) fn effect(&mut self, name: &str) -> DeviceKey {
         let def = CONTAINERS
             .iter()
             .find(|c| c.name == name)
@@ -642,7 +695,7 @@ impl Build {
             .unwrap_or_else(|| panic!("{}: {name} added nothing", self.item))
     }
 
-    fn insert(&mut self, strip: &DeviceKey, slot: usize, name: &str) {
+    pub(in crate::app_core) fn insert(&mut self, strip: &DeviceKey, slot: usize, name: &str) {
         let effect = self.effect(name);
         self.run(Command::Console(ConsoleCommand::SetInsert {
             channel: strip.clone(),
@@ -651,12 +704,12 @@ impl Build {
         }));
     }
 
-    fn master_insert(&mut self, name: &str) {
+    pub(in crate::app_core) fn master_insert(&mut self, name: &str) {
         let master = self.master();
         self.insert(&master, 0, name);
     }
 
-    fn set_return(&mut self, slot: usize, name: &str) {
+    pub(in crate::app_core) fn set_return(&mut self, slot: usize, name: &str) {
         let effect = self.effect(name);
         self.run(Command::Console(ConsoleCommand::SetReturn {
             slot,
@@ -665,12 +718,22 @@ impl Build {
     }
 
     /// An automation lane of `param` on `device`: `(bar, value)` points, linear between.
-    fn automate(&mut self, device: &DeviceKey, param: &str, points: &[(f64, f32)]) {
+    pub(in crate::app_core) fn automate(
+        &mut self,
+        device: &DeviceKey,
+        param: &str,
+        points: &[(f64, f32)],
+    ) {
         self.lane(device, param, points);
     }
 
     /// An automation lane of a fader or a group in dB.
-    fn automate_db(&mut self, device: &DeviceKey, param: &str, points: &[(f64, f32)]) {
+    pub(in crate::app_core) fn automate_db(
+        &mut self,
+        device: &DeviceKey,
+        param: &str,
+        points: &[(f64, f32)],
+    ) {
         let to_value = |db: f32| {
             if param == "fader" {
                 atomik_dsp::fader_pos_for_db(db)
@@ -685,7 +748,12 @@ impl Build {
         self.lane(device, param, &points);
     }
 
-    fn lane(&mut self, device: &DeviceKey, param: &str, points: &[(f64, f32)]) {
+    pub(in crate::app_core) fn lane(
+        &mut self,
+        device: &DeviceKey,
+        param: &str,
+        points: &[(f64, f32)],
+    ) {
         self.run(Command::Song(SongCommand::AddAutomationLane {
             device: device.clone(),
             param: param.to_owned(),
@@ -741,7 +809,7 @@ impl Build {
     }
 
     /// A device of the patch `def` on a new device of its type.
-    fn patch(&mut self, key: &DeviceKey, def: &Def) {
+    pub(in crate::app_core) fn patch(&mut self, key: &DeviceKey, def: &Def) {
         self.run(Command::AddDevice {
             index: usize::MAX,
             type_id: def.device.to_owned(),
@@ -770,7 +838,7 @@ impl Build {
     }
 
     /// The drum machine `key` with the synthesised pads of `kit`.
-    fn pads(&mut self, key: &DeviceKey, kit: &KitDef) {
+    pub(in crate::app_core) fn pads(&mut self, key: &DeviceKey, kit: &KitDef) {
         self.run(Command::AddDevice {
             index: usize::MAX,
             type_id: DRUM.to_owned(),
@@ -799,7 +867,13 @@ impl Build {
     }
 
     /// Adds the instrument of `voice` (its channel, its track and its clips) and returns its key.
-    fn voice(&mut self, def: &ExampleDef, voice: &Voice, kits: &[(&str, KitBuilt)]) {
+    pub(in crate::app_core) fn voice(
+        &mut self,
+        own: &[ClipDef],
+        bars: i64,
+        voice: &Voice,
+        kits: &[(&str, KitBuilt)],
+    ) {
         let key = match &voice.source {
             Source::Patch(name) => {
                 let patch = DEFS
@@ -874,7 +948,7 @@ impl Build {
             device: key.clone(),
         }));
         for p in voice.clips {
-            let clip_def = clip_named(def, p.clip);
+            let clip_def = clip_named(own, self.item, p.clip);
             let length = clip_def.bars;
             assert!(
                 p.bars % length == 0 && p.bars >= length,
@@ -884,12 +958,17 @@ impl Build {
                 p.bars
             );
             assert!(
-                p.bar >= 1 && p.bar - 1 + p.bars <= def.bars,
+                p.bar >= 1 && p.bar - 1 + p.bars <= bars,
                 "{}: {} runs past the end",
                 self.item,
                 p.clip
             );
             let mut clip = clip_of(clip_def, bar_tick(p.bar as f64));
+            if p.keys != Keys::All
+                && let ClipContent::Notes(notes) = &mut clip.content
+            {
+                notes.retain(|n| p.keys.takes(n.key));
+            }
             clip.length = beats_ticks(p.bars as f64 * 4.0);
             if p.bars > length {
                 clip.loop_length = Some(beats_ticks(length as f64 * 4.0));
@@ -904,7 +983,7 @@ impl Build {
 }
 
 /// The device key of a voice: its name in lower case, a dash for anything but letters and digits.
-fn slug(name: &str) -> String {
+pub(in crate::app_core) fn slug(name: &str) -> String {
     name.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() {
@@ -916,19 +995,22 @@ fn slug(name: &str) -> String {
         .collect()
 }
 
-fn kit_named(name: &str) -> &'static KitDef {
+pub(in crate::app_core) fn kit_named(name: &str) -> &'static KitDef {
     KITS.iter()
         .find(|k| k.name == name)
         .unwrap_or_else(|| panic!("no factory kit {name}"))
 }
 
-/// The clip `name`: one of the example's own, else a factory clip.
-fn clip_named<'a>(def: &'a ExampleDef, name: &str) -> &'a ClipDef {
-    def.clips
-        .iter()
+/// The clip `name`: one of the song's own, else a factory clip.
+pub(in crate::app_core) fn clip_named<'a>(
+    own: &'a [ClipDef],
+    song: &str,
+    name: &str,
+) -> &'a ClipDef {
+    own.iter()
         .chain(CLIPS.iter())
         .find(|c| c.name == name)
-        .unwrap_or_else(|| panic!("{}: no clip {name}", def.name))
+        .unwrap_or_else(|| panic!("{song}: no clip {name}"))
 }
 
 // ------------------------------------------------------------------------------- the writer
@@ -955,7 +1037,7 @@ pub(in crate::app_core) fn build_example(def: &ExampleDef, kits: &[(&str, KitBui
     };
     build.run(Command::SetTempo(def.bpm));
     for voice in def.voices {
-        build.voice(def, voice, kits);
+        build.voice(def.clips, def.bars, voice, kits);
     }
     (def.mix)(&mut build);
     build.run(Command::Song(SongCommand::SetSongEnd(bar_tick(
