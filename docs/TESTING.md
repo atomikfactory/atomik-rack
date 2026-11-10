@@ -1848,6 +1848,17 @@ the player (frames, the note's end, seeks, block sizes, no allocation), the thre
 `crates/render/tests/note_expression.rs` a bounce whose pitch follows a curve at every block size.
 `crates/app/src/midi_file_tests.rs` writes and reads an MPE track.
 
+Editing and sending: `crates/model/src/expression_edit.rs` tests the pure steps (add,
+move as a group, delete, freehand thinning, scaling, apply to several notes) and `crates/ui/tests/piano_roll_expression.rs`
+the gestures through a real document (add, move, Shift, Ctrl, the four ways to delete, the rubber band, the Pencil
+stroke, Escape, the 1024 cap, apply; each one undo step), with two display-list goldens in `seq_snapshot.rs`.
+`crates/core/src/mpe_out.rs` tests the allocation of channels, the configuration message bytes and the bends,
+`crates/midi-io/tests/mpe_roundtrip.rs` reads what it sends back with the MPE input, `crates/devices/src/midi_out/tests.rs`
+the device (zones, rotation, bends, offs, the first values before the note on, global messages on the master
+channel, switching off; every test runs under the allocation guard), `crates/engine/tests/midi_tap.rs` a note with a
+pitch curve through the engine, and `crates/plugin-host/tests/device_mpe.rs` the plugin device (raw messages, zone
+announcements, switching the option).
+
 Hand checks, not automated (they need an MPE controller):
 
 - Switch the controller's port to MPE in Audio Settings > MIDI inputs with MPE (a click steps through the zones)
@@ -1859,6 +1870,14 @@ Hand checks, not automated (they need an MPE controller):
   three curves; undo and redo the clear button; play it back and compare with the live sound.
 - Export the clip as a MIDI file and import it again: the notes come back with their curves; open the file in
   another MPE aware program and check that the notes bend one by one.
+- Select a note, press the strip's tabs, click to add points, drag them, Alt-click one, drag a rubber band round
+  several and move them, draw with the Pencil, undo each step; select three notes, open the strip (Edit Note
+  Expression) and press APPLY.
+- Set a MIDI Out device to a lower zone with a hardware MPE synth or an MPE aware program on a virtual port: the
+  zone is announced when you press play, each note of a chord bends on its own and a note off ends the right
+  note. Switch the zone off while notes sound: nothing hangs.
+- Switch MPE on in the panel of a CLAP plugin that takes MIDI and play a bent note: the plugin sees one note per
+  channel from channel 2.
 
 ## MIDI Out
 

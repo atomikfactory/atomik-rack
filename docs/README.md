@@ -24,6 +24,17 @@ controls in Help Mode, which links here.
   click and a drag do, and the snap grid next to them sets where clips and points land.
 - **The piano roll.** Opens on a note clip. It has the select, pencil, eraser and razor tools, a snap grid, quantize,
   a scale with a root and a kind that notes can snap to, chord stamps, and the controller lanes under the velocity lane.
+- **The expression strip.** A note can carry its own pitch, pressure and timbre curves (the three MPE dimensions,
+  recorded from an MPE keyboard or drawn here). Select a note that has curves, or run Edit Note Expression from the
+  command palette for any note (it also works with several notes selected), and a strip opens beside it with a tab for
+  each curve. Click empty
+  space to add a point and drag a point to move it (Shift moves it finely, Ctrl snaps a pitch to a semitone); Alt-click
+  or double-click a point to delete it; drag from empty space to select several points and move or delete them
+  together; with the Pencil tool a drag draws the curve freehand. The pitch scale button steps through 48, 24, 12 and 2
+  semitones either way. Apply copies the curve of the first selected note to the other selected notes, stretched to
+  each one's length. Every gesture is one undo step. The curves go out as MPE: set the MIDI Out device to a lower or
+  upper zone, or press MPE on the panel of a plugin that takes plain MIDI; plugins that take note expressions get the
+  curves without it.
 - **The mixer.** One strip per channel, with its sections (input, EQ, compressor, sends, pan and fader), the insert
   slots, the output choice, snapshots of the whole mix and groups that move several faders together.
 - **The file browser.** The places on the left, the files on the right. It sorts by name, length or size, previews

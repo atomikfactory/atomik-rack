@@ -6787,9 +6787,33 @@ each note on that note's channel. Atomik keeps that as data of the note and play
   controllers and program changes go to channel 1. An MPE track of a song file uses channels 1 to 16 of its own
   MIDI track. The import reads RPN 6 on a master channel, merges the notes of the member channels into one track
   (with the master channel's controllers) and keeps each note's bend, pressure and CC 74 as its curves.
-- **Piano roll** ([piano_roll.rs](../crates/ui/src/piano_roll.rs)). With one note selected that has expression, a strip
-  under it (above it at the bottom of the grid) draws the three curves over the note's length with a button that
-  clears them: one `SetClipMidi`, one undo step. There is no editing of the points by hand yet.
+- **Editing** ([expression_edit.rs](../crates/model/src/expression_edit.rs)). Pure functions over one curve:
+  `set_point` (adds, or takes the value of a point at the same tick; `None` at 1024 points), `move_points` (a group
+  moves together, limited so no point leaves the note or the range, a moved point replaces an unselected one at its
+  tick), `remove_points`, `draw_stroke` (a freehand stroke replaces what it covers, thinned with `thin_points` of
+  Cleanup Automation, harder until it fits the cap), `scale_to_length`, `with_curve` and `apply_curve` (copies a
+  curve to other notes, scaled to each length). Each returns the new curve or data, so a gesture derives every step
+  from the data at its press.
+- **Piano roll** ([expression.rs](../crates/ui/src/piano_roll/expression.rs)). The strip belongs to the edited note,
+  the lowest selected note: shown while it has expression, or after `editor.edit_expression` (then for any note,
+  and with several selected). It has tabs for the three curves, the pitch scale chip (48, 24, 12 or 2 semitones
+  either way), APPLY (several notes selected) and the clear button, and a plot over the note's length. A click on
+  empty space adds a point; a drag from empty space is a rubber band (the Pencil tool draws a freehand stroke
+  instead); a drag on a point moves it and the selected ones (Shift: a tenth of the travel; Ctrl: whole semitones
+  for a pitch); Alt-click, a double click, a right click and the Eraser delete; Delete and Select All work while
+  the plot has the focus. A gesture sends `SetClipMidi` with one merge id and `EndMerge` on release, so it is one
+  undo step; Escape sends the data from the press back. `editor.apply_expression_curve` and the APPLY button copy
+  the curve of the chosen tab from the edited note to the other selected notes.
+- **Output** ([mpe_out.rs](../crates/core/src/mpe_out.rs)). `MpeEncoder` is the sending side of a zone: `note_on`
+  takes a member channel (never used first, then the longest released, then the oldest note's), resets or presets
+  the channel's bend, pressure and CC 74 before the note on, `tuning`, `pressure` and `slide` send a bend, channel
+  pressure and CC 74 only when the channel's value changes, `note_off` follows the key the note started on, and
+  `mcm` is the MPE Configuration Message (RPN 6 on the master channel). `Initial::of` reads the expression events
+  that share a note on's frame so they go first. The MIDI Out device (`mpe.zone`, `mpe.members`) sends everything
+  as frames on its tap and announces the zone at its start, at each playback start and on a change. The plugin
+  device (`mpe.send`, the last param) turns notes into `PluginEventKind::Midi` raw messages (wire tag 9) on member
+  channels 2 to 16; the CLAP processor passes them to a plugin that takes MIDI and the VST3 processor ignores them
+  (those plugins get note expression events). Both devices are allocation free on the audio thread.
 
 ## 7. The UI crate
 
@@ -7129,7 +7153,7 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
 - **MIDI controller data.** Controller lanes belong to note clips or, outside clips, to a note track
   (Track > Edit Track Controllers, 2.12); a track's own lanes are shown only in the roll's track mode, not in the
   arrangement (its header has a CC badge). Per-note expression (MPE) is not a lane: it is kept by note (see
-  "6p. Per-note expression"), cannot be edited by hand yet and follows a note only while its start and key
+  "6p. Per-note expression"), is edited in the piano roll's strip and follows a note only while its start and key
   stay; a recorded lane is one `Step` point per burst of events, not a smooth curve. A ramp is played as steps
   of 40 ticks. Pressure is kept as a
   modulation source in five instruments but no parameter reads it yet, and the only registered
@@ -7243,7 +7267,8 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   remote-controls page), CLAP presets and VST3 program lists are not listed (only `.vstpreset`
   files), the Windows DPI choice per plugin is not offered, recovery snapshots hold the project
   file without its audio bundle, and surround and multi-output are not supported. A plugin gets per-note
-  expression as note expression events (CLAP and VST3); MPE MIDI on member channels is not sent to plugins.
+  expression as note expression events (CLAP and VST3); MPE MIDI on member channels goes only to a CLAP plugin that
+  takes MIDI, with the plugin device's `mpe.send` switched on.
 - **File browser.** Tags and favourites are keyed by path, so moving or renaming a file outside the
   app loses them. A preview plays at 0 dB with no level control and no cue output, and the browser
   shows no waveform. The tree does not expand to reveal the folder shown in the list. Folders are

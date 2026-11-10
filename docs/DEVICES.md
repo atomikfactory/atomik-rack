@@ -2104,6 +2104,8 @@ the port is back (the app tries again once a second).
 | `cc1.number` ... `cc8.number` | CC 1 number ... | 0..127 | 1, 7, 10, 11, 71, 74, 91, 93 | The controller a CV input drives. |
 | `cc1.scale` ... `cc8.scale` | CC 1 scale ... | -4..4 | 1 | The value sent is `127 * (cv * scale + offset)`, rounded and clamped to 0..127. |
 | `cc1.offset` ... `cc8.offset` | CC 1 offset ... | -1..1 | 0 | See `scale`. |
+| `mpe.zone` | MPE | Off, Lower zone, Upper zone | Off | Speak MPE: notes go out on member channels with their expression (see below). |
+| `mpe.members` | MPE members | 1..15 | 15 | The number of member channels of the zone. |
 
 ### Behaviour (as built)
 
@@ -2121,6 +2123,12 @@ the port is back (the app tries again once a second).
   `transpose` or `channel` while a key is held still releases the note that was started, and a
   note on for a key that is still down releases it first. A key that transposes out of 0..127 is
   dropped, with its note off.
+- **MPE.** With `mpe.zone` on a lower or an upper zone the device speaks MPE, see
+  [Per-note expression](#per-note-expression-mpe): every note goes out on a member channel of its own, the curves
+  of a note become that channel's pitch bend, pressure and CC 74, the controllers, pitch bend, channel pressure and
+  program change that mean the whole device go to the zone's master channel, and `channel` is not used. The
+  MPE Configuration Message goes out when the zone is set, when the device starts and each time playback starts.
+  Switching the zone off releases the member notes and switches the zone off at the receiver.
 - **Controllers from CV.** The value at the end of each batch is sent when its 7-bit value changes,
   at most 100 times a second per input; the newest value is never held back longer than that.
 - **Program and bank** go out when the device starts and whenever either param changes.
@@ -4872,8 +4880,42 @@ key; a new note on a key starts from rest, and a note without expression is bit 
 
 The other melodic instruments (the grain sampler, the sampler, the semi-modular synth) take a note's pressure
 as their pressure source and ignore its tuning and slide; the organ and the drum devices ignore all three.
-A CLAP or VST3 plugin gets them as note expression events (tuning, pressure and brightness); the MIDI Out
-device has no MIDI 1.0 message for them and drops them.
+A CLAP or VST3 plugin gets them as note expression events (tuning, pressure and brightness).
+
+### What goes out
+
+The expression of a note goes out in three ways, by where the notes go:
+
+- **To a plugin that takes note expression** (CLAP note expressions, VST3 note expression events): as note
+  expression events, as above. Nothing to switch on.
+- **To a plugin that takes plain MIDI:** the plugin device has a `mpe.send` param (the MPE button of its panel,
+  "Send MPE (channels 2-16)", off by default, the last param of the device). With it on the device sends a lower
+  MPE zone of 15 member channels to the plugin as raw MIDI messages, replacing its note events: the MPE
+  Configuration Message when the option is switched on, when playback starts and after the plugin restarted; every
+  note on a member channel; the curves of a note as that channel's pitch bend, channel pressure and CC 74; the
+  controllers, pitch bend and channel pressure of the track on the master channel (channel 1). It works for a CLAP
+  plugin that takes MIDI. A VST3 plugin has no raw MIDI input and keeps getting note expression events.
+- **To the MIDI Out device:** with its `mpe.zone` set (above), as MPE on the port. With the zone off the output is
+  as it always was and the expression is dropped (MIDI 1.0 has no message for it outside MPE).
+
+The same encoder serves both ([mpe_out.rs](../crates/core/src/mpe_out.rs)):
+
+- **Channels.** A note takes a member channel that is free: one never used yet first (nearest the master first),
+  then the one released longest ago, so a channel rests as long as it can before another note reuses it. With every
+  member sounding, the oldest note is released and its channel taken. A note off goes on the channel the note went out
+  on with the key it started on (a changed transpose cannot strand it).
+- **A fresh note starts clean.** The first values of a note (the expression events at the same frame as its note on)
+  go out just before the note on; a channel that still holds a bend, pressure or slide of the note before is reset
+  to rest first. A message that repeats what the channel holds is not sent.
+- **Pitch.** The bend is the note's pitch offset over the member range of 48 semitones (the range the configuration
+  message sets), held to the ends of the wheel. Pressure is channel pressure and timbre is CC 74, both `0..=1` as
+  7-bit values.
+- **Real time.** The encoder works on fixed arrays and fills fixed lists: nothing allocates on the audio thread.
+- **Stopping.** An all-notes-off releases every member note and sends CC 123 on the channels used, the master
+  included.
+
+The pitch, pressure and timbre curves can be drawn and edited in the piano roll (see
+[README.md](README.md)).
 
 ## Third-party plugin devices: `clap.<id>` and `vst3.<id>`
 
@@ -4898,7 +4940,7 @@ plugin says so), Utility (a note effect: notes out, no audio) or Effect. A mono 
 (input = (L + R) / 2, the output copied to both sides); a mono aux output is copied to both sides of
 its pair. Surround buses, a second aux input and aux outputs past the seventh are disabled. The CV
 and aux sockets come last, so the cables of a project saved before they existed still find their
-sockets (the descriptor version is 2).
+sockets (the descriptor version is 3).
 
 ### Params
 
@@ -4909,7 +4951,8 @@ sockets (the descriptor version is 2).
 (only the ones you set) next to the plugin's opaque **state** blob, and edits reach the plugin as
 events at the start of each 64-frame batch. The panel pins up to 16 params as knobs; PARAMS opens
 the searchable list with every param (also the editor for a plugin without a window). After the
-plugin's params come the 16 params of the CV programmer, see below.
+plugin's params come the 16 params of the CV programmer, see below, and the last param `mpe.send` (0 or 1, off by
+default: send the notes as MPE to a plugin that takes MIDI, see [Per-note expression](#per-note-expression-mpe)).
 
 ### CV programmer and aux outputs
 
