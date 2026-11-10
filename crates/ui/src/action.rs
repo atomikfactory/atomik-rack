@@ -747,6 +747,9 @@ pub enum UiAction {
     PickColor(crate::color_picker::ColorTarget),
     /// The colour picker asks for something: give its colour to the target, or close.
     ColorPicker(crate::color_picker::ColorPickerAction),
+    /// The theme editor ([`crate::ThemeEditorView`]) asks for something: preview, save, pick a
+    /// colour for a token, or close.
+    ThemeEditor(crate::theme_editor::ThemeEditorAction),
     /// The Audio to Notes panel ([`crate::NotesView`]) asks for something: extract the notes of
     /// the selected audio clip with its settings, or close.
     AudioToNotes(crate::notes_panel::NotesAction),
