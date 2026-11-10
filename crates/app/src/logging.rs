@@ -272,6 +272,12 @@ pub fn minute_stamp(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}")
 }
 
+/// `2026-10-29 123456` for `secs`: the time in the name of a backup copy (UTC).
+pub fn backup_stamp(secs: u64) -> String {
+    let (y, m, d, hh, mm, ss) = civil(secs);
+    format!("{y:04}-{m:02}-{d:02} {hh:02}{mm:02}{ss:02}")
+}
+
 /// `20261029-123456` for `secs`: the form that names files.
 pub fn file_stamp(secs: u64) -> String {
     let (y, m, d, hh, mm, ss) = civil(secs);
