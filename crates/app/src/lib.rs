@@ -70,8 +70,6 @@ pub mod mixcheck_worker;
 #[cfg(test)]
 pub(crate) mod offline_sink;
 pub mod palette;
-pub mod themes;
-pub mod themes_tab;
 pub mod platform;
 pub mod plugin_setup;
 #[cfg(test)]
@@ -97,6 +95,8 @@ pub mod surface;
 pub mod tap_tempo;
 pub mod target;
 pub mod text_clipboard;
+pub mod themes;
+pub mod themes_tab;
 pub mod transition_choice;
 pub mod translate;
 pub mod ui_state;
