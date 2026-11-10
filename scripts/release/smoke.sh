@@ -2,7 +2,9 @@
 # Smoke test of a release artifact, used the way a user would use it.
 # Usage: smoke.sh <artifact> <repo-root>
 #   artifact: .zip or .tar.gz (unpacked), -setup.exe (installed silently for the current user,
-#             then uninstalled), .deb (installed with apt, then removed) or .dmg (mounted).
+#             then uninstalled), .deb (installed with apt, then removed), .dmg (mounted),
+#             .AppImage (unpacked and run through its own runtime) or .flatpak (installed for the
+#             user, run in its sandbox, then removed).
 # Environment: EXPECT_SIGNED=true makes the check fail when the artifact is not properly signed
 #   (Windows: a valid Authenticode signature on the installer and the installed programs; macOS: a
 #   Developer ID signature accepted by Gatekeeper and a stapled notarisation ticket). Anything else
@@ -171,9 +173,12 @@ smoke_deb() {
     exit 1
   fi
   test -f /opt/atomik-rack/factory/factory.json || { echo "error: no factory library installed" >&2; exit 1; }
-  test -f /usr/share/applications/atomik-rack.desktop || { echo "error: no desktop entry" >&2; exit 1; }
-  grep -q "^Icon=atomik-rack$" /usr/share/applications/atomik-rack.desktop || { echo "error: the desktop entry has no icon" >&2; exit 1; }
-  test -f /usr/share/icons/hicolor/256x256/apps/atomik-rack.png || { echo "error: no icon installed" >&2; exit 1; }
+  id=io.github.atomikfactory.AtomikRack
+  test -f "/usr/share/applications/$id.desktop" || { echo "error: no desktop entry" >&2; exit 1; }
+  grep -q "^Icon=$id$" "/usr/share/applications/$id.desktop" || { echo "error: the desktop entry has no icon" >&2; exit 1; }
+  test -f "/usr/share/icons/hicolor/256x256/apps/$id.png" || { echo "error: no icon installed" >&2; exit 1; }
+  test -f "/usr/share/metainfo/$id.metainfo.xml" || { echo "error: no metainfo installed" >&2; exit 1; }
+  test -f "/usr/share/mime/packages/$id.xml" || { echo "error: no file type installed" >&2; exit 1; }
   echo "== remove"
   sudo apt-get remove -y -q atomik-rack
   cleanup_cmd=""
@@ -267,11 +272,65 @@ smoke_dmg() {
   fi
 }
 
+smoke_appimage() {
+  # No FUSE on a runner: the image unpacks itself to run (the same file runs normally on a desktop).
+  case "$archive" in /*) image="$archive" ;; *) image="$PWD/$archive" ;; esac
+  chmod +x "$image"
+  export APPIMAGE_EXTRACT_AND_RUN=1
+  echo "== unpack"
+  (cd "$work" && "$image" --appimage-extract > /dev/null)
+  dir="$work/squashfs-root"
+  ls -l "$dir"
+  id=io.github.atomikfactory.AtomikRack
+  for f in AppRun "$id.desktop" "$id.png" "usr/share/metainfo/$id.metainfo.xml"     "usr/share/applications/$id.desktop" "usr/share/icons/hicolor/256x256/apps/$id.png"     usr/bin/factory/factory.json usr/share/doc/atomik-rack/LICENSE; do
+    test -e "$dir/$f" || { echo "error: $f is missing from the image" >&2; exit 1; }
+  done
+  check_programs "$dir/usr/bin" ""
+  echo "== the image itself (AppRun)"
+  "$image" --version
+  echo "== shared libraries (atomik)"
+  ldd "$dir/usr/bin/atomik"
+  if LD_LIBRARY_PATH="$dir/usr/lib" ldd "$dir/usr/bin/atomik" | grep -q "not found"; then
+    echo "error: missing libraries" >&2
+    exit 1
+  fi
+}
+
+smoke_flatpak() {
+  id=io.github.atomikfactory.AtomikRack
+  case "$archive" in /*) bundle="$archive" ;; *) bundle="$PWD/$archive" ;; esac
+  flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+  echo "== install (for the user, the runtime comes from Flathub)"
+  flatpak install --user -y --noninteractive "$bundle"
+  cleanup_cmd="flatpak uninstall --user -y --noninteractive $id"
+  flatpak info --user "$id"
+  echo "== permissions"
+  flatpak info --user --show-permissions "$id"
+  echo "== programs in the sandbox"
+  for b in atomik atomik-render atomik-play atomik-plugin-scan atomik-plugin-host; do
+    flatpak run --command="$b" "$id" --version || { echo "error: $b does not run in the sandbox" >&2; exit 1; }
+  done
+  # The programs were built on the runner, not against the runtime: a library or a C library version
+  # the runtime lacks shows here as "not found".
+  if flatpak run --command=sh "$id" -c 'ldd /app/bin/atomik' | tee "$work/ldd.txt" | grep -q "not found"; then
+    cat "$work/ldd.txt"
+    echo "error: the runtime lacks a library the program needs" >&2
+    exit 1
+  fi
+  flatpak run --command=sh "$id" -c 'test -f /app/bin/factory/factory.json'     || { echo "error: no factory library in the Flatpak" >&2; exit 1; }
+  test "$(flatpak run --command=sh "$id" -c 'echo "$FLATPAK_ID"')" = "$id"     || { echo "error: FLATPAK_ID is not set in the sandbox" >&2; exit 1; }
+  echo "== remove"
+  flatpak uninstall --user -y --noninteractive "$id"
+  cleanup_cmd=""
+}
+
 case "$archive" in
   *.zip|*.tar.gz) smoke_archive ;;
   *-setup.exe) smoke_setup ;;
   *.deb) smoke_deb ;;
   *.dmg) smoke_dmg ;;
+  *.AppImage) smoke_appimage ;;
+  *.flatpak) smoke_flatpak ;;
   *) echo "error: unknown artifact type: $archive" >&2; exit 1 ;;
 esac
 echo "smoke ok: $(basename "$archive")"

@@ -1,0 +1,70 @@
+# Flatpak manifest of Atomik Rack. scripts/release/package-flatpak.sh builds it: it stages this file
+# with the files named below in one folder and fills in @TARBALL_SHA256@. The program is NOT compiled
+# here: the source is the release tarball's prebuilt programs (docs/DECISIONS.md, entry U), so the
+# Flatpak holds the same binaries as the .tar.gz, .deb and AppImage.
+app-id: io.github.atomikfactory.AtomikRack
+runtime: org.freedesktop.Platform
+runtime-version: "25.08"
+sdk: org.freedesktop.Sdk
+command: atomik
+
+finish-args:
+  # Windows: native Wayland, with X11 only as the fallback when there is no Wayland session.
+  - --socket=wayland
+  - --socket=fallback-x11
+  # Shared memory with X11 (without it X11 windows are slow and may not draw at all).
+  - --share=ipc
+  # The window is drawn on the GPU (Vulkan or OpenGL through the Mesa of the runtime).
+  - --device=dri
+  # Sound out and in through the sound server (PulseAudio or PipeWire's PulseAudio socket).
+  - --socket=pulseaudio
+  # Raw MIDI ports and ALSA devices (/dev/snd): MIDI keyboards, interfaces and control surfaces.
+  - --device=all
+  # Where songs, samples and bounces usually live. Songs are saved here or next to their audio.
+  - --filesystem=xdg-music
+  - --filesystem=xdg-documents
+  # Reading a project, a sample folder or a plugin from anywhere in the home folder; nothing is
+  # written outside the two folders above (and the app's own data folders).
+  - --filesystem=home:ro
+  # Plugins installed for the user. The folders are named on purpose (home:ro already covers them)
+  # so that the list of what the app reads stays visible here. System plugin folders such as
+  # /usr/lib/vst3 cannot be granted: Flatpak reserves /usr. See docs/RELEASING.md.
+  - --filesystem=~/.vst3:ro
+  - --filesystem=~/.clap:ro
+  # The optional update check, which asks the project page for its release list once a day after
+  # the user said yes. It is the only network use; the notice in a Flatpak says to update with the
+  # software centre.
+  - --share=network
+
+modules:
+  - name: atomik-rack
+    buildsystem: simple
+    build-commands:
+      # The five programs side by side: the app finds the plugin scanner, the plugin host and the
+      # factory library beside its own executable.
+      - install -Dm755 -t /app/bin atomik atomik-render atomik-play atomik-plugin-scan atomik-plugin-host
+      - cp -R factory /app/bin/factory
+      - install -Dm644 -t /app/share/licenses/io.github.atomikfactory.AtomikRack LICENSE
+      - install -Dm644 -t /app/share/applications io.github.atomikfactory.AtomikRack.desktop
+      - install -Dm644 io.github.atomikfactory.AtomikRack.mime.xml /app/share/mime/packages/io.github.atomikfactory.AtomikRack.xml
+      - install -Dm644 -t /app/share/metainfo io.github.atomikfactory.AtomikRack.metainfo.xml
+      - install -Dm644 icon-128.png /app/share/icons/hicolor/128x128/apps/io.github.atomikfactory.AtomikRack.png
+      - install -Dm644 icon-256.png /app/share/icons/hicolor/256x256/apps/io.github.atomikfactory.AtomikRack.png
+      - install -Dm644 icon-512.png /app/share/icons/hicolor/512x512/apps/io.github.atomikfactory.AtomikRack.png
+    sources:
+      # The release tarball (the top folder is stripped by default).
+      - type: archive
+        path: atomik-rack-linux-x86_64.tar.gz
+        sha256: "@TARBALL_SHA256@"
+      - type: file
+        path: io.github.atomikfactory.AtomikRack.desktop
+      - type: file
+        path: io.github.atomikfactory.AtomikRack.mime.xml
+      - type: file
+        path: io.github.atomikfactory.AtomikRack.metainfo.xml
+      - type: file
+        path: icon-128.png
+      - type: file
+        path: icon-256.png
+      - type: file
+        path: icon-512.png

@@ -443,3 +443,39 @@ in a file of version 44, so the fields added after the 44 reader shipped (the cl
 could not be skipped under 44. Their rows are now `since` 45 and `ignorable`, the writer says `"compat": 44`, and a
 reader of 44 opens a 45 file and drops those parts with a warning each. Every file saved now carries the two header
 fields; a file before version 37 that carries them is read as the older file it says.
+
+## U. Linux packages: AppImage and Flatpak from the release programs
+
+**Question.** How does the program reach Linux users on any distribution without a second build of the program for
+each package, and what may the sandboxed package see?
+
+**Options.** For the programs in the Flatpak: (1) compile inside `flatpak-builder` with the Rust SDK extension, from
+the source archive; (2) take the five programs of the release tarball as the source, with its checksum. For the
+AppImage: (a) bundle every library the programs load; (b) bundle only what a base system may lack and take the
+sound, font, display and graphics libraries from the host. For the Flatpak's reach: (x) a minimal sandbox that sees
+only the document and music folders; (y) read-only access to the home folder, with the plugin folders named.
+
+**Implications.** Option 1 makes the Flatpak a second, slower build (the whole workspace, with a vendored copy of the
+crates because the build has no network) whose programs differ from the ones tested and signed everywhere else. Option 2
+puts the same binaries in the `.tar.gz`, the `.deb`, the AppImage and the Flatpak, and the build is one `install` per
+file; the cost is that the programs are linked on the CI runner, so the Flatpak needs the C library of its runtime to be
+at least as new as the runner's (the smoke check runs `ldd` inside the sandbox, so a mismatch fails the build, not a
+user). For that reason the Rust SDK extension is not part of the manifest: nothing is compiled. Bundling the sound
+libraries (a) breaks on hosts whose ALSA plug-ins sit elsewhere, and the font and graphics libraries must match the
+host's configuration and drivers, so (b) is the usual AppImage rule; with the programs' present needs it bundles nothing
+today and the image still carries the factory library and the desktop files, so it needs ALSA, fontconfig and a graphics
+driver exactly like the archive. A song, a sample folder and a plugin live anywhere under the home folder: (x) would
+make the file dialog useless for most of the work, so (y), read-only, with `~/.vst3` and `~/.clap` listed so the
+list of what the program reads stays visible. Flatpak reserves `/usr`, so `/usr/lib/vst3` and `/usr/lib/clap` cannot be
+granted; plugins installed system-wide are not seen by the Flatpak (the AppImage and the packages see them). The
+update check keeps `--share=network`, the only network use, because it is the program's own optional request; inside a
+Flatpak its notice says to update with the software centre instead of pointing at a download page.
+
+**Decision.** Option 2, (b) and (y). One desktop entry, one AppStream file (its releases list made from the version)
+and the icons are installed under the app id `io.github.atomikfactory.AtomikRack` by all three Linux packages
+(`packaging/linux`, `scripts/release/linux-share.sh`); the program sets the same id as its window class so the desktop
+shows the right name and icon. The AppImage is built with the official `appimagetool` at a pinned version and checksum,
+the Flatpak by `flatpak-builder` against `org.freedesktop.Platform` 25.08; both are built only by the release and nightly
+workflows, and pull requests check the scripts, the manifest and the metadata without building.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

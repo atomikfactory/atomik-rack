@@ -686,6 +686,16 @@ impl App {
             .with_min_inner_size(LogicalSize::new(min_size.0, min_size.1))
             .with_maximized(placement.maximised)
             .with_window_icon(window_logic::window_icon());
+        // The desktop shell matches a window to its launcher (name and icon) by this id: the id of
+        // the desktop entry of the Linux packages (packaging/linux).
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            use winit::platform::wayland::WindowAttributesExtWayland;
+            use winit::platform::x11::WindowAttributesExtX11;
+            const APP_ID: &str = "io.github.atomikfactory.AtomikRack";
+            attributes = WindowAttributesExtWayland::with_name(attributes, APP_ID, APP_ID);
+            attributes = WindowAttributesExtX11::with_name(attributes, APP_ID, APP_ID);
+        }
         if let Some(pos) = placement.pos {
             attributes = attributes.with_position(window_logic::position_for(space, pos));
         }

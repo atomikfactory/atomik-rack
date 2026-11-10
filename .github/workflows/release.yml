@@ -1,8 +1,9 @@
 name: Release
 
 # On a tag vX.Y.Z (which must equal the Cargo.toml version) builds the release artifacts through the
-# reusable build workflow (build.yml): Windows zip and installer, macOS zip and dmg, Linux tar.gz
-# and deb, each with a .sha256, plus SHA256SUMS (and SHA256SUMS.asc when a GPG key is configured).
+# reusable build workflow (build.yml): Windows zip and installer, macOS zip and dmg, Linux tar.gz,
+# deb, AppImage and Flatpak bundle, each with a .sha256, plus SHA256SUMS (and SHA256SUMS.asc when a
+# GPG key is configured).
 # Every artifact is smoke-tested, and signed where the signing secrets exist (see
 # docs/RELEASING.md); then a DRAFT GitHub release is created with all of them, and a maintainer
 # publishes it by hand after checking it. A manual run builds and smoke-tests but never creates a

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Atomik Rack
+GenericName=Digital audio workstation
+Comment=A rack of devices you patch and play
+Keywords=audio;music;synth;sequencer;mixer;midi;daw;
+Icon=io.github.atomikfactory.AtomikRack
+Exec=atomik %f
+Terminal=false
+StartupNotify=true
+StartupWMClass=io.github.atomikfactory.AtomikRack
+Categories=AudioVideo;Audio;Midi;Music;
+MimeType=application/x-atomik-project;

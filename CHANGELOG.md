@@ -9,6 +9,16 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **AppImage and Flatpak for Linux.** The release and nightly builds now also produce
+  `atomik-rack-<version>-x86_64.AppImage` and `atomik-rack-<version>.flatpak` (a single-file bundle), each with a
+  checksum in `SHA256SUMS`, beside the `.tar.gz` and the `.deb`. All four hold the same programs. One desktop entry,
+  one AppStream file (with a releases list made from the version) and the icons are installed under the app id
+  `io.github.atomikfactory.AtomikRack` by the `.deb`, the AppImage and the Flatpak, and the program uses that id as
+  its window class so the desktop shows the right name and icon. The AppImage takes the sound, font and graphics
+  libraries from the host; the Flatpak runs on `org.freedesktop.Platform` with Wayland and X11, GPU, sound, MIDI
+  and read-only access to the home folder, with `~/.vst3` and `~/.clap` named (plugin folders under `/usr` are not
+  visible in it). In a Flatpak the update notice says to update with your software centre. Pull requests check the
+  scripts, the manifest, the desktop entry and the metainfo; the packages are built only by the release workflows.
 - **CPU use per device.** The engine now times every device all the time (about half a percent of a 64-frame callback
   for a hundred devices, never part of the sound), and the figures are averaged over about a second with a peak held for
   two seconds. View > Show Device CPU (the old CPU Meters switch, off at the start) shows a figure such as `3.2%` on the

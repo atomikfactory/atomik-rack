@@ -5,7 +5,8 @@
 //! worker, failures silent unless the user asked. The shell adds the words: the question and the
 //! news are the notice in the lower left corner ([`UpdateNotice`]); a check by hand that finds
 //! nothing, or fails, says so in the status line. Nothing is downloaded or installed: "What's new"
-//! only opens the release page in the browser.
+//! only opens the release page in the browser, and in a Flatpak the news says to update with the
+//! software centre.
 
 use super::*;
 use crate::update_notice::{Choice, Notice, NoticeOutcome, UpdateNotice};
@@ -75,7 +76,8 @@ impl<B: AudioBackend> Shell<B> {
     }
 
     fn show_notice(&mut self, notice: Notice) {
-        self.update_notice = Some(UpdateNotice::new(notice));
+        let store = crate::update_notice::store_managed();
+        self.update_notice = Some(UpdateNotice::new(notice).in_store(store));
         self.repaint = true;
     }
 
