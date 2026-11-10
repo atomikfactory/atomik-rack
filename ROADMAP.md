@@ -117,7 +117,12 @@ and a clip launcher (a Launcher view of looping note clips in slots by track and
 bar or other quantize boundary, each slot overriding its track's arrangement until it stops, with Back to Arrangement and
 Record Launches, which writes what was launched into the arrangement as one undo step),
 and the menu bar in every window (the detached rack and mixer windows carry the same menu bar as the main window, over
-the one menu model, and a command chosen there acts on the pane of that window).
+the one menu model, and a command chosen there acts on the pane of that window),
+and a first-run audio and MIDI setup (a panel before the start screen on the very first start, and Options > Audio and
+MIDI Setup... any time: the audio host, device and buffer with a test chord whose output meter moves and the measured
+latency, an optional input with a live meter, and the MIDI keyboards with a lamp and a tone for each key and a button
+for the controller wizard; Skip and Done write the settings file so it never opens by itself again, and the update
+question waits behind it).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms

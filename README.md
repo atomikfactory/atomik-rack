@@ -72,6 +72,13 @@ Builds are code-signed (Windows) and notarised (macOS) only when the project's s
 
 ## First steps
 
+The very first time Atomik Rack starts, a short setup opens before anything else and gets sound working: pick the
+audio device and the buffer size, press Test to hear a soft chord and watch the output meter move (the latency is
+shown in milliseconds), choose an audio input if you record, and tick your MIDI keyboard (a lamp lights when you play
+a key, and each key plays a soft tone). **Next**, **Back**, **Skip** and **Done** move through it, and it does not
+open by itself again. Options > Audio and MIDI Setup... opens it at any time; the choices are the ones of Audio
+Settings and are saved in the same file.
+
 The start screen opens when Atomik Rack starts without a song, and File > Start Screen shows it at any time. It
 offers a new song, the templates, your recent songs (pin one to keep it at the top) and a strip of cards: the
 example songs that ship with the program (each opens as a new unsaved song, so the shipped copy is never changed)
