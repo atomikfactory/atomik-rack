@@ -12,6 +12,7 @@ mod engine;
 mod fault;
 mod graph;
 mod interface;
+mod io_peaks;
 mod launch;
 mod lens;
 mod live;
@@ -48,6 +49,7 @@ pub use engine::{
 };
 pub use graph::{Cable, DeviceInstanceId, Endpoint, EngineConfig, Graph, GraphError};
 pub use interface::{INTERFACE_TYPE_ID, MAX_INTERFACE_CHANNELS, interface_descriptor};
+pub use io_peaks::IoPeaks;
 pub use launch::{
     LaunchAudioInput, LaunchCell, LaunchCommand, LaunchEvent, LaunchGrid, LaunchSlotInput,
     LaunchState, LaunchTrackInput, MAX_LAUNCH_TRACKS,

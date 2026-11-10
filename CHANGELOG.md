@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Audio and MIDI setup.** The first time Atomik Rack starts (no `settings.json` yet) a short panel opens before the
+  start screen and gets sound working in three steps. Sound output lists the audio hosts, the output devices and the
+  buffer sizes (the same lists as Audio Settings, with the hint "smaller = less delay, more CPU"), a Test button plays
+  a soft sine chord for one second at -18 dBFS through the engine, and the output meter beside it moves when the sound
+  reaches the device; the output latency is shown in milliseconds, as the stream reports it or as an estimate from
+  the buffer when the host does not say. If the device does not open, a plain message says why and points to another
+  one. Input is optional: an input device list, a live input meter and a Turn On Input button for a project with no
+  input channels. MIDI keyboard lists the MIDI inputs with a check box each, lights a "note received" lamp and plays a
+  soft tone for every key, and Set Up Controller... opens the controller wizard. Next, Back, Skip and Done move
+  through it; Skip and Done both write `settings.json`, so it never opens by itself again, and each choice is applied
+  at once through the same path as Audio Settings, which writes the same file. The question about checking for new
+  versions waits until the setup is closed. Options > Audio and MIDI Setup... (`options.audio_setup`) opens it again
+  at any time. The engine now publishes the loudest output and input sample of each batch (the preview voice and
+  the click included). Format unchanged (45), command count 533.
 - **Clip launcher.** View > Launcher (F10) puts a grid where the rack was, the arrangement below it: one column per
   note track, one row per scene, a launch triangle in each slot, a scene column with a launch button and the scene's
   name, a stop square under each track and STOP ALL. A slot holds a note clip with its own loop length, name, colour and

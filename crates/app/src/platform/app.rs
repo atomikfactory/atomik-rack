@@ -231,6 +231,11 @@ pub fn run(cli: Cli) -> Result<(), String> {
     // With the preference on, a start that names no project continues with the last song.
     // Otherwise the default song, when one is chosen, takes the place of the starter project,
     // and the start screen offers the new song, the templates and the recent songs.
+    // The very first start (no settings file yet) opens the audio and MIDI setup before the
+    // start screen; the update question waits behind it. A screenshot or stress run skips it.
+    if cli.screenshot.is_none() && !cli.stress && !cli.stress_song_loads() {
+        shell.first_run_setup();
+    }
     if cli.starts_empty() {
         shell.start_without_project();
     }

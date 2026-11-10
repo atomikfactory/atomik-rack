@@ -514,6 +514,12 @@ pub struct Shell<B: AudioBackend> {
     start_screen: Option<StartScreen>,
     /// The controller set-up wizard, while it is open.
     controller_wizard: Option<crate::controller_wizard_view::ControllerWizardView>,
+    /// The first-run audio and MIDI setup, while it shows (see `shell_audio_setup`).
+    audio_setup: Option<crate::audio_setup::AudioSetup>,
+    /// This start is the first one: no settings file existed when the shell was made.
+    first_run: bool,
+    /// The start screen waits for the audio setup to close.
+    start_screen_waiting: bool,
     /// The update check: its worker, the daily throttle and what is kept (`updates.json`).
     updater: Updater,
     /// The question or the news of the update check, while it shows.
@@ -781,6 +787,12 @@ impl<B: AudioBackend> Shell<B> {
         let keymap_stamp = keymap_path.as_deref().and_then(stamp_of);
         let export_prefs_path = Self::export_prefs_file(options.settings_path.as_deref());
         let options_library_path = options.library_path.clone();
+        // The first start: the settings file is written when the setup is done or skipped (or
+        // when Audio Settings applies), so a missing one means nothing was ever chosen here.
+        let first_run = options
+            .settings_path
+            .as_deref()
+            .is_some_and(|p| !p.exists());
         let library_override = options.library_root.clone();
         let mut shell = Self {
             core,
@@ -854,6 +866,9 @@ impl<B: AudioBackend> Shell<B> {
             wavetable: None,
             start_screen: None,
             controller_wizard: None,
+            audio_setup: None,
+            first_run,
+            start_screen_waiting: false,
             updater: Updater::new(updates_path),
             update_notice: None,
             update_release: None,
@@ -2289,7 +2304,12 @@ impl<B: AudioBackend> Shell<B> {
         }
         self.start_with_default_song();
         if self.workflow.show_start_screen {
-            self.open_start_screen();
+            if self.audio_setup.is_some() {
+                // The first-run setup comes first; the start screen shows when it closes.
+                self.start_screen_waiting = true;
+            } else {
+                self.open_start_screen();
+            }
         }
     }
 
@@ -5698,6 +5718,10 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
             return self.controller_wizard_event(event);
         }
+        if self.audio_setup.is_some() {
+            self.repaint = true;
+            return self.audio_setup_event(event);
+        }
         if self.start_screen.is_some() {
             self.repaint = true;
             return self.start_screen_event(event);
@@ -8683,6 +8707,10 @@ impl<B: AudioBackend> Shell<B> {
                 self.open_settings(None);
                 Vec::new()
             }
+            AppCommand::AudioSetup => {
+                self.open_audio_setup();
+                Vec::new()
+            }
             AppCommand::KeyboardShortcuts => {
                 self.open_settings(Some(crate::settings_dialog::Tab::Keyboard));
                 Vec::new()
@@ -9176,6 +9204,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_export();
         self.sync_film();
         self.poll_updates();
+        self.sync_audio_setup();
         self.sync_masking();
         self.sync_bass_read();
         self.sync_delivery();
@@ -9564,7 +9593,13 @@ impl<B: AudioBackend> Shell<B> {
         chosen
     }
 
-    fn apply_settings(&mut self, mut settings: AudioSettings) {
+    fn apply_settings(&mut self, settings: AudioSettings) {
+        self.apply_settings_saving(settings, true);
+    }
+
+    /// [`Self::apply_settings`], writing `settings.json` only when `save` is set (the audio setup
+    /// applies each choice at once and writes the file when it is done).
+    fn apply_settings_saving(&mut self, mut settings: AudioSettings, save: bool) {
         let saved_tune = self.core.sink().settings().master_tune_cents;
         settings.master_tune_cents =
             self.apply_tune_setting(settings.master_tune_cents, saved_tune);
@@ -9605,6 +9640,7 @@ impl<B: AudioBackend> Shell<B> {
         // Nothing but a rejected device choice changed: the file stays as it is.
         let unchanged = kept_old_devices && !to_save.differs_from(&before);
         if let Some(path) = &self.settings_path
+            && save
             && !unchanged
             && let Err(e) = settings::save(path, &to_save)
         {
@@ -10353,6 +10389,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(start) = &self.start_screen {
             start.paint(canvas, &theme, self.size());
         }
+        if let Some(setup) = &self.audio_setup {
+            setup.paint(canvas, &theme, self.size());
+        }
         if let Some(wizard) = &self.controller_wizard {
             wizard.paint(canvas, &theme, self.size());
         }
@@ -10476,6 +10515,9 @@ fn pointer_pos(event: &UiEvent) -> Option<Point> {
 
 #[path = "shell_film.rs"]
 mod film_impl;
+
+#[path = "shell_audio_setup.rs"]
+mod audio_setup_impl;
 
 #[path = "shell_update.rs"]
 mod update_impl;
@@ -10662,6 +10704,10 @@ mod organise_tests;
 #[cfg(test)]
 #[path = "shell_audio_edit_tests.rs"]
 mod audio_edit_tests;
+
+#[cfg(test)]
+#[path = "shell_audio_setup_tests.rs"]
+mod audio_setup_tests;
 
 #[cfg(test)]
 #[path = "shell_inspector_tests.rs"]

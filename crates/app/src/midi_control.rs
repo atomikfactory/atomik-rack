@@ -17,7 +17,7 @@ use atomik_core::{ChannelMessage, MessageKind};
 use atomik_midi_io::Mmc;
 use atomik_model::{MidiSource, SourceKind, is_param_controller};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// The most messages waiting for the UI thread; the newest are dropped beyond it.
@@ -42,6 +42,10 @@ pub struct ControlHub {
     dropped: AtomicU64,
     consume: Mutex<Arc<Vec<MidiSource>>>,
     learning: AtomicBool,
+    /// Note-ons seen since the start, and the key of the last one plus one (0: none yet). The
+    /// audio setup panel reads them to light its "note received" lamp.
+    notes_seen: AtomicU64,
+    last_key: AtomicU32,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -56,6 +60,10 @@ impl ControlHub {
 
     /// Queues a message for the UI thread (MIDI thread). A full inbox drops it and counts it.
     pub fn push(&self, port: &Arc<str>, message: ChannelMessage) {
+        if let MessageKind::NoteOn { key, .. } = message.kind {
+            self.last_key.store(u32::from(key) + 1, Ordering::Relaxed);
+            self.notes_seen.fetch_add(1, Ordering::Relaxed);
+        }
         let mut inbox = lock(&self.inbox);
         if inbox.len() >= INBOX_CAPACITY {
             self.dropped.fetch_add(1, Ordering::Relaxed);
@@ -65,6 +73,16 @@ impl ControlHub {
             port: Arc::clone(port),
             message,
         });
+    }
+
+    /// How many note-ons the ports have sent since the start, and the key of the last one
+    /// (`None` before the first). Counts every message, whether a mapping consumes it or not.
+    pub fn note_activity(&self) -> (u64, Option<u8>) {
+        let key = self.last_key.load(Ordering::Relaxed);
+        (
+            self.notes_seen.load(Ordering::Relaxed),
+            key.checked_sub(1).and_then(|k| u8::try_from(k).ok()),
+        )
     }
 
     /// Queues a machine control command (MIDI thread); a full queue drops it and counts it.
@@ -139,6 +157,18 @@ mod tests {
 
     fn port() -> Arc<str> {
         Arc::from("Pad")
+    }
+
+    #[test]
+    fn the_hub_counts_note_ons_and_remembers_the_last_key() {
+        let hub = ControlHub::new();
+        assert_eq!(hub.note_activity(), (0, None));
+        hub.push(&port(), ChannelMessage::cc(0, 1, 64));
+        hub.push(&port(), ChannelMessage::note_off(0, 60));
+        assert_eq!(hub.note_activity(), (0, None), "only a note-on counts");
+        hub.push(&port(), ChannelMessage::note_on(0, 60, 90));
+        hub.push(&port(), ChannelMessage::note_on(0, 0, 90));
+        assert_eq!(hub.note_activity(), (2, Some(0)), "key 0 is a key");
     }
 
     #[test]

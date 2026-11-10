@@ -1584,6 +1584,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Mixer,
     )
     .rep(),
+    cmd(
+        "options.audio_setup",
+        "Audio and MIDI Setup",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
     cmd("rack.add_column", "Add Column", G::Rack, C::Rack),
     cmd("rack.assign_send", "Use as Send Effect", G::Rack, C::Rack),
     cmd("rack.auto_route", "Auto-route", G::Rack, C::Rack),
@@ -3124,7 +3131,7 @@ mod tests {
             assert!(!d.label.trim().is_empty(), "{}", d.id);
             let prefix = d.id.split('.').next().unwrap();
             let expected: &[&str] = match d.group {
-                Group::Global => &["file", "audio", "help", "video"],
+                Group::Global => &["file", "audio", "help", "options", "video"],
                 Group::Transport => &["transport", "sync", "launcher"],
                 Group::View => &["view", "window"],
                 Group::Edit => &["edit"],
