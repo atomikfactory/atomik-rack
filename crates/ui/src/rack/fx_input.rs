@@ -417,6 +417,7 @@ impl RackView {
         };
         let kind = self.plot_kind(e.dev);
         let cut = fx::handle_is_cut(kind, e.band);
+        let mut grabbed = false;
         if e.axis.is_none() {
             let (dx, dy) = (rp.x - e.origin.x, rp.y - e.origin.y);
             if dx.hypot(dy) < 3.0 {
@@ -428,10 +429,21 @@ impl RackView {
             } else {
                 EqAxis::Gain
             });
+            grabbed = true;
         }
         let target = rp + e.grab;
         let keys = fx::handle_keys(kind, e.band);
         let key = self.devices[e.dev].key.clone();
+        // Moving the handle of a dynamic EQ band that is off is asking for that band: it comes
+        // on (every band of a new dynamic EQ is off, and a band that is off makes no sound).
+        if grabbed
+            && kind == FxKind::DynamicEq
+            && self
+                .eq_bands(e.dev)
+                .is_some_and(|b| b.get(e.band).is_some_and(|b| !b.on))
+        {
+            out.push(param_cmd(&key, &keys.on, 1.0, None));
+        }
         match e.axis {
             Some(EqAxis::Freq) => {
                 if let Some(p) = self.param_of_key(e.dev, &keys.freq) {
