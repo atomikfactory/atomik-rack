@@ -171,7 +171,10 @@ pub fn render_stems(
             crate::freeze::MAX_TAIL_SECONDS
         )));
     }
-    // The strips the request can take, with the sockets each is read at.
+    let flat = doc.expand(registry);
+    // The strips the request can take, with the sockets each is read at. A strip that is a
+    // container (a send effect, an insert) has no flat device: it is read where its own output
+    // is fed from inside.
     let taken: Vec<(usize, &StemSource, [atomik_model::SocketRef; 2])> = request
         .sources
         .iter()
@@ -181,7 +184,7 @@ pub fn render_stems(
                 StemStrip::Full => Some(s.tap.clone()),
                 StemStrip::Dry => s.dry.clone(),
             }?;
-            Some((i, s, tap))
+            Some((i, s, through_exit(&flat, tap)))
         })
         .collect();
     if taken.is_empty() {
@@ -197,7 +200,6 @@ pub fn render_stems(
     };
     let frames = usize::try_from(to + tail).map_err(|e| fail(e.to_string()))?;
     let (from_f, to_f) = (from as usize, to as usize);
-    let flat = doc.expand(registry);
     let probes: Vec<DeviceKey> = flat.devices.iter().map(|d| d.key.clone()).collect();
     let passes: Vec<&[(usize, &StemSource, [atomik_model::SocketRef; 2])]> =
         taken.chunks(TAPS_PER_PASS).collect();
@@ -287,6 +289,15 @@ pub fn render_stems(
         }
     }
     Ok(summary)
+}
+
+/// `socket` as a flat socket: the output of a container is read at the inner socket that feeds it
+/// ([`ExpandedRack::exits`]); any other socket stays.
+fn through_exit(
+    flat: &ExpandedRack,
+    tap: [atomik_model::SocketRef; 2],
+) -> [atomik_model::SocketRef; 2] {
+    tap.map(|t| flat.exits.get(&t).cloned().unwrap_or(t))
 }
 
 /// The delay in frames to give the stem read at each strip's tap device so it lands where the

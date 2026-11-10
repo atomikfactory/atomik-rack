@@ -1287,6 +1287,10 @@ fn tap_cables(
     let base = doc.output_channels;
     for (k, tap) in taps.iter().enumerate() {
         for (side, from) in tap.iter().enumerate() {
+            // A container is not an engine device: one that nothing feeds is read as silence.
+            if expanded.alias.contains_key(&from.device) {
+                continue;
+            }
             let out = usize::from(base) + 2 * k + side + 1;
             expanded.cables.push(atomik_model::Cable {
                 from: from.clone(),
