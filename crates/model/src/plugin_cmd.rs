@@ -377,5 +377,12 @@ pub(crate) fn sync_layout(
         .and_then(|d| d.plugin.as_mut())
         .ok_or_else(|| bad(format!("{device} is not a plugin device")))?;
     p.layout = layout;
+    // The ports the plugin no longer has take their cables with them (no undo step, like the
+    // layout itself): every device of the type is checked, the document must stay valid.
+    let (type_id, plugin) = (p.type_id(), p.plugin_ref());
+    let layout = p.layout.clone();
+    if let Ok(desc) = atomik_device_sdk::descriptor_for(&plugin, &layout) {
+        crate::plugin::drop_cables_off_layout(doc, &type_id, desc);
+    }
     Ok(())
 }

@@ -337,6 +337,25 @@ may break APIs and the patch and project formats.
   tool still draws.
 
 ### Fixed
+- **A plugin that answers a busy result no longer shows FAILED.** A VST3 plugin that returned something other than OK
+  from its audio call (many do while they load content, sign in or change their buses) failed its device for good with
+  "the plugin returned an error status", and the instrument made no sound. That block is now silent (dry for an
+  effect), counted and reported once in the plugin log, and the device keeps playing; only a crash, a panic or a lost
+  plugin process fails a device. A plugin whose buses moved without a restart request is given matching buses when it
+  is activated, and a bounce waits for a restart to finish so its pre-roll is the same everywhere.
+- **The notes input follows the rack selection.** Selecting an instrument in the rack (built-in or plugin) now arms its
+  track and sends the keyboard to it, as clicking its channel strip in the mixer does, instead of leaving the input on
+  the instrument that was armed before.
+- **Plugins that take long to restart, change their buses or replace a built-in device.** A plugin that was busy
+  while the host deactivated it for a restart (just after a sign-in in its own window, for example) was stopped after
+  2 seconds; deactivation is now waited for as long as an activation, and a restart polls it instead of holding the
+  window, so a busy plugin that is alive is no longer stopped (a plugin that never answers still is). A plugin that
+  gains or loses buses at run time (aux outputs, a sidechain) now updates the scan cache (`plugins.json`), the device
+  browser and the registry together, so adding it again, opening a project saved after the change and dragging its
+  row from a browser that predates it all work; the cables on ports that remain are kept, and only those on ports
+  that vanished are removed, with a message. Dropping a plugin on a built-in instrument or effect to replace it now
+  creates the plugin like a normal add instead of leaving a MISSING stand-in with audio off; undo brings the
+  built-in device back.
 - **Select All in the search boxes.** Ctrl+A (Cmd+A on a Mac) in the device browser's search, the parameter
   search and the plugin parameter search now selects the text you typed, instead of the devices in the rack. These
   boxes now have a caret you can move or click into place, and Ctrl+C, X and V copy, cut and paste their text.

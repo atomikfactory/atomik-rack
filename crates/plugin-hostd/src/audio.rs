@@ -9,6 +9,7 @@
 //! After setup the loop makes no allocation of its own: the port's buffers are fixed, and the
 //! hand-over messages are the only thing that move between threads.
 
+use crate::panic_report;
 use atomik_plugin_host::{AudioThreadGuard, FtzGuard, PluginProcessor, ProcessStatus};
 use atomik_plugin_ipc::{AudioOp, ChildPort, ProcessorInfo};
 use std::io;
@@ -33,6 +34,8 @@ enum Command {
 /// The main thread's handle on the audio thread.
 pub struct AudioThread {
     commands: Sender<Command>,
+    /// The log lines of a panic the thread caught, for the main thread to pass on.
+    panics: Receiver<Vec<String>>,
 }
 
 impl AudioThread {
@@ -42,10 +45,12 @@ impl AudioThread {
     /// When the operating system refuses a thread.
     pub fn spawn(port: ChildPort) -> io::Result<Self> {
         let (commands, rx) = mpsc::channel();
+        let (report, panics) = mpsc::channel();
+        panic_report::install();
         std::thread::Builder::new()
-            .name("host-audio".to_string())
-            .spawn(move || serve(port, &rx))?;
-        Ok(Self { commands })
+            .name(panic_report::AUDIO_THREAD_NAME.to_string())
+            .spawn(move || serve(port, &rx, &report))?;
+        Ok(Self { commands, panics })
     }
 
     /// Gives the audio thread the processor; returns once it has taken it over (and told the
@@ -54,6 +59,16 @@ impl AudioThread {
         let (ack, acked) = mpsc::channel();
         self.commands.send(Command::Install(processor, ack)).is_ok()
             && acked.recv_timeout(HANDOVER_TIMEOUT).is_ok()
+    }
+
+    /// The log lines of a panic the plugin raised on the audio thread since the last call
+    /// (the panic, then its backtrace); empty when there was none.
+    pub fn take_panic_lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        while let Ok(more) = self.panics.try_recv() {
+            lines.extend(more);
+        }
+        lines
     }
 
     /// Takes the processor back (stopped if the parent left it started). `None` when the audio
@@ -86,9 +101,11 @@ fn publish_info(port: &ChildPort, held: &Held) {
     });
 }
 
-fn serve(mut port: ChildPort, commands: &Receiver<Command>) {
+fn serve(mut port: ChildPort, commands: &Receiver<Command>, report: &Sender<Vec<String>>) {
     priority();
     let mut held: Option<Held> = None;
+    // What the thread already told stderr (which the parent shows with a lost process).
+    let (mut said_none, mut said_poisoned) = (false, false);
     loop {
         loop {
             match commands.try_recv() {
@@ -106,9 +123,12 @@ fn serve(mut port: ChildPort, commands: &Receiver<Command>) {
                     let taken = held.take().map(|mut h| {
                         if h.started && !h.poisoned {
                             let _guard = AudioThreadGuard::enter();
-                            let _ = catch_unwind(AssertUnwindSafe(|| {
+                            let run = catch_unwind(AssertUnwindSafe(|| {
                                 h.processor.stop_processing();
                             }));
+                            if run.is_err() {
+                                let _ = report.send(panic_report::take(AudioOp::Stop));
+                            }
                         }
                         h.processor
                     });
@@ -122,12 +142,30 @@ fn serve(mut port: ChildPort, commands: &Receiver<Command>) {
             let op = request.op();
             match held.as_mut() {
                 Some(h) if !h.poisoned => {
-                    answer(request, op, h);
+                    answer(request, op, h, report);
                     if op == AudioOp::Process {
                         publish_info(&port, h);
                     }
                 }
-                _ => request.complete(|_| (ProcessStatus::Error, false)),
+                Some(_) => {
+                    if !std::mem::replace(&mut said_poisoned, true) {
+                        eprintln!(
+                            "atomik-plugin-host: the plugin panicked; every request is now answered with an error"
+                        );
+                    }
+                    request.complete(|_| (ProcessStatus::Error, false));
+                }
+                None => {
+                    // No processor right now (a restart is between its deactivation and its
+                    // activation, or an activation failed): the batch is refused, the device
+                    // keeps playing silence and does not fail.
+                    if !std::mem::replace(&mut said_none, true) {
+                        eprintln!(
+                            "atomik-plugin-host: a request came while the child holds no processor; refused"
+                        );
+                    }
+                    request.complete(|_| (ProcessStatus::Refused, false));
+                }
             }
         }
         if let Some(h) = held.as_ref()
@@ -139,7 +177,12 @@ fn serve(mut port: ChildPort, commands: &Receiver<Command>) {
 }
 
 /// Runs one request on the processor.
-fn answer(request: atomik_plugin_ipc::Request<'_>, op: AudioOp, held: &mut Held) {
+fn answer(
+    request: atomik_plugin_ipc::Request<'_>,
+    op: AudioOp,
+    held: &mut Held,
+    report: &Sender<Vec<String>>,
+) {
     let _guard = AudioThreadGuard::enter();
     let Held {
         processor,
@@ -170,6 +213,8 @@ fn answer(request: atomik_plugin_ipc::Request<'_>, op: AudioOp, held: &mut Held)
         }));
         run.unwrap_or_else(|_| {
             *poisoned = true;
+            // The panic path may allocate: the plugin is finished anyway.
+            let _ = report.send(panic_report::take(op));
             (ProcessStatus::Error, false)
         })
     });
@@ -210,8 +255,7 @@ mod tests {
 
     static NEXT: AtomicU64 = AtomicU64::new(800_000);
 
-    #[test]
-    fn the_plugin_runs_with_denormals_flushed_and_on_a_marked_audio_thread() {
+    fn rig() -> (ParentPort, AudioThread) {
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
         let pid = std::process::id();
         let path = default_block_dir().join(block_file_name(pid, n));
@@ -220,8 +264,14 @@ mod tests {
         let parent_bell = Doorbell::create(&name, &parent_block).unwrap();
         let child_block = SharedBlock::open(&path).unwrap();
         let child_bell = Doorbell::open(&name, &child_block).unwrap();
-        let mut parent = ParentPort::new(parent_block, parent_bell);
+        let parent = ParentPort::new(parent_block, parent_bell);
         let audio = AudioThread::spawn(ChildPort::new(child_block, child_bell)).unwrap();
+        (parent, audio)
+    }
+
+    #[test]
+    fn the_plugin_runs_with_denormals_flushed_and_on_a_marked_audio_thread() {
+        let (mut parent, audio) = rig();
 
         let (flushed, on_audio) = (
             Arc::new(AtomicBool::new(false)),
@@ -260,6 +310,78 @@ mod tests {
             flushed.load(Ordering::SeqCst),
             FLUSH_SUPPORTED,
             "denormals are flushed as in process"
+        );
+    }
+
+    /// A processor whose `process` panics.
+    struct Panicker;
+
+    impl PluginProcessor for Panicker {
+        fn start_processing(&mut self) -> bool {
+            true
+        }
+        fn stop_processing(&mut self) {}
+        fn reset(&mut self) {}
+        fn process(&mut self, _io: &mut PluginIo<'_>) -> ProcessStatus {
+            panic!("the plugin fell over");
+        }
+    }
+
+    #[test]
+    fn a_panic_of_the_plugin_reaches_the_main_thread_with_its_message_place_and_operation() {
+        let (mut parent, audio) = rig();
+        assert!(audio.install(Box::new(Panicker)));
+        let mut out = [[0.0; BATCH]; 2];
+        let mut events = EventList::with_capacity(8);
+        let mut io = PluginIo {
+            frames: BATCH,
+            main_in: &[],
+            main_in_silent: true,
+            sidechain: &[],
+            sidechain_silent: true,
+            main_out: &mut out,
+            aux_out: &mut [],
+            events_in: &[],
+            events_out: &mut events,
+            transport: PluginTransport::default(),
+            dropped: 0,
+        };
+        assert!(audio.take_panic_lines().is_empty(), "nothing yet");
+        for _ in 0..2 {
+            let t = parent.submit(AudioOp::Process, &io);
+            assert_eq!(
+                parent.wait_done(t, Deadline::after(Duration::from_secs(10))),
+                Poll::Done
+            );
+            assert_eq!(
+                parent.take_response(t, &mut io).status,
+                ProcessStatus::Error
+            );
+        }
+        let lines = audio.take_panic_lines();
+        let first = &lines[0];
+        assert!(
+            first.starts_with(
+                "panicked in the plugin host during Process: the plugin fell over at "
+            ),
+            "{first}"
+        );
+        assert!(
+            first.contains("audio.rs:"),
+            "the location is in the line: {first}"
+        );
+        // Only the first panic is told: the second request was answered without the plugin.
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|l| l.starts_with("panicked in"))
+                .count(),
+            1,
+            "{lines:?}"
+        );
+        assert!(
+            lines.get(1).is_none_or(|l| l.contains("atomik_")),
+            "the backtrace line, when there is one, names our frames: {lines:?}"
         );
     }
 }

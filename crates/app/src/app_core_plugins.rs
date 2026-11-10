@@ -96,9 +96,9 @@ use atomik_model::{
 use atomik_plugin_host::ScanReport;
 use atomik_plugin_host::{
     CrashJournal, CreateTicket, EditorKind, HUNG, InUsePlugin, InstanceId, InstantiateRequest,
-    LOST, ManagerEvent, NativeParent, ParamPhase, PluginCache, PluginCatalog, PluginHandle,
-    PluginSettings, PluginStatus, PresetInfo, RecoveryDir, RescanMode, ScanJob, ScanRunner,
-    blacklist_in_use,
+    LOST, LogLevel, ManagerEvent, NativeParent, ParamPhase, PluginCache, PluginCatalog,
+    PluginHandle, PluginSettings, PluginStatus, PresetInfo, RecoveryDir, RescanMode, ScanJob,
+    ScanRunner, blacklist_in_use,
 };
 use atomik_render::plugins::{PluginHost, PluginIsolation};
 use atomik_ui::plugin_data::{
@@ -130,6 +130,18 @@ const STATE_MERGE_BASE: u64 = PLUGIN_GESTURE_MERGE_BASE + (1 << 38);
 const STATE_STEP_GAP_SECS: f64 = 5.0;
 /// How many times in a row a plugin that stopped answering audio is reloaded without the user.
 const MAX_AUTO_RELOADS: u8 = 2;
+/// An instance is created again for a port mismatch at most once per this long, per plugin and
+/// port shape (a guard against a recreate loop).
+const RECREATE_WINDOW_SECS: u64 = 30;
+
+/// True when both descriptors have the same sockets (the port shape; params are not compared).
+fn same_shape(a: &DeviceDescriptor, b: &DeviceDescriptor) -> bool {
+    std::ptr::eq(a, b)
+        || a.sockets
+            .iter()
+            .map(|s| s.key)
+            .eq(b.sockets.iter().map(|s| s.key))
+}
 
 /// The files the plugin machinery keeps in the config directory.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -258,6 +270,57 @@ pub(crate) fn crash_log_line(device: &str, reason: &str) -> String {
     format!("plugin [{device}] process ended: {reason}")
 }
 
+/// The app log line of a plugin device that went FAILED, with the full reason.
+pub(crate) fn failed_log_line(device: &str, reason: &str) -> String {
+    format!("plugin [{device}] failed: {reason}")
+}
+
+/// The app log line of an editor that was asked for: the device key, the instance id and the
+/// plugin's process (`again`: the app already knew the editor as open or opening).
+pub(crate) fn editor_requested_line(
+    device: &str,
+    instance: InstanceId,
+    process: Option<usize>,
+    again: bool,
+) -> String {
+    let process = process.map_or_else(|| "none".to_string(), |p| p.to_string());
+    let again = if again {
+        " (already open or opening)"
+    } else {
+        ""
+    };
+    format!(
+        "plugin [{device}] editor requested: instance {}, process {process}{again}",
+        instance.0
+    )
+}
+
+/// The app log line of an editor that is open.
+pub(crate) fn editor_opened_line(device: &str, instance: InstanceId) -> String {
+    format!("plugin [{device}] editor opened: instance {}", instance.0)
+}
+
+/// The app log line of an editor that did not open.
+pub(crate) fn editor_failed_line(device: &str, instance: InstanceId, reason: &str) -> String {
+    format!(
+        "plugin [{device}] editor did not open: instance {}: {reason}",
+        instance.0
+    )
+}
+
+/// The app log line of an editor that closed.
+pub(crate) fn editor_closed_line(device: &str, instance: Option<InstanceId>) -> String {
+    let instance = instance.map_or_else(|| "none".to_string(), |i| i.0.to_string());
+    format!("plugin [{device}] editor closed: instance {instance}")
+}
+
+/// The app log line of something a plugin (or its host process) said at warning level or worse.
+/// A panic of the plugin in its host process reads `plugin [<key>] panicked in the plugin host
+/// during <op>: <message> at <file>:<line>:<col>`, followed by the child's last stderr lines.
+pub(crate) fn plugin_said_line(device: &str, text: &str) -> String {
+    format!("plugin [{device}] {text}")
+}
+
 /// The recovery snapshot state.
 #[derive(Debug)]
 struct Recovery {
@@ -323,6 +386,9 @@ pub(super) struct PluginState {
     no_capture: BTreeSet<DeviceKey>,
     /// The descriptor each live device was inserted with.
     live_desc: BTreeMap<DeviceKey, &'static DeviceDescriptor>,
+    /// When each instance was last created again for a port mismatch, by device, plugin and port
+    /// shape.
+    recreated: BTreeMap<(DeviceKey, String, String), u64>,
     /// Devices whose instance was created while no engine ran: it lives parked (editor and
     /// params work) and is attached to the engine as soon as one exists.
     offline: BTreeSet<DeviceKey>,
@@ -331,6 +397,8 @@ pub(super) struct PluginState {
     paint_first: bool,
     shown: BTreeMap<DeviceKey, PluginDeviceStatus>,
     catalog_dirty: bool,
+    /// The scan cache learned a layout from a live plugin: `plugins.json` is saved at the next frame.
+    cache_dirty: bool,
     merger: PluginGestureMerger,
     open_gestures: BTreeSet<(DeviceKey, u32)>,
     from_plugin: bool,
@@ -402,10 +470,12 @@ impl PluginState {
             auto_reloads: BTreeMap::new(),
             no_capture: BTreeSet::new(),
             live_desc: BTreeMap::new(),
+            recreated: BTreeMap::new(),
             offline: BTreeSet::new(),
             paint_first: false,
             shown: BTreeMap::new(),
             catalog_dirty: true,
+            cache_dirty: false,
             merger: PluginGestureMerger::new(),
             open_gestures: BTreeSet::new(),
             from_plugin: false,
@@ -681,6 +751,17 @@ impl<S: EngineSink> AppCore<S> {
     /// plugin is installed now (a rescan found it, or plugins were just enabled). A live device
     /// whose plugin went away (disabled, file gone) makes the engine rebuild so it shows MISSING.
     pub fn refresh_plugin_catalog(&mut self) {
+        if self.register_catalog() {
+            self.rebuild_engine();
+        }
+    }
+
+    /// The work of [`Self::refresh_plugin_catalog`] without the engine rebuild: true when a live
+    /// device needs one (its plugin went away or its descriptor changed).
+    fn register_catalog(&mut self) -> bool {
+        // A project saved after a plugin grew new ports teaches the scan about them first, so
+        // the catalog and the registry agree with the devices the project holds.
+        self.adopt_document_ports();
         // The stand-ins of the last round go too: an installed plugin must not collide with its
         // own stand-in type (the ones still needed are registered again below).
         let types: Vec<String> = self
@@ -717,16 +798,14 @@ impl<S: EngineSink> AppCore<S> {
                 rebuild = true;
             } else if live {
                 // Same plugin, maybe a new descriptor (the plugin changed since the last scan).
-                let now = self
-                    .registry
-                    .get(&plugin.type_id())
-                    .map(|f| f.descriptor as *const DeviceDescriptor);
-                let then = self
-                    .plugins
-                    .live_desc
-                    .get(&key)
-                    .map(|d| *d as *const DeviceDescriptor);
-                if now != then {
+                let now = self.registry.get(&plugin.type_id()).map(|f| f.descriptor);
+                let then = self.plugins.live_desc.get(&key).copied();
+                let alike = match (now, then) {
+                    (Some(a), Some(b)) => same_shape(a, b),
+                    (None, None) => true,
+                    _ => false,
+                };
+                if !alike {
                     rebuild = true;
                 }
             } else if installed && !self.plugins.pending.contains(&key) {
@@ -735,9 +814,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.plugins.batch_total += 1;
             }
         }
-        if rebuild {
-            self.rebuild_engine();
-        }
+        rebuild
     }
 
     /// True when `plugin` can be used now: plugins are on and the catalog lists it OK.
@@ -762,11 +839,24 @@ impl<S: EngineSink> AppCore<S> {
         if let Some(&id) = self.plugins.instances.get(key) {
             let sample_rate = f64::from(self.document.doc().sample_rate);
             // The parked instance must still be the plugin the device names (a relink changed it).
-            let same = self
+            // ... and must still have the layout the registry holds: a plugin that changed its
+            // buses in another instance is created again (its state is in the document) instead
+            // of being given a device that no longer matches the registered type.
+            let current = self.registry.get(&type_id).map(|f| f.descriptor);
+            let fits = self
                 .plugins
-                .loaded
-                .get(&id)
-                .is_some_and(|i| i.plugin == plugin);
+                .host
+                .manager_ref()
+                .layout(id)
+                .and_then(|l| atomik_device_sdk::descriptor_for(&plugin, l).ok())
+                .is_some_and(|d| current.is_some_and(|c| same_shape(c, d)));
+            let fits = fits || self.keep_despite_mismatch(&plugin, key, id, current);
+            let same = fits
+                && self
+                    .plugins
+                    .loaded
+                    .get(&id)
+                    .is_some_and(|i| i.plugin == plugin);
             if usable && same && !self.sink.has_engine() {
                 // No engine to take a device: the instance stays parked behind a stand-in.
                 self.plugins.offline.insert(key.clone());
@@ -803,6 +893,43 @@ impl<S: EngineSink> AppCore<S> {
             self.plugins.batch_total += 1;
         }
         Some((standin, descriptor))
+    }
+
+    /// Loop guard: the instance `id` of `key` has other ports than the registry holds, so it would
+    /// be created again. The first time per plugin, device and port shape that is allowed (false);
+    /// a second one within [`RECREATE_WINDOW_SECS`] is refused with a warning (true: keep it).
+    fn keep_despite_mismatch(
+        &mut self,
+        plugin: &PluginRef,
+        key: &DeviceKey,
+        id: InstanceId,
+        current: Option<&'static DeviceDescriptor>,
+    ) -> bool {
+        let Some(current) = current else {
+            return false;
+        };
+        if self.plugins.host.manager_ref().layout(id).is_none() {
+            return false;
+        }
+        let shape = current
+            .sockets
+            .iter()
+            .map(|s| s.key)
+            .collect::<Vec<_>>()
+            .join(",");
+        let entry = (key.clone(), plugin.type_id(), shape);
+        let now = unix_seconds();
+        if let Some(at) = self.plugins.recreated.get(&entry)
+            && now.saturating_sub(*at) < RECREATE_WINDOW_SECS
+        {
+            log::warn!(
+                "[{key}] {} was already created again for the ports it has now: kept as it is",
+                entry.1
+            );
+            return true;
+        }
+        self.plugins.recreated.insert(entry, now);
+        false
     }
 
     /// Makes `descriptor` the registry's descriptor of `type_id` when the live plugin's layout
@@ -940,6 +1067,7 @@ impl<S: EngineSink> AppCore<S> {
         self.instantiate_one();
         self.adopt_offline();
         self.poll_scan();
+        self.save_learned_cache();
         self.answer_param_texts();
         self.feed_plugin_views();
     }
@@ -1082,6 +1210,7 @@ impl<S: EngineSink> AppCore<S> {
             ManagerEvent::RestartFailed { instance, reason } => {
                 self.plugins.bad.insert(instance);
                 if let Some(key) = self.plugins.keys.get(&instance).cloned() {
+                    log::warn!("{}", failed_log_line(&key.0, &reason));
                     self.plugins.failed.insert(key, reason);
                 }
             }
@@ -1093,6 +1222,7 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 self.plugins.bad.insert(instance);
                 if let Some(key) = self.plugins.keys.get(&instance).cloned() {
+                    log::warn!("{}", failed_log_line(&key.0, &reason));
                     self.plugins.log(format!("[{key}] failed: {reason}"));
                     self.plugins.failed.insert(key, reason);
                 }
@@ -1143,13 +1273,26 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             ManagerEvent::EditorOpened(instance) => {
-                if let Some(key) = self.plugins.keys.get(&instance).cloned()
-                    && self.plugins.windows.get(&key) == Some(&EditorWindow::ExternalOpening)
-                {
-                    self.plugins
-                        .windows
-                        .insert(key.clone(), EditorWindow::External);
-                    self.plugins.log(format!("[{key}] editor opened"));
+                if let Some(key) = self.plugins.keys.get(&instance).cloned() {
+                    match self.plugins.windows.get(&key) {
+                        Some(EditorWindow::ExternalOpening) => {
+                            self.plugins
+                                .windows
+                                .insert(key.clone(), EditorWindow::External);
+                            self.plugins.log(format!("[{key}] editor opened"));
+                            log::info!("{}", editor_opened_line(&key.0, instance));
+                        }
+                        None => {
+                            // The editor was closed while the plugin still opened it: the
+                            // editor that just appeared is closed again, not left open unseen.
+                            log::info!(
+                                "plugin [{key}] editor opened after it was closed: instance {}, closing it",
+                                instance.0
+                            );
+                            let _ = self.plugins.host.manager().close_gui(instance);
+                        }
+                        Some(_) => {}
+                    }
                 }
             }
             ManagerEvent::EditorFailed { instance, reason } => {
@@ -1159,6 +1302,7 @@ impl<S: EngineSink> AppCore<S> {
                     self.plugins.windows.remove(&key);
                     self.plugins
                         .log(format!("[{key}] editor did not open: {reason}"));
+                    log::info!("{}", editor_failed_line(&key.0, instance, &reason));
                     self.reject(format!("cannot open the plugin editor: {reason}"));
                 }
             }
@@ -1196,6 +1340,9 @@ impl<S: EngineSink> AppCore<S> {
                     .keys
                     .get(&instance)
                     .map_or_else(|| "plugin".to_string(), |k| k.0.clone());
+                if matches!(level, LogLevel::Warning | LogLevel::Error) {
+                    log::warn!("{}", plugin_said_line(&name, &text));
+                }
                 self.plugins.log(format!("[{name}] {level:?}: {text}"));
             }
             ManagerEvent::Destroyed(id) => {
@@ -1380,7 +1527,23 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.presets.remove(key);
         self.plugins.preset_current.remove(key);
         self.plugins.keys.insert(id, key.clone());
+        // The live plugin has another layout than the scan the registry came from (it changed
+        // its buses since, or after a sign-in): the scan cache and the catalog learn it below.
+        let scan_is_stale = self
+            .registry
+            .get(&type_id)
+            .is_none_or(|f| !same_shape(f.descriptor, descriptor))
+            || self
+                .plugins
+                .host
+                .catalog()
+                .entry(plugin)
+                .is_some_and(|e| !e.layout.same_ports(&layout));
+        if scan_is_stale {
+            self.report_cables_off(plugin, &layout);
+        }
         self.adopt_descriptor(&type_id, descriptor);
+        let live_layout = layout.clone();
         // The full param table and the real vendor and version; not an undo step.
         if let Err(e) = self.sync_silent(Command::Plugin(PluginCommand::SyncLayout {
             device: key.clone(),
@@ -1418,6 +1581,9 @@ impl<S: EngineSink> AppCore<S> {
             self.plugins.offline.insert(key.clone());
         }
         self.plugins.log(format!("[{key}] loaded"));
+        if scan_is_stale && self.learn_layout(plugin, &live_layout) {
+            self.rebuild_engine();
+        }
     }
 
     /// Attaches the instances created while no engine ran, now that one exists.
@@ -1890,14 +2056,135 @@ impl<S: EngineSink> AppCore<S> {
         let Some(plugin) = self.plugins.loaded.get(&instance).map(|i| i.plugin.clone()) else {
             return;
         };
+        // The document already holds exactly this layout: nothing changed for the engine.
+        if self
+            .doc()
+            .resolve(&key)
+            .and_then(|d| d.plugin.as_deref())
+            .is_some_and(|p| p.layout == layout)
+        {
+            return;
+        }
+        self.report_cables_off(&plugin, &layout);
         let _ = self.sync_silent(Command::Plugin(PluginCommand::SyncLayout {
             device: key,
             layout: layout.clone(),
         }));
+        // The scan cache, the catalog and the registry all learn the new layout: a plugin added
+        // later, a project opened later and the browser's rows agree with the live one.
+        self.learn_layout(&plugin, &layout);
         if let Ok(descriptor) = atomik_device_sdk::descriptor_for(&plugin, &layout) {
             self.adopt_descriptor(&plugin.type_id(), descriptor);
         }
         self.rebuild_engine();
+    }
+
+    /// The live plugin `plugin` reported `layout`, which is not what the scan cache holds: the
+    /// cache (saved to `plugins.json` at the next frame), the catalog and the registry take it.
+    /// True when a live device needs an engine rebuild.
+    fn learn_layout(
+        &mut self,
+        plugin: &PluginRef,
+        layout: &atomik_device_sdk::PluginLayout,
+    ) -> bool {
+        if self.plugins.cache.update_layout(plugin, layout) {
+            self.plugins.cache_dirty = true;
+        }
+        self.register_catalog()
+    }
+
+    /// Tells the user which cables go because the plugin no longer has the ports they use.
+    fn report_cables_off(&mut self, plugin: &PluginRef, layout: &atomik_device_sdk::PluginLayout) {
+        let Ok(desc) = atomik_device_sdk::descriptor_for(plugin, layout) else {
+            return;
+        };
+        let off = atomik_model::cables_off_layout(self.doc(), &plugin.type_id(), desc);
+        if off.is_empty() {
+            return;
+        }
+        let ports: BTreeSet<String> = off
+            .iter()
+            .flat_map(|(_, c)| [c.from.socket.clone(), c.to.socket.clone()])
+            .filter(|s| desc.socket_by_key(s).is_none())
+            .collect();
+        let name = layout.name.clone();
+        let ports = ports.into_iter().collect::<Vec<_>>().join(", ");
+        let message = format!(
+            "{name} no longer has the ports {ports}: {} cable(s) on them were removed",
+            off.len()
+        );
+        self.plugins.log(message.clone());
+        self.report(message);
+    }
+
+    /// The saved project's plugin layouts may have ports the scan cache lacks (the plugin changed
+    /// its buses after the scan, and the project was saved with cables on them): the cache gets
+    /// the union of the ports, so the project loads and the plugin can be added again. The live
+    /// plugin has the last word when it is created.
+    fn adopt_document_ports(&mut self) {
+        let saved: Vec<(PluginRef, atomik_device_sdk::PluginLayout)> = self
+            .doc()
+            .plugin_devices()
+            .into_iter()
+            .filter_map(|(_, d)| {
+                d.plugin
+                    .as_ref()
+                    .map(|p| (p.plugin_ref(), p.layout.clone()))
+            })
+            .collect();
+        for (plugin, saved) in saved {
+            let Some(scanned) = self.plugins.cache.layout_of(&plugin) else {
+                continue;
+            };
+            let (Ok(have), Ok(want)) = (
+                atomik_device_sdk::descriptor_for(&plugin, scanned),
+                atomik_device_sdk::descriptor_for(&plugin, &saved),
+            ) else {
+                continue;
+            };
+            if want
+                .sockets
+                .iter()
+                .all(|s| have.socket_by_key(s.key).is_some())
+            {
+                continue;
+            }
+            let mut merged = scanned.clone();
+            merged.main_in = merged.main_in.or(saved.main_in);
+            merged.main_out = merged.main_out.or(saved.main_out);
+            merged.sidechain |= saved.sidechain;
+            merged.notes_in |= saved.notes_in;
+            merged.notes_out |= saved.notes_out;
+            merged.aux_out = merged.aux_out.max(saved.aux_out);
+            if self.plugins.cache.update_layout(&plugin, &merged) {
+                self.plugins.cache_dirty = true;
+            }
+        }
+    }
+
+    /// Before a command is planned: every plugin it names gets the layout the catalog holds now
+    /// (the browser row the user dragged may predate a layout the plugin reported since), and the
+    /// registry is brought in line with the catalog, so the creation cannot fail on a stale one.
+    pub(super) fn refresh_plugin_command(&mut self, command: &mut Command) {
+        let mut stale = false;
+        let catalog = self.plugins.host.catalog();
+        let registry = &self.registry;
+        atomik_model::map_plugin_layouts(command, &mut |plugin, layout| {
+            let Some(entry) = catalog.entry(plugin) else {
+                return;
+            };
+            if &entry.layout != layout {
+                *layout = entry.layout.clone();
+            }
+            let want = atomik_device_sdk::descriptor_for(plugin, &entry.layout).ok();
+            let have = registry.get(&plugin.type_id()).map(|f| f.descriptor);
+            if let (Some(w), Some(h)) = (want, have) {
+                stale |= !same_shape(w, h);
+            }
+        });
+        if stale {
+            self.refresh_plugin_catalog();
+        }
     }
 
     // ------------------------------------------------------------------ actions
@@ -2439,6 +2726,18 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.scan_note.as_deref()
     }
 
+    /// Writes `plugins.json` when a live plugin taught the cache a layout.
+    fn save_learned_cache(&mut self) {
+        if !std::mem::take(&mut self.plugins.cache_dirty) {
+            return;
+        }
+        if let Some(path) = &self.plugins.paths.cache
+            && let Err(e) = self.plugins.cache.save(path)
+        {
+            self.reject(format!("{}: {e}", path.display()));
+        }
+    }
+
     fn poll_scan(&mut self) {
         if !self.plugins.job.as_ref().is_some_and(ScanJob::is_finished) {
             return;
@@ -2727,6 +3026,9 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         let owner = self.plugins.editor_owner;
+        let process = self.plugins.host.manager_ref().native_handle(id);
+        let again = self.plugins.windows.contains_key(device);
+        log::info!("{}", editor_requested_line(&device.0, id, process, again));
         match self
             .plugins
             .host
@@ -2737,6 +3039,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.plugins
                     .windows
                     .insert(device.clone(), EditorWindow::External);
+                log::info!("{}", editor_opened_line(&device.0, id));
             }
             Ok(false) => {
                 self.plugins
@@ -2744,7 +3047,10 @@ impl<S: EngineSink> AppCore<S> {
                     .insert(device.clone(), EditorWindow::ExternalOpening);
                 self.reject(EDITOR_WAITING.to_string());
             }
-            Err(e) => self.reject(format!("cannot open the plugin editor: {e}")),
+            Err(e) => {
+                log::info!("{}", editor_failed_line(&device.0, id, &e.to_string()));
+                self.reject(format!("cannot open the plugin editor: {e}"));
+            }
         }
     }
 
@@ -2923,6 +3229,15 @@ impl<S: EngineSink> AppCore<S> {
                 window,
                 EditorWindow::External | EditorWindow::ExternalOpening
             );
+        if matches!(
+            window,
+            EditorWindow::External | EditorWindow::ExternalOpening
+        ) {
+            log::info!(
+                "{}",
+                editor_closed_line(&device.0, self.plugins.instances.get(device).copied())
+            );
+        }
         if let Some(id) = self.plugins.instances.get(device).copied() {
             match self.plugins.host.manager().close_gui(id) {
                 Ok(Some(blob)) if !self.plugins.no_capture.contains(device) => {
@@ -2943,7 +3258,7 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    fn close_plugin_window(&mut self, device: &DeviceKey) {
+    pub(super) fn close_plugin_window(&mut self, device: &DeviceKey) {
         self.close_plugin_gui_inner(device, true);
     }
 

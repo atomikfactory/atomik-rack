@@ -84,6 +84,10 @@ pub fn reported_size(physical: (u32, u32), scale: f64, mac: bool) -> (u32, u32) 
 pub struct Editor {
     open: bool,
     size: (u32, u32),
+    /// The size the window was last asked to take, until the window reported it (or the user
+    /// chose another): a window that cannot take it (clamped by the system) would otherwise
+    /// answer with another size, which the plugin corrects again, for ever.
+    asked: Option<(u32, u32)>,
 }
 
 impl Editor {
@@ -118,6 +122,7 @@ impl Editor {
                 windows.resize(w, h);
                 self.open = true;
                 self.size = (w, h);
+                self.asked = None;
                 Ok((w, h))
             }
             Err(e) => {
@@ -168,7 +173,10 @@ impl Editor {
         match instance.resize_gui(w, h) {
             Ok((aw, ah)) => {
                 self.size = (aw, ah);
-                if (aw, ah) != (w, h) {
+                if (aw, ah) == (w, h) {
+                    self.asked = None;
+                } else if self.asked != Some((aw, ah)) {
+                    self.asked = Some((aw, ah));
                     windows.resize(aw, ah);
                 }
             }
@@ -179,6 +187,7 @@ impl Editor {
     /// The plugin asked for another size: the window follows.
     pub fn plugin_resized(&mut self, windows: &mut dyn WindowSystem, w: u32, h: u32) {
         if self.open {
+            self.asked = Some((w, h));
             self.size = (w, h);
             windows.resize(w, h);
         }
@@ -508,6 +517,36 @@ mod tests {
                 "resize 480x360".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn a_window_that_cannot_take_the_size_the_plugin_wants_is_not_asked_again_and_again() {
+        let l = log();
+        let (mut inst, mut ws, mut ed) = (
+            FakeInstance::new(&l),
+            FakeWindows::new(&l),
+            Editor::default(),
+        );
+        ed.open(&mut inst, &mut ws, "Fake", None, 1.0).unwrap();
+        l.borrow_mut().clear();
+        // The plugin wants 480x360; the system keeps the window at 500x400 and says so after
+        // every request.
+        inst.resize_answer = Some((480, 360));
+        for _ in 0..5 {
+            ed.user_resized(&mut inst, &mut ws, 500, 400);
+        }
+        let asked = lines(&l)
+            .iter()
+            .filter(|line| line.starts_with("resize 480x360"))
+            .count();
+        assert_eq!(asked, 1, "{:?}", lines(&l));
+        // Once the window took a size, a later user resize is answered as usual.
+        inst.resize_answer = None;
+        ed.user_resized(&mut inst, &mut ws, 480, 360);
+        inst.resize_answer = Some((480, 360));
+        l.borrow_mut().clear();
+        ed.user_resized(&mut inst, &mut ws, 700, 500);
+        assert!(lines(&l).contains(&"resize 480x360".to_string()));
     }
 
     #[test]

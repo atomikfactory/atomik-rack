@@ -49,6 +49,10 @@ pub const MAX_FRAME_BYTES: usize = 64 << 20;
 pub const MAX_REPLY_JSON_BYTES: usize = 1 << 20;
 /// Longest log line the parent accepts from the child, in bytes.
 pub const MAX_LOG_BYTES: usize = 4096;
+/// How the text of a log line from the child begins when the plugin panicked in the child: the
+/// line goes on with the operation, the message and the location. The parent adds the tail of
+/// the child's stderr to such a line.
+pub const PANIC_LOG_PREFIX: &str = "panicked in the plugin host during ";
 /// Largest editor width or height the parent accepts from the child, in pixels.
 pub const MAX_GUI_DIMENSION: u32 = 16_384;
 /// Size of the shared block, in bytes.

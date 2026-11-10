@@ -93,6 +93,9 @@ const IDLE_PEAK: f32 = 1.0e-6;
 
 type ProcBox = Box<dyn PluginProcessor>;
 
+/// A device whose plugin refuses blocks reports the first one and then every this many.
+const REFUSED_REPORT_EVERY: u64 = 8192;
+
 const SILENCE: Batch = [0.0; BATCH];
 
 /// The engine-side device of one plugin instance.
@@ -179,6 +182,8 @@ pub struct PluginDevice {
     dropped: u64,
     /// Batches whose result did not arrive in time (sandbox).
     late: u64,
+    /// Batches the plugin refused (answered a non-OK result): silent, not a failure.
+    refused: u64,
 }
 
 fn idle_batches_for(sample_rate: f64) -> u32 {
@@ -347,6 +352,7 @@ impl PluginDevice {
             out_peak: 0.0,
             dropped: 0,
             late: 0,
+            refused: 0,
         }
     }
 
@@ -1020,6 +1026,18 @@ impl PluginDevice {
             Ok(ProcessStatus::Late) => {
                 // Not a failure: this batch has no wet signal, the state stays as it was.
                 self.late += 1;
+                false
+            }
+            Ok(ProcessStatus::Refused) => {
+                // Not a failure either: many plugins answer non-OK while they load content,
+                // sign in or change their buses. Silence this batch, keep going, say so first
+                // at once and then now and then (the message carries no allocation).
+                self.refused += 1;
+                if self.refused == 1 || self.refused.is_multiple_of(REFUSED_REPORT_EVERY) {
+                    self.messenger.post(PluginMessage::Refused {
+                        batches: self.refused,
+                    });
+                }
                 false
             }
             Ok(ProcessStatus::Lost) => {

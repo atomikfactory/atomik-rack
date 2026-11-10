@@ -89,6 +89,12 @@ pub enum PluginMessage {
         /// Why.
         reason: &'static str,
     },
+    /// The plugin did not take some batches (see [`crate::ProcessStatus::Refused`]): the device
+    /// plays on and says so, first at once, then now and then.
+    Refused {
+        /// How many batches the plugin has refused so far.
+        batches: u64,
+    },
     /// The plugin's process ended (sandbox only).
     ProcessExited {
         /// The exit code or signal and the last lines the process wrote to stderr.

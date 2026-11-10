@@ -29,7 +29,7 @@ use atomik_ui::{
     Help, PianoRollView, PluginParamsView, RackView, SampleEditorView, SeqEditorView,
     SliceEditorView, StepEditorView, Theme, TransportAction, TransportBar, UiAction, UiEvent,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -221,6 +221,9 @@ pub struct AppCore<S: EngineSink> {
     arrangement_track_changed: bool,
     /// The console selection the last arming followed (see `follow_console_selection`).
     console_selection: Vec<DeviceKey>,
+    /// The device selected in the rack that the last arming followed (see
+    /// `follow_rack_selection`).
+    rack_selection: Option<DeviceKey>,
     /// The snapshot the mix was last stored, updated, recalled or compared with (see
     /// `app_core_snapshots.rs`); view state, forgotten when a document is replaced.
     snapshot_hint: Option<u32>,
@@ -568,6 +571,7 @@ impl<S: EngineSink> AppCore<S> {
             arranged_track: None,
             arrangement_track_changed: false,
             console_selection: Vec::new(),
+            rack_selection: None,
             snapshot_hint: None,
             snapshot_morph: None,
             marker_seen: None,
@@ -904,7 +908,9 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Applies a command and syncs the engine and the view. On rejection nothing changes and
     /// the view shows the error.
-    pub fn apply_command(&mut self, command: Command) -> Result<(), ModelError> {
+    pub fn apply_command(&mut self, mut command: Command) -> Result<(), ModelError> {
+        // A plugin the command names gets the layout the catalog holds now.
+        self.refresh_plugin_command(&mut command);
         // Anything but a step of the patch trial accepts the trial first (it is one undo step).
         let trial = std::mem::take(&mut self.trial_next);
         if !trial {
@@ -1342,6 +1348,9 @@ impl<S: EngineSink> AppCore<S> {
         if pane == Pane::Arrangement {
             self.follow_arrangement_track(event);
         }
+        if pane == Pane::Rack {
+            self.follow_rack_selection();
+        }
         if pane == Pane::Console {
             self.follow_console_selection();
             // A plain click (no Shift/Ctrl) that left exactly one strip selected hands the keys
@@ -1640,6 +1649,7 @@ impl<S: EngineSink> AppCore<S> {
         self.mki = None;
         self.arranged_track = None;
         self.console_selection.clear();
+        self.rack_selection = None;
         self.snapshot_hint = None;
         self.snapshot_morph = None;
         self.console.set_snapshot_hint(None);
@@ -1891,6 +1901,23 @@ impl<S: EngineSink> AppCore<S> {
         let mut stale = (false, false);
         let mut restart = false;
         let mut defer = false;
+        // Keys that this edit both adds and removes: a replacement (or its undo) hands a new
+        // device the old one's key. The model reports the additions first and the removals last
+        // (so routing never names a missing device), which for such a key would remove the NEW
+        // device and its pending plugin instance. The old engine device is set aside when the
+        // new one comes and is the one that goes at the removal.
+        let replaced: BTreeSet<&DeviceKey> = ops
+            .iter()
+            .filter_map(|op| match op {
+                SyncOp::DeviceAdded(k) => Some(k),
+                _ => None,
+            })
+            .filter(|k| {
+                ops.iter()
+                    .any(|op| matches!(op, SyncOp::DeviceRemoved(r) if r == *k))
+            })
+            .collect();
+        let mut retiring: BTreeMap<DeviceKey, DeviceInstanceId> = BTreeMap::new();
         for op in ops {
             if matches!(
                 op,
@@ -1904,6 +1931,13 @@ impl<S: EngineSink> AppCore<S> {
                     // A container stands for its whole inside: its `~split` and every
                     // inner device, in the expansion's order.
                     let subtree = containers::subtree(self.document.doc(), exp, key);
+                    if replaced.contains(key) {
+                        for flat in containers::flat_keys_of(&self.ids, key) {
+                            if let Some(old) = self.ids.remove(&flat) {
+                                retiring.insert(flat, old);
+                            }
+                        }
+                    }
                     for device in subtree {
                         self.fx_meter_seq.remove(&device.key);
                         self.audio.monitor_sent.remove(&device.key);
@@ -1915,6 +1949,12 @@ impl<S: EngineSink> AppCore<S> {
                     // A new strip starts from the default feed.
                     self.vca_sent.remove(key);
                     inserted.push(key.clone());
+                }
+                SyncOp::DeviceRemoved(key) if replaced.contains(key) => {
+                    self.retire_replaced(key, &mut retiring);
+                    self.fx_meter_seq.remove(key);
+                    self.audio.monitor_sent.remove(key);
+                    self.vca_sent.remove(key);
                 }
                 SyncOp::DeviceRemoved(key) => {
                     for flat in containers::flat_keys_of(&self.ids, key) {
@@ -2139,6 +2179,34 @@ impl<S: EngineSink> AppCore<S> {
                 end: Ticks(wanted.1),
                 enabled: wanted.2,
             });
+        }
+    }
+
+    /// A device that took the place (and key) of `key` has been inserted: the engine devices
+    /// set aside for `key` and its inside go now, and what the plugin glue holds for the old
+    /// device goes with them, unless the new one is a plugin (its instance is queued by then).
+    fn retire_replaced(
+        &mut self,
+        key: &DeviceKey,
+        retiring: &mut BTreeMap<DeviceKey, DeviceInstanceId>,
+    ) {
+        let prefix = format!("{}/", key.0);
+        let old: Vec<DeviceKey> = retiring
+            .keys()
+            .filter(|k| *k == key || k.0.starts_with(&prefix))
+            .cloned()
+            .collect();
+        let new_is_plugin = self.doc().resolve(key).is_some_and(|d| d.plugin.is_some());
+        if new_is_plugin {
+            self.close_plugin_window(key);
+        } else {
+            self.plugins_device_removed(key);
+        }
+        for flat in old {
+            if let Some(id) = retiring.remove(&flat) {
+                let result = self.sink.remove_device(id);
+                self.engine_result(result);
+            }
         }
     }
 
@@ -4336,6 +4404,10 @@ mod plugins_gui_tests;
 #[cfg(test)]
 #[path = "app_core_plugins_qa_tests.rs"]
 mod plugins_qa_tests;
+
+#[cfg(test)]
+#[path = "app_core_plugins_layout_tests.rs"]
+mod plugins_layout_tests;
 
 #[cfg(test)]
 #[path = "app_core_plugins_vst3_tests.rs"]

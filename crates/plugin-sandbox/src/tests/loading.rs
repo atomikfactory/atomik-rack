@@ -230,3 +230,73 @@ fn a_stopped_child_is_reported_with_why_and_how_it_ended() {
     );
     assert!(reason.contains("last words of the plugin"), "{reason}");
 }
+
+fn opens(ctl: &crate::fake::Control) -> usize {
+    ctl.requests()
+        .iter()
+        .filter(|r| matches!(r, ToChild::OpenGui { .. }))
+        .count()
+}
+
+/// Two instances of one plugin are two children with two links: the editor of the second is
+/// asked of the second child only, answered by it alone (whatever the first is doing), and
+/// neither is asked twice.
+#[test]
+fn two_instances_open_their_editors_each_in_its_own_child() {
+    let a_started = start_with(
+        slow_editor(Duration::from_millis(600)),
+        slow_load_timeouts(),
+    );
+    let b_started = start_with(
+        slow_editor(Duration::from_millis(200)),
+        slow_load_timeouts(),
+    );
+    let mut a = a_started.instance.map_err(|e| e.to_string()).unwrap();
+    let mut b = b_started.instance.map_err(|e| e.to_string()).unwrap();
+    let (a_ctl, b_ctl) = (&a_started.fake.ctl, &b_started.fake.ctl);
+    let t = now();
+    assert_eq!(
+        a.begin_open_external_gui(Some(NativeParent::Win32(7))),
+        Ok(false)
+    );
+    assert_eq!(
+        b.begin_open_external_gui(Some(NativeParent::Win32(7))),
+        Ok(false)
+    );
+    // Asking again while they open sends nothing more, to either child.
+    assert_eq!(a.begin_open_external_gui(None), Ok(false));
+    assert_eq!(b.begin_open_external_gui(None), Ok(false));
+    let b_answer = loop {
+        // A is not answered yet: B's answer is not A's.
+        if let Some(answer) = b.poll_open_external_gui() {
+            break answer;
+        }
+        assert!(now().saturating_duration_since(t) < Duration::from_secs(8));
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(b_answer, Ok(()));
+    assert_eq!(
+        a.poll_open_external_gui(),
+        None,
+        "B's answer is not A's, A still opens"
+    );
+    let a_answer = loop {
+        if let Some(answer) = a.poll_open_external_gui() {
+            break answer;
+        }
+        assert!(now().saturating_duration_since(t) < Duration::from_secs(8));
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(a_answer, Ok(()));
+    assert_eq!(
+        (opens(a_ctl), opens(b_ctl)),
+        (1, 1),
+        "one request per child"
+    );
+    assert_eq!(b.poll_open_external_gui(), None, "reported once");
+    assert_eq!(a.poll_open_external_gui(), None, "reported once");
+    // Raising B's open editor asks B again and A not at all.
+    assert_eq!(b.begin_open_external_gui(None), Ok(false));
+    eventually("B to be asked again", || opens(b_ctl) == 2);
+    assert_eq!(opens(a_ctl), 1);
+}

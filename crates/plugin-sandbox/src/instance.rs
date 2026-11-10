@@ -43,10 +43,13 @@ pub(crate) struct RemoteInstance {
     /// When the `OpenGui` that is still out was sent (see
     /// [`PluginInstance::begin_open_external_gui`]).
     opening_since: Option<std::time::Instant>,
+    /// When a [`PluginInstance::begin_deactivate`] went out and has no answer yet.
+    deactivating_since: Option<std::time::Instant>,
 }
 
 /// The name of the editor request, in errors and the held-call guard.
 const OPEN_GUI: &str = "OpenGui";
+const DEACTIVATE: &str = "Deactivate";
 
 enum Stage {
     /// The Hello is out.
@@ -182,6 +185,7 @@ impl RemoteInstance {
             offline_active: false,
             texts: BTreeMap::new(),
             opening_since: None,
+            deactivating_since: None,
         })
     }
 
@@ -200,6 +204,19 @@ impl RemoteInstance {
 
     fn timeouts(&self) -> Timeouts {
         self.link.timeouts()
+    }
+
+    /// Waits for a [`PluginInstance::begin_deactivate`] whose answer nobody polled (the device
+    /// went away meanwhile), so that the next call is not refused as busy.
+    fn finish_deactivate(&mut self) {
+        let Some(since) = self.deactivating_since else {
+            return;
+        };
+        let wait = self.timeouts().create;
+        while self.link.poll_reply(DEACTIVATE, since, wait).is_none() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.deactivating_since = None;
     }
 
     fn period(sample_rate: f64) -> Duration {
@@ -230,6 +247,7 @@ impl PluginInstance for RemoteInstance {
     }
 
     fn activate(&mut self, cfg: &ActivateConfig) -> Result<Box<dyn PluginProcessor>, BackendError> {
+        self.finish_deactivate();
         if !(cfg.sample_rate.is_finite() && cfg.sample_rate > 0.0) {
             return Err(BackendError::Failed(format!(
                 "cannot activate at the sample rate {}",
@@ -295,11 +313,49 @@ impl PluginInstance for RemoteInstance {
         // nothing in flight.
         drop(processor);
         self.offline_active = false;
-        let call = self.timeouts().call;
+        // A plugin that is busy but alive (it just finished a sign-in, it rebuilds its buses)
+        // may take longer than an ordinary call: as long as an activation.
+        let wait = self.timeouts().create;
         // A failure is a lost child, which the link has already recorded.
         let _ = self
             .link
-            .call("Deactivate", call, |id| ToChild::Deactivate { id }, None);
+            .call(DEACTIVATE, wait, |id| ToChild::Deactivate { id }, None);
+    }
+
+    fn begin_deactivate(&mut self, processor: Box<dyn PluginProcessor>) -> bool {
+        if self.timeouts().bounce {
+            // A bounce finishes a restart at the same batch as in process, whatever mode the
+            // plugin was told: it waits for the child.
+            self.deactivate(processor);
+            return true;
+        }
+        drop(processor);
+        self.offline_active = false;
+        if self
+            .link
+            .begin_held_call(DEACTIVATE, |id| ToChild::Deactivate { id })
+            .is_err()
+        {
+            // A lost child (recorded by the link) or one busy with another held request: there
+            // is nothing to wait for.
+            return true;
+        }
+        self.deactivating_since = Some(crate::clock::now());
+        false
+    }
+
+    fn poll_deactivate(&mut self) -> bool {
+        let Some(since) = self.deactivating_since else {
+            return true;
+        };
+        // The app stays responsive while it waits, so the wait is as long as a load's: a child
+        // that is alive and working is not stopped for being slow; a dead one ends the wait.
+        let wait = self.timeouts().load;
+        if self.link.poll_reply(DEACTIVATE, since, wait).is_none() {
+            return false;
+        }
+        self.deactivating_since = None;
+        true
     }
 
     fn latency_frames(&self) -> u32 {

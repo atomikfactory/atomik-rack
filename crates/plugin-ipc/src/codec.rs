@@ -42,6 +42,7 @@ pub fn status_code(status: ProcessStatus) -> u32 {
         ProcessStatus::Error => 4,
         ProcessStatus::Late => 5,
         ProcessStatus::Lost => 6,
+        ProcessStatus::Refused => 7,
     }
 }
 
@@ -54,6 +55,7 @@ pub fn status_from_code(code: u32) -> ProcessStatus {
         3 => ProcessStatus::Sleep,
         5 => ProcessStatus::Late,
         6 => ProcessStatus::Lost,
+        7 => ProcessStatus::Refused,
         _ => ProcessStatus::Error,
     }
 }

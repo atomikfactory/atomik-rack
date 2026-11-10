@@ -17,8 +17,8 @@ use crate::util::utf16_text;
 use crate::values;
 use atomik_device_sdk::{PluginLayout, PluginStateBlob, RunMode};
 use atomik_plugin_host::{
-    ActivateConfig, BackendError, NativeParent, PluginInstance as HostInstance, PluginProcessor,
-    PresetInfo, assert_main_thread, is_main_thread,
+    ActivateConfig, BackendError, LogLevel, NativeParent, PluginInstance as HostInstance,
+    PluginMessage, PluginProcessor, PresetInfo, assert_main_thread, is_main_thread,
 };
 use std::ffi::{c_char, c_void};
 use std::sync::Arc;
@@ -244,13 +244,29 @@ impl Vst3Instance {
         (self.read.layout.clone(), self.read.params_truncated)
     }
 
+    /// A warning in the app's plugin log.
+    fn say(&self, text: String) {
+        self.hub.messenger.post(PluginMessage::Log {
+            level: LogLevel::Warning,
+            text,
+        });
+    }
+
     /// Re-reads buses, params and maps (the plugin is inactive).
     fn refresh_layout(&mut self) {
-        let Ok(plan) = layout::negotiate(&self.component, &self.processor) else {
-            return;
+        let plan = match layout::negotiate(&self.component, &self.processor) {
+            Ok(plan) => plan,
+            Err(e) => {
+                self.say(format!("the plugin's new buses cannot be hosted: {e}"));
+                return;
+            }
         };
-        let Ok(read) = layout::read(&self.class, plan, self.controller.as_ref()) else {
-            return;
+        let read = match layout::read(&self.class, plan, self.controller.as_ref()) {
+            Ok(read) => read,
+            Err(e) => {
+                self.say(format!("the plugin's new layout cannot be read: {e}"));
+                return;
+            }
         };
         if read.layout != self.read.layout {
             self.layout_changed = true;
@@ -313,14 +329,19 @@ impl HostInstance for Vst3Instance {
 
     fn activate(&mut self, cfg: &ActivateConfig) -> Result<Box<dyn PluginProcessor>, BackendError> {
         assert_main_thread("activating a VST3 plugin");
-        if self
+        let dirty = self
             .hub
             .layout_dirty
-            .swap(false, std::sync::atomic::Ordering::AcqRel)
-            || self
-                .hub
-                .midi_dirty
-                .swap(false, std::sync::atomic::Ordering::AcqRel)
+            .swap(false, std::sync::atomic::Ordering::AcqRel);
+        let midi_dirty = self
+            .hub
+            .midi_dirty
+            .swap(false, std::sync::atomic::Ordering::AcqRel);
+        // A plugin whose buses moved without a restart request still gets a plan that matches
+        // them: the processor's bus arrays must be what the plugin has.
+        if dirty
+            || midi_dirty
+            || !layout::plan_is_current(&self.component, &self.processor, &self.read.plan)
         {
             self.refresh_layout();
         }

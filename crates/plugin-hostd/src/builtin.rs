@@ -7,6 +7,7 @@
 //! * `null.latency`: passthrough that reports 32 frames of latency.
 //! * `null.crash`: passthrough that aborts the process in `process` after N batches (N from
 //!   `ATOMIK_NULL_CRASH_AFTER`, default 0, read at activation).
+//! * `null.panic`: `process` panics (a Rust panic on the audio thread, which the child catches).
 //! * `null.hang`: `process` never returns.
 //! * `null.hang-activate`: `activate` never returns.
 //! * `null.noisy`: a passthrough that prints to stdout everywhere (instantiate, activate, process,
@@ -43,6 +44,7 @@ enum Kind {
     Gain,
     Latency,
     Crash,
+    Panic,
     Hang,
     HangActivate,
     Synth,
@@ -55,6 +57,7 @@ impl Kind {
             "null.gain" => Self::Gain,
             "null.latency" => Self::Latency,
             "null.crash" => Self::Crash,
+            "null.panic" => Self::Panic,
             "null.hang" => Self::Hang,
             "null.hang-activate" => Self::HangActivate,
             "null.synth" => Self::Synth,
@@ -137,6 +140,7 @@ impl PluginInstance for BuiltinInstance {
                     batches: 0,
                 })
             }
+            Kind::Panic => Box::new(PanicProcessor),
             Kind::Hang => Box::new(HangProcessor),
             Kind::Noisy => {
                 chatter("noisy activate");
@@ -315,6 +319,23 @@ impl PluginProcessor for PassProcessor {
         self.batches = self.batches.saturating_add(1);
         copy_through(io);
         ProcessStatus::Continue
+    }
+}
+
+/// A processor whose `process` panics.
+struct PanicProcessor;
+
+impl PluginProcessor for PanicProcessor {
+    fn start_processing(&mut self) -> bool {
+        true
+    }
+
+    fn stop_processing(&mut self) {}
+
+    fn reset(&mut self) {}
+
+    fn process(&mut self, _io: &mut PluginIo<'_>) -> ProcessStatus {
+        panic!("null.panic panics on purpose");
     }
 }
 

@@ -13,8 +13,8 @@ use atomik_core::{BATCH, Batch, ExprKind};
 use atomik_device_sdk::{PluginFormat, PluginLayout, PluginRef, PluginStateBlob, RunMode};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// What a backend call can fail with.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -273,6 +273,11 @@ pub enum ProcessStatus {
     Sleep,
     /// The plugin failed: the device becomes FAILED.
     Error,
+    /// The plugin did not take this batch (a VST3 plugin answered a result other than OK, as
+    /// many do while they load content, sign in or change their buses; the child had no
+    /// processor for a moment). Not a failure: the device has no wet signal this batch, counts
+    /// it and carries on. Only a panic, a crash or a lost process fails a device.
+    Refused,
     /// Sandbox: the result did not come back in time for this batch. Not a failure: the
     /// device has no valid wet signal this batch (dry for effects, silence otherwise).
     Late,
@@ -402,6 +407,19 @@ pub trait PluginInstance {
     fn activate(&mut self, cfg: &ActivateConfig) -> Result<Box<dyn PluginProcessor>, BackendError>;
     /// Deactivates; the processor must have been stopped and handed back first.
     fn deactivate(&mut self, processor: Box<dyn PluginProcessor>);
+    /// Starts [`PluginInstance::deactivate`] without waiting for the plugin: true when it is
+    /// done, false when [`PluginInstance::poll_deactivate`] will tell. A restart (a bus layout
+    /// change, a new sample rate) uses this so the app does not stand still while a busy
+    /// plugin finishes; the default deactivates at once.
+    fn begin_deactivate(&mut self, processor: Box<dyn PluginProcessor>) -> bool {
+        self.deactivate(processor);
+        true
+    }
+    /// True once a [`PluginInstance::begin_deactivate`] that returned false is done (or the
+    /// plugin is gone).
+    fn poll_deactivate(&mut self) -> bool {
+        true
+    }
     /// The latency the plugin reports now, in frames.
     fn latency_frames(&self) -> u32;
     /// Starts saving the plugin state without waiting for it: the next
@@ -598,11 +616,34 @@ pub struct NullStats {
     lost: AtomicBool,
     external_editor: AtomicBool,
     external_opens: AtomicUsize,
+    external_closes: AtomicUsize,
     external_delay: AtomicUsize,
     presets: AtomicBool,
+    deactivate_delay: AtomicUsize,
+    /// The layout the instances take at their next restart (see [`NullStats::change_layout`]).
+    pending_layout: Mutex<Option<PluginLayout>>,
+    /// The layout the plugin has since: new instances start with it.
+    changed_layout: Mutex<Option<PluginLayout>>,
 }
 
 impl NullStats {
+    /// Makes a restart's deactivation take `polls` polls of the instance (a plugin that is busy
+    /// but alive): [`PluginInstance::begin_deactivate`] answers "not yet" and
+    /// [`PluginInstance::poll_deactivate`] says when it is done.
+    pub fn set_deactivate_delay(&self, polls: usize) {
+        self.deactivate_delay.store(polls, Ordering::Relaxed);
+    }
+    /// Makes the null plugin change its layout (its buses, as a plugin does after a sign-in) at
+    /// the next restart of an instance: [`PluginInstance::take_layout_changed`] answers true once
+    /// and [`PluginInstance::layout`] is `layout` from then on, for every instance created
+    /// afterwards too.
+    pub fn change_layout(&self, layout: PluginLayout) {
+        *self
+            .pending_layout
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(layout);
+    }
+
     /// Instances created.
     pub fn created(&self) -> usize {
         self.created.load(Ordering::Relaxed)
@@ -656,6 +697,10 @@ impl NullStats {
     /// How many times an external editor was opened.
     pub fn external_opens(&self) -> usize {
         self.external_opens.load(Ordering::Relaxed)
+    }
+    /// How many times an open external editor was closed.
+    pub fn external_closes(&self) -> usize {
+        self.external_closes.load(Ordering::Relaxed)
     }
 }
 
@@ -723,14 +768,21 @@ impl PluginBackend for NullBackend {
             .find(|p| &p.plugin == plugin)
             .ok_or_else(|| BackendError::UnknownPlugin(plugin.id.clone()))?;
         self.stats.created.fetch_add(1, Ordering::Relaxed);
+        let changed = self
+            .stats
+            .changed_layout
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         Ok(Box::new(NullInstance {
-            layout: p.layout.clone(),
+            layout: changed.unwrap_or_else(|| p.layout.clone()),
             behavior: p.behavior,
             latency: p.latency,
             state: PluginStateBlob::default(),
             held: BTreeMap::new(),
             stats: Arc::clone(&self.stats),
             opening: None,
+            deactivating: None,
         }))
     }
 }
@@ -744,6 +796,8 @@ struct NullInstance {
     stats: Arc<NullStats>,
     /// Polls left before a slow external editor is open.
     opening: Option<usize>,
+    /// Polls left before a slow deactivation is done.
+    deactivating: Option<usize>,
 }
 
 impl Drop for NullInstance {
@@ -790,6 +844,45 @@ impl PluginInstance for NullInstance {
 
     fn deactivate(&mut self, _processor: Box<dyn PluginProcessor>) {
         self.stats.deactivated.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn begin_deactivate(&mut self, processor: Box<dyn PluginProcessor>) -> bool {
+        self.deactivate(processor);
+        let polls = self.stats.deactivate_delay.load(Ordering::Relaxed);
+        self.deactivating = (polls > 0).then_some(polls);
+        self.deactivating.is_none()
+    }
+
+    fn poll_deactivate(&mut self) -> bool {
+        match self.deactivating {
+            Some(n) if n > 1 => {
+                self.deactivating = Some(n - 1);
+                false
+            }
+            _ => {
+                self.deactivating = None;
+                true
+            }
+        }
+    }
+
+    fn take_layout_changed(&mut self) -> bool {
+        let pending = self
+            .stats
+            .pending_layout
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let Some(layout) = pending else {
+            return false;
+        };
+        *self
+            .stats
+            .changed_layout
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(layout.clone());
+        self.layout = layout;
+        true
     }
 
     fn latency_frames(&self) -> u32 {
@@ -859,7 +952,11 @@ impl PluginInstance for NullInstance {
         ))
     }
 
-    fn close_gui(&mut self) {}
+    fn close_gui(&mut self) {
+        if self.editor_kind() == EditorKind::External {
+            self.stats.external_closes.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 
     fn poll(&mut self) {}
 

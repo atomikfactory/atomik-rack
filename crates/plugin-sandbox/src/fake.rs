@@ -168,6 +168,7 @@ impl Control {
                 ProcessStatus::Error => 4,
                 ProcessStatus::Late => 5,
                 ProcessStatus::Lost => 6,
+                ProcessStatus::Refused => 7,
             },
             Ordering::SeqCst,
         );
@@ -361,6 +362,7 @@ fn status_of(code: u8) -> ProcessStatus {
         4 => ProcessStatus::Error,
         5 => ProcessStatus::Late,
         6 => ProcessStatus::Lost,
+        7 => ProcessStatus::Refused,
         _ => ProcessStatus::Continue,
     }
 }
