@@ -162,6 +162,16 @@ impl<'r> Planner<'r> {
         index: usize,
         type_id: &str,
     ) -> Result<DeviceKey, ModelError> {
+        self.insert_device_with(index, type_id, None)
+    }
+
+    /// Like [`Self::insert_device`]; a container comes with the inside `inner` when given.
+    pub(crate) fn insert_device_with(
+        &mut self,
+        index: usize,
+        type_id: &str,
+        inner: Option<Box<crate::container::ContainerDoc>>,
+    ) -> Result<DeviceKey, ModelError> {
         let desc = rules::descriptor(self.registry, type_id)?;
         crate::plugin_cmd::refuse_generic_add(type_id)?;
         let key = rules::generate_key(&self.scratch, type_id);
@@ -173,6 +183,9 @@ impl<'r> Planner<'r> {
         );
         // Console and insert devices never carry patterns of their own.
         device.steps = None;
+        if let (Some(inner), Some(slot)) = (inner, device.inner.as_mut()) {
+            *slot = inner;
+        }
         self.push(Edit::Insert {
             index: rules::top_index(&self.scratch, index),
             device,

@@ -415,7 +415,20 @@ pub(crate) fn set_insert(
     slot: usize,
     effect: Option<InsertEffect>,
 ) -> Result<(), ModelError> {
-    set_insert_in(p, channel, slot, effect, false)
+    set_insert_in(p, channel, slot, effect, false, None)
+}
+
+/// [`set_insert`] with a new container effect that comes with the inside `inner` (a pasted copy).
+pub(crate) fn set_insert_container(
+    p: &mut Planner<'_>,
+    channel: &DeviceKey,
+    slot: usize,
+    inner: Box<crate::container::ContainerDoc>,
+) -> Result<(), ModelError> {
+    let effect = InsertEffect::New {
+        type_id: crate::container::CONTAINER_TYPE.to_owned(),
+    };
+    set_insert_in(p, channel, slot, Some(effect), false, Some(inner))
 }
 
 /// `AddInsert`: like [`set_insert`] with an effect, but the effects from `slot` on shift down.
@@ -436,7 +449,7 @@ pub(crate) fn add_insert(
         let new: Vec<DeviceKey> = old.iter().filter(|k| *k != e).cloned().collect();
         rewire(p, &other, &old, &new)?;
     }
-    set_insert_in(p, channel, slot, Some(effect), true)
+    set_insert_in(p, channel, slot, Some(effect), true, None)
 }
 
 fn set_insert_in(
@@ -445,6 +458,7 @@ fn set_insert_in(
     slot: usize,
     effect: Option<InsertEffect>,
     shift: bool,
+    inner: Option<Box<crate::container::ContainerDoc>>,
 ) -> Result<(), ModelError> {
     check_target(p, channel)?;
     if slot >= INSERT_SLOTS {
@@ -505,7 +519,7 @@ fn set_insert_in(
             };
             let after = if slot == 0 { channel } else { &old[slot - 1] };
             let index = rules::index_of(p.doc(), after)? + 1;
-            p.insert_device(index, type_id)?
+            p.insert_device_with(index, type_id, inner)?
         }
     };
     if slot < new.len() && !shift {
