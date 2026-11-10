@@ -288,6 +288,9 @@
 //!   [`TextField`]s (caret, selection, clipboard, input-method composition): the host sends
 //!   [`UiEvent::Ime`] for the window system's input method and installs the system clipboard with
 //!   [`clipboard::install`] on the UI thread (without one the text stays inside the app).
+//! - **Share.** [`ShareView`] is the modal panel of File > Share Project: the title, author and
+//!   note, three check boxes (preview, stems, plugin list) and the size the share would have; it
+//!   emits [`UiAction::Share`] (`SHARE`, a changed box, `CLOSE`).
 //! - **References and decision zone.** [`ZoneView`] is the modal panel that lists the song's
 //!   reference tracks and draws, for each attribute of the mix, the range the references span with
 //!   the mix as a marker; the app feeds it a [`ZoneData`] and handles [`UiAction::Zone`]
@@ -440,6 +443,7 @@ pub mod seq_edit;
 pub mod seq_editor;
 pub mod seq_paint;
 pub mod seq_panel;
+pub mod share_panel;
 pub mod sidechain;
 pub mod silence_panel;
 pub mod slice_editor;
@@ -558,6 +562,7 @@ pub use search_field::{SEARCH_MAX_CHARS, SearchField, SearchKey};
 pub use seq_editor::SeqEditorView;
 pub use seq_paint::SeqTheme;
 pub use seq_panel::SeqButton;
+pub use share_panel::{ShareAction, ShareBox, ShareField, ShareValues, ShareView};
 pub use silence_panel::{SilenceAction, SilenceRow, SilenceValues, SilenceView};
 pub use slice_editor::SliceEditorView;
 pub use song_info_panel::{InfoField, SongInfoAction, SongInfoView};
