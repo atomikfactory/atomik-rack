@@ -235,6 +235,37 @@ audio time a device uses: 100 % means the device alone takes as long as the audi
   Track on it (Unfreeze undoes it); Not now closes the card. Each track is suggested at most once per song, and a frozen
   track or one without clips is never suggested.
 
+## Plugins
+
+Options > Plugin Manager is the place to find, organise and fix the third-party plugins (VST3 and CLAP). Turning
+plugins on, the scan folders and the sandbox stay in Audio > Plugins.
+
+- **The table.** One row for every plugin the scan found: name, vendor, format, category (what the plugin says it is:
+  instrument, effect or note effect), status, file and the time of its last scan. A file that failed to scan is a row
+  too, with its reason in the status. Click a column head to sort, again to reverse. The star column sorts the
+  favourites first.
+- **Search and filters.** The search field finds a word in the name, vendor, path or a tag. The four buttons beside it
+  step through their choices on each click: format (all, VST3, CLAP), status (all, OK, failed, unsupported,
+  quarantined, disabled), category and tag.
+- **Choosing rows.** A click chooses a row, Ctrl (Cmd on macOS) toggles one, Shift chooses a range and Ctrl+A all the
+  rows shown. The buttons act on the chosen rows.
+- **Favourites.** Click the star of a row, or press Space on it. In the device browser the starred plugins come first,
+  in a Favourites group and at the top of their kind.
+- **Tags.** Type a tag in the Tag field and press Add Tag (or Enter): the chosen plugins get it. The tags of the first
+  chosen plugin are listed beside the field; click one to take it off. In the device browser type `#` and the start
+  of a tag in the search field to list the plugins that have it. Tags are the same words as in the file browser.
+- **Disable.** Hides the chosen plugins from the browser and the menus. A project that uses a disabled plugin still
+  loads it, and Enable shows the plugin again.
+- **Quarantine.** A plugin whose process ends, or that cannot be loaded, three times in a row is quarantined: it is
+  hidden like a disabled one and a message says so once. An instance that ends without a fault, or a load that works,
+  starts the count again. Try Again takes the chosen plugins out of quarantine (and scans failed files again).
+- **Rescan.** Rescan All scans every plugin folder again, Rescan Selected only the files of the chosen rows. The scan
+  runs in the background: the panel shows how far it is and the same button becomes Cancel.
+- **Show in Folder.** Opens the file manager at the file of the first chosen row.
+- **Where it is kept.** Favourites, tags, disabled plugins and the quarantine are saved by the plugin's own id in
+  `plugins_user.json` beside the settings file, so they stay with a plugin that moved to another folder. A missing or
+  damaged file reads as empty.
+
 ## Windows
 
 The rack and the mixer can leave the main window (View > Panels > Detach Rack and Detach Mixer, or by closing their
