@@ -10,7 +10,7 @@
 //!
 //! Each is one `Edit::Compound`, so one undo step.
 
-use crate::automation_rec::{ThinLevel, thin_points};
+use crate::automation_rec::{ThinLevel, thin_points, thin_points_by};
 use crate::controller::ControllerLane;
 use crate::history::Edit;
 use crate::param_lane::ParamLane;
@@ -436,7 +436,8 @@ pub(crate) fn chop_clips(
 // ---------------------------------------------------------------------------------- cleanup
 
 /// Plans `CleanupAutomation`: every automation clip of the selection is thinned with
-/// [`thin_points`] at `level` (a fraction of its parameter's range). Other clips are left alone;
+/// [`thin_points_by`] at the cleanup tolerance of `level` ([`ThinLevel::cleanup_fraction`], a
+/// fraction of the parameter's range on its taper). Other clips are left alone;
 /// a selection where nothing changes rejects.
 pub(crate) fn cleanup_automation(
     doc: &RackDoc,
@@ -450,8 +451,12 @@ pub(crate) fn cleanup_automation(
         let ClipContent::Automation(points) = &c.content else {
             continue;
         };
-        let range = automation_range(doc, registry, device, lane);
-        let thinned = thin_points(points, level.fraction() * range);
+        // The error is measured on the scale the lane is seen in (its taper), so a pixel is the
+        // same distance everywhere on it; a param that is gone is measured in plain values.
+        let thinned = match automation_descriptor(doc, registry, device, lane) {
+            Some(d) => thin_points_by(points, level.cleanup_fraction(), &|v| d.to_normalized(v)),
+            None => thin_points(points, level.cleanup_fraction()),
+        };
         if thinned.len() != points.len() {
             let mut new = c.clone();
             new.content = ClipContent::Automation(thinned);
@@ -464,14 +469,14 @@ pub(crate) fn cleanup_automation(
     Ok((Edit::Compound(edits), None))
 }
 
-/// The size of the range of the parameter an automation lane drives (1 when it is unknown, as
-/// for a plugin parameter that is gone).
-fn automation_range(
-    doc: &RackDoc,
-    registry: &atomik_device_sdk::Registry,
+/// The descriptor of the parameter an automation lane drives (`None` when it is unknown, as for
+/// a plugin parameter that is gone).
+fn automation_descriptor<'a>(
+    doc: &'a RackDoc,
+    registry: &'a atomik_device_sdk::Registry,
     device: &DeviceKey,
     lane: usize,
-) -> f32 {
+) -> Option<&'a atomik_core::ParamDescriptor> {
     let param = doc
         .song
         .track(device)
@@ -479,12 +484,7 @@ fn automation_range(
         .and_then(|l| match &l.kind {
             crate::song::LaneKind::Automation(p) => Some(p.clone()),
             _ => None,
-        });
-    let desc = crate::song_cmd::device_descriptor(doc, registry, device).ok();
-    match (desc, param) {
-        (Some(d), Some(p)) => {
-            crate::console_vca::lane_param(d, &p).map_or(1.0, |p| (p.max - p.min).max(f32::EPSILON))
-        }
-        _ => 1.0,
-    }
+        })?;
+    let desc = crate::song_cmd::device_descriptor(doc, registry, device).ok()?;
+    crate::console_vca::lane_param(desc, &param)
 }
