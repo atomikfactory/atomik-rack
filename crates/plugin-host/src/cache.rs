@@ -106,6 +106,8 @@ pub struct CachedFile {
     pub stamp: FileStamp,
     /// The scanner version that produced the entry.
     pub scanner_version: u32,
+    /// When it was scanned, seconds since the Unix epoch (0: not recorded, an older cache).
+    pub scanned_secs: u64,
     /// The plugins found in it (unsupported ones included, with their reason).
     pub plugins: Vec<ScannedPlugin>,
 }
@@ -143,10 +145,12 @@ pub struct PluginCache {
     blacklist: BTreeMap<PathBuf, BlacklistEntry>,
 }
 
+/// Seconds since the Unix epoch now: the time a scan or a failure is recorded at (never read by
+/// the audio path).
 // Justification: the blacklist records the wall-clock date of a failure for the user; this runs on
 // the main or scan thread, never on an engine thread (is about the audio path).
 #[allow(clippy::disallowed_methods)]
-fn now_secs() -> u64 {
+pub fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
@@ -204,6 +208,14 @@ impl PluginCache {
         );
     }
 
+    /// Forgets what is known about `path` (its cached scan and its blacklist entry), so the next
+    /// incremental scan visits it again. Returns whether there was anything.
+    pub fn forget(&mut self, path: &Path) -> bool {
+        let a = self.files.remove(path).is_some();
+        let b = self.blacklist.remove(path).is_some();
+        a || b
+    }
+
     /// Removes a blacklist entry (the user's choice). Returns whether there was one.
     pub fn unblacklist(&mut self, path: &Path) -> bool {
         self.blacklist.remove(path).is_some()
@@ -239,6 +251,7 @@ impl PluginCache {
                     size: f.stamp.size,
                     mtime_ns: f.stamp.mtime_ns,
                     scanner_version: f.scanner_version,
+                    scanned: f.scanned_secs,
                     plugins: f.plugins.iter().map(PluginDto::from_scanned).collect(),
                 })
                 .collect(),
@@ -291,6 +304,7 @@ impl PluginCache {
                         mtime_ns: f.mtime_ns,
                     },
                     scanner_version: f.scanner_version,
+                    scanned_secs: f.scanned,
                     plugins,
                 },
             );

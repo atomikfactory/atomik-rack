@@ -250,6 +250,59 @@ fn the_cache_round_trips_and_writes_the_same_bytes_every_time() {
 }
 
 #[test]
+fn a_scan_records_when_it_ran_and_an_old_cache_has_no_time() {
+    let d = temp("when");
+    plugin_files(&d, &["a.clap"]);
+    let mut cache = PluginCache::default();
+    run(
+        &enabled(&d),
+        &mut cache,
+        &Fake::ok(),
+        RescanMode::Incremental,
+    );
+    let scanned: Vec<u64> = cache.files().map(|f| f.scanned_secs).collect();
+    assert_eq!(scanned.len(), 1);
+    assert!(scanned[0] > 0, "the scan time is kept");
+    let (back, _) = {
+        let file = d.join("plugins.json");
+        cache.save(&file).unwrap();
+        PluginCache::load(&file)
+    };
+    assert_eq!(back, cache, "the time round trips");
+    // A cache written before the time was kept has none.
+    let old = cache.to_json().replace(
+        &format!(
+            "\"scanned\": {},
+",
+            scanned[0]
+        ),
+        "",
+    );
+    assert!(
+        !old.contains("scanned\""),
+        "the field is gone from the text"
+    );
+    let loaded = PluginCache::from_json(&old).unwrap();
+    assert_eq!(loaded.files().next().unwrap().scanned_secs, 0);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_forgotten_file_is_scanned_again_by_an_incremental_rescan() {
+    let d = temp("forget");
+    plugin_files(&d, &["a.clap", "b.clap"]);
+    let mut cache = PluginCache::default();
+    let settings = enabled(&d);
+    run(&settings, &mut cache, &Fake::ok(), RescanMode::Incremental);
+    let first = cache.files().next().unwrap().path.clone();
+    assert!(cache.forget(&first));
+    assert!(!cache.forget(&first), "nothing left to forget");
+    let again = run(&settings, &mut cache, &Fake::ok(), RescanMode::Incremental);
+    assert_eq!((again.scanned, again.cached), (1, 1));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn a_missing_corrupt_or_old_cache_is_ignored_and_rebuilt() {
     let d = temp("bad");
     let file = d.join("plugins.json");

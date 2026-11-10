@@ -279,6 +279,7 @@ pub fn add_scanned_file(
         format,
         stamp,
         scanner_version: SCANNER_VERSION,
+        scanned_secs: atomik_plugin_host::now_secs(),
         plugins: result.plugins,
     });
     Ok(())

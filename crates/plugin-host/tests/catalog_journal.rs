@@ -70,6 +70,7 @@ fn add_file(cache: &mut PluginCache, path: &str, plugins: Vec<ScannedPlugin>) {
         format: PluginFormat::Clap,
         stamp: stamp(),
         scanner_version: SCANNER_VERSION,
+        scanned_secs: 0,
         plugins,
     });
 }

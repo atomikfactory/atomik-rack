@@ -180,7 +180,14 @@ pub(crate) struct FileDto {
     pub(crate) size: u64,
     pub(crate) mtime_ns: i64,
     pub(crate) scanner_version: u32,
+    /// When the file was scanned, seconds since the Unix epoch (0: not recorded).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub(crate) scanned: u64,
     pub(crate) plugins: Vec<PluginDto>,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 #[derive(Serialize, Deserialize)]
