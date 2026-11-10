@@ -203,6 +203,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &self.versions {
             return v.help_at(pos);
         }
+        if let Some(v) = &self.backup {
+            return v.help_at(pos);
+        }
         if let Some(v) = &self.plugin_manager {
             return v.help_at(pos);
         }

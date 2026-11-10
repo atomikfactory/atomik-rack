@@ -63,6 +63,8 @@ pub enum AppCommand {
     SaveVersion,
     /// File ▸ Versions…: the versions of the project, with Restore and Protect.
     Versions,
+    /// File ▸ Restore from Backup…: the backup copies of the project, to open one as a new song.
+    RestoreBackup,
     /// File ▸ Export Project Archive…: the project and its audio as one `.atomikz` file.
     ExportArchive,
     /// File ▸ Share Project…: the project, its audio, a preview, the stems and the credits as one
@@ -893,6 +895,7 @@ impl AppCommand {
             AppCommand::StartScreen => ("file.start_screen", None),
             AppCommand::SaveVersion => ("file.save_version", None),
             AppCommand::Versions => ("file.versions", None),
+            AppCommand::RestoreBackup => ("file.restore_backup", None),
             AppCommand::ExportArchive => ("file.export_archive", None),
             AppCommand::ShareProject => ("file.share_project", None),
             AppCommand::ImportArchive => ("file.import_archive", None),
@@ -1301,6 +1304,7 @@ impl AppCommand {
             ("file.start_screen", None) => AppCommand::StartScreen,
             ("file.save_version", None) => AppCommand::SaveVersion,
             ("file.versions", None) => AppCommand::Versions,
+            ("file.restore_backup", None) => AppCommand::RestoreBackup,
             ("file.export_archive", None) => AppCommand::ExportArchive,
             ("file.share_project", None) => AppCommand::ShareProject,
             ("file.import_archive", None) => AppCommand::ImportArchive,
@@ -2840,6 +2844,7 @@ pub fn menus_with_songs(
                 item("Save As\u{2026}", AppCommand::SaveAs),
                 item("Save Version\u{2026}", AppCommand::SaveVersion),
                 item("Versions\u{2026}", AppCommand::Versions),
+                item("Restore from Backup\u{2026}", AppCommand::RestoreBackup),
                 MenuEntry::Separator,
                 item("Song Information\u{2026}", AppCommand::SongInfo),
                 MenuEntry::Submenu(Submenu {
@@ -4705,6 +4710,7 @@ mod tests {
             AppCommand::StartScreen,
             AppCommand::SaveVersion,
             AppCommand::Versions,
+            AppCommand::RestoreBackup,
             AppCommand::ExportArchive,
             AppCommand::ShareProject,
             AppCommand::ImportArchive,

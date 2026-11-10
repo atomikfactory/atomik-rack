@@ -401,6 +401,10 @@ fn request_json(r: ShellRequest) -> Value {
             "pick_ffmpeg_folder",
             "a folder dialog: a headless session cannot show it (the FFmpeg folder is covered by the app tests)",
         ),
+        ShellRequest::PickBackupFolder => (
+            "pick_backup_folder",
+            "a folder dialog: a headless session cannot show it (the backup folder is covered by the app tests)",
+        ),
         ShellRequest::PickVideoFile(_) => (
             "pick_video",
             "a file dialog: a headless session cannot show it (importing, relinking and preparing a video are covered by the app tests)",

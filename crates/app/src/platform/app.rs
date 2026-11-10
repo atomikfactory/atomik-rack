@@ -1574,6 +1574,16 @@ impl App {
                         self.shell.set_ffmpeg_folder(folder);
                     }
                 }
+                ShellRequest::PickBackupFolder => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Choose the folder that keeps the backup copies");
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(folder) = dialog.pick_folder() {
+                        self.shell.set_backup_folder(folder);
+                    }
+                }
                 ShellRequest::PickVideoFile(pick) => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title(match pick {

@@ -152,7 +152,8 @@ fn the_tab_strip_exists_only_with_preferences_and_switches_the_tab() {
             Tab::Interface,
             Tab::Surfaces,
             Tab::Sync,
-            Tab::Video
+            Tab::Video,
+            Tab::Backup
         ]
     );
     assert_eq!(d.tab(), Tab::Audio);
@@ -1254,6 +1255,166 @@ fn the_update_answer_starts_from_the_saved_one_and_keeps_the_other_drafts() {
         assert_eq!(wf.update_check, saved);
         assert!(!wf.auto_route);
     }
+}
+
+// ------------------------------------------------------------------ backup
+
+#[test]
+fn the_backup_tab_starts_off_with_ten_copies_and_the_audio_on() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Backup);
+    let l = d.backup_layout(VIEW).unwrap();
+    assert!(l.folder.path.starts_with("None"), "{}", l.folder.path);
+    assert_eq!(l.keep.value, "10");
+    assert!(l.audio.on);
+    let wf = d.preferences().unwrap().1;
+    assert_eq!(wf.backup_folder, None);
+    assert_eq!((wf.backup_keep, wf.backup_audio), (10, true));
+    // Everything sits inside the panel, above the Apply and Cancel buttons.
+    let panel = d.panel(VIEW);
+    let (apply, _) = d.buttons(VIEW);
+    let last_note = l.notes.last().unwrap().0.y;
+    assert!(
+        l.folder.rect.y0 >= panel.y0 && last_note < apply.y0,
+        "{last_note} {apply:?}"
+    );
+    // The other tabs have no backup layout.
+    goto(&mut d, Tab::Video);
+    assert!(d.backup_layout(VIEW).is_none());
+}
+
+#[test]
+fn the_backup_tab_chooses_the_folder_and_none_clears_it() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Backup);
+    let l = d.backup_layout(VIEW).unwrap();
+    // Choose asks the platform for a folder; the dialog stays open.
+    assert_eq!(
+        down(&mut d, l.folder.choose.center()),
+        DialogOutcome::PickBackupFolder
+    );
+    d.set_backup_folder(Some(PathBuf::from("/mnt/other/backups")));
+    let l = d.backup_layout(VIEW).unwrap();
+    assert_eq!(l.folder.path, "/mnt/other/backups");
+    assert_eq!(
+        d.preferences().unwrap().1.backup_folder,
+        Some(PathBuf::from("/mnt/other/backups"))
+    );
+    assert_eq!(down(&mut d, l.folder.none.center()), DialogOutcome::Open);
+    assert_eq!(d.preferences().unwrap().1.backup_folder, None);
+    // An empty path is no folder.
+    d.set_backup_folder(Some(PathBuf::new()));
+    assert_eq!(d.preferences().unwrap().1.backup_folder, None);
+    // A long path keeps its tail.
+    d.set_backup_folder(Some(PathBuf::from(format!("/mnt/{}/tail", "x".repeat(80)))));
+    let shown = d.backup_layout(VIEW).unwrap().folder.path;
+    assert!(
+        shown.starts_with('\u{2026}') && shown.ends_with("/tail"),
+        "{shown}"
+    );
+}
+
+#[test]
+fn the_keep_count_steps_between_one_and_fifty_and_shift_moves_by_ten() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Backup);
+    let keep = |d: &SettingsDialog| d.preferences().unwrap().1.backup_keep;
+    let l = d.backup_layout(VIEW).unwrap();
+    down(&mut d, l.keep.more.center());
+    assert_eq!(keep(&d), 11);
+    down(&mut d, l.keep.less.center());
+    down(&mut d, l.keep.less.center());
+    assert_eq!(keep(&d), 9);
+    assert_eq!(d.backup_layout(VIEW).unwrap().keep.value, "9");
+    // Shift moves by ten, and the ends hold.
+    let shift_click = |d: &mut SettingsDialog, p: Point| {
+        d.handle(
+            &UiEvent::PointerDown {
+                pos: p,
+                button: PointerButton::Primary,
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Modifiers::NONE
+                },
+                clicks: 1,
+            },
+            VIEW,
+        );
+    };
+    shift_click(&mut d, l.keep.more.center());
+    assert_eq!(keep(&d), 19);
+    for _ in 0..6 {
+        shift_click(&mut d, l.keep.more.center());
+    }
+    assert_eq!(keep(&d), 50);
+    for _ in 0..6 {
+        shift_click(&mut d, l.keep.less.center());
+    }
+    assert_eq!(keep(&d), 1);
+    down(&mut d, l.keep.less.center());
+    assert_eq!(keep(&d), 1);
+}
+
+#[test]
+fn include_audio_toggles_and_apply_returns_every_backup_setting() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Backup);
+    let l = d.backup_layout(VIEW).unwrap();
+    down(&mut d, l.audio.rect.center());
+    assert!(!d.backup_layout(VIEW).unwrap().audio.on);
+    assert!(!d.preferences().unwrap().1.backup_audio);
+    d.set_backup_folder(Some(PathBuf::from("/b")));
+    down(&mut d, l.keep.more.center());
+    let wf = d.preferences().unwrap().1;
+    assert_eq!(
+        (wf.backup_folder, wf.backup_keep, wf.backup_audio),
+        (Some(PathBuf::from("/b")), 11, false)
+    );
+    down(&mut d, l.audio.check.center());
+    assert!(d.preferences().unwrap().1.backup_audio);
+}
+
+#[test]
+fn the_backup_tab_starts_from_the_saved_settings_and_keeps_the_other_drafts() {
+    let prefs = WorkflowPrefs {
+        backup_folder: Some(PathBuf::from("/saved")),
+        backup_keep: 3,
+        backup_audio: false,
+        auto_route: false,
+        ..WorkflowPrefs::default()
+    };
+    let mut d = SettingsDialog::new(AudioSettings::default(), DeviceLists::default())
+        .with_preferences(
+            KeymapEditor::new(Os::Windows, Profile::Standard, UserKeymap::default()),
+            prefs,
+        );
+    goto(&mut d, Tab::Backup);
+    let l = d.backup_layout(VIEW).unwrap();
+    assert_eq!((l.keep.value.as_str(), l.audio.on), ("3", false));
+    let wf = d.preferences().unwrap().1;
+    assert_eq!(wf.backup_folder, Some(PathBuf::from("/saved")));
+    assert!(!wf.auto_route);
+    // Enter applies and Esc cancels, as in the other tabs.
+    assert!(matches!(
+        press(&mut d, "Enter", Os::Windows),
+        DialogOutcome::Apply(_)
+    ));
+    assert_eq!(press(&mut d, "Escape", Os::Windows), DialogOutcome::Cancel);
+}
+
+#[test]
+fn golden_backup() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Backup);
+    d.set_backup_folder(Some(PathBuf::from("/mnt/other/backups")));
+    golden("settings_backup", &d);
+}
+
+#[test]
+fn golden_backup_off() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Backup);
+    golden("settings_backup_off", &d);
 }
 
 #[test]

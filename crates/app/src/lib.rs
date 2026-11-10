@@ -18,6 +18,7 @@ pub mod audio_relink;
 pub mod audio_setup;
 pub mod audio_setup_view;
 pub mod audio_writer;
+pub mod backup_tab;
 pub mod bass_read_worker;
 pub mod blind_ab;
 pub mod browser_workers;

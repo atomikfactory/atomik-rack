@@ -178,22 +178,23 @@ use atomik_ui::keymap::{
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
-    BassReadAction, BassReadView, DeliveryAction, DeliveryPage, DeliveryView, SoundAnalystAction,
-    SoundAnalystView,
+    BackupAction, BackupItem, BackupView, BlindAction, BlindView, BrowseAction, Canvas, CanvasExt,
+    ColorPickerAction, ColorPickerView, ColorTarget, CommandPaletteView, ConsoleButton,
+    ExportScope, ExportView, FileBrowserView, FilmView, Flip, HISTORY_PANEL_WIDTH,
+    HarmonyPickerAction, HarmonyPickerView, HarmonyTarget, Key, KickBassAction, KickBassView,
+    MacrosAction, MacrosView, MaskingAction, MaskingView, MidiMapsAction, MidiMapsView,
+    MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView, Modifiers, NotesAction,
+    NotesValues, NotesView, NumpadKey, PaletteAction, ParamSearchAction, ParamSearchView,
+    PickerValue, Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction,
+    QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView, RepetitionAction,
+    RepetitionView, ScaleAction, ScaleView, ShareAction, ShareView, SilenceAction, SilenceValues,
+    SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent,
+    VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues, WarpView, ZoneAction,
+    ZoneView,
 };
 use atomik_ui::{
-    BlindAction, BlindView, BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView,
-    ColorTarget, CommandPaletteView, ConsoleButton, ExportScope, ExportView, FileBrowserView,
-    FilmView, Flip, HISTORY_PANEL_WIDTH, HarmonyPickerAction, HarmonyPickerView, HarmonyTarget,
-    Key, KickBassAction, KickBassView, MacrosAction, MacrosView, MaskingAction, MaskingView,
-    MidiMapsAction, MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView,
-    Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, PaletteAction, ParamSearchAction,
-    ParamSearchView, PickerValue, Place, PluginBannerView, PluginSettingsView, PointerButton,
-    QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView,
-    RepetitionAction, RepetitionView, ScaleAction, ScaleView, ShareAction, ShareView,
-    SilenceAction, SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH,
-    TextRun, UiAction, UiEvent, VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues,
-    WarpView, ZoneAction, ZoneView,
+    BassReadAction, BassReadView, DeliveryAction, DeliveryPage, DeliveryView, SoundAnalystAction,
+    SoundAnalystView,
 };
 use atomik_ui::{PluginManagerAction, PluginManagerView};
 use atomik_ui::{ReverbSendAction, ReverbSendValues, ReverbSendView};
@@ -310,6 +311,9 @@ pub enum ShellRequest {
     /// Show a folder dialog (the Video tab's FFmpeg folder Choose...), then call
     /// [`Shell::set_ffmpeg_folder`] with the picked folder.
     PickFfmpegFolder,
+    /// Show a folder dialog (the Backup tab's Backup folder Choose...), then call
+    /// [`Shell::set_backup_folder`] with the picked folder.
+    PickBackupFolder,
     /// Show a folder dialog (the Workflow tab's Scratch folder Choose...), then call
     /// [`Shell::set_scratch_folder`] with the picked folder.
     PickScratchFolder,
@@ -437,6 +441,8 @@ pub enum PendingAction {
     OpenFile(PathBuf),
     /// Restore this version of the project (File > Versions) as the current song.
     RestoreVersion(u32),
+    /// Open this backup copy (File > Restore from Backup) as a new song.
+    RestoreBackup(PathBuf),
 }
 
 /// How the shell is set up.
@@ -682,6 +688,10 @@ pub struct Shell<B: AudioBackend> {
     zone: Option<ZoneView>,
     /// The versions panel, while it is open.
     versions: Option<VersionsView>,
+    /// The restore list of the backup copies (File > Restore from Backup), while it is open.
+    backup: Option<BackupView>,
+    /// The copies the restore list shows, in its order.
+    backup_rows: Vec<crate::app_core::BackupRow>,
     /// The plugin manager (Options > Plugin Manager), while it is open.
     plugin_manager: Option<PluginManagerView>,
     /// `plugins_user.json` beside the settings file (`None`: the choices are not saved).
@@ -913,6 +923,8 @@ impl<B: AudioBackend> Shell<B> {
             kick_bass: None,
             zone: None,
             versions: None,
+            backup: None,
+            backup_rows: Vec::new(),
             plugin_manager: None,
             plugins_user_path,
             masking: None,
@@ -2413,6 +2425,96 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// Whether the restore list of the backup copies is open.
+    pub fn backup_open(&self) -> bool {
+        self.backup.is_some()
+    }
+
+    /// The restore list of the backup copies, while it is open.
+    pub fn backup_view(&self) -> Option<&BackupView> {
+        self.backup.as_ref()
+    }
+
+    /// File > Restore from Backup: opens the restore list; the copies are looked for on a
+    /// worker and the list fills in on a later frame (`Shell::sync_backup`).
+    fn open_backup_list(&mut self) {
+        if let Err(why) = self.core.start_backup_list() {
+            self.notify(why);
+            return;
+        }
+        let theme = self.core.view().theme().clone();
+        let mut view = BackupView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.backup = Some(view);
+        self.backup_rows.clear();
+        self.repaint = true;
+    }
+
+    /// Fills the restore list with the copies the worker found.
+    fn sync_backup(&mut self) {
+        if self.backup.is_none() {
+            return;
+        }
+        let Some(found) = self.core.take_backup_list() else {
+            return;
+        };
+        match found {
+            Ok(rows) => {
+                let items = rows
+                    .iter()
+                    .map(|r| BackupItem {
+                        when: r.when.clone(),
+                        size: r.size.clone(),
+                    })
+                    .collect();
+                self.backup_rows = rows;
+                if let Some(view) = &mut self.backup {
+                    view.set_rows(items);
+                }
+            }
+            Err(why) => {
+                if let Some(view) = &mut self.backup {
+                    view.set_failed(why);
+                }
+            }
+        }
+        self.repaint = true;
+    }
+
+    /// What the restore list asked for: closing is the shell's; a copy to open waits for the
+    /// answer about unsaved changes first.
+    fn backup_action(&mut self, action: BackupAction) {
+        match action {
+            BackupAction::Close => self.backup = None,
+            BackupAction::Restore(index) => {
+                let Some(path) = self.backup_rows.get(index).map(|r| r.path.clone()) else {
+                    return;
+                };
+                // A save that is still writing decides whether there is anything unsaved.
+                self.core.settle_save();
+                if self.core.is_dirty() {
+                    self.pending.push(ShellRequest::ConfirmSave {
+                        then: PendingAction::RestoreBackup(path),
+                    });
+                } else {
+                    self.restore_backup(&path);
+                }
+            }
+        }
+        self.repaint = true;
+    }
+
+    /// Opens the backup copy `path` as a new song and closes the list. A copy that cannot be
+    /// opened is reported and the list stays.
+    fn restore_backup(&mut self, path: &Path) {
+        match self.core.restore_backup(path) {
+            Ok(()) => self.backup = None,
+            Err(e) => self.notify(e.to_string()),
+        }
+        self.repaint = true;
+    }
+
     /// Whether the plugin manager is open.
     pub fn plugin_manager_open(&self) -> bool {
         self.plugin_manager.is_some()
@@ -3622,6 +3724,19 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// The backup folder picked in the folder dialog: into the open settings dialog's draft
+    /// (applied with its Apply), else applied and saved at once.
+    pub fn set_backup_folder(&mut self, folder: PathBuf) {
+        if let Some(dialog) = &mut self.dialog {
+            dialog.set_backup_folder(Some(folder));
+        } else {
+            self.workflow.backup_folder = Some(folder);
+            self.save_workflow();
+            self.apply_workflow_to_views();
+        }
+        self.repaint = true;
+    }
+
     /// The library folder picked in the folder dialog: into the open settings dialog's draft
     /// (applied with its Apply), else applied and saved at once.
     pub fn set_library_folder(&mut self, folder: PathBuf) {
@@ -3732,6 +3847,11 @@ impl<B: AudioBackend> Shell<B> {
             .set_reverse_mode(self.workflow.reverse_mode.graphical());
         self.core.set_midi_resolution(self.workflow.midi_resolution);
         self.core.set_keep_versions(self.workflow.keep_versions);
+        self.core.set_backup(
+            self.workflow.backup_folder.clone(),
+            self.workflow.backup_keep,
+            self.workflow.backup_audio,
+        );
         self.core.set_preview_db(self.workflow.preview_db);
         self.core
             .view_mut()
@@ -3834,6 +3954,9 @@ impl<B: AudioBackend> Shell<B> {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.share {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.backup {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.harmony_picker {
@@ -4573,6 +4696,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.share.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.share {
+                v.set_bounds(rect);
+            }
+        }
+        if self.backup.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.backup {
                 v.set_bounds(rect);
             }
         }
@@ -5979,6 +6108,21 @@ impl<B: AudioBackend> Shell<B> {
             }
             return Vec::new();
         }
+        if self.backup.is_some() {
+            // The restore list takes every event; Esc closes it.
+            self.repaint = true;
+            let actions = self
+                .backup
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Backup(a) = action {
+                    self.backup_action(a);
+                }
+            }
+            return Vec::new();
+        }
         if self.versions.is_some() {
             // The versions panel takes every event (typed text included); Esc closes it.
             self.repaint = true;
@@ -6228,6 +6372,7 @@ impl<B: AudioBackend> Shell<B> {
                 DialogOutcome::PickLibraryFolder => return vec![ShellRequest::PickLibraryFolder],
                 DialogOutcome::PickScratchFolder => return vec![ShellRequest::PickScratchFolder],
                 DialogOutcome::PickFfmpegFolder => return vec![ShellRequest::PickFfmpegFolder],
+                DialogOutcome::PickBackupFolder => return vec![ShellRequest::PickBackupFolder],
                 DialogOutcome::SetUpController => self.open_controller_wizard(),
                 DialogOutcome::ExportController => {
                     return vec![ShellRequest::PickExportController];
@@ -8042,6 +8187,11 @@ impl<B: AudioBackend> Shell<B> {
                 self.close_menubars();
                 Vec::new()
             }
+            AppCommand::RestoreBackup => {
+                self.open_backup_list();
+                self.close_menubars();
+                Vec::new()
+            }
             AppCommand::Versions => {
                 self.open_versions(true);
                 self.close_menubars();
@@ -9426,6 +9576,10 @@ impl<B: AudioBackend> Shell<B> {
                 self.restore_version(id);
                 Vec::new()
             }
+            PendingAction::RestoreBackup(path) => {
+                self.restore_backup(&path);
+                Vec::new()
+            }
         }
     }
 
@@ -9795,6 +9949,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_kick_bass();
         self.sync_zone();
         self.sync_guide();
+        self.sync_backup();
         // Imports and loads finish between frames: keep painting until the last one landed.
         if busy || self.core.is_busy() {
             self.repaint = true;
@@ -10938,6 +11093,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.versions {
             view.paint(canvas);
         }
+        if let Some(view) = &self.backup {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.plugin_manager {
             view.paint(canvas);
         }
@@ -11412,6 +11570,10 @@ mod video_tests;
 #[cfg(test)]
 #[path = "shell_versions_tests.rs"]
 mod versions_tests;
+
+#[cfg(test)]
+#[path = "shell_backup_tests.rs"]
+mod backup_tests;
 
 #[cfg(test)]
 #[path = "shell_plugin_manager_tests.rs"]
