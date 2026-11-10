@@ -393,7 +393,7 @@ ToggleCompensation | Delay Compensation
 ToggleCompensation | Delay Compensation
 ToggleConsole | Console
 ToggleConsoleLinks | Show Console Links
-ToggleCpuMeters | CPU Meters
+ToggleCpuMeters | Show Device CPU
 ToggleEditor | Clip Editor
 ToggleEnergyLane | Energy Lane
 ToggleFileBrowser | File Browser

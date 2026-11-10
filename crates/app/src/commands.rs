@@ -244,9 +244,10 @@ pub enum AppCommand {
     /// View > Show Console Links: draw the channel to master cables on the back of
     /// the rack (a channel otherwise shows "Output: Master").
     ToggleConsoleLinks,
-    /// View > CPU Meters: the share of the audio time each device takes, on its name plate (a
-    /// container shows the sum of what is inside). The engine times its devices only while this
-    /// is on. Not saved: it starts off.
+    /// View > Show Device CPU: the share of the audio time each device takes, on its name plate (a
+    /// container shows the sum of what is inside), and each channel strip shows its track's total.
+    /// The engine times its devices all the time; this only shows the figures. Not saved: it
+    /// starts off.
     ToggleCpuMeters,
     /// View > Big Meter: a large VU, PPM or peak meter with a hold marker and clip lamps for one
     /// pair of the Audio I/O sockets, floating over the rack. Not saved: it starts hidden.
@@ -3292,7 +3293,11 @@ pub fn menus_with_songs(
                             AppCommand::ToggleConsoleLinks,
                             state.console_links,
                         ),
-                        check("CPU Meters", AppCommand::ToggleCpuMeters, state.cpu_meters),
+                        check(
+                            "Show Device CPU",
+                            AppCommand::ToggleCpuMeters,
+                            state.cpu_meters,
+                        ),
                         check("Big Meter", AppCommand::ToggleBigMeter, state.big_meter),
                     ],
                 }),

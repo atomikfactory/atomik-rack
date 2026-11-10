@@ -841,6 +841,9 @@ pub struct ConsoleView {
     cache_ids: BTreeMap<DeviceKey, u64>,
     next_cache: u64,
     meters: BTreeMap<DeviceKey, MeterBallistics>,
+    /// The CPU total of each channel's track in percent of the audio time (the figure on the
+    /// name plate); empty = readout off.
+    cpu: BTreeMap<DeviceKey, f32>,
     latencies: BTreeMap<DeviceKey, u32>,
     /// The latency of the whole mix up to the interface outputs, in frames.
     total_latency: u32,
@@ -937,6 +940,7 @@ impl ConsoleView {
             cache_ids: BTreeMap::new(),
             next_cache: 1,
             meters: BTreeMap::new(),
+            cpu: BTreeMap::new(),
             latencies: BTreeMap::new(),
             total_latency: 0,
             meter_mode: MeterMode::Peak,
@@ -1095,6 +1099,27 @@ impl ConsoleView {
                 self.meters.entry(key.clone()).or_default().set_input(*m);
             }
         }
+    }
+
+    /// Shows `loads` (channel key, the track's CPU total in percent of the audio time) on the
+    /// name plates of the strips; `None` hides the readout. Repaints only when a shown figure
+    /// changed.
+    pub fn set_cpu_loads(&mut self, loads: Option<&BTreeMap<DeviceKey, f32>>) {
+        let next = loads.cloned().unwrap_or_default();
+        let shown = |m: &BTreeMap<DeviceKey, f32>| -> Vec<(DeviceKey, String)> {
+            m.iter()
+                .map(|(k, v)| (k.clone(), paint::cpu_text(*v)))
+                .collect()
+        };
+        if shown(&next) != shown(&self.cpu) {
+            self.repaint = true;
+        }
+        self.cpu = next;
+    }
+
+    /// The CPU total shown on the plate of strip `key`, if any.
+    pub fn cpu_load(&self, key: &DeviceKey) -> Option<f32> {
+        self.cpu.get(key).copied()
     }
 
     /// Advances the meter ballistics to `now_seconds` (any monotonic clock; the first call
@@ -4855,6 +4880,18 @@ impl ConsoleView {
             self.paint_strip_marks(c, &s.key, l, true);
             if let Some(r) = l.meter {
                 stereo_meter(c, &self.st, r, self.meters.get(&s.key), s.silenced);
+            }
+            if let Some(pct) = self.cpu.get(&s.key) {
+                let plate = plate_rect(l.name);
+                c.text(
+                    &TextRun::new(
+                        paint::cpu_text(*pct),
+                        pt(plate.x1 - 4.0, plate.y0 + 9.5),
+                        6.0,
+                        paint::cpu_color(&self.st.base, *pct),
+                    )
+                    .align(Align::End),
+                );
             }
             if let Some(r) = self.rename.as_ref().filter(|r| r.strip == s.key) {
                 self.field_off.set((x, top));

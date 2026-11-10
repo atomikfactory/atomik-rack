@@ -1076,3 +1076,140 @@ fn freeze_with_strip_says_why_a_send_in_use_stops_it() {
     freeze(&mut c, "lead", FreezeThrough::Track);
     assert!(frozen(&c, "lead").is_some_and(|f| !f.strip));
 }
+
+// ------------------------------------------------------------------ CPU readout
+
+fn cpu_sample(busy_ms: u64, budget_ms: u64) -> atomik_engine::timing::CpuSample {
+    atomik_engine::timing::CpuSample {
+        busy_ns: busy_ms * 1_000_000,
+        budget_ns: budget_ms * 1_000_000,
+    }
+}
+
+/// Gives each device of `loads` (key, percent) a reading of one second of audio at that load,
+/// twice, so the readout has a figure for it.
+fn feed_loads(c: &mut AppCore<RecordingSink>, loads: &[(DeviceKey, f32)], second: u64) {
+    for (k, pct) in loads {
+        let id = c.device_id(k).unwrap();
+        c.sink_mut().cpu.insert(
+            id,
+            cpu_sample((*pct as u64) * 10 * second, 1000 * second + 1000),
+        );
+    }
+    c.frame();
+}
+
+#[test]
+fn a_tracks_cpu_is_the_sum_of_its_instrument_channel_and_insert_effects() {
+    let mut c = core_with(2);
+    let chain = atomik_model::track_chain(c.doc(), c.registry(), &key("lead")).unwrap();
+    let mut loads = vec![(key("lead"), 6.0), (chain.channel.clone(), 2.0)];
+    loads.push((chain.effects[0].clone(), 8.0));
+    loads.push((chain.effects[1].clone(), 4.0));
+    loads.push((key("bass"), 3.0));
+    feed_loads(&mut c, &loads, 0);
+    feed_loads(&mut c, &loads, 1);
+    let tracks = c.track_cpu();
+    let lead = tracks.iter().find(|t| t.track == key("lead")).unwrap();
+    assert!((lead.percent - 20.0).abs() < 0.01, "{}", lead.percent);
+    assert_eq!(lead.channel, chain.channel);
+    assert!(lead.freezable);
+    assert_eq!(tracks[0].track, key("lead"), "heaviest first");
+    c.set_cpu_meters(true);
+    // The console strip of the track shows the total.
+    assert!((c.console().cpu_load(&chain.channel).unwrap() - 20.0).abs() < 0.01);
+    c.set_cpu_meters(false);
+    assert_eq!(c.console().cpu_load(&chain.channel), None);
+}
+
+#[test]
+fn the_heaviest_devices_name_their_tracks_and_a_container_counts_once() {
+    let mut c = core_with(1);
+    let chain = atomik_model::track_chain(c.doc(), c.registry(), &key("lead")).unwrap();
+    let verb = chain.effects[0].clone();
+    let loads = vec![
+        (key("lead"), 5.0),
+        (verb.clone(), 9.0),
+        (chain.channel, 1.0),
+    ];
+    feed_loads(&mut c, &loads, 0);
+    feed_loads(&mut c, &loads, 1);
+    let top = c.heaviest_devices(2);
+    assert_eq!(top.len(), 2);
+    assert_eq!(top[0].percent, 9.0);
+    assert_eq!(
+        top[0].track.as_deref(),
+        Some("Lead"),
+        "an insert says its track"
+    );
+    assert_eq!(top[1].name, "Lead");
+    assert_eq!(top[1].track, None, "the instrument is the track");
+    assert!(top[0].peak >= top[0].percent);
+}
+
+#[test]
+fn the_freeze_hint_suggests_the_heaviest_freezable_track_once_and_freezes_it() {
+    let mut c = core_with(1);
+    let loads = vec![(key("lead"), 40.0), (key("bass"), 10.0)];
+    feed_loads(&mut c, &loads, 0);
+    feed_loads(&mut c, &loads, 1);
+    // Not playing: nothing, however high the load.
+    for t in 0..8 {
+        c.transport_frame(f64::from(t));
+        assert_eq!(c.cpu_hint_poll(95.0, true), None);
+    }
+    c.handle_action(atomik_ui::UiAction::Transport(
+        atomik_ui::TransportAction::Play,
+    ));
+    let mut hint = None;
+    for t in 10..20 {
+        c.transport_frame(f64::from(t));
+        hint = hint.or(c.cpu_hint_poll(95.0, true));
+    }
+    let hint = hint.expect("five seconds above 70 % while playing");
+    assert_eq!(hint.track, key("lead"));
+    assert!((hint.percent - 40.0).abs() < 0.01);
+    // The track is not suggested again; the next one is.
+    let mut again = Vec::new();
+    for t in 20..40 {
+        c.transport_frame(f64::from(t));
+        again.extend(c.cpu_hint_poll(95.0, true));
+    }
+    assert_eq!(again.len(), 1);
+    assert_eq!(again[0].track, key("bass"));
+    // Freeze runs on the suggested track whatever is selected.
+    c.handle_action(atomik_ui::UiAction::Transport(
+        atomik_ui::TransportAction::Stop,
+    ));
+    c.freeze_track_of(&hint.track);
+    c.wait_background();
+    assert!(frozen(&c, "lead").is_some());
+    assert!(frozen(&c, "bass").is_none());
+    // A new song starts a new watch.
+    c.new_document();
+    assert!(c.track_cpu().is_empty());
+}
+
+#[test]
+fn a_frozen_track_is_never_suggested() {
+    let mut c = core_with(1);
+    freeze(&mut c, "lead", FreezeThrough::Track);
+    let loads = vec![(key("bass"), 10.0)];
+    feed_loads(&mut c, &loads, 0);
+    feed_loads(&mut c, &loads, 1);
+    assert!(
+        c.track_cpu()
+            .iter()
+            .all(|t| t.track != key("lead") || !t.freezable)
+    );
+    c.handle_action(atomik_ui::UiAction::Transport(
+        atomik_ui::TransportAction::Play,
+    ));
+    let mut hints = Vec::new();
+    for t in 0..12 {
+        c.transport_frame(f64::from(t));
+        hints.extend(c.cpu_hint_poll(95.0, true));
+    }
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].track, key("bass"));
+}

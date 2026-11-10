@@ -3004,7 +3004,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
-    cmd("view.toggle_cpu_meters", "CPU Meters", G::View, C::Global).menu(),
+    cmd(
+        "view.toggle_cpu_meters",
+        "Show Device CPU",
+        G::View,
+        C::Global,
+    )
+    .menu(),
     cmd("view.toggle_editor", "Clip Editor", G::View, C::Global).menu(),
     cmd("view.toggle_energy_lane", "Energy Lane", G::View, C::Global).menu(),
     cmd(

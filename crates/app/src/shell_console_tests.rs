@@ -1512,7 +1512,7 @@ fn the_view_menu_switches_the_cpu_meters_on_and_off() {
         .items()
         .map(|i| i.label.as_ref().to_string())
         .collect();
-    assert!(view.contains(&"CPU Meters".to_string()), "{view:?}");
+    assert!(view.contains(&"Show Device CPU".to_string()), "{view:?}");
     // Off at start; the command id is the one the menu, the keymap and the QA server share.
     assert!(!s.menu_state().cpu_meters);
     assert_eq!(

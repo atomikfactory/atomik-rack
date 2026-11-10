@@ -242,7 +242,7 @@ View
     Marker List
   Meters and Links >
     Show Console Links
-    CPU Meters
+    Show Device CPU
     Big Meter
   ---
   Find Parameter…

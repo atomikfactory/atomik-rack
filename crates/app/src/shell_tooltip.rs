@@ -111,6 +111,14 @@ impl<B: AudioBackend> Shell<B> {
         {
             return Some(help);
         }
+        // The freeze hint card sits over the song like the update notice.
+        if window == WindowKind::Main
+            && !self.modal_open()
+            && let Some(card) = &self.cpu_hint
+            && let Some(help) = card.help_at(self.size(), pos)
+        {
+            return Some(help);
+        }
         // The guide panel floats over the song (and under every modal).
         if window == WindowKind::Main
             && !self.modal_open()
@@ -216,6 +224,12 @@ impl<B: AudioBackend> Shell<B> {
             if pos.x >= banner_x && pos.y >= bar && pos.y < bar + self.banner.height() {
                 return self.banner.help_at(pos);
             }
+        }
+        // The status line says what the engine load is made of.
+        if window == WindowKind::Main
+            && let Some(help) = self.status_help(pos)
+        {
+            return Some(help);
         }
         let Ok(pane) = self.hit_in(window, pos)? else {
             return None;

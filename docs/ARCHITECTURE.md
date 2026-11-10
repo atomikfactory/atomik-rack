@@ -2855,24 +2855,38 @@ number, the Audio settings tab has an Auto chip).
 
 ### Per-device processing time
 
-[timing.rs](../crates/engine/src/timing.rs) feeds the CPU readout (View > Meters and Links > CPU Meters). The engine
-never reads a clock itself: the host installs a monotonic nanosecond counter once (`install_clock`;
-the app passes `monotonic_ns` of audio-io) and switches the measurement on with `set_enabled`.
-While it is on, `Node::run` reads the counter before and after each device call and adds the
-difference to the node's own `busy_ns`, on whichever thread runs the node. After each batch the
+[timing.rs](../crates/engine/src/timing.rs) feeds the CPU readout (View > Meters and Links > Show Device CPU). The
+engine never reads a clock itself: the host installs a monotonic nanosecond counter once (`install_clock`;
+the app passes `monotonic_ns` of audio-io) and switches the measurement on with `set_enabled`; the app core does that
+when it is made, so the engine measures all the time and the View switch only decides whether the figures show.
+`Node::run` reads the counter before and after each device call and adds the
+difference to the node's own `busy_ns`, on whichever thread runs the node (a worker of the multicore engine measures its
+nodes the same way, and a plugin in its own process is timed across the call that waits for it). After each batch the
 audio thread publishes every device's total next to the audio time rendered so far into
 [`Meters`](../crates/engine/src/console.rs) (`device_cpu`, a few atomics per device; the slots are
 cleared with the device-value slots when a device leaves or the arena is swapped). A reader keeps
 two samples and turns them into a load with `load_percent`: the share of one callback's budget the
 device used. The numbers are never read back into the signal, nothing allocates and nothing locks
 (the clock slot is a `OnceLock`, read as an atomic load), so a bounce is bit-identical with the
-measurement on or off (`cpu_timing.rs` in [engine/tests](../crates/engine/tests)). With it off a
-node pays two relaxed loads per call; on, about 70 ns per device per batch (100 devices cost about
-0.5 % of a 64-frame callback at 48 kHz; [perf/BASELINE.md](../perf/BASELINE.md)).
+measurement on or off (`cpu_timing.rs` in [engine/tests](../crates/engine/tests), which also pins the cost at two
+clock reads per device call with a fake clock; `cpu_slow_device.rs` runs a busy-wait device, serial and on workers,
+under the allocation guard and checks that it has the biggest share). On, it costs about 70 ns per device per batch
+(100 devices cost about 0.5 % of a 64-frame callback at 48 kHz; [perf/BASELINE.md](../perf/BASELINE.md); the
+`render_batch` bench prices it with `ATOMIK_BENCH_TIMING=1`). With the switch off a node pays two relaxed loads per call.
 The app side is [app_core_cpu.rs](../crates/app/src/app_core_cpu.rs): once per frame it reads the
-samples, forms a load once 200 ms of audio have passed, smooths it, and hands the loads to the rack
-view, which draws them on the name plates over the cached panels; a container shows the sum of the
-devices inside it. The switch is not saved.
+samples and, once 200 ms of audio have passed, turns them into a load that goes into the device's `Gauge`
+([cpu_gauge.rs](../crates/app/src/cpu_gauge.rs)): the load averaged over about a second (an exponential average with a
+time constant of one second of audio) and a peak held for two seconds. The core sums each track's chain (the
+instrument, its channel and the insert effects, found with `track_chain`) into `TrackCpu`. The loads go to the rack
+view, which draws them on the name plates over the cached panels (a container shows the sum of the devices inside it),
+and the track totals to the console, which draws them live on the strip name plates; `paint::cpu_text` and
+`paint::cpu_color` give both the same text (one decimal below 10 %) and the warning colour above 25 %. The status line
+tooltip ([shell_cpu.rs](../crates/app/src/shell_cpu.rs)) lists the five heaviest devices (`heaviest_devices`) under the
+engine load of the audio status; the tooltip box takes one row per line. The freeze hint is the pure `HintWatch` of
+`cpu_gauge.rs` (the engine load above 70 % for 5 s while playing, once per track per song, the heaviest freezable
+track that was not suggested yet) and a card in the lower left corner ([cpu_hint.rs](../crates/app/src/cpu_hint.rs))
+whose Freeze button calls `freeze_track_of`. The switch and the hints given are not saved; a new song forgets both
+the figures and the hints.
 
 ### Master tune
 

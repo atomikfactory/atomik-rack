@@ -125,7 +125,10 @@ for the controller wizard; Skip and Done write the settings file so it never ope
 question waits behind it),
 and a chord track and song key (a song key with key changes and a chord lane, a Key lane and a Chord lane above
 the tracks, a picker with a chord symbol field, a Key field in the transport bar, a piano roll that follows the
-song key, a Song Chord stamp, Fit Notes to Chords, Detect Song Key and a browser search for loops in the song key).
+song key, a Song Chord stamp, Fit Notes to Chords, Detect Song Key and a browser search for loops in the song key),
+and CPU use per device (a measurement that is always on, a figure on every device plate and a total on every mixer
+strip with View > Show Device CPU, a tooltip on the status line with the five heaviest devices and their tracks, and a
+hint to freeze the heaviest track when the engine load stays above 70 % while playing).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms

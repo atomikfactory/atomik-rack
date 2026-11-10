@@ -9,6 +9,13 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **CPU use per device.** The engine now times every device all the time (about half a percent of a 64-frame callback
+  for a hundred devices, never part of the sound), and the figures are averaged over about a second with a peak held for
+  two seconds. View > Show Device CPU (the old CPU Meters switch, off at the start) shows a figure such as `3.2%` on the
+  name plate of each device, in the warning colour above 25 % of the audio time, and the total of its track (instrument,
+  channel and insert effects) on each channel strip of the mixer. The tooltip of the status line gives the engine load
+  and lists the five heaviest devices with their tracks. When the engine load stays above 70 % for five seconds while
+  playing, a card says which track uses the most CPU and offers to freeze it with one click, once per track per song.
 - **Chord track and song key.** The song can have a key and a chord lane that the rest of the app follows. A key is a
   root and a scale kind (every kind of the piano roll but chromatic); key changes along the song work like meter
   changes, and the key at a tick is the last change at or before it, else the song key. A chord has a root, a quality
