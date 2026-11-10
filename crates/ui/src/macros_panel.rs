@@ -1231,7 +1231,7 @@ impl MacrosView {
                 c,
                 st,
                 r,
-                &fit_label(&b.name, r.width() - 10.0, 9.5),
+                &crate::paint::fit_label_raw(&b.name, r.width() - 10.0, 9.5),
                 lit,
                 hovered(r),
             );
@@ -1300,7 +1300,7 @@ impl MacrosView {
             };
             sp::label(
                 c,
-                &fit_label(&m.name, name_cell.width() - 6.0, 10.5),
+                &crate::paint::fit_label_raw(&m.name, name_cell.width() - 6.0, 10.5),
                 name_cell.x0 + 4.0,
                 text_y,
                 10.5,

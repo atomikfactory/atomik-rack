@@ -2723,6 +2723,42 @@ pub fn menus_with_songs(
     templates: &[String],
     songs: &SongList<'_>,
 ) -> Vec<Menu> {
+    let mut menus = menus_in_english(state, keymap, recent, templates, songs);
+    if atomik_ui::i18n::language() != atomik_ui::Lang::English {
+        for menu in &mut menus {
+            menu.title = atomik_ui::i18n::t(menu.title);
+            localise_entries(&mut menu.entries);
+        }
+    }
+    menus
+}
+
+/// The labels of `entries` in the language in use: the fixed texts are looked up, the names of
+/// songs, templates and tracks (owned texts) are left as they are.
+fn localise_entries(entries: &mut [MenuEntry]) {
+    for entry in entries {
+        match entry {
+            MenuEntry::Item(item) => {
+                if let Cow::Borrowed(label) = item.label {
+                    item.label = Cow::Borrowed(atomik_ui::i18n::t(label));
+                }
+            }
+            MenuEntry::Submenu(sub) => {
+                sub.label = atomik_ui::i18n::t(sub.label);
+                localise_entries(&mut sub.entries);
+            }
+            MenuEntry::Separator => {}
+        }
+    }
+}
+
+fn menus_in_english(
+    state: &MenuState,
+    keymap: &Keymap,
+    recent: &[String],
+    templates: &[String],
+    songs: &SongList<'_>,
+) -> Vec<Menu> {
     let make = |label: &'static str, command: AppCommand, checked, enabled| {
         MenuEntry::Item(MenuItem {
             label: Cow::Borrowed(label),
@@ -2735,7 +2771,11 @@ pub fn menus_with_songs(
     // Undo and Redo name the step they run ("Undo Move Device").
     let step = |verb: &'static str, label: Option<&'static str>, command: AppCommand, enabled| {
         let text = match label {
-            Some(l) if enabled => Cow::Owned(format!("{verb} {l}")),
+            Some(l) if enabled => Cow::Owned(format!(
+                "{} {}",
+                atomik_ui::i18n::t(verb),
+                atomik_ui::i18n::t(l)
+            )),
             _ => Cow::Borrowed(verb),
         };
         MenuEntry::Item(MenuItem {

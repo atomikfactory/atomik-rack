@@ -206,8 +206,8 @@ impl KeymapEditor {
                         context,
                     };
                     let label = match arg {
-                        Some(a) => format!("{} ({a})", d.label),
-                        None => d.label.to_string(),
+                        Some(a) => format!("{} ({})", crate::i18n::tr(d.label), crate::i18n::tr(a)),
+                        None => crate::i18n::tr(d.label).into_owned(),
                     };
                     let row = Row {
                         chords: self.current_chords(&key),
@@ -414,9 +414,10 @@ impl KeymapEditor {
             let base = registry
                 .get(&b.command)
                 .map_or(b.command.as_str(), |d| d.label);
+            let base = crate::i18n::tr(base);
             out.push(Clash {
                 label: match &b.arg {
-                    Some(a) => format!("{base} ({a})"),
+                    Some(a) => format!("{base} ({})", crate::i18n::tr(a)),
                     None => base.to_string(),
                 },
                 command: b.command.clone(),

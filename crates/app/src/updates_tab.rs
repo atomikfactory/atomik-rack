@@ -72,7 +72,7 @@ impl UpdatesSection {
         y += ROW + 8.0;
         let mut notes = Vec::new();
         for note in NOTES {
-            for line in wrap(note, WRAP) {
+            for line in wrap(atomik_ui::i18n::t(note), WRAP) {
                 notes.push((Point::new(x0, y + 12.0), line));
                 y += 16.0;
             }

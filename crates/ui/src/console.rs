@@ -6090,7 +6090,7 @@ fn name_plate(
     let col = if dim { t.text_muted } else { t.text };
     c.text(
         &TextRun::new(
-            fit_label(name, r.width() - 8.0, 10.0),
+            crate::paint::fit_label_raw(name, r.width() - 8.0, 10.0),
             pt(r.x0 + 5.0, r.y0 + 15.0),
             10.0,
             col,

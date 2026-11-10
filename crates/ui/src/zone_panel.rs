@@ -456,7 +456,7 @@ impl ZoneView {
             let name_w = (rect.width() - TEXT_W - 30.0).max(40.0);
             sp::label(
                 c,
-                &fit_label(&r.name, name_w, FONT),
+                &crate::paint::fit_label_raw(&r.name, name_w, FONT),
                 rect.x0 + 22.0,
                 rect.y0 + 14.0,
                 FONT,

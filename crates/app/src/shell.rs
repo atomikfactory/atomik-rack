@@ -559,6 +559,8 @@ pub struct Shell<B: AudioBackend> {
     guide: Option<Guide>,
     /// The operating system is set to a dark theme (what the System theme choice follows).
     system_dark: bool,
+    /// The language the views were last drawn in ([`Shell::sync_language`] notices a change).
+    shown_language: atomik_ui::Lang,
     /// The rack split before a double-click on the divider collapsed the rack: the next
     /// double-click puts it back.
     split_before: Option<f64>,
@@ -862,6 +864,7 @@ impl<B: AudioBackend> Shell<B> {
             dialog: None,
             about: None,
             system_dark: true,
+            shown_language: atomik_ui::i18n::language(),
             split_before: None,
             ports_listed_at: None,
             settings_path: options.settings_path,
@@ -3914,8 +3917,40 @@ impl<B: AudioBackend> Shell<B> {
     /// Hands the theme to every view the shell and the core hold, when it is not the one they
     /// already have: a switch is live, nothing keeps the colours of the old one.
     fn apply_theme(&mut self) {
+        self.apply_theme_with(false);
+    }
+
+    /// The language the preference names: the System choice follows the operating system's
+    /// locale (English when it is unknown or has no texts here).
+    pub fn language(&self) -> atomik_ui::Lang {
+        self.workflow
+            .language
+            .resolve(atomik_ui::i18n::system_locale().as_deref())
+    }
+
+    /// Makes [`Shell::language`] the language of the whole process. The platform calls it before
+    /// it handles an event and after the settings changed; the tests never do, they scope a
+    /// language to their own thread instead.
+    pub fn apply_language_globally(&self) {
+        atomik_ui::i18n::set_language(self.language());
+    }
+
+    /// When the language in use changed since the views last drew, hands the views a fresh copy
+    /// of the theme (which clears every cache of drawn text) and lays them out again, so the
+    /// whole interface changes at once.
+    fn sync_language(&mut self) {
+        let now = atomik_ui::i18n::language();
+        if now != self.shown_language {
+            self.shown_language = now;
+            self.apply_theme_with(true);
+            self.layout_view();
+        }
+    }
+
+    /// [`Shell::apply_theme`]; `force` hands the theme over even when the views have it.
+    fn apply_theme_with(&mut self, force: bool) {
         let theme = self.theme();
-        if self.core.view().theme() == &theme {
+        if !force && self.core.view().theme() == &theme {
             return;
         }
         self.core.set_theme(theme.clone());
@@ -9975,6 +10010,7 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Per-frame work: engine garbage, the transport position and recorded notes.
     pub fn frame(&mut self) {
+        self.sync_language();
         let busy = self.core.is_busy();
         self.core.frame();
         self.sync_plugin_ui();
@@ -11671,6 +11707,10 @@ mod piano_keys_tests;
 #[cfg(test)]
 #[path = "shell_interface_tests.rs"]
 mod interface_tests;
+
+#[cfg(test)]
+#[path = "shell_language_tests.rs"]
+mod language_tests;
 
 #[cfg(test)]
 #[path = "shell_edit_keys_tests.rs"]

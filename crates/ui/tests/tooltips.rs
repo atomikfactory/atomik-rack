@@ -27,6 +27,15 @@ impl Seen {
             "{what}: a tooltip is one short line ({} characters)",
             help.text.len()
         );
+        // The limit holds in every language: the French of a tooltip is one short line too.
+        let french = atomik_ui::i18n::with_language(atomik_ui::Lang::French, || {
+            atomik_ui::i18n::tr(&help.text).into_owned()
+        });
+        assert!(
+            french.chars().count() <= 90,
+            "{what}: the French tooltip is {} characters: {french}",
+            french.chars().count()
+        );
         self.0.push((what.to_string(), help));
     }
 }

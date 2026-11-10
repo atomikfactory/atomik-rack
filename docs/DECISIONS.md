@@ -510,3 +510,42 @@ and the documentation are one text. A link to a file the manual does not hold op
 one request to a fixed address like Help > Documentation, and nothing else is ever opened from the text.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## W. How the interface is translated
+
+**Question.** The interface should be usable in French, and adding another language should be one file. Which way
+do the texts reach the language: a call at every place a text is written (`t("Save")`), a key per text with a
+catalogue of identifiers (`menu.file.save`), or one lookup at the place where text is drawn?
+
+**Options.** (1) A call at each place, with the English text as the key: readable, but the program draws text in a few
+thousand places (labels returned by functions, tables of choices, helpers that cut a label to its room), so every one
+would need editing, and a text added later without the call would silently stay English. (2) Identifier keys with a
+catalogue per language, as `fluent` or `gettext` do: the right answer for a program that starts with it, but it replaces
+every text of the code by an identifier, which makes the code harder to read and the change enormous. (3) One lookup
+where a [`TextRun`](../crates/ui/src/canvas.rs) is made, with the English text as the key, plus a lookup of the same
+kind where text is not drawn by the program (the native menus, the tooltips, the width of a tab).
+
+**Implications.** With (3) every label that is written as a text is translated where it is drawn, in every panel,
+and a text with no entry shows in English, so the program is always complete and the catalogue can grow one entry at a
+time. The cost is that the lookup cannot tell a word of the program from a word of the user: a track called `Bass`
+would show as `Basse`. The places that draw the user's own words (track, clip, strip and device names, file and patch
+names, plugin parameters) take the `verbatim` road (`TextRun::verbatim`, `fit_label_raw`), and the menus translate only
+their fixed texts, never the song, template and track names they list; a place not yet on that road shows a name
+translated only when it is exactly a word of the catalogue. Text built with `format!` is found by its shape: an entry
+may name values in braces (`Added {name}`) and then matches any text of that shape and puts the values into the French.
+A count has a singular and a plural entry, and French counts 0 and 1 as singular. The catalogue is one text file per
+language, `English text => texte`, included with `include_str!` (no file is read at run time, nothing can be missing),
+parsed once, searched by binary search, and never allocates for a text it knows.
+
+**Decision.** Option 3. The catalogue is `crates/ui/locales/fr.txt` and the lookup is `atomik_ui::i18n` (`t`, `tr`,
+`tf`, `tn`, `key_name`). The language is a setting (`language` of `workflow.json`: `system`, `en` or `fr`), shown in
+Settings > Video under the update question, where there was room; System reads the language of the operating system
+once at start (the `sys-locale` crate, see [DEPENDENCIES.md](DEPENDENCIES.md)) and falls back to English. A change
+applies at once: the shell hands the views a fresh theme, which drops every cache of drawn text, and lays them out
+again. The project format is unchanged, because the language belongs to the person and not to the song. The tests
+never read the language of the machine: the process starts in English and a test that wants French scopes it to its
+own thread. The manual (`docs/README.md` and `docs/KEYBOARD.md`), the texts of Help Mode (`help/*.json`) and the
+names of devices stay in English for now. The French uses the glossary at the top of the catalogue (Piste, Clip,
+Boucle, Calque, Table de mixage, Envois, Retours, Réglages, Annuler, Rétablir).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

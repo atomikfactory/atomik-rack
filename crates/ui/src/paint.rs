@@ -62,7 +62,14 @@ fn round_stroke(width: f64) -> Stroke {
 }
 
 /// Cuts a label to roughly fit `width` at `size` (no text measurement: platform-independent).
+/// The label is looked up in the language first, so it is the translation that is cut; use
+/// [`fit_label_raw`] for the words of the user.
 pub fn fit_label(text: &str, width: f64, size: f32) -> String {
+    fit_label_raw(&crate::i18n::tr(text), width, size)
+}
+
+/// [`fit_label`] for text that is shown as it is (a name the user typed).
+pub fn fit_label_raw(text: &str, width: f64, size: f32) -> String {
     let max = ((width / (f64::from(size) * 0.56)).floor() as usize).max(1);
     if text.chars().count() <= max {
         text.to_string()
@@ -88,8 +95,24 @@ pub fn fit_label_in(c: &mut dyn Canvas, text: &str, width: f64, size: f32) -> St
     fit_label_weight(c, text, width, size, 400)
 }
 
+/// [`fit_label_in`] for text that is shown as it is (a name the user typed).
+pub fn fit_label_in_raw(c: &mut dyn Canvas, text: &str, width: f64, size: f32) -> String {
+    fit_label_weight_raw(c, text, width, size, 400)
+}
+
 /// [`fit_label_in`] for text drawn at `weight`.
 pub fn fit_label_weight(
+    c: &mut dyn Canvas,
+    text: &str,
+    width: f64,
+    size: f32,
+    weight: u16,
+) -> String {
+    fit_label_weight_raw(c, &crate::i18n::tr(text), width, size, weight)
+}
+
+/// [`fit_label_weight`] for text that is shown as it is (a name the user typed).
+pub fn fit_label_weight_raw(
     c: &mut dyn Canvas,
     text: &str,
     width: f64,
@@ -136,7 +159,7 @@ pub fn tail_fit<'a>(
 
 /// Splits a name into at most two lines that fit `width` (word boundaries first).
 pub fn wrap_name(text: &str, width: f64, size: f32) -> Vec<String> {
-    let fits = |t: &str| fit_label(t, width, size) == t;
+    let fits = |t: &str| fit_label_raw(t, width, size) == t;
     if fits(text) {
         return vec![text.to_string()];
     }
@@ -144,10 +167,10 @@ pub fn wrap_name(text: &str, width: f64, size: f32) -> Vec<String> {
     for split in (1..words.len()).rev() {
         let first = words[..split].join(" ");
         if fits(&first) {
-            return vec![first, fit_label(&words[split..].join(" "), width, size)];
+            return vec![first, fit_label_raw(&words[split..].join(" "), width, size)];
         }
     }
-    vec![fit_label(text, width, size)]
+    vec![fit_label_raw(text, width, size)]
 }
 
 /// Size of the sample name on a loaded drum pad.
@@ -173,7 +196,7 @@ pub fn wrap_pad_name(text: &str, width: f64, size: f32) -> Vec<String> {
     let first: String = chars[..at].iter().collect();
     let rest: String = chars[at..].iter().collect();
     let first = first.trim_end().to_string();
-    vec![first, fit_label(rest.trim_start(), width, size)]
+    vec![first, fit_label_raw(rest.trim_start(), width, size)]
 }
 
 /// Moves a hairline coordinate (logical pixels) to the middle of a physical pixel at `scale`, so
@@ -835,7 +858,7 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
         // name fits.
         let chars = info.name.chars().count().max(1) as f64;
         size = ((width / (chars * 0.56) * 0.99) as f32).clamp(8.0, theme.name_size);
-        lines = vec![fit_label(info.name, width, size)];
+        lines = vec![crate::paint::fit_label_raw(info.name, width, size)];
     }
     let mut y = r.y0 + 19.0;
     for line in &lines {
@@ -979,7 +1002,7 @@ pub fn group_chip<C: Canvas + ?Sized>(
     } else {
         (plate.x0 + 6.0, plate.y1 - 44.0, plate.width() - 12.0)
     };
-    let text = fit_label(name, (room - 10.0).max(8.0), size);
+    let text = crate::paint::fit_label_raw(name, (room - 10.0).max(8.0), size);
     let w = (estimate_width(&text, size) + 10.0).min(room);
     let tag = Rect::new(x, y, x + w, y + 12.0);
     c.fill_with(RoundedRect::from_rect(tag, 3.0), fill);

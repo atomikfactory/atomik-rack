@@ -166,7 +166,7 @@ fn splits(v: &ContainerEditorView, c: &mut dyn Canvas) {
         if r.width() > 40.0 && r.height() > 14.0 {
             sp::label(
                 c,
-                &fit_label(&name, r.width() - 12.0, 9.0),
+                &crate::paint::fit_label_raw(&name, r.width() - 12.0, 9.0),
                 r.x0 + 6.0,
                 r.y0 + 12.0,
                 9.0,
@@ -314,7 +314,7 @@ fn list(v: &ContainerEditorView, c: &mut dyn Canvas) {
             .map_or_else(|| s.target.0.clone(), |d| d.name.clone());
         sp::label(
             c,
-            &fit_label(&name, tr.width() - 26.0, 10.0),
+            &crate::paint::fit_label_raw(&name, tr.width() - 26.0, 10.0),
             tr.x0 + 7.0,
             tr.y0 + 13.0,
             10.0,

@@ -7099,7 +7099,8 @@ impl ArrangementView {
                     paint_channel(c, &channel, &source, &frame_x);
                 }
             } else {
-                let text = fit_label(&meta.original_name, vis.width() - 12.0, 9.0);
+                let text =
+                    crate::paint::fit_label_raw(&meta.original_name, vis.width() - 12.0, 9.0);
                 sp::label(
                     c,
                     &text,
@@ -7807,7 +7808,7 @@ impl ArrangementView {
         let compact = hr.height() < COMPACT_BELOW;
         let frozen = tr.frozen.is_some();
         let name_width = self.track_name_width(hr, track);
-        let name = fit_label(&sp::track_name(doc, &tr.device), name_width, 11.5);
+        let name = crate::paint::fit_label_raw(&sp::track_name(doc, &tr.device), name_width, 11.5);
         let name_y = if compact {
             hr.y0 + hr.height() / 2.0 + 4.0
         } else {

@@ -54,6 +54,7 @@ winit = "0.30.13"
 muda = "0.21.2"
 rfd = "0.17.2"
 arboard = { version = "3.7.0", default-features = false }
+sys-locale = "0.3.2"
 pollster = "1.0"
 symphonia = { version = "0.6.1", default-features = false }
 rubato = "5.0.1"

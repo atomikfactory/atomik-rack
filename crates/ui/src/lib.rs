@@ -397,6 +397,7 @@ pub mod granular_panel;
 pub mod harmony_picker;
 pub mod help_panel;
 pub mod history_panel;
+pub mod i18n;
 pub mod interface;
 pub mod io_panel;
 pub mod key_chord_panel;
@@ -521,6 +522,7 @@ pub use film_panel::{
 pub use harmony_picker::{HarmonyPickerAction, HarmonyPickerView, HarmonyTarget, PickerValue};
 pub use help_panel::{HELP_PANEL_HEIGHT, HelpCard};
 pub use history_panel::{HISTORY_PANEL_WIDTH, HistoryRow, HistoryView};
+pub use i18n::{Lang, LanguageChoice};
 pub use io_panel::IoSocketState;
 pub use kick_bass_panel::{
     FixView, KickBassAction, KickBassInfo, KickBassView, RunView, StripHit, StripView,

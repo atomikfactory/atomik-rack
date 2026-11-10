@@ -11,7 +11,6 @@
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::console::{FADER_UNITY_POS, fader, lcd_text, small_button, strip_background};
 use crate::console_layout::{BUTTON_H, LCD_H, PAD, STRIP_W};
-use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::text_field::{FieldColors, TextField};
 use crate::theme::mix;
@@ -250,7 +249,7 @@ pub fn paint_strip(
     } else {
         c.text(
             &TextRun::new(
-                fit_label(&v.name, plate.width() - 8.0, 10.0),
+                crate::paint::fit_label_raw(&v.name, plate.width() - 8.0, 10.0),
                 pt(plate.x0 + 5.0, plate.y0 + 18.0),
                 10.0,
                 Color::WHITE,

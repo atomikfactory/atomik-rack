@@ -662,7 +662,7 @@ impl Browser {
                     c.fill_with(Circle::new(pt(r.x0 + 13.0, r.center().y), 5.0), accent);
                     c.text(
                         &TextRun::new(
-                            crate::paint::fit_label(&e.title(), r.width() - 34.0, 11.0),
+                            crate::paint::fit_label_raw(&e.title(), r.width() - 34.0, 11.0),
                             pt(r.x0 + 26.0, r.y0 + 14.0),
                             11.0,
                             theme.text,
@@ -710,7 +710,7 @@ impl Browser {
                 BrowserRow::Failed { title, reason } => {
                     let dim = theme.text_muted.with_alpha(0.7);
                     c.text(&TextRun::new(
-                        crate::paint::fit_label(title, r.width() - 14.0, 10.0),
+                        crate::paint::fit_label_raw(title, r.width() - 14.0, 10.0),
                         pt(r.x0 + 6.0, r.y0 + 14.0),
                         10.0,
                         dim,

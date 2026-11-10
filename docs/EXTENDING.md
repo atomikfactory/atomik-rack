@@ -291,3 +291,30 @@ and the files beside it), and every sound is rendered by the application's own d
   writes every file and `factory.json`; the tests then check that the files are what the tables describe, that
   every patch makes sound (a non-silent, bounded bounce of a built-in phrase), that every loop decodes at its tagged
   tempo and that the folder stays under 25 MB.
+
+## 8. Adding a language
+
+The interface is translated by one text file per language, `crates/ui/locales/<code>.txt`, with the English text of the
+program as the key ([DECISIONS.md](DECISIONS.md#w-how-the-interface-is-translated) explains the choice). To add a
+language, say German (`de`):
+
+1. Copy `crates/ui/locales/fr.txt` to `de.txt` and replace the French of each line. A line is `English text => Text`;
+   a line that starts with `#` is a comment, a backslash and `n` make a line break and two backslashes make one. Keep
+   the glossary at the top up to date: a word is translated the same way everywhere.
+2. A text that names a value (`Added {name}`) keeps the same names in the translation; the order may change. Such a
+   line also matches any text of that shape, so a message the program builds with `format!` is translated by naming
+   its shape once. A count has two lines (`Copied {n} take` and `Copied {n} takes`); the rule that picks one is
+   `tn` in `crates/ui/src/i18n.rs`.
+3. Names of keys and modifiers (`Shift`, `Enter`) are the lines that start with `key:`. Device names, units and
+   abbreviations that read the same stay as they are (or are left out: a text with no line shows in English).
+4. In `crates/ui/src/i18n.rs` add the language to `Lang` (its `code`, its own `name`, the `include_str!` of the file)
+   and to `LanguageChoice::ALL`; the settings file, the Settings > Video buttons and the System choice follow from the
+   list. Add the plural rule to `tn`.
+5. Run `cargo test -p atomik-ui --test i18n_catalog --test i18n_sources --test french_goldens` (copy the golden and
+   catalogue tests for the new code): they check that no text has two lines, that every line names the values the
+   English names, that no text is much longer than the English, that every command of the registry has a line, and
+   that no tooltip passes 90 characters. The views are drawn in the language into goldens under `tests/golden/<code>/`
+   (`ATOMIK_UPDATE_GOLDEN=1` writes them); look at what changed before you commit it.
+
+A text with no line is not an error: it shows in English. The tests that draw the views list the texts that a view
+drew without a line, which is the list of what is left to translate.
