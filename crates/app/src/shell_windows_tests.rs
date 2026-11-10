@@ -66,8 +66,9 @@ fn detach_rack_main_layout_has_no_rack() {
         s.pane_rect(Pane::Rack),
         Some((
             WindowKind::Rack,
-            Rect::new(0.0, 0.0, size.width, size.height)
-        ))
+            Rect::new(0.0, MENU_BAR_HEIGHT, size.width, size.height)
+        )),
+        "the rack sits below the menu bar of its window"
     );
     assert_eq!(s.pane_rect(Pane::Console), None, "the console is not shown");
 }
@@ -102,7 +103,7 @@ fn detach_console_lower_pane_never_console() {
     let size = s.window_size(WindowKind::Console).unwrap();
     assert_eq!(
         s.core().console().bounds(),
-        Rect::new(0.0, 0.0, size.width, size.height)
+        Rect::new(0.0, MENU_BAR_HEIGHT, size.width, size.height)
     );
     assert!(s.menu_state().console, "a detached console counts as shown");
     assert!(s.menu_state().console_detached);
@@ -171,7 +172,10 @@ fn scale_changed_in_rack_window_leaves_main_views() {
     assert_eq!(s.physical_size_in(WindowKind::Rack), Some((1800, 1000)));
     assert_eq!(
         s.pane_rect(Pane::Rack),
-        Some((WindowKind::Rack, Rect::new(0.0, 0.0, 900.0, 500.0)))
+        Some((
+            WindowKind::Rack,
+            Rect::new(0.0, MENU_BAR_HEIGHT, 900.0, 500.0)
+        ))
     );
     // The other way round: the main window's scale does not reach the rack window.
     s.handle(&UiEvent::ScaleChanged(1.5));
@@ -324,9 +328,15 @@ fn rack_window() -> (Shell<NullBackend>, DeviceKey) {
 /// A point of the rack window over the left edge of a device panel.
 fn device_point(s: &Shell<NullBackend>, key: &DeviceKey) -> Point {
     let r = s.core().view().device_rect(key).unwrap();
-    s.core()
+    let at = s
+        .core()
         .view()
-        .rack_to_view(Point::new(r.x0 + 6.0, r.center().y))
+        .rack_to_view(Point::new(r.x0 + 6.0, r.center().y));
+    // The rack view's point, moved below the menu bar of its window.
+    let origin = s
+        .pane_rect(Pane::Rack)
+        .map_or(Point::ORIGIN, |(_, r)| r.origin());
+    Point::new(at.x + origin.x, at.y + origin.y)
 }
 
 #[test]
@@ -608,6 +618,8 @@ fn library_item_drag_inserts_into_detached_rack() {
         .core()
         .view()
         .rack_to_view(Point::new(r.x0 + 300.0, r.y1 + 20.0));
+    // The window point: the rack sits below the menu bar.
+    let over = Point::new(over.x, over.y + MENU_BAR_HEIGHT);
     let synths = |s: &Shell<NullBackend>| {
         s.core()
             .doc()
@@ -764,16 +776,17 @@ fn paint_in_console_window_displays_console_only() {
     s.paint_in(WindowKind::Console, &mut console);
     assert!(!main.texts().iter().any(|t| t.contains(console_text)));
     assert!(console.texts().iter().any(|t| t.contains(console_text)));
-    // No menu bar and no status bar in the console window.
+    // The menu bar is in every window of the app, the status bar only in the main one.
     assert!(main.texts().contains(&"File"));
-    assert!(!console.texts().contains(&"File"));
+    assert!(console.texts().contains(&"File"));
     assert!(main.texts().iter().any(|t| t.contains("MIDI off")));
     assert!(!console.texts().iter().any(|t| t.contains("MIDI off")));
-    // The rack window paints the rack and nothing of the main window.
+    // The rack window paints the rack and the menu bar, nothing else of the main window.
     s.execute(AppCommand::DetachRack);
     let mut rack = atomik_ui::DisplayList::new();
     s.paint_in(WindowKind::Rack, &mut rack);
-    assert!(!rack.texts().contains(&"File"));
+    assert!(rack.texts().contains(&"File"));
+    assert!(!rack.texts().iter().any(|t| t.contains("MIDI off")));
     assert!(!rack.is_empty());
 }
 

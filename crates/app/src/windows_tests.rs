@@ -569,3 +569,44 @@ fn place_detached_no_monitors_leaves_position_to_the_os() {
     let p = place_detached(None, DEFAULT, MIN, &[], 0, &[]);
     assert_eq!(p.pos, None);
 }
+
+#[test]
+fn a_point_in_the_menu_bar_strip_of_a_window_is_a_point_of_that_window() {
+    // A rack window at (100, 50) with a 1000x700 inner area at scale 2: its menu bar is the
+    // top 26 logical units of that area, and the pane below starts at 26.
+    let rects = [rect(
+        WindowKind::Rack,
+        (100.0, 50.0),
+        (2000.0, 1400.0),
+        2.0,
+        DesktopSpace::Physical,
+    )];
+    let z = ZOrder::default();
+    let bar = window_under(&rects, (300.0, 50.0 + 30.0), &z).unwrap();
+    assert_eq!(bar.logical, (100.0, 15.0), "inside the bar");
+    let pane = window_under(&rects, (300.0, 50.0 + 60.0), &z).unwrap();
+    assert_eq!(pane.logical, (100.0, 30.0), "below the bar");
+    // The desktop point of a pointer reported in the window's own physical pixels.
+    assert_eq!(
+        to_desktop(DesktopSpace::Physical, (100.0, 50.0), 2.0, (200.0, 30.0)),
+        (300.0, 80.0)
+    );
+    // On macOS the positions are points: the physical offset is divided by the window's scale.
+    assert_eq!(
+        to_desktop(DesktopSpace::Points, (100.0, 50.0), 2.0, (200.0, 30.0)),
+        (200.0, 65.0)
+    );
+    let mac = [rect(
+        WindowKind::Console,
+        (100.0, 50.0),
+        (1000.0, 700.0),
+        2.0,
+        DesktopSpace::Points,
+    )];
+    assert_eq!(
+        window_under(&mac, (300.0, 50.0 + 13.0), &z)
+            .unwrap()
+            .logical,
+        (200.0, 13.0 * 1.0)
+    );
+}

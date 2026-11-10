@@ -6419,6 +6419,18 @@ winit and GPU code is not (it needs a window and a GPU).
   on Wayland, leaves it to the OS), maximised when saved so, and then told `ScaleChanged` and
   `Resize` with `handle_in`. The main window is placed and restored the same way. A window that
   cannot be created is attached again (`window_closed`).
+- **The menu bar in the detached windows.** `Shell::bar_height_in(window)` is the height of the in-window menu bar
+  at the top of a window: the main window and the detached rack and console carry it (when the app draws its own bar,
+  not on macOS), the small tool windows and the detached browser do not. Each window with a bar has its own `MenuBar`
+  state (`window_bars` for the detached ones) over the one `Shell::menu_model`, so the menus, check marks and enabled
+  states cannot drift. `menu_bar_event` gives an event to the bar of its window (a key goes to the window whose menu is
+  open) before the panes see it; a press on a detached bar first gives that window's pane the keys, so the commands
+  act on it through `live_pane` and `pane_command`. Opening a menu closes every other one (`close_other_bars`), as do
+  `window_focused` for another window and `focus_lost`. `pane_rect` of a detached pane starts below the bar, so
+  `hit_in`, the rack's view origin, the drops and the cross-window drag maths (`to_desktop`, `window_under`, which work
+  on the whole inner rect of a window) agree; `paint_detached` translates the rack below the bar and paints the bar
+  over it. The platform raises a window's minimum width to `Shell::menu_bar_width`. The saved geometry is the whole
+  inner size, bar included.
 - **Closing.** The close button of a detached window calls `window_closed(kind)` (the pane returns
   to the main window); closing the main window of the only song quits and keeps the detached flags, so
   the windows reopen at the next start; closing the main window of one of several songs runs

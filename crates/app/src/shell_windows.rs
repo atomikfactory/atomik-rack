@@ -4,8 +4,9 @@
 //! There is still one [`Shell`], one document and one view per pane; a window is a place where
 //! panes are laid out. The shell owns each open window's size and scale ([`WinState`]) so it works
 //! headless; the platform opens and closes the real windows to match [`Shell::windows_wanted`] and
-//! reports their size and scale with [`Shell::handle_in`]. A detached pane fills its window from
-//! the top left corner; the main window's layout leaves it out ([`Shell::layout`]).
+//! reports their size and scale with [`Shell::handle_in`]. A detached pane fills its window below the
+//! main menu bar, which the rack and console windows carry like the main window; the main window's
+//! layout leaves the detached panes out ([`Shell::layout`]).
 //!
 //! The detached flags are saved in `ui-state.json` ([`UiState::windows`]) and restored at start.
 //! Detaching does not change the F6 choice or the console's place in the lower pane: attaching
@@ -183,7 +184,9 @@ impl<B: AudioBackend> Shell<B> {
         let window = self.window_of(pane);
         if window != WindowKind::Main {
             let size = self.window_size(window)?;
-            return Some((window, Rect::new(0.0, 0.0, size.width, size.height)));
+            // Below the menu bar, for the windows that carry one.
+            let top = self.bar_height_in(window).min(size.height);
+            return Some((window, Rect::new(0.0, top, size.width, size.height)));
         }
         let l = self.layout();
         let rect = match pane {
@@ -414,6 +417,7 @@ impl<B: AudioBackend> Shell<B> {
         // A menu opened in the window that goes away, or over the pane that moves, is stale.
         self.context_menu = None;
         self.capture = None;
+        self.window_bars.remove(&kind);
         self.leave_all_hover();
         self.ui.windows.set_detached(kind, detached);
         if kind == WindowKind::Browser {
@@ -559,6 +563,8 @@ impl<B: AudioBackend> Shell<B> {
     pub fn window_focused(&mut self, kind: WindowKind) {
         // A window coming to the front shows the keys as `keymap.json` has them now.
         self.reload_keymap_file();
+        // A menu open in another window closes: one menu is open at a time.
+        self.close_other_bars(kind);
         let Some(last) = self.win(kind).map(|w| w.last_focus) else {
             return;
         };
@@ -652,10 +658,175 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    // ------------------------------------------------------------------ menu bars
+
+    /// The height of the menu bar at the top of `window`: the main window and the detached rack
+    /// and console carry the one menu bar when the app draws it (not with a native menu bar);
+    /// the small tool windows and the file browser have none.
+    pub(super) fn bar_height_in(&self, window: WindowKind) -> f64 {
+        let carries = matches!(
+            window,
+            WindowKind::Main | WindowKind::Rack | WindowKind::Console
+        );
+        if carries && self.menubar.is_some() {
+            MENU_BAR_HEIGHT
+        } else {
+            0.0
+        }
+    }
+
+    /// The width the menu bar needs: a window that carries it is never narrower. Zero when the
+    /// window has no bar.
+    pub fn menu_bar_width(&self, window: WindowKind) -> f64 {
+        if self.bar_height_in(window) == 0.0 {
+            return 0.0;
+        }
+        MenuBar::title_rects(&self.menu_model())
+            .last()
+            .map_or(0.0, |r| r.x1 + 4.0)
+    }
+
+    /// The bar state of `window` (`None`: it has no bar, or no bar state yet).
+    pub(super) fn bar_ref(&self, window: WindowKind) -> Option<&MenuBar> {
+        match window {
+            WindowKind::Main => self.menubar.as_ref(),
+            _ => self.window_bars.get(&window),
+        }
+    }
+
+    /// The bar state of `window`, made when a window that carries a bar first needs it.
+    pub(super) fn bar_mut(&mut self, window: WindowKind) -> Option<&mut MenuBar> {
+        if self.bar_height_in(window) == 0.0 {
+            return None;
+        }
+        match window {
+            WindowKind::Main => self.menubar.as_mut(),
+            _ => Some(self.window_bars.entry(window).or_default()),
+        }
+    }
+
+    /// The windows that have a bar state.
+    pub(super) fn bar_windows(&self) -> Vec<WindowKind> {
+        let main = self.menubar.as_ref().map(|_| WindowKind::Main);
+        main.into_iter()
+            .chain(self.window_bars.keys().copied())
+            .collect()
+    }
+
+    /// The window whose menu is open, if any.
+    pub fn open_menu_window(&self) -> Option<WindowKind> {
+        self.bar_windows()
+            .into_iter()
+            .find(|&w| self.bar_ref(w).is_some_and(MenuBar::is_open))
+    }
+
+    /// A menu of the menu bar is open in some window.
+    pub(super) fn any_bar_open(&self) -> bool {
+        self.open_menu_window().is_some()
+    }
+
+    /// Closes the open menu in every window.
+    pub(super) fn close_menubars(&mut self) {
+        let was = self.any_bar_open();
+        if let Some(bar) = self.menubar.as_mut() {
+            bar.close();
+        }
+        for bar in self.window_bars.values_mut() {
+            bar.close();
+        }
+        if was {
+            for w in self.wins.values_mut() {
+                w.dirty = true;
+            }
+        }
+    }
+
+    /// Closes the open menu of every window but `keep`: opening a menu closes the others.
+    pub(super) fn close_other_bars(&mut self, keep: WindowKind) {
+        let mut closed = Vec::new();
+        for window in self.bar_windows() {
+            if window != keep
+                && let Some(bar) = self.bar_mut(window)
+                && bar.is_open()
+            {
+                bar.close();
+                closed.push(window);
+            }
+        }
+        for window in closed {
+            if let Some(w) = self.win_mut(window) {
+                w.dirty = true;
+            }
+        }
+    }
+
+    /// An event for the menu bar of `window` (or, for a key, of the window whose menu is open).
+    /// `None`: the bar leaves the event alone and it goes on to the panes.
+    pub(super) fn menu_bar_event(
+        &mut self,
+        window: WindowKind,
+        event: &UiEvent,
+    ) -> Option<Vec<ShellRequest>> {
+        let owner = self.open_menu_window();
+        // A key goes to the open menu wherever it is; a press in another window closes it.
+        let target = match (event, owner) {
+            (UiEvent::Key { .. }, Some(o)) => o,
+            _ => window,
+        };
+        if matches!(event, UiEvent::PointerDown { .. }) && owner.is_some_and(|o| o != window) {
+            self.close_other_bars(window);
+        }
+        if self.bar_height_in(target) == 0.0 {
+            return None;
+        }
+        // A press on the bar of a detached window gives its pane the keys, so the commands of
+        // the menu (Select All, Copy) act on that window's pane.
+        if target != WindowKind::Main
+            && let UiEvent::PointerDown { pos, .. } = event
+            && pos.y < MENU_BAR_HEIGHT
+        {
+            self.focused = target;
+            self.set_focus(pane_of(target));
+        }
+        let model = self.menu_model();
+        let size = self.window_size(target).unwrap_or_else(|| self.size());
+        let bar = self.bar_mut(target)?;
+        bar.set_window(size);
+        let before = (bar.look(), bar.deep_look());
+        let was_open = bar.is_open();
+        let outcome = bar.handle(event, &model);
+        let opened = !was_open && bar.is_open();
+        let changed = (bar.look(), bar.deep_look()) != before;
+        if opened {
+            self.close_other_bars(target);
+            // A menu that opens shows the keys as the file has them now.
+            self.reload_keymap_file();
+        }
+        match outcome {
+            MenuBarOutcome::Ignored => None,
+            MenuBarOutcome::Consumed => {
+                // A move that leaves the bar as it was (the pointer inside one title) shows
+                // nothing new, and one that changes it only repaints the window with the bar.
+                let moved = matches!(event, UiEvent::PointerMove { .. });
+                if !moved {
+                    self.repaint = true;
+                } else if changed && let Some(w) = self.win_mut(target) {
+                    w.dirty = true;
+                }
+                self.leave_hover_in(target);
+                Some(Vec::new())
+            }
+            MenuBarOutcome::Command(command) => {
+                self.repaint = true;
+                Some(self.execute_command(command))
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ pointer
 
     /// A pointer event (or another event with no position) in a detached window: its pane takes
-    /// everything; there is no menu bar, banner or divider.
+    /// everything but the menu bar (see [`Self::menu_bar_event`]); there is no banner or divider.
     pub(super) fn pointer_in_detached(
         &mut self,
         window: WindowKind,
@@ -850,9 +1021,32 @@ impl<B: AudioBackend> Shell<B> {
         if window == WindowKind::PianoKeys {
             self.refresh_key_labels();
         }
-        self.core.paint_pane(pane_of(window), canvas);
+        let top = self.bar_height_in(window);
+        if window == WindowKind::Rack && top > 0.0 {
+            // The rack view works in its own coordinates: its origin is below the menu bar.
+            let clip = Rect::new(0.0, top * scale, size.width * scale, size.height * scale);
+            canvas.push_clip(&clip.into());
+            canvas.push_transform(Affine::translate((0.0, top * scale)));
+            self.core.paint_pane(Pane::Rack, canvas);
+            canvas.pop_transform();
+            canvas.pop_clip();
+        } else {
+            self.core.paint_pane(pane_of(window), canvas);
+        }
         let theme = self.core.view().theme().clone();
         canvas.push_transform(Affine::scale(scale));
+        if top > 0.0 {
+            let model = self.menu_model();
+            let fresh;
+            let bar = match self.bar_ref(window) {
+                Some(bar) => bar,
+                None => {
+                    fresh = MenuBar::new();
+                    &fresh
+                }
+            };
+            bar.paint(canvas, &theme, &model, size);
+        }
         self.paint_overlays(window, canvas, &theme, size);
         canvas.pop_transform();
     }
