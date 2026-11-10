@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A French interface and a way to add languages.** Settings > Video has a Language row, System (default), English
+  or Français, and a change applies at once with no restart. System reads the language of the operating system once
+  at start (the `sys-locale` crate, decision W) and falls back to English. The menus and every command of the
+  registry, the Settings tabs, the start screen, the export panel, the rack, arrangement, console, launcher and
+  palette labels, the status messages and the tooltips are in French (Piste, Clip, Boucle, Calque, Table de mixage,
+  Envois, Retours, Réglages, Annuler, Rétablir; the glossary heads `crates/ui/locales/fr.txt`), the shortcuts use
+  the French key names (Maj, Entrée, Échap, Suppr, Espace, Retour arrière), and dB, Hz, BPM, LUFS, MIDI and CC stay
+  as they are. A text with no French line shows in English, and the names of songs, tracks, clips and files that
+  the views draw are left as typed. Another language is one file of `English text => text` lines (docs/EXTENDING.md, "Adding a
+  language"); a line may name values (`Added {name}`) and then matches any message of that shape. The manual, the
+  texts of Help Mode and the parameter names of most device panels are still English. The language is saved in
+  `workflow.json`; the project format is unchanged.
 - **A built-in manual.** Help > Manual (`help.manual`, Ctrl+F1, Cmd+Alt+F1 on macOS) opens the user documentation in a
   large panel that works offline: a table of contents built from the headings on the left, the page on the right with
   headings, paragraphs, bold and italic text, code, lists, tables and links between sections (a picture shows its

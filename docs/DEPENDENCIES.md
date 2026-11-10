@@ -48,6 +48,14 @@ larger C build. `webpki-roots` is licensed `CDLA-Permissive-2.0`, a permissive d
 allowed licences of `deny.toml`; `cargo deny check` passes. The choice is in
 [DECISIONS.md](DECISIONS.md#s-the-update-check).
 
+The language of the operating system (`sys-locale` 0.3, `MIT OR Apache-2.0`, one dependency `libc`) was added for the
+System choice of the language setting: it asks the platform once at start for the locale (`fr-FR`), which the program
+maps to a language it has texts for. The standard library has no way to read it (the environment variables are not set
+on Windows and not reliable on macOS), and reading it by hand means platform calls that the workspace's `unsafe` policy
+keeps out of the program. Nothing is sent anywhere; the value is read and compared. The choice is in
+[DECISIONS.md](DECISIONS.md#w-how-the-interface-is-translated); `cargo deny check` passes with the licences the policy
+already allows.
+
 ## Packaging tools
 
 Used only by the release and nightly workflows (and not linked into the program), at pinned versions:
