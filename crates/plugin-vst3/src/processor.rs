@@ -311,6 +311,9 @@ impl Vst3Processor {
                             })
                     }
                 },
+                // VST3 has no raw MIDI input: a plugin of this format takes the note expression
+                // events of the same notes instead, so these are not a loss.
+                PluginEventKind::Midi { .. } => true,
                 PluginEventKind::Param { id, value } => {
                     let n = values::normalized(&self.steps, id, value);
                     // A full ring only means the controller shows an older value for a while.

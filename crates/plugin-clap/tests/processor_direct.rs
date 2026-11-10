@@ -214,3 +214,32 @@ fn events_the_plugin_cannot_take_are_counted_in_the_dropped_figure() {
     assert_eq!(dropped, 1);
     inst.deactivate(p);
 }
+
+#[test]
+fn the_raw_midi_of_the_mpe_output_goes_to_a_plugin_that_takes_midi() {
+    // A member channel message of the lower zone: a note on, then the pressure of that channel.
+    let (backend, _) = backend_for("atomik-test-clap-variants");
+    let (mut inst, _manager) = bare(&backend, "atomik.test.midisynth");
+    let mut p = inst.activate(&activate_config(RunMode::Realtime)).unwrap();
+    assert!(p.start_processing());
+    let mut b = Bufs::new();
+    let events = [
+        ev(
+            0,
+            K::Midi {
+                bytes: [0x91, 60, 100],
+                len: 3,
+            },
+        ),
+        ev(
+            1,
+            K::Midi {
+                bytes: [0xD1, 64, 0],
+                len: 2,
+            },
+        ),
+    ];
+    let (_, dropped) = b.run(&mut *p, &events, 0, false, 2);
+    assert_eq!(dropped, 0, "a MIDI plugin takes them");
+    inst.deactivate(p);
+}

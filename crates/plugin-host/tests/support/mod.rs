@@ -166,7 +166,8 @@ pub fn harness(rig: Rig) -> (atomik_testkit::harness::DeviceHarness, Rest) {
 
 // ----- processors over the test DSP ---------------------------------------------------------
 
-fn to_core(e: &PluginEvent) -> core::TimedEvent {
+/// The test DSP has no raw MIDI input: a `Midi` event is not passed on.
+fn to_core(e: &PluginEvent) -> Option<core::TimedEvent> {
     use core::Event;
     let event = match e.kind {
         PluginEventKind::NoteOn {
@@ -209,11 +210,12 @@ fn to_core(e: &PluginEvent) -> core::TimedEvent {
             value,
         },
         PluginEventKind::Param { id, value } => Event::Param { id, value },
+        PluginEventKind::Midi { .. } => return None,
     };
-    core::TimedEvent {
+    Some(core::TimedEvent {
         offset: e.offset,
         event,
-    }
+    })
 }
 
 /// The test effect as a processor (reference DSP behind the host's `PluginIo`).
@@ -289,7 +291,7 @@ impl PluginProcessor for CoreSynth {
             if let PluginEventKind::Param { id, value } = e.kind {
                 self.synth.set_param(id, value);
             } else if self.buf.len() < self.buf.capacity() {
-                self.buf.push(to_core(e));
+                self.buf.extend(to_core(e));
             }
         }
         let mut out = [[0.0; BATCH]; 2];
@@ -336,7 +338,7 @@ impl PluginProcessor for CoreShift {
             if let PluginEventKind::Param { id, value } = e.kind {
                 self.shift.set_param(id, value);
             } else if self.inbuf.len() < self.inbuf.capacity() {
-                self.inbuf.push(to_core(e));
+                self.inbuf.extend(to_core(e));
             }
         }
         self.shift.process(&self.inbuf, &mut self.outbuf);

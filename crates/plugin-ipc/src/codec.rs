@@ -147,6 +147,8 @@ mod tests {
                 }
             ),
             (any::<u32>(), f64_bits()).prop_map(|(id, value)| PluginEventKind::Param { id, value }),
+            (any::<[u8; 3]>(), 2u8..=3)
+                .prop_map(|(bytes, len)| PluginEventKind::Midi { bytes, len }),
         ];
         (any::<u16>(), kind).prop_map(|(offset, kind)| PluginEvent { offset, kind })
     }

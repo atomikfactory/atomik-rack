@@ -209,5 +209,5 @@ fn the_descriptor_carries_the_programmer_after_the_plugin_params() {
         assert!(d.param_by_key(&format!("cv.dest_{k}")).is_some());
         assert!(d.param_by_key(&format!("cv.amount_{k}")).is_some());
     }
-    assert_eq!(d.params.len(), 1 + 2 + 16);
+    assert_eq!(d.params.len(), 1 + 2 + 16 + 1, "the MPE option comes last");
 }

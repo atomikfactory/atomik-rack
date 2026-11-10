@@ -51,8 +51,10 @@ use crate::slot::{
     DeviceEnd, DeviceState, HostMessenger, PluginMessage, PluginSlot, ReapItem, ReaperQueue,
 };
 use crate::threads::AudioThreadGuard;
+use atomik_core::mpe_out::{Initial, Out, mcm};
 use atomik_core::{
-    BATCH, Batch, ExprKind, MAX_EVENTS_PER_BATCH, NoteEvent, NoteKind, PPQ, ParamId,
+    BATCH, Batch, ExprKind, MAX_EVENTS_PER_BATCH, MpeEncoder, NoteEvent, NoteKind, PPQ, ParamId,
+    ZoneSide,
 };
 use atomik_device_sdk::{
     Channels, Device, DeviceDescriptor, DeviceKind, MAX_AUX_OUTPUTS, PLUGIN_CV_INPUTS,
@@ -151,6 +153,16 @@ pub struct PluginDevice {
 
     note_ids: [i32; 128],
     next_note_id: i32,
+
+    /// `mpe.send`: the notes go out as a lower MPE zone of raw MIDI messages (member channels
+    /// 2 to 16) instead of note events.
+    mpe_send: bool,
+    /// `mpe.send` changed: release the notes of the old way and announce or end the zone.
+    mpe_changed: bool,
+    /// Send the MPE Configuration Message with the next events.
+    mpe_announce: bool,
+    mpe: MpeEncoder,
+    was_playing: bool,
 
     in_main: [Batch; 2],
     sidechain: [Batch; 2],
@@ -317,6 +329,11 @@ impl PluginDevice {
             activation_rate,
             restart_posted: false,
             run_mode: RunMode::Realtime,
+            mpe_send: false,
+            mpe_changed: false,
+            mpe_announce: false,
+            mpe: MpeEncoder::new(ZoneSide::Lower, atomik_core::mpe::MAX_MEMBERS),
+            was_playing: false,
             note_ids: [CLOSED; 128],
             next_note_id: 0,
             in_main: [SILENCE; 2],
@@ -435,6 +452,7 @@ impl PluginDevice {
 
     fn close_all_notes(&mut self) {
         self.note_ids = [CLOSED; 128];
+        self.mpe = MpeEncoder::new(ZoneSide::Lower, atomik_core::mpe::MAX_MEMBERS);
     }
 
     // ----- the restart hand-shake ------------------------------------------------------------
@@ -469,6 +487,8 @@ impl PluginDevice {
             self.quiet_batches = 0;
             self.state = DeviceState::Running;
             self.close_all_notes();
+            // A restarted plugin has not heard of the MPE zone.
+            self.mpe_announce = self.mpe_send;
             // A restarted plugin has restored its state: every param the rack ever set goes
             // out again, so the rack-side values win.
             for i in 1..self.cv_base {
@@ -493,12 +513,76 @@ impl PluginDevice {
             self.events_in.push(0, kind);
         }
         self.pending.clear();
+        self.mpe_housekeeping(ctx);
         if let Some(socket) = self.sockets.notes_in {
-            for event in ctx.notes_in(socket) {
-                self.translate(*event, hold_new_notes);
+            let events = ctx.notes_in(socket);
+            for (i, event) in events.iter().enumerate() {
+                self.translate(*event, hold_new_notes, &events[i + 1..]);
             }
         }
         self.dropped += u64::from(self.events_in.take_dropped());
+    }
+
+    /// Queues one raw MIDI message for the plugin.
+    fn push_midi(&mut self, offset: u16, bytes: &[u8]) {
+        let mut b = [0u8; 3];
+        let len = bytes.len().min(3);
+        b[..len].copy_from_slice(&bytes[..len]);
+        self.events_in.push(
+            offset,
+            PluginEventKind::Midi {
+                bytes: b,
+                len: len as u8,
+            },
+        );
+    }
+
+    /// The MPE output own events at the start of a batch: the notes of the old way are
+    /// released when `mpe.send` changed, and the zone is announced (or ended) when it was
+    /// switched, when playback starts and after a restart of the plugin.
+    fn mpe_housekeeping(&mut self, ctx: &ProcessContext<'_>) {
+        if self.mpe_changed {
+            self.mpe_changed = false;
+            if self.mpe_send {
+                // Notes of the plain way end as note events; the zone starts clean.
+                for key in 0..128u8 {
+                    let id = self.note_ids[usize::from(key)];
+                    if id != CLOSED {
+                        self.note_ids[usize::from(key)] = CLOSED;
+                        self.events_in
+                            .push(0, PluginEventKind::NoteOff { key, note_id: id });
+                    }
+                }
+                self.mpe = MpeEncoder::new(ZoneSide::Lower, atomik_core::mpe::MAX_MEMBERS);
+                self.mpe_announce = true;
+            } else {
+                let events = &mut self.events_in;
+                self.mpe.release_all(|channel, key| {
+                    events.push(
+                        0,
+                        PluginEventKind::Midi {
+                            bytes: [0x80 | channel, key, 0],
+                            len: 3,
+                        },
+                    );
+                });
+                for m in mcm(ZoneSide::Lower, 0) {
+                    self.push_midi(0, &m);
+                }
+                self.mpe_announce = false;
+            }
+        }
+        let playing = ctx.time.playing;
+        if self.mpe_send && playing && !self.was_playing {
+            self.mpe_announce = true;
+        }
+        self.was_playing = playing;
+        if self.mpe_send && self.mpe_announce {
+            self.mpe_announce = false;
+            for m in mcm(ZoneSide::Lower, self.mpe.members()) {
+                self.push_midi(0, &m);
+            }
+        }
     }
 
     /// The events of a powered-off device: the ends of open notes only (see `run_plugin`).
@@ -507,9 +591,12 @@ impl PluginDevice {
         if let Some(socket) = self.sockets.notes_in {
             for event in ctx.notes_in(socket) {
                 match event.kind {
-                    NoteKind::Off { .. } => self.translate(*event, true),
-                    NoteKind::AllOff if self.note_ids.iter().any(|id| *id != CLOSED) => {
-                        self.translate(*event, true);
+                    NoteKind::Off { .. } => self.translate(*event, true, &[]),
+                    NoteKind::AllOff
+                        if self.note_ids.iter().any(|id| *id != CLOSED)
+                            || self.mpe.sounding() > 0 =>
+                    {
+                        self.translate(*event, true, &[]);
                     }
                     _ => {}
                 }
@@ -518,7 +605,76 @@ impl PluginDevice {
         self.dropped += u64::from(self.events_in.take_dropped());
     }
 
-    fn translate(&mut self, event: NoteEvent, hold_new_notes: bool) {
+    /// One note event as MPE: raw MIDI on member channels (see `mpe.send`).
+    fn translate_mpe(&mut self, event: NoteEvent, hold_new_notes: bool, rest: &[NoteEvent]) {
+        let offset = event.offset;
+        let master = self.mpe.master();
+        let mut out = Out::new();
+        match event.kind {
+            NoteKind::On { key, velocity } => {
+                if hold_new_notes {
+                    return;
+                }
+                let key = key & 0x7F;
+                let v = atomik_device_sdk::velocity_to_7bit(finite_or(velocity, 1.0));
+                self.mpe
+                    .note_on(key, key, v, Initial::of(key, offset, rest), &mut out);
+            }
+            NoteKind::Off { key } => {
+                self.mpe.note_off(key & 0x7F, &mut out);
+            }
+            NoteKind::AllOff => {
+                let events = &mut self.events_in;
+                self.mpe.release_all(|channel, key| {
+                    events.push(
+                        offset,
+                        PluginEventKind::Midi {
+                            bytes: [0x80 | channel, key, 0],
+                            len: 3,
+                        },
+                    );
+                });
+                self.push_midi(offset, &[0xB0 | master, 123, 0]);
+            }
+            NoteKind::PitchBend { value } => {
+                let v = (finite_or(value, 0.0).clamp(-1.0, 1.0) * 8192.0 + 8192.0)
+                    .round()
+                    .clamp(0.0, 16383.0) as u16;
+                self.push_midi(offset, &[0xE0 | master, (v & 0x7F) as u8, (v >> 7) as u8]);
+            }
+            NoteKind::Cc { controller, value } => {
+                let v = (finite_or(value, 0.0).clamp(0.0, 1.0) * 127.0).round() as u8;
+                self.push_midi(offset, &[0xB0 | master, controller & 0x7F, v]);
+            }
+            NoteKind::ChannelPressure { value } => {
+                let v = (finite_or(value, 0.0).clamp(0.0, 1.0) * 127.0).round() as u8;
+                self.push_midi(offset, &[0xD0 | master, v]);
+            }
+            NoteKind::PolyPressure { key, value } => {
+                self.mpe
+                    .pressure(key & 0x7F, finite_or(value, 0.0), &mut out);
+            }
+            NoteKind::NoteExpr { key, kind, value } => {
+                let key = key & 0x7F;
+                let v = finite_or(value, 0.0);
+                match kind {
+                    ExprKind::Tuning => self.mpe.tuning(key, v, &mut out),
+                    ExprKind::Pressure => self.mpe.pressure(key, v, &mut out),
+                    ExprKind::Slide => self.mpe.slide(key, v, &mut out),
+                    ExprKind::Volume | ExprKind::Pan => {}
+                }
+            }
+        }
+        for m in out.as_slice() {
+            self.push_midi(offset, m.bytes());
+        }
+    }
+
+    fn translate(&mut self, event: NoteEvent, hold_new_notes: bool, rest: &[NoteEvent]) {
+        if self.mpe_send {
+            self.translate_mpe(event, hold_new_notes, rest);
+            return;
+        }
         let offset = event.offset;
         match event.kind {
             NoteKind::On { key, velocity } => {
@@ -775,6 +931,7 @@ impl PluginDevice {
         let instrument =
             self.descriptor.kind == DeviceKind::Instrument && self.sockets.notes_in.is_some();
         let busy = self.note_ids.iter().any(|id| *id != CLOSED)
+            || self.mpe.sounding() > 0
             || (instrument && self.quiet_batches < self.idle_batches);
         let skip = match rule {
             SleepRule::PluginDecides => self.sleeping && !wake,
@@ -1066,6 +1223,11 @@ impl Device for PluginDevice {
                 } else {
                     self.cv_amount[k] = plain.clamp(-1.0, 1.0);
                 }
+            } else if j == 2 * PLUGIN_CV_INPUTS {
+                // `mpe.send`, after the CV programmer params.
+                let on = plain >= 0.5;
+                self.mpe_changed |= on != self.mpe_send;
+                self.mpe_send = on;
             }
         } else if i < self.values.len() {
             self.values[i] = f64::from(plain);

@@ -77,6 +77,8 @@ pub const EV_POLY_PRESSURE: u32 = 6;
 pub const EV_NOTE_EXPR: u32 = 7;
 /// Event tag: a parameter change.
 pub const EV_PARAM: u32 = 8;
+/// Event tag: a raw MIDI channel message (`a` holds the three bytes, `c` how many are used).
+pub const EV_MIDI: u32 = 9;
 
 /// A [`PluginEvent`] as 32 bytes of plain data. Fields not used by a kind are zero, so equal
 /// events are equal bit for bit. `a` is the key, the controller number or the param id; `b` is
@@ -278,6 +280,11 @@ impl WireEvent {
                 w.c = expr_code(kind);
                 w.value = value.to_bits();
             }
+            PluginEventKind::Midi { bytes, len } => {
+                w.tag = EV_MIDI;
+                w.a = u32::from(bytes[0]) | u32::from(bytes[1]) << 8 | u32::from(bytes[2]) << 16;
+                w.c = u32::from(len);
+            }
             PluginEventKind::Param { id, value } => {
                 w.tag = EV_PARAM;
                 w.a = id;
@@ -320,6 +327,16 @@ impl WireEvent {
                 kind: expr_from_code(self.c)?,
                 value,
             },
+            EV_MIDI => {
+                let len = u8::try_from(self.c).ok().filter(|l| (2..=3).contains(l))?;
+                if self.a > 0x00FF_FFFF {
+                    return None;
+                }
+                PluginEventKind::Midi {
+                    bytes: [self.a as u8, (self.a >> 8) as u8, (self.a >> 16) as u8],
+                    len,
+                }
+            }
             EV_PARAM => PluginEventKind::Param {
                 id: self.a,
                 value: f64::from_bits(self.wide),
