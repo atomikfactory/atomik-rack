@@ -221,6 +221,9 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
         WorkflowCommand::ReplaceDevice { .. } => "Replace Device",
         WorkflowCommand::SplitSub { .. } => "Split Sub",
         WorkflowCommand::AddReverbSend { .. } => "Add Reverb Send",
+        WorkflowCommand::DuckFrom { .. } => "Duck from Track",
+        WorkflowCommand::GentlePump { .. } => "Add Gentle Pump",
+        WorkflowCommand::RemoveDucking { .. } => "Remove Ducking",
         WorkflowCommand::AddRumble { .. } => "Add Rumble",
         WorkflowCommand::AddTransition { edit, .. } => match edit {
             crate::transition::TransitionEdit::FilterDown { .. } => "Add Filter Down Transition",

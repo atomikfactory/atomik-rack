@@ -43,6 +43,7 @@ mod device_patch;
 mod doc_compare;
 mod drums;
 mod drums_cmd;
+pub mod duck_from;
 pub mod energy_map;
 mod expand;
 pub mod freeze;
