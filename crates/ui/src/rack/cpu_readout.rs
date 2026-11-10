@@ -1,5 +1,5 @@
 //! The CPU readout on the name plates: the share of the audio time each device takes, set by
-//! the app (View > CPU Meters). The figures are kept apart from the cached panel lists and
+//! the app (View > Show Device CPU). The figures are kept apart from the cached panel lists and
 //! painted over them, so a changing number never rebuilds a panel.
 
 use super::RackView;
@@ -43,10 +43,11 @@ impl RackView {
                 }
             }
         }
-        // Whole percents are all a plate shows: repaint only when one changed.
-        let rounded = |m: &BTreeMap<DeviceKey, f32>| -> Vec<(DeviceKey, i32)> {
+        // A plate shows tenths of a percent under 10 and whole percents above: repaint only
+        // when a shown figure changed.
+        let rounded = |m: &BTreeMap<DeviceKey, f32>| -> Vec<(DeviceKey, String)> {
             m.iter()
-                .map(|(k, v)| (k.clone(), v.round() as i32))
+                .map(|(k, v)| (k.clone(), crate::paint::cpu_text(*v)))
                 .collect()
         };
         if rounded(&shown) != rounded(&self.cpu) {

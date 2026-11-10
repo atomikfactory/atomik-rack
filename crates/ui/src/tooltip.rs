@@ -25,6 +25,8 @@ pub const HELP_DELAY: f64 = 0.6;
 const SIZE: f32 = 11.0;
 /// Height of the box.
 const HEIGHT: f64 = 22.0;
+/// Extra height of each further line of a box with line breaks.
+const LINE: f64 = 14.0;
 /// Gap between the button and the box.
 const GAP: f64 = 6.0;
 /// Margin kept between the box and the window edge.
@@ -195,20 +197,31 @@ pub fn stepper_help(
 /// Where the box for a tooltip of `width` goes: under `rect`, its left edge on the button's,
 /// moved to stay inside `view`; above the button when there is no room below.
 pub fn place(rect: Rect, width: f64, view: Rect) -> Rect {
+    place_lines(rect, width, 1, view)
+}
+
+/// [`place`] for a box of `lines` text lines.
+fn place_lines(rect: Rect, width: f64, lines: usize, view: Rect) -> Rect {
+    let height = HEIGHT + LINE * lines.saturating_sub(1) as f64;
     let max_x = (view.x1 - MARGIN - width).max(view.x0 + MARGIN);
     let x = rect.x0.clamp(view.x0 + MARGIN, max_x);
     let below = rect.y1 + GAP;
-    let y = if below + HEIGHT + MARGIN <= view.y1 {
+    let y = if below + height + MARGIN <= view.y1 {
         below
     } else {
-        (rect.y0 - GAP - HEIGHT).max(view.y0 + MARGIN)
+        (rect.y0 - GAP - height).max(view.y0 + MARGIN)
     };
-    Rect::new(x, y, x + width, y + HEIGHT)
+    Rect::new(x, y, x + width, y + height)
 }
 
-/// The box a tooltip of `text` for the button `rect` takes in `view`.
+/// The box a tooltip of `text` for the button `rect` takes in `view` (a text with line breaks
+/// takes one row per line).
 pub fn box_for(rect: Rect, text: &str, view: Rect) -> Rect {
-    place(rect, estimate_width(text, SIZE) + 16.0, view)
+    let width = text
+        .lines()
+        .map(|l| estimate_width(l, SIZE))
+        .fold(0.0, f64::max);
+    place_lines(rect, width + 16.0, text.lines().count().max(1), view)
 }
 
 /// Paints the tooltip `text` of the button `rect` inside `view` (logical pixels).
@@ -217,7 +230,10 @@ pub fn paint<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, rect: Rect, text: &st
     let shape = RoundedRect::from_rect(r, 4.0);
     c.fill_with(shape, theme.tooltip_bg);
     c.stroke_with(shape, 1.0, theme.section_line);
-    c.text(&TextRun::new(text, Point::new(r.x0 + 8.0, r.y0 + 15.0), SIZE, theme.text).weight(600));
+    for (i, line) in text.lines().enumerate() {
+        let y = r.y0 + 15.0 + LINE * i as f64;
+        c.text(&TextRun::new(line, Point::new(r.x0 + 8.0, y), SIZE, theme.text).weight(600));
+    }
 }
 
 #[cfg(test)]

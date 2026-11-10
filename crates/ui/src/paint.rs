@@ -908,10 +908,35 @@ pub fn lock_icon<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, center: Point) {
     c.fill_with(Circle::new(pt(center.x, center.y + 2.0), 0.9), theme.plate);
 }
 
-/// The CPU load of a device on its name plate, in whole percent of the audio time: muted while
-/// it is small, the normal text colour from 30 %, the warning colour from 70 %. Unfolded it sits
-/// at the bottom right of the plate, beside the fold button; a folded strip shows it past the
-/// plate, after the room the output display of a channel takes.
+/// The share of the audio time above which a CPU figure turns the warning colour.
+pub const CPU_WARN_PERCENT: f32 = 25.0;
+
+/// A CPU load as the plates and strips show it: one decimal below 10 % ("3.2%"), whole percent
+/// above.
+pub fn cpu_text(percent: f32) -> String {
+    let p = percent.max(0.0);
+    if p < 9.95 {
+        format!("{p:.1}%")
+    } else {
+        format!("{}%", p.round() as i64)
+    }
+}
+
+/// The colour of a CPU figure: muted while it is small, the normal text colour from 10 %, the
+/// warning colour above [`CPU_WARN_PERCENT`].
+pub fn cpu_color(theme: &Theme, percent: f32) -> Color {
+    if percent > CPU_WARN_PERCENT {
+        theme.warning
+    } else if percent >= 10.0 {
+        theme.text
+    } else {
+        theme.text_muted
+    }
+}
+
+/// The CPU load of a device on its name plate (see [`cpu_text`] and [`cpu_color`]). Unfolded it
+/// sits at the bottom right of the plate, beside the fold button; a folded strip shows it past
+/// the plate, after the room the output display of a channel takes.
 pub fn cpu_readout<C: Canvas + ?Sized>(
     c: &mut C,
     theme: &Theme,
@@ -919,14 +944,8 @@ pub fn cpu_readout<C: Canvas + ?Sized>(
     folded: bool,
     percent: f32,
 ) {
-    let color = if percent >= 70.0 {
-        theme.warning
-    } else if percent >= 30.0 {
-        theme.text
-    } else {
-        theme.text_muted
-    };
-    let text = format!("{}%", percent.round().max(0.0) as i64);
+    let color = cpu_color(theme, percent);
+    let text = cpu_text(percent);
     if folded {
         c.text(&TextRun::new(
             text,
