@@ -1319,8 +1319,15 @@ mod tests {
         assert_eq!(f.text(), "abc");
         assert_eq!(f.caret(), 3, "the caret comes back with the text");
         key(&mut f, Key::Char('z'), CTRL);
-        assert_eq!(key(&mut f, Key::Char('y'), CTRL), FieldKey::Edited);
-        assert_eq!(f.text(), if cfg!(target_os = "macos") { "" } else { "abc" });
+        // Ctrl+Y redoes on Windows and Linux; macOS leaves it alone.
+        let redo = key(&mut f, Key::Char('y'), CTRL);
+        if cfg!(target_os = "macos") {
+            assert_eq!(redo, FieldKey::Ignored);
+            assert_eq!(f.text(), "");
+        } else {
+            assert_eq!(redo, FieldKey::Edited);
+            assert_eq!(f.text(), "abc");
+        }
     }
 
     #[test]
