@@ -48,6 +48,19 @@ larger C build. `webpki-roots` is licensed `CDLA-Permissive-2.0`, a permissive d
 allowed licences of `deny.toml`; `cargo deny check` passes. The choice is in
 [DECISIONS.md](DECISIONS.md#s-the-update-check).
 
+## Packaging tools
+
+Used only by the release and nightly workflows (and not linked into the program), at pinned versions:
+
+| Tool | Version | Licence | Used for |
+| --- | --- | --- | --- |
+| `appimagetool` (official AppImage) | 1.9.1, SHA-256 pinned in `scripts/release/fetch-appimagetool.sh` | MIT | Turns the AppDir into the `.AppImage`. Downloaded from its GitHub release in CI and checked against the pinned checksum before it runs; nothing downloads it in a test. |
+| `flatpak-builder` and `flatpak` | the Ubuntu runner's packages | LGPL-2.1-or-later | Builds the Flatpak bundle from `packaging/linux/io.github.atomikfactory.AtomikRack.yml`. The runtime `org.freedesktop.Platform` and `org.freedesktop.Sdk` 25.08 (free software, mostly LGPL and GPL components) come from Flathub when the bundle is built. |
+| `shellcheck`, `desktop-file-utils`, `appstream` | the Ubuntu runner's packages | GPL-3.0-or-later, GPL-2.0-or-later, LGPL-2.1-or-later | Pull request checks of the packaging scripts, the desktop entry and the metainfo. |
+
+None of them is part of the Cargo dependency graph, so `cargo deny` does not see them. Moving appimagetool to a new
+release means changing the version and the checksum in the script together, from the checksum on the release page.
+
 ## Duplicate versions
 
 `cargo deny check bans` warns when two versions of a crate are in the graph. The ones that cannot be

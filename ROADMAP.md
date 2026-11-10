@@ -128,13 +128,22 @@ the tracks, a picker with a chord symbol field, a Key field in the transport bar
 song key, a Song Chord stamp, Fit Notes to Chords, Detect Song Key and a browser search for loops in the song key),
 and CPU use per device (a measurement that is always on, a figure on every device plate and a total on every mixer
 strip with View > Show Device CPU, a tooltip on the status line with the five heaviest devices and their tracks, and a
-hint to freeze the heaviest track when the engine load stays above 70 % while playing).
+hint to freeze the heaviest track when the engine load stays above 70 % while playing),
+and Linux packages for any distribution (an AppImage and a Flatpak bundle beside the archive and the Debian package,
+all four from the same programs, with one desktop entry, one AppStream file and the icons under the app id, and the
+update notice of a Flatpak pointing at the software centre).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
 
 - **Sync follow-ups.** Audio clips stretched to the followed tempo (they play at their own rate and are re-synchronised at each clip start, locate and loop wrap, so a clip of many bars drifts when the two tempos differ), streamed audio while following (silent today), a lock for a sender that sends no Start or Song Position Pointer (the song runs on the measured tempo alone), and a setting for how tightly the song is held to the clock.
 - **Plugin sandbox follow-ups.** Run the sandbox on Linux and macOS for real (the wake-up and stdout redirection are compile-checked only), optional grouping of several instances in one process, and embedding sandboxed editors where the platform allows it.
+- **Linux packages follow-ups.** The AppImage and the Flatpak bundle are built by the release and nightly workflows and
+  checked on a runner, but not yet run on real machines of several distributions (see the checklist in
+  [RELEASE-TESTING.md](docs/RELEASE-TESTING.md)). Still to come: a Flathub submission (it needs screenshots of the
+  program in the metainfo and a manifest that builds from the source archive), plugin folders outside the home folder
+  for the Flatpak (system-wide plugins are not visible in the sandbox), AppImage updates through its own update
+  information, an ARM64 build, and an older build machine so the programs run on older distributions.
 - **macOS and wider Linux verification.** Ubuntu 26.04 is a main platform beside Windows; other distributions and audio setups still need checking. macOS is built, linted and tested only on GitHub Actions and has not been run on a Mac by hand. Verifying and fixing both is a priority.
 - **VST3 on Wayland.** Plugin editor embedding on native Wayland (sandboxed editors already run through XWayland; in-process editors and sessions without `DISPLAY` fall back to the parameter pane). Editors that need file-descriptor handlers now run on Linux; they still need checking with more real plugins.
 - **Signed builds.** The pipeline is wired (Authenticode or Azure Trusted Signing, Developer ID signing with notarisation, a GPG signature of the checksums) and skips each step until its secrets exist; what is left is to obtain the certificates (a Windows code-signing certificate or an Azure signing account, an Apple Developer ID account, a GPG key), add them to the `release-signing` environment and confirm the first signed release on real machines. Until then the builds are unsigned.

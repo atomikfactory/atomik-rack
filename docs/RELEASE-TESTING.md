@@ -370,6 +370,36 @@ list for every release so that a result can be compared with the last one.
 - **Automated:** none
 - **Known bad:** a missing runtime on a clean machine.
 
+### HW-INS-04 The AppImage
+- **Applies to:** Linux
+- **Preconditions:** the `.AppImage` of the draft release on a desktop distribution that is not Ubuntu (and once on
+  Ubuntu), with a sound card or a MIDI keyboard if one is at hand.
+- **Steps:** `chmod +x` the file and start it from the file manager and from a terminal; open a demo project and play
+  it; open Audio Settings and pick the device; check the title bar, the task bar icon and the name under Help >
+  About; unpack it with `--appimage-extract` and run `squashfs-root/usr/bin/atomik-render` on a demo project.
+- **Expected:** it starts first time with no missing libraries, sound plays, the icon and the name are the app's
+  (not a generic one), and the render writes a WAV that is not silent. A distribution without FUSE 2 runs it with
+  `APPIMAGE_EXTRACT_AND_RUN=1`.
+- **Automated:** none
+- **Known bad:** a base system without ALSA or fontconfig, a C library older than the one of the build machine.
+
+### HW-INS-05 The Flatpak
+- **Applies to:** Linux
+- **Preconditions:** the `.flatpak` bundle of the draft release, Flatpak installed with Flathub added, a Wayland
+  session and an X11 session if both are at hand, a MIDI keyboard if one is at hand, and a VST3 or CLAP plugin in
+  `~/.vst3` or `~/.clap`.
+- **Steps:** `flatpak install --user` the bundle and start it from the application menu and with `flatpak run
+  io.github.atomikfactory.AtomikRack`; open a demo project from `~/Music` or `~/Documents` and from another folder
+  of the home folder; save a song in Documents; play it and pick the audio device; open the MIDI input list; scan
+  plugins and load the one in the user folder; read the update notice (Help > Check for Updates against a newer
+  release list); uninstall.
+- **Expected:** it starts with the right icon and name on Wayland and X11, sound plays, MIDI ports are listed, files
+  open from the home folder and save to Music and Documents (and not elsewhere), the user plugin is found and runs,
+  system plugin folders under `/usr` are not found (a known limit), the update notice says to update with the
+  software centre, and the uninstall leaves the projects.
+- **Automated:** none
+- **Known bad:** a runtime older than the one the programs were linked against, a window without an icon.
+
 ### HW-INS-02 SmartScreen and Gatekeeper
 - **Applies to:** Windows, macOS
 - **Preconditions:** the downloaded artifact, with the quarantine flag it gets from a browser.
