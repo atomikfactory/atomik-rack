@@ -87,11 +87,15 @@ pub(crate) struct Vst3Processor {
 // specification lets the audio thread call.
 unsafe impl Send for Vst3Processor {}
 
+/// One slot per bus, in bus order. Every bus gets real buffers for its full channel count, even
+/// a deactivated one: strict plugins check each bus's `numChannels` against its arrangement and
+/// refuse the whole block otherwise. A deactivated input is fed silence (and flagged silent); a
+/// deactivated output is written to scratch the host never reads.
 fn slots(plan: &[crate::layout::BusPlan]) -> (Vec<Slot>, usize) {
     let mut first = 0usize;
     let mut out = Vec::with_capacity(plan.len());
     for b in plan {
-        let channels = if b.active() { b.channels as usize } else { 0 };
+        let channels = b.channels as usize;
         out.push(Slot {
             first,
             channels,
@@ -509,5 +513,52 @@ impl PluginProcessor for Vst3Processor {
 impl Drop for Vst3Processor {
     fn drop(&mut self) {
         self.stop_processing();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::{BusPlan, Role};
+
+    /// A strict plugin checks every bus's channel count, deactivated ones too, and refuses the
+    /// whole block when one says 0: every bus gets buffers for its full arrangement.
+    #[test]
+    fn a_deactivated_bus_still_gets_buffers_for_all_its_channels() {
+        let plan = [
+            BusPlan {
+                channels: 2,
+                role: Role::Main,
+            },
+            BusPlan {
+                channels: 2,
+                role: Role::Aux,
+            },
+            BusPlan {
+                channels: 2,
+                role: Role::Unused,
+            },
+            BusPlan {
+                channels: 1,
+                role: Role::Unused,
+            },
+        ];
+        let (slots, total) = slots(&plan);
+        assert_eq!(total, 7);
+        assert_eq!(
+            slots
+                .iter()
+                .map(|s| (s.first, s.channels))
+                .collect::<Vec<_>>(),
+            [(0, 2), (2, 2), (4, 2), (6, 1)]
+        );
+        let mut data = vec![[0.0f32; BATCH]; total];
+        let mut ptrs: Vec<*mut f32> = data.iter_mut().map(|b| b.as_mut_ptr()).collect();
+        let buses = bus_buffers(&slots, &mut ptrs);
+        for (bus, plan) in buses.iter().zip(&plan) {
+            assert_eq!(bus.numChannels, plan.channels as i32);
+            // SAFETY: reading the union member `bus_buffers` wrote.
+            assert!(!unsafe { bus.__field0.channelBuffers32 }.is_null());
+        }
     }
 }
