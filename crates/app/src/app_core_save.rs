@@ -1161,6 +1161,8 @@ impl<S: EngineSink> AppCore<S> {
         for path in std::mem::take(&mut self.audio.recovered_files) {
             let _ = std::fs::remove_file(path);
         }
+        // The save is confirmed: the backup copy is made beside it, on its own worker.
+        self.backup_after_save(file);
     }
 
     /// Takes the result of the save the worker finished; with `wait` blocks for it. True when a

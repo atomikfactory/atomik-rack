@@ -16,6 +16,7 @@
 //! when [`DialogOutcome::Apply`] arrives and saves `keymap.json` and `workflow.json`. Without
 //! preferences the dialog is the audio-only dialog it always was.
 
+use crate::backup_tab::{BackupLayout, BackupTab};
 use crate::controller_profile::ProfileOptions;
 use crate::interface_tab::{InterfaceLayout, InterfaceTab, UiPrefs};
 use crate::keyboard_tab::{FOOTER, KeyboardLayout, KeyboardTab, PAD, TITLE, TabOutcome};
@@ -202,11 +203,16 @@ pub enum Tab {
     Sync,
     /// Where the user's FFmpeg is, and the answer to the update check question.
     Video,
+    /// The folder every saved project is also copied into.
+    Backup,
 }
+
+/// The size of the labels in the tab strip.
+const TAB_FONT: f32 = 12.0;
 
 impl Tab {
     /// Every tab, in strip order.
-    pub const ALL: [Tab; 7] = [
+    pub const ALL: [Tab; 8] = [
         Tab::Audio,
         Tab::Keyboard,
         Tab::Workflow,
@@ -214,6 +220,7 @@ impl Tab {
         Tab::Surfaces,
         Tab::Sync,
         Tab::Video,
+        Tab::Backup,
     ];
 
     /// The tab label.
@@ -226,6 +233,7 @@ impl Tab {
             Tab::Surfaces => "Controllers",
             Tab::Sync => "Sync",
             Tab::Video => "Video",
+            Tab::Backup => "Backup",
         }
     }
 
@@ -239,6 +247,7 @@ impl Tab {
             Tab::Surfaces => "Controllers",
             Tab::Sync => "MIDI clock",
             Tab::Video => "Video & updates",
+            Tab::Backup => "Backups",
         }
     }
 }
@@ -250,6 +259,7 @@ struct Prefs {
     workflow: WorkflowTab,
     interface: InterfaceTab,
     video: VideoTab,
+    backup: BackupTab,
 }
 
 /// Where everything is, for the current view size and scroll (logical units).
@@ -297,6 +307,8 @@ pub enum DialogOutcome {
     PickScratchFolder,
     /// The Video tab asks for the folder holding FFmpeg (the dialog stays open).
     PickFfmpegFolder,
+    /// The Backup tab asks for the backup folder (the dialog stays open).
+    PickBackupFolder,
     /// The Controllers tab asks for the set-up wizard (the dialog stays open).
     SetUpController,
     /// The Controllers tab asks for a file to export the controller profile to.
@@ -424,6 +436,11 @@ impl SettingsDialog {
             interface: InterfaceTab::new(UiPrefs::of(&workflow)),
             video: VideoTab::new(workflow.ffmpeg_folder.clone(), String::new())
                 .with_update_answer(workflow.update_check),
+            backup: BackupTab::new(
+                workflow.backup_folder.clone(),
+                workflow.backup_keep,
+                workflow.backup_audio,
+            ),
             workflow: WorkflowTab::new(workflow),
         });
         self
@@ -503,6 +520,23 @@ impl SettingsDialog {
             .map(|p| p.video.layout(self.panel(view)))
     }
 
+    /// The Backup tab layout, while that tab shows.
+    pub fn backup_layout(&self, view: Size) -> Option<BackupLayout> {
+        if self.tab != Tab::Backup {
+            return None;
+        }
+        self.prefs
+            .as_ref()
+            .map(|p| p.backup.layout(self.panel(view)))
+    }
+
+    /// Replaces the backup folder draft of the Backup tab (a picked folder; `None`: no backups).
+    pub fn set_backup_folder(&mut self, folder: Option<PathBuf>) {
+        if let Some(p) = &mut self.prefs {
+            p.backup.set_folder(folder);
+        }
+    }
+
     /// Replaces the FFmpeg folder draft of the Video tab (a picked folder; `None`: search the
     /// system path).
     pub fn set_ffmpeg_folder(&mut self, folder: Option<PathBuf>) {
@@ -526,6 +560,9 @@ impl SettingsDialog {
             p.interface.prefs().apply_to(&mut workflow);
             workflow.ffmpeg_folder = p.video.folder().cloned();
             workflow.update_check = p.video.update_answer();
+            workflow.backup_folder = p.backup.folder().cloned();
+            workflow.backup_keep = p.backup.keep();
+            workflow.backup_audio = p.backup.audio();
             (p.keyboard.editor().user().clone(), workflow)
         })
     }
@@ -602,6 +639,17 @@ impl SettingsDialog {
                 let y0 = ((view.height - height) / 2.0).max(0.0);
                 Rect::new(x0, y0, x0 + width, y0 + height)
             }
+            Tab::Backup => {
+                let width = (view.width - 32.0).clamp(240.0, 640.0);
+                let content = self
+                    .prefs
+                    .as_ref()
+                    .map_or(0.0, |p| p.backup.content_height());
+                let height = (TITLE + content + 24.0 + FOOTER).min(view.height - 32.0);
+                let x0 = ((view.width - width) / 2.0).max(0.0);
+                let y0 = ((view.height - height) / 2.0).max(0.0);
+                Rect::new(x0, y0, x0 + width, y0 + height)
+            }
         }
     }
 
@@ -626,12 +674,14 @@ impl SettingsDialog {
         let mut right = panel.x1 - PAD;
         let mut out = Vec::new();
         for tab in Tab::ALL.into_iter().rev() {
-            let w = text_width(tab.label()) + 12.0;
+            // Eight tabs share the title row with the heading: a smaller label, little padding
+            // and a hairline gap.
+            let w = text_width(tab.label()) * f64::from(TAB_FONT) / 13.0 + 8.0;
             out.push((
                 Rect::new(right - w, panel.y0 + 10.0, right, panel.y0 + 34.0),
                 tab,
             ));
-            right -= w + 2.0;
+            right -= w + 1.0;
         }
         out.reverse();
         out
@@ -1604,6 +1654,7 @@ impl SettingsDialog {
             Tab::Workflow => prefs.workflow.handle(event, panel),
             Tab::Interface => prefs.interface.handle(event, panel),
             Tab::Video => prefs.video.handle(event, panel),
+            Tab::Backup => prefs.backup.handle(event, panel),
             Tab::Audio | Tab::Surfaces | Tab::Sync => TabOutcome::Open,
         };
         match out {
@@ -1615,6 +1666,7 @@ impl SettingsDialog {
             TabOutcome::PickLibraryFolder => DialogOutcome::PickLibraryFolder,
             TabOutcome::PickScratchFolder => DialogOutcome::PickScratchFolder,
             TabOutcome::PickFfmpegFolder => DialogOutcome::PickFfmpegFolder,
+            TabOutcome::PickBackupFolder => DialogOutcome::PickBackupFolder,
         }
     }
 
@@ -1649,7 +1701,7 @@ impl SettingsDialog {
                 &TextRun::new(
                     tab.label(),
                     Point::new(r.center().x, r.y0 + 16.5),
-                    13.0,
+                    TAB_FONT,
                     theme.text,
                 )
                 .align(Align::Center),
@@ -1673,6 +1725,11 @@ impl SettingsDialog {
             }
             (Tab::Video, Some(p)) => {
                 p.video.paint(canvas, theme, panel_rect);
+                self.paint_buttons(canvas, theme, panel_rect);
+                return;
+            }
+            (Tab::Backup, Some(p)) => {
+                p.backup.paint(canvas, theme, panel_rect);
                 self.paint_buttons(canvas, theme, panel_rect);
                 return;
             }

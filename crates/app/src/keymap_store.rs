@@ -127,12 +127,22 @@ pub struct WorkflowPrefs {
     /// The level the file browser's previews play at, in dB ([`MIN_PREVIEW_DB`] to
     /// [`MAX_PREVIEW_DB`], default 0): audio files, patches and clips.
     pub preview_db: f32,
+    /// The folder every saved project is also copied into (`None`: no backup copies).
+    pub backup_folder: Option<PathBuf>,
+    /// How many backup copies of a project stay (1 to [`MAX_BACKUP_KEEP`], default 10).
+    pub backup_keep: u32,
+    /// Whether a backup copy brings the audio the project uses (default on).
+    pub backup_audio: bool,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
 }
 
 /// How many automatic versions a save keeps when the preference is not set.
 pub const DEFAULT_KEEP_VERSIONS: u32 = 20;
+/// How many backup copies of a project stay when the preference is not set.
+pub const DEFAULT_BACKUP_KEEP: u32 = 10;
+/// The most backup copies of a project the preference allows.
+pub const MAX_BACKUP_KEEP: u32 = atomik_audio_file::MAX_BACKUPS as u32;
 /// The most automatic versions the preference may ask for.
 pub const MAX_KEEP_VERSIONS: u32 = 1000;
 /// The quietest preview level, in dB.
@@ -234,6 +244,9 @@ impl Default for WorkflowPrefs {
             keep_versions: DEFAULT_KEEP_VERSIONS,
             update_check: None,
             preview_db: 0.0,
+            backup_folder: None,
+            backup_keep: DEFAULT_BACKUP_KEEP,
+            backup_audio: true,
             extra: BTreeMap::new(),
         }
     }
@@ -354,6 +367,14 @@ impl WorkflowPrefs {
                 .map_or(defaults.preview_db, |v| {
                     (v as f32).clamp(MIN_PREVIEW_DB, MAX_PREVIEW_DB).round()
                 }),
+            backup_folder: path_field(obj, "backup_folder"),
+            backup_keep: obj
+                .get("backup_keep")
+                .and_then(Value::as_u64)
+                .map_or(defaults.backup_keep, |n| {
+                    n.clamp(1, u64::from(MAX_BACKUP_KEEP)) as u32
+                }),
+            backup_audio: flag("backup_audio", defaults.backup_audio),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -390,6 +411,9 @@ impl WorkflowPrefs {
                             | "keep_versions"
                             | "update_check"
                             | "preview_db"
+                            | "backup_folder"
+                            | "backup_keep"
+                            | "backup_audio"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -474,6 +498,8 @@ impl WorkflowPrefs {
             map.insert("update_check".into(), Value::Bool(answer));
         }
         map.insert("preview_db".into(), Value::from(f64::from(self.preview_db)));
+        map.insert("backup_keep".into(), Value::from(self.backup_keep));
+        map.insert("backup_audio".into(), Value::Bool(self.backup_audio));
         if let Some(folder) = &self.library_folder {
             map.insert(
                 "library_folder".into(),
@@ -484,6 +510,7 @@ impl WorkflowPrefs {
             ("default_song", &self.default_song),
             ("scratch_folder", &self.scratch_folder),
             ("ffmpeg_folder", &self.ffmpeg_folder),
+            ("backup_folder", &self.backup_folder),
         ] {
             if let Some(path) = path {
                 map.insert(
@@ -1209,6 +1236,46 @@ mod packaging_tests {
         for bad in [r#"{"ffmpeg_folder": ""}"#, r#"{"ffmpeg_folder": 7}"#] {
             assert_eq!(WorkflowPrefs::from_json(bad).unwrap().ffmpeg_folder, None);
         }
+    }
+
+    #[test]
+    fn the_backup_settings_default_off_and_round_trip() {
+        let d = WorkflowPrefs::default();
+        assert_eq!(d.backup_folder, None);
+        assert_eq!((d.backup_keep, d.backup_audio), (10, true));
+        let old = WorkflowPrefs::from_json("{}").unwrap();
+        assert_eq!(old, d);
+        assert!(!d.to_json().contains("backup_folder"));
+        let set = WorkflowPrefs {
+            backup_folder: Some(PathBuf::from("/mnt/other/backups")),
+            backup_keep: 25,
+            backup_audio: false,
+            ..WorkflowPrefs::default()
+        };
+        let text = set.to_json();
+        assert!(
+            text.contains("\"backup_folder\": \"/mnt/other/backups\""),
+            "{text}"
+        );
+        assert!(text.contains("\"backup_keep\": 25"), "{text}");
+        assert!(text.contains("\"backup_audio\": false"), "{text}");
+        let back = WorkflowPrefs::from_json(&text).unwrap();
+        assert_eq!(back, set);
+        assert!(back.extra.is_empty());
+        assert_eq!(back.to_json(), text);
+        // The count is kept between 1 and 50; a wrong type or an empty folder is the default.
+        let low = WorkflowPrefs::from_json(r#"{"backup_keep": 0}"#).unwrap();
+        assert_eq!(low.backup_keep, 1);
+        let high = WorkflowPrefs::from_json(r#"{"backup_keep": 900}"#).unwrap();
+        assert_eq!(high.backup_keep, MAX_BACKUP_KEEP);
+        let bad = WorkflowPrefs::from_json(
+            r#"{"backup_keep": "ten", "backup_audio": 3, "backup_folder": ""}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            (bad.backup_keep, bad.backup_audio, bad.backup_folder),
+            (10, true, None)
+        );
     }
 
     #[test]

@@ -365,6 +365,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.versions {
                     v.set_scale(scale);
                 }
+                if let Some(v) = &mut self.backup {
+                    v.set_scale(scale);
+                }
                 if let Some(v) = &mut self.plugin_manager {
                     v.set_scale(scale);
                 }
@@ -623,6 +626,7 @@ impl<B: AudioBackend> Shell<B> {
             || self.kick_bass.is_some()
             || self.zone.is_some()
             || self.versions.is_some()
+            || self.backup.is_some()
             || self.plugin_manager.is_some()
             || self.masking.is_some()
             || self.mixcheck.is_some()

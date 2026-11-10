@@ -340,7 +340,14 @@ New original devices built from the existing DSP blocks, grouped by the gap they
   `.atomikz` file: the project, every audio file it uses, a credits text (title, author, note, date, version and the
   plugins with vendor and format), a preview at -14 LUFS (MP3, or WAV without FFmpeg) and optionally the stems, written
   on a worker with progress and cancel, with a size warning over 500 MB; File > Open or a drop unpacks one into a
-  folder you pick and shows the song information. Still to come: files named inside a binary plugin state (it is never
+  folder you pick and shows the song information. Backup copies are done: with a backup folder set in Settings > Backup
+  every successful save also copies the project to `<folder>/<name>/<name> <date and time>.atomik` and, with Include
+  audio, its audio files once each by content hash to `<folder>/<name>/Audio/`, on a worker that never delays or fails
+  the save (a failure is a toast once per session), keeping the newest copies (1 to 50) and the audio they name; File >
+  Restore from Backup lists the copies and opens one as a new unsaved song. Still to come for backups: the versions
+  and the autosave snapshots are not copied, a folder per project path (two projects of the same name share one folder
+  in the backup folder), a backup on a timer for a project that is not saved, and offering the audio of another copy
+  for a copy made without audio. Still to come: files named inside a binary plugin state (it is never
   searched, since a path in it cannot be replaced safely), the files a plugin state or a reference track names outside
   the project in a share or a project archive (a share holds the project's audio only), and removing the Files folder
   of the old place when a project moves.

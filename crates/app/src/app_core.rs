@@ -385,6 +385,8 @@ pub struct AppCore<S: EngineSink> {
     auto_color: bool,
     /// How many automatic versions a save keeps (Settings; see [`AppCore::set_keep_versions`]).
     keep_versions: u32,
+    /// The backup copies of saved projects (Settings > Backup; see `app_core_backup.rs`).
+    backup: backup::BackupState,
     /// The level browser previews play at, in dB (the browser's level control; see
     /// [`AppCore::set_preview_db`]).
     preview_db: f32,
@@ -707,6 +709,7 @@ impl<S: EngineSink> AppCore<S> {
             join_next: false,
             auto_color: false,
             keep_versions: crate::keymap_store::DEFAULT_KEEP_VERSIONS,
+            backup: backup::BackupState::default(),
             preview_db: 0.0,
             midi_resolution: crate::midi_file::MidiResolution::default(),
             take_import: None,
@@ -4221,6 +4224,10 @@ pub use versions::{VersionComparison, VersionRow};
 
 #[path = "app_core_archive.rs"]
 mod archive;
+
+#[path = "app_core_backup.rs"]
+mod backup;
+pub use backup::{BACKUP_THREAD, BackupRow};
 
 #[path = "app_core_share.rs"]
 mod share;

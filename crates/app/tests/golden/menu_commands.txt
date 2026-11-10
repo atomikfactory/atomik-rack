@@ -339,6 +339,7 @@ RescanMidi | Rescan MIDI Ports
 ResetDefaultSong | Reset Default Song
 ResetStrip | Reset Channel
 RestartAudio | Restart Audio
+RestoreBackup | Restore from Backup…
 ReverseClips(false) | Reverse Note Starts
 ReverseClipsDefault | Reverse Clips
 ReverseReverbPrint(Eight) | 8 s

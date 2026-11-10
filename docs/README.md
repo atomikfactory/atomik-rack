@@ -247,6 +247,35 @@ question about unsaved changes, and the Song Information panel shows the title, 
 always is, and the song plays with a stand-in for it. A damaged archive, one with entries that leave its folder or
 that no share holds, or one over the size limits, is refused before anything is written.
 
+## Backup copies
+
+Besides the project file, its versions and the autosave snapshots, Atomik Rack can keep a backup copy of every saved
+project in a second folder, for example on another drive or in a folder you sync somewhere else. It is for the day a
+disk fails. Settings > Backup has three controls: the **Backup folder** (None until you choose one, with **Choose...**
+and **None**), **Keep** (how many copies of each project stay, 1 to 50, 10 by default; Shift moves it by ten) and
+**Include audio** (on by default).
+
+Every successful save, File > Save, Save As, Collect Files and Move Project alike, then copies the project into
+`<backup folder>/<project name>/<project name> <date and time>.atomik` (the time is UTC, to the second, like
+`Song 2026-11-10 093112.atomik`). With Include audio the audio files the project uses go into
+`<backup folder>/<project name>/Audio/`. Audio is named by its content, so a file is copied once and later saves find it
+there. The copy runs on its own worker after the save is done: it never delays a save and never fails one. Autosave
+snapshots are for crash recovery and make no backup.
+
+When there are more than **Keep** copies the oldest are removed. An audio file goes only when no copy that stays names
+it: every project file in the project's backup folder is read first, and if one cannot be read no audio is removed at
+all. Files you put there yourself that are not copies of this project are never touched. Two projects with the same
+name share one folder in the backup folder, so give them different names.
+
+If a copy fails (the folder is gone, the disk is full) the status line says `Backup failed: <the reason>` once per
+session and every later failure goes to the log only; the save itself is fine and the next save tries again.
+
+**File > Restore from Backup...** lists the copies of the open project, newest first, with the date and the size of
+each. Choose one (Up and Down, a click, then RESTORE or Enter; a double click restores at once) and it opens as a new
+unsaved song, like a template: it is never the song's file, so neither the copy nor the project is overwritten, and
+Save asks where to keep it. The question about unsaved changes comes first. Its audio comes from the copy's own
+`Audio` folder (a copy made without Include audio opens with its audio listed as missing, to be relinked).
+
 ## CPU use
 
 The program times every device in the rack on the audio thread all the time; the cost is small (about half a percent

@@ -519,6 +519,23 @@ panel is [`ui/src/versions_panel.rs`](../crates/ui/src/versions_panel.rs) (`Vers
 `PendingAction::RestoreVersion`. Archives and Collect Files write only the project text and audio, so they leave the
 versions out.
 
+Backup copies are [`audio-file/src/backup.rs`](../crates/audio-file/src/backup.rs): `backup_project` copies the saved
+project file to `<folder>/<name>/<name> <YYYY-MM-DD HHMMSS>.atomik` (UTC) through a temporary file and a rename, first
+copying the audio its text names (`scan_assets`) that `<folder>/<name>/Audio/` does not hold yet, then prunes: copies
+beyond the newest N go, and an audio file goes only when no `.atomik` file left in the folder names it (all of them
+are read; one that cannot be read, or is over the size cap, keeps all the audio, the same rule as Move Project). Files
+that are not copies are never removed. `list_backups` reads the copies of one project, newest first. In the app,
+`finish_save` calls `AppCore::backup_after_save` once a save is confirmed (a save worker's result or a blocking save,
+never an autosave snapshot): it hands a worker (`BACKUP_THREAD`) a request that owns everything (the file, a clone of
+the bundle, the settings, the time), queues the newest request while one runs so two workers never write into one
+folder, and `poll_backup` takes the result each frame, showing the first failure as a toast and the rest in the log.
+The settings are `backup_folder`, `backup_keep` and `backup_audio` of `WorkflowPrefs` (Settings > Backup, `BackupTab`).
+`AppCore::start_backup_list` lists the copies on a worker too; the panel is
+[`ui/src/backup_panel.rs`](../crates/ui/src/backup_panel.rs) (`BackupView`, `UiAction::Backup`), opened by
+`file.restore_backup`. `AppCore::restore_backup` accepts only a copy the list holds and opens it with `open_template`,
+so it is a new unsaved song whose audio is read from the copy's own `Audio` folder; after the question about unsaved
+changes it is `PendingAction::RestoreBackup`.
+
 ### 2.4 Playback, per 64-frame batch
 
 ```
@@ -5122,7 +5139,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (551) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (552) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

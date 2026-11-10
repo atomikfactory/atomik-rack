@@ -346,6 +346,7 @@ impl<S: EngineSink> AppCore<S> {
     pub fn is_busy(&self) -> bool {
         self.audio.pending > 0
             || self.saving()
+            || self.backup_running()
             || self.browser_busy()
             || self.kick_bass_running()
             || self.zone_busy()
@@ -453,12 +454,14 @@ impl<S: EngineSink> AppCore<S> {
     /// something changed.
     pub fn poll_background(&mut self) -> bool {
         let saved = self.poll_save();
-        self.drain(false) || saved
+        let backed_up = self.poll_backup();
+        self.drain(false) || saved || backed_up
     }
 
     /// Blocks until every worker is done and applied (tests, scripts).
     pub fn wait_background(&mut self) {
         self.settle_save();
+        self.settle_backup();
         self.drain(true);
         for writer in self.audio.cancelled.drain(..) {
             let _ = writer.join();

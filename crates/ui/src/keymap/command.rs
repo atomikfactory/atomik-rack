@@ -1016,6 +1016,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd(
+        "file.restore_backup",
+        "Restore from Backup",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
     cmd("file.save", "Save", G::Global, C::Global).menu(),
     cmd("file.save_as", "Save As", G::Global, C::Global).menu(),
     cmd(

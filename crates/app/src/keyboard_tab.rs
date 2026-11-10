@@ -48,6 +48,8 @@ pub(crate) enum TabOutcome {
     PickScratchFolder,
     /// Ask the platform for the folder holding FFmpeg (the Video tab's Choose).
     PickFfmpegFolder,
+    /// Ask the platform for the backup folder (the Backup tab's Choose).
+    PickBackupFolder,
 }
 
 /// One chord chip of a row.
