@@ -21,13 +21,7 @@ root="$(mktemp -d)"
 trap 'rm -rf "$root"' EXIT
 
 opt="$root/opt/atomik-rack"
-mkdir -p "$opt" "$root/usr/bin" "$root/usr/share/applications" "$root/usr/share/mime/packages" \
-  "$root/usr/share/doc/atomik-rack" "$root/DEBIAN"
-for size in 128 256 512; do
-  mkdir -p "$root/usr/share/icons/hicolor/${size}x${size}/apps"
-  install -m 0644 "assets/icon/atomik-rack-$size.png" \
-    "$root/usr/share/icons/hicolor/${size}x${size}/apps/atomik-rack.png"
-done
+mkdir -p "$opt" "$root/usr/bin" "$root/usr/share/doc/atomik-rack" "$root/DEBIAN"
 for bin in $bins; do
   install -m 0755 "target/release/$bin" "$opt/$bin"
   # The release profile keeps line tables for backtraces (debug = 1): the package does not need them.
@@ -37,27 +31,9 @@ done
 
 cp -R factory "$opt/factory"
 
-cat > "$root/usr/share/applications/atomik-rack.desktop" <<'DESKTOP'
-[Desktop Entry]
-Type=Application
-Name=Atomik Rack
-Comment=A rack of devices you patch and play
-Icon=atomik-rack
-Exec=atomik %f
-Terminal=false
-Categories=AudioVideo;Audio;Midi;Music;
-MimeType=application/x-atomik-project;
-DESKTOP
-
-cat > "$root/usr/share/mime/packages/atomik-rack.xml" <<'MIME'
-<?xml version="1.0" encoding="UTF-8"?>
-<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
-  <mime-type type="application/x-atomik-project">
-    <comment>Atomik Rack project</comment>
-    <glob pattern="*.atomik"/>
-  </mime-type>
-</mime-info>
-MIME
+# The desktop entry, file type, metainfo and icons are shared with the AppImage and the Flatpak and
+# named after the app id (packaging/linux).
+sh scripts/release/linux-share.sh "$root/usr/share" "$label"
 
 cat > "$root/usr/share/doc/atomik-rack/copyright" <<'COPYRIGHT'
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/

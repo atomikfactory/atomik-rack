@@ -220,6 +220,25 @@ jobs:
       - run: |
           sh scripts/release/test-report-test.sh
           sh scripts/release/test-report.sh --check
+      # The Linux packages (AppImage, Flatpak, deb): the scripts' syntax and dry runs, the manifest,
+      # the desktop entry and the metainfo. Nothing is built or downloaded: the packages are built
+      # by the release and nightly workflows only.
+      - name: Linux packaging files
+        run: |
+          set -eu
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends shellcheck desktop-file-utils appstream
+          shellcheck scripts/release/package-appimage.sh scripts/release/package-flatpak.sh \
+            scripts/release/linux-share.sh scripts/release/linux-metainfo.sh \
+            scripts/release/appimage-libs.sh scripts/release/fetch-appimagetool.sh \
+            scripts/release/package-appimage-test.sh scripts/release/package-flatpak-test.sh \
+            scripts/release/appimage-libs-test.sh
+          sh scripts/release/appimage-libs-test.sh
+          sh scripts/release/package-appimage-test.sh
+          sh scripts/release/package-flatpak-test.sh
+          desktop-file-validate packaging/linux/io.github.atomikfactory.AtomikRack.desktop
+          RELEASE_DATE=2026-01-01 sh scripts/release/linux-metainfo.sh v0.4.0 "$RUNNER_TEMP/io.github.atomikfactory.AtomikRack.metainfo.xml"
+          appstreamcli validate --no-net "$RUNNER_TEMP/io.github.atomikfactory.AtomikRack.metainfo.xml"
       # The documents: the long guides are hard-wrapped, every Markdown link and anchor resolves,
       # the crate table of ARCHITECTURE.md matches the Cargo.toml files and the functions the
       # guides cite exist.

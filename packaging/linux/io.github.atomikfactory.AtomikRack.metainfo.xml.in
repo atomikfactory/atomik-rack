@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template: scripts/release/linux-metainfo.sh fills in the releases list from the version. -->
+<component type="desktop-application">
+  <id>io.github.atomikfactory.AtomikRack</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Atomik Rack</name>
+  <summary>A rack of devices you patch and play</summary>
+  <developer id="io.github.atomikfactory">
+    <name>Atomik Factory</name>
+  </developer>
+  <description>
+    <p>
+      Atomik Rack is a modular digital audio workstation. Instruments and effects sit in a rack that you
+      patch with cables, and a sequencer, a mixer and an arrangement turn the rack into songs.
+    </p>
+    <p>
+      It hosts CLAP and VST3 plugins, each in a process of its own, records audio and MIDI, edits clips,
+      notes and automation, and bounces a song to a file without opening a window.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.atomikfactory.AtomikRack.desktop</launchable>
+  <url type="homepage">https://github.com/atomikfactory/atomik-rack</url>
+  <url type="bugtracker">https://github.com/atomikfactory/atomik-rack/issues</url>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Midi</category>
+    <category>Music</category>
+  </categories>
+  <provides>
+    <binary>atomik</binary>
+    <mediatype>application/x-atomik-project</mediatype>
+  </provides>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+@RELEASES@
+</component>
