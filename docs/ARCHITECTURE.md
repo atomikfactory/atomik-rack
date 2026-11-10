@@ -5139,7 +5139,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (553) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (555) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5276,6 +5276,19 @@ creation chain in the **Creation chain** bullet.
     revision of every cached list, the arrangement syncs again). `contrast_ratio` tests in
     `theme.rs` hold the type, the muted type, the focus ring and the lamp colours of both themes
     to their WCAG ratios.
+  - **Themes as data.** The colour tokens are one table, `TOKENS` in `theme_doc.rs` (name in the file,
+    label in the editor, group, getter and setter), and a theme is a `ThemeDoc` read from a JSON file with a
+    `version`, a `name`, a `based_on` (`light` or `dark`: what a missing colour falls back to) and `colors`.
+    `Theme::dark`, `Theme::light` and `Theme::synthwave` are read once from the files
+    `crates/ui/themes/*.json` (`include_str!`) through the same loader as a user theme, and a test holds
+    the Light and Dark files to the palettes the code had before. The app's `ThemeLibrary`
+    (`themes.rs`) lists the built-in themes and the files of the `themes` folder next to `settings.json`
+    (a file that does not load is skipped and named), and does duplicate, rename, delete, import, export and
+    save; `WorkflowPrefs::theme_id` names the theme in use when it is not a Dark, Light or System choice.
+    `Shell::current_theme` is the editor's preview, else the library's theme of that id, else the choice, and
+    `Shell::apply_theme` is unchanged. The Themes tab (`themes_tab.rs`) asks the shell with a `ThemeAction`;
+    the theme editor is `ThemeEditorView`, a modal over the settings dialog that edits a `ThemeDoc`, asks for
+    the colour picker through `ColorTarget::ThemeToken`, and is written when it closes.
   - **Application zoom.** The shell draws and lays out in logical units at the scale each window
     was told. The platform tells every window `Shell::ui_scale(display scale)`, the display scale
     times `Shell::app_zoom`, and works the logical size and the pointer positions out with it, so

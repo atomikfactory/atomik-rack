@@ -549,3 +549,28 @@ names of devices stay in English for now. The French uses the glossary at the to
 Boucle, Calque, Table de mixage, Envois, Retours, Réglages, Annuler, Rétablir).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## X. Themes are JSON files
+
+**Question.** The colours of the interface were two constructors in code, Light and Dark. Users want their own
+themes, and a third look (a neon, 1980s one) should not need a change of the program. How are themes kept?
+
+**Options.** (1) More constructors in code: nothing can be shared or edited, and each theme is a release. (2) A text
+format of its own: one more parser to write and test. (3) JSON, which the program already reads and writes for its
+settings, with a version field.
+
+**Implications.** With (3) the built-in themes can be files too, compiled in with `include_str!`, so the built-in and the
+user themes go through one loader and a built-in theme is an example of the format. The cost is that a file can be wrong,
+so the loader checks the version, the name and each colour, skips a file that fails (one log line and one message
+naming the files, never deleting anything) and lets a file leave colours out: they come from the built-in theme it is
+based on, so a theme made for this version still opens when a later version adds a colour. The built-in Light and Dark
+files give back the old palettes byte for byte (a test compares them with the former code), so no existing rendering
+changes. A theme is a preference and not project data: it lives in `workflow.json` (`theme_id`, written only when a theme
+other than Dark, Light or System is in use, so an older file with `"theme": "dark"` still gives Dark) and in the
+`themes` folder next to `settings.json`, and the project format stays as it is.
+
+**Decision.** Option 3. The format is described in [EXTENDING.md](EXTENDING.md#9-making-a-theme). A theme sets the colour
+tokens of `Theme` (about sixty), a few numbers that were already in `Theme`, and nothing else: no new styling
+dimension. A glow on the meters and the playhead was left out, since it would cost frame time for one theme.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

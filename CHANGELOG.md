@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Themes, with a built-in Synthwave theme.** The colours of the interface are now data: one JSON file per theme with
+  a version, a name, the built-in theme it is based on (a colour it leaves out comes from there) and about sixty colour
+  tokens. Light and Dark are files compiled into the program that give back the old palettes exactly, so nothing looks
+  different; **Synthwave** is new, a neon night with an indigo background, magenta and cyan accents, a magenta grid in
+  the arrangement and meters that run cyan, magenta and orange, with its body text kept above a 4.5 to 1 contrast
+  (a test checks it for every built-in theme). **Settings > Themes** lists the themes with a sample of each and uses
+  one at once; Duplicate, Rename, Delete (after a question), Import, Export and Open Themes Folder manage your own,
+  which are files in a `themes` folder next to `settings.json`. A theme editor opens on a theme of your own: the colours
+  in groups (Backgrounds, Text, Accents, Meters, Arrangement, Rack, Console), each with a swatch that opens the colour
+  picker and a hex text field, a live preview in the whole program, RESET to the base theme, and an undo for the
+  session (Ctrl+Z); it writes the file when it closes. A file that is not a theme is skipped with one message that
+  names it. View > Theme gains Next Theme (`view.next_theme`) and Theme Manager (`view.theme_manager`), neither with a
+  key. The grid lines and level meters are theme colours now (`grid_bar`, `grid_beat`, `grid_sub`, `meter_low`,
+  `meter_mid`, `meter_high`). A glow on the meters and the playhead is not done. The theme is a preference
+  (`theme_id` in `workflow.json`, an old `"theme": "dark"` still gives Dark); the project format is unchanged (45).
 - **A French interface and a way to add languages.** Settings > Video has a Language row, System (default), English
   or Français, and a change applies at once with no restart. System reads the language of the operating system once
   at start (the `sys-locale` crate, decision W) and falls back to English. The menus and every command of the

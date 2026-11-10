@@ -311,6 +311,65 @@ unsaved song, like a template: it is never the song's file, so neither the copy 
 Save asks where to keep it. The question about unsaved changes comes first. Its audio comes from the copy's own
 `Audio` folder (a copy made without Include audio opens with its audio listed as missing, to be relinked).
 
+## Themes
+
+Atomik Rack has three themes: **Dark** (the one it always had), **Light**, and **Synthwave**, a neon night with a deep
+indigo background, hot magenta and electric cyan accents, a magenta grid in the arrangement and meters that run cyan,
+magenta and orange. **Settings > Themes** lists them with a row of sample colours each; a click on one uses it at once,
+in every window and panel, and it is kept for the next start. View > Theme has the same choices (Dark, Light, Same as
+System) and **Next Theme**, which steps through the whole list, and **Theme Manager...** opens the tab. The Theme row of
+Settings > Interface shows the theme in use; stepping it goes back to Dark, Light and Same as System.
+
+Your own themes are files. Below the list:
+
+- **Duplicate** makes your own copy of any theme, named "<name> copy". Dark, Light and Synthwave cannot be changed or
+  deleted, so a copy is how you start.
+- **Rename** types a new name in the row (Enter keeps it, Esc leaves the old one). Two themes cannot share a name.
+- **Delete** asks first. If the theme was in use, the choice goes back to Dark, Light or Same as System.
+- **Edit...** opens the theme editor on one of your themes.
+- **Import...** takes a theme file (`.json`), checks it, and copies it into the themes folder (with a number after the
+  name if the name is taken). **Export...** saves the selected theme as a `.json` file you can share.
+- **Open Themes Folder** shows the folder in the file manager: the `themes` folder next to `settings.json`. A theme
+  is one `.json` file there, and you can edit it with any text editor (docs/EXTENDING.md, "Making a theme", has the format).
+
+A file that is not a theme (it is not JSON, it has a colour that is not `#rrggbb`, or it is a newer version of the
+format) is skipped when the program starts, with one message that lists the files and one line in the log; the file is
+never touched. A theme that leaves a colour out takes it from the built-in theme it is based on, Light or Dark.
+
+### The theme editor
+
+The editor lists every colour of the theme in groups (Backgrounds, Text, Accents, Meters, Arrangement, Rack and
+Console). Each row has a swatch and the colour as text:
+
+- Click the **swatch** to open the colour picker; **Apply** gives the colour to that row.
+- Click the **hex text** and type a colour, `#rrggbb` or `#rrggbbaa` when the colour is see-through. The row changes as
+  soon as the text is a colour.
+- **RESET** (shown on a row that differs from the theme it is based on) sets the colour back to the base theme's.
+- **UNDO**, or Ctrl+Z (Cmd+Z on macOS), takes back the last change; the history lasts until the editor closes.
+- Up and Down move to the next row, **SAVE** (Ctrl+S) writes the file, and **CLOSE** (Esc) writes it too when
+  something changed.
+
+Every change shows at once in the whole program behind the editor, including the part of the theme in use. When the
+editor closes the program goes back to the theme in use. The colour tokens:
+
+| Group | Tokens |
+| --- | --- |
+| Backgrounds | `background`, `rail`, `rail_hole`, `ear`, `panel_top`, `panel_bottom`, `back_top`, `back_bottom`, `plate`, `lcd`, `button`, `browser_bg`, `browser_row`, `tooltip_bg`, `error_bg`, `bevel_light`, `bevel_dark`, `section_line`, `ink`, `veil`, `dim` |
+| Text | `text`, `text_muted`, `on_accent`, `on_dark`, `on_error` |
+| Accents | `highlight`, `focus`, `selection`, `warning`, `mute` |
+| Meters | `meter_low`, `meter_mid`, `meter_high` |
+| Arrangement | `lane`, `lane_alt`, `lane_auto`, `grid_bar`, `grid_beat`, `grid_sub`, `row_black`, `key_white`, `key_black` |
+| Rack | `screw_light`, `screw_dark`, `knob_top`, `knob_bottom`, `knob_track`, `knob_pointer`, `jack_light`, `jack_dark`, `jack_hole`, `led_off`, `cable_audio`, `cable_cv`, `cable_notes`, `cable_insert`, `cable_send`, `cable_sidechain`, `cable_shadow` |
+| Console | `io_connected`, `io_free`, `io_unavailable`, `clip` |
+
+Besides the colours a theme file can set `dark` (light type on dark surfaces), `accent_saturation` and
+`accent_lightness` (the colours the devices and tracks get when nothing names theirs; Synthwave's are neon) and
+`corner` (the panel corner radius). Keep the text readable: the built-in themes keep their body text at a contrast
+of at least 4.5 to 1 against every panel, and a theme you make is not checked.
+
+The theme in use is a preference, not part of a project: songs look the same in every theme, and nothing about the
+theme is saved in them.
+
 ## CPU use
 
 The program times every device in the rack on the audio thread all the time; the cost is small (about half a percent

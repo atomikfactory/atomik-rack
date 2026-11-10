@@ -318,3 +318,46 @@ language, say German (`de`):
 
 A text with no line is not an error: it shows in English. The tests that draw the views list the texts that a view
 drew without a line, which is the list of what is left to translate.
+
+## 9. Making a theme
+
+A theme is one JSON file. The three built-in themes (`crates/ui/themes/light.json`, `dark.json` and `synthwave.json`,
+compiled in) and the themes of the user (the `themes` folder next to `settings.json`) go through the same loader
+([DECISIONS.md](DECISIONS.md#x-themes-are-json-files) explains the choice). A theme that sets only a few colours is
+fine: the others come from the theme it is `based_on`.
+
+```json
+{
+  "version": 1,
+  "name": "Night drive",
+  "based_on": "dark",
+  "dark": true,
+  "accent_saturation": 0.85,
+  "accent_lightness": 0.62,
+  "corner": 3.0,
+  "colors": {
+    "background": "#140c28",
+    "panel_bottom": "#22153f",
+    "text": "#f3e9ff",
+    "highlight": "#ff5db1",
+    "grid_bar": "#ff2e9760"
+  }
+}
+```
+
+- `version` is 1. A file with another version is skipped and named in a message at start.
+- `name` is up to 40 characters and is not the file name; two themes cannot share a name.
+- `based_on` is `light` or `dark` (default `dark`). Every colour the file leaves out, and every number, comes from it.
+- `dark`, `accent_saturation`, `accent_lightness` and `corner` are optional. `dark` says the type is light on dark
+  surfaces; the two accent numbers (0 to 1) make the colour a device or track gets when nothing names one.
+- Each entry of `colors` is `#rrggbb`, or `#rrggbbaa` for a colour that lets what is behind it show (a grid line, a
+  shadow, a veil). A name the program does not know is ignored, so a newer file keeps working; a value that is not a
+  colour makes the file unusable.
+
+The names are the table `TOKENS` of `crates/ui/src/theme_doc.rs`, listed by group in the user manual. To add a token:
+add the field to `Theme` (`crates/ui/src/theme.rs`), a row to `TOKENS` with its label, a value in each of the three
+built-in files (a test refuses a built-in file that leaves one out), and a French line for its label in
+`crates/ui/locales/fr.txt`. Paint code takes colours from the theme and never writes a colour of its own, so that a
+theme can change it. The contrast test (`body_text_has_contrast_on_every_surface_of_every_builtin`) checks the body
+text of every built-in theme against its panels, and the golden files `crates/ui/tests/golden/synthwave_*.json` and
+`crates/app/tests/golden/*synthwave*.json` show what a theme paints.
