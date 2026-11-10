@@ -412,7 +412,7 @@ impl Chord {
         let mac = os == Os::Mac;
         let mut out = String::new();
         let mut push = |s: &str| {
-            out.push_str(s);
+            out.push_str(&crate::i18n::key_name(s));
             out.push('+');
         };
         if self.mods.cmd {
@@ -434,7 +434,7 @@ impl Chord {
                 Os::Linux => "Super",
             });
         }
-        out.push_str(&self.key.menu_text());
+        out.push_str(&crate::i18n::key_name(&self.key.menu_text()));
         out
     }
 }

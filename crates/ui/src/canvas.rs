@@ -8,6 +8,7 @@
 //!   (feature `cpu-canvas`).
 
 use crate::display_list::DisplayList;
+use crate::i18n;
 use vello::kurbo::{
     Affine, BezPath, Circle, CubicBez, Ellipse, Line, Point, Rect, RoundedRect, Shape, Stroke,
 };
@@ -117,6 +118,25 @@ pub struct TextRun {
 impl TextRun {
     /// A regular-weight, start-aligned run.
     pub fn new(text: impl Into<String>, pos: Point, size: f32, color: Color) -> Self {
+        let text: String = text.into();
+        let text = match i18n::translate(&text) {
+            Some(shown) => shown.into_owned(),
+            None => text,
+        };
+        Self {
+            text,
+            pos,
+            size,
+            weight: 400,
+            color,
+            align: Align::Start,
+            letter_spacing: 0.0,
+        }
+    }
+
+    /// A run of the user's own words (a song, track, clip or file name): shown exactly as given,
+    /// never looked up in the language.
+    pub fn verbatim(text: impl Into<String>, pos: Point, size: f32, color: Color) -> Self {
         Self {
             text: text.into(),
             pos,

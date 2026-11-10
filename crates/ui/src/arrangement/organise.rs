@@ -1372,7 +1372,7 @@ impl ArrangementView {
         let hot = self.hover == Some(Hit::FolderToggle(group));
         c.fill_with(chev, if hot { t.text } else { t.text_muted });
         let (nx, nw) = self.folder_name_box(hr, group);
-        let name = fit_label(&g.name, nw, 11.0);
+        let name = crate::paint::fit_label_raw(&g.name, nw, 11.0);
         c.text(&TextRun::new(name, pt(nx, hr.center().y + 4.0), 11.0, t.text).weight(600));
         let flags = self.folder_flags(group);
         let hovered = |b| self.hover == Some(Hit::FolderButton(group, b));

@@ -86,9 +86,10 @@ impl Help {
     /// button's command (nothing added when it is unbound).
     pub fn text_with(&self, keymap: &Keymap) -> String {
         let shortcut = self.command.and_then(|c| keymap.shortcut_text(c, self.arg));
+        let text = crate::i18n::tr(&self.text);
         match shortcut {
-            Some(s) => format!("{} ({s})", self.text),
-            None => self.text.to_string(),
+            Some(s) => format!("{text} ({s})"),
+            None => text.into_owned(),
         }
     }
 }

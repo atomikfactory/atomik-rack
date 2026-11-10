@@ -385,7 +385,7 @@ impl RelinkView {
             let name_w = (row.width() - 2.0 * PAD - 110.0 - 100.0).max(60.0);
             sp::label(
                 c,
-                &fit_label(&entry.name, name_w, 11.0),
+                &crate::paint::fit_label_raw(&entry.name, name_w, 11.0),
                 row.x0 + PAD,
                 row.y0 + 18.0,
                 11.0,

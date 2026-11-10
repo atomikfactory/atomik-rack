@@ -568,6 +568,30 @@ fn the_view_with_playing_queued_and_empty_slots_matches_its_golden_at_1x() {
 }
 
 #[test]
+fn the_view_in_french_matches_its_golden() {
+    let (list, misses) = atomik_ui::i18n::with_misses(|| {
+        atomik_ui::i18n::with_language(atomik_ui::Lang::French, || {
+            let v = golden_view(1.0);
+            let mut dl = DisplayList::new();
+            v.paint(&mut dl);
+            dl
+        })
+    });
+    check("fr/launcher_view_1x.json", &list.to_json());
+    // Only the names the test gave the tracks and the scenes are left in English.
+    let words: Vec<_> = misses
+        .iter()
+        .filter(|m| {
+            !["Bass", "Lead", "Keys", "Intro"]
+                .iter()
+                .any(|n| m.starts_with(n))
+                && !m.chars().any(|c| c.is_ascii_digit())
+        })
+        .collect();
+    assert!(words.is_empty(), "no French entry: {words:?}");
+}
+
+#[test]
 fn the_view_matches_its_golden_at_2x() {
     let v = golden_view(2.0);
     let mut dl = DisplayList::new();

@@ -841,7 +841,7 @@ impl PluginSettingsView {
                 let y = r.y0 + 15.0;
                 label(
                     c,
-                    &fit_label(&row.name, 170.0, 10.0),
+                    &crate::paint::fit_label_raw(&row.name, 170.0, 10.0),
                     r.x0 + 26.0,
                     y,
                     10.0,
@@ -911,7 +911,7 @@ impl PluginSettingsView {
                 let name = f.path.rsplit(['/', '\\']).next().unwrap_or(&f.path);
                 label(
                     c,
-                    &fit_label(name, r.width() - 80.0, 10.0),
+                    &crate::paint::fit_label_raw(name, r.width() - 80.0, 10.0),
                     r.x0 + 8.0,
                     r.y0 + 14.0,
                     10.0,

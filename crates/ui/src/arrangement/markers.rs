@@ -17,7 +17,7 @@ use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::event::{Key, Modifiers, PointerButton};
 use crate::keymap::CommandOutcome;
 use crate::marker_edit::{self as edit, MarkSel, RangePart};
-use crate::paint::{estimate_width, fit_label};
+use crate::paint::estimate_width;
 use crate::seq_edit;
 use crate::seq_paint as sp;
 use crate::text_field::{FieldColors, TextField};
@@ -1324,7 +1324,7 @@ impl ArrangementView {
             }
             if renaming != Some(sel) && g.width() > 14.0 {
                 c.push_clip(&Rect::new(g.x0 + 3.0, g.y0, g.x1 - 3.0, g.y1).into());
-                let text = fit_label(&r.name, g.width() - 8.0, 9.0);
+                let text = crate::paint::fit_label_raw(&r.name, g.width() - 8.0, 9.0);
                 c.text(&TextRun::new(text, pt(g.x0 + 5.0, g.y1 - 3.5), 9.0, t.text).weight(600));
                 c.pop_clip();
             }
@@ -1487,7 +1487,7 @@ impl ArrangementView {
             if renaming != Some(row.sel) {
                 sp::label(
                     c,
-                    &fit_label(&row.name, 98.0, 10.0),
+                    &crate::paint::fit_label_raw(&row.name, 98.0, 10.0),
                     r.x0 + 14.0,
                     r.y0 + 15.0,
                     10.0,

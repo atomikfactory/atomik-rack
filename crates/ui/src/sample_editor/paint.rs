@@ -169,7 +169,7 @@ fn zone(v: &SampleEditorView, c: &mut dyn Canvas, i: usize, selected: bool) {
     tip.close_path();
     c.fill_with(tip, root);
     if r.width() > 46.0 && r.height() > 14.0 {
-        let name = fit_label(&asset_name(v, z), r.width() - 8.0, 8.0);
+        let name = crate::paint::fit_label_raw(&asset_name(v, z), r.width() - 8.0, 8.0);
         sp::label(
             c,
             &name,
@@ -286,7 +286,7 @@ fn list(v: &SampleEditorView, c: &mut dyn Canvas) {
             Rect::new(r.x0, r.y0, r.x0 + 3.0, r.y1),
             zone_tint(v, i, z),
         );
-        let name = fit_label(&asset_name(v, z), r.width() - 16.0, 9.5);
+        let name = crate::paint::fit_label_raw(&asset_name(v, z), r.width() - 16.0, 9.5);
         let name_col = if v.is_missing(z) { st.record } else { t.text };
         sp::label(
             c,

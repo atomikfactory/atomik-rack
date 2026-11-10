@@ -108,7 +108,7 @@ fn chrome(v: &PluginParamsView, c: &mut dyn Canvas) {
         let title = format!("{}  ·  {}", v.name, v.vendor);
         sp::label(
             c,
-            &fit_label(&title, b.width() - 320.0, 10.0),
+            &crate::paint::fit_label_raw(&title, b.width() - 320.0, 10.0),
             b.x0 + 130.0,
             b.y0 + 18.0,
             10.0,
@@ -260,7 +260,7 @@ fn param_row(v: &PluginParamsView, c: &mut dyn Canvas, row: &Row, r: Rect, ri: u
     let value = v.value_of(row);
     sp::label(
         c,
-        &fit_label(&row.name, super::NAME_W, 10.0),
+        &crate::paint::fit_label_raw(&row.name, super::NAME_W, 10.0),
         r.x0 + super::PAD,
         r.y0 + 17.0,
         10.0,

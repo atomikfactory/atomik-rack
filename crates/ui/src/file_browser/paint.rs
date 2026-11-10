@@ -6,7 +6,7 @@ use super::menu::{self, Menu};
 use super::{FileBrowserView, Gesture, Hover, Pane, tree};
 use crate::action::Place;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
-use crate::paint::{fit_label_in, fit_label_weight, measure};
+use crate::paint::{fit_label_in_raw, fit_label_weight_raw, measure};
 use crate::text_field::FieldColors;
 use atomik_library::{FileKind, FileRow, LibrarySection, SortKey};
 use vello::kurbo::{Affine, BezPath, Rect, RoundedRect, Stroke};
@@ -110,7 +110,7 @@ impl FileBrowserView {
         };
         c.fill_with(lay.banner, crate::theme::PATCH_TARGET);
         c.push_clip(&lay.banner.into());
-        let title = fit_label_in(
+        let title = fit_label_in_raw(
             c,
             &format!("PATCHES FOR {}", target.label.to_uppercase()),
             lay.banner.width() - 2.0 * lay::PAD,
@@ -338,7 +338,8 @@ impl FileBrowserView {
         let reserve = count
             .as_ref()
             .map_or(0.0, |s| measure(c, s, SMALL_FONT, 400) + 10.0);
-        let mut label = fit_label_in(c, &item.label, row.x1 - lx - reserve - lay::SB_W, TREE_FONT);
+        let mut label =
+            fit_label_in_raw(c, &item.label, row.x1 - lx - reserve - lay::SB_W, TREE_FONT);
         if item.loading {
             label.push_str(" ...");
         }
@@ -392,7 +393,7 @@ impl FileBrowserView {
             // A long name gives way so that the keys always show.
             let fixed = measure(c, "Delete ''? Enter deletes, Esc cancels", SMALL_FONT, 400);
             let room = (bar.width() - 2.0 * lay::PAD - fixed).max(24.0);
-            let name = fit_label_in(c, &name, room, SMALL_FONT);
+            let name = fit_label_in_raw(c, &name, room, SMALL_FONT);
             let shown = format!("Delete '{name}'? Enter deletes, Esc cancels");
             c.text(&TextRun::new(
                 shown,
@@ -587,7 +588,7 @@ impl FileBrowserView {
         ] {
             if !text.is_empty() {
                 let at = line(y);
-                let shown = fit_label_in(c, &text, width, size);
+                let shown = fit_label_in_raw(c, &text, width, size);
                 c.text(&TextRun::new(
                     shown,
                     pt(at.x0, baseline(at, size)),
@@ -788,7 +789,7 @@ impl FileBrowserView {
             cols.name.1 - name_x - 4.0
         };
         let weight = if is_folder { 600 } else { 400 };
-        let name = fit_label_weight(c, &r.name, name_w, ROW_FONT, weight);
+        let name = fit_label_weight_raw(c, &r.name, name_w, ROW_FONT, weight);
         let text_w = measure(c, &name, ROW_FONT, weight);
         let mut run = TextRun::new(name, pt(name_x, baseline(rect, ROW_FONT)), ROW_FONT, t.text);
         if is_folder {
@@ -826,7 +827,7 @@ impl FileBrowserView {
         if item {
             let detail = r.item.as_ref().map_or("", |i| i.detail.as_str());
             let w = right - name_x - name_w - 12.0;
-            let shown = fit_label_in(c, detail, w, SMALL_FONT);
+            let shown = fit_label_in_raw(c, detail, w, SMALL_FONT);
             c.text(
                 &TextRun::new(
                     shown,
