@@ -435,7 +435,8 @@ impl SettingsDialog {
             keyboard: KeyboardTab::new(keymap),
             interface: InterfaceTab::new(UiPrefs::of(&workflow)),
             video: VideoTab::new(workflow.ffmpeg_folder.clone(), String::new())
-                .with_update_answer(workflow.update_check),
+                .with_update_answer(workflow.update_check)
+                .with_language(workflow.language),
             backup: BackupTab::new(
                 workflow.backup_folder.clone(),
                 workflow.backup_keep,
@@ -560,6 +561,7 @@ impl SettingsDialog {
             p.interface.prefs().apply_to(&mut workflow);
             workflow.ffmpeg_folder = p.video.folder().cloned();
             workflow.update_check = p.video.update_answer();
+            workflow.language = p.video.language();
             workflow.backup_folder = p.backup.folder().cloned();
             workflow.backup_keep = p.backup.keep();
             workflow.backup_audio = p.backup.audio();
@@ -676,7 +678,7 @@ impl SettingsDialog {
         for tab in Tab::ALL.into_iter().rev() {
             // Eight tabs share the title row with the heading: a smaller label, little padding
             // and a hairline gap.
-            let w = text_width(tab.label()) * f64::from(TAB_FONT) / 13.0 + 8.0;
+            let w = text_width(atomik_ui::i18n::t(tab.label())) * f64::from(TAB_FONT) / 13.0 + 8.0;
             out.push((
                 Rect::new(right - w, panel.y0 + 10.0, right, panel.y0 + 34.0),
                 tab,

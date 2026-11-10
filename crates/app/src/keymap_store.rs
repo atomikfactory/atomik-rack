@@ -16,9 +16,9 @@ use crate::master_keyboard::MasterKeyboard;
 use crate::midi_file::MidiResolution;
 use crate::record_over::{KeepEvents, RecordMode};
 use atomik_model::ThinLevel;
-use atomik_ui::ThemeChoice;
 use atomik_ui::keymap::UserKeymap;
 use atomik_ui::widget::KnobRange;
+use atomik_ui::{LanguageChoice, ThemeChoice};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -124,6 +124,8 @@ pub struct WorkflowPrefs {
     /// The answer to "Check for new versions once a day?": `None` until the user answers (the
     /// program then makes no request), `Some(true)` for Yes, `Some(false)` for No.
     pub update_check: Option<bool>,
+    /// The language of the interface: the system's (default), or one of the program's.
+    pub language: LanguageChoice,
     /// The level the file browser's previews play at, in dB ([`MIN_PREVIEW_DB`] to
     /// [`MAX_PREVIEW_DB`], default 0): audio files, patches and clips.
     pub preview_db: f32,
@@ -243,6 +245,7 @@ impl Default for WorkflowPrefs {
             reverse_mode: ReverseMode::default(),
             keep_versions: DEFAULT_KEEP_VERSIONS,
             update_check: None,
+            language: LanguageChoice::System,
             preview_db: 0.0,
             backup_folder: None,
             backup_keep: DEFAULT_BACKUP_KEEP,
@@ -360,6 +363,10 @@ impl WorkflowPrefs {
                     n.clamp(1, u64::from(MAX_KEEP_VERSIONS)) as u32
                 }),
             update_check: obj.get("update_check").and_then(Value::as_bool),
+            language: obj
+                .get("language")
+                .and_then(Value::as_str)
+                .map_or(LanguageChoice::System, LanguageChoice::from_code),
             preview_db: obj
                 .get("preview_db")
                 .and_then(Value::as_f64)
@@ -410,6 +417,7 @@ impl WorkflowPrefs {
                             | "reverse_mode"
                             | "keep_versions"
                             | "update_check"
+                            | "language"
                             | "preview_db"
                             | "backup_folder"
                             | "backup_keep"
@@ -496,6 +504,12 @@ impl WorkflowPrefs {
         map.insert("keep_versions".into(), Value::from(self.keep_versions));
         if let Some(answer) = self.update_check {
             map.insert("update_check".into(), Value::Bool(answer));
+        }
+        if self.language != LanguageChoice::System {
+            map.insert(
+                "language".into(),
+                Value::String(self.language.code().into()),
+            );
         }
         map.insert("preview_db".into(), Value::from(f64::from(self.preview_db)));
         map.insert("backup_keep".into(), Value::from(self.backup_keep));
@@ -1184,6 +1198,34 @@ mod packaging_tests {
         assert_eq!(back, set);
         assert!(back.extra.is_empty(), "known fields are not kept as extra");
         assert_eq!(back.to_json(), text, "the text is canonical");
+    }
+
+    #[test]
+    fn the_language_defaults_to_the_system_and_round_trips() {
+        assert_eq!(WorkflowPrefs::default().language, LanguageChoice::System);
+        assert_eq!(
+            WorkflowPrefs::from_json("{}").unwrap().language,
+            LanguageChoice::System
+        );
+        assert!(!WorkflowPrefs::default().to_json().contains("language"));
+        for choice in LanguageChoice::ALL {
+            let prefs = WorkflowPrefs {
+                language: choice,
+                ..WorkflowPrefs::default()
+            };
+            let text = prefs.to_json();
+            assert_eq!(
+                text.contains("\"language\""),
+                choice != LanguageChoice::System
+            );
+            assert_eq!(WorkflowPrefs::from_json(&text).unwrap().language, choice);
+        }
+        for bad in [r#"{"language": 3}"#, r#"{"language": "klingon"}"#] {
+            assert_eq!(
+                WorkflowPrefs::from_json(bad).unwrap().language,
+                LanguageChoice::System
+            );
+        }
     }
 
     #[test]

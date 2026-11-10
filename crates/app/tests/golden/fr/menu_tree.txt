@@ -1,0 +1,602 @@
+Fichier
+  Nouveau [Ctrl+N]
+  Ouvrir… [Ctrl+O]
+  Ouvrir un récent >
+    song 0
+    song 1
+    song 2
+    song 3
+    song 4
+    song 5
+    song 6
+    song 7
+    ---
+    Vider le menu
+  Nouveau depuis un modèle >
+    template 0
+    template 1
+    template 2
+    template 3
+    template 4
+    template 5
+    template 6
+    template 7
+    template 8
+    template 9
+    template 10
+    template 11
+    template 12
+    template 13
+    template 14
+    template 15
+    ---
+    Enregistrer comme modèle
+    Afficher le dossier des modèles
+    ---
+    Utiliser le morceau comme morceau par défaut
+    Réinitialiser le morceau par défaut
+  Fermer [Ctrl+W]
+  ---
+  Enregistrer [Ctrl+S]
+  Enregistrer sous… [Ctrl+Maj+S]
+  Enregistrer une version…
+  Versions…
+  Restaurer une sauvegarde…
+  ---
+  Informations du morceau…
+  Nouveau à la fréquence >
+    44,1 kHz
+    48 kHz
+    96 kHz
+  Convertir la fréquence d'échantillonnage >
+    44,1 kHz
+    48 kHz
+    96 kHz
+  Écran de démarrage…
+  ---
+  Importer >
+    Importer de l'audio… [Ctrl+Maj+I]
+    Importer du MIDI…
+    Importer le MIDI comme morceau…
+  Exporter >
+    Exporter le morceau en fichier audio…
+    Exporter la boucle en fichier audio…
+    Exporter la sélection en fichier audio…
+    Exporter les stems en fichiers audio…
+    Film avec le mix…
+    ---
+    Exporter le clip MIDI…
+    Exporter la piste MIDI…
+    Exporter le morceau en MIDI…
+    Résolution de l'export MIDI >
+      15360 par noire (natif)
+      960 par noire
+      480 par noire
+    ---
+    Exporter le patch…
+  Exporter pour >
+    Streaming
+    Podcast
+    Video
+    Stems for mixing
+    Club
+  Fichiers du projet >
+    Relier l'audio manquant…
+    Rassembler les fichiers…
+    Aperçu de la collecte des fichiers
+    Annuler la collecte ou le déplacement
+    Déplacer le projet…
+    ---
+    Exporter l'archive du projet…
+    Partager le projet…
+    Importer une archive de projet…
+    Annuler l'archive du projet
+  Vidéo >
+    Importer une vidéo…
+    Importer l'audio de la vidéo
+    Importer l'audio avec la vidéo
+    Retirer la vidéo
+    Relier la vidéo…
+    ---
+    Garder l'audio avec la vidéo
+    Déplacer la vidéo à la tête de lecture
+    Rogner le début de la vidéo à la tête de lecture
+    Rogner la fin de la vidéo à la tête de lecture
+    ---
+    Incrustation vidéo
+    ---
+    Préparer la vidéo…
+    Vérifier FFmpeg
+    Annuler le traitement vidéo
+  ---
+  Test de stress >
+    Rack de stress
+    Morceau de stress
+  ---
+  Quitter [Ctrl+Q]
+Édition
+  Annuler [Ctrl+Z]
+  Rétablir [Ctrl+Y]
+  Historique d'annulation
+  ---
+  Couper [Ctrl+X]
+  Copier [Ctrl+C]
+  Coller [Ctrl+V]
+  Dupliquer [Ctrl+D]
+  Supprimer [Suppr]
+  ---
+  Tout sélectionner [Ctrl+A]
+  ---
+  Combiner [Ctrl+Maj+G]
+  Séparer [Ctrl+Maj+U]
+  Sub séparé
+  ---
+  Quantifier [Ctrl+K]
+  Options de quantification…
+  ---
+  Éditions audio >
+    Inverser l'audio
+    Normaliser l'audio
+    Normaliser à >
+      Crête -1 dBFS
+      RMS -18 dBFS
+      Volume sonore -23 LUFS
+      Volume sonore -14 LUFS
+    Chirurgien de crêtes…
+    Supprimer les silences…
+    Quantifier l'audio
+  Temps et clips >
+    Insérer des mesures aux repères
+    Supprimer les mesures aux repères
+    ---
+    Inverser les clips
+    Inverser les débuts de notes
+    Mettre le tempo à l'échelle >
+      Doubler (200 %)
+      Diviser par deux (50 %)
+      150 %
+      125 %
+      75 %
+      Autre…
+    Découper les clips en >
+      Mesure
+      Demi-mesure
+      Temps
+      Note 1/8
+      Note 1/16
+    ---
+    Nettoyer l'automation >
+      Normal
+      Fort
+      Maximum
+    Déplacer l'automation dans le clip de notes
+    Effacer les voies de paramètres du clip
+Affichage
+  Arrière du rack [Tab]
+  Câbles >
+    Câbles : afficher
+    Câbles : au survol
+    Câbles : sélectionnés
+    Câbles : masquer ceux du routage automatique
+    Câbles : masquer
+  ---
+  Zoom avant [Ctrl+=]
+  Zoom arrière [Ctrl+-]
+  Taille réelle [Ctrl+0]
+  Zoom de l'application >
+    75 %
+    100 %
+    125 %
+    150 %
+    175 %
+    200 %
+  Thème >
+    Sombre
+    Clair
+    Comme le système
+  ---
+  Panneaux >
+    Navigateur d'appareils [F3]
+    Explorateur de fichiers [F9]
+    Détacher le navigateur
+    Touches de piano [F4]
+    Panneau des pistes
+    Rack [F6]
+    Détacher le rack [Ctrl+Maj+F6]
+    Détacher la table de mixage [Ctrl+Maj+F5]
+    Égaliseur à spectre [F2]
+    Vidéo
+    Navigateur du rack
+    Tri du rack >
+      Aucun groupement
+      Un rack par piste
+      Groupe auto
+    Colonne unique
+    Séquenceur seul [F7]
+    Éditeur de clip [F8]
+    Inspecteur
+  Éditeurs >
+    Arrangement
+    Piano roll
+    Éditeur d'échantillon
+    Éditeur de pas
+    Éditeur de découpe
+  Lanceur >
+    Lanceur [F10]
+    Retour à l'arrangement
+    Arrêter tous les clips
+    Enregistrer les lancements
+    Nouvelle scène
+    La scène arrête les pistes vides
+    Clip vers le lanceur
+    Clip du lanceur vers l'arrangement
+    Quantification du lancement >
+      Aucun
+      1/16
+      1/8
+      1/4
+      1/2
+      1 mesure
+      2 mesures
+      4 mesures
+  Voies et marqueurs >
+    Voie de tempo
+    Voie d'énergie
+    Actualiser la voie d'énergie
+    Voie de tonalité
+    Voie d'accords
+    Rangée vidéo
+    Bandeau des marqueurs
+    Liste des marqueurs
+  Vumètres et liens >
+    Afficher les liens de la console
+    Afficher la charge CPU des appareils
+    Grand vumètre
+  ---
+  Chercher un paramètre… [Ctrl+Maj+P]
+  L'automation suit la sélection
+  Afficher la voie d'automation
+Transport
+  Lecture / Arrêt [Espace]
+  Enregistrer [Ctrl+Entrée]
+  Retour à zéro [NumpadDecimal]
+  ---
+  Boucle [L]
+  Métronome [C]
+  Créer les voies automatiquement
+  ---
+  Ajouter un marqueur [Maj+M]
+  Ajouter un marqueur de plage depuis la boucle
+  Placer le marqueur de fin à la tête de lecture
+  Placer le repère gauche à la tête de lecture
+  Placer le repère droit à la tête de lecture
+  Marqueur précédent [,]
+  Marqueur suivant [.]
+  ---
+  Quantification à l'entrée : aucune
+  Quantification à l'entrée : 1/8
+  Quantification à l'entrée : 1/16
+  ---
+  Tonalité du morceau…
+  Détecter la tonalité du morceau
+Table de mixage
+  Console [F5]
+  Agrandir la console [Maj+F5]
+  ---
+  Ajouter un canal…
+  Router vers un nouveau bus de sortie [Ctrl+G]
+  Créer un canal parallèle
+  Supprimer le canal
+  ---
+  Groupes et VCA >
+    Créer un VCA depuis la sélection
+    Créer un VCA depuis le dossier
+    Router le dossier vers un nouveau bus
+    Arrêter le routage du dossier
+    Router le dossier vers un bus >
+      Bus A
+      Bus B
+    Ajouter à un VCA
+    Retirer du VCA
+    Supprimer le VCA
+    Ajouter à un groupe >
+      Drums
+      Bass
+    Supprimer le groupe >
+      Drums
+      Bass
+    Router le groupe vers un bus >
+      Drums
+      Bass
+    Arrêter le routage du groupe >
+      Drums
+      Bass
+    Router le groupe vers un nouveau bus
+    Arrêter le routage du groupe
+    Lier les faders
+  Tranche de console >
+    Inverser la polarité
+    Contourner tous les inserts
+    Vider les inserts
+    ---
+    Copier les réglages du canal
+    Coller les réglages du canal
+    Réinitialiser le canal
+  Instantanés >
+    Mémoriser l'instantané
+    Mettre à jour l'instantané
+    Rappeler l'instantané
+    Rappeler l'instantané suivant [Ctrl+Alt+Page suiv.]
+    Rappeler l'instantané précédent [Ctrl+Alt+Page préc.]
+    Morpher vers l'instantané suivant
+    Morpher vers l'instantané précédent
+    Durée du morphing >
+      1 seconde
+      2 secondes
+      4 secondes
+      8 secondes
+    L'instantané inclut les effets
+    Comparer A/B [Ctrl+Alt+B]
+    Terminer la comparaison
+    Supprimer l'instantané
+  ---
+  Compensation de latence
+  Aligner les retours
+  Les envois suivent le bus
+  Mode du vumètre >
+    Vumètres de crête
+    Vumètres PPM
+    Vumètres VU
+  ---
+  Contrôle et macros >
+    Apprentissage MIDI
+    Assignations MIDI…
+    Assigner une commande >
+      Previous track
+      Next track
+      Undo
+      Redo
+      Previous preset
+      Next preset
+    Verrouiller les surfaces sur la sélection
+    Exporter un préréglage d'assignations MIDI…
+    Importer un préréglage d'assignations MIDI…
+    Effacer les assignations MIDI
+    ---
+    Macros…
+    Nouvelle banque de macros
+Analyse
+  Analyste du son…
+  Panneau de référence…
+  Référence >
+    Écouter la référence [Ctrl+Maj+R]
+    Ajouter une piste de référence…
+    Sélectionner la piste de référence >
+      Référence 1
+    Piste de référence suivante
+    Retirer la piste de référence
+    ---
+    Démarrer à la position de la tête de lecture
+    Suivre la tête de lecture
+    Caler sur le niveau de référence
+    Bande de référence >
+      Plage complète
+      Sub
+      Grave
+      Médium
+      Aigu
+    Solo stéréo de la référence >
+      Gauche et droite
+      Médium
+      Côté
+  Loupe de traduction >
+    Casque
+    Petite enceinte
+    Sub de club
+    Mono
+  ---
+  Vérifier le mix…
+  Carte de masquage…
+  Contrôle kick et basse…
+  La basse sera-t-elle audible ?…
+  Chercher une répétition…
+  ---
+  Cibles de livraison…
+Créer
+  Créer un instrument… [Ctrl+I]
+  Créer un effet… [Ctrl+E]
+  Créer un player…
+  Créer une piste audio [Ctrl+T]
+  Créer un canal de mixage… [Ctrl+Maj+M]
+Piste
+  Grouper les pistes [Ctrl+Maj+T]
+  Dégrouper
+  Replier le dossier
+  Renommer le dossier…
+  ---
+  Monter la piste [Ctrl+Alt+Maj+Haut]
+  Descendre la piste [Ctrl+Alt+Maj+Bas]
+  Renommer la piste…
+  Commentaire de la piste…
+  Supprimer la piste et l'appareil
+  ---
+  Voies de notes >
+    Ajouter une voie de notes
+    Renommer la voie de notes…
+    Supprimer la voie de notes
+    Couper la voie
+    Fusionner les voies de notes [Ctrl+R]
+    Répartir les notes sur des voies
+  Gel >
+    Geler la piste
+    Geler la piste jusqu'à l'appareil sélectionné
+    Geler avec la queue
+    Geler avec la tranche
+    Refaire le rendu de la piste gelée
+    Dégeler la piste
+    Dégeler la piste et garder l'audio
+    Annuler le gel
+  Rendu >
+    Rendre sur place
+    Rendre sur place et couper les originaux
+    Rendre les clips sur une nouvelle piste (sec)
+    Rendre la plage sur place
+  Players >
+    Envoyer les players vers la piste
+    Enregistrement direct
+    Replier tous les players
+    Contourner tous les players
+  ---
+  Ajouter une voie de motif
+  Voie de motif vers notes
+  Éditer les contrôleurs de la piste
+  Ajouter un envoi de réverbération…
+  Sidechain rapide >
+    Ducking depuis…
+    Ducking depuis (pré-fader)…
+    Pompage doux
+    Supprimer le ducking
+  Générateur de grondement >
+    Répétition de la queue
+    Queue de réverbération
+  Réverbération inversée >
+    0,5 s
+    1 s
+    2 s
+    4 s
+    8 s
+  Ajouter une transition >
+    Montée, 1 mesure
+    Montée, 2 mesures
+    Montée, 4 mesures
+    ---
+    Impact
+    ---
+    Filtre descendant, 1 mesure
+    Filtre descendant, 2 mesures
+    Filtre descendant, 4 mesures
+    Filtre de groupe descendant, 1 mesure
+    Filtre de groupe descendant, 2 mesures
+    Filtre de groupe descendant, 4 mesures
+    ---
+    Silence sur le premier temps
+    Remplissage
+  ---
+  Hauteur et repli des voies >
+    Replier les voies d'automation
+    Déplier les voies d'automation
+    ---
+    Hauteur de la piste : petite
+    Hauteur de la piste : moyenne
+    Hauteur de la piste : grande
+    Hauteur de la piste : ajustée [Alt+M]
+    Hauteur de la piste : réduire / restaurer [Alt+Maj+M]
+Audio
+  Réglages… [Ctrl+,]
+  Plugins…
+  Redémarrer l'audio
+  Réanalyser les ports MIDI
+  Canaux d'entrée >
+    0 (désactivé)
+    1
+    2
+    4
+    8
+    16
+    32
+  Canaux de sortie >
+    1
+    2
+    4
+    8
+    16
+    32
+  ---
+  Gain du clip >
+    Gain du clip : +1 dB
+    Gain du clip : −1 dB
+    Gain du clip : réinitialiser
+  Fondus >
+    Fondus : anti-clic 5 ms
+    Fondus : aucun
+    Effacer l'enveloppe de gain
+    ---
+    Forme du fondu : linéaire
+    Forme du fondu : puissance égale
+    Forme du fondu : exponentiel
+    Forme du fondu : courbe en S
+  Fondu enchaîné >
+    Fondu enchaîné : aucun
+    Fondu enchaîné : linéaire
+    Fondu enchaîné : puissance égale
+    Fondu enchaîné : exponentiel
+    Fondu enchaîné : courbe en S
+  Warp >
+    Warper l'audio
+    Warper sur le tempo du morceau
+    Réglages de warp…
+    Mode de warp : temps
+    Mode de warp : tonal
+    Mode de warp : changement de hauteur
+    Warper la boucle sur 1 mesure
+    Warper la boucle sur 2 mesures
+    Warper la boucle sur 4 mesures
+    Warper la boucle sur 8 mesures
+  Transposer >
+    Transposer : un demi-ton vers le haut
+    Transposer : un demi-ton vers le bas
+    Transposer : une octave vers le haut
+    Transposer : une octave vers le bas
+    Transposer : réinitialiser
+  ---
+  Audio vers notes…
+Options
+  Clic [C]
+  Décompte [Ctrl+P]
+  ---
+  Quantification à l'entrée : aucune
+  Quantification à l'entrée : 1/8
+  Quantification à l'entrée : 1/16
+  ---
+  Poursuivre les notes
+  Compensation de latence
+  Aligner les retours
+  ---
+  Synchro >
+    Sortie d'horloge MIDI
+    Envoyer l'horloge à l'arrêt
+    Suivre l'horloge MIDI
+  ---
+  Réglages… [Ctrl+,]
+  Configuration audio et MIDI…
+  Gestionnaire de plugins…
+Fenêtre
+  Fenêtre principale
+  Fenêtre du rack
+  Fenêtre de la table de mixage
+  ---
+  Nouvelle fenêtre de morceau [Ctrl+Maj+N]
+  Ouvrir le morceau dans une nouvelle fenêtre… [Ctrl+Maj+O]
+  Fermer la fenêtre du morceau [Ctrl+Maj+W]
+  ---
+  Morceau suivant [Ctrl+Maj+Page suiv.]
+  Morceau précédent [Ctrl+Maj+Page préc.]
+  ---
+  open song 0
+  open song 1
+  open song 2
+  open song 3
+Aide
+  Palette de commandes… [Ctrl+Maj+K]
+  Visite guidée
+  Mode aide [Maj+F1]
+  Raccourcis clavier [F1]
+  Manuel [Ctrl+F1]
+  Documentation
+  Signaler un problème
+  Rechercher des mises à jour
+  ---
+  Exporter le diagnostic…
+  Exporter la liste des paramètres de l'appareil…
+  ---
+  À propos d'Atomik Rack

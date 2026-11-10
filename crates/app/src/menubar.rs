@@ -1480,3 +1480,7 @@ mod structure_tests;
 #[cfg(test)]
 #[path = "menu_scroll_tests.rs"]
 mod scroll_tests;
+
+#[cfg(test)]
+#[path = "french_menu_tests.rs"]
+mod french_tests;

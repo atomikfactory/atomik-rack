@@ -14,9 +14,12 @@
 //! (the tab strip and the other tabs have no room for a row of their own).
 
 use crate::keyboard_tab::{PAD, TITLE, TabOutcome};
+use crate::language_tab::{LanguageLayout, LanguageSection};
 use crate::updates_tab::{UpdatesLayout, UpdatesSection};
 use atomik_ui::kurbo::{Point, Rect, RoundedRect};
-use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, UiEvent};
+use atomik_ui::{
+    Align, Canvas, CanvasExt, Key, LanguageChoice, PointerButton, TextRun, Theme, UiEvent,
+};
 use std::path::PathBuf;
 
 const ROW: f64 = 40.0;
@@ -84,6 +87,8 @@ pub struct VideoLayout {
     pub notes: Vec<(Point, String)>,
     /// The "New versions" section under the notes (the answer to the update check question).
     pub updates: UpdatesLayout,
+    /// The "Language" section under the update question.
+    pub language: LanguageLayout,
 }
 
 /// The Video tab state.
@@ -92,6 +97,7 @@ pub struct VideoTab {
     folder: Option<PathBuf>,
     status: String,
     updates: UpdatesSection,
+    language: LanguageSection,
     hover: Option<Point>,
 }
 
@@ -102,6 +108,7 @@ impl VideoTab {
             folder,
             status,
             updates: UpdatesSection::new(None),
+            language: LanguageSection::new(LanguageChoice::System),
             hover: None,
         }
     }
@@ -111,6 +118,17 @@ impl VideoTab {
     pub fn with_update_answer(mut self, answer: Option<bool>) -> Self {
         self.updates = UpdatesSection::new(answer);
         self
+    }
+
+    /// The same tab editing the language of the interface as well.
+    pub fn with_language(mut self, choice: LanguageChoice) -> Self {
+        self.language = LanguageSection::new(choice);
+        self
+    }
+
+    /// The edited language choice.
+    pub fn language(&self) -> LanguageChoice {
+        self.language.choice()
     }
 
     /// The edited answer to the question of the update check.
@@ -158,18 +176,20 @@ impl VideoTab {
         y += 22.0 + 16.0 * lines.len() as f64 + 14.0;
         let mut notes = Vec::new();
         for note in NOTES {
-            for line in wrap(note, WRAP + 8) {
+            for line in wrap(atomik_ui::i18n::t(note), WRAP + 8) {
                 notes.push((Point::new(x0, y + 12.0), line));
                 y += 16.0;
             }
             y += 6.0;
         }
-        let (updates, _) = UpdatesSection::layout_at(x0, inner, y + 8.0);
+        let (updates, y) = UpdatesSection::layout_at(x0, inner, y + 8.0);
+        let (language, _) = LanguageSection::layout_at(x0, inner, y + 8.0);
         VideoLayout {
             folder,
             status: (title, lines),
             notes,
             updates,
+            language,
         }
     }
 
@@ -178,9 +198,17 @@ impl VideoTab {
         let lines = wrap(&self.status, WRAP).len() as f64;
         let notes: f64 = NOTES
             .iter()
-            .map(|n| 16.0 * wrap(n, WRAP + 8).len() as f64 + 6.0)
+            .map(|n| 16.0 * wrap(atomik_ui::i18n::t(n), WRAP + 8).len() as f64 + 6.0)
             .sum();
-        ROW + 14.0 + 22.0 + 16.0 * lines + 14.0 + notes + 8.0 + UpdatesSection::height()
+        ROW + 14.0
+            + 22.0
+            + 16.0 * lines
+            + 14.0
+            + notes
+            + 8.0
+            + UpdatesSection::height()
+            + 8.0
+            + LanguageSection::height()
     }
 
     /// Handles an event inside `panel`.
@@ -208,6 +236,7 @@ impl VideoTab {
                     self.folder = None;
                 }
                 self.updates.press(&layout.updates, event);
+                self.language.press(&layout.language, event);
             }
             _ => {}
         }
@@ -263,5 +292,6 @@ impl VideoTab {
             canvas.text(&TextRun::new(line.clone(), *at, 11.5, theme.text_muted));
         }
         self.updates.paint(canvas, theme, &l.updates, self.hover);
+        self.language.paint(canvas, theme, &l.language, self.hover);
     }
 }

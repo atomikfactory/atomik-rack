@@ -848,12 +848,24 @@ fn other_workflow_fields_survive_the_dialog() {
 
 // ------------------------------------------------------------------ goldens
 
+/// Every golden of a tab is also drawn in French (`tests/golden/fr/`): the same state, the
+/// other language.
 fn golden(name: &str, d: &SettingsDialog) {
+    golden_in(name, d, atomik_ui::Lang::English);
+    golden_in(name, d, atomik_ui::Lang::French);
+}
+
+fn golden_in(name: &str, d: &SettingsDialog, lang: atomik_ui::Lang) {
     let mut list = DisplayList::new();
-    d.paint(&mut list, &Theme::dark(), VIEW);
+    atomik_ui::i18n::with_language(lang, || d.paint(&mut list, &Theme::dark(), VIEW));
     let actual = list.to_json();
+    let folder = if lang == atomik_ui::Lang::English {
+        "tests/golden"
+    } else {
+        "tests/golden/fr"
+    };
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
+        .join(folder)
         .join(format!("{name}_1x.json"));
     if std::env::var_os("ATOMIK_UPDATE_GOLDEN").is_some_and(|v| v == "1") {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1070,6 +1082,12 @@ fn the_interface_tab_starts_from_the_saved_preferences_and_keeps_the_workflow_dr
 
 #[test]
 fn the_tab_strip_leaves_room_for_the_title_of_every_tab() {
+    for lang in atomik_ui::Lang::ALL {
+        atomik_ui::i18n::with_language(lang, tab_strip_leaves_room);
+    }
+}
+
+fn tab_strip_leaves_room() {
     for tab in Tab::ALL {
         let mut d = dialog();
         goto(&mut d, tab);
@@ -1078,7 +1096,7 @@ fn the_tab_strip_leaves_room_for_the_title_of_every_tab() {
         let panel = d.panel(VIEW);
         let first = strip.first().unwrap().0;
         // The title is drawn at 16 px from the panel's padding; ask for its measured width.
-        let title = crate::menubar::text_width(tab.title()) * 16.0 / 13.0;
+        let title = crate::menubar::text_width(atomik_ui::i18n::t(tab.title())) * 16.0 / 13.0;
         assert!(
             first.x0 > panel.x0 + PAD + title + 8.0,
             "{tab:?}: the tabs start at {} but the title ends at {}",
@@ -1940,4 +1958,93 @@ fn the_keyboard_search_selects_all_replaces_and_undoes_inside_the_field() {
     press(&mut d, "Cmd+A", Os::Windows);
     press(&mut d, "Backspace", Os::Windows);
     assert!(kb(&d).items.len() > 90, "everything is listed again");
+}
+
+// ------------------------------------------------------------------ French
+
+/// What each tab draws in French that has no French entry: the names of devices and ports that
+/// the fixtures give are the only words left.
+#[test]
+fn every_tab_in_french_is_translated() {
+    let mut missing = std::collections::BTreeSet::new();
+    let mut d = dialog();
+    for tab in Tab::ALL {
+        goto(&mut d, tab);
+        let (_, misses) = atomik_ui::i18n::with_misses(|| {
+            atomik_ui::i18n::with_language(atomik_ui::Lang::French, || {
+                let mut list = DisplayList::new();
+                d.paint(&mut list, &Theme::dark(), VIEW);
+            })
+        });
+        for m in misses {
+            let plain = m.chars().filter(|c| c.is_alphabetic()).count() <= 2
+                || m.chars().any(|c| c.is_ascii_digit())
+                || (m.ends_with('.') && m.chars().count() <= 14)
+                || m.contains('+')
+                // A label with its argument in brackets, made of two texts the language has.
+                || m.ends_with(')')
+                || m.starts_with("Numpad")
+                || atomik_ui::i18n::is_part_of_an_entry(atomik_ui::Lang::French, &m)
+                || m.ends_with("...")
+                || m.ends_with(".json")
+                || m.ends_with(".md");
+            if !plain {
+                missing.insert(format!("{tab:?}: {m}"));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "texts with no French entry:
+{}",
+        missing.into_iter().collect::<Vec<_>>().join(
+            "
+"
+        )
+    );
+}
+
+#[test]
+fn the_tab_strip_fits_in_french() {
+    atomik_ui::i18n::with_language(atomik_ui::Lang::French, || {
+        let d = dialog();
+        let strip = d.tab_strip(VIEW);
+        assert_eq!(strip.len(), Tab::ALL.len());
+        for pair in strip.windows(2) {
+            assert!(pair[0].0.x1 <= pair[1].0.x0 + 0.5, "tabs overlap");
+        }
+        let panel = d.layout(VIEW).panel;
+        for (r, tab) in &strip {
+            assert!(
+                r.x1 <= panel.x1 && r.x0 >= panel.x0,
+                "{tab:?} leaves the dialog"
+            );
+            let label = atomik_ui::i18n::t(tab.label());
+            assert!(
+                crate::menubar::text_width(label) * 12.0 / 13.0 <= r.width() + 8.0,
+                "{label} does not fit its tab"
+            );
+        }
+    });
+}
+
+#[test]
+fn the_language_section_changes_the_draft() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Video);
+    assert_eq!(
+        d.preferences().unwrap().1.language,
+        atomik_ui::LanguageChoice::System
+    );
+    let l = d.video_layout(VIEW).unwrap();
+    let (rect, choice) = l.language.buttons[2];
+    assert_eq!(
+        choice,
+        atomik_ui::LanguageChoice::Is(atomik_ui::Lang::French)
+    );
+    down(&mut d, rect.center());
+    assert_eq!(
+        d.preferences().unwrap().1.language,
+        atomik_ui::LanguageChoice::Is(atomik_ui::Lang::French)
+    );
 }

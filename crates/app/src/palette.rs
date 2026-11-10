@@ -60,8 +60,8 @@ pub fn commands(
         entries.push(PaletteEntry {
             key: def.id.to_owned(),
             id: def.id.to_owned(),
-            name: plain(def.label),
-            path: def.group.title().to_owned(),
+            name: plain(&atomik_ui::i18n::tr(def.label)),
+            path: atomik_ui::i18n::t(def.group.title()).to_owned(),
             shortcut: keymap.shortcut_text(def.id, None),
             enabled: true,
         });

@@ -281,7 +281,13 @@ fn the_pointer_row_has_a_tooltip_that_says_what_it_does() {
     assert!(s.help_at(VIEW, Point::new(1.0, 1.0)).is_none());
 }
 
+/// The start screen is a golden in both languages (`tests/golden/fr/` for French).
 fn golden(name: &str, theme: &Theme) {
+    golden_in(name, theme);
+    atomik_ui::i18n::with_language(atomik_ui::Lang::French, || golden_in(name, theme));
+}
+
+fn golden_in(name: &str, theme: &Theme) {
     let mut list = DisplayList::new();
     let mut s = StartScreen::new(
         vec![
@@ -305,10 +311,16 @@ fn golden(name: &str, theme: &Theme) {
 }
 
 fn check_golden(name: &str, actual: &str) {
+    let folder = if atomik_ui::i18n::language() == atomik_ui::Lang::English {
+        "tests/golden"
+    } else {
+        "tests/golden/fr"
+    };
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
+        .join(folder)
         .join(format!("{name}_1x.json"));
     if std::env::var_os("ATOMIK_UPDATE_GOLDEN").is_some_and(|v| v == "1") {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, actual).unwrap();
         return;
     }
@@ -817,4 +829,35 @@ fn golden_start_screen_genres_dark() {
 #[test]
 fn golden_start_screen_genres_light() {
     golden_genres("start_screen_genres_light", &Theme::light());
+}
+
+#[test]
+fn the_start_screen_in_french_has_no_untranslated_word() {
+    let s = StartScreen::new(
+        vec!["Band Rehearsal".into(), "Beat Sketch".into()],
+        vec![RecentRow::new(
+            &PathBuf::from("/songs/demo/Night Drive.atomik"),
+            Some(1_700_000_000),
+        )],
+        false,
+        true,
+    );
+    let (_, misses) = atomik_ui::i18n::with_misses(|| {
+        atomik_ui::i18n::with_language(atomik_ui::Lang::French, || {
+            let mut list = DisplayList::new();
+            s.paint(&mut list, &Theme::dark(), VIEW);
+        })
+    });
+    let words: Vec<&String> = misses
+        .iter()
+        .filter(|m| {
+            // The names of the templates and the songs, and what is cut or counted.
+            !["Band Rehearsal", "Beat Sketch", "Night Drive"].contains(&m.as_str())
+                && !m.chars().any(|c| c.is_ascii_digit())
+                && !m.ends_with('.')
+                && !m.starts_with('/')
+                && !atomik_ui::i18n::is_part_of_an_entry(atomik_ui::Lang::French, m)
+        })
+        .collect();
+    assert!(words.is_empty(), "no French entry: {words:?}");
 }

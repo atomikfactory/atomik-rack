@@ -57,6 +57,8 @@ winit.workspace = true
 rfd.workspace = true
 # The OS clipboard for text fields (text only: no image support).
 arboard.workspace = true
+# The language of the operating system, for the System choice of the language setting.
+sys-locale.workspace = true
 pollster.workspace = true
 png.workspace = true
 serde.workspace = true

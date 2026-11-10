@@ -60,6 +60,9 @@ mod clock {
 
 /// Runs the app until the window closes.
 pub fn run(cli: Cli) -> Result<(), String> {
+    // The one place the language of the machine is read: the System choice of the language
+    // setting follows it.
+    atomik_ui::i18n::set_system_locale(sys_locale::get_locale());
     let settings_path = cli.settings.clone().or_else(default_settings_path);
     let (saved, settings_error) = match &settings_path {
         Some(path) => settings::load(path),
@@ -221,6 +224,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
     ));
     let factory_folder = crate::factory::locate();
     shell.set_factory_folder(factory_folder.clone());
+    shell.apply_language_globally();
     // Creating a plugin blocks this thread: show LOADING one frame before it starts.
     shell.core_mut().set_plugin_load_paints_first(true);
     // A save writes beside the window instead of freezing it.
@@ -1742,6 +1746,7 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        self.shell.apply_language_globally();
         // A plugin editor's own window: its resize and close go to the core.
         if let Some(doc) = self.plugin_windows.doc_of(id) {
             if let Some(song) = self.shell.song_mut(doc) {
@@ -1925,6 +1930,7 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.shell.apply_language_globally();
         self.flush_all_files(event_loop);
         let now = clock::now();
         if self.quit_at.is_some_and(|t| now >= t) {
