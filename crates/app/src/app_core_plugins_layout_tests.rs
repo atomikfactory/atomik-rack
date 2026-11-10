@@ -366,3 +366,88 @@ fn a_plugin_instrument_added_plainly_and_auto_routed_gets_one_note_lane() {
     assert_eq!(t.note_lane_count(), 1);
     assert_eq!(core.doc().song.tracks.len(), 1);
 }
+
+// ------------------------------------------------------------------ the notes input follows the rack
+
+fn select_in_rack(core: &mut AppCore<OfflineSink>, k: &str) {
+    core.view_mut().set_selection(&[key(k)], Some(&key(k)));
+    core.handle_pane_event(
+        Pane::Rack,
+        &UiEvent::PointerMove {
+            pos: atomik_ui::kurbo::Point::new(1.0, 1.0),
+            modifiers: atomik_ui::Modifiers::NONE,
+        },
+    );
+}
+
+fn notes_go_to(core: &AppCore<OfflineSink>) -> String {
+    core.notes_target_device()
+        .map(|d| d.key.0.clone())
+        .unwrap_or_default()
+}
+
+/// Three instances of one plugin instrument: selecting one in the rack moves the notes input
+/// (the record arm and the live keyboard) to it, as clicking its mixer channel does.
+#[test]
+fn selecting_a_plugin_instrument_in_the_rack_moves_the_notes_input_to_it() {
+    let l = instrument_layout(true);
+    let (mut core, _stats) = null_core(l.clone(), l);
+    for name in ["a", "b", "c"] {
+        let source = source_of(&core, GAIN);
+        apply(
+            &mut core,
+            Command::Workflow(WorkflowCommand::CreateInstrument {
+                index: usize::MAX,
+                source,
+                key: Some(key(name)),
+                options: CreateOptions::default(),
+            }),
+        );
+    }
+    core.wait_plugins();
+    settle(&mut core);
+    assert_eq!(notes_go_to(&core), "c", "the last one made");
+    for name in ["a", "b", "a", "c"] {
+        select_in_rack(&mut core, name);
+        assert_eq!(
+            notes_go_to(&core),
+            name,
+            "after selecting {name} in the rack"
+        );
+        let armed: Vec<_> = core
+            .doc()
+            .song
+            .tracks
+            .iter()
+            .filter(|t| t.armed)
+            .map(|t| t.device.0.clone())
+            .collect();
+        assert_eq!(
+            armed,
+            vec![name.to_string()],
+            "only the selected one is armed"
+        );
+    }
+}
+
+/// The same for built-in instruments, and a selection of a device with no track changes nothing.
+#[test]
+fn selecting_a_built_in_instrument_in_the_rack_moves_the_notes_input_to_it() {
+    let mut core = plugin_core(OfflineSink::new());
+    for name in ["a", "b", "c"] {
+        apply(
+            &mut core,
+            Command::Workflow(WorkflowCommand::CreateInstrument {
+                index: usize::MAX,
+                source: CreateSource::Type(BUILTIN.into()),
+                key: Some(key(name)),
+                options: CreateOptions::default(),
+            }),
+        );
+    }
+    assert_eq!(notes_go_to(&core), "c");
+    select_in_rack(&mut core, "a");
+    assert_eq!(notes_go_to(&core), "a");
+    select_in_rack(&mut core, "b");
+    assert_eq!(notes_go_to(&core), "b");
+}

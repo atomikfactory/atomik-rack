@@ -220,6 +220,26 @@ impl<S: EngineSink> AppCore<S> {
         self.arm_track_device(&device);
     }
 
+    /// A device newly selected in the rack that has a song track (an instrument, built-in or
+    /// plugin) moves the live keyboard to it, as clicking its channel strip in the console does:
+    /// its track is armed (and the tracks an earlier auto-arm armed are disarmed) through the
+    /// same path. A device without a track, or one inside a container, changes nothing.
+    pub(super) fn follow_rack_selection(&mut self) {
+        let selected = self.view.selected().cloned();
+        if selected == self.rack_selection {
+            return;
+        }
+        self.rack_selection.clone_from(&selected);
+        let Some(device) = selected else {
+            return;
+        };
+        let doc = self.document.doc();
+        if doc.song.track(&device).is_none() || doc.owner_device(&device) != device {
+            return;
+        }
+        self.arm_track_device(&device);
+    }
+
     /// A track header clicked (or stepped to) in the arrangement is a channel strip clicked in
     /// the console: the strip is selected there and the track armed and selected in the rack
     /// through the same path, and a plain click hands the keys to the rack.

@@ -221,6 +221,9 @@ pub struct AppCore<S: EngineSink> {
     arrangement_track_changed: bool,
     /// The console selection the last arming followed (see `follow_console_selection`).
     console_selection: Vec<DeviceKey>,
+    /// The device selected in the rack that the last arming followed (see
+    /// `follow_rack_selection`).
+    rack_selection: Option<DeviceKey>,
     /// The snapshot the mix was last stored, updated, recalled or compared with (see
     /// `app_core_snapshots.rs`); view state, forgotten when a document is replaced.
     snapshot_hint: Option<u32>,
@@ -568,6 +571,7 @@ impl<S: EngineSink> AppCore<S> {
             arranged_track: None,
             arrangement_track_changed: false,
             console_selection: Vec::new(),
+            rack_selection: None,
             snapshot_hint: None,
             snapshot_morph: None,
             marker_seen: None,
@@ -1344,6 +1348,9 @@ impl<S: EngineSink> AppCore<S> {
         if pane == Pane::Arrangement {
             self.follow_arrangement_track(event);
         }
+        if pane == Pane::Rack {
+            self.follow_rack_selection();
+        }
         if pane == Pane::Console {
             self.follow_console_selection();
             // A plain click (no Shift/Ctrl) that left exactly one strip selected hands the keys
@@ -1642,6 +1649,7 @@ impl<S: EngineSink> AppCore<S> {
         self.mki = None;
         self.arranged_track = None;
         self.console_selection.clear();
+        self.rack_selection = None;
         self.snapshot_hint = None;
         self.snapshot_morph = None;
         self.console.set_snapshot_hint(None);
