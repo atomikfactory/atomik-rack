@@ -23,7 +23,8 @@ fn device(name: &str, inputs: u16, outputs: u16) -> DeviceInfo {
 fn lists() -> DeviceLists {
     DeviceLists {
         hosts: vec![HostInfo {
-            kind: HostChoice::platform_default().kind(),
+            // A fixed host, so the pages and goldens do not depend on the OS running the tests.
+            kind: HostChoice::Wasapi.kind(),
             devices: vec![
                 device("Speakers", 0, 2),
                 device("Headset", 1, 2),
