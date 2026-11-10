@@ -18,8 +18,8 @@ use atomik_plugin_host::{
 };
 use atomik_plugin_ipc::{
     DeathHandle, FromChild, MAX_FRAME_BYTES, MAX_GUI_DIMENSION, MAX_LOG_BYTES,
-    MAX_REPLY_JSON_BYTES, PROTOCOL_VERSION, ToChild, WireLayout, into_backend_error,
-    read_frame_with, write_frame,
+    MAX_REPLY_JSON_BYTES, PANIC_LOG_PREFIX, PROTOCOL_VERSION, ToChild, WireLayout,
+    into_backend_error, read_frame_with, write_frame,
 };
 use std::collections::BTreeMap;
 use std::io::{ErrorKind, Read, Write};
@@ -428,9 +428,14 @@ impl Shared {
                     self.rejected.fetch_add(1, Ordering::Relaxed);
                     return;
                 }
+                let mut text = text.clone();
+                if text.starts_with(PANIC_LOG_PREFIX) {
+                    // The child's own words about the panic are the most useful thing next to it.
+                    text = with_stderr_tail(text, &lock(&self.stderr_tail));
+                }
                 return post(PluginMessage::Log {
                     level: LogLevel::from(*level),
-                    text: text.clone(),
+                    text,
                 });
             }
         };
@@ -518,6 +523,24 @@ fn run_stderr(shared: &Shared, mut stderr: Box<dyn Read + Send>) {
         }
     }
     shared.stderr_done.store(true, Ordering::Release);
+}
+
+/// How many of the child's last stderr lines a panic line carries.
+const PANIC_STDERR_LINES: usize = 3;
+
+/// `text` followed by the last lines of the child's stderr (none when it wrote nothing).
+pub(crate) fn with_stderr_tail(text: String, tail: &[u8]) -> String {
+    let tail = String::from_utf8_lossy(tail);
+    let lines: Vec<&str> = tail
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let from = lines.len().saturating_sub(PANIC_STDERR_LINES);
+    if lines.len() == from {
+        return text;
+    }
+    format!("{text} [child stderr: {}]", lines[from..].join(" | "))
 }
 
 fn lost() -> BackendError {
@@ -974,5 +997,36 @@ impl Drop for Link {
                 let _ = h.join();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod stderr_tail_tests {
+    use super::with_stderr_tail;
+
+    #[test]
+    fn a_panic_line_carries_the_last_three_stderr_lines_and_nothing_when_there_are_none() {
+        assert_eq!(with_stderr_tail("x".to_string(), b""), "x");
+        assert_eq!(
+            with_stderr_tail(
+                "x".to_string(),
+                b" 
+
+"
+            ),
+            "x"
+        );
+        assert_eq!(
+            with_stderr_tail(
+                "x".to_string(),
+                b"a
+b
+
+c
+d
+"
+            ),
+            "x [child stderr: b | c | d]"
+        );
     }
 }

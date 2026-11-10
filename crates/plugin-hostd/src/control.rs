@@ -16,7 +16,8 @@ use atomik_plugin_host::{
     PluginInstance, PluginMessage, plugin_channel,
 };
 use atomik_plugin_ipc::{
-    FromChild, MAX_PRESETS, PROTOCOL_VERSION, ToChild, WireErrorKind, WireLayout, write_frame,
+    FromChild, MAX_PRESETS, PROTOCOL_VERSION, ToChild, WireErrorKind, WireLayout, WireLevel,
+    write_frame,
 };
 use atomik_plugin_vst3::Vst3Backend;
 use std::io::Write;
@@ -152,6 +153,16 @@ impl Control {
     /// before each reply and on `Flush`, so what a call made the plugin post reaches the parent
     /// before the answer, and never waits for a timer (HI-2).
     fn forward(&mut self, windows: &mut dyn WindowSystem) -> Option<u8> {
+        // A panic of the plugin on the audio thread: the parent logs it with the plugin's name.
+        for text in self.audio.take_panic_lines() {
+            let log = FromChild::Log {
+                level: WireLevel::Warning,
+                text,
+            };
+            if let Some(code) = self.notify(&log, windows) {
+                return Some(code);
+            }
+        }
         while let Some(message) = self.messages.as_ref().and_then(ManagerEnd::try_recv) {
             if let Some(instance) = self.instance.as_deref_mut() {
                 match &message {

@@ -30,7 +30,7 @@ pub use doorbell::{Doorbell, DoorbellName};
 pub use frame::{read_frame, read_frame_with, write_frame};
 pub use layout::{
     BLOCK_SIZE, MAGIC, MAX_CHANNELS, MAX_EVENTS_IN, MAX_EVENTS_OUT, MAX_FRAME_BYTES,
-    MAX_GUI_DIMENSION, MAX_LOG_BYTES, MAX_REPLY_JSON_BYTES, PROTOCOL_VERSION,
+    MAX_GUI_DIMENSION, MAX_LOG_BYTES, MAX_REPLY_JSON_BYTES, PANIC_LOG_PREFIX, PROTOCOL_VERSION,
 };
 pub use message::{
     FromChild, MAX_PRESET_TEXT, MAX_PRESETS, ToChild, WireChannels, WireErrorKind, WireKind,

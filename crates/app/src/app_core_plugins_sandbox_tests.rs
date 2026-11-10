@@ -4,7 +4,7 @@
 //! row. The instances come from the `NullBackend`, so no process is started.
 
 use super::*;
-use crate::app_core::plugins::{EDITOR_WAITING, crash_log_line};
+use crate::app_core::plugins::{EDITOR_WAITING, crash_log_line, failed_log_line, plugin_said_line};
 use crate::offline_sink::OfflineSink;
 use crate::plugin_test_support::*;
 use atomik_model::empty_doc;
@@ -345,6 +345,38 @@ fn a_crash_is_logged_with_its_reason_and_exit_code() {
     assert!(line.contains("rack.synth"), "{line}");
     assert!(line.contains("0xc0000005"), "{line}");
     assert!(line.contains("boom"), "{line}");
+}
+
+#[test]
+fn a_panic_of_the_plugin_in_its_host_is_logged_with_the_key_the_message_and_the_place() {
+    let (mut core, _stats, dev) = lost_core();
+    let text = "panicked in the plugin host during Process: boom at crates/x/src/a.rs:3:9 [child stderr: thread 'host-audio' panicked]";
+    post(
+        &mut core,
+        &dev,
+        PluginMessage::Log {
+            level: atomik_plugin_host::LogLevel::Warning,
+            text: text.to_string(),
+        },
+    );
+    core.frame();
+    assert_eq!(
+        plugin_said_line("echo", text),
+        format!("plugin [echo] {text}")
+    );
+    assert!(
+        core.plugin_log().iter().any(|l| l.contains(text)),
+        "{:?}",
+        core.plugin_log()
+    );
+}
+
+#[test]
+fn a_device_that_went_failed_is_logged_with_its_full_reason() {
+    assert_eq!(
+        failed_log_line("rack.synth", "the plugin returned an error status"),
+        "plugin [rack.synth] failed: the plugin returned an error status"
+    );
 }
 
 #[test]

@@ -14,6 +14,7 @@ mod control;
 mod driver;
 mod editor;
 mod notify;
+mod panic_report;
 mod winit_driver;
 
 use atomik_plugin_host::mark_main_thread;

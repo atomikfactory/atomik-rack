@@ -96,9 +96,9 @@ use atomik_model::{
 use atomik_plugin_host::ScanReport;
 use atomik_plugin_host::{
     CrashJournal, CreateTicket, EditorKind, HUNG, InUsePlugin, InstanceId, InstantiateRequest,
-    LOST, ManagerEvent, NativeParent, ParamPhase, PluginCache, PluginCatalog, PluginHandle,
-    PluginSettings, PluginStatus, PresetInfo, RecoveryDir, RescanMode, ScanJob, ScanRunner,
-    blacklist_in_use,
+    LOST, LogLevel, ManagerEvent, NativeParent, ParamPhase, PluginCache, PluginCatalog,
+    PluginHandle, PluginSettings, PluginStatus, PresetInfo, RecoveryDir, RescanMode, ScanJob,
+    ScanRunner, blacklist_in_use,
 };
 use atomik_render::plugins::{PluginHost, PluginIsolation};
 use atomik_ui::plugin_data::{
@@ -256,6 +256,18 @@ pub(crate) const EDITOR_WAITING: &str = "waiting for the plugin to open its edit
 /// why, the exit code and the last lines the process wrote to stderr.
 pub(crate) fn crash_log_line(device: &str, reason: &str) -> String {
     format!("plugin [{device}] process ended: {reason}")
+}
+
+/// The app log line of a plugin device that went FAILED, with the full reason.
+pub(crate) fn failed_log_line(device: &str, reason: &str) -> String {
+    format!("plugin [{device}] failed: {reason}")
+}
+
+/// The app log line of something a plugin (or its host process) said at warning level or worse.
+/// A panic of the plugin in its host process reads `plugin [<key>] panicked in the plugin host
+/// during <op>: <message> at <file>:<line>:<col>`, followed by the child's last stderr lines.
+pub(crate) fn plugin_said_line(device: &str, text: &str) -> String {
+    format!("plugin [{device}] {text}")
 }
 
 /// The recovery snapshot state.
@@ -1107,6 +1119,7 @@ impl<S: EngineSink> AppCore<S> {
             ManagerEvent::RestartFailed { instance, reason } => {
                 self.plugins.bad.insert(instance);
                 if let Some(key) = self.plugins.keys.get(&instance).cloned() {
+                    log::warn!("{}", failed_log_line(&key.0, &reason));
                     self.plugins.failed.insert(key, reason);
                 }
             }
@@ -1118,6 +1131,7 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 self.plugins.bad.insert(instance);
                 if let Some(key) = self.plugins.keys.get(&instance).cloned() {
+                    log::warn!("{}", failed_log_line(&key.0, &reason));
                     self.plugins.log(format!("[{key}] failed: {reason}"));
                     self.plugins.failed.insert(key, reason);
                 }
@@ -1221,6 +1235,9 @@ impl<S: EngineSink> AppCore<S> {
                     .keys
                     .get(&instance)
                     .map_or_else(|| "plugin".to_string(), |k| k.0.clone());
+                if matches!(level, LogLevel::Warning | LogLevel::Error) {
+                    log::warn!("{}", plugin_said_line(&name, &text));
+                }
                 self.plugins.log(format!("[{name}] {level:?}: {text}"));
             }
             ManagerEvent::Destroyed(id) => {

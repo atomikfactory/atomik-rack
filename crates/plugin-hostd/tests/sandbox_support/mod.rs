@@ -158,10 +158,11 @@ pub fn null_plugin(id: &str) -> PluginRef {
 }
 
 /// Every null plugin the child knows.
-pub const NULL_IDS: [&str; 7] = [
+pub const NULL_IDS: [&str; 8] = [
     "null.gain",
     "null.latency",
     "null.crash",
+    "null.panic",
     "null.hang",
     "null.hang-activate",
     "null.synth",
