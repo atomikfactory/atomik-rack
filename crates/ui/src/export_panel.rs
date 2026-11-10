@@ -4,12 +4,16 @@
 //! ```text
 //! EXPORT SONG AS AUDIO FILE
 //! my song.wav
+//!   PRESET      [ (NONE)            v ] [ SAVE PRESET... ] [ DELETE PRESET ]
 //!   BIT DEPTH   [ 16-BIT ] [ 24-BIT ] [ 32-BIT FLOAT ]
 //!   DITHER      [ NONE ] [ TPDF ] [ SHAPED ]
 //!   SAMPLE RATE [ PROJECT ] [ 44.1 kHz ] [ 48 kHz ] [ 88.2 kHz ] [ 96 kHz ]
 //!   FILE FORMAT [ WAV ] [ AIFF ] [ FLAC ] [ MP3 ] [ AAC ] [ OPUS ]
 //!   QUALITY     [ 128 kbps ] [ 192 kbps ] [ 256 kbps ] [ 320 kbps ] [ V0 ] [ V2 ] [ V4 ]
 //!   TAIL        [ KEEP EFFECT TAIL ]
+//!   MIX DOWN    [ STEREO ] [ MONO ]
+//!   LOUDNESS    [ OFF ] [ -16 LUFS ] [ -14 LUFS ] [ -9 GUIDE ]
+//!   EXTRA FILE  [ ONE FILE ] [ MP3 320 kbps ]
 //!   Renders to the End marker, then keeps the tail while it is audible.
 //!                                                          [ EXPORT ] [ CANCEL ]
 //! ```
@@ -26,7 +30,15 @@
 //! compressed file has no bit depth or dither, so those rows grey out, and its QUALITY row
 //! offers the bitrates of the format (MP3 also three variable-bitrate qualities). FLAC
 //! holds 16-bit and 24-bit audio, so the 32-bit float button is inert while FLAC is chosen (and
-//! choosing FLAC at 32-bit float moves the depth to 24-bit). In the **progress** mode
+//! choosing FLAC at 32-bit float moves the depth to 24-bit).
+//!
+//! The **Preset** row ([`ExportView::set_presets`]) lists the presets the app gives it: choosing
+//! one fills every field ([`ExportView::choose_preset`]), a preset of stems turns the panel into a
+//! stems export, and a field touched afterwards shows `(changed)` after the name
+//! ([`ExportView::preset_changed`]). SAVE PRESET... swaps the row for a name entry and emits
+//! [`ExportAction::SavePreset`] on Enter; DELETE PRESET (a preset of the user's only) emits
+//! [`ExportAction::DeletePreset`]. A preset that needs FFmpeg is disabled without it. The
+//! MIX DOWN, LOUDNESS and EXTRA FILE rows are for the mix, not for stems. In the **progress** mode
 //! ([`ExportView::show_progress`]) a bar shows the fraction the app feeds with
 //! [`ExportView::set_progress`], and CANCEL (or Esc) emits [`ExportAction::Cancel`] to stop the
 //! render. The view never closes itself: the app drops it when the export is over.
