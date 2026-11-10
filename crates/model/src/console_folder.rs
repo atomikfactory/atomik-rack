@@ -76,6 +76,40 @@ impl RackDoc {
     }
 }
 
+/// Longest stem of the name of a folder's bus: the bus name limit less room for a ` 99` suffix.
+const BUS_STEM_CHARS: usize = crate::console::MAX_BUS_NAME_CHARS - 3;
+
+/// `<folder name> Bus`, cut to [`BUS_STEM_CHARS`] characters.
+fn bus_stem(folder_name: &str) -> String {
+    format!("{} Bus", folder_name.trim())
+        .chars()
+        .take(BUS_STEM_CHARS)
+        .collect::<String>()
+        .trim_end()
+        .to_owned()
+}
+
+impl RackDoc {
+    /// The name Route Folder to New Bus gives the bus of `folder`: `<folder name> Bus`, with
+    /// ` 2`, ` 3`, ... when a bus has that name already; `Bus n` for a folder with no name.
+    pub fn folder_bus_name(&self, folder: u32) -> String {
+        let name = self
+            .song
+            .org
+            .group(folder)
+            .map(|g| g.name.trim().to_owned())
+            .filter(|n| !n.is_empty());
+        let Some(name) = name else {
+            return self.console.default_bus_name();
+        };
+        let stem = bus_stem(&name);
+        std::iter::once(stem.clone())
+            .chain((2usize..).map(|n| format!("{stem} {n}")))
+            .find(|n| self.console.bus_by_name(n).is_none())
+            .expect("a free name exists")
+    }
+}
+
 fn edit_routes(p: &mut Planner<'_>, new: Vec<FolderRoute>) {
     let old = p.doc().console.folder_routes.clone();
     if old != new {

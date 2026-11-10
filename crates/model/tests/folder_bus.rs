@@ -377,3 +377,22 @@ fn a_channel_moved_in_the_console_keeps_the_route_members_in_console_order() {
     );
     assert_console_invariants(d.doc());
 }
+
+#[test]
+fn a_folder_bus_is_named_after_the_folder_and_numbered_when_taken() {
+    let (mut d, r) = project();
+    let f = folder(&mut d, &r, &["a", "b"], "Strings");
+    assert_eq!(d.doc().folder_bus_name(f), "Strings Bus");
+    let first = d.doc().folder_bus_name(f);
+    route_new(&mut d, &r, f, &first);
+    assert!(d.doc().console.bus_by_name("Strings Bus").is_some());
+    assert_eq!(d.doc().folder_bus_name(f), "Strings Bus 2");
+    // A name too long for a bus is cut, and still unique.
+    let long = folder(&mut d, &r, &["c", "d"], &"x".repeat(40));
+    let name = d.doc().folder_bus_name(long);
+    assert!(
+        name.chars().count() <= atomik_model::console::MAX_BUS_NAME_CHARS,
+        "{name}"
+    );
+    route_new(&mut d, &r, long, &name);
+}

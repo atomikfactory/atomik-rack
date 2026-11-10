@@ -2739,8 +2739,8 @@ impl<S: EngineSink> AppCore<S> {
         (!self.doc().folder_route_strips(folder).is_empty()).then_some(folder)
     }
 
-    /// Mixer > Route Folder to New Bus (`bus` none: a bus named after the folder, or `Bus n` when
-    /// that name is taken) or to the bus at place `bus` of the console (from 1), in one undo step.
+    /// Mixer > Route Folder to New Bus (`bus` none: a bus called `<folder name> Bus`, numbered
+    /// when that name is taken) or to the bus at place `bus` of the console (from 1), in one undo step.
     /// False, with a message, when no folder is selected, there is no such bus or the model
     /// refuses.
     pub fn route_folder(&mut self, pane: Pane, bus: Option<u32>) -> bool {
@@ -2750,13 +2750,10 @@ impl<S: EngineSink> AppCore<S> {
         };
         let doc = self.doc();
         let command = match bus {
-            None => {
-                let named = doc.song.org.group(folder).map(|g| g.name.clone());
-                let name = named
-                    .filter(|n| doc.console.bus_by_name(n).is_none())
-                    .unwrap_or_else(|| doc.console.default_bus_name());
-                atomik_model::ConsoleCommand::RouteFolderToNewBus { folder, name }
-            }
+            None => atomik_model::ConsoleCommand::RouteFolderToNewBus {
+                folder,
+                name: doc.folder_bus_name(folder),
+            },
             Some(n) => {
                 let Some(target) = doc.console.buses.get(n as usize - 1) else {
                     self.reject(format!("There is no bus number {n}"));

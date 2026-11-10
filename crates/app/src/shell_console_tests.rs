@@ -1929,7 +1929,7 @@ fn route_folder_plays_the_selected_folder_into_a_bus_and_stop_routing_undoes_it(
     let route = doc.console.folder_route(1).expect("a route");
     assert_eq!(route.members.len(), 2);
     assert_eq!(
-        doc.console.bus_by_name("Strings").map(|b| b.bus.clone()),
+        doc.console.bus_by_name("Strings Bus").map(|b| b.bus.clone()),
         Some(route.bus.clone()),
         "the bus is named after the folder"
     );
@@ -1942,7 +1942,7 @@ fn route_folder_plays_the_selected_folder_into_a_bus_and_stop_routing_undoes_it(
         .filter(|i| matches!(i.command, AppCommand::RouteFolder(Some(_))))
         .map(|i| i.label.to_string())
         .collect();
-    assert_eq!(rows, ["Strings"]);
+    assert_eq!(rows, ["Strings Bus"]);
     s.core_mut().undo();
     assert_eq!(s.core().doc(), &before, "one undo step");
     s.core_mut().redo();
