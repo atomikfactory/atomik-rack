@@ -105,6 +105,7 @@ impl<B: AudioBackend> Shell<B> {
     /// What the panel asked for.
     pub(super) fn export_action(&mut self, action: ExportAction) {
         match action {
+            ExportAction::SavePreset | ExportAction::DeletePreset => {}
             ExportAction::Cancel => {
                 if self.export.as_ref().is_some_and(ExportView::in_progress) {
                     // The panel stays until the worker has stopped (`sync_export`).
