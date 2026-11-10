@@ -690,7 +690,7 @@ impl SongSnapshot {
         mut self,
         tracks: &[crate::launch::LaunchTrackInput],
     ) -> Result<Self, SongError> {
-        self.launch = crate::launch::compile_launch(tracks, &self.tracks)?;
+        self.launch = crate::launch::compile_launch(tracks, &self.tracks, &self.audio)?;
         self.launch_rt = vec![crate::launch::LaunchRt::default(); self.launch.len()];
         Ok(self)
     }

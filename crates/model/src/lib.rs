@@ -2521,6 +2521,16 @@ impl RackDoc {
                     .iter()
                     .filter_map(|t| t.frozen.as_ref().map(|f| f.audio.asset.clone())),
             )
+            // The audio clips in launcher slots.
+            .chain(
+                self.song
+                    .launcher
+                    .clips()
+                    .filter_map(|(_, _, s)| match &s.clip.content {
+                        ClipContent::Audio(a) => Some(a.asset.clone()),
+                        _ => None,
+                    }),
+            )
             .collect::<BTreeSet<String>>()
             .into_iter()
             .chain({

@@ -4097,6 +4097,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(panel) = l.history {
             self.core.history_mut().set_bounds(panel);
         }
+        if self.launcher_on_top() {
+            self.core.launcher_mut().set_bounds(l.rack);
+        }
         self.browser_edge = l.file_browser.map_or(0.0, |r| r.x1);
         if let Some(song) = l.song {
             self.core.arrangement_mut().set_bounds(song);
@@ -4108,7 +4111,9 @@ impl<B: AudioBackend> Shell<B> {
             self.core.seq_editor_mut().set_bounds(song);
             self.core.container_editor_mut().set_bounds(song);
             self.core.plugin_params_mut().set_bounds(song);
-            self.core.launcher_mut().set_bounds(song);
+            if !self.launcher_on_top() {
+                self.core.launcher_mut().set_bounds(song);
+            }
             if !self.console_detached() {
                 self.core.console_mut().set_bounds(song);
             }
@@ -4329,11 +4334,18 @@ impl<B: AudioBackend> Shell<B> {
             Pane::PianoRoll
         } else if self.core.audio_editor_clip().is_some() {
             Pane::AudioEditor
-        } else if self.core.launcher_visible() {
+        } else if self.core.launcher_visible() && !self.rack_in_main() {
             Pane::Launcher
         } else {
             Pane::Arrangement
         }
+    }
+
+    /// The Launcher takes the place of the rack in the main window (so the arrangement stays in
+    /// view below it, and clips can be dragged between the two): while it shows and the rack is
+    /// in the main window. Otherwise it takes the lower pane.
+    pub(super) fn launcher_on_top(&self) -> bool {
+        self.core.launcher_visible() && self.rack_in_main()
     }
 
     fn song_pane(&self) -> Pane {
@@ -4357,7 +4369,6 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::SeqEditor
             | Pane::ContainerEditor
             | Pane::PluginParams
-            | Pane::Launcher
                 if !self.ui.show_song =>
             {
                 Pane::Rack
@@ -4372,6 +4383,11 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::SeqEditor
             | Pane::ContainerEditor
             | Pane::PluginParams => self.song_pane(),
+            Pane::Launcher if !self.core.launcher_visible() => self.live_pane(Pane::Rack),
+            Pane::Launcher if self.launcher_on_top() => Pane::Launcher,
+            Pane::Launcher if !self.ui.show_song => Pane::Rack,
+            Pane::Launcher => self.song_pane(),
+            Pane::Rack if self.launcher_on_top() => Pane::Launcher,
             Pane::FileBrowser if !self.ui.file_browser_visible => self.live_pane(Pane::Rack),
             Pane::PianoKeys if !self.detached(WindowKind::PianoKeys) => self.live_pane(Pane::Rack),
             Pane::TrackPanel if !self.core.track_panel_visible() => self.live_pane(Pane::Rack),
@@ -4457,7 +4473,11 @@ impl<B: AudioBackend> Shell<B> {
         } else if l.file_browser.is_some_and(|r| r.contains(pos)) {
             Some(Ok(Pane::FileBrowser))
         } else if l.rack.contains(pos) {
-            Some(Ok(Pane::Rack))
+            Some(Ok(if self.launcher_on_top() {
+                Pane::Launcher
+            } else {
+                Pane::Rack
+            }))
         } else if l.divider.is_some_and(|d| d.contains(pos)) {
             Some(Err(()))
         } else if l.transport.contains(pos) {
@@ -4556,6 +4576,7 @@ impl<B: AudioBackend> Shell<B> {
             Pane::StepEditor,
             Pane::SliceEditor,
             Pane::SeqEditor,
+            Pane::Launcher,
             Pane::Rack,
         ] {
             if Some(pane) != target {
@@ -4566,7 +4587,9 @@ impl<B: AudioBackend> Shell<B> {
             UiEvent::FileHover { paths, .. } => {
                 // Library items hover only over the panes that take them, MIDI files only over
                 // the arrangement (anywhere else they import at the playhead on release).
-                let takes = if paths.iter().any(|p| crate::midi_file::is_midi_path(p)) {
+                let takes = if target == Some(Pane::Launcher) {
+                    true
+                } else if paths.iter().any(|p| crate::midi_file::is_midi_path(p)) {
                     target == Some(Pane::Arrangement)
                 } else {
                     matches!(target, Some(Pane::Rack | Pane::Arrangement))
@@ -4577,6 +4600,10 @@ impl<B: AudioBackend> Shell<B> {
                 {
                     self.forward(pane, event);
                 }
+            }
+            // Files on a launcher slot go in the slot: audio on an audio track, MIDI on a note track.
+            UiEvent::FileDrop { .. } if target == Some(Pane::Launcher) => {
+                self.forward(Pane::Launcher, event);
             }
             UiEvent::FileDrop { pos, paths } => {
                 // A project opens (after the question about unsaved changes) wherever it
@@ -4762,6 +4789,7 @@ impl<B: AudioBackend> Shell<B> {
                 | Pane::SampleEditor
                 | Pane::StepEditor
                 | Pane::SliceEditor
+                | Pane::Launcher
                 | Pane::Rack),
             ) => Some(pane),
             _ => None,
@@ -7939,7 +7967,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::ToggleLauncher => {
                 let visible = !self.core.launcher_visible();
-                if visible {
+                if visible && !self.rack_in_main() {
                     // An open editor hides the launcher: close it, then show the launcher.
                     self.core.close_open_editor();
                     self.reveal_lower_pane();
@@ -10135,6 +10163,7 @@ impl<B: AudioBackend> Shell<B> {
                 && self.core.file_browser().needs_repaint())
             || (self.core.track_panel_visible() && self.core.track_panel().needs_repaint())
             || (self.core.history_visible() && self.core.history().needs_repaint())
+            || (self.launcher_on_top() && self.core.launcher().needs_repaint())
             || (self.ui.show_song
                 && match self.song_pane() {
                     Pane::PianoRoll => self.core.piano_roll().needs_repaint(),
@@ -10191,9 +10220,14 @@ impl<B: AudioBackend> Shell<B> {
                 )
                 .into(),
             );
-            canvas.push_transform(Affine::translate((l.rack.x0 * scale, l.rack.y0 * scale)));
-            self.core.paint_pane(Pane::Rack, canvas);
-            canvas.pop_transform();
+            if self.launcher_on_top() {
+                // The launcher paints in window coordinates, like the song panes.
+                self.core.paint_pane(Pane::Launcher, canvas);
+            } else {
+                canvas.push_transform(Affine::translate((l.rack.x0 * scale, l.rack.y0 * scale)));
+                self.core.paint_pane(Pane::Rack, canvas);
+                canvas.pop_transform();
+            }
             canvas.pop_clip();
         }
         self.core.paint_pane(Pane::Transport, canvas);

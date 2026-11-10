@@ -49,8 +49,8 @@ pub use engine::{
 pub use graph::{Cable, DeviceInstanceId, Endpoint, EngineConfig, Graph, GraphError};
 pub use interface::{INTERFACE_TYPE_ID, MAX_INTERFACE_CHANNELS, interface_descriptor};
 pub use launch::{
-    LaunchCell, LaunchCommand, LaunchEvent, LaunchGrid, LaunchSlotInput, LaunchState,
-    LaunchTrackInput, MAX_LAUNCH_TRACKS,
+    LaunchAudioInput, LaunchCell, LaunchCommand, LaunchEvent, LaunchGrid, LaunchSlotInput,
+    LaunchState, LaunchTrackInput, MAX_LAUNCH_TRACKS,
 };
 pub use live::{EngineOptions, FrameClock, LIVE_RELEASE_HEADROOM, LiveNoteSender, WorkerConfig};
 pub use offline::{

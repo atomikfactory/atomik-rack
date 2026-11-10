@@ -28,10 +28,11 @@
 //! Nothing here allocates: the state is fixed-size and lives in the snapshot, the queue
 //! entries are small `Copy` values, and the events for the app go through a lock-free ring.
 
+use crate::audio::{AudioRt, memory_regions};
 use crate::graph::DeviceInstanceId;
 use crate::player::Emitter;
 use crate::seq::{CompiledTrack, SongNote, SongTrack, TrackCursor, compile_track};
-use atomik_core::{MeterMap, NoteKind, TempoMap};
+use atomik_core::{BATCH, Batch, MeterMap, NoteKind, TempoMap};
 use atomik_device_sdk::SocketId;
 use rtrb::Producer;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -89,6 +90,20 @@ pub struct LaunchSlotInput {
     pub controllers: Vec<crate::SongController>,
     /// Per-note expression in slot ticks.
     pub expression: Vec<crate::SongExpression>,
+    /// The audio of an audio track's slot (and no notes).
+    pub audio: Option<LaunchAudioInput>,
+}
+
+/// The audio of one slot: regions in slot frames (frame 0 is the slot start), the gain
+/// envelopes they use and the assets they read (memory assets; a streamed one stays silent).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaunchAudioInput {
+    /// Regions, as [`crate::SongAudioRegion`] with song frames counted from the slot start.
+    pub regions: Vec<crate::SongAudioRegion>,
+    /// Gain envelopes ([`crate::SongAudioTrack::envelopes`]).
+    pub envelopes: Vec<Vec<(u64, f32)>>,
+    /// The assets (`AssetId(n)` is `assets[n]`).
+    pub assets: Vec<crate::SongAsset>,
 }
 
 /// The slots of one track.
@@ -103,19 +118,25 @@ pub struct LaunchTrackInput {
 }
 
 /// A compiled slot.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
 pub(crate) struct CompiledSlot {
     pub(crate) length: i64,
     pub(crate) track: CompiledTrack,
+    /// The audio of an audio slot.
+    pub(crate) audio: Option<std::sync::Arc<crate::audio::LaneData>>,
 }
 
 /// A compiled launch track.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
 pub(crate) struct LaunchTrack {
     pub(crate) device: DeviceInstanceId,
     pub(crate) socket: SocketId,
     /// The arrangement track of the same device and socket, if the song has one.
     pub(crate) link: Option<usize>,
+    /// An audio track: its slots play audio, and `audio_link` is its arrangement.
+    pub(crate) is_audio: bool,
+    /// The arrangement audio track of the same device, if the song has one.
+    pub(crate) audio_link: Option<usize>,
     pub(crate) slots: Vec<Option<CompiledSlot>>,
 }
 
@@ -130,7 +151,7 @@ pub(crate) struct Queued {
 }
 
 /// The audio thread's state of one launch track.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Clone)]
 pub(crate) struct LaunchRt {
     /// The playing slot, `None` in the arrangement state.
     pub(crate) slot: Option<u16>,
@@ -143,6 +164,27 @@ pub(crate) struct LaunchRt {
     /// Bit `k` set while the slot holds key `k` on.
     held: u128,
     pub(crate) queued: Option<Queued>,
+    /// Audio slot: the song frame it started at and the frames of one cycle.
+    start_frame: u64,
+    cycle_frames: u64,
+    /// Audio slot: what it renders in this batch.
+    pb: [Batch; 2],
+}
+
+impl Default for LaunchRt {
+    fn default() -> Self {
+        Self {
+            slot: None,
+            start: 0,
+            cycle: 0,
+            next: 0,
+            held: 0,
+            queued: None,
+            start_frame: 0,
+            cycle_frames: 1,
+            pb: [[0.0; BATCH]; 2],
+        }
+    }
 }
 
 /// Something the launcher did, for the app (it records launches into the arrangement).
@@ -256,11 +298,12 @@ impl LaunchCell {
     }
 }
 
-/// Compiles the launch tracks of a song (off the audio thread). `arrangement` are the compiled
-/// arrangement tracks, to link each launch track to its own.
+/// Compiles the launch tracks of a song (off the audio thread). `arrangement` and `audio` are the
+/// compiled arrangement tracks, to link each launch track to its own.
 pub(crate) fn compile_launch(
     input: &[LaunchTrackInput],
     arrangement: &[CompiledTrack],
+    audio: &[crate::audio::CompiledAudio],
 ) -> Result<Vec<LaunchTrack>, crate::SongError> {
     let mut out: Vec<LaunchTrack> = Vec::with_capacity(input.len());
     for t in input {
@@ -271,6 +314,7 @@ pub(crate) fn compile_launch(
             return Err(crate::SongError::DuplicateTrack(t.device, t.notes_socket));
         }
         let mut slots = Vec::with_capacity(t.slots.len());
+        let mut is_audio = false;
         for s in &t.slots {
             slots.push(match s {
                 None => None,
@@ -300,9 +344,26 @@ pub(crate) fn compile_launch(
                         controllers: s.controllers.clone(),
                         expression: s.expression.clone(),
                     };
+                    let lane = match &s.audio {
+                        Some(a) => {
+                            is_audio = true;
+                            let compiled = crate::audio::compile_audio(
+                                &[crate::SongAudioTrack {
+                                    device: t.device,
+                                    regions: a.regions.clone(),
+                                    envelopes: a.envelopes.clone(),
+                                    warp_maps: Vec::new(),
+                                }],
+                                &a.assets,
+                            )?;
+                            compiled.into_iter().next().map(|c| c.data)
+                        }
+                        None => None,
+                    };
                     Some(CompiledSlot {
                         length: s.length,
                         track: compile_track(&track)?,
+                        audio: lane,
                     })
                 }
             });
@@ -310,10 +371,13 @@ pub(crate) fn compile_launch(
         let link = arrangement
             .iter()
             .position(|a| a.device == t.device && a.socket == t.notes_socket);
+        let audio_link = audio.iter().position(|a| a.device == t.device);
         out.push(LaunchTrack {
             device: t.device,
             socket: t.notes_socket,
-            link,
+            link: if is_audio { None } else { link },
+            is_audio,
+            audio_link: if is_audio { audio_link } else { None },
             slots,
         });
     }
@@ -461,10 +525,18 @@ pub(crate) fn all_off(rt: &mut [LaunchRt]) {
 }
 
 /// Marks the arrangement cursors of launched tracks silent (after a seek or a swap).
-pub(crate) fn mark_silent(tracks: &[LaunchTrack], rt: &[LaunchRt], cursors: &mut [TrackCursor]) {
+pub(crate) fn mark_silent(
+    tracks: &[LaunchTrack],
+    rt: &[LaunchRt],
+    cursors: &mut [TrackCursor],
+    audio: &mut [AudioRt],
+) {
     for (t, r) in tracks.iter().zip(rt) {
         if let Some(c) = t.link.and_then(|l| cursors.get_mut(l)) {
             c.silent = r.slot.is_some();
+        }
+        if let Some(a) = t.audio_link.and_then(|l| audio.get_mut(l)) {
+            a.silent = r.slot.is_some();
         }
     }
 }
@@ -488,6 +560,7 @@ pub(crate) fn emit(
     sr: f64,
     arrangement: (&[CompiledTrack], &mut [TrackCursor]),
     launch: (&[LaunchTrack], &mut [LaunchRt]),
+    audio: &mut [AudioRt],
     (a, b, base): (u64, u64, usize),
     em: &mut Emitter<'_>,
     events: &mut Producer<LaunchEvent>,
@@ -511,6 +584,7 @@ pub(crate) fn emit(
         crate::player::emit_notes(map, sr, tracks, cursors, from, end, offset, em);
         for (t, r) in lt.iter().zip(lr.iter_mut()) {
             emit_slot(map, sr, t, r, (from, end, offset), em);
+            render_audio_slot(t, r, (from, end, offset));
         }
         let Some(end) = at else { break };
         let offset = base + (end - a) as usize;
@@ -528,6 +602,7 @@ pub(crate) fn emit(
                 (q, end),
                 offset,
                 em,
+                &mut *audio,
             );
             note_event(events, lt[i].device, lr[i].slot, t);
         }
@@ -536,6 +611,7 @@ pub(crate) fn emit(
 }
 
 /// A launch or a stop reaches its boundary at song frame `frame` (batch offset `offset`).
+#[allow(clippy::too_many_arguments)] // Justification: one RT helper; a struct would only rename them.
 fn switch(
     map: TempoMap<'_>,
     sr: f64,
@@ -544,6 +620,7 @@ fn switch(
     (q, frame): (Queued, u64),
     offset: usize,
     em: &mut Emitter<'_>,
+    audio: &mut [AudioRt],
 ) {
     let tick = q.at.unwrap_or(0);
     // What sounds on the track now ends here.
@@ -569,8 +646,19 @@ fn switch(
             if let Some(c) = t.link.and_then(|l| cursors.get_mut(l)) {
                 c.silent = true;
             }
+            if t.is_audio {
+                // An audio slot loops over `cycle_frames` song frames from where it starts; the
+                // length is the tempo's at the start (the audio itself plays unwarped).
+                let len = t.slots[usize::from(slot)].as_ref().map_or(1, |s| s.length);
+                r.start_frame = map.song_frame(tick, sr);
+                r.cycle_frames = (map.song_frame(tick + len, sr) - r.start_frame).max(1);
+            }
+            if let Some(a) = t.audio_link.and_then(|l| audio.get_mut(l)) {
+                a.silent = true;
+            }
         }
         None => {
+            // The arrangement audio of this track comes back with the next batch (`mix_audio`).
             if r.slot.take().is_some()
                 && let Some(l) = t.link
             {
@@ -692,6 +780,8 @@ pub(crate) fn carry(
                 new_rt.start = r.start;
                 new_rt.cycle = r.cycle;
                 new_rt.next = r.next;
+                new_rt.start_frame = r.start_frame;
+                new_rt.cycle_frames = r.cycle_frames;
                 if same(s) {
                     new_rt.held = held;
                 } else {
@@ -716,4 +806,68 @@ pub(crate) fn wrap(
 ) {
     release(tracks, rt, em, at);
     seek(map, sr, tracks, rt, ls);
+}
+
+/// Clears what the audio slots render, at the start of a playing batch.
+pub(crate) fn clear_audio(rt: &mut [LaunchRt]) {
+    for r in rt {
+        r.pb = [[0.0; BATCH]; 2];
+    }
+}
+
+/// Renders the playing audio slot over song frames `[a, b)` (batch offset `off` for `a`): the
+/// slot's regions play from the slot's start frame and loop every `cycle_frames`.
+fn render_audio_slot(t: &LaunchTrack, r: &mut LaunchRt, (a, b, off): (u64, u64, usize)) {
+    let Some(data) = r
+        .slot
+        .and_then(|s| t.slots.get(usize::from(s))?.as_ref())
+        .and_then(|s| s.audio.as_ref())
+    else {
+        return;
+    };
+    let cycle = r.cycle_frames.max(1) as i64;
+    let start = r.start_frame as i64;
+    let mut p = a as i64;
+    let end = b as i64;
+    while p < end {
+        // The cycle `p` is in (a position before the start counts backwards on the same grid).
+        let k = (p - start).div_euclid(cycle);
+        let base = start + k * cycle;
+        let q = end.min(base + cycle);
+        let (la, lb) = ((p - base) as u64, (q - base) as u64);
+        memory_regions(data, &mut r.pb, la, lb, off + (p - a as i64) as usize, la);
+        p = q;
+    }
+}
+
+/// Hands what the audio slots rendered to their tracks: added to the arrangement's own buffer
+/// of a track that has one (silent while the slot plays), set as the track's playback otherwise.
+/// Call before the arrangement's buffers are published.
+pub(crate) fn mix_audio(
+    arena: &mut crate::arena::Arena,
+    tracks: &[LaunchTrack],
+    rt: &[LaunchRt],
+    audio: &mut [AudioRt],
+) {
+    for (t, r) in tracks.iter().zip(rt) {
+        if !t.is_audio {
+            continue;
+        }
+        if r.slot.is_none()
+            && let Some(a) = t.audio_link.and_then(|l| audio.get_mut(l))
+        {
+            // The slot stopped in this batch: the arrangement plays again from the next.
+            a.silent = false;
+        }
+        match t.audio_link.and_then(|l| audio.get_mut(l)) {
+            Some(a) => {
+                for (dst, src) in a.pb.iter_mut().zip(&r.pb) {
+                    for (d, s) in dst.iter_mut().zip(src) {
+                        *d += *s;
+                    }
+                }
+            }
+            None => arena.set_playback(t.device, &r.pb),
+        }
+    }
 }

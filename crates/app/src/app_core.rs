@@ -1072,6 +1072,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             UiAction::CrossfadeEnd { commit } => self.end_stretch(commit),
             UiAction::Launcher(action) => self.launcher_action(action),
+            UiAction::ClipsDragged { ids, pos } => self.clips_dragged(&ids, pos),
             UiAction::HistoryGoto(row) => {
                 self.history_goto(row);
             }
@@ -2100,10 +2101,12 @@ impl<S: EngineSink> AppCore<S> {
         );
         // The clip launcher's slots join the snapshot; the engine publishes their state in this
         // order.
-        let plans =
-            atomik_render::project::launch_input(self.document.doc(), &self.registry, |k| {
-                ids.get(k).copied()
-            });
+        let plans = atomik_render::project::launch_input(
+            self.document.doc(),
+            &self.registry,
+            |k| ids.get(k).copied(),
+            self.audio.assets(),
+        );
         let launch_inputs: Vec<_> = plans.iter().map(|p| p.input.clone()).collect();
         let launch_tracks: Vec<_> = plans
             .iter()
@@ -4469,6 +4472,10 @@ mod sync_tests;
 #[cfg(test)]
 #[path = "app_core_tempo_tests.rs"]
 mod tempo_tests;
+
+#[cfg(test)]
+#[path = "app_core_launcher_drag_tests.rs"]
+mod launcher_drag_tests;
 
 #[cfg(test)]
 #[path = "app_core_launcher_tests.rs"]

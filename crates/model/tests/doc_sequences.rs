@@ -1312,6 +1312,7 @@ fn resolve_launcher(op: &LauncherOp, doc: &RackDoc) -> Option<Command> {
                 device,
                 row,
                 start: *start,
+                onto: None,
             }
         }
         LauncherOp::EditClip(t, r, k) => {

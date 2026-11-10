@@ -282,6 +282,14 @@ impl RackDoc {
             if song.clip(slot.clip.id).is_some() || song.take_clip(slot.clip.id).is_some() {
                 found.add(&path, "the clip id is also used on a lane");
             }
+            if let Some(t) = song.track(device)
+                && t.is_audio() != slot.clip.content.is_audio()
+            {
+                found.add(
+                    &path,
+                    "the clip does not fit the track: notes need a note track",
+                );
+            }
             validate_clip(&path, &slot.clip, found);
         }
     }

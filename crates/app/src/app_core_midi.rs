@@ -289,6 +289,36 @@ impl<S: EngineSink> AppCore<S> {
         self.import_midi_as(path, mode, place);
     }
 
+    /// Puts all the notes of the MIDI file at `path` in slot `row` of note track `device` as one
+    /// launcher clip (a MIDI file dropped on a slot). A file that cannot be read, has no notes or
+    /// does not fit a slot is reported and nothing changes.
+    pub fn import_midi_slot(&mut self, path: &Path, device: DeviceKey, row: usize) {
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        let result = read_midi(path).and_then(|midi| {
+            let clip = midi.merged().into_clip(0, &self.doc().song);
+            if !clip.content.is_notes() {
+                return Err("the file has no notes".to_owned());
+            }
+            self.apply_command(Command::Song(SongCommand::Launcher(
+                atomik_model::LauncherCommand::SetSlot {
+                    device,
+                    row,
+                    clip: atomik_model::LauncherClip {
+                        clip,
+                        quantize: None,
+                    },
+                },
+            )))
+            .map_err(|e| e.to_string())
+        });
+        if let Err(e) = result {
+            self.report(format!("{name}: {e}"));
+        }
+    }
+
     /// Measures the feel of the MIDI file at `path` as a groove and adds it to the song's
     /// library: all the notes of all its tracks and channels count, from the start of the file
     /// (its bar 1 is the song's), measured against `step` in `slots` slots (see

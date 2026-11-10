@@ -5240,7 +5240,13 @@ impl ArrangementView {
                 horizontal,
                 ..
             } => {
-                if moved && horizontal {
+                if moved && !self.bounds.contains(pos) {
+                    // Dropped outside the view (on the launcher, perhaps): the host decides.
+                    out.push(UiAction::ClipsDragged {
+                        ids: originals.iter().map(|c| c.id).collect(),
+                        pos,
+                    });
+                } else if moved && horizontal {
                     // A folder clip: one move of exactly the contained clips, in time only.
                     let moves: Vec<ClipMove> = originals
                         .iter()

@@ -42,11 +42,11 @@ use atomik_device_sdk::{
     DeviceDescriptor, Direction, Registry, RunMode, SampleMapRef, SocketId, SocketKind,
 };
 use atomik_engine::{
-    AssetId, DeviceInstanceId, EngineOptions, HotEdit, Knot, LaunchSlotInput, LaunchTrackInput,
-    OfflineJob, SongAsset, SongAudioRegion, SongAudioTrack, SongAutomation, SongController,
-    SongControllerKind, SongCurve, SongExprPoint, SongExpression, SongFadeCurve, SongInput,
-    SongNote, SongPoint, SongSnapshot, SongTempo, SongTrack, TimedEdit, TransportCommand,
-    WorkerConfig, compile_song, new_engine_with_options,
+    AssetId, DeviceInstanceId, EngineOptions, HotEdit, Knot, LaunchAudioInput, LaunchSlotInput,
+    LaunchTrackInput, OfflineJob, SongAsset, SongAudioRegion, SongAudioTrack, SongAutomation,
+    SongController, SongControllerKind, SongCurve, SongExprPoint, SongExpression, SongFadeCurve,
+    SongInput, SongNote, SongPoint, SongSnapshot, SongTempo, SongTrack, TimedEdit,
+    TransportCommand, WorkerConfig, compile_song, new_engine_with_options,
 };
 use atomik_model::console::{SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM, VCA_SOLO_PARAM};
 use atomik_model::song::{
@@ -1733,6 +1733,7 @@ pub fn launch_input(
     doc: &RackDoc,
     registry: &Registry,
     id_of: impl Fn(&DeviceKey) -> Option<DeviceInstanceId>,
+    assets: &BTreeMap<String, SongAsset>,
 ) -> Vec<LaunchPlan> {
     let song = &doc.song;
     if song.launcher.slots.is_empty() {
@@ -1741,12 +1742,18 @@ pub fn launch_input(
     let expanded = doc.has_containers().then(|| doc.expand(registry));
     let mut out: Vec<LaunchPlan> = Vec::new();
     for track in effective_tracks(song) {
-        if track.frozen.is_some() || track.is_audio() || track.is_automation_only() {
+        if track.frozen.is_some() || track.is_automation_only() {
             continue;
         }
         let Some(slots) = song.launcher.slots.get(&track.device) else {
             continue;
         };
+        if track.is_audio() {
+            if let Some(plan) = audio_launch_plan(doc, track, slots, &id_of, assets) {
+                out.push(plan);
+            }
+            continue;
+        }
         let is_container = doc.device(&track.device).is_some_and(|d| d.inner.is_some());
         let (flat, type_id) = match (&expanded, is_container) {
             (Some(exp), true) => {
@@ -1824,6 +1831,7 @@ pub fn launch_input(
                     notes,
                     controllers,
                     expression: song_expression(&flatten_expression(song, &scratch)),
+                    audio: None,
                 })
             })
             .collect();
@@ -1846,4 +1854,102 @@ pub struct LaunchPlan {
     pub track: DeviceKey,
     /// What the engine gets.
     pub input: LaunchTrackInput,
+}
+
+/// The launch track of an audio track: each slot's audio clip flattened over a copy of the track
+/// that holds it alone at tick 0, so its regions are in frames from the slot start. The slots play
+/// unwarped (the file at its own rate); a file that is not loaded, or is streamed, is silent.
+fn audio_launch_plan(
+    doc: &RackDoc,
+    track: &atomik_model::song::Track,
+    slots: &[Option<atomik_model::LauncherClip>],
+    id_of: &impl Fn(&DeviceKey) -> Option<DeviceInstanceId>,
+    assets: &BTreeMap<String, SongAsset>,
+) -> Option<LaunchPlan> {
+    let device = id_of(&track.device)?;
+    let song = &doc.song;
+    let compiled = slots
+        .iter()
+        .map(|slot| {
+            let slot = slot.as_ref()?;
+            let mut scratch = track.clone();
+            scratch.frozen = None;
+            scratch.lanes = vec![atomik_model::Lane {
+                kind: LaneKind::Audio,
+                name: None,
+                muted: false,
+                solo: false,
+                color: None,
+                static_value: None,
+                clips: vec![slot.clip.clone()],
+                take_groups: Vec::new(),
+            }];
+            let mut pool: Vec<SongAsset> = Vec::new();
+            let mut used: BTreeMap<String, AssetId> = BTreeMap::new();
+            let mut envelopes: Vec<Vec<(u64, f32)>> = Vec::new();
+            let regions = flatten_audio(&scratch, song, doc.sample_rate)
+                .into_iter()
+                .filter_map(|r| {
+                    let (key, asset) = assets.get_key_value(r.asset.as_str())?;
+                    if asset.is_stream() {
+                        return None;
+                    }
+                    let asset_id = *used.entry(key.clone()).or_insert_with(|| {
+                        pool.push(asset.clone());
+                        AssetId(u32::try_from(pool.len() - 1).unwrap_or(u32::MAX))
+                    });
+                    let env = if r.envelope.is_empty() {
+                        None
+                    } else {
+                        let k = envelopes
+                            .iter()
+                            .position(|e| *e == r.envelope)
+                            .unwrap_or_else(|| {
+                                envelopes.push(r.envelope.clone());
+                                envelopes.len() - 1
+                            });
+                        Some(u32::try_from(k).unwrap_or(u32::MAX))
+                    };
+                    Some(SongAudioRegion {
+                        asset: asset_id,
+                        song_start_frame: r.song_start_frame,
+                        source_offset: r.source_offset,
+                        frames: r.frames,
+                        gain: r.gain,
+                        fade_in: r.fade_in,
+                        fade_out: r.fade_out,
+                        fade_curve: song_fade_curve(r.fade_curve),
+                        fade_out_curve: song_fade_curve(r.fade_out_curve),
+                        clip_pos: r.clip_pos,
+                        clip_frames: r.clip_frames,
+                        reverse: r.reverse,
+                        env,
+                        x_in: r.x_in,
+                        x_out: r.x_out,
+                        x_curve: song_fade_curve(r.x_curve),
+                        warp: None,
+                    })
+                })
+                .collect();
+            Some(LaunchSlotInput {
+                length: slot.clip.length,
+                notes: Vec::new(),
+                controllers: Vec::new(),
+                expression: Vec::new(),
+                audio: Some(LaunchAudioInput {
+                    regions,
+                    envelopes,
+                    assets: pool,
+                }),
+            })
+        })
+        .collect();
+    Some(LaunchPlan {
+        track: track.device.clone(),
+        input: LaunchTrackInput {
+            device,
+            notes_socket: SocketId(0),
+            slots: compiled,
+        },
+    })
 }

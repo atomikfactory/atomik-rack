@@ -883,6 +883,7 @@ impl Player {
             cursors,
             launch,
             launch_rt,
+            audio_rt,
             ..
         } = &mut *new;
         let map = ext
@@ -890,7 +891,7 @@ impl Player {
             .map_or(TempoMap::new(tempo), |e| TempoMap::new(e));
         seek(map, sr, tracks, cursors, self.pos);
         crate::launch::seek(map, sr, launch, launch_rt, self.pos);
-        crate::launch::mark_silent(launch, launch_rt, cursors);
+        crate::launch::mark_silent(launch, launch_rt, cursors, audio_rt);
         self.song = Some(new);
         self.audio_reseek = true;
         old
@@ -1413,6 +1414,9 @@ impl Player {
                 rt.pb = [[0.0; BATCH]; 2];
             }
         }
+        if let Some((_, lr)) = lch.as_mut() {
+            crate::launch::clear_audio(lr);
+        }
         let renderer = Renderer {
             underruns: &stats.underruns,
         };
@@ -1431,6 +1435,10 @@ impl Player {
                         sr,
                         (tracks, cursors),
                         (lt, lr),
+                        match aud.as_mut() {
+                            Some((_, rts)) => &mut rts[..],
+                            None => &mut [],
+                        },
                         (a, b, off),
                         &mut em,
                         launch_events,
@@ -1499,6 +1507,9 @@ impl Player {
         }
         if let Some((lt, lr)) = lch.as_ref() {
             crate::launch::publish(launch_cell, lt, lr, map, sr, *pos);
+        }
+        if let (Some((lt, lr)), Some((_, rts))) = (lch.as_ref(), aud.as_mut()) {
+            crate::launch::mix_audio(arena, lt, lr, rts);
         }
         if let Some((tracks, rts)) = aud.as_mut() {
             publish_audio(arena, tracks, rts, *pos);

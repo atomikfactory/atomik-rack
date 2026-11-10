@@ -467,6 +467,8 @@ pub(crate) struct AudioRt {
     pub(crate) handoff: Option<Handoff>,
     /// The regions playing while the player follows an external clock.
     pub(crate) follow: crate::audio_follow::FollowRt,
+    /// A launcher slot plays on this track: the arrangement clips are silent.
+    pub(crate) silent: bool,
 }
 
 impl Clone for AudioRt {
@@ -478,6 +480,7 @@ impl Clone for AudioRt {
             stream: None,
             handoff: None,
             follow: Default::default(),
+            silent: self.silent,
         }
     }
 }
@@ -489,6 +492,7 @@ impl AudioRt {
             stream: None,
             handoff: None,
             follow: Default::default(),
+            silent: false,
         }
     }
 }
@@ -650,9 +654,17 @@ impl Renderer<'_> {
             pb,
             stream,
             handoff,
+            silent,
             ..
         } = rt;
         let n_seg = (b - a) as usize;
+        if *silent {
+            // A launcher slot plays on this track instead: the stream stays in step, nothing sounds.
+            if let Some(lane) = stream.as_mut() {
+                lane.skip(n_seg);
+            }
+            return;
+        }
         let live = data.regions[data.regions.partition_point(|r| r.end() <= a)..]
             .iter()
             .take_while(|r| r.song_start_frame < b);
@@ -691,7 +703,7 @@ impl Renderer<'_> {
 /// Renders the memory regions of `data` over song frames `[a, b)` into `pb` at batch offset
 /// `off`. Song frames below `written` already hold output: a region adds to them and assigns
 /// to the rest.
-fn memory_regions(
+pub(crate) fn memory_regions(
     data: &LaneData,
     pb: &mut [Batch; 2],
     a: u64,

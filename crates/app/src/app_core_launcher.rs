@@ -257,7 +257,41 @@ impl<S: EngineSink> AppCore<S> {
             LauncherAction::SetQuantize(q) => {
                 self.launcher_edit(LauncherCommand::SetQuantize(q));
             }
-            LauncherAction::OpenClip(id) => self.open_piano_roll(id),
+            LauncherAction::DragOut { device, row, pos } => {
+                // A slot dropped on the arrangement: a clip on the lane's track at the tick.
+                if let Some((lane, start)) = self.arrangement.drop_spot_at(pos) {
+                    self.launcher_edit(LauncherCommand::ToArrangement {
+                        device,
+                        row,
+                        start,
+                        onto: lane.map(|(d, _)| d),
+                    });
+                }
+            }
+            LauncherAction::DropFile { device, row, path } => {
+                if crate::midi_file::is_midi_path(&path) {
+                    self.import_midi_slot(&path, device, row);
+                } else {
+                    self.import_slot(path, device, row);
+                }
+            }
+            LauncherAction::DropClips { device, row, clips } => {
+                if let Some(clip) = clips.first().copied() {
+                    self.launcher_edit(LauncherCommand::PutClip { device, row, clip });
+                }
+            }
+            LauncherAction::OpenClip(id) => {
+                let audio = self
+                    .doc()
+                    .song
+                    .clip_or_take(id)
+                    .is_some_and(|(_, c)| c.content.is_audio());
+                if audio {
+                    self.open_audio_editor(id);
+                } else {
+                    self.open_piano_roll(id);
+                }
+            }
             LauncherAction::NewClip { device, row } => {
                 let length = self.bar_ticks();
                 let command = LauncherCommand::NewClip {
@@ -317,7 +351,12 @@ impl<S: EngineSink> AppCore<S> {
             return;
         };
         let start = self.position.max(0);
-        self.launcher_edit(LauncherCommand::ToArrangement { device, row, start });
+        self.launcher_edit(LauncherCommand::ToArrangement {
+            device,
+            row,
+            start,
+            onto: None,
+        });
     }
 
     // ------------------------------------------------------------------ recording
@@ -401,7 +440,7 @@ impl<S: EngineSink> AppCore<S> {
             let lane = track
                 .lanes
                 .iter()
-                .position(|l| l.kind.is_notes())
+                .position(|l| l.kind.is_notes() || l.kind.is_audio())
                 .unwrap_or(0);
             let len = slot.clip.length;
             let make = |s: i64, e: i64, loop_length: Option<i64>| -> Command {
@@ -431,5 +470,26 @@ impl<S: EngineSink> AppCore<S> {
             }
         }
         out
+    }
+}
+
+impl<S: EngineSink> AppCore<S> {
+    /// Arrangement clips dragged out of the arrangement and dropped at `pos`: on a launcher slot
+    /// the first of them is copied into it.
+    pub(super) fn clips_dragged(&mut self, ids: &[ClipId], pos: atomik_ui::kurbo::Point) {
+        if !self.launch.on {
+            return;
+        }
+        let Some((device, row, _)) = self.launcher_view.slot_at(pos) else {
+            return;
+        };
+        let Some(clip) = ids
+            .iter()
+            .copied()
+            .find(|id| self.doc().song.clip(*id).is_some())
+        else {
+            return;
+        };
+        self.launcher_edit(LauncherCommand::PutClip { device, row, clip });
     }
 }

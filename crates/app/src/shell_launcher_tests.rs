@@ -118,23 +118,26 @@ fn the_view_menu_has_a_launcher_submenu_and_the_command_switches_the_lower_pane(
     assert_eq!(s.lower_pane(), Pane::Arrangement);
     assert!(!s.menu_state().launcher.shown);
     s.execute(AppCommand::ToggleLauncher);
-    assert_eq!(s.lower_pane(), Pane::Launcher);
-    assert!(s.menu_state().launcher.shown);
-    let song = s.layout().song.expect("the lower pane shows");
-    assert_eq!(s.pane_rect(Pane::Launcher).map(|(_, r)| r), Some(song));
-    assert_eq!(s.core().launcher().bounds(), song);
-    assert_eq!(s.hit_pane(song.center()), Some(Pane::Launcher));
-    s.execute(AppCommand::ToggleLauncher);
+    // The launcher takes the rack's place; the arrangement stays in view below it.
     assert_eq!(s.lower_pane(), Pane::Arrangement);
+    assert!(s.menu_state().launcher.shown);
+    let top = s.layout().rack;
+    assert_eq!(s.pane_rect(Pane::Launcher).map(|(_, r)| r), Some(top));
+    assert_eq!(s.core().launcher().bounds(), top);
+    assert_eq!(s.hit_pane(top.center()), Some(Pane::Launcher));
+    let song = s.layout().song.expect("the lower pane shows");
+    assert_eq!(s.hit_pane(song.center()), Some(Pane::Arrangement));
+    s.execute(AppCommand::ToggleLauncher);
+    assert_eq!(s.hit_pane(top.center()), Some(Pane::Rack));
 }
 
 #[test]
 fn f10_switches_the_launcher_and_the_arrangement_comes_back() {
     let mut s = with_slots();
     key(&mut s, Key::F(10), Modifiers::NONE);
-    assert_eq!(s.lower_pane(), Pane::Launcher);
+    assert!(s.menu_state().launcher.shown);
     key(&mut s, Key::F(10), Modifiers::NONE);
-    assert_eq!(s.lower_pane(), Pane::Arrangement);
+    assert!(!s.menu_state().launcher.shown);
 }
 
 #[test]
@@ -150,7 +153,9 @@ fn a_double_click_opens_the_clip_and_closing_the_roll_shows_the_launcher_again()
     );
     assert_eq!(s.lower_pane(), Pane::PianoRoll);
     s.core_mut().close_piano_roll();
-    assert_eq!(s.lower_pane(), Pane::Launcher);
+    assert_eq!(s.lower_pane(), Pane::Arrangement);
+    assert!(s.menu_state().launcher.shown);
+    assert_eq!(s.hit_pane(s.layout().rack.center()), Some(Pane::Launcher));
     // An empty slot: a double click makes a clip and opens it.
     let at = slot_point(&s, 1, 2);
     click(&mut s, at, 2);
@@ -199,7 +204,7 @@ fn typing_a_scene_name_does_not_run_commands() {
         s.core().doc().song.launcher.slot(&key_of("a"), 0).is_some(),
         "Delete did not clear the slot"
     );
-    assert_eq!(s.lower_pane(), Pane::Launcher);
+    assert!(s.menu_state().launcher.shown);
     key(&mut s, Key::Enter, Modifiers::NONE);
     assert!(!s.core().launcher().is_text_owner());
     let name = s.core().doc().song.launcher.scenes[0].name.clone();

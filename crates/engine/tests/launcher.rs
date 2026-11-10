@@ -24,6 +24,7 @@ fn slot(length: i64, notes: Vec<SongNote>) -> Option<LaunchSlotInput> {
         notes,
         controllers: Vec::new(),
         expression: Vec::new(),
+        audio: None,
     })
 }
 

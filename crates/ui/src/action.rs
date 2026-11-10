@@ -22,6 +22,14 @@ pub enum UiAction {
     /// state right after the `n`-th undo step. The host undoes or redoes as many steps as it
     /// takes (see [`crate::HistoryView`]).
     HistoryGoto(usize),
+    /// Arrangement clips were dragged out of the arrangement and dropped at `pos` (window logical
+    /// pixels): on a launcher slot, perhaps.
+    ClipsDragged {
+        /// The clips.
+        ids: Vec<ClipId>,
+        /// Where they were dropped.
+        pos: vello::kurbo::Point,
+    },
     /// The Launcher view asked for something that is not a document edit: a launch, a stop, a
     /// switch, opening a clip (see [`crate::LauncherAction`]).
     Launcher(crate::launcher::LauncherAction),

@@ -1,7 +1,7 @@
 //! The clip launcher: a grid of looping clips (slots) and scenes (rows) the song can launch live.
 //!
 //! The launcher is a second way to make music next to the arrangement. A *slot* holds one clip
-//! of a note track; a *scene* is one row of slots across the tracks. The launcher lives in
+//! of a note or audio track; a *scene* is one row of slots across the tracks. The launcher lives in
 //! [`Song::launcher`](crate::song::Song::launcher): the slots of a track are kept under its
 //! device key (like the track heights), indexed by scene row, so a track without slots costs
 //! nothing and a track that is deleted and brought back by undo gets its slots back.
@@ -13,7 +13,8 @@
 //! do in the arrangement, and `name` and `color` are the slot's. The launch quantize override
 //! is the slot's own ([`LauncherClip::quantize`]).
 //!
-//! Only note tracks have slots in this version; audio slots come later.
+//! Note tracks and audio tracks have slots: a note slot holds a note clip, an audio slot an audio
+//! clip (its file, gain, fades and so on; the launcher plays it unwarped).
 //!
 //! Every command is undoable and is one [`Edit::Launcher`] (plus the clip ids it allocates).
 
@@ -294,8 +295,11 @@ fn check_slot_clip(c: &Clip) -> Result<(), String> {
     if !(MIN_LOOP_TICKS..=MAX_LOOP_TICKS).contains(&c.length) {
         return Err(format!("loop length {}", c.length));
     }
-    if !matches!(c.content, ClipContent::Notes(_)) {
-        return Err("holds notes".into());
+    if matches!(c.content, ClipContent::Automation(_)) {
+        return Err("holds notes or audio".into());
+    }
+    if c.content.is_audio() && c.offset != 0 {
+        return Err("an audio clip has no content offset".into());
     }
     if c.offset < 0 || c.offset > MAX_TICK || c.loop_length.is_some_and(|n| n <= 0 || n > MAX_TICK)
     {
@@ -372,7 +376,8 @@ pub enum LauncherCommand {
         /// A new quantize override (`Some(None)` follows the song's).
         quantize: Option<Option<LaunchQuantize>>,
     },
-    /// Copies slot `row` of `device` into the arrangement at `start`, as a clip one loop long.
+    /// Copies slot `row` of `device` into the arrangement at `start`, as a clip one loop long, on
+    /// the same track or, with `onto`, on another track that takes the same kind of clip.
     ToArrangement {
         /// The track.
         device: DeviceKey,
@@ -380,6 +385,8 @@ pub enum LauncherCommand {
         row: usize,
         /// Song tick where the clip starts.
         start: i64,
+        /// The track that gets the clip (`None`: the slot's own).
+        onto: Option<DeviceKey>,
     },
     /// Inserts an empty scene before row `at` (`at == scenes` adds one at the end).
     InsertScene {
@@ -423,21 +430,31 @@ pub enum LauncherCommand {
     SetStopEmpty(bool),
 }
 
-/// The lane of `track` a slot clip is edited on: its first note lane.
+/// The lane of `track` a slot clip is edited on: its first note lane, or the audio lane.
 pub(crate) fn slot_lane(track: &Track) -> usize {
     track
         .lanes
         .iter()
-        .position(|l| matches!(l.kind, LaneKind::Notes))
+        .position(|l| matches!(l.kind, LaneKind::Notes | LaneKind::Audio))
         .unwrap_or(0)
 }
 
-fn note_track<'d>(doc: &'d RackDoc, device: &DeviceKey) -> Result<&'d Track, ModelError> {
+/// The track a slot can be on: a note track or an audio track.
+fn slot_track<'d>(doc: &'d RackDoc, device: &DeviceKey) -> Result<&'d Track, ModelError> {
     let t = &doc.song.tracks[track_index(doc, device)?];
-    if t.is_audio() || t.is_automation_only() || t.lanes.is_empty() {
-        return Err(bad(format!("{device} is not a note track")));
+    if t.is_automation_only() || t.lanes.is_empty() {
+        return Err(bad(format!("{device} has no slots")));
     }
     Ok(t)
+}
+
+/// A clip of `content` goes in the slots of `track`: notes on a note track, audio on an audio track.
+fn content_fits(track: &Track, content: &ClipContent) -> Result<(), ModelError> {
+    match (track.is_audio(), content) {
+        (false, ClipContent::Notes(_)) | (true, ClipContent::Audio(_)) => Ok(()),
+        (true, _) => Err(bad("an audio track takes audio clips")),
+        (false, _) => Err(bad("a note track takes note clips")),
+    }
 }
 
 fn scene_at(l: &Launcher, at: usize) -> Result<(), ModelError> {
@@ -519,14 +536,12 @@ pub(crate) fn plan(
     let mut made = None;
     match command {
         LauncherCommand::PutClip { device, row, clip } => {
-            note_track(doc, &device)?;
+            let target = slot_track(doc, &device)?;
             let (_, _, source) = doc
                 .song
                 .clip(clip)
                 .ok_or_else(|| bad(format!("no clip {}", clip.0)))?;
-            if !source.content.is_notes() {
-                return Err(bad("only a note clip goes in a slot"));
-            }
+            content_fits(target, &source.content)?;
             new.ensure_rows(row + 1)?;
             let id = ids.take()?;
             made = Some(id);
@@ -544,7 +559,9 @@ pub(crate) fn plan(
             row,
             length,
         } => {
-            note_track(doc, &device)?;
+            if slot_track(doc, &device)?.is_audio() {
+                return Err(bad("an audio slot needs a file: put an audio clip in it"));
+            }
             if !(MIN_LOOP_TICKS..=MAX_LOOP_TICKS).contains(&length) {
                 return Err(range("a loop is between a sixteenth note and 128 bars"));
             }
@@ -578,7 +595,7 @@ pub(crate) fn plan(
             );
         }
         LauncherCommand::SetSlot { device, row, clip } => {
-            let track = note_track(doc, &device)?;
+            let track = slot_track(doc, &device)?;
             let lane = slot_lane(track);
             let checked = check_new_clip(doc, registry, &device, lane, clip.clip)?;
             new.ensure_rows(row + 1)?;
@@ -594,7 +611,7 @@ pub(crate) fn plan(
             );
         }
         LauncherCommand::MoveSlot { from, to, copy } => {
-            note_track(doc, &to.0)?;
+            let target = slot_track(doc, &to.0)?;
             let source = old
                 .slot(&from.0, from.1)
                 .ok_or_else(|| bad("that slot is empty"))?
@@ -602,6 +619,7 @@ pub(crate) fn plan(
             if from == to {
                 return Err(bad("the slot did not move"));
             }
+            content_fits(target, &source.clip.content)?;
             new.ensure_rows(to.1 + 1)?;
             let clip = if copy {
                 let id = ids.take()?;
@@ -661,12 +679,19 @@ pub(crate) fn plan(
             }
             new.put(&device, row, Some(slot));
         }
-        LauncherCommand::ToArrangement { device, row, start } => {
-            let track = note_track(doc, &device)?;
-            let lane = slot_lane(track);
+        LauncherCommand::ToArrangement {
+            device,
+            row,
+            start,
+            onto,
+        } => {
             let slot = old
                 .slot(&device, row)
                 .ok_or_else(|| bad("that slot is empty"))?;
+            let target_key = onto.unwrap_or_else(|| device.clone());
+            let target = slot_track(doc, &target_key)?;
+            content_fits(target, &slot.clip.content)?;
+            let lane = slot_lane(target);
             if !(0..=MAX_TICK).contains(&start) {
                 return Err(range("tick out of range"));
             }
@@ -674,8 +699,8 @@ pub(crate) fn plan(
                 start,
                 ..slot.clip.clone()
             };
-            let clip = check_new_clip(doc, registry, &device, lane, clip)?;
-            let (edit, id) = insert_new(doc, device, lane, clip)?;
+            let clip = check_new_clip(doc, registry, &target_key, lane, clip)?;
+            let (edit, id) = insert_new(doc, target_key, lane, clip)?;
             return Ok((edit, Some(id)));
         }
         LauncherCommand::InsertScene { at } => {

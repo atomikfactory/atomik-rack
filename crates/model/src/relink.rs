@@ -95,6 +95,32 @@ pub(crate) fn plan(doc: &RackDoc, from: &str, to: &str) -> Result<Edit, ModelErr
             }
         }
     }
+    // The audio clips in launcher slots follow the file like the clips of a lane.
+    {
+        let old = &doc.song.launcher;
+        let mut new = old.clone();
+        let mut changed = false;
+        for slot in new.slots.values_mut().flat_map(|l| l.iter_mut().flatten()) {
+            if let ClipContent::Audio(a) = &mut slot.clip.content
+                && a.asset == from
+            {
+                if a.source_offset > target.frames {
+                    return Err(bad(format!(
+                        "a launcher clip starts {} frames into the asset but the replacement has {}",
+                        a.source_offset, target.frames
+                    )));
+                }
+                a.asset = to.to_owned();
+                changed = true;
+            }
+        }
+        if changed {
+            edits.push(Edit::Launcher {
+                old: Box::new(old.clone()),
+                new: Box::new(new),
+            });
+        }
+    }
     let mut zone_edits = Vec::new();
     collect_zone_edits(&doc.devices, None, from, to, &mut zone_edits);
     let mut pool = doc.assets.clone();

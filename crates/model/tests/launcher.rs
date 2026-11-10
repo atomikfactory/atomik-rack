@@ -254,6 +254,7 @@ fn a_slot_goes_to_the_arrangement_as_a_clip() {
             device: key("synth"),
             row: 0,
             start: 15_360 * 8,
+            onto: None,
         }),
         &reg,
     )
@@ -387,7 +388,6 @@ fn a_file_without_a_launcher_opens_with_an_empty_one() {
     );
 }
 
-#[test]
 #[test]
 fn bad_launchers_name_their_path() {
     let reg = registry();

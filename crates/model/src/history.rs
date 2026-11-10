@@ -529,6 +529,11 @@ impl Edit {
                 .chain(new)
                 .flat_map(|g| &g.takes)
                 .for_each(|c| clip(c, out)),
+            Edit::Launcher { old, new } => {
+                for (_, _, s) in old.clips().chain(new.clips()) {
+                    clip(&s.clip, out);
+                }
+            }
             Edit::Compound(edits) => edits.iter().for_each(|e| e.collect_assets(out)),
             Edit::Swap(Swap::AssetName { asset, .. }) => {
                 out.insert(asset.clone());

@@ -115,6 +115,34 @@ pub enum LauncherAction {
     SetQuantize(LaunchQuantize),
     /// Open the slot's clip in the piano roll.
     OpenClip(ClipId),
+    /// A slot was dragged out of the view and dropped at `pos` (window logical pixels).
+    DragOut {
+        /// The track.
+        device: DeviceKey,
+        /// The scene row.
+        row: usize,
+        /// Where it was dropped.
+        pos: Point,
+    },
+    /// A file was dropped on a slot: an audio file for an audio track, a MIDI file for a note
+    /// track.
+    DropFile {
+        /// The track.
+        device: DeviceKey,
+        /// The scene row.
+        row: usize,
+        /// The file.
+        path: std::path::PathBuf,
+    },
+    /// Arrangement clips were dropped on a slot (a drag from the arrangement).
+    DropClips {
+        /// The track.
+        device: DeviceKey,
+        /// The scene row.
+        row: usize,
+        /// The arrangement clips.
+        clips: Vec<ClipId>,
+    },
     /// Make an empty one-bar clip in the slot and open it in the piano roll.
     NewClip {
         /// The track.
@@ -128,6 +156,7 @@ pub enum LauncherAction {
 struct Col {
     device: DeviceKey,
     name: String,
+    audio: bool,
     accent: Color,
 }
 
@@ -230,6 +259,8 @@ pub struct LauncherView {
     menu: Option<Menu>,
     edit: Option<Editing>,
     clipboard: Option<LauncherClip>,
+    peaks: BTreeMap<String, Arc<atomik_audio_file::PeakPyramid>>,
+    drop_hover: Option<(usize, usize)>,
     repaint: Cell<bool>,
 }
 
@@ -252,6 +283,8 @@ impl LauncherView {
             menu: None,
             edit: None,
             clipboard: None,
+            peaks: BTreeMap::new(),
+            drop_hover: None,
             repaint: Cell::new(true),
         }
     }
@@ -315,8 +348,9 @@ impl LauncherView {
             .song
             .tracks
             .iter()
-            .filter(|t| !t.is_audio() && !t.is_automation_only())
+            .filter(|t| !t.is_automation_only())
             .map(|t| Col {
+                audio: t.is_audio(),
                 device: t.device.clone(),
                 name: doc
                     .device(&t.device)
@@ -343,6 +377,36 @@ impl LauncherView {
     pub fn set_feed(&mut self, feed: LauncherFeed) {
         if feed != self.feed {
             self.feed = feed;
+            self.repaint.set(true);
+        }
+    }
+
+    /// Sets the waveform peaks of an asset (its content hash) for the audio slots.
+    pub fn set_peaks(&mut self, asset: &str, peaks: Arc<atomik_audio_file::PeakPyramid>) {
+        self.peaks.insert(asset.to_owned(), peaks);
+        self.repaint.set(true);
+    }
+
+    /// The slot under `pos` (window logical pixels): its track, scene row and whether the track
+    /// is an audio track. Where a drag from another pane lands.
+    pub fn slot_at(&self, pos: Point) -> Option<(DeviceKey, usize, bool)> {
+        match self.spot_at(pos)? {
+            Spot::Slot(c, r) | Spot::SlotPlay(c, r) => {
+                let col = self.cols.get(c)?;
+                Some((col.device.clone(), r, col.audio))
+            }
+            _ => None,
+        }
+    }
+
+    /// Highlights the slot a drag from another pane is over (`None` clears it).
+    pub fn set_drop_hover(&mut self, hover: Option<(DeviceKey, usize)>) {
+        let spot = hover.and_then(|(d, r)| {
+            let c = self.cols.iter().position(|c| c.device == d)?;
+            Some((c, r))
+        });
+        if spot != self.drop_hover {
+            self.drop_hover = spot;
             self.repaint.set(true);
         }
     }
@@ -671,6 +735,21 @@ impl LauncherView {
             } => {
                 self.on_up(*pos, *modifiers, &mut out);
             }
+            UiEvent::FileHover { pos, .. } => {
+                let hover = self.slot_at(*pos).map(|(d, r, _)| (d, r));
+                self.set_drop_hover(hover);
+            }
+            UiEvent::FileHoverCancel => self.set_drop_hover(None),
+            UiEvent::FileDrop { pos, paths } => {
+                self.set_drop_hover(None);
+                if let (Some((device, row, _)), Some(path)) = (self.slot_at(*pos), paths.first()) {
+                    out.push(UiAction::Launcher(LauncherAction::DropFile {
+                        device,
+                        row,
+                        path: path.clone(),
+                    }));
+                }
+            }
             UiEvent::PointerLeave => {
                 if self.hover.take().is_some() {
                     self.repaint.set(true);
@@ -808,6 +887,7 @@ impl LauncherView {
                         Some(s) => {
                             out.push(UiAction::Launcher(LauncherAction::OpenClip(s.clip.id)))
                         }
+                        None if self.cols.get(c).is_some_and(|col| col.audio) => {}
                         None => out.push(launch(LauncherAction::NewClip { device: d, row: r })),
                     }
                 } else if self.slot(c, r).is_some() {
@@ -839,6 +919,17 @@ impl LauncherView {
         };
         self.repaint.set(true);
         if !d.started {
+            return;
+        }
+        if !self.bounds.contains(pos) {
+            // Dropped outside the view: on the arrangement, perhaps.
+            if let Some((device, row)) = self.slot_ref(d.from.0, d.from.1) {
+                out.push(UiAction::Launcher(LauncherAction::DragOut {
+                    device,
+                    row,
+                    pos,
+                }));
+            }
             return;
         }
         let Some(Spot::Slot(c, r) | Spot::SlotPlay(c, r)) = self.spot_at(pos) else {
@@ -1429,6 +1520,9 @@ impl LauncherView {
         } else if queued {
             c.stroke_with(shape, 1.0, self.st.playhead.with_alpha(0.5));
         }
+        if self.drop_hover == Some((col, row)) {
+            c.stroke_with(shape, 2.0, self.st.record);
+        }
         if self.focused && self.cursor == (col, row) {
             c.stroke_with(
                 RoundedRect::from_rect(r.inset(-1.0), 4.0),
@@ -1470,8 +1564,67 @@ impl LauncherView {
         c.fill_with(Geom::Path(path), color);
     }
 
-    /// A tiny picture of the slot's notes.
+    /// The waveform of an audio slot's file from the clip's start to the end of the file.
+    fn paint_wave(
+        &self,
+        c: &mut dyn Canvas,
+        r: Rect,
+        a: &atomik_model::AudioClipContent,
+        playing: bool,
+    ) {
+        let Some(peaks) = self.peaks.get(&a.asset) else {
+            return;
+        };
+        let area = Rect::new(r.x0 + PLAY_W, r.y0 + 17.0, r.x1 - 4.0, r.y1 - 5.0);
+        let from = a.source_offset as f64;
+        let span = (peaks.frames() as f64 - from).max(1.0);
+        let width = area.width().max(1.0);
+        let level = peaks.level_for(span / width);
+        let ink = if playing {
+            self.st.base.ink
+        } else {
+            self.st.base.text
+        };
+        let mid = area.center().y;
+        let half = area.height() / 2.0;
+        for x in 0..width as usize {
+            let (f0, f1) = (
+                from + span * x as f64 / width,
+                from + span * (x as f64 + 1.0) / width,
+            );
+            let mut lo = f32::INFINITY;
+            let mut hi = f32::NEG_INFINITY;
+            for ch in 0..level.channels.len().min(2) {
+                if let Some((a, b)) = crate::audio::column_peak(level, ch, f0, f1, peaks.frames()) {
+                    lo = lo.min(a);
+                    hi = hi.max(b);
+                }
+            }
+            if lo > hi {
+                continue;
+            }
+            let (y0, y1) = (
+                mid - f64::from(hi.clamp(-1.0, 1.0)) * half,
+                mid - f64::from(lo.clamp(-1.0, 1.0)) * half,
+            );
+            c.fill_with(
+                Rect::new(
+                    area.x0 + x as f64,
+                    y0,
+                    area.x0 + x as f64 + 1.0,
+                    y1.max(y0 + 1.0),
+                ),
+                ink.with_alpha(0.8),
+            );
+        }
+    }
+
+    /// A tiny picture of the slot: its notes, or the waveform of its file.
     fn paint_overview(&self, c: &mut dyn Canvas, r: Rect, s: &LauncherClip, playing: bool) {
+        if let ClipContent::Audio(a) = &s.clip.content {
+            self.paint_wave(c, r, a, playing);
+            return;
+        }
         let ClipContent::Notes(notes) = &s.clip.content else {
             return;
         };

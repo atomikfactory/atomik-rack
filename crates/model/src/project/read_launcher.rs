@@ -81,8 +81,8 @@ pub(super) fn load_launcher(
                 .iter()
                 .find(|t| t.device == key)
                 .ok_or_else(|| p.field("track").error(format!("{:?} has no track", key.0)))?;
-            if track.is_audio() || track.is_automation_only() {
-                return Err(p.field("track").error("only a note track has slots"));
+            if track.is_automation_only() {
+                return Err(p.field("track").error("an automation track has no slots"));
             }
             let row = uint(&o["row"], &p.field("row"), MAX_SCENES as u64)? as usize;
             if row >= launcher.scenes.len() {
@@ -98,8 +98,19 @@ pub(super) fn load_launcher(
             let clip = read_clip::load_clip(
                 &o["clip"],
                 &p.field("clip"),
-                (Obj::NoteClip, version),
-                &LaneKind::Notes,
+                (
+                    if track.is_audio() {
+                        Obj::AudioClip
+                    } else {
+                        Obj::NoteClip
+                    },
+                    version,
+                ),
+                if track.is_audio() {
+                    &LaneKind::Audio
+                } else {
+                    &LaneKind::Notes
+                },
                 (doc, None),
                 song,
                 clip_first,
