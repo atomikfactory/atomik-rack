@@ -298,9 +298,9 @@ fn activate_that_is_not_answered_fails_after_the_create_timeout_and_frees_the_ca
 }
 
 #[test]
-fn opening_the_editor_waits_for_the_create_timeout_and_not_the_call_timeout() {
+fn opening_the_editor_waits_for_the_load_timeout_and_not_the_call_timeout() {
     let mut timeouts = test_timeouts();
-    timeouts.create = Duration::from_millis(300);
+    timeouts.load = Duration::from_millis(300);
     timeouts.call = Duration::from_secs(30);
     let started = start_with(
         FakeOptions::default()

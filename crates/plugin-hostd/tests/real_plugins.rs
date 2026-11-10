@@ -518,17 +518,25 @@ fn a_vst3_editor_opens_in_a_window_of_the_child_and_closes_again() {
 #[cfg(windows)]
 const APP_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Sends a request and waits up to `within` for its answer; `None` when none came.
+/// How long the app lets a plugin take to open its editor: it may check its licence online or
+/// show its own dialogs first (the sandbox's load timeout).
+#[cfg(windows)]
+const EDITOR_PATIENCE: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Sends a request and waits up to `within` for its answer, calling `meanwhile` between polls
+/// (the app's UI thread handling its messages); `None` when none came.
 #[cfg(windows)]
 fn call_within(
     p: &mut TestParent,
     within: std::time::Duration,
+    mut meanwhile: impl FnMut(),
     make: impl FnOnce(u64) -> ToChild,
 ) -> Option<FromChild> {
     let id = p.id();
     p.send(&make(id));
     let end = atomik_plugin_ipc::Deadline::after(within);
     while !end.passed() {
+        meanwhile();
         let Ok((msg, _)) = p.recv_or_end(std::time::Duration::from_millis(20)) else {
             continue;
         };
@@ -540,53 +548,71 @@ fn call_within(
     None
 }
 
-/// Opens and closes the editor of a plugin owned by a window whose thread pumps no messages
-/// while a request is out, like the app's UI thread blocked on the reply. Both answers must come
-/// within the app's call timeout.
+/// Opens, closes and opens again the editor of a plugin owned by a window of this process, the
+/// way the app does: the app's UI thread keeps handling its messages while the editor opens
+/// (which may take minutes: licence or sign-in dialogs), and the child gives its window the
+/// owner only after it answered. Closing is answered within the app's call timeout.
 #[cfg(windows)]
-fn editor_answers_while_the_owner_does_not_pump(format: Format, file: &Path, plugin: &str) {
+fn editor_opens_closes_and_reopens_under_an_owner(format: Format, file: &Path, plugin: &str) {
     let owner = support::owner_window::OwnerWindow::new();
     let mut p = TestParent::spawn(&Spawn::real(format.name(), file, plugin));
     p.hello();
     let (_, has_gui, _) = p.instantiate();
     assert!(has_gui);
-    let opened = call_within(&mut p, APP_PATIENCE, |id| ToChild::OpenGui {
-        id,
-        owner: Some(NativeParent::Win32(owner.hwnd()).into()),
-        scale: 1.0,
-    });
-    assert!(
-        matches!(opened, Some(FromChild::GuiOpened { w, h, .. }) if w > 0 && h > 0),
-        "OpenGui was not answered in time (or failed): {opened:?}; stderr: {}",
-        p.stderr()
-    );
-    // The app is free again: it handles its messages, and the child's window finishes showing.
-    for _ in 0..20 {
-        owner.pump();
-        std::thread::sleep(std::time::Duration::from_millis(25));
+    for round in 0..2 {
+        #[allow(clippy::disallowed_methods)] // Justification: the opening time is reported.
+        let started = std::time::Instant::now();
+        let opened = call_within(
+            &mut p,
+            EDITOR_PATIENCE,
+            || owner.pump(),
+            |id| ToChild::OpenGui {
+                id,
+                owner: Some(NativeParent::Win32(owner.hwnd()).into()),
+                scale: 1.0,
+            },
+        );
+        assert!(
+            matches!(opened, Some(FromChild::GuiOpened { w, h, .. }) if w > 0 && h > 0),
+            "OpenGui (round {round}) was not answered (or failed): {opened:?}; stderr: {}",
+            p.stderr()
+        );
+        eprintln!(
+            "round {round}: the editor opened in {:?}",
+            started.elapsed()
+        );
+        for _ in 0..20 {
+            owner.pump();
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        let closed = call_within(
+            &mut p,
+            APP_PATIENCE,
+            || owner.pump(),
+            |id| ToChild::CloseGui { id },
+        );
+        assert!(
+            matches!(closed, Some(FromChild::Ok { .. })),
+            "CloseGui (round {round}) was not answered in time: {closed:?}; stderr: {}",
+            p.stderr()
+        );
     }
-    let closed = call_within(&mut p, APP_PATIENCE, |id| ToChild::CloseGui { id });
-    assert!(
-        matches!(closed, Some(FromChild::Ok { .. })),
-        "CloseGui was not answered in time: {closed:?}; stderr: {}",
-        p.stderr()
-    );
 }
 
 #[cfg(windows)]
 #[test]
 #[ignore = "opens a real window; run by hand"]
-fn the_clap_editor_opens_while_the_owner_window_does_not_pump_messages() {
+fn the_clap_editor_opens_closes_and_reopens_under_an_owner_window() {
     let file = Format::Clap.file("atomik-test-clap");
     let id = Format::Clap.id(Kind::Gain);
-    editor_answers_while_the_owner_does_not_pump(Format::Clap, &file, &id);
+    editor_opens_closes_and_reopens_under_an_owner(Format::Clap, &file, &id);
 }
 
 /// The same with an installed VST3 (`ATOMIK_VST3_EDITOR_FILE` and `ATOMIK_VST3_EDITOR_ID`).
 #[cfg(windows)]
 #[test]
 #[ignore = "opens a real window of an installed plugin; run by hand"]
-fn a_vst3_editor_opens_while_the_owner_window_does_not_pump_messages() {
+fn a_vst3_editor_opens_closes_and_reopens_under_an_owner_window() {
     let (Ok(file), Ok(id)) = (
         std::env::var("ATOMIK_VST3_EDITOR_FILE"),
         std::env::var("ATOMIK_VST3_EDITOR_ID"),
@@ -594,5 +620,5 @@ fn a_vst3_editor_opens_while_the_owner_window_does_not_pump_messages() {
         eprintln!("skipped: set ATOMIK_VST3_EDITOR_FILE and ATOMIK_VST3_EDITOR_ID");
         return;
     };
-    editor_answers_while_the_owner_does_not_pump(Format::Vst3, Path::new(&file), &id);
+    editor_opens_closes_and_reopens_under_an_owner(Format::Vst3, Path::new(&file), &id);
 }

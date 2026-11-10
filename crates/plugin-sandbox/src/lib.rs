@@ -69,7 +69,12 @@ impl HostCommand {
 pub struct SandboxConfig {
     /// How to start a child.
     pub command: HostCommand,
-    /// Instantiate, activate, capture and restore state, and open the editor.
+    /// Loading: the child's greeting, `Instantiate` and opening the editor. A live child that
+    /// has not answered yet is waiting for something (an online licence check, a sign-in
+    /// dialog, a firewall prompt), so this is long, see [`LOAD_TIMEOUT`]; the app polls these
+    /// waits and stays responsive.
+    pub load_timeout: Duration,
+    /// Activate, capture and restore state.
     pub create_timeout: Duration,
     /// Every other main-thread call.
     pub call_timeout: Duration,
@@ -89,7 +94,8 @@ pub struct SandboxConfig {
 }
 
 impl SandboxConfig {
-    /// The default timeouts (10 s, 2 s, 250 ms, 30 s, 3 s) for `command`, for the live app.
+    /// The default timeouts ([`LOAD_TIMEOUT`], 10 s, 2 s, 250 ms, 30 s, 3 s) for `command`, for
+    /// the live app.
     ///
     /// A call that matters (create, activate, state, deactivate) that is not answered in time
     /// stops the child. A cosmetic one only drops its request: the child is marked slow after a
@@ -97,6 +103,7 @@ impl SandboxConfig {
     pub fn new(command: HostCommand) -> Self {
         Self {
             command,
+            load_timeout: LOAD_TIMEOUT,
             create_timeout: Duration::from_secs(10),
             call_timeout: Duration::from_secs(2),
             text_timeout: Duration::from_millis(250),
@@ -106,6 +113,10 @@ impl SandboxConfig {
         }
     }
 }
+
+/// How long a plugin may take to load or to open its editor before its child is stopped: long
+/// enough for a user to answer a firewall prompt and a plugin's own licence or sign-in dialogs.
+pub const LOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// The sandboxed backend of one plugin format.
 #[derive(Debug)]
@@ -208,6 +219,7 @@ impl SandboxBackend {
 
     fn timeouts(&self) -> Timeouts {
         Timeouts {
+            load: self.config.load_timeout,
             create: self.config.create_timeout,
             call: self.config.call_timeout,
             text: self.config.text_timeout,
