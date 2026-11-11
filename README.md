@@ -61,7 +61,7 @@ Release builds are attached to each [GitHub release](https://github.com/atomikfa
 
 - **Windows:** `atomik-rack-<version>-windows-x86_64-setup.exe` (installer) or `atomik-rack-<version>-windows-x86_64.zip`.
 - **macOS (Apple Silicon and Intel):** `atomik-rack-<version>-macos-universal.dmg` or `atomik-rack-<version>-macos-universal.zip`.
-- **Linux (x86-64):** `atomik-rack-<version>-x86_64.AppImage` (any distribution), `atomik-rack-<version>.flatpak` (a Flatpak bundle), `atomik-rack_<version>_amd64.deb` for Debian and Ubuntu, or `atomik-rack-<version>-linux-x86_64.tar.gz`.
+- **Linux (x86-64):** `atomik-rack-<version>-x86_64.AppImage` (any distribution), `atomik-rack_<version>_amd64.deb` for Debian and Ubuntu, or `atomik-rack-<version>-linux-x86_64.tar.gz`.
 
 A [nightly build](https://github.com/atomikfactory/atomik-rack/releases/tag/nightly) of `main` is published every day that it changes, under the same names with `nightly-<date>-<commit>` as the version. It is a pre-release: expect rough edges.
 
@@ -69,7 +69,7 @@ Builds are code-signed (Windows) and notarised (macOS) only when the project's s
 
 - **Windows.** Run the installer (it asks for administrator rights to install for everyone, and offers to install just for you), or unzip the archive and run `atomik.exe`. If SmartScreen says "Windows protected your PC", choose **More info**, then **Run anyway**.
 - **macOS.** Open the disk image and drag `Atomik Rack.app` to Applications (or unzip the archive). A build that is not notarised is only ad-hoc signed: right-click the app, choose **Open**, then **Open** again. Or remove the quarantine flag once: `xattr -dr com.apple.quarantine "/Applications/Atomik Rack.app"`.
-- **Linux.** Install the package with `sudo apt-get install ./atomik-rack_<version>_amd64.deb` (it pulls in ALSA and fontconfig and puts `atomik` on your path), or extract the archive and run `./atomik`. The **AppImage** needs no installation: `chmod +x atomik-rack-<version>-x86_64.AppImage`, then run it (it takes ALSA, fontconfig and the graphics driver from your system, like the archive, and needs a C library at least as new as Ubuntu's of the build). For the **Flatpak** bundle: `flatpak install --user atomik-rack-<version>.flatpak`, then `flatpak run io.github.atomikfactory.AtomikRack` (Flatpak fetches the runtime from Flathub). In the Flatpak the program can read your home folder and write to Music and Documents; user plugins in `~/.vst3` and `~/.clap` are found, plugins in system folders such as `/usr/lib/vst3` are not visible, and the update notice tells you to update with your software centre. The archive needs ALSA (`libasound2`), fontconfig (`libfontconfig1`) and a working Vulkan or OpenGL driver; on Debian/Ubuntu: `sudo apt-get install libasound2 libfontconfig1`.
+- **Linux.** Install the package with `sudo apt-get install ./atomik-rack_<version>_amd64.deb` (it pulls in ALSA and fontconfig and puts `atomik` on your path), or extract the archive and run `./atomik`. The **AppImage** needs no installation: `chmod +x atomik-rack-<version>-x86_64.AppImage`, then run it (it takes ALSA, fontconfig and the graphics driver from your system, like the archive, and needs a C library at least as new as Ubuntu's of the build). The archive needs ALSA (`libasound2`), fontconfig (`libfontconfig1`) and a working Vulkan or OpenGL driver; on Debian/Ubuntu: `sudo apt-get install libasound2 libfontconfig1`.
 
 ## First steps
 
