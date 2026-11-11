@@ -3356,6 +3356,29 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// The undo or redo command a key press is bound to in the global keymap (`None` for any
+    /// other event or key), for a modal panel that takes every event but edits the document.
+    fn history_key(&self, event: &UiEvent) -> Option<AppCommand> {
+        let UiEvent::Key {
+            key,
+            modifiers,
+            pressed: true,
+        } = event
+        else {
+            return None;
+        };
+        let stack = ContextStack::global();
+        let Resolution::Bound(list) = self.router.keymap().resolve_event(key, *modifiers, &stack)
+        else {
+            return None;
+        };
+        list.iter().find_map(|r| match r.command.as_str() {
+            "edit.undo" => Some(AppCommand::Undo),
+            "edit.redo" => Some(AppCommand::Redo),
+            _ => None,
+        })
+    }
+
     /// What the matrix panel asked for: its edits are ordinary commands.
     fn mod_matrix_action(&mut self, action: UiAction) {
         match action {
@@ -5727,8 +5750,17 @@ impl<B: AudioBackend> Shell<B> {
             return Vec::new();
         }
         if self.mod_matrix.is_some() {
-            // The matrix panel takes every event; Esc closes its menu, then the panel.
+            // The matrix panel takes every event; Esc closes its menu, then the panel. Undo and
+            // redo are the document's, as everywhere (the panel edits it with ordinary commands).
             self.repaint = true;
+            if let Some(command) = self.history_key(event) {
+                match command {
+                    AppCommand::Undo => self.core.undo(),
+                    _ => self.core.redo(),
+                };
+                self.sync_mod_matrix();
+                return Vec::new();
+            }
             let actions = self
                 .mod_matrix
                 .as_mut()

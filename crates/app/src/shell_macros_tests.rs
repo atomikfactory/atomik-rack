@@ -835,6 +835,44 @@ fn the_matrix_panel_edits_a_slot_and_its_amount_as_undoable_commands() {
 }
 
 #[test]
+fn undo_and_redo_keys_work_while_the_matrix_panel_is_open() {
+    let mut s = shell();
+    add_synth(&mut s, "a", "Lead");
+    s.core_mut()
+        .view_mut()
+        .set_selection(&[key("a")], Some(&key("a")));
+    s.run_command("rack.mod_matrix", None);
+    let info = s.core().mod_matrix_info(&key("a")).unwrap();
+    let (source, target) = (info.sources[0].clone(), info.targets[0].clone());
+    let v = s.mod_matrix_view().unwrap();
+    let (src, tgt) = (
+        v.picker_rect(0, 's').center(),
+        v.picker_rect(0, 't').center(),
+    );
+    choose(&mut s, src, &source);
+    choose(&mut s, tgt, &target);
+    let slot = |s: &Shell<NullBackend>| s.core().doc().resolve(&key("a")).unwrap().mod_slot(0);
+    assert!(slot(&s).is_some());
+    press(&mut s, Key::Char('z'), Modifiers::CTRL);
+    assert_eq!(slot(&s), None, "Ctrl+Z undid the slot");
+    assert!(s.mod_matrix_view().is_some(), "the panel stays open");
+    s.frame();
+    assert_eq!(
+        s.mod_matrix_view().unwrap().row(0),
+        Some((None, None, None)),
+        "and shows the undo"
+    );
+    let redo = Modifiers {
+        shift: true,
+        ..Modifiers::CTRL
+    };
+    press(&mut s, Key::Char('z'), redo);
+    assert!(slot(&s).is_some(), "Ctrl+Shift+Z redid it");
+    press(&mut s, Key::Escape, Modifiers::NONE);
+    assert!(s.mod_matrix_view().is_none());
+}
+
+#[test]
 fn a_device_without_a_matrix_does_not_open_the_panel() {
     let mut s = shell();
     s.core_mut()
