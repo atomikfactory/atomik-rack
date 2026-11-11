@@ -2729,14 +2729,40 @@ impl<S: EngineSink> AppCore<S> {
         (free && !doc.folder_strips(folder).is_empty()).then_some(folder)
     }
 
-    /// The track folder the folder routing commands work on: the folder selected in the
-    /// arrangement when one of its tracks has a console channel.
+    /// The track folder the folder routing commands work on: in the arrangement, the folder
+    /// selected there; in the console, the innermost folder that holds the tracks of every
+    /// selected channel strip. Either way one of its tracks must have a console channel.
     fn routable_folder(&self, pane: Pane) -> Option<u32> {
-        if pane != Pane::Arrangement {
-            return None;
-        }
-        let folder = self.arrangement().selected_group()?;
+        let folder = match pane {
+            Pane::Arrangement => self.arrangement().selected_group()?,
+            Pane::Console => self.console_selection_folder()?,
+            _ => return None,
+        };
         (!self.doc().folder_route_strips(folder).is_empty()).then_some(folder)
+    }
+
+    /// The innermost track folder that holds the track of every selected console channel, none
+    /// when the selection is empty, holds a strip that is no channel with a track, or the
+    /// tracks share no folder.
+    fn console_selection_folder(&self) -> Option<u32> {
+        let doc = self.doc();
+        let strips = self.strips_to_route(true);
+        let mut tracks = Vec::new();
+        for strip in &strips {
+            let i = doc.console.channel_index(strip)?;
+            let source = doc.console.channels[i].source.clone()?;
+            doc.song.track(&source)?;
+            tracks.push(source);
+        }
+        let leaf = doc.song.track_group(tracks.first()?);
+        doc.song.org.chain(leaf).into_iter().rev().find(|f| {
+            let inside = doc.song.group_tracks(*f);
+            tracks.iter().all(|t| {
+                inside
+                    .iter()
+                    .any(|i| doc.song.tracks.get(*i).is_some_and(|x| x.device == *t))
+            })
+        })
     }
 
     /// Mixer > Route Folder to New Bus (`bus` none: a bus called `<folder name> Bus`, numbered
@@ -2768,7 +2794,8 @@ impl<S: EngineSink> AppCore<S> {
         self.apply_command(Command::Console(command)).is_ok()
     }
 
-    /// Mixer > Stop Routing Folder: the channels of the selected folder go back to the master.
+    /// Mixer > Stop Routing Folder: the channels of the selected folder go back to the master,
+    /// and the bus Route Folder made goes when nothing else uses it.
     /// False, with a message, when no folder is selected or it is not routed.
     pub fn unroute_folder(&mut self, pane: Pane) -> bool {
         let routed = self

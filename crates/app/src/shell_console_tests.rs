@@ -1929,7 +1929,9 @@ fn route_folder_plays_the_selected_folder_into_a_bus_and_stop_routing_undoes_it(
     let route = doc.console.folder_route(1).expect("a route");
     assert_eq!(route.members.len(), 2);
     assert_eq!(
-        doc.console.bus_by_name("Strings Bus").map(|b| b.bus.clone()),
+        doc.console
+            .bus_by_name("Strings Bus")
+            .map(|b| b.bus.clone()),
         Some(route.bus.clone()),
         "the bus is named after the folder"
     );
@@ -2165,4 +2167,44 @@ fn the_reference_panel_lists_selects_and_refreshes_through_its_buttons() {
     let close = s.zone_view().unwrap().close_rect().center();
     click(&mut s, close);
     assert!(!s.zone_open());
+}
+
+#[test]
+fn route_folder_works_from_the_console_selection_and_is_off_when_it_cannot_apply() {
+    let mut s = folder_shell();
+    s.execute(AppCommand::ToggleConsole);
+    s.set_focus(Pane::Console);
+    assert_eq!(s.live_pane(s.focus), Pane::Console);
+    let enabled = |s: &Shell<NullBackend>, c: AppCommand| menu_row(s, c).map(|i| i.enabled);
+    let strip = |s: &Shell<NullBackend>, k: &str| {
+        s.core()
+            .doc()
+            .console
+            .channel_of(&DeviceKey(k.into()))
+            .map(|c| c.channel.clone())
+            .unwrap()
+    };
+    // Nothing selected, or a strip outside the folder: nothing to route.
+    assert_eq!(enabled(&s, AppCommand::RouteFolder(None)), Some(false));
+    let (a, b, c) = (strip(&s, "a"), strip(&s, "b"), strip(&s, "c"));
+    s.core_mut()
+        .console_mut()
+        .set_selected_strips(&[a.clone(), c.clone()]);
+    assert_eq!(enabled(&s, AppCommand::RouteFolder(None)), Some(false));
+    let before = s.core().doc().clone();
+    s.execute(AppCommand::RouteFolder(None));
+    assert_eq!(s.core().doc(), &before, "nothing to route changes nothing");
+    // The channels of two tracks of the folder: the folder is routed.
+    s.core_mut().console_mut().set_selected_strips(&[a, b]);
+    assert_eq!(enabled(&s, AppCommand::RouteFolder(None)), Some(true));
+    assert_eq!(enabled(&s, AppCommand::UnrouteFolder), Some(false));
+    s.execute(AppCommand::RouteFolder(None));
+    let route = s.core().doc().console.folder_route(1).expect("a route");
+    assert_eq!(route.members.len(), 2);
+    assert_eq!(enabled(&s, AppCommand::UnrouteFolder), Some(true));
+    // Stopping goes back to the master and removes the bus the route made.
+    s.execute(AppCommand::UnrouteFolder);
+    let doc = s.core().doc();
+    assert!(doc.console.folder_routes.is_empty());
+    assert!(doc.console.buses.is_empty(), "the folder's bus is gone");
 }
