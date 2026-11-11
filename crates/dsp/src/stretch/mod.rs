@@ -22,6 +22,10 @@
 //! previews a warped clip whose finished buffer is still being rendered. It sounds close to the
 //! Beats and Tonal buffers (same pitch and timing, a little lower quality).
 //!
+//! The [`psola`] module shifts the notes of monophonic audio one by one while keeping the
+//! formants (TD-PSOLA): the pitch edits of the audio clip editor's Vocal mode, applied to the
+//! asset before the time map.
+//!
 //! Everything else here is offline (it allocates), deterministic (the same input gives the same
 //! bits on every platform: only IEEE `+ - * /`, `sqrt`, and the deterministic trigonometry of
 //! this crate are used) and cancellable: the `cancel` callback is polled about every
@@ -30,10 +34,13 @@
 mod beats;
 pub(crate) mod fft;
 mod map;
+pub mod psola;
 pub mod realtime;
 mod repitch;
 mod tonal;
 
+#[cfg(test)]
+mod psola_tests;
 #[cfg(test)]
 mod realtime_tests;
 #[cfg(test)]
