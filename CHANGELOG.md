@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Vocal mode in the audio clip editor: pitch and timing edits of a monophonic clip.** The audio clip editor's Vocal
+  mode (VOCAL in its toolbar, or 3) finds the notes of a voice, a bass or a lead on a worker, with a progress bar and
+  CANCEL in the footer, and draws them on a pitch grid (piano keys, a row per semitone, the song key's scale lit, the
+  waveform dimmed) as bars with their pitch curve, the original and the result. A click selects, Shift adds, a box
+  selects, Ctrl+A selects all. Dragging a note up or down moves the selected notes in whole semitones (in cents with
+  the alternate-tool key); dragging it sideways moves it in time through two warp markers. CORRECT
+  (`editor.vocal_correct`) brings the selected notes to the nearest semitone or, with SCALE (`editor.vocal_scale`),
+  to the song key's scale; FLATTEN (`editor.vocal_flatten`) straightens their drift by a percentage while keeping a
+  vibrato; RESET (`editor.vocal_reset`) removes the edits; `editor.audio_mode_vocal` (3) opens the mode. Each is one
+  undo step. The edits are saved on the clip as `pitch_edits`, pinned to the audio's own frames, an optional field an
+  older version drops (format still 45); a split and a join keep them. The render applies them with a TD-PSOLA shift
+  that keeps the formants before the warp, so bounces, Bounce in Place, Freeze and Export hear them and stay
+  bit-identical; the preview plays the clip without the edits until its buffer is ready. Comp mode stays disabled.
+  560 commands.
 - **Warped and transposed audio clips play at the right pitch while their stretch is still being prepared.** A warped
   clip is rendered into a buffer by a worker; until that buffer is ready, the clip used to play a resampled read, so a
   Beats or Tonal clip changed pitch with the tempo and a transposition was not heard at all, then jumped when the

@@ -603,3 +603,28 @@ which is its true sound. Reversed and streamed clips keep their behaviour (no in
 it.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## Z. Vocal pitch edits are pinned to source frames and rendered with TD-PSOLA
+
+**Question.** The Vocal mode of the audio clip editor moves the notes of a monophonic clip in pitch, flattens their
+drift and moves them in time. What is saved, and how is it rendered?
+
+**Options.** Saving: (1) the notes and their edits in clip time (ticks), (2) per-note edits in the asset's own frames,
+with the note analysis done again on open. Rendering: (a) the Tonal phase vocoder with a time-varying ratio, (b) a
+resample per note, (c) TD-PSOLA driven by the monophonic tracker's pitch.
+
+**Implications.** Edits in ticks move away from their audio whenever the tempo or a warp marker changes; edits in
+source frames stay on the note whatever the time map does, survive a split and a join by their span, and keep the file
+small (the analysis is not saved: it is quick and found again). A resample moves the formants with the pitch (a
+chipmunk voice); the phase vocoder keeps the length but smears the voice and moves the formants too. PSOLA overlap-adds
+one grain per period at the new spacing without resampling the grains, so the spectral envelope stays put; at a ratio
+of 1 the grains add back to the source exactly. It needs a pitch mark per period, which the tracker gives, and only
+suits one voice at a time. Applying it to the asset span before the time map lets the warp stretch run on the corrected
+audio (one more pass, no new combined engine) and keeps the bounce bit-identical.
+
+**Decision.** (2) and (c): `pitch_edits` on the audio clip, pinned to asset frames, an ignorable field of format 45;
+`atomik_dsp::stretch::psola` applies them to the span a warp job reads, then the warp runs. Each note glides in and out
+of its edit over 20 ms. A clip with edits is always rendered, through the 1:1 map when warp is off. Timing moves use
+warp markers, not a new kind of edit.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

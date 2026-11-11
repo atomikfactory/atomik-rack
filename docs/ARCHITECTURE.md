@@ -2332,6 +2332,24 @@ learns nothing new.
   it to the preview voice of the file browser (`preview_channel`, source rate of the asset, clip
   gain) from an `atomik-audition` thread that reads the engine's copy of the asset and waits when
   the ring is full, so the audio thread allocates nothing and offline renders never receive it.
+- **Vocal mode** ([audio_editor/vocal.rs](../crates/ui/src/audio_editor/vocal.rs),
+  [psola.rs](../crates/dsp/src/stretch/psola.rs),
+  [pitch_edit.rs](../crates/model/src/pitch_edit.rs)). Entering Vocal, opening a clip in it and
+  the SENS buttons emit `UiAction::AnalyseVocal`; `AppCore::analyse_vocal` reads the clip's span of
+  its file plus 40 ms on each side (at most 300 s, mixed to mono as the render mixes it) on a worker
+  (`atomik-vocal`, `Msg::Vocal`, progress and cancel through atomics, `CancelVocalAnalysis` stops
+  it) and runs `psola::vocal_notes`: the monophonic tracker cuts the notes, and each note gets its
+  5 ms pitch curve from `psola::note_pitch`, run on the note and its pad alone, so the render hears
+  the same curve and centre (the median of the voiced frames). Results are cached by asset, span and
+  sensitivity and never saved. The clip saves `pitch_edits` (`PitchEdit`: source span in asset
+  frames, shift in cents, drift percent, vibrato keep), replaced whole by `SongCommand::SetPitchEdits`
+  (merge ids make a drag one step); a split keeps each edit in the piece that plays its first frame
+  and a join keeps both lists. Edits that change something are part of the clip's `WarpJob`
+  (`pitch`, in its key), so a clip with edits is rendered even with warp off (the 1:1 map):
+  `render_warp` applies `psola::shift_notes` to the asset span first, then the time map. The view
+  draws the result curve with `psola::note_offsets`, the function the render uses. A time drag pins
+  two markers with `slice_edit::move_span`. The interim preview plays without the edits until the
+  buffer is ready.
 - **File.** Project format 24: an optional
   `"warp": {"mode", "bpm", "enabled"?, "transpose"?, "markers"?}` in the clip's `"audio"` object,
   omitted for the default. A version 23 file loads with no warp and refuses the field.
@@ -5149,7 +5167,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (555) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (560) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

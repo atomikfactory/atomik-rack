@@ -174,6 +174,37 @@ and a few tools. Nothing here changes how the song sounds.
 - **Saving.** The key, the key changes and the chords are saved only when set, as optional fields that an older
   version of the program drops with a warning (project format 45).
 
+## Vocal mode
+
+The audio clip editor (double click an audio clip, or F8) has a Vocal mode for a clip of one voice at a time: a
+singer, a bass, a lead. Press VOCAL in its toolbar, or 3.
+
+- **The notes.** The editor listens to the clip and finds its notes; the footer shows how far it is and CANCEL (or
+  Escape) stops it. This is not saved: it is done again when the clip opens, and quickly for a clip it has just seen.
+  SENS - and + find fewer or more notes. A clip with no clear pitch (drums, noise, a chord) says "No pitched notes
+  found in this clip".
+- **The grid.** The waveform becomes a grid of semitones with piano keys on the left, dimmed behind the notes. When
+  the song has a key, its scale is lit. Each note is a bar from its start to its end at its pitch, with the pitch
+  curve through it: the original faint, the result bright.
+- **Select.** Click a note; Shift+click adds or removes one; drag on the empty grid to draw a box. Ctrl+A selects all.
+- **Move the pitch.** Drag a note up or down: the selected notes move by whole semitones. Hold the alternate-tool
+  key (Alt, Ctrl on macOS) to move them freely, in cents. Escape during the drag puts them back.
+- **Move in time.** Drag a note sideways: two warp markers are pinned at its start and end and moved together, so
+  the note moves and the audio on both sides stretches. A clip without warp has it switched on at the song tempo.
+- **CORRECT** brings the centre of each selected note to the nearest semitone; with **SCALE** on and a song key, to
+  the nearest note of the scale. **FLATTEN** straightens the pitch drift of the selected notes by the amount beside
+  it (drag the number up or down, 100% makes a straight line); a vibrato is kept. **RESET** removes the edits of the
+  selected notes, or of every note when none is selected. Each is one undo step, and so is each drag.
+- **The footer** names the first selected note (E3, say) with its distance from the nearest semitone in cents, before
+  and after the edit, and its drift.
+- **The sound.** The edits are pinned to the audio, so they stay with their notes when the tempo or the warp markers
+  change, a split keeps each in the piece that holds the note's start, and a join keeps both. The clip is rendered
+  with them in the background (the clip shows CALC meanwhile and plays without the edits until it is done); the
+  bounce, Bounce in Place, Freeze and Export always hear them. The shift keeps the voice's character (its formants):
+  it works on one note at a time, so it suits one voice and not chords.
+- **Saving.** The edits are saved with the clip, as an optional field that an older version drops with a warning
+  (project format 45).
+
 ## Controllers
 
 Settings > Controllers > Set Up Controller... learns a hardware controller from the messages it sends: move each knob
