@@ -104,7 +104,7 @@ fn opening_shows_the_clip_and_keeps_the_mode_across_clips() {
     let (d, reg, mut v) = setup();
     assert!(v.is_present());
     assert_eq!(v.mode(), AudioMode::Overview);
-    v.set_mode(AudioMode::Vocal);
+    v.set_mode(AudioMode::Comp);
     assert_eq!(v.mode(), AudioMode::Overview, "a disabled mode is ignored");
     v.set_mode(AudioMode::Slice);
     v.open(ClipId(11));

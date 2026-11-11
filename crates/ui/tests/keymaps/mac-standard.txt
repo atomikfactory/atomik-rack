@@ -18,6 +18,7 @@ edit.undo | global | Cmd+Z
 editor.audio_add_marker | editor | I
 editor.audio_mode_overview | editor | 1
 editor.audio_mode_slice | editor | 2
+editor.audio_mode_vocal | editor | 3
 editor.chordify | editor | Shift+C
 editor.extend_next_note | editor | Shift+Right
 editor.extend_prev_note | editor | Shift+Left

@@ -26,7 +26,9 @@
 //!   Slice mode with warp off switches warp on at the song tempo at the clip start (one undo step,
 //!   like Quantize Audio); the first marker added to such a clip does both in one step. A reversed
 //!   clip cannot be warped and cannot be sliced.
-//! * **Vocal** and **Comp** are listed and disabled.
+//! * **Vocal** edits the pitch and timing of a monophonic clip (a voice, a bass, a lead): see the
+//!   Vocal mode section below.
+//! * **Comp** is listed and disabled.
 //!
 //! The mode is view state ([`AudioEditorView::mode`], [`AudioEditorView::set_mode`]); the app
 //! persists it. Opening another clip keeps it.
@@ -59,6 +61,33 @@
 //! * Left/Right (`editor.select_prev_note` / `next`) select the previous or next marker; Up and
 //!   Down open the previous or next audio clip of the song in the same mode. Esc closes.
 //!
+//! # Vocal mode
+//!
+//! * **Analysis.** Entering Vocal mode, opening a clip in it and the SENS buttons emit
+//!   [`UiAction::AnalyseVocal`]; the app finds the notes and their pitch curves on a worker (not
+//!   saved: done again on open) and answers with [`AudioEditorView::set_vocal_notes`]. The footer
+//!   shows the progress meanwhile ([`AudioEditorView::set_vocal_progress`]); Esc or CANCEL emit
+//!   [`UiAction::CancelVocalAnalysis`]. A clip without voiced notes says so in the footer.
+//! * **Grid.** The waveform's height becomes a pitch grid: piano keys on the left, a row per
+//!   semitone, the song key's scale lit when the song has a key, the waveform dimmed behind. Each
+//!   note is a rounded blob from its start to its end at its edited centre pitch, with its pitch
+//!   curve through it: the original dim, the result bright.
+//! * **Select.** A click selects a note, Shift adds or removes it, a drag on the empty grid draws
+//!   a rubber band. Ctrl+A (`edit.select_all`) selects every note.
+//! * **Pitch drag.** Dragging a note up or down moves the selected notes in whole semitones; with
+//!   the alternate-tool role held it moves them freely, in cents. The clip's `pitch_edits` change
+//!   through one `SetPitchEdits` merge group per gesture; Esc restores them.
+//! * **Time drag.** Dragging a note sideways moves it in time: warp markers are pinned at its
+//!   start and end and moved together ([`atomik_model::slice_edit::move_span`]), so the audio on
+//!   both sides stretches. A clip without warp is switched on at the song tempo in the same step.
+//! * **Toolbar.** CORRECT (`editor.vocal_correct`) brings each selected note's centre to the
+//!   nearest semitone, or to the nearest note of the song key's scale with SCALE
+//!   (`editor.vocal_scale`) on. FLATTEN (`editor.vocal_flatten`) sets the drift of the selected
+//!   notes to the percentage beside it (drag it up or down). RESET (`editor.vocal_reset`) removes
+//!   the edits of the selected notes, or of every note when none is. Each is one undo step.
+//! * **Inspector.** The footer names the first selected note, its offset from the nearest
+//!   semitone in cents before and after the edit, and its drift.
+//!
 //! The ctrl/cmd wheel zooms around the pointer, the wheel scrolls. Double-clicking the title
 //! renames the asset (`Command::RenameAsset`).
 
@@ -86,6 +115,8 @@ use vello::kurbo::{Point, Rect};
 use vello::peniko::Color;
 
 mod paint;
+mod vocal;
+mod vocal_paint;
 
 /// Height of the toolbar band.
 pub const TOOLBAR_HEIGHT: f64 = 32.0;
@@ -116,7 +147,7 @@ pub enum AudioMode {
     Overview,
     /// Edit the warp markers.
     Slice,
-    /// Listed, not available yet.
+    /// Edit the pitch and timing of the notes of a monophonic clip.
     Vocal,
     /// Listed, not available yet.
     Comp,
@@ -158,7 +189,10 @@ impl AudioMode {
 
     /// Whether the mode can be chosen.
     pub fn is_enabled(self) -> bool {
-        matches!(self, AudioMode::Overview | AudioMode::Slice)
+        matches!(
+            self,
+            AudioMode::Overview | AudioMode::Slice | AudioMode::Vocal
+        )
     }
 }
 
@@ -178,8 +212,16 @@ enum Hit {
     SensUp,
     AddAll,
     Speaker,
+    Correct,
+    Flatten,
+    FlattenValue,
+    Reset,
+    ScaleToggle,
+    Cancel,
     /// An interior marker, by its index in the framed list.
     Marker(usize),
+    /// A note of Vocal mode, by its index in the analysis.
+    Note(usize),
     Wave,
 }
 
@@ -213,6 +255,12 @@ enum Drag {
     Marker(Box<MarkerDrag>),
     /// The speaker is held on the waveform: the audition stops on the release.
     Audition,
+    /// A note of Vocal mode is moved.
+    Note(Box<vocal::NoteDrag>),
+    /// A rubber band selects notes.
+    Band(vocal::Band),
+    /// The flatten amount is dragged: the press's y and the amount then.
+    Flatten(f64, u8),
 }
 
 /// The clip being edited, as the document holds it.
@@ -242,6 +290,14 @@ struct Layout {
     sens_up: Rect,
     add_all: Rect,
     speaker: Rect,
+    correct: Rect,
+    flatten: Rect,
+    flatten_value: Rect,
+    reset: Rect,
+    scale: Rect,
+    cancel: Rect,
+    /// The piano keys left of the pitch grid (Vocal mode; empty otherwise).
+    keys: Rect,
     ruler: Rect,
     wave: Rect,
     footer: Rect,
@@ -291,6 +347,8 @@ pub struct AudioEditorView {
     next_merge: u64,
     focused: bool,
     repaint: bool,
+    /// Vocal mode.
+    vocal: vocal::Vocal,
 }
 
 impl AudioEditorView {
@@ -341,6 +399,7 @@ impl AudioEditorView {
             next_merge: MERGE_BASE,
             focused: false,
             repaint: true,
+            vocal: vocal::Vocal::default(),
         }
     }
 
@@ -357,6 +416,7 @@ impl AudioEditorView {
             self.rename = None;
             self.zoom = 1.0;
             self.scroll = 0.0;
+            self.clear_vocal();
         }
         self.clip = Some(clip);
         self.present = false;
@@ -377,7 +437,16 @@ impl AudioEditorView {
         self.selected = None;
         self.drag = Drag::None;
         self.rename = None;
+        self.clear_vocal();
         self.repaint = true;
+    }
+
+    /// Forgets the notes of the clip (another clip opens, or none).
+    fn clear_vocal(&mut self) {
+        self.vocal.notes.clear();
+        self.vocal.offsets.clear();
+        self.vocal.selected.clear();
+        self.vocal.analysis = vocal::Analysis::None;
     }
 
     /// The clip being edited.
@@ -639,14 +708,32 @@ impl AudioEditorView {
         let sens_up = Rect::new(sens_down.x1 + 36.0, y0, sens_down.x1 + 56.0, y1);
         let add_all = Rect::new(sens_up.x1 + 12.0, y0, sens_up.x1 + 76.0, y1);
         let speaker = Rect::new(b.x1 - 78.0, y0, b.x1 - 8.0, y1);
+        // Vocal mode's buttons take the place of Slice mode's.
+        let correct = Rect::new(stretch.x0, y0, stretch.x0 + 70.0, y1);
+        let flatten = Rect::new(correct.x1 + 4.0, y0, correct.x1 + 70.0, y1);
+        let flatten_value = Rect::new(flatten.x1 + 2.0, y0, flatten.x1 + 46.0, y1);
+        let reset = Rect::new(flatten_value.x1 + 12.0, y0, flatten_value.x1 + 68.0, y1);
+        let scale = Rect::new(reset.x1 + 4.0, y0, reset.x1 + 60.0, y1);
         let footer = rect(b.x0, b.y1 - FOOTER_HEIGHT, b.x1, b.y1);
+        let cancel = Rect::new(
+            footer.x1 - 70.0,
+            footer.y0 + 3.0,
+            footer.x1 - 8.0,
+            footer.y1 - 3.0,
+        );
+        let keys_w = if self.mode == AudioMode::Vocal {
+            vocal::KEYS_W
+        } else {
+            0.0
+        };
         let ruler = rect(
-            b.x0 + PAD,
+            b.x0 + PAD + keys_w,
             bar.y1 + 2.0,
             b.x1 - PAD,
             bar.y1 + 2.0 + RULER_HEIGHT,
         );
         let wave = rect(ruler.x0, ruler.y1, ruler.x1, footer.y0 - 2.0);
+        let keys = rect(b.x0 + PAD, wave.y0, wave.x0, wave.y1);
         Layout {
             top,
             close,
@@ -662,6 +749,13 @@ impl AudioEditorView {
             sens_up,
             add_all,
             speaker,
+            correct,
+            flatten,
+            flatten_value,
+            reset,
+            scale,
+            cancel,
+            keys,
             ruler,
             wave,
             footer,
@@ -750,6 +844,11 @@ impl AudioEditorView {
                 keys(Role::Constrain)
             ),
             AudioMode::Slice => String::new(),
+            AudioMode::Vocal if self.voicing() => format!(
+                "Drag a note up or down to move its pitch  ·  sideways to move it in time  ·  {} drags in cents  ·  Shift adds to the selection",
+                keys(Role::AlternateTool)
+            ),
+            AudioMode::Vocal => String::new(),
             _ => "Slice mode edits the warp markers of the clip".to_owned(),
         }
     }
@@ -804,6 +903,7 @@ impl AudioEditorView {
             .device(&track.device)
             .map_or(self.st.base.highlight, |d| self.st.base.accent_for(d));
         let bars = Bars::of(&doc.song);
+        self.vocal.key = doc.song.harmony.key_at(clip.start).map(|k| k.as_scale());
         if !self.present
             || self.info.as_ref() != Some(&info)
             || self.meta != meta
@@ -820,6 +920,8 @@ impl AudioEditorView {
             self.rate = doc.sample_rate;
             self.bars = bars;
             self.rebuild(&doc.song);
+            let dragging = !matches!(self.drag, Drag::None);
+            self.refresh_vocal(!dragging);
             self.repaint = true;
         }
     }
@@ -895,6 +997,31 @@ impl AudioEditorView {
                 }
             }
         }
+        if self.mode == AudioMode::Vocal {
+            for (r, h) in [
+                (l.correct, Hit::Correct),
+                (l.flatten, Hit::Flatten),
+                (l.flatten_value, Hit::FlattenValue),
+                (l.reset, Hit::Reset),
+                (l.scale, Hit::ScaleToggle),
+                (l.sens_down, Hit::SensDown),
+                (l.sens_up, Hit::SensUp),
+            ] {
+                if r.contains(pos) {
+                    return h;
+                }
+            }
+            if matches!(self.vocal.analysis, vocal::Analysis::Running(_)) && l.cancel.contains(pos)
+            {
+                return Hit::Cancel;
+            }
+            if l.wave.contains(pos)
+                && self.voicing()
+                && let Some(i) = self.note_at(pos)
+            {
+                return Hit::Note(i);
+            }
+        }
         if (l.wave.contains(pos) || l.ruler.contains(pos)) && self.slicing() {
             let nearest = self
                 .interior()
@@ -933,6 +1060,13 @@ impl AudioEditorView {
                         Help::new(l.modes[i], "Edit the warp markers of the clip")
                             .with_command("editor.audio_mode_slice"),
                     ),
+                    AudioMode::Vocal => Some(
+                        Help::new(
+                            l.modes[i],
+                            "Edit the pitch and timing of the notes of the clip",
+                        )
+                        .with_command("editor.audio_mode_vocal"),
+                    ),
                     _ => help(l.modes[i], "Not available yet"),
                 }
             }
@@ -959,8 +1093,37 @@ impl AudioEditorView {
                 )
                 .with_command("editor.audio_to_slicer"),
             ),
+            Hit::SensDown if self.mode == AudioMode::Vocal => help(l.sens_down, "Find fewer notes"),
+            Hit::SensUp if self.mode == AudioMode::Vocal => help(l.sens_up, "Find more notes"),
             Hit::SensDown => help(l.sens_down, "Find fewer transients"),
             Hit::SensUp => help(l.sens_up, "Find more transients"),
+            Hit::Correct => Some(
+                Help::new(
+                    l.correct,
+                    "Bring the selected notes to the nearest semitone, or the scale with SCALE on",
+                )
+                .with_command("editor.vocal_correct"),
+            ),
+            Hit::Flatten => Some(
+                Help::new(l.flatten, "Flatten the pitch drift of the selected notes")
+                    .with_command("editor.vocal_flatten"),
+            ),
+            Hit::FlattenValue => help(
+                l.flatten_value,
+                "How much Flatten straightens the notes: drag up or down",
+            ),
+            Hit::Reset => Some(
+                Help::new(
+                    l.reset,
+                    "Remove the edits of the selected notes, or of every note",
+                )
+                .with_command("editor.vocal_reset"),
+            ),
+            Hit::ScaleToggle => Some(
+                Help::new(l.scale, "Correct to the notes of the song key")
+                    .with_command("editor.vocal_scale"),
+            ),
+            Hit::Cancel => help(l.cancel, "Stop finding the notes"),
             Hit::AddAll => Some(
                 Help::new(l.add_all, "Put a marker on every detected transient")
                     .with_command("editor.audio_add_transients"),
@@ -972,7 +1135,7 @@ impl AudioEditorView {
                 )
                 .with_command("tool.speaker"),
             ),
-            Hit::Marker(_) | Hit::Wave | Hit::None => None,
+            Hit::Marker(_) | Hit::Note(_) | Hit::Wave | Hit::None => None,
         }
     }
 
@@ -997,7 +1160,7 @@ impl AudioEditorView {
                     f.drag(*pos);
                     self.repaint = true;
                 }
-                self.pointer_move(*pos, *modifiers, &mut out)
+                self.pointer_move(*pos, *modifiers, doc, &mut out)
             }
             UiEvent::PointerDown {
                 pos,
@@ -1080,7 +1243,35 @@ impl AudioEditorView {
             Hit::SensUp => self.step_sensitivity(true, out),
             Hit::AddAll => self.add_all_transients(doc, out),
             Hit::Speaker => self.speaker = !self.speaker,
-            Hit::Marker(_) | Hit::Wave if self.speaker => self.start_audition(pos, doc, out),
+            Hit::Correct => self.vocal_correct(out),
+            Hit::Flatten => self.vocal_flatten_selected(out),
+            Hit::FlattenValue => self.drag = Drag::Flatten(pos.y, self.vocal.flatten),
+            Hit::Reset => self.vocal_reset(out),
+            Hit::ScaleToggle => self.vocal.scale = !self.vocal.scale,
+            Hit::Cancel => {
+                self.vocal.analysis = vocal::Analysis::None;
+                out.push(UiAction::CancelVocalAnalysis);
+            }
+            Hit::Marker(_) | Hit::Note(_) | Hit::Wave if self.speaker => {
+                self.start_audition(pos, doc, out)
+            }
+            Hit::Note(i) => {
+                let free = self.alternate_held(modifiers);
+                self.press_note(i, pos, modifiers.shift, free);
+            }
+            Hit::Wave if self.mode == AudioMode::Vocal && self.voicing() => {
+                let base = if modifiers.shift {
+                    self.vocal.selected.clone()
+                } else {
+                    BTreeSet::new()
+                };
+                self.vocal.selected = base.clone();
+                self.drag = Drag::Band(vocal::Band {
+                    start: pos,
+                    now: pos,
+                    base,
+                });
+            }
             Hit::Marker(i) => {
                 self.selected = Some(i);
                 let Some(info) = &self.info else { return };
@@ -1110,7 +1301,13 @@ impl AudioEditorView {
         }
     }
 
-    fn pointer_move(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
+    fn pointer_move(
+        &mut self,
+        pos: Point,
+        modifiers: Modifiers,
+        doc: &RackDoc,
+        out: &mut Vec<UiAction>,
+    ) {
         self.pointer = Some(pos);
         if matches!(self.drag, Drag::None) {
             let h = self.hit(pos);
@@ -1121,12 +1318,35 @@ impl AudioEditorView {
             return;
         }
         self.repaint = true;
+        match &mut self.drag {
+            Drag::Band(b) => {
+                b.now = pos;
+                self.band_select();
+                return;
+            }
+            Drag::Flatten(y, orig) => {
+                let (y, orig) = (*y, *orig);
+                self.drag_flatten(orig, pos.y - y);
+                return;
+            }
+            Drag::Note(_) => {
+                let free = self.alternate_held(modifiers);
+                if let Drag::Note(d) = &mut self.drag {
+                    d.free |= free;
+                }
+                if let Some(cmd) = self.drag_note(pos, &doc.song) {
+                    out.push(UiAction::Command(cmd));
+                }
+                return;
+            }
+            _ => {}
+        }
         let Some(id) = self.clip else { return };
         let kind = self.move_kind(modifiers);
         let (rate, length) = (self.rate, self.length());
         let tick = match &self.drag {
             Drag::Marker(d) => self.tick_of(pos.x + d.grab).round() as i64,
-            Drag::None | Drag::Audition => return,
+            _ => return,
         };
         let Drag::Marker(d) = &mut self.drag else {
             return;
@@ -1161,6 +1381,14 @@ impl AudioEditorView {
 
     /// The way a marker drag moves with `modifiers` held: the constrain role carries the markers
     /// after it along, the alternate-tool role (or the Slide toggle) slides it along the audio.
+    fn alternate_held(&self, modifiers: Modifiers) -> bool {
+        self.roles
+            .is_active(Role::AlternateTool, modifiers, GestureClass::DragItem)
+            || self
+                .roles
+                .is_active(Role::AlternateTool, modifiers, GestureClass::Hold)
+    }
+
     fn move_kind(&self, modifiers: Modifiers) -> MoveKind {
         let held = |role| {
             self.roles
@@ -1183,10 +1411,15 @@ impl AudioEditorView {
             out.push(UiAction::StopAudition);
             return;
         }
-        if let Drag::Marker(d) = std::mem::replace(&mut self.drag, Drag::None)
-            && d.emitted
-        {
-            out.push(UiAction::EndMerge);
+        match std::mem::replace(&mut self.drag, Drag::None) {
+            Drag::Marker(d) if d.emitted => out.push(UiAction::EndMerge),
+            Drag::Note(d) if d.emitted => out.push(UiAction::EndMerge),
+            // A click on a note of a selection, without a move: that note alone.
+            Drag::Note(d) if d.axis.is_none() => {
+                self.vocal.selected.clear();
+                self.vocal.selected.insert(d.index);
+            }
+            _ => {}
         }
     }
 
@@ -1196,8 +1429,26 @@ impl AudioEditorView {
             out.push(UiAction::StopAudition);
             return;
         }
-        let Drag::Marker(d) = std::mem::replace(&mut self.drag, Drag::None) else {
-            return;
+        let d = match std::mem::replace(&mut self.drag, Drag::None) {
+            Drag::Marker(d) => d,
+            Drag::Note(d) => {
+                if d.emitted
+                    && let Some(cmd) = self.restore_note_drag(&d)
+                {
+                    out.push(UiAction::Command(cmd));
+                    out.push(UiAction::EndMerge);
+                }
+                return;
+            }
+            Drag::Band(b) => {
+                self.vocal.selected = b.base;
+                return;
+            }
+            Drag::Flatten(_, orig) => {
+                self.vocal.flatten = orig;
+                return;
+            }
+            Drag::None | Drag::Audition => return,
         };
         if d.emitted
             && let Some(id) = self.clip
@@ -1246,6 +1497,13 @@ impl AudioEditorView {
             Key::Escape => {
                 if !matches!(self.drag, Drag::None) {
                     self.cancel_drag(out);
+                } else if self.mode == AudioMode::Vocal
+                    && matches!(self.vocal.analysis, vocal::Analysis::Running(_))
+                {
+                    self.vocal.analysis = vocal::Analysis::None;
+                    out.push(UiAction::CancelVocalAnalysis);
+                } else if self.mode == AudioMode::Vocal && !self.vocal.selected.is_empty() {
+                    self.vocal.selected.clear();
                 } else if self.selected.is_some() {
                     self.selected = None;
                 } else {
@@ -1309,6 +1567,13 @@ impl AudioEditorView {
         self.mode = mode;
         self.drag = Drag::None;
         self.selected = None;
+        if mode == AudioMode::Vocal {
+            self.vocal.selected.clear();
+            if self.vocal.analysis == vocal::Analysis::None {
+                out.extend(self.analyse_action());
+            }
+            return;
+        }
         if mode != AudioMode::Slice {
             return;
         }
@@ -1413,7 +1678,11 @@ impl AudioEditorView {
         };
         if next != self.sensitivity {
             self.sensitivity = next;
-            out.extend(self.detect_action());
+            if self.mode == AudioMode::Vocal {
+                out.extend(self.analyse_action());
+            } else {
+                out.extend(self.detect_action());
+            }
         }
     }
 
@@ -1678,6 +1947,30 @@ impl AudioEditorView {
         match id {
             "editor.audio_mode_overview" => self.choose_mode(AudioMode::Overview, doc, &mut out),
             "editor.audio_mode_slice" => self.choose_mode(AudioMode::Slice, doc, &mut out),
+            "editor.audio_mode_vocal" => self.choose_mode(AudioMode::Vocal, doc, &mut out),
+            "editor.vocal_correct" | "editor.vocal_flatten" | "editor.vocal_reset"
+                if !self.voicing() =>
+            {
+                return CommandOutcome::Declined;
+            }
+            "editor.vocal_correct" | "editor.vocal_flatten" => {
+                self.status.clear();
+                if id == "editor.vocal_correct" {
+                    self.vocal_correct(&mut out);
+                } else {
+                    self.vocal_flatten_selected(&mut out);
+                }
+                if out.is_empty() && !self.status.is_empty() {
+                    return CommandOutcome::NotApplicable(self.status.clone());
+                }
+            }
+            "editor.vocal_reset" => self.vocal_reset(&mut out),
+            "editor.vocal_scale" if self.mode == AudioMode::Vocal => {
+                self.vocal.scale = !self.vocal.scale;
+            }
+            "edit.select_all" if self.voicing() => {
+                self.vocal.selected = (0..self.vocal.notes.len()).collect();
+            }
             "editor.audio_add_marker" => {
                 let Some(pos) = self.pointer.filter(|p| self.layout().wave.contains(*p)) else {
                     return CommandOutcome::Declined;

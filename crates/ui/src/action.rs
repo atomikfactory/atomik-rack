@@ -10,6 +10,9 @@ use std::path::PathBuf;
 ///
 /// The enum is `#[non_exhaustive]`: hosts match the variants they handle and ignore the rest
 /// with a wildcard arm, so later phases can add actions without breaking them.
+// Most actions are commands, which carry whole clips: boxing them would add an allocation to
+// nearly every action the views emit.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum UiAction {
@@ -453,6 +456,19 @@ pub enum UiAction {
         /// Detector sensitivity in percent.
         sensitivity: u8,
     },
+    /// Find the notes and pitch curves of the audio clip open in the audio clip editor (Vocal
+    /// mode opened, a clip opened in it, or the sensitivity changed): the app analyses the span of
+    /// the file the clip plays on a worker and gives the result back with
+    /// [`crate::AudioEditorView::set_vocal_notes`], its progress with
+    /// [`crate::AudioEditorView::set_vocal_progress`]. `sensitivity` is in percent (0..=100).
+    AnalyseVocal {
+        /// The clip.
+        clip: ClipId,
+        /// Note detector sensitivity in percent.
+        sensitivity: u8,
+    },
+    /// Stop the analysis [`UiAction::AnalyseVocal`] started (Esc or CANCEL in the editor).
+    CancelVocalAnalysis,
     /// The speaker tool is pressed: play the frames `start_frame..end_frame` of `asset` as they
     /// are in the file (at the file's own rate, no warp, fades or envelope), from the end down
     /// when `reverse`, at `gain_db`. Live only; a new press replaces the audition and

@@ -264,3 +264,103 @@ fn a_clip_that_is_not_open_or_not_audio_is_ignored() {
     assert!(c.audio_editor().transients().is_empty());
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// ------------------------------------------------------------------ vocal
+
+/// A sung-like take of 2 s: a flat A2 (about 30 cents low) from 0.25 s to 0.9 s and a C3 from
+/// 1.1 s to 1.8 s, a sawtooth of a few harmonics.
+fn core_with_voice() -> (AppCore<RecordingSink>, ClipId, PathBuf) {
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("atomik-app-vocal-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("voice.wav");
+    let mut data = vec![0.0f32; 96_000];
+    let mut phase = 0.0f64;
+    for (i, x) in data.iter_mut().enumerate() {
+        let key = match i {
+            12_000..43_200 => 56.7,
+            52_800..86_400 => 60.0,
+            _ => {
+                phase = 0.0;
+                continue;
+            }
+        };
+        let f0 = 440.0 * 2f64.powf((key - 69.0) / 12.0);
+        phase += f0 / 48_000.0;
+        let mut s = 0.0;
+        for h in 1..=6 {
+            s += (std::f64::consts::TAU * f64::from(h) * phase).sin() / f64::from(h);
+        }
+        *x = (0.3 * s) as f32;
+    }
+    write_wav_f32(&path, &AudioData::new(48_000, vec![data]).unwrap()).unwrap();
+    let mut c = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+    c.set_warp_imports(WarpImports::Off);
+    c.import_audio(vec![path], ImportTarget::NewTracks, 0);
+    c.wait_background();
+    let id = c.doc().song.tracks[0].lanes[0].clips[0].id;
+    (c, id, dir)
+}
+
+fn pitch_edits(c: &AppCore<RecordingSink>, id: ClipId) -> Vec<atomik_model::PitchEdit> {
+    match &c.doc().song.clip(id).unwrap().2.content {
+        ClipContent::Audio(a) => a.pitch_edits.clone(),
+        _ => panic!("audio"),
+    }
+}
+
+#[test]
+fn opening_in_vocal_mode_finds_the_notes_off_the_ui_thread() {
+    let (mut c, id, dir) = core_with_voice();
+    c.audio_editor_mut().set_mode(AudioMode::Vocal);
+    c.handle_action(UiAction::OpenAudioEditor(id));
+    assert!(!c.audio_editor().vocal_ready(), "not found yet");
+    c.wait_background();
+    let notes = c.audio_editor().vocal_notes();
+    let keys: Vec<u8> = notes.iter().map(|n| n.key).collect();
+    assert_eq!(keys, vec![57, 60], "{notes:?}");
+    let centre = notes[0].pitch.centre.unwrap();
+    assert!((centre - 56.7).abs() < 0.1, "{centre}");
+    // The same clip again comes from the cache, at once.
+    c.handle_action(UiAction::CloseAudioEditor);
+    c.handle_action(UiAction::OpenAudioEditor(id));
+    assert_eq!(c.audio_editor().vocal_notes().len(), 2);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn correct_flatten_and_reset_are_one_undo_step_each() {
+    let (mut c, id, dir) = core_with_voice();
+    c.audio_editor_mut().set_mode(AudioMode::Vocal);
+    c.handle_action(UiAction::OpenAudioEditor(id));
+    c.wait_background();
+    c.pane_command(Pane::AudioEditor, "edit.select_all", None)
+        .expect("the editor selects its notes");
+    assert_eq!(c.audio_editor().vocal_selection(), vec![0, 1]);
+    for (cmd, check) in [
+        ("editor.vocal_correct", 1usize),
+        ("editor.vocal_flatten", 2),
+        ("editor.vocal_reset", 3),
+    ] {
+        let depth = c.document().undo_depth();
+        c.pane_command(Pane::AudioEditor, cmd, None)
+            .expect("the editor runs it");
+        assert_eq!(c.document().undo_depth(), depth + 1, "{cmd}: one step");
+        let edits = pitch_edits(&c, id);
+        match check {
+            1 => {
+                // The C3 is in tune: it needs no edit.
+                assert_eq!(edits.len(), 1, "{edits:?}");
+                assert!((25..=35).contains(&edits[0].shift_cents), "{edits:?}");
+            }
+            2 => {
+                assert_eq!(edits.len(), 2, "{edits:?}");
+                assert!(edits.iter().all(|e| e.drift == 100), "{edits:?}");
+            }
+            _ => assert!(edits.is_empty()),
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}

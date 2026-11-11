@@ -15,11 +15,21 @@
 //! its file (the slices keep their positions in the file), with `loop.beats` set from the clip
 //! length at the song tempo. The device and its slices are **one undo step**. A clip without
 //! markers, a reversed clip and a clip whose file is missing are refused with a message.
+//!
+//! # Vocal mode
+//!
+//! `UiAction::AnalyseVocal` (Vocal mode entered, a clip opened in it, the sensitivity changed)
+//! finds the notes of the clip and their pitch curves ([`atomik_dsp::stretch::psola::vocal_notes`])
+//! on a worker (`atomik-vocal`): the span of the file the clip plays (at most
+//! [`MAX_ONSET_SECONDS`] of it), read with the pad the pitch curves need around it. The editor
+//! shows the progress ([`AppCore::poll_background`] passes it on) and `CancelVocalAnalysis` stops
+//! it. A result is cached by asset, span and sensitivity (a few at most) and never saved: it is
+//! found again when the clip opens. The edits themselves are the clip's saved `pitch_edits`.
 
 use super::AppCore;
 use super::audio_edit_ops::for_each_chunk;
 use super::slicer::LOOP_SLICER;
-use crate::audio_import::spawn_clip_onsets;
+use crate::audio_import::{VocalFound, spawn_clip_onsets, spawn_vocal};
 use crate::sink::EngineSink;
 use atomik_model::slice_edit;
 use atomik_model::{
@@ -28,6 +38,7 @@ use atomik_model::{
 };
 use atomik_ui::{AudioEditorView, AudioMode};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// The loop slicer's length parameter.
 const BEATS_PARAM: &str = "loop.beats";
@@ -90,6 +101,109 @@ impl OnsetState {
     }
 }
 
+/// How many Vocal mode analyses stay cached.
+const VOCAL_CACHE: usize = 4;
+
+/// What the UI thread and a Vocal mode worker share.
+#[derive(Debug, Default)]
+struct VocalShared {
+    /// Thousandths done.
+    done: AtomicU32,
+    /// Set to stop the worker.
+    cancel: AtomicBool,
+}
+
+/// A finished analysis: the notes of the frames `from..to` of an asset at one sensitivity.
+struct CachedVocal {
+    asset: String,
+    sensitivity: u8,
+    from: u64,
+    to: u64,
+    notes: Arc<VocalFound>,
+}
+
+/// The analysis the editor waits for.
+struct VocalRequest {
+    id: u64,
+    clip: ClipId,
+    asset: String,
+    sensitivity: u8,
+    from: u64,
+    to: u64,
+    shared: Arc<VocalShared>,
+}
+
+/// The Vocal mode analyses of the audio clip editor: a small cache and the one request in flight.
+#[derive(Default)]
+pub(super) struct VocalState {
+    cache: Vec<CachedVocal>,
+    latest: Option<VocalRequest>,
+    next: u64,
+}
+
+impl VocalState {
+    /// Stops the analysis in flight and forgets the cache (the project changed).
+    pub(super) fn reset(&mut self) {
+        if let Some(req) = self.latest.take() {
+            req.shared.cancel.store(true, Ordering::Relaxed);
+        }
+        self.cache.clear();
+    }
+}
+
+/// The analysis a worker runs: the mono mix of `lo..hi` of `asset`, then the notes between
+/// `from` and `to` (asset frames). `None` when `shared` says stop.
+fn analyse_vocal_span(
+    asset: &atomik_engine::SongAsset,
+    (lo, hi): (u64, u64),
+    (from, to): (u64, u64),
+    rate: u32,
+    sensitivity: u8,
+    shared: &VocalShared,
+) -> Option<VocalFound> {
+    let total = (hi - lo).max(1);
+    let mut mono: Vec<f32> = Vec::with_capacity((hi - lo) as usize);
+    let mut stopped = false;
+    for_each_chunk(asset, lo, hi, |planes| {
+        if stopped || shared.cancel.load(Ordering::Relaxed) {
+            stopped = true;
+            return;
+        }
+        // The two channels the render reads, mixed the way it mixes them.
+        let planes = &planes[..planes.len().min(2)];
+        mono.extend(atomik_dsp::stretch::psola::mono(planes));
+        let done = (mono.len() as u64 * 200 / total) as u32;
+        shared.done.store(done, Ordering::Relaxed);
+    });
+    if stopped {
+        return None;
+    }
+    let mut progress = |p: f32| {
+        shared
+            .done
+            .store(200 + (p * 800.0) as u32, Ordering::Relaxed);
+        !shared.cancel.load(Ordering::Relaxed)
+    };
+    let found = atomik_dsp::stretch::psola::vocal_notes(
+        &mono,
+        rate,
+        (from - lo, to - lo),
+        f32::from(sensitivity) / 100.0,
+        &mut progress,
+    )?;
+    Some(
+        found
+            .into_iter()
+            .map(|mut n| {
+                n.start += lo;
+                n.end += lo;
+                n.pitch = n.pitch.shifted(lo);
+                n
+            })
+            .collect(),
+    )
+}
+
 impl<S: EngineSink> AppCore<S> {
     /// The audio clip editor.
     pub fn audio_editor(&self) -> &AudioEditorView {
@@ -134,8 +248,160 @@ impl<S: EngineSink> AppCore<S> {
             self.arrangement.set_selected_clips(&[id]);
         }
         self.audio_editor.sync(self.document.doc(), &self.registry);
-        if self.audio_editor.mode() == AudioMode::Slice {
-            self.detect_transients(id, self.audio_editor.sensitivity());
+        match self.audio_editor.mode() {
+            AudioMode::Slice => self.detect_transients(id, self.audio_editor.sensitivity()),
+            AudioMode::Vocal => self.analyse_vocal(id, self.audio_editor.sensitivity()),
+            _ => {}
+        }
+    }
+
+    // ------------------------------------------------------------------ vocal
+
+    /// Finds the notes of the audio clip for the editor's Vocal mode (`UiAction::AnalyseVocal`):
+    /// a cached analysis of the clip's span is used at once, else a worker analyses it and the
+    /// result arrives with [`Self::apply_vocal`]. A request replaces (and stops) the one before.
+    pub fn analyse_vocal(&mut self, id: ClipId, sensitivity: u8) {
+        let sensitivity = sensitivity.min(100);
+        if let Some(req) = self.audio.vocal.latest.take() {
+            req.shared.cancel.store(true, Ordering::Relaxed);
+        }
+        let doc = self.doc();
+        let Some((_, clip)) = doc.song.clip_or_take(id) else {
+            return;
+        };
+        let ClipContent::Audio(a) = &clip.content else {
+            return;
+        };
+        let Some(asset) = self.audio.assets.get(&a.asset).cloned() else {
+            self.audio_editor.set_vocal_notes(id, Vec::new());
+            return;
+        };
+        // The render reads the asset at the document rate: so does the analysis.
+        let rate = doc.sample_rate;
+        let from = a.source_offset;
+        let end = source_at_tick(
+            &doc.song,
+            doc.sample_rate,
+            clip.start,
+            a,
+            clip.start + clip.length,
+        )
+        .round()
+        .max(0.0) as u64;
+        let end = end.min(asset.frames());
+        let to = end.min(from.saturating_add(MAX_ONSET_SECONDS * u64::from(rate)));
+        let hash = a.asset.clone();
+        if to <= from {
+            self.audio_editor.set_vocal_notes(id, Vec::new());
+            return;
+        }
+        let hit = self.audio.vocal.cache.iter().find(|c| {
+            c.asset == hash && c.sensitivity == sensitivity && c.from == from && c.to == to
+        });
+        if let Some(hit) = hit {
+            let notes = hit.notes.as_ref().clone();
+            self.audio_editor.set_vocal_notes(id, notes);
+            return;
+        }
+        let pad = u64::from(rate) * atomik_dsp::stretch::psola::PAD_MS / 1000;
+        let (lo, hi) = (from.saturating_sub(pad), (to + pad).min(asset.frames()));
+        let job = self.audio.vocal.next;
+        self.audio.vocal.next += 1;
+        let shared = Arc::new(VocalShared::default());
+        let worker = Arc::clone(&shared);
+        let work: Box<dyn FnOnce() -> Result<Option<VocalFound>, String> + Send> =
+            Box::new(move || {
+                Ok(analyse_vocal_span(
+                    &asset,
+                    (lo, hi),
+                    (from, to),
+                    rate,
+                    sensitivity,
+                    &worker,
+                ))
+            });
+        match spawn_vocal(self.audio.tx.clone(), self.audio.generation, job, work) {
+            Ok(()) => {
+                self.audio.pending += 1;
+                self.audio.vocal.latest = Some(VocalRequest {
+                    id: job,
+                    clip: id,
+                    asset: hash,
+                    sensitivity,
+                    from,
+                    to,
+                    shared,
+                });
+                self.audio_editor.set_vocal_progress(Some(0.0));
+                if end > to {
+                    self.report("Notes are looked for in the first 5 minutes of the clip");
+                }
+            }
+            Err(e) => self.reject(format!("vocal: cannot start the analysis: {e}")),
+        }
+    }
+
+    /// Stops the Vocal mode analysis in flight (`UiAction::CancelVocalAnalysis`).
+    pub fn cancel_vocal(&mut self) {
+        if let Some(req) = self.audio.vocal.latest.take() {
+            req.shared.cancel.store(true, Ordering::Relaxed);
+        }
+        self.audio_editor.set_vocal_progress(None);
+    }
+
+    /// Passes the progress of the analysis in flight to the editor; true when it changed.
+    pub(super) fn show_vocal_progress(&mut self) -> bool {
+        let Some(req) = &self.audio.vocal.latest else {
+            return false;
+        };
+        let p = req.shared.done.load(Ordering::Relaxed) as f32 / 1000.0;
+        let before = self.audio_editor.needs_repaint();
+        self.audio_editor.set_vocal_progress(Some(p));
+        !before && self.audio_editor.needs_repaint()
+    }
+
+    /// An analysis finished: it is cached and, when the editor still waits for it, shown.
+    pub(super) fn apply_vocal(&mut self, job: u64, result: Result<Option<VocalFound>, String>) {
+        let Some(req) = self.audio.vocal.latest.take() else {
+            return;
+        };
+        if req.id != job {
+            // A newer request replaced the one this result answers.
+            self.audio.vocal.latest = Some(req);
+            return;
+        }
+        let notes = match result {
+            Ok(Some(n)) => n,
+            Ok(None) => {
+                self.audio_editor.set_vocal_progress(None);
+                return;
+            }
+            Err(e) => {
+                self.audio_editor.set_vocal_progress(None);
+                return self.reject(format!("vocal: {e}"));
+            }
+        };
+        let notes = Arc::new(notes);
+        let cache = &mut self.audio.vocal.cache;
+        cache.retain(|c| {
+            !(c.asset == req.asset
+                && c.sensitivity == req.sensitivity
+                && c.from == req.from
+                && c.to == req.to)
+        });
+        if cache.len() >= VOCAL_CACHE {
+            cache.remove(0);
+        }
+        cache.push(CachedVocal {
+            asset: req.asset,
+            sensitivity: req.sensitivity,
+            from: req.from,
+            to: req.to,
+            notes: Arc::clone(&notes),
+        });
+        if self.audio_editor.clip() == Some(req.clip) {
+            self.audio_editor
+                .set_vocal_notes(req.clip, notes.as_ref().clone());
         }
     }
 
