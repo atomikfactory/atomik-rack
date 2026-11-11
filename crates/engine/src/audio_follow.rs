@@ -29,6 +29,7 @@
 //! allocates nothing: the state is a small array in the track's RT scratch.
 
 use crate::audio::{AudioRt, CompiledAudio, LaneData, render_region};
+use crate::audio_stretch::StretchBank;
 use atomik_core::{BATCH, Batch};
 
 /// Regions of one track that play at once while following.
@@ -45,17 +46,24 @@ pub(crate) struct FollowRt {
 
 /// Renders the stretch of `n` player frames at batch offset `off` whose ends on the song's own
 /// timeline are `u0` and `u1` into `rt.pb` (which holds zeros or earlier output: the regions
-/// add). `reseek` rebuilds which regions are underway (see the module docs).
+/// add). `reseek` rebuilds which regions are underway (see the module docs); `sr` is the sample
+/// rate (for the real-time stretchers of interim warps).
 pub(crate) fn render_segment(
     track: &CompiledAudio,
     rt: &mut AudioRt,
     (u0, u1): (f64, f64),
     n: usize,
     off: usize,
-    reseek: bool,
+    (reseek, sr): (bool, u32),
 ) {
     let data = &*track.data;
-    let AudioRt { pb, follow, .. } = rt;
+    let AudioRt {
+        pb,
+        follow,
+        stretch,
+        ..
+    } = rt;
+    stretch.begin(sr);
     let (u0, u1) = (u0.max(0.0), u1.max(0.0));
     if reseek {
         follow.active = [None; MAX_ACTIVE];
@@ -73,7 +81,7 @@ pub(crate) fn render_segment(
     for slot in &mut follow.active {
         if let Some((idx, played)) = slot {
             let r = &data.regions[*idx as usize];
-            *played += play(data, *idx as usize, *played, 0, n, off, pb);
+            *played += play(data, *idx as usize, *played, (0, n, off), pb, stretch);
             if *played >= r.frames {
                 *slot = None;
             }
@@ -94,7 +102,7 @@ pub(crate) fn render_segment(
         } else {
             0
         };
-        let played = play(data, idx, 0, k, n, off, pb);
+        let played = play(data, idx, 0, (k, n, off), pb, stretch);
         if played < r.frames {
             start(follow, idx, played);
         }
@@ -115,15 +123,14 @@ fn play(
     data: &LaneData,
     idx: usize,
     played: u64,
-    k: usize,
-    n: usize,
-    off: usize,
+    (k, n, off): (usize, usize, usize),
     pb: &mut [Batch; 2],
+    stretch: &mut StretchBank,
 ) -> u64 {
     let r = &data.regions[idx];
     let frames = ((n - k) as u64).min(r.frames.saturating_sub(played)) as usize;
     if frames > 0 && frames <= BATCH {
-        render_region(data, r, pb, played, frames, off + k, frames);
+        render_region(data, idx, pb, (played, frames, off + k, frames), stretch);
     }
     frames as u64
 }
@@ -164,7 +171,7 @@ mod tests {
         let mut out = Vec::new();
         for (k, u) in ends.iter().enumerate() {
             rt.pb = [[0.0; BATCH]; 2];
-            render_segment(t, &mut rt, *u, BATCH, 0, reseek_first && k == 0);
+            render_segment(t, &mut rt, *u, BATCH, 0, (reseek_first && k == 0, 48_000));
             out.extend_from_slice(&rt.pb[0]);
         }
         out

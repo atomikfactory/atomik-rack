@@ -835,7 +835,17 @@ fn render_audio_slot(t: &LaunchTrack, r: &mut LaunchRt, (a, b, off): (u64, u64, 
         let base = start + k * cycle;
         let q = end.min(base + cycle);
         let (la, lb) = ((p - base) as u64, (q - base) as u64);
-        memory_regions(data, &mut r.pb, la, lb, off + (p - a as i64) as usize, la);
+        // Slots carry no interim warps: an empty bank (no allocation) does.
+        let mut none = crate::audio_stretch::StretchBank::default();
+        memory_regions(
+            data,
+            &mut r.pb,
+            la,
+            lb,
+            off + (p - a as i64) as usize,
+            la,
+            &mut none,
+        );
         p = q;
     }
 }
