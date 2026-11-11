@@ -307,12 +307,17 @@ smoke_flatpak() {
   echo "== permissions"
   flatpak info --user --show-permissions "$id"
   echo "== programs in the sandbox"
-  for b in atomik atomik-render atomik-play atomik-plugin-scan atomik-plugin-host; do
+  # The same programs answer --version as in the archive check; the scanner and the plugin host take
+  # no --version (they are started by the app), so for them the file and its libraries are checked.
+  for b in atomik atomik-render atomik-play; do
     flatpak run --command="$b" "$id" --version || { echo "error: $b does not run in the sandbox" >&2; exit 1; }
+  done
+  for b in atomik-plugin-scan atomik-plugin-host; do
+    flatpak run --command=sh "$id" -c "test -x /app/bin/$b" || { echo "error: $b missing in the sandbox" >&2; exit 1; }
   done
   # The programs were built on the runner, not against the runtime: a library or a C library version
   # the runtime lacks shows here as "not found".
-  if flatpak run --command=sh "$id" -c 'ldd /app/bin/atomik' | tee "$work/ldd.txt" | grep -q "not found"; then
+  if flatpak run --command=sh "$id" -c 'for b in atomik atomik-render atomik-play atomik-plugin-scan atomik-plugin-host; do ldd /app/bin/$b; done' | tee "$work/ldd.txt" | grep -q "not found"; then
     cat "$work/ldd.txt"
     echo "error: the runtime lacks a library the program needs" >&2
     exit 1
