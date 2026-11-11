@@ -49,6 +49,19 @@ pub(super) fn audio_json(a: &AudioClipContent) -> String {
         }
         let _ = write!(extra, ", \"warp\": {{{warp}}}");
     }
+    if !a.pitch_edits.is_empty() {
+        let edits: Vec<String> = a
+            .pitch_edits
+            .iter()
+            .map(|e| {
+                format!(
+                    "[{}, {}, {}, {}, {}]",
+                    e.src_start, e.src_end, e.shift_cents, e.drift, e.vibrato_keep
+                )
+            })
+            .collect();
+        let _ = write!(extra, ", \"pitch_edits\": [{}]", edits.join(", "));
+    }
 
     format!(
         "{{\"asset\": {}, \"offset\": {}, \"gain_db\": {}, \"fade_in\": {}, \"fade_out\": {}, \"fade_curve\": \"{}\"{extra}}}",

@@ -353,7 +353,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0usize..2, 0usize..12).prop_map(|(t, s)| WfOp::Player(t, s)),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::NotesCable(a, b)),
         (
-            0u8..3,
+            0u8..4,
             0usize..12,
             proptest::collection::vec((1i64..4000, 1u64..200_000), 0..5)
         )
@@ -1064,6 +1064,26 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                         return None;
                     }
                     Command::Batch(commands)
+                }
+                2 => {
+                    // Pitch edits pinned to the asset: one per gap, a gap apart.
+                    let mut at = a.source_offset;
+                    let mut edits = Vec::new();
+                    for (dt, ds) in gaps {
+                        let start = at + *ds % 2000;
+                        let end = start + 480 + *ds % 5000;
+                        edits.push(atomik_model::PitchEdit {
+                            shift_cents: (*dt % 2400) as i32,
+                            drift: (*ds % 101) as u8,
+                            ..atomik_model::PitchEdit::new(start, end)
+                        });
+                        at = end;
+                    }
+                    sc(SongCommand::SetPitchEdits {
+                        id,
+                        edits,
+                        merge: None,
+                    })
                 }
                 _ => Command::RenameAsset {
                     asset: a.asset.clone(),

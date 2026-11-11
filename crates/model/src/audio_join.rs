@@ -226,6 +226,7 @@ pub(crate) fn join_audio(
                 .ok_or_else(|| bad("the joined gain envelope would have too many points"))?;
             acc.fade_out = b.fade_out;
             acc.warp.markers = joined_markers(song, rate, (&run, &acc), (next, b), delta_ticks)?;
+            acc.pitch_edits = crate::pitch_edit::join_pitch_edits(&acc.pitch_edits, &b.pitch_edits);
             end = next.end();
             run.length = end - run.start;
         } else {
@@ -239,6 +240,7 @@ pub(crate) fn join_audio(
             if !maps_agree(song, rate, (&run, &acc), (next, b), &acc.warp.markers) {
                 return Err(markers_differ(run.id, next.id));
             }
+            acc.pitch_edits = crate::pitch_edit::join_pitch_edits(&acc.pitch_edits, &b.pitch_edits);
         }
     }
     let joined = Clip {

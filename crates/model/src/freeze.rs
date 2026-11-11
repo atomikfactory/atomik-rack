@@ -555,6 +555,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | SongCommand::DuplicateClip { id, .. }
                 | SongCommand::SetAudioClip { id, .. }
                 | SongCommand::SetWarpMarkers { id, .. }
+                | SongCommand::SetPitchEdits { id, .. }
                 | SongCommand::StripSilence { id, .. } => clip_frozen(id),
                 SongCommand::SetClipGrid { clip, .. }
                 | SongCommand::SetClipControllers { clip, .. }

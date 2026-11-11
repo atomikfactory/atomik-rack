@@ -347,6 +347,7 @@ pub(crate) fn check_audio(doc: &RackDoc, a: &AudioClipContent) -> Result<(), Mod
         }
     }
     a.warp.validate().map_err(range)?;
+    crate::validate_pitch_edits(&a.pitch_edits, meta.frames, meta.sample_rate).map_err(range)?;
     check_envelope(&a.envelope)
 }
 
@@ -825,11 +826,33 @@ pub(crate) fn split_pair(doc: &RackDoc, c: &Clip, at: i64) -> Result<(Clip, Clip
         }
         let (right_envelope, left_envelope) = split_envelope(&a.envelope, left_frames);
         r.envelope = right_envelope;
+        // The pitch edits stay with the piece that plays their first frame, trimmed to it.
+        let min = doc
+            .assets
+            .get(&a.asset)
+            .map_or(1, |m| crate::min_edit_frames(m.sample_rate));
+        let left_offset = match &left.content {
+            ClipContent::Audio(l) => l.source_offset,
+            _ => a.source_offset,
+        };
+        let cut = if a.reverse {
+            left_offset
+        } else {
+            r.source_offset
+        };
+        let (below, from) = crate::pitch_edit::split_pitch_edits(&a.pitch_edits, cut, min);
+        let (left_edits, right_edits) = if a.reverse {
+            (from, below)
+        } else {
+            (below, from)
+        };
+        r.pitch_edits = right_edits;
         right.content = ClipContent::Audio(r);
         right.offset = 0;
         if let ClipContent::Audio(l) = &mut left.content {
             l.fade_out = 0;
             l.envelope = left_envelope;
+            l.pitch_edits = left_edits;
         }
     }
     check_geometry(right.start, right.length, right.offset, right.loop_length).map_err(range)?;
@@ -1677,6 +1700,7 @@ pub(crate) fn plan(
                 envelope: Vec::new(),
                 xfade: Some(FadeCurve::EqualPower),
                 warp: crate::warp::WarpSettings::default(),
+                pitch_edits: Vec::new(),
             };
             check_audio(doc, &content)?;
             check_audio_span(&content, audio_span_frames(doc, start, length, None))?;
@@ -1789,6 +1813,27 @@ pub(crate) fn plan(
             }
             let mut content = a.clone();
             content.warp.markers = markers;
+            check_audio(doc, &content)?;
+            Edit::Clip {
+                device,
+                lane,
+                old: Some(c.clone()),
+                new: Some(Clip {
+                    content: ClipContent::Audio(content),
+                    ..c.clone()
+                }),
+            }
+        }
+        SongCommand::SetPitchEdits { id, edits, .. } => {
+            let (device, lane, c) = find_clip(doc, id)?;
+            let ClipContent::Audio(a) = &c.content else {
+                return Err(bad(format!("clip {} is not an audio clip", id.0)));
+            };
+            if a.pitch_edits == edits {
+                return Err(bad("the clip already has those pitch edits"));
+            }
+            let mut content = a.clone();
+            content.pitch_edits = edits;
             check_audio(doc, &content)?;
             Edit::Clip {
                 device,

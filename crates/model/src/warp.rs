@@ -356,6 +356,9 @@ pub struct WarpJob {
     /// The clip plays backwards: the buffer is the warped span turned around, so it plays
     /// forward like any other.
     pub reverse: bool,
+    /// The clip's pitch edits that change something and overlap the span the map reads (asset
+    /// frames, see [`crate::pitch_edit`]): applied to the asset before the time map.
+    pub pitch: Vec<crate::PitchEdit>,
 }
 
 impl WarpJob {
@@ -378,6 +381,12 @@ impl WarpJob {
             eat(&a.to_bits().to_le_bytes());
             eat(&b.to_bits().to_le_bytes());
         }
+        for e in &self.pitch {
+            eat(&e.src_start.to_le_bytes());
+            eat(&e.src_end.to_le_bytes());
+            eat(&e.shift_cents.to_le_bytes());
+            eat(&[e.drift, u8::from(e.vibrato_keep)]);
+        }
         h
     }
 
@@ -396,7 +405,9 @@ impl WarpJob {
     }
 }
 
-/// The [`WarpJob`] of the audio clip `clip` (`None` when the clip is not warped).
+/// The [`WarpJob`] of the audio clip `clip` (`None` when the clip is not warped and has no pitch
+/// edit that changes something). A clip with pitch edits and warp off gets a job with the 1:1
+/// map, so its buffer is the asset with the edits applied.
 pub fn warp_job(
     song: &Song,
     sample_rate: u32,
@@ -404,7 +415,8 @@ pub fn warp_job(
     length: i64,
     a: &AudioClipContent,
 ) -> Option<WarpJob> {
-    if !a.warp.active() {
+    let edited = a.pitch_edits.iter().any(|e| !e.is_neutral());
+    if !a.warp.active() && !edited {
         return None;
     }
     let table = song.tempo_table();
@@ -465,6 +477,20 @@ pub fn warp_job(
     if knots.len() < 2 {
         return None;
     }
+    let (lo, hi) = knots
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), k| {
+            (l.min(k.1), h.max(k.1))
+        });
+    let pitch: Vec<crate::PitchEdit> = a
+        .pitch_edits
+        .iter()
+        .filter(|e| !e.is_neutral() && (e.src_end as f64) > lo && (e.src_start as f64) < hi)
+        .copied()
+        .collect();
+    if !a.warp.active() && pitch.is_empty() {
+        return None;
+    }
     Some(WarpJob {
         asset: a.asset.clone(),
         mode: a.warp.mode,
@@ -473,6 +499,7 @@ pub fn warp_job(
         frames,
         sample_rate,
         reverse: a.reverse,
+        pitch,
     })
 }
 

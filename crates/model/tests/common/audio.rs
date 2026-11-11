@@ -137,6 +137,7 @@ pub fn audio(n: u8) -> AudioClipContent {
         envelope: Vec::new(),
         xfade: Some(FadeCurve::EqualPower),
         warp: Default::default(),
+        pitch_edits: Vec::new(),
     }
 }
 
@@ -254,6 +255,7 @@ impl ClipSpec {
             envelope: Vec::new(),
             xfade: None,
             warp: Default::default(),
+            pitch_edits: Vec::new(),
         }
     }
 }

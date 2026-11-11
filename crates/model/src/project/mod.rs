@@ -455,7 +455,11 @@
 //! The song may also carry its harmony (see [`crate::harmony`]) in three optional fields, `"key"`,
 //! `"key_changes"` and `"chords"`, written only when set and ignorable (a reader that drops them opens the
 //! song without a key or a chord lane). Chords are sorted by tick and never overlap.
-//! Saving always writes version 45, with `"compat": 44` and the `"ignorable"` list (see [`schema`]): a reader of 44 opens the file and drops the launcher and the per-note expression, one warning each.
+//! An audio clip may also carry `"pitch_edits"` after its `"warp"` (see [`crate::pitch_edit`]): one
+//! `[src_start, src_end, cents, drift, vibrato_keep]` per edited note, in asset frames, sorted and
+//! disjoint. It is written only while the clip has some and it is ignorable: a reader that drops it
+//! plays the clip as it was recorded.
+//! Saving always writes version 45, with `"compat": 44` and the `"ignorable"` list (see [`schema`]): a reader of 44 opens the file and drops the launcher, the per-note expression and the pitch edits, one warning each.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,

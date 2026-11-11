@@ -686,6 +686,10 @@ pub(super) fn load_audio(
         None => WarpSettings::default(),
         Some(w) => load_warp(w, &path.field("warp"))?,
     };
+    let pitch_edits = match a.get("pitch_edits") {
+        None => Vec::new(),
+        Some(v) => load_pitch_edits(v, &path.field("pitch_edits"))?,
+    };
     Ok(AudioClipContent {
         asset: asset.to_owned(),
         source_offset,
@@ -698,7 +702,45 @@ pub(super) fn load_audio(
         envelope,
         xfade,
         warp,
+        pitch_edits,
     })
+}
+
+/// Reads and checks a clip's `"pitch_edits"`: `[src_start, src_end, cents, drift, vibrato_keep]`
+/// per edited note, sorted and disjoint (the asset is checked when the clip is used).
+fn load_pitch_edits(v: &Value, path: &JsonPath) -> Result<Vec<crate::PitchEdit>, ModelError> {
+    let items = array(v, path)?;
+    if items.len() > crate::MAX_PITCH_EDITS {
+        return Err(path.error(format!(
+            "{} pitch edits is above the {} allowed",
+            items.len(),
+            crate::MAX_PITCH_EDITS
+        )));
+    }
+    let mut out = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        let ip = path.index(i);
+        let t = tuple(
+            item,
+            &ip,
+            5,
+            "an edit [src_start, src_end, cents, drift, vibrato_keep]",
+        )?;
+        let cents = int(&t[2], &ip.index(2))?;
+        let drift = int(&t[3], &ip.index(3))?;
+        let Value::Bool(keep) = t[4] else {
+            return Err(ip.index(4).error("expected true or false"));
+        };
+        out.push(crate::PitchEdit {
+            src_start: uint(&t[0], &ip.index(0), MAX_AUDIO_FRAMES)?,
+            src_end: uint(&t[1], &ip.index(1), MAX_AUDIO_FRAMES)?,
+            shift_cents: i32::try_from(cents).unwrap_or(i32::MAX),
+            drift: u8::try_from(drift).unwrap_or(u8::MAX),
+            vibrato_keep: keep,
+        });
+    }
+    crate::pitch_edit::check_pitch_edit_list(&out).map_err(|e| path.error(e))?;
+    Ok(out)
 }
 
 /// Reads and validates a clip's `"warp"` object.
