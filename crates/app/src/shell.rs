@@ -7593,7 +7593,7 @@ impl<B: AudioBackend> Shell<B> {
                 && core.view().uncombine_reason(doc, core.registry()).is_none(),
             move_out: pane == Pane::Rack
                 && core.view().move_out_reason(doc, core.registry()).is_none(),
-            in_container: pane == Pane::Rack && core.view().scope_depth() > 0,
+            in_container: pane == Pane::Rack && core.view().move_out_listed(),
             columns: doc.columns,
             track_can_chase: core.arrangement().chase_menu().0,
             track_chase: core.arrangement().chase_menu().1,
