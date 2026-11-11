@@ -153,6 +153,20 @@ fn the_patch_name_shows_on_the_plate_and_changes_what_is_drawn() {
     assert!(!plain.iter().any(|t| t.starts_with("Warm")));
 }
 
+#[test]
+fn a_short_patch_name_is_drawn_whole() {
+    let d = one_device("atomik.stereo-delay").unwrap();
+    let reg = registry();
+    for name in ["Dusk Pad", "Warm Pad", "Bell"] {
+        let mut named = d.doc().clone();
+        named.devices[0].patch_name = name.into();
+        let mut v = plain_view(d.doc(), &reg);
+        v.sync(&named, &reg);
+        let shown = paint_text(&mut v, &named, &reg);
+        assert!(shown.iter().any(|t| t == name), "{name}: {shown:?}");
+    }
+}
+
 fn paint_text(
     v: &mut RackView,
     doc: &atomik_model::RackDoc,

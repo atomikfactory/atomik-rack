@@ -30,7 +30,8 @@
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas};
 use crate::event::{Key, PointerButton, UiEvent};
-use crate::paint::fit_label;
+use crate::i18n::tr;
+use crate::paint::{fit_label, fit_label_in_raw, measure};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::{Theme, mix};
 use crate::tooltip::Help;
@@ -402,6 +403,13 @@ impl DeliveryView {
                         "Set the master limiter's ceiling and the export report's target",
                     );
                 }
+                // A row says its whole verdict, whatever the row had room to draw.
+                for (i, row) in self.data.targets.rows.iter().take(ROWS).enumerate() {
+                    let r = self.row_rect(i);
+                    if r.contains(pos) {
+                        return Some(Help::new(r, format!("{}: {}", row.name, row.effect)));
+                    }
+                }
                 if self.list_rect().contains(pos) {
                     return help(
                         self.list_rect(),
@@ -659,10 +667,20 @@ impl DeliveryView {
             } else {
                 row.name.clone()
             };
-            let half = (r.width() - 24.0) * 0.5;
+            // The name keeps what it needs (up to 45 %) and the verdict gets the rest, both
+            // measured, so a long verdict is not cut while there is room for it.
+            let room = r.width() - 24.0;
+            let name = tr(&name);
+            let effect = tr(&row.effect);
+            let name_w = measure(c, &name, FONT, 400);
+            let effect_w = measure(c, &effect, FONT, 400);
+            let name_room = name_w.min((room * 0.45).max(room - effect_w - 12.0));
+            let effect_room = room - name_room - 12.0;
+            let name = fit_label_in_raw(c, &name, name_room, FONT);
+            let effect = fit_label_in_raw(c, &effect, effect_room, FONT);
             sp::label(
                 c,
-                &fit_label(&name, half, FONT),
+                &name,
                 r.x0 + 16.0,
                 r.y0 + 15.0,
                 FONT,
@@ -671,7 +689,7 @@ impl DeliveryView {
             );
             sp::label(
                 c,
-                &fit_label(&row.effect, half, FONT),
+                &effect,
                 r.x1 - 8.0,
                 r.y0 + 15.0,
                 FONT,

@@ -84,25 +84,30 @@ pub fn fit_label_raw(text: &str, width: f64, size: f32) -> String {
 /// [`estimate_width`] this follows the glyphs actually drawn, so CJK, Cyrillic and wide Latin
 /// text neither clips nor truncates early. A canvas without a text engine falls back to its own
 /// estimate.
-pub fn measure(c: &mut dyn Canvas, text: &str, size: f32, weight: u16) -> f64 {
+pub fn measure<C: Canvas + ?Sized>(c: &mut C, text: &str, size: f32, weight: u16) -> f64 {
     c.text_width(&TextRun::new(text, pt(0.0, 0.0), size, Color::BLACK).weight(weight))
 }
 
 /// Cuts `text` to fit `width` at `size`, measured on the canvas: the longest prefix that fits
 /// with a closing `.` (like [`fit_label`]); the text itself when it fits. At least one character
 /// is kept.
-pub fn fit_label_in(c: &mut dyn Canvas, text: &str, width: f64, size: f32) -> String {
+pub fn fit_label_in<C: Canvas + ?Sized>(c: &mut C, text: &str, width: f64, size: f32) -> String {
     fit_label_weight(c, text, width, size, 400)
 }
 
 /// [`fit_label_in`] for text that is shown as it is (a name the user typed).
-pub fn fit_label_in_raw(c: &mut dyn Canvas, text: &str, width: f64, size: f32) -> String {
+pub fn fit_label_in_raw<C: Canvas + ?Sized>(
+    c: &mut C,
+    text: &str,
+    width: f64,
+    size: f32,
+) -> String {
     fit_label_weight_raw(c, text, width, size, 400)
 }
 
 /// [`fit_label_in`] for text drawn at `weight`.
-pub fn fit_label_weight(
-    c: &mut dyn Canvas,
+pub fn fit_label_weight<C: Canvas + ?Sized>(
+    c: &mut C,
     text: &str,
     width: f64,
     size: f32,
@@ -112,8 +117,8 @@ pub fn fit_label_weight(
 }
 
 /// [`fit_label_weight`] for text that is shown as it is (a name the user typed).
-pub fn fit_label_weight_raw(
-    c: &mut dyn Canvas,
+pub fn fit_label_weight_raw<C: Canvas + ?Sized>(
+    c: &mut C,
     text: &str,
     width: f64,
     size: f32,
@@ -139,10 +144,35 @@ pub fn fit_label_weight_raw(
     format!("{}.", &text[..end])
 }
 
+/// Fits `text` to `width` by shrinking it first: the largest size from `size` down to `min_size`
+/// (in half steps) at which it fits whole, else the cut of [`fit_label_weight_raw`] at `min_size`.
+/// Returns the text to draw and its size. For a short readout (a choice name on a display) that
+/// is better cut than a smaller one.
+pub fn fit_label_shrink<C: Canvas + ?Sized>(
+    c: &mut C,
+    text: &str,
+    width: f64,
+    size: f32,
+    min_size: f32,
+    weight: u16,
+) -> (String, f32) {
+    let mut at = size;
+    while at > min_size {
+        if measure(c, text, at, weight) <= width {
+            return (text.to_string(), at);
+        }
+        at -= 0.5;
+    }
+    (
+        fit_label_weight_raw(c, text, width, min_size, weight),
+        min_size,
+    )
+}
+
 /// The end of `text` that fits `room` at `size` and `weight` (the text of a field that scrolls
 /// to its caret), measured on the canvas.
-pub fn tail_fit<'a>(
-    c: &mut dyn Canvas,
+pub fn tail_fit<'a, C: Canvas + ?Sized>(
+    c: &mut C,
     text: &'a str,
     room: f64,
     size: f32,
@@ -582,10 +612,11 @@ pub fn patch_strip(height: f64) -> PatchStrip {
     let (y0, y1) = (cy - 6.0, cy + 6.0);
     let x = PLATE_X.0;
     PatchStrip {
-        prev: Rect::new(x + 20.0, y0, x + 29.0, y1),
-        name: Rect::new(x + 30.0, y0, x + 54.0, y1),
-        next: Rect::new(x + 55.0, y0, x + 64.0, y1),
-        save: Rect::new(x + 66.0, y0, x + 77.0, y1),
+        // The arrows are narrow so that the name has room for a whole short patch name.
+        prev: Rect::new(x + 20.0, y0, x + 27.0, y1),
+        name: Rect::new(x + 28.0, y0, x + 61.0, y1),
+        next: Rect::new(x + 62.0, y0, x + 69.0, y1),
+        save: Rect::new(x + 70.0, y0, x + 79.0, y1),
     }
 }
 
@@ -624,9 +655,10 @@ fn patch_strip_paint<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelI
         .device
         .filter(|d| !d.patch_name.is_empty())
         .map_or("-", |d| d.patch_name.as_str());
+    let shown = fit_label_weight(c, label, strip.name.width() - 4.0, 6.0, 600);
     c.text(
         &TextRun::new(
-            fit_label(label, strip.name.width() - 4.0, 6.0),
+            shown,
             pt(strip.name.x0 + 3.0, strip.name.center().y + 2.2),
             6.0,
             if info.patch_browse {
@@ -1926,12 +1958,19 @@ pub fn control_labelled<C: Canvas + ?Sized>(
                 1.0,
                 with_alpha(theme.ink, 0.07),
             );
-            let text = fit_label(&format_value(p, value), lcd.width() - 14.0, 8.5);
+            let (text, text_size) = fit_label_shrink(
+                c,
+                &crate::i18n::tr(&format_value(p, value)),
+                lcd.width() - 14.0,
+                8.5,
+                6.5,
+                600,
+            );
             c.text(
                 &TextRun::new(
                     text,
                     pt(cx, lcd.y0 + 11.5),
-                    8.5,
+                    text_size,
                     mix(accent, Color::WHITE, 0.3),
                 )
                 .weight(600)
@@ -2371,5 +2410,25 @@ mod hairline_tests {
     fn at_scale_one_it_is_round_plus_half() {
         assert_eq!(snap_hairline(10.4, 1.0), 10.5);
         assert_eq!(snap_hairline(10.6, 1.0), 11.5);
+    }
+}
+
+#[cfg(test)]
+mod fit_tests {
+    use super::*;
+    use crate::display_list::DisplayList;
+
+    #[test]
+    fn a_readout_shrinks_before_it_is_cut() {
+        let mut c = DisplayList::new();
+        // 17 characters measure 17 * size * 0.58 on the test canvas.
+        let (text, size) = fit_label_shrink(&mut c, "four on the floor", 62.0, 8.5, 6.0, 600);
+        assert_eq!(text, "four on the floor");
+        assert!((6.0..8.5).contains(&size), "{size}");
+        let (cut, size) = fit_label_shrink(&mut c, "four on the floor", 30.0, 8.5, 6.0, 600);
+        assert_eq!(size, 6.0);
+        assert!(cut.ends_with('.') && cut.len() < "four on the floor".len());
+        let (same, size) = fit_label_shrink(&mut c, "Saw", 62.0, 8.5, 6.0, 600);
+        assert_eq!((same.as_str(), size), ("Saw", 8.5));
     }
 }
