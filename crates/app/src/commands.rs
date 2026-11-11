@@ -2301,8 +2301,6 @@ pub struct MenuState {
     pub sequencer_only: bool,
     /// An editor (piano roll, sample, step, slice, ...) is open.
     pub editor: bool,
-    /// Audio files of the project are missing (File > Relink Missing Audio is available).
-    pub missing_audio: bool,
     /// A project archive is being written or unpacked (File > Cancel Project Archive is
     /// available).
     pub archive_busy: bool,
@@ -3009,11 +3007,9 @@ fn menus_in_english(
                 MenuEntry::Submenu(Submenu {
                     label: "Project Files",
                     entries: vec![
-                        enabled(
-                            "Relink Missing Audio\u{2026}",
-                            AppCommand::RelinkAudio,
-                            state.missing_audio,
-                        ),
+                        // Always available: the command looks at the files again and says so
+                        // when nothing is missing (a greyed item could not explain itself).
+                        item("Relink Missing Audio\u{2026}", AppCommand::RelinkAudio),
                         item("Collect Files\u{2026}", AppCommand::CollectFiles),
                         item("Preview Collect Files", AppCommand::CollectPreview),
                         enabled(
@@ -4717,7 +4713,6 @@ mod tests {
             video_overlay: true,
             sequencer_only: false,
             editor: false,
-            missing_audio: false,
             archive_busy: false,
             video_busy: false,
             video_clip: false,
@@ -5877,7 +5872,6 @@ mod tests {
                 video_overlay: true,
                 sequencer_only: false,
                 editor: false,
-                missing_audio: true,
                 archive_busy: false,
                 video_busy: false,
                 video_clip: false,

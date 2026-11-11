@@ -1365,6 +1365,8 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Opens the relink panel, or says there is nothing to relink.
     fn open_relink(&mut self) {
+        // Files that went missing while the song is open count too.
+        self.core.rescan_missing_assets();
         if self.core.missing_assets().is_empty() {
             self.notify("no missing audio files".to_owned());
             return;
@@ -2460,6 +2462,8 @@ impl<B: AudioBackend> Shell<B> {
         view.set_bounds(self.plugin_modal_rect());
         if list {
             view.focus_list();
+        } else {
+            view.set_save_only();
         }
         self.versions = Some(view);
         self.repaint = true;
@@ -2603,6 +2607,15 @@ impl<B: AudioBackend> Shell<B> {
         match action {
             VersionsAction::Close => self.versions = None,
             VersionsAction::Save(name) => match self.core.save_version(&name) {
+                Ok(_)
+                    if self
+                        .versions
+                        .as_ref()
+                        .is_some_and(VersionsView::is_save_only) =>
+                {
+                    // File > Save Version names and keeps, nothing more: the toast says so.
+                    self.versions = None;
+                }
                 Ok(_) => self.refresh_versions(true),
                 Err(e) => self.notify(e.to_string()),
             },
@@ -4472,7 +4485,6 @@ impl<B: AudioBackend> Shell<B> {
             sequencer_only: self.in_sequencer_only(),
             editor: !self.lower_is_console()
                 && !matches!(self.lower_pane(), Pane::Arrangement | Pane::Console),
-            missing_audio: !self.core.missing_assets().is_empty(),
             archive_busy: self.core.archive_busy(),
             video_busy: self.core.video_busy(),
             video_clip: self.core.video_clip().is_some(),
@@ -8332,6 +8344,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::ResetDefaultSong => {
                 self.workflow.default_song = None;
+                self.core.remove_default_song();
                 self.save_workflow();
                 self.notify("File > New opens the starter project again".to_owned());
                 Vec::new()

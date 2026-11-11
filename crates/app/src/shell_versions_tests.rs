@@ -168,16 +168,43 @@ fn saving_a_version_from_the_panel_keeps_it_named_and_leaves_the_song_unsaved() 
     s.execute(AppCommand::SaveVersion);
     type_text(&mut s, "Idea A");
     key(&mut s, Key::Enter);
-    assert!(s.versions_open(), "the panel stays to show the new version");
-    let v = s.versions_view().unwrap();
-    assert_eq!(v.items().len(), 2);
-    assert_eq!(v.items()[0].name, "Idea A");
-    assert!(!v.items()[0].automatic);
-    assert_eq!(v.name(), "", "the name is cleared");
+    assert!(
+        !s.versions_open(),
+        "Save Version names and keeps, then closes"
+    );
+    let rows = s.core().versions().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].name, "Idea A");
+    assert!(!rows[0].automatic);
     assert!(s.core().is_dirty());
-    // The date is shown to the minute (UTC).
+    // Browsing is the other command: the panel stays open to show versions, and the date is
+    // shown to the minute (UTC).
+    s.execute(AppCommand::Versions);
+    assert!(!s.versions_view().unwrap().is_save_only());
     let when = &s.versions_view().unwrap().items()[0].when;
     assert_eq!(when.len(), "2026-11-06 12:34".len(), "{when}");
+}
+
+#[test]
+fn save_version_is_a_naming_prompt_and_versions_is_the_browser() {
+    let t = Tmp::new("distinct");
+    let mut s = saved(&t);
+    s.execute(AppCommand::SaveVersion);
+    assert!(s.versions_view().unwrap().is_save_only());
+    key(&mut s, Key::Escape);
+    s.execute(AppCommand::Versions);
+    assert!(!s.versions_view().unwrap().is_save_only());
+}
+
+#[test]
+fn saving_with_an_empty_name_gives_a_default_name() {
+    let t = Tmp::new("emptysave");
+    let mut s = saved(&t);
+    s.execute(AppCommand::SaveVersion);
+    key(&mut s, Key::Enter);
+    let rows = s.core().versions().unwrap();
+    assert_eq!(rows[0].name, "Version 1");
+    assert!(!rows[0].automatic);
 }
 
 #[test]

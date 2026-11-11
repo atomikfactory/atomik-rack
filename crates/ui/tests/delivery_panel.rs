@@ -372,3 +372,20 @@ fn the_panel_stays_inside_a_small_window_and_its_buttons_do_not_overlap() {
         assert!(v.list_rect().y1 <= p.y1);
     }
 }
+
+#[test]
+fn a_long_verdict_is_drawn_whole_while_the_row_has_room_for_it() {
+    let verdict = "turned up 6.5 dB, 2.0 dB past the ceiling, into its limiter";
+    let mut d = data(DeliveryPage::Targets);
+    d.targets.rows[0].effect = verdict.into();
+    let mut v = DeliveryView::new(Theme::dark());
+    v.set_bounds(BOUNDS);
+    v.set_data(d);
+    let t = texts(&v);
+    assert!(t.iter().any(|s| s == verdict), "{t:?}");
+    let help = v.help_at(v.row_rect(0).center()).expect("a tooltip");
+    assert!(
+        help.text.contains(verdict),
+        "the tooltip has the whole verdict"
+    );
+}

@@ -130,6 +130,8 @@ pub struct VersionsView {
     scroll: usize,
     name: TextField,
     focus: Focus,
+    /// Opened by File > Save Version: titled for naming, and closed once the version is kept.
+    save_only: bool,
     dragging_name: bool,
     hover: Option<Point>,
     repaint: bool,
@@ -157,6 +159,7 @@ impl VersionsView {
             scroll: 0,
             name: TextField::new("", MAX_NAME_CHARS, false),
             focus: Focus::Name,
+            save_only: false,
             dragging_name: false,
             hover: None,
             repaint: true,
@@ -271,6 +274,19 @@ impl VersionsView {
             r.scroll = to(r.scroll, max).min(max);
             self.repaint = true;
         }
+    }
+
+    /// Makes this the File > Save Version prompt: titled for naming, with the keys on the name.
+    /// The app closes it once the version is kept.
+    pub fn set_save_only(&mut self) {
+        self.save_only = true;
+        self.focus = Focus::Name;
+        self.repaint = true;
+    }
+
+    /// Whether the panel was opened to name and keep a version (not to browse them).
+    pub fn is_save_only(&self) -> bool {
+        self.save_only
     }
 
     /// Gives the list the keys (File > Versions opens the panel this way).
@@ -743,7 +759,11 @@ impl VersionsView {
         sp::line(c, p.x1 - 0.5, p.y0, p.x1 - 0.5, p.y1, st.separator);
         sp::label(
             c,
-            "VERSIONS",
+            if self.save_only {
+                "SAVE VERSION"
+            } else {
+                "VERSIONS"
+            },
             p.x0 + PAD,
             p.y0 + 22.0,
             12.0,
@@ -804,7 +824,12 @@ impl VersionsView {
             };
             let mark_w = if mark.is_empty() { 0.0 } else { 96.0 };
             let (shown, color) = if v.name.is_empty() {
-                ("Saved automatically", t.text_muted)
+                let shown = if v.automatic {
+                    "Saved automatically"
+                } else {
+                    "Unnamed version"
+                };
+                (shown, t.text_muted)
             } else {
                 (v.name.as_str(), t.text)
             };

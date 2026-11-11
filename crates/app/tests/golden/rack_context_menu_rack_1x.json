@@ -6,7 +6,7 @@
 {"text":"Ctrl+V","at":[1086.00,1193.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"fill":{"rect":[910.00,1205.00,1090.00,1206.00]},"brush":"#ffffff1c"},
 {"text":"Create","at":[932.00,1226.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"▸","at":[1086.00,1226.50],"size":12.00,"weight":400,"align":"end","color":"#ece8e1ff"},
+{"fill":{"path":"M1079.90 1218.00 L1079.90 1226.00 L1085.50 1222.00 Z"},"brush":"#ece8e1ff"},
 {"fill":{"rect":[910.00,1238.00,1090.00,1239.00]},"brush":"#ffffff1c"},
 {"text":"Add Column","at":[932.00,1259.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Remove Column","at":[932.00,1283.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},

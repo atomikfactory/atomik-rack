@@ -858,7 +858,19 @@ fn resonance_overlay<C: Canvas + ?Sized>(
 
 // ------------------------------------------------------------------ distortion
 
-const CURVE_NAMES: [&str; 5] = ["SOFT CLIP", "HARD CLIP", "TUBE", "FOLDBACK", "BITCRUSH"];
+/// The plot titles, one per `curve` choice of the distortion device.
+const CURVE_NAMES: [&str; 10] = [
+    "SOFT CLIP",
+    "HARD CLIP",
+    "TUBE",
+    "FOLDBACK",
+    "BITCRUSH",
+    "TAPE",
+    "FUZZ",
+    "MODULATE",
+    "WARP",
+    "SCREAM",
+];
 
 fn distortion<C: Canvas + ?Sized>(
     c: &mut C,
@@ -869,7 +881,10 @@ fn distortion<C: Canvas + ?Sized>(
 ) {
     let r = fx.plot;
     lcd(c, theme, r);
-    let curve = p.get("curve").round().clamp(0.0, 4.0) as usize;
+    let curve = p
+        .get("curve")
+        .round()
+        .clamp(0.0, (CURVE_NAMES.len() - 1) as f32) as usize;
     let (drive, bias, bits) = (p.get("drive"), p.get("bias"), p.get("crush.bits"));
     let at = |x: f32, y: f32| {
         pt(

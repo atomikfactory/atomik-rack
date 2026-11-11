@@ -111,9 +111,21 @@ impl<S: EngineSink> AppCore<S> {
         self.settle_save();
         let (text, assets) = self.snapshot_text()?;
         let mut store = VersionStore::for_project(&file)?;
+        // A named version always has a name: without one it is "Version N" (N counts the named
+        // versions), so it is never mistaken for an automatic one.
+        let name = if name.chars().all(|c| c.is_control() || c.is_whitespace()) {
+            let named = store
+                .entries()
+                .iter()
+                .filter(|v| v.kind == VersionKind::Named)
+                .count();
+            format!("Version {}", named + 1)
+        } else {
+            name.to_owned()
+        };
         let id = store.add(
             VersionKind::Named,
-            name,
+            &name,
             &text,
             &assets,
             crate::logging::unix_seconds(),

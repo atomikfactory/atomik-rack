@@ -7654,7 +7654,7 @@ impl ArrangementView {
                         );
                         let p = self.param_of(*track, *lane);
                         let name_w = LANE_NAME_WIDTH - (x - hr.x0);
-                        let name = fit_label(p.name, name_w, 10.0);
+                        let name = crate::paint::fit_label_in(c, p.name, name_w, 10.0);
                         sp::label(c, &name, x + 26.0, hr.y0 + 21.0, 10.0, t.text, Align::Start);
                         let range = format!(
                             "{} – {}",
@@ -7865,15 +7865,8 @@ impl ArrangementView {
             // The first lane's param and controls share the header's second line.
             let p = self.param_of(track, 0);
             let x = hr.x0 + 56.0 + self.track_indent(track);
-            sp::label(
-                c,
-                &fit_label(p.name, 100.0 - (x - hr.x0) - 4.0, 9.0),
-                x,
-                hr.y0 + 44.0,
-                9.0,
-                t.text_muted,
-                Align::Start,
-            );
+            let name = crate::paint::fit_label_in(c, p.name, AUTOMATION_NAME_ROOM, 9.0);
+            sp::label(c, &name, x, hr.y0 + 44.0, 9.0, t.text_muted, Align::Start);
             let ar = self.track_button_rect(hr, track, TrackButton::AddLane);
             sp::button(c, st, ar, "+", None, hovered(TrackButton::AddLane));
             self.paint_lane_buttons(c, hr, track, 0);
@@ -8022,12 +8015,21 @@ impl ArrangementView {
                     t.focus
                 }),
             );
+            // Measured: a font whose capitals are wide shrinks the label instead of clipping it.
+            let (label, size) = crate::paint::fit_label_shrink(
+                c,
+                &crate::i18n::tr(tool.label()),
+                tr.width() - 2.0,
+                7.5,
+                6.0,
+                400,
+            );
             sp::label(
                 c,
-                tool.label(),
+                &label,
                 tr.center().x,
                 tr.center().y + 3.0,
-                7.5,
+                size,
                 if active { t.highlight } else { t.text_muted },
                 Align::Center,
             );
@@ -8175,6 +8177,12 @@ fn value_range(r: Rect) -> (f64, f64) {
 
 /// Room for the name of an automation lane in its header, left of the write controls.
 const LANE_NAME_WIDTH: f64 = 86.0;
+/// The room of the parameter name on an automation track's second header line: from its start
+/// (56 px after the indent) to the lane picker, which moves with the indent too, so the room
+/// does not shrink in a folder.
+const AUTOMATION_NAME_ROOM: f64 = 104.0 - 56.0 - 3.0;
+// "Feedback" at 9 px (0.58 em a character, the widest estimate) fits, whatever the indent.
+const _: () = assert!(AUTOMATION_NAME_ROOM >= 8.0 * 9.0 * 0.58);
 /// The most a compact header (one line) moves its M, S and R buttons for the indent: the last
 /// one ends 4 px inside the track list.
 const COMPACT_SHIFT: f64 = 24.0;
