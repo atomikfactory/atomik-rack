@@ -45,7 +45,7 @@ use atomik_engine::{
     AssetId, DeviceInstanceId, EngineOptions, HotEdit, Knot, LaunchAudioInput, LaunchSlotInput,
     LaunchTrackInput, OfflineJob, SongAsset, SongAudioRegion, SongAudioTrack, SongAutomation,
     SongController, SongControllerKind, SongCurve, SongExprPoint, SongExpression, SongFadeCurve,
-    SongInput, SongNote, SongPoint, SongSnapshot, SongTempo, SongTrack, TimedEdit,
+    SongInput, SongNote, SongPoint, SongSnapshot, SongTempo, SongTrack, SongWarpMode, TimedEdit,
     TransportCommand, WorkerConfig, compile_song, new_engine_with_options,
 };
 use atomik_model::console::{SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM, VCA_SOLO_PARAM};
@@ -306,6 +306,14 @@ fn entry_input(
     };
     let desc = registry.get(&type_id)?.descriptor;
     Some((id_of(&flat)?, notes_input(desc)?))
+}
+
+fn song_warp_mode(mode: atomik_model::WarpMode) -> SongWarpMode {
+    match mode {
+        atomik_model::WarpMode::Repitch => SongWarpMode::Repitch,
+        atomik_model::WarpMode::Beats => SongWarpMode::Beats,
+        atomik_model::WarpMode::Tonal => SongWarpMode::Tonal,
+    }
 }
 
 fn song_fade_curve(curve: FadeCurve) -> SongFadeCurve {
@@ -614,6 +622,7 @@ fn song_input_inner(
                         .as_ref()
                         .and_then(|job| warps.get(&job.key()).map(|b| (job.key(), b)));
                     let mut warp = None;
+                    let (mut warp_mode, mut warp_cents) = (SongWarpMode::Repitch, 0);
                     let (key, asset, source_offset, reverse) = match rendered {
                         Some((k, buffer)) => (crate::warp::pool_key(k), buffer, r.clip_pos, false),
                         None => {
@@ -631,6 +640,9 @@ fn song_input_inner(
                                         warp_keys.len() - 1
                                     });
                                 warp = Some(u32::try_from(at).unwrap_or(u32::MAX));
+                                // The interim read keeps the pitch the buffer will have.
+                                warp_mode = song_warp_mode(job.mode);
+                                warp_cents = job.transpose_cents;
                             }
                             (key.clone(), asset, r.source_offset, r.reverse)
                         }
@@ -669,6 +681,8 @@ fn song_input_inner(
                         x_out: r.x_out,
                         x_curve: song_fade_curve(r.x_curve),
                         warp,
+                        warp_mode,
+                        warp_cents,
                     })
                 })
                 .collect();
@@ -1932,6 +1946,8 @@ fn audio_launch_plan(
                         x_out: r.x_out,
                         x_curve: song_fade_curve(r.x_curve),
                         warp: None,
+                        warp_mode: SongWarpMode::Repitch,
+                        warp_cents: 0,
                     })
                 })
                 .collect();
