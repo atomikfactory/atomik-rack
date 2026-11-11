@@ -562,3 +562,70 @@ fn a_new_project_forgets_the_clip() {
     c.delivery_open(DeliveryPage::Peaks);
     assert!(c.delivery_data().peaks.clip.is_empty());
 }
+
+/// The two levels a preview line gives: "the highest goes from A to B dBFS".
+fn promised(preview: &str) -> Option<(f32, f32)> {
+    let rest = preview.split("goes from ").nth(1)?;
+    let mut numbers = rest
+        .split_whitespace()
+        .filter_map(|w| w.parse::<f32>().ok());
+    Some((numbers.next()?, numbers.next()?))
+}
+
+#[test]
+fn the_preview_on_the_shipped_audio_demo_loop_is_what_apply_all_gives() {
+    let file =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/projects/audio-demo.atomik");
+    let mut c = core();
+    c.open(&file).unwrap();
+    c.wait_background();
+    let id = c
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .flat_map(|t| t.lanes.iter().flat_map(|l| l.clips.iter()))
+        .find(|c| matches!(c.content, ClipContent::Audio(_)))
+        .map(|c| c.id)
+        .unwrap();
+    c.arrangement_mut().set_selected_clips(&[id]);
+    c.delivery_open(DeliveryPage::Peaks);
+    c.surgeon_scan();
+    let before = c.delivery_data().peaks;
+    assert!(!before.rows.is_empty(), "{before:?}");
+    eprintln!("{} | {}", before.preview, before.message);
+    let top_before = before.rows[0].db;
+    let (from, to) = promised(&before.preview).expect(&before.preview);
+    assert!((from - top_before).abs() < 0.01, "{}", before.preview);
+    if before.can_apply {
+        let depth = c.document.undo_depth();
+        c.surgeon_apply_all();
+        assert_eq!(c.document.undo_depth(), depth + 1);
+        let after = c.delivery_data().peaks;
+        // The clip read again plays what the preview promised.
+        assert!(
+            (after.rows[0].db - to).abs() < 0.05,
+            "promised {to}, plays {} ({})",
+            after.rows[0].db,
+            before.preview
+        );
+    } else {
+        // The loop's peaks are round: no dip eight frames wide lowers them, and the page says
+        // so (no headroom promised) instead of promising what Apply All cannot give.
+        assert!((to - from).abs() < 0.01, "{}", before.preview);
+        assert!(
+            before.preview.contains("cannot be trimmed"),
+            "{}",
+            before.preview
+        );
+        let was = c.doc().clone();
+        c.surgeon_apply_all();
+        assert_eq!(c.doc(), &was, "nothing was written");
+        assert!(
+            c.last_rejection()
+                .is_some_and(|m| m.contains("cannot be trimmed")),
+            "{:?}",
+            c.last_rejection()
+        );
+    }
+}

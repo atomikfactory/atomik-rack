@@ -14,7 +14,7 @@ use super::*;
 use atomik_engine::SongAsset;
 use atomik_model::peak_surgeon::{
     DEFAULT_STEP_DB, DEFAULT_WIDTH, Dip, MAX_STEP_DB, MIN_STEP_DB, Plan, Scan, Scanner, Settings,
-    dips_that_fit, plan, trimmed,
+    dips_that_fit, plan_scan, trimmed,
 };
 use atomik_model::{AudioClipContent, ClipContent};
 use atomik_ui::{PeakRow, PeaksData};
@@ -226,7 +226,7 @@ impl<S: EngineSink> AppCore<S> {
 
     fn surgeon_plan(&self) -> Option<Plan> {
         let scan = self.surgeon.scan.as_ref()?;
-        Some(plan(&scan.peaks, &self.surgeon_settings()))
+        Some(plan_scan(scan, &self.surgeon_settings()))
     }
 
     /// Chooses peak `n` of the list (clamped).
@@ -299,7 +299,7 @@ impl<S: EngineSink> AppCore<S> {
                 headroom: top - p.db(),
             })
             .collect();
-        let p = plan(&scan.peaks, &self.surgeon_settings());
+        let p = plan_scan(scan, &self.surgeon_settings());
         let above = scan
             .peaks
             .iter()
@@ -310,7 +310,7 @@ impl<S: EngineSink> AppCore<S> {
             format!("No peak above {:.1} dBFS: nothing to trim", s.threshold_db)
         } else {
             let left = if p.left > 0 {
-                format!("; {} too sharp to trim", p.left)
+                format!("; {} cannot be trimmed with dips this wide", p.left)
             } else {
                 String::new()
             };
@@ -353,10 +353,17 @@ impl<S: EngineSink> AppCore<S> {
             return self.reject("Select an audio clip to trim its peaks".to_owned());
         };
         if plan.dips.is_empty() {
-            return self.reject(format!(
-                "No peak above {:.1} dBFS: nothing to trim",
-                self.surgeon.threshold_db
-            ));
+            return self.reject(if plan.left > 0 {
+                format!(
+                    "Peak Surgeon: the peaks above {:.1} dBFS cannot be trimmed with dips this wide",
+                    self.surgeon.threshold_db
+                )
+            } else {
+                format!(
+                    "No peak above {:.1} dBFS: nothing to trim",
+                    self.surgeon.threshold_db
+                )
+            });
         }
         self.surgeon_apply(&plan.dips);
     }
