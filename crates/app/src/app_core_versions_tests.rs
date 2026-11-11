@@ -231,6 +231,18 @@ fn save_version_keeps_the_song_as_it_is_without_saving_it() {
 }
 
 #[test]
+fn an_empty_version_name_gets_a_default_name_and_is_not_automatic() {
+    let t = Tmp::new("emptyname");
+    let mut c = saved_song(&t);
+    c.save_version("").unwrap();
+    c.save_version(" 	 ").unwrap();
+    let rows = c.versions().unwrap();
+    assert_eq!(rows[1].name, "Version 1");
+    assert_eq!(rows[0].name, "Version 2");
+    assert!(rows.iter().all(|r| !r.automatic));
+}
+
+#[test]
 fn versions_need_a_project_file() {
     let mut c = core();
     assert!(matches!(c.versions(), Err(AppError::NoPath)));

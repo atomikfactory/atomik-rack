@@ -2531,3 +2531,4 @@ Socket connected => Prise connectée
 Socket free => Prise libre
 Socket unavailable => Prise indisponible
 Clip lamp => Voyant de clip
+Unnamed version => Version sans nom

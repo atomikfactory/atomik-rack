@@ -2460,6 +2460,8 @@ impl<B: AudioBackend> Shell<B> {
         view.set_bounds(self.plugin_modal_rect());
         if list {
             view.focus_list();
+        } else {
+            view.set_save_only();
         }
         self.versions = Some(view);
         self.repaint = true;
@@ -2603,6 +2605,15 @@ impl<B: AudioBackend> Shell<B> {
         match action {
             VersionsAction::Close => self.versions = None,
             VersionsAction::Save(name) => match self.core.save_version(&name) {
+                Ok(_)
+                    if self
+                        .versions
+                        .as_ref()
+                        .is_some_and(VersionsView::is_save_only) =>
+                {
+                    // File > Save Version names and keeps, nothing more: the toast says so.
+                    self.versions = None;
+                }
                 Ok(_) => self.refresh_versions(true),
                 Err(e) => self.notify(e.to_string()),
             },
