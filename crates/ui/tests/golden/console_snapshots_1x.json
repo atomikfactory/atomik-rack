@@ -2813,7 +2813,7 @@
 {"fill":{"rrect":[154.00,32.00,182.00,50.00,2.50]},"brush":"#00000073"},
 {"fill":{"rrect":[154.00,31.00,182.00,49.00,2.50]},"brush":"#d8c07dff"},
 {"stroke":{"line":[156.00,31.50,180.00,31.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
-{"text":"1","at":[168.00,43.24],"size":9.00,"weight":700,"align":"center","color":"#17191cff"},
+{"text":"C","at":[168.00,43.24],"size":9.00,"weight":700,"align":"center","color":"#17191cff"},
 {"fill":{"rrect":[186.00,32.00,210.00,50.00,2.50]},"brush":"#00000073"},
 {"fill":{"rrect":[186.00,31.00,210.00,49.00,2.50]},"brush":"#3b4047ff"},
 {"stroke":{"line":[188.00,31.50,208.00,31.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},

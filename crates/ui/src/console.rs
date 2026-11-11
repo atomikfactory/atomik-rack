@@ -132,6 +132,9 @@ const SCROLL_STEP: f64 = 48.0;
 const MENU_ROW: f64 = 20.0;
 const MENU_W: f64 = 200.0;
 const OUTPUT_MENU_W: f64 = 300.0;
+/// Width of the snapshot chip menu: its longest rows ("Recall mutes and solos only (no change)")
+/// must fit whole, the disabled ones included.
+const SNAPSHOT_MENU_W: f64 = 270.0;
 const MENU_ROWS: usize = 18;
 const LEFT_PAD: f64 = 4.0;
 const MASTER_GAP: f64 = 8.0;
@@ -3125,8 +3128,10 @@ impl ConsoleView {
             items.push(("Move right".to_string(), MenuItem::SnapMove(id, i + 1)));
         }
         items.push(("Delete snapshot".to_string(), MenuItem::SnapDelete(id)));
-        let origin = self.menu_origin(pos, items.len());
-        self.menu = Some(Menu::plain(items, origin));
+        let origin = self.menu_origin_w(pos, items.len(), SNAPSHOT_MENU_W);
+        let mut menu = Menu::plain(items, origin);
+        menu.list.width = SNAPSHOT_MENU_W;
+        self.menu = Some(menu);
     }
 
     /// Starts typing the name of snapshot `id` (a double-click on its chip); the console is the
@@ -3171,8 +3176,13 @@ impl ConsoleView {
     }
 
     fn menu_origin(&self, pos: Point, rows: usize) -> Point {
+        self.menu_origin_w(pos, rows, MENU_W)
+    }
+
+    /// [`Self::menu_origin`] for a menu `width` wide.
+    fn menu_origin_w(&self, pos: Point, rows: usize, width: f64) -> Point {
         let h = rows.min(MENU_ROWS) as f64 * MENU_ROW + 8.0;
-        let x = pos.x.min(self.bounds.x1 - MENU_W - 2.0).max(self.bounds.x0);
+        let x = pos.x.min(self.bounds.x1 - width - 2.0).max(self.bounds.x0);
         let y = if pos.y + h > self.bounds.y1 {
             (pos.y - h).max(self.bounds.y0)
         } else {

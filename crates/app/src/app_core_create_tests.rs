@@ -681,3 +681,30 @@ fn a_mod_source_dropped_at_a_slot_is_placed_there_without_cables_and_selected() 
     assert_ne!(second, created);
     assert_eq!(c.doc().cables, cables, "still no cable");
 }
+
+#[test]
+fn creating_an_effect_with_only_the_master_strip_selected_inserts_on_the_master() {
+    let mut c = core();
+    instrument(&mut c, SYNTH).unwrap();
+    let master = c.doc().console.master.clone().expect("a master");
+    c.console_mut().select_master();
+    assert!(c.console().master_selected());
+    let before = c.doc().clone();
+    effect(&mut c, DELAY, CreateTarget::Selected(master.clone()));
+    let doc = c.doc();
+    let chain = atomik_model::insert_chain(doc, &c.registry, &master);
+    assert_eq!(chain.len(), 1, "an insert on the master");
+    assert_eq!(doc.console.return_slot(&chain[0]), None, "not a send");
+    c.undo();
+    assert_eq!(c.doc(), &before, "one undo step");
+    // With the master picked some other way (a channel is the console selection) it stays a send.
+    let channel = c.doc().console.channels[0].channel.clone();
+    c.console_mut().set_selected_strips(&[channel]);
+    assert!(!c.console().master_selected());
+    effect(&mut c, DELAY, CreateTarget::Selected(master));
+    let send = c.doc().devices.iter().find(|d| d.type_id == DELAY);
+    assert!(
+        send.and_then(|d| c.doc().console.return_slot(&d.key))
+            .is_some()
+    );
+}

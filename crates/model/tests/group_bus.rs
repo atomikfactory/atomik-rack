@@ -572,3 +572,37 @@ fn the_lanes_are_saved_and_a_lane_of_a_missing_group_is_refused() {
     let broken = text.replace("vca.1.solo", "vca.7.solo");
     assert!(load_project(&broken, &r).is_err());
 }
+
+#[test]
+fn stopping_a_group_route_sends_the_members_back_to_their_folder_bus() {
+    let (mut d, r) = project();
+    // The first two tracks are in the folder "Strings", routed to its own bus.
+    d.apply(
+        sc(SongCommand::GroupTracks {
+            devices: vec![key("a"), key("b")],
+            name: "Strings".into(),
+        }),
+        &r,
+    )
+    .unwrap();
+    let folder = d.doc().song.org.groups.iter().map(|g| g.id).max().unwrap();
+    d.apply(
+        con(ConsoleCommand::RouteFolderToNewBus {
+            folder,
+            name: "Strings Bus".into(),
+        }),
+        &r,
+    )
+    .unwrap();
+    let folder_bus = bus_of(&d, "Strings Bus");
+    route_new(&mut d, &r, 1, "Drum bus");
+    let drum_bus = bus_of(&d, "Drum bus");
+    assert_eq!(dest(&d, "channel"), OutputDest::Bus(drum_bus));
+    d.apply(con(ConsoleCommand::UnrouteVca { vca: 1 }), &r)
+        .unwrap();
+    assert_eq!(dest(&d, "channel"), OutputDest::Bus(folder_bus.clone()));
+    assert_eq!(dest(&d, "channel-2"), OutputDest::Bus(folder_bus));
+    assert_console_invariants(d.doc());
+    d.undo().unwrap();
+    assert!(matches!(dest(&d, "channel"), OutputDest::Bus(b) if b == bus_of(&d, "Drum bus")));
+}

@@ -18,6 +18,7 @@ use crate::console::{ConsoleCommand, InsertEffect, OutputDest, is_console_type};
 use crate::console_cmd::{Planner, bad};
 use crate::console_insert::{insert_chain, stereo_effect_type};
 use crate::console_snapshot::{SnapshotScope, kept_params};
+use crate::container::ContainerDoc;
 use crate::history::Edit;
 use crate::{DeviceKey, ModelError, RackDoc, rules};
 use atomik_core::ParamDescriptor;
@@ -31,6 +32,9 @@ pub struct InsertClip {
     pub type_id: String,
     /// Its params that are not at their default.
     pub params: BTreeMap<String, f32>,
+    /// The inside of a container insert (a pasted copy gets its own copy of it); `None` on every
+    /// other effect.
+    pub inner: Option<Box<ContainerDoc>>,
 }
 
 /// The settings copied from a channel or a bus (see the module documentation).
@@ -113,9 +117,12 @@ impl RackDoc {
                 let Some(f) = registry.get(&effect.type_id) else {
                     continue;
                 };
-                // Plugins and containers hold more than params: they are not copied.
-                if f.descriptor.kind != DeviceKind::Effect
-                    || atomik_device_sdk::is_plugin_type_id(&effect.type_id)
+                // A plugin holds more than params (its state lives in the plugin): it is not
+                // copied. A container is: its inside is copied with it.
+                if !matches!(
+                    f.descriptor.kind,
+                    DeviceKind::Effect | DeviceKind::Container
+                ) || atomik_device_sdk::is_plugin_type_id(&effect.type_id)
                 {
                     continue;
                 }
@@ -131,6 +138,7 @@ impl RackDoc {
                 inserts.push(InsertClip {
                     type_id: effect.type_id.clone(),
                     params,
+                    inner: effect.inner.clone(),
                 });
             }
         }
@@ -192,20 +200,37 @@ fn paste_inserts(
     strip: &DeviceKey,
     inserts: &[InsertClip],
 ) -> Result<(), ModelError> {
-    clear_chain(p, strip)?;
-    for (slot, insert) in inserts.iter().enumerate() {
+    // The target's plugin inserts cannot be copied, so a paste cannot replace them: they stay.
+    let keep = |p: &Planner<'_>, key: &DeviceKey| {
+        p.doc()
+            .device(key)
+            .is_some_and(|d| atomik_device_sdk::is_plugin_type_id(&d.type_id))
+    };
+    while let Some(slot) = insert_chain(p.doc(), p.registry, strip)
+        .iter()
+        .position(|k| !keep(p, k))
+    {
+        crate::console_insert::set_insert(p, strip, slot, None)?;
+    }
+    for insert in inserts {
+        let slot = insert_chain(p.doc(), p.registry, strip).len();
         let desc = rules::descriptor(p.registry, &insert.type_id)?;
         if !stereo_effect_type(desc) {
             return Err(bad(format!("{} is not a stereo effect", insert.type_id)));
         }
-        crate::console_insert::set_insert(
-            p,
-            strip,
-            slot,
-            Some(InsertEffect::New {
-                type_id: insert.type_id.clone(),
-            }),
-        )?;
+        match &insert.inner {
+            Some(inner) => {
+                crate::console_insert::set_insert_container(p, strip, slot, inner.clone())?;
+            }
+            None => crate::console_insert::set_insert(
+                p,
+                strip,
+                slot,
+                Some(InsertEffect::New {
+                    type_id: insert.type_id.clone(),
+                }),
+            )?,
+        }
         let chain = insert_chain(p.doc(), p.registry, strip);
         let Some(key) = chain.get(slot).cloned() else {
             return Err(bad("the pasted insert did not join the chain"));

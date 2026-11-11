@@ -5,8 +5,8 @@ mod common;
 
 use atomik_device_sdk::Registry;
 use atomik_model::{
-    ChannelSettingsClip, Command, ConsoleCommand, DeviceKey, Document, InsertEffect, SnapshotScope,
-    insert_chain, output_dest,
+    ChannelSettingsClip, Command, ConsoleCommand, ContainerCommand, DeviceKey, Document,
+    InsertEffect, SnapshotScope, insert_chain, output_dest,
 };
 use common::*;
 
@@ -260,4 +260,57 @@ fn a_ganged_drag_is_one_undo_step() {
     assert_eq!(param(&d, &a, "fader"), Some(0.1));
     d.undo().unwrap();
     assert_eq!(d.doc(), &before);
+}
+
+#[test]
+fn a_paste_copies_a_container_insert_with_its_inside_and_replaces_the_target_chain() {
+    let reg = console_registry();
+    let (mut d, a, b) = rack(&reg);
+    let new_fx = |strip: &DeviceKey, id: &str| {
+        cc(ConsoleCommand::SetInsert {
+            channel: strip.clone(),
+            slot: 0,
+            effect: Some(InsertEffect::New { type_id: id.into() }),
+        })
+    };
+    d.apply(new_fx(&a, "atomik.container"), &reg).unwrap();
+    let source = insert_chain(d.doc(), &reg, &a)[0].clone();
+    d.apply(
+        Command::Container(ContainerCommand::AddInner {
+            container: source.clone(),
+            index: 0,
+            type_id: "atomik.compressor".into(),
+            key: None,
+            auto_split: false,
+        }),
+        &reg,
+    )
+    .unwrap();
+    // The target has an insert of its own.
+    d.apply(new_fx(&b, "atomik.eq"), &reg).unwrap();
+    let clip = d
+        .doc()
+        .copy_channel_settings(&reg, &a, SnapshotScope::ALL)
+        .unwrap();
+    assert_eq!(clip.inserts.len(), 1, "the container is copied");
+    d.apply(
+        cc(ConsoleCommand::PasteSettings {
+            strips: vec![b.clone()],
+            clip,
+        }),
+        &reg,
+    )
+    .unwrap();
+    let chain = insert_chain(d.doc(), &reg, &b);
+    assert_eq!(chain.len(), 1);
+    assert_ne!(chain[0], source, "a new device, not the source's");
+    let pasted = d.doc().device(&chain[0]).unwrap();
+    assert_eq!(pasted.type_id, "atomik.container");
+    let inside = pasted.inner.as_ref().unwrap();
+    assert_eq!(inside.devices.len(), 1);
+    assert_eq!(inside.devices[0].type_id, "atomik.compressor");
+    // One undo step puts the target's own chain back.
+    d.undo().unwrap();
+    let back = insert_chain(d.doc(), &reg, &b);
+    assert_eq!(d.doc().device(&back[0]).unwrap().type_id, "atomik.eq");
 }

@@ -238,12 +238,14 @@ fn stopping_the_route_sends_the_channels_back_to_the_master() {
     assert_eq!(dest(&d, "channel-2"), OutputDest::Master);
     assert!(d.doc().console.folder_routes.is_empty());
     assert!(
-        d.doc().console.bus_by_name("Strings bus").is_some(),
-        "the bus stays"
+        d.doc().console.bus_by_name("Strings bus").is_none(),
+        "the bus Route Folder made goes with the route"
     );
-    // A member the user had moved elsewhere is left where it is.
+    assert_console_invariants(d.doc());
+    // One undo step puts the bus and the route back.
     d.undo().unwrap();
     assert_eq!(d.doc(), &routed);
+    // A member the user had moved elsewhere is left where it is.
     d.apply(
         con(ConsoleCommand::SetOutput {
             strip: key("channel"),
@@ -375,5 +377,67 @@ fn a_channel_moved_in_the_console_keeps_the_route_members_in_console_order() {
         ["channel", "channel-2"],
         "undo restores the order"
     );
+    assert_console_invariants(d.doc());
+}
+
+#[test]
+fn a_folder_bus_is_named_after_the_folder_and_numbered_when_taken() {
+    let (mut d, r) = project();
+    let f = folder(&mut d, &r, &["a", "b"], "Strings");
+    assert_eq!(d.doc().folder_bus_name(f), "Strings Bus");
+    let first = d.doc().folder_bus_name(f);
+    route_new(&mut d, &r, f, &first);
+    assert!(d.doc().console.bus_by_name("Strings Bus").is_some());
+    assert_eq!(d.doc().folder_bus_name(f), "Strings Bus 2");
+    // A name too long for a bus is cut, and still unique.
+    let long = folder(&mut d, &r, &["c", "d"], &"x".repeat(40));
+    let name = d.doc().folder_bus_name(long);
+    assert!(
+        name.chars().count() <= atomik_model::console::MAX_BUS_NAME_CHARS,
+        "{name}"
+    );
+    route_new(&mut d, &r, long, &name);
+}
+
+#[test]
+fn stopping_a_route_removes_the_folders_own_bus_only_when_nothing_else_uses_it() {
+    let (mut d, r) = project();
+    let f = folder(&mut d, &r, &["a", "b"], "Strings");
+    // A bus the user made stays.
+    d.apply(
+        con(ConsoleCommand::CreateBus {
+            name: "Mix".into(),
+            dest: OutputDest::Master,
+        }),
+        &r,
+    )
+    .unwrap();
+    let mix = bus_of(&d, "Mix");
+    d.apply(
+        con(ConsoleCommand::RouteFolderToBus {
+            folder: f,
+            bus: mix,
+        }),
+        &r,
+    )
+    .unwrap();
+    d.apply(con(ConsoleCommand::UnrouteFolder { folder: f }), &r)
+        .unwrap();
+    assert!(d.doc().console.bus_by_name("Mix").is_some());
+    // The folder's own bus stays while another strip plays into it.
+    let name = d.doc().folder_bus_name(f);
+    route_new(&mut d, &r, f, &name);
+    let own = bus_of(&d, &name);
+    d.apply(
+        con(ConsoleCommand::SetOutput {
+            strip: key("channel-3"),
+            dest: OutputDest::Bus(own),
+        }),
+        &r,
+    )
+    .unwrap();
+    d.apply(con(ConsoleCommand::UnrouteFolder { folder: f }), &r)
+        .unwrap();
+    assert!(d.doc().console.bus_by_name(&name).is_some());
     assert_console_invariants(d.doc());
 }
