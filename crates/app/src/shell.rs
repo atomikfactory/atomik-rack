@@ -8312,6 +8312,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::ResetDefaultSong => {
                 self.workflow.default_song = None;
+                self.core.remove_default_song();
                 self.save_workflow();
                 self.notify("File > New opens the starter project again".to_owned());
                 Vec::new()

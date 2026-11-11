@@ -340,6 +340,14 @@ fn the_default_song_replaces_the_starter_project_for_new_but_not_for_close() {
     s.execute(AppCommand::ResetDefaultSong);
     assert_eq!(s.workflow().default_song, None);
     assert!(!workflow_json(&t).contains("default_song"));
+    assert!(
+        s.core()
+            .templates()
+            .iter()
+            .all(|e| e.name != "Default Song"),
+        "the Default Song row is gone from New from Template"
+    );
+    assert!(!path.exists());
     s.execute(AppCommand::New);
     assert!(!has(&s, "in-default"));
     assert!(!s.start_with_default_song());

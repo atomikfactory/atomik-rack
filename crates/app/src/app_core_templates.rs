@@ -334,6 +334,18 @@ impl<S: EngineSink> AppCore<S> {
         })
     }
 
+    /// Reset Default Song: removes the `Default Song` copy from the templates folder (its project
+    /// file or its folder with the audio) so it no longer shows in File > New from Template.
+    /// Nothing happens when there is none.
+    pub fn remove_default_song(&mut self) {
+        let Some(dir) = self.templates_dir() else {
+            return;
+        };
+        let _ = std::fs::remove_file(dir.join(format!("{DEFAULT_SONG_NAME}.{PROJECT_EXTENSION}")));
+        let _ = std::fs::remove_dir_all(dir.join(DEFAULT_SONG_NAME));
+        self.reload_templates();
+    }
+
     /// Writes the song as a project at `target` (an unused file name in `dir`): the text of the
     /// saved form, and when it uses audio the bundle folder `<dir>/<stem>/` with that audio only.
     /// The core's file, saved state and bundle do not change.
