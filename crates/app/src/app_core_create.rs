@@ -47,8 +47,28 @@ impl<S: EngineSink> AppCore<S> {
                     options: with_armed(options),
                 })
             }
+            // With only the master strip selected in the console, an effect goes on the master's
+            // inserts; the model reads the master as a selected device as a send.
+            Command::Workflow(WorkflowCommand::CreateEffect {
+                source,
+                target: atomik_model::CreateTarget::Selected(k),
+                key,
+                options,
+            }) if self.only_master_strip_selected(&k) => {
+                Command::Workflow(WorkflowCommand::CreateEffect {
+                    source,
+                    target: atomik_model::CreateTarget::MasterInserts,
+                    key,
+                    options,
+                })
+            }
             other => other,
         }
+    }
+
+    /// True when `key` is the console master and the master strip is the console's selection.
+    fn only_master_strip_selected(&self, key: &DeviceKey) -> bool {
+        self.document.doc().console.master.as_ref() == Some(key) && self.console.master_selected()
     }
 
     /// After a creation command: remembers the tracks it armed, selects the new device (the
