@@ -13,6 +13,7 @@ use crate::commands::{AppCommand, Menu, MenuEntry};
 use crate::menu_layout::{
     self as geo, ARROW_SPEED, EDGE_MARGIN, ListLayout, WHEEL_STEP, natural_height,
 };
+use atomik_ui::context_menu::{Arrow, paint_arrow};
 use atomik_ui::kurbo::{Point, Rect, RoundedRect, Size};
 use atomik_ui::peniko::Color;
 use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, UiEvent};
@@ -785,10 +786,10 @@ fn paint_list(
     if scrolls {
         canvas.pop_clip();
         for (strip, glyph, enabled) in [
-            (open.layout.up_strip(), "\u{25B4}", open.layout.offset > 0.0),
+            (open.layout.up_strip(), Arrow::Up, open.layout.offset > 0.0),
             (
                 open.layout.down_strip(),
-                "\u{25BE}",
+                Arrow::Down,
                 open.layout.offset < open.layout.max_offset,
             ),
         ] {
@@ -804,15 +805,7 @@ fn paint_list(
             } else {
                 theme.text_muted
             };
-            canvas.text(
-                &TextRun::new(
-                    glyph,
-                    Point::new(strip.center().x, strip.y1 - 2.5),
-                    11.0,
-                    color,
-                )
-                .align(Align::Center),
-            );
+            paint_arrow(canvas, strip.center(), glyph, color);
         }
     }
 }
@@ -869,14 +862,11 @@ fn paint_row(canvas: &mut dyn Canvas, theme: &Theme, entry: &MenuEntry, r: Rect,
                 FONT,
                 theme.text,
             ));
-            canvas.text(
-                &TextRun::new(
-                    "\u{25B8}",
-                    Point::new(r.x1 - 10.0, base),
-                    12.0,
-                    theme.text_muted,
-                )
-                .align(Align::End),
+            paint_arrow(
+                canvas,
+                Point::new(r.x1 - 14.0, r.center().y),
+                Arrow::Right,
+                theme.text_muted,
             );
         }
     }

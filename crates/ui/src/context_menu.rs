@@ -34,7 +34,7 @@ use crate::event::{Key, PointerButton, UiEvent};
 use crate::keymap::{Keymap, Registry};
 use crate::menu_layout::{self as geo, ARROW_SPEED, ListLayout, WHEEL_STEP};
 use crate::theme::Theme;
-use vello::kurbo::{Point, Rect, RoundedRect, Size, Vec2};
+use vello::kurbo::{BezPath, Point, Rect, RoundedRect, Size, Vec2};
 use vello::peniko::Color;
 
 pub use crate::menu_layout::{ITEM_HEIGHT, SEPARATOR_HEIGHT};
@@ -1024,9 +1024,11 @@ impl ContextMenu {
                         FONT,
                         color,
                     ));
-                    canvas.text(
-                        &TextRun::new("\u{25B8}", Point::new(r.x1 - 10.0, base), 12.0, color)
-                            .align(Align::End),
+                    paint_arrow(
+                        canvas,
+                        Point::new(r.x1 - 14.0, r.center().y),
+                        Arrow::Right,
+                        color,
                     );
                 }
             }
@@ -1044,10 +1046,10 @@ impl ContextMenu {
     fn paint_strips(&self, canvas: &mut dyn Canvas, theme: &Theme) {
         let pointer = self.last.unwrap_or(Point::new(-1.0e6, -1.0e6));
         for (strip, glyph, enabled) in [
-            (self.lay.up_strip(), "\u{25B4}", self.offset > 0.0),
+            (self.lay.up_strip(), Arrow::Up, self.offset > 0.0),
             (
                 self.lay.down_strip(),
-                "\u{25BE}",
+                Arrow::Down,
                 self.offset < self.lay.max_offset,
             ),
         ] {
@@ -1063,17 +1065,49 @@ impl ContextMenu {
             } else {
                 theme.text_muted
             };
-            canvas.text(
-                &TextRun::new(
-                    glyph,
-                    Point::new(strip.center().x, strip.y1 - 2.5),
-                    11.0,
-                    color,
-                )
-                .align(Align::Center),
-            );
+            paint_arrow(canvas, strip.center(), glyph, color);
         }
     }
+}
+
+/// Which way a menu arrow points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arrow {
+    /// Opens a submenu.
+    Right,
+    /// Scrolls a long menu up.
+    Up,
+    /// Scrolls a long menu down.
+    Down,
+}
+
+/// Paints a small filled triangle centred on `at`. Menu arrows are shapes, not text: the
+/// triangle characters are missing from the fonts of some systems and showed as empty boxes.
+pub fn paint_arrow(canvas: &mut dyn Canvas, at: Point, way: Arrow, color: Color) {
+    let (long, wide) = (3.5, 4.0);
+    let (a, b, c) = match way {
+        Arrow::Right => (
+            Point::new(at.x - long * 0.6, at.y - wide),
+            Point::new(at.x - long * 0.6, at.y + wide),
+            Point::new(at.x + long, at.y),
+        ),
+        Arrow::Up => (
+            Point::new(at.x - wide, at.y + long * 0.6),
+            Point::new(at.x + wide, at.y + long * 0.6),
+            Point::new(at.x, at.y - long),
+        ),
+        Arrow::Down => (
+            Point::new(at.x - wide, at.y - long * 0.6),
+            Point::new(at.x + wide, at.y - long * 0.6),
+            Point::new(at.x, at.y + long),
+        ),
+    };
+    let mut path = BezPath::new();
+    path.move_to(a);
+    path.line_to(b);
+    path.line_to(c);
+    path.close_path();
+    canvas.fill_with(path, color);
 }
 
 #[cfg(test)]
@@ -1430,6 +1464,28 @@ mod tests {
         );
         let mut list = crate::display_list::DisplayList::new();
         m.paint(&mut list, &Theme::default());
+    }
+
+    #[test]
+    fn a_submenu_row_draws_its_arrow_as_a_shape_not_a_character() {
+        let m = menu(
+            &[Spec::submenu("More", vec![Spec::item("edit.undo")])],
+            Os::Windows,
+        );
+        let mut list = crate::display_list::DisplayList::new();
+        m.paint(&mut list, &Theme::default());
+        let texts = list.texts();
+        assert!(texts.contains(&"More"));
+        assert!(
+            !texts.iter().any(|t| t.contains('\u{25B8}')),
+            "the triangle character shows as a box in some fonts: {texts:?}"
+        );
+        let paths = list
+            .ops()
+            .iter()
+            .filter(|op| format!("{op:?}").contains("Path"))
+            .count();
+        assert!(paths >= 1, "the arrow is a filled path");
     }
 
     fn tick(m: &mut ContextMenu, t: f64) {
