@@ -8,6 +8,8 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+## [0.4.0-rc.2] - 2026-11-10
+
 ### Added
 - **Themes, with a built-in Synthwave theme.** The colours of the interface are now data: one JSON file per theme with
   a version, a name, the built-in theme it is based on (a colour it leaves out comes from there) and about sixty colour
