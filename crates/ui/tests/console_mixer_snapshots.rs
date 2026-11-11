@@ -988,3 +988,21 @@ fn the_chip_menu_recalls_the_routing_alone_and_adds_and_removes_the_snapshot_lan
             .any(|x| matches!(x, UiAction::Command(Command::Song(c)) if *c == removed))
     );
 }
+
+#[test]
+fn the_disabled_rows_of_the_chip_menu_are_drawn_whole() {
+    let (mut d, reg) = project(3);
+    d.apply(set("ch-bass", "fader", 0.91), &reg).unwrap();
+    let mut v = wide(d.doc(), &reg);
+    right_click_chip(&mut v, d.doc(), &reg, 2);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), &reg);
+    let drawn = dl.texts();
+    for row in [
+        "Recall mutes and solos only (no change)",
+        "Recall insert bypass only (no change)",
+        "Recall routing only (no change)",
+    ] {
+        assert!(drawn.contains(&row), "{row:?} is cut off");
+    }
+}
