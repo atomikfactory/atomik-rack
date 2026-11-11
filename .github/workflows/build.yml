@@ -146,9 +146,11 @@ jobs:
           name: atomik-rack-linux-x86_64
           path: dist
       - name: Install flatpak and flatpak-builder
+        # elfutils: flatpak-builder strips the programs and splits their debug info with eu-strip
+        # (a recommended package, so --no-install-recommends leaves it out).
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends flatpak flatpak-builder
+          sudo apt-get install -y -q --no-install-recommends flatpak flatpak-builder elfutils
       - name: Package (flatpak bundle)
         env:
           VERSION: ${{ inputs.version }}
