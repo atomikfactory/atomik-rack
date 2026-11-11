@@ -1009,8 +1009,12 @@ impl RackView {
         let h = CompactList::height(entries.len(), MENU_ROW_H);
         let x0 =
             rp.x.min(self.devices[i].x + f64::from(RACK_WIDTH) - 16.0 - MENU_W);
-        let bottom = self.view_to_rack(Point::new(0.0, self.size.height)).y;
-        let y0 = if rp.y + h > bottom { rp.y - h } else { rp.y };
+        let (top, bottom) = (
+            self.view_to_rack(Point::new(0.0, self.rack_area().y0)).y,
+            self.view_to_rack(Point::new(0.0, self.size.height)).y,
+        );
+        // Below the pointer, above it when that does not fit, and always inside the window.
+        let y0 = CompactList::fit_y(rp.y, rp.y - h, h, top, bottom);
         self.macro_menu = Some(MacroMenu {
             dev: i,
             param,

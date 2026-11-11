@@ -36,11 +36,24 @@ impl ThinLevel {
     /// Every level, from the lightest.
     pub const ALL: [ThinLevel; 3] = [ThinLevel::Normal, ThinLevel::Heavy, ThinLevel::Maximum];
 
-    /// The tolerance as a fraction of the parameter's range.
+    /// The tolerance as a fraction of the parameter's range, as pencil strokes and recorded
+    /// moves are thinned with (tight: they keep what was played).
     pub const fn fraction(self) -> f32 {
         match self {
             ThinLevel::Normal => 0.005,
             ThinLevel::Heavy => 0.02,
+            ThinLevel::Maximum => 0.05,
+        }
+    }
+
+    /// The tolerance of Cleanup Automation, as a fraction of the parameter's range on screen
+    /// (the range of its taper, see [`atomik_core::ParamDescriptor::to_normalized`]): a drawn curve
+    /// carries the shake and the pixel steps of the hand that drew it, a pixel or two of a lane,
+    /// so a clean-up that wants to remove anything has to accept that much.
+    pub const fn cleanup_fraction(self) -> f32 {
+        match self {
+            ThinLevel::Normal => 0.015,
+            ThinLevel::Heavy => 0.03,
             ThinLevel::Maximum => 0.05,
         }
     }
@@ -276,6 +289,19 @@ pub fn segment_clips_with(
 /// be sorted by tick. A `tolerance` that is not above zero keeps every point. Iterative, so the
 /// depth of the input does not matter.
 pub fn thin_points(points: &[AutomationPoint], tolerance: f32) -> Vec<AutomationPoint> {
+    thin_points_by(points, tolerance, &|v| v)
+}
+
+/// [`thin_points`] with the error measured as `measure` of the value (a map to the scale the
+/// lane is seen in: for a log-scaled param a plain distance in Hz is far too small at the top and
+/// far too big at the bottom). The line between two kept points is still the straight one
+/// in plain values, which is what plays; its distance from a point is the distance of the two
+/// `measure`d values.
+pub fn thin_points_by(
+    points: &[AutomationPoint],
+    tolerance: f32,
+    measure: &dyn Fn(f32) -> f32,
+) -> Vec<AutomationPoint> {
     if points.len() < 3 || tolerance.is_nan() || tolerance <= 0.0 {
         return points.to_vec();
     }
@@ -286,7 +312,7 @@ pub fn thin_points(points: &[AutomationPoint], tolerance: f32) -> Vec<Automation
         let bent = matches!(points[i - 1].curve, Curve::Bend(_));
         if points[i].curve != Curve::Linear || bent || i == points.len() - 1 {
             keep[i] = true;
-            thin_run(points, run_start, i, tolerance, &mut keep);
+            thin_run(points, (run_start, i), tolerance, measure, &mut keep);
             run_start = i;
         }
     }
@@ -299,7 +325,13 @@ pub fn thin_points(points: &[AutomationPoint], tolerance: f32) -> Vec<Automation
 }
 
 /// RDP over `points[from..=to]` (both ends already kept), marking the survivors in `keep`.
-fn thin_run(points: &[AutomationPoint], from: usize, to: usize, tolerance: f32, keep: &mut [bool]) {
+fn thin_run(
+    points: &[AutomationPoint],
+    (from, to): (usize, usize),
+    tolerance: f32,
+    measure: &dyn Fn(f32) -> f32,
+    keep: &mut [bool],
+) {
     let mut stack = vec![(from, to)];
     while let Some((a, b)) = stack.pop() {
         if b <= a + 1 {
@@ -315,7 +347,7 @@ fn thin_run(points: &[AutomationPoint], from: usize, to: usize, tolerance: f32, 
                 0.0
             };
             let line = f64::from(pa.value) + (f64::from(pb.value) - f64::from(pa.value)) * t;
-            let err = (f64::from(p.value) - line).abs();
+            let err = (f64::from(measure(p.value)) - f64::from(measure(line as f32))).abs();
             if err > worst.0 {
                 worst = (err, k);
             }

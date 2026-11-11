@@ -515,17 +515,14 @@ fn cleanup_keeps_the_curve_within_the_tolerance_and_heavier_levels_remove_more()
             .unwrap()
             .param_by_key("filter.cutoff")
             .unwrap();
-        let desc = p.max - p.min;
-        let tol = level.fraction() * desc;
-        for p in &pts {
+        // The error is measured on the scale the lane is seen in (the cutoff is log-scaled).
+        let tol = level.cleanup_fraction();
+        for q in &pts {
             let tuples: Vec<(i64, f32, Curve)> =
                 kept.iter().map(|k| (k.tick, k.value, k.curve)).collect();
-            let v = atomik_model::song::automation_value_at(&tuples, p.tick as f64);
-            assert!(
-                (v - p.value).abs() <= tol * 1.001,
-                "{level:?} at {}",
-                p.tick
-            );
+            let v = atomik_model::song::automation_value_at(&tuples, q.tick as f64);
+            let off = (p.to_normalized(v) - p.to_normalized(q.value)).abs();
+            assert!(off <= tol * 1.001 + 1e-4, "{level:?} at {}", q.tick);
         }
     }
     assert!(
@@ -555,6 +552,64 @@ fn cleanup_leaves_notes_alone_and_rejects_a_selection_with_nothing_to_thin() {
     assert_eq!(d.doc(), &before);
 }
 
+/// A curve drawn by hand on the cutoff lane (a log-scaled param): a smooth path of the pointer,
+/// worn by pixel steps of a 100 px lane and a pixel of shake, one point per sixty-fourth note.
+fn hand_drawn_cutoff(n: usize) -> Vec<AutomationPoint> {
+    let r = registry();
+    let p = *r
+        .descriptor(SYNTH)
+        .unwrap()
+        .param_by_key("filter.cutoff")
+        .unwrap();
+    let mut seed = 12345u32;
+    let mut shake = move || {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (seed >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0
+    };
+    (0..n)
+        .map(|i| {
+            let x = i as f32 / (n - 1) as f32;
+            let path = 0.5
+                + 0.35 * (std::f32::consts::TAU * 1.5 * x).sin()
+                + 0.1 * (std::f32::consts::TAU * 7.0 * x).sin();
+            let pixel = ((path * 100.0 + shake()).round() / 100.0).clamp(0.0, 1.0);
+            point(
+                i as i64 * (PPQ / 16),
+                p.from_normalized(pixel),
+                Curve::Linear,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn cleanup_of_a_hand_drawn_curve_removes_most_points_and_keeps_the_shape() {
+    let r = registry();
+    let pts = hand_drawn_cutoff(513);
+    let p = *r
+        .descriptor(SYNTH)
+        .unwrap()
+        .param_by_key("filter.cutoff")
+        .unwrap();
+    let mut d = cutoff_doc(&r, pts.clone());
+    let id = d.doc().song.track(&key("synth")).unwrap().lanes[1].clips[0].id;
+    one_step(&mut d, &r, cleanup(vec![id], ThinLevel::Normal));
+    let kept = auto_points(&d);
+    assert!(
+        kept.len() * 100 <= pts.len() * 45,
+        "{} of {} points are left",
+        kept.len(),
+        pts.len()
+    );
+    // The curve still passes within two pixels of a 100 px lane at every original point.
+    let tuples: Vec<(i64, f32, Curve)> = kept.iter().map(|k| (k.tick, k.value, k.curve)).collect();
+    for q in &pts {
+        let v = atomik_model::song::automation_value_at(&tuples, q.tick as f64);
+        let off = (p.to_normalized(v) - p.to_normalized(q.value)).abs();
+        assert!(off <= 0.02 + 1e-4, "{off} off at tick {}", q.tick);
+    }
+}
+
 proptest! {
     /// Cleanup never moves the curve at an original point by more than the tolerance.
     #[test]
@@ -574,12 +629,13 @@ proptest! {
         if d.apply(cleanup(vec![id], level), &r).is_ok() {
             let kept = auto_points(&d);
             let p = r.descriptor(SYNTH).unwrap().param_by_key("filter.cutoff").unwrap();
-            let tol = level.fraction() * (p.max - p.min);
+            let tol = level.cleanup_fraction();
             let tuples: Vec<(i64, f32, Curve)> =
                 kept.iter().map(|k| (k.tick, k.value, k.curve)).collect();
             for q in &pts {
                 let v = atomik_model::song::automation_value_at(&tuples, q.tick as f64);
-                prop_assert!((v - q.value).abs() <= tol * 1.001 + 0.01);
+                let off = (p.to_normalized(v) - p.to_normalized(q.value)).abs();
+                prop_assert!(off <= tol * 1.001 + 1e-4, "{off} > {tol}");
             }
         }
     }

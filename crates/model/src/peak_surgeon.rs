@@ -76,6 +76,11 @@ pub struct Scan {
     pub peaks: Vec<Peak>,
     /// Frames scanned.
     pub frames: u64,
+    /// For each peak (same order), the levels of the frames from `width` before it to `width` after
+    /// it (`2 * width + 1` values, zero outside the clip): what a dip of that width acts on. A
+    /// peak that is the top of a round hill has neighbours almost as high, so lowering the peak
+    /// frame alone does not lower the clip's top: [`plan_scan`] measures the dips against these.
+    pub shoulders: Vec<Vec<f32>>,
 }
 
 impl Scan {
@@ -96,6 +101,8 @@ pub struct Scanner {
     next: u64,
     /// The kept peaks, lowest on top.
     kept: BinaryHeap<Reverse<(u32, Reverse<u64>)>>,
+    /// The levels around each kept peak, by its frame.
+    around: BTreeMap<u64, Vec<f32>>,
 }
 
 impl Scanner {
@@ -107,6 +114,7 @@ impl Scanner {
             base: 0,
             next: 0,
             kept: BinaryHeap::new(),
+            around: BTreeMap::new(),
         }
     }
 
@@ -153,7 +161,15 @@ impl Scanner {
                 .total_cmp(&a.level)
                 .then_with(|| a.frame.cmp(&b.frame))
         });
-        Scan { peaks, frames }
+        let shoulders = peaks
+            .iter()
+            .map(|p| self.around.remove(&p.frame).unwrap_or_default())
+            .collect();
+        Scan {
+            peaks,
+            frames,
+            shoulders,
+        }
     }
 
     fn examine(&mut self, at: u64) {
@@ -180,9 +196,16 @@ impl Scanner {
         if before.iter().any(|&b| b >= level) || after.iter().any(|&a| a > level) {
             return;
         }
+        let shoulder: Vec<f32> = (0..=2 * w)
+            .map(|j| (i + j).checked_sub(w).and_then(|k| self.buf.get(k)))
+            .map(|l| l.copied().unwrap_or(0.0))
+            .collect();
+        self.around.insert(at, shoulder);
         self.kept.push(Reverse((level.to_bits(), Reverse(at))));
-        if self.kept.len() > KEEP {
-            self.kept.pop();
+        if self.kept.len() > KEEP
+            && let Some(Reverse((_, Reverse(gone)))) = self.kept.pop()
+        {
+            self.around.remove(&gone);
         }
     }
 }
@@ -260,8 +283,28 @@ impl Plan {
     }
 }
 
-/// Chooses the dips for `peaks` (highest first, as [`Scan::peaks`]); see the module docs.
+/// A step that lowers the top of its peak by less than this share of the step is not made: the
+/// peak is the top of a round hill, and the dip only lowers its own frame while the neighbours
+/// stay.
+const FUTILE_SHARE: f32 = 0.25;
+
+/// Chooses the dips for `peaks` (highest first, as [`Scan::peaks`]) as if each peak were a single
+/// frame; see the module docs. [`plan_scan`] is the plan the app uses: it knows the frames around
+/// each peak.
 pub fn plan(peaks: &[Peak], settings: &Settings) -> Plan {
+    plan_with(peaks, &[], settings)
+}
+
+/// Chooses the dips for the peaks of `scan`, measuring each peak by the highest frame of its
+/// neighbourhood once the dips are in ([`Scan::shoulders`]), so the plan's levels are the levels
+/// the clip plays after the edit. A peak whose neighbours are too close to its own level to be
+/// lowered by a dip this wide is left (and counted in [`Plan::left`]) instead of getting dips that
+/// win nothing.
+pub fn plan_scan(scan: &Scan, settings: &Settings) -> Plan {
+    plan_with(&scan.peaks, &scan.shoulders, settings)
+}
+
+fn plan_with(peaks: &[Peak], shoulders: &[Vec<f32>], settings: &Settings) -> Plan {
     let width = settings.width.clamp(MIN_WIDTH, MAX_WIDTH);
     let step = settings.step_db.clamp(MIN_STEP_DB, MAX_STEP_DB);
     let limit = db_to_gain(settings.threshold_db);
@@ -278,6 +321,24 @@ pub fn plan(peaks: &[Peak], settings: &Settings) -> Plan {
             .range(lo..=hi)
             .fold(1.0f64, |g, (&c, &d)| g * dip_factor(c, d, width, frame)) as f32
     };
+    // The level the clip plays at the top of peak `i` with `depths` in: the peak frame itself, or
+    // the highest frame around it when the scan kept them.
+    let level_of = |depths: &BTreeMap<u64, f32>, i: usize| -> f32 {
+        let p = peaks[i];
+        match shoulders.get(i).filter(|s| !s.is_empty()) {
+            None => p.level * factor(depths, p.frame),
+            Some(s) => {
+                let reach = (s.len() / 2) as u64;
+                s.iter()
+                    .enumerate()
+                    .filter_map(|(j, &l)| {
+                        let frame = (p.frame + j as u64).checked_sub(reach)?;
+                        Some(l * factor(depths, frame))
+                    })
+                    .fold(0.0, f32::max)
+            }
+        }
+    };
     let mut heap: BinaryHeap<(u32, usize)> = peaks
         .iter()
         .enumerate()
@@ -286,7 +347,7 @@ pub fn plan(peaks: &[Peak], settings: &Settings) -> Plan {
         .collect();
     while let Some((bits, i)) = heap.pop() {
         let p = peaks[i];
-        let now = p.level * factor(&depths, p.frame);
+        let now = level_of(&depths, i);
         if now.to_bits() != bits {
             // Another dip lowered it since it was queued.
             if now > limit {
@@ -304,11 +365,20 @@ pub fn plan(peaks: &[Peak], settings: &Settings) -> Plan {
             continue;
         }
         depths.insert(p.frame, deeper);
-        heap.push(((p.level * factor(&depths, p.frame)).to_bits(), i));
+        let lowered = level_of(&depths, i);
+        if gain_to_db(now) - gain_to_db(lowered.max(f32::MIN_POSITIVE)) < FUTILE_SHARE * step {
+            // The neighbours of the peak are as loud as it: this dip would win nothing.
+            match depth {
+                Some(d) => depths.insert(p.frame, d),
+                None => depths.remove(&p.frame),
+            };
+            out.left += 1;
+            continue;
+        }
+        heap.push((lowered.to_bits(), i));
     }
-    out.after_db = peaks
-        .iter()
-        .map(|p| p.level * factor(&depths, p.frame))
+    out.after_db = (0..peaks.len())
+        .map(|i| level_of(&depths, i))
         .reduce(f32::max)
         .map(gain_to_db);
     out.dips = depths
@@ -609,6 +679,79 @@ mod tests {
             .count();
         assert!(changed <= 2 * 15, "{changed} frames changed");
         assert!(levels.iter().zip(&after).all(|(a, b)| *b <= *a + 1e-7));
+    }
+
+    /// A low tone: 50 Hz at 48 kHz, so its crests are round (the frames around one are within a
+    /// hundredth of a dB of it).
+    fn bass(len: usize, amp: f32) -> Vec<f32> {
+        (0..len)
+            .map(|i| amp * (std::f32::consts::TAU * 50.0 * i as f32 / 48_000.0).sin())
+            .collect()
+    }
+
+    #[test]
+    fn the_plan_of_round_crests_promises_what_the_clip_plays_after_the_dips() {
+        let clip = AudioClipContent::new("a", 0);
+        let channels = vec![bass(9_600, 0.9)];
+        let levels = played_levels(&clip, &channels, 9_600);
+        let s = scan(&levels, 8);
+        let top = s.top_db().unwrap();
+        let settings = Settings {
+            threshold_db: top - 1.5,
+            step_db: 0.3,
+            width: 8,
+            max_dips: 100,
+        };
+        // Whatever the plan says it gains, the clip plays it: the plan and the edit agree.
+        for p in [plan_scan(&s, &settings), plan(&s.peaks, &settings)] {
+            let trimmed = trimmed(&clip, &p.dips, 8, 9_600).unwrap();
+            let after = played_levels(&trimmed, &channels, 9_600);
+            let played_top = gain_to_db(after.iter().copied().fold(0.0f32, f32::max));
+            let promised = p.after_db.unwrap();
+            if p.dips.is_empty() {
+                assert!((played_top - top).abs() < 1e-4);
+            }
+            if p != plan_scan(&s, &settings) {
+                // The root of the bug: a plan that sees the peak frames alone promises headroom
+                // that the neighbours of each crest, as loud as it, take away again.
+                assert!(p.gained_db() > 1.0, "{p:?}");
+                assert!(top - played_top < 0.1, "plays {played_top}, top {top}");
+            } else {
+                assert!(
+                    (played_top - promised).abs() < 0.01,
+                    "plays {played_top}, the plan said {promised}"
+                );
+                assert!(p.gained_db() < 0.1, "a round crest gains nothing: {p:?}");
+                assert!(p.left > 0, "and the plan says so");
+            }
+        }
+    }
+
+    #[test]
+    fn a_sharp_peak_on_a_round_hill_is_still_dipped_by_the_amount_the_plan_says() {
+        let clip = AudioClipContent::new("a", 0);
+        let mut tone = bass(9_600, 0.5);
+        tone[4_000] = 0.9;
+        let channels = vec![tone];
+        let levels = played_levels(&clip, &channels, 9_600);
+        let s = scan(&levels, 8);
+        let settings = Settings {
+            threshold_db: -3.0,
+            step_db: 0.3,
+            width: 8,
+            max_dips: 100,
+        };
+        let p = plan_scan(&s, &settings);
+        assert!(!p.dips.is_empty());
+        let trimmed = trimmed(&clip, &p.dips, 8, 9_600).unwrap();
+        let after = played_levels(&trimmed, &channels, 9_600);
+        let played_top = gain_to_db(after.iter().copied().fold(0.0f32, f32::max));
+        assert!(
+            (played_top - p.after_db.unwrap()).abs() < 0.01,
+            "plays {played_top}, the plan said {:?}",
+            p.after_db
+        );
+        assert!(p.gained_db() > 2.0, "{p:?}");
     }
 
     #[test]

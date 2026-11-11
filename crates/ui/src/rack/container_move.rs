@@ -66,6 +66,12 @@ impl RackView {
         )
     }
 
+    /// Whether the device menu lists Move Out of Container: a container is open, or the selection
+    /// is a device inside an unfolded container.
+    pub fn move_out_listed(&self) -> bool {
+        !self.scope.is_empty() || self.local_selection().iter().any(is_inner)
+    }
+
     /// Why Move Out of Container cannot work on the selection (`None`: it can): one device of
     /// an open container goes back to the rack, after the container.
     pub fn move_out_reason(&self, doc: &RackDoc, registry: &Registry) -> Option<String> {

@@ -180,6 +180,18 @@ impl CompactList {
         rows as f64 * row_height + 2.0 * Self::PAD
     }
 
+    /// The top of a panel `height` tall that wants to start at `below`, or at `above` when it
+    /// does not fit under it (`bottom` is the lowest edge it may reach): kept between `top` and
+    /// `bottom`, so every row shows whichever way it opens.
+    pub fn fit_y(below: f64, above: f64, height: f64, top: f64, bottom: f64) -> f64 {
+        let y = if below + height > bottom {
+            above
+        } else {
+            below
+        };
+        y.min(bottom - height).max(top)
+    }
+
     /// A list whose panel is `rect`.
     pub fn new(rect: Rect, row_height: f64) -> Self {
         Self {
@@ -266,6 +278,21 @@ mod tests {
         let r = l.row_rect(4).unwrap();
         assert_eq!(l.row_at(r.center()), Some(4));
         assert_eq!(l.row_at(Point::new(0.0, 0.0)), None);
+    }
+
+    #[test]
+    fn a_compact_list_opens_below_then_above_and_is_always_kept_inside() {
+        // Fits below: starts at the pointer.
+        assert_eq!(CompactList::fit_y(100.0, 20.0, 80.0, 0.0, 400.0), 100.0);
+        // Does not fit below: opens above the pointer.
+        assert_eq!(CompactList::fit_y(350.0, 270.0, 80.0, 0.0, 400.0), 270.0);
+        // Fits neither below nor above (a short window): shifted down from the top edge, so
+        // the first row is not cut off.
+        assert_eq!(CompactList::fit_y(150.0, -130.0, 280.0, 20.0, 300.0), 20.0);
+        // Above the top by a little: moved down to it.
+        assert_eq!(CompactList::fit_y(340.0, -10.0, 100.0, 0.0, 380.0), 0.0);
+        // Never below the bottom edge.
+        assert_eq!(CompactList::fit_y(380.0, 100.0, 100.0, 0.0, 400.0), 100.0);
     }
 
     #[test]

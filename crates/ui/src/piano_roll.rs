@@ -342,6 +342,18 @@ struct LatentSelection {
     shown: std::collections::BTreeSet<usize>,
 }
 
+/// The notes that were selected before the edit that left the history `depth` steps deep, by start
+/// and key, in clip `clip`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UndoSelection {
+    depth: usize,
+    clip: ClipId,
+    names: Vec<(i64, u8)>,
+}
+
+/// How many edits the roll remembers the selection of.
+const UNDO_SELECTIONS: usize = 256;
+
 /// The piano roll. See the module documentation.
 #[derive(Debug)]
 pub struct PianoRollView {
@@ -397,6 +409,18 @@ pub struct PianoRollView {
     /// The notes that were selected before an edit moved them, by what names them (start and
     /// key), kept until they are found again (see [`Self::resolve_selection`]).
     latent: Option<LatentSelection>,
+    /// The notes that were selected before each recent edit, by the depth of the history the
+    /// edit left (see [`Self::undo_selection`]).
+    undo_selections: Vec<UndoSelection>,
+    /// How deep the history is, as the host last said ([`Self::set_undo_depth`]).
+    undo_depth: usize,
+    /// The depth of the edit whose selection was recorded last, while the same edit goes on (a
+    /// drag is one step that is synced many times).
+    recorded_depth: Option<usize>,
+    /// An undo or a redo is about to change the clip: that sync is not an edit.
+    stepping: bool,
+    /// The notes an undo gives back the selection of, until the next sync of the clip.
+    restore: Option<Vec<(i64, u8)>>,
     /// The selection as of the last sync: a selection that differs was changed since by a
     /// gesture, which already speaks of the notes of the clip it is about to be given.
     seen: std::collections::BTreeSet<usize>,
@@ -570,6 +594,11 @@ impl PianoRollView {
             fit_pending: false,
             selection: Selection::new(),
             latent: None,
+            undo_selections: Vec::new(),
+            undo_depth: 0,
+            recorded_depth: None,
+            stepping: false,
+            restore: None,
             seen: std::collections::BTreeSet::new(),
             drag: Drag::None,
             hover: Hit::None,
@@ -602,6 +631,7 @@ impl PianoRollView {
             self.ctl_focus = false;
             self.expr.focus = false;
             self.latent = None;
+            self.undo_selections.clear();
         }
         self.clip_id = Some(id);
         self.track = None;
@@ -1430,6 +1460,7 @@ impl PianoRollView {
         if !same_clip || meter != self.meter {
             self.rows_dirty = true;
             let before = self.notes_snapshot();
+            self.remember_selection_before(&before, id);
             let (clip, device) = match found {
                 Some((t, c)) => (Some(c.clone()), Some(t.device.clone())),
                 None => (None, None),
@@ -1446,8 +1477,72 @@ impl PianoRollView {
             }
             self.repaint = true;
         }
+        self.restore = None;
+        self.stepping = false;
         self.seen = self.selection.items().clone();
         self.sync_rest(doc);
+    }
+
+    /// Notes down which notes were selected before the edit that the clip just changed by (the
+    /// selection as of the last sync, named in the notes `before`), under the depth of the
+    /// history. An undo or a redo is not an edit.
+    fn remember_selection_before(&mut self, before: &atomik_model::NoteList, id: ClipId) {
+        if std::mem::take(&mut self.stepping) || self.clip.is_none() || self.clip_id != Some(id) {
+            return;
+        }
+        let depth = self.undo_depth;
+        if self.recorded_depth == Some(depth) {
+            // The same step again (a drag): the first sync of it holds the selection before it.
+            return;
+        }
+        let names: Vec<(i64, u8)> = self
+            .seen
+            .iter()
+            .filter_map(|i| before.get(*i))
+            .map(|n| (n.tick, n.key))
+            .collect();
+        // A new edit ends the redo line: what was beyond this depth is gone.
+        self.undo_selections.retain(|e| e.depth < depth);
+        self.recorded_depth = Some(depth);
+        if names.is_empty() {
+            return;
+        }
+        self.undo_selections.push(UndoSelection {
+            depth,
+            clip: id,
+            names,
+        });
+        if self.undo_selections.len() > UNDO_SELECTIONS {
+            self.undo_selections.remove(0);
+        }
+    }
+
+    /// Tells the roll how deep the document's history is now, before the sync that follows an
+    /// edit, so it can tell which edit a selection belongs to.
+    pub fn set_undo_depth(&mut self, depth: usize) {
+        self.undo_depth = depth;
+    }
+
+    /// An undo is about to put back the clip as it was before the edit that left the history
+    /// `depth` steps deep: at the next sync the notes that were selected before that edit are
+    /// selected again, as in most editors, when they are all found. An edit the view did not
+    /// see, or one whose notes are not there, leaves the selection to the rules of
+    /// [`Self::resolve_selection`].
+    pub fn undo_selection(&mut self, depth: usize) {
+        self.stepping = true;
+        self.recorded_depth = None;
+        self.restore = self
+            .undo_selections
+            .iter()
+            .rev()
+            .find(|e| e.depth == depth && Some(e.clip) == self.clip_id)
+            .map(|e| e.names.clone());
+    }
+
+    /// A redo is about to change the clip: the sync that follows is not a new edit.
+    pub fn redo_selection(&mut self) {
+        self.stepping = true;
+        self.recorded_depth = None;
     }
 
     /// The track mode's sync: the stand-in clip is the track's own controller lanes over the
@@ -1567,6 +1662,14 @@ impl PianoRollView {
     /// back to those notes.
     fn resolve_selection(&mut self, before: atomik_model::NoteList, touched: bool) {
         let n = self.notes().len();
+        if let Some(names) = self.restore.take()
+            && let Some(found) = self.find_names(&names)
+        {
+            // An undo: the notes the edit was made on are selected again.
+            self.latent = None;
+            self.selection.set(found);
+            return;
+        }
         if touched {
             // A gesture chose the notes of the clip it is about to be given: indices are right.
             self.latent = None;

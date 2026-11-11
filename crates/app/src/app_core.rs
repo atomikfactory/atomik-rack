@@ -1381,7 +1381,12 @@ impl<S: EngineSink> AppCore<S> {
     pub fn undo(&mut self) -> bool {
         self.commit_patch_browse();
         self.plugins_flush_dirty(true);
+        let depth = self.document.undo_depth();
         let done = catch_unwind(AssertUnwindSafe(|| self.document.try_undo()));
+        if matches!(done, Ok(Ok(Some(_)))) {
+            // The piano roll selects again what the undone edit was made on.
+            self.piano_roll.undo_selection(depth);
+        }
         let undone = self.after_history_step(done, "undo");
         // A transition that was undone no longer counts.
         let depth = self.document.undo_depth();
@@ -1394,6 +1399,9 @@ impl<S: EngineSink> AppCore<S> {
         self.commit_patch_browse();
         self.plugins_flush_dirty(false);
         let done = catch_unwind(AssertUnwindSafe(|| self.document.try_redo()));
+        if matches!(done, Ok(Ok(Some(_)))) {
+            self.piano_roll.redo_selection();
+        }
         self.after_history_step(done, "redo")
     }
 
@@ -1460,6 +1468,7 @@ impl<S: EngineSink> AppCore<S> {
         let doc = self.document.doc();
         self.view.sync(doc, &self.registry);
         self.arrangement.sync_at(doc, &self.registry, revision);
+        self.piano_roll.set_undo_depth(self.document.undo_depth());
         self.piano_roll.sync_at(doc, &self.registry, revision);
         self.sync_roll_labels();
         self.sync_song_key_filter();
@@ -1792,6 +1801,10 @@ impl<S: EngineSink> AppCore<S> {
         self.sink.collect_garbage();
         self.plugins_frame();
         self.poll_background();
+        // The kick and bass worker's answer is taken before the panels read it: the platform
+        // stops ticking once nothing is busy, so a frame that read the old progress would be
+        // the last one painted.
+        self.poll_kick_bass();
         self.feed_sampling();
         // A device latency changed (e.g. a channel's `latency.adjust`): recompile with it.
         if self.sink.latency_epoch() != self.latency_epoch {

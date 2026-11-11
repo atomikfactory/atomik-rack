@@ -1010,6 +1010,35 @@ fn the_menu_of_an_open_container_moves_a_device_out_after_it() {
     assert_eq!(devices(&s), ["a", "container"]);
 }
 
+#[test]
+fn the_menu_of_a_device_in_an_unfolded_container_lists_move_out_of_container() {
+    let mut s = rack3();
+    let (b, c) = (plate(&s, "b"), plate(&s, "c"));
+    click(&mut s, b, Modifiers::NONE);
+    click(&mut s, c, Modifiers::SHIFT);
+    s.execute(AppCommand::Combine);
+    // The container is unfolded, not opened: the rack shows its two devices in place.
+    assert_eq!(s.core().view().scope_depth(), 0);
+    let inner = plate(&s, "container/b");
+    click(&mut s, inner, Modifiers::NONE);
+    let items = open_menu(&mut s, inner);
+    let on = |id: &str| items.iter().find(|(c, _, _)| c == id).map(|(_, _, e)| *e);
+    assert_eq!(on("rack.move_out"), Some(true), "{items:?}");
+    let at = s
+        .context_menu()
+        .unwrap()
+        .item_center("rack.move_out")
+        .unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    assert!(s.core().last_rejection().is_none());
+    assert_eq!(devices(&s), ["a", "container", "b"]);
+    // A device of the top level has no such row.
+    let top = plate(&s, "a");
+    click(&mut s, top, Modifiers::NONE);
+    let items = open_menu(&mut s, top);
+    assert!(!items.iter().any(|(c, _, _)| c == "rack.move_out"));
+}
+
 // ------------------------------------------------------------------ goldens
 
 fn golden(name: &str, menu: &atomik_ui::context_menu::ContextMenu) {

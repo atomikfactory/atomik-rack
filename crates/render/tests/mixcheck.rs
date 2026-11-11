@@ -535,3 +535,48 @@ fn a_kick_whose_body_is_in_its_harmonics_has_a_weak_fundamental_and_a_good_kick_
     assert!(found[0].value > 6.0);
     assert!(found[0].measured.contains("harmonic"));
 }
+
+/// Every example song the application ships can be checked: the mix check understands containers
+/// (the send effects of a modular song are containers) as the renderer does.
+#[test]
+fn every_shipped_example_song_can_be_checked() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut projects: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
+    for entry in std::fs::read_dir(root.join("factory/Projects"))
+        .unwrap()
+        .flatten()
+    {
+        let folder = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        projects.push((folder.join(format!("{name}.atomik")), folder));
+    }
+    projects.push((
+        root.join("examples/projects/audio-demo.atomik"),
+        root.join("examples/projects/audio-demo"),
+    ));
+    projects.push((
+        root.join("examples/projects/container-demo/container-demo.atomik"),
+        root.join("examples/projects/container-demo"),
+    ));
+    let registry = default_registry();
+    for (file, folder) in projects {
+        let text = std::fs::read_to_string(&file).unwrap();
+        let doc = atomik_model::load_project(&text, &registry)
+            .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+        if doc.console.channels.is_empty() {
+            continue;
+        }
+        let plan = plan(&doc, &registry).expect("a plan");
+        let result = render_check(
+            &doc,
+            &registry,
+            (&options(512), Some(&folder)),
+            &mut PluginBounce::default(),
+            (&plan, ExportSpan::Range(0, 2 * BAR)),
+            RenderControl::default(),
+        );
+        if let Err(e) = result {
+            panic!("{}: {e}", file.display());
+        }
+    }
+}

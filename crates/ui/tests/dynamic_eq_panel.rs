@@ -411,3 +411,23 @@ fn the_finder_buttons_and_delta_explain_themselves() {
         assert!(help.text.len() <= 100, "{}", help.text);
     }
 }
+
+#[test]
+fn dragging_the_handle_of_a_band_that_is_off_switches_it_on() {
+    let (mut document, mut v) = rig();
+    // The shelf on the right starts off in the rig, like every band of a new dynamic EQ.
+    assert_eq!(param(&document, "band5.on"), 0.0);
+    let h = v.eq_handle_center(&key("fx"), 4).unwrap();
+    let a = drag(&mut document, &mut v, h, &[Point::new(h.x - 40.0, h.y)]);
+    assert_eq!(param(&document, "band5.on"), 1.0, "{:?}", set_params(&a));
+    assert!(param(&document, "band5.freq") < 5000.0);
+    // A band that is on stays on, and a plain click that does not move it changes nothing.
+    let h = v.eq_handle_center(&key("fx"), 4).unwrap();
+    let a = drag(&mut document, &mut v, h, &[Point::new(h.x - 30.0, h.y)]);
+    assert!(set_params(&a).iter().all(|(k, _, _)| k != "band5.on"));
+    let (mut document, mut v) = rig();
+    let h = v.eq_handle_center(&key("fx"), 4).unwrap();
+    let a = drag(&mut document, &mut v, h, &[]);
+    assert!(set_params(&a).is_empty(), "{:?}", set_params(&a));
+    assert_eq!(param(&document, "band5.on"), 0.0);
+}
