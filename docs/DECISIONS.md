@@ -28,6 +28,7 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 | [N](#n-video-through-the-users-ffmpeg) | Video through the user's FFmpeg | Default (not yet confirmed) |
 | [O](#o-the-video-of-a-song-and-its-time) | The video of a song and its time | Default (not yet confirmed) |
 | [R](#r-controller-profiles) | Controller profiles | Default (not yet confirmed) |
+| [Y](#y-the-pitch-keeping-preview-of-a-warped-clip-is-a-real-time-wsola) | Pitch-keeping preview of warped clips | Default (not yet confirmed) |
 
 ---
 
@@ -572,5 +573,33 @@ other than Dark, Light or System is in use, so an older file with `"theme": "dar
 **Decision.** Option 3. The format is described in [EXTENDING.md](EXTENDING.md#9-making-a-theme). A theme sets the colour
 tokens of `Theme` (about sixty), a few numbers that were already in `Theme`, and nothing else: no new styling
 dimension. A glow on the meters and the playhead was left out, since it would cost frame time for one theme.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## Y. The pitch-keeping preview of a warped clip is a real-time WSOLA
+
+**Question.** A warped clip plays a buffer rendered by a worker. Until it is ready the engine plays an interim read
+through the clip's time map, which was a resampling: the pitch moved with the stretch and a transposition was not
+heard. What should play instead?
+
+**Options.** (1) Keep the resampling. (2) A real-time phase vocoder like the Tonal mode: FFTs on the audio thread,
+a heavier and more complex state per clip. (3) A streaming WSOLA like the body of the Beats mode: overlap-added
+windowed pieces of the source, each moved a little to continue the previous one, and a resample for the transposition.
+
+**Implications.** WSOLA needs no FFT and only a few small buffers, so it can be built once and run with no allocation;
+its cost is bounded by limiting the similarity search (a quarter frame either way, on the sum of both channels, every
+eighth sample over candidates four apart, then refined), which measured about 2.4 ms per second of stereo audio at
+48 kHz per clip (16 tracks of transposed interim warps took 8.9 % of real time against 5.1 % for the resampled read, see
+[perf/BASELINE.md](../perf/BASELINE.md)), about 8 % of one core for 32 clips. It is rougher than the Tonal buffer on
+sustained chords and smears attacks more than the Beats buffer, which is acceptable for the second or two before the
+buffer replaces it. At a ratio of 1 with no transposition it gives back the source bit for bit, so an unstretched clip
+does not change. The stretchers are preallocated per audio track when the song is compiled: a fixed cap of four keeps
+the memory bounded (each is sized for 192 kHz, about 150 KB), and regions take the slots in turn, so two that sound
+together never share one. A region that finds its slot busy within one block falls back to the resampling and is
+counted.
+
+**Decision.** Option 3 for Beats, Tonal and transposed clips; a Repitch clip without transposition keeps the resampling,
+which is its true sound. Reversed and streamed clips keep their behaviour (no interim warp). Offline renders never use
+it.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.

@@ -927,10 +927,11 @@ Hand checks, not automated (they need your ears):
   flams and double hits, and undo it in one step; trim and split a quantized clip and check that the
   hits stay where they were.
 - Change the tempo while playing with a warped clip: the clip keeps time at once (it never plays
-  unwarped, and a transposed clip is at the wrong pitch for a moment), a CALC chip shows on its
-  header until the warped buffer takes over (listen for a click at the switch, there should be
-  none); drag a warp marker and a tempo ramp point while playing and listen for gaps; open a big
-  project with many warped clips and watch the memory the cache uses.
+  unwarped, and a Beats, Tonal or transposed clip keeps its pitch while it waits), a CALC chip shows
+  on its header until the warped buffer takes over (listen for a click or a jump in pitch at the
+  switch, there should be none; the preview is a little rougher than the buffer); drag a warp
+  marker and a tempo ramp point while playing and listen for gaps; open a big project with many
+  warped clips and watch the memory the cache uses.
 - Open an old project and check that it sounds the same.
 
 ## Exporting audio files

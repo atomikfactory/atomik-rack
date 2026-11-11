@@ -8,6 +8,18 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **Warped and transposed audio clips play at the right pitch while their stretch is still being prepared.** A warped
+  clip is rendered into a buffer by a worker; until that buffer is ready, the clip used to play a resampled read, so a
+  Beats or Tonal clip changed pitch with the tempo and a transposition was not heard at all, then jumped when the
+  buffer arrived. That preview now goes through a real-time stretcher (a streaming WSOLA in atomik-dsp that never
+  allocates on the audio thread): it keeps the pitch, plays the transposition and follows the warp markers and tempo
+  ramps, so it sounds like the finished buffer, a little rougher, and the 5 ms switch to the buffer is near-silent. A
+  Repitch clip without transposition still plays the resampled read, unchanged. Each audio track holds at most four
+  stretchers; a fifth clip sounding in the same 64-frame block falls back to the resampled read. Reversed and streamed
+  clips play as before (unwarped until their buffer is ready). Offline bounces never hear the preview and stay
+  bit-identical; the project format is unchanged (45).
+
 ## [0.4.0-rc.2] - 2026-11-10
 
 ### Added

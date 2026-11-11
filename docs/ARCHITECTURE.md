@@ -2260,16 +2260,26 @@ learns nothing new.
 - **Interim warp** ([engine/src/audio.rs](../crates/engine/src/audio.rs)). `song_input_live` (the
   app's builder; a bounce never calls it) gives a warped clip of a memory asset whose buffer is not
   ready (and that does not play backwards) a region with `SongAudioRegion::warp`, an index into `SongAudioTrack::warp_maps` (the job's
-  `(clip frame, asset frame)` knots, one map per job). The engine reads the asset through the
-  piecewise-linear map with four-point Hermite interpolation, on stack blocks, so a tempo ramp,
-  markers and trims are right from the next batch; it is a resampling (the pitch follows the ratio,
-  a transposition is not heard) and a streamed asset keeps playing unwarped. When a song swap
-  replaces a track that played an interim warp, `start_handoffs` keeps the old lane's data in the
-  new track's scratch (an `Arc` clone, dropped with the snapshot, never on the audio thread) and
-  `Handoff` mixes the two over 5 ms, so the finished buffer arrives without a click; a track that
-  reads streamed assets is left out. The clips still rendering are listed by `calculating_clips`
-  and drawn with a CALC chip. A cheaper stretcher than resampling (WSOLA) could replace the Hermite
-  read behind the same region field.
+  `(clip frame, asset frame)` knots, one map per job), with the job's mode and transposition in
+  `warp_mode` and `warp_cents`. The engine reads the asset through the piecewise-linear map, on
+  stack blocks, so a tempo ramp, markers and trims are right from the next batch. A Repitch clip
+  without transposition reads with four-point Hermite interpolation (a resampling, which is what
+  Repitch sounds like). A Beats or Tonal clip, or a transposed one, plays through the real-time
+  stretcher (`RtStretcher`, [dsp/src/stretch/realtime.rs](../crates/dsp/src/stretch/realtime.rs)):
+  a streaming WSOLA with 30 ms Hann frames, a bounded stereo-linked similarity search and a Hermite
+  resample for the transposition, so the preview keeps the pitch the finished buffer will have. Each
+  track owns a `StretchBank` ([engine/src/audio_stretch.rs](../crates/engine/src/audio_stretch.rs))
+  of at most four stretchers, built when the song is compiled; `compile_audio` deals the regions
+  their slots in turn, and a region whose slot is busy in the same segment falls back to the
+  Hermite read (counted by `interim_stretch_fallbacks`). A block that does not continue the last
+  one (a locate, a loop wrap, a new clip in the slot) restarts the stretcher at once, with no fade.
+  A streamed asset keeps playing unwarped. When a song swap replaces a track that played an
+  interim warp, `start_handoffs` keeps the old lane's data in the new track's scratch (an `Arc`
+  clone, dropped with the snapshot, never on the audio thread) and moves the old track's
+  stretchers with it, and `Handoff` mixes the two over 5 ms, so the finished buffer arrives
+  without a click; a track that reads streamed assets is left out. The clips still rendering are
+  listed by `calculating_clips` and drawn with a CALC chip. Bounces never build interim regions,
+  so their bits do not change.
 - **App** ([app_core_warp.rs](../crates/app/src/app_core_warp.rs)). The cache lives in `AudioState`.
   Each `submit_song` calls `sync_warps`: it lists the jobs the document needs, drops buffers nobody
   needs and cancels their workers, queues the missing jobs whose asset is loaded and starts at most
@@ -7241,10 +7251,10 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   Resolution offers 960 and 480. The file browser does not list `.mid` files, so a file can only be
   dropped from the operating system.
 - **Time-stretch.** A warped clip is rendered once into a buffer, so a change of tempo, setting or
-  clip waits for a worker (the clip plays an interim resampled read meanwhile, at the right timing
-  but the wrong pitch for a transposed clip; a streamed asset plays unwarped, and so does a
-  reversed clip, backwards, until its buffer is ready); the stretch engines are offline only and
-  the Tonal mode does not keep formants when transposing (2.18).
+  clip waits for a worker (the clip plays an interim read meanwhile, at the right timing and, through
+  the real-time stretcher, at the right pitch, a little rougher than the finished buffer; a streamed
+  asset plays unwarped, and so does a reversed clip, backwards, until its buffer is ready); the
+  Tonal mode does not keep formants when transposing (2.18).
 - **Tempo and meter.** Tempo ramps are linear in BPM only (no other curve shapes), meter changes
   only start on bar lines, and tempo-synced devices follow a ramp in steps of one 64-frame batch.
   The LFO of the modulation effects computes its synced phase from the absolute frame and the tempo
