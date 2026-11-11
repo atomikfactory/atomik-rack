@@ -42,6 +42,7 @@ mod fader;
 mod fdn;
 pub mod fm;
 pub mod grain;
+pub mod harmony;
 pub mod k_weighting;
 pub mod kick_bass;
 pub mod ladder;
