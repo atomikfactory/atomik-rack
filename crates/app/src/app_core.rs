@@ -1792,6 +1792,10 @@ impl<S: EngineSink> AppCore<S> {
         self.sink.collect_garbage();
         self.plugins_frame();
         self.poll_background();
+        // The kick and bass worker's answer is taken before the panels read it: the platform
+        // stops ticking once nothing is busy, so a frame that read the old progress would be
+        // the last one painted.
+        self.poll_kick_bass();
         self.feed_sampling();
         // A device latency changed (e.g. a channel's `latency.adjust`): recompile with it.
         if self.sink.latency_epoch() != self.latency_epoch {

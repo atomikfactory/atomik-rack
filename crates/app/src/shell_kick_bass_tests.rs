@@ -133,3 +133,26 @@ fn a_song_without_tracks_opens_an_empty_panel_that_explains_what_to_pick() {
     let info = s.kick_bass_view().unwrap().info();
     assert!(matches!(&info.run, atomik_ui::RunView::Failed(w) if w.contains("Pick")));
 }
+
+#[test]
+fn the_panel_shows_the_result_as_soon_as_the_check_ends_without_another_input() {
+    let mut s = shell_with(scene(180.0));
+    s.execute(AppCommand::KickBassCheck);
+    let run = s.kick_bass_view().unwrap().run_rect().center();
+    click(&mut s, run);
+    // The platform loop ticks while the app is busy and then paints what the last frame left:
+    // that last frame must already hold the result, not the 100 % of the render before it.
+    let mut waited = 0;
+    let mut t = 0.0;
+    while s.is_busy() {
+        waited += 1;
+        assert!(waited < 6_000, "the check did not finish");
+        std::thread::sleep(Duration::from_millis(20));
+        t += 0.02;
+        s.frame_at(t);
+    }
+    assert_eq!(
+        s.kick_bass_view().unwrap().info().run,
+        atomik_ui::RunView::Done
+    );
+}
