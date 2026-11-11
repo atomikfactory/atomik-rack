@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds the Flatpak bundle: dist/atomik-rack-<version>.flatpak (+ .sha256), from the release tarball.
 # Usage: package-flatpak.sh [--dry-run] <label>   (repository root; dist/ holds the tarball that
-#        package-tar.sh wrote, dist/atomik-rack-<version>-linux-x86_64.tar.gz)
+#        package-tar.sh wrote, dist/atomik-rack-<label>-linux-x86_64.tar.gz)
 #   --dry-run  prints the staged files and the commands, and builds nothing
 # Needs flatpak and flatpak-builder (apt-get install flatpak flatpak-builder). The runtime and the
 # SDK come from Flathub (flatpak-builder installs them for the user).
@@ -15,7 +15,8 @@ fi
 label="$1"
 id="io.github.atomikfactory.AtomikRack"
 file_version="${label#v}"
-tarball="dist/atomik-rack-${file_version}-linux-x86_64.tar.gz"
+# package-tar.sh names the archive after the label itself (the tag keeps its "v").
+tarball="dist/atomik-rack-${label}-linux-x86_64.tar.gz"
 out="dist/atomik-rack-${file_version}.flatpak"
 src="packaging/linux"
 
