@@ -1365,6 +1365,8 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Opens the relink panel, or says there is nothing to relink.
     fn open_relink(&mut self) {
+        // Files that went missing while the song is open count too.
+        self.core.rescan_missing_assets();
         if self.core.missing_assets().is_empty() {
             self.notify("no missing audio files".to_owned());
             return;
@@ -4460,7 +4462,6 @@ impl<B: AudioBackend> Shell<B> {
             sequencer_only: self.in_sequencer_only(),
             editor: !self.lower_is_console()
                 && !matches!(self.lower_pane(), Pane::Arrangement | Pane::Console),
-            missing_audio: !self.core.missing_assets().is_empty(),
             archive_busy: self.core.archive_busy(),
             video_busy: self.core.video_busy(),
             video_clip: self.core.video_clip().is_some(),

@@ -967,7 +967,6 @@ mod tests {
             video_overlay: true,
             sequencer_only: false,
             editor: false,
-            missing_audio: false,
             archive_busy: false,
             video_busy: false,
             video_clip: false,

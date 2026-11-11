@@ -104,11 +104,11 @@ fn click(s: &mut Shell<NullBackend>, p: atomik_ui::kurbo::Point) -> Vec<ShellReq
 }
 
 #[test]
-fn the_menu_item_is_in_the_file_menu_and_enabled_only_while_audio_is_missing() {
+fn the_menu_item_is_in_the_file_menu_and_always_available() {
     let s = shell();
     let item = relink_item(&s);
     assert_eq!(item.label, "Relink Missing Audio\u{2026}");
-    assert!(!item.enabled, "nothing is missing in a new project");
+    assert!(item.enabled, "the command explains when nothing is missing");
     assert_eq!(item.command.command_id(), Some(("file.relink_audio", None)));
 
     let t = Tmp::new();
@@ -136,6 +136,29 @@ fn the_command_opens_a_list_of_the_missing_files() {
 }
 
 #[test]
+fn audio_that_goes_missing_while_the_song_is_open_can_be_relinked() {
+    let t = Tmp::new();
+    let mut c = AppCore::with_doc(RecordingSink::new(), atomik_model::empty_doc(), None);
+    c.import_audio(
+        vec![wav(&t.0.join("source"), "kick.wav", 1.0)],
+        ImportTarget::NewTracks,
+        0,
+    );
+    c.wait_background();
+    let hash = c.doc().assets.keys().next().unwrap().clone();
+    c.save_as(&t.0.join("song.atomik")).unwrap();
+    let mut s = shell();
+    s.open_file(&t.0.join("song").join("song.atomik"));
+    s.core_mut().wait_background();
+    s.frame();
+    assert!(s.core().missing_assets().is_empty());
+    std::fs::remove_file(t.0.join("song").join("Audio").join(format!("{hash}.wav"))).unwrap();
+    s.execute(AppCommand::RelinkAudio);
+    assert!(s.relink_open());
+    assert_eq!(s.relink_view().unwrap().entries()[0].name, "kick.wav");
+}
+
+#[test]
 fn with_nothing_missing_the_command_only_says_so() {
     let mut s = shell();
     assert!(s.execute(AppCommand::RelinkAudio).is_empty());
@@ -155,7 +178,10 @@ fn locate_asks_for_a_file_and_the_picked_file_relinks_the_asset() {
     s.frame();
     assert!(s.core().missing_assets().is_empty());
     assert!(!s.relink_open(), "the panel closes once nothing is missing");
-    assert!(!relink_item(&s).enabled);
+    assert!(
+        relink_item(&s).enabled,
+        "the item stays available and says nothing is missing"
+    );
     assert!(s.core().is_dirty(), "the relink is an edit");
 }
 

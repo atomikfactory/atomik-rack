@@ -316,6 +316,23 @@ impl<S: EngineSink> AppCore<S> {
         &self.audio.missing
     }
 
+    /// Looks at the project's audio files again: assets whose file is no longer in the bundle
+    /// (moved or deleted while the song is open) join the missing list, so they can be relinked.
+    pub fn rescan_missing_assets(&mut self) {
+        if self.audio.adopt_from.is_some() {
+            return;
+        }
+        let Some(bundle) = self.audio.bundle.as_ref().map(|b| &b.bundle) else {
+            return;
+        };
+        let found = missing_assets(self.doc(), Some(bundle));
+        for m in found {
+            if !self.audio.missing.iter().any(|x| x.hash == m.hash) {
+                self.audio.missing.push(m);
+            }
+        }
+    }
+
     /// The waveform peaks fed to the arrangement view, by asset hash.
     pub fn peaks(&self) -> &BTreeMap<String, Arc<PeakPyramid>> {
         &self.audio.peaks
