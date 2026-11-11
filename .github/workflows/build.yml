@@ -56,7 +56,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { label: linux-x86_64, os: ubuntu-latest }
+          # Linux is linked against the C library of the build machine, so it is built on an older
+          # Ubuntu: the programs then start on any system and Flatpak runtime at least that new.
+          # ubuntu-latest has glibc 2.43, newer than the org.freedesktop.Platform 25.08 runtime,
+          # and the Flatpak smoke test failed with "GLIBC_2.43 not found". 24.04 has glibc 2.39.
+          - { label: linux-x86_64, os: ubuntu-24.04 }
           - { label: windows-x86_64, os: windows-latest }
           - { label: macos-universal, os: macos-latest }
     steps:
