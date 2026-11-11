@@ -5084,12 +5084,20 @@ impl PianoRollView {
                 (self.hover == Hit::Top(Some(TopItem::Tool(tool))) || active)
                     .then_some(if active { t.highlight } else { t.focus }),
             );
+            let (label, size) = crate::paint::fit_label_shrink(
+                c,
+                &crate::i18n::tr(tool.label()),
+                tr.width() - 2.0,
+                7.5,
+                6.0,
+                400,
+            );
             sp::label(
                 c,
-                tool.label(),
+                &label,
                 tr.center().x,
                 tr.center().y + 3.0,
-                7.5,
+                size,
                 if active { t.highlight } else { t.text_muted },
                 Align::Center,
             );
