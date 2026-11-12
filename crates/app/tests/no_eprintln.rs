@@ -42,7 +42,12 @@ fn no_production_file_prints_with_eprintln() {
         rust_files(&entry.path().join("src"), &mut files);
         for file in files {
             let stem = file.file_stem().unwrap().to_string_lossy().into_owned();
-            if stem == "tests" || stem.ends_with("_tests") {
+            // A program of a library crate (`src/bin/*.rs`, a command-line tool) talks to its
+            // user on stderr like the program crates above.
+            let program = file
+                .strip_prefix(entry.path().join("src"))
+                .is_ok_and(|rel| rel.starts_with("bin"));
+            if program || stem == "tests" || stem.ends_with("_tests") {
                 continue;
             }
             let text = fs::read_to_string(&file).unwrap();
