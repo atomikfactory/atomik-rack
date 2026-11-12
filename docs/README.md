@@ -240,6 +240,37 @@ singer, a bass, a lead. Press VOCAL in its toolbar, or 3.
 - **Saving.** The edits are saved with the clip, as an optional field that an older version drops with a warning
   (project format 45).
 
+## Webcam control
+
+The webcam can turn a knob: click a knob, slider or fader (on a rack panel, in the parameter pane, on a console strip
+or in a plugin's own window), pinch your thumb and index finger in front of the camera and twist your wrist like a
+knob. The last control you pressed is the **camera target**: it carries a small lens and a ring while the camera is on,
+it is view state (never saved with a project) and deleting its device clears it.
+
+- **Turning it on.** The CAM button of the transport bar (when the bar has room; the `...` menu has it too), View >
+  Panels > Camera and the `camera.toggle` command (no default key). The camera is off until you do, and it is off
+  again when you turn it off, when you quit and on any camera error. The first time, the hand models are missing, and
+  a dialog says what is downloaded (two files, 7.8 MB), from where (the host name), that nothing about you or your
+  computer is sent and that camera pictures stay in memory. Nothing is fetched before you press Download; it shows
+  the progress, Cancel stops it and a failure says why with Retry. The files are checked against a checksum, and a
+  failed or cancelled download leaves nothing behind. Settings > Camera > Delete downloaded models removes them.
+- **The gesture.** A pinch opens a gesture, every twist turns the target, and letting go closes it: it is one undo
+  step, Touch automation writes while the fingers are together, and it works exactly like a MIDI controller mapped to
+  the control. A twist turns the target by its angle over **Twist for full range** (90 to 360 degrees, default 270) of
+  its range; with **Fine control by distance** (on by default) a hand close to the camera turns it a quarter as far
+  and a far hand all the way. A stepped control moves one step for each step width of twist, and a step is only taken
+  back after a whole step width the other way, so a trembling hand does not make it flicker. With no target a pinch
+  says "Click a knob first".
+- **The preview.** A small box in the lower right corner of the main window (View > Panels > Camera Preview, or its
+  close button, `camera.preview`): the camera picture shown like a mirror with the landmarks of the hand on it, the
+  state (NO HAND, HAND or PINCH), the target and its value while you pinch, and a tooltip with the frames per second
+  and the milliseconds the models took.
+- **Settings.** The Camera tab: the camera (the list is asked for with Refresh, so opening the settings never
+  touches a camera), which hand (either, left or right), the full turn, fine control, the pinch sensitivity and the
+  preview. They are saved with the other settings (`workflow.json`), never in a project.
+- **Privacy.** Frames live in memory only: they are never written to disk, logged, sent anywhere, put in a project or
+  kept after the camera stops, and a lit dot shows whenever the camera runs. See [Privacy](#privacy).
+
 ## Controllers
 
 Settings > Controllers > Set Up Controller... learns a hardware controller from the messages it sends: move each knob
