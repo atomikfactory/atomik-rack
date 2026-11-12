@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Devices that follow the song's key and chords.** Key & Chord has `scale.source` (song: the song key at the note,
+  key changes included), `chord.source` (song chord) with `chord.follow` stamp (any key plays the lane's chord near
+  it) or snap (each key moves to the nearest chord tone), and `chord.retrigger` (held keys are re-voiced at a chord
+  or key change, with no stuck notes). The Arpeggiator has `source` (held, song chord, held + song chord),
+  `chord.octave` and `gate.keys`, and the CV Quantizer `scale.source`. The defaults follow nothing, so older songs
+  play as before. The harmony is compiled with the song and looked up per batch without allocating, so bounces stay
+  bit-identical at every block size and worker count; a harmony edit now reaches the engine. A following panel
+  shows a SONG tag with the chord or key at the playhead.
+- **Chord lane follow-ups.** A click on a chord of the chord lane (or a chord picked in the picker) plays it through
+  the selected note track or the preview voice (Play Chords on Click in the lane's right-click list, on by
+  default). Fit Notes to Chords shows the moved notes first, with Apply (one undo step, or Enter) and Cancel (or
+  Esc). A MIDI import as a song reads chords from chord-symbol text, lyric and marker events and the song key from
+  the key signature (when the song has none), in the import's one undo step; the app can also detect chords from
+  the imported notes. `edit.paste_chord` (Ctrl+Alt+V in the arrangement) pastes the lane's copied chord at the
+  playhead.
 - **Chords and keys from audio, and polyphonic audio to notes.** Transport > Detect Chords from Audio... (also in the
   right-click menu of an audio clip, `sequencer.detect_chords_from_audio`) listens to the selected audio clips, or to
   those under the loop, on a worker with progress and cancel, and opens a preview panel: the chords drawn over their

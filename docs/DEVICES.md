@@ -3291,6 +3291,9 @@ The same six as the step sequencer, in the same order: `notes_in`, `notes_out`, 
 | `input.low` | 0 to 127 | 0 | none | Linear | yes |
 | `input.high` | 0 to 127 | 127 | none | Linear | yes |
 | `repeat` | 1 to 4 (times each note of the figure plays) | 1 | none | Linear | yes |
+| `source` | 0-2: held, song chord, held + song chord | 0 (held) | choice | Linear | yes |
+| `chord.octave` | 0-3: C2, C3, C4, C5 (the song chord, `gate.keys` off) | 1 (C3) | choice | Linear | yes |
+| `gate.keys` | 0 or 1 (with a song chord source, run only while a key is held) | 1 | toggle | Linear | yes |
 
 **Step pattern.** With `pattern.on` the global step number modulo 16 picks one of the sixteen
 `step.N` values: a rest is silent, a tie extends the note before it to the end of the tie, an accent
@@ -3327,6 +3330,28 @@ ticks). **Input range:** keys outside `input.low` to `input.high` are not arpegg
   it; a `reset` leaves an `AllOff` for the next batch.
 - **Meter values:** the held key count, then the next 8 keys it will play (0 = none; in chord mode
   the lowest key of the chord).
+- **Song chords.** `source` song chord arpeggiates the chord of the song's chord lane at each step
+  (a slash chord's bass first, below the root), from the octave of the lowest held key, or from
+  `chord.octave` when `gate.keys` is off. With `gate.keys` on the figure runs only while a key is
+  held (the held keys give the register and the velocity); off, it runs whenever the transport plays
+  over a chord, with no key needed. `held + song chord` moves each held key to the nearest chord tone
+  (ties down). A step with no chord plays the held keys as they are. The set is read at every step:
+  a chord change takes effect at the next step without restarting the figure, and a change on a step
+  boundary plays the new chord on that step. The panel shows a **SONG** tag with the chord at the
+  playhead while it follows the lane.
+
+## How harmony reaches the devices
+
+The song key, the key changes and the chord lane are compiled with the song into a sorted, shared
+harmony that the engine swaps with the song (a harmony edit reaches the engine with the next song
+swap, like any song edit). Every batch, the player hands each device the key and the chord at each
+frame of the batch where one of them changes (`ProcessContext::harmony`, a fixed-size copy inside
+the batch's time info, at most eight changes per batch). A change lands on the frame where a note of
+the same tick is emitted, so a note and the chord starting under it agree. With the transport
+stopped the batch holds the harmony at the playhead (what the arpeggiator's internal clock reads).
+Nothing allocates or locks, and a bounce sees exactly the same harmony at every block size and
+worker count. A song without key and chords gives devices no harmony at all. See
+[DECISIONS AB](DECISIONS.md#ab-the-song-harmony-reaches-devices-compiled-with-the-song-looked-up-per-batch).
 
 ## Note Filter: `atomik.note-filter` (Utility, "Players")
 
@@ -3432,6 +3457,10 @@ stateless per-event map. Source:
 | `scale.note.0` to `scale.note.11` | 0 or 1 (pitch classes C to B) | 1 for C D E F G A B (C major) | toggle | Linear | yes |
 | `chord.alter` | 0–5: off, major 3rd, minor 3rd, sus4, flat 5, sharp 5 | 0 | choice | Linear | yes |
 | `chord.notes` | 0 to 5 (0 = the whole chord, else the lowest *n* notes) | 0 | none | Linear | yes |
+| `scale.source` | 0-1: device, song (the song key at the note) | 0 (device) | choice | Linear | yes |
+| `chord.source` | 0-1: device, song chord (the chord lane) | 0 (device) | choice | Linear | yes |
+| `chord.follow` | 0-1: stamp, snap (with `chord.source` song chord) | 0 (stamp) | choice | Linear | yes |
+| `chord.retrigger` | 0 or 1 (re-voice held keys at a change of the song key or chord) | 1 | toggle | Linear | yes |
 
 A custom scale with no note switched on restricts nothing; diatonic chords on a custom scale stack
 the major shapes like on the chromatic scale. `chord.alter` moves the chord's third or fifth by
@@ -3484,6 +3513,23 @@ and the panel read the same scales and chords.
 - **Starting points.** *Lock to minor* (`scale.kind` Natural Minor, `scale.mode` filter), *Triads in
   key* (`chord` Triad), *Stabs (7th, open)* (`chord` 7th, `chord.voicing` open, `chord.velocity`
   0.7).
+- **Following the song.** The four last params read the song's key and chord lane, live and in
+  bounces (see [How harmony reaches the devices](#how-harmony-reaches-the-devices)); their defaults
+  follow nothing, so older songs play as before.
+  - `scale.source` song: the scale root and kind are the song key at the note (key changes
+    included); `scale.mode` and `scale.snap` still apply. With no song key the notes pass, as with
+    `off`, and the diatonic chords stack the major shapes.
+  - `chord.source` song chord with `chord.follow` stamp: any key plays the chord of the lane at the
+    note, from its root at or below the key (the key picks the register), and a slash chord's bass
+    below its lowest tone; inversion, voicing, octave, velocity (on the chord root's pitch class)
+    and `chord.notes` still apply. With no chord in the lane the key passes unchanged.
+  - With `chord.follow` snap: each key moves to the nearest chord tone (ties down), then the
+    `chord` stage applies; with no chord the scale stage applies instead.
+  - `chord.retrigger`: when what the device follows changes while keys are held (a chord or key
+    change, a loop wrap, a locate), the held keys are re-voiced on that frame: the old notes Off and
+    the new ones On, with the held velocities. Off, the held notes keep sounding until released.
+  - While the device follows the song, the panel shows a **SONG** tag at the bottom of the FROM CLIP
+    strip with the chord (or the key) at the playhead.
 
 ---
 
@@ -4687,6 +4733,7 @@ Sockets: `pitch_cv_in` (CV in), `pitch_cv_out`, `trig_out` (CV out).
 | `scale.custom` | off, on | off | toggle |
 | `scale.note.0` to `scale.note.11` | off, on: one per pitch class from C | C major | toggle |
 | `hysteresis` | 0 to 1 | 0 | semitones (shown as percent) |
+| `scale.source` | device, song | device | choice |
 
 - The pitch CV is the one of the sequencers, `(key - 60) / 24`: 0 is middle C, +-1 two octaves
   either way, one semitone 1/24. An input beyond +-1 still quantizes (limited to +-8).
@@ -4701,6 +4748,9 @@ Sockets: `pitch_cv_in` (CV in), `pitch_cv_out`, `trig_out` (CV out).
   scale any more is never held), so a wobbling input does not chatter.
 - `trig_out` is a 1 ms pulse at every change of the quantized key (the first sample after a start
   only sets the key). No latency.
+- `scale.source` song quantizes to the song key at the playhead (key changes included, see
+  [How harmony reaches the devices](#how-harmony-reaches-the-devices)); with no song key every
+  semitone passes.
 
 ### Sample and Hold: `atomik.sample-hold` (Utility)
 

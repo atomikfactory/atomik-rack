@@ -192,11 +192,13 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
   own (highlighting, snap to scale and fold); a Song Chord stamp that drops the chord of the lane; Fit Notes to Chords;
   Detect Song Key from the notes of every note clip (or from the audio when there are none, and Detect Key from
   Audio); Detect Chords from Audio (chroma and multi-pitch analysis, chord templates smoothed on the beats, slash
-  basses and tuning correction, with a preview panel and one undo step); and a `key:song` search in the browser. Still
-  to come: devices that follow the chord lane (a key and chord device or an arpeggiator reading it), chords read from
-  a MIDI file, a preview before Fit Notes to Chords, a clip that opts out of the song key without a scale of
-  its own, a chord that sounds by itself, a Song Key button in the browser's search field and a keyboard command to
-  paste a copied chord.
+  basses and tuning correction, with a preview panel and one undo step); a `key:song` search in the browser; devices
+  that follow the song live and in bounces (Key and Chord on the song key or the chord lane, stamping or snapping to
+  it and re-voicing held keys at a change, the Arpeggiator on the lane's chord, the CV Quantizer on the song key);
+  chords and the key read from the chord symbols and key signature of a MIDI file, or detected from its notes; a
+  preview with Apply and Cancel before Fit Notes to Chords; a chord that plays when clicked or picked; and Paste
+  Chord at the playhead. Still to come: a clip that opts out of the song key without a scale of its own, a check box
+  for the chord detection from notes in a MIDI import dialog, and a Song Key button in the browser's search field.
 - **Automation recording follow-ups.** A touch that starts at the press instead of the first move (needs a press and release signal from every control, plugin windows included).
 - **MIDI controller data follow-ups.** Expression for the other instruments (the grain sampler, the sampler, the semi-modular synth and the organ take a note's pressure as their pressure source and ignore its pitch and slide), MPE member channels to a VST3 plugin that takes MPE through its MIDI mapping (CLAP and VST3 plugins already get per-note expression events, and a CLAP plugin that takes MIDI can be sent an MPE zone), a member bend range other than 48 semitones, an expression that follows its note when the note is moved or retuned (it is kept by the note's start and key), the zone an MPE controller announced shown in Audio Settings, the CC badge on a compact track row (the badge needs a row of 52 px or more), and snapping of the points of the track lanes to the bar lines of a changing meter (the Bar and Beat snap counts from the first meter).
 - **Quantize and groove follow-ups.** A groove from an audio loop, device-parameter lanes and a track's own controller lanes that move with the notes of a quantize (only the lanes of a note clip do today), and a quantize of the note lengths to a length grid (the grid per note picks the start grid from each note's length).
