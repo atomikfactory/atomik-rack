@@ -628,3 +628,32 @@ of its edit over 20 ms. A clip with edits is always rendered, through the 1:1 ma
 warp markers, not a new kind of edit.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AA. Chords from audio: a voice-folded chroma, triad-biased templates, Viterbi on the beats
+
+**Question.** How does Detect Chords from Audio turn a recording into chord-lane chords, and how far can polyphonic
+audio to notes go?
+
+**Options.** Chroma: (1) fold the raw spectrum into twelve bins, (2) fold the pitches a multi-pitch search finds.
+Recognition: (a) a trained model, (b) templates of each chord quality scored by cosine, frame by frame, (c) the same
+templates over beat units with a Viterbi pass. Polyphonic notes: (i) a transcription model, (ii) the voices of the
+multi-pitch search tracked into notes.
+
+**Implications.** A raw chroma counts a note's third and fifth harmonics as the fifth and the major third of the
+chord, so a lone C reads as C major and a minor chord leans major; folding the voices of a harmonic-sum search with
+iterative cancellation (a smooth harmonic envelope taken out per voice, at most six voices) counts each note once. A
+model needs training data and a dependency and cannot be checked offline against synthetic material; templates are a
+few lines, deterministic and cover every lane quality. Frame-by-frame decisions flicker on passing notes; units on the
+song's beat grid (a beat, half bar or bar) with a self-transition bonus make chords change only on beats, at most once
+per unit, and a cached analysis lets the panel re-score instantly. Triads come first by a small penalty on sevenths and
+sixths, so a seventh wins only when it is clearly there; a bass bonus tells Am7 from C6. A recording off A = 440 is
+corrected from the circular mean of the voices' fundamentals. Tracking the same voices into notes gives usable
+sketches of a piano or guitar part, but harmonics shared by notes an octave or a twelfth apart, dense mixes and
+distortion still lose or add notes.
+
+**Decision.** (2), (c) and (ii): `atomik_dsp::harmony` (whitened STFT peaks as fractional keys, multi-pitch with
+cancellation, tuning, chroma and bass chroma), `chords` (templates of 13 qualities on 12 roots plus no chord, Viterbi
+over units, slash basses), `poly` (voice tracks into notes snapped to onsets). The key from audio compares the summed
+chroma with the key profiles of `key_detect`; on an exact tie the major key wins.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

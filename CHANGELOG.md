@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Chords and keys from audio, and polyphonic audio to notes.** Transport > Detect Chords from Audio... (also in the
+  right-click menu of an audio clip, `sequencer.detect_chords_from_audio`) listens to the selected audio clips, or to
+  those under the loop, on a worker with progress and cancel, and opens a preview panel: the chords drawn over their
+  bars (dimmed when unsure), with CHANGES (every beat, half bar or bar), CHORDS (Simple triads or Full with sevenths
+  and sixths) and SLASH CHORDS (the bass note), which score the kept analysis again at once. REPLACE IN RANGE or FILL
+  GAPS ONLY writes the chord lane in one undo step, with the song key the audio points to when the song has none.
+  The analysis (in atomik-dsp) is a whitened STFT read as fractional keys, a harmonic-sum multi-pitch search with
+  cancellation (up to six voices), a tuning estimate that corrects a recording off A = 440, a chroma per frame, chord
+  templates biased toward triads and smoothed by a Viterbi pass over the beats. Transport > Detect Key from Audio
+  (`sequencer.detect_key_from_audio`) reads the key of the audio (at most ten minutes), and Detect Song Key falls back
+  to the audio when the song has no notes. Audio to Notes has a Polyphonic mode with a voice count (1 to 6) for a
+  piano or a guitar part: a usable sketch, not a transcription. 562 commands; the project format is unchanged (45).
 - **Vocal mode in the audio clip editor: pitch and timing edits of a monophonic clip.** The audio clip editor's Vocal
   mode (VOCAL in its toolbar, or 3) finds the notes of a voice, a bass or a lead on a worker, with a progress bar and
   CANCEL in the footer, and draws them on a pitch grid (piano keys, a row per semitone, the song key's scale lit, the
