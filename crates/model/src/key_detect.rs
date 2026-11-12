@@ -51,6 +51,18 @@ pub fn detect_key(notes: &[(u8, i64)]) -> Option<KeyGuess> {
     for (key, weight) in notes {
         hist[usize::from(key % 12)] += (*weight).max(0) as f64;
     }
+    detect_key_from_profile(&hist)
+}
+
+/// The key a pitch-class profile points to (`profile[pc]`, C first: how much of each pitch class
+/// sounds, from notes or from the chroma of audio). `None` when it is empty, flat or not finite.
+/// On a tie the lowest root wins, and major before minor, so a profile that fits a major key and
+/// its relative minor exactly as well is read as the major key.
+pub fn detect_key_from_profile(profile: &[f64; 12]) -> Option<KeyGuess> {
+    let mut hist = [0f64; 12];
+    for (h, p) in hist.iter_mut().zip(profile) {
+        *h = if p.is_finite() { p.max(0.0) } else { 0.0 };
+    }
     if hist.iter().sum::<f64>() <= 0.0 {
         return None;
     }
@@ -178,6 +190,27 @@ mod tests {
             (66, 1),
         ];
         assert_eq!(detect_key(&notes).unwrap().key.root, 0);
+    }
+
+    #[test]
+    fn a_profile_reads_like_the_notes_it_counts() {
+        // An A minor chroma: A, C, E strong, the rest of the scale weaker.
+        let mut profile = [0.0f64; 12];
+        for (pc, w) in [
+            (9, 4.0),
+            (0, 3.0),
+            (4, 3.5),
+            (2, 1.0),
+            (5, 1.0),
+            (7, 1.5),
+            (11, 0.8),
+        ] {
+            profile[pc] = w;
+        }
+        let g = detect_key_from_profile(&profile).unwrap();
+        assert_eq!(g.key, Key::new(9, ScaleKind::NaturalMinor));
+        assert_eq!(detect_key_from_profile(&[0.0; 12]), None);
+        assert_eq!(detect_key_from_profile(&[f64::NAN; 12]), None);
     }
 
     #[test]

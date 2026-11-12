@@ -113,7 +113,7 @@ fn rows_that_do_not_apply_to_the_mode_read_na_and_stay_put() {
 
 #[test]
 fn modes_have_ids_for_scripts() {
-    for m in [NotesMode::Pitched, NotesMode::Drums] {
+    for m in NotesMode::ALL {
         assert_eq!(NotesMode::from_id(m.id()), Some(m));
     }
     assert_eq!(NotesMode::from_id("vocal"), None);
@@ -282,4 +282,27 @@ fn while_an_extraction_runs_the_button_cancels_and_the_bar_shows_how_far_it_is()
     assert_ne!(paint(&v), busy, "the bar moves");
     v.set_progress(None);
     assert_eq!(paint(&v), idle);
+}
+
+#[test]
+fn the_polyphonic_mode_has_a_voice_count_and_keeps_the_range() {
+    let mut v = view();
+    v.step(NotesRow::Mode, -1);
+    assert_eq!(v.values().mode, NotesMode::Polyphonic, "the modes wrap");
+    assert_eq!(v.value_text(NotesRow::Mode), "Polyphonic (chords)");
+    assert_eq!(v.value_text(NotesRow::Voices), "4");
+    assert_eq!(v.value_text(NotesRow::Lowest), "C2");
+    assert_eq!(v.value_text(NotesRow::Drift), "n/a");
+    assert_eq!(v.value_text(NotesRow::Bend), "n/a");
+    for _ in 0..10 {
+        v.step(NotesRow::Voices, 1);
+    }
+    assert_eq!(v.values().voices, 6);
+    for _ in 0..10 {
+        v.step(NotesRow::Voices, -1);
+    }
+    assert_eq!(v.values().voices, 1);
+    v.step(NotesRow::Mode, 1);
+    assert_eq!(v.values().mode, NotesMode::Pitched);
+    assert_eq!(v.value_text(NotesRow::Voices), "n/a");
 }

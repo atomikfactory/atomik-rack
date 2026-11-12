@@ -282,6 +282,8 @@ Transport
   ---
   Tonalité du morceau…
   Détecter la tonalité du morceau
+  Détecter la tonalité dans l'audio
+  Détecter les accords dans l'audio…
 Table de mixage
   Console [F5]
   Agrandir la console [Maj+F5]

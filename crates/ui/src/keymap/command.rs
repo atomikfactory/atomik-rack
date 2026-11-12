@@ -2068,6 +2068,22 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.detect_chords_from_audio",
+        "Detect Chords from Audio",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.detect_key_from_audio",
+        "Detect Key from Audio",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.direct_record",
         "Direct Record",
         G::Sequencer,

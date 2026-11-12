@@ -136,7 +136,9 @@ DeliveryTargets | Delivery Targets…
 DetachBrowser | Detach Browser
 DetachConsole | Detach Mixer
 DetachRack | Detach Rack
+DetectChordsFromAudio | Detect Chords from Audio…
 DetectKey | Detect Song Key
+DetectKeyFromAudio | Detect Key from Audio
 DirectRecord | Direct Record
 Documentation | Documentation
 DuckFrom | Duck from…

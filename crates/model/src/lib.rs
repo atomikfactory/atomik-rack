@@ -275,7 +275,9 @@ pub use groove::{Groove, GrooveSlot, QuantizeParams};
 pub use harmony::{ChordEvent, Harmony, Key, KeyChange, MAX_CHORDS, MAX_KEY_CHANGES};
 pub use history::InvariantError;
 use history::{Edit, Swap, song_end_growth};
-pub use key_detect::{KeyGuess, detect_key, detect_song_key, song_note_weights};
+pub use key_detect::{
+    KeyGuess, detect_key, detect_key_from_profile, detect_song_key, song_note_weights,
+};
 use labels::Labels;
 pub use labels::{DEFAULT_LABEL, HistoryStep};
 pub use launcher::{

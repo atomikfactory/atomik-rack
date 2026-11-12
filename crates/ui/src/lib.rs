@@ -364,6 +364,7 @@ pub mod canvas;
 pub mod character_panel;
 pub mod character_screen;
 pub mod chord_edit;
+pub mod chords_panel;
 pub mod clipboard;
 pub mod color_picker;
 pub mod command_palette;
@@ -496,6 +497,9 @@ pub use bass_read_panel::{BassLevel, BassReadAction, BassReadData, BassReadView,
 pub use blind_panel::{BlindAction, BlindInfo, BlindView};
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
+pub use chords_panel::{
+    ChordChanges, ChordsAction, ChordsPreview, ChordsRow, ChordsValues, ChordsView, PreviewChord,
+};
 pub use color_picker::{ColorPickerAction, ColorPickerView, ColorTarget};
 pub use command_palette::{CommandPaletteView, PaletteAction};
 pub use console::{ConsoleButton, ConsoleView, console_shortcut, fader_db, is_console_device};

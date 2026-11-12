@@ -161,6 +161,9 @@ pub(super) struct AudioState {
     pub(super) onsets: super::clip_editor::OnsetState,
     /// The notes of the audio clip editor's Vocal mode ([`super::clip_editor`]).
     pub(super) vocal: super::clip_editor::VocalState,
+    /// Detect Chords and Detect Key from Audio: the analysis that runs and the one heard last
+    /// ([`super::chords`]).
+    pub(super) chords: super::chords::ChordsState,
     /// The speaker tool's audition ([`super::audition`]).
     pub(super) audition: super::audition::AuditionState,
     pub(super) peaks: BTreeMap<String, Arc<PeakPyramid>>,
@@ -246,6 +249,7 @@ impl AudioState {
             notes: super::notes::NotesState::default(),
             onsets: super::clip_editor::OnsetState::default(),
             vocal: super::clip_editor::VocalState::default(),
+            chords: super::chords::ChordsState::default(),
             audition: super::audition::AuditionState::default(),
             peaks: BTreeMap::new(),
             drop_adds: false,
@@ -644,6 +648,11 @@ impl<S: EngineSink> AppCore<S> {
                     job,
                     result,
                 } if generation == current => self.apply_vocal(job, result),
+                Msg::Chords {
+                    generation,
+                    job,
+                    result,
+                } if generation == current => self.apply_chords(job, result),
                 Msg::Scanned {
                     generation,
                     root,
@@ -705,6 +714,7 @@ impl<S: EngineSink> AppCore<S> {
                 | Msg::Noted { .. }
                 | Msg::Onsets { .. }
                 | Msg::Vocal { .. }
+                | Msg::Chords { .. }
                 | Msg::Scanned { .. }
                 | Msg::Edited { .. }
                 | Msg::PasteConverted { .. }
@@ -1506,6 +1516,7 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.mixcheck.reset();
         self.audio.notes.reset();
         self.audio.vocal.reset();
+        self.audio.chords.reset();
         self.audio.buffers.clear();
         self.cpu_reset();
         self.audio.ram_pending.clear();

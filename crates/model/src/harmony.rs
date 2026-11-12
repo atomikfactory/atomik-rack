@@ -348,6 +348,82 @@ impl Harmony {
         }
         self.without_chord(from).with_chord(chord)
     }
+
+    /// The harmony with the `found` chords (sorted, not overlapping) put in the lane over the
+    /// ticks `from..to`; a found chord is cut to the range.
+    ///
+    /// * **Replace** (`fill_gaps_only` false): the chords of the range go. A chord that starts
+    ///   before the range ends where it begins; one that runs past its end keeps the part after.
+    /// * **Merge** (`fill_gaps_only` true): the chords already there stay and the found chords
+    ///   fill only the gaps between them (a found chord may become several pieces).
+    ///
+    /// Refused when the result could not be stored (too many chords).
+    pub fn with_chords_in_range(
+        &self,
+        (from, to): (i64, i64),
+        found: &[ChordEvent],
+        fill_gaps_only: bool,
+    ) -> Result<Harmony, String> {
+        let (from, to) = (from.clamp(0, MAX_TICK), to.clamp(0, MAX_TICK));
+        let mut kept: Vec<ChordEvent> = Vec::new();
+        if fill_gaps_only {
+            kept.clone_from(&self.chords);
+        } else {
+            for c in &self.chords {
+                if c.end() <= from || c.tick >= to {
+                    kept.push(*c);
+                    continue;
+                }
+                if c.tick < from {
+                    kept.push(ChordEvent {
+                        length: from - c.tick,
+                        ..*c
+                    });
+                }
+                if c.end() > to {
+                    kept.push(ChordEvent {
+                        tick: to,
+                        length: c.end() - to,
+                        ..*c
+                    });
+                }
+            }
+        }
+        let mut added: Vec<ChordEvent> = Vec::new();
+        for f in found {
+            let (a, b) = (f.tick.max(from), f.end().min(to));
+            if b <= a {
+                continue;
+            }
+            // The free stretches of `a..b` among the chords kept.
+            let mut at = a;
+            for c in kept.iter().filter(|c| c.end() > a && c.tick < b) {
+                if c.tick > at {
+                    added.push(ChordEvent {
+                        tick: at,
+                        length: c.tick - at,
+                        ..*f
+                    });
+                }
+                at = at.max(c.end());
+            }
+            if b > at {
+                added.push(ChordEvent {
+                    tick: at,
+                    length: b - at,
+                    ..*f
+                });
+            }
+        }
+        kept.extend(added);
+        kept.sort_by_key(|c| c.tick);
+        let out = Harmony {
+            chords: kept,
+            ..self.clone()
+        };
+        out.check()?;
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -363,6 +439,82 @@ mod tests {
 
     fn chord(bar: i64, bars: i64, root: u8, quality: ChordKind) -> ChordEvent {
         ChordEvent::new(bar * BAR, bars * BAR, root, quality)
+    }
+
+    fn spans(h: &Harmony) -> Vec<(i64, i64, u8)> {
+        h.chords
+            .iter()
+            .map(|c| (c.tick / BAR, c.end() / BAR, c.root))
+            .collect()
+    }
+
+    #[test]
+    fn found_chords_replace_the_chords_of_their_range() {
+        let h = Harmony {
+            chords: vec![
+                chord(0, 2, 0, ChordKind::Major),
+                chord(3, 2, 2, ChordKind::Minor),
+                chord(6, 4, 4, ChordKind::Minor),
+                chord(12, 1, 5, ChordKind::Major),
+            ],
+            ..Harmony::default()
+        };
+        let found = [
+            chord(0, 2, 7, ChordKind::Major),
+            chord(2, 4, 9, ChordKind::Minor),
+            chord(6, 4, 11, ChordKind::Dim),
+        ];
+        let out = h
+            .with_chords_in_range((BAR, 8 * BAR), &found, false)
+            .unwrap();
+        // The first chord ends where the range starts; the third keeps its part after the range.
+        assert_eq!(
+            spans(&out),
+            vec![
+                (0, 1, 0),
+                (1, 2, 7),
+                (2, 6, 9),
+                (6, 8, 11),
+                (8, 10, 4),
+                (12, 13, 5)
+            ]
+        );
+        assert!(out.check().is_ok());
+    }
+
+    #[test]
+    fn merging_found_chords_only_fills_the_gaps() {
+        let h = Harmony {
+            chords: vec![
+                chord(2, 1, 0, ChordKind::Major),
+                chord(4, 1, 5, ChordKind::Major),
+            ],
+            ..Harmony::default()
+        };
+        let found = [chord(0, 8, 9, ChordKind::Minor)];
+        let out = h.with_chords_in_range((0, 6 * BAR), &found, true).unwrap();
+        assert_eq!(
+            spans(&out),
+            vec![(0, 2, 9), (2, 3, 0), (3, 4, 9), (4, 5, 5), (5, 6, 9)]
+        );
+    }
+
+    #[test]
+    fn found_chords_keep_the_key_and_their_bass() {
+        let h = Harmony {
+            key: Some(key(0, ScaleKind::Major)),
+            ..Harmony::default()
+        };
+        let mut slash = chord(0, 1, 0, ChordKind::Major);
+        slash.bass = Some(7);
+        let out = h.with_chords_in_range((0, BAR), &[slash], false).unwrap();
+        assert_eq!(out.key, h.key);
+        assert_eq!(out.chords, vec![slash]);
+        assert_eq!(
+            h.with_chords_in_range((0, BAR), &[], false).unwrap(),
+            h,
+            "nothing found changes nothing"
+        );
     }
 
     #[test]

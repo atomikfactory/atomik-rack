@@ -168,11 +168,31 @@ and a few tools. Nothing here changes how the song sounds.
   tone, a tie going down, and never onto a note that is already there; it is one undo step.
 - **Detect Song Key.** Transport > Detect Song Key reads every note clip and sets the key it finds, as one undo
   step: the longer a note, the more it counts. The status line says how clear the answer was; Undo puts the old key
-  back. It is a guess, and it only finds major and natural minor.
+  back. It is a guess, and it only finds major and natural minor. A song with no notes but with audio clips is read
+  from its audio instead, and Transport > Detect Key from Audio always listens to the audio: the selected audio clips,
+  or every audio clip, at most ten minutes of it, on a worker.
+- **Detect Chords from Audio.** Select audio clips (or set the loop over the part you want) and choose Transport >
+  Detect Chords from Audio..., or the same item in the right-click menu of an audio clip. The program listens on a
+  worker (CANCEL stops it) and opens a panel with the chords it heard drawn over their bars; a chord it is unsure of
+  is dimmed. CHANGES lets a chord change on every beat, every half bar or every bar; CHORDS picks Simple (triads only)
+  or Full (sevenths and sixths too, when they are clearly there); SLASH CHORDS adds the bass note when it is not the
+  root (C/G). Each change shows at once, without listening again. REPLACE IN RANGE puts the chords over the span the
+  clips cover, replacing the chords there; FILL GAPS ONLY keeps the chords already in the lane and fills the gaps.
+  When the song has no key, a check box also sets the key the audio points to. It is one undo step either way. It
+  works best on a clear piano, guitar or pad part; drums and a busy mix make it guess more, and a recording a little
+  sharp or flat (A = 432, say) is heard true.
 - **The browser.** Type key:song in the file browser's search to see the loops tagged with the song key (the factory
   loops carry a tag such as A minor). A song without a key filters nothing. key:minor finds the tags with that word.
 - **Saving.** The key, the key changes and the chords are saved only when set, as optional fields that an older
   version of the program drops with a warning (project format 45).
+
+## Audio to notes
+
+Audio > Audio to Notes... turns the selected audio clips into note clips, on a new track or on the selected note
+track. MODE picks what to listen for: Pitched (one voice), Drums, or Polyphonic (chords), which follows a piano or a
+guitar part with several notes at once. VOICES AT ONCE caps how many notes sound together (1 to 6, 4 by default), and
+the sensitivity, the shortest note and the note range work as for a single voice. Polyphonic notes are a sketch to
+edit, not a transcription: a dense mix, a distorted guitar or two notes an octave apart can lose a note or add one.
 
 ## Vocal mode
 

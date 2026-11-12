@@ -8,6 +8,7 @@
 //! Minimum note     [-]  60 ms                 [+]
 //! Lowest note      [-]  C2                    [+]
 //! Highest note     [-]  C7                    [+]
+//! Voices at once   [-]  n/a                   [+]
 //! Pitch drift      [-]  70 cents              [+]
 //! Keep pitch bend  [-]  On                    [+]
 //! Open hats        [-]  n/a                   [+]
@@ -30,7 +31,8 @@
 //!
 //! Every value has a `-` and a `+` button and answers the wheel. The rows that do not apply to the
 //! mode (the range, the pitch drift and the pitch bend for drums, the open hats, the drum kit and
-//! the drum keys for a pitched voice) read `n/a` and do not step. The settings live in [`NotesValues`], which the app keeps between openings.
+//! the drum keys for a pitched voice, the voice count for all but polyphonic, the pitch drift and
+//! bend for polyphonic) read `n/a` and do not step. The settings live in [`NotesValues`], which the app keeps between openings.
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas};
@@ -64,6 +66,9 @@ pub const GRIDS: [u32; 5] = [0, 4, 8, 16, 32];
 /// Sensitivity moves in steps of this many percent.
 pub const SENSITIVITY_STEP: u32 = 5;
 
+/// The most voices the polyphonic mode follows at once.
+pub const MAX_VOICES: u32 = 6;
+
 /// What the extraction looks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotesMode {
@@ -71,32 +76,35 @@ pub enum NotesMode {
     Pitched,
     /// A drum loop: kick, snare and hats on the General MIDI keys.
     Drums,
+    /// Chords and several voices of a piano or a guitar part.
+    Polyphonic,
 }
 
 impl NotesMode {
+    /// Every mode, in the order the panel steps through.
+    pub const ALL: [NotesMode; 3] = [NotesMode::Pitched, NotesMode::Drums, NotesMode::Polyphonic];
+
     /// The word in the panel and for scripts.
     pub fn label(self) -> &'static str {
         match self {
             NotesMode::Pitched => "Pitched (one voice)",
             NotesMode::Drums => "Drums",
+            NotesMode::Polyphonic => "Polyphonic (chords)",
         }
     }
 
-    /// The id used by commands and scripts (`pitched`, `drums`).
+    /// The id used by commands and scripts (`pitched`, `drums`, `polyphonic`).
     pub fn id(self) -> &'static str {
         match self {
             NotesMode::Pitched => "pitched",
             NotesMode::Drums => "drums",
+            NotesMode::Polyphonic => "polyphonic",
         }
     }
 
     /// The mode with this id.
     pub fn from_id(id: &str) -> Option<Self> {
-        match id {
-            "pitched" => Some(NotesMode::Pitched),
-            "drums" => Some(NotesMode::Drums),
-            _ => None,
-        }
+        Self::ALL.into_iter().find(|m| m.id() == id)
     }
 }
 
@@ -107,12 +115,14 @@ pub struct NotesValues {
     pub mode: NotesMode,
     /// `0..=100`: more finds quieter and less clear sound.
     pub sensitivity: u32,
-    /// Notes shorter than this are left out (ms; pitched mode).
+    /// Notes shorter than this are left out (ms; pitched and polyphonic modes).
     pub min_note_ms: u32,
-    /// Lowest key looked for (pitched mode).
+    /// Lowest key looked for (pitched and polyphonic modes).
     pub key_lo: u8,
-    /// Highest key looked for (pitched mode).
+    /// Highest key looked for (pitched and polyphonic modes).
     pub key_hi: u8,
+    /// The most notes at once, `1..=6` (polyphonic mode).
+    pub voices: u32,
     /// How far, in cents, a note's pitch may drift before it is another note (pitched mode).
     pub drift_cents: u32,
     /// Keep how the pitch moves inside a note as a pitch-bend lane, else round it to the key
@@ -138,6 +148,7 @@ impl Default for NotesValues {
             min_note_ms: 60,
             key_lo: 36,
             key_hi: 96,
+            voices: 4,
             drift_cents: 70,
             keep_bend: true,
             open_hats: true,
@@ -182,6 +193,8 @@ pub enum NotesRow {
     Lowest,
     /// The highest key.
     Highest,
+    /// The most notes at once (polyphonic).
+    Voices,
     /// The pitch drift of one note.
     Drift,
     /// The pitch bend of a note kept as a bend lane.
@@ -200,12 +213,13 @@ pub enum NotesRow {
 
 impl NotesRow {
     /// Every row, top down.
-    pub const ALL: [NotesRow; 12] = [
+    pub const ALL: [NotesRow; 13] = [
         NotesRow::Mode,
         NotesRow::Sensitivity,
         NotesRow::MinNote,
         NotesRow::Lowest,
         NotesRow::Highest,
+        NotesRow::Voices,
         NotesRow::Drift,
         NotesRow::Bend,
         NotesRow::OpenHats,
@@ -222,6 +236,7 @@ impl NotesRow {
             NotesRow::MinNote => "Minimum note",
             NotesRow::Lowest => "Lowest note",
             NotesRow::Highest => "Highest note",
+            NotesRow::Voices => "Voices at once",
             NotesRow::Drift => "Pitch drift",
             NotesRow::Bend => "Keep pitch bend",
             NotesRow::OpenHats => "Open hats",
@@ -235,11 +250,9 @@ impl NotesRow {
     /// True when the row means something in `mode`.
     pub fn applies(self, mode: NotesMode) -> bool {
         match self {
-            NotesRow::MinNote
-            | NotesRow::Lowest
-            | NotesRow::Highest
-            | NotesRow::Drift
-            | NotesRow::Bend => mode == NotesMode::Pitched,
+            NotesRow::MinNote | NotesRow::Lowest | NotesRow::Highest => mode != NotesMode::Drums,
+            NotesRow::Drift | NotesRow::Bend => mode == NotesMode::Pitched,
+            NotesRow::Voices => mode == NotesMode::Polyphonic,
             NotesRow::OpenHats | NotesRow::Kit | NotesRow::Keys => mode == NotesMode::Drums,
             _ => true,
         }
@@ -350,6 +363,7 @@ impl NotesView {
             NotesRow::MinNote => format!("{} ms", v.min_note_ms),
             NotesRow::Lowest => note_name(v.key_lo),
             NotesRow::Highest => note_name(v.key_hi),
+            NotesRow::Voices => v.voices.to_string(),
             NotesRow::Drift => format!("{} cents", v.drift_cents),
             NotesRow::Bend => if v.keep_bend { "On" } else { "Off" }.to_owned(),
             NotesRow::OpenHats => if v.open_hats { "On" } else { "Off" }.to_owned(),
@@ -385,10 +399,12 @@ impl NotesView {
         }
         match row {
             NotesRow::Mode => {
-                v.mode = match v.mode {
-                    NotesMode::Pitched => NotesMode::Drums,
-                    NotesMode::Drums => NotesMode::Pitched,
-                };
+                let at = NotesMode::ALL
+                    .iter()
+                    .position(|m| *m == v.mode)
+                    .unwrap_or(0) as i32;
+                let n = NotesMode::ALL.len() as i32;
+                v.mode = NotesMode::ALL[(at + dir.signum()).rem_euclid(n) as usize];
             }
             NotesRow::Sensitivity => {
                 let next = i64::from(v.sensitivity) + i64::from(dir) * i64::from(SENSITIVITY_STEP);
@@ -400,6 +416,10 @@ impl NotesView {
             }
             NotesRow::Highest => {
                 v.key_hi = (i32::from(v.key_hi) + dir).clamp(i32::from(v.key_lo), 127) as u8;
+            }
+            NotesRow::Voices => {
+                v.voices =
+                    (i64::from(v.voices) + i64::from(dir)).clamp(1, i64::from(MAX_VOICES)) as u32;
             }
             NotesRow::Drift => v.drift_cents = step_list(&DRIFT_CENTS, v.drift_cents, dir),
             NotesRow::Bend => v.keep_bend = !v.keep_bend,

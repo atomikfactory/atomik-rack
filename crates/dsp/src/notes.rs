@@ -5,7 +5,9 @@
 //! * [`extract_drum_notes`] ([`drums`]) finds the hits of a drum loop and sorts each into kick,
 //!   snare, closed hat or open hat (and, for a full kit, toms and a crash) on the keys of a
 //!   [`DrumMap`].
-//! * [`extract_in_segments`] ([`long`]) runs either of them over a clip of any length, a minute
+//! * [`crate::harmony::extract_poly_notes`] tracks the several voices of a piano or a guitar
+//!   part (chords included) into notes.
+//! * [`extract_in_segments`] ([`long`]) runs any of them over a clip of any length, a minute
 //!   at a time, with progress and a way to stop.
 //!
 //! Both are pure and deterministic and run off the real-time thread (they allocate). Same

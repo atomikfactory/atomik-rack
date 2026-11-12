@@ -217,3 +217,34 @@ fn the_audio_editor_vocal_mode_in_french() {
         dl
     });
 }
+
+#[test]
+fn the_detect_chords_panel_in_french() {
+    use atomik_ui::{ChordsPreview, ChordsValues, ChordsView, PreviewChord};
+    french("chords_panel_1x.json", || {
+        let mut v = ChordsView::new(Theme::dark(), ChordsValues::default());
+        v.set_bounds(Rect::new(0.0, 0.0, 900.0, 600.0));
+        v.set_target("Piano.wav, bars 1 to 2".into());
+        v.set_preview(Some(ChordsPreview {
+            span: (0, 7680),
+            chords: vec![
+                PreviewChord {
+                    tick: 0,
+                    length: 3840,
+                    symbol: "Am".into(),
+                    confidence: 0.9,
+                },
+                PreviewChord {
+                    tick: 3840,
+                    length: 3840,
+                    symbol: "E7".into(),
+                    confidence: 0.3,
+                },
+            ],
+            key: Some("A minor".into()),
+        }));
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl);
+        dl
+    });
+}

@@ -1,7 +1,7 @@
 {"ops":[
-{"fill":{"rrect":[258.00,1330.00,522.00,2229.00,6.00]},"brush":"#0000005a"},
-{"fill":{"rrect":[256.00,1327.00,520.00,2226.00,6.00]},"brush":"#16181bff"},
-{"stroke":{"rrect":[256.00,1327.00,520.00,2226.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"fill":{"rrect":[258.00,1330.00,522.00,2253.00,6.00]},"brush":"#0000005a"},
+{"fill":{"rrect":[256.00,1327.00,520.00,2250.00,6.00]},"brush":"#16181bff"},
+{"stroke":{"rrect":[256.00,1327.00,520.00,2250.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
 {"text":"Cut","at":[288.00,1347.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Ctrl+X","at":[506.00,1347.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"Copy","at":[288.00,1371.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
@@ -52,10 +52,11 @@
 {"text":"Warp to Song Tempo","at":[288.00,2070.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
 {"text":"Warp Settings","at":[288.00,2094.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
 {"text":"Audio to Notes","at":[288.00,2118.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
-{"text":"Transpose Up a Semitone","at":[288.00,2142.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
-{"text":"Transpose Down a Semitone","at":[288.00,2166.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
-{"text":"Audio Fade Shape","at":[288.00,2190.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"fill":{"path":"M499.90 2182.00 L499.90 2190.00 L505.50 2186.00 Z"},"brush":"#ece8e1ff"},
-{"text":"Audio Crossfade","at":[288.00,2214.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"fill":{"path":"M499.90 2206.00 L499.90 2214.00 L505.50 2210.00 Z"},"brush":"#ece8e1ff"}
+{"text":"Detect Chords from Audio","at":[288.00,2142.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"Transpose Up a Semitone","at":[288.00,2166.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"Transpose Down a Semitone","at":[288.00,2190.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"Audio Fade Shape","at":[288.00,2214.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"fill":{"path":"M499.90 2206.00 L499.90 2214.00 L505.50 2210.00 Z"},"brush":"#ece8e1ff"},
+{"text":"Audio Crossfade","at":[288.00,2238.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"fill":{"path":"M499.90 2230.00 L499.90 2238.00 L505.50 2234.00 Z"},"brush":"#ece8e1ff"}
 ]}

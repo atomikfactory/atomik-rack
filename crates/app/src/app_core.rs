@@ -4236,6 +4236,8 @@ mod delivery;
 #[path = "app_core_duck_from.rs"]
 mod duck_from;
 pub use duck_from::DuckMenu;
+#[path = "app_core_chords.rs"]
+mod chords;
 #[path = "app_core_energy.rs"]
 mod energy;
 #[path = "app_core_harmony.rs"]

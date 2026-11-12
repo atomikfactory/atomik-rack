@@ -2483,6 +2483,15 @@ instrument (one note at a time) or a **drum** loop. It is an offline analysis in
 written in house (no new dependency), and the result goes in as an ordinary note clip, so the
 engine, the audio thread and the file format are untouched.
 
+- **Polyphonic and chords** ([dsp/src/harmony/mod.rs](../crates/dsp/src/harmony/mod.rs)). A whitened
+  STFT read as interpolated peaks on fractional keys feeds a harmonic-sum multi-pitch search with
+  iterative cancellation (up to six voices) and a tuning estimate; each frame folds its voices into
+  a chroma and a bass chroma. [harmony/poly.rs](../crates/dsp/src/harmony/poly.rs) tracks the voices
+  into notes (the Polyphonic mode); [harmony/chords.rs](../crates/dsp/src/harmony/chords.rs) scores
+  chord templates over beat units with a Viterbi pass (Detect Chords from Audio, whose cached
+  analysis the app scores again for its preview panel, see
+  [app_core_chords.rs](../crates/app/src/app_core_chords.rs)), and the summed chroma gives the key
+  from audio through the key profiles (DECISIONS AA).
 - **Pitched** ([dsp/src/notes/pitched.rs](../crates/dsp/src/notes/pitched.rs)). The mono mix is
   averaged down (a box filter, at least six samples per period of the highest key of the range) and
   a **YIN** tracker (de Cheveigne and Kawahara) runs every 5 ms on a window of 1.5 periods of the
@@ -5167,7 +5176,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (560) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (562) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

@@ -4,7 +4,8 @@
 //! Every change is one undo step and says in the status line what it did. Detect Song Key reads
 //! the notes of every note clip ([`atomik_model::key_detect`]) and, because a toast holds no
 //! buttons, sets the key it finds as one undo step instead of proposing it; Undo puts the old key
-//! back. A song with no notes is left alone.
+//! back. A song with no notes but with audio clips reads the key from the audio instead (Detect Key
+//! from Audio, on a worker: see [`super::chords`]); a song with neither is left alone.
 
 use super::*;
 use atomik_model::harmony::{Harmony, Key};
@@ -67,9 +68,20 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Estimates the key from every note clip and makes it the song key (one undo step). Returns
     /// the key it set, `None` when there are no notes to read or the key was already that one.
+    /// With no notes but some audio, the key is read from the audio on a worker (and set when it
+    /// is done).
     pub fn detect_song_key(&mut self) -> Option<Key> {
         let Some(guess) = detect_song_key(&self.doc().song) else {
-            self.report("No notes to read a key from");
+            let has_audio = self.doc().song.tracks.iter().any(|t| {
+                t.lanes.iter().any(|l| {
+                    l.clips
+                        .iter()
+                        .any(|c| matches!(c.content, atomik_model::ClipContent::Audio(_)))
+                })
+            });
+            if !(has_audio && self.detect_key_from_audio()) {
+                self.report("No notes to read a key from");
+            }
             return None;
         };
         if self.harmony().key == Some(guess.key) {
