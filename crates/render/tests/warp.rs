@@ -692,3 +692,43 @@ fn the_live_song_plays_a_reversed_unready_warp_backwards_and_unwarped() {
     assert!(!region.reverse);
     assert_eq!(region.source_offset, 0);
 }
+
+/// A clip of the sine with warp off and one pitch edit over `[12 000, 84 000)` of its asset.
+fn edited(cents: i32) -> Song {
+    song("pitch-edit", &sine(196.0, 96_000), |d, a| {
+        put(d, a, 0, 4 * PPQ, WarpSettings::default());
+        let id = d.last_clip_id().unwrap();
+        d.apply(
+            Command::Song(SongCommand::SetPitchEdits {
+                id,
+                edits: vec![atomik_model::PitchEdit {
+                    shift_cents: cents,
+                    ..atomik_model::PitchEdit::new(12_000, 84_000)
+                }],
+                merge: None,
+            }),
+            &default_registry(),
+        )
+        .unwrap();
+    })
+}
+
+#[test]
+fn a_pitch_edit_is_heard_in_the_bounce_and_bounces_the_same_every_time() {
+    let up = edited(300);
+    let r = render(&up, 512, 0);
+    let l = &r.channels[0];
+    let shifted = 196.0 * 2f64.powf(0.25);
+    assert!(
+        tone(l, 30_000, 66_000, shifted) > 4.0 * tone(l, 30_000, 66_000, 196.0),
+        "the note sounds three semitones up"
+    );
+    // Outside the edit the clip plays as recorded.
+    assert!(tone(l, 0, 9_600, 196.0) > 4.0 * tone(l, 0, 9_600, shifted));
+    assert_eq!(bits(&r), bits(&render(&up, 512, 0)));
+    assert_eq!(bits(&r), bits(&render(&up, 777, 2)));
+    let plain = song("pitch-plain", &sine(196.0, 96_000), |d, a| {
+        put(d, a, 0, 4 * PPQ, WarpSettings::default());
+    });
+    assert_ne!(bits(&r), bits(&render(&plain, 512, 0)));
+}

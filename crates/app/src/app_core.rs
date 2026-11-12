@@ -1178,6 +1178,8 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::DetectTransients { clip, sensitivity } => {
                 self.detect_transients(clip, sensitivity)
             }
+            UiAction::AnalyseVocal { clip, sensitivity } => self.analyse_vocal(clip, sensitivity),
+            UiAction::CancelVocalAnalysis => self.cancel_vocal(),
             UiAction::AuditionSpan {
                 asset,
                 start_frame,

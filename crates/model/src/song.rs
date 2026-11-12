@@ -214,6 +214,9 @@ pub struct AudioClipContent {
     /// [`crate::warp`]). The default plays the asset in real time. A reversed clip can be
     /// warped: the stretched span plays backwards.
     pub warp: WarpSettings,
+    /// Per-note pitch edits of the Vocal mode, sorted and disjoint, in asset frames (see
+    /// [`crate::pitch_edit`]); empty for none. A clip with edits is always rendered.
+    pub pitch_edits: Vec<crate::PitchEdit>,
 }
 
 impl AudioClipContent {
@@ -232,6 +235,7 @@ impl AudioClipContent {
             envelope: Vec::new(),
             xfade: Some(FadeCurve::EqualPower),
             warp: WarpSettings::default(),
+            pitch_edits: Vec::new(),
         }
     }
 
@@ -1708,6 +1712,18 @@ pub enum SongCommand {
         id: ClipId,
         /// The new markers: ticks from the clip start, source frames from its source offset.
         markers: Vec<crate::WarpMarker>,
+        /// Drag-merge group.
+        merge: Option<u64>,
+    },
+    /// Replaces the pitch edits of an audio clip (the Vocal mode of the audio clip editor; one undo
+    /// step, `merge` groups the commands of a drag). The list is checked as in
+    /// [`crate::validate_pitch_edits`] against the clip's asset; the rest of the content is
+    /// kept. A list equal to the current one is rejected.
+    SetPitchEdits {
+        /// Clip id.
+        id: ClipId,
+        /// The new edits, sorted and disjoint, in asset frames.
+        edits: Vec<crate::PitchEdit>,
         /// Drag-merge group.
         merge: Option<u64>,
     },

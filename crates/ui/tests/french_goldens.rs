@@ -192,3 +192,28 @@ fn the_export_panel_in_french() {
         });
     }
 }
+
+#[test]
+fn the_audio_editor_vocal_mode_in_french() {
+    use atomik_model::harmony::Key;
+    use atomik_model::theory::ScaleKind;
+    use atomik_ui::{AudioEditorView, AudioMode};
+    use support::audio::*;
+    let reg = registry();
+    let mut doc = audio_doc();
+    doc.song_mut().harmony.key = Some(Key::new(0, ScaleKind::Major));
+    let clip = atomik_model::ClipId(10);
+    french("audio_editor_vocal_1x.json", || {
+        let mut v = AudioEditorView::new(Theme::dark());
+        v.set_bounds(Rect::new(0.0, 0.0, 1000.0, 500.0));
+        v.set_peaks(HASH_A, pyramid(FRAMES_A, 2));
+        v.set_mode(AudioMode::Vocal);
+        v.open(clip);
+        v.sync(&doc, &reg);
+        v.set_vocal_notes(clip, vocal_notes());
+        v.set_vocal_selection(&[1]);
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl, &doc, &reg);
+        dl
+    });
+}

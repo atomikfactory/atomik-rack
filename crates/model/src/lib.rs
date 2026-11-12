@@ -78,6 +78,7 @@ pub mod param_lane;
 mod param_search;
 mod patch;
 pub mod peak_surgeon;
+pub mod pitch_edit;
 mod plugin;
 mod plugin_cmd;
 mod plugin_files;
@@ -177,6 +178,10 @@ pub use midi_param::{
 };
 pub use mod_matrix::{ModSlot, amount_param, engine_params};
 pub use param_search::{MAX_RESULTS, ParamEntry, ParamIndex, SearchTarget, unit_label};
+pub use pitch_edit::{
+    MAX_PITCH_EDITS, PITCH_EDIT_MAX_CENTS, PITCH_EDIT_MAX_DRIFT, PITCH_EDIT_MIN_MS, PitchEdit,
+    min_edit_frames, validate_pitch_edits,
+};
 pub use plugin::{
     MAX_LAYOUT_PARAMS, MAX_PINNED_PARAMS, MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES,
     PLUGIN_GESTURE_MERGE_BASE, PluginCommand, PluginDoc, cables_off_layout, map_plugin_layouts,
@@ -1454,6 +1459,7 @@ impl Document {
                 | SongCommand::SetClipParamLanes { merge: Some(m), .. }
                 | SongCommand::SetAudioClip { merge: Some(m), .. }
                 | SongCommand::SetWarpMarkers { merge: Some(m), .. }
+                | SongCommand::SetPitchEdits { merge: Some(m), .. }
                 | SongCommand::SetClipGrid { merge: Some(m), .. },
             ) => Some(MergeKey::Clip(*m)),
             Command::Workflow(
@@ -2124,6 +2130,7 @@ impl Document {
                                     | SongCommand::SetClipGeometry { .. }
                                     | SongCommand::SetAudioClip { .. }
                                     | SongCommand::SetWarpMarkers { .. }
+                                    | SongCommand::SetPitchEdits { .. }
                                     | SongCommand::SplitClip { .. }
                                     | SongCommand::NewTakeGroup { .. }
                                     | SongCommand::StripSilence { .. }
@@ -2138,7 +2145,7 @@ impl Document {
                             )
                     ) {
                         return Err(ModelError::BadBatch(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetDelivery, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetDelivery, SetWarpMarkers, SetPitchEdits, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;

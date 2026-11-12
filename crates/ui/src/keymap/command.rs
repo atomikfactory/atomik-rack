@@ -567,6 +567,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .decline(),
     cmd(
+        "editor.audio_mode_vocal",
+        "Audio Editor: Vocal",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
         "editor.audio_revert",
         "Revert Markers",
         G::Editor,
@@ -821,6 +828,34 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd("editor.transpose_up", "Transpose Up", G::Editor, C::Editor).rep(),
+    cmd(
+        "editor.vocal_correct",
+        "Correct Note Pitch",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.vocal_flatten",
+        "Flatten Note Drift",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.vocal_reset",
+        "Reset Pitch Edits",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.vocal_scale",
+        "Correct to the Song Key",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
     cmd("editor.zoom_keys_in", "Taller Keys", G::Editor, C::Editor).rep(),
     cmd("editor.zoom_keys_out", "Shorter Keys", G::Editor, C::Editor).rep(),
     cmd(

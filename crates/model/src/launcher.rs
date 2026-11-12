@@ -776,7 +776,8 @@ pub(crate) fn slot_target(doc: &RackDoc, command: &SongCommand) -> Option<ClipId
     let id = match command {
         SongCommand::SetClipContent { id, .. }
         | SongCommand::SetAudioClip { id, .. }
-        | SongCommand::SetWarpMarkers { id, .. } => *id,
+        | SongCommand::SetWarpMarkers { id, .. }
+        | SongCommand::SetPitchEdits { id, .. } => *id,
         SongCommand::SetClipGrid { clip, .. }
         | SongCommand::SetClipControllers { clip, .. }
         | SongCommand::SetClipMidi { clip, .. }

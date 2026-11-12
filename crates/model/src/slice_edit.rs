@@ -25,6 +25,7 @@
 //! | [`nudge`] | the marker by a number of ticks (a stretch move) | as `move_stretch` |
 //! | [`delete`] | removes a marker | the audio on both sides stretches evenly between the neighbours |
 //! | [`revert`] | removes every marker | the clip plays at its natural speed |
+//! | [`move_span`] | a stretch of audio (two markers pinned at its ends) by a number of ticks | the audio before and after it stretches |
 
 use crate::warp::{MAX_WARP_MARKERS, WarpMarker, WarpSettings};
 
@@ -354,6 +355,54 @@ pub fn nudge(
     move_stretch(warp, rate, length, index, tick.saturating_add(delta))
 }
 
+/// Moves the audio between the source frames `from` and `to` (from the clip's source offset,
+/// `from < to`) by `delta` ticks: a marker is pinned at each where the audio plays now (one
+/// already there is used), then both, and the markers between them, move by `delta`, clamped so
+/// they stay one tick away from the markers around them. The audio before and after stretches;
+/// the span keeps its length. The Vocal mode's time drag of a note.
+pub fn move_span(
+    warp: &WarpSettings,
+    rate: u32,
+    length: i64,
+    (from, to): (u64, u64),
+    delta: i64,
+) -> Result<Vec<WarpMarker>, SliceError> {
+    check(length)?;
+    if from >= to {
+        return Err(SliceError::NoRoom);
+    }
+    let mut current = warp.clone();
+    current.markers = framed(warp, rate, length);
+    for source in [from, to] {
+        if current.markers.iter().any(|m| m.source == source) {
+            continue;
+        }
+        let (list, _) = add_at_source(&current, rate, length, source)?;
+        current.markers = list;
+    }
+    let mut list = current.markers;
+    let a = list
+        .iter()
+        .position(|m| m.source == from)
+        .ok_or(SliceError::NoRoom)?;
+    let b = list
+        .iter()
+        .position(|m| m.source == to)
+        .ok_or(SliceError::NoRoom)?;
+    interior(&list, a)?;
+    interior(&list, b)?;
+    let lo = list[a - 1].tick + 1 - list[a].tick;
+    let hi = list[b + 1].tick - 1 - list[b].tick;
+    if lo > hi {
+        return Err(SliceError::NoRoom);
+    }
+    let delta = delta.clamp(lo, hi);
+    for m in &mut list[a..=b] {
+        m.tick += delta;
+    }
+    Ok(list)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,6 +439,20 @@ mod tests {
         warp(list.to_vec()).validate().is_ok()
             && list.first().is_some_and(|f| f.tick == 0)
             && list.last().is_some_and(|l| l.tick == length)
+    }
+
+    #[test]
+    fn a_span_moves_whole_and_stays_between_its_neighbours() {
+        // 2 frames per tick: the span 200..400 plays at ticks 100..200.
+        let w = warp(Vec::new());
+        let list = move_span(&w, RATE, 400, (200, 400), 30).unwrap();
+        assert_eq!(list, vec![m(0, 0), m(130, 200), m(230, 400), m(400, 800)]);
+        assert!(valid(&list, 400));
+        // Far past the clip end it stops a tick before it.
+        let far = move_span(&w, RATE, 400, (200, 400), 1000).unwrap();
+        assert_eq!(far[2].tick, 399);
+        // A span that reaches the clip start cannot move.
+        assert!(move_span(&w, RATE, 400, (0, 400), 10).is_err());
     }
 
     #[test]
