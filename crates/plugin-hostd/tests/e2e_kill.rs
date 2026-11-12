@@ -9,8 +9,8 @@ mod sandbox_support;
 use atomik_device_sdk::RunMode;
 use atomik_plugin_host::{DeviceState, ManagerEvent};
 use sandbox_support::{
-    CRASH_DEADLINE, FORMATS, METER_STATE, Plug, Sandbox, bits, effect, meters, out_l, request,
-    request_with_state, run_to_crash,
+    CRASH_DEADLINE, FORMATS, METER_STATE, Plug, SETTLE, Sandbox, bits, effect, meters, out_l,
+    process_settled, request, request_with_state, run_to_crash,
 };
 use std::process::Command;
 use std::sync::Mutex;
@@ -56,9 +56,7 @@ fn a_child_killed_from_outside_crashes_the_device_and_a_reload_from_the_captured
         let mut h = effect(first, 0.25);
         // The app's last captured state: a gain of -6 dB, heard on the output.
         h.set_param("p1", format.gain_value(-6.0));
-        for _ in 0..10 {
-            h.process();
-        }
+        process_settled(&mut h, 10, SETTLE);
         let blob = sb.manager.capture_state(id).unwrap();
         let heard = out_l(&h);
         assert!(heard.iter().any(|s| s.abs() > 0.001));
@@ -97,9 +95,8 @@ fn a_child_killed_from_outside_crashes_the_device_and_a_reload_from_the_captured
             .unwrap();
         assert!(second.restore_error.is_none());
         let mut h2 = effect(second, 0.25);
-        for _ in 0..10 {
-            h2.process();
-        }
+        // A late batch passes the dry input: compare once the new child keeps up.
+        process_settled(&mut h2, 10, SETTLE);
         assert_eq!(meters(&h2)[METER_STATE], DeviceState::Running.as_f32());
         assert_eq!(
             bits(&out_l(&h2)),

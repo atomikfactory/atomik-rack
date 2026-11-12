@@ -61,6 +61,15 @@ may break APIs and the patch and project formats.
   clips play as before (unwarped until their buffer is ready). Offline bounces never hear the preview and stay
   bit-identical; the project format is unchanged (45).
 
+### Fixed
+- **Edits in a sandboxed plugin's editor are recorded.** The begin and end of a gesture made in the editor of a
+  sandboxed plugin (CLAP or VST3) carry no value, and the plugin process dropped them because its messages cannot
+  carry NaN, so the app saw every change outside a gesture and recorded none of them: no undo step, no automation.
+  They now cross as 0, a value the app ignores. The sandbox is also run for real on Linux and macOS in CI: every
+  test plugin library goes through a real plugin process there (load, audio, state, crash, hang, a library that
+  fails or never returns, many instances in a row, the edge-case plugins and an editor gesture). The project format
+  is unchanged (45).
+
 ## [0.4.0-rc.2] - 2026-11-10
 
 ### Added
