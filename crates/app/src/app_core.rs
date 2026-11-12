@@ -392,6 +392,9 @@ pub struct AppCore<S: EngineSink> {
     preview_db: f32,
     /// The ticks per quarter note File > Export MIDI writes (File > MIDI Export Resolution).
     midi_resolution: crate::midi_file::MidiResolution,
+    /// A MIDI import as a song also detects the chords of its notes for the chord lane when the
+    /// file names none ([`Self::set_midi_chords_from_notes`]).
+    midi_chords_from_notes: bool,
     /// The take group the file the import dialog returns becomes a take of (Import File as
     /// Take), until the dialog answers.
     take_import: Option<u32>,
@@ -712,6 +715,7 @@ impl<S: EngineSink> AppCore<S> {
             backup: backup::BackupState::default(),
             preview_db: 0.0,
             midi_resolution: crate::midi_file::MidiResolution::default(),
+            midi_chords_from_notes: false,
             take_import: None,
             trial_next: false,
             stretch_open: false,
@@ -1828,6 +1832,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_take(&state);
         self.feed_player_preview();
         self.show_transport();
+        self.feed_song_harmony();
         self.feed_automation_values();
         self.feed_device_meters();
         self.feed_device_scopes();

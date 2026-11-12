@@ -2,7 +2,7 @@
 //! Detect Song Key on a C major and an A minor song, and the key the browser filters by.
 
 use super::*;
-use crate::sink::RecordingSink;
+use crate::sink::{RecordingSink, SinkCall};
 use atomik_core::PPQ;
 use atomik_model::harmony::{ChordEvent, Harmony, Key};
 use atomik_model::theory::{ChordKind, ScaleKind};
@@ -177,4 +177,43 @@ fn the_browser_filters_by_the_tags_of_the_song_key() {
     c.set_song_key(None).unwrap();
     c.sync_song_key_filter();
     assert!(c.file_browser.song_key_tags().is_empty());
+}
+
+#[test]
+fn a_harmony_edit_reaches_the_engine_with_the_song() {
+    let mut c = core();
+    c.sink_mut().take();
+    let h = Harmony {
+        key: Some(Key::new(0, ScaleKind::Major)),
+        changes: Vec::new(),
+        chords: vec![ChordEvent::new(0, BAR, 9, ChordKind::Minor)],
+    };
+    c.set_harmony(h).unwrap();
+    let song = c
+        .sink_mut()
+        .take()
+        .into_iter()
+        .rev()
+        .find_map(|call| match call {
+            SinkCall::Song(input) => Some(input),
+            _ => None,
+        })
+        .expect("the song was sent again");
+    assert_eq!(song.harmony.chord_at(0).map(|ch| ch.root), Some(9));
+    assert_eq!(song.harmony.key_at(BAR * 4).map(|k| k.root), Some(0));
+}
+
+#[test]
+fn the_rack_is_told_the_key_and_chord_at_the_playhead() {
+    let mut c = core();
+    c.frame();
+    assert_eq!(c.view().song_harmony(), (None, None));
+    c.set_harmony(Harmony {
+        key: Some(Key::new(9, ScaleKind::NaturalMinor)),
+        changes: Vec::new(),
+        chords: vec![ChordEvent::new(0, BAR, 5, ChordKind::MajorSeventh)],
+    })
+    .unwrap();
+    c.frame();
+    assert_eq!(c.view().song_harmony(), (Some("Am"), Some("Fmaj7")));
 }

@@ -735,6 +735,10 @@ pub enum UiAction {
     /// Open the key and chord picker (see [`crate::HarmonyPickerView`]) on the song key, a key
     /// change or a chord: a double click on a lane item, or a click on the transport bar's Key.
     HarmonyPicker(crate::harmony_picker::HarmonyTarget),
+    /// Play this chord briefly (a click on a chord of the chord lane with "Play Chords on Click"
+    /// on, or a chord picked in the picker); the app plays it through the selected note track or
+    /// the preview voice.
+    AuditionChord(atomik_model::ChordEvent),
     /// The key and chord picker asks for something: set the value, delete the item or close.
     Harmony(crate::harmony_picker::HarmonyPickerAction),
     /// The kick and bass check panel ([`crate::KickBassView`]) asks for something: pick a track,

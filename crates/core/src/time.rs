@@ -1,6 +1,7 @@
 //! Sample rate, tempo and musical/sample time conversions.
 
 use crate::PPQ;
+use crate::harmony::HarmonyNow;
 
 /// Error for out-of-range time values.
 #[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
@@ -89,6 +90,9 @@ pub struct TimeInfo {
     /// The master tune in cents around A = 440 Hz for this batch (the project value, glided by
     /// the engine when it changes). 0 outside a project. Pitched devices shift by it.
     pub tune_cents: f32,
+    /// The song's key and chord over the batch ([`HarmonyNow::NONE`] without a song or without
+    /// harmony). See [`crate::harmony`].
+    pub harmony: HarmonyNow,
 }
 
 /// A loop wrap inside one batch (see [`TimeInfo::loop_wrap`]).
@@ -116,6 +120,7 @@ impl TimeInfo {
             loop_ticks: None,
             time_signature: (4, 4),
             tune_cents: 0.0,
+            harmony: HarmonyNow::NONE,
         }
     }
 }

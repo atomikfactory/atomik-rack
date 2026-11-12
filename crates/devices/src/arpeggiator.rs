@@ -30,11 +30,22 @@
 //! * **Free rate.** `rate.mode` free makes a step `1 / rate.hz` seconds at the current tempo.
 //! * **Input range.** Keys outside `input.low..=input.high` go to `notes_out` as played; their Off,
 //!   `AllOff`, bypass and `reset` close them.
+//! * **Song chords** (appended params; the default `source` `held` follows nothing). With
+//!   `source` `song chord` the arpeggiated set is the chord of the song's chord lane at the step
+//!   (its bass too, below the root), from the octave of the lowest held key, or from
+//!   `chord.octave` when `gate.keys` is off. With `gate.keys` on the figure runs only while a key
+//!   is held; off, it runs whenever the song plays a chord (transport playing, no key needed;
+//!   held keys still set the velocity). `held + song chord` moves each held key to the nearest
+//!   chord tone (ties down). A step with no chord in the lane plays the held keys as they are. The
+//!   set is read at every step, so a chord change takes effect at the next step and the figure
+//!   goes on (the step counter does not restart); a change on a step boundary plays the new chord
+//!   on that step.
 //! * **Meter values:** the number of held keys, then the next 8 keys the arpeggiator will play (0 =
 //!   none; in chord mode the lowest key of the chord).
 
 use atomik_core::{
-    BATCH, MAX_EVENTS_PER_BATCH, NoteEvent, NoteKind, ParamDescriptor, ParamId, Taper, Unit,
+    BATCH, MAX_EVENTS_PER_BATCH, NoteEvent, NoteKind, ParamDescriptor, ParamId, SongChord, Taper,
+    Unit,
 };
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, PrepareInfo, ProcessContext, SeqResolution,
@@ -95,6 +106,14 @@ const P_SHIFT: u32 = 31;
 const P_IN_LOW: u32 = 32;
 const P_IN_HIGH: u32 = 33;
 const P_REPEAT: u32 = 34;
+const P_SOURCE: u32 = 35;
+const P_CHORD_OCTAVE: u32 = 36;
+const P_GATE_KEYS: u32 = 37;
+
+const SOURCES: Unit = Unit::Choice(&["held", "song chord", "held + song chord"]);
+const CHORD_OCTAVES: Unit = Unit::Choice(&["C2", "C3", "C4", "C5"]);
+/// The key of `chord.octave` 0 (C2; C3 is 60).
+const CHORD_OCTAVE_C2: u8 = 48;
 
 /// Steps of the rhythm pattern.
 const PATTERN_STEPS: usize = 16;
@@ -115,7 +134,7 @@ macro_rules! step_param {
     };
 }
 
-static PARAMS: [ParamDescriptor; 35] = [
+static PARAMS: [ParamDescriptor; 38] = [
     param(P_MODE, "mode", "Mode", (0.0, 5.0, 0.0), MODES, true),
     param(P_RATE, "rate", "Rate", (0.0, 6.0, 3.0), RATES, true),
     param(
@@ -242,6 +261,23 @@ static PARAMS: [ParamDescriptor; 35] = [
         Unit::None,
         true,
     ),
+    param(P_SOURCE, "source", "Source", (0.0, 2.0, 0.0), SOURCES, true),
+    param(
+        P_CHORD_OCTAVE,
+        "chord.octave",
+        "Chord octave",
+        (0.0, 3.0, 1.0),
+        CHORD_OCTAVES,
+        true,
+    ),
+    param(
+        P_GATE_KEYS,
+        "gate.keys",
+        "Gate by keys",
+        (0.0, 1.0, 1.0),
+        Unit::Toggle,
+        true,
+    ),
 ];
 
 /// Static description of the arpeggiator.
@@ -287,8 +323,58 @@ impl Mode {
     }
 }
 
+/// What the figure arpeggiates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Source {
+    /// The held keys.
+    Held,
+    /// The chord of the song's chord lane.
+    SongChord,
+    /// The held keys moved to the nearest chord tone.
+    HeldSnapped,
+}
+
 /// Keys per set (all MIDI keys).
 const KEYS: usize = 128;
+
+/// The set one step plays: keys ascending, keys in press order and the velocity of each key.
+struct PlaySet {
+    sorted: [u8; KEYS],
+    m: usize,
+    order: [u8; KEYS],
+    n: usize,
+    vel: [f32; KEYS],
+}
+
+impl PlaySet {
+    const fn new() -> Self {
+        Self {
+            sorted: [0; KEYS],
+            m: 0,
+            order: [0; KEYS],
+            n: 0,
+            vel: [0.0; KEYS],
+        }
+    }
+
+    /// Adds `key` (once) with its velocity, keeping the press order.
+    fn add(&mut self, key: u8, vel: f32) {
+        let k = usize::from(key & 0x7F);
+        if self.order[..self.n].contains(&(k as u8)) {
+            return;
+        }
+        self.order[self.n] = k as u8;
+        self.n += 1;
+        self.vel[k] = vel;
+    }
+
+    /// Fills `sorted` from the keys added.
+    fn finish(&mut self) {
+        self.sorted[..self.n].copy_from_slice(&self.order[..self.n]);
+        self.sorted[..self.n].sort_unstable();
+        self.m = self.n;
+    }
+}
 /// Next keys published by [`Device::meter_values`].
 const PREVIEW: usize = 8;
 
@@ -519,6 +605,10 @@ pub struct Arpeggiator {
     in_low: u8,
     in_high: u8,
     repeat: u64,
+    source: Source,
+    /// The key the song chord is placed from when `gate.keys` is off.
+    chord_octave: u8,
+    gate_keys: bool,
     /// Keys outside the input range whose On went through to `notes_out` and whose Off has not.
     thru_down: [bool; KEYS],
     // Clock.
@@ -566,6 +656,9 @@ impl Arpeggiator {
             in_low: 0,
             in_high: 127,
             repeat: 1,
+            source: Source::Held,
+            chord_octave: CHORD_OCTAVE_C2 + 12,
+            gate_keys: true,
             thru_down: [false; KEYS],
             grid: Grid::DEFAULT,
             next_step: 0,
@@ -678,25 +771,77 @@ impl Arpeggiator {
         }
     }
 
+    /// Fills `out` with what a step plays under the song `chord` (`playing`: the transport
+    /// plays). Returns false when the step is silent.
+    fn play_set(&self, chord: Option<SongChord>, playing: bool, out: &mut PlaySet) -> bool {
+        let held = &self.set;
+        let lowest = (0..KEYS).find(|k| held.member[*k]).map(|k| k as u8);
+        match (self.source, chord) {
+            (Source::SongChord, Some(c)) => {
+                if held.n == 0 && (self.gate_keys || !playing) {
+                    return false;
+                }
+                let vel = lowest.map_or(100.0 / 127.0, |k| held.vel[usize::from(k)]);
+                let from = match lowest {
+                    Some(k) if self.gate_keys => k,
+                    _ => self.chord_octave,
+                };
+                let root = u32::from(from - from % 12) + u32::from(c.root);
+                if let Some(b) = c.bass.filter(|b| *b % 12 != c.root) {
+                    let down = (u32::from(c.root) + 12 - u32::from(b % 12)) % 12;
+                    if let Some(k) = root.checked_sub(down)
+                        && k <= 127
+                    {
+                        out.add(k as u8, vel);
+                    }
+                }
+                for i in c.kind.intervals() {
+                    let k = root + u32::from(*i);
+                    if k <= 127 {
+                        out.add(k as u8, vel);
+                    }
+                }
+            }
+            (Source::HeldSnapped, Some(c)) => {
+                for &k in &held.order[..held.n] {
+                    out.add(c.nearest(k), held.vel[usize::from(k)]);
+                }
+            }
+            _ => {
+                if held.n == 0 {
+                    return false;
+                }
+                let m = held.fill_sorted(&mut out.sorted);
+                out.m = m;
+                out.order[..held.n].copy_from_slice(&held.order[..held.n]);
+                out.n = held.n;
+                out.vel = held.vel;
+                return m > 0;
+            }
+        }
+        out.finish();
+        out.m > 0
+    }
+
     fn rnd(&self, k: i64) -> u64 {
         hash64(self.seed_mix, k as u64, 1)
     }
 
-    /// Fills the published preview of the next notes.
-    fn update_preview(&mut self) {
+    /// Fills the published preview of the next notes (under the song `chord` at the batch
+    /// start).
+    fn update_preview(&mut self, chord: Option<SongChord>, playing: bool) {
         self.held_count = self.set.n.min(255) as u8;
         self.preview = [0; PREVIEW];
-        if self.set.n == 0 {
+        let mut set = PlaySet::new();
+        if !self.play_set(chord, playing, &mut set) {
             return;
         }
-        let mut sorted = [0u8; KEYS];
-        let m = self.set.fill_sorted(&mut sorted);
         for i in 0..PREVIEW {
             let (_, key) = choose(
                 self.mode,
                 self.insert,
-                &sorted[..m],
-                &self.set.order[..self.set.n],
+                &set.sorted[..set.m],
+                &set.order[..set.n],
                 self.octaves,
                 (self.cycle + i as u64) / self.repeat,
                 self.rnd(self.next_step + i as i64),
@@ -802,7 +947,12 @@ impl StepHost for Run<'_, '_> {
     fn on_step(&mut self, k: i64, tick: f64, frame: usize) {
         let s = &mut *self.s;
         s.apply_inputs(self.ctx, frame, true);
-        if s.set.n == 0 {
+        let chord = match s.source {
+            Source::Held => None,
+            _ => self.ctx.harmony().chord_at(frame.min(BATCH - 1) as u16),
+        };
+        let mut set = PlaySet::new();
+        if !s.play_set(chord, self.ctx.time.playing, &mut set) {
             return;
         }
         let mut end = s.grid.gate_end(tick, k, s.gate);
@@ -827,8 +977,6 @@ impl StepHost for Run<'_, '_> {
         let n = s.cycle;
         s.cycle += 1;
         let n = n / s.repeat;
-        let mut sorted = [0u8; KEYS];
-        let m = s.set.fill_sorted(&mut sorted);
         let shift = s.shift;
         let velocity_of = |s: &Arpeggiator, base: u8| {
             if accent {
@@ -836,12 +984,12 @@ impl StepHost for Run<'_, '_> {
             } else if s.fixed_velocity {
                 f32::from(s.velocity) / 127.0
             } else {
-                s.set.vel[usize::from(base)].clamp(1.0 / 127.0, 1.0)
+                set.vel[usize::from(base)].clamp(1.0 / 127.0, 1.0)
             }
         };
         if s.mode == Mode::Chord {
             let o = 12 * (n % u64::from(s.octaves)) as u32;
-            for &base in &sorted[..m] {
+            for &base in &set.sorted[..set.m] {
                 let key = shifted(fold(u32::from(base) + o), shift);
                 let vel = velocity_of(s, base);
                 s.sound_on(self.ctx, frame, key, vel, end);
@@ -851,8 +999,8 @@ impl StepHost for Run<'_, '_> {
             let (base, key) = choose(
                 s.mode,
                 s.insert,
-                &sorted[..m],
-                &s.set.order[..s.set.n],
+                &set.sorted[..set.m],
+                &set.order[..set.n],
                 s.octaves,
                 n,
                 s.rnd(k),
@@ -930,12 +1078,27 @@ impl Device for Arpeggiator {
             P_IN_LOW => self.in_low = plain.round().clamp(0.0, 127.0) as u8,
             P_IN_HIGH => self.in_high = plain.round().clamp(0.0, 127.0) as u8,
             P_REPEAT => self.repeat = plain.round().clamp(1.0, 4.0) as u64,
+            P_SOURCE => {
+                self.source = match plain.round().clamp(0.0, 2.0) as u8 {
+                    0 => Source::Held,
+                    1 => Source::SongChord,
+                    _ => Source::HeldSnapped,
+                }
+            }
+            P_CHORD_OCTAVE => {
+                self.chord_octave = CHORD_OCTAVE_C2 + 12 * plain.round().clamp(0.0, 3.0) as u8;
+            }
+            P_GATE_KEYS => self.gate_keys = plain >= 0.5,
             _ => {}
         }
     }
 
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
         let time = ctx.time;
+        let preview_chord = match self.source {
+            Source::Held => None,
+            _ => time.harmony.chord_at(0),
+        };
         self.core.begin_batch(ctx);
         if self.bypass.begin_batch(ctx.notes_out(NOTES_OUT)) {
             // The switch closes what the arpeggiator sent and starts it from nothing.
@@ -956,7 +1119,7 @@ impl Device for Arpeggiator {
             }
         }
         if self.bypass.is_active() {
-            self.update_preview();
+            self.update_preview(preview_chord, time.playing);
             self.core.end_batch(ctx);
             return;
         }
@@ -989,7 +1152,7 @@ impl Device for Arpeggiator {
             self.core.close_all(ctx, 0);
             self.clock.invalidate();
             self.apply_inputs(ctx, BATCH, true);
-            self.update_preview();
+            self.update_preview(preview_chord, time.playing);
             self.core.end_batch(ctx);
             return;
         };
@@ -1002,7 +1165,7 @@ impl Device for Arpeggiator {
         let end = self.run(ctx, tick, tpf, wrap);
         self.apply_inputs(ctx, BATCH, true);
         self.clock.advance(end, tpf, mode);
-        self.update_preview();
+        self.update_preview(preview_chord, time.playing);
         self.core.end_batch(ctx);
     }
 

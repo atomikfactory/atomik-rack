@@ -1,7 +1,7 @@
 //! The per-batch processing context handed to [`crate::Device::process`].
 
 use crate::SocketId;
-use atomik_core::{Batch, NoteBuffer, NoteEvent, TimeInfo};
+use atomik_core::{Batch, HarmonyNow, NoteBuffer, NoteEvent, TimeInfo};
 
 /// Borrowed view of one device's sockets for one batch. Contains no owned or growable data.
 ///
@@ -47,6 +47,12 @@ impl<'a> ProcessContext<'a> {
     pub fn with_playback(mut self, playback: &'a [Batch]) -> Self {
         self.playback = playback;
         self
+    }
+
+    /// The song's key and chord over this batch (see [`atomik_core::harmony`]): ask it by the
+    /// frame offset of an event. [`HarmonyNow::NONE`] without a song or without harmony.
+    pub fn harmony(&self) -> &HarmonyNow {
+        &self.time.harmony
     }
 
     /// The rendered playback batch of `channel`, or `None` if the engine rendered no playback

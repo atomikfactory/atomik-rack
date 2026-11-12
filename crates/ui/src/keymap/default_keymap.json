@@ -84,6 +84,7 @@
         { "command": "view.zoom_in", "context": "sequencer", "chords": ["H"] },
         { "command": "view.zoom_out", "context": "sequencer", "chords": ["G"] },
         { "command": "sequencer.snap_toggle", "context": "sequencer", "chords": ["S"] },
+        { "command": "edit.paste_chord", "context": "sequencer", "chords": ["Cmd+Alt+V"] },
         { "command": "sequencer.audio_crossfade", "arg": "toggle", "context": "sequencer", "chords": ["X"] },
         { "command": "sequencer.track_height", "arg": "fit", "context": "sequencer", "chords": ["Alt+M"] },
         { "command": "sequencer.track_height", "arg": "minimise", "context": "sequencer", "chords": ["Alt+Shift+M"] },

@@ -92,6 +92,7 @@ fn rig(notes: Vec<SongNote>, channel: u8) -> Rig {
         .set_param(id, ParamId(0), f32::from(channel))
         .unwrap();
     let input = SongInput {
+        harmony: Default::default(),
         tracks: vec![SongTrack {
             device: id,
             notes_socket: SocketId(0),

@@ -657,3 +657,26 @@ over units, slash basses), `poly` (voice tracks into notes snapped to onsets). T
 chroma with the key profiles of `key_detect`; on an exact tie the major key wins.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AB. The song harmony reaches devices: compiled with the song, looked up per batch
+
+**Question.** How do note devices (Key & Chord, the Arpeggiator, the CV Quantizer) read the song key and the chord
+lane on the audio thread, live and in bounces?
+
+**Options.** (1) Devices get the model's harmony through a shared lock; (2) the app sends key and chord changes as
+timed events into each device; (3) the harmony is compiled with the song into sorted shared slices that the engine
+swaps with the song, and the player hands each batch a fixed-size view of what holds over the batch.
+
+**Implications.** A lock on the audio thread is out. Timed events need a route per device and a chase on every locate
+and loop wrap. A compiled harmony costs a binary search per batch, follows locates, loops, tempo maps and the clip
+launcher for free, and is the same in a bounce. A view that borrows the compiled slices cannot live in the copyable
+time info the workers receive; a small copy can: the key and chord at the first frame and at every frame where one
+changes inside the batch (eight at most; a 64-frame batch never holds more in music).
+
+**Decision.** (3). `atomik_core::harmony::SongHarmony` (in `SongInput::harmony`, built by `song_harmony` in the
+renderer) and `HarmonyNow` in `TimeInfo::harmony`, read through `ProcessContext::harmony`. A change lands on the frame
+where a note of the same tick is emitted. Stopped, the batch holds the harmony at the playhead. A harmony edit now
+reports `SongChanged` so the engine gets it with the next song swap. The new device params are appended with defaults
+that follow nothing, so older songs and patches play as before.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

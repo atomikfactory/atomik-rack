@@ -43,6 +43,7 @@ const P_CUSTOM: u32 = 3;
 /// First of the twelve `scale.note.N` toggles (ids 4..=15, one per pitch class from C).
 const P_NOTE0: u32 = 4;
 const P_HYSTERESIS: u32 = 16;
+const P_SCALE_SOURCE: u32 = 17;
 
 /// The custom scale a device starts with: C major.
 const C_MAJOR: u16 = 0b1010_1011_0101;
@@ -88,7 +89,7 @@ static ROOTS: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
 
-static PARAMS: [ParamDescriptor; 17] = [
+static PARAMS: [ParamDescriptor; 18] = [
     choice(P_SCALE, "scale", "Scale", &SCALES, 1.0),
     choice(P_ROOT, "root", "Root", &ROOTS, 0.0),
     count(P_TRANSPOSE, "transpose", "Transpose", -24.0, 24.0, 0.0),
@@ -113,6 +114,13 @@ static PARAMS: [ParamDescriptor; 17] = [
         1.0,
         0.0,
         Unit::Percent,
+    ),
+    choice(
+        P_SCALE_SOURCE,
+        "scale.source",
+        "Scale source",
+        &["device", "song"],
+        0.0,
     ),
 ];
 
@@ -187,6 +195,10 @@ pub struct CvQuantizer {
     key: Option<i32>,
     last_in: f32,
     last_key: i32,
+    /// The scale comes from the song key at the playhead (no key: every semitone).
+    song: bool,
+    /// The mask the cached `last_key` was found with.
+    used_mask: u16,
 }
 
 impl CvQuantizer {
@@ -204,6 +216,8 @@ impl CvQuantizer {
             key: None,
             last_in: f32::NAN,
             last_key: MIDDLE_C,
+            song: false,
+            used_mask: 0,
         };
         q.derive();
         q
@@ -265,6 +279,10 @@ impl Device for CvQuantizer {
                 self.hysteresis = v.clamp(0.0, 1.0);
                 self.last_in = f32::NAN;
             }
+            P_SCALE_SOURCE => {
+                self.song = v >= 0.5;
+                self.last_in = f32::NAN;
+            }
             _ => {}
         }
     }
@@ -273,15 +291,25 @@ impl Device for CvQuantizer {
         let cv = *ctx.input(PITCH_IN);
         let mut pitch = [0.0f32; BATCH];
         let mut trig = [0.0f32; BATCH];
+        let harmony = *ctx.harmony();
         for n in 0..BATCH {
+            let mask = if self.song {
+                harmony.key_at(n as u16).map_or(0, |k| k.pitch_mask())
+            } else {
+                self.mask
+            };
+            if mask != self.used_mask {
+                self.used_mask = mask;
+                self.last_in = f32::NAN;
+            }
             let x = finite(cv[n]).clamp(-LIMIT, LIMIT);
             let q = if x.to_bits() == self.last_in.to_bits() {
                 self.last_key
             } else {
                 let at = MIDDLE_C as f32 + x * KEYS_PER_UNIT;
                 let q = match self.key {
-                    Some(cur) => nearest_key_sticky(self.mask, at, cur, self.hysteresis),
-                    None => nearest_key(self.mask, at),
+                    Some(cur) => nearest_key_sticky(mask, at, cur, self.hysteresis),
+                    None => nearest_key(mask, at),
                 };
                 self.last_in = x;
                 self.last_key = q;
@@ -347,9 +375,26 @@ mod tests {
                 "scale.note.10",
                 "scale.note.11",
                 "hysteresis",
+                "scale.source",
             ],
             &["pitch_cv_in", "pitch_cv_out", "trig_out"],
         );
+    }
+
+    #[test]
+    fn scale_source_song_quantizes_to_the_song_key_at_the_playhead() {
+        use atomik_core::HarmonyNow;
+        let mut h = harness(Box::new(CvQuantizer::new()));
+        h.set_param("scale.source", 1.0);
+        // No song key: every semitone passes.
+        assert_eq!(quantize(&mut h, 61.0), 61.0);
+        h.time_mut().harmony = HarmonyNow::single(0, Some(Scale::new(2, ScaleKind::Major)), None);
+        // D major: C sits between B and C#, ties go down; C# is in the scale.
+        assert_eq!(quantize(&mut h, 60.0), 59.0);
+        assert_eq!(quantize(&mut h, 61.0), 61.0);
+        // The device's own scale (C major) is back with the source on device.
+        h.set_param("scale.source", 0.0);
+        assert_eq!(quantize(&mut h, 61.0), 60.0);
     }
 
     #[test]

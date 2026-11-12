@@ -354,6 +354,16 @@ struct UndoSelection {
 /// How many edits the roll remembers the selection of.
 const UNDO_SELECTIONS: usize = 256;
 
+/// A Fit Notes to Chords result shown before it is applied.
+#[derive(Debug, Clone)]
+struct FitPreview {
+    /// The clip's notes the result was computed from (the preview lapses when they change).
+    base: Vec<Note>,
+    /// The note list and selection Apply sets.
+    list: Vec<Note>,
+    sel: BTreeSet<usize>,
+}
+
 /// The piano roll. See the module documentation.
 #[derive(Debug)]
 pub struct PianoRollView {
@@ -384,6 +394,8 @@ pub struct PianoRollView {
     /// The song's key and chord lane: a clip without a scale of its own follows the key at its
     /// start, and the song chord stamp and Fit Notes to Chords read the chords.
     harmony: Harmony,
+    /// Fit Notes to Chords waiting for Apply or Cancel: the moved notes are drawn as ghosts.
+    fit_preview: Option<FitPreview>,
     snap: Snap,
     vp: ViewportState,
     clip_id: Option<ClipId>,
@@ -578,6 +590,7 @@ impl PianoRollView {
             arp: ArpOptions::default(),
             strum: StrumOptions::default(),
             harmony: Harmony::default(),
+            fit_preview: None,
             snap: Snap::default(),
             vp: ViewportState::new(),
             clip_id: None,
@@ -2209,6 +2222,20 @@ impl PianoRollView {
             }
             UiEvent::PointerDown {
                 pos,
+                button: PointerButton::Primary,
+                ..
+            } if self
+                .fit_buttons()
+                .is_some_and(|(a, c)| a.contains(*pos) || c.contains(*pos)) =>
+            {
+                if self.fit_buttons().is_some_and(|(a, _)| a.contains(*pos)) {
+                    out = self.apply_fit_preview();
+                } else {
+                    self.cancel_fit_preview();
+                }
+            }
+            UiEvent::PointerDown {
+                pos,
                 button,
                 modifiers,
                 clicks,
@@ -3424,8 +3451,14 @@ impl PianoRollView {
         if modifiers.command() {
             return;
         }
+        if self.fit_preview_shown() && matches!(key, Key::Enter) {
+            out.extend(self.apply_fit_preview());
+            return;
+        }
         if matches!(key, Key::Escape) {
-            if !matches!(self.drag, Drag::None) {
+            if self.fit_preview_shown() {
+                self.cancel_fit_preview();
+            } else if !matches!(self.drag, Drag::None) {
                 self.cancel_drag(out);
             } else if self.controller_focus() {
                 self.ctl_sel.clear();
@@ -3725,7 +3758,17 @@ impl PianoRollView {
                     &self.harmony.chords,
                     origin,
                 );
-                self.apply_edit(moved.map(|list| chord_edit::unique(list, &sel)))
+                // The result is shown first: Apply (one undo step) or Cancel in the bar.
+                self.fit_preview = moved.map(|list| {
+                    let (list, sel) = chord_edit::unique(list, &sel);
+                    FitPreview {
+                        base: self.notes().to_vec(),
+                        list,
+                        sel,
+                    }
+                });
+                self.repaint = true;
+                CommandOutcome::Handled(Vec::new())
             }
             "editor.set_chord" => match arg.and_then(Stamp::from_id) {
                 Some(stamp) => {
@@ -4141,6 +4184,101 @@ impl PianoRollView {
 
     /// Sends a new note list (one `SetClipContent`, so one undo step) and selects `new`;
     /// nothing is sent when the list is the clip's own.
+    /// The Fit Notes to Chords preview while it still matches the clip's notes.
+    fn live_fit(&self) -> Option<&FitPreview> {
+        self.fit_preview
+            .as_ref()
+            .filter(|f| f.base.as_slice() == self.notes())
+    }
+
+    /// Whether Fit Notes to Chords shows a result waiting for Apply or Cancel.
+    pub fn fit_preview_shown(&self) -> bool {
+        self.live_fit().is_some()
+    }
+
+    /// The notes the Fit Notes to Chords preview would set (`None` without one).
+    pub fn fit_preview_notes(&self) -> Option<Vec<Note>> {
+        self.live_fit().map(|f| f.list.clone())
+    }
+
+    /// Applies the Fit Notes to Chords preview as one undo step (nothing when it lapsed).
+    pub fn apply_fit_preview(&mut self) -> Vec<UiAction> {
+        let fit = self.fit_preview.take();
+        self.repaint = true;
+        match fit.filter(|f| f.base.as_slice() == self.notes()) {
+            Some(f) => match self.apply_edit(Some((f.list, f.sel))) {
+                CommandOutcome::Handled(out) => out,
+                _ => Vec::new(),
+            },
+            None => Vec::new(),
+        }
+    }
+
+    /// Drops the Fit Notes to Chords preview; the notes stay as they are.
+    pub fn cancel_fit_preview(&mut self) {
+        if self.fit_preview.take().is_some() {
+            self.repaint = true;
+        }
+    }
+
+    /// The bar of the Fit Notes to Chords preview and its Apply and Cancel buttons (at the top
+    /// right of the note grid).
+    fn fit_bar(&self) -> (Rect, Rect, Rect) {
+        let g = self.grid_rect();
+        let bar = Rect::new(
+            (g.x1 - 300.0).max(g.x0),
+            g.y0 + 4.0,
+            g.x1 - 6.0,
+            g.y0 + 28.0,
+        );
+        let cancel = Rect::new(bar.x1 - 72.0, bar.y0 + 3.0, bar.x1 - 4.0, bar.y1 - 3.0);
+        let apply = Rect::new(cancel.x0 - 72.0, cancel.y0, cancel.x0 - 4.0, cancel.y1);
+        (bar, apply, cancel)
+    }
+
+    /// Where the Apply and Cancel buttons of a shown Fit Notes to Chords preview are.
+    pub fn fit_buttons(&self) -> Option<(Rect, Rect)> {
+        self.live_fit().map(|_| {
+            let (_, apply, cancel) = self.fit_bar();
+            (apply, cancel)
+        })
+    }
+
+    fn paint_fit_preview(&self, c: &mut dyn Canvas) {
+        let Some(fit) = self.live_fit() else {
+            return;
+        };
+        let st = &self.st;
+        let g = self.grid_rect();
+        c.push_clip(&g.into());
+        // The moved notes, as outlines where they would go.
+        for n in fit.list.iter().filter(|n| !fit.base.contains(n)) {
+            let r = self.rect_of(n);
+            if r.x1 < g.x0 || r.x0 > g.x1 || r.y1 < g.y0 || r.y0 > g.y1 {
+                continue;
+            }
+            let r = Rect::new(r.x0, r.y0 + 0.5, r.x1.max(r.x0 + 2.0), r.y1 - 0.5);
+            let rr = RoundedRect::from_rect(r, 2.0);
+            c.fill_with(rr, self.accent.with_alpha(0.25));
+            c.stroke_with(rr, 1.5, self.accent);
+        }
+        let (bar, apply, cancel) = self.fit_bar();
+        sp::rect(c, bar, st.header);
+        c.stroke_with(bar, 1.0, self.accent);
+        sp::label(
+            c,
+            &fit_label("Fit Notes to Chords", apply.x0 - bar.x0 - 12.0, 9.0),
+            bar.x0 + 8.0,
+            bar.center().y + 3.5,
+            9.0,
+            st.base.text,
+            Align::Start,
+        );
+        sp::button(c, st, apply, "APPLY", Some(self.accent), false);
+        sp::button(c, st, cancel, "CANCEL", None, false);
+        c.pop_clip();
+    }
+
     fn apply_edit(&mut self, result: Option<(Vec<Note>, BTreeSet<usize>)>) -> CommandOutcome {
         let mut out = Vec::new();
         if let Some((list, new)) = result
@@ -4259,6 +4397,7 @@ impl PianoRollView {
         if self.clip.is_some() && self.track.is_none() {
             self.paint_scale_bar(c);
             self.paint_inspector(c);
+            self.paint_fit_preview(c);
         }
         if self.focused {
             sp::line(c, b.x0, b.y0 + 0.5, b.x1, b.y0 + 0.5, self.st.base.focus);

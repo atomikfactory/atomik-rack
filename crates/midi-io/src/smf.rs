@@ -4,7 +4,7 @@
 //! and each `MTrk` chunk as a list of [`SmfEvent`]s at absolute ticks. Only what a sequencer
 //! uses is kept: channel messages (notes, polyphonic and channel pressure, controllers, program
 //! change, pitch bend), complete SysEx messages and the meta events for tempo, time signature,
-//! markers and track names. Everything else (SysEx split into packets or with a data byte above
+//! key signature, text, lyrics, markers and track names. Everything else (SysEx split into packets or with a data byte above
 //! 127, sequencer-specific and unknown meta events, unknown chunks) is skipped, and a type 2 file
 //! or an SMPTE time division is refused with a message.
 //!
@@ -129,6 +129,18 @@ pub enum SmfMessage {
     SysEx(Vec<u8>),
     /// A marker (meta event 6).
     Marker(String),
+    /// A text event (meta event 1).
+    Text(String),
+    /// A lyric (meta event 5).
+    Lyric(String),
+    /// A key signature (meta event `0x59`): sharps (positive) or flats (negative), -7..=7, and
+    /// whether the key is minor.
+    KeySignature {
+        /// Sharps above 0, flats below.
+        sharps: i8,
+        /// A minor key.
+        minor: bool,
+    },
     /// A track or sequence name (meta event 3).
     TrackName(String),
 }
@@ -349,6 +361,23 @@ fn read_track(data: &[u8], index: usize, base: usize) -> Result<SmfTrack, SmfErr
                         tick,
                         message: SmfMessage::Marker(String::from_utf8_lossy(p).into_owned()),
                     }),
+                    (0x01, p) => track.events.push(SmfEvent {
+                        tick,
+                        message: SmfMessage::Text(String::from_utf8_lossy(p).into_owned()),
+                    }),
+                    (0x05, p) => track.events.push(SmfEvent {
+                        tick,
+                        message: SmfMessage::Lyric(String::from_utf8_lossy(p).into_owned()),
+                    }),
+                    (0x59, [sf, mi]) if (-7..=7).contains(&(*sf as i8)) && *mi <= 1 => {
+                        track.events.push(SmfEvent {
+                            tick,
+                            message: SmfMessage::KeySignature {
+                                sharps: *sf as i8,
+                                minor: *mi == 1,
+                            },
+                        });
+                    }
                     (0x51, [a, b, d]) => {
                         let micros = u32::from_be_bytes([0, *a, *b, *d]);
                         if micros > 0 {
@@ -600,6 +629,13 @@ fn track_bytes(track: &SmfTrack) -> Vec<u8> {
             }
             SmfMessage::Marker(text) => write_meta(&mut out, 0x06, text.as_bytes()),
             SmfMessage::TrackName(text) => write_meta(&mut out, 0x03, text.as_bytes()),
+            SmfMessage::Text(text) => write_meta(&mut out, 0x01, text.as_bytes()),
+            SmfMessage::Lyric(text) => write_meta(&mut out, 0x05, text.as_bytes()),
+            SmfMessage::KeySignature { sharps, minor } => write_meta(
+                &mut out,
+                0x59,
+                &[(*sharps).clamp(-7, 7) as u8, u8::from(*minor)],
+            ),
             _ => {}
         }
     }

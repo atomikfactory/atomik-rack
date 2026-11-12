@@ -138,7 +138,7 @@ takes the lower pane instead.
 ## Key and chords
 
 The song can have a key and a chord lane. The rest of the app follows them: the piano roll, the browser, new chords
-and a few tools. Nothing here changes how the song sounds.
+and a few tools. They change how the song sounds only through the devices you ask to follow them (below).
 
 - **The song key.** A root and a scale (major, minor, the modes, the pentatonic scales and the others of the piano
   roll; never chromatic). Click the Key field in the transport bar, or choose Transport > Song Key..., to open the
@@ -153,7 +153,11 @@ and a few tools. Nothing here changes how the song sounds.
   the length. Drag a chord to move it, drag its right end to resize it, double click it to change it. Chords never
   overlap: a move or a resize that would run into the next chord stops short. Escape puts a drag back, and every
   gesture is one undo step. The right button on a chord or a tag lists Delete and Copy; on the empty lane it lists
-  Add Here and, after a Copy, Paste.
+  Add Here and, after a Copy, Paste. Paste Chord (Ctrl+Alt+V in the arrangement, or the command palette) puts the
+  copied chord at the playhead.
+- **Hearing a chord.** A click on a chord plays it for a moment through the instrument of the selected note track, or
+  a small built-in voice when none is selected; picking a chord in the picker plays it too. It is silent while the
+  song plays. Turn it off with Play Chords on Click in the chord lane's right-click list.
 - **The picker.** The Root row, the Quality rows (or the Scale rows for a key) and the Bass row pick a chord with the
   mouse. The Chord field takes a symbol: a root letter (A to G, either case) with a sharp or a flat, a quality such as
   m, min, -, maj7, M7, 7, m7b5, dim, dim7, aug, sus2, sus4, 6, m6, 9, maj9, m9, add9, 11, 13 or 5, and an optional bass
@@ -165,7 +169,18 @@ and a few tools. Nothing here changes how the song sounds.
 - **Chords in the piano roll.** The Chord Stamp menu has Song Chord: the pencil drops the chord of the chord lane at the
   place you draw (a single note where the lane has no chord), with its bass note below the chord. Fit Notes to Chords
   (in the Chords menu) moves each selected note that falls outside the chord at its position to the nearest chord
-  tone, a tie going down, and never onto a note that is already there; it is one undo step.
+  tone, a tie going down, and never onto a note that is already there. The moved notes show first as outlines, with
+  Apply and Cancel in a bar at the top of the roll (Enter applies, Esc cancels); Apply is one undo step.
+- **Devices that follow the song.** Key & Chord can take its scale from the song key (Scale Source: song, key changes
+  included) and its chord from the chord lane (Chord Source: song chord): Follow stamp plays the lane's chord near
+  any key you press, Follow snap moves each key to the nearest chord tone, and Retrigger re-voices the keys you hold
+  when the chord changes. The Arpeggiator's Source plays the lane's chord (song chord) or snaps the held keys to it
+  (held + song chord); with Gate by Keys off it runs by itself whenever the song plays a chord, from Chord Octave.
+  The CV Quantizer can quantize to the song key. A device that follows shows a SONG tag with the chord or key at the
+  playhead. Bounces sound exactly like playback.
+- **Chords from a MIDI file.** Importing a MIDI file as a song also reads the chord symbols written in it (text,
+  lyric or marker events such as Am7 or C/G, each lasting until the next) into the chord lane, and its key signature
+  as the song key when the song has none, all in the import's one undo step.
 - **Detect Song Key.** Transport > Detect Song Key reads every note clip and sets the key it finds, as one undo
   step: the longer a note, the more it counts. The status line says how clear the answer was; Undo puts the old key
   back. It is a guess, and it only finds major and natural minor. A song with no notes but with audio clips is read

@@ -109,8 +109,8 @@ use crate::seq::{
 use crate::stream::{StreamRequest, StreamStats};
 use crate::sync::{ClockOut, ExternalClock, SyncOut, clocks_in};
 use atomik_core::{
-    BATCH, Batch, LoopWrap, MeterMap, MeterSegment, NoteKind, PPQ, ParamId, Tempo, TempoMap,
-    TempoSegment, Ticks,
+    BATCH, Batch, HarmonyNow, LoopWrap, MeterMap, MeterSegment, NoteKind, PPQ, ParamId,
+    SongHarmony, Tempo, TempoMap, TempoSegment, Ticks,
 };
 use atomik_device_sdk::SocketId;
 use rtrb::Producer;
@@ -622,6 +622,40 @@ pub(crate) struct BatchTime {
     pub(crate) loop_ticks: Option<(f64, f64)>,
     /// `(numerator, denominator)`: the meter at the batch start; 4/4 without a song.
     pub(crate) time_signature: (u8, u8),
+    /// The song's key and chord over the batch ([`HarmonyNow::NONE`] without harmony).
+    pub(crate) harmony: HarmonyNow,
+}
+
+/// Adds the harmony of the song frames `a..b` (batch frames from `off` on) to `out`: the key and
+/// chord at `a`, then every change whose tick is emitted inside the stretch. A change lands on
+/// the frame of [`TempoMap::song_frame`], where a note of the same tick is emitted.
+fn harmony_marks(
+    h: &SongHarmony,
+    map: TempoMap<'_>,
+    sr: f64,
+    (a, b, off): (u64, u64, usize),
+    out: &mut HarmonyNow,
+) {
+    if h.is_empty() {
+        return;
+    }
+    let mut t = map.tick(a as f64, sr).floor() as i64;
+    // A change emitted at or before `a` (rounding) already holds at `a`.
+    while let Some(n) = h.next_change_after(t) {
+        if map.song_frame(n, sr) > a {
+            break;
+        }
+        t = n;
+    }
+    out.push(h.mark(off as u16, t));
+    while let Some(n) = h.next_change_after(t) {
+        let f = map.song_frame(n, sr);
+        if f >= b || off + ((f - a) as usize) >= BATCH {
+            break;
+        }
+        out.push(h.mark((off + (f - a) as usize) as u16, n));
+        t = n;
+    }
 }
 
 /// A count-in in progress: the plan and the frames left.
@@ -1261,7 +1295,7 @@ impl Player {
         let four_four = [MeterSegment::FOUR_FOUR];
         let following = ext.is_some();
         // The song's own tempo map: the audio clips of a followed song are placed on it.
-        let (map, own, meters, (lanes, lane_last), mut parts, mut aud, mut lch) =
+        let (map, own, meters, (lanes, lane_last), mut parts, mut aud, mut lch, harmony) =
             match song.as_deref_mut() {
                 Some(s) => (
                     ext.as_ref()
@@ -1272,6 +1306,7 @@ impl Player {
                     Some((&s.tracks[..], &mut s.cursors[..])),
                     Some((&s.audio[..], &mut s.audio_rt[..])),
                     Some((&s.launch[..], &mut s.launch_rt[..])),
+                    Some(&s.harmony),
                 ),
                 None => (
                     ext.as_ref()
@@ -1279,6 +1314,7 @@ impl Player {
                     TempoMap::new(&constant),
                     MeterMap::new(&four_four),
                     (&[][..], &mut [][..]),
+                    None,
                     None,
                     None,
                     None,
@@ -1363,7 +1399,12 @@ impl Player {
             loop_ticks: (lp.is_some() && parts.is_some())
                 .then_some((self.loop_start as f64, self.loop_end as f64)),
             time_signature: meters.meter_at(tick.floor() as i64),
+            harmony: HarmonyNow::NONE,
         };
+        // The harmony at the playhead; a playing batch rebuilds it stretch by stretch below.
+        if let Some(h) = harmony {
+            harmony_marks(h, map, sr, (*pos, *pos + 1, 0), &mut time.harmony);
+        }
         *click_count = 0;
         *counting = false;
         if sync_cfg.enabled && sync_cfg.while_stopped && (pre_roll.is_some() || !*playing) {
@@ -1436,6 +1477,12 @@ impl Player {
                 _ => (rem, false),
             };
             let (a, b) = (*pos, *pos + len);
+            if let Some(h) = harmony {
+                if off == 0 {
+                    time.harmony.clear();
+                }
+                harmony_marks(h, map, sr, (a, b, off), &mut time.harmony);
+            }
             match (parts.as_mut(), lch.as_mut()) {
                 (Some((tracks, cursors)), Some((lt, lr))) if !lt.is_empty() => {
                     crate::launch::emit(

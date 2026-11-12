@@ -45,7 +45,7 @@ const LEFT_W: f64 = 302.0;
 const KNOBS_X: f64 = CONTENT_X.0 + LEFT_W + 8.0;
 const COL_W: f64 = 63.0;
 /// The controls, in cell order (five per row): the empty key is the octave stepper's cell.
-const ARP_CONTROLS: [&str; 16] = [
+const ARP_CONTROLS: [&str; 19] = [
     "gate",
     "swing",
     "velocity.fixed",
@@ -62,6 +62,9 @@ const ARP_CONTROLS: [&str; 16] = [
     "input.low",
     "input.high",
     "repeat",
+    "source",
+    "chord.octave",
+    "gate.keys",
 ];
 /// Steps of the rhythm pattern.
 pub const ARP_STEPS: usize = 16;
@@ -95,6 +98,8 @@ pub struct ArpPanel {
     pub steps_title: Rect,
     /// The sixteen step cells of the rhythm pattern (a click cycles rest, on, tie, accent).
     pub steps: [Rect; ARP_STEPS],
+    /// The SONG tag, at the right of the mode title (drawn while `source` reads the chord lane).
+    pub song_tag: Rect,
 }
 
 /// The panel of `atomik.arpeggiator` (four rack units, see the module documentation); the back is
@@ -117,6 +122,12 @@ pub fn arp_layout(desc: &DeviceDescriptor) -> PanelSpec {
     let stepper_y = top + 14.0;
     let panel = ArpPanel {
         mode_title: Rect::new(x0, MARGIN_TOP, x0 + LEFT_W, MARGIN_TOP + TITLE_H),
+        song_tag: Rect::new(
+            x0 + LEFT_W - 84.0,
+            MARGIN_TOP - 1.0,
+            x0 + LEFT_W,
+            MARGIN_TOP + TITLE_H + 1.0,
+        ),
         rate_title: Rect::new(x0, rate_title_y, x0 + LEFT_W, rate_title_y + TITLE_H),
         modes,
         rates,
@@ -216,6 +227,11 @@ fn glyph(mode: usize) -> (&'static [(f64, f64)], bool) {
         4 => (&[(0.0, 0.2), (0.33, 0.9), (0.66, 0.5), (1.0, 1.0)], true),
         _ => (&[(0.5, 0.0), (0.5, 0.5), (0.5, 1.0)], false),
     }
+}
+
+/// Whether the arpeggiator reads the song's chord lane (`source` is not `held`).
+pub fn follows_song(device: &RackDevice, desc: &DeviceDescriptor) -> bool {
+    param(device, desc, "source") >= 0.5
 }
 
 fn param(device: &RackDevice, desc: &DeviceDescriptor, key: &str) -> f32 {

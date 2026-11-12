@@ -99,6 +99,66 @@ fn the_front_panel_with_a_clip_scale_matches_golden() {
     check("key_chord_panel_clip_1x.json", &dl.to_json());
 }
 
+/// A Key & Chord stamping the song chord, with A minor 7 at the playhead.
+fn following() -> (RackDoc, RackView) {
+    let mut doc = key_chord_only();
+    doc.devices[0].params.insert("chord.source".into(), 1.0);
+    let reg = registry();
+    let mut v = view(&doc, &reg);
+    v.set_song_harmony(Some("C".into()), Some("Am7".into()));
+    (doc, v)
+}
+
+#[test]
+fn a_panel_that_follows_the_song_shows_the_song_tag_and_matches_golden() {
+    let (doc, mut v) = following();
+    let t = texts_of(&mut v, &doc);
+    assert!(t.iter().any(|x| x == "SONG"), "{t:?}");
+    assert!(
+        t.iter().any(|x| x == "Am7"),
+        "the chord at the playhead: {t:?}"
+    );
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &registry());
+    check("key_chord_panel_song_1x.json", &dl.to_json());
+    // Following the key only, the tag names the key.
+    let mut doc = key_chord_only();
+    doc.devices[0].params.insert("scale.source".into(), 1.0);
+    let mut v = view(&doc, &registry());
+    v.set_song_harmony(Some("C".into()), Some("Am7".into()));
+    let t = texts_of(&mut v, &doc);
+    assert!(
+        t.iter().any(|x| x == "C") && !t.iter().any(|x| x == "Am7"),
+        "{t:?}"
+    );
+}
+
+#[test]
+fn a_panel_that_follows_nothing_has_no_song_tag() {
+    let (doc, mut v) = setup();
+    v.set_song_harmony(Some("C".into()), Some("Am7".into()));
+    let t = texts_of(&mut v, &doc);
+    assert!(!t.iter().any(|x| x == "SONG" || x == "Am7"), "{t:?}");
+}
+
+#[test]
+fn the_song_tag_overlaps_no_control() {
+    let reg = registry();
+    let desc = reg.get(KEY_CHORD_TYPE).unwrap().descriptor;
+    let spec = key_chord_layout(desc);
+    let panel = spec.key_chord.expect("key chord panel");
+    let tag = panel.song_tag;
+    assert!(
+        tag.y1 <= spec.height() && tag.y0 >= panel.from_clip.y1,
+        "{tag:?}"
+    );
+    for c in &spec.front {
+        let r = c.rect;
+        let overlap = tag.x0 < r.x1 && r.x0 < tag.x1 && tag.y0 < r.y1 && r.y0 < tag.y1;
+        assert!(!overlap, "{tag:?} overlaps {r:?}");
+    }
+}
+
 // ------------------------------------------------------------------ layout
 
 #[test]

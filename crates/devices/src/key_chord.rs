@@ -29,13 +29,26 @@
 //! * **Custom scale, alter, size.** `scale.custom` replaces the scale kind with the twelve
 //!   `scale.note.N` toggles (an empty set restricts nothing); `chord.alter` moves the third or fifth
 //!   of the chord by a semitone; `chord.notes` keeps the lowest n notes (0 = all).
-//! * **Bypass** (`bypass`, last param): see `crate::note_fx::PlayerBypass`.
+//! * **Bypass** (`bypass`): see `crate::note_fx::PlayerBypass`.
+//! * **Following the song** (appended params; the defaults follow nothing, so older songs play
+//!   as before). `scale.source` `song` takes the scale root and kind from the song key at the
+//!   note's frame (key changes included; `scale.mode` still applies, and with no song key the
+//!   notes pass as with `off`). `chord.source` `song chord` reads the chord lane: with
+//!   `chord.follow` `stamp` any key plays the current chord's tones (and the bass of a slash
+//!   chord below them) from the chord root at or below the key, and the inversion, voicing,
+//!   octave, velocity and size stages still apply; with no chord the note passes unchanged. With
+//!   `snap` each key moves to the nearest chord tone (ties down) before the chord stage; with no
+//!   chord the scale stage applies. With `chord.retrigger` on, a change of what the device follows
+//!   while keys are held re-voices them on the frame of the change: the old notes go Off and the
+//!   new ones On with the held velocities, through the `NoteRouter`.
 
 use atomik_core::theory::{
     ChordKind, DiatonicSize, MAX_CHORD_KEYS, MAX_KEY, PITCH_NAMES, Scale, ScaleKind, chord_into,
     diatonic_chord_into,
 };
-use atomik_core::{NoteBuffer, NoteEvent, NoteKind, ParamDescriptor, ParamId, Taper, Unit};
+use atomik_core::{
+    HarmonyNow, NoteBuffer, NoteEvent, NoteKind, ParamDescriptor, ParamId, SongChord, Taper, Unit,
+};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
     SocketDescriptor, SocketId, SocketKind,
@@ -138,6 +151,9 @@ static CHORD_LABELS: [&str; 25] = [
 const SCALE_MODES: Unit = Unit::Choice(&["off", "snap", "filter"]);
 const SNAPS: Unit = Unit::Choice(&["nearest", "up", "down"]);
 const VOICINGS: Unit = Unit::Choice(&["close", "open", "drop-2", "bass"]);
+const SCALE_SOURCES: Unit = Unit::Choice(&["device", "song"]);
+const CHORD_SOURCES: Unit = Unit::Choice(&["device", "song chord"]);
+const FOLLOWS: Unit = Unit::Choice(&["stamp", "snap"]);
 
 const P_ROOT: u32 = 0;
 const P_KIND: u32 = 1;
@@ -154,6 +170,10 @@ const P_CUSTOM: u32 = 10;
 const P_NOTE0: u32 = 11;
 const P_ALTER: u32 = 23;
 const P_NOTES: u32 = 24;
+const P_SCALE_SOURCE: u32 = 25;
+const P_CHORD_SOURCE: u32 = 26;
+const P_FOLLOW: u32 = 27;
+const P_RETRIGGER: u32 = 28;
 
 const ALTERS: Unit = Unit::Choice(&["off", "major 3rd", "minor 3rd", "sus4", "flat 5", "sharp 5"]);
 
@@ -173,7 +193,7 @@ macro_rules! note_param {
     };
 }
 
-static PARAMS: [ParamDescriptor; 25] = [
+static PARAMS: [ParamDescriptor; 29] = [
     param(
         P_ROOT,
         "scale.root",
@@ -276,6 +296,38 @@ static PARAMS: [ParamDescriptor; 25] = [
         Unit::None,
         true,
     ),
+    param(
+        P_SCALE_SOURCE,
+        "scale.source",
+        "Scale source",
+        (0.0, 1.0, 0.0),
+        SCALE_SOURCES,
+        true,
+    ),
+    param(
+        P_CHORD_SOURCE,
+        "chord.source",
+        "Chord source",
+        (0.0, 1.0, 0.0),
+        CHORD_SOURCES,
+        true,
+    ),
+    param(
+        P_FOLLOW,
+        "chord.follow",
+        "Chord follow",
+        (0.0, 1.0, 0.0),
+        FOLLOWS,
+        true,
+    ),
+    param(
+        P_RETRIGGER,
+        "chord.retrigger",
+        "Retrigger",
+        (0.0, 1.0, 1.0),
+        Unit::Toggle,
+        true,
+    ),
 ];
 
 /// Static description of the Key & Chord device.
@@ -347,40 +399,49 @@ pub struct KeyChord {
     alter: u8,
     /// Chord size limit; 0 = the whole chord.
     chord_notes: usize,
+    /// The scale comes from the song key.
+    scale_song: bool,
+    /// The chord comes from the song's chord lane.
+    chord_song: bool,
+    /// With `chord_song`: snap keys to the chord tones instead of stamping the chord.
+    follow_snap: bool,
+    /// Re-voice the held keys when the followed harmony changes.
+    retrigger: bool,
+    /// The velocity of each input key that is down (0 = up), for the re-voice.
+    held_vel: [f32; 128],
+    /// The followed key and chord the held keys were last voiced with (`None` = nothing yet).
+    last: Option<Now>,
 }
 
-impl KeyChord {
-    fn new() -> Self {
-        Self {
-            custom: false,
-            custom_mask: C_MAJOR,
-            alter: 0,
-            chord_notes: 0,
-            router: NoteRouter::new(),
-            bypass: PlayerBypass::new(),
-            flush_alloff: false,
-            scale: Scale::new(0, ScaleKind::Major),
-            mode: ScaleMode::Snap,
-            snap: Snap::Nearest,
-            chord: ChordSel::Off,
-            inversion: 0,
-            voicing: Voicing::Close,
-            octave: 0,
-            added_velocity: 1.0,
-        }
-    }
+/// What the device follows of the song at one frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct Now {
+    key: Option<Scale>,
+    chord: Option<SongChord>,
+}
 
+/// The scale stage in effect for one note: the device's own scale, its custom set or the song
+/// key.
+#[derive(Debug, Clone, Copy)]
+struct ScaleView {
+    scale: Scale,
+    /// The custom pitch-class set (an empty set restricts nothing).
+    custom: Option<u16>,
+    mode: ScaleMode,
+    snap: Snap,
+}
+
+impl ScaleView {
     fn in_scale(&self, key: u8) -> bool {
-        if self.custom {
-            self.custom_mask == 0 || self.custom_mask & (1 << (key % 12)) != 0
-        } else {
-            self.scale.contains(key)
+        match self.custom {
+            Some(mask) => mask == 0 || mask & (1 << (key % 12)) != 0,
+            None => self.scale.contains(key),
         }
     }
 
     /// The in-scale key nearest to `key`, ties down.
     fn nearest(&self, key: u8) -> u8 {
-        if !self.custom {
+        if self.custom.is_none() {
             return self.scale.nearest(key);
         }
         for d in 0..12u8 {
@@ -408,7 +469,7 @@ impl KeyChord {
     }
 
     /// The key the scale stage gives `key`, or `None` when the filter drops it.
-    fn scale_stage(&self, key: u8) -> Option<u8> {
+    fn stage(&self, key: u8) -> Option<u8> {
         match self.mode {
             ScaleMode::Off => Some(key),
             ScaleMode::Filter => self.in_scale(key).then_some(key),
@@ -420,13 +481,100 @@ impl KeyChord {
         }
     }
 
-    /// The chord keys on `base` (ascending, at most eight) before voicing.
-    fn chord_keys(&self, base: u8, out: &mut [u8; MAX_CHORD_KEYS]) -> usize {
-        let n = self.chord_keys_all(base, out);
+    /// Diatonic chords need degrees: a custom set or the chromatic scale has none.
+    fn has_degrees(&self) -> bool {
+        self.custom.is_none() && !self.scale.is_chromatic()
+    }
+}
+
+impl KeyChord {
+    fn new() -> Self {
+        Self {
+            custom: false,
+            custom_mask: C_MAJOR,
+            alter: 0,
+            chord_notes: 0,
+            router: NoteRouter::new(),
+            bypass: PlayerBypass::new(),
+            flush_alloff: false,
+            scale: Scale::new(0, ScaleKind::Major),
+            mode: ScaleMode::Snap,
+            snap: Snap::Nearest,
+            chord: ChordSel::Off,
+            inversion: 0,
+            voicing: Voicing::Close,
+            octave: 0,
+            added_velocity: 1.0,
+            scale_song: false,
+            chord_song: false,
+            follow_snap: false,
+            retrigger: true,
+            held_vel: [0.0; 128],
+            last: None,
+        }
+    }
+
+    /// Whether the device reads anything of the song's harmony.
+    fn follows(&self) -> bool {
+        self.scale_song || self.chord_song
+    }
+
+    /// The part of the song harmony at `offset` the device follows.
+    fn now_at(&self, harmony: &HarmonyNow, offset: u16) -> Now {
+        let Some(m) = harmony.at(offset) else {
+            return Now::default();
+        };
+        Now {
+            key: if self.scale_song { m.key } else { None },
+            chord: if self.chord_song { m.chord } else { None },
+        }
+    }
+
+    /// The scale stage for a note played under `now`.
+    fn view(&self, now: Now) -> ScaleView {
+        if self.scale_song {
+            return match now.key {
+                Some(scale) => ScaleView {
+                    scale,
+                    custom: None,
+                    mode: self.mode,
+                    snap: self.snap,
+                },
+                // No song key: the notes pass (the chromatic scale gives the diatonic choices
+                // their major shapes).
+                None => ScaleView {
+                    scale: Scale::new(0, ScaleKind::Chromatic),
+                    custom: None,
+                    mode: ScaleMode::Off,
+                    snap: self.snap,
+                },
+            };
+        }
+        ScaleView {
+            scale: self.scale,
+            custom: self.custom.then_some(self.custom_mask),
+            mode: self.mode,
+            snap: self.snap,
+        }
+    }
+
+    /// The chord keys on `base` (ascending, at most eight) before voicing, and the key of the
+    /// chord root (`base`, or the stamped song chord's root).
+    fn chord_keys(
+        &self,
+        base: u8,
+        view: &ScaleView,
+        stamp: Option<SongChord>,
+        out: &mut [u8; MAX_CHORD_KEYS],
+    ) -> (usize, u8) {
+        let (n, root) = match stamp {
+            Some(c) => self.stamp_keys(base, c, out),
+            None => (self.chord_keys_all(base, view, out), base),
+        };
         // Alter the chord, then keep its lowest `chord.notes` keys.
         if self.alter > 0 {
             for k in &mut out[..n] {
-                let rel = (*k + 12 - base % 12) % 12;
+                let rel = (*k + 12 - root % 12) % 12;
                 let shift: i16 = match (self.alter, rel) {
                     (1, 3) => 1,
                     (2, 4) => -1,
@@ -439,21 +587,45 @@ impl KeyChord {
                 *k = (i16::from(*k) + shift).clamp(0, i16::from(MAX_KEY)) as u8;
             }
         }
-        if self.chord_notes > 0 {
+        let n = if self.chord_notes > 0 {
             n.min(self.chord_notes)
         } else {
             n
-        }
+        };
+        (n, root)
     }
 
-    fn chord_keys_all(&self, base: u8, out: &mut [u8; MAX_CHORD_KEYS]) -> usize {
+    /// The song chord voiced from its root at or below `key`, its bass (a slash chord) below
+    /// the lowest tone; returns the count and the root key.
+    fn stamp_keys(&self, key: u8, c: SongChord, out: &mut [u8; MAX_CHORD_KEYS]) -> (usize, u8) {
+        let root = c.root_at_or_below(key);
+        let mut n = chord_into(root, c.kind, self.inversion, out);
+        if let Some(b) = c.bass.filter(|b| *b % 12 != c.root)
+            && n > 0
+            && n < MAX_CHORD_KEYS
+        {
+            let low = out[0];
+            let mut down = (low % 12 + 12 - b % 12) % 12;
+            if down == 0 {
+                down = 12;
+            }
+            if let Some(bass) = low.checked_sub(down) {
+                out.copy_within(0..n, 1);
+                out[0] = bass;
+                n += 1;
+            }
+        }
+        (n, root)
+    }
+
+    fn chord_keys_all(&self, base: u8, view: &ScaleView, out: &mut [u8; MAX_CHORD_KEYS]) -> usize {
         match self.chord {
             ChordSel::Off => {
                 out[0] = base;
                 1
             }
             ChordSel::Fixed(kind) => chord_into(base, kind, self.inversion, out),
-            ChordSel::Diatonic(size) if self.custom || self.scale.is_chromatic() => {
+            ChordSel::Diatonic(size) if !view.has_degrees() => {
                 let kind = match size {
                     DiatonicSize::Triad => ChordKind::Major,
                     DiatonicSize::Seventh => ChordKind::MajorSeventh,
@@ -462,18 +634,35 @@ impl KeyChord {
                 chord_into(base, kind, self.inversion, out)
             }
             ChordSel::Diatonic(size) => {
-                diatonic_chord_into(self.scale, base, size, self.inversion, out)
+                diatonic_chord_into(view.scale, base, size, self.inversion, out)
             }
         }
     }
 
-    /// The notes an input `On` plays, written to `out`; returns how many.
-    fn notes(&self, key: u8, velocity: f32, out: &mut [(u8, f32); MAX_CHORD_KEYS]) -> usize {
-        let Some(base) = self.scale_stage(key) else {
+    /// The notes an input `On` plays under `now`, written to `out`; returns how many.
+    fn notes(
+        &self,
+        key: u8,
+        velocity: f32,
+        now: Now,
+        out: &mut [(u8, f32); MAX_CHORD_KEYS],
+    ) -> usize {
+        let view = self.view(now);
+        let (base, stamp) = match (self.chord_song, self.follow_snap, now.chord) {
+            // Stamp with no chord in the lane: the key passes as played.
+            (true, false, None) => {
+                out[0] = (key, velocity);
+                return 1;
+            }
+            (true, false, Some(c)) => (view.stage(key), Some(c)),
+            (true, true, Some(c)) => (Some(c.nearest(key)), None),
+            _ => (view.stage(key), None),
+        };
+        let Some(base) = base else {
             return 0;
         };
         let mut raw = [0u8; MAX_CHORD_KEYS];
-        let n = self.chord_keys(base, &mut raw);
+        let (n, root) = self.chord_keys(base, &view, stamp, &mut raw);
         let mut keys = [0i32; MAX_CHORD_KEYS];
         for (slot, k) in keys.iter_mut().zip(&raw[..n]) {
             *slot = i32::from(*k);
@@ -493,7 +682,7 @@ impl KeyChord {
             }
             Voicing::Bass => {
                 if n_keys < MAX_CHORD_KEYS {
-                    keys[n_keys] = i32::from(base) - 12;
+                    keys[n_keys] = i32::from(root) - 12;
                     n_keys += 1;
                 }
             }
@@ -514,7 +703,7 @@ impl KeyChord {
                 continue;
             }
             let k = keys[i] as u8;
-            let v = if k % 12 == base % 12 {
+            let v = if k % 12 == root % 12 {
                 velocity
             } else if self.added_velocity > 0.0 {
                 (velocity * self.added_velocity).max(1.0 / 127.0)
@@ -527,7 +716,29 @@ impl KeyChord {
         count
     }
 
-    fn apply(&mut self, out: &mut NoteBuffer, e: NoteEvent) {
+    /// Re-voices every held key under `now` at `frame` (Off the old notes, On the new).
+    fn revoice(&mut self, out: &mut NoteBuffer, frame: usize, now: Now) {
+        for k in 0..128u8 {
+            let vel = self.held_vel[usize::from(k)];
+            if vel <= 0.0 || !self.router.is_held(k) {
+                continue;
+            }
+            let mut notes = [(0u8, 0.0f32); MAX_CHORD_KEYS];
+            let n = self.notes(k, vel, now, &mut notes);
+            self.router.on(out, frame, k, &notes[..n]);
+        }
+    }
+
+    /// The followed harmony at a mark: re-voices the held keys when it changed.
+    fn harmony_mark(&mut self, out: &mut NoteBuffer, harmony: &HarmonyNow, offset: u16) {
+        let now = self.now_at(harmony, offset);
+        if self.last.is_some_and(|l| l != now) && self.retrigger {
+            self.revoice(out, usize::from(offset), now);
+        }
+        self.last = Some(now);
+    }
+
+    fn apply(&mut self, out: &mut NoteBuffer, e: NoteEvent, now: Now) {
         let frame = usize::from(e.offset);
         let pass = |out: &mut NoteBuffer, kind: NoteKind| {
             push_sorted(
@@ -541,11 +752,16 @@ impl KeyChord {
         match e.kind {
             NoteKind::On { key, velocity } => {
                 let mut notes = [(0u8, 0.0f32); MAX_CHORD_KEYS];
-                let n = self.notes(key, velocity, &mut notes);
+                let n = self.notes(key, velocity, now, &mut notes);
                 self.router.on(out, frame, key, &notes[..n]);
+                self.held_vel[usize::from(key & 0x7F)] = velocity.max(1.0 / 127.0);
             }
-            NoteKind::Off { key } => self.router.off(out, frame, key),
+            NoteKind::Off { key } => {
+                self.router.off(out, frame, key);
+                self.held_vel[usize::from(key & 0x7F)] = 0.0;
+            }
             NoteKind::AllOff => {
+                self.held_vel = [0.0; 128];
                 self.router.all_off(out, frame);
                 pass(out, NoteKind::AllOff);
             }
@@ -588,6 +804,8 @@ impl Device for KeyChord {
             self.flush_alloff = true;
         }
         self.router.clear();
+        self.held_vel = [0.0; 128];
+        self.last = None;
         if self.bypass.reset() {
             self.flush_alloff = true;
         }
@@ -644,6 +862,10 @@ impl Device for KeyChord {
             }
             P_ALTER => self.alter = int(0.0, 5.0) as u8,
             P_NOTES => self.chord_notes = int(0.0, 5.0) as usize,
+            P_SCALE_SOURCE => self.scale_song = plain >= 0.5,
+            P_CHORD_SOURCE => self.chord_song = plain >= 0.5,
+            P_FOLLOW => self.follow_snap = plain >= 0.5,
+            P_RETRIGGER => self.retrigger = plain >= 0.5,
             _ => {}
         }
     }
@@ -663,12 +885,39 @@ impl Device for KeyChord {
             // The switch closes what the device sent and starts it from nothing.
             self.router.close_all(ctx.notes_out(NOTES_OUT), 0);
             self.router.clear();
+            self.held_vel = [0.0; 128];
+        }
+        if !self.follows() {
+            self.last = None;
+            for i in 0..ctx.notes_in(NOTES_IN).len() {
+                let e = ctx.notes_in(NOTES_IN)[i];
+                if let Some(e) = self.bypass.route(ctx.notes_out(NOTES_OUT), e) {
+                    self.apply(ctx.notes_out(NOTES_OUT), e, Now::default());
+                }
+            }
+            return;
+        }
+        // Following the song: the harmony changes are applied in frame order with the input,
+        // a change before the events of its own frame.
+        let harmony = *ctx.harmony();
+        let marks = harmony.marks();
+        let mut next_mark = 0;
+        if marks.is_empty() {
+            self.harmony_mark(ctx.notes_out(NOTES_OUT), &harmony, 0);
         }
         for i in 0..ctx.notes_in(NOTES_IN).len() {
             let e = ctx.notes_in(NOTES_IN)[i];
-            if let Some(e) = self.bypass.route(ctx.notes_out(NOTES_OUT), e) {
-                self.apply(ctx.notes_out(NOTES_OUT), e);
+            while next_mark < marks.len() && marks[next_mark].offset <= e.offset {
+                self.harmony_mark(ctx.notes_out(NOTES_OUT), &harmony, marks[next_mark].offset);
+                next_mark += 1;
             }
+            if let Some(e) = self.bypass.route(ctx.notes_out(NOTES_OUT), e) {
+                let now = self.now_at(&harmony, e.offset);
+                self.apply(ctx.notes_out(NOTES_OUT), e, now);
+            }
+        }
+        for m in &marks[next_mark..] {
+            self.harmony_mark(ctx.notes_out(NOTES_OUT), &harmony, m.offset);
         }
     }
 }

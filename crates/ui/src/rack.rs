@@ -639,6 +639,9 @@ pub struct RackView {
     /// The scale of the clip open in the piano roll, for the FROM CLIP button of a Key & Chord
     /// panel (`None`: no clip, or a clip without a scale; the button is disabled).
     clip_scale: Option<atomik_model::theory::Scale>,
+    /// The song key (short) and the chord at the playhead, for the SONG tags of the devices that
+    /// follow the song.
+    song_harmony: (Option<String>, Option<String>),
     repaint: bool,
     content_height: f64,
     /// How many columns the view lays out (1 inside a container).
@@ -828,6 +831,30 @@ fn param_cmd(key: &DeviceKey, param: &str, value: f32, merge: Option<u64>) -> Ui
 }
 
 impl RackView {
+    /// Tells the view the song key (short name) and the chord of the lane at the playhead: the
+    /// SONG tags of the Key & Chord and Arpeggiator panels that follow the song name them.
+    pub fn set_song_harmony(&mut self, key: Option<String>, chord: Option<String>) {
+        let now = (key, chord);
+        if self.song_harmony != now {
+            self.song_harmony = now;
+            for d in &mut self.devices {
+                if d.spec.key_chord.is_some() || d.spec.arp.is_some() {
+                    d.revision += 1;
+                    d.lists = [None, None];
+                }
+            }
+            self.repaint = true;
+        }
+    }
+
+    /// The song key and chord the SONG tags show ([`RackView::set_song_harmony`]).
+    pub fn song_harmony(&self) -> (Option<&str>, Option<&str>) {
+        (
+            self.song_harmony.0.as_deref(),
+            self.song_harmony.1.as_deref(),
+        )
+    }
+
     /// Tells the view the scale of the clip open in the piano roll (`None` when no clip is open
     /// or it has no scale): it enables the FROM CLIP button of the Key & Chord panels.
     pub fn set_clip_scale(&mut self, scale: Option<atomik_model::theory::Scale>) {
@@ -983,6 +1010,7 @@ impl RackView {
             previewing: None,
             midi: crate::MidiMarks::default(),
             clip_scale: None,
+            song_harmony: (None, None),
             repaint: true,
             content_height: 0.0,
             columns: 1,
@@ -4977,6 +5005,8 @@ impl RackView {
             master: d.master.info(),
             mix: d.mix.info(if d.is_mix() { &d.meters } else { &[] }),
             from_clip: self.clip_scale.is_some(),
+            song_key: self.song_harmony.0.as_deref(),
+            song_chord: self.song_harmony.1.as_deref(),
             sampling: self.sampling.as_ref() == Some(&d.key),
             previewing: self.previewing.as_ref() == Some(&d.key),
             match_db: d.match_db,

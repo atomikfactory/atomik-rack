@@ -56,6 +56,11 @@ fn is_name_or_value(text: &str) -> bool {
         "Drums",
         "Pad",
         "Keys",
+        "Key & Chord",
+        "Key &",
+        "KEY & CHORD",
+        "Arpeggiator",
+        "ARPEGGIATOR",
     ];
     // A shortcut, a level at minus infinity, a file name: values, not words.
     let shortcut = text.contains('+') && text.split('+').all(|k| !k.is_empty() && k.len() < 12);
@@ -245,6 +250,25 @@ fn the_detect_chords_panel_in_french() {
         }));
         let mut dl = DisplayList::new();
         v.paint(&mut dl);
+        dl
+    });
+}
+
+#[test]
+fn the_key_chord_and_arpeggiator_panels_following_the_song_in_french() {
+    let mut doc = reference_doc();
+    let mut kc = device("kc", "atomik.key-chord", "Key & Chord");
+    kc.params.insert("chord.source".into(), 1.0);
+    let mut arp = device("arp", "atomik.arpeggiator", "Arpeggiator");
+    arp.params.insert("source".into(), 2.0);
+    doc.devices = vec![kc, arp];
+    doc.cables.clear();
+    let reg = registry();
+    french("key_chord_arp_song_1x.json", || {
+        let mut v = view(&doc, &reg);
+        v.set_song_harmony(Some("Am".into()), Some("Fmaj7".into()));
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl, &doc, &reg);
         dl
     });
 }

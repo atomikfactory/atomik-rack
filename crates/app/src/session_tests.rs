@@ -769,6 +769,7 @@ fn dropping_a_running_session_stops_it() {
 fn song_transport_audition_and_recording_calls_are_accepted_live_and_idle() {
     use atomik_engine::{SongInput, SongTempo, TransportCommand, compile_song};
     let input = SongInput {
+        harmony: Default::default(),
         tracks: vec![],
         tempo: vec![SongTempo {
             tick: atomik_core::Ticks(0),

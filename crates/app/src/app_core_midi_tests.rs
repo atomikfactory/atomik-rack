@@ -7,6 +7,7 @@ use crate::sink::RecordingSink;
 use atomik_core::PPQ;
 use atomik_midi_io::smf::{SmfEvent, SmfFile, SmfMessage, SmfTrack};
 use atomik_model::song::{AutomationPoint, Curve, Marker, TempoEvent};
+use atomik_model::theory::{ChordKind, ScaleKind};
 use atomik_model::{
     Clip, ClipContent, ClipId, Command, ControllerKind, ControllerLane, DeviceKey, Note,
     SongCommand, empty_doc,
@@ -857,4 +858,134 @@ fn a_channel_of_controllers_alone_imports_to_the_track_lanes_in_one_undo_step() 
     assert!(c.last_rejection().unwrap().contains("Imported 1 track"));
     c.undo();
     assert_eq!(c.doc(), &before, "one undo step");
+}
+
+/// A type 0 file at 480 ticks per quarter: a key signature, chord symbols as a text event, a
+/// marker and a lyric, and a bar of C major then a bar of A minor held as block chords.
+fn chord_file() -> SmfFile {
+    let ev = |tick: u64, message: SmfMessage| SmfEvent { tick, message };
+    let on = |tick: u64, key: u8| {
+        [
+            ev(
+                tick,
+                SmfMessage::NoteOn {
+                    channel: 0,
+                    key,
+                    velocity: 100,
+                },
+            ),
+            ev(
+                tick + 1920,
+                SmfMessage::NoteOff {
+                    channel: 0,
+                    key,
+                    velocity: 0,
+                },
+            ),
+        ]
+    };
+    let mut events = vec![
+        ev(
+            0,
+            SmfMessage::KeySignature {
+                sharps: -1,
+                minor: true,
+            },
+        ),
+        ev(0, SmfMessage::Text("C".into())),
+        ev(0, SmfMessage::Marker("Intro".into())),
+        ev(1920, SmfMessage::Marker("Am7".into())),
+        ev(3840, SmfMessage::Lyric("F/A".into())),
+    ];
+    for (bar, keys) in [[48u8, 52, 55], [45, 48, 52]].iter().enumerate() {
+        for k in keys {
+            events.extend(on(bar as u64 * 1920, *k));
+        }
+    }
+    events.sort_by_key(|e| e.tick);
+    SmfFile {
+        format: 0,
+        ppq: 480,
+        tracks: vec![SmfTrack {
+            events,
+            end_tick: 4800,
+        }],
+    }
+}
+
+#[test]
+fn a_midi_import_reads_chord_symbols_and_the_key_signature_in_one_undo_step() {
+    let tmp = Tmp::new("chords");
+    std::fs::write(tmp.path("chords.mid"), chord_file().to_bytes()).unwrap();
+    let mut c = core();
+    c.import_midi(&tmp.path("chords.mid"), true);
+    let h = c.doc().song.harmony.clone();
+    // One flat, minor: D minor.
+    assert_eq!(
+        h.key,
+        Some(atomik_model::Key::new(2, ScaleKind::NaturalMinor))
+    );
+    let chords: Vec<String> = h.chords.iter().map(|ch| ch.symbol()).collect();
+    assert_eq!(chords, ["C", "Am7", "F/A"]);
+    assert_eq!(
+        h.chords
+            .iter()
+            .map(|ch| (ch.tick, ch.end()))
+            .collect::<Vec<_>>(),
+        [(0, BAR), (BAR, 2 * BAR), (2 * BAR, 2 * BAR + 2 * PPQ)]
+    );
+    // The marker that is not a chord stays a marker.
+    let markers: Vec<&str> = c
+        .doc()
+        .song
+        .markers
+        .iter()
+        .map(|m| m.name.as_str())
+        .collect();
+    assert_eq!(markers, ["Intro"]);
+    c.undo();
+    assert!(c.doc().song.harmony.is_empty(), "one undo step");
+    assert!(c.doc().song.tracks.is_empty());
+}
+
+#[test]
+fn a_midi_import_keeps_a_song_key_that_is_already_set() {
+    let tmp = Tmp::new("keep-key");
+    std::fs::write(tmp.path("chords.mid"), chord_file().to_bytes()).unwrap();
+    let mut c = core();
+    let g = atomik_model::Key::new(7, ScaleKind::Major);
+    c.set_song_key(Some(g)).unwrap();
+    c.import_midi(&tmp.path("chords.mid"), true);
+    assert_eq!(c.doc().song.harmony.key, Some(g));
+    assert_eq!(c.doc().song.harmony.chords.len(), 3);
+}
+
+#[test]
+fn a_midi_import_detects_chords_from_the_notes_when_asked() {
+    let mut file = chord_file();
+    file.tracks[0].events.retain(|e| {
+        !matches!(
+            e.message,
+            SmfMessage::Text(_) | SmfMessage::Lyric(_) | SmfMessage::Marker(_)
+        )
+    });
+    let tmp = Tmp::new("detect");
+    std::fs::write(tmp.path("plain.mid"), file.to_bytes()).unwrap();
+    let mut c = core();
+    c.import_midi(&tmp.path("plain.mid"), true);
+    assert!(c.doc().song.harmony.chords.is_empty(), "off by default");
+    let mut c = core();
+    c.set_midi_chords_from_notes(true);
+    c.import_midi(&tmp.path("plain.mid"), true);
+    let roots: Vec<(u8, ChordKind)> = c
+        .doc()
+        .song
+        .harmony
+        .chords
+        .iter()
+        .map(|ch| (ch.root, ch.quality))
+        .collect();
+    assert_eq!(roots, [(0, ChordKind::Major), (9, ChordKind::Minor)]);
+    c.undo();
+    assert!(c.doc().song.harmony.chords.is_empty(), "one undo step");
 }

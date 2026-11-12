@@ -106,6 +106,28 @@ fn the_back_panel_matches_golden() {
     check("arp_panel_back_1x.json", &dl.to_json());
 }
 
+#[test]
+fn an_arpeggiator_on_the_song_chord_shows_the_song_tag_and_matches_golden() {
+    let (mut doc, _) = setup();
+    let i = doc
+        .devices
+        .iter()
+        .position(|d| d.type_id == ARP_TYPE)
+        .unwrap();
+    doc.devices[i].params.insert("source".into(), 1.0);
+    let reg = registry();
+    let mut v = view(&doc, &reg);
+    v.set_song_harmony(Some("Am".into()), Some("Fmaj7".into()));
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    let t: Vec<String> = dl.texts().into_iter().map(str::to_string).collect();
+    assert!(
+        t.iter().any(|x| x == "SONG") && t.iter().any(|x| x == "Fmaj7"),
+        "{t:?}"
+    );
+    check("arp_panel_song_1x.json", &dl.to_json());
+}
+
 // ------------------------------------------------------------------ layout
 
 #[test]
@@ -124,7 +146,9 @@ fn the_layout_places_every_param_once_and_the_extras_do_not_overlap() {
     assert_eq!(
         keys,
         [
+            "chord.octave",
             "gate",
+            "gate.keys",
             "hold",
             "input.high",
             "input.low",
@@ -136,6 +160,7 @@ fn the_layout_places_every_param_once_and_the_extras_do_not_overlap() {
             "repeat",
             "run",
             "shift",
+            "source",
             "swing",
             "velocity.fixed",
             "velocity.mode"

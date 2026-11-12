@@ -1257,7 +1257,8 @@ pub enum SongCommand {
     },
     /// Replace the song's harmony: the song key, the key changes and the chord lane (see
     /// [`crate::harmony`]; [`Harmony::check`](crate::harmony::Harmony::check) must pass). One undo
-    /// step. Reports [`crate::SyncOp::ViewChanged`] only: the harmony never reaches the engine.
+    /// step. Reports [`crate::SyncOp::ViewChanged`] and [`crate::SyncOp::SongChanged`]: note devices
+    /// may follow the harmony, so the engine gets the new song.
     SetHarmony(crate::harmony::Harmony),
     /// [`SongCommand::SetHarmony`] for a drag: commands with the same `merge` id are one undo step.
     DragHarmony {
