@@ -19,6 +19,12 @@
 //! and lines on it, and under it the target's name and value while pinched, or a message. The
 //! frames per second and the milliseconds the models took show as its tooltip. The picture lives
 //! in the state only: it is never written anywhere.
+//!
+//! While the camera sends MIDI (its MIDI controller mode, or MIDI Learn armed) the box grows by a
+//! panel of six small bars, the live values of the controls: twist, height, left and right,
+//! closeness, pinch and open palm, under the name of the hand and its channel
+//! ([`CameraControlsState`]). With MIDI Learn armed in a mode without MIDI it says that the
+//! camera is sending for Learn.
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun};
@@ -40,6 +46,9 @@ const PAD: f64 = 8.0;
 const HEADER: f64 = 22.0;
 const PICTURE_H: f64 = 120.0;
 const FONT: f32 = 10.5;
+/// The height of the panel of bars in the MIDI controller mode.
+const CONTROLS_H: f64 = 66.0;
+const BAR_ROW: f64 = 17.0;
 
 /// What the camera sees of the user's hand, as the indicator shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -78,6 +87,28 @@ pub struct CameraPicture {
     pub rgb: Vec<u8>,
 }
 
+/// One control of the camera's MIDI: a small bar.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CameraBar {
+    /// What the control is called (`Twist`, `Height`).
+    pub label: &'static str,
+    /// The value: 0 to 1, or -1 to 1 when `centred`.
+    pub value: f32,
+    /// The bar grows from its middle (an encoder: the last turn).
+    pub centred: bool,
+}
+
+/// The live values of the camera's MIDI controls.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CameraControlsState {
+    /// The hand shown and its channel (`Right hand, channel 1`).
+    pub hand: &'static str,
+    /// One bar for each control, in the order they show (two columns).
+    pub bars: Vec<CameraBar>,
+    /// The camera sends only because MIDI Learn is armed.
+    pub learning: bool,
+}
+
 /// What the preview box shows.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CameraPreviewState {
@@ -97,6 +128,8 @@ pub struct CameraPreviewState {
     pub fps: f32,
     /// Milliseconds the models took for a frame.
     pub infer_ms: f32,
+    /// The camera's MIDI controls, while it sends MIDI.
+    pub controls: Option<CameraControlsState>,
 }
 
 /// The chains of landmarks that make the lines of a hand.
@@ -158,13 +191,22 @@ impl CameraPreviewView {
         }
     }
 
+    /// The height of the box showing `state`: taller while the MIDI controls show.
+    pub fn height_for(state: &CameraPreviewState) -> f64 {
+        if state.controls.is_some() {
+            PREVIEW_HEIGHT + CONTROLS_H
+        } else {
+            PREVIEW_HEIGHT
+        }
+    }
+
     /// The box, in window logical pixels.
     pub fn bounds(&self) -> Rect {
         Rect::new(
             self.origin.x,
             self.origin.y,
             self.origin.x + PREVIEW_WIDTH,
-            self.origin.y + PREVIEW_HEIGHT,
+            self.origin.y + Self::height_for(&self.state),
         )
     }
 
@@ -350,6 +392,12 @@ impl CameraPreviewView {
         // The target while pinched, else the message.
         let text_w = PREVIEW_WIDTH - 2.0 * PAD;
         let y = b.y0 + HEADER + PICTURE_H + 16.0;
+        if let Some(controls) = &self.state.controls {
+            self.paint_controls(c, t, controls, y);
+            c.pop_transform();
+            self.repaint = false;
+            return;
+        }
         match (&self.state.target, &self.state.value, &self.state.message) {
             (Some(target), value, _) => {
                 c.text(&TextRun::verbatim(
@@ -389,6 +437,52 @@ impl CameraPreviewView {
         }
         c.pop_transform();
         self.repaint = false;
+    }
+}
+
+impl CameraPreviewView {
+    /// The panel of bars under the picture: the hand and its channel (or that the camera sends
+    /// for MIDI Learn), then the six controls in two columns.
+    fn paint_controls(
+        &self,
+        c: &mut dyn Canvas,
+        t: &Theme,
+        controls: &CameraControlsState,
+        y: f64,
+    ) {
+        let b = self.bounds();
+        let text_w = PREVIEW_WIDTH - 2.0 * PAD;
+        let (head, colour) = if controls.learning {
+            ("Sending for MIDI Learn", t.warning)
+        } else {
+            (controls.hand, t.text_muted)
+        };
+        c.text(&TextRun::new(head, Point::new(b.x0 + PAD, y), FONT, colour));
+        let col_w = (text_w - 8.0) / 2.0;
+        for (i, bar) in controls.bars.iter().enumerate() {
+            let (col, row) = (i % 2, i / 2);
+            let x0 = b.x0 + PAD + col as f64 * (col_w + 8.0);
+            let top = y + 6.0 + row as f64 * BAR_ROW;
+            c.text(&TextRun::new(
+                bar.label,
+                Point::new(x0, top + 8.0),
+                9.0,
+                t.text_muted,
+            ));
+            let track = Rect::new(x0, top + 11.0, x0 + col_w, top + 15.0);
+            c.fill_with(RoundedRect::from_rect(track, 2.0), t.background);
+            let v = f64::from(bar.value.clamp(-1.0, 1.0));
+            let fill = if bar.centred {
+                let mid = track.center().x;
+                let end = mid + v * col_w / 2.0;
+                Rect::new(mid.min(end), track.y0, mid.max(end), track.y1)
+            } else {
+                Rect::new(track.x0, track.y0, track.x0 + v.max(0.0) * col_w, track.y1)
+            };
+            if fill.width() > 0.0 {
+                c.fill_with(RoundedRect::from_rect(fill, 2.0), t.focus);
+            }
+        }
     }
 }
 

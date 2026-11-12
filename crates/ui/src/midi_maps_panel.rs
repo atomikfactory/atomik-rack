@@ -34,13 +34,14 @@
 //! scrolls with the wheel over the rows; only the rows in view are painted.
 
 use crate::action::UiAction;
-use crate::canvas::{Align, Canvas};
+use crate::canvas::{Align, Canvas, TextRun};
 use crate::event::{PointerButton, UiEvent};
-use crate::paint::fit_label;
+use crate::i18n::{tf, tr};
+use crate::paint::{fit_label, fit_label_raw};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::Theme;
 use crate::tooltip::Help;
-use atomik_model::{MapMode, MidiMapping, RelativeKind};
+use atomik_model::{CAMERA_PORT, MapMode, MidiMapping, MidiSource, RelativeKind};
 use vello::kurbo::{Affine, Point, Rect};
 
 const PAD: f64 = 14.0;
@@ -128,6 +129,19 @@ pub fn cycle_mode(mode: MapMode, cc: bool, forward: bool) -> MapMode {
     } else {
         (at + n - 1) % n
     }]
+}
+
+/// The words for a source that names one control of the camera: `Camera, right hand twist`, in
+/// the language of the interface. `None` for any other source.
+pub fn camera_source_text(source: &MidiSource) -> Option<String> {
+    let (hand, control) = source.camera_control()?;
+    Some(tf(
+        "Camera, {hand} {control}",
+        &[
+            ("hand", &tr(hand.label())),
+            ("control", &tr(control.label())),
+        ],
+    ))
 }
 
 /// The port after (or before) `current` in "any port" followed by `ports`. A port the list does
@@ -346,7 +360,7 @@ impl MidiMapsView {
         let channel = take(40.0, 4.0);
         let port = take(96.0, 12.0);
         let flex = (port.0 - 12.0 - (row.x0 + PAD)).max(40.0);
-        let source_w = (flex * 0.34).floor();
+        let source_w = (flex * 0.40).floor();
         Columns {
             source: (row.x0 + PAD, row.x0 + PAD + source_w),
             target: (row.x0 + PAD + source_w + 8.0, port.0 - 12.0),
@@ -711,15 +725,33 @@ impl MidiMapsView {
             let col = self.columns(row);
             let m = &r.mapping;
             let text_y = row.y0 + 17.0;
-            sp::label(
-                c,
-                &fit_label(&m.source.what(), col.source.1 - col.source.0, 10.5),
-                col.source.0,
-                text_y,
-                10.5,
-                t.text,
-                Align::Start,
-            );
+            if let Some(text) = camera_source_text(&m.source) {
+                // The camera: the control by name, and the message it sends under it.
+                let width = col.source.1 - col.source.0;
+                c.text(&TextRun::verbatim(
+                    fit_label_raw(&text, width, 10.5),
+                    Point::new(col.source.0, row.y0 + 12.0),
+                    10.5,
+                    t.text,
+                ));
+                let channel = m.source.channel.map_or(0, |c| u16::from(c) + 1);
+                c.text(&TextRun::verbatim(
+                    fit_label_raw(&format!("{} ch {channel}", m.source.what()), width, 8.5),
+                    Point::new(col.source.0, row.y0 + 22.0),
+                    8.5,
+                    t.text_muted,
+                ));
+            } else {
+                sp::label(
+                    c,
+                    &fit_label(&m.source.what(), col.source.1 - col.source.0, 10.5),
+                    col.source.0,
+                    text_y,
+                    10.5,
+                    t.text,
+                    Align::Start,
+                );
+            }
             let (target, colour) = if r.missing {
                 (format!("{} (missing)", r.target), t.warning)
             } else {
@@ -737,6 +769,7 @@ impl MidiMapsView {
             let cell = |x: (f64, f64)| self.cell(row, x);
             let port = match (&m.source.surface, &m.source.port) {
                 (Some(surface), _) => format!("[{surface}]"),
+                (None, Some(port)) if port == CAMERA_PORT => "Camera".to_owned(),
                 (None, Some(port)) => port.clone(),
                 (None, None) => "Any port".to_owned(),
             };
