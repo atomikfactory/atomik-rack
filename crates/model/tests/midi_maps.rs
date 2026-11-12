@@ -1054,3 +1054,72 @@ fn focused_params_need_a_real_param_key_and_commands_have_labels() {
     assert!(MidiTarget::Command(atomik_model::RemoteCommand::Undo).is_trigger());
     assert!(!MidiTarget::Focused { param: "x".into() }.is_trigger());
 }
+
+#[test]
+fn a_camera_mapping_uses_the_existing_fields_and_the_format_stays_45() {
+    use atomik_model::{CAMERA_PORT, CameraControl, CameraHand};
+    let (mut d, r) = project();
+    // The twist learns as an endless encoder, the pinch note as a toggle, the rest as absolute.
+    for (control, target, mode) in [
+        (
+            CameraControl::Twist,
+            param("channel", "fader"),
+            MapMode::Relative(RelativeKind::TwosComplement),
+        ),
+        (
+            CameraControl::Height,
+            param("a", "filter.cutoff"),
+            MapMode::Absolute,
+        ),
+        (
+            CameraControl::Pinch,
+            param("channel", "mute"),
+            MapMode::Toggle,
+        ),
+    ] {
+        run_map(
+            &mut d,
+            &r,
+            MidiMapCommand::Learn {
+                source: MidiSource::camera(CameraHand::Left, control),
+                target,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            d.doc().midi_maps.last().unwrap().options.mode,
+            mode,
+            "{control:?}"
+        );
+    }
+    let text = save_project(d.doc());
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["version"], 45, "no format bump");
+    let maps = v["midi_maps"].as_array().unwrap();
+    assert_eq!(maps[0]["source"]["port"], CAMERA_PORT);
+    assert_eq!(
+        maps[0]["source"]["channel"], 1,
+        "the left hand is channel 2"
+    );
+    assert_eq!(maps[0]["source"]["number"], 20);
+    assert!(maps[0]["source"].get("surface").is_none());
+    let loaded = load_project(&text, &r).unwrap();
+    assert_eq!(loaded.midi_maps, d.doc().midi_maps);
+    assert!(loaded.midi_maps.iter().all(|m| m.source.is_camera()));
+    assert_eq!(save_project(&loaded), text);
+}
+
+#[test]
+fn a_camera_source_reads_as_the_camera_and_keeps_the_message_visible() {
+    use atomik_model::{CameraControl, CameraHand};
+    let twist = MidiSource::camera(CameraHand::Right, CameraControl::Twist);
+    assert_eq!(twist.describe(), "Camera, right hand twist (CC 20 ch 1)");
+    let note = MidiSource::camera(CameraHand::Left, CameraControl::OpenPalm);
+    assert_eq!(
+        note.describe(),
+        "Camera, left hand open palm (Note C#3 ch 2)"
+    );
+    let mut odd = twist;
+    odd.channel = None;
+    assert_eq!(odd.describe(), "CC 20 any ch (Camera)");
+}
