@@ -787,3 +787,36 @@ app quits and on any camera error; the hand models download only after the conse
 `workflow.json`, never in a project. The format is not changed.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AF. The camera as a virtual MIDI controller: how a mapping names it, and why the format is unchanged
+
+**Question.** The webcam is to be a controller that MIDI Learn can map to anything, next to the knob it already turns.
+How does a saved mapping say that its source is the camera, which controls does a hand have, and which notes may reach
+an instrument?
+
+**Options.** Source: (1) a new field on a mapping and a project format bump; (2) the `surface` field, with a reserved
+surface name; (3) the `port` field, with a reserved input name. Controls: (1) a set the user defines; (2) a fixed set
+per hand. Notes: (1) the camera is a keyboard like any port; (2) a controller whose notes feed mappings only, with a
+switch to play an instrument.
+
+**Implications.** (1) needs a bump and a migration for something the existing fields already say. (2) would make a
+camera mapping look like a generic surface, which has its own lock and device logic, and a user may name a surface
+"Camera". (3) is the field a mapping already uses for "this input only": a mapping with a port hears that port only, and
+the camera goes through the same list of ports as the others in the MIDI Mappings panel. A user-defined set of controls
+needs a place to edit them; a fixed set is documented once, has fixed channels (the right hand 1, the left hand 2) and
+lets mappings, presets and the documentation agree. A keyboard that plays by default would put a note on the selected
+instrument every time a finger touched, with the camera in front of a person who is talking, gesturing or just working.
+
+**Decision.** (3), (2), (2). A camera source is `port = "atomik:camera"` (the reserved name, shown as Camera), on channel
+1 or 2, with the fixed controller or note of its control: twist is controller 20 (a relative encoder in two's
+complement; a learned twist starts as an endless encoder), the pinch is note 60, the palm height controller 21, left
+and right controller 22, hand closeness controller 23 and the open palm note 61. Camera messages are heard only by
+mappings whose port is the camera, and the camera's mappings are heard by nothing else, even a real port that is named
+the same. Nothing changes in a saved project: a mapping that names the camera is an ordinary mapping with a port, the
+format stays 45 and an older build reads such a mapping as one that listens to an input it does not have. The camera's
+mode (Turn clicked knob, MIDI controller, Both) is a workflow setting; with MIDI Learn armed the camera sends in any mode
+so a control can be learned without switching. The camera's notes play an instrument only with the setting "Camera notes
+play the selected instrument", off by default: a note track on all inputs never hears them. The note tracks have no
+per-track input choice yet, so that setting stands for choosing Camera as an input.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
