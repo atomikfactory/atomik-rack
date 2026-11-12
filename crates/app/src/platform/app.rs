@@ -2,6 +2,7 @@
 //! translation and routing, frame pacing, dialogs.
 
 use super::gpu::{FrameResult, GpuContext, WindowSurface, render_offscreen, write_png};
+use super::learn_strips::{Dock, LearnStrips};
 use super::plugin_windows::PluginWindows;
 use super::window_logic;
 use crate::app_core::{AppCore, default_registry};
@@ -396,6 +397,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
             .map(|s| now + Duration::from_secs_f64(s)),
         stopped: false,
         plugin_windows: PluginWindows::default(),
+        learn_strips: LearnStrips::default(),
         #[cfg(target_os = "macos")]
         native: None,
     };
@@ -469,6 +471,8 @@ struct App {
     stopped: bool,
     /// The plugin editor windows (separate top-level windows).
     plugin_windows: PluginWindows,
+    /// The Learn strips docked to the plugin editor windows.
+    learn_strips: LearnStrips,
     #[cfg(target_os = "macos")]
     native: Option<super::native_menu::NativeMenus>,
 }
@@ -936,6 +940,52 @@ impl App {
             }
         }
         self.shell.handle_routed(kind, event, under)
+    }
+
+    /// Docks a Learn strip to every visible plugin editor window whose frame is known: the
+    /// embedded ones (our windows) and the ones the plugins' own processes show.
+    fn sync_learn_strips(&mut self, event_loop: &ActiveEventLoop) {
+        let ids = self.shell.ids();
+        self.learn_strips.keep_songs(&ids);
+        for id in ids {
+            let Some(song) = self.shell.song(id) else {
+                continue;
+            };
+            let theme = song.theme();
+            let scale = self
+                .windows
+                .get(&(id, WindowKind::Main))
+                .map_or(1.0, |w| w.window.scale_factor());
+            let core = song.core();
+            let owner = match core.plugin_editor_owner() {
+                Some(atomik_plugin_host::NativeParent::Win32(h)) => Some(h as isize),
+                _ => None,
+            };
+            let mut docks = self.plugin_windows.docks(id);
+            docks.extend(
+                core.external_editor_frames()
+                    .into_iter()
+                    .map(|(device, frame)| {
+                        (
+                            device,
+                            Dock {
+                                frame,
+                                scale,
+                                owner,
+                            },
+                        )
+                    }),
+            );
+            self.learn_strips.sync(
+                event_loop,
+                &mut self.gpu,
+                &mut self.text,
+                &theme,
+                id,
+                core,
+                &docks,
+            );
+        }
     }
 
     /// Paints `kind`'s window into its scene.
@@ -1787,6 +1837,14 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         self.shell.apply_language_globally();
+        // A Learn strip of a plugin editor: its buttons go to the core.
+        if let Some(doc) = self.learn_strips.doc_of(id) {
+            if let Some(song) = self.shell.song_mut(doc) {
+                self.learn_strips
+                    .event(&mut self.gpu, &mut self.text, id, event, song.core_mut());
+            }
+            return;
+        }
         // A plugin editor's own window: its resize and close go to the core.
         if let Some(doc) = self.plugin_windows.doc_of(id) {
             if let Some(song) = self.shell.song_mut(doc) {
@@ -2004,6 +2062,7 @@ impl ApplicationHandler for App {
                 self.handle_requests(event_loop, requests);
             }
         }
+        self.sync_learn_strips(event_loop);
         self.shell.select(self.shell.play_focus());
         // Engine garbage is dropped here, on the UI thread, every tick; the transport
         // position and recorded notes are read too.
@@ -2045,7 +2104,8 @@ impl ApplicationHandler for App {
                     || s.core().snapshot_morphing()
                     || s.core().macro_gliding()
                     || !s.core().plugins_ready()
-            }) || self.plugin_windows.any(),
+            }) || self.plugin_windows.any()
+                || self.learn_strips.any(),
             plugins: songs.iter().any(|s| s.core().plugin_instance_count() > 0),
         };
         let mut deadline = window_logic::wake_after(wakers, FRAME).map(|d| now + d);
