@@ -448,6 +448,17 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   deadline. Off CI the first render must be on time; with `CI=true` a shared runner may miss a deadline and the
   render is repeated up to three times, so a sandbox that cannot keep up still fails. Every run prints which
   attempt was on time, and a retry is also written to the job summary of a GitHub Actions run.
+- **The sandbox on every platform.** The CI job `sandbox` runs the tests of `atomik-plugin-ipc`,
+  `atomik-plugin-sandbox`, `atomik-plugin-hostd` and `atomik-plugin-host` on Linux and macOS with a real
+  `atomik-plugin-host` child, after building every test plugin library: on each pull request that touches
+  a plugin crate or a test plugin, and on every manual run (`gh workflow run ci.yml --ref <branch> -f
+  sandbox_only=true` runs it alone). `plugin-hostd/tests/e2e_variants.rs` loads every test library through
+  the sandbox in both formats (a failing entry, an entry that never returns, many instances in a row, and
+  each edge-case plugin, which must end up as it does in process); `e2e_gesture.rs` checks that an edit made
+  in a sandboxed plugin's editor reaches the app as a whole gesture (begin, change, end). A test plugin
+  reports such an edit when its state is loaded and `ATOMIK_TEST_GUI_EDIT_ON_RESTORE` is `<param>:<value>`.
+  A live child that misses a batch's deadline passes the dry input, so the tests that compare a live output
+  process until the child keeps up (`process_settled`). Editors need a desktop and stay hand checks.
 - **Real plugins** are only for manual checks (the ignored tests in `app_core_plugins_real_tests.rs`
   and `plugin-vst3/tests/real_plugin.rs`, driven by the `ATOMIK_REAL_*` environment variables, and
   `plugin_scan_fallback.rs`, which scans the folders named by `ATOMIK_SCAN_SMOKE`, run against

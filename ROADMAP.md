@@ -149,14 +149,17 @@ scan worker, and Show in Folder; the choices are kept by plugin id in `plugins_u
 and a French interface with a translation system (Settings > Video > Language: System, English or Français, applied
 at once; the menus, the commands, the settings, the dialogs, the start screen, the status messages and the tooltips
 are in French, a text with no French line shows in English, and another language is one file, see
-[docs/EXTENDING.md](docs/EXTENDING.md)).
+[docs/EXTENDING.md](docs/EXTENDING.md)),
+and the plugin sandbox checked on Linux and macOS (CI runs every test plugin library, CLAP and VST3, through a real
+plugin process on both: load, audio, state, crash, hang, a library that fails or never returns, many instances in a
+row, and an edit made in the plugin's own editor, whose begin and end now reach the app from a sandboxed plugin).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
 
 - **Sync follow-ups.** Audio clips stretched to the followed tempo (they play at their own rate and are re-synchronised at each clip start, locate and loop wrap, so a clip of many bars drifts when the two tempos differ), streamed audio while following (silent today), a lock for a sender that sends no Start or Song Position Pointer (the song runs on the measured tempo alone), and a setting for how tightly the song is held to the clock.
 - **Plugin manager follow-ups.** Done: the table, the filters, favourites, tags, Disable, the quarantine and the rescan. Still to come: a category read from the plugin's own feature list (a plugin that only analyses is listed as an effect), the quarantine reason in the table, keeping a quarantined plugin out of the projects that use it, and a tag cloud in the browser instead of the `#tag` search.
-- **Plugin sandbox follow-ups.** Run the sandbox on Linux and macOS for real (the wake-up and stdout redirection are compile-checked only), optional grouping of several instances in one process, and embedding sandboxed editors where the platform allows it.
+- **Plugin sandbox follow-ups.** Done: the sandbox runs for real on Linux and macOS in CI, with every test plugin library through a real plugin process. Still to come: optional grouping of several instances in one process (one per plugin, one per plugin file, or one shared, with a crash taking down the whole group), embedding sandboxed editors where the platform allows it, and real third-party plugins hand-checked on Linux and macOS.
 - **Linux packages follow-ups.** The AppImage and the Flatpak bundle are built by the release and nightly workflows and
   checked on a runner, but not yet run on real machines of several distributions (see the checklist in
   [RELEASE-TESTING.md](docs/RELEASE-TESTING.md)). Still to come: a Flathub submission (it needs screenshots of the

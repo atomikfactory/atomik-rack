@@ -1466,7 +1466,17 @@ extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_istream
         }
         bytes.extend_from_slice(&chunk[..n as usize]);
     }
-    lock(i).dsp.load(&bytes)
+    let mut inner = lock(i);
+    if !inner.dsp.load(&bytes) {
+        return false;
+    }
+    // A test in another process asks for an editor edit this way; the next `process` reports it.
+    if let Some(edit) = atomik_test_plugin_core::gui_edit_on_restore()
+        && inner.gui_edits.len() < inner.gui_edits.capacity()
+    {
+        inner.gui_edits.push(edit);
+    }
+    true
 }
 
 static STATE: clap_plugin_state = clap_plugin_state {

@@ -219,7 +219,7 @@ pub enum FromChild {
     ParamEdit {
         /// The plugin's param id.
         param: u32,
-        /// The plain value.
+        /// The plain value; 0 for a gesture's begin and end when the plugin gave none.
         value: f64,
         /// Which part of the gesture.
         phase: WirePhase,

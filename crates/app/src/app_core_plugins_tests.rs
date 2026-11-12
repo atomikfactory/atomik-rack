@@ -492,6 +492,34 @@ fn save_captures_the_state_and_reopening_restores_it() {
 
 // ------------------------------------------------------------------ gui gestures
 
+/// A sandboxed plugin's begin and end come as 0 (the wire has no NaN); the app ignores the
+/// markers' value, so the gesture is recorded the same.
+#[test]
+fn a_gui_gesture_from_a_sandboxed_plugin_with_zero_markers_is_recorded() {
+    let mut core = plugin_core(OfflineSink::new());
+    add_plugin(&mut core, SYNTH, "lead");
+    settle(&mut core);
+    let dev = key("lead");
+    for (phase, value) in [
+        (ParamPhase::Begin, 0.0),
+        (ParamPhase::Change, 0.4),
+        (ParamPhase::End, 0.0),
+    ] {
+        post(
+            &mut core,
+            &dev,
+            PluginMessage::ParamEdit {
+                id: 2,
+                value,
+                phase,
+            },
+        );
+    }
+    core.frame();
+    let value = core.doc().resolve(&dev).unwrap().params.get("p2").copied();
+    assert_eq!(value, Some(0.4));
+}
+
 #[test]
 fn a_gui_gesture_is_one_undo_step_and_is_not_echoed_to_the_plugin() {
     let mut core = plugin_core(OfflineSink::new());
