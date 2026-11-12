@@ -1,9 +1,11 @@
 //! The song's harmony: a song key, key changes along the song and a chord lane.
 //!
-//! The harmony lives in [`Song::harmony`](crate::song::Song::harmony). It never changes how the
-//! song plays: the note editors, the browser and a few tools read it (the piano roll of a clip
-//! without a scale of its own follows [`Harmony::key_at`], the chord stamp can drop the chord of
-//! the lane, "Fit Notes to Chords" moves notes onto the chord tones).
+//! The harmony lives in [`Song::harmony`](crate::song::Song::harmony). The note editors, the
+//! browser and a few tools read it (the piano roll of a clip without a scale of its own follows
+//! [`Harmony::key_at`], the chord stamp can drop the chord of the lane, "Fit Notes to Chords"
+//! moves notes onto the chord tones), and it is compiled with the song for the engine, where the
+//! Key and Chord device, the Arpeggiator and the CV Quantizer can follow it (see
+//! `atomik_core::harmony`).
 //!
 //! * The **song key** is a root and a scale kind (never chromatic). It holds from the start of
 //!   the song until the first key change.

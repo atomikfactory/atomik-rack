@@ -33,6 +33,7 @@ mod tune;
 mod workers;
 
 pub use arena::{RoutingPlan, Topology};
+pub use atomik_core::harmony::{ChordMark, KeyMark, SongChord, SongHarmony};
 pub use atomik_dsp::lens::{LensSettings, Voicing as LensVoicing};
 pub use audio::{
     AssetId, Knot, SongAsset, SongAudioRegion, SongAudioTrack, SongFadeCurve, SongWarpMode,

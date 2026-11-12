@@ -58,6 +58,7 @@ pub fn strack_plain(device: DeviceInstanceId, notes: Vec<SongNote>) -> SongTrack
 /// Song input in 4/4.
 pub fn song_input(tracks: Vec<SongTrack>, map: &[(i64, f64)]) -> SongInput {
     SongInput {
+        harmony: Default::default(),
         tracks,
         tempo: tempo(map),
         meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],

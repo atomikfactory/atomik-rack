@@ -915,7 +915,7 @@ pub enum Command {
 /// | `RenameAsset` | `ViewChanged` |
 /// | tempo map (`SongCommand::SetTempoMap` and `DragTempoMap`, also set `tempo_bpm`) | `TempoChanged(first bpm)`, `SongChanged` |
 /// | meter (`SetMeter`, `SetMeterMap`, `DragMeterMap`) | `SongChanged` |
-/// | key and chords (`SetHarmony`, `DragHarmony`; also undo/redo) | `ViewChanged` |
+/// | key and chords (`SetHarmony`, `DragHarmony`; also undo/redo) | `ViewChanged`, `SongChanged` |
 /// | markers and ranges (`SetMarkers`, `DragMarkers`, `SetRanges`, `DragRanges`; also undo/redo) | `ViewChanged` |
 /// | quantize (`ApplyQuantize`, `QuantizeNotes`) | `SongChanged` |
 /// | note tools (`ApplyNoteTool`) | `SongChanged` |

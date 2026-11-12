@@ -241,6 +241,83 @@ fn key_chord_bounce_is_bit_identical_across_block_sizes_and_workers() {
     }
 }
 
+/// A harmony of A minor then F major (a chord change inside the second note) in C major.
+fn lane_harmony() -> atomik_model::Harmony {
+    use atomik_model::theory::{ChordKind, ScaleKind};
+    use atomik_model::{ChordEvent, Key};
+    atomik_model::Harmony {
+        key: Some(Key::new(0, ScaleKind::Major)),
+        changes: Vec::new(),
+        chords: vec![
+            ChordEvent::new(0, PPQ + PPQ / 4, 9, ChordKind::Minor),
+            ChordEvent::new(PPQ + PPQ / 4, 3 * PPQ, 5, ChordKind::Major),
+        ],
+    }
+}
+
+fn following_key_chord(set: &[(&str, f32)], harmony: Option<atomik_model::Harmony>) -> RackDoc {
+    let mut b = Builder::new();
+    b.synth();
+    b.add("atomik.key-chord", "kc");
+    for (p, v) in set {
+        b.set("kc", p, *v);
+    }
+    b.connect(("kc", "notes_out"), ("synth", "notes_in"));
+    b.clip("kc", &NOTES);
+    if let Some(h) = harmony {
+        b.apply(Command::Song(SongCommand::SetHarmony(h)));
+    }
+    b.doc.doc().clone()
+}
+
+#[test]
+fn a_key_chord_that_follows_nothing_ignores_the_harmony() {
+    let set = [("scale.kind", 2.0), ("chord", 1.0)];
+    assert!(
+        bounce(&following_key_chord(&set, Some(lane_harmony())), 512, 0)
+            == bounce(&following_key_chord(&set, None), 512, 0),
+        "the default sources play today's output"
+    );
+}
+
+#[test]
+fn a_key_chord_stamping_the_lane_bounces_differently_and_is_bit_identical_across_blocks() {
+    let set = [("chord.source", 1.0), ("chord.voicing", 1.0)];
+    let doc = following_key_chord(&set, Some(lane_harmony()));
+    let reference = bounce(&doc, 512, 0);
+    assert!(reference.iter().any(|b| f32::from_bits(*b).abs() > 1e-3));
+    assert!(
+        reference != bounce(&following_key_chord(&set, None), 512, 0),
+        "the lane changes what plays"
+    );
+    for (block, workers) in [(64, 0), (333, 0), (512, 2), (1000, 3)] {
+        assert!(
+            bounce(&doc, block, workers) == reference,
+            "block {block}, workers {workers}"
+        );
+    }
+}
+
+#[test]
+fn an_arpeggiator_on_the_song_chord_is_bit_identical_across_blocks() {
+    let mut b = Builder::new();
+    b.synth();
+    b.add("atomik.arpeggiator", "arp");
+    b.set("arp", "source", 1.0);
+    b.connect(("arp", "notes_out"), ("synth", "notes_in"));
+    b.clip("arp", &NOTES);
+    b.apply(Command::Song(SongCommand::SetHarmony(lane_harmony())));
+    let doc = b.doc.doc().clone();
+    let reference = bounce(&doc, 512, 0);
+    assert!(reference.iter().any(|b| f32::from_bits(*b).abs() > 1e-3));
+    for (block, workers) in [(64, 0), (333, 0), (1000, 3)] {
+        assert!(
+            bounce(&doc, block, workers) == reference,
+            "block {block}, workers {workers}"
+        );
+    }
+}
+
 fn through_device(type_id: &str, set: &[(&str, f32)]) -> RackDoc {
     let mut b = Builder::new();
     b.synth();

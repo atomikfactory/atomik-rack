@@ -1549,6 +1549,7 @@ impl Engine {
             loop_wrap: bt.loop_wrap,
             loop_ticks: bt.loop_ticks,
             time_signature: bt.time_signature,
+            harmony: bt.harmony,
             tune_cents: self.tune.next(),
         };
         match (&mut self.routing, &mut self.pool) {

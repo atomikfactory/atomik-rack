@@ -25,8 +25,8 @@
 use crate::controllers::{CtlLane, SongController, expand, validate};
 use crate::graph::DeviceInstanceId;
 use atomik_core::{
-    BATCH, ExprKind, MapError, MeterEvent, MeterMap, MeterSegment, NoteKind, ParamId, Tempo,
-    TempoMap, TempoPoint, TempoSegment, Ticks, compile_meter, compile_tempo,
+    BATCH, ExprKind, MapError, MeterEvent, MeterMap, MeterSegment, NoteKind, ParamId, SongHarmony,
+    Tempo, TempoMap, TempoPoint, TempoSegment, Ticks, compile_meter, compile_tempo,
 };
 use atomik_device_sdk::SocketId;
 
@@ -156,6 +156,9 @@ pub struct SongInput {
     pub audio: Vec<crate::SongAudioTrack>,
     /// The audio assets; `AssetId(n)` is `assets[n]`.
     pub assets: Vec<crate::SongAsset>,
+    /// The song key, key changes and chord lane, which note devices may follow (see
+    /// [`atomik_core::harmony`]); empty for a song without harmony.
+    pub harmony: SongHarmony,
 }
 
 /// Song compilation errors.
@@ -216,6 +219,8 @@ pub struct SongSnapshot {
     pub(crate) launch: Vec<crate::launch::LaunchTrack>,
     /// RT scratch, one per launch track.
     pub(crate) launch_rt: Vec<crate::launch::LaunchRt>,
+    /// The compiled harmony: what devices see of the key and the chord lane.
+    pub(crate) harmony: SongHarmony,
 }
 
 /// One flattened note event of a track.
@@ -377,6 +382,7 @@ pub fn compile_song(input: &SongInput) -> Result<SongSnapshot, SongError> {
         launch_rt: Vec::new(),
         lane_last: vec![None; lanes.len()],
         lanes,
+        harmony: input.harmony.clone(),
     })
 }
 
@@ -909,6 +915,7 @@ mod tests {
 
     fn input(tracks: Vec<SongTrack>, map: &[(i64, f64)]) -> SongInput {
         SongInput {
+            harmony: Default::default(),
             tracks,
             tempo: tempo_map(map),
             meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],
@@ -955,6 +962,7 @@ mod tests {
     #[test]
     fn compile_rejects_bad_meter_maps_and_ramps_to_nowhere() {
         let with_meter = |meter: Vec<MeterEvent>| SongInput {
+            harmony: Default::default(),
             meter,
             ..input(Vec::new(), &[(0, 120.0)])
         };
@@ -985,6 +993,7 @@ mod tests {
     fn ramp_segments_run_to_the_next_events_tempo_and_convert_both_ways() {
         let bar = 4 * PPQ;
         let ramp = SongInput {
+            harmony: Default::default(),
             tempo: vec![
                 SongTempo {
                     tick: Ticks(0),

@@ -35,6 +35,7 @@ fn a_held_lane_is_skipped_and_the_others_play_until_it_is_released() {
     let (mut e, mut h) = engine_with(c, 0, None);
     h.submit_plan(g.compile().unwrap()).unwrap();
     let input = SongInput {
+        harmony: Default::default(),
         tracks: vec![SongTrack {
             device: id,
             notes_socket: ParamLog::NOTES_IN,

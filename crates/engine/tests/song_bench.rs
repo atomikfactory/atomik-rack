@@ -54,6 +54,7 @@ fn e3_2_song(devices: &[atomik_engine::DeviceInstanceId]) -> SongInput {
         .map(|k| (k * 8 * 4 * PPQ, 100.0 + 5.0 * k as f64))
         .collect();
     SongInput {
+        harmony: Default::default(),
         tracks,
         tempo: tempo(&map),
         meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],

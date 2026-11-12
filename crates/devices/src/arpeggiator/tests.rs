@@ -174,7 +174,10 @@ fn descriptor_validates_and_orders_params_and_sockets() {
             "shift",
             "input.low",
             "input.high",
-            "repeat"
+            "repeat",
+            "source",
+            "chord.octave",
+            "gate.keys"
         ]
     );
     let sockets: Vec<_> = DESCRIPTOR.sockets.iter().map(|s| s.key).collect();
@@ -1162,4 +1165,119 @@ proptest! {
         }
         prop_assert!(count.iter().all(|c| *c == 0), "a note hangs");
     }
+}
+
+// ---- Following the song's chord lane ----
+
+use atomik_core::theory::ChordKind;
+use atomik_core::{HarmonyMark, HarmonyNow, SongChord};
+
+fn chord_now(c: Option<SongChord>) -> HarmonyNow {
+    let mut now = HarmonyNow::NONE;
+    now.push(HarmonyMark {
+        offset: 0,
+        tick: 0,
+        key: None,
+        chord: c,
+    });
+    now
+}
+
+fn on_keys(evs: &[Ev]) -> Vec<u8> {
+    ons(evs).into_iter().map(|(_, k)| k).collect()
+}
+
+/// A 1/16 arpeggiator following the song chord, its chord lane set to `c`.
+fn chord_rig(source: f32, c: Option<SongChord>) -> DeviceHarness {
+    let mut h = rig();
+    set(&mut h, "source", source);
+    h.time_mut().harmony = chord_now(c);
+    h
+}
+
+#[test]
+fn song_chord_with_gate_by_keys_arpeggiates_the_lane_chord_while_a_key_is_held() {
+    let am = Some(SongChord::new(9, ChordKind::Minor));
+    let mut h = chord_rig(1.0, am);
+    // Nothing held: silent.
+    assert!(collect(&mut h, batches_for(4, 3_840)).is_empty());
+    // One key held (E3): A minor from the A of that octave on (E3 = 64, its octave starts at
+    // C3 = 60), up: A C E.
+    press(&mut h, &[64]);
+    let keys = on_keys(&collect(&mut h, batches_for(6, 3_840)));
+    assert_eq!(&keys[..6], [69, 72, 76, 69, 72, 76]);
+}
+
+#[test]
+fn a_slash_chord_puts_its_bass_first() {
+    let c_over_g = Some(SongChord {
+        bass: Some(7),
+        ..SongChord::new(0, ChordKind::Major)
+    });
+    let mut h = chord_rig(1.0, c_over_g);
+    press(&mut h, &[61]);
+    let keys = on_keys(&collect(&mut h, batches_for(4, 3_840)));
+    assert_eq!(&keys[..4], [55, 60, 64, 67]);
+}
+
+#[test]
+fn gate_by_keys_off_runs_without_keys_while_the_song_plays_a_chord() {
+    let am = Some(SongChord::new(9, ChordKind::Minor));
+    let mut h = chord_rig(1.0, am);
+    set(&mut h, "gate.keys", 0.0);
+    // chord.octave C4 (72): A4 C5 E5.
+    set(&mut h, "chord.octave", 2.0);
+    let keys = on_keys(&collect(&mut h, batches_for(3, 3_840)));
+    assert_eq!(&keys[..3], [81, 84, 88]);
+    // No chord in the lane: silent.
+    let mut h = chord_rig(1.0, None);
+    set(&mut h, "gate.keys", 0.0);
+    assert!(collect(&mut h, batches_for(4, 3_840)).is_empty());
+    // Stopped: silent without keys, even with run = always.
+    let mut h = chord_rig(1.0, am);
+    set(&mut h, "gate.keys", 0.0);
+    h.time_mut().playing = false;
+    assert!(collect(&mut h, batches_for(4, 3_840)).is_empty());
+}
+
+#[test]
+fn a_chord_change_continues_the_step_counter() {
+    let c = Some(SongChord::new(0, ChordKind::Major));
+    let f = Some(SongChord::new(5, ChordKind::Major));
+    let mut h = chord_rig(1.0, c);
+    press(&mut h, &[60]);
+    // Two steps of C major (C E), then the lane moves to F major: the third step is the third
+    // note of the figure, now in F (F A C from the F of the octave of C3: 65 69 72).
+    let mut keys = Vec::new();
+    while keys.len() < 2 {
+        keys.extend(on_keys(&batch(&mut h)));
+    }
+    h.time_mut().harmony = chord_now(f);
+    while keys.len() < 4 {
+        keys.extend(on_keys(&batch(&mut h)));
+    }
+    assert_eq!(keys, [60, 64, 72, 65]);
+}
+
+#[test]
+fn held_plus_song_chord_snaps_the_held_keys_to_chord_tones() {
+    let am = Some(SongChord::new(9, ChordKind::Minor));
+    let mut h = chord_rig(2.0, am);
+    // D3 (62) ties down to C3, G3 (67) goes to A3 (69), B3 (71) to C4 (72).
+    press(&mut h, &[62, 67, 71]);
+    let keys = on_keys(&collect(&mut h, batches_for(4, 3_840)));
+    assert_eq!(&keys[..4], [60, 69, 72, 60]);
+    // No chord: the held keys as they are.
+    let mut h = chord_rig(2.0, None);
+    press(&mut h, &[62, 67]);
+    let keys = on_keys(&collect(&mut h, batches_for(2, 3_840)));
+    assert_eq!(&keys[..2], [62, 67]);
+}
+
+#[test]
+fn source_held_ignores_the_song_chord() {
+    let mut h = chord_rig(0.0, Some(SongChord::new(9, ChordKind::Minor)));
+    press(&mut h, &[60, 62]);
+    let keys = on_keys(&collect(&mut h, batches_for(2, 3_840)));
+    assert_eq!(&keys[..2], [60, 62]);
 }

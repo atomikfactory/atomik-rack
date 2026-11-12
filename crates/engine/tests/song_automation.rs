@@ -90,6 +90,7 @@ fn ac_s4_automation_matches_the_curve_at_every_batch_start() {
         expression: Vec::new(),
     };
     let input = SongInput {
+        harmony: Default::default(),
         tracks: vec![track],
         tempo: tempo(&[(0, 120.0), (3 * PPQ / 2, 90.0)]),
         meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],

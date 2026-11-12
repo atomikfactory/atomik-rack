@@ -695,12 +695,43 @@ fn song_input_inner(
         })
         .collect();
     SongInput {
+        harmony: song_harmony(&song.harmony),
         tracks,
         tempo,
         meter: song.meter.clone(),
         audio,
         assets: pool,
     }
+}
+
+/// The song's harmony as the engine compiles it: the song key, the key changes and the chords
+/// (see [`atomik_engine::SongHarmony`]). An empty harmony gives an empty one.
+pub fn song_harmony(h: &atomik_model::Harmony) -> atomik_engine::SongHarmony {
+    if h.is_empty() {
+        return atomik_engine::SongHarmony::default();
+    }
+    let changes: Vec<atomik_engine::KeyMark> = h
+        .changes
+        .iter()
+        .map(|c| atomik_engine::KeyMark {
+            tick: c.tick,
+            key: c.key.as_scale(),
+        })
+        .collect();
+    let chords: Vec<atomik_engine::ChordMark> = h
+        .chords
+        .iter()
+        .map(|c| atomik_engine::ChordMark {
+            tick: c.tick,
+            end: c.end(),
+            chord: atomik_engine::SongChord {
+                root: c.root,
+                kind: c.quality,
+                bass: c.bass,
+            },
+        })
+        .collect();
+    atomik_engine::SongHarmony::new(h.key.map(|k| k.as_scale()), &changes, &chords)
 }
 
 /// The engine ids a bounce (and a fresh app engine) gives the rack: 1, 2, 3... in the order of

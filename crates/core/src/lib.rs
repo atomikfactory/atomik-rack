@@ -4,6 +4,7 @@
 //! This crate is a stable contract: public changes need review.
 
 pub mod bend;
+pub mod harmony;
 mod meter_map;
 mod midi;
 pub mod mpe;
@@ -15,6 +16,7 @@ mod tempo_map;
 pub mod theory;
 mod time;
 
+pub use harmony::{HarmonyMark, HarmonyNow, SongChord, SongHarmony};
 pub use meter_map::{
     BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent, MeterMap, MeterSegment, MeterTable, compile_meter,
     meter_ok,
