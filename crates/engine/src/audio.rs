@@ -57,14 +57,27 @@
 //! A warped clip normally plays a finished buffer rendered off the audio thread (a plain
 //! region of that buffer). Until the buffer exists its region can carry an interim warp
 //! (`SongAudioRegion::warp`): the engine reads the clip's *memory* asset through the clip's time
-//! map (`(clip frame, asset frame)` knots, `SongAudioTrack::warp_maps`) with four-point Hermite
-//! interpolation, so the timing follows the tempo and the markers at once. It is a resampling:
-//! the pitch moves with the stretch ratio and a transposition is not heard. The read allocates
-//! nothing (stack blocks) and streamed assets never take it. Offline renders are given the
-//! finished buffer instead (the render crate builds interim regions only for the live song).
+//! map (`(clip frame, asset frame)` knots, `SongAudioTrack::warp_maps`), so the timing follows
+//! the tempo and the markers at once. How it reads depends on the clip's stretch mode and
+//! transposition (`SongAudioRegion::warp_mode`, `warp_cents`):
+//!
+//! * **Repitch without transposition**: four-point Hermite interpolation, a resampling, so the
+//!   pitch moves with the speed, which is what Repitch sounds like.
+//! * **Beats or Tonal, or any transposition**: the real-time stretcher
+//!   (`atomik_dsp::stretch::RtStretcher`, a streaming WSOLA), so the pitch stays and the
+//!   transposition is heard, close to what the finished buffer will sound like. The stretchers
+//!   live in the track's `StretchBank` (`audio_stretch.rs`), built when the song is compiled;
+//!   a region beyond the bank's capacity in one segment falls back to the Hermite read.
+//!
+//! Neither read allocates (stack blocks, preallocated stretchers) and streamed assets never take
+//! them. A reversed clip has no interim warp: it plays its asset backwards, unwarped, until its
+//! buffer is ready. Offline renders are given the finished buffer instead (the render crate
+//! builds interim regions only for the live song), so bounces never hear the interim read.
 //!
 //! When a song swap replaces a track that played an interim warp, the new track fades in over
 //! 5 ms while the old one fades out (`Handoff`), so the finished buffer arrives without a click.
+//! The old track's stretchers move into the crossfade, so the old output runs on unbroken while
+//! it fades.
 //!
 //! # Streamed assets
 //!
@@ -72,6 +85,7 @@
 //! carries the *finished* output of the streamed regions (gain, fades, envelope, crossfade, mixed
 //! where two overlap), and the audio thread copies it, then adds the memory regions.
 
+use crate::audio_stretch::{MAX_STRETCHERS, StretchBank};
 use crate::graph::DeviceInstanceId;
 use crate::stream::StreamLaneRt;
 use atomik_core::{BATCH, Batch};
@@ -266,7 +280,27 @@ pub struct SongAudioRegion {
     /// An interim warp: an index into [`SongAudioTrack::warp_maps`], or `None`. The region then
     /// plays its (memory) asset through that time map (see the module docs, *Interim warps*).
     pub warp: Option<u32>,
+    /// The stretch mode of an interim warp (Repitch without one).
+    pub warp_mode: SongWarpMode,
+    /// The transposition of an interim warp in cents (0 without one; at most two octaves either
+    /// way).
+    pub warp_cents: i32,
 }
+
+/// The stretch mode of an interim warp (the model's `WarpMode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SongWarpMode {
+    /// Speed and pitch change together.
+    #[default]
+    Repitch,
+    /// Transient-preserving stretch.
+    Beats,
+    /// Stretch for tonal material.
+    Tonal,
+}
+
+/// Largest interim transposition in cents (two octaves).
+const MAX_WARP_CENTS: i32 = 2_400;
 
 impl SongAudioRegion {
     /// A plain forward region: no reverse, envelope or crossfade, and a clip equal to the
@@ -290,7 +324,14 @@ impl SongAudioRegion {
             x_out: 0,
             x_curve: SongFadeCurve::EqualPower,
             warp: None,
+            warp_mode: SongWarpMode::Repitch,
+            warp_cents: 0,
         }
+    }
+
+    /// True for an interim warp the real-time stretcher plays (it keeps the pitch).
+    pub(crate) fn keeps_pitch(&self) -> bool {
+        self.warp.is_some() && (self.warp_mode != SongWarpMode::Repitch || self.warp_cents != 0)
     }
 
     /// First song frame after the region.
@@ -408,6 +449,11 @@ pub(crate) struct LaneData {
     pub(crate) envelopes: Vec<Vec<(u64, f32)>>,
     pub(crate) warp_maps: Vec<Arc<[Knot]>>,
     pub(crate) assets: Arc<[SongAsset]>,
+    /// Per region: its slot in the track's [`StretchBank`] when the real-time stretcher plays
+    /// it.
+    pub(crate) stretch_slot: Vec<Option<u16>>,
+    /// Number of stretchers the track needs (at most [`MAX_STRETCHERS`]).
+    pub(crate) stretchers: usize,
 }
 
 impl LaneData {
@@ -439,15 +485,18 @@ pub(crate) struct Handoff {
     data: Arc<LaneData>,
     total: u32,
     left: u32,
+    /// The old track's stretchers (moved here at the swap, so its output runs on unbroken).
+    stretch: StretchBank,
 }
 
 impl Handoff {
     /// Mixes the old lane into song frames `[a, b)` (at batch offset `off`) of `pb`: the new
     /// output weighs `i / total` and the old one the rest, `i` counting frames since the swap.
-    fn cross(&mut self, pb: &mut [Batch; 2], a: u64, b: u64, off: usize) {
+    fn cross(&mut self, pb: &mut [Batch; 2], a: u64, b: u64, off: usize, sr: u32) {
         let n = (b - a) as usize;
         let mut old = [[0.0f32; BATCH]; 2];
-        memory_regions(&self.data, &mut old, a, b, off, a);
+        self.stretch.begin(sr);
+        memory_regions(&self.data, &mut old, a, b, off, a, &mut self.stretch);
         let done = (self.total - self.left) as usize;
         for k in 0..n.min(self.left as usize) {
             let t = (done + k) as f32 / self.total as f32;
@@ -469,11 +518,13 @@ pub(crate) struct AudioRt {
     pub(crate) follow: crate::audio_follow::FollowRt,
     /// A launcher slot plays on this track: the arrangement clips are silent.
     pub(crate) silent: bool,
+    /// The real-time stretchers of the interim warps that keep their pitch.
+    pub(crate) stretch: StretchBank,
 }
 
 impl Clone for AudioRt {
     /// A clone carries no stream lane (the lane belongs to the submitted snapshot) and no
-    /// crossfade.
+    /// crossfade, and fresh stretchers.
     fn clone(&self) -> Self {
         Self {
             pb: self.pb,
@@ -481,11 +532,13 @@ impl Clone for AudioRt {
             handoff: None,
             follow: Default::default(),
             silent: self.silent,
+            stretch: self.stretch.clone(),
         }
     }
 }
 
 impl AudioRt {
+    /// Scratch without stretchers.
     pub(crate) fn new() -> Self {
         Self {
             pb: [[0.0; BATCH]; 2],
@@ -493,6 +546,15 @@ impl AudioRt {
             handoff: None,
             follow: Default::default(),
             silent: false,
+            stretch: StretchBank::default(),
+        }
+    }
+
+    /// Scratch for `track`, with the stretchers its interim warps need (allocates).
+    pub(crate) fn for_track(track: &CompiledAudio) -> Self {
+        Self {
+            stretch: StretchBank::with_slots(track.data.stretchers),
+            ..Self::new()
         }
     }
 }
@@ -502,7 +564,7 @@ impl AudioRt {
 /// buffer). Tracks that read streamed assets are left out: the streamed output is not
 /// rendered here. Allocation-free.
 pub(crate) fn start_handoffs(
-    old: &[CompiledAudio],
+    (old, old_rts): (&[CompiledAudio], &mut [AudioRt]),
     new: &[CompiledAudio],
     rts: &mut [AudioRt],
     sr: f64,
@@ -512,15 +574,21 @@ pub(crate) fn start_handoffs(
         if n.streams || rt.handoff.is_some() {
             continue;
         }
-        if let Some(o) = old
+        if let Some(k) = old
             .iter()
-            .find(|o| o.device == n.device && o.interim && !o.streams)
-            && !Arc::ptr_eq(&o.data, &n.data)
+            .position(|o| o.device == n.device && o.interim && !o.streams)
+            && !Arc::ptr_eq(&old[k].data, &n.data)
         {
+            // The old stretchers leave with the old track (an empty bank stays behind).
+            let stretch = old_rts
+                .get_mut(k)
+                .map(|o| std::mem::take(&mut o.stretch))
+                .unwrap_or_default();
             rt.handoff = Some(Handoff {
-                data: Arc::clone(&o.data),
+                data: Arc::clone(&old[k].data),
                 total,
                 left: total,
+                stretch,
             });
         }
     }
@@ -580,7 +648,12 @@ pub(crate) fn compile_audio(
             let warp_ok = r.warp.is_none_or(|w| {
                 (w as usize) < track.warp_maps.len() && !r.reverse && !asset.is_stream()
             });
+            // A stretch mode or transposition belongs to an interim warp.
+            let pitch_ok = (r.warp.is_some()
+                || (r.warp_mode == SongWarpMode::Repitch && r.warp_cents == 0))
+                && r.warp_cents.abs() <= MAX_WARP_CENTS;
             let valid = warp_ok
+                && pitch_ok
                 && r.frames >= 1
                 && r.gain.is_finite()
                 && r.song_start_frame.checked_add(r.frames).is_some()
@@ -619,6 +692,18 @@ pub(crate) fn compile_audio(
             .iter()
             .any(|r| assets[r.asset.0 as usize].is_stream());
         let interim = regions.iter().any(|r| r.warp.is_some());
+        // The regions the real-time stretcher plays take the slots in turn: two that play at
+        // once are neighbours in this order, so they never share one.
+        let mut rank = 0usize;
+        let stretch_slot: Vec<Option<u16>> = regions
+            .iter()
+            .map(|r| {
+                r.keeps_pitch().then(|| {
+                    rank += 1;
+                    ((rank - 1) % MAX_STRETCHERS) as u16
+                })
+            })
+            .collect();
         out.push(CompiledAudio {
             device: track.device,
             data: Arc::new(LaneData {
@@ -626,6 +711,8 @@ pub(crate) fn compile_audio(
                 envelopes: track.envelopes.clone(),
                 warp_maps: track.warp_maps.clone(),
                 assets: Arc::clone(&shared),
+                stretch_slot,
+                stretchers: rank.min(MAX_STRETCHERS),
             }),
             streams,
             interim,
@@ -637,6 +724,10 @@ pub(crate) fn compile_audio(
 /// The RT view of one audio track while rendering a batch.
 pub(crate) struct Renderer<'a> {
     pub(crate) underruns: &'a AtomicU64,
+    /// Counts the interim reads that found no free stretcher.
+    pub(crate) fallbacks: &'a AtomicU64,
+    /// The sample rate (for the real-time stretchers).
+    pub(crate) sample_rate: u32,
 }
 
 impl Renderer<'_> {
@@ -655,6 +746,7 @@ impl Renderer<'_> {
             stream,
             handoff,
             silent,
+            stretch,
             ..
         } = rt;
         let n_seg = (b - a) as usize;
@@ -691,18 +783,24 @@ impl Renderer<'_> {
                 lane.skip(n_seg);
             }
         }
-        memory_regions(data, pb, a, b, off, written);
+        stretch.begin(self.sample_rate);
+        let before = stretch.fallbacks();
+        memory_regions(data, pb, a, b, off, written, stretch);
+        let missed = stretch.fallbacks() - before;
+        if missed > 0 {
+            self.fallbacks.fetch_add(missed, Ordering::Relaxed);
+        }
         if let Some(h) = handoff.as_mut()
             && h.left > 0
         {
-            h.cross(pb, a, b, off);
+            h.cross(pb, a, b, off, self.sample_rate);
         }
     }
 }
 
 /// Renders the memory regions of `data` over song frames `[a, b)` into `pb` at batch offset
 /// `off`. Song frames below `written` already hold output: a region adds to them and assigns
-/// to the rest.
+/// to the rest. `stretch` is the track's bank, begun for this segment.
 pub(crate) fn memory_regions(
     data: &LaneData,
     pb: &mut [Batch; 2],
@@ -710,11 +808,13 @@ pub(crate) fn memory_regions(
     b: u64,
     off: usize,
     mut written: u64,
+    stretch: &mut StretchBank,
 ) {
     let first = data.regions.partition_point(|r| r.end() <= a);
-    for r in data.regions[first..]
+    for (idx, r) in data.regions[first..]
         .iter()
-        .take_while(|r| r.song_start_frame < b)
+        .enumerate()
+        .take_while(|(_, r)| r.song_start_frame < b)
     {
         let lo = a.max(r.song_start_frame);
         let hi = b.min(r.end());
@@ -722,24 +822,24 @@ pub(crate) fn memory_regions(
         let i0 = lo - r.song_start_frame;
         let at = off + (lo - a) as usize;
         let added = (written.saturating_sub(lo)).min(n as u64) as usize;
-        if render_region(data, r, pb, i0, n, at, added) {
+        if render_region(data, first + idx, pb, (i0, n, at, added), stretch) {
             written = written.max(hi);
         }
     }
 }
 
-/// Renders `n` frames of region `r`, from its frame `i0`, into `pb` at batch offset `at`: the
+/// Renders `n` frames of region `idx`, from its frame `i0`, into `pb` at batch offset `at`: the
 /// first `added` of them add to what is there and the rest assign. Returns false for a region
-/// of a streamed asset (nothing is rendered). A frame outside the asset is silent.
+/// of a streamed asset (nothing is rendered). A frame outside the asset is silent. An interim
+/// warp that keeps its pitch plays through its stretcher in `stretch`.
 pub(crate) fn render_region(
     data: &LaneData,
-    r: &SongAudioRegion,
+    idx: usize,
     pb: &mut [Batch; 2],
-    i0: u64,
-    n: usize,
-    at: usize,
-    added: usize,
+    (i0, n, at, added): (u64, usize, usize, usize),
+    stretch: &mut StretchBank,
 ) -> bool {
+    let r = &data.regions[idx];
     let SongAsset::Memory {
         data: planes,
         frames: asset_frames,
@@ -756,11 +856,32 @@ pub(crate) fn render_region(
         let mut g = [0.0f32; BATCH];
         r.gains(data.envelope(r), i0, &mut g[..n]);
         let map = &data.warp_maps[w as usize];
-        let mut seg = 0usize;
+        let mut v = [[0.0f32; BATCH]; 2];
+        let sr = stretch.sample_rate();
+        let stretcher = data.stretch_slot[idx].and_then(|s| stretch.take(idx as u32, s));
+        if let Some(st) = stretcher {
+            let ratio = atomik_dsp::stretch::pitch_ratio_for_cents(r.warp_cents);
+            let [vl, vr] = &mut v;
+            st.process(
+                [&l[..], &rr[..]],
+                map,
+                ratio,
+                sr,
+                r.clip_pos + i0,
+                [&mut vl[..n], &mut vr[..n]],
+            );
+        } else {
+            let mut seg = 0usize;
+            let [vl, vr] = &mut v;
+            for (k, (ol, or)) in vl[..n].iter_mut().zip(&mut vr[..n]).enumerate() {
+                let clip_frame = (r.clip_pos + i0 + k as u64) as f64;
+                let s = map_source(map, clip_frame, &mut seg);
+                *ol = hermite_at(l, s);
+                *or = hermite_at(rr, s);
+            }
+        }
         for k in 0..n {
-            let clip_frame = (r.clip_pos + i0 + k as u64) as f64;
-            let s = map_source(map, clip_frame, &mut seg);
-            let (vl, vr) = (hermite_at(l, s) * g[k], hermite_at(rr, s) * g[k]);
+            let (vl, vr) = (v[0][k] * g[k], v[1][k] * g[k]);
             if k < added {
                 pb[0][at + k] += vl;
                 pb[1][at + k] += vr;

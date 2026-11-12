@@ -545,6 +545,39 @@ fn the_live_song_plays_an_unready_warp_through_its_time_map_and_the_bounce_does_
     assert!(done.audio[0].warp_maps.is_empty());
 }
 
+#[test]
+fn the_live_interim_region_carries_the_clip_mode_and_transposition() {
+    let registry = default_registry();
+    let s = song("interim-pitch", &sine(440.0, 200_000), |d, a| {
+        let warp = WarpSettings {
+            transpose_cents: 500,
+            ..on(100.0, WarpMode::Tonal)
+        };
+        put(d, a, 0, 4 * PPQ, warp);
+    });
+    let assets = atomik_render::bundle::load_song_assets(&s.doc, Some(&s.bundle)).unwrap();
+    let ids = std::collections::BTreeMap::from([(
+        DeviceKey("audio-track".into()),
+        atomik_engine::DeviceInstanceId(1),
+    )]);
+    let id_of = |k: &DeviceKey| ids.get(k).copied();
+    let empty = Default::default();
+    let live = song_input_live(&s.doc, &registry, id_of, &assets, &empty);
+    let region = live.audio[0].regions[0];
+    assert_eq!(region.warp, Some(0));
+    assert_eq!(region.warp_mode, atomik_engine::SongWarpMode::Tonal);
+    assert_eq!(region.warp_cents, 500);
+    // The bounce path plays plain regions: no mode, no transposition.
+    let dry = song_input_with_warps(&s.doc, &registry, id_of, &assets, &empty);
+    assert_eq!(
+        dry.audio[0].regions[0].warp_mode,
+        atomik_engine::SongWarpMode::Repitch
+    );
+    assert_eq!(dry.audio[0].regions[0].warp_cents, 0);
+    // The engine accepts it.
+    assert!(atomik_engine::compile_song(&live).is_ok());
+}
+
 /// `put` with the clip played backwards.
 fn put_reversed(d: &mut Document, asset: &str, start: i64, length: i64, warp: WarpSettings) {
     put(d, asset, start, length, warp);

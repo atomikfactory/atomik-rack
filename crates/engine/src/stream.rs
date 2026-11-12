@@ -83,6 +83,9 @@ pub(crate) struct StreamRequest {
 pub(crate) struct StreamStats {
     /// Segment reads that lacked data (audio thread increments).
     pub(crate) underruns: AtomicU64,
+    /// Interim-warp segment reads that wanted a real-time stretcher and found none free, so
+    /// they played the plain Hermite read (audio thread increments).
+    pub(crate) stretch_fallbacks: AtomicU64,
     /// Every lane has `PRIME_SECONDS` buffered (streamer updates).
     pub(crate) primed: AtomicBool,
     /// Refill requests the audio thread has queued / the streamer has handled (equal when no
@@ -109,6 +112,7 @@ impl Default for StreamStats {
     fn default() -> Self {
         Self {
             underruns: AtomicU64::new(0),
+            stretch_fallbacks: AtomicU64::new(0),
             primed: AtomicBool::new(true),
             requested: AtomicU64::new(0),
             served: AtomicU64::new(0),

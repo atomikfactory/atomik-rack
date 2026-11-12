@@ -368,9 +368,7 @@ pub fn compile_song(input: &SongInput) -> Result<SongSnapshot, SongError> {
     Ok(SongSnapshot {
         tempo,
         meter,
-        audio_rt: (0..audio.len())
-            .map(|_| crate::audio::AudioRt::new())
-            .collect(),
+        audio_rt: audio.iter().map(crate::audio::AudioRt::for_track).collect(),
         audio,
         cursors: vec![TrackCursor::default(); tracks.len()],
         tracks,

@@ -802,7 +802,7 @@ impl Player {
         dropped: &AtomicU64,
     ) -> Option<Box<SongSnapshot>> {
         let constant = [TempoSegment::constant(engine_tempo)];
-        let old = self.song.take();
+        let mut old = self.song.take();
         // While following, the position is on the external clock's constant tempo, whatever the
         // snapshots' own maps say.
         let ext = self.follow.map(|f| [TempoSegment::constant(f.tempo)]);
@@ -857,12 +857,18 @@ impl Player {
                 em.release_track(t.device, t.socket, &mut held, 0);
             }
         }
-        if let Some(old) = old.as_deref() {
-            // An audio track that played an interim warp crossfades to its replacement.
+        if let Some(old) = old.as_deref_mut() {
+            // An audio track that played an interim warp crossfades to its replacement (its
+            // stretchers go with it, so the old output runs on while it fades).
             let SongSnapshot {
                 audio, audio_rt, ..
             } = &mut *new;
-            crate::audio::start_handoffs(&old.audio, audio, audio_rt, sr);
+            let SongSnapshot {
+                audio: old_audio,
+                audio_rt: old_rt,
+                ..
+            } = old;
+            crate::audio::start_handoffs((old_audio, old_rt), audio, audio_rt, sr);
         }
         if let Some(old) = old.as_deref() {
             // The clip launcher: slots keep playing across the swap where the new song still has
@@ -1419,6 +1425,8 @@ impl Player {
         }
         let renderer = Renderer {
             underruns: &stats.underruns,
+            fallbacks: &stats.stretch_fallbacks,
+            sample_rate: sr.round() as u32,
         };
         let mut off = 0usize;
         while off < BATCH {
@@ -1460,7 +1468,14 @@ impl Player {
                     );
                     let reseek = std::mem::take(audio_reseek);
                     for (t, rt) in tracks.iter().zip(rts.iter_mut()) {
-                        audio_follow::render_segment(t, rt, u, (b - a) as usize, off, reseek);
+                        audio_follow::render_segment(
+                            t,
+                            rt,
+                            u,
+                            (b - a) as usize,
+                            off,
+                            (reseek, sr.round() as u32),
+                        );
                     }
                 } else {
                     for (t, rt) in tracks.iter().zip(rts.iter_mut()) {
