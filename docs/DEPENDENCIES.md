@@ -56,6 +56,56 @@ keeps out of the program. Nothing is sent anywhere; the value is read and compar
 [DECISIONS.md](DECISIONS.md#w-how-the-interface-is-translated); `cargo deny check` passes with the licences the policy
 already allows.
 
+The hand tracking crate (`atomik-vision`) added three groups of dependencies; the choices are in
+[DECISIONS.md](DECISIONS.md#ad-webcam-hand-tracking-the-camera-the-models-privacy-and-the-gesture-rules).
+
+- **Inference: `tract-tflite` 0.23** (with `tract-core`, `tract-data`, `tract-linalg` and a few small crates;
+  `MIT OR Apache-2.0`, pure Rust, by Sonos). It reads the official `.tflite` model files directly and runs them on the
+  CPU, with no conversion and no native library. The `tract-linalg` build script asks the machine's C compiler (through
+  the `cc` crate) which assembly kernels it can build, so a C compiler must be on the build machine (Xcode tools on
+  macOS, `gcc` or `clang` on Linux, MSVC on Windows: every build machine has one). No `libclang`, no `bindgen`.
+  The alternatives were ONNX Runtime (`ort`, a native library to download or build), the TensorFlow Lite C++ library
+  (a CMake or Bazel build) and writing the layers by hand.
+- **Camera, Windows and macOS: `nokhwa` 0.10** (`Apache-2.0`, with `nokhwa-core` and the system binding crates
+  `nokhwa-bindings-windows`, over Media Foundation, and `nokhwa-bindings-macos`, over AVFoundation). It is used with
+  `default-features = false` and one backend feature per system: its default `decoding` feature pulls a C JPEG library
+  (`mozjpeg`) that needs a C compiler and an assembler, and the program already has `zune-jpeg`, so the pictures are
+  converted in `crates/vision/src/camera/convert.rs`. On macOS the binding compiles one small Objective-C file with
+  the system compiler. It uses `unsafe` inside; `atomik-vision` does not. Its build-time macro crate `paste` is
+  unmaintained (RUSTSEC-2024-0436, a notice and not a vulnerability): the advisory is ignored in `deny.toml` with a
+  review date.
+- **Camera, Linux: `linuxvideo` 0.3** (`0BSD`, with `uoctl`, `bitflags` 1, `libc` and `log`). A pure Rust Video4Linux
+  client: no `bindgen`, no `libclang`, no system library. `nokhwa`'s Linux backend goes through `v4l`, whose
+  `v4l2-sys-mit` runs `bindgen` at build time, which would make libclang and the kernel headers a requirement of every
+  build and of CI. `0BSD` is a permissive licence with no conditions; it is now in the allowed licences of
+  `deny.toml`.
+- **Already in the workspace:** `sha2` (the checksums of the model files; `ring` is also there through `ureq`, but
+  `sha2` is the crate every other checksum of the program uses), `ureq` (the one HTTPS request of the model download,
+  configured as the update check is: HTTPS only, no redirect, timeouts), `zune-jpeg`, `clap` and `ctrlc` (the demo
+  tool only).
+
+## Model files
+
+The hand tracking models are not part of the installer, the repository or `Cargo.lock`. The user downloads them once
+(a dialog says what is fetched, from where and how big), into `models/hands/` of the settings folder, and every file is
+checked against the size and SHA-256 below, written in `crates/vision/src/download.rs` and nowhere else, when it is
+downloaded and again before it is first loaded in a run. A mismatch deletes what was fetched.
+
+| File | Size | SHA-256 | Source |
+| --- | --- | --- | --- |
+| `palm_detection_full.tflite` | 2,339,846 bytes | `1b14e9422c6ad006cde6581a46c8b90dd573c07ab7f3934b5589e7cea3f89a54` | `https://storage.googleapis.com/mediapipe-assets/palm_detection_full.tflite` |
+| `hand_landmark_full.tflite` | 5,478,917 bytes | `11c272b891e1a99ab034208e23937a8008388cf11ed2a9d776ed3d01d0ba00e3` | `https://storage.googleapis.com/mediapipe-assets/hand_landmark_full.tflite` |
+
+Both are the MediaPipe hand models (the palm detector and the 21-point hand landmark model), published by Google under
+the Apache License 2.0 (see the model cards of the MediaPipe Hand Detection and Hand Landmarks models). The files are
+not changed: they are used as published. The notice that goes with them:
+
+> Hand tracking models: Copyright The MediaPipe Authors (Google LLC). Licensed under the Apache License, Version 2.0
+> (http://www.apache.org/licenses/LICENSE-2.0). Used without changes; downloaded by the user from the publisher.
+
+A new version of a model is a change of the hashes in `download.rs` and of this table, made by hand after the new file
+was run through the tests of `crates/vision` (set `ATOMIK_VISION_MODELS` to the folder, see [TESTING.md](TESTING.md)).
+
 ## Packaging tools
 
 Used only by the release and nightly workflows (and not linked into the program), at pinned versions:
@@ -90,8 +140,9 @@ a new one: look at who pulls it before adding a skip.
 An advisory is ignored in `deny.toml` only with a reason and a review date (`review-by YYYY-MM-DD` in
 the reason). `scripts/check-advisory-ignores.sh` runs in the Security workflow (on every pull request
 and every Monday) and fails once the date has passed; look at the advisory again, then remove the
-ignore or move the date on purpose. The ignore of the unmaintained-crate notice for `ttf-parser`
-(it arrives through winit's Wayland decorations) is the only one today.
+ignore or move the date on purpose. Two are ignored today: the unmaintained-crate notice for `ttf-parser`
+(it arrives through winit's Wayland decorations) and the one for `paste` (a build-time macro crate of the `nokhwa`
+camera backends on Windows and macOS).
 
 ## The quarterly pass
 

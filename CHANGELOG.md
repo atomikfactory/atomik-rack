@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Hand tracking core for webcam control.** A new crate, `atomik-vision`, is the engine room of a coming webcam
+  controller (nothing in the application uses it yet). The camera is read through a trait (Media Foundation on
+  Windows, AVFoundation on macOS, Video4Linux on Linux; a fake replays frames for tests) on a capture thread that
+  keeps only the newest frame. The two MediaPipe hand models, the palm detector and the 21-point hand landmark model,
+  run in pure Rust on the CPU from the official files (the detector only while no hand is followed; about 20 ms a
+  frame for a followed hand). The models are not in the installer: a one-time download, started by the user, fetches
+  two files (7.8 MB) from one fixed HTTPS address each, checks them against a SHA-256 written in the source and leaves
+  nothing behind when anything fails or is cancelled. The gesture recogniser turns landmarks into a pinch of the
+  thumb and index finger (with hysteresis, so it does not flicker), a twist of the wrist measured from the moment of
+  the pinch like a ratchet (smoothed, with a dead zone so a still hand does not drift, and a 150 ms tolerance for a
+  missed frame), and keeps two hands apart. The `vision-demo` tool lists cameras, shows and downloads the models,
+  prints the state of the hand live and records landmarks (numbers only) for tests. Frames live in memory only; the
+  camera is on only while a tracker runs. The macOS bundle asks for camera access with a plain sentence and the
+  hardened runtime gets the camera entitlement. Decision AD in `docs/DECISIONS.md`.
 - **Learn in the plugin window.** Every plugin editor window gets a thin strip docked to its top edge with the
   plugin's name, LEARN AUTOMATION, LEARN MIDI, a status line and a close button. Pick a mode, then touch a control
   in the plugin's own interface: LEARN AUTOMATION shows that parameter's automation lane in the arrangement (an

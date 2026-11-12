@@ -707,3 +707,47 @@ the space above is off the screen. A Wayland session gives no window positions, 
 pane's top bar has the same two toggles everywhere. The mode is view state per editor, never saved.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AD. Webcam hand tracking: the camera, the models, privacy and the gesture rules
+
+**Question.** The webcam is to become a controller: pinch the thumb and index finger in front of the camera and
+twist the wrist like a knob. How is the camera read on each system, how are the hand models run, where do the model
+files come from, what happens to the pictures, and how is the gesture decided?
+
+**Options.** Camera: (1) `nokhwa` on every system; (2) `nokhwa` on Windows and macOS and a pure Rust Video4Linux
+client (`linuxvideo`) on Linux; (3) OpenCV; (4) the platform calls by hand. Inference: (1) `tract` reading the
+official `.tflite` files; (2) `tract` on `.onnx` files converted from them; (3) ONNX Runtime or the TensorFlow Lite
+C++ library through bindings. Model files: (1) bundled in the installer; (2) downloaded once after the user agrees;
+(3) a bigger model that is downloaded every run. Gesture: a trained gesture network, or plain rules on the 21
+landmarks.
+
+**Implications.** `nokhwa` is Apache-2.0 and wraps Media Foundation and AVFoundation, but its Linux backend goes
+through `v4l`, whose `v4l2-sys-mit` runs `bindgen` at build time (libclang and the kernel headers on every build
+machine and in CI); its default JPEG decoder is a C library, and the program already has `zune-jpeg`, so the default
+features are off and the frames are converted in `camera/convert.rs`. `linuxvideo` is 0BSD (added to the allowed
+licences), has no `bindgen` and no system library, and reads Video4Linux with the plain kernel interface. OpenCV is a
+huge C++ dependency. Platform calls by hand mean `unsafe` in our crates, which the workspace denies; the capture
+crates use `unsafe` inside, ours does not. `tract` is pure Rust (MIT or Apache-2.0) and reads the official `.tflite`
+files directly: both models load and run, so no conversion script, no extra hosting and no second copy of a file
+whose licence is not ours to republish. Its build script only asks the C compiler of the machine which assembly it
+can use (every macOS and Linux build machine has one). ONNX Runtime and TensorFlow Lite are C++ libraries with
+downloads or a CMake build. The two models are 2.3 and 5.5 MB; bundling them makes every installer bigger for a
+feature that not every user has a camera for, so they are downloaded once, after a dialog that says what, from where
+and how big, from one fixed HTTPS address each (`ureq`, no redirect, nothing about the user or the machine), and are
+checked against a SHA-256 written in the source at the download and again before each run. The camera picture is
+the most private thing the program can touch: it is only used after a user action, only in memory (never written,
+logged, sent or put in a project), only while the camera is on, and a lit indicator shows when it is (the
+application side comes with the wiring). A twist read from the wrist angle needs no network: the gesture is the
+angle of the wrist-to-knuckle line and the distance between two fingertips.
+
+**Decision.** (2), (1), (2), plain rules. The crate is `atomik-vision`, with no dependency on the application. The
+pinch is the thumb tip to index tip distance over the hand size (wrist to middle knuckle): it starts below 0.25 and
+ends above 0.40, so a hand near one number does not flicker; the numbers come from the synthetic hands of the tests
+and wait for hand checks. The twist is a ratchet: the angle of the wrist-to-knuckle line, unwrapped, smoothed with a
+One Euro filter and measured from the angle at the moment the pinch began, so a user can open the hand, turn it back
+and pinch again to keep turning; a change under 1.5 degrees is held back, so a still hand does not drift. A hand that
+is lost keeps its pinch for 150 ms, then the pinch ends. The palm detector runs only when no hand is followed (the
+landmarks of one frame frame the next), so a followed hand costs one run of the landmark model. The capture is on its
+own thread with a one-frame handoff (the newest frame wins, nothing queues).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
