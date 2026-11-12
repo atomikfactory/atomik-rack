@@ -358,3 +358,21 @@ fn the_example_bounces_from_its_file_and_matches_the_document_bounce() {
     assert!(bits(&from_file) == bits(&bounce(&doc, 512, 0)));
     assert!(from_file.warnings.is_empty(), "{:?}", from_file.warnings);
 }
+
+/// A hand-cabled loop is audible and the console lists it: the demo saved without its return
+/// slot (as a user cabling `fx_send1 -> Hall -> return1` by hand has it) opens with the slot
+/// inferred and bounces bit for bit like the demo.
+#[test]
+fn a_hand_cabled_send_loop_is_inferred_on_open_and_sounds_the_same() {
+    let (registry, doc) = registry_and_doc();
+    let text = std::fs::read_to_string(demo_file()).unwrap();
+    let blank = text.replace("\"returns\": [\"hall\", null", "\"returns\": [null, null");
+    assert_ne!(blank, text);
+    let loaded = load_project(&blank, &registry).expect("a valid project");
+    assert_eq!(loaded.console.returns[0], Some(key("hall")));
+    assert_eq!(loaded, doc);
+    let a = bounce(&doc, 256, 1);
+    let b = bounce(&loaded, 256, 1);
+    assert_eq!(bits(&a), bits(&b));
+    assert!(peak(&b, 0) > 0.02, "the loop carries signal");
+}

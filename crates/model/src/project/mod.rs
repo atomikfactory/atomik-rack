@@ -741,6 +741,10 @@ fn load_value(
         return Ok(migrate_v1(doc, registry, warnings));
     }
     doc.console = load_console(&obj["console"], &root.field("console"), &doc, version)?;
+    // A loop cabled by hand through the master's send and return counts as that return.
+    for (slot, effect) in crate::console_loop::inferred_returns(&doc) {
+        doc.console.returns[slot] = Some(effect);
+    }
     drop_stale_follows(&mut doc);
     check_vca_lanes(&doc, &root.field("song").field("tracks"))?;
     if let Some(maps) = obj.get("midi_maps") {
