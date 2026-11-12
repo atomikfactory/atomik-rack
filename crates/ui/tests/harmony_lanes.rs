@@ -373,7 +373,10 @@ fn the_context_menu_of_a_chord_deletes_and_copies_and_the_lane_pastes() {
     set(&mut d, &reg, &mut v, lane_harmony());
     let p = v.chord_center(3 * BAR).unwrap();
     play(&mut v, &mut d, &reg, &[right_down(p), right_up(p)]);
-    assert_eq!(v.menu_labels(), ["Delete Chord", "Copy Chord"]);
+    assert_eq!(
+        v.menu_labels(),
+        ["Delete Chord", "Copy Chord", "Play Chords on Click"]
+    );
     // Copy.
     let copy = v.param_menu_row_center(1).unwrap();
     play(&mut v, &mut d, &reg, &[down(copy), up(copy)]);
@@ -381,7 +384,10 @@ fn the_context_menu_of_a_chord_deletes_and_copies_and_the_lane_pastes() {
     // Paste on the empty lane at bar 6.
     let empty = Point::new(bar_x(&v, 6.0), chord_y(&v));
     play(&mut v, &mut d, &reg, &[right_down(empty), right_up(empty)]);
-    assert_eq!(v.menu_labels(), ["Add Chord Here", "Paste Chord"]);
+    assert_eq!(
+        v.menu_labels(),
+        ["Add Chord Here", "Paste Chord", "Play Chords on Click"]
+    );
     let paste = v.param_menu_row_center(1).unwrap();
     let actions = play(&mut v, &mut d, &reg, &[down(paste), up(paste)]);
     assert_eq!(actions.len(), 1, "{actions:?}");
@@ -610,5 +616,32 @@ fn an_unreadable_symbol_shows_its_hint_in_the_picker() {
             .any(|t| t.contains("does not start with a note name")),
         "{:?}",
         dl.texts()
+    );
+}
+
+#[test]
+fn a_click_on_a_chord_plays_it_unless_play_chords_on_click_is_off() {
+    let (mut d, reg, mut v) = setup();
+    set(&mut d, &reg, &mut v, lane_harmony());
+    let chord = d.doc().song.harmony.chords[0];
+    let p = v.chord_center(chord.tick).unwrap();
+    let actions = play(&mut v, &mut d, &reg, &[down(p), up(p)]);
+    assert!(
+        actions.contains(&UiAction::AuditionChord(chord)),
+        "{actions:?}"
+    );
+    assert!(v.plays_chords_on_click());
+    // The lane's menu turns it off (a checked row).
+    play(&mut v, &mut d, &reg, &[right_down(p), right_up(p)]);
+    let row = v.menu_labels().len() - 1;
+    let toggle = v.param_menu_row_center(row).unwrap();
+    play(&mut v, &mut d, &reg, &[down(toggle), up(toggle)]);
+    assert!(!v.plays_chords_on_click());
+    let actions = play(&mut v, &mut d, &reg, &[down(p), up(p)]);
+    assert!(
+        !actions
+            .iter()
+            .any(|a| matches!(a, UiAction::AuditionChord(_))),
+        "{actions:?}"
     );
 }

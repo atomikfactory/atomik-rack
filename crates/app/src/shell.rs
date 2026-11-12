@@ -6209,8 +6209,14 @@ impl<B: AudioBackend> Shell<B> {
                 .map(|v| v.handle(&text_form(event)))
                 .unwrap_or_default();
             for action in actions {
-                if let UiAction::Harmony(a) = action {
-                    self.harmony_picker_action(a);
+                match action {
+                    UiAction::Harmony(a) => self.harmony_picker_action(a),
+                    UiAction::AuditionChord(chord)
+                        if self.core.arrangement().plays_chords_on_click() =>
+                    {
+                        self.core.audition_chord(&chord);
+                    }
+                    _ => {}
                 }
             }
             return Vec::new();
@@ -8075,6 +8081,7 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 UiAction::PickColor(target) => self.open_color_picker(target.clone()),
                 UiAction::HarmonyPicker(target) => self.open_harmony_picker(*target),
+                UiAction::AuditionChord(chord) => self.core.audition_chord(chord),
                 UiAction::EditWavetable(device) => self.open_wavetable_editor(device.clone()),
                 UiAction::OpenSampleEditor(_) => self.show_sample_editor(),
                 UiAction::CloseSampleEditor => {

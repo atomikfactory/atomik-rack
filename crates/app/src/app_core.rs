@@ -1828,6 +1828,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_take(&state);
         self.feed_player_preview();
         self.show_transport();
+        self.feed_song_harmony();
         self.feed_automation_values();
         self.feed_device_meters();
         self.feed_device_scopes();

@@ -556,14 +556,18 @@ impl HarmonyPickerView {
             self.text.press(pos, clicks, shift);
         } else if let Some(pc) = (0..12u8).find(|pc| self.root_rect(*pc).contains(pos)) {
             self.set_root(pc);
+            self.audition(out);
         } else if self.is_chord() {
             if let Some(q) = (0..ChordKind::ALL.len()).find(|i| self.quality_rect(*i).contains(pos))
             {
                 self.set_quality(ChordKind::ALL[q]);
+                self.audition(out);
             } else if self.bass_rect(None).contains(pos) {
                 self.set_bass(None);
+                self.audition(out);
             } else if let Some(pc) = (0..12u8).find(|pc| self.bass_rect(Some(*pc)).contains(pos)) {
                 self.set_bass(Some(pc));
+                self.audition(out);
             }
         } else if let Some(kind) = key_scales()
             .enumerate()
@@ -571,6 +575,21 @@ impl HarmonyPickerView {
             .map(|(_, k)| k)
         {
             self.set_scale_kind(kind);
+        }
+    }
+
+    /// A chord picked in a chord picker sounds briefly ([`UiAction::AuditionChord`]).
+    fn audition(&self, out: &mut Vec<UiAction>) {
+        if let PickerValue::Chord {
+            root,
+            quality,
+            bass,
+        } = self.value
+        {
+            out.push(UiAction::AuditionChord(atomik_model::ChordEvent {
+                bass,
+                ..atomik_model::ChordEvent::new(0, 1, root, quality)
+            }));
         }
     }
 

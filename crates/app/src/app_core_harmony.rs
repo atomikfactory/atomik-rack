@@ -33,6 +33,16 @@ impl<S: EngineSink> AppCore<S> {
         self.harmony().key_at(self.position().max(0))
     }
 
+    /// Tells the rack the song key and the chord at the playhead, for the SONG tags of the
+    /// devices that follow the song (from [`Self::frame`]; the view repaints only on a change).
+    pub(super) fn feed_song_harmony(&mut self) {
+        let tick = self.position().max(0);
+        let h = &self.doc().song.harmony;
+        let key = h.key_at(tick).map(Key::short);
+        let chord = h.chord_at(tick).map(|c| c.symbol());
+        self.view.set_song_harmony(key, chord);
+    }
+
     /// Makes `harmony` the song's key and chords (one undo step).
     ///
     /// # Errors

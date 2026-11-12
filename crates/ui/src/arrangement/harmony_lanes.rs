@@ -91,6 +91,8 @@ pub(super) enum HarmonyRow {
     Do(Box<UiAction>),
     /// Keep a key or chord to paste later.
     Copy(Copied),
+    /// Turn "Play Chords on Click" on or off.
+    TogglePlay,
 }
 
 /// What a drag moves.
@@ -132,6 +134,8 @@ pub(super) struct HarmonyUi {
     copied: Option<Copied>,
     /// What the first press of a double click added (the second press opens its picker).
     added: Option<Sel>,
+    /// "Play Chords on Click" is off (it is on by default).
+    silent_clicks: bool,
 }
 
 /// The key a new key change starts with when the song has none in effect.
@@ -415,6 +419,9 @@ impl ArrangementView {
                         length: original.length,
                     }));
                 } else {
+                    if !self.hl.silent_clicks {
+                        out.push(UiAction::AuditionChord(original));
+                    }
                     let target = Target::Chord {
                         from: at,
                         original,
@@ -444,6 +451,9 @@ impl ArrangementView {
                 };
                 self.harmony_select(Some(Sel::Chord(tick)));
                 self.hl.added = Some(Sel::Chord(tick));
+                if !self.hl.silent_clicks && !double {
+                    out.push(UiAction::AuditionChord(chord));
+                }
                 let target = Target::Chord {
                     from: tick,
                     original: chord,
@@ -660,23 +670,33 @@ impl ArrangementView {
                 }
             }
         }
+        // The chord lane's own switch, last: whether a click on a chord plays it.
+        let chord_lane = matches!(part, HarmonyHit::Chord(..) | HarmonyHit::ChordEmpty);
+        if chord_lane {
+            rows.push(("Play Chords on Click".to_owned(), HarmonyRow::TogglePlay));
+        }
         self.repaint = true;
         if rows.is_empty() {
             return;
         }
+        let checked = rows
+            .iter()
+            .map(|(_, r)| matches!(r, HarmonyRow::TogglePlay) && !self.hl.silent_clicks)
+            .collect();
         let items = rows
             .iter()
             .enumerate()
             .map(|(i, (label, _))| (i.to_string(), label.clone()))
             .collect();
         let rows = rows.into_iter().map(|(_, r)| r).collect();
-        let menu = Menu::new(
+        let mut menu = Menu::new(
             DeviceKey(String::new()),
             MenuKind::Harmony(rows),
             items,
             pos,
             0,
         );
+        menu.checked = checked;
         self.open_menu(menu);
     }
 
@@ -685,7 +705,13 @@ impl ArrangementView {
         match row {
             HarmonyRow::Do(action) => out.push((**action).clone()),
             HarmonyRow::Copy(item) => self.hl.copied = Some(*item),
+            HarmonyRow::TogglePlay => self.hl.silent_clicks = !self.hl.silent_clicks,
         }
+    }
+
+    /// Whether a click on a chord of the lane plays it ("Play Chords on Click", on by default).
+    pub fn plays_chords_on_click(&self) -> bool {
+        !self.hl.silent_clicks
     }
 
     /// `edit.delete` removes the selected key change or chord (the song key: clears it); `edit.copy`

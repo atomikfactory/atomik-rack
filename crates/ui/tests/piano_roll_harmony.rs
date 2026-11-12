@@ -14,7 +14,7 @@ use atomik_ui::chord_edit::{Stamp, lane_chord_keys};
 use atomik_ui::key_rows::Fold;
 use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::Point;
-use atomik_ui::{PianoRollView, Tool, UiAction};
+use atomik_ui::{Key as UiKey, Modifiers, PianoRollView, PointerButton, Tool, UiAction, UiEvent};
 use support::song::*;
 use support::*;
 
@@ -334,11 +334,73 @@ fn fit_notes_to_chords_moves_the_selection_onto_chord_tones_in_one_undo_step() {
     v.set_selected_notes(&[0, 1, 2]);
     let out = run_cmd(&mut v, &mut d, &reg, "editor.fit_to_chords");
     assert!(matches!(out, CommandOutcome::Handled(_)));
+    // The result is a preview first: the notes have not moved.
+    assert!(v.fit_preview_shown());
+    assert_eq!(keys(&notes_of(&d)), [61, 66, 62, 66]);
     // C# -> C, F# -> G (C major); D -> C (nearest A minor tone, a tie goes down); the fourth note
     // was not selected.
+    let preview = v.fit_preview_notes().unwrap();
+    assert_eq!(keys(&preview), [60, 67, 60, 66]);
+    // Apply, from the bar's button.
+    let (apply_btn, _) = v.fit_buttons().unwrap();
+    let a = v.handle(
+        &UiEvent::PointerDown {
+            pos: apply_btn.center(),
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        },
+        d.doc(),
+        &reg,
+    );
+    apply(&mut v, &mut d, &reg, &a);
+    assert!(!v.fit_preview_shown());
     assert_eq!(keys(&notes_of(&d)), [60, 67, 60, 66]);
     d.undo().unwrap();
     assert_eq!(keys(&notes_of(&d)), [61, 66, 62, 66], "one undo step");
+}
+
+#[test]
+fn cancelling_the_fit_preview_changes_nothing() {
+    let h = Harmony {
+        chords: vec![chord(0, 1, 0, ChordKind::Major)],
+        ..Harmony::default()
+    };
+    let (mut v, mut d, reg) = setup(h, vec![n(0, 61)]);
+    v.set_selected_notes(&[0]);
+    run_cmd(&mut v, &mut d, &reg, "editor.fit_to_chords");
+    assert!(v.fit_preview_shown());
+    let undo_before = d.undo_label().map(str::to_owned);
+    let a = v.handle(
+        &UiEvent::Key {
+            key: UiKey::Escape,
+            modifiers: Modifiers::NONE,
+            pressed: true,
+        },
+        d.doc(),
+        &reg,
+    );
+    apply(&mut v, &mut d, &reg, &a);
+    assert!(!v.fit_preview_shown());
+    assert_eq!(keys(&notes_of(&d)), [61]);
+    assert_eq!(
+        d.undo_label().map(str::to_owned),
+        undo_before,
+        "no undo step"
+    );
+    // Enter applies a new preview.
+    run_cmd(&mut v, &mut d, &reg, "editor.fit_to_chords");
+    let a = v.handle(
+        &UiEvent::Key {
+            key: UiKey::Enter,
+            modifiers: Modifiers::NONE,
+            pressed: true,
+        },
+        d.doc(),
+        &reg,
+    );
+    apply(&mut v, &mut d, &reg, &a);
+    assert_eq!(keys(&notes_of(&d)), [60]);
 }
 
 #[test]
@@ -370,6 +432,8 @@ fn fit_notes_to_chords_follows_the_clip_position_in_the_song() {
     let (mut v, mut d, reg) = setup(h, vec![n(0, 61), n(BAR, 61)]);
     v.set_selected_notes(&[0, 1]);
     run_cmd(&mut v, &mut d, &reg, "editor.fit_to_chords");
+    let a = v.apply_fit_preview();
+    apply(&mut v, &mut d, &reg, &a);
     // Only the note under the G major chord (B, D, G) moves: C# goes to D.
     assert_eq!(keys(&notes_of(&d)), [61, 62]);
 }
