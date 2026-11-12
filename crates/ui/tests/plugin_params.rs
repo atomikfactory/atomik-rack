@@ -254,6 +254,37 @@ fn the_close_button_closes() {
 }
 
 #[test]
+fn the_learn_toggles_ask_the_app_and_light_with_the_armed_mode() {
+    use atomik_ui::{PluginLearnMode, PluginLearnRequest};
+    let d = plugin_rack();
+    let mut v = pane_on(d.doc(), "synth");
+    for (rect, mode) in [
+        (v.learn_automation_rect(), PluginLearnMode::Automation),
+        (v.learn_midi_rect(), PluginLearnMode::Midi),
+    ] {
+        let acts = click_at(&mut v, d.doc(), center(rect));
+        assert!(
+            acts.contains(&UiAction::PluginLearn {
+                device: key("synth"),
+                request: PluginLearnRequest::Toggle(mode),
+            }),
+            "{acts:?}"
+        );
+    }
+    assert_eq!(v.hit(center(v.learn_midi_rect())), Hit::LearnMidi);
+    assert!(v.learn_automation_rect().x1 < v.learn_midi_rect().x0);
+    assert!(v.learn_midi_rect().x1 < v.close_rect().x0);
+    assert!(v.help_at(center(v.learn_midi_rect())).is_some());
+    v.set_learn_mode(Some(PluginLearnMode::Midi));
+    assert_eq!(v.learn_mode(), Some(PluginLearnMode::Midi));
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), &registry());
+    for want in ["LEARN AUTOMATION", "LEARN MIDI"] {
+        assert!(dl.texts().contains(&want), "{:?}", dl.texts());
+    }
+}
+
+#[test]
 fn a_vanished_device_makes_the_pane_not_present() {
     let mut d = plugin_rack();
     let reg = registry();

@@ -44,6 +44,7 @@ pub fn to_wire(message: PluginMessage) -> Option<FromChild> {
         PluginMessage::RescanParams => FromChild::RescanParams,
         PluginMessage::RequestRestart => FromChild::RequestRestart,
         PluginMessage::GuiResize { w, h } => FromChild::GuiResize { w, h },
+        PluginMessage::GuiFrame { x, y, w, h } => FromChild::GuiFrame { x, y, w, h },
         PluginMessage::GuiClosed => FromChild::GuiClosed,
         PluginMessage::GuiRequestShow => FromChild::GuiRequestShow,
         PluginMessage::GuiRequestHide => FromChild::GuiRequestHide,

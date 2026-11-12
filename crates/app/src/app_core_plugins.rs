@@ -111,6 +111,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[path = "app_core_plugin_learn.rs"]
+mod learn;
+
 /// Seconds between recovery snapshots of a changed project while a plugin is loaded.
 pub const RECOVERY_PERIOD_SECS: f64 = 60.0;
 /// The autosave period until the preference says otherwise.
@@ -433,6 +436,12 @@ pub(super) struct PluginState {
     window_requests: Vec<PluginWindowRequest>,
     /// The app window's native handle: the owner of external editors.
     editor_owner: Option<NativeParent>,
+    /// The Learn modes of the editor windows (see `app_core_plugin_learn.rs`).
+    learn: learn::PluginLearn,
+    /// The editor window the user brought forward last.
+    focused_window: Option<DeviceKey>,
+    /// The outer frame of each external editor's window (physical pixels), as its process said.
+    frames: BTreeMap<DeviceKey, (i32, i32, u32, u32)>,
     settings_changed: bool,
     folder_dialog: bool,
     /// What the user decided about each plugin: stars, tags, disabled, quarantine.
@@ -499,6 +508,9 @@ impl PluginState {
             geoms_changed: false,
             window_requests: Vec::new(),
             editor_owner: None,
+            learn: learn::PluginLearn::default(),
+            focused_window: None,
+            frames: BTreeMap::new(),
             settings_changed: false,
             folder_dialog: false,
             user: PluginsUser::default(),
@@ -1070,6 +1082,12 @@ impl<S: EngineSink> AppCore<S> {
         self.save_learned_cache();
         self.answer_param_texts();
         self.feed_plugin_views();
+        if self.plugin_params_open
+            && let Some(device) = self.plugin_params.device().cloned()
+        {
+            let mode = self.plugin_learn_mode(&device);
+            self.plugin_params.set_learn_mode(mode);
+        }
     }
 
     /// Runs the clock-driven plugin work: the quiet-period state capture and the
@@ -1270,6 +1288,19 @@ impl<S: EngineSink> AppCore<S> {
                     self.plugins
                         .window_requests
                         .push(PluginWindowRequest::Resize { device: key, w, h });
+                }
+            }
+            ManagerEvent::GuiFrame {
+                instance,
+                x,
+                y,
+                w,
+                h,
+            } => {
+                if let Some(key) = self.plugins.keys.get(&instance).cloned()
+                    && self.plugins.windows.contains_key(&key)
+                {
+                    self.plugins.frames.insert(key, (x, y, w, h));
                 }
             }
             ManagerEvent::EditorOpened(instance) => {
@@ -2001,12 +2032,16 @@ impl<S: EngineSink> AppCore<S> {
         };
         let actions = match phase {
             ParamPhase::Begin => {
+                // Learn acts on the touch first; the edit then goes through as usual.
+                self.plugin_learn_begin(&key, param);
                 self.plugins.gesture_touched.insert(key.clone());
                 self.plugins.open_gestures.insert((key.clone(), param));
                 self.plugins.merger.begin(&key, param)
             }
             ParamPhase::Change => {
                 if !self.plugins.open_gestures.contains(&(key.clone(), param)) {
+                    // A plugin that sends no gesture begin: its first change is the touch.
+                    self.plugin_learn_change(&key, param);
                     // Not a gesture: a patch change or an internal modulation. Not stored.
                     return;
                 }
@@ -2214,6 +2249,9 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::PluginParamTexts { .. } => {}
             UiAction::PluginSettings(a) => self.plugin_settings_action(a),
             UiAction::PluginBanner(a) => self.plugin_banner_action(a),
+            UiAction::PluginLearn { device, request } => {
+                self.plugin_learn_request(device, *request);
+            }
             _ => return false,
         }
         true
@@ -3221,6 +3259,8 @@ impl<S: EngineSink> AppCore<S> {
         let Some(window) = self.plugins.windows.remove(device) else {
             return;
         };
+        self.plugin_learn_window_closed(device);
+        self.plugins.frames.remove(device);
         self.commit_window_geometry(device);
         self.plugins.window_pos.remove(device);
         // An external editor is a window of the plugin's process: nothing to destroy here.
@@ -3267,6 +3307,18 @@ impl<S: EngineSink> AppCore<S> {
         for key in open {
             self.close_plugin_gui_inner(&key, true);
         }
+    }
+
+    /// The editors the plugins' own processes show, with the outer frame of each window
+    /// (x, y, width, height in physical pixels) as the process last said: the platform docks
+    /// their Learn strips there.
+    pub fn external_editor_frames(&self) -> Vec<(DeviceKey, (i32, i32, u32, u32))> {
+        self.plugins
+            .frames
+            .iter()
+            .filter(|(d, _)| self.plugins.windows.get(*d) == Some(&EditorWindow::External))
+            .map(|(d, f)| (d.clone(), *f))
+            .collect()
     }
 
     /// True when the editor window of `device` is open or opening.

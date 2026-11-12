@@ -6758,6 +6758,15 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.cancel_sampling();
                 return Vec::new();
             }
+            // Esc disarms Learn in the plugin windows.
+            if *pressed
+                && *key == Key::Escape
+                && window == WindowKind::Main
+                && !self.context_stack().contexts().contains(&Context::Text)
+                && self.core.disarm_all_plugin_learn()
+            {
+                return Vec::new();
+            }
             if *pressed && self.patch_browse_key(key) {
                 return Vec::new();
             }
@@ -7078,6 +7087,12 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.split_sub();
             }
             ("rack.preview_player", None) => self.core.preview_selected_player(),
+            ("plugin.learn_automation", None) => self
+                .core
+                .plugin_learn_command(atomik_ui::PluginLearnMode::Automation),
+            ("plugin.learn_midi", None) => self
+                .core
+                .plugin_learn_command(atomik_ui::PluginLearnMode::Midi),
             ("rack.combine", None) => {
                 self.core.combine_selection();
             }
@@ -7720,6 +7735,19 @@ impl<B: AudioBackend> Shell<B> {
                     .primary()
                     .is_some_and(|d| core.is_player_device(&d)),
             previewing: core.previewing_player().is_some(),
+            plugin: pane == Pane::Rack
+                && core
+                    .view()
+                    .primary()
+                    .is_some_and(|d| core.plugin_instance(&d).is_some()),
+            learn_automation: pane == Pane::Rack
+                && core.view().primary().is_some_and(|d| {
+                    core.plugin_learn_mode(&d) == Some(atomik_ui::PluginLearnMode::Automation)
+                }),
+            learn_midi: pane == Pane::Rack
+                && core.view().primary().is_some_and(|d| {
+                    core.plugin_learn_mode(&d) == Some(atomik_ui::PluginLearnMode::Midi)
+                }),
             midi_out: pane == Pane::Rack
                 && core
                     .view()

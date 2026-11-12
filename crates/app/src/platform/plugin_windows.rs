@@ -18,6 +18,7 @@
 //! Like the rest of the platform layer this is not unit-tested (it needs a window); the request
 //! protocol it implements is, in `app_core_plugins_gui_tests.rs`.
 
+use super::learn_strips::Dock;
 use crate::app_core::{AppCore, PluginWindowInfo, PluginWindowRequest};
 use crate::session::{LiveSession, SystemBackend};
 use crate::windows::DocId;
@@ -68,6 +69,14 @@ fn parent_from_raw(raw: RawWindowHandle) -> Result<NativeParent, String> {
 /// What a Wayland session is told (neither CLAP nor VST3 embeds into a Wayland surface).
 const WAYLAND_MESSAGE: &str = "Wayland sessions cannot embed a plugin editor (CLAP and VST3 both need an X11 window); use the PARAMS pane (or run Atomik under XWayland)";
 
+/// The `HWND` of `window` on Windows (the owner of its Learn strip); `None` elsewhere.
+pub(super) fn hwnd_of(window: &Window) -> Option<isize> {
+    match native_parent(window) {
+        Ok(NativeParent::Win32(h)) => Some(h as isize),
+        _ => None,
+    }
+}
+
 fn native_parent(window: &Window) -> Result<NativeParent, String> {
     let handle = window
         .window_handle()
@@ -90,6 +99,29 @@ impl PluginWindows {
     /// Whether any editor window is open.
     pub(super) fn any(&self) -> bool {
         !self.windows.is_empty()
+    }
+
+    /// Where the visible editor windows of song `doc` are, for their Learn strips (none where
+    /// the system gives no window position: Wayland).
+    pub(super) fn docks(&self, doc: DocId) -> Vec<(DeviceKey, Dock)> {
+        self.windows
+            .iter()
+            .filter(|((d, _), w)| {
+                *d == doc && w.is_visible() != Some(false) && !w.is_minimized().unwrap_or(false)
+            })
+            .filter_map(|((_, device), w)| {
+                let at = w.outer_position().ok()?;
+                let size = w.outer_size();
+                Some((
+                    device.clone(),
+                    Dock {
+                        frame: (at.x, at.y, size.width, size.height),
+                        scale: w.scale_factor(),
+                        owner: hwnd_of(w),
+                    },
+                ))
+            })
+            .collect()
     }
 
     /// Fulfils the window requests of the core of song `doc`, in order.
@@ -195,6 +227,7 @@ impl PluginWindows {
                 core.plugin_window_closed(&device);
             }
             WindowEvent::Moved(p) => core.plugin_window_moved(&device, p.x, p.y),
+            WindowEvent::Focused(true) => core.plugin_window_focused(&device),
             WindowEvent::Resized(size) if size.width > 0 && size.height > 0 => {
                 let (w, h) = if cfg!(target_os = "macos") {
                     let scale = self

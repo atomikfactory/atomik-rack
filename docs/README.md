@@ -479,6 +479,15 @@ plugins on, the scan folders and the sandbox stay in Audio > Plugins.
 - **Quarantine.** A plugin whose process ends, or that cannot be loaded, three times in a row is quarantined: it is
   hidden like a disabled one and a message says so once. An instance that ends without a fault, or a load that works,
   starts the count again. Try Again takes the chosen plugins out of quarantine (and scans failed files again).
+- **Learn in the plugin window.** Each plugin editor window has a thin strip docked to its top edge (below it when the
+  window is at the top of the screen): the plugin's name, LEARN AUTOMATION, LEARN MIDI, what happened last and a close
+  button. Pick a mode, then move any control in the plugin's own interface. LEARN AUTOMATION shows that parameter's
+  automation lane in the arrangement, adding an empty lane when it has none; LEARN MIDI waits for a hardware control
+  and maps it to that parameter (the strip says which: `Cutoff ← CC 21 ch 1`). The mode stays on for the next
+  control; click the lit button or the close button, press Esc in the main window, close the editor or turn on MIDI
+  Learn to stop. The plugin device's right-click menu and the command palette have Learn Automation from Plugin Window
+  and Learn MIDI from Plugin Window. Where the strip cannot be shown (a Wayland session), the parameter pane (PARAMS)
+  has the same two buttons, and a touch on one of its rows works the same way.
 - **Rescan.** Rescan All scans every plugin folder again, Rescan Selected only the files of the chosen rows. The scan
   runs in the background: the panel shows how far it is and the same button becomes Cancel.
 - **Show in Folder.** Opens the file manager at the file of the first chosen row.

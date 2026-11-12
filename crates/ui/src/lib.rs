@@ -431,6 +431,7 @@ pub mod piano_roll;
 pub mod pick_list;
 pub mod plugin_banner;
 pub mod plugin_data;
+pub mod plugin_learn;
 pub mod plugin_manager;
 pub mod plugin_panel;
 pub mod plugin_params;
@@ -555,6 +556,10 @@ pub use piano_keys::{
 };
 pub use piano_roll::{NOTE_INSPECTOR_HEIGHT, NoteField, PianoRollView};
 pub use plugin_banner::{BannerKind, PluginBannerView};
+pub use plugin_learn::{
+    PluginLearnMode, PluginLearnRequest, PluginLearnState, PluginLearnStatus, PluginLearnStrip,
+    STRIP_HEIGHT as LEARN_STRIP_HEIGHT,
+};
 pub use plugin_manager::{
     PluginManagerAction, PluginManagerData, PluginManagerRow, PluginManagerView, StatusFilter,
 };

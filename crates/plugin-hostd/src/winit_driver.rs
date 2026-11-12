@@ -146,6 +146,26 @@ impl WindowSystem for Windows<'_> {
     fn destroy(&mut self) {
         *self.window = None;
     }
+
+    fn frame(&self) -> Option<(i32, i32, u32, u32)> {
+        match frame_of(self.window.as_ref()?)? {
+            WindowInput::Frame { x, y, w, h } => Some((x, y, w, h)),
+            _ => None,
+        }
+    }
+}
+
+/// The window's outer frame on the screen (physical pixels), for the app's Learn strip; `None`
+/// where the system gives no position (Wayland).
+fn frame_of(window: &Window) -> Option<WindowInput> {
+    let at = window.outer_position().ok()?;
+    let size = window.outer_size();
+    Some(WindowInput::Frame {
+        x: at.x,
+        y: at.y,
+        w: size.width,
+        h: size.height,
+    })
 }
 
 struct App {
@@ -190,26 +210,35 @@ impl ApplicationHandler<Event> for App {
         let Some(window) = self.window.as_ref().filter(|w| w.id() == id) else {
             return;
         };
-        let input = match event {
-            WindowEvent::CloseRequested => WindowInput::CloseRequested,
+        let inputs = match event {
+            WindowEvent::CloseRequested => vec![WindowInput::CloseRequested],
             WindowEvent::Resized(size) if size.width > 0 && size.height > 0 => {
                 let (w, h) = reported_size(
                     (size.width, size.height),
                     window.scale_factor(),
                     cfg!(target_os = "macos"),
                 );
-                WindowInput::Resized(w, h)
+                vec![WindowInput::Resized(w, h)]
+                    .into_iter()
+                    .chain(frame_of(window))
+                    .collect()
             }
+            WindowEvent::Moved(_) => frame_of(window).into_iter().collect(),
             _ => return,
         };
-        let code = {
-            let mut windows = Windows {
-                window: &mut self.window,
-                event_loop,
+        for input in inputs {
+            let code = {
+                let mut windows = Windows {
+                    window: &mut self.window,
+                    event_loop,
+                };
+                self.control.on_window(input, &mut windows)
             };
-            self.control.on_window(input, &mut windows)
-        };
-        self.finish(event_loop, code);
+            self.finish(event_loop, code);
+            if self.exit.is_some() {
+                return;
+            }
+        }
     }
 }
 

@@ -272,3 +272,44 @@ fn the_key_chord_and_arpeggiator_panels_following_the_song_in_french() {
         dl
     });
 }
+
+#[test]
+fn the_learn_strip_of_a_plugin_window_in_french() {
+    use atomik_ui::{PluginLearnMode, PluginLearnState, PluginLearnStatus, PluginLearnStrip};
+    let states = [
+        ("idle", None, PluginLearnStatus::Waiting),
+        (
+            "automation",
+            Some(PluginLearnMode::Automation),
+            PluginLearnStatus::LaneShown("Cutoff".into()),
+        ),
+        (
+            "midi",
+            Some(PluginLearnMode::Midi),
+            PluginLearnStatus::MoveHardware("Cutoff".into()),
+        ),
+        (
+            "mapped",
+            Some(PluginLearnMode::Midi),
+            PluginLearnStatus::Mapped {
+                param: "Cutoff".into(),
+                source: "CC 21 ch 1".into(),
+            },
+        ),
+    ];
+    for (name, mode, status) in states {
+        french(&format!("plugin_learn_strip_{name}_1x.json"), || {
+            let mut v = PluginLearnStrip::new(Theme::dark());
+            v.set_bounds(Rect::new(0.0, 0.0, 720.0, atomik_ui::LEARN_STRIP_HEIGHT));
+            v.set_state(PluginLearnState {
+                device: key("lead"),
+                plugin: "Test Synth".into(),
+                mode,
+                status,
+            });
+            let mut dl = DisplayList::new();
+            v.paint(&mut dl);
+            dl
+        });
+    }
+}

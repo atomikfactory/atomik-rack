@@ -143,6 +143,19 @@ pub enum ManagerEvent {
         /// Height in pixels.
         h: u32,
     },
+    /// An external editor's window moved or changed size (its outer frame, physical pixels).
+    GuiFrame {
+        /// The instance.
+        instance: InstanceId,
+        /// Left edge.
+        x: i32,
+        /// Top edge.
+        y: i32,
+        /// Outer width.
+        w: u32,
+        /// Outer height.
+        h: u32,
+    },
     /// The plugin closed its editor.
     GuiClosed(InstanceId),
     /// The plugin asks to show its editor.
@@ -927,6 +940,13 @@ impl PluginManager {
                 PluginMessage::GuiResize { w, h } => {
                     events.push(ManagerEvent::GuiResize { instance: id, w, h })
                 }
+                PluginMessage::GuiFrame { x, y, w, h } => events.push(ManagerEvent::GuiFrame {
+                    instance: id,
+                    x,
+                    y,
+                    w,
+                    h,
+                }),
                 PluginMessage::GuiClosed => events.push(ManagerEvent::GuiClosed(id)),
                 PluginMessage::GuiRequestShow => events.push(ManagerEvent::GuiRequestShow(id)),
                 PluginMessage::GuiRequestHide => events.push(ManagerEvent::GuiRequestHide(id)),
