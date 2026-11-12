@@ -116,6 +116,10 @@ cargo about generate --workspace --locked about.hbs > THIRD-PARTY-NOTICES.html
 
 The licences it accepts must be the ones `deny.toml` allows, so a licence that passes `cargo deny check` is never refused here. Attach `THIRD-PARTY-NOTICES.html` to the draft release by hand (`gh release upload vX.Y.Z THIRD-PARTY-NOTICES.html`); the packaging scripts do not include it yet, so the About box points to the release page and not to a file next to the program. The About text is `AboutBox::lines` in `crates/app/src/about_box.rs`: it names the project and its public repository and nothing else, so a release needs no change to it.
 
+The hand models are not in the installer or in `Cargo.lock`: the user downloads them once, so `cargo about` does not see
+them. Their licence (Apache-2.0, published by Google) and notice are in the "Model files" section of
+[DEPENDENCIES.md](DEPENDENCIES.md); say so in the release notes of any release that has the webcam hand control.
+
 ## Signing
 
 Signing is wired for every platform and each step is skipped, with a notice in the log, until its secrets exist; the build never fails because a secret is missing. As soon as the secrets are added, the next build signs. Once the secrets of a platform exist, anything that goes wrong in its signing chain fails the build.

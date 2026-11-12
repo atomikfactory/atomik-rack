@@ -71,7 +71,7 @@ jobs:
       - name: Report
         run: >-
           cargo llvm-cov report --fail-under-lines 90
-          --ignore-filename-regex '(^|/)crates/([^/]+/src/main[.]rs|ui/src/scene_canvas[.]rs|ui/src/text[.]rs|audio-io/src/stream[.]rs|play/src/backend[.]rs|testplugins/(clap|vst3)[^/]*/src/[^/]*[.]rs)$'
+          --ignore-filename-regex '(^|/)crates/([^/]+/src/main[.]rs|ui/src/scene_canvas[.]rs|ui/src/text[.]rs|audio-io/src/stream[.]rs|play/src/backend[.]rs|testplugins/(clap|vst3)[^/]*/src/[^/]*[.]rs|vision/src/(bin/vision-demo|camera/system)[.]rs)$'
           --lcov --output-path lcov.info
       - name: Coverage floor of each crate
         run: sh scripts/coverage-floors.sh lcov.info

@@ -152,7 +152,10 @@ are in French, a text with no French line shows in English, and another language
 [docs/EXTENDING.md](docs/EXTENDING.md)),
 and the plugin sandbox checked on Linux and macOS (CI runs every test plugin library, CLAP and VST3, through a real
 plugin process on both: load, audio, state, crash, hang, a library that fails or never returns, many instances in a
-row, and an edit made in the plugin's own editor, whose begin and end now reach the app from a sandboxed plugin).
+row, and an edit made in the plugin's own editor, whose begin and end now reach the app from a sandboxed plugin),
+and the core of webcam hand control (the `atomik-vision` crate: a camera behind a trait on every system, the two hand
+models run in pure Rust and downloaded once after a consent, and a recogniser for a pinch of the thumb and index
+finger and a ratcheted twist of the wrist, with a `vision-demo` tool to try them; nothing in the app uses it yet).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -319,6 +322,11 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
   looped clip, a triplet variation, a menu of its own (it is in the Edit menu) and a list that follows edits made
   while it is open (FIND searches again).
 - **Reference tracks.** Up to 16 reference files per song, kept in the project and collected with it, one key to switch between the mix and the selected reference after the master chain (live only, never in a bounce or export) with a short crossfade, a start at the song position or at a cue of its own, an automatic level match from the short-term loudness of the mix and of the loudest section of the reference with the matched gain slowly following, and a band solo (sub, low, mid, high) and a mid or side solo applied to both. Still to come: a reference that follows seeks while it plays, a manual trim of the matched gain and a loudness match over a section the user chooses.
+- **Webcam hand control.** The core is done (see above): the camera, the hand models and the gesture recogniser in
+  the `atomik-vision` crate, tried with `vision-demo`. Still to come: the app side (a consent dialog and the one-time
+  model download from the Settings, the camera switch with its lit indicator and its camera choice, and a preview
+  with the landmarks), turning the last clicked knob with a pinch and twist (fine and coarse control by how near the
+  hand is), and the camera as a virtual MIDI controller that MIDI Learn can map.
 
 ## Phase 5: Devices
 

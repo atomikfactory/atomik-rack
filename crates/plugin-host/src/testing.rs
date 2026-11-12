@@ -5,7 +5,7 @@
 //! once, then located by the platform's library file name in the target directory. A missing or
 //! unbuildable artifact fails loudly instead of skipping the test.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, PoisonError};
 
@@ -152,6 +152,25 @@ pub fn build_cdylib(package: &str) -> Result<PathBuf, TestingError> {
     locate_cdylib(&package.replace('-', "_"))
 }
 
+/// Copies `built` over `target` for test processes that may be loading `target` right now: the
+/// bytes go to a private temporary file next to it, which is then renamed over it, so a reader
+/// sees the old file or the whole new one, never a half-written one ("file too short"). A copy
+/// that is loaded elsewhere cannot be replaced on Windows; keeping it is fine because it is a
+/// copy of an earlier build of the same sources.
+fn install_copy(built: &Path, target: &Path) {
+    let Some(name) = target.file_name() else {
+        return;
+    };
+    let temp = target.with_file_name(format!(
+        ".{}.{}.tmp",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    if std::fs::copy(built, &temp).is_ok() && std::fs::rename(&temp, target).is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+}
+
 /// Builds `package` and installs a copy named `<crate>.clap` in a `clap-plugins` folder of the
 /// target directory (what a scanner finds), returning the copy's path. The copy is rewritten
 /// only when the build is newer, so a library a test process has loaded is not replaced under it.
@@ -170,9 +189,7 @@ pub fn clap_test_plugin(package: &str) -> Result<PathBuf, TestingError> {
         _ => true,
     };
     if stale {
-        // A copy that is loaded elsewhere cannot be overwritten on Windows; keeping it is fine
-        // because it is a copy of an earlier build of the same sources.
-        let _ = std::fs::copy(&built, &target);
+        install_copy(&built, &target);
         if !target.is_file() {
             return Err(TestingError::NotBuilt(package.to_string(), target));
         }
@@ -250,9 +267,7 @@ pub fn vst3_test_plugin(package: &str) -> Result<PathBuf, TestingError> {
         _ => true,
     };
     if stale {
-        // A copy that is loaded elsewhere cannot be overwritten on Windows; keeping it is fine
-        // because it is a copy of an earlier build of the same sources.
-        let _ = std::fs::copy(&built, &binary);
+        install_copy(&built, &binary);
         if !binary.is_file() {
             return Err(TestingError::NotBuilt(package.to_string(), binary));
         }
@@ -277,7 +292,7 @@ pub fn vst3_test_plugin_file(package: &str) -> Result<PathBuf, TestingError> {
         _ => true,
     };
     if stale {
-        let _ = std::fs::copy(&built, &target);
+        install_copy(&built, &target);
         if !target.is_file() {
             return Err(TestingError::NotBuilt(package.to_string(), target));
         }

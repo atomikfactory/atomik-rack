@@ -133,8 +133,12 @@ jobs:
             profile: release
     env:
       # A documents-only change skips the steps below, not the job: a matrix job that is skipped
-      # as a whole never reports the names a required check waits for.
-      RUN_CODE: ${{ needs.changes.outputs.code }}
+      # as a whole never reports the names a required check waits for. The release legs take 45
+      # to 70 minutes, so a pull request runs the debug legs only (on its affected packages); the
+      # release legs run on main after the merge and on a manual run.
+      RUN_CODE: >-
+        ${{ (matrix.profile == 'release' && github.event_name == 'pull_request')
+            && 'false' || needs.changes.outputs.code }}
       # `--workspace`, or the affected packages as `-p name ...` on a pull request.
       PACKAGES: ${{ needs.changes.outputs.packages }}
     steps:

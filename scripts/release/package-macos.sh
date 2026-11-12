@@ -62,6 +62,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>$min_os</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>Atomik Rack records audio from your input device.</string>
+  <key>NSCameraUsageDescription</key><string>Atomik Rack uses the camera to follow your hand when you turn on hand control. Pictures stay in memory and are never saved or sent.</string>
 </dict>
 </plist>
 PLIST

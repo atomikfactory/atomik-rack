@@ -2157,3 +2157,43 @@ to `api.github.com` and, when a newer release exists, the notice offers What's n
 browser), Skip this version and Later; start again within a day and no request is made. Help > Check for Updates
 asks at once and says "is the newest version" when there is nothing newer. With the network off, the same command
 says it could not check and the daily check says nothing.
+
+## Hand tracking (webcam)
+
+The tests of `crates/vision` need no camera, no model files and no network:
+
+```sh
+cargo test -p atomik-vision
+```
+
+- `tests/gesture.rs` runs the recogniser on synthetic hands (a parametric hand that is turned, pinched, moved, given
+  noise and a dropped frame, in `tests/support/mod.rs`). The frames of the main sequences are checked in as
+  `tests/fixtures/*.json`; `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-vision --test gesture -- --test-threads=1`
+  rewrites them when the generator changes.
+- `tests/download.rs` runs the model download through a fake fetcher (a good download, a wrong checksum or size, a
+  failed request, a cancel, a damaged file, nothing requested when the files are ready).
+- `tests/tracker.rs` drives the tracker end to end with a fake camera and a scripted hand finder: events, a clean
+  stop, the camera released, switching cameras, the newest-frame handoff, the preview.
+
+The real models are not in the repository. To run the tests that need them, download the two files once (the
+`vision-demo models --download` tool below puts them in the settings folder; the addresses are in
+[DEPENDENCIES.md](DEPENDENCIES.md#model-files)) and point `ATOMIK_VISION_MODELS` at the folder that holds them:
+
+```sh
+ATOMIK_VISION_MODELS=/path/to/models/hands cargo test --release -p atomik-vision --test models -- --nocapture
+```
+
+Without the variable every test in `tests/models.rs` prints that it was skipped and passes. With it they check the
+output shapes, that a synthetic input gives finite numbers, that two runs are bit-identical, that the pinned
+checksums match the files, and print the time of the detector and the landmark model (a release build only means
+something: about 35 ms and 19 ms on a desktop CPU, so a followed hand costs about 20 ms a frame).
+
+Hand checks with a real camera, by `vision-demo` (`cargo run --release -p atomik-vision --bin vision-demo -- ...`):
+
+- `cameras` lists the cameras; `models` shows the state of the model files and `models --download` asks y/N and
+  fetches them (the only network use).
+- `track [--camera N] [--hands 2]` prints `hand=R pinch=on twist=+23.4° size=0.31 fps=30 infer=12ms` ten times a
+  second: pinch the thumb and index finger and turn the wrist, then open the fingers. The twist counts from the
+  moment of the pinch; a clockwise turn as you see yourself in a mirror is positive.
+- `record out.json --seconds 10` saves the landmark stream (numbers only, no pictures) for new fixtures.
+- The camera light is on only while `track` or `record` runs.
