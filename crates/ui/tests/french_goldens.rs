@@ -129,6 +129,26 @@ fn the_transport_bar_in_french() {
 }
 
 #[test]
+fn the_camera_button_in_french() {
+    let (doc, reg) = (song_doc(), registry());
+    for (name, on) in [("off", false), ("on", true)] {
+        french(&format!("transport_camera_{name}_1x.json"), || {
+            let mut v = atomik_ui::TransportBar::new(Theme::dark());
+            v.set_bounds(Rect::new(0.0, 0.0, 1920.0, 44.0));
+            v.sync(&doc, &reg);
+            let state = atomik_ui::TransportState {
+                camera: on,
+                ..v.state()
+            };
+            v.set_state(state);
+            let mut dl = DisplayList::new();
+            v.paint(&mut dl, &doc, &reg);
+            dl
+        });
+    }
+}
+
+#[test]
 fn the_piano_roll_in_french() {
     let (doc, reg) = (song_doc(), registry());
     french("piano_roll_1x.json", || {
@@ -309,6 +329,91 @@ fn the_learn_strip_of_a_plugin_window_in_french() {
             });
             let mut dl = DisplayList::new();
             v.paint(&mut dl);
+            dl
+        });
+    }
+}
+
+/// The webcam controller's preview box and consent dialog in French.
+#[test]
+fn the_camera_views_in_french() {
+    use atomik_ui::{
+        CameraDialogState, CameraDialogView, CameraLamp, CameraPicture, CameraPreviewState,
+        CameraPreviewView,
+    };
+    let picture = || CameraPicture {
+        width: 2,
+        height: 2,
+        rgb: vec![10; 12],
+    };
+    let hand: Vec<(f32, f32)> = (0..21)
+        .map(|i| (0.2 + 0.03 * i as f32, 0.9 - 0.035 * i as f32))
+        .collect();
+    let previews = [
+        ("no_hand", CameraLamp::NoHand, false, None, None),
+        ("hand", CameraLamp::Hand, true, None, None),
+        (
+            "pinch",
+            CameraLamp::Pinch,
+            true,
+            Some(("Lead Cutoff", "2.4 kHz")),
+            None,
+        ),
+        (
+            "no_target",
+            CameraLamp::Pinch,
+            true,
+            None,
+            Some("Click a knob first"),
+        ),
+    ];
+    for (name, lamp, with_hand, target, message) in previews {
+        let (hand, picture) = (hand.clone(), picture());
+        french(&format!("camera_preview_{name}_1x.json"), move || {
+            let mut v = CameraPreviewView::new();
+            v.set_origin(atomik_ui::kurbo::Point::new(660.0, 380.0));
+            v.set_state(CameraPreviewState {
+                lamp,
+                picture: Some(picture),
+                hands: if with_hand { vec![hand] } else { Vec::new() },
+                target: target.map(|t| t.0.to_owned()),
+                value: target.map(|t| t.1.to_owned()),
+                message: message.map(str::to_owned),
+                fps: 29.6,
+                infer_ms: 21.4,
+            });
+            let mut dl = DisplayList::new();
+            v.paint(&mut dl, &Theme::dark());
+            dl
+        });
+    }
+    let dialogs = [
+        (
+            "consent",
+            CameraDialogState::Consent {
+                source: "storage.googleapis.com".into(),
+                bytes: 7_818_763,
+            },
+        ),
+        (
+            "downloading",
+            CameraDialogState::Downloading {
+                received: 3_000_000,
+                total: 7_818_763,
+            },
+        ),
+        (
+            "failed",
+            CameraDialogState::Failed {
+                message: "The server answered 500".into(),
+            },
+        ),
+    ];
+    for (name, state) in dialogs {
+        french(&format!("camera_dialog_{name}_1x.json"), move || {
+            let mut v = CameraDialogView::new((900.0, 600.0), state);
+            let mut dl = DisplayList::new();
+            v.paint(&mut dl, &Theme::dark());
             dl
         });
     }

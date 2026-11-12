@@ -23,12 +23,18 @@ pub struct MidiMarks {
     pub armed: Option<(DeviceKey, String)>,
     /// MIDI Learn mode is on.
     pub learning: bool,
+    /// The control the camera turns, while the camera is on (a ring and a small lens).
+    pub camera: Option<(DeviceKey, String)>,
 }
 
 impl MidiMarks {
     /// True when nothing is marked and learning is off (the views then paint nothing extra).
     pub fn is_empty(&self) -> bool {
-        self.mapped.is_empty() && self.vcas.is_empty() && self.armed.is_none() && !self.learning
+        self.mapped.is_empty()
+            && self.vcas.is_empty()
+            && self.armed.is_none()
+            && !self.learning
+            && self.camera.is_none()
     }
 
     /// Paints the mark of the control `param` of `device` whose cell is `rect` (in the
@@ -48,6 +54,22 @@ impl MidiMarks {
         let mapped = self.mapped.contains(&key);
         let armed = self.armed.as_ref() == Some(&key);
         self.paint(c, theme, mapped, armed, rect);
+        if self.camera.as_ref() == Some(&key) {
+            self.paint_camera(c, theme, rect);
+        }
+    }
+
+    /// The ring and the small lens of the control the camera turns.
+    fn paint_camera(&self, c: &mut dyn Canvas, theme: &Theme, rect: Rect) {
+        c.stroke_with(
+            RoundedRect::from_rect(rect.inset(-2.0), 5.0),
+            1.6,
+            theme.focus,
+        );
+        let at = Point::new(rect.x0 + 4.0, rect.y0 + 4.0);
+        c.fill_with(Circle::new(at, 4.0), theme.background);
+        c.stroke_with(Circle::new(at, 3.0), 1.2, theme.focus);
+        c.fill_with(Circle::new(at, 1.1), theme.focus);
     }
 
     /// Paints the mark of a VCA group's plate or fader cell.

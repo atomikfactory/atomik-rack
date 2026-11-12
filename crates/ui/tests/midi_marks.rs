@@ -229,3 +229,37 @@ fn a_mapped_vca_strip_is_marked() {
     });
     assert_eq!(circles(&paint_console(&mut v, &doc, &reg)), base);
 }
+
+// ---- The camera target ---------------------------------------------------------------------------
+
+#[test]
+fn the_control_the_camera_turns_carries_a_ring_and_a_lens_and_only_that_one() {
+    let doc = reference_doc();
+    let mut v = plain_view(&doc, &registry());
+    v.set_midi_marks(MidiMarks::default());
+    let plain = paint_rack_view(&mut v, &doc);
+    v.set_midi_marks(MidiMarks {
+        camera: Some((key("synth"), "filter.cutoff".to_owned())),
+        ..MidiMarks::default()
+    });
+    let with_camera = paint_rack_view(&mut v, &doc);
+    assert_ne!(
+        plain.to_json(),
+        with_camera.to_json(),
+        "the target is marked"
+    );
+    assert!(circles(&with_camera) > circles(&plain), "the lens");
+    // A target on another device marks nothing here.
+    v.set_midi_marks(MidiMarks {
+        camera: Some((key("nowhere"), "x".to_owned())),
+        ..MidiMarks::default()
+    });
+    assert_eq!(paint_rack_view(&mut v, &doc).to_json(), plain.to_json());
+    assert!(
+        !MidiMarks {
+            camera: Some((key("synth"), "filter.cutoff".to_owned())),
+            ..MidiMarks::default()
+        }
+        .is_empty()
+    );
+}

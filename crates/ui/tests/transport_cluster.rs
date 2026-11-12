@@ -70,7 +70,7 @@ fn wheel(pos: Point, dy: f64) -> UiEvent {
     }
 }
 
-const ALL_PARTS: [ClusterPart; 10] = [
+const ALL_PARTS: [ClusterPart; 11] = [
     ClusterPart::Rewind,
     ClusterPart::Forward,
     ClusterPart::Tap,
@@ -81,6 +81,7 @@ const ALL_PARTS: [ClusterPart; 10] = [
     ClusterPart::Grid,
     ClusterPart::Quantize,
     ClusterPart::Key,
+    ClusterPart::Camera,
 ];
 
 /// Every rectangle the cluster shows, with a name.
@@ -421,4 +422,61 @@ fn the_key_field_is_the_first_to_go_when_the_bar_is_narrow() {
     let b = bar_of(1000.0, &doc);
     assert!(b.cluster_rect(ClusterPart::Key).is_none());
     assert!(b.cluster_rect(ClusterPart::More).is_some());
+}
+
+#[test]
+fn the_camera_button_runs_the_camera_command_and_lights_while_the_camera_is_on() {
+    let doc = song_doc();
+    let mut b = bar_of(1920.0, &doc);
+    let r = b
+        .cluster_rect(ClusterPart::Camera)
+        .expect("room for CAM at 1920 px");
+    let a = click(&mut b, &doc, r.center());
+    assert_eq!(
+        a,
+        vec![UiAction::RunCommand {
+            id: "camera.toggle".into(),
+            arg: None
+        }]
+    );
+    // It has a tooltip with the command.
+    let help = b.help_at(r.center()).expect("a tooltip");
+    assert_eq!(help.command, Some("camera.toggle"));
+    assert!(help.text.chars().count() <= 90, "{}", help.text);
+    // Lit with the camera on: the display list differs, and the lit dot is drawn.
+    let paint = |b: &mut TransportBar| {
+        let mut dl = DisplayList::new();
+        b.paint(&mut dl, &doc, &registry());
+        dl.to_json()
+    };
+    let off = paint(&mut b);
+    b.set_state(atomik_ui::TransportState {
+        camera: true,
+        ..b.state()
+    });
+    let on = paint(&mut b);
+    assert_ne!(off, on);
+}
+
+#[test]
+fn the_camera_button_is_the_first_to_go_into_the_overflow_menu() {
+    let (b, _) = with_rec(1000.0);
+    assert!(b.cluster_rect(ClusterPart::Camera).is_none());
+    assert!(b.cluster_rect(ClusterPart::More).is_some());
+}
+
+#[test]
+fn the_camera_button_off_and_on_matches_its_goldens() {
+    let doc = song_doc();
+    for (name, on) in [("off", false), ("on", true)] {
+        let mut b = bar_of(1920.0, &doc);
+        let state = TransportState {
+            camera: on,
+            ..b.state()
+        };
+        b.set_state(state);
+        let mut dl = DisplayList::new();
+        b.paint(&mut dl, &doc, &registry());
+        starter::check_golden(&format!("transport_camera_{name}_1x.json"), &dl.to_json());
+    }
 }

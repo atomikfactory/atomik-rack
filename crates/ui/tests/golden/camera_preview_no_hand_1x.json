@@ -1,0 +1,18 @@
+{"ops":[
+{"transform":[1.00,0.00,0.00,1.00,0.00,0.00]},
+{"fill":{"rrect":[660.00,380.00,836.00,568.00,8.00]},"brush":"#16181bff"},
+{"stroke":{"rrect":[660.00,380.00,836.00,568.00,8.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"fill":{"circle":[671.00,392.00,3.50]},"brush":"#8f96a0ff"},
+{"text":"NO HAND","at":[680.00,396.00],"size":10.50,"weight":700,"align":"start","color":"#ece8e1ff"},
+{"text":"×","at":[824.00,396.00],"size":13.00,"weight":400,"align":"center","color":"#8f96a0ff"},
+{"fill":{"rrect":[668.00,402.00,828.00,522.00,4.00]},"brush":"#0e1013ff"},
+{"clip":{"rect":[668.00,402.00,828.00,522.00]}},
+{"transform":[-20.00,0.00,0.00,20.00,828.00,402.00]},
+{"fill":{"rect":[0.00,0.00,8.00,6.00]},"brush":"image"},
+{"pop_transform":true},
+{"transform":[-1.00,0.00,0.00,1.00,828.00,402.00]},
+{"pop_transform":true},
+{"pop_clip":true},
+{"text":"Click a knob, pinch, twist","at":[668.00,538.00],"size":10.50,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"pop_transform":true}
+]}
