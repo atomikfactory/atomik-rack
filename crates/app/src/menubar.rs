@@ -939,6 +939,8 @@ mod tests {
             console_links: false,
             cpu_meters: false,
             big_meter: false,
+            camera: false,
+            camera_preview: false,
             tempo_lane: false,
             energy_lane: false,
             key_lane: false,

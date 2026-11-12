@@ -261,6 +261,10 @@ pub enum AppCommand {
     /// View > Big Meter: a large VU, PPM or peak meter with a hold marker and clip lamps for one
     /// pair of the Audio I/O sockets, floating over the rack. Not saved: it starts hidden.
     ToggleBigMeter,
+    /// Turns the webcam controller on or off.
+    ToggleCamera,
+    /// Shows or hides the camera preview box.
+    ToggleCameraPreview,
     /// View > Tempo Lane: the tempo curve lane between the ruler and the track lanes in the
     /// arrangement (saved with the view state).
     ToggleTempoLane,
@@ -1025,6 +1029,8 @@ impl AppCommand {
             AppCommand::ToggleConsoleLinks => ("view.toggle_console_links", None),
             AppCommand::ToggleCpuMeters => ("view.toggle_cpu_meters", None),
             AppCommand::ToggleBigMeter => ("view.toggle_big_meter", None),
+            AppCommand::ToggleCamera => ("camera.toggle", None),
+            AppCommand::ToggleCameraPreview => ("camera.preview", None),
             AppCommand::ToggleTempoLane => ("view.toggle_tempo_lane", None),
             AppCommand::ToggleEnergyLane => ("view.toggle_energy_lane", None),
             AppCommand::ToggleKeyLane => ("view.toggle_key_lane", None),
@@ -1436,6 +1442,8 @@ impl AppCommand {
             ("view.toggle_console_links", None) => AppCommand::ToggleConsoleLinks,
             ("view.toggle_cpu_meters", None) => AppCommand::ToggleCpuMeters,
             ("view.toggle_big_meter", None) => AppCommand::ToggleBigMeter,
+            ("camera.toggle", None) => AppCommand::ToggleCamera,
+            ("camera.preview", None) => AppCommand::ToggleCameraPreview,
             ("view.toggle_tempo_lane", None) => AppCommand::ToggleTempoLane,
             ("view.toggle_energy_lane", None) => AppCommand::ToggleEnergyLane,
             ("view.toggle_key_lane", None) => AppCommand::ToggleKeyLane,
@@ -2275,6 +2283,10 @@ pub struct MenuState {
     pub cpu_meters: bool,
     /// The Big Meter shows over the rack.
     pub big_meter: bool,
+    /// The webcam controller is on.
+    pub camera: bool,
+    /// The camera preview box is switched on.
+    pub camera_preview: bool,
     /// The arrangement shows the tempo lane.
     pub tempo_lane: bool,
     /// The arrangement shows the energy lane.
@@ -3313,6 +3325,12 @@ fn menus_in_english(
                             state.spectrum_eq,
                         ),
                         check("Video", AppCommand::ToggleVideo, state.video_window),
+                        check("Camera", AppCommand::ToggleCamera, state.camera),
+                        check(
+                            "Camera Preview",
+                            AppCommand::ToggleCameraPreview,
+                            state.camera_preview,
+                        ),
                         check(
                             "Rack Navigator",
                             AppCommand::ToggleRackNavigator,
@@ -4710,6 +4728,8 @@ mod tests {
             console_links: false,
             cpu_meters: false,
             big_meter: false,
+            camera: false,
+            camera_preview: false,
             tempo_lane: false,
             energy_lane: false,
             key_lane: false,
@@ -4853,6 +4873,8 @@ mod tests {
             AppCommand::ToggleConsoleLinks,
             AppCommand::ToggleCpuMeters,
             AppCommand::ToggleBigMeter,
+            AppCommand::ToggleCamera,
+            AppCommand::ToggleCameraPreview,
             AppCommand::ToggleTempoLane,
             AppCommand::ToggleEnergyLane,
             AppCommand::RefreshEnergyLane,
@@ -5871,6 +5893,8 @@ mod tests {
                 console_links: false,
                 cpu_meters: false,
                 big_meter: false,
+                camera: false,
+                camera_preview: false,
                 tempo_lane: false,
                 energy_lane: false,
                 key_lane: false,

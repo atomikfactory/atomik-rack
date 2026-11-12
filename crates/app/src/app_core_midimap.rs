@@ -56,6 +56,8 @@ pub(super) enum GestureKey {
     Map(u32),
     /// A control of a surface (`strip:3`, `master`, `pan:3`).
     Surface(String),
+    /// The pinch of the webcam controller.
+    Camera,
 }
 
 /// A held control: its merge id, when it last moved and whether a finger holds it (a touch
@@ -783,6 +785,10 @@ impl<S: EngineSink> AppCore<S> {
         }
         if let Some(MidiTarget::Param { device, param }) = &self.midi.armed {
             marks.armed = Some((device.clone(), param.clone()));
+        }
+        // The control the camera turns, while the camera is on.
+        if self.camera_is_on() {
+            marks.camera = self.camera_target().cloned();
         }
         marks
     }

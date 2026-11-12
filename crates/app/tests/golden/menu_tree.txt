@@ -209,6 +209,8 @@ View
     Detach Mixer
     Spectrum EQ
     Video
+    Camera
+    Camera Preview
     Rack Navigator
     Rack Sorting >
       No Grouping

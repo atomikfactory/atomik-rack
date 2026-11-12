@@ -112,10 +112,11 @@ macro_rules! docs {
 /// The manual sections the help text links to, with the address that opens each in the browser
 /// (the same way Help > Documentation opens the project page). The built-in manual holds all of
 /// them; the address is where a section would open if it did not.
-const SECTIONS: [(&str, &str); 5] = [
+const SECTIONS: [(&str, &str); 6] = [
     ("The main window", docs!("README.md#the-main-window")),
     ("CPU use", docs!("README.md#cpu-use")),
     ("Launcher", docs!("README.md#launcher")),
+    ("Webcam control", docs!("README.md#webcam-control")),
     ("Help Mode", docs!("README.md#help-mode")),
     ("Devices", docs!("DEVICES.md")),
 ];

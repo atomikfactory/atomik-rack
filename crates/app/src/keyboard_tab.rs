@@ -50,6 +50,10 @@ pub(crate) enum TabOutcome {
     PickFfmpegFolder,
     /// Ask the platform for the backup folder (the Backup tab's Choose).
     PickBackupFolder,
+    /// The Camera tab asks for the list of cameras.
+    ListCameras,
+    /// The Camera tab asks for the downloaded hand models to be deleted.
+    DeleteCameraModels,
     /// The Themes tab asks the shell for something.
     Theme(crate::themes_tab::ThemeAction),
 }

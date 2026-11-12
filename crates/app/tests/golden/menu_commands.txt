@@ -402,6 +402,8 @@ StressSong | Stress Song
 ThemeManager | Theme Manager…
 ToggleBigMeter | Big Meter
 ToggleBrowser | Device Browser
+ToggleCamera | Camera
+ToggleCameraPreview | Camera Preview
 ToggleChase | Chase Notes
 ToggleChordLane | Chord Lane
 ToggleClockIn | Follow MIDI Clock

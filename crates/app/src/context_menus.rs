@@ -95,6 +95,8 @@ pub struct MenuEnable {
     pub lens_mono: bool,
     /// Transport menu: the lens is off (headphones).
     pub lens_off: bool,
+    /// Transport menu: the webcam controller is on (the row is checked).
+    pub camera: bool,
     /// Tempo point: "Ramp to Next" can be switched (the point is not the last).
     pub tempo_can_ramp: bool,
     /// Tempo point: it ramps to the next point (the item is checked).
@@ -1124,6 +1126,8 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 quantize("sixteenth", "Input Quantize: 1/16"),
                 Spec::Separator,
                 item("transport.set_song_key", true),
+                Spec::Separator,
+                lens("camera.toggle", "Camera", e.camera),
                 Spec::Separator,
                 lens(
                     "mixer.lens_small_speaker",

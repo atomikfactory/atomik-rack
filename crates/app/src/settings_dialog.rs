@@ -17,6 +17,7 @@
 //! preferences the dialog is the audio-only dialog it always was.
 
 use crate::backup_tab::{BackupLayout, BackupTab};
+use crate::camera_tab::{CameraLayout, CameraTab};
 use crate::controller_profile::ProfileOptions;
 use crate::interface_tab::{InterfaceLayout, InterfaceTab, UiPrefs};
 use crate::keyboard_tab::{FOOTER, KeyboardLayout, KeyboardTab, PAD, TITLE, TabOutcome};
@@ -206,16 +207,18 @@ pub enum Tab {
     Video,
     /// The folder every saved project is also copied into.
     Backup,
+    /// The webcam controller.
+    Camera,
     /// The themes: use one, make your own.
     Themes,
 }
 
 /// The size of the labels in the tab strip.
-const TAB_FONT: f32 = 11.0;
+const TAB_FONT: f32 = 10.5;
 
 impl Tab {
     /// Every tab, in strip order.
-    pub const ALL: [Tab; 9] = [
+    pub const ALL: [Tab; 10] = [
         Tab::Audio,
         Tab::Keyboard,
         Tab::Workflow,
@@ -224,6 +227,7 @@ impl Tab {
         Tab::Sync,
         Tab::Video,
         Tab::Backup,
+        Tab::Camera,
         Tab::Themes,
     ];
 
@@ -238,6 +242,7 @@ impl Tab {
             Tab::Sync => "Sync",
             Tab::Video => "Video",
             Tab::Backup => "Backup",
+            Tab::Camera => "Camera",
             Tab::Themes => "Themes",
         }
     }
@@ -253,6 +258,7 @@ impl Tab {
             Tab::Sync => "MIDI clock",
             Tab::Video => "Video & updates",
             Tab::Backup => "Backups",
+            Tab::Camera => "Camera",
             Tab::Themes => "Themes",
         }
     }
@@ -274,6 +280,7 @@ struct Prefs {
     interface: InterfaceTab,
     video: VideoTab,
     backup: BackupTab,
+    camera: CameraTab,
     themes: ThemesTab,
     /// The theme in use when it is not a Dark / Light / System choice (see
     /// [`WorkflowPrefs::theme_id`]).
@@ -329,6 +336,10 @@ pub enum DialogOutcome {
     PickFfmpegFolder,
     /// The Backup tab asks for the backup folder (the dialog stays open).
     PickBackupFolder,
+    /// The Camera tab asks for the list of cameras (the dialog stays open).
+    ListCameras,
+    /// The Camera tab asks for the downloaded hand models to be deleted (the dialog stays open).
+    DeleteCameraModels,
     /// The Controllers tab asks for the set-up wizard (the dialog stays open).
     SetUpController,
     /// The Controllers tab asks for a file to export the controller profile to.
@@ -464,6 +475,10 @@ impl SettingsDialog {
                 workflow.backup_folder.clone(),
                 workflow.backup_keep,
                 workflow.backup_audio,
+            ),
+            camera: CameraTab::new(
+                workflow.camera.clone(),
+                crate::vision_link::ModelState::Missing,
             ),
             themes: ThemesTab::new(Vec::new(), String::new()),
             theme_id: workflow.theme_id.clone(),
@@ -631,6 +646,30 @@ impl SettingsDialog {
             .map(|p| p.backup.layout(self.panel(view)))
     }
 
+    /// The Camera tab layout, while that tab shows.
+    pub fn camera_layout(&self, view: Size) -> Option<CameraLayout> {
+        if self.tab != Tab::Camera {
+            return None;
+        }
+        self.prefs
+            .as_ref()
+            .map(|p| p.camera.layout(self.panel(view)))
+    }
+
+    /// Shows the state of the hand models in the Camera tab.
+    pub fn set_camera_models(&mut self, models: crate::vision_link::ModelState) {
+        if let Some(p) = &mut self.prefs {
+            p.camera.set_models(models);
+        }
+    }
+
+    /// Shows the cameras the system listed in the Camera tab.
+    pub fn set_camera_list(&mut self, cameras: Vec<crate::vision_link::CameraEntry>) {
+        if let Some(p) = &mut self.prefs {
+            p.camera.set_cameras(cameras);
+        }
+    }
+
     /// Replaces the backup folder draft of the Backup tab (a picked folder; `None`: no backups).
     pub fn set_backup_folder(&mut self, folder: Option<PathBuf>) {
         if let Some(p) = &mut self.prefs {
@@ -665,6 +704,7 @@ impl SettingsDialog {
             workflow.backup_folder = p.backup.folder().cloned();
             workflow.backup_keep = p.backup.keep();
             workflow.backup_audio = p.backup.audio();
+            workflow.camera = p.camera.prefs().clone();
             workflow.theme_id = p.theme_id.clone();
             (p.keyboard.editor().user().clone(), workflow)
         })
@@ -753,6 +793,17 @@ impl SettingsDialog {
                 let y0 = ((view.height - height) / 2.0).max(0.0);
                 Rect::new(x0, y0, x0 + width, y0 + height)
             }
+            Tab::Camera => {
+                let width = (view.width - 32.0).clamp(240.0, 640.0);
+                let content = self
+                    .prefs
+                    .as_ref()
+                    .map_or(0.0, |p| p.camera.content_height());
+                let height = (TITLE + content + 24.0 + FOOTER).min(view.height - 32.0);
+                let x0 = ((view.width - width) / 2.0).max(0.0);
+                let y0 = ((view.height - height) / 2.0).max(0.0);
+                Rect::new(x0, y0, x0 + width, y0 + height)
+            }
             Tab::Themes => {
                 let width = (view.width - 32.0).clamp(240.0, 640.0);
                 let content = self
@@ -788,9 +839,9 @@ impl SettingsDialog {
         let mut right = panel.x1 - PAD;
         let mut out = Vec::new();
         for tab in Tab::ALL.into_iter().rev() {
-            // Nine tabs share the title row with the heading: a smaller label, little padding
+            // Ten tabs share the title row with the heading: a smaller label, little padding
             // and a hairline gap.
-            let w = text_width(atomik_ui::i18n::t(tab.label())) * f64::from(TAB_FONT) / 13.0 + 6.0;
+            let w = text_width(atomik_ui::i18n::t(tab.label())) * f64::from(TAB_FONT) / 13.0 + 3.0;
             out.push((
                 Rect::new(right - w, panel.y0 + 10.0, right, panel.y0 + 34.0),
                 tab,
@@ -1783,6 +1834,7 @@ impl SettingsDialog {
             }
             Tab::Video => prefs.video.handle(event, panel),
             Tab::Backup => prefs.backup.handle(event, panel),
+            Tab::Camera => prefs.camera.handle(event, panel),
             Tab::Themes => prefs.themes.handle(event, panel),
             Tab::Audio | Tab::Surfaces | Tab::Sync => TabOutcome::Open,
         };
@@ -1796,6 +1848,8 @@ impl SettingsDialog {
             TabOutcome::PickScratchFolder => DialogOutcome::PickScratchFolder,
             TabOutcome::PickFfmpegFolder => DialogOutcome::PickFfmpegFolder,
             TabOutcome::PickBackupFolder => DialogOutcome::PickBackupFolder,
+            TabOutcome::ListCameras => DialogOutcome::ListCameras,
+            TabOutcome::DeleteCameraModels => DialogOutcome::DeleteCameraModels,
             TabOutcome::Theme(action) => {
                 if let ThemeAction::Use(id) = &action {
                     self.use_theme(id);
@@ -1865,6 +1919,11 @@ impl SettingsDialog {
             }
             (Tab::Backup, Some(p)) => {
                 p.backup.paint(canvas, theme, panel_rect);
+                self.paint_buttons(canvas, theme, panel_rect);
+                return;
+            }
+            (Tab::Camera, Some(p)) => {
+                p.camera.paint(canvas, theme, panel_rect);
                 self.paint_buttons(canvas, theme, panel_rect);
                 return;
             }
