@@ -645,3 +645,49 @@ fn a_click_on_a_chord_plays_it_unless_play_chords_on_click_is_off() {
         "{actions:?}"
     );
 }
+
+#[test]
+fn paste_chord_puts_the_copied_chord_at_the_playhead() {
+    let (mut d, reg, mut v) = setup();
+    set(&mut d, &reg, &mut v, lane_harmony());
+    // Nothing copied yet.
+    v.set_playhead(6 * BAR);
+    assert!(matches!(
+        v.command("edit.paste_chord", None, d.doc(), &reg),
+        CommandOutcome::NotApplicable(_)
+    ));
+    // Copy the F major 7 of bar 4 (with edit.copy on the selected chord).
+    let p = v.chord_center(3 * BAR).unwrap();
+    play(&mut v, &mut d, &reg, &[down(p), up(p)]);
+    assert!(matches!(
+        v.command("edit.copy", None, d.doc(), &reg),
+        CommandOutcome::Handled(_)
+    ));
+    let CommandOutcome::Handled(actions) = v.command("edit.paste_chord", None, d.doc(), &reg)
+    else {
+        panic!("paste handled")
+    };
+    for a in actions {
+        if let UiAction::Command(Command::Song(c)) = a {
+            d.apply(Command::Song(c), &reg).unwrap();
+        }
+    }
+    let chords = &d.doc().song.harmony.chords;
+    assert_eq!(chords.len(), 3);
+    assert_eq!(
+        (
+            chords[2].tick,
+            chords[2].length,
+            chords[2].root,
+            chords[2].quality
+        ),
+        (6 * BAR, BAR, 5, ChordKind::MajorSeventh)
+    );
+    // The playhead inside a chord: not applicable.
+    v.sync(d.doc(), &reg);
+    v.set_playhead(BAR);
+    assert!(matches!(
+        v.command("edit.paste_chord", None, d.doc(), &reg),
+        CommandOutcome::NotApplicable(_)
+    ));
+}

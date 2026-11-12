@@ -2647,3 +2647,6 @@ Chord follow => Suivi de l'accord
 Chord octave => Octave de l'accord
 Gate by keys => Selon les touches
 Play Chords on Click => Jouer les accords au clic
+Paste Chord => Coller l'accord
+Copy a chord of the chord lane first => Copiez d'abord un accord de la voie des accords
+The playhead is inside a chord => La tête de lecture est dans un accord

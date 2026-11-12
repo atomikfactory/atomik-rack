@@ -512,6 +512,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("edit.paste", "Paste", G::Edit, C::Global)
         .decline()
         .menu(),
+    cmd("edit.paste_chord", "Paste Chord", G::Edit, C::Sequencer),
     cmd("edit.paste_settings", "Paste Settings", G::Edit, C::Rack),
     cmd(
         "edit.quantize_options",
