@@ -420,6 +420,18 @@ impl Shared {
                 }
                 return post(PluginMessage::GuiResize { w: *w, h: *h });
             }
+            FromChild::GuiFrame { x, y, w, h } => {
+                if *w > MAX_GUI_DIMENSION || *h > MAX_GUI_DIMENSION {
+                    self.rejected.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+                return post(PluginMessage::GuiFrame {
+                    x: *x,
+                    y: *y,
+                    w: *w,
+                    h: *h,
+                });
+            }
             FromChild::GuiClosed => return post(PluginMessage::GuiClosed),
             FromChild::GuiRequestShow => return post(PluginMessage::GuiRequestShow),
             FromChild::GuiRequestHide => return post(PluginMessage::GuiRequestHide),
