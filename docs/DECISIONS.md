@@ -680,3 +680,30 @@ reports `SongChanged` so the engine gets it with the next song swap. The new dev
 that follow nothing, so older songs and patches play as before.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AC. The Learn strip of a plugin window is a docked window of its own
+
+**Question.** Learn in the plugin window needs a thin app-drawn strip with the plugin's name and the LEARN AUTOMATION
+and LEARN MIDI toggles at each plugin editor. Where does it go for each kind of editor: the embedded ones (our own
+top-level window, with the plugin's view embedded in it) and the external ones (the window of a sandboxed plugin's own
+process, the default)?
+
+**Options.** (1) Inside the editor window: the window grows by the strip's height, the plugin's view goes into a native
+child area below it and the app draws the strip above; (2) a borderless window of the app, docked to the editor
+window's top edge and following its moves and resizes, for both kinds; (3) the strip only in the parameter pane.
+
+**Implications.** (1) needs a native child window (a child `HWND`, an `NSView` subview, an X11 subwindow) between the
+top-level window and the plugin's view, which the app can only make through `unsafe` platform calls (the workspace
+denies `unsafe` outside the plugin backends), and it cannot reach into the window of a sandboxed plugin's process at
+all. (2) never puts a surface over or beside the plugin's view inside one window, so it cannot cause the flicker and
+focus bugs that made the editors top-level windows in the first place; it needs the editor's frame, which our own
+windows give and which a plugin's process now reports (`GuiFrame`, on every move and resize and when the editor is
+shown). (3) leaves the user's eyes on the rack instead of the plugin.
+
+**Decision.** (2), with (3) as the fallback. The strip is an undecorated window with its own surface, shown without
+being activated, owned on Windows by the editor window (embedded) or the app window (external) so it stays above them
+and minimises with them, an X11 utility window on Linux; it docks right above the editor's frame, or below it when
+the space above is off the screen. A Wayland session gives no window positions, so it has no strip; the parameter
+pane's top bar has the same two toggles everywhere. The mode is view state per editor, never saved.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

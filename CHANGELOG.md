@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Learn in the plugin window.** Every plugin editor window gets a thin strip docked to its top edge with the
+  plugin's name, LEARN AUTOMATION, LEARN MIDI, a status line and a close button. Pick a mode, then touch a control
+  in the plugin's own interface: LEARN AUTOMATION shows that parameter's automation lane in the arrangement (an
+  empty lane is added when it has none), LEARN MIDI arms it so the next hardware control moved is mapped to it (one
+  undo step; the strip names the source). The mode stays armed for the next touch; the lit button, the close button,
+  Esc in the main window, closing the editor and the global MIDI Learn mode disarm it. The touch is the plugin's
+  gesture begin, or the first change of a parameter not moved for half a second for plugins that send none; the edit
+  itself still goes through, and a control that is not a parameter says so. The strip docks to embedded editors and
+  to the windows of sandboxed plugins (their process now reports where the window is); where no window position is
+  known (Wayland) the parameter pane's LEARN AUTOMATION and LEARN MIDI toggles do the same. Commands
+  `plugin.learn_automation` and `plugin.learn_midi`, in the palette and the plugin device's right-click menu.
 - **Devices that follow the song's key and chords.** Key & Chord has `scale.source` (song: the song key at the note,
   key changes included), `chord.source` (song chord) with `chord.follow` stamp (any key plays the lane's chord near
   it) or snap (each key moves to the nearest chord tone), and `chord.retrigger` (held keys are re-voiced at a chord
