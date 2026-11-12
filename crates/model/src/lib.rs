@@ -2295,7 +2295,7 @@ impl Document {
                 let edit = if cable.from.device.0.contains('/') || cable.to.device.0.contains('/') {
                     edit
                 } else {
-                    console_loop::with_returns(doc, edit)
+                    console_loop::with_returns(doc, registry, edit)
                 };
                 workflow_create::with_entries(doc, registry, edit)
             }
@@ -2320,7 +2320,11 @@ impl Document {
                     1 => cables.remove(0),
                     _ => Edit::Compound(cables),
                 };
-                workflow_create::with_entries(doc, registry, console_loop::with_returns(doc, cut))
+                workflow_create::with_entries(
+                    doc,
+                    registry,
+                    console_loop::with_returns(doc, registry, cut),
+                )
             }
             Command::SetParam {
                 key, param, value, ..
@@ -2430,8 +2434,12 @@ impl Document {
             Command::MidiMap(c) => midi_map::plan(doc, registry, c)?,
             Command::Macro(c) => macros::plan(doc, registry, c)?,
             Command::Song(song_command) => return song_cmd::plan(doc, registry, song_command),
-            Command::Workflow(c) => return workflow_cmd::plan(doc, registry, c),
+            Command::Workflow(c) => {
+                let (edit, clip) = workflow_cmd::plan(doc, registry, c)?;
+                return Ok((console_loop::settle(doc, edit), clip));
+            }
         };
+        let edit = console_loop::settle(doc, edit);
         Ok((edit, None))
     }
 }

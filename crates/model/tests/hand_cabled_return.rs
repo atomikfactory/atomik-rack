@@ -152,3 +152,121 @@ fn loading_does_not_register_an_open_loop() {
     let loaded = load_project(&text(&d), &r).unwrap();
     assert!(loaded.console.returns.iter().all(Option::is_none));
 }
+
+const SYNTH: &str = "atomik.poly-synth";
+
+/// `with_loose_reverb` plus two synths, each with a channel.
+fn with_channels(r: &Registry) -> (Document, Vec<atomik_model::DeviceKey>) {
+    let mut d = with_loose_reverb(r);
+    for k in ["s1", "s2"] {
+        d.apply(
+            wf(WorkflowCommand::CreateInstrument {
+                index: usize::MAX,
+                source: CreateSource::Type(SYNTH.into()),
+                key: Some(key(k)),
+                options: CreateOptions::default(),
+            }),
+            r,
+        )
+        .unwrap();
+    }
+    let channels = d
+        .doc()
+        .console
+        .channels
+        .iter()
+        .map(|c| c.channel.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(channels.len(), 2);
+    (d, channels)
+}
+
+fn param(d: &Document, device: &atomik_model::DeviceKey, name: &str) -> Option<f32> {
+    d.doc().device(device).unwrap().params.get(name).copied()
+}
+
+#[test]
+fn registering_the_loop_turns_the_send_on_for_channels_where_it_is_off() {
+    let r = reg();
+    let (mut d, chans) = with_channels(&r);
+    for c in &chans {
+        assert_eq!(param(&d, c, "send2.on"), None, "off by default");
+    }
+    d.apply(
+        Command::SetParam {
+            key: chans[1].clone(),
+            param: "send2.on".into(),
+            value: 1.0,
+            merge: None,
+        },
+        &r,
+    )
+    .unwrap();
+    d.apply(
+        Command::SetParam {
+            key: chans[1].clone(),
+            param: "send2.level".into(),
+            value: -12.0,
+            merge: None,
+        },
+        &r,
+    )
+    .unwrap();
+    let cables = send_cables(2);
+    for (a, b) in &cables[..3] {
+        d.apply(connect(a, b), &r).unwrap();
+    }
+    assert_eq!(param(&d, &chans[0], "send2.on"), None, "loop still open");
+    let before = text(&d);
+    d.apply(connect(&cables[3].0, &cables[3].1), &r).unwrap();
+    assert_eq!(d.doc().console.returns[1], Some(key("verb")));
+    assert_eq!(param(&d, &chans[0], "send2.on"), Some(1.0));
+    assert_eq!(param(&d, &chans[1], "send2.on"), Some(1.0), "already on");
+    assert_eq!(param(&d, &chans[1], "send2.level"), Some(-12.0));
+    assert_eq!(param(&d, &chans[0], "send2.level"), None, "level untouched");
+    assert_eq!(
+        param(&d, &chans[0], "send1.on"),
+        None,
+        "other sends untouched"
+    );
+    // One undo step takes back cable, slot and send.
+    d.undo().unwrap();
+    assert_eq!(text(&d), before);
+    assert_eq!(param(&d, &chans[0], "send2.on"), None);
+    assert!(d.doc().console.returns[1].is_none());
+    d.redo().unwrap();
+    assert_eq!(param(&d, &chans[0], "send2.on"), Some(1.0));
+}
+
+#[test]
+fn cutting_the_loop_leaves_the_sends_on() {
+    let r = reg();
+    let (mut d, chans) = with_channels(&r);
+    wire_all(&mut d, &r, 1);
+    assert_eq!(param(&d, &chans[0], "send1.on"), Some(1.0));
+    d.apply(
+        Command::Disconnect {
+            to: sock("master:return1_l"),
+        },
+        &r,
+    )
+    .unwrap();
+    assert!(d.doc().console.returns[0].is_none());
+    assert_eq!(param(&d, &chans[0], "send1.on"), Some(1.0));
+}
+
+#[test]
+fn loading_infers_the_slot_without_touching_params() {
+    let r = reg();
+    let (mut d, _) = with_channels(&r);
+    wire_all(&mut d, &r, 1);
+    let saved = text(&d);
+    // The user's file: loop cabled, slot empty, sends never switched on.
+    let blank = saved.replace("\"returns\": [\"verb\", null", "\"returns\": [null, null");
+    let loaded = load_project(&blank, &r).unwrap();
+    assert_eq!(loaded.console.returns[0], Some(key("verb")));
+    // No param of any device changed against the document the loop was cabled in.
+    for dev in &loaded.devices {
+        assert_eq!(dev.params, d.doc().device(&dev.key).unwrap().params);
+    }
+}

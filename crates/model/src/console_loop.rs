@@ -10,6 +10,7 @@
 use crate::console::{FX_SLOTS, is_console_type, sockets};
 use crate::history::Edit;
 use crate::{DeviceKey, RackDoc};
+use atomik_device_sdk::Registry;
 
 /// The effect whose in/out sockets close the loop through the master's send and return `slot`
 /// (0-based), whatever the console lists there. `None` for an open loop, a loop through two
@@ -67,9 +68,10 @@ pub(crate) fn inferred_returns(doc: &RackDoc) -> Vec<(usize, DeviceKey)> {
 }
 
 /// `edit`, a top-level cable change, plus the console returns it completes or breaks, in the
-/// same undo step: a completed loop onto an empty slot registers the effect; a cut that opens
+/// same undo step (a registered return also switches send `k` on for every channel whose send
+/// is off, levels untouched, so the loop is heard; freeing a slot leaves the sends alone): a completed loop onto an empty slot registers the effect; a cut that opens
 /// the loop of a registered return frees the slot. Other edits are returned as they are.
-pub(crate) fn with_returns(doc: &RackDoc, edit: Edit) -> Edit {
+pub(crate) fn with_returns(doc: &RackDoc, registry: &Registry, edit: Edit) -> Edit {
     if doc.console.master.is_none() {
         return edit;
     }
@@ -107,6 +109,7 @@ pub(crate) fn with_returns(doc: &RackDoc, edit: Edit) -> Edit {
                         old: None,
                         new: Some(effect),
                     });
+                    extra.extend(sends_on(doc, registry, slot));
                 }
             }
         }
@@ -117,4 +120,71 @@ pub(crate) fn with_returns(doc: &RackDoc, edit: Edit) -> Edit {
     let mut edits = vec![edit];
     edits.extend(extra);
     Edit::Compound(edits)
+}
+
+/// `send{slot+1}.on` set to on for every console channel where it is off.
+fn sends_on(doc: &RackDoc, registry: &Registry, slot: usize) -> Vec<Edit> {
+    let param = format!("send{}.on", slot + 1);
+    let mut edits = Vec::new();
+    for channel in &doc.console.channels {
+        let Some(device) = doc.device(&channel.channel) else {
+            continue;
+        };
+        let Some(spec) = registry
+            .get(&device.type_id)
+            .and_then(|r| r.descriptor.param_by_key(&param))
+        else {
+            continue;
+        };
+        let old = device.params.get(&param).copied();
+        if old.unwrap_or(spec.default) >= 0.5 {
+            continue;
+        }
+        let on = spec.clamp(1.0);
+        edits.push(Edit::Param {
+            key: channel.channel.clone(),
+            param: param.clone(),
+            old,
+            new: (spec.default.to_bits() != on.to_bits()).then_some(on),
+            default: spec.default,
+        });
+    }
+    edits
+}
+
+/// `edit` plus the slots of the send/return loops it leaves cabled with the slot empty
+/// (slot only: no send is switched on here). Keeps what is saved and what a load infers the
+/// same, whatever cable-changing command (a delete that bridges, a paste) made the loop.
+/// Edits that change no cable are returned as they are.
+pub(crate) fn settle(doc: &RackDoc, edit: Edit) -> Edit {
+    if doc.console.master.is_none() {
+        return edit;
+    }
+    if !touches_wiring(&edit) {
+        return edit;
+    }
+    let mut after = doc.clone();
+    if edit.perform(&mut after).is_err() {
+        return edit;
+    }
+    let found = inferred_returns(&after);
+    if found.is_empty() {
+        return edit;
+    }
+    let mut edits = vec![edit];
+    edits.extend(found.into_iter().map(|(slot, effect)| Edit::ConsoleReturn {
+        slot,
+        old: None,
+        new: Some(effect),
+    }));
+    Edit::Compound(edits)
+}
+
+/// Whether `edit` adds or removes a cable or a device (a removal takes its cables along).
+fn touches_wiring(edit: &Edit) -> bool {
+    match edit {
+        Edit::Compound(edits) => edits.iter().any(touches_wiring),
+        Edit::Connect(_) | Edit::Disconnect(_) | Edit::Insert { .. } | Edit::Remove { .. } => true,
+        _ => false,
+    }
 }
