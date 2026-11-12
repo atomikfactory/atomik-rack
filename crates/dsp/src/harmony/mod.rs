@@ -16,7 +16,8 @@
 //!    the log-frequency axis runs at any resolution (the constant-Q-like bins are the keys).
 //! 4. *Multi-pitch:* for each candidate key of the range the salience is the weighted sum of the
 //!    peaks found at its first ten harmonics (within 0.35 of a semitone; the fundamental must be
-//!    there, and mostly not taken by a voice already found). The strongest candidate is a voice; its harmonics are taken out of the peaks (each by
+//!    there, and mostly not taken by a voice already found; a candidate on a low harmonic of a
+//!    voice already found counts half). The strongest candidate is a voice; its harmonics are taken out of the peaks (each by
 //!    the smallest of its peak and the peaks of its two neighbours as heard, what a smooth harmonic envelope predicts, so a
 //!    partial shared with a higher note stays for that note) and the search runs again, up to the voice count, while a candidate keeps a
 //!    share of the first voice's salience that the sensitivity sets.
@@ -66,6 +67,9 @@ const FIRST_PASS_TOLERANCE: f32 = 0.5;
 /// The share of its peak a candidate's fundamental must still hold after the voices found so far
 /// are taken out.
 const FUNDAMENTAL_LEFT: f32 = 0.4;
+/// What the salience of a candidate on the 2nd to 6th harmonic of a voice already found is
+/// multiplied by.
+const HARMONIC_GHOST: f32 = 0.5;
 /// Whitening exponent: the share of each band's level (in dB) that is kept.
 const WHITEN_NU: f32 = 0.33;
 /// The lowest band of the whitening, in Hz; bands are a third of an octave apart.
@@ -385,6 +389,15 @@ fn find_voices(peaks: &[Peak], p: &AnalysisParams, tuning: f32, first_tol: f32) 
                     matched[h - 1] = Some(i);
                     sal += harmonic_weight(h) * residual[i];
                 }
+            }
+            // A key on a low harmonic of a voice already found (an octave, a twelfth...) is most
+            // likely what is left of that voice: it counts for less.
+            if found
+                .voices
+                .iter()
+                .any(|v| matches!(key.checked_sub(v.key), Some(12 | 19 | 24 | 28 | 31)))
+            {
+                sal *= HARMONIC_GHOST;
             }
             if best.is_none_or(|b| sal > b.1) {
                 best = Some((key, sal, matched));
