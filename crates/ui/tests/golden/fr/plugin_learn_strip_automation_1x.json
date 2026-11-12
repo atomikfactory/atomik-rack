@@ -1,0 +1,22 @@
+{"ops":[
+{"transform":[1.00,0.00,0.00,1.00,0.00,0.00]},
+{"clip":{"rect":[0.00,0.00,720.00,28.00]}},
+{"fill":{"rect":[0.00,0.00,720.00,28.00]},"brush":"#1c1e23ff"},
+{"stroke":{"line":[0.00,27.50,720.00,27.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"Test Synth","at":[8.00,18.00],"size":10.50,"weight":700,"align":"start","color":"#ece8e1ff"},
+{"fill":{"rrect":[154.00,4.00,286.00,24.00,3.00]},"brush":"#ceb879ff"},
+{"stroke":{"line":[156.00,4.50,284.00,4.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[154.50,4.50,285.50,23.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"APPRENDRE AUTOMATION","at":[220.00,17.50],"size":9.50,"weight":700,"align":"center","color":"#17191cff"},
+{"fill":{"rrect":[292.00,4.00,392.00,24.00,3.00]},"brush":"#3b4047ff"},
+{"stroke":{"line":[294.00,4.50,390.00,4.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[292.50,4.50,391.50,23.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"APPRENDRE MIDI","at":[342.00,17.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
+{"fill":{"rrect":[690.00,4.00,712.00,24.00,3.00]},"brush":"#3b4047ff"},
+{"stroke":{"line":[692.00,4.50,710.00,4.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[690.50,4.50,711.50,23.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"×","at":[701.00,17.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
+{"text":"Cutoff : voie affichée","at":[404.00,18.00],"size":10.50,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"pop_clip":true},
+{"pop_transform":true}
+]}

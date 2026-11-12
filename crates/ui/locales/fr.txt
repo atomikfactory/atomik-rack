@@ -330,7 +330,9 @@ Launch Quantize => Quantification du lancement
 Launch Scene => Lancer la scène
 Launcher => Lanceur
 Launcher Clip to Arrangement => Clip du lanceur vers l'arrangement
+Learn Automation from Plugin Window => Apprendre l'automation depuis la fenêtre du plugin
 Learn MIDI => Apprentissage MIDI
+Learn MIDI from Plugin Window => Apprendre le MIDI depuis la fenêtre du plugin
 Link Faders => Lier les faders
 Listen to Reference => Écouter la référence
 Lock Surfaces to Selection => Verrouiller les surfaces sur la sélection
@@ -2212,6 +2214,8 @@ the temporary folder of the system => le dossier temporaire du système
 
 
 # Messages of the status line and the toasts
+Learn from the plugin window needs a loaded plugin device => L'apprentissage depuis la fenêtre du plugin demande un appareil plugin chargé
+Select a plugin device first => Sélectionnez d'abord un appareil plugin
 A VCA level cannot be assigned to a macro => Un niveau de VCA ne peut pas être assigné à une macro
 A VCA level has no lane in the arrangement => Un niveau de VCA n'a pas de voie dans l'arrangement
 A project archive is already being made => Une archive de projet est déjà en cours de création
@@ -2363,6 +2367,9 @@ Song key set to {key} from the audio ({fit}); Undo puts the old key back => Tona
 
 
 # Tooltips (one short line each, 90 characters at most)
+Touch a control in the plugin to show its automation lane => Touchez une commande du plugin pour afficher sa voie d'automation
+Touch a control in the plugin, then move a hardware control to map it => Touchez une commande du plugin, puis bougez une commande matérielle pour l'assigner
+Stop learning (Esc) => Arrêter l'apprentissage (Échap)
 Bring the selected notes to the nearest semitone, or the scale with SCALE on => Amener les notes choisies au demi-ton le plus proche, ou à la gamme avec GAMME
 Correct to the notes of the song key => Corriger vers les notes de la tonalité du morceau
 Edit the pitch and timing of the notes of the clip => Éditer la hauteur et le placement des notes du clip
@@ -2650,3 +2657,14 @@ Play Chords on Click => Jouer les accords au clic
 Paste Chord => Coller l'accord
 Copy a chord of the chord lane first => Copiez d'abord un accord de la voie des accords
 The playhead is inside a chord => La tête de lecture est dans un accord
+
+# The Learn strip of a plugin window
+LEARN AUTOMATION => APPRENDRE AUTOMATION
+LEARN MIDI => APPRENDRE MIDI
+Pick LEARN AUTOMATION or LEARN MIDI, then touch a control in the plugin => Choisissez APPRENDRE AUTOMATION ou APPRENDRE MIDI, puis touchez une commande du plugin
+Touch a control in the plugin to show its lane => Touchez une commande du plugin pour afficher sa voie
+Touch a control in the plugin to map it to MIDI => Touchez une commande du plugin pour l'assigner en MIDI
+{param}: lane shown => {param} : voie affichée
+{param}: no automation lane here => {param} : pas de voie d'automation ici
+{param}: move a hardware control => {param} : bougez une commande matérielle
+This control is not automatable => Cette commande n'est pas automatisable

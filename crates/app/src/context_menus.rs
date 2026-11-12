@@ -108,6 +108,12 @@ pub struct MenuEnable {
     /// Piano roll: the scale, fold and chord state the check marks of the scale and chord
     /// submenus show.
     pub notes: NoteTools,
+    /// Rack: the primary device is a loaded plugin (the Learn from Plugin Window rows show).
+    pub plugin: bool,
+    /// Rack: the primary plugin's window learns automation (the row is checked).
+    pub learn_automation: bool,
+    /// Rack: the primary plugin's window learns MIDI (the row is checked).
+    pub learn_midi: bool,
     /// Control menu: the control has a MIDI mapping (Forget MIDI works).
     pub control_mapped: bool,
     /// Control menu: the param can be assigned to a macro (nothing drives it and it can be).
@@ -813,6 +819,25 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     item("rack.preview_player", e.player)
                 },
             ]);
+            if e.plugin {
+                v.extend([
+                    Spec::Separator,
+                    Spec::Item {
+                        command: "plugin.learn_automation",
+                        arg: None,
+                        label: None,
+                        enabled: true,
+                        checked: Some(e.learn_automation),
+                    },
+                    Spec::Item {
+                        command: "plugin.learn_midi",
+                        arg: None,
+                        label: None,
+                        enabled: true,
+                        checked: Some(e.learn_midi),
+                    },
+                ]);
+            }
             v
         }
         ContextTarget::Rack => vec![

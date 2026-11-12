@@ -1226,7 +1226,8 @@ impl<S: EngineSink> AppCore<S> {
             | UiAction::StepPluginPreset { .. }
             | UiAction::PluginParamTexts { .. }
             | UiAction::PluginSettings(_)
-            | UiAction::PluginBanner(_)) => {
+            | UiAction::PluginBanner(_)
+            | UiAction::PluginLearn { .. }) => {
                 self.plugin_action(&a);
             }
             UiAction::ImportAudio {
@@ -4477,6 +4478,10 @@ mod plugins_latency_tests;
 #[cfg(test)]
 #[path = "app_core_plugins_sandbox_tests.rs"]
 mod plugins_sandbox_tests;
+
+#[cfg(test)]
+#[path = "app_core_plugin_learn_tests.rs"]
+mod plugin_learn_tests;
 
 #[cfg(test)]
 #[path = "app_core_tests.rs"]

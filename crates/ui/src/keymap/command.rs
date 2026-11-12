@@ -1691,6 +1691,18 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd(
+        "plugin.learn_automation",
+        "Learn Automation from Plugin Window",
+        G::Rack,
+        C::Global,
+    ),
+    cmd(
+        "plugin.learn_midi",
+        "Learn MIDI from Plugin Window",
+        G::Rack,
+        C::Global,
+    ),
     cmd("rack.add_column", "Add Column", G::Rack, C::Rack),
     cmd("rack.assign_send", "Use as Send Effect", G::Rack, C::Rack),
     cmd("rack.auto_route", "Auto-route", G::Rack, C::Rack),

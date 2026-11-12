@@ -569,6 +569,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Records that `param` of `device` is being touched and, when following, shows its lane.
     pub(super) fn param_touched(&mut self, device: &DeviceKey, param: &str) {
         self.macros.touched.insert(device.clone(), param.to_owned());
+        self.plugin_learn_pane_touch(device, param);
         if self.macros.follow && !self.midi.learning() {
             self.follow_param(device, param, true, false);
         }
@@ -577,7 +578,13 @@ impl<S: EngineSink> AppCore<S> {
     /// Shows the automation lane of `param` of `device` in the arrangement, adding it when it
     /// is missing (an empty lane: no automation is created). `say` reports why nothing is shown.
     /// True when a lane is shown.
-    fn follow_param(&mut self, device: &DeviceKey, param: &str, create: bool, say: bool) -> bool {
+    pub(super) fn follow_param(
+        &mut self,
+        device: &DeviceKey,
+        param: &str,
+        create: bool,
+        say: bool,
+    ) -> bool {
         let Some((host, lane)) = self.lane_host(device, param) else {
             if say {
                 self.report(format!(

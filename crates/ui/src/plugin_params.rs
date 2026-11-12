@@ -99,6 +99,8 @@ const AUTO_W: f64 = 44.0;
 const MAP_W: f64 = 44.0;
 const CV_W: f64 = 34.0;
 const STEP_W: f64 = 24.0;
+const LEARN_AUTO_W: f64 = 132.0;
+const LEARN_MIDI_W: f64 = 100.0;
 const MENU_ROW_H: f64 = 18.0;
 const MENU_W: f64 = 170.0;
 /// First merge id of the pane's own slider drags (the merger of GUI gestures starts half way,
@@ -119,6 +121,10 @@ pub enum Hit {
     None,
     /// The close button.
     Close,
+    /// The LEARN AUTOMATION toggle of the top bar.
+    LearnAutomation,
+    /// The LEARN MIDI toggle of the top bar.
+    LearnMidi,
     /// The search field.
     Search,
     /// The slider of a continuous param.
@@ -268,6 +274,8 @@ pub struct PluginParamsView {
     drag: Drag,
     hover: Hit,
     toast: Option<String>,
+    /// The armed Learn mode of the plugin's window (the top bar's toggles).
+    learn: Option<crate::plugin_learn::PluginLearnMode>,
     next_merge: u64,
     focused: bool,
     repaint: bool,
@@ -334,6 +342,7 @@ impl PluginParamsView {
             drag: Drag::None,
             hover: Hit::None,
             toast: None,
+            learn: None,
             next_merge: PANE_MERGE_BASE,
             focused: false,
             repaint: true,
@@ -506,6 +515,36 @@ impl PluginParamsView {
     pub fn close_rect(&self) -> Rect {
         let b = self.bounds;
         Rect::new(b.x1 - 28.0, b.y0 + 4.0, b.x1 - 8.0, b.y0 + 24.0)
+    }
+
+    /// The LEARN MIDI toggle of the top bar (the fallback of the plugin window's Learn strip).
+    pub fn learn_midi_rect(&self) -> Rect {
+        let b = self.bounds;
+        Rect::new(
+            b.x1 - 80.0 - LEARN_MIDI_W,
+            b.y0 + 4.0,
+            b.x1 - 80.0,
+            b.y0 + 24.0,
+        )
+    }
+
+    /// The LEARN AUTOMATION toggle of the top bar.
+    pub fn learn_automation_rect(&self) -> Rect {
+        let m = self.learn_midi_rect();
+        Rect::new(m.x0 - 6.0 - LEARN_AUTO_W, m.y0, m.x0 - 6.0, m.y1)
+    }
+
+    /// Shows which Learn mode the plugin's window has armed (the top bar's toggles light).
+    pub fn set_learn_mode(&mut self, mode: Option<crate::plugin_learn::PluginLearnMode>) {
+        if self.learn != mode {
+            self.learn = mode;
+            self.repaint = true;
+        }
+    }
+
+    /// The Learn mode the top bar shows armed.
+    pub fn learn_mode(&self) -> Option<crate::plugin_learn::PluginLearnMode> {
+        self.learn
     }
 
     /// The search field.
@@ -708,6 +747,14 @@ impl PluginParamsView {
         let help = |rect: Option<Rect>, text: &'static str| Some(Help::new(rect?, text));
         match self.hit(pos) {
             Hit::Close => help(Some(self.close_rect()), "Close the parameter pane"),
+            Hit::LearnAutomation => help(
+                Some(self.learn_automation_rect()),
+                "Touch a control in the plugin to show its automation lane",
+            ),
+            Hit::LearnMidi => help(
+                Some(self.learn_midi_rect()),
+                "Touch a control in the plugin, then move a hardware control to map it",
+            ),
             Hit::StepDec(id) => help(self.dec_rect(id), "Previous value"),
             Hit::StepInc(id) => help(self.inc_rect(id), "Next value"),
             Hit::Toggle(id) => help(self.toggle_rect(id), "Switch this parameter on or off"),
@@ -751,6 +798,12 @@ impl PluginParamsView {
         }
         if self.close_rect().contains(pos) {
             return Hit::Close;
+        }
+        if self.present && self.learn_automation_rect().contains(pos) {
+            return Hit::LearnAutomation;
+        }
+        if self.present && self.learn_midi_rect().contains(pos) {
+            return Hit::LearnMidi;
         }
         if self.search_rect().contains(pos) {
             return Hit::Search;
@@ -1254,6 +1307,19 @@ impl PluginParamsView {
             | Hit::PresetName
             | Hit::PresetRow(_) => {}
             Hit::Close => out.push(UiAction::ClosePluginParams),
+            Hit::LearnAutomation | Hit::LearnMidi => {
+                if let Some(device) = self.device.clone() {
+                    let mode = if hit == Hit::LearnMidi {
+                        crate::plugin_learn::PluginLearnMode::Midi
+                    } else {
+                        crate::plugin_learn::PluginLearnMode::Automation
+                    };
+                    out.push(UiAction::PluginLearn {
+                        device,
+                        request: crate::plugin_learn::PluginLearnRequest::Toggle(mode),
+                    });
+                }
+            }
             Hit::Slider(id) => self.slider_down(id, pos, clicks, out),
             Hit::StepDec(id) => self.step(id, -1.0, out),
             Hit::StepInc(id) => self.step(id, 1.0, out),

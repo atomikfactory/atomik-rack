@@ -585,6 +585,14 @@ pub enum UiAction {
         /// The plugin device (path key).
         device: DeviceKey,
     },
+    /// A click on the Learn strip of a plugin window (or its fallback in the parameter pane):
+    /// arm or disarm what a touch on a control of the plugin's own interface does.
+    PluginLearn {
+        /// The plugin device (path key).
+        device: DeviceKey,
+        /// What to arm or disarm.
+        request: crate::plugin_learn::PluginLearnRequest,
+    },
     /// Open the plugin parameter pane (the panel's PARAMS button): call
     /// [`crate::PluginParamsView::open`] and show it in place of the arrangement, like the
     /// sample editor. `device` is the **path key**.
