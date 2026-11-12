@@ -3321,7 +3321,7 @@ mod tests {
                 Group::Transport => &["transport", "sync", "launcher"],
                 Group::View => &["view", "window"],
                 Group::Edit => &["edit"],
-                Group::Rack => &["rack"],
+                Group::Rack => &["rack", "plugin"],
                 Group::Sequencer => &["sequencer"],
                 Group::Editor => &["editor"],
                 Group::Mixer => &["mixer", "midi", "macro", "automation", "controller"],
