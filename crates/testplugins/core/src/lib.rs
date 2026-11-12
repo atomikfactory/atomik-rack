@@ -15,6 +15,8 @@
 //!   channel and per-note pressure, note expression and note ids.
 //! * [`NoteShift`]: a note effect that transposes and emits notes.
 //! * [`ParamBank`]: 2 000 plain params plus one that can appear at run time.
+//! * [`gui_edit_on_restore`]: the edit a shell reports as if made in its editor when its state
+//!   is loaded, for tests that drive a plugin in another process.
 
 mod gain;
 mod noteshift;
@@ -157,6 +159,26 @@ pub(crate) fn decode_state<const N: usize>(tag: [u8; 4], bytes: &[u8]) -> Option
         out[i] = v;
     }
     Some(out)
+}
+
+/// The environment variable that makes a test plugin report an edit made in its own editor
+/// (begin, change, end) each time its state is loaded: `<param id>:<value>`, the value in the
+/// unit the format's host edits use (plain for CLAP, normalised for VST3). The tests of a plugin
+/// in another process cannot call the library's test hooks, so they ask the plugin this way.
+pub const GUI_EDIT_ON_RESTORE_ENV: &str = "ATOMIK_TEST_GUI_EDIT_ON_RESTORE";
+
+/// The edit [`GUI_EDIT_ON_RESTORE_ENV`] asks for, `None` when it is unset or not
+/// `<param id>:<finite value>`.
+pub fn gui_edit_on_restore() -> Option<(u32, f64)> {
+    parse_gui_edit(&std::env::var(GUI_EDIT_ON_RESTORE_ENV).ok()?)
+}
+
+/// `<param id>:<finite value>` as the pair.
+pub fn parse_gui_edit(text: &str) -> Option<(u32, f64)> {
+    let (id, value) = text.trim().split_once(':')?;
+    let value: f64 = value.trim().parse().ok()?;
+    let id = id.trim().parse().ok()?;
+    value.is_finite().then_some((id, value))
 }
 
 #[cfg(test)]

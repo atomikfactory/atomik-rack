@@ -94,8 +94,9 @@ pub enum ManagerError {
 /// Something that happened to an instance, for the app to act on.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ManagerEvent {
-    /// A parameter edit made inside the plugin's window (`value` is NaN for a gesture's
-    /// begin and end markers).
+    /// A parameter edit made inside the plugin's window. A gesture's begin and end markers
+    /// carry no value: NaN from a plugin in this process, 0 from a sandboxed one (the wire has
+    /// no NaN).
     ParamEdit {
         /// The instance.
         instance: InstanceId,
