@@ -19,7 +19,7 @@
 //! without hears every surface and every port, so older projects map as they did.
 //!
 //! The **camera** is an input too: a source whose port is [`crate::CAMERA_PORT`] hears the
-//! webcam hand tracker only (see [`crate::camera_source`]), and hardware never drives it.
+//! webcam hand tracker only (its controls are in `camera_source.rs`), and hardware never drives it.
 //!
 //! # Options
 //!

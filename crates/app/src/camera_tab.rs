@@ -2,7 +2,9 @@
 //!
 //! The tab holds the **camera** to use (chosen from the list the system gave; the list is only
 //! asked for when **Refresh** is pressed, so opening the dialog never touches a camera), the
-//! **hand** that turns the knob (either, left or right), **Twist for full range** (how far the
+//! **mode** (turn the clicked knob, send MIDI as the controller Camera, or both), the
+//! **hand** that turns the knob (either, left or right), **Camera notes** (let the pinch and open
+//! palm notes play the selected instrument too), **Twist for full range** (how far the
 //! wrist turns to sweep a whole range, 90 to 360 degrees), **Fine control by distance** (a hand
 //! near the camera turns the knob finer), **Pinch sensitivity** (scales how close the fingers must
 //! come), **Show camera preview**, and **Delete downloaded models**. The values are workflow
@@ -12,7 +14,8 @@
 
 use crate::keyboard_tab::{PAD, TITLE, TabOutcome};
 use crate::keymap_store::{
-    CameraPrefs, HandChoice, MAX_FULL_TURN, MAX_SENSITIVITY, MIN_FULL_TURN, MIN_SENSITIVITY,
+    CameraMode, CameraPrefs, HandChoice, MAX_FULL_TURN, MAX_SENSITIVITY, MIN_FULL_TURN,
+    MIN_SENSITIVITY,
 };
 use crate::video_tab::wrap;
 use crate::vision_link::{CameraEntry, ModelState};
@@ -23,6 +26,7 @@ const ROW: f64 = 40.0;
 const GAP: f64 = 2.0;
 const STEP_W: f64 = 28.0;
 const BUTTON_W: f64 = 64.0;
+const MODE_W: f64 = 124.0;
 /// How many degrees one press of the twist buttons moves, and with Shift.
 const TURN_STEP: u16 = 15;
 const TURN_BIG: u16 = 45;
@@ -32,8 +36,9 @@ const SENS_BIG: u16 = 25;
 const NAME_CHARS: usize = 38;
 
 /// The words the tab says under the rows.
-const NOTES: [&str; 3] = [
+const NOTES: [&str; 4] = [
     "Click a knob, then pinch thumb and index finger and twist your wrist to turn it.",
+    "As a MIDI controller the camera is an input named Camera: map its controls with MIDI Learn.",
     "The camera picture stays in memory: it is never saved, logged or sent anywhere.",
     "Saved in workflow.json next to settings.json when you press Apply.",
 ];
@@ -51,6 +56,15 @@ pub struct CameraRow {
     pub next: Rect,
     /// The button that asks the system for the list.
     pub refresh: Rect,
+}
+
+/// The mode row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModeRow {
+    /// The whole row.
+    pub rect: Rect,
+    /// The three choices.
+    pub choices: Vec<(CameraMode, Rect)>,
 }
 
 /// The hand row.
@@ -106,6 +120,8 @@ pub struct ModelsRow {
 pub struct CameraLayout {
     /// The camera row.
     pub camera: CameraRow,
+    /// What the hands do.
+    pub mode: ModeRow,
     /// The hand row.
     pub hand: HandRow,
     /// Twist for full range.
@@ -116,6 +132,8 @@ pub struct CameraLayout {
     pub sensitivity: StepRow,
     /// Show camera preview.
     pub preview: CheckRow,
+    /// Camera notes play the selected instrument.
+    pub play_notes: CheckRow,
     /// The models row.
     pub models: ModelsRow,
     /// The notes under the rows, line by line.
@@ -219,6 +237,20 @@ impl CameraTab {
         };
 
         let rect = next_row();
+        let mut mode_choices = Vec::new();
+        let mut right = rect.x1;
+        for choice in CameraMode::ALL.into_iter().rev() {
+            let r = button(rect, right, MODE_W);
+            right = r.x0 - GAP;
+            mode_choices.push((choice, r));
+        }
+        mode_choices.reverse();
+        let mode = ModeRow {
+            rect,
+            choices: mode_choices,
+        };
+
+        let rect = next_row();
         let mut choices = Vec::new();
         let mut right = rect.x1;
         for choice in HandChoice::ALL.into_iter().rev() {
@@ -250,6 +282,7 @@ impl CameraTab {
         let fine = check_row(next_row(), self.prefs.fine);
         let sensitivity = step_row(next_row(), format!("{}%", self.prefs.sensitivity));
         let preview = check_row(next_row(), self.prefs.preview);
+        let play_notes = check_row(next_row(), self.prefs.play_notes);
 
         let rect = next_row();
         let delete = button(rect, rect.x1, 196.0);
@@ -274,11 +307,13 @@ impl CameraTab {
         }
         CameraLayout {
             camera,
+            mode,
             hand,
             turn,
             fine,
             sensitivity,
             preview,
+            play_notes,
             models,
             notes,
         }
@@ -290,7 +325,7 @@ impl CameraTab {
             .iter()
             .map(|n| 16.0 * wrap(n, crate::video_tab::WRAP + 8).len() as f64 + 6.0)
             .sum();
-        7.0 * ROW + 6.0 * GAP + 12.0 + notes
+        9.0 * ROW + 8.0 * GAP + 12.0 + notes
     }
 
     /// Handles an event inside `panel`.
@@ -322,6 +357,10 @@ impl CameraTab {
                 } else if l.camera.next.contains(*pos) {
                     self.step_camera(1);
                 } else if let Some((choice, _)) =
+                    l.mode.choices.iter().find(|(_, r)| r.contains(*pos))
+                {
+                    self.prefs.mode = *choice;
+                } else if let Some((choice, _)) =
                     l.hand.choices.iter().find(|(_, r)| r.contains(*pos))
                 {
                     self.prefs.hand = *choice;
@@ -345,6 +384,8 @@ impl CameraTab {
                     self.prefs.sensitivity = (self.prefs.sensitivity + sens).min(MAX_SENSITIVITY);
                 } else if l.preview.rect.contains(*pos) {
                     self.prefs.preview = !self.prefs.preview;
+                } else if l.play_notes.rect.contains(*pos) {
+                    self.prefs.play_notes = !self.prefs.play_notes;
                 } else if l.models.delete.contains(*pos) && l.models.can_delete {
                     return TabOutcome::DeleteCameraModels;
                 }
@@ -441,6 +482,10 @@ impl CameraTab {
         button(canvas, c.next, ">", false, true);
         button(canvas, c.refresh, "Refresh", false, true);
 
+        title(canvas, l.mode.rect, "Mode", "What the hands do");
+        for (choice, r) in &l.mode.choices {
+            button(canvas, *r, choice.label(), self.prefs.mode == *choice, true);
+        }
         title(canvas, l.hand.rect, "Hand", "Which hand turns the knob");
         for (choice, r) in &l.hand.choices {
             button(canvas, *r, choice.label(), self.prefs.hand == *choice, true);
@@ -468,6 +513,12 @@ impl CameraTab {
             &l.preview,
             "Show camera preview",
             "A small box with the camera picture while the camera is on",
+        );
+        check(
+            canvas,
+            &l.play_notes,
+            "Camera notes play the selected instrument",
+            "Off: the camera only feeds mappings, as a controller",
         );
         title(canvas, l.models.rect, "Hand models", l.models.status);
         button(
