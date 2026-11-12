@@ -769,6 +769,9 @@ pub enum UiAction {
     /// The Audio to Notes panel ([`crate::NotesView`]) asks for something: extract the notes of
     /// the selected audio clip with its settings, or close.
     AudioToNotes(crate::notes_panel::NotesAction),
+    /// The Detect Chords panel ([`crate::ChordsView`]) asks for something: score the analysis
+    /// again, put the chords in the lane, stop the analysis, or close.
+    DetectChords(crate::chords_panel::ChordsAction),
     /// The warp panel ([`crate::WarpView`]) asks for something: set its values on the selected
     /// audio clips, estimate a tempo, or close.
     Warp(crate::warp_panel::WarpAction),

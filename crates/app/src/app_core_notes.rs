@@ -3,7 +3,9 @@
 //! The Audio to Notes panel (Audio menu) picks what to look for ([`NotesValues`]): *Pitched*
 //! follows one voice or instrument and cuts it into notes ([`atomik_dsp::notes::pitched`]), *Drums*
 //! finds the hits of a drum loop and sorts them into kick, snare and hats, and with the full kit
-//! toms and a crash, on the keys of a chosen map ([`atomik_dsp::notes::drums`]).
+//! toms and a crash, on the keys of a chosen map ([`atomik_dsp::notes::drums`]), and
+//! *Polyphonic* follows up to six voices at once, chords included, of a piano or a guitar part
+//! ([`atomik_dsp::harmony::poly`]): a usable sketch, not a transcription.
 //!
 //! **What is read.** Every selected audio clip, one after the other: the span of its asset that
 //! it plays (from the clip's offset; for a warped clip the span the time map reads), mixed to
@@ -34,6 +36,7 @@ use super::audio_edit_ops::{Selected, for_each_chunk};
 use super::*;
 use crate::audio_import::{NotesFound, spawn_notes};
 use atomik_core::PPQ;
+use atomik_dsp::harmony::PolyParams;
 use atomik_dsp::notes::{Analysis, DrumParams, PitchParams, extract_in_segments};
 use atomik_engine::SongAsset;
 use atomik_model::{
@@ -159,9 +162,17 @@ fn analyse(
         kit: v.kit,
         map: v.drum_map,
     };
+    let poly = PolyParams {
+        sensitivity,
+        max_voices: v.voices as usize,
+        min_note_ms: v.min_note_ms,
+        key_lo: v.key_lo,
+        key_hi: v.key_hi,
+    };
     let what = match v.mode {
         NotesMode::Pitched => Analysis::Pitched(&pitch),
         NotesMode::Drums => Analysis::Drums(&drums),
+        NotesMode::Polyphonic => Analysis::Poly(&poly),
     };
     // Frames count in play order: a reversed clip plays the end of its span first.
     let mut read = |at: u64, len: u64| {
@@ -504,7 +515,9 @@ impl<S: EngineSink> AppCore<S> {
             Ok(c) => c,
             Err(_) => {
                 let hint = match v.mode {
-                    NotesMode::Pitched => "raise the sensitivity or widen the note range",
+                    NotesMode::Pitched | NotesMode::Polyphonic => {
+                        "raise the sensitivity or widen the note range"
+                    }
                     NotesMode::Drums => "raise the sensitivity",
                 };
                 return Err(format!("No notes found in the clip: {hint}"));
@@ -518,7 +531,7 @@ impl<S: EngineSink> AppCore<S> {
             Some(device) => self.add_notes_to(device.clone(), clip),
             None => {
                 let suffix = match v.mode {
-                    NotesMode::Pitched => "notes",
+                    NotesMode::Pitched | NotesMode::Polyphonic => "notes",
                     NotesMode::Drums => "drums",
                 };
                 self.add_notes_track(format!("{} {suffix}", run.name), clip)

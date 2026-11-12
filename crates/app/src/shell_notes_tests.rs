@@ -231,3 +231,42 @@ fn the_status_line_shows_the_progress_and_the_reopened_panel_cancels() {
     s.paint(&mut dl);
     assert!(dl.texts().contains(&"EXTRACT"));
 }
+
+#[test]
+fn detect_chords_opens_its_preview_panel_and_esc_closes_it() {
+    let mut s = shell();
+    let id = imported(&mut s);
+    let transport = s
+        .menu_model()
+        .iter()
+        .find(|m| m.title == "Transport")
+        .unwrap()
+        .items()
+        .find(|i| i.label == "Detect Chords from Audio\u{2026}")
+        .cloned()
+        .expect("Transport > Detect Chords from Audio");
+    assert_eq!(transport.command, AppCommand::DetectChordsFromAudio);
+    assert_eq!(
+        AppCommand::from_command("sequencer.detect_chords_from_audio", None),
+        Some(AppCommand::DetectChordsFromAudio)
+    );
+    s.core_mut().arrangement_mut().set_selected_clips(&[]);
+    assert!(s.execute(AppCommand::DetectChordsFromAudio).is_empty());
+    assert!(s.chords_view().is_none(), "nothing to listen to");
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    s.execute(AppCommand::DetectChordsFromAudio);
+    assert!(s.chords_view().is_some());
+    s.core_mut().wait_background();
+    s.handle(&UiEvent::PointerMove {
+        pos: atomik_ui::kurbo::Point::new(1.0, 1.0),
+        modifiers: Modifiers::NONE,
+    });
+    let view = s.chords_view().unwrap();
+    assert!(view.preview().is_some(), "the preview arrives");
+    s.handle(&UiEvent::Key {
+        key: Key::Escape,
+        modifiers: Modifiers::NONE,
+        pressed: true,
+    });
+    assert!(s.chords_view().is_none());
+}

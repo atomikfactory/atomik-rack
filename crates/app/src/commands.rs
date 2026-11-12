@@ -279,6 +279,12 @@ pub enum AppCommand {
     /// Transport > Detect Song Key: reads the key from the notes of every note clip and sets it
     /// (one undo step).
     DetectKey,
+    /// Transport > Detect Key from Audio: reads the key from the audio of the selected clips (or
+    /// of every audio clip) and sets it (one undo step).
+    DetectKeyFromAudio,
+    /// Transport > Detect Chords from Audio…: listens to the selected audio clips (or those in the
+    /// loop) and opens the panel that previews their chords before they go into the chord lane.
+    DetectChordsFromAudio,
     /// View > Refresh Energy Lane: measures the master again (the lane shows an out-of-date
     /// result faded).
     RefreshEnergyLane,
@@ -1025,6 +1031,8 @@ impl AppCommand {
             AppCommand::ToggleChordLane => ("view.toggle_chord_lane", None),
             AppCommand::SetSongKey => ("transport.set_song_key", None),
             AppCommand::DetectKey => ("transport.detect_key", None),
+            AppCommand::DetectKeyFromAudio => ("sequencer.detect_key_from_audio", None),
+            AppCommand::DetectChordsFromAudio => ("sequencer.detect_chords_from_audio", None),
             AppCommand::RefreshEnergyLane => ("view.refresh_energy_lane", None),
             AppCommand::ToggleVideoRow => ("view.toggle_video_row", None),
             AppCommand::FindRepetition => ("sequencer.find_repetition", None),
@@ -1434,6 +1442,8 @@ impl AppCommand {
             ("view.toggle_chord_lane", None) => AppCommand::ToggleChordLane,
             ("transport.set_song_key", None) => AppCommand::SetSongKey,
             ("transport.detect_key", None) => AppCommand::DetectKey,
+            ("sequencer.detect_key_from_audio", None) => AppCommand::DetectKeyFromAudio,
+            ("sequencer.detect_chords_from_audio", None) => AppCommand::DetectChordsFromAudio,
             ("view.refresh_energy_lane", None) => AppCommand::RefreshEnergyLane,
             ("view.toggle_video_row", None) => AppCommand::ToggleVideoRow,
             ("sequencer.find_repetition", None) => AppCommand::FindRepetition,
@@ -3500,6 +3510,11 @@ fn menus_in_english(
                 MenuEntry::Separator,
                 item("Song Key\u{2026}", AppCommand::SetSongKey),
                 item("Detect Song Key", AppCommand::DetectKey),
+                item("Detect Key from Audio", AppCommand::DetectKeyFromAudio),
+                item(
+                    "Detect Chords from Audio\u{2026}",
+                    AppCommand::DetectChordsFromAudio,
+                ),
             ],
         },
         Menu {
@@ -4845,6 +4860,8 @@ mod tests {
             AppCommand::ToggleChordLane,
             AppCommand::SetSongKey,
             AppCommand::DetectKey,
+            AppCommand::DetectKeyFromAudio,
+            AppCommand::DetectChordsFromAudio,
             AppCommand::ToggleVideoRow,
             AppCommand::ToggleMarkerStrip,
             AppCommand::ToggleInspector,
