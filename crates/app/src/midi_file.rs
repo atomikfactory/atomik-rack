@@ -61,9 +61,10 @@ use atomik_model::song::{
     MAX_TICK, MeterEvent, Note, Song, TempoEvent, Track, bar_ticks, flatten_controllers,
     flatten_expression, flatten_midi_data, flatten_notes_with, flatten_track_notes,
 };
+use atomik_model::theory::ScaleKind;
 use atomik_model::{
-    ControllerKind, ControllerLane, DeviceKey, ExpressionKind, ExpressionPoint, MidiData,
-    NoteExpression, ProgramChange, SysexEvent,
+    ChordEvent, ChordSymbol, ControllerKind, ControllerLane, DeviceKey, ExpressionKind,
+    ExpressionPoint, Key, MidiData, NoteExpression, ProgramChange, SysexEvent, parse_chord,
 };
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -652,6 +653,11 @@ pub struct MidiSong {
     pub ranges: Vec<ImportedRange>,
     /// How many channels with only program changes (no notes, no controllers) were left out.
     pub skipped: usize,
+    /// The chords of the text, lyric and marker events that read as chord symbols (`Am7`,
+    /// `C/G`), each up to the next one (the last one to the end of the file), sorted.
+    pub chords: Vec<ChordEvent>,
+    /// The key of the first key signature event.
+    pub key: Option<Key>,
 }
 
 /// A range read from a file: `(start, end, name)` in model ticks.
@@ -917,8 +923,12 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
     let mut tempi: Vec<(i64, u32)> = Vec::new();
     let mut signatures: Vec<(i64, u8, u8)> = Vec::new();
     let mut markers = Vec::new();
+    let mut chord_marks: Vec<(i64, ChordSymbol)> = Vec::new();
+    let mut key_sig: Option<(i64, Key)> = None;
+    let mut file_end = 0i64;
     for (index, t) in smf.tracks.iter().enumerate() {
         let end = model_tick(t.end_tick, ppq);
+        file_end = file_end.max(end);
         let mut channels: BTreeMap<u8, Channel> = BTreeMap::new();
         let mut sysex: Vec<SysexEvent> = Vec::new();
         let mut title = None;
@@ -988,8 +998,21 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
                     denominator_power,
                 } => signatures.push((tick, *numerator, *denominator_power)),
                 SmfMessage::Marker(text) => {
-                    if let Some(name) = clean_name(text) {
+                    // A marker that reads as a chord symbol is a chord, not a marker.
+                    if let Ok(chord) = parse_chord(text) {
+                        chord_marks.push((tick, chord));
+                    } else if let Some(name) = clean_name(text) {
                         markers.push((tick, name));
+                    }
+                }
+                SmfMessage::Text(text) | SmfMessage::Lyric(text) => {
+                    if let Ok(chord) = parse_chord(text) {
+                        chord_marks.push((tick, chord));
+                    }
+                }
+                SmfMessage::KeySignature { sharps, minor } => {
+                    if key_sig.is_none_or(|(t, _)| tick < t) {
+                        key_sig = Some((tick, key_of_signature(*sharps, *minor)));
                     }
                 }
                 SmfMessage::TrackName(text) => {
@@ -1099,6 +1122,7 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
     let (mut markers, mut ranges) = pair_ranges(markers);
     markers.truncate(MAX_IMPORTED_MARKERS);
     ranges.truncate(MAX_IMPORTED_MARKERS);
+    let end = tracks.iter().map(|t| t.end).fold(file_end, i64::max);
     Ok(MidiSong {
         tracks,
         tempo: tempo_map(&tempi),
@@ -1106,7 +1130,102 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
         markers,
         ranges,
         skipped,
+        chords: chords_of_marks(chord_marks, end),
+        key: key_sig.map(|(_, k)| k),
     })
+}
+
+/// The key of a key signature: `sharps` above 0 (flats below) on the circle of fifths, the major
+/// key or its relative minor.
+fn key_of_signature(sharps: i8, minor: bool) -> Key {
+    let major = (i32::from(sharps) * 7).rem_euclid(12) as u8;
+    if minor {
+        Key::new((major + 9) % 12, ScaleKind::NaturalMinor)
+    } else {
+        Key::new(major, ScaleKind::Major)
+    }
+}
+
+/// Chord symbols at ticks as chords of the lane: each one lasts until the next (the last one
+/// until `end`, at least a beat); of two at one tick the later wins.
+fn chords_of_marks(mut marks: Vec<(i64, ChordSymbol)>, end: i64) -> Vec<ChordEvent> {
+    marks.sort_by_key(|(t, _)| *t);
+    let mut kept: Vec<(i64, ChordSymbol)> = Vec::new();
+    for m in marks {
+        match kept.last_mut() {
+            Some(last) if last.0 == m.0 => *last = m,
+            _ => kept.push(m),
+        }
+    }
+    kept.truncate(atomik_model::MAX_CHORDS);
+    let mut out = Vec::with_capacity(kept.len());
+    for (i, (tick, c)) in kept.iter().enumerate() {
+        let next = kept
+            .get(i + 1)
+            .map_or_else(|| end.max(tick + PPQ), |(t, _)| *t);
+        let next = next.min(atomik_model::song::MAX_TICK);
+        if next <= *tick {
+            continue;
+        }
+        out.push(ChordEvent {
+            bass: c.bass,
+            ..ChordEvent::new(*tick, next - tick, c.root, c.quality)
+        });
+    }
+    out
+}
+
+/// The chords of the notes of `tracks`, one guess per beat with the chord templates of the audio
+/// chord detection (`atomik_dsp::harmony::recognise_chords`): each pitch class weighs the time its
+/// notes sound in the beat times their velocity, and the lowest note of the beat is its bass.
+/// Equal neighbours are one chord; a beat with no note is a gap.
+pub fn detect_chords_from_notes(tracks: &[MidiTrack]) -> Vec<ChordEvent> {
+    use atomik_dsp::harmony::{BeatChroma, ChordOptions, recognise_chords};
+    let notes: Vec<&Note> = tracks.iter().flat_map(|t| t.notes.iter()).collect();
+    let end = notes.iter().map(|n| n.tick + n.length).max().unwrap_or(0);
+    if end <= 0 {
+        return Vec::new();
+    }
+    let beats = ((end + PPQ - 1) / PPQ).min(atomik_model::MAX_CHORDS as i64 * 4) as usize;
+    let mut units = vec![BeatChroma::default(); beats];
+    let mut lowest: Vec<Option<(u8, f32)>> = vec![None; beats];
+    for n in &notes {
+        let (a, b) = (n.tick.max(0), (n.tick + n.length).min(beats as i64 * PPQ));
+        if b <= a {
+            continue;
+        }
+        for beat in (a / PPQ)..=((b - 1) / PPQ) {
+            let (u0, u1) = (beat * PPQ, (beat + 1) * PPQ);
+            let overlap = (b.min(u1) - a.max(u0)) as f32 / PPQ as f32;
+            let w = overlap * n.velocity.max(0.05);
+            let i = beat as usize;
+            let u = &mut units[i];
+            u.chroma[usize::from(n.key % 12)] += w;
+            u.level += w;
+            u.frames = 1;
+            u.voiced = 1;
+            if lowest[i].is_none_or(|(k, _)| n.key < k) {
+                lowest[i] = Some((n.key, w));
+            }
+        }
+    }
+    for (u, low) in units.iter_mut().zip(&lowest) {
+        if let Some((k, w)) = low {
+            u.bass[usize::from(k % 12)] += *w;
+        }
+    }
+    recognise_chords(&units, &ChordOptions::default())
+        .into_iter()
+        .map(|c| ChordEvent {
+            bass: c.bass,
+            ..ChordEvent::new(
+                c.first as i64 * PPQ,
+                (c.end - c.first) as i64 * PPQ,
+                c.root,
+                c.quality,
+            )
+        })
+        .collect()
 }
 
 /// Handles the messages of a track that belong to an MPE member channel's own state: its notes

@@ -125,7 +125,40 @@ fn running_status_survives_sysex_and_meta() {
         0x00, 0x90, 60, 100, 0x00, 0xF0, 0x01, 0xF7, 0x00, 0xFF, 0x01, 0x00, 0x00, 62, 100,
     ];
     let f = read(&file(0, 96, &[&track])).unwrap();
-    assert_eq!(f.tracks[0].events.len(), 2);
+    // The two notes, with the (empty) text event between them; the SysEx is cut short.
+    let notes = f.tracks[0]
+        .events
+        .iter()
+        .filter(|e| matches!(e.message, SmfMessage::NoteOn { .. }))
+        .count();
+    assert_eq!(notes, 2);
+    assert_eq!(
+        f.tracks[0].events[1].message,
+        SmfMessage::Text(String::new())
+    );
+}
+
+#[test]
+fn text_lyric_and_key_signature_events_round_trip() {
+    let out = SmfFile {
+        format: 0,
+        ppq: 96,
+        tracks: vec![SmfTrack {
+            events: vec![
+                ev(
+                    0,
+                    SmfMessage::KeySignature {
+                        sharps: -3,
+                        minor: true,
+                    },
+                ),
+                ev(0, SmfMessage::Text("Am7".into())),
+                ev(4, SmfMessage::Lyric("C/G".into())),
+            ],
+            end_tick: 8,
+        }],
+    };
+    assert_eq!(read(&out.to_bytes()).unwrap(), out);
 }
 
 #[test]
