@@ -79,6 +79,7 @@ pub mod param_lane;
 mod param_search;
 mod patch;
 pub mod peak_surgeon;
+pub mod pitch_edit;
 mod plugin;
 mod plugin_cmd;
 mod plugin_files;
@@ -178,6 +179,10 @@ pub use midi_param::{
 };
 pub use mod_matrix::{ModSlot, amount_param, engine_params};
 pub use param_search::{MAX_RESULTS, ParamEntry, ParamIndex, SearchTarget, unit_label};
+pub use pitch_edit::{
+    MAX_PITCH_EDITS, PITCH_EDIT_MAX_CENTS, PITCH_EDIT_MAX_DRIFT, PITCH_EDIT_MIN_MS, PitchEdit,
+    min_edit_frames, validate_pitch_edits,
+};
 pub use plugin::{
     MAX_LAYOUT_PARAMS, MAX_PINNED_PARAMS, MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES,
     PLUGIN_GESTURE_MERGE_BASE, PluginCommand, PluginDoc, cables_off_layout, map_plugin_layouts,
@@ -271,7 +276,9 @@ pub use groove::{Groove, GrooveSlot, QuantizeParams};
 pub use harmony::{ChordEvent, Harmony, Key, KeyChange, MAX_CHORDS, MAX_KEY_CHANGES};
 pub use history::InvariantError;
 use history::{Edit, Swap, song_end_growth};
-pub use key_detect::{KeyGuess, detect_key, detect_song_key, song_note_weights};
+pub use key_detect::{
+    KeyGuess, detect_key, detect_key_from_profile, detect_song_key, song_note_weights,
+};
 use labels::Labels;
 pub use labels::{DEFAULT_LABEL, HistoryStep};
 pub use launcher::{
@@ -909,7 +916,7 @@ pub enum Command {
 /// | `RenameAsset` | `ViewChanged` |
 /// | tempo map (`SongCommand::SetTempoMap` and `DragTempoMap`, also set `tempo_bpm`) | `TempoChanged(first bpm)`, `SongChanged` |
 /// | meter (`SetMeter`, `SetMeterMap`, `DragMeterMap`) | `SongChanged` |
-/// | key and chords (`SetHarmony`, `DragHarmony`; also undo/redo) | `ViewChanged` |
+/// | key and chords (`SetHarmony`, `DragHarmony`; also undo/redo) | `ViewChanged`, `SongChanged` |
 /// | markers and ranges (`SetMarkers`, `DragMarkers`, `SetRanges`, `DragRanges`; also undo/redo) | `ViewChanged` |
 /// | quantize (`ApplyQuantize`, `QuantizeNotes`) | `SongChanged` |
 /// | note tools (`ApplyNoteTool`) | `SongChanged` |
@@ -1455,6 +1462,7 @@ impl Document {
                 | SongCommand::SetClipParamLanes { merge: Some(m), .. }
                 | SongCommand::SetAudioClip { merge: Some(m), .. }
                 | SongCommand::SetWarpMarkers { merge: Some(m), .. }
+                | SongCommand::SetPitchEdits { merge: Some(m), .. }
                 | SongCommand::SetClipGrid { merge: Some(m), .. },
             ) => Some(MergeKey::Clip(*m)),
             Command::Workflow(
@@ -2125,6 +2133,7 @@ impl Document {
                                     | SongCommand::SetClipGeometry { .. }
                                     | SongCommand::SetAudioClip { .. }
                                     | SongCommand::SetWarpMarkers { .. }
+                                    | SongCommand::SetPitchEdits { .. }
                                     | SongCommand::SplitClip { .. }
                                     | SongCommand::NewTakeGroup { .. }
                                     | SongCommand::StripSilence { .. }
@@ -2139,7 +2148,7 @@ impl Document {
                             )
                     ) {
                         return Err(ModelError::BadBatch(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetDelivery, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetDelivery, SetWarpMarkers, SetPitchEdits, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;

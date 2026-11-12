@@ -12,12 +12,14 @@
 //! track's own lanes, as one `SetTrackControllers`; a track with nothing else gets no clip.
 //!
 //! A tempo or meter map replaces the song's; markers and ranges are **added** to the existing ones
-//! (new ids). When a clip reaches past the song end, the end moves to the next bar line after it
+//! (new ids). Chords replace the chords of the chord lane over the ticks they cover, and a key sets
+//! the song key when the song has none; both are part of the same undo step. When a clip reaches past the song end, the end moves to the next bar line after it
 //! (the song end only ever grows here).
 
 use crate::DeviceKey;
 use crate::console_cmd::Planner;
 use crate::controller::ControllerLane;
+use crate::harmony::{ChordEvent, Key};
 use crate::history::{Edit, Swap};
 use crate::song::{Clip, Marker, MeterEvent, RangeMarker, SongCommand, TempoEvent};
 use crate::song_cmd::{check_markers, check_meter_map, check_ranges, check_tempo_map, new_track};
@@ -53,6 +55,11 @@ pub struct MidiImport {
     pub markers: Vec<(i64, String)>,
     /// Ranges to add, as `(start, end, name)` (`start < end`; names as for markers).
     pub ranges: Vec<(i64, i64, String)>,
+    /// Chords for the chord lane (sorted, not overlapping): they replace the lane's chords over
+    /// the ticks from the first one's start to the last one's end.
+    pub chords: Vec<ChordEvent>,
+    /// The song key, used only when the song has none.
+    pub key: Option<Key>,
 }
 
 /// Plans the import (module docs).
@@ -66,6 +73,8 @@ pub(crate) fn plan(
         && import.meter.is_none()
         && import.markers.is_empty()
         && import.ranges.is_empty()
+        && import.chords.is_empty()
+        && import.key.is_none()
     {
         return Err(ModelError::BadSong(
             "the MIDI import has nothing in it".into(),
@@ -177,6 +186,24 @@ pub(crate) fn plan(
         p.push(Edit::Ranges {
             old,
             new: check_ranges(new)?,
+        });
+    }
+    let key = import.key.filter(|_| p.doc().song.harmony.key.is_none());
+    if !import.chords.is_empty() || key.is_some() {
+        let old = p.doc().song.harmony.clone();
+        let mut new = old.clone();
+        if let Some(k) = key {
+            new = new.with_key(Some(k)).map_err(ModelError::OutOfRange)?;
+        }
+        if let (Some(first), Some(last)) = (import.chords.first(), import.chords.last()) {
+            new = new
+                .with_chords_in_range((first.tick, last.end()), &import.chords, false)
+                .map_err(ModelError::OutOfRange)?;
+        }
+        new.check().map_err(ModelError::OutOfRange)?;
+        p.push(Edit::Harmony {
+            old: Box::new(old),
+            new: Box::new(new),
         });
     }
     // The song End follows the clips: applying the step moves it out to the next bar line.

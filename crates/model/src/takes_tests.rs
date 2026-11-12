@@ -40,6 +40,7 @@ fn audio_take(start: i64, length: i64, asset: &str, offset: u64) -> Clip {
             envelope: Vec::new(),
             xfade: None,
             warp: Default::default(),
+            pitch_edits: Vec::new(),
         }),
         ..notes_take(start, length)
     }

@@ -10,6 +10,9 @@ use std::path::PathBuf;
 ///
 /// The enum is `#[non_exhaustive]`: hosts match the variants they handle and ignore the rest
 /// with a wildcard arm, so later phases can add actions without breaking them.
+// Most actions are commands, which carry whole clips: boxing them would add an allocation to
+// nearly every action the views emit.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum UiAction {
@@ -453,6 +456,19 @@ pub enum UiAction {
         /// Detector sensitivity in percent.
         sensitivity: u8,
     },
+    /// Find the notes and pitch curves of the audio clip open in the audio clip editor (Vocal
+    /// mode opened, a clip opened in it, or the sensitivity changed): the app analyses the span of
+    /// the file the clip plays on a worker and gives the result back with
+    /// [`crate::AudioEditorView::set_vocal_notes`], its progress with
+    /// [`crate::AudioEditorView::set_vocal_progress`]. `sensitivity` is in percent (0..=100).
+    AnalyseVocal {
+        /// The clip.
+        clip: ClipId,
+        /// Note detector sensitivity in percent.
+        sensitivity: u8,
+    },
+    /// Stop the analysis [`UiAction::AnalyseVocal`] started (Esc or CANCEL in the editor).
+    CancelVocalAnalysis,
     /// The speaker tool is pressed: play the frames `start_frame..end_frame` of `asset` as they
     /// are in the file (at the file's own rate, no warp, fades or envelope), from the end down
     /// when `reverse`, at `gain_db`. Live only; a new press replaces the audition and
@@ -568,6 +584,14 @@ pub enum UiAction {
     OpenPluginGui {
         /// The plugin device (path key).
         device: DeviceKey,
+    },
+    /// A click on the Learn strip of a plugin window (or its fallback in the parameter pane):
+    /// arm or disarm what a touch on a control of the plugin's own interface does.
+    PluginLearn {
+        /// The plugin device (path key).
+        device: DeviceKey,
+        /// What to arm or disarm.
+        request: crate::plugin_learn::PluginLearnRequest,
     },
     /// Open the plugin parameter pane (the panel's PARAMS button): call
     /// [`crate::PluginParamsView::open`] and show it in place of the arrangement, like the
@@ -719,6 +743,10 @@ pub enum UiAction {
     /// Open the key and chord picker (see [`crate::HarmonyPickerView`]) on the song key, a key
     /// change or a chord: a double click on a lane item, or a click on the transport bar's Key.
     HarmonyPicker(crate::harmony_picker::HarmonyTarget),
+    /// Play this chord briefly (a click on a chord of the chord lane with "Play Chords on Click"
+    /// on, or a chord picked in the picker); the app plays it through the selected note track or
+    /// the preview voice.
+    AuditionChord(atomik_model::ChordEvent),
     /// The key and chord picker asks for something: set the value, delete the item or close.
     Harmony(crate::harmony_picker::HarmonyPickerAction),
     /// The kick and bass check panel ([`crate::KickBassView`]) asks for something: pick a track,
@@ -753,6 +781,9 @@ pub enum UiAction {
     /// The Audio to Notes panel ([`crate::NotesView`]) asks for something: extract the notes of
     /// the selected audio clip with its settings, or close.
     AudioToNotes(crate::notes_panel::NotesAction),
+    /// The Detect Chords panel ([`crate::ChordsView`]) asks for something: score the analysis
+    /// again, put the chords in the lane, stop the analysis, or close.
+    DetectChords(crate::chords_panel::ChordsAction),
     /// The warp panel ([`crate::WarpView`]) asks for something: set its values on the selected
     /// audio clips, estimate a tempo, or close.
     Warp(crate::warp_panel::WarpAction),

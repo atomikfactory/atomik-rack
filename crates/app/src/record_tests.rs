@@ -15,6 +15,7 @@ const OTHER: DeviceInstanceId = DeviceInstanceId(2);
 
 fn snapshot(bpm: f64) -> SongSnapshot {
     compile_song(&SongInput {
+        harmony: Default::default(),
         tracks: vec![],
         tempo: vec![SongTempo {
             tick: Ticks(0),

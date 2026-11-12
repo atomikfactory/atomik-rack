@@ -94,8 +94,9 @@ pub enum ManagerError {
 /// Something that happened to an instance, for the app to act on.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ManagerEvent {
-    /// A parameter edit made inside the plugin's window (`value` is NaN for a gesture's
-    /// begin and end markers).
+    /// A parameter edit made inside the plugin's window. A gesture's begin and end markers
+    /// carry no value: NaN from a plugin in this process, 0 from a sandboxed one (the wire has
+    /// no NaN).
     ParamEdit {
         /// The instance.
         instance: InstanceId,
@@ -140,6 +141,19 @@ pub enum ManagerEvent {
         /// Width in pixels.
         w: u32,
         /// Height in pixels.
+        h: u32,
+    },
+    /// An external editor's window moved or changed size (its outer frame, physical pixels).
+    GuiFrame {
+        /// The instance.
+        instance: InstanceId,
+        /// Left edge.
+        x: i32,
+        /// Top edge.
+        y: i32,
+        /// Outer width.
+        w: u32,
+        /// Outer height.
         h: u32,
     },
     /// The plugin closed its editor.
@@ -926,6 +940,13 @@ impl PluginManager {
                 PluginMessage::GuiResize { w, h } => {
                     events.push(ManagerEvent::GuiResize { instance: id, w, h })
                 }
+                PluginMessage::GuiFrame { x, y, w, h } => events.push(ManagerEvent::GuiFrame {
+                    instance: id,
+                    x,
+                    y,
+                    w,
+                    h,
+                }),
                 PluginMessage::GuiClosed => events.push(ManagerEvent::GuiClosed(id)),
                 PluginMessage::GuiRequestShow => events.push(ManagerEvent::GuiRequestShow(id)),
                 PluginMessage::GuiRequestHide => events.push(ManagerEvent::GuiRequestHide(id)),

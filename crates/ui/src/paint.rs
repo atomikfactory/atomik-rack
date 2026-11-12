@@ -459,6 +459,10 @@ pub struct PanelInfo<'a> {
     pub mix: crate::mix_panel::MixInfo<'a>,
     /// Key & Chord panel: the FROM CLIP button is enabled (the open clip has a scale).
     pub from_clip: bool,
+    /// The song key at the playhead, short (`Am`), for the SONG tag of a following device.
+    pub song_key: Option<&'a str>,
+    /// The chord of the lane at the playhead (`Am7`), for the SONG tag of a following device.
+    pub song_chord: Option<&'a str>,
     /// Granular panel: the published values, the sample and its peaks.
     pub grain: crate::granular_panel::GrainInfo<'a>,
     /// A sampling runs into this device: its SAMPLE button reads STOP.
@@ -1311,8 +1315,22 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     &info.grain,
                 );
             }
-            if let (Some(panel), Some(_)) = (info.spec.key_chord, info.device) {
-                crate::key_chord_panel::paint_panel(c, theme, &panel, info.from_clip);
+            if let (Some(panel), Some(device)) = (info.spec.key_chord, info.device) {
+                let song = crate::key_chord_panel::follows_song(device, desc).map(|chord| {
+                    if chord {
+                        info.song_chord
+                    } else {
+                        info.song_key
+                    }
+                });
+                crate::key_chord_panel::paint_panel(
+                    c,
+                    theme,
+                    &panel,
+                    info.from_clip,
+                    song,
+                    info.accent,
+                );
             }
             if let (Some(arp), Some(device)) = (info.spec.arp, info.device) {
                 crate::arp_panel::paint_panel(
@@ -1324,6 +1342,15 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     &info.player,
                     info.accent,
                 );
+                if crate::arp_panel::follows_song(device, desc) {
+                    crate::key_chord_panel::paint_song_tag(
+                        c,
+                        theme,
+                        arp.song_tag,
+                        info.song_chord,
+                        info.accent,
+                    );
+                }
             }
         }
         Side::Back => {

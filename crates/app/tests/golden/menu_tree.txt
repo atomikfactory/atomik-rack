@@ -282,6 +282,8 @@ Transport
   ---
   Song Key…
   Detect Song Key
+  Detect Key from Audio
+  Detect Chords from Audio…
 Mixer
   Console
   Maximise Console

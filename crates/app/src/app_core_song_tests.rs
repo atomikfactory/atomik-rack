@@ -164,6 +164,7 @@ fn start_up_submits_the_song_and_the_transport_setup_after_the_rack() {
     assert_eq!(
         songs(&calls)[0],
         &SongInput {
+            harmony: Default::default(),
             tracks: vec![],
             tempo: vec![atomik_engine::SongTempo {
                 tick: Ticks(0),

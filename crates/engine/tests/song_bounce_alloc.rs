@@ -48,6 +48,7 @@ fn song_input(s1: DeviceInstanceId, s2: DeviceInstanceId, variant: u8) -> SongIn
         .map(|k| snote(k * PPQ / 2, PPQ / 4, 36 + (k as u8 + variant) % 5))
         .collect();
     SongInput {
+        harmony: Default::default(),
         tracks: vec![
             SongTrack {
                 device: s1,

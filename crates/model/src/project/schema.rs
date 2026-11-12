@@ -551,6 +551,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Audio, "envelope", 23),
     field(Audio, "xfade", 23),
     field(Audio, "warp", 24),
+    field(Audio, "pitch_edits", 45).ignorable(),
     field(Warp, "mode", 1).req(),
     field(Warp, "bpm", 1).req(),
     field(Warp, "enabled", 1),

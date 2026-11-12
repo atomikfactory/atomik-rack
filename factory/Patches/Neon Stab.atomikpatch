@@ -28,7 +28,9 @@
     "song.launcher.slots[].row": 45,
     "song.launcher.slots[].track": 45,
     "song.launcher.stop_empty": 45,
+    "song.tracks[].lanes[].clips[].audio.pitch_edits": 45,
     "song.tracks[].lanes[].clips[].expression": 45,
+    "song.tracks[].lanes[].take_groups[].takes[].audio.pitch_edits": 45,
     "song.tracks[].lanes[].take_groups[].takes[].expression": 45
   },
   "sample_rate": 48000,

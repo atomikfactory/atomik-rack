@@ -516,6 +516,12 @@ fn plugin_messages_become_manager_events_tagged_with_the_instance() {
         },
         PluginMessage::StateDirty,
         PluginMessage::GuiResize { w: 400, h: 300 },
+        PluginMessage::GuiFrame {
+            x: 10,
+            y: 20,
+            w: 416,
+            h: 339,
+        },
         PluginMessage::GuiClosed,
         PluginMessage::GuiRequestShow,
         PluginMessage::GuiRequestHide,
@@ -542,6 +548,13 @@ fn plugin_messages_become_manager_events_tagged_with_the_instance() {
                 instance: id,
                 w: 400,
                 h: 300
+            },
+            ManagerEvent::GuiFrame {
+                instance: id,
+                x: 10,
+                y: 20,
+                w: 416,
+                h: 339
             },
             ManagerEvent::GuiClosed(id),
             ManagerEvent::GuiRequestShow(id),

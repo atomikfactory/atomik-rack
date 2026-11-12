@@ -1,0 +1,36 @@
+[package]
+name = "atomik-vision"
+description = "Atomik Rack hand tracking: camera capture, the hand models run in pure Rust, the one-time model download and the pinch-and-twist gesture recogniser."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+tract-tflite = "0.23.10"
+sha2.workspace = true
+ureq.workspace = true
+zune-jpeg.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+log.workspace = true
+clap.workspace = true
+ctrlc.workspace = true
+
+# The capture backends, one per system and nothing else (no JPEG codec in C, no bindgen, no libclang).
+[target.'cfg(windows)'.dependencies]
+nokhwa = { version = "0.10.11", default-features = false, features = ["input-msmf"] }
+[target.'cfg(target_os = "macos")'.dependencies]
+nokhwa = { version = "0.10.11", default-features = false, features = ["input-avfoundation"] }
+[target.'cfg(target_os = "linux")'.dependencies]
+linuxvideo = "0.3.5"
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

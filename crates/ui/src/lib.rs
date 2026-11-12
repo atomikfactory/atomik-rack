@@ -364,6 +364,7 @@ pub mod canvas;
 pub mod character_panel;
 pub mod character_screen;
 pub mod chord_edit;
+pub mod chords_panel;
 pub mod clipboard;
 pub mod color_picker;
 pub mod command_palette;
@@ -430,6 +431,7 @@ pub mod piano_roll;
 pub mod pick_list;
 pub mod plugin_banner;
 pub mod plugin_data;
+pub mod plugin_learn;
 pub mod plugin_manager;
 pub mod plugin_panel;
 pub mod plugin_params;
@@ -496,6 +498,9 @@ pub use bass_read_panel::{BassLevel, BassReadAction, BassReadData, BassReadView,
 pub use blind_panel::{BlindAction, BlindInfo, BlindView};
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
+pub use chords_panel::{
+    ChordChanges, ChordsAction, ChordsPreview, ChordsRow, ChordsValues, ChordsView, PreviewChord,
+};
 pub use color_picker::{ColorPickerAction, ColorPickerView, ColorTarget};
 pub use command_palette::{CommandPaletteView, PaletteAction};
 pub use console::{ConsoleButton, ConsoleView, console_shortcut, fader_db, is_console_device};
@@ -551,6 +556,10 @@ pub use piano_keys::{
 };
 pub use piano_roll::{NOTE_INSPECTOR_HEIGHT, NoteField, PianoRollView};
 pub use plugin_banner::{BannerKind, PluginBannerView};
+pub use plugin_learn::{
+    PluginLearnMode, PluginLearnRequest, PluginLearnState, PluginLearnStatus, PluginLearnStrip,
+    STRIP_HEIGHT as LEARN_STRIP_HEIGHT,
+};
 pub use plugin_manager::{
     PluginManagerAction, PluginManagerData, PluginManagerRow, PluginManagerView, StatusFilter,
 };

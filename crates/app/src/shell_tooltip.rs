@@ -170,6 +170,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &self.notes {
             return v.help_at(pos);
         }
+        if let Some(v) = &self.chords {
+            return v.help_at(pos);
+        }
         if let Some(v) = &self.scale {
             return v.help_at(pos);
         }

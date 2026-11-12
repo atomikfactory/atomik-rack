@@ -15,8 +15,9 @@ use atomik_testkit::harness::DeviceHarness;
 use atomik_testkit::no_alloc::assert_no_alloc;
 use sandbox_support::SR;
 use sandbox_support::{
-    CRASH_DEADLINE, FORMATS, Format, METER_LATE, METER_STATE, Plug, Sandbox, bits, config,
-    config_with_env, effect, meters, null_plugin, out_l, request, request_with_state, run_to_crash,
+    CRASH_DEADLINE, FORMATS, Format, METER_LATE, METER_STATE, Plug, SETTLE, Sandbox, bits, config,
+    config_with_env, effect, meters, null_plugin, out_l, process_settled, request,
+    request_with_state, run_to_crash,
 };
 use std::time::Duration;
 
@@ -428,9 +429,7 @@ fn a_state_captured_from_one_sandboxed_instance_restores_into_another_with_the_s
         let ida = a.id;
         let mut ha = effect(a, 0.25);
         ha.set_param("p1", format.gain_value(-9.0));
-        for _ in 0..10 {
-            ha.process();
-        }
+        process_settled(&mut ha, 10, SETTLE);
         let blob = sb.manager.capture_state(ida).unwrap();
         assert!(!blob.0.is_empty());
         let b = sb
@@ -444,9 +443,7 @@ fn a_state_captured_from_one_sandboxed_instance_restores_into_another_with_the_s
         assert!(b.restore_error.is_none());
         let idb = b.id;
         let mut hb = effect(b, 0.25);
-        for _ in 0..10 {
-            hb.process();
-        }
+        process_settled(&mut hb, 10, SETTLE);
         assert_eq!(bits(&out_l(&hb)), bits(&out_l(&ha)), "{}", format.name());
         assert_eq!(sb.manager.capture_state(idb).unwrap(), blob);
         drop((ha, hb));

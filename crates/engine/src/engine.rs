@@ -894,6 +894,13 @@ impl EngineHandle {
         self.streams.stats.underruns.load(Ordering::Relaxed)
     }
 
+    /// Segment reads of interim warps that should have kept their pitch but found every
+    /// real-time stretcher of their track busy, so they played the plain resampling read
+    /// instead. Never blocks.
+    pub fn interim_stretch_fallbacks(&self) -> u64 {
+        self.streams.stats.stretch_fallbacks.load(Ordering::Relaxed)
+    }
+
     /// Starts previewing `stream` (a file at `source_rate` Hz) at linear `gain`, live only.
     /// Replaces a preview that is playing (it fades out over 5 ms).
     ///
@@ -1542,6 +1549,7 @@ impl Engine {
             loop_wrap: bt.loop_wrap,
             loop_ticks: bt.loop_ticks,
             time_signature: bt.time_signature,
+            harmony: bt.harmony,
             tune_cents: self.tune.next(),
         };
         match (&mut self.routing, &mut self.pool) {

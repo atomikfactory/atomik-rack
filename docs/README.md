@@ -138,7 +138,7 @@ takes the lower pane instead.
 ## Key and chords
 
 The song can have a key and a chord lane. The rest of the app follows them: the piano roll, the browser, new chords
-and a few tools. Nothing here changes how the song sounds.
+and a few tools. They change how the song sounds only through the devices you ask to follow them (below).
 
 - **The song key.** A root and a scale (major, minor, the modes, the pentatonic scales and the others of the piano
   roll; never chromatic). Click the Key field in the transport bar, or choose Transport > Song Key..., to open the
@@ -153,7 +153,11 @@ and a few tools. Nothing here changes how the song sounds.
   the length. Drag a chord to move it, drag its right end to resize it, double click it to change it. Chords never
   overlap: a move or a resize that would run into the next chord stops short. Escape puts a drag back, and every
   gesture is one undo step. The right button on a chord or a tag lists Delete and Copy; on the empty lane it lists
-  Add Here and, after a Copy, Paste.
+  Add Here and, after a Copy, Paste. Paste Chord (Ctrl+Alt+V in the arrangement, or the command palette) puts the
+  copied chord at the playhead.
+- **Hearing a chord.** A click on a chord plays it for a moment through the instrument of the selected note track, or
+  a small built-in voice when none is selected; picking a chord in the picker plays it too. It is silent while the
+  song plays. Turn it off with Play Chords on Click in the chord lane's right-click list.
 - **The picker.** The Root row, the Quality rows (or the Scale rows for a key) and the Bass row pick a chord with the
   mouse. The Chord field takes a symbol: a root letter (A to G, either case) with a sharp or a flat, a quality such as
   m, min, -, maj7, M7, 7, m7b5, dim, dim7, aug, sus2, sus4, 6, m6, 9, maj9, m9, add9, 11, 13 or 5, and an optional bass
@@ -165,14 +169,76 @@ and a few tools. Nothing here changes how the song sounds.
 - **Chords in the piano roll.** The Chord Stamp menu has Song Chord: the pencil drops the chord of the chord lane at the
   place you draw (a single note where the lane has no chord), with its bass note below the chord. Fit Notes to Chords
   (in the Chords menu) moves each selected note that falls outside the chord at its position to the nearest chord
-  tone, a tie going down, and never onto a note that is already there; it is one undo step.
+  tone, a tie going down, and never onto a note that is already there. The moved notes show first as outlines, with
+  Apply and Cancel in a bar at the top of the roll (Enter applies, Esc cancels); Apply is one undo step.
+- **Devices that follow the song.** Key & Chord can take its scale from the song key (Scale Source: song, key changes
+  included) and its chord from the chord lane (Chord Source: song chord): Follow stamp plays the lane's chord near
+  any key you press, Follow snap moves each key to the nearest chord tone, and Retrigger re-voices the keys you hold
+  when the chord changes. The Arpeggiator's Source plays the lane's chord (song chord) or snaps the held keys to it
+  (held + song chord); with Gate by Keys off it runs by itself whenever the song plays a chord, from Chord Octave.
+  The CV Quantizer can quantize to the song key. A device that follows shows a SONG tag with the chord or key at the
+  playhead. Bounces sound exactly like playback.
+- **Chords from a MIDI file.** Importing a MIDI file as a song also reads the chord symbols written in it (text,
+  lyric or marker events such as Am7 or C/G, each lasting until the next) into the chord lane, and its key signature
+  as the song key when the song has none, all in the import's one undo step.
 - **Detect Song Key.** Transport > Detect Song Key reads every note clip and sets the key it finds, as one undo
   step: the longer a note, the more it counts. The status line says how clear the answer was; Undo puts the old key
-  back. It is a guess, and it only finds major and natural minor.
+  back. It is a guess, and it only finds major and natural minor. A song with no notes but with audio clips is read
+  from its audio instead, and Transport > Detect Key from Audio always listens to the audio: the selected audio clips,
+  or every audio clip, at most ten minutes of it, on a worker.
+- **Detect Chords from Audio.** Select audio clips (or set the loop over the part you want) and choose Transport >
+  Detect Chords from Audio..., or the same item in the right-click menu of an audio clip. The program listens on a
+  worker (CANCEL stops it) and opens a panel with the chords it heard drawn over their bars; a chord it is unsure of
+  is dimmed. CHANGES lets a chord change on every beat, every half bar or every bar; CHORDS picks Simple (triads only)
+  or Full (sevenths and sixths too, when they are clearly there); SLASH CHORDS adds the bass note when it is not the
+  root (C/G). Each change shows at once, without listening again. REPLACE IN RANGE puts the chords over the span the
+  clips cover, replacing the chords there; FILL GAPS ONLY keeps the chords already in the lane and fills the gaps.
+  When the song has no key, a check box also sets the key the audio points to. It is one undo step either way. It
+  works best on a clear piano, guitar or pad part; drums and a busy mix make it guess more, and a recording a little
+  sharp or flat (A = 432, say) is heard true.
 - **The browser.** Type key:song in the file browser's search to see the loops tagged with the song key (the factory
   loops carry a tag such as A minor). A song without a key filters nothing. key:minor finds the tags with that word.
 - **Saving.** The key, the key changes and the chords are saved only when set, as optional fields that an older
   version of the program drops with a warning (project format 45).
+
+## Audio to notes
+
+Audio > Audio to Notes... turns the selected audio clips into note clips, on a new track or on the selected note
+track. MODE picks what to listen for: Pitched (one voice), Drums, or Polyphonic (chords), which follows a piano or a
+guitar part with several notes at once. VOICES AT ONCE caps how many notes sound together (1 to 6, 4 by default), and
+the sensitivity, the shortest note and the note range work as for a single voice. Polyphonic notes are a sketch to
+edit, not a transcription: a dense mix, a distorted guitar or two notes an octave apart can lose a note or add one.
+
+## Vocal mode
+
+The audio clip editor (double click an audio clip, or F8) has a Vocal mode for a clip of one voice at a time: a
+singer, a bass, a lead. Press VOCAL in its toolbar, or 3.
+
+- **The notes.** The editor listens to the clip and finds its notes; the footer shows how far it is and CANCEL (or
+  Escape) stops it. This is not saved: it is done again when the clip opens, and quickly for a clip it has just seen.
+  SENS - and + find fewer or more notes. A clip with no clear pitch (drums, noise, a chord) says "No pitched notes
+  found in this clip".
+- **The grid.** The waveform becomes a grid of semitones with piano keys on the left, dimmed behind the notes. When
+  the song has a key, its scale is lit. Each note is a bar from its start to its end at its pitch, with the pitch
+  curve through it: the original faint, the result bright.
+- **Select.** Click a note; Shift+click adds or removes one; drag on the empty grid to draw a box. Ctrl+A selects all.
+- **Move the pitch.** Drag a note up or down: the selected notes move by whole semitones. Hold the alternate-tool
+  key (Alt, Ctrl on macOS) to move them freely, in cents. Escape during the drag puts them back.
+- **Move in time.** Drag a note sideways: two warp markers are pinned at its start and end and moved together, so
+  the note moves and the audio on both sides stretches. A clip without warp has it switched on at the song tempo.
+- **CORRECT** brings the centre of each selected note to the nearest semitone; with **SCALE** on and a song key, to
+  the nearest note of the scale. **FLATTEN** straightens the pitch drift of the selected notes by the amount beside
+  it (drag the number up or down, 100% makes a straight line); a vibrato is kept. **RESET** removes the edits of the
+  selected notes, or of every note when none is selected. Each is one undo step, and so is each drag.
+- **The footer** names the first selected note (E3, say) with its distance from the nearest semitone in cents, before
+  and after the edit, and its drift.
+- **The sound.** The edits are pinned to the audio, so they stay with their notes when the tempo or the warp markers
+  change, a split keeps each in the piece that holds the note's start, and a join keeps both. The clip is rendered
+  with them in the background (the clip shows CALC meanwhile and plays without the edits until it is done); the
+  bounce, Bounce in Place, Freeze and Export always hear them. The shift keeps the voice's character (its formants):
+  it works on one note at a time, so it suits one voice and not chords.
+- **Saving.** The edits are saved with the clip, as an optional field that an older version drops with a warning
+  (project format 45).
 
 ## Controllers
 
@@ -413,6 +479,15 @@ plugins on, the scan folders and the sandbox stay in Audio > Plugins.
 - **Quarantine.** A plugin whose process ends, or that cannot be loaded, three times in a row is quarantined: it is
   hidden like a disabled one and a message says so once. An instance that ends without a fault, or a load that works,
   starts the count again. Try Again takes the chosen plugins out of quarantine (and scans failed files again).
+- **Learn in the plugin window.** Each plugin editor window has a thin strip docked to its top edge (below it when the
+  window is at the top of the screen): the plugin's name, LEARN AUTOMATION, LEARN MIDI, what happened last and a close
+  button. Pick a mode, then move any control in the plugin's own interface. LEARN AUTOMATION shows that parameter's
+  automation lane in the arrangement, adding an empty lane when it has none; LEARN MIDI waits for a hardware control
+  and maps it to that parameter (the strip says which: `Cutoff ← CC 21 ch 1`). The mode stays on for the next
+  control; click the lit button or the close button, press Esc in the main window, close the editor or turn on MIDI
+  Learn to stop. The plugin device's right-click menu and the command palette have Learn Automation from Plugin Window
+  and Learn MIDI from Plugin Window. Where the strip cannot be shown (a Wayland session), the parameter pane (PARAMS)
+  has the same two buttons, and a touch on one of its rows works the same way.
 - **Rescan.** Rescan All scans every plugin folder again, Rescan Selected only the files of the chosen rows. The scan
   runs in the background: the panel shows how far it is and the same button becomes Cancel.
 - **Show in Folder.** Opens the file manager at the file of the first chosen row.

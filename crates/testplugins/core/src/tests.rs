@@ -585,3 +585,13 @@ fn the_normalised_mapping_is_linear_clamped_and_inverts_on_exact_values() {
         37.0
     );
 }
+
+#[test]
+fn a_gui_edit_request_is_an_id_and_a_finite_value() {
+    assert_eq!(parse_gui_edit("1:0.75"), Some((1, 0.75)));
+    assert_eq!(parse_gui_edit(" 2 : -6 "), Some((2, -6.0)));
+    assert_eq!(parse_gui_edit("1"), None);
+    assert_eq!(parse_gui_edit("x:1"), None);
+    assert_eq!(parse_gui_edit("1:NaN"), None);
+    assert_eq!(parse_gui_edit("1:inf"), None);
+}

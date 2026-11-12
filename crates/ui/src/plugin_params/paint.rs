@@ -108,7 +108,7 @@ fn chrome(v: &PluginParamsView, c: &mut dyn Canvas) {
         let title = format!("{}  ·  {}", v.name, v.vendor);
         sp::label(
             c,
-            &crate::paint::fit_label_raw(&title, b.width() - 320.0, 10.0),
+            &crate::paint::fit_label_raw(&title, b.width() - 460.0, 10.0),
             b.x0 + 130.0,
             b.y0 + 18.0,
             10.0,
@@ -133,6 +133,26 @@ fn chrome(v: &PluginParamsView, c: &mut dyn Canvas) {
         None,
         matches!(v.hover, Hit::Close),
     );
+    if v.present {
+        // The fallback of the plugin window's Learn strip: the same two toggles.
+        use crate::plugin_learn::PluginLearnMode;
+        sp::button(
+            c,
+            st,
+            v.learn_automation_rect(),
+            "LEARN AUTOMATION",
+            (v.learn == Some(PluginLearnMode::Automation)).then_some(st.loop_on),
+            matches!(v.hover, Hit::LearnAutomation),
+        );
+        sp::button(
+            c,
+            st,
+            v.learn_midi_rect(),
+            "LEARN MIDI",
+            (v.learn == Some(PluginLearnMode::Midi)).then_some(t.warning),
+            matches!(v.hover, Hit::LearnMidi),
+        );
+    }
     // The search row.
     let row = Rect::new(b.x0, bar.y1, b.x1, bar.y1 + super::SEARCH_HEIGHT);
     sp::rect(c, row, st.header_lane);

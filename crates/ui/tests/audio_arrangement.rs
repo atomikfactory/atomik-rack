@@ -261,6 +261,7 @@ fn content10(
         envelope: Vec::new(),
         xfade: None,
         warp: Default::default(),
+        pitch_edits: Vec::new(),
     }
 }
 

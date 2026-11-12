@@ -12,5 +12,8 @@
   <!-- Audio input: a hardened-runtime app needs this (plus the usage text in Info.plist) to
        be allowed to record from a microphone or an audio interface. -->
   <key>com.apple.security.device.audio-input</key><true/>
+  <!-- Camera: a hardened-runtime app needs this (plus the usage text in Info.plist) to use the
+       webcam for hand control. The camera is off until the user turns it on. -->
+  <key>com.apple.security.device.camera</key><true/>
 </dict>
 </plist>

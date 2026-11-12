@@ -3,6 +3,7 @@
 
 mod app;
 pub mod gpu;
+mod learn_strips;
 #[cfg(target_os = "macos")]
 mod native_menu;
 mod plugin_windows;

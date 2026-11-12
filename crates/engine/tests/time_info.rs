@@ -364,3 +364,120 @@ fn the_time_signature_changes_at_the_bar_line() {
     }
     assert_eq!(log.last().unwrap().time_signature, (3, 4));
 }
+
+fn test_harmony() -> atomik_engine::SongHarmony {
+    use atomik_core::theory::{ChordKind, Scale, ScaleKind};
+    use atomik_engine::{ChordMark, KeyMark, SongChord, SongHarmony};
+    SongHarmony::new(
+        Some(Scale::new(0, ScaleKind::Major)),
+        &[KeyMark {
+            tick: 2 * PPQ + 7,
+            key: Scale::new(9, ScaleKind::NaturalMinor),
+        }],
+        &[
+            ChordMark {
+                tick: 0,
+                end: PPQ + 1001,
+                chord: SongChord::new(0, ChordKind::Major),
+            },
+            ChordMark {
+                tick: PPQ + 5000,
+                end: 3 * PPQ,
+                chord: SongChord::new(7, ChordKind::Seventh),
+            },
+        ],
+    )
+}
+
+/// The last tick emitted at or before song frame `f` at 120 BPM (0.64 ticks per frame, nearest
+/// frame): `round(t / 0.64) <= f`.
+fn tick_at_song_frame(f: u64) -> i64 {
+    ((16 * f + 7) / 25) as i64
+}
+
+#[test]
+fn devices_see_the_key_and_chord_of_the_lane_at_every_frame() {
+    let (mut e, mut h, log) = rig();
+    let mut input = song_input(Vec::new(), &[(0, 120.0)]);
+    input.harmony = test_harmony();
+    let harmony = input.harmony.clone();
+    h.submit_song(atomik_engine::compile_song(&input).unwrap())
+        .unwrap();
+    batches(&mut e, 2);
+    h.transport(TransportCommand::Play).unwrap();
+    batches(&mut e, 1_500);
+    let log = log.lock().unwrap();
+    // Stopped at tick 0: the harmony at the playhead.
+    assert_eq!(log[0].harmony.marks().len(), 1);
+    assert_eq!(log[0].harmony.chord_at(0), harmony.chord_at(0));
+    let start = log.iter().position(|t| t.playing).unwrap();
+    let base = log[start].frame;
+    let mut changes = 0;
+    let mut last = None;
+    for t in &log[start..] {
+        for o in 0..64u16 {
+            let tick = tick_at_song_frame(t.frame - base + u64::from(o));
+            assert_eq!(
+                t.harmony.chord_at(o),
+                harmony.chord_at(tick),
+                "chord at frame {} + {o}",
+                t.frame
+            );
+            assert_eq!(t.harmony.key_at(o), harmony.key_at(tick), "key at {tick}");
+        }
+        for m in t.harmony.marks() {
+            if last.is_some_and(|l| l != (m.key, m.chord)) {
+                changes += 1;
+            }
+            last = Some((m.key, m.chord));
+        }
+    }
+    // The chord end, the next chord, the key change and the last chord end.
+    assert_eq!(changes, 4);
+}
+
+#[test]
+fn without_harmony_every_batch_has_none() {
+    let (mut e, mut h, log) = rig();
+    h.submit_song(song(Vec::new(), &[(0, 120.0)])).unwrap();
+    h.transport(TransportCommand::Play).unwrap();
+    batches(&mut e, 50);
+    assert!(
+        log.lock()
+            .unwrap()
+            .iter()
+            .all(|t| t.harmony.marks().is_empty())
+    );
+}
+
+#[test]
+fn a_loop_wrap_brings_back_the_harmony_of_the_loop_start() {
+    let (mut e, mut h, log) = rig();
+    let mut input = song_input(Vec::new(), &[(0, 120.0)]);
+    input.harmony = test_harmony();
+    let harmony = input.harmony.clone();
+    h.submit_song(atomik_engine::compile_song(&input).unwrap())
+        .unwrap();
+    // Loop from inside the first chord to inside the second one; 1000 ticks is not a batch
+    // multiple, so the wrap lands inside a batch.
+    h.transport(TransportCommand::SetLoop {
+        start: Ticks(PPQ),
+        end: Ticks(2 * PPQ + 1000),
+        enabled: true,
+    })
+    .unwrap();
+    h.transport(TransportCommand::Locate(Ticks(PPQ))).unwrap();
+    h.transport(TransportCommand::Play).unwrap();
+    batches(&mut e, 800);
+    let log = log.lock().unwrap();
+    let wraps: Vec<&TimeInfo> = log.iter().filter(|t| t.loop_wrap.is_some()).collect();
+    assert!(!wraps.is_empty());
+    for t in wraps {
+        let w = t.loop_wrap.unwrap();
+        assert_eq!(t.harmony.chord_at(w.offset), harmony.chord_at(PPQ));
+        assert_eq!(
+            t.harmony.chord_at(w.offset - 1),
+            harmony.chord_at(2 * PPQ + 999)
+        );
+    }
+}

@@ -6,6 +6,7 @@
 mod arena;
 mod audio;
 mod audio_follow;
+mod audio_stretch;
 mod console;
 mod controllers;
 mod engine;
@@ -32,10 +33,11 @@ mod tune;
 mod workers;
 
 pub use arena::{RoutingPlan, Topology};
+pub use atomik_core::harmony::{ChordMark, KeyMark, SongChord, SongHarmony};
 pub use atomik_dsp::lens::{LensSettings, Voicing as LensVoicing};
 pub use audio::{
-    AssetId, Knot, SongAsset, SongAudioRegion, SongAudioTrack, SongFadeCurve, StreamSource,
-    sin_quarter,
+    AssetId, Knot, SongAsset, SongAudioRegion, SongAudioTrack, SongFadeCurve, SongWarpMode,
+    StreamSource, sin_quarter,
 };
 pub use console::{
     MAX_COMPENSATION_SECONDS, MAX_METER_VALUES, METER_CAPACITY, MeterReading, Meters, PdcReport,

@@ -67,11 +67,12 @@ fn a_song_starts_without_a_key_or_chords() {
 }
 
 #[test]
-fn setting_the_harmony_is_one_undo_step_that_reports_a_view_change() {
+fn setting_the_harmony_is_one_undo_step_that_reaches_the_engine() {
     let reg = registry();
     let mut d = doc(&reg);
     let ops = set(&mut d, &reg, full());
-    assert_eq!(ops, vec![SyncOp::ViewChanged]);
+    // Note devices may follow the key and the chords: the song is swapped as well.
+    assert_eq!(ops, vec![SyncOp::ViewChanged, SyncOp::SongChanged]);
     assert_eq!(d.doc().song.harmony, full());
     d.undo().unwrap();
     assert!(d.doc().song.harmony.is_empty());

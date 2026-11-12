@@ -123,6 +123,10 @@ fn descriptor_validates_and_orders_params_and_sockets() {
             "scale.note.11",
             "chord.alter",
             "chord.notes",
+            "scale.source",
+            "chord.source",
+            "chord.follow",
+            "chord.retrigger",
         ]
     );
     let sockets: Vec<_> = DESCRIPTOR.sockets.iter().map(|s| s.key).collect();
@@ -656,4 +660,239 @@ fn chord_alter_moves_the_third_and_the_fifth() {
     assert_eq!(play_alter(4.0), [60, 64, 66], "flat 5");
     assert_eq!(play_alter(5.0), [60, 64, 68], "sharp 5");
     assert_eq!(play_alter(1.0), [60, 64, 67], "no minor third to raise");
+}
+
+// ---- Following the song's key and chord lane ----
+
+use atomik_core::{HarmonyMark, HarmonyNow, SongChord};
+
+/// Sets the harmony the next batches see: `(offset, key, chord)` marks.
+fn harmony(h: &mut DeviceHarness, marks: &[(u16, Option<Scale>, Option<SongChord>)]) {
+    let mut now = HarmonyNow::NONE;
+    for &(offset, key, chord) in marks {
+        now.push(HarmonyMark {
+            offset,
+            tick: i64::from(offset),
+            key,
+            chord,
+        });
+    }
+    h.time_mut().harmony = now;
+}
+
+fn d_major() -> Option<Scale> {
+    Some(Scale::new(2, ScaleKind::Major))
+}
+
+fn a_minor() -> Option<SongChord> {
+    Some(SongChord::new(9, ChordKind::Minor))
+}
+
+#[test]
+fn the_new_params_are_appended_with_defaults_that_follow_nothing() {
+    let keys: Vec<_> = DESCRIPTOR.params.iter().map(|p| p.key).collect();
+    assert_eq!(
+        &keys[25..],
+        [
+            "scale.source",
+            "chord.source",
+            "chord.follow",
+            "chord.retrigger"
+        ]
+    );
+    let default = |k: &str| DESCRIPTOR.param_by_key(k).unwrap().default;
+    assert_eq!(default("scale.source"), 0.0);
+    assert_eq!(default("chord.source"), 0.0);
+    assert_eq!(default("chord.follow"), 0.0);
+    assert_eq!(default("chord.retrigger"), 1.0);
+}
+
+#[test]
+fn by_default_the_song_harmony_changes_nothing() {
+    let mut h = rig();
+    harmony(&mut h, &[(0, d_major(), a_minor())]);
+    // The device's own C major: C# snaps down to C, nothing of the song applies.
+    assert_eq!(on_keys(&run(&mut h, &[on(0, 61, 0.5)])), [60]);
+}
+
+#[test]
+fn scale_source_song_snaps_to_the_song_key_and_follows_a_key_change() {
+    let mut h = rig();
+    set(&mut h, "scale.source", 1.0);
+    // Held keys would re-voice at the change; this test looks at the new keys only.
+    set(&mut h, "chord.retrigger", 0.0);
+    harmony(
+        &mut h,
+        &[
+            (0, Some(Scale::new(0, ScaleKind::Major)), None),
+            (32, d_major(), None),
+        ],
+    );
+    let out = run(&mut h, &[on(10, 61, 0.5), on(40, 65, 0.5)]);
+    // C# in C major snaps to C; F in D major lies between E and F#: ties go down.
+    assert_eq!(on_keys(&out), [60, 64]);
+}
+
+#[test]
+fn scale_source_song_without_a_song_key_passes_notes() {
+    let mut h = rig();
+    set(&mut h, "scale.source", 1.0);
+    assert_eq!(on_keys(&run(&mut h, &[on(0, 61, 0.5)])), [61]);
+    harmony(&mut h, &[(0, None, a_minor())]);
+    assert_eq!(on_keys(&run(&mut h, &[on(0, 63, 0.5)])), [63]);
+}
+
+#[test]
+fn stamp_plays_the_song_chord_voiced_near_the_played_key() {
+    let mut h = rig();
+    set(&mut h, "scale.mode", 0.0);
+    set(&mut h, "chord.source", 1.0);
+    harmony(&mut h, &[(0, None, a_minor())]);
+    let out = run(&mut h, &[on(0, 64, 0.5)]);
+    let mut keys = on_keys(&out);
+    keys.sort_unstable();
+    assert_eq!(keys, [57, 60, 64], "A minor from the A at or below E4");
+    // The root keeps the played velocity, the added notes are scaled (here by 100 %).
+    assert!(out.contains(&K::On(57, 64)));
+    let mut h = rig();
+    set(&mut h, "scale.mode", 0.0);
+    set(&mut h, "chord.source", 1.0);
+    set(&mut h, "chord.inversion", 1.0);
+    harmony(&mut h, &[(0, None, a_minor())]);
+    let mut keys = on_keys(&run(&mut h, &[on(0, 70, 0.5)]));
+    keys.sort_unstable();
+    assert_eq!(keys, [72, 76, 81], "first inversion of A minor on A4");
+}
+
+#[test]
+fn stamp_adds_the_bass_of_a_slash_chord_below() {
+    let mut h = rig();
+    set(&mut h, "scale.mode", 0.0);
+    set(&mut h, "chord.source", 1.0);
+    let c_over_e = SongChord {
+        bass: Some(4),
+        ..SongChord::new(0, ChordKind::Major)
+    };
+    harmony(&mut h, &[(0, None, Some(c_over_e))]);
+    let mut keys = on_keys(&run(&mut h, &[on(0, 62, 0.5)]));
+    keys.sort_unstable();
+    assert_eq!(keys, [52, 60, 64, 67]);
+}
+
+#[test]
+fn stamp_without_a_chord_passes_the_note_unchanged() {
+    let mut h = rig();
+    set(&mut h, "chord.source", 1.0);
+    // Scale snap is on by default; a stamp with no chord still passes the key as played.
+    assert_eq!(on_keys(&run(&mut h, &[on(0, 61, 0.5)])), [61]);
+}
+
+#[test]
+fn snap_moves_each_key_to_the_nearest_chord_tone_or_falls_back_to_the_scale() {
+    let mut h = rig();
+    set(&mut h, "chord.source", 1.0);
+    set(&mut h, "chord.follow", 1.0);
+    set(&mut h, "chord.retrigger", 0.0);
+    harmony(&mut h, &[(0, None, a_minor()), (40, None, None)]);
+    let out = run(
+        &mut h,
+        &[
+            on(0, 62, 0.5),
+            on(1, 63, 0.5),
+            on(2, 69, 0.5),
+            on(41, 61, 0.5),
+        ],
+    );
+    // D between C and E ties down; D# goes to E; A is a tone; after the chord the scale
+    // stage (C major) snaps C# to C.
+    assert_eq!(on_keys(&out), [60, 64, 69, 60]);
+}
+
+/// Every `On` is closed by an `Off` of the same key later in `out` (or an `AllOff`).
+fn no_stuck_notes(out: &[K]) -> bool {
+    let mut held = std::collections::BTreeMap::<u8, i32>::new();
+    for k in out {
+        match k {
+            K::On(key, _) => *held.entry(*key).or_default() += 1,
+            K::Off(key) => *held.entry(*key).or_default() -= 1,
+            K::AllOff => held.clear(),
+            _ => {}
+        }
+    }
+    held.values().all(|v| *v == 0)
+}
+
+#[test]
+fn a_chord_change_while_held_retriggers_the_held_keys() {
+    let mut h = rig();
+    set(&mut h, "scale.mode", 0.0);
+    set(&mut h, "chord.source", 1.0);
+    harmony(
+        &mut h,
+        &[(0, None, Some(SongChord::new(0, ChordKind::Major)))],
+    );
+    let first = run(&mut h, &[on(0, 60, 0.5)]);
+    let mut keys = on_keys(&first);
+    keys.sort_unstable();
+    assert_eq!(keys, [60, 64, 67]);
+    harmony(
+        &mut h,
+        &[
+            (0, None, Some(SongChord::new(0, ChordKind::Major))),
+            (20, None, Some(SongChord::new(5, ChordKind::Major))),
+        ],
+    );
+    let second = run(&mut h, &[]);
+    let mut offs = off_keys(&second);
+    offs.sort_unstable();
+    assert_eq!(offs, [60, 64, 67]);
+    let mut ons = on_keys(&second);
+    ons.sort_unstable();
+    assert_eq!(ons, [53, 57, 60], "F major from the F at or below C4");
+    assert!(
+        h.notes_out("notes_out").iter().all(|e| e.offset == 20),
+        "the re-voice lands on the chord boundary"
+    );
+    // The new chord keeps the velocity of the held key.
+    assert!(second.contains(&K::On(53, 64)));
+    let third = run(&mut h, &[off(5, 60)]);
+    let all: Vec<K> = first.into_iter().chain(second).chain(third).collect();
+    assert!(no_stuck_notes(&all), "{all:?}");
+}
+
+#[test]
+fn a_chord_change_between_batches_retriggers_and_retrigger_off_keeps_the_notes() {
+    for (retrigger, expect) in [(1.0, true), (0.0, false)] {
+        let mut h = rig();
+        set(&mut h, "scale.mode", 0.0);
+        set(&mut h, "chord.source", 1.0);
+        set(&mut h, "chord.retrigger", retrigger);
+        harmony(
+            &mut h,
+            &[(0, None, Some(SongChord::new(0, ChordKind::Major)))],
+        );
+        let first = run(&mut h, &[on(0, 60, 0.5)]);
+        harmony(
+            &mut h,
+            &[(0, None, Some(SongChord::new(7, ChordKind::Major)))],
+        );
+        let second = run(&mut h, &[]);
+        assert_eq!(!second.is_empty(), expect, "{second:?}");
+        let third = run(&mut h, &[off(0, 60)]);
+        let all: Vec<K> = first.into_iter().chain(second).chain(third).collect();
+        assert!(no_stuck_notes(&all), "{all:?}");
+    }
+}
+
+#[test]
+fn a_key_change_while_held_re_voices_when_following_the_song_key() {
+    let mut h = rig();
+    set(&mut h, "scale.source", 1.0);
+    harmony(&mut h, &[(0, Some(Scale::new(0, ScaleKind::Major)), None)]);
+    let first = run(&mut h, &[on(0, 61, 0.5)]);
+    assert_eq!(on_keys(&first), [60]);
+    harmony(&mut h, &[(0, d_major(), None)]);
+    let second = run(&mut h, &[]);
+    assert_eq!(off_keys(&second), [60]);
+    assert_eq!(on_keys(&second), [61]);
 }

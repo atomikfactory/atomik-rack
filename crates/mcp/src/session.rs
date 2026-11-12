@@ -1544,7 +1544,16 @@ fn audio_notes_def() -> Value {
         "session_audio_notes",
         "Runs Audio > Audio to Notes... on every selected audio clip (select them with session_pointer first) with the given settings, one after the other, waits for the workers and returns what it said. Anything left out takes the panel's default. Each result is one undo step: a note clip that starts and ends with its audio clip, on a new poly synth track or on the note track selected in the rack. Returns `started`, `message` (the toast), `document_changed`, `can_undo`, and for the last clip's result the new clip's `notes` (`tick`, `length`, `key`, `velocity`, at most 500) with their `count`, and `bend_points` (the points of its pitch-bend lane).",
         &[
-            ("mode", "string", "pitched (one voice, default) or drums."),
+            (
+                "mode",
+                "string",
+                "pitched (one voice, default), polyphonic (chords, several voices) or drums.",
+            ),
+            (
+                "voices",
+                "integer",
+                "Polyphonic: the most notes at once, 1 to 6 (default 4).",
+            ),
             ("sensitivity", "integer", "0 to 100 (default 50)."),
             (
                 "min_note_ms",
@@ -1617,9 +1626,8 @@ fn audio_notes(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     };
     let mode = match args.opt_str("mode")? {
         None => defaults.mode,
-        Some(id) => {
-            NotesMode::from_id(id).ok_or_else(|| format!("mode {id:?} is not pitched or drums"))?
-        }
+        Some(id) => NotesMode::from_id(id)
+            .ok_or_else(|| format!("mode {id:?} is not pitched, polyphonic or drums"))?,
     };
     let kit = match args.opt_str("kit")? {
         None => defaults.kit,
@@ -1643,6 +1651,7 @@ fn audio_notes(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         min_note_ms: int("min_note_ms", defaults.min_note_ms)?,
         key_lo: key("key_lo", defaults.key_lo)?,
         key_hi: key("key_hi", defaults.key_hi)?,
+        voices: int("voices", defaults.voices)?.clamp(1, 6),
         drift_cents: int("drift_cents", defaults.drift_cents)?,
         keep_bend: args.opt_bool("keep_bend")?.unwrap_or(defaults.keep_bend),
         open_hats: args.opt_bool("open_hats")?.unwrap_or(defaults.open_hats),

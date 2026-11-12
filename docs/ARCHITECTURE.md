@@ -42,6 +42,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
 | `atomik-video` | [crates/video](../crates/video) | none (serde_json, sha2, thiserror, log, zune-jpeg) | none | The foundation of video tracks, pure and headless, with no codec of its own: finding the FFmpeg the user installed (Settings folder, then `PATH`, version check; `discover.rs`), the one `VideoTool` trait every `ffmpeg` and `ffprobe` call goes through (`SystemTool` with no shell, a list of arguments, no console window and a kill on cancel; a fake for the tests), the `ffprobe` parser (`probe.rs`), the proxy file of small independent JPEG frames with a frame index (`proxy.rs`, `jpeg.rs`), the build of it from the piped frames with progress and cancel (`prepare.rs`), the per-user proxy cache (`cache.rs`), and what the viewer reads it with: the pure-Rust JPEG decode to RGBA (`decode.rs`), the decode worker and its byte-limited frame cache (`frames.rs`) and the exact song-time to frame and timecode arithmetic (`timeline.rs`), and the film export that puts the song's mix and the picture of its film together (`film.rs`) |
 | `atomik-update` | [crates/update](../crates/update) | none (serde_json, thiserror, log, ureq) | none | The optional update check, the only network request the program makes: `Version` (semantic order, release candidates included), the list of releases and the choice of the newest eligible one, `UpdateState` (the daily throttle and the skipped version, `updates.json`), `Consent` (the answer to the question) and the one request behind the `HttpGet` trait: `UreqGet` (rustls, HTTPS only, no redirect, no cookie, a timeout) for the application window, `FakeHttp` and `Offline` for tests and every other shell. Pure and headless |
+| `atomik-vision` | [crates/vision](../crates/vision) | none (tract-tflite, nokhwa on Windows and macOS, linuxvideo on Linux, ureq, sha2, zune-jpeg, serde, serde_json, thiserror, log, clap, ctrlc) | none | Hand tracking for the webcam controller, pure library with no dependency on the application: the `Camera` and `FrameSource` traits (`SystemCamera`, `FakeCamera`), the capture thread with a one-frame handoff (`Capture`), the palm detector and hand landmark models run in pure Rust (`HandModels`, `HandPipeline`, the detector only while no hand is followed), the one-time model download (`ModelStore`, the `Fetcher` trait with `UreqFetcher` and `FakeFetcher`, SHA-256 pinned in the source), the gesture recogniser (`Recogniser`: pinch with hysteresis, ratcheted twist, One Euro smoothing, a dead zone, loss tolerance, two hands) and the `Tracker` worker with its bounded `TrackerEvent` queue. The `vision-demo` tool lists cameras and models and prints or records the hand |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
@@ -2260,16 +2261,26 @@ learns nothing new.
 - **Interim warp** ([engine/src/audio.rs](../crates/engine/src/audio.rs)). `song_input_live` (the
   app's builder; a bounce never calls it) gives a warped clip of a memory asset whose buffer is not
   ready (and that does not play backwards) a region with `SongAudioRegion::warp`, an index into `SongAudioTrack::warp_maps` (the job's
-  `(clip frame, asset frame)` knots, one map per job). The engine reads the asset through the
-  piecewise-linear map with four-point Hermite interpolation, on stack blocks, so a tempo ramp,
-  markers and trims are right from the next batch; it is a resampling (the pitch follows the ratio,
-  a transposition is not heard) and a streamed asset keeps playing unwarped. When a song swap
-  replaces a track that played an interim warp, `start_handoffs` keeps the old lane's data in the
-  new track's scratch (an `Arc` clone, dropped with the snapshot, never on the audio thread) and
-  `Handoff` mixes the two over 5 ms, so the finished buffer arrives without a click; a track that
-  reads streamed assets is left out. The clips still rendering are listed by `calculating_clips`
-  and drawn with a CALC chip. A cheaper stretcher than resampling (WSOLA) could replace the Hermite
-  read behind the same region field.
+  `(clip frame, asset frame)` knots, one map per job), with the job's mode and transposition in
+  `warp_mode` and `warp_cents`. The engine reads the asset through the piecewise-linear map, on
+  stack blocks, so a tempo ramp, markers and trims are right from the next batch. A Repitch clip
+  without transposition reads with four-point Hermite interpolation (a resampling, which is what
+  Repitch sounds like). A Beats or Tonal clip, or a transposed one, plays through the real-time
+  stretcher (`RtStretcher`, [dsp/src/stretch/realtime.rs](../crates/dsp/src/stretch/realtime.rs)):
+  a streaming WSOLA with 30 ms Hann frames, a bounded stereo-linked similarity search and a Hermite
+  resample for the transposition, so the preview keeps the pitch the finished buffer will have. Each
+  track owns a `StretchBank` ([engine/src/audio_stretch.rs](../crates/engine/src/audio_stretch.rs))
+  of at most four stretchers, built when the song is compiled; `compile_audio` deals the regions
+  their slots in turn, and a region whose slot is busy in the same segment falls back to the
+  Hermite read (counted by `interim_stretch_fallbacks`). A block that does not continue the last
+  one (a locate, a loop wrap, a new clip in the slot) restarts the stretcher at once, with no fade.
+  A streamed asset keeps playing unwarped. When a song swap replaces a track that played an
+  interim warp, `start_handoffs` keeps the old lane's data in the new track's scratch (an `Arc`
+  clone, dropped with the snapshot, never on the audio thread) and moves the old track's
+  stretchers with it, and `Handoff` mixes the two over 5 ms, so the finished buffer arrives
+  without a click; a track that reads streamed assets is left out. The clips still rendering are
+  listed by `calculating_clips` and drawn with a CALC chip. Bounces never build interim regions,
+  so their bits do not change.
 - **App** ([app_core_warp.rs](../crates/app/src/app_core_warp.rs)). The cache lives in `AudioState`.
   Each `submit_song` calls `sync_warps`: it lists the jobs the document needs, drops buffers nobody
   needs and cancels their workers, queues the missing jobs whose asset is loaded and starts at most
@@ -2322,6 +2333,24 @@ learns nothing new.
   it to the preview voice of the file browser (`preview_channel`, source rate of the asset, clip
   gain) from an `atomik-audition` thread that reads the engine's copy of the asset and waits when
   the ring is full, so the audio thread allocates nothing and offline renders never receive it.
+- **Vocal mode** ([audio_editor/vocal.rs](../crates/ui/src/audio_editor/vocal.rs),
+  [psola.rs](../crates/dsp/src/stretch/psola.rs),
+  [pitch_edit.rs](../crates/model/src/pitch_edit.rs)). Entering Vocal, opening a clip in it and
+  the SENS buttons emit `UiAction::AnalyseVocal`; `AppCore::analyse_vocal` reads the clip's span of
+  its file plus 40 ms on each side (at most 300 s, mixed to mono as the render mixes it) on a worker
+  (`atomik-vocal`, `Msg::Vocal`, progress and cancel through atomics, `CancelVocalAnalysis` stops
+  it) and runs `psola::vocal_notes`: the monophonic tracker cuts the notes, and each note gets its
+  5 ms pitch curve from `psola::note_pitch`, run on the note and its pad alone, so the render hears
+  the same curve and centre (the median of the voiced frames). Results are cached by asset, span and
+  sensitivity and never saved. The clip saves `pitch_edits` (`PitchEdit`: source span in asset
+  frames, shift in cents, drift percent, vibrato keep), replaced whole by `SongCommand::SetPitchEdits`
+  (merge ids make a drag one step); a split keeps each edit in the piece that plays its first frame
+  and a join keeps both lists. Edits that change something are part of the clip's `WarpJob`
+  (`pitch`, in its key), so a clip with edits is rendered even with warp off (the 1:1 map):
+  `render_warp` applies `psola::shift_notes` to the asset span first, then the time map. The view
+  draws the result curve with `psola::note_offsets`, the function the render uses. A time drag pins
+  two markers with `slice_edit::move_span`. The interim preview plays without the edits until the
+  buffer is ready.
 - **File.** Project format 24: an optional
   `"warp": {"mode", "bpm", "enabled"?, "transpose"?, "markers"?}` in the clip's `"audio"` object,
   omitted for the default. A version 23 file loads with no warp and refuses the field.
@@ -2455,6 +2484,15 @@ instrument (one note at a time) or a **drum** loop. It is an offline analysis in
 written in house (no new dependency), and the result goes in as an ordinary note clip, so the
 engine, the audio thread and the file format are untouched.
 
+- **Polyphonic and chords** ([dsp/src/harmony/mod.rs](../crates/dsp/src/harmony/mod.rs)). A whitened
+  STFT read as interpolated peaks on fractional keys feeds a harmonic-sum multi-pitch search with
+  iterative cancellation (up to six voices) and a tuning estimate; each frame folds its voices into
+  a chroma and a bass chroma. [harmony/poly.rs](../crates/dsp/src/harmony/poly.rs) tracks the voices
+  into notes (the Polyphonic mode); [harmony/chords.rs](../crates/dsp/src/harmony/chords.rs) scores
+  chord templates over beat units with a Viterbi pass (Detect Chords from Audio, whose cached
+  analysis the app scores again for its preview panel, see
+  [app_core_chords.rs](../crates/app/src/app_core_chords.rs)), and the summed chroma gives the key
+  from audio through the key profiles (DECISIONS AA).
 - **Pitched** ([dsp/src/notes/pitched.rs](../crates/dsp/src/notes/pitched.rs)). The mono mix is
   averaged down (a box filter, at least six samples per period of the highest key of the range) and
   a **YIN** tracker (de Cheveigne and Kawahara) runs every 5 ms on a window of 1.5 periods of the
@@ -2978,6 +3016,8 @@ edit is an ordinary `UiAction::Command` (`SetModSlot`, `SetParam` on `modN_amoun
 | `atomik-library-save` | file browser: writes `library.json` from the newest snapshot | Yes (disk) |
 | `atomik-video` | video: looks for FFmpeg, or probes a film and builds its proxy file from ffmpeg's piped frames (one job at a time, progress and cancel); `atomik-video-stdout` and `atomik-video-stderr` read the two pipes of the child process | Yes (disk, child process) |
 | `atomik-update` | update check: one request for the list of releases, only after the user said Yes, at most once a day (one short-lived thread per request, a timeout of 8 s; the shell polls its answer on the frame) | Yes (network) |
+| `atomik-vision` | hand tracking: the worker of a `Tracker` finds the hands in each camera frame, runs the gesture recogniser and sends events on a bounded queue; never on the audio thread; it exists only while the user has the camera on, and ends (releasing the camera) on stop, drop or failure | Yes (CPU) |
+| `atomik-camera` | hand tracking: reads the camera and hands the newest frame to the worker (a one-frame slot; older frames are dropped); opens the device and releases it when it ends | Yes (the camera) |
 | `atomik-library` | library: copies the audio of a saved item into its sibling bundle | Yes (disk) |
 | `atomik-adopt` | library: copies the audio of a loaded item into the session bundle, then decodes and builds peaks like `atomik-load` | Yes (disk) |
 | MIDI callback (midir) | maps event times to frames, pushes live notes; parses every message once more for the control path and queues it in the control hub (a short mutex, never held by the audio thread), consuming it when a mapping listens | Yes, then one wait-free push |
@@ -5123,11 +5163,12 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
 - **Known limits.** No about box (the VST trademark line is in `--help`, the README and DEVICES.md);
   editor window positions are not remembered across sessions; no Wayland embedding for in-process
   editors or without `DISPLAY` (sandboxed editors use XWayland); macOS and Linux paths are
-  compile-checked (type-checked and linted) but have not been run against real plugins; the
-  sandbox's Linux and macOS wake-up and stdout redirection run against the real child in the CI
-  job "sandbox end to end" and in the test matrix, and have not been checked by hand with a
-  window; the editor window of the child is a utility window on X11 (a hint) and its macOS process
-  is an accessory (no Dock icon), neither checked by hand; one process per
+  compile-checked (type-checked and linted) but have not been run against third-party plugins; the
+  sandbox's Linux and macOS wake-up, stdout redirection, crash, hang and kill paths run against the
+  real child with every test plugin library in the CI job "sandbox end to end" and in the test
+  matrix, and have not been checked by hand with a window; the editor window of the child is a
+  utility window on X11 (a hint) and its macOS process is an accessory (no Dock icon), neither
+  checked by hand; one process per
   instance costs memory with many instances; a sandboxed editor is a separate window, not embedded.
 
 ## 6g. Input, commands and the keymap
@@ -5139,7 +5180,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (555) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (565) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -7241,10 +7282,10 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   Resolution offers 960 and 480. The file browser does not list `.mid` files, so a file can only be
   dropped from the operating system.
 - **Time-stretch.** A warped clip is rendered once into a buffer, so a change of tempo, setting or
-  clip waits for a worker (the clip plays an interim resampled read meanwhile, at the right timing
-  but the wrong pitch for a transposed clip; a streamed asset plays unwarped, and so does a
-  reversed clip, backwards, until its buffer is ready); the stretch engines are offline only and
-  the Tonal mode does not keep formants when transposing (2.18).
+  clip waits for a worker (the clip plays an interim read meanwhile, at the right timing and, through
+  the real-time stretcher, at the right pitch, a little rougher than the finished buffer; a streamed
+  asset plays unwarped, and so does a reversed clip, backwards, until its buffer is ready); the
+  Tonal mode does not keep formants when transposing (2.18).
 - **Tempo and meter.** Tempo ramps are linear in BPM only (no other curve shapes), meter changes
   only start on bar lines, and tempo-synced devices follow a ramp in steps of one 64-frame batch.
   The LFO of the modulation effects computes its synced phase from the absolute frame and the tempo

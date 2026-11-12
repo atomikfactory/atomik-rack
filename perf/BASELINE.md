@@ -253,3 +253,17 @@ projects/fx-demo                         15.2x      15.4x              +1.3 %
 
 The gain is below the 5 % a separate `dist` profile needs to be worth its much longer link, so none was added and
 the release builds keep the `release` profile.
+
+## Real-time stretcher (interim warps)
+
+Hand check, not a bench: `cargo test -p atomik-engine --test audio_interim_pitch --test audio_interim -- --ignored
+--nocapture` (test profile, optimised) bounces 10 s of 16 stereo audio tracks at 48 kHz, each playing an interim warp
+at 1.3x speed, on the reference machine:
+
+```text
+16 interim warps (resampled read), 10 s: about 510 ms (5.1 % of real time)
+16 pitch-keeping interim warps (Tonal, +3 semitones), 10 s: about 890 ms (8.9 % of real time)
+```
+
+The real-time stretcher costs about 2.4 ms per second of stereo audio per clip, so 32 clips at once take about 8 % of
+one core on top of the plain read.

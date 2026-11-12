@@ -16,6 +16,7 @@
 use super::{
     DrumParams, ExtractedNote, PitchParams, extract_drum_notes, extract_pitched_notes, velocity_for,
 };
+use crate::harmony::{PolyParams, extract_poly_notes};
 
 /// Length of one stretch of the analysis, in seconds.
 pub const SEGMENT_SECONDS: u64 = 60;
@@ -29,6 +30,8 @@ pub enum Analysis<'a> {
     Pitched(&'a PitchParams),
     /// A drum loop.
     Drums(&'a DrumParams),
+    /// Chords and several voices of a piano or a guitar.
+    Poly(&'a PolyParams),
 }
 
 impl Analysis<'_> {
@@ -36,6 +39,7 @@ impl Analysis<'_> {
         match self {
             Analysis::Pitched(p) => extract_pitched_notes(&[mono], rate, p),
             Analysis::Drums(p) => extract_drum_notes(&[mono], rate, p),
+            Analysis::Poly(p) => extract_poly_notes(&[mono], rate, p),
         }
     }
 }

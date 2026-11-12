@@ -56,6 +56,11 @@ fn is_name_or_value(text: &str) -> bool {
         "Drums",
         "Pad",
         "Keys",
+        "Key & Chord",
+        "Key &",
+        "KEY & CHORD",
+        "Arpeggiator",
+        "ARPEGGIATOR",
     ];
     // A shortcut, a level at minus infinity, a file name: values, not words.
     let shortcut = text.contains('+') && text.split('+').all(|k| !k.is_empty() && k.len() < 12);
@@ -186,6 +191,122 @@ fn the_export_panel_in_french() {
             let mut v = ExportView::new(Theme::dark());
             v.set_bounds(Rect::new(0.0, 0.0, 900.0, 600.0));
             v.open(scope, "my song.wav", 48_000, ExportValues::default());
+            let mut dl = DisplayList::new();
+            v.paint(&mut dl);
+            dl
+        });
+    }
+}
+
+#[test]
+fn the_audio_editor_vocal_mode_in_french() {
+    use atomik_model::harmony::Key;
+    use atomik_model::theory::ScaleKind;
+    use atomik_ui::{AudioEditorView, AudioMode};
+    use support::audio::*;
+    let reg = registry();
+    let mut doc = audio_doc();
+    doc.song_mut().harmony.key = Some(Key::new(0, ScaleKind::Major));
+    let clip = atomik_model::ClipId(10);
+    french("audio_editor_vocal_1x.json", || {
+        let mut v = AudioEditorView::new(Theme::dark());
+        v.set_bounds(Rect::new(0.0, 0.0, 1000.0, 500.0));
+        v.set_peaks(HASH_A, pyramid(FRAMES_A, 2));
+        v.set_mode(AudioMode::Vocal);
+        v.open(clip);
+        v.sync(&doc, &reg);
+        v.set_vocal_notes(clip, vocal_notes());
+        v.set_vocal_selection(&[1]);
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl, &doc, &reg);
+        dl
+    });
+}
+
+#[test]
+fn the_detect_chords_panel_in_french() {
+    use atomik_ui::{ChordsPreview, ChordsValues, ChordsView, PreviewChord};
+    french("chords_panel_1x.json", || {
+        let mut v = ChordsView::new(Theme::dark(), ChordsValues::default());
+        v.set_bounds(Rect::new(0.0, 0.0, 900.0, 600.0));
+        v.set_target("Piano.wav, bars 1 to 2".into());
+        v.set_preview(Some(ChordsPreview {
+            span: (0, 7680),
+            chords: vec![
+                PreviewChord {
+                    tick: 0,
+                    length: 3840,
+                    symbol: "Am".into(),
+                    confidence: 0.9,
+                },
+                PreviewChord {
+                    tick: 3840,
+                    length: 3840,
+                    symbol: "E7".into(),
+                    confidence: 0.3,
+                },
+            ],
+            key: Some("A minor".into()),
+        }));
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl);
+        dl
+    });
+}
+
+#[test]
+fn the_key_chord_and_arpeggiator_panels_following_the_song_in_french() {
+    let mut doc = reference_doc();
+    let mut kc = device("kc", "atomik.key-chord", "Key & Chord");
+    kc.params.insert("chord.source".into(), 1.0);
+    let mut arp = device("arp", "atomik.arpeggiator", "Arpeggiator");
+    arp.params.insert("source".into(), 2.0);
+    doc.devices = vec![kc, arp];
+    doc.cables.clear();
+    let reg = registry();
+    french("key_chord_arp_song_1x.json", || {
+        let mut v = view(&doc, &reg);
+        v.set_song_harmony(Some("Am".into()), Some("Fmaj7".into()));
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl, &doc, &reg);
+        dl
+    });
+}
+
+#[test]
+fn the_learn_strip_of_a_plugin_window_in_french() {
+    use atomik_ui::{PluginLearnMode, PluginLearnState, PluginLearnStatus, PluginLearnStrip};
+    let states = [
+        ("idle", None, PluginLearnStatus::Waiting),
+        (
+            "automation",
+            Some(PluginLearnMode::Automation),
+            PluginLearnStatus::LaneShown("Cutoff".into()),
+        ),
+        (
+            "midi",
+            Some(PluginLearnMode::Midi),
+            PluginLearnStatus::MoveHardware("Cutoff".into()),
+        ),
+        (
+            "mapped",
+            Some(PluginLearnMode::Midi),
+            PluginLearnStatus::Mapped {
+                param: "Cutoff".into(),
+                source: "CC 21 ch 1".into(),
+            },
+        ),
+    ];
+    for (name, mode, status) in states {
+        french(&format!("plugin_learn_strip_{name}_1x.json"), || {
+            let mut v = PluginLearnStrip::new(Theme::dark());
+            v.set_bounds(Rect::new(0.0, 0.0, 720.0, atomik_ui::LEARN_STRIP_HEIGHT));
+            v.set_state(PluginLearnState {
+                device: key("lead"),
+                plugin: "Test Synth".into(),
+                mode,
+                status,
+            });
             let mut dl = DisplayList::new();
             v.paint(&mut dl);
             dl

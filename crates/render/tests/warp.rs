@@ -545,6 +545,39 @@ fn the_live_song_plays_an_unready_warp_through_its_time_map_and_the_bounce_does_
     assert!(done.audio[0].warp_maps.is_empty());
 }
 
+#[test]
+fn the_live_interim_region_carries_the_clip_mode_and_transposition() {
+    let registry = default_registry();
+    let s = song("interim-pitch", &sine(440.0, 200_000), |d, a| {
+        let warp = WarpSettings {
+            transpose_cents: 500,
+            ..on(100.0, WarpMode::Tonal)
+        };
+        put(d, a, 0, 4 * PPQ, warp);
+    });
+    let assets = atomik_render::bundle::load_song_assets(&s.doc, Some(&s.bundle)).unwrap();
+    let ids = std::collections::BTreeMap::from([(
+        DeviceKey("audio-track".into()),
+        atomik_engine::DeviceInstanceId(1),
+    )]);
+    let id_of = |k: &DeviceKey| ids.get(k).copied();
+    let empty = Default::default();
+    let live = song_input_live(&s.doc, &registry, id_of, &assets, &empty);
+    let region = live.audio[0].regions[0];
+    assert_eq!(region.warp, Some(0));
+    assert_eq!(region.warp_mode, atomik_engine::SongWarpMode::Tonal);
+    assert_eq!(region.warp_cents, 500);
+    // The bounce path plays plain regions: no mode, no transposition.
+    let dry = song_input_with_warps(&s.doc, &registry, id_of, &assets, &empty);
+    assert_eq!(
+        dry.audio[0].regions[0].warp_mode,
+        atomik_engine::SongWarpMode::Repitch
+    );
+    assert_eq!(dry.audio[0].regions[0].warp_cents, 0);
+    // The engine accepts it.
+    assert!(atomik_engine::compile_song(&live).is_ok());
+}
+
 /// `put` with the clip played backwards.
 fn put_reversed(d: &mut Document, asset: &str, start: i64, length: i64, warp: WarpSettings) {
     put(d, asset, start, length, warp);
@@ -658,4 +691,44 @@ fn the_live_song_plays_a_reversed_unready_warp_backwards_and_unwarped() {
     let region = done.audio[0].regions[0];
     assert!(!region.reverse);
     assert_eq!(region.source_offset, 0);
+}
+
+/// A clip of the sine with warp off and one pitch edit over `[12 000, 84 000)` of its asset.
+fn edited(cents: i32) -> Song {
+    song("pitch-edit", &sine(196.0, 96_000), |d, a| {
+        put(d, a, 0, 4 * PPQ, WarpSettings::default());
+        let id = d.last_clip_id().unwrap();
+        d.apply(
+            Command::Song(SongCommand::SetPitchEdits {
+                id,
+                edits: vec![atomik_model::PitchEdit {
+                    shift_cents: cents,
+                    ..atomik_model::PitchEdit::new(12_000, 84_000)
+                }],
+                merge: None,
+            }),
+            &default_registry(),
+        )
+        .unwrap();
+    })
+}
+
+#[test]
+fn a_pitch_edit_is_heard_in_the_bounce_and_bounces_the_same_every_time() {
+    let up = edited(300);
+    let r = render(&up, 512, 0);
+    let l = &r.channels[0];
+    let shifted = 196.0 * 2f64.powf(0.25);
+    assert!(
+        tone(l, 30_000, 66_000, shifted) > 4.0 * tone(l, 30_000, 66_000, 196.0),
+        "the note sounds three semitones up"
+    );
+    // Outside the edit the clip plays as recorded.
+    assert!(tone(l, 0, 9_600, 196.0) > 4.0 * tone(l, 0, 9_600, shifted));
+    assert_eq!(bits(&r), bits(&render(&up, 512, 0)));
+    assert_eq!(bits(&r), bits(&render(&up, 777, 2)));
+    let plain = song("pitch-plain", &sine(196.0, 96_000), |d, a| {
+        put(d, a, 0, 4 * PPQ, WarpSettings::default());
+    });
+    assert_ne!(bits(&r), bits(&render(&plain, 512, 0)));
 }

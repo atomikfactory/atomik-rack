@@ -179,18 +179,18 @@ use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
     BackupAction, BackupItem, BackupView, BlindAction, BlindView, BrowseAction, Canvas, CanvasExt,
-    ColorPickerAction, ColorPickerView, ColorTarget, CommandPaletteView, ConsoleButton,
-    ExportScope, ExportView, FileBrowserView, FilmView, Flip, HISTORY_PANEL_WIDTH,
-    HarmonyPickerAction, HarmonyPickerView, HarmonyTarget, Key, KickBassAction, KickBassView,
-    MacrosAction, MacrosView, ManualView, MaskingAction, MaskingView, MidiMapsAction, MidiMapsView,
-    MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView, Modifiers, NotesAction,
-    NotesValues, NotesView, NumpadKey, PaletteAction, ParamSearchAction, ParamSearchView,
-    PickerValue, Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction,
-    QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView, RepetitionAction,
-    RepetitionView, ScaleAction, ScaleView, ShareAction, ShareView, SilenceAction, SilenceValues,
-    SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent,
-    VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues, WarpView, ZoneAction,
-    ZoneView,
+    ChordsAction, ChordsValues, ChordsView, ColorPickerAction, ColorPickerView, ColorTarget,
+    CommandPaletteView, ConsoleButton, ExportScope, ExportView, FileBrowserView, FilmView, Flip,
+    HISTORY_PANEL_WIDTH, HarmonyPickerAction, HarmonyPickerView, HarmonyTarget, Key,
+    KickBassAction, KickBassView, MacrosAction, MacrosView, ManualView, MaskingAction, MaskingView,
+    MidiMapsAction, MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView,
+    Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, PaletteAction, ParamSearchAction,
+    ParamSearchView, PickerValue, Place, PluginBannerView, PluginSettingsView, PointerButton,
+    QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView,
+    RepetitionAction, RepetitionView, ScaleAction, ScaleView, ShareAction, ShareView,
+    SilenceAction, SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH,
+    TextRun, UiAction, UiEvent, VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues,
+    WarpView, ZoneAction, ZoneView,
 };
 use atomik_ui::{
     BassReadAction, BassReadView, DeliveryAction, DeliveryPage, DeliveryView, SoundAnalystAction,
@@ -728,6 +728,10 @@ pub struct Shell<B: AudioBackend> {
     notes: Option<NotesView>,
     /// Its settings, kept between openings.
     notes_values: NotesValues,
+    /// The Detect Chords panel (Transport > Detect Chords from Audio) while it is open.
+    chords: Option<ChordsView>,
+    /// Its settings, kept between openings.
+    chords_values: ChordsValues,
     /// The warp panel (Audio > Warp Settings) while it is open.
     warp: Option<WarpView>,
     /// The warp panel's last values, for the next time it opens without a clip to read.
@@ -980,6 +984,8 @@ impl<B: AudioBackend> Shell<B> {
             color_picker: None,
             notes: None,
             notes_values: NotesValues::default(),
+            chords: None,
+            chords_values: ChordsValues::default(),
             warp: None,
             warp_values: WarpValues::default(),
             silence_values: SilenceValues::default(),
@@ -1262,6 +1268,18 @@ impl<B: AudioBackend> Shell<B> {
         self.notes
             .as_ref()
             .map_or(&self.notes_values, NotesView::values)
+    }
+
+    /// The Detect Chords panel, while it is open.
+    pub fn chords_view(&self) -> Option<&ChordsView> {
+        self.chords.as_ref()
+    }
+
+    /// The Detect Chords panel's settings (those of the open panel, else the last ones).
+    pub fn chords_values(&self) -> &ChordsValues {
+        self.chords
+            .as_ref()
+            .map_or(&self.chords_values, ChordsView::values)
     }
 
     /// Whether the warp panel is open.
@@ -2966,6 +2984,75 @@ impl<B: AudioBackend> Shell<B> {
         started
     }
 
+    /// Starts listening for the chords of the selected audio clips (or those of the loop) and
+    /// opens the Detect Chords panel that shows them; a refusal (no audio) leaves it closed.
+    fn open_chords(&mut self) {
+        if !self.core.detect_chords_from_audio() {
+            self.repaint = true;
+            return;
+        }
+        let theme = self.core.view().theme().clone();
+        let mut view = ChordsView::new(theme, self.chords_values);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.chords = Some(view);
+        self.sync_chords();
+    }
+
+    /// Closes the Detect Chords panel, keeping its settings; a running analysis stops.
+    fn close_chords(&mut self) {
+        if let Some(view) = self.chords.take() {
+            self.chords_values = *view.values();
+            self.core.cancel_chords();
+            self.repaint = true;
+        }
+    }
+
+    /// Feeds the Detect Chords panel what it reads, how far it is and the chords found.
+    fn sync_chords(&mut self) {
+        let Some(values) = self.chords.as_ref().map(|v| *v.values()) else {
+            return;
+        };
+        let target = self.core.chords_target();
+        let progress = self.core.chords_progress();
+        let preview = if progress.is_none() {
+            self.core.chords_preview(&values)
+        } else {
+            None
+        };
+        if let Some(view) = &mut self.chords {
+            view.set_target(target);
+            view.set_progress(progress);
+            view.set_preview(preview);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the Detect Chords panel asked for: a new setting scores the analysis again; REPLACE
+    /// and FILL GAPS put the chords in the lane (one undo step) and close the panel.
+    fn chords_action(&mut self, action: ChordsAction) {
+        match action {
+            ChordsAction::Close => self.close_chords(),
+            ChordsAction::Cancel => {
+                self.core.cancel_chords();
+            }
+            ChordsAction::Rescore => {}
+            ChordsAction::Replace | ChordsAction::Merge => {
+                let values = *self.chords_values();
+                if self
+                    .core
+                    .apply_detected_chords(&values, action == ChordsAction::Merge)
+                {
+                    self.close_chords();
+                }
+            }
+        }
+        self.sync_chords();
+        self.repaint = true;
+    }
+
     /// Opens the warp panel with the settings of the first selected audio clip.
     fn open_warp(&mut self) {
         let theme = self.core.view().theme().clone();
@@ -4137,6 +4224,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.notes {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.chords {
+            v.set_theme(theme.clone());
+        }
         if let Some(v) = &mut self.warp {
             v.set_theme(theme);
         }
@@ -4936,6 +5026,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.notes.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.notes {
+                v.set_bounds(rect);
+            }
+        }
+        if self.chords.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.chords {
                 v.set_bounds(rect);
             }
         }
@@ -5976,6 +6072,31 @@ impl<B: AudioBackend> Shell<B> {
             self.sync_warp();
             return Vec::new();
         }
+        if self.chords.is_some() {
+            // The Detect Chords panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.close_chords();
+                return Vec::new();
+            }
+            let actions = self
+                .chords
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::DetectChords(a) = action {
+                    self.chords_action(a);
+                }
+            }
+            self.sync_chords();
+            return Vec::new();
+        }
         if self.notes.is_some() {
             // The Audio to Notes panel takes every event; Esc closes it.
             self.repaint = true;
@@ -6088,8 +6209,14 @@ impl<B: AudioBackend> Shell<B> {
                 .map(|v| v.handle(&text_form(event)))
                 .unwrap_or_default();
             for action in actions {
-                if let UiAction::Harmony(a) = action {
-                    self.harmony_picker_action(a);
+                match action {
+                    UiAction::Harmony(a) => self.harmony_picker_action(a),
+                    UiAction::AuditionChord(chord)
+                        if self.core.arrangement().plays_chords_on_click() =>
+                    {
+                        self.core.audition_chord(&chord);
+                    }
+                    _ => {}
                 }
             }
             return Vec::new();
@@ -6631,6 +6758,15 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.cancel_sampling();
                 return Vec::new();
             }
+            // Esc disarms Learn in the plugin windows.
+            if *pressed
+                && *key == Key::Escape
+                && window == WindowKind::Main
+                && !self.context_stack().contexts().contains(&Context::Text)
+                && self.core.disarm_all_plugin_learn()
+            {
+                return Vec::new();
+            }
             if *pressed && self.patch_browse_key(key) {
                 return Vec::new();
             }
@@ -6892,6 +7028,10 @@ impl<B: AudioBackend> Shell<B> {
             ("sequencer.add_reverb_send", None) => self.open_reverb_send(),
             ("sequencer.scale_tempo", Some("dialog")) => self.open_scale(),
             ("sequencer.audio_to_notes", None) => self.open_notes(),
+            ("sequencer.detect_chords_from_audio", None) => self.open_chords(),
+            ("sequencer.detect_key_from_audio", None) => {
+                self.core.detect_key_from_audio();
+            }
             ("sequencer.audio_quantize", None) => self.quantize_audio(),
             ("sequencer.audio_warp_tempo", None) => self.core.warp_to_song_tempo(),
             ("sequencer.audio_warp_bars", Some(bars)) => {
@@ -6947,6 +7087,12 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.split_sub();
             }
             ("rack.preview_player", None) => self.core.preview_selected_player(),
+            ("plugin.learn_automation", None) => self
+                .core
+                .plugin_learn_command(atomik_ui::PluginLearnMode::Automation),
+            ("plugin.learn_midi", None) => self
+                .core
+                .plugin_learn_command(atomik_ui::PluginLearnMode::Midi),
             ("rack.combine", None) => {
                 self.core.combine_selection();
             }
@@ -7589,6 +7735,19 @@ impl<B: AudioBackend> Shell<B> {
                     .primary()
                     .is_some_and(|d| core.is_player_device(&d)),
             previewing: core.previewing_player().is_some(),
+            plugin: pane == Pane::Rack
+                && core
+                    .view()
+                    .primary()
+                    .is_some_and(|d| core.plugin_instance(&d).is_some()),
+            learn_automation: pane == Pane::Rack
+                && core.view().primary().is_some_and(|d| {
+                    core.plugin_learn_mode(&d) == Some(atomik_ui::PluginLearnMode::Automation)
+                }),
+            learn_midi: pane == Pane::Rack
+                && core.view().primary().is_some_and(|d| {
+                    core.plugin_learn_mode(&d) == Some(atomik_ui::PluginLearnMode::Midi)
+                }),
             midi_out: pane == Pane::Rack
                 && core
                     .view()
@@ -7950,6 +8109,7 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 UiAction::PickColor(target) => self.open_color_picker(target.clone()),
                 UiAction::HarmonyPicker(target) => self.open_harmony_picker(*target),
+                UiAction::AuditionChord(chord) => self.core.audition_chord(chord),
                 UiAction::EditWavetable(device) => self.open_wavetable_editor(device.clone()),
                 UiAction::OpenSampleEditor(_) => self.show_sample_editor(),
                 UiAction::CloseSampleEditor => {
@@ -8660,6 +8820,16 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::AudioToNotes => {
                 self.open_notes();
+                self.close_menubars();
+                Vec::new()
+            }
+            AppCommand::DetectChordsFromAudio => {
+                self.open_chords();
+                self.close_menubars();
+                Vec::new()
+            }
+            AppCommand::DetectKeyFromAudio => {
+                self.core.detect_key_from_audio();
                 self.close_menubars();
                 Vec::new()
             }
@@ -11000,7 +11170,11 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(progress) = self.core.notes_progress() {
             text = format!("{} \u{b7} {text}", progress.text);
         }
+        if let Some(progress) = self.core.chords_progress() {
+            text = format!("{} \u{b7} {text}", progress.text);
+        }
         self.sync_notes();
+        self.sync_chords();
         if let Some(loading) = self.core.plugin_loading_text() {
             text = format!("{loading} \u{b7} {text}");
         }
@@ -11342,6 +11516,9 @@ impl<B: AudioBackend> Shell<B> {
             view.paint(canvas);
         }
         if let Some(view) = &self.notes {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.chords {
             view.paint(canvas);
         }
         if let Some(view) = &self.warp {

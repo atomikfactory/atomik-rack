@@ -43,6 +43,18 @@ pub enum WindowInput {
     CloseRequested,
     /// The user resized the window; the size is in the plugin's units.
     Resized(u32, u32),
+    /// The window moved or changed size: its outer frame on the screen (physical pixels), which
+    /// the app docks the Learn strip to.
+    Frame {
+        /// Left edge.
+        x: i32,
+        /// Top edge.
+        y: i32,
+        /// Outer width.
+        w: u32,
+        /// Outer height.
+        h: u32,
+    },
 }
 
 /// The plugin backend of a command line.
@@ -137,6 +149,11 @@ impl Control {
                 }
             }
             WindowInput::Resized(w, h) => self.editor.user_resized(instance, windows, w, h),
+            WindowInput::Frame { x, y, w, h } => {
+                if self.editor.is_open() {
+                    return self.notify(&FromChild::GuiFrame { x, y, w, h }, windows);
+                }
+            }
         }
         None
     }
@@ -240,6 +257,10 @@ impl Control {
                 // window waits for the parent's thread, which waits for this answer.
                 if code.is_none() && opens_editor && matches!(reply, FromChild::GuiOpened { .. }) {
                     self.editor.present(windows);
+                    // Where the window is, for the app's Learn strip.
+                    if let Some((x, y, w, h)) = windows.frame() {
+                        return self.notify(&FromChild::GuiFrame { x, y, w, h }, windows);
+                    }
                 }
                 code
             }

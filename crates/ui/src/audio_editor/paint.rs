@@ -1,6 +1,6 @@
 //! Painting of the audio clip editor (see the parent module for the layout).
 
-use super::{AudioEditorView, AudioMode, Drag, Hit};
+use super::{AudioEditorView, AudioMode, Drag, Hit, vocal_paint};
 use crate::audio;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::paint::fit_label;
@@ -124,6 +124,9 @@ fn toolbar(v: &AudioEditorView, c: &mut dyn Canvas) {
         v.speaker.then_some(v.accent),
         v.hover == Hit::Speaker,
     );
+    if v.mode == AudioMode::Vocal {
+        return vocal_paint::toolbar(v, c);
+    }
     if v.mode != AudioMode::Slice {
         return;
     }
@@ -268,6 +271,10 @@ fn waveform(v: &AudioEditorView, c: &mut dyn Canvas) {
     let t = &st.base;
     let l = v.layout();
     let w = l.wave;
+    let vocal = v.mode == AudioMode::Vocal;
+    if vocal {
+        sp::rect(c, l.keys, st.header);
+    }
     c.push_clip(&w.into());
     sp::rect(c, w, st.lane_auto);
     sp::grid(c, st, &v.axis(), w, &v.bars);
@@ -289,6 +296,10 @@ fn waveform(v: &AudioEditorView, c: &mut dyn Canvas) {
         );
     } else if let Some(peaks) = v.peaks.get(asset) {
         segments(v, c, peaks, asset);
+        if vocal {
+            // The waveform stays behind the notes, dimmed.
+            sp::rect(c, w, st.lane_auto.with_alpha(0.72));
+        }
     } else {
         sp::label(
             c,
@@ -300,7 +311,17 @@ fn waveform(v: &AudioEditorView, c: &mut dyn Canvas) {
             Align::Center,
         );
     }
+    if vocal {
+        c.pop_clip();
+        c.push_clip(&l.keys.union(w).into());
+        vocal_paint::grid(v, c);
+        c.pop_clip();
+        c.push_clip(&w.into());
+    }
     markers(v, c);
+    if vocal && !missing {
+        vocal_paint::notes(v, c);
+    }
     if v.mode == AudioMode::Slice
         && let Some(info) = &v.info
         && info.content.reverse
@@ -379,7 +400,7 @@ fn markers(v: &AudioEditorView, c: &mut dyn Canvas) {
     let n = v.framed.len();
     let active = match &v.drag {
         Drag::Marker(d) => Some(d.index),
-        Drag::None | Drag::Audition => None,
+        _ => None,
     };
     for (i, m) in v.framed.iter().enumerate() {
         let x = crate::paint::snap_hairline(v.x_of(m.tick as f64), v.scale);
@@ -436,14 +457,32 @@ fn footer(v: &AudioEditorView, c: &mut dyn Canvas) {
         st.separator,
     );
     let y = l.footer.center().y + 3.0;
-    let (text, color) = if v.status.is_empty() {
+    if v.mode == AudioMode::Vocal && vocal_paint::footer(v, c) {
+        return;
+    }
+    let (text, color) = if v.mode == AudioMode::Vocal {
+        let (text, lit) = vocal_paint::footer_text(v);
+        (text, if lit { t.text } else { t.text_muted })
+    } else if v.status.is_empty() {
         (v.hint(), t.text_muted)
     } else {
         (v.status.clone(), t.text)
     };
     let text = fit_label(&text, l.footer.width() - 220.0, 9.0);
     sp::label(c, &text, l.footer.x0 + 8.0, y, 9.0, color, Align::Start);
-    if let Some(info) = &v.info {
+    if v.mode == AudioMode::Vocal && v.vocal_ready() {
+        let n = v.vocal.notes.len();
+        let info_text = format!("{n} {}", if n == 1 { "note" } else { "notes" });
+        sp::label(
+            c,
+            &info_text,
+            l.footer.x1 - 8.0,
+            y,
+            9.0,
+            t.text_muted,
+            Align::End,
+        );
+    } else if let Some(info) = &v.info {
         let markers = v.framed.len().saturating_sub(2);
         let info_text = format!(
             "{markers} {}  ·  {}",

@@ -373,7 +373,10 @@ fn the_context_menu_of_a_chord_deletes_and_copies_and_the_lane_pastes() {
     set(&mut d, &reg, &mut v, lane_harmony());
     let p = v.chord_center(3 * BAR).unwrap();
     play(&mut v, &mut d, &reg, &[right_down(p), right_up(p)]);
-    assert_eq!(v.menu_labels(), ["Delete Chord", "Copy Chord"]);
+    assert_eq!(
+        v.menu_labels(),
+        ["Delete Chord", "Copy Chord", "Play Chords on Click"]
+    );
     // Copy.
     let copy = v.param_menu_row_center(1).unwrap();
     play(&mut v, &mut d, &reg, &[down(copy), up(copy)]);
@@ -381,7 +384,10 @@ fn the_context_menu_of_a_chord_deletes_and_copies_and_the_lane_pastes() {
     // Paste on the empty lane at bar 6.
     let empty = Point::new(bar_x(&v, 6.0), chord_y(&v));
     play(&mut v, &mut d, &reg, &[right_down(empty), right_up(empty)]);
-    assert_eq!(v.menu_labels(), ["Add Chord Here", "Paste Chord"]);
+    assert_eq!(
+        v.menu_labels(),
+        ["Add Chord Here", "Paste Chord", "Play Chords on Click"]
+    );
     let paste = v.param_menu_row_center(1).unwrap();
     let actions = play(&mut v, &mut d, &reg, &[down(paste), up(paste)]);
     assert_eq!(actions.len(), 1, "{actions:?}");
@@ -611,4 +617,77 @@ fn an_unreadable_symbol_shows_its_hint_in_the_picker() {
         "{:?}",
         dl.texts()
     );
+}
+
+#[test]
+fn a_click_on_a_chord_plays_it_unless_play_chords_on_click_is_off() {
+    let (mut d, reg, mut v) = setup();
+    set(&mut d, &reg, &mut v, lane_harmony());
+    let chord = d.doc().song.harmony.chords[0];
+    let p = v.chord_center(chord.tick).unwrap();
+    let actions = play(&mut v, &mut d, &reg, &[down(p), up(p)]);
+    assert!(
+        actions.contains(&UiAction::AuditionChord(chord)),
+        "{actions:?}"
+    );
+    assert!(v.plays_chords_on_click());
+    // The lane's menu turns it off (a checked row).
+    play(&mut v, &mut d, &reg, &[right_down(p), right_up(p)]);
+    let row = v.menu_labels().len() - 1;
+    let toggle = v.param_menu_row_center(row).unwrap();
+    play(&mut v, &mut d, &reg, &[down(toggle), up(toggle)]);
+    assert!(!v.plays_chords_on_click());
+    let actions = play(&mut v, &mut d, &reg, &[down(p), up(p)]);
+    assert!(
+        !actions
+            .iter()
+            .any(|a| matches!(a, UiAction::AuditionChord(_))),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn paste_chord_puts_the_copied_chord_at_the_playhead() {
+    let (mut d, reg, mut v) = setup();
+    set(&mut d, &reg, &mut v, lane_harmony());
+    // Nothing copied yet.
+    v.set_playhead(6 * BAR);
+    assert!(matches!(
+        v.command("edit.paste_chord", None, d.doc(), &reg),
+        CommandOutcome::NotApplicable(_)
+    ));
+    // Copy the F major 7 of bar 4 (with edit.copy on the selected chord).
+    let p = v.chord_center(3 * BAR).unwrap();
+    play(&mut v, &mut d, &reg, &[down(p), up(p)]);
+    assert!(matches!(
+        v.command("edit.copy", None, d.doc(), &reg),
+        CommandOutcome::Handled(_)
+    ));
+    let CommandOutcome::Handled(actions) = v.command("edit.paste_chord", None, d.doc(), &reg)
+    else {
+        panic!("paste handled")
+    };
+    for a in actions {
+        if let UiAction::Command(Command::Song(c)) = a {
+            d.apply(Command::Song(c), &reg).unwrap();
+        }
+    }
+    let chords = &d.doc().song.harmony.chords;
+    assert_eq!(chords.len(), 3);
+    assert_eq!(
+        (
+            chords[2].tick,
+            chords[2].length,
+            chords[2].root,
+            chords[2].quality
+        ),
+        (6 * BAR, BAR, 5, ChordKind::MajorSeventh)
+    );
+    // The playhead inside a chord: not applicable.
+    v.sync(d.doc(), &reg);
+    v.set_playhead(BAR);
+    assert!(matches!(
+        v.command("edit.paste_chord", None, d.doc(), &reg),
+        CommandOutcome::NotApplicable(_)
+    ));
 }

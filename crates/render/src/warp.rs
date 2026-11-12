@@ -10,8 +10,13 @@
 //! is ready ([`crate::project::song_input_with_warps`]); a clip whose buffer is not ready plays
 //! its asset in real time until the worker is done.
 //!
+//! A clip's pitch edits (the Vocal mode of the audio clip editor) are part of its job: the render
+//! applies them to the asset span first ([`atomik_dsp::stretch::psola`]), then the time map, so a
+//! clip with edits is rendered even with warp off (through the 1:1 map).
+//!
 //! A [`WarpStore`] maps [`WarpJob::key`] to the finished buffer.
 
+use atomik_dsp::stretch::psola::{NoteShift, shift_notes};
 use atomik_dsp::stretch::{StretchMode, StretchParams, TimeMap, pitch_ratio_for_cents, stretch};
 use atomik_engine::SongAsset;
 use atomik_model::{RackDoc, WarpJob, WarpMode, warp_jobs};
@@ -85,7 +90,25 @@ pub fn render_warp(
     let frames = usize::try_from(job.frames).ok()?;
     let (first, end) = job.source_span();
     let end = end.min(asset.frames().max(first));
-    let source = read_span(asset, first, end);
+    let mut source = read_span(asset, first, end);
+    if !job.pitch.is_empty() {
+        // The pitch edits are pinned to the asset: applied to the span before the time map, so
+        // the stretch then runs on the corrected audio.
+        let shifts: Vec<NoteShift> = job
+            .pitch
+            .iter()
+            .filter(|e| e.src_end > first && e.src_start < end)
+            .map(|e| NoteShift {
+                start: e.src_start.saturating_sub(first),
+                end: e.src_end.min(end) - first,
+                shift_cents: e.shift_cents,
+                drift: f32::from(e.drift) / 100.0,
+                vibrato_keep: e.vibrato_keep,
+            })
+            .collect();
+        let refs: Vec<&[f32]> = source.iter().map(Vec::as_slice).collect();
+        source = shift_notes(&refs, job.sample_rate, &shifts, cancel)?;
+    }
     let channels = source.len();
     let knots: Vec<(f64, f64)> = job
         .knots

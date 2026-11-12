@@ -159,6 +159,11 @@ pub(super) struct AudioState {
     pub(super) notes: super::notes::NotesState,
     /// The transients of the audio clip editor ([`super::clip_editor`]).
     pub(super) onsets: super::clip_editor::OnsetState,
+    /// The notes of the audio clip editor's Vocal mode ([`super::clip_editor`]).
+    pub(super) vocal: super::clip_editor::VocalState,
+    /// Detect Chords and Detect Key from Audio: the analysis that runs and the one heard last
+    /// ([`super::chords`]).
+    pub(super) chords: super::chords::ChordsState,
     /// The speaker tool's audition ([`super::audition`]).
     pub(super) audition: super::audition::AuditionState,
     pub(super) peaks: BTreeMap<String, Arc<PeakPyramid>>,
@@ -243,6 +248,8 @@ impl AudioState {
             mixcheck: super::mixcheck::MixCheckState::default(),
             notes: super::notes::NotesState::default(),
             onsets: super::clip_editor::OnsetState::default(),
+            vocal: super::clip_editor::VocalState::default(),
+            chords: super::chords::ChordsState::default(),
             audition: super::audition::AuditionState::default(),
             peaks: BTreeMap::new(),
             drop_adds: false,
@@ -472,7 +479,9 @@ impl<S: EngineSink> AppCore<S> {
     pub fn poll_background(&mut self) -> bool {
         let saved = self.poll_save();
         let backed_up = self.poll_backup();
-        self.drain(false) || saved || backed_up
+        let drained = self.drain(false);
+        let vocal = self.show_vocal_progress();
+        drained || saved || backed_up || vocal
     }
 
     /// Blocks until every worker is done and applied (tests, scripts).
@@ -634,6 +643,16 @@ impl<S: EngineSink> AppCore<S> {
                     job,
                     result,
                 } if generation == current => self.apply_onsets(job, result),
+                Msg::Vocal {
+                    generation,
+                    job,
+                    result,
+                } if generation == current => self.apply_vocal(job, result),
+                Msg::Chords {
+                    generation,
+                    job,
+                    result,
+                } if generation == current => self.apply_chords(job, result),
                 Msg::Scanned {
                     generation,
                     root,
@@ -694,6 +713,8 @@ impl<S: EngineSink> AppCore<S> {
                 | Msg::Sound { .. }
                 | Msg::Noted { .. }
                 | Msg::Onsets { .. }
+                | Msg::Vocal { .. }
+                | Msg::Chords { .. }
                 | Msg::Scanned { .. }
                 | Msg::Edited { .. }
                 | Msg::PasteConverted { .. }
@@ -908,6 +929,7 @@ impl<S: EngineSink> AppCore<S> {
                 envelope: Vec::new(),
                 xfade: None,
                 warp: Default::default(),
+                pitch_edits: Vec::new(),
             }),
         };
         self.apply_command(Command::Song(SongCommand::Launcher(
@@ -974,6 +996,7 @@ impl<S: EngineSink> AppCore<S> {
                 envelope: Vec::new(),
                 xfade: None,
                 warp: Default::default(),
+                pitch_edits: Vec::new(),
             }),
         };
         self.apply_command(Command::Song(SongCommand::AddTake { group, clip }))
@@ -1492,6 +1515,8 @@ impl<S: EngineSink> AppCore<S> {
         self.wavetable.reset();
         self.audio.mixcheck.reset();
         self.audio.notes.reset();
+        self.audio.vocal.reset();
+        self.audio.chords.reset();
         self.audio.buffers.clear();
         self.cpu_reset();
         self.audio.ram_pending.clear();

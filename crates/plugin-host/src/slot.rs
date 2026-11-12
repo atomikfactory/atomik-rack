@@ -71,6 +71,18 @@ pub enum PluginMessage {
         /// Height in pixels.
         h: u32,
     },
+    /// The editor window of the plugin's own process moved or changed size: its outer frame on
+    /// the screen, in physical pixels.
+    GuiFrame {
+        /// Left edge.
+        x: i32,
+        /// Top edge.
+        y: i32,
+        /// Outer width.
+        w: u32,
+        /// Outer height.
+        h: u32,
+    },
     /// The plugin closed its editor.
     GuiClosed,
     /// The plugin asks to show its editor.

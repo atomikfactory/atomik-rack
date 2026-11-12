@@ -214,6 +214,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         self.midi.learn_mode = on;
         if on {
+            self.plugin_learn_global_on();
             self.report("MIDI Learn: change a control, then move a hardware control");
         } else {
             self.midi.armed = None;
@@ -501,11 +502,13 @@ impl<S: EngineSink> AppCore<S> {
         self.midi.learner.reset();
         self.sync_learning();
         let text = format!("{} to {}", source.describe(), target.describe());
+        let (mapped_source, mapped_target) = (source.clone(), target.clone());
         if self
             .apply_command(Command::MidiMap(MidiMapCommand::Learn { source, target }))
             .is_ok()
         {
             self.report(format!("Mapped {text}"));
+            self.plugin_learn_mapped(&mapped_target, &mapped_source);
         }
     }
 

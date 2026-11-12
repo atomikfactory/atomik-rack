@@ -414,6 +414,17 @@ impl<S: EngineSink> AppCore<S> {
         Ok(())
     }
 
+    /// Whether a MIDI import as a song detects the chords of its notes when the file names none
+    /// (off by default).
+    pub fn midi_chords_from_notes(&self) -> bool {
+        self.midi_chords_from_notes
+    }
+
+    /// Turns the chord detection of a MIDI import on or off.
+    pub fn set_midi_chords_from_notes(&mut self, on: bool) {
+        self.midi_chords_from_notes = on;
+    }
+
     fn import_midi_as(&mut self, path: &Path, mode: ImportMode, place: Place) {
         let name = path.file_name().map_or_else(
             || path.display().to_string(),
@@ -482,6 +493,11 @@ impl<S: EngineSink> AppCore<S> {
             scratch.meter.clone_from(meter);
         }
         let count = midi.tracks.len();
+        let detected = if as_song && midi.chords.is_empty() && self.midi_chords_from_notes {
+            crate::midi_file::detect_chords_from_notes(&midi.tracks)
+        } else {
+            Vec::new()
+        };
         let tracks: Vec<ImportedTrack> = midi
             .tracks
             .into_iter()
@@ -491,6 +507,14 @@ impl<S: EngineSink> AppCore<S> {
                 clip: t.has_clip().then(|| t.into_clip(start, &scratch)),
             })
             .collect();
+        // Chords: the chord symbols the file names, else (when asked) the chords of its notes.
+        let chords = if !as_song {
+            Vec::new()
+        } else if midi.chords.is_empty() && self.midi_chords_from_notes {
+            detected
+        } else {
+            midi.chords
+        };
         let import = MidiImport {
             instrument: IMPORT_INSTRUMENT.to_owned(),
             tracks,
@@ -498,6 +522,8 @@ impl<S: EngineSink> AppCore<S> {
             meter: midi.meter.filter(|_| as_song),
             markers: if as_song { midi.markers } else { Vec::new() },
             ranges: if as_song { midi.ranges } else { Vec::new() },
+            chords,
+            key: midi.key.filter(|_| as_song),
         };
         let song_data = if as_song {
             let tempo = import.tempo.as_ref().map_or(0, Vec::len);
@@ -508,8 +534,14 @@ impl<S: EngineSink> AppCore<S> {
             } else {
                 String::new()
             };
+            let chords = import.chords.len();
+            let chords = if chords > 0 {
+                format!(", {chords} chord{}", plural(chords))
+            } else {
+                String::new()
+            };
             format!(
-                " with {tempo} tempo event{} and {markers} marker{}{ranges}",
+                " with {tempo} tempo event{} and {markers} marker{}{ranges}{chords}",
                 plural(tempo),
                 plural(markers)
             )

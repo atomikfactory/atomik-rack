@@ -28,6 +28,7 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 | [N](#n-video-through-the-users-ffmpeg) | Video through the user's FFmpeg | Default (not yet confirmed) |
 | [O](#o-the-video-of-a-song-and-its-time) | The video of a song and its time | Default (not yet confirmed) |
 | [R](#r-controller-profiles) | Controller profiles | Default (not yet confirmed) |
+| [Y](#y-the-pitch-keeping-preview-of-a-warped-clip-is-a-real-time-wsola) | Pitch-keeping preview of warped clips | Default (not yet confirmed) |
 
 ---
 
@@ -572,5 +573,181 @@ other than Dark, Light or System is in use, so an older file with `"theme": "dar
 **Decision.** Option 3. The format is described in [EXTENDING.md](EXTENDING.md#9-making-a-theme). A theme sets the colour
 tokens of `Theme` (about sixty), a few numbers that were already in `Theme`, and nothing else: no new styling
 dimension. A glow on the meters and the playhead was left out, since it would cost frame time for one theme.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## Y. The pitch-keeping preview of a warped clip is a real-time WSOLA
+
+**Question.** A warped clip plays a buffer rendered by a worker. Until it is ready the engine plays an interim read
+through the clip's time map, which was a resampling: the pitch moved with the stretch and a transposition was not
+heard. What should play instead?
+
+**Options.** (1) Keep the resampling. (2) A real-time phase vocoder like the Tonal mode: FFTs on the audio thread,
+a heavier and more complex state per clip. (3) A streaming WSOLA like the body of the Beats mode: overlap-added
+windowed pieces of the source, each moved a little to continue the previous one, and a resample for the transposition.
+
+**Implications.** WSOLA needs no FFT and only a few small buffers, so it can be built once and run with no allocation;
+its cost is bounded by limiting the similarity search (a quarter frame either way, on the sum of both channels, every
+eighth sample over candidates four apart, then refined), which measured about 2.4 ms per second of stereo audio at
+48 kHz per clip (16 tracks of transposed interim warps took 8.9 % of real time against 5.1 % for the resampled read, see
+[perf/BASELINE.md](../perf/BASELINE.md)), about 8 % of one core for 32 clips. It is rougher than the Tonal buffer on
+sustained chords and smears attacks more than the Beats buffer, which is acceptable for the second or two before the
+buffer replaces it. At a ratio of 1 with no transposition it gives back the source bit for bit, so an unstretched clip
+does not change. The stretchers are preallocated per audio track when the song is compiled: a fixed cap of four keeps
+the memory bounded (each is sized for 192 kHz, about 150 KB), and regions take the slots in turn, so two that sound
+together never share one. A region that finds its slot busy within one block falls back to the resampling and is
+counted.
+
+**Decision.** Option 3 for Beats, Tonal and transposed clips; a Repitch clip without transposition keeps the resampling,
+which is its true sound. Reversed and streamed clips keep their behaviour (no interim warp). Offline renders never use
+it.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## Z. Vocal pitch edits are pinned to source frames and rendered with TD-PSOLA
+
+**Question.** The Vocal mode of the audio clip editor moves the notes of a monophonic clip in pitch, flattens their
+drift and moves them in time. What is saved, and how is it rendered?
+
+**Options.** Saving: (1) the notes and their edits in clip time (ticks), (2) per-note edits in the asset's own frames,
+with the note analysis done again on open. Rendering: (a) the Tonal phase vocoder with a time-varying ratio, (b) a
+resample per note, (c) TD-PSOLA driven by the monophonic tracker's pitch.
+
+**Implications.** Edits in ticks move away from their audio whenever the tempo or a warp marker changes; edits in
+source frames stay on the note whatever the time map does, survive a split and a join by their span, and keep the file
+small (the analysis is not saved: it is quick and found again). A resample moves the formants with the pitch (a
+chipmunk voice); the phase vocoder keeps the length but smears the voice and moves the formants too. PSOLA overlap-adds
+one grain per period at the new spacing without resampling the grains, so the spectral envelope stays put; at a ratio
+of 1 the grains add back to the source exactly. It needs a pitch mark per period, which the tracker gives, and only
+suits one voice at a time. Applying it to the asset span before the time map lets the warp stretch run on the corrected
+audio (one more pass, no new combined engine) and keeps the bounce bit-identical.
+
+**Decision.** (2) and (c): `pitch_edits` on the audio clip, pinned to asset frames, an ignorable field of format 45;
+`atomik_dsp::stretch::psola` applies them to the span a warp job reads, then the warp runs. Each note glides in and out
+of its edit over 20 ms. A clip with edits is always rendered, through the 1:1 map when warp is off. Timing moves use
+warp markers, not a new kind of edit.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AA. Chords from audio: a voice-folded chroma, triad-biased templates, Viterbi on the beats
+
+**Question.** How does Detect Chords from Audio turn a recording into chord-lane chords, and how far can polyphonic
+audio to notes go?
+
+**Options.** Chroma: (1) fold the raw spectrum into twelve bins, (2) fold the pitches a multi-pitch search finds.
+Recognition: (a) a trained model, (b) templates of each chord quality scored by cosine, frame by frame, (c) the same
+templates over beat units with a Viterbi pass. Polyphonic notes: (i) a transcription model, (ii) the voices of the
+multi-pitch search tracked into notes.
+
+**Implications.** A raw chroma counts a note's third and fifth harmonics as the fifth and the major third of the
+chord, so a lone C reads as C major and a minor chord leans major; folding the voices of a harmonic-sum search with
+iterative cancellation (a smooth harmonic envelope taken out per voice, at most six voices) counts each note once. A
+model needs training data and a dependency and cannot be checked offline against synthetic material; templates are a
+few lines, deterministic and cover every lane quality. Frame-by-frame decisions flicker on passing notes; units on the
+song's beat grid (a beat, half bar or bar) with a self-transition bonus make chords change only on beats, at most once
+per unit, and a cached analysis lets the panel re-score instantly. Triads come first by a small penalty on sevenths and
+sixths, so a seventh wins only when it is clearly there; a bass bonus tells Am7 from C6. A recording off A = 440 is
+corrected from the circular mean of the voices' fundamentals. Tracking the same voices into notes gives usable
+sketches of a piano or guitar part, but harmonics shared by notes an octave or a twelfth apart, dense mixes and
+distortion still lose or add notes.
+
+**Decision.** (2), (c) and (ii): `atomik_dsp::harmony` (whitened STFT peaks as fractional keys, multi-pitch with
+cancellation, tuning, chroma and bass chroma), `chords` (templates of 13 qualities on 12 roots plus no chord, Viterbi
+over units, slash basses), `poly` (voice tracks into notes snapped to onsets). The key from audio compares the summed
+chroma with the key profiles of `key_detect`; on an exact tie the major key wins.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AB. The song harmony reaches devices: compiled with the song, looked up per batch
+
+**Question.** How do note devices (Key & Chord, the Arpeggiator, the CV Quantizer) read the song key and the chord
+lane on the audio thread, live and in bounces?
+
+**Options.** (1) Devices get the model's harmony through a shared lock; (2) the app sends key and chord changes as
+timed events into each device; (3) the harmony is compiled with the song into sorted shared slices that the engine
+swaps with the song, and the player hands each batch a fixed-size view of what holds over the batch.
+
+**Implications.** A lock on the audio thread is out. Timed events need a route per device and a chase on every locate
+and loop wrap. A compiled harmony costs a binary search per batch, follows locates, loops, tempo maps and the clip
+launcher for free, and is the same in a bounce. A view that borrows the compiled slices cannot live in the copyable
+time info the workers receive; a small copy can: the key and chord at the first frame and at every frame where one
+changes inside the batch (eight at most; a 64-frame batch never holds more in music).
+
+**Decision.** (3). `atomik_core::harmony::SongHarmony` (in `SongInput::harmony`, built by `song_harmony` in the
+renderer) and `HarmonyNow` in `TimeInfo::harmony`, read through `ProcessContext::harmony`. A change lands on the frame
+where a note of the same tick is emitted. Stopped, the batch holds the harmony at the playhead. A harmony edit now
+reports `SongChanged` so the engine gets it with the next song swap. The new device params are appended with defaults
+that follow nothing, so older songs and patches play as before.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AC. The Learn strip of a plugin window is a docked window of its own
+
+**Question.** Learn in the plugin window needs a thin app-drawn strip with the plugin's name and the LEARN AUTOMATION
+and LEARN MIDI toggles at each plugin editor. Where does it go for each kind of editor: the embedded ones (our own
+top-level window, with the plugin's view embedded in it) and the external ones (the window of a sandboxed plugin's own
+process, the default)?
+
+**Options.** (1) Inside the editor window: the window grows by the strip's height, the plugin's view goes into a native
+child area below it and the app draws the strip above; (2) a borderless window of the app, docked to the editor
+window's top edge and following its moves and resizes, for both kinds; (3) the strip only in the parameter pane.
+
+**Implications.** (1) needs a native child window (a child `HWND`, an `NSView` subview, an X11 subwindow) between the
+top-level window and the plugin's view, which the app can only make through `unsafe` platform calls (the workspace
+denies `unsafe` outside the plugin backends), and it cannot reach into the window of a sandboxed plugin's process at
+all. (2) never puts a surface over or beside the plugin's view inside one window, so it cannot cause the flicker and
+focus bugs that made the editors top-level windows in the first place; it needs the editor's frame, which our own
+windows give and which a plugin's process now reports (`GuiFrame`, on every move and resize and when the editor is
+shown). (3) leaves the user's eyes on the rack instead of the plugin.
+
+**Decision.** (2), with (3) as the fallback. The strip is an undecorated window with its own surface, shown without
+being activated, owned on Windows by the editor window (embedded) or the app window (external) so it stays above them
+and minimises with them, an X11 utility window on Linux; it docks right above the editor's frame, or below it when
+the space above is off the screen. A Wayland session gives no window positions, so it has no strip; the parameter
+pane's top bar has the same two toggles everywhere. The mode is view state per editor, never saved.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AD. Webcam hand tracking: the camera, the models, privacy and the gesture rules
+
+**Question.** The webcam is to become a controller: pinch the thumb and index finger in front of the camera and
+twist the wrist like a knob. How is the camera read on each system, how are the hand models run, where do the model
+files come from, what happens to the pictures, and how is the gesture decided?
+
+**Options.** Camera: (1) `nokhwa` on every system; (2) `nokhwa` on Windows and macOS and a pure Rust Video4Linux
+client (`linuxvideo`) on Linux; (3) OpenCV; (4) the platform calls by hand. Inference: (1) `tract` reading the
+official `.tflite` files; (2) `tract` on `.onnx` files converted from them; (3) ONNX Runtime or the TensorFlow Lite
+C++ library through bindings. Model files: (1) bundled in the installer; (2) downloaded once after the user agrees;
+(3) a bigger model that is downloaded every run. Gesture: a trained gesture network, or plain rules on the 21
+landmarks.
+
+**Implications.** `nokhwa` is Apache-2.0 and wraps Media Foundation and AVFoundation, but its Linux backend goes
+through `v4l`, whose `v4l2-sys-mit` runs `bindgen` at build time (libclang and the kernel headers on every build
+machine and in CI); its default JPEG decoder is a C library, and the program already has `zune-jpeg`, so the default
+features are off and the frames are converted in `camera/convert.rs`. `linuxvideo` is 0BSD (added to the allowed
+licences), has no `bindgen` and no system library, and reads Video4Linux with the plain kernel interface. OpenCV is a
+huge C++ dependency. Platform calls by hand mean `unsafe` in our crates, which the workspace denies; the capture
+crates use `unsafe` inside, ours does not. `tract` is pure Rust (MIT or Apache-2.0) and reads the official `.tflite`
+files directly: both models load and run, so no conversion script, no extra hosting and no second copy of a file
+whose licence is not ours to republish. Its build script only asks the C compiler of the machine which assembly it
+can use (every macOS and Linux build machine has one). ONNX Runtime and TensorFlow Lite are C++ libraries with
+downloads or a CMake build. The two models are 2.3 and 5.5 MB; bundling them makes every installer bigger for a
+feature that not every user has a camera for, so they are downloaded once, after a dialog that says what, from where
+and how big, from one fixed HTTPS address each (`ureq`, no redirect, nothing about the user or the machine), and are
+checked against a SHA-256 written in the source at the download and again before each run. The camera picture is
+the most private thing the program can touch: it is only used after a user action, only in memory (never written,
+logged, sent or put in a project), only while the camera is on, and a lit indicator shows when it is (the
+application side comes with the wiring). A twist read from the wrist angle needs no network: the gesture is the
+angle of the wrist-to-knuckle line and the distance between two fingertips.
+
+**Decision.** (2), (1), (2), plain rules. The crate is `atomik-vision`, with no dependency on the application. The
+pinch is the thumb tip to index tip distance over the hand size (wrist to middle knuckle): it starts below 0.25 and
+ends above 0.40, so a hand near one number does not flicker; the numbers come from the synthetic hands of the tests
+and wait for hand checks. The twist is a ratchet: the angle of the wrist-to-knuckle line, unwrapped, smoothed with a
+One Euro filter and measured from the angle at the moment the pinch began, so a user can open the hand, turn it back
+and pinch again to keep turning; a change under 1.5 degrees is held back, so a still hand does not drift. A hand that
+is lost keeps its pinch for 150 ms, then the pinch ends. The palm detector runs only when no hand is followed (the
+landmarks of one frame frame the next), so a followed hand costs one run of the landmark model. The capture is on its
+own thread with a one-frame handoff (the newest frame wins, nothing queues).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.

@@ -16,6 +16,9 @@
 //!   (`atomik_engine::preview_channel`), so the press/stop rules are those of an audio file
 //!   preview: it ends by itself, a stop or another preview replaces it.
 //!
+//! A **chord audition** (a click on a chord of the chord lane, see [`AppCore::audition_chord`])
+//! plays the chord's notes for a moment the same two ways; it is silent while the song plays.
+//!
 //! The song transport starting ends a live preview (it is refused while the song plays). The
 //! document, the selection and the undo history are never touched, and an offline render never
 //! hears a preview: bounces and exports read neither the live note path of the app nor the
@@ -37,6 +40,34 @@ const RELEASE: f64 = 0.25;
 const CHUNK: usize = 1 << 13;
 /// How long the worker waits for room in a full ring.
 const WAIT: Duration = Duration::from_millis(2);
+
+/// How long a chord audition sounds, in seconds.
+const CHORD_SECONDS: f64 = 0.7;
+
+/// The notes of a chord audition: the root from the C at 48 (`C2`), the tones above it and the
+/// bass of a slash chord below, all at once for [`CHORD_SECONDS`].
+pub(super) fn chord_notes(chord: &atomik_model::ChordEvent) -> Vec<TimedNote> {
+    let root = 48 + chord.root % 12;
+    let mut keys: Vec<u8> = chord
+        .quality
+        .intervals()
+        .iter()
+        .map(|i| root + i)
+        .filter(|k| *k <= 127)
+        .collect();
+    if let Some(b) = chord.bass.filter(|b| *b % 12 != chord.root % 12) {
+        let down = (chord.root % 12 + 12 - b % 12) % 12;
+        keys.insert(0, root - down);
+    }
+    keys.into_iter()
+        .map(|key| TimedNote {
+            start: 0.0,
+            end: CHORD_SECONDS,
+            key,
+            velocity: 0.7,
+        })
+        .collect()
+}
 
 /// A note of a clip in seconds from the start of the preview.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -233,6 +264,25 @@ impl<S: EngineSink> AppCore<S> {
         if notes.is_empty() {
             return Err(format!("'{name}' has no notes to preview"));
         }
+        self.start_notes_preview(path, notes)
+    }
+
+    /// Plays a chord of the lane briefly through the selected note track's instrument, or the
+    /// built-in voice without one (see the module docs). Silent while the song plays or without
+    /// audio; it never touches the document.
+    pub fn audition_chord(&mut self, chord: &atomik_model::ChordEvent) {
+        if self.playing || !self.sink.has_engine() {
+            return;
+        }
+        self.stop_preview();
+        if let Err(message) = self.start_notes_preview(Path::new(""), chord_notes(chord)) {
+            log::warn!("chord audition: {message}");
+        }
+    }
+
+    /// Starts the preview of `notes` (`path`: what the browser row shows as playing, empty for
+    /// none).
+    fn start_notes_preview(&mut self, path: &Path, notes: Vec<TimedNote>) -> Result<(), String> {
         let span = span_of(&notes);
         match self.preview_track() {
             Some(device) => {
@@ -649,5 +699,60 @@ mod tests {
         c.sink_mut().no_engine = true;
         c.browse(BrowseAction::Preview(path));
         assert_eq!(c.previewing_clip(), None);
+    }
+
+    #[test]
+    fn a_chord_click_plays_the_chord_through_the_selected_track() {
+        let mut c = with_track();
+        c.sink_mut().take();
+        let chord = atomik_model::ChordEvent {
+            bass: Some(4),
+            ..atomik_model::ChordEvent::new(0, BAR, 0, atomik_model::theory::ChordKind::Major)
+        };
+        c.audition_chord(&chord);
+        let ons: Vec<u8> = live(&mut c)
+            .into_iter()
+            .filter_map(|k| match k {
+                NoteKind::On { key, .. } => Some(key),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            ons,
+            [40, 48, 52, 55],
+            "C/E: the bass E below C2, then C E G"
+        );
+        // The notes end by themselves.
+        c.feed_clip_preview(c.now_seconds + 1.0);
+        let offs = live(&mut c)
+            .into_iter()
+            .filter(|k| matches!(k, NoteKind::Off { .. }))
+            .count();
+        assert_eq!(offs, 4);
+        assert!(c.doc().song.harmony.is_empty(), "the document is untouched");
+    }
+
+    #[test]
+    fn a_chord_click_without_a_track_uses_the_preview_voice_and_is_silent_while_playing() {
+        let mut c = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+        let chord =
+            atomik_model::ChordEvent::new(0, BAR, 9, atomik_model::theory::ChordKind::Minor);
+        c.audition_chord(&chord);
+        assert!(
+            previews(&c)
+                .iter()
+                .any(|p| matches!(p, SinkCall::PreviewStart { .. })),
+            "the preview voice plays it"
+        );
+        let notes = chord_notes(&chord);
+        assert_eq!(
+            notes.iter().map(|n| n.key).collect::<Vec<_>>(),
+            [57, 60, 64]
+        );
+        let mut c = with_track();
+        c.playing = true;
+        c.sink_mut().take();
+        c.audition_chord(&chord);
+        assert!(live(&mut c).is_empty());
     }
 }

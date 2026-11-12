@@ -607,6 +607,7 @@ impl<S: EngineSink> AppCore<S> {
             envelope: Vec::new(),
             xfade: None,
             warp: Default::default(),
+            pitch_edits: Vec::new(),
         };
         let clips: Vec<Clip> = laps
             .iter()

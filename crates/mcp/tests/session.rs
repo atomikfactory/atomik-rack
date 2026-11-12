@@ -945,8 +945,8 @@ fn the_relink_command_lists_the_missing_files_and_relink_fixes_them() {
             .unwrap()
             .contains("relinked 1, 0 still missing")
     );
-    // The list closed with the last missing file; the command stays available (it says when
-    // nothing is missing).
+    // The list closed with the last missing file; the command stays available (it looks at the
+    // files again and says when nothing is missing).
     assert_eq!(command_row(&mut s, "file.relink_audio")["enabled"], true);
     let gone = ok(&mut s, "session_texts", json!({"contains": "LOCATE"}));
     assert!(gone["texts"].as_array().unwrap().is_empty());

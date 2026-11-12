@@ -12,12 +12,14 @@ edit.cut | global | Ctrl+X
 edit.delete | global | Delete, Backspace
 edit.duplicate | global | Ctrl+D
 edit.paste | global | Ctrl+V
+edit.paste_chord | sequencer | Ctrl+Alt+V
 edit.redo | global | Ctrl+Y, Ctrl+Shift+Z
 edit.select_all | global | Ctrl+A
 edit.undo | global | Ctrl+Z
 editor.audio_add_marker | editor | I
 editor.audio_mode_overview | editor | 1
 editor.audio_mode_slice | editor | 2
+editor.audio_mode_vocal | editor | 3
 editor.chordify | editor | Shift+C
 editor.extend_next_note | editor | Shift+Right
 editor.extend_prev_note | editor | Shift+Left

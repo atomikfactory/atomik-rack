@@ -376,6 +376,31 @@ fn a_user_resize_reaches_the_plugin() {
 }
 
 #[test]
+fn the_windows_frame_is_told_to_the_parent_only_while_the_editor_is_open() {
+    let mut r = rig().instantiated();
+    let frame = WindowInput::Frame {
+        x: -8,
+        y: 40,
+        w: 716,
+        h: 539,
+    };
+    r.control.on_window(frame, &mut r.windows);
+    assert_eq!(r.sink.frames(), vec![], "no editor, no frame");
+    r.open(2);
+    let before = r.sink.frames().len();
+    r.control.on_window(frame, &mut r.windows);
+    assert_eq!(
+        r.sink.frames()[before..].to_vec(),
+        vec![FromChild::GuiFrame {
+            x: -8,
+            y: 40,
+            w: 716,
+            h: 539
+        }]
+    );
+}
+
+#[test]
 fn the_plugins_own_resize_hide_and_close_follow_the_window_and_are_forwarded() {
     let mut r = rig_with(
         vec![

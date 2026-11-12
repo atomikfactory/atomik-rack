@@ -63,6 +63,7 @@ fn regions(variant: u8) -> (Vec<SongAudioRegion>, Vec<SongAudioRegion>) {
 fn input(variant: u8) -> SongInput {
     let (a, b) = regions(variant);
     SongInput {
+        harmony: Default::default(),
         tracks: Vec::new(),
         // Tempo change inside the loop [PPQ, 3 PPQ).
         tempo: tempo(&[(0, 240.0), (2 * PPQ, 180.0)]),

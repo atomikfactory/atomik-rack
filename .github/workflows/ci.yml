@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      sandbox_only:
+        description: >-
+          Run only the plugin sandbox end to end job (Linux and macOS) and the cheap checks:
+          the build, clippy and test jobs skip their steps.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -46,10 +53,15 @@ jobs:
           REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
           PR: ${{ github.event.pull_request.number }}
+          SANDBOX_ONLY: ${{ inputs.sandbox_only }}
         run: |
           set -u
           code=true
           packages="--workspace"
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$SANDBOX_ONLY" = "true" ]; then
+            code=false
+            echo "::notice title=Sandbox only::only the plugin sandbox job runs"
+          fi
           if [ "$EVENT" = "pull_request" ] \
             && files="$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')" \
             && [ -n "$files" ] \
@@ -121,8 +133,12 @@ jobs:
             profile: release
     env:
       # A documents-only change skips the steps below, not the job: a matrix job that is skipped
-      # as a whole never reports the names a required check waits for.
-      RUN_CODE: ${{ needs.changes.outputs.code }}
+      # as a whole never reports the names a required check waits for. The release legs take 45
+      # to 70 minutes, so a pull request runs the debug legs only (on its affected packages); the
+      # release legs run on main after the merge and on a manual run.
+      RUN_CODE: >-
+        ${{ (matrix.profile == 'release' && github.event_name == 'pull_request')
+            && 'false' || needs.changes.outputs.code }}
       # `--workspace`, or the affected packages as `-p name ...` on a pull request.
       PACKAGES: ${{ needs.changes.outputs.packages }}
     steps:
@@ -172,16 +188,21 @@ jobs:
 
   # The plugin sandbox with a real child process on the two platforms where its wake-up calls and
   # the redirection of the child's stdout are not Windows code: the doorbell, the shared block,
-  # the life cycle, a crash, a hang and a kill, each against the real `atomik-plugin-host`. The
+  # the life cycle, a crash, a hang and a kill, each against the real `atomik-plugin-host`, and
+  # every in-repo test plugin library (CLAP and VST3: the main ones, the crash, hang, leak, bad
+  # and variants ones) loaded through the sandbox, with a gesture from the plugin's editor. The
   # test matrix runs these tests too; this job names them, so a failure here says what it is.
   sandbox:
     name: sandbox end to end (${{ matrix.os }})
     needs: changes
-    # Only when the plugin process code is affected (or on a full run).
+    # When the plugin process code or a test plugin is affected (or on a full run), and on every
+    # manual run.
     if: >-
-      needs.changes.outputs.code == 'true'
-      && (needs.changes.outputs.packages == '--workspace'
-          || contains(needs.changes.outputs.packages, 'atomik-plugin-'))
+      github.event_name == 'workflow_dispatch'
+      || (needs.changes.outputs.code == 'true'
+          && (needs.changes.outputs.packages == '--workspace'
+              || contains(needs.changes.outputs.packages, 'atomik-plugin-')
+              || contains(needs.changes.outputs.packages, 'atomik-test-')))
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -195,7 +216,22 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: sandbox
-      - run: cargo test -p atomik-plugin-ipc -p atomik-plugin-sandbox -p atomik-plugin-hostd --no-fail-fast
+      # The test plugin libraries first, as the test job does: the tests then only locate them.
+      - name: Build the test plugins
+        shell: bash
+        run: |
+          set -eu
+          packages=""
+          for manifest in crates/testplugins/*/Cargo.toml; do
+            name="$(sed -n 's/^name = "\(.*\)"/\1/p' "$manifest" | head -n 1)"
+            packages="$packages -p $name"
+          done
+          # shellcheck disable=SC2086
+          cargo build $packages
+          echo "ATOMIK_TEST_PLUGINS_PREBUILT=1" >> "$GITHUB_ENV"
+      - run: >-
+          cargo test -p atomik-plugin-ipc -p atomik-plugin-sandbox -p atomik-plugin-hostd
+          -p atomik-plugin-host --no-fail-fast
 
   deny:
     name: cargo-deny

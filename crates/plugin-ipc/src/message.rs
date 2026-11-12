@@ -219,7 +219,7 @@ pub enum FromChild {
     ParamEdit {
         /// The plugin's param id.
         param: u32,
-        /// The plain value.
+        /// The plain value; 0 for a gesture's begin and end when the plugin gave none.
         value: f64,
         /// Which part of the gesture.
         phase: WirePhase,
@@ -237,6 +237,18 @@ pub enum FromChild {
         /// Width in pixels.
         w: u32,
         /// Height in pixels.
+        h: u32,
+    },
+    /// Notification: the editor window moved or changed size: its outer frame on the screen, in
+    /// physical pixels (the app docks the Learn strip to it).
+    GuiFrame {
+        /// Left edge.
+        x: i32,
+        /// Top edge.
+        y: i32,
+        /// Outer width.
+        w: u32,
+        /// Outer height.
         h: u32,
     },
     /// Notification: the editor window was closed.
@@ -821,6 +833,15 @@ mod tests {
             (FromChild::RescanParams, None),
             (FromChild::RequestRestart, None),
             (FromChild::GuiResize { w: 1, h: 2 }, None),
+            (
+                FromChild::GuiFrame {
+                    x: -8,
+                    y: 30,
+                    w: 640,
+                    h: 480,
+                },
+                None,
+            ),
             (FromChild::GuiClosed, None),
             (FromChild::GuiRequestShow, None),
             (FromChild::GuiRequestHide, None),

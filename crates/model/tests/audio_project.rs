@@ -631,6 +631,7 @@ proptest! {
                 envelope: Vec::new(),
                 xfade: None,
                 warp: Default::default(),
+                pitch_edits: Vec::new(),
             };
             let device = if i % 2 == 0 { "audio-track" } else { "audio-track-2" };
             if d.doc().song.track(&key(device)).is_some() {

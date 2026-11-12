@@ -17,7 +17,16 @@
 //! first and then read `r` times as fast, so the pitch is multiplied by `r` and the length is
 //! the map's. It applies to Beats and Tonal; Repitch changes pitch with speed only.
 //!
-//! Everything here is offline (it allocates), deterministic (the same input gives the same
+//! [`RtStretcher`] is the real-time companion (see the [`realtime`] module): a streaming,
+//! allocation-free WSOLA that keeps the pitch and plays the transposition while the engine
+//! previews a warped clip whose finished buffer is still being rendered. It sounds close to the
+//! Beats and Tonal buffers (same pitch and timing, a little lower quality).
+//!
+//! The [`psola`] module shifts the notes of monophonic audio one by one while keeping the
+//! formants (TD-PSOLA): the pitch edits of the audio clip editor's Vocal mode, applied to the
+//! asset before the time map.
+//!
+//! Everything else here is offline (it allocates), deterministic (the same input gives the same
 //! bits on every platform: only IEEE `+ - * /`, `sqrt`, and the deterministic trigonometry of
 //! this crate are used) and cancellable: the `cancel` callback is polled about every
 //! thousandth of a second of audio, and a `true` makes the call return `None`.
@@ -25,13 +34,20 @@
 mod beats;
 pub(crate) mod fft;
 mod map;
+pub mod psola;
+pub mod realtime;
 mod repitch;
 mod tonal;
 
 #[cfg(test)]
+mod psola_tests;
+#[cfg(test)]
+mod realtime_tests;
+#[cfg(test)]
 mod tests;
 
 pub use map::TimeMap;
+pub use realtime::{RT_MAX_SAMPLE_RATE, RtStretcher};
 
 use repitch::{repitch, resample_by};
 

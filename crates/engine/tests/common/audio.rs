@@ -38,6 +38,7 @@ pub fn region(start: u64, offset: u64, frames: u64) -> SongAudioRegion {
 /// Song input in 4/4 at 120 BPM (1 tick = 1.5625 frames at 48 kHz) with audio tracks.
 pub fn audio_input(audio: Vec<SongAudioTrack>, assets: Vec<SongAsset>) -> SongInput {
     SongInput {
+        harmony: Default::default(),
         tracks: Vec::new(),
         tempo: tempo(&[(0, 120.0)]),
         meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],

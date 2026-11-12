@@ -945,3 +945,95 @@ fn the_editor_log_lines_carry_the_device_key_the_instance_and_the_process() {
         "plugin [echo2] editor closed: instance 4"
     );
 }
+
+// ------------------------------------------------------------------ learn in the window
+
+/// An external editor (the plugin's own process shows it): its gesture begin (0, the sandbox
+/// marker) is the touch of LEARN MIDI, and the child closing its editor disarms the window.
+#[test]
+fn learn_midi_takes_the_touch_of_an_external_editor_and_its_close_disarms_it() {
+    let (mut core, stats, dev) = lost_core();
+    stats.set_external_editor(true);
+    core.handle_action(UiAction::OpenPluginGui {
+        device: dev.clone(),
+    });
+    assert!(core.plugin_gui_open(&dev));
+    assert!(core.toggle_plugin_learn(&dev, atomik_ui::PluginLearnMode::Midi));
+    let param = {
+        let d = core.doc().resolve(&dev).unwrap();
+        let desc = core.registry().get(&d.type_id).unwrap().descriptor;
+        desc.params
+            .iter()
+            .find(|p| {
+                p.key
+                    .strip_prefix('p')
+                    .is_some_and(|n| n.parse::<u32>().is_ok())
+            })
+            .expect("a plugin param")
+            .key
+            .to_owned()
+    };
+    let id: u32 = param[1..].parse().unwrap();
+    post(
+        &mut core,
+        &dev,
+        PluginMessage::ParamEdit {
+            id,
+            value: 0.0,
+            phase: atomik_plugin_host::ParamPhase::Begin,
+        },
+    );
+    core.frame();
+    assert_eq!(
+        core.midi_armed(),
+        Some(&atomik_model::MidiTarget::Param {
+            device: dev.clone(),
+            param,
+        })
+    );
+    post(&mut core, &dev, PluginMessage::GuiClosed);
+    core.frame();
+    assert_eq!(core.plugin_learn_mode(&dev), None);
+    assert!(core.midi_armed().is_none(), "the waiting target goes too");
+}
+
+/// The frame the plugin's process says its editor window has is where the Learn strip docks;
+/// it goes with the editor.
+#[test]
+fn an_external_editors_frame_is_kept_while_it_is_open() {
+    let (mut core, stats, dev) = lost_core();
+    stats.set_external_editor(true);
+    post(
+        &mut core,
+        &dev,
+        PluginMessage::GuiFrame {
+            x: 1,
+            y: 2,
+            w: 3,
+            h: 4,
+        },
+    );
+    core.frame();
+    assert!(core.external_editor_frames().is_empty(), "no editor yet");
+    core.handle_action(UiAction::OpenPluginGui {
+        device: dev.clone(),
+    });
+    post(
+        &mut core,
+        &dev,
+        PluginMessage::GuiFrame {
+            x: -8,
+            y: 100,
+            w: 656,
+            h: 519,
+        },
+    );
+    core.frame();
+    assert_eq!(
+        core.external_editor_frames(),
+        vec![(dev.clone(), (-8, 100, 656, 519))]
+    );
+    post(&mut core, &dev, PluginMessage::GuiClosed);
+    core.frame();
+    assert!(core.external_editor_frames().is_empty());
+}

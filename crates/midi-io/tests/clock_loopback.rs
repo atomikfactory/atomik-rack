@@ -61,6 +61,7 @@ fn run(tempo: &[(i64, f64, bool)], seconds: f64, offset_ms: i32) -> Run {
     };
     let (mut engine, mut handle) = new_engine(cfg);
     let song = compile_song(&SongInput {
+        harmony: Default::default(),
         tracks: Vec::new(),
         tempo: tempo_points(tempo),
         meter: vec![MeterEvent::new(1, 4, 4)],

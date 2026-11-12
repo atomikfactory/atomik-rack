@@ -15,7 +15,7 @@ targets = [
 [licenses]
 allow = [
   "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause",
-  "ISC", "Zlib", "Unicode-3.0", "MPL-2.0", "GPL-3.0-or-later", "GPL-3.0-only",
+  "ISC", "Zlib", "Unicode-3.0", "MPL-2.0", "GPL-3.0-or-later", "GPL-3.0-only", "0BSD",
   "LGPL-2.1-or-later", "LGPL-3.0-or-later", "CC0-1.0", "Unlicense", "BSL-1.0",
   # The root certificates the update check trusts (webpki-roots): permissive, data only.
   "CDLA-Permissive-2.0",
@@ -44,6 +44,7 @@ ignore = [
   # Every ignore carries a review date: scripts/check-advisory-ignores.sh (run by the Security
   # workflow) fails once it has passed, so look at the advisory again and renew it deliberately.
   { id = "RUSTSEC-2026-0192", reason = "transitive via winit/sctk-adwaita; unmaintained notice only, no upgrade available; review-by 2027-02-01" },
+  { id = "RUSTSEC-2024-0436", reason = "paste, a proc-macro used at build time by nokhwa (the Windows and macOS camera backends of atomik-vision); unmaintained notice only, no vulnerability; review-by 2027-02-01" },
 ]
 
 [sources]

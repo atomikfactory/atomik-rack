@@ -41,6 +41,11 @@ pub trait WindowSystem {
     fn hide(&mut self);
     /// Destroys the window.
     fn destroy(&mut self);
+    /// The window's outer frame on the screen (x, y, width, height in physical pixels), when
+    /// there is a window and the system gives its position.
+    fn frame(&self) -> Option<(i32, i32, u32, u32)> {
+        None
+    }
 }
 
 /// The window handle a Windows owner needs: only a `HWND` can own a window there.
@@ -92,7 +97,6 @@ pub struct Editor {
 
 impl Editor {
     /// True while the window and the plugin's editor exist.
-    #[cfg(test)]
     pub fn is_open(&self) -> bool {
         self.open
     }

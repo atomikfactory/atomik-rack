@@ -25,3 +25,4 @@ plugin-vst3 80
 render 80
 testkit 80
 ui 80
+vision 70

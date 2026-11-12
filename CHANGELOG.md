@@ -8,6 +8,93 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **Hand tracking core for webcam control.** A new crate, `atomik-vision`, is the engine room of a coming webcam
+  controller (nothing in the application uses it yet). The camera is read through a trait (Media Foundation on
+  Windows, AVFoundation on macOS, Video4Linux on Linux; a fake replays frames for tests) on a capture thread that
+  keeps only the newest frame. The two MediaPipe hand models, the palm detector and the 21-point hand landmark model,
+  run in pure Rust on the CPU from the official files (the detector only while no hand is followed; about 20 ms a
+  frame for a followed hand). The models are not in the installer: a one-time download, started by the user, fetches
+  two files (7.8 MB) from one fixed HTTPS address each, checks them against a SHA-256 written in the source and leaves
+  nothing behind when anything fails or is cancelled. The gesture recogniser turns landmarks into a pinch of the
+  thumb and index finger (with hysteresis, so it does not flicker), a twist of the wrist measured from the moment of
+  the pinch like a ratchet (smoothed, with a dead zone so a still hand does not drift, and a 150 ms tolerance for a
+  missed frame), and keeps two hands apart. The `vision-demo` tool lists cameras, shows and downloads the models,
+  prints the state of the hand live and records landmarks (numbers only) for tests. Frames live in memory only; the
+  camera is on only while a tracker runs. The macOS bundle asks for camera access with a plain sentence and the
+  hardened runtime gets the camera entitlement. Decision AD in `docs/DECISIONS.md`.
+- **Learn in the plugin window.** Every plugin editor window gets a thin strip docked to its top edge with the
+  plugin's name, LEARN AUTOMATION, LEARN MIDI, a status line and a close button. Pick a mode, then touch a control
+  in the plugin's own interface: LEARN AUTOMATION shows that parameter's automation lane in the arrangement (an
+  empty lane is added when it has none), LEARN MIDI arms it so the next hardware control moved is mapped to it (one
+  undo step; the strip names the source). The mode stays armed for the next touch; the lit button, the close button,
+  Esc in the main window, closing the editor and the global MIDI Learn mode disarm it. The touch is the plugin's
+  gesture begin, or the first change of a parameter not moved for half a second for plugins that send none; the edit
+  itself still goes through, and a control that is not a parameter says so. The strip docks to embedded editors and
+  to the windows of sandboxed plugins (their process now reports where the window is); where no window position is
+  known (Wayland) the parameter pane's LEARN AUTOMATION and LEARN MIDI toggles do the same. Commands
+  `plugin.learn_automation` and `plugin.learn_midi`, in the palette and the plugin device's right-click menu.
+- **Devices that follow the song's key and chords.** Key & Chord has `scale.source` (song: the song key at the note,
+  key changes included), `chord.source` (song chord) with `chord.follow` stamp (any key plays the lane's chord near
+  it) or snap (each key moves to the nearest chord tone), and `chord.retrigger` (held keys are re-voiced at a chord
+  or key change, with no stuck notes). The Arpeggiator has `source` (held, song chord, held + song chord),
+  `chord.octave` and `gate.keys`, and the CV Quantizer `scale.source`. The defaults follow nothing, so older songs
+  play as before. The harmony is compiled with the song and looked up per batch without allocating, so bounces stay
+  bit-identical at every block size and worker count; a harmony edit now reaches the engine. A following panel
+  shows a SONG tag with the chord or key at the playhead.
+- **Chord lane follow-ups.** A click on a chord of the chord lane (or a chord picked in the picker) plays it through
+  the selected note track or the preview voice (Play Chords on Click in the lane's right-click list, on by
+  default). Fit Notes to Chords shows the moved notes first, with Apply (one undo step, or Enter) and Cancel (or
+  Esc). A MIDI import as a song reads chords from chord-symbol text, lyric and marker events and the song key from
+  the key signature (when the song has none), in the import's one undo step; the app can also detect chords from
+  the imported notes. `edit.paste_chord` (Ctrl+Alt+V in the arrangement) pastes the lane's copied chord at the
+  playhead.
+- **Chords and keys from audio, and polyphonic audio to notes.** Transport > Detect Chords from Audio... (also in the
+  right-click menu of an audio clip, `sequencer.detect_chords_from_audio`) listens to the selected audio clips, or to
+  those under the loop, on a worker with progress and cancel, and opens a preview panel: the chords drawn over their
+  bars (dimmed when unsure), with CHANGES (every beat, half bar or bar), CHORDS (Simple triads or Full with sevenths
+  and sixths) and SLASH CHORDS (the bass note), which score the kept analysis again at once. REPLACE IN RANGE or FILL
+  GAPS ONLY writes the chord lane in one undo step, with the song key the audio points to when the song has none.
+  The analysis (in atomik-dsp) is a whitened STFT read as fractional keys, a harmonic-sum multi-pitch search with
+  cancellation (up to six voices), a tuning estimate that corrects a recording off A = 440, a chroma per frame, chord
+  templates biased toward triads and smoothed by a Viterbi pass over the beats. Transport > Detect Key from Audio
+  (`sequencer.detect_key_from_audio`) reads the key of the audio (at most ten minutes), and Detect Song Key falls back
+  to the audio when the song has no notes. Audio to Notes has a Polyphonic mode with a voice count (1 to 6) for a
+  piano or a guitar part: a usable sketch, not a transcription. 562 commands; the project format is unchanged (45).
+- **Vocal mode in the audio clip editor: pitch and timing edits of a monophonic clip.** The audio clip editor's Vocal
+  mode (VOCAL in its toolbar, or 3) finds the notes of a voice, a bass or a lead on a worker, with a progress bar and
+  CANCEL in the footer, and draws them on a pitch grid (piano keys, a row per semitone, the song key's scale lit, the
+  waveform dimmed) as bars with their pitch curve, the original and the result. A click selects, Shift adds, a box
+  selects, Ctrl+A selects all. Dragging a note up or down moves the selected notes in whole semitones (in cents with
+  the alternate-tool key); dragging it sideways moves it in time through two warp markers. CORRECT
+  (`editor.vocal_correct`) brings the selected notes to the nearest semitone or, with SCALE (`editor.vocal_scale`),
+  to the song key's scale; FLATTEN (`editor.vocal_flatten`) straightens their drift by a percentage while keeping a
+  vibrato; RESET (`editor.vocal_reset`) removes the edits; `editor.audio_mode_vocal` (3) opens the mode. Each is one
+  undo step. The edits are saved on the clip as `pitch_edits`, pinned to the audio's own frames, an optional field an
+  older version drops (format still 45); a split and a join keep them. The render applies them with a TD-PSOLA shift
+  that keeps the formants before the warp, so bounces, Bounce in Place, Freeze and Export hear them and stay
+  bit-identical; the preview plays the clip without the edits until its buffer is ready. Comp mode stays disabled.
+  560 commands.
+- **Warped and transposed audio clips play at the right pitch while their stretch is still being prepared.** A warped
+  clip is rendered into a buffer by a worker; until that buffer is ready, the clip used to play a resampled read, so a
+  Beats or Tonal clip changed pitch with the tempo and a transposition was not heard at all, then jumped when the
+  buffer arrived. That preview now goes through a real-time stretcher (a streaming WSOLA in atomik-dsp that never
+  allocates on the audio thread): it keeps the pitch, plays the transposition and follows the warp markers and tempo
+  ramps, so it sounds like the finished buffer, a little rougher, and the 5 ms switch to the buffer is near-silent. A
+  Repitch clip without transposition still plays the resampled read, unchanged. Each audio track holds at most four
+  stretchers; a fifth clip sounding in the same 64-frame block falls back to the resampled read. Reversed and streamed
+  clips play as before (unwarped until their buffer is ready). Offline bounces never hear the preview and stay
+  bit-identical; the project format is unchanged (45).
+
+### Fixed
+- **Edits in a sandboxed plugin's editor are recorded.** The begin and end of a gesture made in the editor of a
+  sandboxed plugin (CLAP or VST3) carry no value, and the plugin process dropped them because its messages cannot
+  carry NaN, so the app saw every change outside a gesture and recorded none of them: no undo step, no automation.
+  They now cross as 0, a value the app ignores. The sandbox is also run for real on Linux and macOS in CI: every
+  test plugin library goes through a real plugin process there (load, audio, state, crash, hang, a library that
+  fails or never returns, many instances in a row, the edge-case plugins and an editor gesture). The project format
+  is unchanged (45).
+
 ## [0.4.0-rc.2] - 2026-11-10
 
 ### Added

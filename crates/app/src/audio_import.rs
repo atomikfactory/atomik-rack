@@ -213,6 +213,20 @@ pub(crate) enum Msg {
         job: u64,
         result: Result<Vec<u64>, String>,
     },
+    /// The notes of the clip open in the audio clip editor's Vocal mode were found (`None`: the
+    /// analysis was stopped), or it failed: see the Vocal section of the audio clip editor.
+    Vocal {
+        generation: u64,
+        job: u64,
+        result: Result<Option<VocalFound>, String>,
+    },
+    /// The audio of one Detect Chords or Detect Key from Audio request was analysed (`None`: it
+    /// was stopped), or it failed: see the chords section of [`crate::AppCore`].
+    Chords {
+        generation: u64,
+        job: u64,
+        result: Result<Option<ChordsHeard>, String>,
+    },
     /// An offline edit of a sample made a new asset (or failed): see the sample edit section of
     /// [`crate::AppCore`].
     Edited {
@@ -289,6 +303,107 @@ pub(crate) fn spawn_onsets(
                 job,
                 result,
             });
+        })
+        .map(|_| ())
+}
+
+/// The notes a Vocal mode analysis found, in asset frames.
+pub(crate) type VocalFound = Vec<atomik_dsp::stretch::psola::VocalNote>;
+
+/// The harmony analysis of each clip of a Detect Chords or Detect Key from Audio request, in the
+/// order of the request.
+pub(crate) type ChordsHeard = Vec<atomik_dsp::harmony::Analysis>;
+
+/// Starts a worker that runs `work` (the harmony analysis of the clips of one request) and sends
+/// [`Msg::Chords`]; a panic sends a failure instead, so the request can never stay open.
+pub(crate) fn spawn_chords(
+    tx: Sender<Msg>,
+    generation: u64,
+    job: u64,
+    work: Box<dyn FnOnce() -> Result<Option<ChordsHeard>, String> + Send>,
+) -> std::io::Result<()> {
+    struct Sent {
+        tx: Sender<Msg>,
+        generation: u64,
+        job: u64,
+        sent: bool,
+    }
+    impl Sent {
+        fn send(&mut self, result: Result<Option<ChordsHeard>, String>) {
+            self.sent = true;
+            let _ = self.tx.send(Msg::Chords {
+                generation: self.generation,
+                job: self.job,
+                result,
+            });
+        }
+    }
+    impl Drop for Sent {
+        fn drop(&mut self) {
+            if !self.sent {
+                self.send(Err("the analysis stopped unexpectedly".to_owned()));
+            }
+        }
+    }
+    std::thread::Builder::new()
+        .name("atomik-chords".into())
+        .spawn(move || {
+            let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            let mut sent = Sent {
+                tx,
+                generation,
+                job,
+                sent: false,
+            };
+            let result = work();
+            sent.send(result);
+        })
+        .map(|_| ())
+}
+
+/// Starts a worker that runs `work` (the note analysis of one clip for Vocal mode) and sends
+/// [`Msg::Vocal`]; a panic sends a failure instead, so the request can never stay open.
+pub(crate) fn spawn_vocal(
+    tx: Sender<Msg>,
+    generation: u64,
+    job: u64,
+    work: Box<dyn FnOnce() -> Result<Option<VocalFound>, String> + Send>,
+) -> std::io::Result<()> {
+    struct Sent {
+        tx: Sender<Msg>,
+        generation: u64,
+        job: u64,
+        sent: bool,
+    }
+    impl Sent {
+        fn send(&mut self, result: Result<Option<VocalFound>, String>) {
+            self.sent = true;
+            let _ = self.tx.send(Msg::Vocal {
+                generation: self.generation,
+                job: self.job,
+                result,
+            });
+        }
+    }
+    impl Drop for Sent {
+        fn drop(&mut self) {
+            if !self.sent {
+                self.send(Err("the analysis stopped unexpectedly".to_owned()));
+            }
+        }
+    }
+    std::thread::Builder::new()
+        .name("atomik-vocal".into())
+        .spawn(move || {
+            let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            let mut sent = Sent {
+                tx,
+                generation,
+                job,
+                sent: false,
+            };
+            let result = work();
+            sent.send(result);
         })
         .map(|_| ())
 }

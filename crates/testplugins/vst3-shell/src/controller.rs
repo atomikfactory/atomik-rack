@@ -203,7 +203,24 @@ impl ControllerCore {
                 table.values[i] = norm_of(&spec, dsp.param(spec.id));
             }
         }
+        drop((table, dsp));
+        if let Some((id, value)) = atomik_test_plugin_core::gui_edit_on_restore() {
+            self.gui_edit(id, value);
+        }
         kResultOk
+    }
+
+    /// An edit as the editor makes it: `beginEdit`, `performEdit`, `endEdit` on the handler.
+    fn gui_edit(&self, id: u32, normalized: f64) {
+        let handler = lock(&self.shared().handler).clone();
+        if let Some(h) = handler {
+            // SAFETY: a live handler the host gave us.
+            unsafe {
+                h.beginEdit(id);
+                h.performEdit(id, normalized);
+                h.endEdit(id);
+            }
+        }
     }
 
     pub unsafe fn get_state(&self, stream: *mut IBStream) -> tresult {

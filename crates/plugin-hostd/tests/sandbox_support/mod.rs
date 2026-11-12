@@ -124,7 +124,8 @@ impl Format {
     }
 }
 
-fn hex(words: [u32; 4]) -> String {
+/// A VST3 class id as the hex the scanner and the backends use.
+pub fn hex(words: [u32; 4]) -> String {
     format!(
         "{:08x}{:08x}{:08x}{:08x}",
         words[0], words[1], words[2], words[3]
@@ -375,3 +376,30 @@ pub fn run_to_crash(h: &mut DeviceHarness, level: f32, within: Duration) -> usiz
         std::thread::sleep(Duration::from_millis(1));
     }
 }
+
+/// Processes `n` batches, then on until one batch is answered in time, giving up after
+/// `within`. A live instance whose child misses a batch's deadline passes the dry input for that
+/// batch, and a loaded machine (a CI runner) makes the first batches of a new child late, so a
+/// test that compares a live output processes until the child keeps up.
+pub fn process_settled(h: &mut DeviceHarness, n: usize, within: Duration) {
+    for _ in 0..n {
+        h.process();
+    }
+    let limit = std::time::Instant::now() + within;
+    loop {
+        let late = meters(h)[METER_LATE];
+        h.process();
+        if meters(h)[METER_LATE] == late {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < limit,
+            "the child did not keep up within {within:?}: {} late batches",
+            meters(h)[METER_LATE]
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// How long [`process_settled`] waits for a child to keep up.
+pub const SETTLE: Duration = Duration::from_secs(30);

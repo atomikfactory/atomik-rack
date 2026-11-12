@@ -448,6 +448,17 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   deadline. Off CI the first render must be on time; with `CI=true` a shared runner may miss a deadline and the
   render is repeated up to three times, so a sandbox that cannot keep up still fails. Every run prints which
   attempt was on time, and a retry is also written to the job summary of a GitHub Actions run.
+- **The sandbox on every platform.** The CI job `sandbox` runs the tests of `atomik-plugin-ipc`,
+  `atomik-plugin-sandbox`, `atomik-plugin-hostd` and `atomik-plugin-host` on Linux and macOS with a real
+  `atomik-plugin-host` child, after building every test plugin library: on each pull request that touches
+  a plugin crate or a test plugin, and on every manual run (`gh workflow run ci.yml --ref <branch> -f
+  sandbox_only=true` runs it alone). `plugin-hostd/tests/e2e_variants.rs` loads every test library through
+  the sandbox in both formats (a failing entry, an entry that never returns, many instances in a row, and
+  each edge-case plugin, which must end up as it does in process); `e2e_gesture.rs` checks that an edit made
+  in a sandboxed plugin's editor reaches the app as a whole gesture (begin, change, end). A test plugin
+  reports such an edit when its state is loaded and `ATOMIK_TEST_GUI_EDIT_ON_RESTORE` is `<param>:<value>`.
+  A live child that misses a batch's deadline passes the dry input, so the tests that compare a live output
+  process until the child keeps up (`process_settled`). Editors need a desktop and stay hand checks.
 - **Real plugins** are only for manual checks (the ignored tests in `app_core_plugins_real_tests.rs`
   and `plugin-vst3/tests/real_plugin.rs`, driven by the `ATOMIK_REAL_*` environment variables, and
   `plugin_scan_fallback.rs`, which scans the folders named by `ATOMIK_SCAN_SMOKE`, run against
@@ -927,10 +938,11 @@ Hand checks, not automated (they need your ears):
   flams and double hits, and undo it in one step; trim and split a quantized clip and check that the
   hits stay where they were.
 - Change the tempo while playing with a warped clip: the clip keeps time at once (it never plays
-  unwarped, and a transposed clip is at the wrong pitch for a moment), a CALC chip shows on its
-  header until the warped buffer takes over (listen for a click at the switch, there should be
-  none); drag a warp marker and a tempo ramp point while playing and listen for gaps; open a big
-  project with many warped clips and watch the memory the cache uses.
+  unwarped, and a Beats, Tonal or transposed clip keeps its pitch while it waits), a CALC chip shows
+  on its header until the warped buffer takes over (listen for a click or a jump in pitch at the
+  switch, there should be none; the preview is a little rougher than the buffer); drag a warp
+  marker and a tempo ramp point while playing and listen for gaps; open a big project with many
+  warped clips and watch the memory the cache uses.
 - Open an old project and check that it sounds the same.
 
 ## Exporting audio files
@@ -2145,3 +2157,43 @@ to `api.github.com` and, when a newer release exists, the notice offers What's n
 browser), Skip this version and Later; start again within a day and no request is made. Help > Check for Updates
 asks at once and says "is the newest version" when there is nothing newer. With the network off, the same command
 says it could not check and the daily check says nothing.
+
+## Hand tracking (webcam)
+
+The tests of `crates/vision` need no camera, no model files and no network:
+
+```sh
+cargo test -p atomik-vision
+```
+
+- `tests/gesture.rs` runs the recogniser on synthetic hands (a parametric hand that is turned, pinched, moved, given
+  noise and a dropped frame, in `tests/support/mod.rs`). The frames of the main sequences are checked in as
+  `tests/fixtures/*.json`; `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-vision --test gesture -- --test-threads=1`
+  rewrites them when the generator changes.
+- `tests/download.rs` runs the model download through a fake fetcher (a good download, a wrong checksum or size, a
+  failed request, a cancel, a damaged file, nothing requested when the files are ready).
+- `tests/tracker.rs` drives the tracker end to end with a fake camera and a scripted hand finder: events, a clean
+  stop, the camera released, switching cameras, the newest-frame handoff, the preview.
+
+The real models are not in the repository. To run the tests that need them, download the two files once (the
+`vision-demo models --download` tool below puts them in the settings folder; the addresses are in
+[DEPENDENCIES.md](DEPENDENCIES.md#model-files)) and point `ATOMIK_VISION_MODELS` at the folder that holds them:
+
+```sh
+ATOMIK_VISION_MODELS=/path/to/models/hands cargo test --release -p atomik-vision --test models -- --nocapture
+```
+
+Without the variable every test in `tests/models.rs` prints that it was skipped and passes. With it they check the
+output shapes, that a synthetic input gives finite numbers, that two runs are bit-identical, that the pinned
+checksums match the files, and print the time of the detector and the landmark model (a release build only means
+something: about 35 ms and 19 ms on a desktop CPU, so a followed hand costs about 20 ms a frame).
+
+Hand checks with a real camera, by `vision-demo` (`cargo run --release -p atomik-vision --bin vision-demo -- ...`):
+
+- `cameras` lists the cameras; `models` shows the state of the model files and `models --download` asks y/N and
+  fetches them (the only network use).
+- `track [--camera N] [--hands 2]` prints `hand=R pinch=on twist=+23.4° size=0.31 fps=30 infer=12ms` ten times a
+  second: pinch the thumb and index finger and turn the wrist, then open the fingers. The twist counts from the
+  moment of the pinch; a clockwise turn as you see yourself in a mirror is positive.
+- `record out.json --seconds 10` saves the landmark stream (numbers only, no pictures) for new fixtures.
+- The camera light is on only while `track` or `record` runs.

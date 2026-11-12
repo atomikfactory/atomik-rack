@@ -512,6 +512,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("edit.paste", "Paste", G::Edit, C::Global)
         .decline()
         .menu(),
+    cmd("edit.paste_chord", "Paste Chord", G::Edit, C::Sequencer),
     cmd("edit.paste_settings", "Paste Settings", G::Edit, C::Rack),
     cmd(
         "edit.quantize_options",
@@ -562,6 +563,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "editor.audio_mode_slice",
         "Audio Editor: Slice",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.audio_mode_vocal",
+        "Audio Editor: Vocal",
         G::Editor,
         C::Editor,
     )
@@ -821,6 +829,34 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd("editor.transpose_up", "Transpose Up", G::Editor, C::Editor).rep(),
+    cmd(
+        "editor.vocal_correct",
+        "Correct Note Pitch",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.vocal_flatten",
+        "Flatten Note Drift",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.vocal_reset",
+        "Reset Pitch Edits",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.vocal_scale",
+        "Correct to the Song Key",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
     cmd("editor.zoom_keys_in", "Taller Keys", G::Editor, C::Editor).rep(),
     cmd("editor.zoom_keys_out", "Shorter Keys", G::Editor, C::Editor).rep(),
     cmd(
@@ -1655,6 +1691,18 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd(
+        "plugin.learn_automation",
+        "Learn Automation from Plugin Window",
+        G::Rack,
+        C::Global,
+    ),
+    cmd(
+        "plugin.learn_midi",
+        "Learn MIDI from Plugin Window",
+        G::Rack,
+        C::Global,
+    ),
     cmd("rack.add_column", "Add Column", G::Rack, C::Rack),
     cmd("rack.assign_send", "Use as Send Effect", G::Rack, C::Rack),
     cmd("rack.auto_route", "Auto-route", G::Rack, C::Rack),
@@ -2027,6 +2075,22 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "sequencer.delete_track_and_device",
         "Delete Track and Device",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.detect_chords_from_audio",
+        "Detect Chords from Audio",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.detect_key_from_audio",
+        "Detect Key from Audio",
         G::Sequencer,
         C::Sequencer,
     )
@@ -3257,7 +3321,7 @@ mod tests {
                 Group::Transport => &["transport", "sync", "launcher"],
                 Group::View => &["view", "window"],
                 Group::Edit => &["edit"],
-                Group::Rack => &["rack"],
+                Group::Rack => &["rack", "plugin"],
                 Group::Sequencer => &["sequencer"],
                 Group::Editor => &["editor"],
                 Group::Mixer => &["mixer", "midi", "macro", "automation", "controller"],

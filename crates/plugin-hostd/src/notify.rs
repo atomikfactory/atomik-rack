@@ -1,7 +1,7 @@
 //! What the plugin tells the host from its own threads ([`PluginMessage`]) and how it reaches the
 //! parent: one notification frame per message, in the order the plugin posted them.
 
-use atomik_plugin_host::PluginMessage;
+use atomik_plugin_host::{ParamPhase, PluginMessage};
 use atomik_plugin_ipc::{FromChild, MAX_LOG_BYTES, WireLevel};
 
 /// `text` cut to what the parent accepts in a log line, at a character boundary.
@@ -19,7 +19,20 @@ fn truncated(mut text: String) -> String {
 /// The notification for a message, `None` for a message the parent has no use for.
 pub fn to_wire(message: PluginMessage) -> Option<FromChild> {
     Some(match message {
-        // JSON cannot carry NaN or infinity, and the peer rejects the whole frame.
+        // A gesture's begin and end carry no value (the backends say NaN), but JSON cannot carry
+        // NaN and the peer would reject the whole frame: they go as 0, which the parent ignores.
+        // Dropping them instead would leave the app with changes outside any gesture, which it
+        // does not record.
+        PluginMessage::ParamEdit { id, value, phase }
+            if phase != ParamPhase::Change && !value.is_finite() =>
+        {
+            FromChild::ParamEdit {
+                param: id,
+                value: 0.0,
+                phase: phase.into(),
+            }
+        }
+        // A change without a finite value has nothing to say.
         PluginMessage::ParamEdit { value, .. } if !value.is_finite() => return None,
         PluginMessage::ParamEdit { id, value, phase } => FromChild::ParamEdit {
             param: id,
@@ -31,6 +44,7 @@ pub fn to_wire(message: PluginMessage) -> Option<FromChild> {
         PluginMessage::RescanParams => FromChild::RescanParams,
         PluginMessage::RequestRestart => FromChild::RequestRestart,
         PluginMessage::GuiResize { w, h } => FromChild::GuiResize { w, h },
+        PluginMessage::GuiFrame { x, y, w, h } => FromChild::GuiFrame { x, y, w, h },
         PluginMessage::GuiClosed => FromChild::GuiClosed,
         PluginMessage::GuiRequestShow => FromChild::GuiRequestShow,
         PluginMessage::GuiRequestHide => FromChild::GuiRequestHide,
@@ -83,6 +97,25 @@ mod tests {
                 phase: WirePhase::Begin
             })
         );
+    }
+
+    #[test]
+    fn a_gesture_begin_and_end_without_a_value_go_as_zero_and_are_not_dropped() {
+        for phase in [ParamPhase::Begin, ParamPhase::End] {
+            let m = PluginMessage::ParamEdit {
+                id: 4,
+                value: f64::NAN,
+                phase,
+            };
+            assert_eq!(
+                to_wire(m),
+                Some(FromChild::ParamEdit {
+                    param: 4,
+                    value: 0.0,
+                    phase: phase.into()
+                })
+            );
+        }
     }
 
     #[test]

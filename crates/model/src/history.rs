@@ -1163,7 +1163,8 @@ impl Edit {
             }
             Edit::Harmony { new, .. } => {
                 doc.song_mut().harmony.clone_from(new);
-                vec![SyncOp::ViewChanged]
+                // Note devices may follow the key and the chord lane: the song is swapped too.
+                vec![SyncOp::ViewChanged, SyncOp::SongChanged]
             }
             Edit::TrackHeights { new, .. } => {
                 doc.song_mut().track_heights.clone_from(new);

@@ -810,6 +810,8 @@ fn merging_tracks_joins_notes_and_controllers() {
         markers: Vec::new(),
         ranges: Vec::new(),
         skipped: 0,
+        chords: Vec::new(),
+        key: None,
     }
     .merged();
     assert_eq!(m.name, "A");
