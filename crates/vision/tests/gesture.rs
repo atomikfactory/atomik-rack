@@ -241,3 +241,90 @@ fn a_reset_ends_the_pinches_that_are_open() {
     assert!(is_end(&ended[0]));
     assert!(r.reset().is_empty());
 }
+
+// ---- The open palm ----------------------------------------------------------------------------
+
+fn is_palm_start(e: &GestureEvent) -> bool {
+    matches!(e, GestureEvent::OpenPalmStart { .. })
+}
+fn is_palm_end(e: &GestureEvent) -> bool {
+    matches!(e, GestureEvent::OpenPalmEnd { .. })
+}
+
+/// The frame index of the first event `pick` finds.
+fn frame_of(frames: &[Observation], pick: impl Fn(&GestureEvent) -> bool) -> Option<usize> {
+    let mut r = Recogniser::new(GestureConfig::default());
+    frames
+        .iter()
+        .position(|f| r.update(f).events.iter().any(&pick))
+}
+
+#[test]
+fn an_open_palm_held_for_300_ms_starts_and_closing_the_fingers_ends_it() {
+    let frames = load("open_palm.json");
+    let (events, states) = run(&frames);
+    assert_eq!(count(&events, is_palm_start), 1, "{events:?}");
+    assert_eq!(count(&events, is_palm_end), 1, "{events:?}");
+    // The hand opens at 0.4 s (frame 12): the start comes 300 ms later, at frame 21.
+    let start = frame_of(&frames, is_palm_start).unwrap();
+    assert!((20..=22).contains(&start), "started at frame {start}");
+    let end = frame_of(&frames, is_palm_end).unwrap();
+    assert!((54..=56).contains(&end), "ended at frame {end}");
+    assert!(!states[start - 1][0].open_palm && states[start][0].open_palm);
+    assert!(!states[end][0].open_palm);
+}
+
+#[test]
+fn a_palm_that_opens_for_200_ms_is_not_an_open_palm() {
+    let (events, states) = run(&load("open_flash.json"));
+    assert_eq!(count(&events, is_palm_start), 0, "{events:?}");
+    assert_eq!(count(&events, is_palm_end), 0);
+    assert!(states.iter().all(|f| f.iter().all(|s| !s.open_palm)));
+}
+
+#[test]
+fn a_fist_is_not_an_open_palm() {
+    let frames = support::sequence(60, |_, _| {
+        vec![Spec {
+            curl: 1.0,
+            ..Spec::right()
+        }]
+    });
+    let (events, _) = run(&frames);
+    assert!(events.is_empty(), "{events:?}");
+}
+
+#[test]
+fn a_pinch_ends_the_open_palm_and_an_open_palm_is_never_a_pinch() {
+    let (events, _) = run(&load("pinch_twist.json"));
+    // The hand starts open, so the palm starts, then the pinch takes over.
+    let palm = events.iter().position(is_palm_start).expect("a palm");
+    let pinch = events.iter().position(is_start).expect("a pinch");
+    let palm_end = events.iter().position(is_palm_end).expect("the palm ends");
+    assert!(palm < pinch && palm_end < events.iter().position(is_twist).unwrap());
+    assert_eq!(count(&events, is_start), 1);
+}
+
+#[test]
+fn losing_the_hand_ends_the_open_palm() {
+    let frames = drop_frames(load("open_palm.json"), 30, 60);
+    let (events, _) = run(&frames);
+    assert_eq!(count(&events, is_palm_start), 1);
+    assert_eq!(count(&events, is_palm_end), 1, "{events:?}");
+    let end = frame_of(&frames, is_palm_end).unwrap();
+    assert!(
+        (34..=40).contains(&end),
+        "ended at frame {end}, after the tolerance"
+    );
+}
+
+#[test]
+fn a_reset_ends_the_open_palm() {
+    let frames = load("open_palm.json");
+    let mut r = Recogniser::new(GestureConfig::default());
+    for f in &frames[..30] {
+        r.update(f);
+    }
+    let ended = r.reset();
+    assert!(ended.iter().any(is_palm_end), "{ended:?}");
+}
