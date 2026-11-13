@@ -3321,7 +3321,7 @@ mod tests {
             let expected: &[&str] = match d.group {
                 Group::Global => &["file", "audio", "help", "options", "video"],
                 Group::Transport => &["transport", "sync", "launcher"],
-                Group::View => &["view", "window"],
+                Group::View => &["view", "window", "camera"],
                 Group::Edit => &["edit"],
                 Group::Rack => &["rack", "plugin"],
                 Group::Sequencer => &["sequencer"],
