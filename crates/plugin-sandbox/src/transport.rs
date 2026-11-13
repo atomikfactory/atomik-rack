@@ -12,6 +12,11 @@ pub(crate) trait ChildProcess: Send {
     fn kill(&mut self);
     /// `Some(description)` once the process has ended (and is reaped), `None` while it runs.
     fn try_wait(&mut self) -> Option<String>;
+    /// What the reason of a lost instance should add about the process: a child that is shared
+    /// with other instances names its group. `None` for a child of one instance.
+    fn note(&self) -> Option<String> {
+        None
+    }
 }
 
 /// The channels to one child process.

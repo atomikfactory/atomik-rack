@@ -1079,7 +1079,7 @@ mod tests {
         let reg = registry();
         let mut browser = starred_browser();
         browser.plugins[1].status = PluginEntryStatus::Disabled;
-        browser.plugins[3].status = PluginEntryStatus::Quarantined;
+        browser.plugins[3].status = PluginEntryStatus::Quarantined(String::new());
         let found = listed_plugins(&browser, &reg);
         assert!(!found.contains(&"Example Pad".to_owned()), "{found:?}");
         assert!(!found.contains(&"Example Verb".to_owned()), "{found:?}");

@@ -7,7 +7,7 @@ mod support;
 
 use atomik_device_sdk::PluginFormat;
 use atomik_ui::kurbo::{Point, Rect};
-use atomik_ui::plugin_data::{PluginEntryStatus, ScanProgressInfo};
+use atomik_ui::plugin_data::{PluginEntryStatus, PluginProcessChoice, ScanProgressInfo};
 use atomik_ui::{
     DisplayList, Key, Modifiers, PluginManagerAction, PluginManagerData, PluginManagerRow,
     PluginManagerView, StatusFilter, Theme, UiAction, UiEvent,
@@ -54,6 +54,11 @@ fn row(
         format,
         category: category.to_owned(),
         status,
+        process: match name {
+            "Example Synth" => PluginProcessChoice::Shared,
+            "Example Verb" => PluginProcessChoice::Own,
+            _ => PluginProcessChoice::Default,
+        },
         path: format!("/plugins/{}", name.to_lowercase().replace(' ', "-")),
         scanned_secs: scanned,
         scanned: if scanned == 0 {
@@ -85,7 +90,9 @@ fn data() -> PluginManagerData {
                 "Example Verb",
                 Clap,
                 "Effect",
-                PluginEntryStatus::Quarantined,
+                PluginEntryStatus::Quarantined(
+                    "Crashed 3 times in a row: exited with code 3".into(),
+                ),
                 2,
                 false,
                 &["warm"],
@@ -413,6 +420,70 @@ fn the_star_toggles_a_favourite_and_a_failed_file_has_none() {
             on: true
         }]
     );
+}
+
+fn position_of(v: &PluginManagerView, name: &str) -> usize {
+    names(v)
+        .iter()
+        .position(|n| n == name)
+        .unwrap_or_else(|| panic!("{name} is not listed"))
+}
+
+#[test]
+fn a_click_on_the_process_cell_steps_the_choice_of_that_plugin_only() {
+    let mut v = view();
+    // The synth asks for the shared process: the click goes on to the setting's default.
+    let synth = position_of(&v, "Example Synth");
+    assert_eq!(
+        click!(v, v.process_center(synth).unwrap()),
+        [PluginManagerAction::SetProcess {
+            type_id: "vst3.synth".into(),
+            choice: PluginProcessChoice::Default
+        }]
+    );
+    // The verb asks for its own: shared is next. The echo follows the setting: its own is next.
+    let verb = position_of(&v, "Example Verb");
+    assert_eq!(
+        click!(v, v.process_center(verb).unwrap()),
+        [PluginManagerAction::SetProcess {
+            type_id: "clap.verb".into(),
+            choice: PluginProcessChoice::Shared
+        }]
+    );
+    let echo = position_of(&v, "Example Echo");
+    assert_eq!(
+        click!(v, v.process_center(echo).unwrap()),
+        [PluginManagerAction::SetProcess {
+            type_id: "clap.echo".into(),
+            choice: PluginProcessChoice::Own
+        }]
+    );
+    // A file that failed to scan has no plugin to choose for, and the click only chooses the row.
+    assert!(
+        click!(v, v.process_center(5).unwrap()).is_empty(),
+        "a failed file's process cell asks for nothing"
+    );
+}
+
+#[test]
+fn a_quarantined_plugin_says_why_in_its_status_cell_and_the_tip_is_short() {
+    let v = view();
+    let verb = position_of(&v, "Example Verb");
+    let tip = v
+        .help_at(v.status_center(verb).unwrap())
+        .expect("the reason is the tip");
+    assert!(
+        tip.text
+            .starts_with("Quarantined: Crashed 3 times in a row"),
+        "{}",
+        tip.text
+    );
+    assert!(tip.text.len() <= 90, "{}", tip.text);
+    let process = v
+        .help_at(v.process_center(verb).unwrap())
+        .expect("the process cell has a tip");
+    assert!(process.text.len() <= 90, "{}", process.text);
+    assert!(process.text.contains("shared"), "{}", process.text);
 }
 
 #[test]

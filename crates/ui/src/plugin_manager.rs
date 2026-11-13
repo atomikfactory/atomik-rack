@@ -37,7 +37,7 @@ use crate::canvas::{Align, Canvas, CanvasExt};
 use crate::event::{Key, PointerButton, UiEvent};
 use crate::paint::fit_label;
 use crate::pick_list::{PAD as LIST_PAD, PickList, ROW_HEIGHT};
-use crate::plugin_data::{PluginEntryStatus, ScanProgressInfo, format_badge};
+use crate::plugin_data::{PluginEntryStatus, PluginProcessChoice, ScanProgressInfo, format_badge};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::text_field::{FieldColors, TextField};
 use crate::theme::{Theme, mix};
@@ -77,6 +77,8 @@ pub struct PluginManagerRow {
     pub category: String,
     /// Usable, or why not.
     pub status: PluginEntryStatus,
+    /// Which child process its instances go in (a click on the cell steps through the choices).
+    pub process: PluginProcessChoice,
     /// The file that holds it.
     pub path: String,
     /// When it was scanned, seconds since the Unix epoch (0: not known).
@@ -132,6 +134,13 @@ pub enum PluginManagerAction {
     },
     /// Take the plugins out of quarantine.
     TryAgain(Vec<String>),
+    /// Choose the child process of one plugin's instances.
+    SetProcess {
+        /// The plugin id.
+        type_id: String,
+        /// The new choice.
+        choice: PluginProcessChoice,
+    },
     /// Add a tag to the plugins.
     AddTag {
         /// The plugin ids.
@@ -164,18 +173,20 @@ enum Column {
     Format,
     Category,
     Status,
+    Process,
     Path,
     Scanned,
 }
 
 impl Column {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::Star,
         Self::Name,
         Self::Vendor,
         Self::Format,
         Self::Category,
         Self::Status,
+        Self::Process,
         Self::Path,
         Self::Scanned,
     ];
@@ -188,6 +199,7 @@ impl Column {
             Self::Format => "FORMAT",
             Self::Category => "CATEGORY",
             Self::Status => "STATUS",
+            Self::Process => "PROCESS",
             Self::Path => "PATH",
             Self::Scanned => "SCANNED",
         }
@@ -202,6 +214,7 @@ impl Column {
             Self::Format => 56.0,
             Self::Category => 96.0,
             Self::Status => 150.0,
+            Self::Process => 64.0,
             Self::Path => 0.0,
             Self::Scanned => 116.0,
         }
@@ -255,7 +268,7 @@ impl StatusFilter {
                 PluginEntryStatus::Failed(_) | PluginEntryStatus::Crashed(_)
             ),
             Self::Unsupported => matches!(status, PluginEntryStatus::Unsupported(_)),
-            Self::Quarantined => *status == PluginEntryStatus::Quarantined,
+            Self::Quarantined => matches!(status, PluginEntryStatus::Quarantined(_)),
             Self::Disabled => *status == PluginEntryStatus::Disabled,
         }
     }
@@ -276,7 +289,16 @@ fn status_word(status: &PluginEntryStatus) -> &'static str {
         PluginEntryStatus::Disabled => "Disabled",
         PluginEntryStatus::Failed(_) => "Failed",
         PluginEntryStatus::Crashed(_) => "Crashed",
-        PluginEntryStatus::Quarantined => "Quarantined",
+        PluginEntryStatus::Quarantined(_) => "Quarantined",
+    }
+}
+
+/// The process choice as a word of the table.
+fn process_word(choice: PluginProcessChoice) -> &'static str {
+    match choice {
+        PluginProcessChoice::Default => "default",
+        PluginProcessChoice::Own => "own",
+        PluginProcessChoice::Shared => "shared",
     }
 }
 
@@ -536,6 +558,7 @@ impl PluginManagerView {
             Column::Format => a.format.cmp(&b.format),
             Column::Category => a.category.to_lowercase().cmp(&b.category.to_lowercase()),
             Column::Status => status_word(&a.status).cmp(status_word(&b.status)),
+            Column::Process => process_word(a.process).cmp(process_word(b.process)),
             Column::Path => a.path.to_lowercase().cmp(&b.path.to_lowercase()),
             Column::Scanned => a.scanned_secs.cmp(&b.scanned_secs),
         };
@@ -662,7 +685,7 @@ impl PluginManagerView {
         self.panel().y0 + HEADER_H + FILTER_H
     }
 
-    fn columns(&self) -> [(Column, f64, f64); 8] {
+    fn columns(&self) -> [(Column, f64, f64); 9] {
         let p = self.panel();
         let width = p.width() - 2.0 * PAD;
         let fixed: f64 = Column::ALL.iter().map(|c| c.width()).sum();
@@ -716,6 +739,13 @@ impl PluginManagerView {
         Some(Point::new((x0 + x1) / 2.0, r.center().y))
     }
 
+    /// The process cell of the row at `position`.
+    pub fn process_center(&self, position: usize) -> Option<Point> {
+        let r = self.row_rect(position)?;
+        let (_, x0, x1) = self.columns()[6];
+        Some(Point::new((x0 + x1) / 2.0, r.center().y))
+    }
+
     /// The status cell of the row at `position`.
     pub fn status_center(&self, position: usize) -> Option<Point> {
         let r = self.row_rect(position)?;
@@ -723,8 +753,8 @@ impl PluginManagerView {
         Some(Point::new((x0 + x1) / 2.0, r.center().y))
     }
 
-    /// The head of the column called `title` (NAME, VENDOR, FORMAT, CATEGORY, STATUS, PATH or
-    /// SCANNED; an empty title is the star column).
+    /// The head of the column called `title` (NAME, VENDOR, FORMAT, CATEGORY, STATUS, PROCESS,
+    /// PATH or SCANNED; an empty title is the star column).
     pub fn head_center(&self, title: &str) -> Option<Point> {
         self.columns()
             .iter()
@@ -836,7 +866,7 @@ impl PluginManagerView {
         let mut files = Vec::new();
         for row in self.chosen() {
             match (&row.type_id, &row.status) {
-                (Some(id), PluginEntryStatus::Quarantined | PluginEntryStatus::Crashed(_)) => {
+                (Some(id), PluginEntryStatus::Quarantined(_) | PluginEntryStatus::Crashed(_)) => {
                     ids.push(id.clone());
                 }
                 (None, _) | (Some(_), PluginEntryStatus::Failed(_))
@@ -1088,6 +1118,13 @@ impl PluginManagerView {
         if pos.x >= status_x.1 && pos.x < status_x.2 && row.status.reason().is_some() {
             return Some(Help::new(rect, status_text(&row.status)));
         }
+        let process_x = self.columns()[6];
+        if pos.x >= process_x.1 && pos.x < process_x.2 && row.type_id.is_some() {
+            return tip(
+                rect,
+                "Click to step: default (the Settings choice), own process, shared process",
+            );
+        }
         if pos.x < self.columns()[0].2 && row.type_id.is_some() {
             return tip(rect, "Favourites are listed first in the browser");
         }
@@ -1219,8 +1256,18 @@ impl PluginManagerView {
         } else if let Some(at) = self.list().row_at(pos) {
             self.focus = Focus::List;
             let star = self.columns()[0];
+            let process = self.columns()[6];
             if pos.x >= star.1 && pos.x < star.2 {
                 out.extend(self.toggle_star(at));
+            } else if pos.x >= process.1
+                && pos.x < process.2
+                && let Some(row) = self.visible.get(at).map(|i| &self.data.rows[*i])
+                && let Some(type_id) = row.type_id.clone()
+            {
+                out.push(UiAction::PluginManager(PluginManagerAction::SetProcess {
+                    type_id,
+                    choice: row.process.next(),
+                }));
             } else {
                 self.cursor_to(at, modifiers.shift, modifiers.command());
             }
@@ -1328,7 +1375,7 @@ impl PluginManagerView {
             PluginEntryStatus::Ok => t.text,
             PluginEntryStatus::Failed(_)
             | PluginEntryStatus::Crashed(_)
-            | PluginEntryStatus::Quarantined => mix(t.text, t.focus, 0.35),
+            | PluginEntryStatus::Quarantined(_) => mix(t.text, t.focus, 0.35),
             PluginEntryStatus::Unsupported(_) | PluginEntryStatus::Disabled => t.text_muted,
         }
     }
@@ -1519,6 +1566,12 @@ impl PluginManagerView {
                             Align::Start,
                         );
                         continue;
+                    }
+                    Column::Process => {
+                        if row.type_id.is_none() {
+                            continue;
+                        }
+                        process_word(row.process).to_owned()
                     }
                     Column::Path => row.path.clone(),
                     Column::Scanned => row.scanned.clone(),

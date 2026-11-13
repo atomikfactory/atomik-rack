@@ -371,6 +371,11 @@ impl Shared {
             Some(kill) => format!("{kill} ({status})"),
             None => status,
         };
+        // A process shared with other instances says so: all of them were lost with it.
+        let head = match lock(&self.child).note() {
+            Some(note) => format!("{head}; {note}"),
+            None => head,
+        };
         let tail = {
             let tail = lock(&self.stderr_tail);
             String::from_utf8_lossy(&tail).trim().to_string()

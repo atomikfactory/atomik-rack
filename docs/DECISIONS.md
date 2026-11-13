@@ -912,3 +912,50 @@ profile as for one note; the pitch curve is left out of the match; the numbers s
 the pitch.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AJ. Plugins that share a process, editors in the sandbox, and a quarantine that holds at load
+
+**Question.** (1) Should several sandboxed plugin instances be able to share one child process, and what is the crash
+domain? (2) Can a sandboxed editor be embedded in a window of the app, so that the Learn strip sits inside it? (3) A
+plugin that failed three times in a row is quarantined: should a project that uses it still load it, and should the
+manager say why?
+
+**Options.** Sharing: (1) always one child per instance; (2) a setting with three levels, and a choice per plugin;
+(3) a shared child with one thread for all instances. Embedding: (1) keep the companion window; (2) re-parent the
+child's window into a window of the app, per platform. Quarantine: (1) hide only (as a disabled plugin); (2) do not load
+it in a project until the user says so.
+
+**Implications.** One child per instance isolates fully and costs a process each; a shared child costs less but a crash
+or a hang of any plugin ends or stalls every plugin in it, and the plugins share the child's main thread (editors, timers,
+licence dialogs). The audio path is the part that must stay real-time safe: each instance has its own shared block and
+doorbell, and one thread serving two instances would let a slow plugin delay another's batch. Embedding across processes
+is a platform matter: a Windows child can make its window a child of a window handle the app sends (the handle is the
+same kind the owner already is), with focus and resize to manage between two threads of two processes, and the winit
+call that does it is `unsafe`; X11 can re-parent a window with XEmbed; macOS has no embedding of a view of another
+process without remote views. A quarantine that only hides leaves a project that uses the plugin to crash again and
+again; one that blocks the load turns a device into a stand-in the user can decide about.
+
+**Decision.** (1) The setting `plugin_process` (Settings > Plugins) has three levels: one child per plugin instance (the
+default, today's behaviour, and the only wire traffic when it is chosen), one per plugin file, and one shared child
+(always per plugin format). A plugin can ask for its own child or for the shared one in the plugin manager's PROCESS
+column, kept in `plugins_user.json` and not in the project. A group child (`atomik-plugin-host --group`) holds at most 16
+instances, and the 17th starts another child of the same kind. Each instance of a group has its own slot on the control
+channel, its own shared audio block, its own doorbell and **its own audio thread**: the audio path of an instance is
+exactly that of an ungrouped child, and no queue or lock is shared between instances on it. The crash domain is the
+process: when it ends or is stopped (a crash, a hang, a call that was not answered, a broken protocol) every instance in it
+is lost together, each reason names the group and its plugins, and RELOAD creates new instances, which start a new group.
+A hang timeout of one instance stops the whole child. An instance that is closed leaves its group and the child goes on for
+the others; one that does not answer is abandoned, not killed, so a slow close never punishes the others. A setting change
+applies to instances created after it. (2) Windows was investigated and is not built: it needs the child to create its
+window as a child of the app's handle (an `unsafe` winit call in the child crate, a resize and focus protocol between the
+two processes, and the strip drawn by the app in the same window), and none of that can be tested without a window; the
+app also keeps editors out of its own GPU window on purpose. The companion Learn strip stays on every platform. On Linux
+an XEmbed re-parent is not cheap with winit (it needs the X11 window of the app's editor window and the plugin's own
+window ids across processes) and stays a companion window; on macOS it is not possible across processes. (3) A quarantined
+plugin is not loaded when a project opens: its devices stay stand-ins that say QUARANTINED with the reason of the last
+failure, the rest of the project opens normally, and LOAD ANYWAY (the RELOAD button) loads that device, for this session,
+without lifting the quarantine; TRY AGAIN in the manager lifts it. The project file is unchanged: it is a decision at load.
+The reason (Crashed, Hung or Could not load, three times in a row, and the plugin's own words) is kept with the quarantine
+in `plugins_user.json` and shown in the manager's status column and its tooltip.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
