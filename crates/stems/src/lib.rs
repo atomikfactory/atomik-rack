@@ -26,6 +26,9 @@ pub use stft::{Spectrogram, Stft};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// The sample rate the models run at (audio is resampled to it and back).
+pub const RATE: u32 = 44_100;
+
 /// One of the four stems, in the order of the model files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Stem {

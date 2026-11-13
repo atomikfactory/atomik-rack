@@ -596,6 +596,9 @@ pub enum UiAction {
     /// A button of the camera dialog (the consent to download the hand models, the progress, a
     /// failure).
     CameraDialog(crate::camera_panel::CameraDialogChoice),
+    /// A box or button of the Separate Stems dialog (the stems to make, the consent to download
+    /// the models, the progress, a failure).
+    StemsDialog(crate::stems_dialog::StemsDialogChoice),
     /// A press on a floating meter panel: close it, step its FFT size or pick its second curve.
     MeterPanel(crate::meter_panels::MeterPanelAction),
     /// Open the plugin parameter pane (the panel's PARAMS button): call

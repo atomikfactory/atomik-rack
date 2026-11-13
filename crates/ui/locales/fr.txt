@@ -2822,3 +2822,27 @@ QUARANTINED => EN QUARANTAINE
 LOAD ANYWAY => CHARGER QUAND MÊME
 it failed three times in a row: LOAD ANYWAY tries it => il a échoué trois fois de suite : CHARGER QUAND MÊME l'essaie
 Ctrl-click and Shift-click choose several => Ctrl-clic et Maj-clic en choisissent plusieurs
+
+# Stem separation
+Separate Stems => Séparer les stems
+Separate Stems… => Séparer les stems…
+Clip: {name} => Clip : {name}
+Each stem becomes a new track under the clip. => Chaque stem devient une nouvelle piste sous le clip.
+Download the stem models? => Télécharger les modèles de séparation ?
+Stem separation needs four model files ({size}) from {source}. => La séparation des stems a besoin de quatre fichiers de modèle ({size}) provenant de {source}.
+The models are open source (MIT licence) and are downloaded once. => Les modèles sont libres (licence MIT) et ne sont téléchargés qu'une seule fois.
+Downloading the stem models => Téléchargement des modèles de séparation
+Separating stems => Séparation des stems
+Reading the clip's audio => Lecture de l'audio du clip
+Separating: {percent}% => Séparation : {percent} %
+Writing the stems => Écriture des stems
+The song keeps playing. This can take a few minutes. => La lecture continue. Cela peut prendre quelques minutes.
+Stem separation did not finish => La séparation des stems n'a pas abouti
+Separate => Séparer
+Vocals => Voix
+Mute the original clip => Couper le son du clip d'origine
+Mute the clip that is separated, so only the stems play => Coupe le son du clip séparé, pour n'entendre que les stems
+Make this stem as a new track => Crée ce stem sur une nouvelle piste
+Make a track for each stem that is checked => Crée une piste pour chaque stem coché
+Download the four model files once and separate the clip => Télécharge une fois les quatre fichiers de modèle et sépare le clip
+Close this, or stop what is running => Ferme ceci, ou arrête ce qui tourne

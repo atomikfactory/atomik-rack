@@ -460,6 +460,7 @@ pub mod slice_editor;
 pub mod song_info_panel;
 pub mod sound_analyst_panel;
 pub mod spectrum_eq;
+pub mod stems_dialog;
 pub mod step_drag;
 pub mod step_editor;
 pub mod tempo_lane;
@@ -599,6 +600,9 @@ pub use slice_editor::SliceEditorView;
 pub use song_info_panel::{InfoField, SongInfoAction, SongInfoView};
 pub use sound_analyst_panel::{
     Curve, Distance, MatchRow, SoundAnalystAction, SoundAnalystData, SoundAnalystView,
+};
+pub use stems_dialog::{
+    STEM_COUNT, STEM_LABELS, StemsDialogChoice, StemsDialogState, StemsDialogView, StemsPhase,
 };
 pub use step_editor::{StepEditorView, ToolButton, ToolKind, VelocityLevel};
 pub use text::{ShapedGlyph, ShapedRun, SharedText, TextEngine};
