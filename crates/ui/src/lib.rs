@@ -415,6 +415,7 @@ pub mod marker_edit;
 pub mod masking_panel;
 pub mod master_panel;
 pub mod menu_layout;
+pub mod meter_panels;
 pub mod midi_lane;
 pub mod midi_maps_panel;
 pub mod midi_marks;
@@ -547,6 +548,10 @@ pub use macros_panel::{
 pub use manual::{Manual, ManualAction, ManualView};
 pub use marker_edit::MarkSel;
 pub use masking_panel::{MaskingAction, MaskingData, MaskingPair, MaskingView};
+pub use meter_panels::{
+    CurveSource, MeterKind, MeterPanelAction, MeterPanelState, MeterPanelsView, PANEL_HEIGHT,
+    PANEL_WIDTH,
+};
 pub use midi_maps_panel::{MidiMapRow, MidiMapsAction, MidiMapsView};
 pub use midi_marks::MidiMarks;
 pub use mixcheck_panel::{MixCheckAction, MixCheckData, MixCheckRow, MixCheckView};

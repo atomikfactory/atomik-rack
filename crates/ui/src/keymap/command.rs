@@ -1554,6 +1554,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd(
+        "mixer.show_phase_meter",
+        "Show Phase Meter",
+        G::Mixer,
+        C::Global,
+    ),
+    cmd("mixer.show_spectrum", "Show Spectrum", G::Mixer, C::Global),
+    cmd(
         "mixer.snapshot_effects",
         "Snapshot Includes Effects",
         G::Mixer,
@@ -3321,7 +3328,7 @@ mod tests {
             let expected: &[&str] = match d.group {
                 Group::Global => &["file", "audio", "help", "options", "video"],
                 Group::Transport => &["transport", "sync", "launcher"],
-                Group::View => &["view", "window"],
+                Group::View => &["view", "window", "camera"],
                 Group::Edit => &["edit"],
                 Group::Rack => &["rack", "plugin"],
                 Group::Sequencer => &["sequencer"],
