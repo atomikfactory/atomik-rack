@@ -1022,3 +1022,39 @@ use); growing the ring on the audio thread; a per-panel tap (a second copy of th
 change for each).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AM. Formant-preserving pitch shift in the Tonal engine, and where the comp is edited
+
+**Question.** How does a transposed chord or a whole clip keep its formants, where does that run, and how does the
+audio clip editor edit takes without a second comp?
+
+**Decision.** The phase vocoder of the Tonal mode moves the envelope itself. A pitch shift is a stretch followed by a
+resample, which moves every formant by the pitch ratio `r`. Before the resample, each synthesis frame's bins are
+multiplied by `E(j * r / s) / E(j)`, where `E` is the smooth magnitude envelope of the analysis frame and `s` the
+formant shift (1 for none); after the resample the envelope is `E(f / s)`. `E` comes from **cepstral liftering**: the
+log magnitude spectrum is turned into a cepstrum, the quefrencies below about 1.25 ms are kept (a linear taper to
+2.5 ms) and the result is transformed back. LPC was left out: it needs an order per sound and a stable filter, while
+the lifter has one number that follows the sample rate. The gain is limited to a factor of 16. It uses only IEEE
+arithmetic and the deterministic logarithm and exponential of the crate, so the render is bit-identical on every
+platform, and a clip that does not use it takes the same path as before to the bit. It runs in the **rendered buffer
+only**: the real-time stretcher (a streaming WSOLA) has no spectrum, so the preview of a clip that is still rendering
+keeps the formants moving with the pitch until the buffer is ready. Adding an FFT stage to it would need its own
+buffers and a latency; not done.
+
+**Stereo link.** With the option on, the peaks and the phase rotations come from the mid (from the louder channel for
+a frame whose mid is nearly empty) and both channels take the same rotation, so every bin keeps the phase relation of
+the left and the right. It is a clip option, off for every existing clip, because turning it on changes the render;
+no new-clip default was added (the Interface and Workflow tabs are full).
+
+**Saved fields.** `keep_formants`, `formant` (cents) and `link_stereo` in the clip's `warp` object, written only when
+set, ignorable at format 45: an older version drops them with a warning and plays the clip as before.
+
+**Comp.** The comp stays the take group's `CompSegment` list, edited by commands on the group; the editor's Comp mode
+is a larger view of it. `SetCompRange` is `SetCompSegment` with the crossfade at its two cuts in one step, so a drag
+is one undo step; `FlattenComp` replaces the group and its compiled clips by one clip of a render the app made on the
+freeze worker (the render path Join Clips of different files uses), also one step. Neither needed a saved field.
+
+**Rejected.** A formant stage after the resample (it would need a second analysis of the shifted signal); LPC; a
+second comp model for the editor; making the stereo link the default (it changes old renders).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

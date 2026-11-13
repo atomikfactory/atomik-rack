@@ -455,6 +455,10 @@ pub enum UiAction {
     /// Make a Loop Slicer from the audio clip: a new device that slices the clip's span of its
     /// file at the clip's warp markers, as one undo step (the app owns the device keys).
     ClipToSlicer(ClipId),
+    /// Flatten Comp in the audio clip editor's Comp mode: render the comp of the take group to
+    /// one new audio file and replace the group by one clip of it, as one undo step (the app
+    /// renders on the freeze worker, then applies `SongCommand::FlattenComp`).
+    FlattenComp(u32),
     /// Find the transients of the audio clip open in the audio clip editor (Slice mode opened, a
     /// clip opened in it, or the sensitivity changed): the app detects them off the UI thread, in
     /// the span of the file the clip plays, and gives them back with

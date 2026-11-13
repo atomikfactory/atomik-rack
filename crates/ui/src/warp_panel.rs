@@ -96,7 +96,7 @@ impl WarpValues {
         }
     }
 
-    /// `base` with these values (its markers stay).
+    /// `base` with these values (its markers and its formant options stay).
     pub fn apply_to(&self, base: &WarpSettings) -> WarpSettings {
         WarpSettings {
             enabled: self.enabled,
@@ -106,6 +106,10 @@ impl WarpValues {
             .clamp(WARP_BPM_MIN, WARP_BPM_MAX),
             transpose_cents: (self.semitones * 100 + self.cents)
                 .clamp(-WARP_TRANSPOSE_MAX_CENTS, WARP_TRANSPOSE_MAX_CENTS),
+            // The formant and stereo options live in the audio clip editor.
+            keep_formants: base.keep_formants,
+            formant_cents: base.formant_cents,
+            link_stereo: base.link_stereo,
             markers: base.markers.clone(),
         }
     }
@@ -652,6 +656,9 @@ mod tests {
             mode: WarpMode::Tonal,
             source_bpm: 93.5,
             transpose_cents: -250,
+            keep_formants: true,
+            formant_cents: 300,
+            link_stereo: true,
             markers: vec![atomik_model::WarpMarker { tick: 5, source: 9 }],
         };
         let v = WarpValues::from_settings(&w);
