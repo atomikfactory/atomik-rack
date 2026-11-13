@@ -32,6 +32,7 @@ fn play(song: &mut Song, key: &str, bars: &[i64]) {
         param_lanes: Vec::new(),
         midi: Default::default(),
         groove: None,
+        follow_song_key: true,
         controllers: Vec::new(),
         name: None,
         color: None,

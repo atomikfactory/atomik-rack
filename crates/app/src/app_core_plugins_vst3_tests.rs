@@ -186,6 +186,7 @@ fn a_vst3_effect_and_a_clap_effect_sound_the_same_on_a_console_insert() {
                     param_lanes: Vec::new(),
                     midi: Default::default(),
                     groove: None,
+                    follow_song_key: true,
                     controllers: Vec::new(),
                     name: None,
                     color: None,

@@ -241,6 +241,7 @@ fn the_note_strip_shows_with_the_same_switch_and_edits_two_notes_in_one_undo_ste
                 param_lanes: Vec::new(),
                 midi: Default::default(),
                 groove: None,
+                follow_song_key: true,
                 controllers: Vec::new(),
                 name: None,
                 color: None,

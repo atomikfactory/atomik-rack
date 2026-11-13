@@ -808,6 +808,7 @@ pub(in crate::app_core) fn clip_of(def: &ClipDef, start: i64) -> Clip {
         param_lanes: Vec::new(),
         midi: Default::default(),
         groove: None,
+        follow_song_key: true,
         controllers: Vec::new(),
         name: Some(def.name.to_owned()),
         color: None,

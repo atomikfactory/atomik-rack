@@ -1587,6 +1587,7 @@ impl PianoRollView {
             param_lanes: Vec::new(),
             midi: Default::default(),
             groove: None,
+            follow_song_key: true,
             grid: None,
             content: ClipContent::Notes(atomik_model::NoteList::new()),
         });

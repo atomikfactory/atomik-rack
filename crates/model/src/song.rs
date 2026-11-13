@@ -470,6 +470,10 @@ pub struct Clip {
     /// The scale the note editors highlight and snap to: `Some` only on a note clip and never
     /// chromatic (no scale is `None`). It never changes the clip's notes or how they play.
     pub scale: Option<Scale>,
+    /// Whether a clip without a scale of its own follows the song key in the note editors
+    /// (highlight and snap). `true` for every clip unless it opted out; only a note clip can
+    /// opt out. It changes nothing about how the clip plays. Saved only when `false`.
+    pub follow_song_key: bool,
     /// Pitch bend, aftertouch and controller lanes, in content ticks: non-empty only on a note
     /// clip (see [`crate::controller`]). Sorted by kind, one lane per kind. They follow the
     /// clip's offset, loop and audible span like its notes do.
@@ -1391,6 +1395,16 @@ pub enum SongCommand {
         clip: ClipId,
         /// New scale, or `None` to clear it.
         scale: Option<Scale>,
+    },
+    /// Sets whether a note clip without a scale of its own follows the song key in the note
+    /// editors (the default) or opts out of it. The clip must be a note clip. The notes and the
+    /// engine's view of the clip do not change. One undo step. Reports
+    /// [`crate::SyncOp::SongChanged`].
+    SetClipFollowKey {
+        /// Clip id.
+        clip: ClipId,
+        /// Whether the clip follows the song key.
+        follow: bool,
     },
     /// Names and colours clips: each listed clip gets the new name and colour (a field left at
     /// [`MetaChange::Keep`] stays as it is). A name is trimmed and a blank one clears it; it has

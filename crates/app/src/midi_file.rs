@@ -1528,6 +1528,7 @@ impl MidiTrack {
             controllers: self.controllers,
             midi: self.midi.into(),
             groove: None,
+            follow_song_key: true,
             content: ClipContent::Notes(self.notes.into()),
         }
     }

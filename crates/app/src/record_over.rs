@@ -252,6 +252,7 @@ pub fn keep_events_follow_up(doc: &RackDoc, id: ClipId, policy: KeepEvents) -> V
                         param_lanes: Vec::new(),
                         midi: Default::default(),
                         groove: None,
+                        follow_song_key: clip.follow_song_key,
                         controllers: Vec::new(),
                         name: None,
                         color: None,

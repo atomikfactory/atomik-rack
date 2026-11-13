@@ -202,6 +202,7 @@ fn detect_song_key_sets_the_key_of_the_notes_in_one_undo_step() {
                 param_lanes: Vec::new(),
                 midi: Default::default(),
                 groove: None,
+                follow_song_key: true,
                 controllers: Vec::new(),
                 name: None,
                 color: None,

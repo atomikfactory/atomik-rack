@@ -2295,6 +2295,7 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
         color: first.color,
         grid: first.grid,
         scale: first.scale,
+        follow_song_key: first.follow_song_key,
         controllers,
         param_lanes,
         midi: std::sync::Arc::new(midi),

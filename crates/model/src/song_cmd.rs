@@ -728,6 +728,9 @@ pub(crate) fn check_new_clip(
     if clip.scale.is_some() && !kind.is_notes() {
         return Err(bad("only a note clip can have a scale"));
     }
+    if !clip.follow_song_key && !kind.is_notes() {
+        return Err(bad("only a note clip can opt out of the song key"));
+    }
     if !clip.controllers.is_empty() && !kind.is_notes() {
         return Err(bad("only a note clip can have controller lanes"));
     }
@@ -761,6 +764,7 @@ pub(crate) fn check_new_clip(
         param_lanes,
         midi: std::sync::Arc::new(midi),
         groove: None,
+        follow_song_key: true,
         ..clip
     })
 }
@@ -1605,6 +1609,24 @@ pub(crate) fn plan(
                 }),
             }
         }
+        SongCommand::SetClipFollowKey { clip, follow } => {
+            let (device, lane, c) = find_clip(doc, clip)?;
+            if !c.content.is_notes() {
+                return Err(bad(format!(
+                    "clip {} is not a note clip, so it has no song key to follow",
+                    clip.0
+                )));
+            }
+            Edit::Clip {
+                device,
+                lane,
+                old: Some(c.clone()),
+                new: Some(Clip {
+                    follow_song_key: follow,
+                    ..c.clone()
+                }),
+            }
+        }
         SongCommand::SetClipMeta { ids, name, color } => {
             let name = match name {
                 MetaChange::Set(text) => {
@@ -1716,6 +1738,7 @@ pub(crate) fn plan(
                 param_lanes: Vec::new(),
                 midi: Default::default(),
                 groove: None,
+                follow_song_key: true,
                 controllers: Vec::new(),
                 name: None,
                 color: None,
