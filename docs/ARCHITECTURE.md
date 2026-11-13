@@ -5181,7 +5181,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (569) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (571) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -6232,6 +6232,14 @@ synth. The analysis never changes the song; Make Patch is the one undo step.
   `fit` renders the proposal as an inline patch on its note (`patch_json`, 48 kHz, one voice) with the offline
   renderer, measures it with `analyse` and corrects the cutoff, and the opening of the filter envelope, by the
   octaves the centroid is off, divided by the slope the renders so far show (`REFINE_PASSES`), keeping the best.
+- **Chords.** A sound that holds several notes at once is read by `atomik_dsp::harmony::detect_sound_chord`: the
+  multi-pitch analysis of the chord detection over the whole sound, a key counting as a note when it is in most of
+  the loud frames and at least a third as strong as the strongest, and the root, quality and bass from the chord
+  templates on the sound's chroma as one unit. Fewer than two pitch classes is one note and takes the single-note
+  path unchanged. `propose_chord` then puts the poly synth on every such sound (waveform and envelopes from the
+  profile, one voice a note), `Proposal::keys` lists the notes, `patch_json` and the one-note clip play all of
+  them, and `fit_chord` leaves the pitch curve out because the worker clears the single pitch of a chord. The
+  panel shows `Chord: Am (A3, C4, E4)` in place of the pitch line.
 - **App and panel.** `AppCore::analyse_sound_file` decodes, analyses and fits on the worker `sound_worker`
   (`Msg::Sound`; stop, progress and the generation check as in the other workers). `make_sound_patch` is a
   `CreateInstrument` with the proposal's synth, then one `Command::Batch` of `SetParam` and an `AddClip` with the
