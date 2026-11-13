@@ -232,7 +232,7 @@ fn the_files_are_checked_again_at_load_once_per_run() {
 
 #[test]
 fn the_model_folder_is_under_the_data_folder() {
-    let store = ModelStore::in_data_dir(std::path::Path::new("data"));
+    let store = atomik_vision::download::hands_store(std::path::Path::new("data"));
     assert_eq!(
         store.dir(),
         std::path::Path::new("data").join("models").join("hands")

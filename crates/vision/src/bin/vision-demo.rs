@@ -105,7 +105,7 @@ fn store(cli: &Cli) -> Result<ModelStore, String> {
         .clone()
         .or_else(default_data_dir)
         .ok_or("no data folder: pass --data-dir")?;
-    Ok(ModelStore::in_data_dir(&dir))
+    Ok(atomik_vision::download::hands_store(&dir))
 }
 
 fn megabytes(bytes: u64) -> String {
