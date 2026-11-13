@@ -507,6 +507,8 @@ mod tests {
             delivery: None,
             video: None,
             camera: None,
+            folded_inserts: Vec::new(),
+            spectrum_curves: Vec::new(),
         };
         let mut v = RackView::new(Theme::dark());
         v.set_navigator_visible(true);

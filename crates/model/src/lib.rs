@@ -65,6 +65,7 @@ mod macro_lane;
 mod macros;
 mod macros_io;
 mod master_tune;
+mod meter_view;
 pub mod midi_data;
 mod midi_import;
 mod midi_map;
@@ -174,6 +175,7 @@ pub use macros::{
     macro_key,
 };
 pub use master_tune::{MASTER_TUNE_MAX_CENTS, tune_ratio};
+pub use meter_view::{CurveFrom, MAX_VIEW_ENTRIES, SpectrumCurve};
 pub use midi_import::{ImportedTrack, MidiImport};
 pub use midi_map::{
     DEFAULT_SENSITIVITY, Effect, Learner, MAX_MIDI_MAPS, MAX_PORT_NAME_CHARS, MapMode, MapOptions,
@@ -499,6 +501,12 @@ pub struct RackDoc {
     /// The project's own camera settings (see [`crate::camera_override`]); `None` for a new
     /// project, which then uses the user's settings. Project data with no part in the sound.
     pub camera: Option<CameraOverride>,
+    /// The console strips whose insert area in the rack is folded (see [`crate::meter_view`]),
+    /// sorted; empty for a new project. View data with no part in the sound.
+    pub folded_inserts: Vec<DeviceKey>,
+    /// What each Spectrum device draws as its second curve (see [`crate::meter_view`]), sorted
+    /// by device; empty for a new project. View data with no part in the sound.
+    pub spectrum_curves: Vec<SpectrumCurve>,
 }
 
 /// An edit. Every command is undoable.
@@ -681,6 +689,14 @@ pub enum Command {
     /// rejected when they are out of limits or already that. Reports [`SyncOp::ViewChanged`]. Not
     /// accepted by [`Command::Batch`].
     SetCameraOverride(Option<CameraOverride>),
+    /// Sets which insert areas of the rack are folded (see [`crate::meter_view`]): the keys of
+    /// the strips, one undo step; rejected when it is the current list or too long. Reports
+    /// [`SyncOp::ViewChanged`]. Not accepted by [`Command::Batch`].
+    SetInsertsFolded(Vec<DeviceKey>),
+    /// Sets what each Spectrum device draws as its second curve (see [`crate::meter_view`]), one
+    /// undo step; rejected when it is the current list, too long or names a device twice.
+    /// Reports [`SyncOp::ViewChanged`]. Not accepted by [`Command::Batch`].
+    SetSpectrumCurves(Vec<SpectrumCurve>),
     /// Edits the song's video (see [`VideoCommand`]), one undo step; a command that changes
     /// nothing is rejected. Reports [`SyncOp::ViewChanged`]. Not accepted by [`Command::Batch`].
     Video(VideoCommand),
@@ -926,6 +942,7 @@ pub enum Command {
 /// | `SetReferences` (also undo/redo) | `ViewChanged` |
 /// | `SetDelivery` (also undo/redo, also in a `Batch`) | `ViewChanged` |
 /// | `SetCameraOverride` (also undo/redo) | `ViewChanged` |
+/// | `SetInsertsFolded`, `SetSpectrumCurves` (also undo/redo) | `ViewChanged` |
 /// | `Video` (also undo/redo) | `ViewChanged`, and `SongChanged` when it also moves or trims the audio clip kept with the film |
 /// | `SetMasterTune` (also undo/redo) | `TuneChanged` |
 /// | `ConvertSampleRate` | `RoutingChanged`, `SongChanged`, then `ZonesChanged` per device with zones |
@@ -2438,6 +2455,8 @@ impl Document {
             Command::SetReferences(list) => references::plan_set(doc, &list)?,
             Command::SetDelivery(target) => delivery::plan_set(doc, &target)?,
             Command::SetCameraOverride(camera) => camera_override::plan_set(doc, &camera)?,
+            Command::SetInsertsFolded(keys) => meter_view::plan_folds(doc, &keys)?,
+            Command::SetSpectrumCurves(rows) => meter_view::plan_curves(doc, &rows)?,
             Command::Video(c) => video::plan(doc, registry, &c)?,
             Command::ConvertSampleRate { rate, assets } => rate_convert::plan(doc, rate, &assets)?,
             Command::SetTempo(bpm) => {
@@ -2630,6 +2649,8 @@ pub fn empty_doc() -> RackDoc {
         delivery: None,
         video: None,
         camera: None,
+        folded_inserts: Vec::new(),
+        spectrum_curves: Vec::new(),
     }
 }
 

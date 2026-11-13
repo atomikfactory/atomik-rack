@@ -106,6 +106,8 @@ pub fn reference_doc() -> RackDoc {
         delivery: None,
         video: None,
         camera: None,
+        folded_inserts: Vec::new(),
+        spectrum_curves: Vec::new(),
     }
 }
 

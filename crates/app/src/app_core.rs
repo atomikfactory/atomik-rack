@@ -233,6 +233,9 @@ pub struct AppCore<S: EngineSink> {
     morph_seconds: f32,
     /// The song position of the last frame that played, for the markers that recall snapshots.
     marker_seen: Option<i64>,
+    /// The loop wraps the engine had counted at the last frame, for the reference that follows
+    /// the loop (see `app_core_reference.rs`).
+    reference_loops_seen: Option<u64>,
     /// MIDI learn, the mapping runtime and the held mapped moves (see `app_core_midimap.rs`).
     midi: midimap::MidiControl,
     /// The current macro bank, the last touched params, the search index (see `app_core_macros.rs`).
@@ -587,6 +590,7 @@ impl<S: EngineSink> AppCore<S> {
             snapshot_hint: None,
             snapshot_morph: None,
             marker_seen: None,
+            reference_loops_seen: None,
             morph_seconds: snapshots::DEFAULT_MORPH_SECONDS,
             midi: midimap::MidiControl::new(hub),
             macros: macro_ops::MacroState::default(),
@@ -1155,6 +1159,18 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::FindResonances(device) => self.find_resonances(&device),
             UiAction::CutResonances(device) => self.cut_resonances(&device),
             UiAction::LearnDuck(device) => self.learn_duck(&device),
+            UiAction::SpectrumCurve { device, index } => self.pick_spectrum_curve(&device, index),
+            UiAction::MeterButton {
+                device,
+                kind,
+                toggle,
+            } => {
+                if toggle {
+                    self.toggle_meter_panel(&device, kind);
+                } else {
+                    let _ = self.open_meter_panel(&device, kind);
+                }
+            }
             UiAction::SampleInto { device, at_key } => self.sample_into(device, at_key),
             UiAction::CycleSamplingInput => self.cycle_sampling_input(),
             UiAction::EditSample {
@@ -1839,6 +1855,7 @@ impl<S: EngineSink> AppCore<S> {
             self.position = state.tick;
         }
         self.snapshot_marker_frame(state.playing, state.tick);
+        self.reference_loop_frame(state.playing, state.loop_count);
         // Following a MIDI clock, the clock starts and stops the transport: the buttons show it.
         if self.sink.sync_status().following {
             self.playing = state.playing;
@@ -1853,6 +1870,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_tuners();
         self.feed_spectrum_eq();
         self.feed_meter_panels();
+        self.sync_inserts_folded();
         self.video_frame();
         self.feed_eq_analysers();
         self.poll_resonances();

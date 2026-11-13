@@ -995,3 +995,30 @@ shared. It is a starting point to mix with.
 both allow commercial use and redistribution in a GPL-3.0 program. None is known today.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AL. Meter taps: a point flag and a large ring on request, and the device curve beside the device
+
+**Question.** How can a meter panel show a strip before its fader, and a window of 65536 points, without a megabyte
+per strip, a lock on the audio thread, or a change to what a bounce renders?
+
+**Decision.** The tap (`ScopeTap`) gains a **point flag** next to its live flag: a strip writes the signal after its
+EQ, inserts and parallel compressor (the point the Spectrum EQ window already used) when the flag says PRE, and its
+output otherwise. The flag is read only while the tap is live, so a tap nobody shows still costs one relaxed load. The
+point belongs to the tap, and a tap is shared by every panel of a strip, so the app sends PRE for a strip while any
+panel of it asks for it; a strip drawn only as a second curve stays POST. The tap also gains a **large ring** of 131 072
+frames that the UI allocates when a panel picks 32768 or 65536 points and stores in a `OnceLock`: the writer does one
+`OnceLock::get` per block (an atomic load) and, once the ring exists, writes into both rings; no lock and no allocation
+on the audio thread, and no `unsafe`. The history of the large ring starts at the first block written after it
+appeared, and a read takes the ring that holds more, so the first second of a large window is short rather than wrong.
+Nothing of this is in an offline render, so a bounce is the same to the bit.
+
+**The second curve of the Spectrum device** is project data beside the device, not a parameter: a source is a strip or
+the reference track, and a parameter is a number, which would tie the curve to the position of a strip in the console.
+It is the optional root field `spectrum_curves` of format 45 (ignorable), with one undo step per choice, like the fold
+state of the insert areas (`inserts_folded`). A key whose device is gone is not written.
+
+**Rejected.** A large ring on every strip from the start (about 1 MiB times every channel and bus for a feature few
+use); growing the ring on the audio thread; a per-panel tap (a second copy of the signal per panel, and an engine
+change for each).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

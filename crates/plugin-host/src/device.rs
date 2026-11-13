@@ -1285,7 +1285,10 @@ impl Device for PluginDevice {
             self.run_plugin(ctx, &raw, bypassed, powered)
         };
         self.write_outputs(ctx, &dry, wet_valid, bypassed);
-        if self.scope.is_live()
+        if self.scope.is_live() && self.scope.is_pre() {
+            // The point before the plugin: what comes in (a panel asked for PRE).
+            self.scope.push(&raw[0], &raw[1]);
+        } else if self.scope.is_live()
             && let Some(out_l) = self.sockets.out_l
         {
             let left = *ctx.output(out_l);

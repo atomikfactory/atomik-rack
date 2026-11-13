@@ -398,6 +398,82 @@ fn a_seek_leaves_a_reference_with_a_cue_and_the_mix_alone() {
     assert_eq!(c.reference_start_seconds(), None);
 }
 
+/// Plays the transport at `tick` having wrapped `laps` times, and runs a frame.
+fn playing_at(c: &mut AppCore<RecordingSink>, tick: i64, laps: u64) {
+    let state = &mut c.sink_mut().state;
+    state.playing = true;
+    state.engine_frame = 1;
+    state.tick = tick;
+    state.loop_count = laps;
+    state.loop_enabled = true;
+    c.frame();
+}
+
+#[test]
+fn the_reference_goes_back_with_the_playhead_at_the_loop_wrap() {
+    let tmp = Tmp::new("loop");
+    let path = tmp.tone("long.wav", 0.1, 12);
+    let mut c = core();
+    c.add_reference(&path).unwrap();
+    wait_loaded(&mut c);
+    c.apply_command(Command::Song(atomik_model::SongCommand::SetLoop {
+        range: (beat(4), beat(12)),
+        enabled: true,
+    }))
+    .unwrap();
+    c.transport_action(TransportAction::Locate(beat(4)));
+    c.toggle_reference();
+    assert_eq!(starts(&c), 1);
+    // The song plays through the loop: the reference plays on by itself.
+    playing_at(&mut c, beat(4) + 10, 0);
+    playing_at(&mut c, beat(9), 0);
+    playing_at(&mut c, beat(11), 0);
+    assert_eq!(starts(&c), 1, "no wrap, no new stream");
+    // The playhead wraps: the engine counts a lap and the reference starts at the loop start.
+    playing_at(&mut c, beat(4) + 20, 1);
+    assert_eq!(starts(&c), 2);
+    let at = c.reference_start_seconds().unwrap();
+    assert!(
+        (at - 2.0).abs() < 0.05,
+        "back at the loop start, not at {at}"
+    );
+    assert!(c.reference_listening());
+    // The same lap is not counted twice; the next one is.
+    playing_at(&mut c, beat(6), 1);
+    assert_eq!(starts(&c), 2);
+    playing_at(&mut c, beat(4) + 20, 2);
+    assert_eq!(starts(&c), 3);
+}
+
+#[test]
+fn a_wrap_leaves_a_reference_with_a_cue_and_the_mix_alone() {
+    let tmp = Tmp::new("loop-cue");
+    let path = tmp.tone("long.wav", 0.1, 12);
+    let mut c = core();
+    c.add_reference(&path).unwrap();
+    wait_loaded(&mut c);
+    // Listening to the mix: a lap sends nothing to the reference.
+    playing_at(&mut c, beat(5), 0);
+    playing_at(&mut c, beat(4), 1);
+    assert_eq!(starts(&c), 0);
+    // A reference with a cue is not time-aligned: it stays where it is.
+    c.set_reference_cue(0, true);
+    c.toggle_reference();
+    assert_eq!(starts(&c), 1);
+    playing_at(&mut c, beat(6), 1);
+    playing_at(&mut c, beat(4), 2);
+    assert_eq!(starts(&c), 1, "no new stream for a cue");
+    // A stopped song is not looping: a count that moved while it stood still is no wrap.
+    c.toggle_reference();
+    c.set_reference_cue(0, false);
+    c.toggle_reference();
+    let before = starts(&c);
+    c.sink_mut().state.playing = false;
+    c.sink_mut().state.loop_count = 9;
+    c.frame();
+    assert_eq!(starts(&c), before);
+}
+
 // ------------------------------------------------------------------ trim
 
 #[test]

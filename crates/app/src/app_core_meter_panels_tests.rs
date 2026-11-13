@@ -144,7 +144,7 @@ fn the_flag_is_sent_again_after_an_engine_restart() {
 }
 
 #[test]
-fn the_trace_is_the_analysis_of_the_tap_and_the_size_steps_within_the_ring() {
+fn the_trace_is_the_analysis_of_the_tap_and_the_size_steps_to_the_largest_window() {
     let mut c = two_channels();
     let a = channel_of(&c, "a");
     let id = c.open_meter_panel(&a, MeterKind::Spectrum).unwrap();
@@ -155,12 +155,12 @@ fn the_trace_is_the_analysis_of_the_tap_and_the_size_steps_within_the_ring() {
     assert_eq!(s.trace.len(), atomik_ui::analyser::TRACE_COLUMNS);
     assert!((s.peak_hz - 1000.0).abs() < 25.0, "{}", s.peak_hz);
     assert!((s.peak_db + 6.0).abs() < 2.0, "{}", s.peak_db);
-    // Up to 16384 (half the ring of a strip), no further.
-    for expect in [8192, 16_384, 16_384] {
+    // Up to 65536 like the spectrum device, no further.
+    for expect in [8192, 16_384, 32_768, 65_536, 65_536] {
         c.step_meter_panel_size(id, true);
         assert_eq!(c.meter_panel_size(id), Some(expect));
     }
-    for expect in [8192, 4096, 2048, 1024, 1024] {
+    for expect in [32_768, 16_384, 8192, 4096, 2048, 1024, 1024] {
         c.step_meter_panel_size(id, false);
         assert_eq!(c.meter_panel_size(id), Some(expect));
     }
@@ -403,4 +403,397 @@ fn open_panels_change_neither_the_project_nor_a_bounce() {
                 && x.iter().zip(y).all(|(p, q)| p.to_bits() == q.to_bits())),
         "the bounce is the same to the bit"
     );
+}
+
+// ------------------------------------------------------------------ the strip button
+
+#[test]
+fn the_strip_button_toggles_the_spectrum_panel_and_reports_the_strips_it_lights() {
+    let mut c = two_channels();
+    let (a, b) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    assert!(c.meter_panel_targets().is_empty());
+    assert!(c.toggle_meter_panel(&a, MeterKind::Spectrum), "opens");
+    assert_eq!(c.meter_panel_targets(), std::slice::from_ref(&a));
+    // A second kind on the same strip lights it once.
+    c.open_meter_panel(&a, MeterKind::Phase).unwrap();
+    assert!(c.toggle_meter_panel(&b, MeterKind::Spectrum));
+    assert_eq!(c.meter_panel_targets(), [a.clone(), b.clone()]);
+    assert!(!c.toggle_meter_panel(&a, MeterKind::Spectrum), "closes");
+    assert_eq!(c.meter_panel_ids().len(), 2, "the phase panel of a stays");
+    assert!(!c.toggle_meter_panel(&b, MeterKind::Spectrum));
+    assert_eq!(c.meter_panel_targets(), std::slice::from_ref(&a));
+    // The action of the console's button and of its menu.
+    c.handle_action(atomik_ui::UiAction::MeterButton {
+        device: b.clone(),
+        kind: MeterKind::Phase,
+        toggle: false,
+    });
+    c.handle_action(atomik_ui::UiAction::MeterButton {
+        device: b.clone(),
+        kind: MeterKind::Phase,
+        toggle: false,
+    });
+    assert_eq!(c.meter_panel_ids().len(), 2, "a menu row only opens");
+    c.handle_action(atomik_ui::UiAction::MeterButton {
+        device: b.clone(),
+        kind: MeterKind::Phase,
+        toggle: true,
+    });
+    assert_eq!(c.meter_panel_ids().len(), 1, "the button closes it");
+    // An instrument is no strip: nothing opens.
+    assert!(!c.toggle_meter_panel(&key("a"), MeterKind::Spectrum));
+}
+
+// ------------------------------------------------------------------ PRE and POST
+
+#[test]
+fn a_panel_taps_after_the_fader_until_pre_is_chosen_and_the_point_follows_the_panels() {
+    let mut c = two_channels();
+    let (a, b) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    let (ia, ib) = (c.device_id(&a).unwrap(), c.device_id(&b).unwrap());
+    let one = c.open_meter_panel(&a, MeterKind::Spectrum).unwrap();
+    let two = c.open_meter_panel(&a, MeterKind::Phase).unwrap();
+    let other = c.open_meter_panel(&b, MeterKind::Spectrum).unwrap();
+    assert!(c.sink().scopes_pre.is_empty(), "POST by default");
+    assert_eq!(c.meter_panel_pre(one), Some(false));
+    assert!(!state_of(&c, one).pre);
+    c.meter_panel_action(MeterPanelAction::Point { id: one });
+    assert_eq!(c.meter_panel_pre(one), Some(true));
+    assert!(state_of(&c, one).pre);
+    assert_eq!(
+        c.sink().scopes_pre.iter().copied().collect::<Vec<_>>(),
+        [ia]
+    );
+    // The strip is PRE while any panel of it asks; the other strip is not touched.
+    c.set_meter_panel_pre(two, true);
+    c.set_meter_panel_pre(one, false);
+    c.frame();
+    assert!(c.sink().scopes_pre.contains(&ia) && !c.sink().scopes_pre.contains(&ib));
+    c.meter_panel_action(MeterPanelAction::Point { id: two });
+    c.frame();
+    assert!(c.sink().scopes_pre.is_empty(), "both POST again");
+    // A strip drawn as a second curve keeps its own point.
+    c.set_meter_panel_pre(other, true);
+    c.set_meter_panel_curve(one, CurveFrom::Strip(b.clone()));
+    c.frame();
+    assert!(c.sink().scopes_pre.contains(&ib) && !c.sink().scopes_pre.contains(&ia));
+    // The point is sent again after an engine restart, like the live flag.
+    c.sink_mut().scopes_pre.clear();
+    c.frame();
+    assert!(c.sink().scopes_pre.contains(&ib));
+    // Closing the panel puts the point back and turns the tap off.
+    c.close_meter_panel(other);
+    c.set_meter_panel_curve(one, CurveFrom::Off);
+    assert!(c.sink().scopes_pre.is_empty() && !c.sink().scopes_live.contains(&ib));
+}
+
+#[test]
+fn pre_starts_the_trace_again_from_the_new_signal() {
+    let mut c = two_channels();
+    let a = channel_of(&c, "a");
+    let id = c.open_meter_panel(&a, MeterKind::Spectrum).unwrap();
+    feed(&mut c, &a, tone(1000.0, 20_000, 0.5));
+    c.frame();
+    let post = state_of(&c, id).trace;
+    assert!(post.iter().any(|v| *v > -60.0));
+    // The tap now carries something else (the signal before the fader).
+    feed(&mut c, &a, tone(3000.0, 20_001, 0.5));
+    c.set_meter_panel_pre(id, true);
+    c.frame();
+    let pre = state_of(&c, id);
+    assert!((pre.peak_hz - 3000.0).abs() < 60.0, "{}", pre.peak_hz);
+}
+
+// ------------------------------------------------------------------ the large ring
+
+#[test]
+fn the_large_ring_is_asked_for_once_per_device_and_only_for_a_large_window() {
+    let mut c = two_channels();
+    let (a, b) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    let (ia, ib) = (c.device_id(&a).unwrap(), c.device_id(&b).unwrap());
+    let id = c.open_meter_panel(&a, MeterKind::Spectrum).unwrap();
+    for _ in 0..3 {
+        c.step_meter_panel_size(id, true); // 8192, 16384, 32768
+    }
+    assert_eq!(c.meter_panel_size(id), Some(32_768));
+    assert_eq!(c.sink().scopes_large.get(&ia), Some(&1), "asked once");
+    assert!(!c.sink().scopes_large.contains_key(&ib));
+    c.step_meter_panel_size(id, true);
+    c.frame();
+    c.frame();
+    assert_eq!(
+        c.sink().scopes_large.get(&ia),
+        Some(&1),
+        "not again for 65536"
+    );
+    // A second curve that is a strip needs its ring too, at the same window.
+    c.set_meter_panel_curve(id, CurveFrom::Strip(b.clone()));
+    assert_eq!(c.sink().scopes_large.get(&ib), Some(&1));
+    // A small window asks for nothing.
+    let mut c = two_channels();
+    let a = channel_of(&c, "a");
+    let ia = c.device_id(&a).unwrap();
+    let id = c.open_meter_panel(&a, MeterKind::Spectrum).unwrap();
+    c.step_meter_panel_size(id, true);
+    c.step_meter_panel_size(id, true);
+    assert_eq!(c.meter_panel_size(id), Some(16_384));
+    assert!(!c.sink().scopes_large.contains_key(&ia));
+    // A new engine has new taps: the ring is asked for again.
+    c.step_meter_panel_size(id, true);
+    assert_eq!(c.sink().scopes_large.get(&ia), Some(&1));
+    c.rebuild_engine();
+    c.frame();
+    assert_eq!(
+        c.sink().scopes_large.values().sum::<u32>(),
+        2,
+        "asked again for the new engine"
+    );
+}
+
+#[test]
+fn a_large_window_reads_that_many_frames_from_the_tap() {
+    let mut c = two_channels();
+    let a = channel_of(&c, "a");
+    let id = c.open_meter_panel(&a, MeterKind::Spectrum).unwrap();
+    for _ in 0..4 {
+        c.step_meter_panel_size(id, true);
+    }
+    assert_eq!(c.meter_panel_size(id), Some(65_536));
+    feed(&mut c, &a, tone(1000.0, 70_000, 0.5));
+    c.frame();
+    let s = state_of(&c, id);
+    assert_eq!(s.size, 65_536);
+    assert!((s.peak_hz - 1000.0).abs() < 10.0, "{}", s.peak_hz);
+}
+
+// ------------------------------------------------------------------ the second curve of the device
+
+fn with_spectrum_device() -> (AppCore<RecordingSink>, DeviceKey) {
+    let mut c = two_channels();
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.spectrum".into(),
+        key: Some(key("spec")),
+    })
+    .expect("a spectrum device");
+    c.frame();
+    (c, key("spec"))
+}
+
+fn data_of(c: &AppCore<RecordingSink>, device: &DeviceKey) -> atomik_ui::analyser::AnalyserData {
+    c.view().analyser_data(device).expect("an analyser").clone()
+}
+
+#[test]
+fn a_spectrum_device_lists_its_sources_and_the_choice_is_saved_with_it_in_one_undo_step() {
+    let (mut c, spec) = with_spectrum_device();
+    let (a, b) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    let id = c.device_id(&spec).unwrap();
+    c.sink_mut()
+        .device_scopes
+        .insert(id, tone(500.0, 20_000, 0.3));
+    c.frame();
+    let d = data_of(&c, &spec);
+    // Off, then every strip in console order (the master among them).
+    assert_eq!(d.second_sources[0], CurveSource::Off);
+    assert!(d.second_sources.len() >= 3, "{:?}", d.second_sources);
+    assert_eq!(d.second_source, 0);
+    assert!(d.second.is_empty());
+    let depth = c.document().undo_depth();
+    let names: Vec<String> = c
+        .console()
+        .strip_names()
+        .into_iter()
+        .map(|(_, n, _)| n)
+        .collect();
+    let row = d
+        .second_sources
+        .iter()
+        .position(|s| *s == CurveSource::Strip(names[1].clone()))
+        .expect("the second strip is listed");
+    c.handle_action(atomik_ui::UiAction::SpectrumCurve {
+        device: spec.clone(),
+        index: row,
+    });
+    assert_eq!(c.document().undo_depth(), depth + 1, "one undo step");
+    let picked = c.console().strip_names()[1].0.clone();
+    assert_eq!(
+        c.doc().spectrum_curves,
+        [atomik_model::SpectrumCurve {
+            device: spec.clone(),
+            from: atomik_model::CurveFrom::Strip(picked.clone()),
+        }]
+    );
+    // Picking the same row again changes nothing.
+    c.handle_action(atomik_ui::UiAction::SpectrumCurve {
+        device: spec.clone(),
+        index: row,
+    });
+    assert_eq!(c.document().undo_depth(), depth + 1);
+    // The strip's tap is live for the device and its curve is that tap's analysis.
+    let strip_id = c.device_id(&picked).unwrap();
+    c.sink_mut()
+        .device_scopes
+        .insert(strip_id, tone(2000.0, 20_000, 0.3));
+    c.frame();
+    assert!(c.sink().scopes_live.contains(&strip_id));
+    let d = data_of(&c, &spec);
+    assert_eq!(d.second_source, row);
+    assert_eq!(d.second.len(), atomik_ui::analyser::TRACE_COLUMNS);
+    assert!(d.second.iter().any(|v| *v > -60.0));
+    // It round-trips through the saved project and survives undo and redo.
+    let text = atomik_model::save_project(c.doc());
+    assert!(text.contains("\"spectrum_curves\": ["));
+    let loaded = atomik_model::load_project(&text, c.registry()).expect("loads");
+    assert_eq!(loaded.spectrum_curves, c.doc().spectrum_curves);
+    assert!(c.undo());
+    assert!(c.doc().spectrum_curves.is_empty());
+    c.frame();
+    assert!(data_of(&c, &spec).second.is_empty());
+    assert!(c.redo());
+    c.frame();
+    assert_eq!(data_of(&c, &spec).second_source, row);
+    let _ = (a, b);
+}
+
+#[test]
+fn the_reference_track_is_a_choice_of_the_device_once_the_song_has_one() {
+    let (mut c, spec) = with_spectrum_device();
+    let id = c.device_id(&spec).unwrap();
+    c.sink_mut()
+        .device_scopes
+        .insert(id, tone(500.0, 20_000, 0.3));
+    c.frame();
+    assert!(
+        !data_of(&c, &spec)
+            .second_sources
+            .contains(&CurveSource::Reference)
+    );
+    // A project that names a reference file offers it (the file need not be decoded for the list).
+    c.apply_command(Command::SetReferences(vec![atomik_model::Reference::new(
+        "ref.wav",
+    )]))
+    .expect("a reference");
+    c.frame();
+    let d = data_of(&c, &spec);
+    let row = d
+        .second_sources
+        .iter()
+        .position(|s| *s == CurveSource::Reference)
+        .expect("listed");
+    c.pick_spectrum_curve(&spec, row);
+    assert_eq!(
+        c.doc().spectrum_curves[0].from,
+        atomik_model::CurveFrom::Reference
+    );
+    c.frame();
+    assert_eq!(data_of(&c, &spec).second_source, row);
+    // Back to none.
+    c.pick_spectrum_curve(&spec, 0);
+    assert!(c.doc().spectrum_curves.is_empty());
+}
+
+#[test]
+fn a_deleted_source_strip_clears_the_devices_curve() {
+    let (mut c, spec) = with_spectrum_device();
+    let id = c.device_id(&spec).unwrap();
+    c.sink_mut()
+        .device_scopes
+        .insert(id, tone(500.0, 20_000, 0.3));
+    c.frame();
+    let b = channel_of(&c, "b");
+    let row = data_of(&c, &spec)
+        .second_sources
+        .iter()
+        .position(|s| matches!(s, CurveSource::Strip(_)))
+        .unwrap();
+    c.pick_spectrum_curve(&spec, row);
+    let source = match &c.doc().spectrum_curves[0].from {
+        atomik_model::CurveFrom::Strip(k) => k.clone(),
+        other => panic!("{other:?}"),
+    };
+    let victim = if source == b { b } else { source };
+    c.apply_command(Command::Console(ConsoleCommand::RemoveChannel {
+        channel: victim,
+    }))
+    .expect("the channel goes");
+    c.frame();
+    let d = data_of(&c, &spec);
+    assert_eq!(d.second_source, 0, "no source any more");
+    assert!(d.second.is_empty());
+}
+
+// ------------------------------------------------------------------ the fold state
+
+#[test]
+fn the_fold_state_of_the_insert_areas_is_saved_restored_and_undone() {
+    let mut c = two_channels();
+    let a = channel_of(&c, "a");
+    c.frame();
+    assert!(c.doc().folded_inserts.is_empty());
+    // The rack view folds an area: the project takes it as one undo step.
+    let depth = c.document().undo_depth();
+    c.view_mut().set_inserts_shown(&a, false);
+    c.frame();
+    assert_eq!(c.doc().folded_inserts, std::slice::from_ref(&a));
+    assert_eq!(c.document().undo_depth(), depth + 1);
+    c.frame();
+    assert_eq!(
+        c.document().undo_depth(),
+        depth + 1,
+        "a steady state is silent"
+    );
+    // It is saved, and a project opened later shows the area folded.
+    let text = atomik_model::save_project(c.doc());
+    assert!(text.contains("\"inserts_folded\": ["));
+    let doc = atomik_model::load_project(&text, c.registry()).expect("loads");
+    let mut other = AppCore::with_doc(RecordingSink::new(), doc, None);
+    other.frame();
+    assert!(!other.view().inserts_shown(&a), "restored on load");
+    // Undo unfolds it in the view, redo folds it again.
+    assert!(c.undo());
+    c.frame();
+    assert!(c.view().inserts_shown(&a), "the undo shows the area");
+    assert!(c.doc().folded_inserts.is_empty());
+    assert!(c.redo());
+    c.frame();
+    assert!(!c.view().inserts_shown(&a), "the redo folds it");
+    // Unfolding in the view goes back into the project.
+    c.view_mut().set_inserts_shown(&a, true);
+    c.frame();
+    assert!(c.doc().folded_inserts.is_empty());
+}
+
+#[test]
+fn deleting_a_strip_is_no_fold_change_and_an_old_file_loads_unfolded() {
+    let mut c = two_channels();
+    let (a, b) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    c.frame();
+    c.view_mut().set_inserts_shown(&a, false);
+    c.view_mut().set_inserts_shown(&b, false);
+    c.frame();
+    assert_eq!(c.doc().folded_inserts.len(), 2);
+    let depth = c.document().undo_depth();
+    c.apply_command(Command::Console(ConsoleCommand::RemoveChannel {
+        channel: a.clone(),
+    }))
+    .expect("the channel goes");
+    c.frame();
+    c.frame();
+    assert_eq!(
+        c.document().undo_depth(),
+        depth + 1,
+        "the delete is the only new step"
+    );
+    assert!(!c.view().inserts_shown(&b));
+    // Undoing the delete brings the strip back folded.
+    assert!(c.undo());
+    c.frame();
+    assert!(!c.view().inserts_shown(&a), "the area comes back folded");
+    // A project without the field: everything shown.
+    let mut doc = c.doc().clone();
+    doc.folded_inserts.clear();
+    let mut fresh = AppCore::with_doc(RecordingSink::new(), doc, None);
+    fresh.frame();
+    assert!(fresh.view().inserts_shown(&a) && fresh.view().inserts_shown(&b));
 }
