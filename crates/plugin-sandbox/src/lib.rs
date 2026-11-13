@@ -2,14 +2,17 @@
 //! `atomik-plugin-host` child process, so a plugin that crashes or hangs cannot take the app
 //! down.
 //!
-//! * [`SandboxBackend`] starts one child per instance and talks to it over its stdin and stdout
-//!   (main-thread calls, with timeouts) and a shared audio block (the engine-side processor).
+//! * [`SandboxBackend`] starts one child per instance (or, when the app asks for it with
+//!   [`SandboxBackend::set_grouping`], one child for several instances) and talks to it over its
+//!   stdin and stdout (main-thread calls, with timeouts) and a shared audio block (the
+//!   engine-side processor).
 //! * When a child ends, its instance is lost: the device turns CRASHED and the app replaces the
-//!   instance on RELOAD.
+//!   instance on RELOAD. A child that hosts a group loses every instance of the group together.
 //!
 //! The contract is `not-for-git/plan/sandbox/03-interfaces.md`, section C.
 
 mod clock;
+mod group;
 mod instance;
 mod link;
 mod processor;
@@ -20,12 +23,14 @@ mod fake;
 #[cfg(test)]
 mod tests;
 
+use crate::group::{Attach, Hub};
 use crate::instance::RemoteInstance;
 use crate::link::{LiveGuard, Timeouts};
 use crate::transport::Transport;
 use atomik_device_sdk::{PluginFormat, PluginRef};
 use atomik_plugin_host::{
-    BackendError, HostHandle, PendingInstance, PluginBackend, PluginInstance, ScannedPlugin,
+    BackendError, HostHandle, PendingInstance, PluginBackend, PluginInstance, ProcessChoice,
+    ProcessMode, ScannedPlugin,
 };
 use atomik_plugin_ipc::{
     Doorbell, DoorbellName, ParentPort, SharedBlock, block_file_name, default_block_dir,
@@ -35,7 +40,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
 #[cfg(test)]
@@ -125,8 +130,38 @@ pub struct SandboxBackend {
     config: SandboxConfig,
     /// Which file holds each plugin (fed from the scan cache; main thread only).
     files: Mutex<BTreeMap<PluginRef, PathBuf>>,
-    /// Children alive now.
+    /// Child processes alive now.
     live: Arc<AtomicUsize>,
+    /// Instances that live in a group child now.
+    members: Arc<AtomicUsize>,
+    /// How instances share children (see [`SandboxBackend::set_grouping`]).
+    grouping: Mutex<Grouping>,
+    /// The group children by what their instances share.
+    hubs: Mutex<BTreeMap<String, Vec<Weak<Hub>>>>,
+}
+
+/// The sharing rule: the setting and what single plugins ask for.
+#[derive(Debug, Default)]
+struct Grouping {
+    mode: ProcessMode,
+    choices: BTreeMap<PluginRef, ProcessChoice>,
+}
+
+impl Grouping {
+    /// What the next instance of `plugin` (held in `file`) shares its child with: `None` for a
+    /// child of its own.
+    fn key(&self, plugin: &PluginRef, file: &Path) -> Option<String> {
+        let choice = self.choices.get(plugin).copied().unwrap_or_default();
+        match (choice, self.mode) {
+            (ProcessChoice::Own, _) | (ProcessChoice::Default, ProcessMode::PerPlugin) => None,
+            (ProcessChoice::Shared, _) | (ProcessChoice::Default, ProcessMode::Shared) => {
+                Some("shared".to_string())
+            }
+            (ProcessChoice::Default, ProcessMode::PerFile) => {
+                Some(format!("file:{}", file.display()))
+            }
+        }
+    }
 }
 
 /// How long a slow instance is left alone between two cosmetic calls.
@@ -149,7 +184,17 @@ impl SandboxBackend {
             config,
             files: Mutex::new(BTreeMap::new()),
             live: Arc::new(AtomicUsize::new(0)),
+            members: Arc::new(AtomicUsize::new(0)),
+            grouping: Mutex::new(Grouping::default()),
+            hubs: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    /// Sets how the instances created from now on share child processes: the `mode` for every
+    /// plugin, and the `choices` of the plugins that ask for something else. Instances that are
+    /// running keep their child.
+    pub fn set_grouping(&self, mode: ProcessMode, choices: BTreeMap<PluginRef, ProcessChoice>) {
+        *self.grouping.lock().unwrap_or_else(PoisonError::into_inner) = Grouping { mode, choices };
     }
 
     /// The configuration.
@@ -166,9 +211,14 @@ impl SandboxBackend {
         }
     }
 
-    /// Children alive now (for tests and diagnostics).
+    /// Child processes alive now (for tests and diagnostics): a group counts once.
     pub fn live_children(&self) -> usize {
         self.live.load(Ordering::SeqCst)
+    }
+
+    /// Instances that live in a group child now (for tests and diagnostics).
+    pub fn grouped_instances(&self) -> usize {
+        self.members.load(Ordering::SeqCst)
     }
 
     /// Makes the shared block and the doorbell and starts the child for `plugin`.
@@ -195,6 +245,26 @@ impl SandboxBackend {
             Doorbell::create(&doorbell_name, &block).map_err(|e| io_error("doorbell", e))?;
         let port = ParentPort::new(block, doorbell);
 
+        let key = self
+            .grouping
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .key(plugin, &file);
+        // A path that is not text cannot travel over the control channel: that instance gets a
+        // child of its own.
+        if let (Some(key), Some(plugin_file), Some(block)) =
+            (key, file.to_str(), block_path.to_str())
+        {
+            let attach = Attach {
+                plugin_file: plugin_file.to_string(),
+                plugin_id: plugin.id.clone(),
+                block: block.to_string(),
+                doorbell: doorbell_name.0.clone(),
+            };
+            let transport = self.join_group(&key, attach)?;
+            return Ok((transport, port, LiveGuard::new(&self.members)));
+        }
+
         let command = &self.config.command;
         let mut args = command.args.clone();
         args.push(self.format.name().into());
@@ -215,6 +285,38 @@ impl SandboxBackend {
                 ))
             })?;
         Ok((transport, port, LiveGuard::new(&self.live)))
+    }
+
+    /// Adds an instance to a group child that shares `key`: the first one with room, or a new
+    /// one when there is none (every one is full or gone).
+    fn join_group(&self, key: &str, attach: Attach) -> Result<Transport, BackendError> {
+        let mut hubs = self.hubs.lock().unwrap_or_else(PoisonError::into_inner);
+        let list = hubs.entry(key.to_string()).or_default();
+        list.retain(|w| w.upgrade().is_some_and(|h| h.alive()));
+        for hub in list.iter().filter_map(Weak::upgrade) {
+            if let Some(transport) = hub.join(attach.clone()) {
+                return Ok(transport);
+            }
+        }
+        let command = &self.config.command;
+        let mut args = command.args.clone();
+        args.push("--group".into());
+        args.push(self.format.name().into());
+        args.push("--parent-pid".into());
+        args.push(std::process::id().to_string().into());
+        let transport =
+            transport::spawn_process(&command.program, &args, &command.envs).map_err(|e| {
+                BackendError::Failed(format!(
+                    "cannot start {} for a plugin group: {e}",
+                    command.program.display()
+                ))
+            })?;
+        let hub = Hub::start(transport, LiveGuard::new(&self.live));
+        let transport = hub.join(attach).ok_or_else(|| {
+            BackendError::Failed("the plugin group ended before it took the plugin".to_string())
+        })?;
+        list.push(Arc::downgrade(&hub));
+        Ok(transport)
     }
 
     fn timeouts(&self) -> Timeouts {

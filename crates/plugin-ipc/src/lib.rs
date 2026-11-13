@@ -7,6 +7,7 @@
 //! * The [`Doorbell`]: a cross-process wake-up whose `ring` never blocks.
 //! * The control channel: length-prefixed JSON frames with an optional binary payload, and the
 //!   messages in both directions.
+//! * The group envelope: slot frames that let one child host several instances (see [`group`]).
 //!
 //! The contract is `not-for-git/plan/sandbox/03-interfaces.md`, section B.
 
@@ -16,6 +17,7 @@ pub mod codec;
 pub mod deadline;
 pub mod doorbell;
 pub mod frame;
+pub mod group;
 pub mod layout;
 pub mod lifetime;
 pub mod message;
@@ -28,6 +30,10 @@ pub use codec::AudioOp;
 pub use deadline::Deadline;
 pub use doorbell::{Doorbell, DoorbellName};
 pub use frame::{read_frame, read_frame_with, write_frame};
+pub use group::{
+    FromGroup, GROUP_SLOT, MAX_GROUP_INSTANCES, SlotWriter, ToGroup, read_slot_frame,
+    write_slot_frame,
+};
 pub use layout::{
     BLOCK_SIZE, MAGIC, MAX_CHANNELS, MAX_EVENTS_IN, MAX_EVENTS_OUT, MAX_FRAME_BYTES,
     MAX_GUI_DIMENSION, MAX_LOG_BYTES, MAX_REPLY_JSON_BYTES, PANIC_LOG_PREFIX, PROTOCOL_VERSION,
