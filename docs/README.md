@@ -227,21 +227,20 @@ at the same place that has the same offset, gain, fades and warp but plays the s
 the clip where the models hear anything. The whole is one undo step, and the stem files go into the project's audio
 folder like any rendered audio.
 
-- **The models.** The first time, a dialog says what is downloaded (four files, 142.6 MB), from where (`zenodo.org`),
-  that nothing about you or your computer is sent and that the models are open source (MIT licence). Nothing is
-  fetched before you press Download. Each file is checked against a checksum, and a failed or cancelled download leaves
-  nothing behind. They are kept in `models/stems/` of the settings folder.
+- **How it works, and why there is no model.** It is a fast signal-processing split, not a learned model, so there is
+  nothing to download and nothing leaves your computer. The drums are the percussive part of a harmonic/percussive
+  split, the bass is the harmonic part below about 150 Hz, the vocals are the harmonic part above that which sits in the
+  centre of the stereo image, and other is what is left, so the four stems add up to the clip. A model whose weights or
+  training data carry non-commercial terms is not used, and none is known whose weights and data are free of them; the
+  dialog says "Signal-processing split: expect some bleed between stems."
 - **Speed and memory.** It runs on a worker with progress and Cancel while the song keeps playing. A 3-minute stereo
-  song takes about a minute on a fast desktop CPU, a few minutes on a laptop; the work is done in pieces of 20 seconds,
-  so a long file does not need more memory for the separation. The same clip always gives the same stems.
-- **Limits.** The stems are a good starting point and not a studio result: a vocal can leak a little into the others, and
-  reverb tails and heavily processed sounds are shared between stems. The whole file of the clip is separated, not just
-  the part the clip plays. A mono file gives mono stems; with more than two channels the first two are used. A clip on a
-  frozen track is refused, and so are several clips at once.
-- **The licence of the models.** The weights are the Open-Unmix `umxhq` files, published under the MIT licence and used
-  unchanged. They were trained on the MUSDB18-HQ training set, whose own terms are non-commercial: whether that matters
-  for your use is a question for you and a lawyer, not a promise of this program. The details are in
-  [DEPENDENCIES.md](DEPENDENCIES.md#stem-separation-models) and [DECISIONS.md](DECISIONS.md).
+  song takes a few seconds in a release build; the work is done in pieces of 20 seconds, so a long file does not need
+  more memory for the separation. The same clip always gives the same stems.
+- **Limits.** Expect bleed: a kick leaks into the bass, a snare tail or a hi-hat into other stems, a centred guitar or
+  synth into the vocals, and reverb tails are shared between stems. A mono file has no stereo image to tell the voice
+  from the rest, so its vocals are only the 200 Hz to 5 kHz band, at a lower weight (the dialog says so). The whole file
+  of the clip is separated, not just the part the clip plays. A mono file gives mono stems; with more than two channels
+  the first two are used. A clip on a frozen track is refused, and so are several clips at once.
 
 ## Vocal mode
 
