@@ -273,6 +273,12 @@ impl<S: EngineSink> AppCore<S> {
                     }
                     text.push_str(&format!("matched {gain:+.1} dB"));
                 }
+                if selected && r.trim_tenths != 0 {
+                    if !text.is_empty() {
+                        text.push_str("   ");
+                    }
+                    text.push_str(&format!("trim {:+.1} dB", r.trim_db()));
+                }
                 ZoneReference {
                     name: r.name().to_owned(),
                     selected,
@@ -308,6 +314,8 @@ impl<S: EngineSink> AppCore<S> {
             status: self.zone_status(busy),
             busy,
             listening: info.listening,
+            trim_db: (!info.items.is_empty()).then_some(info.trim_db),
+            matching: info.matching,
         }
     }
 

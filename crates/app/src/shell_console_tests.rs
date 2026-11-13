@@ -2136,7 +2136,7 @@ fn the_reference_panel_lists_selects_and_refreshes_through_its_buttons() {
     let first = {
         let v = s.zone_view().unwrap();
         let p = v.panel();
-        Point::new(p.x0 + 60.0, p.y0 + 34.0 + 22.0 + 10.0)
+        Point::new(p.x0 + 60.0, p.y0 + 34.0 + 30.0 + 22.0 + 10.0)
     };
     click(&mut s, first);
     s.frame();

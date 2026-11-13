@@ -563,6 +563,8 @@ pub struct Shell<B: AudioBackend> {
     camera_dialog: Option<atomik_ui::CameraDialogView>,
     /// The camera preview box (it paints while the camera is on and the preview is on).
     camera_preview: atomik_ui::CameraPreviewView,
+    /// The floating meter panels of console strips and plugin devices.
+    meter_panels: atomik_ui::MeterPanelsView,
     /// The suggestion to freeze the heaviest track, while it shows (shell state, never saved).
     cpu_hint: Option<CpuHintCard>,
     /// The newer release the news is about (what its buttons act on).
@@ -984,6 +986,7 @@ impl<B: AudioBackend> Shell<B> {
             update_notice: None,
             camera_dialog: None,
             camera_preview: atomik_ui::CameraPreviewView::new(),
+            meter_panels: atomik_ui::MeterPanelsView::new(),
             cpu_hint: None,
             update_release: None,
             guide: None,
@@ -1977,6 +1980,13 @@ impl<B: AudioBackend> Shell<B> {
             }
             ZoneAction::Select(index) => self.core.select_reference(index),
             ZoneAction::Listen => self.core.toggle_reference(),
+            ZoneAction::Trim(tenths) => self.core.step_reference_trim(tenths),
+            ZoneAction::TrimReset => self.core.set_reference_trim(0),
+            ZoneAction::MatchSection => {
+                // The reason of a refusal is in the status line.
+                let _ = self.core.match_reference_section();
+            }
+            ZoneAction::CancelMatch => self.core.cancel_reference_match(),
         }
         self.sync_zone();
         self.repaint = true;
@@ -5829,6 +5839,10 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(requests) = self.camera_preview_event(window, event) {
             return requests;
         }
+        // The meter panels take only the events that land on a panel or its list.
+        if let Some(requests) = self.meter_panels_event(window, event) {
+            return requests;
+        }
         // The notice of the update check takes only the events that land on its card.
         if let Some(requests) = self.update_notice_event(window, event) {
             return requests;
@@ -7112,6 +7126,8 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.split_sub();
             }
             ("rack.preview_player", None) => self.core.preview_selected_player(),
+            ("mixer.show_spectrum", None) => self.show_meter(atomik_ui::MeterKind::Spectrum),
+            ("mixer.show_phase_meter", None) => self.show_meter(atomik_ui::MeterKind::Phase),
             ("plugin.learn_automation", None) => self
                 .core
                 .plugin_learn_command(atomik_ui::PluginLearnMode::Automation),
@@ -10347,6 +10363,7 @@ impl<B: AudioBackend> Shell<B> {
         let busy = self.core.is_busy();
         self.core.frame();
         self.sync_camera_ui();
+        self.sync_meter_panels();
         self.sync_plugin_ui();
         self.sync_library_ui();
         self.sync_video_ui();
@@ -11631,6 +11648,7 @@ impl<B: AudioBackend> Shell<B> {
         {
             notice.paint(canvas, &theme, self.size());
         }
+        self.paint_meter_panels(canvas, &theme);
         self.paint_camera_preview(canvas, &theme);
         self.paint_camera_dialog(canvas, &theme);
         canvas.pop_transform();
@@ -11762,6 +11780,8 @@ mod audio_setup_impl;
 mod camera_impl;
 #[path = "shell_cpu.rs"]
 mod cpu_impl;
+#[path = "shell_meter_panels.rs"]
+mod meter_panels_impl;
 #[path = "shell_update.rs"]
 mod update_impl;
 
@@ -12029,6 +12049,10 @@ mod backup_tests;
 #[cfg(test)]
 #[path = "shell_camera_tests.rs"]
 mod camera_tests;
+
+#[cfg(test)]
+#[path = "shell_meter_panels_tests.rs"]
+mod meter_panels_tests;
 
 #[cfg(test)]
 #[path = "shell_plugin_manager_tests.rs"]
