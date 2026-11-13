@@ -21,7 +21,6 @@
 {"stroke":{"line":[244.00,33.50,296.00,33.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
 {"stroke":{"rrect":[242.50,33.50,297.50,54.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
 {"text":"COMP","at":[270.00,47.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
-{"fill":{"rect":[242.00,33.00,298.00,55.00]},"brush":"#0e10138c"},
 {"fill":{"rrect":[922.00,33.00,992.00,55.00,3.00]},"brush":"#3b4047ff"},
 {"stroke":{"line":[924.00,33.50,990.00,33.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
 {"stroke":{"rrect":[922.50,33.50,991.50,54.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
