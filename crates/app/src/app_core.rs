@@ -1206,6 +1206,7 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::PasteTakes { group } => self.paste_takes(group),
             UiAction::CloseAudioEditor => self.close_audio_editor(),
             UiAction::ClipToSlicer(id) => self.clip_to_slicer(id),
+            UiAction::FlattenComp(group) => self.flatten_comp(group),
             UiAction::DetectTransients { clip, sensitivity } => {
                 self.detect_transients(clip, sensitivity)
             }
