@@ -18,7 +18,9 @@
 //! HAND, HAND or PINCH), the downscaled camera picture shown like a mirror with the landmark dots
 //! and lines on it, and under it the target's name and value while pinched, or a message. The
 //! frames per second and the milliseconds the models took show as its tooltip. The picture lives
-//! in the state only: it is never written anywhere.
+//! in the state only: it is never written anywhere. While both hands are pinched (the two-hand
+//! pad) an X/Y crosshair with a ring as wide as the distance between the hands is drawn over the
+//! picture ([`CameraPreviewState::pad`]).
 //!
 //! While the camera sends MIDI (its MIDI controller mode, or MIDI Learn armed) the box grows by a
 //! panel of six small bars, the live values of the controls: twist, height, left and right,
@@ -130,6 +132,10 @@ pub struct CameraPreviewState {
     pub infer_ms: f32,
     /// The camera's MIDI controls, while it sends MIDI.
     pub controls: Option<CameraControlsState>,
+    /// The two-hand pad while both hands are pinched: the middle of the hands as the preview
+    /// shows it (from the left and from the top, 0 to 1) and the distance between them in frame
+    /// heights. Drawn as a crosshair.
+    pub pad: Option<(f32, f32, f32)>,
 }
 
 /// The chains of landmarks that make the lines of a hand.
@@ -388,6 +394,23 @@ impl CameraPreviewView {
             }
         }
         c.pop_transform();
+        if let Some((px, py, spread)) = self.state.pad {
+            // The crosshair of the two-hand pad: lines through the middle of the hands and a
+            // ring as wide as the distance between them.
+            let at = Point::new(
+                area.x0 + f64::from(px) * area.width(),
+                area.y0 + f64::from(py) * area.height(),
+            );
+            let mut cross = BezPath::new();
+            cross.move_to(Point::new(area.x0, at.y));
+            cross.line_to(Point::new(area.x1, at.y));
+            cross.move_to(Point::new(at.x, area.y0));
+            cross.line_to(Point::new(at.x, area.y1));
+            c.stroke_with(cross, 1.0, t.focus);
+            let radius = (f64::from(spread) * area.height() / 2.0).clamp(3.0, area.width() / 2.0);
+            c.stroke_with(Circle::new(at, radius), 1.6, t.focus);
+            c.fill_with(Circle::new(at, 3.0), t.focus);
+        }
         c.pop_clip();
         // The target while pinched, else the message.
         let text_w = PREVIEW_WIDTH - 2.0 * PAD;

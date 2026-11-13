@@ -368,6 +368,13 @@ fn the_camera_views_in_french() {
             None,
             Some("Click a knob first"),
         ),
+        (
+            "pad",
+            CameraLamp::Pinch,
+            true,
+            Some(("Lead Cutoff", "2.4 kHz")),
+            None,
+        ),
     ];
     for (name, lamp, with_hand, target, message) in previews {
         let (hand, picture) = (hand.clone(), picture());
@@ -377,13 +384,18 @@ fn the_camera_views_in_french() {
             v.set_state(CameraPreviewState {
                 lamp,
                 picture: Some(picture),
-                hands: if with_hand { vec![hand] } else { Vec::new() },
+                hands: match (with_hand, name) {
+                    (_, "pad") => vec![hand.clone(), hand],
+                    (true, _) => vec![hand],
+                    (false, _) => Vec::new(),
+                },
                 target: target.map(|t| t.0.to_owned()),
                 value: target.map(|t| t.1.to_owned()),
                 message: message.map(str::to_owned),
                 fps: 29.6,
                 infer_ms: 21.4,
                 controls: None,
+                pad: (name == "pad").then_some((0.62, 0.4, 0.5)),
             });
             let mut dl = DisplayList::new();
             v.paint(&mut dl, &Theme::dark());
@@ -472,6 +484,7 @@ fn the_camera_midi_views_in_french() {
                     ],
                     learning,
                 }),
+                pad: None,
             });
             let mut dl = DisplayList::new();
             v.paint(&mut dl, &Theme::dark());
