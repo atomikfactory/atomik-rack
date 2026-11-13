@@ -196,6 +196,8 @@ pub(super) fn flatten(doc: &RackDoc) -> Option<RackDoc> {
         delivery: None,
         video: None,
         camera: None,
+        folded_inserts: Vec::new(),
+        spectrum_curves: Vec::new(),
     })
 }
 

@@ -119,6 +119,8 @@ enum WfOp {
     Delivery(u8),
     /// The project's own camera settings: none, or one of three tables.
     Camera(u8),
+    /// The fold state of the insert areas and the Spectrum curves (the first value picks which).
+    MeterView(u8, u8),
     /// The song's video: set, remove, move, trim or relink (the first value picks which).
     Video(u8, u8),
     Take(TakeOp),
@@ -345,6 +347,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0u8..4).prop_map(WfOp::References),
         (0u8..5).prop_map(WfOp::Delivery),
         (0u8..4).prop_map(WfOp::Camera),
+        (0u8..4, 0u8..4).prop_map(|(k, v)| WfOp::MeterView(k, v)),
         (0u8..6, 0u8..4).prop_map(|(k, v)| WfOp::Video(k, v)),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
@@ -964,6 +967,31 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                     ],
                 }),
             })
+        }
+        WfOp::MeterView(kind, v) => {
+            let key = |i: usize| {
+                doc.devices
+                    .get(i % doc.devices.len().max(1))
+                    .map(|d| d.key.clone())
+            };
+            let pick = |n: u8| (0..usize::from(n)).filter_map(key).collect::<Vec<_>>();
+            if *kind % 2 == 0 {
+                Command::SetInsertsFolded(pick(*v))
+            } else {
+                let rows = pick(*v)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, device)| atomik_model::SpectrumCurve {
+                        from: if i % 2 == 0 {
+                            atomik_model::CurveFrom::Reference
+                        } else {
+                            atomik_model::CurveFrom::Strip(device.clone())
+                        },
+                        device,
+                    })
+                    .collect();
+                Command::SetSpectrumCurves(rows)
+            }
         }
         WfOp::Video(kind, v) => {
             let facts = |secs: u64| atomik_model::VideoFacts {

@@ -326,6 +326,8 @@ pub(crate) fn load_rack(
         delivery: None,
         video: None,
         camera: None,
+        folded_inserts: Vec::new(),
+        spectrum_curves: Vec::new(),
     };
     let (v, p) = field("devices");
     let mut first_use: BTreeMap<String, JsonPath> = BTreeMap::new();

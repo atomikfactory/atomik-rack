@@ -91,6 +91,8 @@ mod tests {
             delivery: None,
             video: None,
             camera: None,
+            folded_inserts: Vec::new(),
+            spectrum_curves: Vec::new(),
         }
     }
 

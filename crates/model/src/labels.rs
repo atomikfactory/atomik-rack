@@ -73,6 +73,8 @@ impl Command {
             Command::SetReferences(_) => "Edit Reference Tracks",
             Command::SetDelivery(_) => "Set Delivery Target",
             Command::SetCameraOverride(_) => "Set Camera Settings",
+            Command::SetInsertsFolded(_) => "Fold Inserts",
+            Command::SetSpectrumCurves(_) => "Set Spectrum Curve",
             Command::Video(c) => crate::video::label(c),
             Command::ConvertSampleRate { .. } => "Convert Sample Rate",
             Command::Console(c) => console_label(c),
