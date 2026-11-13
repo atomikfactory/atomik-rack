@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Comp mode in the audio clip editor.** Press COMP for a clip with takes: a comp lane over one lane per take,
+  newest on top. Press on a take to hear it from there, drag a range of it into the comp (one `SetCompRange`, one
+  undo step, with a crossfade at the cuts, 10 ms to start with and settable), Up and Down move the range to the take
+  above or below, and FLATTEN COMP renders the comp to one new audio file and replaces the take group by one clip of
+  it. It is the same comp the arrangement keeps, no second model.
+- **Keep formants.** A Tonal clip has KEEP FORMANTS, a formant SHIFT of 12 semitones either way and STEREO LINK in the
+  Overview toolbar. The spectral envelope of each frame (cepstral liftering) is moved back where it was after the
+  pitch shift, so a transposed chord or a whole clip keeps its formants; the stereo link gives both channels the phase
+  rotation of the mid, so a stretched stereo clip keeps its image. The fields are optional in format 45 (an older
+  version drops them) and off for existing clips, so their renders do not change. The preview of a clip that is
+  still rendering does not have the formant work yet.
+- **A reversed clip can be sliced.** Clip to Loop Slicer and the editor's Slice mode accept a reversed clip: the
+  slices play backwards and the first slice is the last span of the file. Its markers are drawn where the reversed
+  audio plays them; moving them still needs the clip un-reversed.
 - **A meter button on every console strip.** The name plate of a channel, a bus and the master has a small FFT button
   that opens its spectrum panel and closes it again; it is lit while a panel of that strip is open, and a
   right-click offers the spectrum or the phase meter. The strip name keeps the rest of the plate.
