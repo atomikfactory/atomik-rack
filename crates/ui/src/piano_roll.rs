@@ -162,6 +162,8 @@ pub struct NoteTools {
     pub root: u8,
     /// Snap to scale is on.
     pub snap_scale: bool,
+    /// The open clip follows the song key (it did not opt out).
+    pub follow_key: bool,
     /// Note audition is off.
     pub audition_off: bool,
     /// The fold.
@@ -1255,13 +1257,19 @@ impl PianoRollView {
         clip.scale.or_else(|| self.song_scale())
     }
 
+    /// Whether the open clip follows the song key (the default); a clip that opted out is not
+    /// highlighted or snapped by it. `true` without a clip.
+    pub fn clip_follows_key(&self) -> bool {
+        self.clip.as_ref().is_none_or(|c| c.follow_song_key)
+    }
+
     /// The scale of the song key at the open clip's start, which a clip without a scale of its
     /// own follows. `None` without a song key, and in the track controller view.
     pub fn song_scale(&self) -> Option<Scale> {
         if self.track.is_some() {
             return None;
         }
-        let clip = self.clip.as_ref()?;
+        let clip = self.clip.as_ref().filter(|c| c.follow_song_key)?;
         self.harmony.key_at(clip.start).map(SongKey::as_scale)
     }
 
@@ -1357,6 +1365,7 @@ impl PianoRollView {
             scale: self.scale(),
             root: self.scale().map_or(self.root_pref, |s| s.root),
             snap_scale: self.snap_scale,
+            follow_key: self.clip_follows_key(),
             audition_off: !self.audition_notes,
             fold: self.fold,
             stamp: self.stamp,
@@ -3676,6 +3685,17 @@ impl PianoRollView {
             "editor.nudge_right_beat" => self.move_selection(self.meter.beat_ticks(), 0),
             "editor.nudge_left_tick" => self.move_selection(-1, 0),
             "editor.nudge_right_tick" => self.move_selection(1, 0),
+            "editor.follow_song_key" => {
+                let (Some(clip), true) = (self.clip_id, self.track.is_none()) else {
+                    return CommandOutcome::Declined;
+                };
+                CommandOutcome::Handled(vec![UiAction::Command(Command::Song(
+                    SongCommand::SetClipFollowKey {
+                        clip,
+                        follow: !self.clip_follows_key(),
+                    },
+                ))])
+            }
             "editor.scale_snap_toggle" => {
                 self.snap_scale = !self.snap_scale;
                 CommandOutcome::Handled(Vec::new())

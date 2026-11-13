@@ -426,6 +426,7 @@ ToggleLaneMute | Mute Lane
 ToggleLauncher | Launcher
 ToggleMarkerList | Marker List
 ToggleMarkerStrip | Marker Strip
+ToggleMidiChords | Detect Chords from Notes
 TogglePianoKeys | Piano Keys
 TogglePianoRoll | Piano Roll
 TogglePolarity | Toggle Polarity

@@ -660,6 +660,12 @@ const COMMANDS: &[CommandDef] = &[
     ),
     cmd("editor.fold_set", "Set Fold", G::Editor, C::Editor).arg(FOLD_ARGS),
     cmd("editor.fold_toggle", "Fold", G::Editor, C::Editor),
+    cmd(
+        "editor.follow_song_key",
+        "Follow Song Key",
+        G::Editor,
+        C::Editor,
+    ),
     cmd("editor.join_notes", "Join Notes", G::Editor, C::Editor).decline(),
     cmd("editor.legato", "Make Legato", G::Editor, C::Editor)
         .arg(LEGATO_ARGS)
@@ -1017,6 +1023,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "file.import_midi_song",
         "Import MIDI as Song",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.midi_import_chords",
+        "Detect Chords on MIDI Import",
         G::Global,
         C::Global,
     )
