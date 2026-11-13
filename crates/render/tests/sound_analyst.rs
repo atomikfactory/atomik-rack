@@ -298,3 +298,67 @@ fn every_choice_of_the_proposal_is_explained() {
     assert!(text.contains("Envelope"), "{text}");
     assert!(text.contains("Filter"), "{text}");
 }
+
+/// A saw chord of the three keys at once, falling to a tenth in 0.4 s.
+fn saw_chord(keys: &[u8]) -> Vec<f32> {
+    let tau = 0.4 / 10f64.ln();
+    let hz = |key: u8| 440.0 * ((f64::from(key) - 69.0) / 12.0).exp2();
+    let parts: Vec<Vec<f32>> = keys
+        .iter()
+        .map(|k| {
+            tone(
+                hz(*k),
+                (12, false),
+                1.4,
+                |t| (t / 0.002).min(1.0) * (-t / tau).exp(),
+                |_, _| 1.0,
+            )
+        })
+        .collect();
+    (0..parts[0].len())
+        .map(|i| parts.iter().map(|p| p[i]).sum::<f32>() * 0.5)
+        .collect()
+}
+
+#[test]
+fn a_chord_gets_the_poly_synth_playing_every_note_and_renders_as_that_chord() {
+    use atomik_dsp::harmony::detect_sound_chord;
+    use atomik_render::sound_analyst::{fit_chord, patch_json};
+    let x = saw_chord(&[57, 60, 64]);
+    let profile = analyse(&[&x], RATE).unwrap();
+    let chord = detect_sound_chord(&[&x], RATE).expect("a chord");
+    assert_eq!(chord.keys, [57, 60, 64]);
+    let fit = fit_chord(&profile, Some(&chord), &default_registry()).unwrap();
+    assert_eq!(fit.proposal.family, Family::Poly);
+    assert_eq!(fit.proposal.keys(), [57, 60, 64]);
+    assert!(fit.proposal.param("voices").is_some_and(|v| v >= 3.0));
+    let json: serde_json::Value = serde_json::from_str(&patch_json(&fit.proposal)).unwrap();
+    let played: Vec<u64> = json["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["key"].as_u64().unwrap())
+        .collect();
+    assert_eq!(played, [57, 60, 64]);
+    // The render is the same chord.
+    let rendered = measure(&fit.proposal, &default_registry()).unwrap();
+    let planes = render_of(&fit.proposal);
+    let again = detect_sound_chord(&[&planes], 48_000).expect("the render is a chord too");
+    assert_eq!(again.keys, [57, 60, 64]);
+    assert!(rendered.duration_s > 0.2);
+    // One note takes the single-note path as before.
+    let one = propose(&analyse(&[&saw_pluck()], RATE).unwrap());
+    assert_eq!(one.keys(), [one.key]);
+    assert!(one.chord.is_none());
+}
+
+/// The mono samples of the render of `proposal`.
+fn render_of(proposal: &atomik_render::sound_analyst::Proposal) -> Vec<f32> {
+    let r = atomik_render::render_json(
+        &atomik_render::sound_analyst::patch_json(proposal),
+        &default_registry(),
+        std::num::NonZeroUsize::new(512).unwrap(),
+    )
+    .unwrap();
+    r.channels[0].clone()
+}

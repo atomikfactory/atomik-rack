@@ -35,11 +35,18 @@
 //! again (up to [`REFINE_PASSES`] times; the best of the tries is kept). The result is the
 //! proposal, the profile of its render and the [`Distances`] to the target: the match meter.
 //!
+//! A sound that holds several notes at once (a chord: [`atomik_dsp::harmony::detect_sound_chord`])
+//! is proposed on the poly synth whatever its partials say (they do not line up as one pitch's
+//! do): the waveform comes from the profile, the proposal plays every note of the chord together
+//! on as many voices, and the render that is measured plays them too. A single note takes the
+//! path above, unchanged.
+//!
 //! The render is the patch render of the offline renderer, deterministic like a bounce.
 
 use crate::{RenderError, render_json};
 use atomik_device_sdk::Registry;
 use atomik_dsp::exp2_det;
+use atomik_dsp::harmony::SoundChord;
 use atomik_dsp::sound_analysis::{
     Distances, GAP_FRACTION, HarmonicKind, SoundProfile, WINDOW_S, analyse, compare,
 };
@@ -128,8 +135,12 @@ pub struct Proposal {
     pub family: Family,
     /// The param keys and plain values that differ from a new device, in the order they are set.
     pub params: Vec<(String, f32)>,
-    /// The key of the note the patch plays (the nearest key of the fundamental).
+    /// The key of the note the patch plays (the nearest key of the fundamental; the lowest note
+    /// of a chord).
     pub key: u8,
+    /// The chord the patch plays when the sound holds several notes: all its keys sound
+    /// together. `None`: one note, `key`.
+    pub chord: Option<SoundChord>,
     /// How long that note is held, in seconds.
     pub hold_s: f32,
     /// How long the sound lasts, in seconds.
@@ -149,6 +160,14 @@ impl Proposal {
     /// The value set for `key`.
     pub fn param(&self, key: &str) -> Option<f32> {
         self.params.iter().find(|(k, _)| k == key).map(|(_, v)| *v)
+    }
+
+    /// The keys that sound together: the chord's notes, else the one note.
+    pub fn keys(&self) -> Vec<u8> {
+        match &self.chord {
+            Some(c) => c.keys.clone(),
+            None => vec![self.key],
+        }
     }
 
     fn set(&mut self, key: &str, value: f32) {
@@ -304,8 +323,20 @@ fn key_of(profile: &SoundProfile) -> (u8, f32) {
 
 /// The starting patch for `profile` (module docs).
 pub fn propose(profile: &SoundProfile) -> Proposal {
-    let family = family_of(profile);
-    let (key, fine) = key_of(profile);
+    propose_chord(profile, None)
+}
+
+/// The starting patch for `profile`, which holds `chord` when there is one: the poly synth
+/// playing all the notes of the chord (module docs).
+pub fn propose_chord(profile: &SoundProfile, chord: Option<&SoundChord>) -> Proposal {
+    let family = match chord {
+        Some(_) if family_of(profile) != Family::Noise => Family::Poly,
+        _ => family_of(profile),
+    };
+    let (key, fine) = match chord.and_then(|c| c.keys.first()) {
+        Some(low) => (*low, 0.0),
+        None => key_of(profile),
+    };
     let e = &profile.envelope;
     let length_s = profile.duration_s;
     let hold_s = if e.sustain > 0.0 {
@@ -317,11 +348,15 @@ pub fn propose(profile: &SoundProfile) -> Proposal {
         family,
         params: Vec::new(),
         key,
+        chord: chord.cloned(),
         hold_s,
         length_s,
-        cutoff_floor: match (family, profile.pitch) {
-            (Family::Noise, _) => MIN_NOISE_CUTOFF_HZ,
-            (_, Some(pitch)) => (pitch.fundamental_hz * FUNDAMENTAL_CLEARANCE).max(MIN_CUTOFF_HZ),
+        cutoff_floor: match (family, profile.pitch, chord) {
+            (Family::Noise, ..) => MIN_NOISE_CUTOFF_HZ,
+            (_, _, Some(c)) => (key_hz(c.keys[0]) * FUNDAMENTAL_CLEARANCE).max(MIN_CUTOFF_HZ),
+            (_, Some(pitch), None) => {
+                (pitch.fundamental_hz * FUNDAMENTAL_CLEARANCE).max(MIN_CUTOFF_HZ)
+            }
             _ => MIN_CUTOFF_HZ,
         },
         reasons: Vec::new(),
@@ -331,6 +366,11 @@ pub fn propose(profile: &SoundProfile) -> Proposal {
         Family::Fm => fm_patch(&mut p, profile),
     }
     p
+}
+
+/// The frequency of a MIDI key in Hz.
+fn key_hz(key: u8) -> f32 {
+    440.0 * exp2_det((f32::from(key) - 69.0) / 12.0)
 }
 
 /// The envelope reasons shared by every family.
@@ -356,7 +396,9 @@ fn envelope_reason(p: &SoundProfile) -> String {
 fn poly_patch(p: &mut Proposal, profile: &SoundProfile, fine: f32) {
     let noise_voice = p.family == Family::Noise;
     let (a, d, s, r) = amp_envelope(profile);
-    p.set("voices", 2.0);
+    // One voice per note of a chord, and a spare for the tail of the last one.
+    let voices = p.chord.as_ref().map_or(2, |c| c.keys.len() + 1);
+    p.set("voices", voices as f32);
     p.set("velocity.amp", 0.0);
     p.set("osc.mix", 0.0);
     p.set("filter.type", 0.0);
@@ -431,7 +473,10 @@ fn poly_patch(p: &mut Proposal, profile: &SoundProfile, fine: f32) {
         p.reasons
             .push(format!("Filter: steady around {:.0} Hz", b.mean_hz));
     }
-    if let Some(pitch) = profile.pitch.filter(|m| m.start_semitones != 0.0) {
+    if let Some(pitch) = profile
+        .pitch
+        .filter(|m| m.start_semitones != 0.0 && p.chord.is_none())
+    {
         p.set("env.mod.dest", 0.0);
         p.set(
             "env.mod.amount",
@@ -546,11 +591,11 @@ pub fn patch_json(proposal: &Proposal) -> String {
             { "from": "s:out_l", "to": "interface:out_1" },
             { "from": "s:out_r", "to": "interface:out_2" }
         ],
-        "notes": [ {
+        "notes": proposal.keys().iter().map(|key| json!({
             "device": "s", "socket": "notes_in", "at_beats": 0.0,
             "length_beats": f64::from(proposal.hold_s) * BEATS_PER_SECOND,
-            "key": proposal.key, "velocity": 1.0
-        } ]
+            "key": key, "velocity": 1.0
+        })).collect::<Vec<_>>()
     })
     .to_string()
 }
@@ -574,7 +619,21 @@ pub fn measure(proposal: &Proposal, registry: &Registry) -> Result<SoundProfile,
 /// # Errors
 /// The render fails or holds no sound.
 pub fn fit(target: &SoundProfile, registry: &Registry) -> Result<Fit, SoundError> {
-    let mut proposal = propose(target);
+    fit_chord(target, None, registry)
+}
+
+/// The proposal for `target`, which holds `chord` when there is one, rendered with all the notes
+/// of the chord, compared and corrected like [`fit`]. A chord has no single pitch, so the
+/// distances of a chord leave the pitch curve out when `target` has none.
+///
+/// # Errors
+/// The render fails or holds no sound.
+pub fn fit_chord(
+    target: &SoundProfile,
+    chord: Option<&SoundChord>,
+    registry: &Registry,
+) -> Result<Fit, SoundError> {
+    let mut proposal = propose_chord(target, chord);
     let mut rendered = measure(&proposal, registry)?;
     let mut best = Fit {
         distances: compare(target, &rendered),

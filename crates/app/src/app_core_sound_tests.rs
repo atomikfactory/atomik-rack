@@ -290,6 +290,84 @@ fn make_patch_is_refused_while_a_job_runs() {
     assert_eq!(*c.doc(), before);
 }
 
+/// A saw chord (A minor, A3 C4 E4) that falls to a tenth in 0.4 s.
+fn chord_pluck() -> Vec<f32> {
+    let tau = 0.4 / 10f64.ln();
+    let hz = |key: f64| 440.0 * ((key - 69.0) / 12.0).exp2();
+    (0..(1.4 * f64::from(RATE)) as usize)
+        .map(|i| {
+            let t = i as f64 / f64::from(RATE);
+            let sum: f64 = [57.0, 60.0, 64.0]
+                .iter()
+                .map(|key| {
+                    (1..=12)
+                        .map(|k| (TAU * hz(*key) * k as f64 * t).sin() / k as f64)
+                        .sum::<f64>()
+                })
+                .sum();
+            (0.2 * (t / 0.002).min(1.0) * (-t / tau).exp() * sum) as f32
+        })
+        .collect()
+}
+
+#[test]
+fn a_chord_is_reported_with_its_name_and_notes_and_the_patch_plays_them_all() {
+    let tmp = Tmp::new();
+    let mut c = core();
+    analysed(&mut c, &tmp.file("chord.wav", chord_pluck()));
+    let a = c.sound_analysis().expect("analysed");
+    let chord = a.chord.as_ref().expect("a chord was found");
+    assert_eq!(chord.keys, [57, 60, 64]);
+    assert_eq!(
+        (chord.root, chord.quality),
+        (9, atomik_model::theory::ChordKind::Minor)
+    );
+    assert!(a.profile.pitch.is_none(), "a chord has no single pitch");
+    let data = c.sound_data();
+    assert_eq!(data.numbers.len(), 4, "{:?}", data.numbers);
+    assert_eq!(data.numbers[2], "Chord: Am (A3, C4, E4)");
+    assert!(data.pitch.is_none(), "no pitch curve for a chord");
+    assert!(data.matched.as_ref().unwrap().pitch.is_none());
+    assert!(
+        c.last_rejection()
+            .is_some_and(|m| m.contains("a chord, Chord: Am")),
+        "{:?}",
+        c.last_rejection()
+    );
+    // The patch plays the three notes together, on enough voices.
+    let before = c.doc().clone();
+    c.make_sound_patch().unwrap();
+    let device = c.sound_patch_device().cloned().unwrap();
+    let doc = c.doc();
+    let d = doc.device(&device).unwrap();
+    assert_eq!(d.type_id, "atomik.poly-synth");
+    assert!(d.params.get("voices").is_some_and(|v| *v >= 3.0));
+    let ClipContent::Notes(notes) = &doc.song.track(&device).unwrap().lanes[0].clips[0].content
+    else {
+        panic!("a note clip");
+    };
+    let played: Vec<(i64, u8)> = notes.iter().map(|n| (n.tick, n.key)).collect();
+    assert_eq!(played, [(0, 57), (0, 60), (0, 64)]);
+    assert!(c.undo());
+    assert_eq!(*c.doc(), before, "one undo step");
+    // The match of the made patch renders the same notes.
+    c.redo();
+    c.start_sound_match().expect("starts");
+    c.wait_background();
+    let m = c.sound_data().matched.unwrap();
+    assert!(m.of.starts_with("Patch on"), "{}", m.of);
+    assert!(m.level.value < 6.0, "{m:?}");
+}
+
+#[test]
+fn a_single_note_is_not_taken_for_a_chord() {
+    let tmp = Tmp::new();
+    let mut c = core();
+    analysed(&mut c, &tmp.file("pluck.wav", pluck()));
+    assert!(c.sound_analysis().unwrap().chord.is_none());
+    assert!(c.sound_data().numbers[2].starts_with("Pitch:"));
+}
+
 #[test]
 fn the_note_names_follow_the_midi_keys() {
     assert_eq!(sound::note_name(57.0), "A3");
