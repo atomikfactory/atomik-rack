@@ -14,6 +14,7 @@ pub mod audio_trim;
 mod audition;
 pub mod automation_rec;
 mod automation_view;
+mod camera_override;
 mod camera_source;
 mod chord_fit;
 pub mod chord_symbol;
@@ -133,9 +134,14 @@ pub mod console;
 pub mod song;
 
 pub use audio_join::{JoinRender, join_render};
+pub use camera_override::{
+    CAMERA_MODES, CameraOverride, GestureHand, GestureRow, MAX_COMMAND_CHARS, MAX_GESTURE_ROWS,
+};
 pub use camera_source::{
-    CAMERA_PORT, CLOSENESS_CC, CameraControl, CameraHand, HEIGHT_CC, LEFT_HAND_CHANNEL,
-    OPEN_PALM_NOTE, PINCH_NOTE, RIGHT_HAND_CHANNEL, SIDE_CC, TWIST_CC,
+    BOTH_HANDS_CHANNEL, CAMERA_PORT, CLOSENESS_CC, CameraControl, CameraGesture, CameraHand,
+    FIST_NOTE, HEIGHT_CC, LEFT_HAND_CHANNEL, OPEN_PALM_NOTE, PAD_SPREAD_CC, PAD_X_CC, PAD_Y_CC,
+    PEACE_NOTE, PINCH_NOTE, POINT_NOTE, RIGHT_HAND_CHANNEL, SIDE_CC, SWIPE_LEFT_NOTE,
+    SWIPE_RIGHT_NOTE, THUMBS_UP_NOTE, TWIST_CC,
 };
 pub use clip_transform::{SCALE_PERCENT_MAX, SCALE_PERCENT_MIN};
 pub use container::{
@@ -490,6 +496,9 @@ pub struct RackDoc {
     /// The film of the song, linked by path (see [`crate::video`]); `None` for a new project.
     /// Project data with no part in the sound.
     pub video: Option<VideoClip>,
+    /// The project's own camera settings (see [`crate::camera_override`]); `None` for a new
+    /// project, which then uses the user's settings. Project data with no part in the sound.
+    pub camera: Option<CameraOverride>,
 }
 
 /// An edit. Every command is undoable.
@@ -668,6 +677,10 @@ pub enum Command {
     /// target equal to the current one is rejected. Reports [`SyncOp::ViewChanged`]. Also accepted
     /// by [`Command::Batch`], so a limiter's ceiling and the target are one step.
     SetDelivery(Option<Delivery>),
+    /// Sets or clears the project's own camera settings (see [`CameraOverride`]), one undo step;
+    /// rejected when they are out of limits or already that. Reports [`SyncOp::ViewChanged`]. Not
+    /// accepted by [`Command::Batch`].
+    SetCameraOverride(Option<CameraOverride>),
     /// Edits the song's video (see [`VideoCommand`]), one undo step; a command that changes
     /// nothing is rejected. Reports [`SyncOp::ViewChanged`]. Not accepted by [`Command::Batch`].
     Video(VideoCommand),
@@ -912,6 +925,7 @@ pub enum Command {
 /// | `SetSongInfo` (also undo/redo) | `ViewChanged` |
 /// | `SetReferences` (also undo/redo) | `ViewChanged` |
 /// | `SetDelivery` (also undo/redo, also in a `Batch`) | `ViewChanged` |
+/// | `SetCameraOverride` (also undo/redo) | `ViewChanged` |
 /// | `Video` (also undo/redo) | `ViewChanged`, and `SongChanged` when it also moves or trims the audio clip kept with the film |
 /// | `SetMasterTune` (also undo/redo) | `TuneChanged` |
 /// | `ConvertSampleRate` | `RoutingChanged`, `SongChanged`, then `ZonesChanged` per device with zones |
@@ -2423,6 +2437,7 @@ impl Document {
             Command::SetRackSort(mode) => rack_groups::plan_set(doc, registry, mode)?,
             Command::SetReferences(list) => references::plan_set(doc, &list)?,
             Command::SetDelivery(target) => delivery::plan_set(doc, &target)?,
+            Command::SetCameraOverride(camera) => camera_override::plan_set(doc, &camera)?,
             Command::Video(c) => video::plan(doc, registry, &c)?,
             Command::ConvertSampleRate { rate, assets } => rate_convert::plan(doc, rate, &assets)?,
             Command::SetTempo(bpm) => {
@@ -2614,6 +2629,7 @@ pub fn empty_doc() -> RackDoc {
         references: Vec::new(),
         delivery: None,
         video: None,
+        camera: None,
     }
 }
 

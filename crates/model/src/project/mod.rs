@@ -35,6 +35,8 @@
 //!   "video"?: { "path", "start_us", "in_us", "out_us", "duration_us", "fps_num", "fps_den",
 //!               "width", "height", "timecode"?, "audio"?,
 //!               "audio_link"?: { "clip", "lead_us", "keep" } }  (v44, ignorable; written only when set),
+//!   "camera"?: { "mode", "gestures": [{ "gesture", "hand", "command" }, ...] }
+//!                                                               (v45, ignorable; written only when set),
 //!   "assets": { "<64 hex digits>": { "channels", "sample_rate", "frames", "name" }… },
 //!                                                               (v3; optional, default {})
 //!   "song": { "tempo": [{"tick", "bpm", "ramp"? (v13; written only when true)}…],
@@ -773,6 +775,12 @@ fn load_value(
     }
     if let Some(film) = obj.get("video") {
         doc.video = Some(crate::video::load_video(film, &root.field("video"))?);
+    }
+    if let Some(camera) = obj.get("camera") {
+        doc.camera = Some(crate::camera_override::load_camera(
+            camera,
+            &root.field("camera"),
+        )?);
     }
     check_frozen_tracks(&doc, registry, &root.field("song").field("tracks"))?;
     Ok(doc)

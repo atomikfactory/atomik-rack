@@ -511,6 +511,7 @@ impl RackDoc {
             references: self.references.clone(),
             delivery: self.delivery.clone(),
             video: self.video.clone(),
+            camera: self.camera.clone(),
         })
     }
 
