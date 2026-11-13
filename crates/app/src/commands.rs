@@ -34,6 +34,9 @@ pub enum AppCommand {
     /// File ▸ MIDI Export Resolution: the ticks per quarter note of the MIDI files written from
     /// now on (kept in the preferences).
     SetMidiResolution(MidiResolution),
+    /// File ▸ Import ▸ Detect Chords from Notes: whether Import MIDI as Song writes the chords
+    /// of the notes to the chord lane when the file names none.
+    ToggleMidiChords,
     /// Audio ▸ Input Channels: the host inputs the project asks for (0 to 32).
     InputChannels(u16),
     /// Audio ▸ Output Channels: the host outputs the project asks for (1 to 32).
@@ -891,6 +894,7 @@ impl AppCommand {
             AppCommand::NewAtRate(r) => ("file.new_rate", Some(arg_of(RATE_ARGS, *r)?)),
             AppCommand::ConvertRate(r) => ("file.convert_rate", Some(arg_of(RATE_ARGS, *r)?)),
             AppCommand::SetMidiResolution(r) => ("file.midi_resolution", Some(r.id())),
+            AppCommand::ToggleMidiChords => ("file.midi_import_chords", None),
             AppCommand::InputChannels(n) => (
                 "audio.input_channels",
                 Some(arg_of(INPUT_CHANNEL_ARGS, *n)?),
@@ -1302,6 +1306,7 @@ impl AppCommand {
             ("file.new", None) => AppCommand::New,
             ("file.new_rate", Some(a)) => AppCommand::NewAtRate(num_arg(RATE_ARGS, a)?),
             ("file.convert_rate", Some(a)) => AppCommand::ConvertRate(num_arg(RATE_ARGS, a)?),
+            ("file.midi_import_chords", None) => AppCommand::ToggleMidiChords,
             ("file.midi_resolution", Some(a)) => {
                 AppCommand::SetMidiResolution(MidiResolution::from_id(a)?)
             }
@@ -2259,6 +2264,8 @@ pub struct MenuState {
     pub sample_rate: u32,
     /// The resolution of the MIDI files File > Export MIDI writes.
     pub midi_resolution: MidiResolution,
+    /// Import MIDI as Song detects the chords of the notes.
+    pub midi_chords: bool,
     /// The host inputs the project asks for.
     pub input_channels: u16,
     /// The host outputs the project asks for.
@@ -2955,6 +2962,11 @@ fn menus_in_english(
                         item("Import Audio\u{2026}", AppCommand::ImportAudio),
                         item("Import MIDI\u{2026}", AppCommand::ImportMidi),
                         item("Import MIDI as Song\u{2026}", AppCommand::ImportMidiSong),
+                        check(
+                            "Detect Chords from Notes",
+                            AppCommand::ToggleMidiChords,
+                            state.midi_chords,
+                        ),
                     ],
                 }),
                 MenuEntry::Submenu(Submenu {
@@ -4716,6 +4728,7 @@ mod tests {
             follow_clock: false,
             sample_rate: 48_000,
             midi_resolution: MidiResolution::Native,
+            midi_chords: false,
             input_channels: 2,
             output_channels: 2,
             quantize: InputQuantize::OFF,
@@ -5089,6 +5102,7 @@ mod tests {
         for r in MidiResolution::ALL {
             v.push(AppCommand::SetMidiResolution(r));
         }
+        v.push(AppCommand::ToggleMidiChords);
         for n in [0, 1, 2, 4, 8, 16, 32] {
             v.push(AppCommand::InputChannels(n));
         }
@@ -5825,6 +5839,7 @@ mod tests {
             follow_clock: false,
             sample_rate: 48_000,
             midi_resolution: MidiResolution::Native,
+            midi_chords: false,
             input_channels: 2,
             output_channels: 2,
             ..state()
@@ -5881,6 +5896,7 @@ mod tests {
                 follow_clock: false,
                 sample_rate: 48_000,
                 midi_resolution: MidiResolution::Native,
+                midi_chords: false,
                 input_channels: 2,
                 output_channels: 2,
                 quantize: InputQuantize::EIGHTH,
