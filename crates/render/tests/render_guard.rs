@@ -40,6 +40,7 @@ fn project() -> atomik_model::RackDoc {
                 param_lanes: Vec::new(),
                 midi: Default::default(),
                 groove: None,
+                follow_song_key: true,
                 controllers: Vec::new(),
                 name: None,
                 color: None,

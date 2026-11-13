@@ -365,11 +365,16 @@ fn the_chordify_key_builds_the_stamp_chord_on_the_selection() {
 }
 
 fn golden(name: &str, menu: &atomik_ui::context_menu::ContextMenu) {
+    golden_in("tests/golden", name, menu);
+}
+
+/// The golden of `menu` under `dir` (the French ones are in `tests/golden/fr`).
+fn golden_in(dir: &str, name: &str, menu: &atomik_ui::context_menu::ContextMenu) {
     let mut list = atomik_ui::DisplayList::new();
     menu.paint(&mut list, &atomik_ui::Theme::dark());
     let actual = list.to_json();
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
+        .join(dir)
         .join(format!("{name}_1x.json"));
     if std::env::var_os("ATOMIK_UPDATE_GOLDEN").is_some_and(|v| v == "1") {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -405,6 +410,31 @@ fn the_notes_menu_with_the_scale_submenus_open_matches_golden() {
         ["Scale", "Scale Type"]
     );
     golden("piano_roll_context_menu_scale", s.context_menu().unwrap());
+}
+
+#[test]
+fn the_scale_menu_has_a_follow_song_key_check_in_english_and_french() {
+    for (lang, dir) in [
+        (atomik_ui::Lang::English, "tests/golden"),
+        (atomik_ui::Lang::French, "tests/golden/fr"),
+    ] {
+        atomik_ui::i18n::with_language(lang, || {
+            let (mut s, _) = roll_shell(None);
+            let spot = empty_spot(&s);
+            mouse(&mut s, spot, PointerButton::Secondary);
+            let menu = s.context_menu().unwrap();
+            let at = menu
+                .submenu_center("Scale")
+                .or_else(|| menu.submenu_center("Gamme"))
+                .unwrap();
+            hover(&mut s, at);
+            golden_in(
+                dir,
+                "piano_roll_context_menu_follow_key",
+                s.context_menu().unwrap(),
+            );
+        });
+    }
 }
 
 #[test]

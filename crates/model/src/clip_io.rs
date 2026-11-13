@@ -195,6 +195,7 @@ fn load_clip_body(v: &Value, path: &JsonPath) -> Result<Clip, ModelError> {
         param_lanes: Vec::new(),
         midi: Default::default(),
         groove: None,
+        follow_song_key: true,
         controllers: match obj.get("controllers") {
             Some(c) => load_controllers(c, &path.field("controllers"))?,
             None => Vec::new(),
@@ -223,6 +224,7 @@ mod tests {
             param_lanes: Vec::new(),
             midi: Default::default(),
             groove: None,
+            follow_song_key: true,
             controllers: Vec::new(),
             name: None,
             color: None,

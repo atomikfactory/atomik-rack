@@ -31,8 +31,10 @@
     "song.launcher.stop_empty": 45,
     "song.tracks[].lanes[].clips[].audio.pitch_edits": 45,
     "song.tracks[].lanes[].clips[].expression": 45,
+    "song.tracks[].lanes[].clips[].follow_song_key": 45,
     "song.tracks[].lanes[].take_groups[].takes[].audio.pitch_edits": 45,
-    "song.tracks[].lanes[].take_groups[].takes[].expression": 45
+    "song.tracks[].lanes[].take_groups[].takes[].expression": 45,
+    "song.tracks[].lanes[].take_groups[].takes[].follow_song_key": 45
   },
   "sample_rate": 48000,
   "tempo_bpm": 120,

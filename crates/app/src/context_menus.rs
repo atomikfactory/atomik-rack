@@ -1265,6 +1265,13 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                         Spec::submenu("Root", root_items(t)),
                         Spec::submenu("Scale Type", scale_items(t)),
                         item("editor.detect_scale", true),
+                        Spec::Item {
+                            command: "editor.follow_song_key",
+                            arg: None,
+                            label: None,
+                            enabled: true,
+                            checked: Some(t.follow_key),
+                        },
                         Spec::Separator,
                         Spec::Item {
                             command: "editor.scale_snap_toggle",
@@ -2322,6 +2329,7 @@ mod tests {
         let registry = atomik_ui::keymap::Registry::bundled();
         let t = NoteTools {
             snap_scale: true,
+            follow_key: true,
             fold: Fold::Scale,
             stamp: Stamp::Diatonic(DiatonicSize::Seventh),
             inversion: 1,
@@ -2451,6 +2459,7 @@ mod tests {
             stamp: Stamp::Chord(ChordKind::MajorSeventh),
             fold: Fold::Used,
             snap_scale: true,
+            follow_key: true,
             ..tools(Some(Scale::new(7, ScaleKind::Blues)))
         };
         let e = MenuEnable {

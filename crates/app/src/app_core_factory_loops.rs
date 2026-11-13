@@ -333,6 +333,7 @@ pub(in crate::app_core) fn render_loop(def: &LoopDef) -> Vec<Vec<f32>> {
             param_lanes: Vec::new(),
             midi: Default::default(),
             groove: None,
+            follow_song_key: true,
             controllers: Vec::new(),
             name: None,
             color: None,

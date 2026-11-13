@@ -856,6 +856,7 @@ fn automate_adds_a_lane_for_the_param_on_the_track_of_the_selected_clip() {
                 param_lanes: Vec::new(),
                 midi: Default::default(),
                 groove: None,
+                follow_song_key: true,
                 controllers: Vec::new(),
                 name: None,
                 color: None,

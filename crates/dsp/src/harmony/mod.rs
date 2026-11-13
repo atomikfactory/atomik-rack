@@ -36,12 +36,14 @@
 
 pub mod chords;
 pub mod poly;
+pub mod sound;
 
 pub use chords::{
     BeatChroma, ChordGuess, ChordOptions, ChordSpan, detect_chords, key_profile, pool_frames,
     recognise_chords,
 };
 pub use poly::{PolyParams, extract_poly_notes};
+pub use sound::{SoundChord, detect_sound_chord};
 
 use crate::det_math::{exp2_det, log2_det};
 use crate::det_trig::{cos_cycles, sin_cycles};

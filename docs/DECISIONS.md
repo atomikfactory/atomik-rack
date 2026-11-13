@@ -886,3 +886,29 @@ without the user touching anything: a wave at a friend, a stretch or a stopped h
 the user opts in, and sees what they chose.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AI. A clip that opts out of the song key: editor only, and a chord in Sound Match on the poly synth
+
+**Question.** A note clip follows the song key unless it has a scale of its own. Should a clip be able to opt out of the
+key without having a scale, and should the devices that follow the song key (Key and Chord, the CV Quantizer) skip its
+notes too? And when a sound held to be matched is a chord, which synth plays it and how is the match measured?
+
+**Options.** Opt-out: (1) editor only (no highlight and no snap from the key); (2) editor and devices, by tagging each
+note event with the clip it came from. Chord in Sound Match: (1) keep one pitch and ignore the other notes; (2) the poly
+synth plays every note, with the chord named; (3) the FM synth.
+
+**Implications.** The engine hands a device bare note events (a frame offset, a key, a velocity): a note carries no clip
+of origin, and adding one touches every event the devices copy on the audio thread, for one flag. A device reads the song
+key at the frame it sits at, not for a clip. A chord has no single pitch and its partials do not line up as one note's do,
+so the single-pitch curve and the harmonic kind mean nothing for it; the level and brightness curves still do.
+
+**Decision.** Opt-out (1): the toggle `Follow song key` (the Scale menu of the piano roll) is a clip field written only
+when off (ignorable, so the format stays 45), and it is limited to the editor: the clip is not highlighted or snapped by
+the song key, and the devices keep following the song key for its notes. The document says so. Chord (2): the sound is
+read with the multi-pitch analysis of the chord detection, a key counts as a note when it is in most of the loud frames
+and at least a third as strong as the strongest, and fewer than two pitch classes is one note, which takes the single-note
+path exactly as before. The poly synth plays all the notes on as many voices; the waveform and the envelopes come from the
+profile as for one note; the pitch curve is left out of the match; the numbers show the chord and its notes in place of
+the pitch.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

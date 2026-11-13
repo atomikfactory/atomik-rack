@@ -88,6 +88,7 @@ fn add_clip(c: &mut AppCore<RecordingSink>, k: &str, start: i64, notes: Vec<Note
         param_lanes: Vec::new(),
         midi: Default::default(),
         groove: None,
+        follow_song_key: true,
         controllers: vec![ControllerLane::new(
             ControllerKind::Cc(1),
             vec![point(0, vel(64)), point(PPQ, 1.0)],
@@ -467,6 +468,7 @@ fn an_exported_track_merges_its_note_lanes_and_skips_a_muted_one() {
         param_lanes: Vec::new(),
         midi: Default::default(),
         groove: None,
+        follow_song_key: true,
         controllers: Vec::new(),
         name: None,
         color: None,
@@ -988,4 +990,107 @@ fn a_midi_import_detects_chords_from_the_notes_when_asked() {
     assert_eq!(roots, [(0, ChordKind::Major), (9, ChordKind::Minor)]);
     c.undo();
     assert!(c.doc().song.harmony.chords.is_empty(), "one undo step");
+}
+
+/// A type 0 file at 480 ticks per quarter holding a bar each of C, G, Am and F as block chords.
+fn progression_file() -> SmfFile {
+    let ev = |tick: u64, message: SmfMessage| SmfEvent { tick, message };
+    let mut events = Vec::new();
+    for (bar, keys) in [[48u8, 52, 55], [43, 47, 50], [45, 48, 52], [41, 45, 48]]
+        .iter()
+        .enumerate()
+    {
+        for k in keys {
+            let t = bar as u64 * 1920;
+            events.push(ev(
+                t,
+                SmfMessage::NoteOn {
+                    channel: 0,
+                    key: *k,
+                    velocity: 100,
+                },
+            ));
+            events.push(ev(
+                t + 1920,
+                SmfMessage::NoteOff {
+                    channel: 0,
+                    key: *k,
+                    velocity: 0,
+                },
+            ));
+        }
+    }
+    events.sort_by_key(|e| e.tick);
+    SmfFile {
+        format: 0,
+        ppq: 480,
+        tracks: vec![SmfTrack {
+            events,
+            end_tick: 7680,
+        }],
+    }
+}
+
+#[test]
+fn detecting_chords_writes_a_four_chord_progression_in_one_undo_step() {
+    let tmp = Tmp::new("progression");
+    std::fs::write(tmp.path("pop.mid"), progression_file().to_bytes()).unwrap();
+    let mut c = core();
+    c.set_midi_chords_from_notes(true);
+    c.import_midi(&tmp.path("pop.mid"), true);
+    let found: Vec<(u8, ChordKind, i64, i64)> = c
+        .doc()
+        .song
+        .harmony
+        .chords
+        .iter()
+        .map(|ch| (ch.root, ch.quality, ch.tick, ch.end()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (0, ChordKind::Major, 0, BAR),
+            (7, ChordKind::Major, BAR, 2 * BAR),
+            (9, ChordKind::Minor, 2 * BAR, 3 * BAR),
+            (5, ChordKind::Major, 3 * BAR, 4 * BAR),
+        ]
+    );
+    c.undo();
+    assert!(c.doc().song.harmony.chords.is_empty(), "one undo step");
+    assert!(c.doc().song.tracks.is_empty());
+}
+
+#[test]
+fn chord_symbols_in_the_file_win_over_detection() {
+    let tmp = Tmp::new("symbols-win");
+    // The notes say C then Am; the symbols say Dm7 then G.
+    let mut file = chord_file();
+    file.tracks[0].events.retain(|e| {
+        !matches!(
+            e.message,
+            SmfMessage::Text(_) | SmfMessage::Lyric(_) | SmfMessage::Marker(_)
+        )
+    });
+    file.tracks[0].events.push(SmfEvent {
+        tick: 0,
+        message: SmfMessage::Text("Dm7".into()),
+    });
+    file.tracks[0].events.push(SmfEvent {
+        tick: 1920,
+        message: SmfMessage::Marker("G".into()),
+    });
+    file.tracks[0].events.sort_by_key(|e| e.tick);
+    std::fs::write(tmp.path("symbols.mid"), file.to_bytes()).unwrap();
+    let mut c = core();
+    c.set_midi_chords_from_notes(true);
+    c.import_midi(&tmp.path("symbols.mid"), true);
+    let chords: Vec<String> = c
+        .doc()
+        .song
+        .harmony
+        .chords
+        .iter()
+        .map(|ch| ch.symbol())
+        .collect();
+    assert_eq!(chords, ["Dm7", "G"]);
 }

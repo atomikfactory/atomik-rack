@@ -281,6 +281,7 @@ fn project(root: &Path, position: f32, with_sample: bool) -> RackDoc {
             param_lanes: Vec::new(),
             midi: Default::default(),
             groove: None,
+            follow_song_key: true,
             controllers: Vec::new(),
             name: None,
             color: None,

@@ -297,6 +297,7 @@ fn unrolled(
         param_lanes,
         midi: std::sync::Arc::new(midi),
         groove: None,
+        follow_song_key: true,
         ..(*c).clone()
     };
     check_geometry(clip.start, clip.length, 0, None).map_err(range)?;

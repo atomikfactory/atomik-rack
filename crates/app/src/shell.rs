@@ -4565,6 +4565,7 @@ impl<B: AudioBackend> Shell<B> {
             follow_clock: self.core.sink().settings().sync.follow_clock,
             sample_rate: self.core.doc().sample_rate,
             midi_resolution: self.core.midi_resolution(),
+            midi_chords: self.core.midi_chords_from_notes(),
             input_channels: self.core.doc().input_channels,
             output_channels: self.core.doc().output_channels,
             quantize: self.core.input_quantize(),
@@ -8663,6 +8664,11 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::ConvertRate(rate) => {
                 self.core.convert_sample_rate(rate);
+                Vec::new()
+            }
+            AppCommand::ToggleMidiChords => {
+                let on = !self.core.midi_chords_from_notes();
+                self.core.set_midi_chords_from_notes(on);
                 Vec::new()
             }
             AppCommand::SetMidiResolution(resolution) => {

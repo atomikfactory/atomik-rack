@@ -278,6 +278,7 @@ fn shell_with_group(s: &mut Shell<NullBackend>) {
         param_lanes: Vec::new(),
         midi: Default::default(),
         groove: None,
+        follow_song_key: true,
         controllers: Vec::new(),
         name: None,
         color: None,
@@ -380,4 +381,35 @@ fn the_export_resolution_is_a_checked_submenu_that_changes_the_files_written() {
         assert_eq!(AppCommand::from_command(id, arg), Some(c));
     }
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn detect_chords_from_notes_is_a_check_in_the_import_menu_that_the_import_follows() {
+    let mut s = shell();
+    let entry = |s: &Shell<NullBackend>| {
+        s.menu_model()
+            .into_iter()
+            .find_map(|m| crate::commands::find_submenu(&m.entries, "Import").cloned())
+            .expect("File > Import")
+            .entries
+            .into_iter()
+            .find_map(|e| match e {
+                MenuEntry::Item(i) if i.label == "Detect Chords from Notes" => Some(i),
+                _ => None,
+            })
+            .expect("File > Import > Detect Chords from Notes")
+    };
+    assert_eq!(entry(&s).checked, Some(false), "off by default");
+    assert!(!s.core().midi_chords_from_notes());
+    s.execute(AppCommand::ToggleMidiChords);
+    assert_eq!(entry(&s).checked, Some(true));
+    assert!(s.core().midi_chords_from_notes());
+    s.execute(AppCommand::ToggleMidiChords);
+    assert_eq!(entry(&s).checked, Some(false));
+    // The command round-trips through its id.
+    let (id, arg) = AppCommand::ToggleMidiChords.command_id().unwrap();
+    assert_eq!(
+        AppCommand::from_command(id, arg),
+        Some(AppCommand::ToggleMidiChords)
+    );
 }

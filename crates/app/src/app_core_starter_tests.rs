@@ -315,6 +315,7 @@ fn lead_with_a_clip<S: EngineSink>(c: &mut AppCore<S>) {
             param_lanes: Vec::new(),
             midi: Default::default(),
             groove: None,
+            follow_song_key: true,
             controllers: Vec::new(),
             name: None,
             color: None,

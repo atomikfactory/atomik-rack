@@ -11,8 +11,9 @@
 
 use crate::audio_import::Msg;
 use atomik_audio_file::decode_file_with;
-use atomik_dsp::sound_analysis::{Distances, SoundProfile, analyse};
-use atomik_render::sound_analyst::{Fit, Proposal, fit, measure};
+use atomik_dsp::harmony::{SoundChord, detect_sound_chord};
+use atomik_dsp::sound_analysis::{Distances, HarmonicKind, SoundProfile, analyse};
+use atomik_render::sound_analyst::{Fit, Proposal, fit_chord, measure};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -39,8 +40,12 @@ pub(crate) enum Work {
 pub struct Analysed {
     /// The name of the file.
     pub name: String,
-    /// What was measured.
+    /// What was measured. A sound that holds a chord has no single pitch: its pitch is `None`
+    /// and its pitch curve is flat.
     pub profile: SoundProfile,
+    /// The notes and the name of the chord the sound holds; `None` for a single note (or no
+    /// pitch), which takes the single-note path.
+    pub chord: Option<SoundChord>,
     /// The proposed patch, its render and the distances.
     pub fit: Fit,
 }
@@ -75,16 +80,29 @@ fn run(work: Work, cancel: &AtomicBool, progress: &dyn Fn(f32)) -> Result<Option
             }
             let audio = decoded.audio;
             let planes: Vec<&[f32]> = audio.channels.iter().map(Vec::as_slice).collect();
-            let profile = analyse(&planes, audio.sample_rate).map_err(|e| e.to_string())?;
+            let mut profile = analyse(&planes, audio.sample_rate).map_err(|e| e.to_string())?;
+            progress(0.4);
+            if cancel.load(Ordering::Relaxed) {
+                return Ok(None);
+            }
+            // Several notes at once: the chord and its notes (a noise sound has none).
+            let chord = (profile.harmonics.kind != HarmonicKind::Noise)
+                .then(|| detect_sound_chord(&planes, audio.sample_rate))
+                .flatten();
+            if chord.is_some() {
+                profile.pitch = None;
+                profile.pitch_hz.fill(0.0);
+            }
             progress(0.5);
             if cancel.load(Ordering::Relaxed) {
                 return Ok(None);
             }
-            let fit = fit(&profile, &registry).map_err(|e| e.to_string())?;
+            let fit = fit_chord(&profile, chord.as_ref(), &registry).map_err(|e| e.to_string())?;
             progress(1.0);
             Ok(Some(Outcome::Analysed(Box::new(Analysed {
                 name,
                 profile,
+                chord,
                 fit,
             }))))
         }
