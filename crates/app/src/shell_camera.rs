@@ -9,7 +9,7 @@
 //! handed over in memory and are never written anywhere.
 
 use super::*;
-use atomik_ui::{CAMERA_PREVIEW_HEIGHT, CAMERA_PREVIEW_WIDTH, CameraDialogView, CameraPreviewView};
+use atomik_ui::{CAMERA_PREVIEW_WIDTH, CameraDialogView, CameraPreviewView};
 
 /// The gap between the preview box and the window edge, and above the status line.
 const MARGIN: f64 = 14.0;
@@ -59,13 +59,14 @@ impl<B: AudioBackend> Shell<B> {
             }
         }
         if self.camera_preview_visible() {
+            let state = self.core.camera_preview_state();
             let origin = Point::new(
                 (size.width - CAMERA_PREVIEW_WIDTH - MARGIN).max(0.0),
-                (size.height - STATUS_BAR_HEIGHT - CAMERA_PREVIEW_HEIGHT - MARGIN).max(0.0),
+                (size.height - STATUS_BAR_HEIGHT - CameraPreviewView::height_for(&state) - MARGIN)
+                    .max(0.0),
             );
             self.camera_preview.set_origin(origin);
-            self.camera_preview
-                .set_state(self.core.camera_preview_state());
+            self.camera_preview.set_state(state);
             if self.camera_preview.needs_repaint() {
                 self.repaint = true;
             }

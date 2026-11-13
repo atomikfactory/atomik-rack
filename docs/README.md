@@ -261,6 +261,39 @@ it is view state (never saved with a project) and deleting its device clears it.
   and a far hand all the way. A stepped control moves one step for each step width of twist, and a step is only taken
   back after a whole step width the other way, so a trembling hand does not make it flicker. With no target a pinch
   says "Click a knob first".
+- **The camera as a MIDI controller.** Settings > Camera > **Mode** picks what the hands do: **Turn clicked knob** (the
+  default, above), **MIDI controller** or **Both**. In the MIDI controller mode the camera is an input named
+  **Camera** that MIDI Learn can map to anything it can map today (a device or plugin param, a mixer control, the
+  tempo, a transport key or a command): arm a control as usual, then move your hand. Its messages never leave the
+  app; they take the same path as a hardware controller (MIDI Learn, the MIDI Mappings list, macros, modulation
+  through a mapping). A mapping learned from the camera is saved like any other, shows as "Camera, right hand twist"
+  with its message under it, and listens to the camera only: a hardware controller sending the same number on the same
+  channel does not drive it, and the camera does not drive a mapping that listens to a hardware port or to any port.
+  The controls are fixed: the right hand sends on channel 1 and the left hand on channel 2 (the preview shows the
+  hand and its channel).
+
+  | Control | Message |
+  | --- | --- |
+  | Twist while pinched | Relative encoder, controller 20 (two's complement), an endless knob with a ratchet |
+  | Pinch | Note 60, on when the fingers meet and off when they open |
+  | Palm height | Controller 21, 0 to 127 over the middle 80% of the frame, the top is 127 |
+  | Palm left and right | Controller 22, the same range; moving your hand to the right (in the preview) raises it |
+  | Hand closeness | Controller 23, from a far hand (0) to one near the camera (127) |
+  | Open palm | Note 61, all four fingers extended and the thumb clear of the index finger for 300 ms |
+
+  A learned twist is made an endless encoder (one full turn of the twist setting sweeps a mapping's whole range at the
+  default encoder step). The controllers send only when their value moves by a step of 1 or more, at most 60 times a
+  second each, from a smoothed palm position; when the hand is lost they hold their last value (there is no jump to 0)
+  and the notes end. **Both** turns the clicked knob with the pinch and twist and sends the other controls; the twist
+  controller is then not sent, so one gesture never drives two targets. With MIDI Learn armed (Learn mode, or LEARN
+  MIDI in a plugin window) the camera sends all its controls whatever the mode, a pinch turns no knob, and the preview
+  says so, so you can learn a control without switching mode. In the MIDI controller mode the preview shows six small
+  bars with the live values (twist, height, left and right, closeness, pinch and palm).
+- **Notes and tracks.** The camera is a controller, not an instrument: a note track that listens to all inputs never
+  receives the pinch and open palm notes, and you can map them to a toggle or a command. To play with them on purpose,
+  turn on **Camera notes play the selected instrument** in Settings > Camera: they then play the selected instrument
+  (and record on an armed track) like a keyboard, unless a mapping that consumes the note took it. Controllers are
+  recorded as automation by mapping them to a parameter and recording the take as usual.
 - **The preview.** A small box in the lower right corner of the main window (View > Panels > Camera Preview, or its
   close button, `camera.preview`): the camera picture shown like a mirror with the landmarks of the hand on it, the
   state (NO HAND, HAND or PINCH), the target and its value while you pinch, and a tooltip with the frames per second

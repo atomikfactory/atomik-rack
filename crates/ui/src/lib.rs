@@ -499,9 +499,9 @@ pub use bass_read_panel::{BassLevel, BassReadAction, BassReadData, BassReadView,
 pub use blind_panel::{BlindAction, BlindInfo, BlindView};
 pub use browser::device_rows;
 pub use camera_panel::{
-    CameraDialogChoice, CameraDialogState, CameraDialogView, CameraLamp, CameraPicture,
-    CameraPreviewState, CameraPreviewView, PREVIEW_HEIGHT as CAMERA_PREVIEW_HEIGHT,
-    PREVIEW_WIDTH as CAMERA_PREVIEW_WIDTH,
+    CameraBar, CameraControlsState, CameraDialogChoice, CameraDialogState, CameraDialogView,
+    CameraLamp, CameraPicture, CameraPreviewState, CameraPreviewView,
+    PREVIEW_HEIGHT as CAMERA_PREVIEW_HEIGHT, PREVIEW_WIDTH as CAMERA_PREVIEW_WIDTH,
 };
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
 pub use chords_panel::{

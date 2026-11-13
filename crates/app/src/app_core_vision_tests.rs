@@ -62,6 +62,7 @@ fn hand_state(depth: f32, pinch: bool) -> HandState {
         palm_height: 0.2,
         hand_size: depth,
         depth_proxy: depth,
+        open_palm: false,
     }
 }
 
@@ -723,3 +724,7 @@ fn a_core_without_a_camera_cannot_turn_one_on() {
     assert!(!c.camera_is_on());
     assert!(c.camera_list().is_empty());
 }
+
+// The camera as a MIDI controller has its own file.
+#[path = "app_core_camera_midi_tests.rs"]
+mod camera_midi;

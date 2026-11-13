@@ -14,6 +14,7 @@ pub mod audio_trim;
 mod audition;
 pub mod automation_rec;
 mod automation_view;
+mod camera_source;
 mod chord_fit;
 pub mod chord_symbol;
 mod clip_io;
@@ -132,6 +133,10 @@ pub mod console;
 pub mod song;
 
 pub use audio_join::{JoinRender, join_render};
+pub use camera_source::{
+    CAMERA_PORT, CLOSENESS_CC, CameraControl, CameraHand, HEIGHT_CC, LEFT_HAND_CHANNEL,
+    OPEN_PALM_NOTE, PINCH_NOTE, RIGHT_HAND_CHANNEL, SIDE_CC, TWIST_CC,
+};
 pub use clip_transform::{SCALE_PERCENT_MAX, SCALE_PERCENT_MIN};
 pub use container::{
     BOUNDARY_CV, BOUNDARY_KEY, CONTAINER_MACROS, CONTAINER_TYPE, ContainerCommand, ContainerDoc,

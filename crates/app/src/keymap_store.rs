@@ -194,6 +194,57 @@ impl HandChoice {
     }
 }
 
+/// What the camera does with the hands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CameraMode {
+    /// A pinch and a twist turn the last clicked knob (the default).
+    #[default]
+    Knob,
+    /// The camera is a MIDI controller named Camera: its messages can be mapped to anything.
+    Midi,
+    /// Both: the twist turns the clicked knob and the other controls send MIDI (the twist
+    /// controller is not sent, so one gesture never drives two targets).
+    Both,
+}
+
+impl CameraMode {
+    /// Every mode, in button order.
+    pub const ALL: [CameraMode; 3] = [CameraMode::Knob, CameraMode::Midi, CameraMode::Both];
+
+    /// The id used in `workflow.json`.
+    pub fn id(self) -> &'static str {
+        match self {
+            CameraMode::Knob => "knob",
+            CameraMode::Midi => "midi",
+            CameraMode::Both => "both",
+        }
+    }
+
+    /// The mode with this id.
+    pub fn from_id(id: &str) -> Option<CameraMode> {
+        CameraMode::ALL.into_iter().find(|m| m.id() == id)
+    }
+
+    /// The text on the settings button.
+    pub fn label(self) -> &'static str {
+        match self {
+            CameraMode::Knob => "Turn clicked knob",
+            CameraMode::Midi => "MIDI controller",
+            CameraMode::Both => "Both",
+        }
+    }
+
+    /// Whether a pinch and a twist turn the clicked knob in this mode.
+    pub fn turns_knob(self) -> bool {
+        matches!(self, CameraMode::Knob | CameraMode::Both)
+    }
+
+    /// Whether the camera sends its MIDI controls in this mode.
+    pub fn sends_midi(self) -> bool {
+        matches!(self, CameraMode::Midi | CameraMode::Both)
+    }
+}
+
 /// The least a full turn of the twist may be, in degrees.
 pub const MIN_FULL_TURN: u16 = 90;
 /// The most a full turn of the twist may be, in degrees.
@@ -221,6 +272,12 @@ pub struct CameraPrefs {
     pub sensitivity: u16,
     /// The camera preview box shows while the camera is on (default on).
     pub preview: bool,
+    /// What the hands do (default: turn the clicked knob).
+    pub mode: CameraMode,
+    /// The pinch and open palm notes also play the selected instrument, as a keyboard would
+    /// (default off: the camera is a controller, not an instrument, so a track listening to
+    /// all inputs never gets its notes).
+    pub play_notes: bool,
 }
 
 impl Default for CameraPrefs {
@@ -232,6 +289,8 @@ impl Default for CameraPrefs {
             fine: true,
             sensitivity: 100,
             preview: true,
+            mode: CameraMode::Knob,
+            play_notes: false,
         }
     }
 }
@@ -279,6 +338,15 @@ impl CameraPrefs {
                 .get("preview")
                 .and_then(Value::as_bool)
                 .unwrap_or(defaults.preview),
+            mode: obj
+                .get("mode")
+                .and_then(Value::as_str)
+                .and_then(CameraMode::from_id)
+                .unwrap_or(defaults.mode),
+            play_notes: obj
+                .get("play_notes")
+                .and_then(Value::as_bool)
+                .unwrap_or(defaults.play_notes),
         }
     }
 
@@ -293,6 +361,8 @@ impl CameraPrefs {
         map.insert("fine".into(), Value::Bool(self.fine));
         map.insert("sensitivity".into(), Value::from(self.sensitivity));
         map.insert("preview".into(), Value::Bool(self.preview));
+        map.insert("mode".into(), Value::String(self.mode.id().into()));
+        map.insert("play_notes".into(), Value::Bool(self.play_notes));
         Value::Object(map)
     }
 }
@@ -1546,9 +1616,20 @@ mod camera_tests {
                 d.full_turn,
                 d.fine,
                 d.sensitivity,
-                d.preview
+                d.preview,
+                d.mode,
+                d.play_notes
             ),
-            (None, HandChoice::Either, 270, true, 100, true)
+            (
+                None,
+                HandChoice::Either,
+                270,
+                true,
+                100,
+                true,
+                CameraMode::Knob,
+                false
+            )
         );
     }
 
@@ -1562,6 +1643,8 @@ mod camera_tests {
                 fine: false,
                 sensitivity: 120,
                 preview: false,
+                mode: CameraMode::Both,
+                play_notes: true,
             },
             ..WorkflowPrefs::default()
         };
@@ -1589,6 +1672,10 @@ mod camera_tests {
         assert_eq!(p.hand, HandChoice::Either);
         assert!(p.fine, "not a flag: the default");
         assert_eq!(p.camera, None);
+        let p = WorkflowPrefs::from_json(r#"{"camera": {"mode": "x", "play_notes": 1}}"#)
+            .unwrap()
+            .camera;
+        assert_eq!((p.mode, p.play_notes), (CameraMode::Knob, false));
         let p = WorkflowPrefs::from_json(r#"{"camera": 7}"#).unwrap().camera;
         assert_eq!(p, CameraPrefs::default());
     }
