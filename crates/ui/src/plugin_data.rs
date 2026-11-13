@@ -45,8 +45,10 @@ pub enum PluginEntryStatus {
     Failed(String),
     /// The plugin's process ended on its own while it was in use (the reason); RETRY clears it.
     Crashed(String),
-    /// It crashed or failed to load three times in a row and is hidden until TRY AGAIN.
-    Quarantined,
+    /// It crashed or failed to load three times in a row and is hidden until TRY AGAIN; a
+    /// project that uses it does not load it until the user says so. The reason (the last
+    /// failure; empty when it is not known).
+    Quarantined(String),
 }
 
 impl PluginEntryStatus {
@@ -58,7 +60,7 @@ impl PluginEntryStatus {
             Self::Disabled => "DISABLED",
             Self::Failed(_) => "COULD NOT LOAD",
             Self::Crashed(_) => "CRASHED",
-            Self::Quarantined => "QUARANTINED",
+            Self::Quarantined(_) => "QUARANTINED",
         }
     }
 
@@ -66,6 +68,7 @@ impl PluginEntryStatus {
     pub fn reason(&self) -> Option<&str> {
         match self {
             Self::Unsupported(r) | Self::Failed(r) | Self::Crashed(r) => Some(r),
+            Self::Quarantined(r) if !r.is_empty() => Some(r),
             _ => None,
         }
     }
@@ -169,6 +172,9 @@ pub struct PluginDeviceStatus {
     /// The plugin's process ended (sandbox): the reason, the exit code or signal and the last
     /// lines it wrote. RELOAD creates a new instance.
     pub crashed: Option<String>,
+    /// The plugin is quarantined, so the project did not load it: the reason (empty when it is
+    /// not known). LOAD ANYWAY (the RELOAD button) loads it.
+    pub quarantined: Option<String>,
     /// The instance is being created.
     pub loading: bool,
     /// The instance waits for the audio engine (audio is off): the reason. The editor and the
@@ -237,6 +243,8 @@ pub struct PluginSettingsData {
     /// Plugins run in a separate process right now (false: inside the app, whatever the switch
     /// says: the sandbox could not start).
     pub running_sandboxed: bool,
+    /// How sandboxed plugins share child processes (applies to plugins loaded after a change).
+    pub process: PluginProcessMode,
 }
 
 impl Default for PluginSettingsData {
@@ -253,6 +261,7 @@ impl Default for PluginSettingsData {
             log: Vec::new(),
             sandbox: true,
             running_sandboxed: true,
+            process: PluginProcessMode::default(),
         }
     }
 }
@@ -282,6 +291,8 @@ pub enum PluginSettingsAction {
     SetTimeout(u32),
     /// Run plugins in a separate process (applies after a restart of the app).
     SetSandbox(bool),
+    /// Choose how sandboxed plugins share child processes (applies to plugins loaded after).
+    SetProcessMode(PluginProcessMode),
     /// Disable or enable one plugin (type id).
     SetPluginDisabled {
         /// The type id (`clap.<id>`).
@@ -293,6 +304,52 @@ pub enum PluginSettingsAction {
     RetryFile(String),
     /// Clear the CRASHED mark of one plugin (type id) so it is used again as any other.
     RetryPlugin(String),
+}
+
+/// How sandboxed plugins share child processes (mirror of the host's `ProcessMode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PluginProcessMode {
+    /// Every instance has a child of its own.
+    #[default]
+    PerPlugin,
+    /// The instances of one plugin file share a child.
+    PerFile,
+    /// Every sandboxed instance shares one child.
+    Shared,
+}
+
+impl PluginProcessMode {
+    /// The next mode, wrapping around.
+    pub fn next(self) -> Self {
+        match self {
+            Self::PerPlugin => Self::PerFile,
+            Self::PerFile => Self::Shared,
+            Self::Shared => Self::PerPlugin,
+        }
+    }
+}
+
+/// What one plugin asks of the process setting (mirror of the host's `ProcessChoice`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PluginProcessChoice {
+    /// Whatever the setting says.
+    #[default]
+    Default,
+    /// A child of its own.
+    Own,
+    /// The shared child.
+    Shared,
+}
+
+impl PluginProcessChoice {
+    /// The next choice, wrapping around.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Default => Self::Own,
+            Self::Own => Self::Shared,
+            Self::Shared => Self::Default,
+        }
+    }
 }
 
 /// What the project banner asks the app to do.

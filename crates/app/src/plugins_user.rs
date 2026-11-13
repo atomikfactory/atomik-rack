@@ -10,12 +10,17 @@
 //!   loads it.
 //! * **Quarantine**: a plugin that crashed or failed to load [`QUARANTINE_AFTER`] times in a row
 //!   is quarantined (hidden, like a disabled one) until the user presses TRY AGAIN. A success
-//!   starts the count again.
+//!   starts the count again. The last failure's reason is kept with the quarantine, and a
+//!   project that uses a quarantined plugin does not load it until the user says so.
+//! * **Process**: which child process a plugin's instances go in, when it asks for something
+//!   other than the setting (see [`atomik_plugin_host::ProcessChoice`]).
 //!
 //! The store is plain data with no clock and no file access besides [`PluginsUser::load`] and
 //! [`PluginsUser::save`], so every rule here is tested without a plugin.
 
+use atomik_device_sdk::PluginRef;
 use atomik_library::{MAX_TAG_CHARS, Tag, TagError};
+use atomik_plugin_host::ProcessChoice;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -28,6 +33,9 @@ pub const VERSION: u32 = 1;
 pub const QUARANTINE_AFTER: u32 = 3;
 /// Most tags one plugin takes.
 pub const MAX_TAGS: usize = 16;
+/// Longest quarantine reason kept, in characters: the manager's tooltip says "Quarantined: "
+/// and the reason in 90 characters at most.
+pub const MAX_REASON_CHARS: usize = 77;
 
 /// The file next to a settings file.
 pub fn path(settings_path: &Path) -> PathBuf {
@@ -44,6 +52,10 @@ pub struct PluginsUser {
     quarantined: BTreeSet<String>,
     /// Failures in a row of the plugins that have some and are not quarantined yet.
     failures: BTreeMap<String, u32>,
+    /// Why each quarantined plugin is quarantined (the last failure that did it).
+    reasons: BTreeMap<String, String>,
+    /// The plugins that ask for a process of their own or the shared one.
+    process: BTreeMap<String, ProcessChoice>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -59,6 +71,23 @@ struct Stored {
     quarantined: Vec<String>,
     #[serde(default)]
     failures: BTreeMap<String, u32>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    reasons: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    process: BTreeMap<String, ProcessChoice>,
+}
+
+/// `text` as one line of at most [`MAX_REASON_CHARS`] characters, cut at its first `;` (the
+/// sandbox's own explanations after it are long) and ended with an ellipsis when it was cut.
+pub fn short_reason(text: &str) -> String {
+    let first = text.split(';').next().unwrap_or(text);
+    let line = first.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= MAX_REASON_CHARS {
+        return line;
+    }
+    let mut cut: String = line.chars().take(MAX_REASON_CHARS - 1).collect();
+    cut.push('\u{2026}');
+    cut
 }
 
 impl PluginsUser {
@@ -152,6 +181,30 @@ impl PluginsUser {
         found.into_values().collect()
     }
 
+    // ------------------------------------------------------------------ process
+
+    /// What the plugin asks for ([`ProcessChoice::Default`]: whatever the setting says).
+    pub fn process_of(&self, id: &str) -> ProcessChoice {
+        self.process.get(id).copied().unwrap_or_default()
+    }
+
+    /// Sets what the plugin asks for; true when it changed.
+    pub fn set_process(&mut self, id: &str, choice: ProcessChoice) -> bool {
+        if choice == ProcessChoice::Default {
+            self.process.remove(id).is_some()
+        } else {
+            self.process.insert(id.to_owned(), choice) != Some(choice)
+        }
+    }
+
+    /// The choices by plugin, for the sandbox (an id that is not a plugin type id is left out).
+    pub fn process_choices(&self) -> BTreeMap<PluginRef, ProcessChoice> {
+        self.process
+            .iter()
+            .filter_map(|(id, c)| PluginRef::from_type_id(id).map(|p| (p, *c)))
+            .collect()
+    }
+
     // ------------------------------------------------------------------ disable
 
     /// Whether the user disabled the plugin.
@@ -183,6 +236,12 @@ impl PluginsUser {
     /// Counts one failure (a crash, or a failure to load). Returns true when this one
     /// quarantined the plugin (the caller says so once).
     pub fn record_failure(&mut self, id: &str) -> bool {
+        self.record_failure_because(id, "")
+    }
+
+    /// Like [`PluginsUser::record_failure`], keeping `reason` (cut by [`short_reason`]) with the
+    /// quarantine when this failure is the one that quarantines the plugin.
+    pub fn record_failure_because(&mut self, id: &str, reason: &str) -> bool {
         if self.quarantined.contains(id) {
             return false;
         }
@@ -191,9 +250,22 @@ impl PluginsUser {
         if *count >= QUARANTINE_AFTER {
             self.failures.remove(id);
             self.quarantined.insert(id.to_owned());
+            let reason = short_reason(reason);
+            if !reason.is_empty() {
+                self.reasons.insert(id.to_owned(), reason);
+            }
             return true;
         }
         false
+    }
+
+    /// Why the plugin is quarantined, when it is and the reason is known (a quarantine from an
+    /// older file has none).
+    pub fn quarantine_reason(&self, id: &str) -> Option<&str> {
+        self.quarantined
+            .contains(id)
+            .then(|| self.reasons.get(id).map(String::as_str))
+            .flatten()
     }
 
     /// A success: the count of failures in a row starts again. True when there was one.
@@ -204,6 +276,7 @@ impl PluginsUser {
     /// TRY AGAIN: takes the plugin out of quarantine and clears its count; true when it was
     /// quarantined or had failures.
     pub fn try_again(&mut self, id: &str) -> bool {
+        self.reasons.remove(id);
         let was = self.quarantined.remove(id);
         self.failures.remove(id).is_some() || was
     }
@@ -224,6 +297,8 @@ impl PluginsUser {
             disabled: self.disabled.iter().cloned().collect(),
             quarantined: self.quarantined.iter().cloned().collect(),
             failures: self.failures.clone(),
+            reasons: self.reasons.clone(),
+            process: self.process.clone(),
         };
         let mut text = serde_json::to_string_pretty(&stored).unwrap_or_default();
         text.push('\n');
@@ -248,8 +323,18 @@ impl PluginsUser {
                 .into_iter()
                 .filter(|(_, n)| (1..QUARANTINE_AFTER).contains(n))
                 .collect(),
+            process: stored
+                .process
+                .into_iter()
+                .filter(|(_, c)| *c != ProcessChoice::Default)
+                .collect(),
             ..Self::default()
         };
+        for (id, reason) in stored.reasons {
+            if user.quarantined.contains(&id) {
+                user.reasons.insert(id, short_reason(&reason));
+            }
+        }
         for (id, names) in stored.tags {
             for name in names {
                 let _ = user.add_tag(&id, &name);
@@ -371,6 +456,72 @@ mod tests {
             "already quarantined: nothing new to say"
         );
         assert!(!u.is_quarantined(B), "only that plugin");
+    }
+
+    #[test]
+    fn the_failure_that_quarantines_a_plugin_leaves_its_reason() {
+        let mut u = PluginsUser::default();
+        assert!(!u.record_failure_because(A, "the first"));
+        assert!(!u.record_failure_because(A, "the second"));
+        assert_eq!(u.quarantine_reason(A), None, "not quarantined yet");
+        assert!(u.record_failure_because(
+            A,
+            "the plugin process exited with code 3 (0x3); this process hosted a group of 2"
+        ));
+        assert_eq!(
+            u.quarantine_reason(A),
+            Some("the plugin process exited with code 3 (0x3)"),
+            "cut at the first semicolon"
+        );
+        let back = PluginsUser::from_json(&u.to_json());
+        assert_eq!(back.quarantine_reason(A), u.quarantine_reason(A));
+        assert!(u.try_again(A));
+        assert_eq!(u.quarantine_reason(A), None, "TRY AGAIN forgets it");
+    }
+
+    #[test]
+    fn a_reason_is_one_short_line() {
+        assert_eq!(short_reason("  a \n b  "), "a b");
+        let long = "x".repeat(200);
+        let cut = short_reason(&long);
+        assert_eq!(cut.chars().count(), MAX_REASON_CHARS);
+        assert!(cut.ends_with('\u{2026}'));
+        // "Quarantined: " and the reason fit a tooltip.
+        assert!("Quarantined: ".len() + cut.len() <= 90 + 2, "{}", cut.len());
+    }
+
+    #[test]
+    fn a_quarantine_from_an_older_file_has_no_reason_and_still_loads() {
+        let u = PluginsUser::from_json(r#"{"version": 1, "quarantined": ["clap.a"]}"#);
+        assert!(u.is_quarantined("clap.a"));
+        assert_eq!(u.quarantine_reason("clap.a"), None);
+        // A reason for a plugin that is not quarantined is dropped.
+        let v = PluginsUser::from_json(
+            r#"{"version": 1, "reasons": {"clap.b": "x"}, "quarantined": ["clap.a"]}"#,
+        );
+        assert_eq!(v.quarantine_reason("clap.b"), None);
+    }
+
+    #[test]
+    fn what_a_plugin_asks_of_the_process_is_kept_and_default_is_not_stored() {
+        let mut u = PluginsUser::default();
+        assert_eq!(u.process_of(A), ProcessChoice::Default);
+        assert!(u.set_process(A, ProcessChoice::Shared));
+        assert!(!u.set_process(A, ProcessChoice::Shared), "no change");
+        assert!(u.set_process(B, ProcessChoice::Own));
+        let back = PluginsUser::from_json(&u.to_json());
+        assert_eq!(back.process_of(A), ProcessChoice::Shared);
+        assert_eq!(back.process_of(B), ProcessChoice::Own);
+        assert_eq!(back.process_choices().len(), 2);
+        assert!(u.set_process(A, ProcessChoice::Default));
+        assert!(
+            !u.to_json().contains(A),
+            "a plugin that follows the setting is not in the file"
+        );
+        assert!(
+            !PluginsUser::default().to_json().contains("process"),
+            "an empty store writes the same text as before"
+        );
     }
 
     #[test]

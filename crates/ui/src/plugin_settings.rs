@@ -43,8 +43,8 @@ use crate::canvas::{Align, Canvas, CanvasExt};
 use crate::event::{Modifiers, PointerButton, UiEvent};
 use crate::paint::fit_label;
 use crate::plugin_data::{
-    MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, PluginEntryStatus, PluginRescan, PluginSettingsAction,
-    PluginSettingsData, format_badge,
+    MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, PluginEntryStatus, PluginProcessMode, PluginRescan,
+    PluginSettingsAction, PluginSettingsData, format_badge,
 };
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
@@ -367,6 +367,13 @@ impl PluginSettingsView {
         Some(Rect::new(r.x0 + 2.0, r.y0 + 4.0, r.x0 + 16.0, r.y0 + 18.0))
     }
 
+    /// The button, at the right of the separate-process row, that steps through how plugins
+    /// share processes.
+    pub fn process_button_rect(&self) -> Option<Rect> {
+        let (_, r) = self.find(Item::Sandbox)?;
+        Some(Rect::new(r.x1 - 196.0, r.y0 + 8.0, r.x1 - 6.0, r.y1 - 8.0))
+    }
+
     /// The RETRY button of plugin row `i`, only for a plugin marked CRASHED.
     pub fn crash_retry_rect(&self, i: usize) -> Option<Rect> {
         let (_, r) = self.find(Item::Plugin(i))?;
@@ -408,6 +415,11 @@ impl PluginSettingsView {
                 Item::Sandbox,
                 self.sandbox_toggle_rect(),
                 "Run each plugin in its own process so a crash cannot take Atomik down",
+            ),
+            (
+                Item::Sandbox,
+                self.process_button_rect(),
+                "How plugins share processes: a crash stops every plugin in the same one",
             ),
             (
                 Item::AddFolder,
@@ -526,6 +538,13 @@ impl PluginSettingsView {
             .is_some_and(|r| r.inflate(4.0, 4.0).contains(pos))
         {
             Self::emit(out, PluginSettingsAction::SetSandbox(!self.data.sandbox));
+            return;
+        }
+        if self.process_button_rect().is_some_and(|r| r.contains(pos)) {
+            Self::emit(
+                out,
+                PluginSettingsAction::SetProcessMode(self.data.process.next()),
+            );
             return;
         }
         if !self.data.enabled {
@@ -652,11 +671,19 @@ impl PluginSettingsView {
                         c.fill_with(RoundedRect::from_rect(tg.inset(-3.0), 1.0), accent);
                     }
                 }
+                if let Some(b) = self.process_button_rect() {
+                    let text = match d.process {
+                        PluginProcessMode::PerPlugin => "PROCESSES: ONE PER PLUGIN",
+                        PluginProcessMode::PerFile => "PROCESSES: ONE PER FILE",
+                        PluginProcessMode::Shared => "PROCESSES: ONE SHARED",
+                    };
+                    sp::button(c, st, b, text, None, self.hovered(b));
+                }
                 label(
                     c,
                     &fit_label(
                         "Run plugins in a separate process (recommended)",
-                        r.width() - 26.0,
+                        r.width() - 226.0,
                         10.0,
                     ),
                     r.x0 + 26.0,
@@ -674,7 +701,7 @@ impl PluginSettingsView {
                     c,
                     &fit_label(
                         &format!("{now}. Applies after restarting Atomik"),
-                        r.width() - 26.0,
+                        r.width() - 226.0,
                         9.0,
                     ),
                     r.x0 + 26.0,

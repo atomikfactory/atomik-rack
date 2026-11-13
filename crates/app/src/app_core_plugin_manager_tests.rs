@@ -13,7 +13,7 @@ use atomik_plugin_host::{
     ScanRunner, ScannedPlugin,
 };
 use atomik_ui::plugin_data::PluginEntryStatus;
-use atomik_ui::{PluginManagerAction as Act, PluginManagerRow};
+use atomik_ui::{PluginManagerAction as Act, PluginManagerRow, UiAction};
 use std::sync::{Arc, Mutex};
 
 fn demo_file() -> PathBuf {
@@ -208,7 +208,15 @@ fn three_crashes_in_a_row_quarantine_a_plugin_and_say_so_once() {
     }
     crash(&mut core, "lead", "the plugin process exited with code 3");
     assert!(core.plugins_user().is_quarantined(SYNTH));
-    assert_eq!(row_of(&core, SYNTH).status, PluginEntryStatus::Quarantined);
+    assert!(
+        matches!(
+            row_of(&core, SYNTH).status,
+            PluginEntryStatus::Quarantined(ref r)
+                if r == "Crashed 3 times in a row: the plugin process exited with code 3"
+        ),
+        "{:?}",
+        row_of(&core, SYNTH).status
+    );
     let message = core.last_rejection().expect("a message").to_owned();
     assert!(message.contains("quarantined"), "{message}");
     assert!(message.contains("3 failures"), "{message}");
@@ -223,10 +231,208 @@ fn three_crashes_in_a_row_quarantine_a_plugin_and_say_so_once() {
 }
 
 #[test]
+fn the_table_says_why_a_plugin_is_quarantined_in_a_short_line() {
+    let mut core = plugin_core(OfflineSink::new());
+    let long = format!(
+        "the plugin process exited with code -1073740791 (0xc0000409, fail-fast or stack buffer          overrun); this process hosted a group of 3 plugins ({}) and every one was stopped",
+        "x".repeat(60)
+    );
+    for _ in 0..QUARANTINE_AFTER {
+        core.plugin_failed_in_a_row(SYNTH, "Crashed", &long);
+    }
+    let PluginEntryStatus::Quarantined(reason) = row_of(&core, SYNTH).status else {
+        panic!("not quarantined");
+    };
+    assert!(reason.starts_with("Crashed 3 times in a row: the plugin process exited"));
+    assert!(
+        !reason.contains("group of"),
+        "cut at the first semicolon: {reason}"
+    );
+    assert!(
+        "Quarantined: ".len() + reason.chars().count() <= 90,
+        "the tooltip stays short: {reason}"
+    );
+    // A hang and a load that failed say so.
+    for (kind, detail) in [
+        ("Hung", "the plugin stopped answering"),
+        ("Could not load", "no entry"),
+    ] {
+        let mut core = plugin_core(OfflineSink::new());
+        for _ in 0..QUARANTINE_AFTER {
+            core.plugin_failed_in_a_row(GAIN, kind, detail);
+        }
+        let PluginEntryStatus::Quarantined(reason) = row_of(&core, GAIN).status else {
+            panic!("not quarantined");
+        };
+        assert!(reason.starts_with(kind), "{reason}");
+    }
+    // A quarantine from before reasons were kept has none, and is still a quarantine.
+    let mut core = plugin_core(OfflineSink::new());
+    core.set_plugins_user(PluginsUser::from_json(&format!(
+        r#"{{"version": 1, "quarantined": ["{SHIFT}"]}}"#
+    )));
+    assert_eq!(
+        row_of(&core, SHIFT).status,
+        PluginEntryStatus::Quarantined(String::new())
+    );
+}
+
+fn quarantined_core() -> AppCore<OfflineSink> {
+    let mut core = plugin_core(OfflineSink::new());
+    let mut user = PluginsUser::default();
+    for _ in 0..QUARANTINE_AFTER {
+        user.record_failure_because(SYNTH, "Crashed 3 times in a row: exited with code 3");
+    }
+    core.set_plugins_user(user);
+    core
+}
+
+#[test]
+fn a_quarantined_plugin_in_a_project_is_not_loaded_and_says_why() {
+    let mut core = quarantined_core();
+    // The project has a device of the quarantined plugin and one of another plugin.
+    let command = add_command(&core, SYNTH, "lead");
+    core.apply_command(command).unwrap();
+    add_plugin(&mut core, GAIN, "fx");
+    core.wait_plugins();
+    settle(&mut core);
+    assert!(
+        core.plugin_instance(&key("lead")).is_none(),
+        "the quarantined plugin was not loaded"
+    );
+    assert!(
+        core.plugin_instance(&key("fx")).is_some(),
+        "the rest of the project opens normally"
+    );
+    let status = core.view().plugin_status(&key("lead"));
+    assert_eq!(
+        status.quarantined.as_deref(),
+        Some("Crashed 3 times in a row: exited with code 3")
+    );
+    assert!(status.missing.is_none() && !status.loading, "{status:?}");
+    assert!(core.view().plugin_status(&key("fx")).quarantined.is_none());
+    let lines = atomik_ui::plugin_panel::status_lines(&status, &[]);
+    assert_eq!(lines.state, "QUARANTINED");
+    assert!(
+        lines.detail.contains("exited with code 3"),
+        "{}",
+        lines.detail
+    );
+}
+
+#[test]
+fn load_anyway_loads_the_quarantined_plugin_for_that_device_only() {
+    let mut core = quarantined_core();
+    for k in ["lead", "pad"] {
+        let command = add_command(&core, SYNTH, k);
+        core.apply_command(command).unwrap();
+    }
+    core.wait_plugins();
+    settle(&mut core);
+    assert!(core.plugin_instance(&key("lead")).is_none());
+    assert!(core.plugin_instance(&key("pad")).is_none());
+    core.handle_action(UiAction::ReloadPlugin {
+        device: key("lead"),
+    });
+    core.wait_plugins();
+    settle(&mut core);
+    assert!(
+        core.plugin_instance(&key("lead")).is_some(),
+        "loaded anyway"
+    );
+    assert!(
+        core.plugin_instance(&key("pad")).is_none(),
+        "the other device still waits for its own decision"
+    );
+    assert!(
+        core.view()
+            .plugin_status(&key("lead"))
+            .quarantined
+            .is_none(),
+        "it no longer says QUARANTINED"
+    );
+    assert!(
+        core.plugins_user().is_quarantined(SYNTH),
+        "the plugin is still quarantined in the manager"
+    );
+}
+
+#[test]
+fn try_again_in_the_manager_lets_the_waiting_devices_load() {
+    let mut core = quarantined_core();
+    let command = add_command(&core, SYNTH, "lead");
+    core.apply_command(command).unwrap();
+    core.wait_plugins();
+    settle(&mut core);
+    assert!(core.plugin_instance(&key("lead")).is_none());
+    core.plugin_manager_action(&Act::TryAgain(vec![SYNTH.into()]));
+    core.wait_plugins();
+    settle(&mut core);
+    assert!(core.plugin_instance(&key("lead")).is_some());
+    assert!(
+        core.view()
+            .plugin_status(&key("lead"))
+            .quarantined
+            .is_none()
+    );
+}
+
+#[test]
+fn what_a_plugin_asks_of_the_process_is_saved_and_handed_to_the_sandbox() {
+    let mut core = plugin_core(OfflineSink::new());
+    assert!(core.take_plugins_user_change().is_none());
+    core.plugin_manager_action(&Act::SetProcess {
+        type_id: SYNTH.into(),
+        choice: atomik_ui::plugin_data::PluginProcessChoice::Shared,
+    });
+    assert_eq!(
+        row_of(&core, SYNTH).process,
+        atomik_ui::plugin_data::PluginProcessChoice::Shared
+    );
+    let saved = core.take_plugins_user_change().expect("saved");
+    assert_eq!(
+        saved.process_of(SYNTH),
+        atomik_plugin_host::ProcessChoice::Shared
+    );
+    assert_eq!(saved.process_choices().len(), 1);
+    // Back to the setting's choice: not stored.
+    core.plugin_manager_action(&Act::SetProcess {
+        type_id: SYNTH.into(),
+        choice: atomik_ui::plugin_data::PluginProcessChoice::Default,
+    });
+    assert!(
+        core.take_plugins_user_change()
+            .expect("saved")
+            .process_choices()
+            .is_empty()
+    );
+}
+
+#[test]
+fn the_process_setting_is_saved_and_defaults_to_one_process_per_plugin() {
+    use atomik_ui::plugin_data::{PluginProcessMode, PluginSettingsAction};
+    let mut core = plugin_core(OfflineSink::new());
+    assert_eq!(
+        core.plugin_settings_data().process,
+        PluginProcessMode::PerPlugin
+    );
+    assert!(core.take_plugin_settings_change().is_none());
+    core.handle_action(UiAction::PluginSettings(
+        PluginSettingsAction::SetProcessMode(PluginProcessMode::Shared),
+    ));
+    assert_eq!(
+        core.plugin_settings_data().process,
+        PluginProcessMode::Shared
+    );
+    let saved = core.take_plugin_settings_change().expect("saved");
+    assert_eq!(saved.process, atomik_plugin_host::ProcessMode::Shared);
+}
+
+#[test]
 fn a_clean_end_starts_the_count_again_and_try_again_clears_the_quarantine() {
     let mut core = plugin_core(OfflineSink::new());
-    core.plugin_failed_in_a_row(SYNTH);
-    core.plugin_failed_in_a_row(SYNTH);
+    core.plugin_failed_in_a_row(SYNTH, "Crashed", "exited with code 3");
+    core.plugin_failed_in_a_row(SYNTH, "Crashed", "exited with code 3");
     assert_eq!(core.plugins_user().failures(SYNTH), 2);
     // An instance that lives and ends well is a success.
     add_plugin(&mut core, SYNTH, "lead");
@@ -237,13 +443,13 @@ fn a_clean_end_starts_the_count_again_and_try_again_clears_the_quarantine() {
     }
     assert_eq!(core.plugins_user().failures(SYNTH), 0, "reset by the end");
     // Two more are not three in a row.
-    core.plugin_failed_in_a_row(SYNTH);
-    core.plugin_failed_in_a_row(SYNTH);
+    core.plugin_failed_in_a_row(SYNTH, "Crashed", "exited with code 3");
+    core.plugin_failed_in_a_row(SYNTH, "Crashed", "exited with code 3");
     assert!(!core.plugins_user().is_quarantined(SYNTH));
     core.plugin_worked(SYNTH);
     assert_eq!(core.plugins_user().failures(SYNTH), 0);
     for _ in 0..QUARANTINE_AFTER {
-        core.plugin_failed_in_a_row(SYNTH);
+        core.plugin_failed_in_a_row(SYNTH, "Crashed", "exited with code 3");
     }
     assert!(core.plugins_user().is_quarantined(SYNTH));
     // TRY AGAIN: out of quarantine, the CRASHED mark of the settings gone too.

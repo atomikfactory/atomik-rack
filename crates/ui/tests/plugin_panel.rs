@@ -309,6 +309,53 @@ fn a_missing_plugin_matches_golden_and_says_why() {
 }
 
 #[test]
+fn a_quarantined_plugin_matches_golden_says_why_and_load_anyway_asks_for_a_load() {
+    let (d, mut v) = setup();
+    v.set_plugin_status(
+        &key("synth"),
+        PluginDeviceStatus {
+            quarantined: Some("Crashed 3 times in a row: exited with code 3".into()),
+            ..PluginDeviceStatus::default()
+        },
+    );
+    let texts = texts_of(&mut v, d.doc());
+    for t in [
+        "QUARANTINED",
+        // The info window fits the reason to its width.
+        "Crashed 3 times",
+        "LOAD ANYWAY",
+    ] {
+        assert!(
+            texts.iter().any(|x| x.contains(t)),
+            "missing {t:?}: {texts:?}"
+        );
+    }
+    check(
+        "plugin_panel_quarantined_1x.json",
+        &paint_rack(&mut v, d.doc()).to_json(),
+    );
+    // The button asks for the same thing RELOAD does: the app takes it as the user's decision.
+    let acts = press_button(&mut v, &d, "synth", PluginButton::Reload);
+    assert!(acts.contains(&UiAction::ReloadPlugin {
+        device: key("synth")
+    }));
+}
+
+#[test]
+fn a_quarantined_plugin_with_no_known_reason_still_says_what_to_do() {
+    let lines = atomik_ui::plugin_panel::status_lines(
+        &PluginDeviceStatus {
+            quarantined: Some(String::new()),
+            ..PluginDeviceStatus::default()
+        },
+        &[],
+    );
+    assert_eq!(lines.state, "QUARANTINED");
+    assert!(lines.error);
+    assert!(lines.detail.contains("LOAD ANYWAY"), "{}", lines.detail);
+}
+
+#[test]
 fn a_failed_plugin_matches_golden_and_says_why() {
     let (d, mut v) = setup();
     v.set_plugin_status(
