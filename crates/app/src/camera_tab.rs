@@ -9,9 +9,14 @@
 //! near the camera turns the knob finer), **Pinch sensitivity** (scales how close the fingers must
 //! come), **Show camera preview**, and **Delete downloaded models**. The values are workflow
 //! preferences ([`crate::keymap_store::CameraPrefs`]) edited in a draft and merged back when the
-//! dialog is applied; they are never saved in a project. The Interface and Workflow tabs have no
-//! room left, so the camera has a tab of its own.
+//! dialog is applied. **Use for this project only** keeps the mode and the gesture table in the
+//! open project instead (`atomik_model::CameraOverride`): while it is on, the mode buttons and
+//! the table edit the project's copy and the settings' own stay as they were. **Gesture
+//! commands** opens the page of the gesture table ([`crate::camera_gestures_tab`]). The Interface
+//! and Workflow tabs have no room left, so the camera has a tab of its own.
 
+use crate::camera_gestures::{GestureBinding, from_override, to_rows};
+use crate::camera_gestures_tab::{GesturePage, PageOutcome};
 use crate::keyboard_tab::{PAD, TITLE, TabOutcome};
 use crate::keymap_store::{
     CameraMode, CameraPrefs, HandChoice, MAX_FULL_TURN, MAX_SENSITIVITY, MIN_FULL_TURN,
@@ -19,6 +24,7 @@ use crate::keymap_store::{
 };
 use crate::video_tab::wrap;
 use crate::vision_link::{CameraEntry, ModelState};
+use atomik_model::CameraOverride;
 use atomik_ui::kurbo::{Point, Rect, RoundedRect};
 use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, UiEvent};
 
@@ -102,6 +108,17 @@ pub struct CheckRow {
     pub on: bool,
 }
 
+/// The gesture commands row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GesturesRow {
+    /// The whole row.
+    pub rect: Rect,
+    /// How many gestures have a command, as shown.
+    pub status: String,
+    /// The button that opens the page.
+    pub edit: Rect,
+}
+
 /// The models row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelsRow {
@@ -134,10 +151,21 @@ pub struct CameraLayout {
     pub preview: CheckRow,
     /// Camera notes play the selected instrument.
     pub play_notes: CheckRow,
+    /// Use for this project only.
+    pub project: CheckRow,
+    /// Gesture commands.
+    pub gestures: GesturesRow,
     /// The models row.
     pub models: ModelsRow,
     /// The notes under the rows, line by line.
     pub notes: Vec<(Point, String)>,
+}
+
+/// The mode and the gesture table a project keeps of its own while it is edited.
+#[derive(Debug, Clone, PartialEq)]
+struct ProjectDraft {
+    mode: CameraMode,
+    gestures: Vec<GestureBinding>,
 }
 
 /// The Camera tab state.
@@ -147,6 +175,10 @@ pub struct CameraTab {
     cameras: Vec<CameraEntry>,
     models: ModelState,
     hover: Option<Point>,
+    /// The project's own mode and table, while it has them.
+    project: Option<ProjectDraft>,
+    /// The gesture commands page, while it is open.
+    page: Option<GesturePage>,
 }
 
 fn shorten(text: &str) -> String {
@@ -166,12 +198,76 @@ impl CameraTab {
             cameras: Vec::new(),
             models,
             hover: None,
+            project: None,
+            page: None,
         }
     }
 
     /// The edited settings.
     pub fn prefs(&self) -> &CameraPrefs {
         &self.prefs
+    }
+
+    /// Shows the project's own camera settings (`None`: the project uses the settings').
+    pub fn set_project(&mut self, camera: Option<&CameraOverride>) {
+        self.project = camera.map(|c| ProjectDraft {
+            mode: CameraMode::from_id(&c.mode).unwrap_or_default(),
+            gestures: from_override(c),
+        });
+    }
+
+    /// The project's own camera settings as edited (`None`: the project uses the settings').
+    pub fn project_override(&self) -> Option<CameraOverride> {
+        self.project.as_ref().map(|p| CameraOverride {
+            mode: p.mode.id().to_owned(),
+            gestures: to_rows(&p.gestures),
+        })
+    }
+
+    /// The mode being edited: the project's while it has its own, else the settings'.
+    pub fn mode(&self) -> CameraMode {
+        self.project.as_ref().map_or(self.prefs.mode, |p| p.mode)
+    }
+
+    /// The gesture table being edited: the project's while it has its own, else the settings'.
+    pub fn table(&self) -> &[GestureBinding] {
+        self.project
+            .as_ref()
+            .map_or(&self.prefs.gestures, |p| &p.gestures)
+    }
+
+    fn table_mut(&mut self) -> &mut Vec<GestureBinding> {
+        match &mut self.project {
+            Some(p) => &mut p.gestures,
+            None => &mut self.prefs.gestures,
+        }
+    }
+
+    fn set_mode(&mut self, mode: CameraMode) {
+        match &mut self.project {
+            Some(p) => p.mode = mode,
+            None => self.prefs.mode = mode,
+        }
+    }
+
+    /// Whether the gesture commands page is open.
+    pub fn on_gestures_page(&self) -> bool {
+        self.page.is_some()
+    }
+
+    /// The layout of the gesture commands page, while it is open.
+    pub fn page_layout(&self, panel: Rect) -> Option<crate::camera_gestures_tab::PageLayout> {
+        self.page.as_ref().map(|p| p.layout(panel, self.table()))
+    }
+
+    /// Opens the gesture commands page.
+    pub fn open_gestures_page(&mut self) {
+        self.page = Some(GesturePage::new());
+    }
+
+    /// The picker of the gesture commands page, while it is open.
+    pub fn picker(&self) -> Option<&crate::camera_gestures_tab::Picker> {
+        self.page.as_ref().and_then(GesturePage::picker)
     }
 
     /// Shows the cameras the system listed.
@@ -283,6 +379,26 @@ impl CameraTab {
         let sensitivity = step_row(next_row(), format!("{}%", self.prefs.sensitivity));
         let preview = check_row(next_row(), self.prefs.preview);
         let play_notes = check_row(next_row(), self.prefs.play_notes);
+        let project = check_row(next_row(), self.project.is_some());
+
+        let rect = next_row();
+        let set = self
+            .table()
+            .iter()
+            .filter(|b| !b.command.is_empty())
+            .count();
+        let gestures = GesturesRow {
+            rect,
+            status: match set {
+                0 => atomik_ui::i18n::tr("No gesture runs a command").into_owned(),
+                n => atomik_ui::i18n::tn(
+                    n as u64,
+                    "{n} gesture runs a command",
+                    "{n} gestures run a command",
+                ),
+            },
+            edit: button(rect, rect.x1, 76.0),
+        };
 
         let rect = next_row();
         let delete = button(rect, rect.x1, 196.0);
@@ -314,6 +430,8 @@ impl CameraTab {
             sensitivity,
             preview,
             play_notes,
+            project,
+            gestures,
             models,
             notes,
         }
@@ -321,15 +439,30 @@ impl CameraTab {
 
     /// The height the panel needs for the rows and the notes of this tab.
     pub fn content_height(&self) -> f64 {
+        if self.page.is_some() {
+            return GesturePage::content_height();
+        }
         let notes: f64 = NOTES
             .iter()
             .map(|n| 16.0 * wrap(n, crate::video_tab::WRAP + 8).len() as f64 + 6.0)
             .sum();
-        9.0 * ROW + 8.0 * GAP + 12.0 + notes
+        11.0 * ROW + 10.0 * GAP + 12.0 + notes
     }
 
     /// Handles an event inside `panel`.
     pub(crate) fn handle(&mut self, event: &UiEvent, panel: Rect) -> TabOutcome {
+        if let Some(mut page) = self.page.take() {
+            let outcome = page.handle(event, panel, self.table_mut());
+            match outcome {
+                PageOutcome::Stay => self.page = Some(page),
+                PageOutcome::Back => {}
+                PageOutcome::Apply => {
+                    self.page = Some(page);
+                    return TabOutcome::Apply;
+                }
+            }
+            return TabOutcome::Open;
+        }
         match event {
             UiEvent::Key {
                 key, pressed: true, ..
@@ -359,7 +492,7 @@ impl CameraTab {
                 } else if let Some((choice, _)) =
                     l.mode.choices.iter().find(|(_, r)| r.contains(*pos))
                 {
-                    self.prefs.mode = *choice;
+                    self.set_mode(*choice);
                 } else if let Some((choice, _)) =
                     l.hand.choices.iter().find(|(_, r)| r.contains(*pos))
                 {
@@ -386,6 +519,17 @@ impl CameraTab {
                     self.prefs.preview = !self.prefs.preview;
                 } else if l.play_notes.rect.contains(*pos) {
                     self.prefs.play_notes = !self.prefs.play_notes;
+                } else if l.project.rect.contains(*pos) {
+                    // On: the project keeps a copy of what is set now; off: back to the settings.
+                    self.project = match self.project.take() {
+                        Some(_) => None,
+                        None => Some(ProjectDraft {
+                            mode: self.prefs.mode,
+                            gestures: self.prefs.gestures.clone(),
+                        }),
+                    };
+                } else if l.gestures.edit.contains(*pos) {
+                    self.open_gestures_page();
                 } else if l.models.delete.contains(*pos) && l.models.can_delete {
                     return TabOutcome::DeleteCameraModels;
                 }
@@ -397,6 +541,10 @@ impl CameraTab {
 
     /// Paints the tab inside `panel`.
     pub fn paint(&self, canvas: &mut dyn Canvas, theme: &Theme, panel: Rect) {
+        if let Some(page) = &self.page {
+            page.paint(canvas, theme, panel, self.table());
+            return;
+        }
         let l = self.layout(panel);
         let lit = |r: Rect| self.hover.is_some_and(|p| r.contains(p));
         let button = |canvas: &mut dyn Canvas, r: Rect, label: &str, on: bool, enabled: bool| {
@@ -484,7 +632,7 @@ impl CameraTab {
 
         title(canvas, l.mode.rect, "Mode", "What the hands do");
         for (choice, r) in &l.mode.choices {
-            button(canvas, *r, choice.label(), self.prefs.mode == *choice, true);
+            button(canvas, *r, choice.label(), self.mode() == *choice, true);
         }
         title(canvas, l.hand.rect, "Hand", "Which hand turns the knob");
         for (choice, r) in &l.hand.choices {
@@ -520,6 +668,19 @@ impl CameraTab {
             "Camera notes play the selected instrument",
             "Off: the camera only feeds mappings, as a controller",
         );
+        check(
+            canvas,
+            &l.project,
+            "Use for this project only",
+            "The mode and the gesture commands are kept in this project",
+        );
+        title(
+            canvas,
+            l.gestures.rect,
+            "Gesture commands",
+            &l.gestures.status,
+        );
+        button(canvas, l.gestures.edit, "Edit\u{2026}", false, true);
         title(canvas, l.models.rect, "Hand models", l.models.status);
         button(
             canvas,

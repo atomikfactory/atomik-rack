@@ -64,7 +64,7 @@
 {"fill":{"rrect":[476.00,349.00,606.00,377.00,6.00]},"brush":"#262a30ff"},
 {"text":"Supprimer","at":[541.00,367.00],"size":12.00,"weight":400,"align":"center","color":"#8f96a0ff"},
 {"fill":{"rrect":[614.00,349.00,744.00,377.00,6.00]},"brush":"#262a30ff"},
-{"text":"Edit...","at":[679.00,367.00],"size":12.00,"weight":400,"align":"center","color":"#8f96a0ff"},
+{"text":"Modifier...","at":[679.00,367.00],"size":12.00,"weight":400,"align":"center","color":"#8f96a0ff"},
 {"fill":{"rrect":[200.00,385.00,330.00,413.00,6.00]},"brush":"#262a30ff"},
 {"text":"Importer...","at":[265.00,403.00],"size":12.00,"weight":400,"align":"center","color":"#ece8e1ff"},
 {"fill":{"rrect":[338.00,385.00,468.00,413.00,6.00]},"brush":"#262a30ff"},

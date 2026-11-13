@@ -159,7 +159,9 @@ finger and a ratcheted twist of the wrist, with a `vision-demo` tool to try them
 with it (the camera target, a pinch and twist as one undo step like a mapped controller, fine control by how near the
 hand is, the CAM switch with its consent dialog, its preview box and its Settings tab) and the camera as a MIDI
 controller (an input named Camera that MIDI Learn can map: twist, pinch, palm height, left and right, closeness and an
-open palm for each hand, with a mode setting that turns the clicked knob, sends MIDI or both).
+open palm for each hand, with a mode setting that turns the clicked knob, sends MIDI or both) and more gestures (a
+two-hand pad for the last two clicked knobs or controllers 24 to 26, a fist, thumbs up, point, peace and swipes that
+run commands from a table in Settings > Camera and arrive as notes 62 to 67, and camera settings kept per project).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -328,8 +330,11 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 - **Reference tracks.** Up to 16 reference files per song, kept in the project and collected with it, one key to switch between the mix and the selected reference after the master chain (live only, never in a bounce or export) with a short crossfade, a start at the song position or at a cue of its own, an automatic level match from the short-term loudness of the mix and of the loudest section of the reference with the matched gain slowly following, and a band solo (sub, low, mid, high) and a mid or side solo applied to both. A reference that follows the playhead goes to the new song position when the playhead is moved, a trim of up to 12 dB in 0.1 dB steps is added to the matched gain and saved with the reference, and the References and Decision Zone panel can match the loudness over the time selection or the loop. Still to come: following the loop when it wraps around while the reference plays.
 - **Webcam hand control.** Done: the camera, the hand models and the gesture recogniser in the `atomik-vision` crate,
   turning the last clicked knob with a pinch and twist, and the camera as a virtual MIDI controller that MIDI Learn can
-  map (see above). Still to come: more gestures (a swipe, a fist, a two-hand spread), user-defined mappings of gestures
-  to commands, and a second hand for a second knob.
+  map (see above), a two-hand pad that turns the last two clicked knobs or sends controllers 24 to 26, a fist, thumbs up,
+  point, peace and swipe that run any command from a table (empty by default) and arrive as notes 62 to 67, and the
+  camera mode and gesture table kept per project. Still to come: gestures the user records or defines, a gesture table
+  with several rows for one gesture in the editor (the file already allows them), and the second ring on the
+  pad's other knob.
 
 ## Phase 5: Devices
 

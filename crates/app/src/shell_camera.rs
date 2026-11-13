@@ -35,6 +35,31 @@ impl<B: AudioBackend> Shell<B> {
         self.camera_dialog.as_ref()
     }
 
+    /// Keeps the project's own camera settings as the Settings dialog left them: one undo step
+    /// when they changed, nothing when they did not.
+    pub(super) fn apply_camera_project(&mut self, camera: Option<atomik_model::CameraOverride>) {
+        if !self.core.set_camera_override(camera) {
+            self.notify("The camera settings could not be kept in the project");
+        }
+    }
+
+    /// Runs the commands the camera's gestures asked for, each as the key bound to it would (the
+    /// same view first, then the shell's own), and says so when one does not apply here.
+    pub(super) fn run_camera_commands(&mut self) {
+        for id in self.core.take_camera_commands() {
+            match self.run_command(&id, None) {
+                Some(mut requests) => self.pending.append(&mut requests),
+                None => {
+                    let name = atomik_ui::keymap::Registry::bundled()
+                        .get(&id)
+                        .map_or(id.as_str(), |d| d.label);
+                    self.notify(format!("{name} is not available in this view"));
+                }
+            }
+            self.repaint = true;
+        }
+    }
+
     /// Hands the views the core's state; called once a frame.
     pub(super) fn sync_camera_ui(&mut self) {
         let size = self.size();
