@@ -959,3 +959,39 @@ The reason (Crashed, Hung or Could not load, three times in a row, and the plugi
 in `plugins_user.json` and shown in the manager's status column and its tooltip.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AK. Stem separation: signal processing, because no model is free of non-commercial terms
+
+**Question.** How does the program split a song into vocals, drums, bass and other, under the rule that a model whose
+weights or training data carry non-commercial terms is not used?
+
+**The rule.** A model whose weights OR training data carry non-commercial terms is a no-go, however permissive the
+licence written on the weights is.
+
+**Rejected.** Open-Unmix `umxhq` (MIT on the weights, but trained on MUSDB18-HQ, whose terms are non-commercial: a
+licence on the weights does not remove the terms of the data); Open-Unmix `umxl` (CC BY-NC-SA 4.0); Demucs (the author
+wrote that the weights "are not covered by the MIT license, and are provided only for scientific purposes"). Other
+published separators were looked at and fail the same rule: they are trained on multitrack sets released for
+non-commercial research (MUSDB18 and others under CC BY-NC-SA) or say nothing about their weights.
+
+**Decision.** `atomik-stems` is a signal-processing separator with no model and no download, so there is no network
+use, no file to host and no licence to carry. It is a 2048-point STFT with a hop of 512 (46 ms, 21.5 Hz bins). The
+drums are the percussive part of a harmonic/percussive split: a median of 17 frames across time (about 200 ms) is the
+harmonic estimate, a median of 17 bins across frequency (about 370 Hz) the percussive one, and the soft mask is the
+percussive power over the sum of the two. The bass is the harmonic part under a smooth crossover (a smoothstep from 100
+to 200 Hz, centred on 150 Hz). The vocals are the harmonic part above it that is centred in the stereo image (a mask
+from the left/right similarity of each cell) with a weight that keeps the voice's range (to 5 kHz) at full strength; a
+mono input has no image, so its vocals are the 200 Hz to 5 kHz harmonic band at a weight of 0.6, and the dialog says so.
+The other stem is the mix minus the three, in the time domain, so the four add up to the mix to float rounding. A song
+is cut into chunks of 20 s with 1 s of context and a linear crossfade, so memory depends on the chunk; the median passes
+run on a few threads over frame ranges, and every cell is the same function of the same inputs, so the same input
+gives the same bits whatever the thread count. A 3-minute stereo song takes a few seconds in a release build.
+
+**Limits, said in the dialog and the README.** It is a fast split with bleed between stems, not a learned model: a
+kick leaks into the bass, a snare tail into the other stem, a centred guitar or synth into the vocals, and reverb is
+shared. It is a starting point to mix with.
+
+**Later.** The `StemBackend` trait stays, so a model can be plugged in when one exists whose weights and training data
+both allow commercial use and redistribution in a GPL-3.0 program. None is known today.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

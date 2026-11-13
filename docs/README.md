@@ -217,6 +217,31 @@ guitar part with several notes at once. VOICES AT ONCE caps how many notes sound
 the sensitivity, the shortest note and the note range work as for a single voice. Polyphonic notes are a sketch to
 edit, not a transcription: a dense mix, a distorted guitar or two notes an octave apart can lose a note or add one.
 
+## Stem separation
+
+Right-click an audio clip and choose **Separate Stems** (also in the command palette, `audio.separate_stems`, with no
+default key) to split it into vocals, drums, bass and everything else. Select one audio clip first. A dialog asks which
+stems to make (all four are checked) and whether to **Mute the original clip** (on). Each stem becomes a new audio
+track right under the clip's track, named after the clip ("Verse Vocals", "Verse Drums"...), with a copy of the clip
+at the same place that has the same offset, gain, fades and warp but plays the stem's file; the four stems add up to
+the clip where the models hear anything. The whole is one undo step, and the stem files go into the project's audio
+folder like any rendered audio.
+
+- **How it works, and why there is no model.** It is a fast signal-processing split, not a learned model, so there is
+  nothing to download and nothing leaves your computer. The drums are the percussive part of a harmonic/percussive
+  split, the bass is the harmonic part below about 150 Hz, the vocals are the harmonic part above that which sits in the
+  centre of the stereo image, and other is what is left, so the four stems add up to the clip. A model whose weights or
+  training data carry non-commercial terms is not used, and none is known whose weights and data are free of them; the
+  dialog says "Signal-processing split: expect some bleed between stems."
+- **Speed and memory.** It runs on a worker with progress and Cancel while the song keeps playing. A 3-minute stereo
+  song takes a few seconds in a release build; the work is done in pieces of 20 seconds, so a long file does not need
+  more memory for the separation. The same clip always gives the same stems.
+- **Limits.** Expect bleed: a kick leaks into the bass, a snare tail or a hi-hat into other stems, a centred guitar or
+  synth into the vocals, and reverb tails are shared between stems. A mono file has no stereo image to tell the voice
+  from the rest, so its vocals are only the 200 Hz to 5 kHz band, at a lower weight (the dialog says so). The whole file
+  of the clip is separated, not just the part the clip plays. A mono file gives mono stems; with more than two channels
+  the first two are used. A clip on a frozen track is refused, and so are several clips at once.
+
 ## Vocal mode
 
 The audio clip editor (double click an audio clip, or F8) has a Vocal mode for a clip of one voice at a time: a
@@ -641,8 +666,9 @@ you work in.
 
 ## Privacy
 
-Atomik Rack sends nothing about the user or the computer. Its only network request is the optional check for a newer
-version (Help > Check for Updates, and once a day when the user said Yes to the question at the first start): one
+Atomik Rack sends nothing about the user or the computer. Besides the one-time downloads of model files, which only the
+user starts after a dialog (the hand models and the stem models, nothing is sent with them), its only network request is
+the optional check for a newer version (Help > Check for Updates, and once a day when the user said Yes to the question at the first start): one
 HTTPS request to the project's page for the list of releases, carrying only the program name and version as the
 User-Agent. Nothing is downloaded or installed, and until the question is answered nothing is sent. How it works is in
 [ARCHITECTURE.md](ARCHITECTURE.md#the-update-check); the choice is in [DECISIONS.md](DECISIONS.md#s-the-update-check).

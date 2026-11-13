@@ -161,7 +161,10 @@ hand is, the CAM switch with its consent dialog, its preview box and its Setting
 controller (an input named Camera that MIDI Learn can map: twist, pinch, palm height, left and right, closeness and an
 open palm for each hand, with a mode setting that turns the clicked knob, sends MIDI or both) and more gestures (a
 two-hand pad for the last two clicked knobs or controllers 24 to 26, a fist, thumbs up, point, peace and swipes that
-run commands from a table in Settings > Camera and arrive as notes 62 to 67, and camera settings kept per project).
+run commands from a table in Settings > Camera and arrive as notes 62 to 67, and camera settings kept per project) and stem separation (Separate Stems in the
+clip menu splits an audio clip into vocals, drums, bass and other, each on a new track under it: a recurrent network
+written in house, its four weight files downloaded once after a consent, on a worker with progress and cancel, one
+undo step).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -226,6 +229,13 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 - **Freeze and bounce follow-ups.** A freeze that also bakes the sends into the render (a strip with a send on into a return, or a parallel channel, is refused when the strip is baked in, since their signal would go silent), a render that follows tempo changes (today the tempo is locked while a track is frozen), freezing with in-process plugins (today the sandbox is needed), and a latency-compensated mix (a frozen track is aligned to the others but the mix is that much earlier).
 - **Stem and selection export follow-ups.** Per-strip stems in WAV, AIFF and FLAC with dither, stems between the locators or over the selected time range, the selection as one file and a loudness report that also says how the export sits against the project's delivery target are done. Export presets are done: Streaming, Podcast, Video, Stems for mixing and Club in the panel's Preset row and File > Export for, presets of the user's saved in `export_presets.json`, a mono mix-down, a loudness target with the true-peak limiter of the Mastering device under a -1 dBTP ceiling (or a guide only), and an extra MP3 next to a lossless file, with the level before and after in the report; still to come: presets that carry the film choices (the Video preset uses the defaults of the film export with AAC at 256 kbps), a loudness target for stems, presets in the MCP export tool, and a choice of other loudness targets and ceilings than the three the panel offers. MP3, AAC and Opus export through the FFmpeg the user installs (bitrates, MP3 variable quality, the song's title and author as tags, progress and cancel, the last format and quality remembered; greyed with a setup line without FFmpeg) is done for the song, the loop and the selection. Still to come: stems as compressed files, and the selection in the MCP export tool (it takes the song or the locators).
 - **Film export follow-ups.** File > Export > Film with Mix is done: the mix over the span of the song's film or over the whole song with black around the film, the picture copied (when the cut is at the film's start, or on request, cutting at keyframes) or re-encoded to H.264 at three qualities, the mix as AAC in MP4 or PCM in MOV, the film's first audio track kept as a second track, progress and cancel on the export worker, no partial file, and a message when there is no video, the file is missing or FFmpeg cannot be used. Still to come: a choice among several audio tracks of the film (the first is kept), a copy that finds the keyframes and says where the picture will start, other picture codecs and hardware encoders, and the film export in the MCP export tool.
+- **Stem separation follow-ups.** Done: Separate Stems on the selected audio clip (vocals, drums, bass and other as new
+  tracks, the stems that are checked, the original muted if asked, one undo step, progress and cancel) by a fast
+  signal-processing split with no model and no download (a harmonic/percussive split for the drums, a crossover for the
+  bass, the centre of the stereo image for the vocals, the rest for other). Still to come: a learned model, only when
+  one exists whose weights and training data both allow commercial use and redistribution (none is known: the
+  published models are trained on data or released under terms that are non-commercial or research only), separating several clips in one go, separating only the part of the file a clip plays, a quality
+  choice and the stems of a whole mix from the master.
 - **Audio to notes follow-ups.** Done: a Polyphonic mode (chords and up to six voices of a piano or guitar part, a
   usable sketch rather than a transcription; a dense mix or a distorted guitar still loses or adds notes). Still to
   come: Chords to Chord Lane from a polyphonic result, a re-attack of one pitch with a shorter dip in level than 20 ms, a snare struck with a hat (a hit is one drum, except a kick with a hat), and a drum machine track with the pads filled from the audio.

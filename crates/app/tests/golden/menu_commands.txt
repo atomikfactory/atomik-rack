@@ -373,6 +373,7 @@ ScaleTempo(ThreeQuarters) | 75 %
 SelectAll | Select All
 SelectReference(0) | Reference 1
 SendPlayersToTrack | Send Players to Track
+SeparateStems | Separate Stems…
 SequencerOnly | Sequencer Only
 SetDefaultSong | Use Song as Default Song
 SetEndMarker | Set End Marker at Playhead

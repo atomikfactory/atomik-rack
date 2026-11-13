@@ -113,6 +113,11 @@ impl<B: AudioBackend> Shell<B> {
         if window != WindowKind::Main && self.modal_open() {
             return None;
         }
+        if window == WindowKind::Main
+            && let Some(help) = self.stems_help(pos)
+        {
+            return Some(help);
+        }
         // The consent dialog and the camera preview box.
         if window == WindowKind::Main
             && let Some(help) = self.camera_help(pos)

@@ -240,6 +240,8 @@ pub struct AppCore<S: EngineSink> {
     /// The webcam controller: the camera target, the pinch, the camera and the model download
     /// (see `app_core_vision.rs`).
     vision: vision::VisionCore,
+    /// The Separate Stems dialog, its worker and the backend (see `app_core_stems.rs`).
+    stems: stems::StemsState,
     /// The control surfaces that are set up, each with its own driver and ports (see
     /// `app_core_surface.rs`).
     surfaces: Vec<crate::surface::SurfaceHost>,
@@ -589,6 +591,7 @@ impl<S: EngineSink> AppCore<S> {
             midi: midimap::MidiControl::new(hub),
             macros: macro_ops::MacroState::default(),
             vision: vision::VisionCore::default(),
+            stems: stems::StemsState::default(),
             surfaces: Vec::new(),
             rack_focus_request: false,
             selection_changed: false,
@@ -4180,6 +4183,9 @@ mod midimap;
 #[path = "app_core_vision.rs"]
 mod vision;
 
+#[path = "app_core_stems.rs"]
+mod stems;
+
 #[path = "app_core_jacks.rs"]
 mod jack_ops;
 
@@ -4420,6 +4426,10 @@ mod delivery_tests;
 #[cfg(test)]
 #[path = "app_core_energy_tests.rs"]
 mod energy_tests;
+
+#[cfg(test)]
+#[path = "app_core_stems_tests.rs"]
+mod stems_tests;
 
 #[cfg(test)]
 #[path = "app_core_harmony_tests.rs"]

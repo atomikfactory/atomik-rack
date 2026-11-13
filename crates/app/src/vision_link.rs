@@ -162,7 +162,7 @@ impl SystemVision {
     /// The backend that keeps its models under `data_dir` (`models/hands/`).
     pub fn new(data_dir: &Path) -> Self {
         Self {
-            store: ModelStore::in_data_dir(data_dir),
+            store: atomik_vision::download::hands_store(data_dir),
             fetcher: Arc::new(UreqFetcher),
         }
     }

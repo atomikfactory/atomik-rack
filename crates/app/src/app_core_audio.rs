@@ -618,6 +618,11 @@ impl<S: EngineSink> AppCore<S> {
                     job,
                     result,
                 } if generation == current => self.apply_energy(job, *result),
+                Msg::Stems {
+                    generation,
+                    job,
+                    result,
+                } if generation == current => self.apply_stems(job, *result),
                 Msg::BassRead {
                     generation,
                     job,
@@ -708,6 +713,7 @@ impl<S: EngineSink> AppCore<S> {
                 | Msg::Masked { .. }
                 | Msg::Checked { .. }
                 | Msg::Energy { .. }
+                | Msg::Stems { .. }
                 | Msg::BassRead { .. }
                 | Msg::Delivery { .. }
                 | Msg::Sound { .. }
@@ -1509,6 +1515,7 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.export.reset();
         self.audio.masking.reset();
         self.audio.energy.reset();
+        self.stems.reset();
         self.meter_panels_clear();
         self.repetition.reset();
         self.bass_read.reset();

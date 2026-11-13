@@ -106,6 +106,14 @@ not changed: they are used as published. The notice that goes with them:
 A new version of a model is a change of the hashes in `download.rs` and of this table, made by hand after the new file
 was run through the tests of `crates/vision` (set `ATOMIK_VISION_MODELS` to the folder, see [TESTING.md](TESTING.md)).
 
+### Stem separation
+
+Stem separation uses no model: `atomik-stems` is a signal-processing split written in house (an STFT, median filters
+and masks), so there is no weight file, no download, no data licence and nothing to host. A model whose weights or
+training data carry non-commercial terms is not used (see [DECISIONS.md](DECISIONS.md) AK). The crates
+`atomik-download` (the shared store and download, used by the hand models) and `atomik-stems` add no third-party
+dependency: `atomik-stems` uses `thiserror` only.
+
 ## Packaging tools
 
 Used only by the release and nightly workflows (and not linked into the program), at pinned versions:

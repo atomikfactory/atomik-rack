@@ -440,6 +440,53 @@ fn the_camera_views_in_french() {
     }
 }
 
+/// The Separate Stems dialog in each state, in French.
+#[test]
+fn the_stems_dialog_in_french() {
+    use atomik_ui::{StemsDialogState, StemsDialogView, StemsPhase};
+    let dialogs = [
+        (
+            "options",
+            StemsDialogState::Options {
+                clip: "Verse Guitar".into(),
+                stems: [true, true, false, true],
+                mute_original: true,
+                mono: false,
+            },
+        ),
+        (
+            "options_mono",
+            StemsDialogState::Options {
+                clip: "Verse Guitar".into(),
+                stems: [true, true, false, true],
+                mute_original: true,
+                mono: true,
+            },
+        ),
+        (
+            "working",
+            StemsDialogState::Working {
+                phase: StemsPhase::Separating,
+                progress: 0.42,
+            },
+        ),
+        (
+            "failed",
+            StemsDialogState::Failed {
+                message: "cannot read the file".into(),
+            },
+        ),
+    ];
+    for (name, state) in dialogs {
+        french(&format!("stems_dialog_{name}_1x.json"), move || {
+            let mut v = StemsDialogView::new((900.0, 600.0), state);
+            let mut dl = DisplayList::new();
+            v.paint(&mut dl, &Theme::dark());
+            dl
+        });
+    }
+}
+
 /// The camera's MIDI controls in the preview box, and a MIDI Mappings list with camera sources,
 /// in French.
 #[test]

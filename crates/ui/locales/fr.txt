@@ -2822,3 +2822,24 @@ QUARANTINED => EN QUARANTAINE
 LOAD ANYWAY => CHARGER QUAND MÊME
 it failed three times in a row: LOAD ANYWAY tries it => il a échoué trois fois de suite : CHARGER QUAND MÊME l'essaie
 Ctrl-click and Shift-click choose several => Ctrl-clic et Maj-clic en choisissent plusieurs
+
+# Stem separation
+Separate Stems => Séparer les stems
+Separate Stems… => Séparer les stems…
+Clip: {name} => Clip : {name}
+Each stem becomes a new track under the clip. => Chaque stem devient une nouvelle piste sous le clip.
+Signal-processing split: expect some bleed between stems. => Séparation par traitement du signal : attendez-vous à un peu de fuite entre les stems.
+Mono clip: the vocals are the 200 Hz-5 kHz band, at a lower weight. => Clip mono : les voix sont la bande 200 Hz-5 kHz, à un niveau plus bas.
+Separating stems => Séparation des stems
+Reading the clip's audio => Lecture de l'audio du clip
+Separating: {percent}% => Séparation : {percent} %
+Writing the stems => Écriture des stems
+The song keeps playing while the stems are made. => La lecture continue pendant la création des stems.
+Stem separation did not finish => La séparation des stems n'a pas abouti
+Separate => Séparer
+Vocals => Voix
+Mute the original clip => Couper le son du clip d'origine
+Mute the clip that is separated, so only the stems play => Coupe le son du clip séparé, pour n'entendre que les stems
+Make this stem as a new track => Crée ce stem sur une nouvelle piste
+Make a track for each stem that is checked => Crée une piste pour chaque stem coché
+Close this, or stop what is running => Ferme ceci, ou arrête ce qui tourne

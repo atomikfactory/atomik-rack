@@ -2188,6 +2188,16 @@ output shapes, that a synthetic input gives finite numbers, that two runs are bi
 checksums match the files, and print the time of the detector and the landmark model (a release build only means
 something: about 35 ms and 19 ms on a desktop CPU, so a followed hand costs about 20 ms a frame).
 
+The stem separation tests need no model and no network (`crates/stems/tests/separation.rs`): synthetic mixtures (a sine
+bass below the crossover, noise-burst drums, a centred formant tone and a hard-panned pad) must give each stem a
+correlation above 0.8 with its source (it measures 0.96 and up) and clearly more than with any other source, the four
+stems must add up to the mix, and silence, mono, non-finite input, cancel and determinism are checked. The speed test is
+ignored by default; it separates three minutes of stereo and prints the time:
+
+```
+cargo test --release -p atomik-stems --test separation -- --ignored --nocapture
+```
+
 Hand checks with a real camera, by `vision-demo` (`cargo run --release -p atomik-vision --bin vision-demo -- ...`):
 
 - `cameras` lists the cameras; `models` shows the state of the model files and `models --download` asks y/N and

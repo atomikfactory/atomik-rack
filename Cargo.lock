@@ -277,6 +277,7 @@ dependencies = [
  "atomik-plugin-sandbox",
  "atomik-plugin-scan",
  "atomik-render",
+ "atomik-stems",
  "atomik-ui",
  "atomik-update",
  "atomik-video",
@@ -354,6 +355,15 @@ dependencies = [
  "atomik-testkit",
  "criterion",
  "proptest",
+]
+
+[[package]]
+name = "atomik-download"
+version = "0.4.0-rc.2"
+dependencies = [
+ "sha2",
+ "thiserror 2.0.21",
+ "ureq",
 ]
 
 [[package]]
@@ -587,6 +597,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomik-stems"
+version = "0.4.0-rc.2"
+dependencies = [
+ "proptest",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "atomik-test-clap"
 version = "0.4.0-rc.2"
 dependencies = [
@@ -759,6 +777,7 @@ dependencies = [
 name = "atomik-vision"
 version = "0.4.0-rc.2"
 dependencies = [
+ "atomik-download",
  "clap",
  "ctrlc",
  "linuxvideo",
@@ -767,10 +786,8 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "sha2",
  "thiserror 2.0.21",
  "tract-tflite",
- "ureq",
  "zune-jpeg",
 ]
 

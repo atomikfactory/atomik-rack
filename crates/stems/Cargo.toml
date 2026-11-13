@@ -1,0 +1,19 @@
+[package]
+name = "atomik-stems"
+description = "Atomik Rack stem separation: a fast, deterministic signal-processing split of a song into drums, bass, vocals and other (no model, no download), with the STFT and the chunked, cancellable run."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

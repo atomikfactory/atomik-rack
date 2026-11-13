@@ -1791,6 +1791,15 @@ pub(crate) fn plan(
             )?;
             return Ok((edit, Some(id)));
         }
+        SongCommand::AddStemTracks {
+            clip,
+            stems,
+            mute_original,
+        } => {
+            let (edit, ids) =
+                crate::freeze::plan_stem_tracks(doc, registry, clip, &stems, mute_original)?;
+            return Ok((edit, ids.last().copied()));
+        }
         SongCommand::SetAudioClip {
             id,
             start,
