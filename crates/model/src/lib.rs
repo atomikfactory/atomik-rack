@@ -324,9 +324,10 @@ pub use takes::{CompSegment, TakeGroup};
 pub use takes_cmd::{MAX_LINKED_GROUPS, MAX_TAKES};
 pub use validate::Violation;
 pub use warp::{
-    AudioQuantize, MAX_WARP_MARKERS, WARP_BPM_MAX, WARP_BPM_MIN, WARP_TRANSPOSE_MAX_CENTS, WarpJob,
-    WarpMarker, WarpMode, WarpSettings, bpm_for_beats, estimate_bpm, quantize_audio,
-    source_at_tick, tick_at_source, warp_job, warp_jobs, warped_at_song_tempo,
+    AudioQuantize, MAX_WARP_MARKERS, WARP_BPM_MAX, WARP_BPM_MIN, WARP_FORMANT_MAX_CENTS,
+    WARP_TRANSPOSE_MAX_CENTS, WarpJob, WarpMarker, WarpMode, WarpSettings, bpm_for_beats,
+    estimate_bpm, quantize_audio, source_at_tick, tick_at_source, warp_job, warp_jobs,
+    warped_at_song_tempo,
 };
 pub use zone_remap::{SampleEdit, remap_zone};
 

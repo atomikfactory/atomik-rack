@@ -561,6 +561,9 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Warp, "enabled", 1),
     field(Warp, "transpose", 1),
     field(Warp, "markers", 1),
+    field(Warp, "keep_formants", 45).ignorable(),
+    field(Warp, "formant", 45).ignorable(),
+    field(Warp, "link_stereo", 45).ignorable(),
 ];
 
 /// The names of an object's fields at `version`, and the ones a file must have, in table order.

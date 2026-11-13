@@ -911,6 +911,7 @@ fn project_inspect_lists_the_warp_of_an_audio_clip() {
                     source_bpm: 96.5,
                     transpose_cents: -300,
                     markers: vec![WarpMarker { tick: 0, source: 0 }],
+                    ..WarpSettings::default()
                 },
                 ..a
             },

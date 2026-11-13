@@ -349,6 +349,76 @@ pub(crate) fn plan(
             check_comp(&new.comp, g.takes.len(), range_).map_err(range)?;
             build(doc, &device, lane, Some(g), Some(new), Clips::Recompile)
         }
+        SongCommand::SetCompRange {
+            group,
+            take,
+            start,
+            end,
+            xfade,
+        } => {
+            let (device, lane, g) = find(doc, group)?;
+            let range_ = g.range();
+            if start >= end {
+                return Err(range(format!("comp segment [{start}, {end}) is empty")));
+            }
+            if xfade > MAX_TICK as u64 {
+                return Err(range(format!("crossfade of {xfade} ticks is too long")));
+            }
+            let mut new = g.clone();
+            set_segment(&mut new.comp, take, start, end);
+            if xfade > 0 && g.takes.iter().all(|t| t.content.is_audio()) {
+                for s in &mut new.comp {
+                    if s.start == start || s.start == end {
+                        s.xfade = xfade;
+                    }
+                }
+            }
+            check_comp(&new.comp, g.takes.len(), range_).map_err(range)?;
+            build(doc, &device, lane, Some(g), Some(new), Clips::Recompile)
+        }
+        SongCommand::FlattenComp { group, audio } => {
+            let (device, lane, g) = find(doc, group)?;
+            if !g.takes.iter().all(|t| t.content.is_audio()) {
+                return Err(bad(
+                    "only a group of audio takes can be rendered to one file",
+                ));
+            }
+            let (Some(first), Some(last)) = (g.comp.first(), g.comp.last()) else {
+                return Err(bad(format!("the comp of group {group} is empty")));
+            };
+            if audio.reverse || audio.warp != crate::WarpSettings::default() {
+                return Err(bad("the render of a comp is a plain clip"));
+            }
+            check_audio(doc, &audio)?;
+            let (start, end) = (first.start, last.end);
+            let Edit::Compound(mut edits) =
+                build(doc, &device, lane, Some(g), None, Clips::Remove)?
+            else {
+                unreachable!("build returns a compound edit");
+            };
+            let id = doc.song.next_clip_id;
+            let next = id
+                .checked_add(1)
+                .ok_or_else(|| bad("clip ids are exhausted"))?;
+            let clip = Clip {
+                id: ClipId(id),
+                start,
+                length: end - start,
+                offset: 0,
+                loop_length: None,
+                muted: false,
+                content: ClipContent::Audio(audio),
+                ..g.takes[0].clone()
+            };
+            edits.push(Edit::Clip {
+                device,
+                lane,
+                old: None,
+                new: Some(clip),
+            });
+            edits.push(Edit::NextClipId { old: id, new: next });
+            Ok(Edit::Compound(edits))
+        }
         SongCommand::SetLinkedComp {
             groups,
             take,
