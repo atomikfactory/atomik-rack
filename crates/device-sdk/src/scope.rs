@@ -17,15 +17,25 @@
 //!   reader is suspended for most of a second in the middle of a copy.
 //! * **Frames are stored as `f32` bits in `AtomicU32`s**, so there is no `unsafe`, no lock and
 //!   no allocation after [`ScopeTap::new`].
+//! * **A live flag** ([`ScopeTap::set_live`], [`ScopeTap::is_live`]) is how a device that taps
+//!   only on request (a console strip, a plugin device) learns that something looks at its tap:
+//!   the UI sets it, the device reads it once per batch and writes nothing while it is off, so
+//!   a tap nobody shows costs one relaxed load per batch. Devices whose whole job is the display
+//!   (the spectrum and phase meter devices) ignore it and always write.
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
-/// Frames of history in a tap (a power of two): 0.68 s at 48 kHz, four times the largest
-/// analysis window the spectrum device offers.
+/// Frames of history in a tap (a power of two): 0.68 s at 48 kHz, twice the analysis window of
+/// the largest size a strip's panel offers.
 pub const SCOPE_FRAMES: usize = 32_768;
 
-// A read is capped at half a ring: room for the largest analysis window (8192) with margin.
-const _: () = assert!(SCOPE_FRAMES / 2 >= 8192);
+/// Frames of history of the large taps ([`ScopeTap::large`]): twice the largest analysis
+/// window (65536) the spectrum device offers, 1 MiB for the two channels.
+pub const LARGE_SCOPE_FRAMES: usize = 131_072;
+
+// A read is capped at half a ring: room for the largest analysis window of a default tap.
+const _: () = assert!(SCOPE_FRAMES / 2 >= 16_384);
+const _: () = assert!(LARGE_SCOPE_FRAMES / 2 >= 65_536);
 
 /// How many times a read that the writer lapped is repeated before it gives up.
 const READ_ATTEMPTS: usize = 4;
@@ -37,6 +47,8 @@ pub struct ScopeTap {
     right: Box<[AtomicU32]>,
     /// Frames written since creation (never wraps in practice: 2^64 frames).
     head: AtomicU64,
+    /// Whether anything looks at the tap (see the module docs).
+    live: AtomicBool,
 }
 
 impl Default for ScopeTap {
@@ -46,10 +58,22 @@ impl Default for ScopeTap {
 }
 
 impl ScopeTap {
-    /// An empty tap (allocates; non-RT).
+    /// An empty tap of [`SCOPE_FRAMES`] frames (allocates; non-RT).
     pub fn new() -> Self {
+        Self::with_frames(SCOPE_FRAMES)
+    }
+
+    /// An empty tap of [`LARGE_SCOPE_FRAMES`] frames, for a window of up to 65536 frames.
+    pub fn large() -> Self {
+        Self::with_frames(LARGE_SCOPE_FRAMES)
+    }
+
+    /// An empty tap holding `frames` frames, rounded up to a power of two (at least 64;
+    /// allocates; non-RT).
+    pub fn with_frames(frames: usize) -> Self {
+        let frames = frames.next_power_of_two().max(64);
         let ring = || {
-            (0..SCOPE_FRAMES)
+            (0..frames)
                 .map(|_| AtomicU32::new(0))
                 .collect::<Box<[AtomicU32]>>()
         };
@@ -57,7 +81,23 @@ impl ScopeTap {
             left: ring(),
             right: ring(),
             head: AtomicU64::new(0),
+            live: AtomicBool::new(false),
         }
+    }
+
+    /// Frames of history the tap holds; a read returns at most half of them.
+    pub fn frames(&self) -> usize {
+        self.left.len()
+    }
+
+    /// Tells the writer whether anything looks at the tap (module docs). Any thread.
+    pub fn set_live(&self, live: bool) {
+        self.live.store(live, Ordering::Relaxed);
+    }
+
+    /// RT-safe. Whether something looks at the tap: one relaxed load.
+    pub fn is_live(&self) -> bool {
+        self.live.load(Ordering::Relaxed)
     }
 
     /// RT-safe. Appends the frames `(left[i], right[i])` for the shorter of the two slices.
@@ -66,7 +106,7 @@ impl ScopeTap {
         let n = left.len().min(right.len());
         let start = self.head.load(Ordering::Relaxed);
         for (i, (l, r)) in left.iter().zip(right).enumerate().take(n) {
-            let at = (start.wrapping_add(i as u64) as usize) & (SCOPE_FRAMES - 1);
+            let at = (start.wrapping_add(i as u64) as usize) & (self.left.len() - 1);
             self.left[at].store(l.to_bits(), Ordering::Relaxed);
             self.right[at].store(r.to_bits(), Ordering::Relaxed);
         }
@@ -88,24 +128,25 @@ impl ScopeTap {
 
     /// Copies the newest frames into `left` and `right`, oldest first, so that the last element
     /// written is the most recent frame. Copies at most `left.len().min(right.len())` and at
-    /// most [`SCOPE_FRAMES`] / 2 frames, and never more than were written; the unused tail of
+    /// most [`ScopeTap::frames`] / 2 frames, and never more than were written; the unused tail of
     /// the slices is untouched. Returns `(frames copied, head the copy ends at)`; `(0, head)`
     /// when nothing was written yet or the writer kept lapping the copy.
     pub fn read_latest(&self, left: &mut [f32], right: &mut [f32]) -> (usize, u64) {
-        let want = left.len().min(right.len()).min(SCOPE_FRAMES / 2);
+        let ring = self.left.len();
+        let want = left.len().min(right.len()).min(ring / 2);
         for _ in 0..READ_ATTEMPTS {
             let end = self.head.load(Ordering::Acquire);
             let n = (want as u64).min(end) as usize;
             let first = end - n as u64;
             for (i, (l, r)) in left.iter_mut().zip(right.iter_mut()).enumerate().take(n) {
-                let at = (first.wrapping_add(i as u64) as usize) & (SCOPE_FRAMES - 1);
+                let at = (first.wrapping_add(i as u64) as usize) & (ring - 1);
                 *l = f32::from_bits(self.left[at].load(Ordering::Relaxed));
                 *r = f32::from_bits(self.right[at].load(Ordering::Relaxed));
             }
             // The writer may have run ahead while we copied; the oldest frames we read are
             // intact only while it is still less than a ring behind the end of the copy.
             let now = self.head.load(Ordering::Acquire);
-            if now.saturating_sub(first) <= SCOPE_FRAMES as u64 {
+            if now.saturating_sub(first) <= ring as u64 {
                 return (n, end);
             }
         }
@@ -211,5 +252,34 @@ mod tests {
             }
         }
         writer.join().unwrap();
+    }
+
+    #[test]
+    fn a_large_tap_holds_a_65536_frame_window_and_a_default_tap_16384() {
+        let big = ScopeTap::large();
+        assert_eq!(big.frames(), LARGE_SCOPE_FRAMES);
+        let (l, r) = ramp(0, 70_000);
+        big.push(&l, &r);
+        let (mut a, mut b) = (vec![0.0; 65_536], vec![0.0; 65_536]);
+        assert_eq!(big.read_latest(&mut a, &mut b), (65_536, 70_000));
+        assert_eq!(a[65_535], 69_999.0);
+        assert_eq!(a[0], (70_000 - 65_536) as f32);
+        let small = ScopeTap::new();
+        small.push(&l, &r);
+        assert_eq!(
+            small.read_latest(&mut a, &mut b).0,
+            16_384,
+            "capped at half the ring"
+        );
+    }
+
+    #[test]
+    fn the_live_flag_starts_off_and_is_set_from_any_thread() {
+        let tap = ScopeTap::new();
+        assert!(!tap.is_live());
+        tap.set_live(true);
+        assert!(tap.is_live());
+        tap.set_live(false);
+        assert!(!tap.is_live());
     }
 }

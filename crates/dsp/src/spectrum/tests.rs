@@ -430,17 +430,17 @@ fn a_change_of_settings_starts_over_and_the_result_is_deterministic() {
 
 #[test]
 fn the_largest_transform_reads_a_tone_at_its_own_power() {
-    assert_eq!(MAX_SIZE, 16_384);
-    let size = 16_384;
+    assert_eq!(MAX_SIZE, 65_536);
+    let size = 65_536;
     let x = sine(1000.0, 48_000.0, size, 0.5);
     let silent = vec![0.0; size];
     let mut sp = Spectrum::new();
     let s = settings(size, WindowKind::Hann);
     sp.update(&x, &silent, 0, 48_000.0, &s, 400);
     assert_eq!(Analyser::new(1 << 20, WindowKind::Hann).size(), MAX_SIZE);
-    // The tone sits near a bin (bin width 2.9 Hz): its level is within the scalloping loss.
+    // The tone sits near a bin (bin width 0.73 Hz): its level is within the scalloping loss.
     assert!(near(sp.peak_db(), -6.02, 1.5), "{}", sp.peak_db());
-    assert!(near(sp.peak_hz(), 1000.0, 3.0), "{}", sp.peak_hz());
+    assert!(near(sp.peak_hz(), 1000.0, 1.0), "{}", sp.peak_hz());
 }
 
 #[test]

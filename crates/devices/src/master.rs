@@ -46,7 +46,9 @@
 //!   The first batch after `prepare`/`reset` snaps them all to their targets.
 //! * **Analyser tap** (`internal.tap_live`, set by the app while a window shows the master, never
 //!   stored): stage 2 pushes the signal before the fader into a [`ScopeTap`] for the UI to
-//!   analyse; off, nothing is written and the output is bit-identical.
+//!   analyse; off, nothing is written and the output is bit-identical. With the switch off and
+//!   the tap's live flag on ([`ScopeTap::set_live`], set while a meter panel shows the master),
+//!   stage 2 pushes the main output after the fader instead.
 
 use crate::channel::{
     FADER_CV_DB, SMOOTH_MS, Section, Step, cv_trim, fader, finite, is_silent, pan, send_gain,
@@ -813,6 +815,13 @@ impl Master {
         }
         *ctx.output(SocketId(S_MAIN_L)) = l;
         *ctx.output(SocketId(S_MAIN_R)) = r;
+        // A meter panel (the tap's live flag) looks at the main output after the fader; the
+        // Spectrum EQ window's pre-fader point wins while it is on.
+        if let (false, Some(tap)) = (self.on(P_TAP_LIVE), &self.tap)
+            && tap.is_live()
+        {
+            tap.push(&l, &r);
+        }
         *ctx.output(SocketId(S_MONITOR_L)) = mon_l;
         *ctx.output(SocketId(S_MONITOR_R)) = mon_r;
     }
