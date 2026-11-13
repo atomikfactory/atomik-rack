@@ -959,3 +959,41 @@ The reason (Crashed, Hung or Could not load, three times in a row, and the plugi
 in `plugins_user.json` and shown in the manager's status column and its tooltip.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AK. Stem separation: Open-Unmix, the published weights as they are, downloaded and not bundled, and one thing that is not settled
+
+**Question.** Which open model separates a song into vocals, drums, bass and other on the CPU in pure Rust at a usable
+speed, under a licence that lets a GPL-3.0 program use it? Are the weights bundled with the program or downloaded? How
+is the result kept identical from run to run?
+
+**Options.** Model: (1) Demucs (hybrid transformer, better quality, MIT code); (2) Open-Unmix `umxhq` (recurrent, MIT
+code, weights on Zenodo with a licence field); (3) Open-Unmix `umxl` (larger, trained on more data). Weights: (a) bundle
+them in the installer or the repository; (b) download once with the user's consent, as the hand models are. Runtime:
+(x) an ONNX graph in tract; (y) the network written in house, reading the published checkpoints.
+
+**Implications.** The author of Demucs wrote that its weights "are not covered by the MIT license, and are provided only
+for scientific purposes", so they do not qualify, and the transformer layers and the STFT inside the graph are not a
+sure fit for tract either. The published `umxl` weights say CC BY-NC-SA 4.0, which does not qualify. The Zenodo record of
+`umxhq` names the MIT licence for the files. Open-Unmix is a few dense layers and three bidirectional LSTM layers: about
+nine million weights per stem, a sum of products that can be written with a fixed order, so the result does not depend on
+the machine's thread count or on a library's choices. The files are 142.6 MB for the four stems: too much for an
+installer that is otherwise a fraction of that.
+
+**Decision.** (2), (b), (y). `atomik-stems` reads the published checkpoints unchanged (no conversion step, so nothing for
+the project to host: the four files come straight from the publisher, pinned by size and SHA-256 in the source, one fixed
+HTTPS address each, no redirect, after the consent dialog; the download code moved into the shared `atomik-download`
+crate). The network is written in house: the batch norms are folded into the dense layers when the weights are loaded,
+every sum is a fixed tree of eight lanes, the four stems run on four threads that share nothing, and the transform uses
+f64 twiddles, so the same input gives the same bits on one machine. A song is cut into chunks of 20 s with 2 s of context
+on each side and a linear crossfade over the second around each boundary, so memory depends on the chunk and not on the
+song; the stems are ratio masks (each stem's power over the four) on the complex mix, so they add up to the mix wherever
+a network hears anything. A 3-minute stereo song takes about a minute on a 32-thread desktop CPU; there is one quality
+level and no fast/best choice (the better model does not qualify). The stems are made from the clip's whole file so every
+stem file is as long as the clip's file and the clip that plays it keeps its offset and warp.
+
+**Not settled.** The weights carry the MIT licence on their record, but they were trained on MUSDB18-HQ, whose own
+terms are non-commercial. Whether a licence on the weights is enough for a use that is not research is a legal question
+the project has not answered, and a user or a distributor who needs an answer should ask a lawyer. Changing models later
+is a change of the table in `docs/DEPENDENCIES.md` and of the files in `crates/stems`.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

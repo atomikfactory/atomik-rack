@@ -9,6 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Separate Stems.** Right-click an audio clip and choose Separate Stems (or find it in the command palette): a small
+  dialog asks which stems to make (vocals, drums, bass, other) and whether to mute the original clip, and each stem
+  becomes a new audio track under the clip, named after it, with a copy of the clip at the same place with the same
+  offset, gain, fades and warp. It is one undo step. The first time, a dialog says that four model files (142.6 MB)
+  come from `zenodo.org`, that nothing about you is sent, and fetches nothing until you press Download; each file is
+  checked against a checksum. The work runs on a worker with progress and Cancel; a 3-minute song takes about a
+  minute. The network (Open-Unmix, MIT licence) is written in house in the new `atomik-stems` crate, and the same
+  input gives the same result every time. The download code moved into the shared `atomik-download` crate. Decision
+  AK in `docs/DECISIONS.md`. 572 commands.
 - **Plugins that share a process.** Settings > Plugins has a PROCESSES button: one process per plugin (the default,
   as before), one per plugin file, or one shared by all sandboxed plugins of a format. The plugin manager has a
   PROCESS column where one plugin asks for its own process or the shared one. A group holds up to 16 plugins (the

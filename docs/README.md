@@ -217,6 +217,32 @@ guitar part with several notes at once. VOICES AT ONCE caps how many notes sound
 the sensitivity, the shortest note and the note range work as for a single voice. Polyphonic notes are a sketch to
 edit, not a transcription: a dense mix, a distorted guitar or two notes an octave apart can lose a note or add one.
 
+## Stem separation
+
+Right-click an audio clip and choose **Separate Stems** (also in the command palette, `audio.separate_stems`, with no
+default key) to split it into vocals, drums, bass and everything else. Select one audio clip first. A dialog asks which
+stems to make (all four are checked) and whether to **Mute the original clip** (on). Each stem becomes a new audio
+track right under the clip's track, named after the clip ("Verse Vocals", "Verse Drums"...), with a copy of the clip
+at the same place that has the same offset, gain, fades and warp but plays the stem's file; the four stems add up to
+the clip where the models hear anything. The whole is one undo step, and the stem files go into the project's audio
+folder like any rendered audio.
+
+- **The models.** The first time, a dialog says what is downloaded (four files, 142.6 MB), from where (`zenodo.org`),
+  that nothing about you or your computer is sent and that the models are open source (MIT licence). Nothing is
+  fetched before you press Download. Each file is checked against a checksum, and a failed or cancelled download leaves
+  nothing behind. They are kept in `models/stems/` of the settings folder.
+- **Speed and memory.** It runs on a worker with progress and Cancel while the song keeps playing. A 3-minute stereo
+  song takes about a minute on a fast desktop CPU, a few minutes on a laptop; the work is done in pieces of 20 seconds,
+  so a long file does not need more memory for the separation. The same clip always gives the same stems.
+- **Limits.** The stems are a good starting point and not a studio result: a vocal can leak a little into the others, and
+  reverb tails and heavily processed sounds are shared between stems. The whole file of the clip is separated, not just
+  the part the clip plays. A mono file gives mono stems; with more than two channels the first two are used. A clip on a
+  frozen track is refused, and so are several clips at once.
+- **The licence of the models.** The weights are the Open-Unmix `umxhq` files, published under the MIT licence and used
+  unchanged. They were trained on the MUSDB18-HQ training set, whose own terms are non-commercial: whether that matters
+  for your use is a question for you and a lawyer, not a promise of this program. The details are in
+  [DEPENDENCIES.md](DEPENDENCIES.md#stem-separation-models) and [DECISIONS.md](DECISIONS.md).
+
 ## Vocal mode
 
 The audio clip editor (double click an audio clip, or F8) has a Vocal mode for a clip of one voice at a time: a
@@ -641,8 +667,9 @@ you work in.
 
 ## Privacy
 
-Atomik Rack sends nothing about the user or the computer. Its only network request is the optional check for a newer
-version (Help > Check for Updates, and once a day when the user said Yes to the question at the first start): one
+Atomik Rack sends nothing about the user or the computer. Besides the one-time downloads of model files, which only the
+user starts after a dialog (the hand models and the stem models, nothing is sent with them), its only network request is
+the optional check for a newer version (Help > Check for Updates, and once a day when the user said Yes to the question at the first start): one
 HTTPS request to the project's page for the list of releases, carrying only the program name and version as the
 User-Agent. Nothing is downloaded or installed, and until the question is answered nothing is sent. How it works is in
 [ARCHITECTURE.md](ARCHITECTURE.md#the-update-check); the choice is in [DECISIONS.md](DECISIONS.md#s-the-update-check).

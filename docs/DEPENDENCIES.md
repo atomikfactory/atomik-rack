@@ -106,6 +106,40 @@ not changed: they are used as published. The notice that goes with them:
 A new version of a model is a change of the hashes in `download.rs` and of this table, made by hand after the new file
 was run through the tests of `crates/vision` (set `ATOMIK_VISION_MODELS` to the folder, see [TESTING.md](TESTING.md)).
 
+### Stem separation models
+
+Stem separation uses the Open-Unmix `umxhq` weights, four files of 35,637,796 bytes each, one network per stem. They
+are not part of the installer, the repository or `Cargo.lock`. The user downloads them once (a dialog says what is
+fetched, from where and how big: four files, 142.6 MB, from `zenodo.org`) into `models/stems/` of the settings folder,
+and every file is checked against the size and SHA-256 below, written in `crates/stems/src/lib.rs` (`files`) and
+nowhere else, when it is downloaded and again before it is first loaded in a run. A mismatch deletes what was fetched.
+The files are not converted or changed: they are the published checkpoints, read by `crates/stems/src/torch.rs`, which
+never runs anything from them.
+
+| File | Size | SHA-256 | Source |
+| --- | --- | --- | --- |
+| `vocals-b62c91ce.pth` | 35,637,796 bytes | `b62c91cedbc7a066f1778ead5b5cecb377aa3a46a31af1cce7c5c8769339d083` | `https://zenodo.org/records/3370489/files/vocals-b62c91ce.pth?download=1` |
+| `drums-9619578f.pth` | 35,637,796 bytes | `9619578f885c54737cb0234f9f9a4a679ee4f31438fd77fd1dbe02bb16c2da0a` | `https://zenodo.org/records/3370489/files/drums-9619578f.pth?download=1` |
+| `bass-8d85a5bd.pth` | 35,637,796 bytes | `8d85a5bd3f996a8867fca0e8442e077e5a3f5ec747a6112742452a8f347b39c8` | `https://zenodo.org/records/3370489/files/bass-8d85a5bd.pth?download=1` |
+| `other-b52fbbf7.pth` | 35,637,796 bytes | `b52fbbf76479e752bd72e02304c602ac7802aa5bfbfb9cd12054b2695d5093ab` | `https://zenodo.org/records/3370489/files/other-b52fbbf7.pth?download=1` |
+
+**Licences.** The code of Open-Unmix is MIT. The Zenodo record of these weights (`10.5281/zenodo.3370489`, "Open-Unmix-
+Pytorch UMX-HQ") names the MIT licence for the files, which allows use and redistribution in a GPL-3.0 program; the
+program does not redistribute them anyway, the user fetches them from the publisher. The weights were trained on the
+MUSDB18-HQ training set, whose own terms are non-commercial and apply to that data; this is the question the project
+has not settled and says so (see [DECISIONS.md](DECISIONS.md) AK). Weights that were looked at and not used: the
+published `umxl` weights (CC BY-NC-SA 4.0, non-commercial) and the Demucs weights, whose author wrote that they "are not
+covered by the MIT license, and are provided only for scientific purposes". Zenodo serves the files straight (no
+redirect), so the download needs nothing else than the fixed address of each file.
+
+> Stem separation models: Open-Unmix `umxhq` (Stoter, Uhlich, Liutkus, Mitsufuji), MIT licence. Used without changes;
+> downloaded by the user from the publisher.
+
+The crates `atomik-download` (the shared store and download) and `atomik-stems` (the network, the transform and the
+separation, all written in house) add no third-party dependency: they use `sha2`, `ureq` and `thiserror`, which were in
+the workspace. A new version of the models is a change of the hashes in `files` and of this table, made by hand after
+the real-model tests passed (set `ATOMIK_STEM_MODELS` to the folder, see [TESTING.md](TESTING.md)).
+
 ## Packaging tools
 
 Used only by the release and nightly workflows (and not linked into the program), at pinned versions:

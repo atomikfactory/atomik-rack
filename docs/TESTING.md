@@ -2188,6 +2188,15 @@ output shapes, that a synthetic input gives finite numbers, that two runs are bi
 checksums match the files, and print the time of the detector and the landmark model (a release build only means
 something: about 35 ms and 19 ms on a desktop CPU, so a followed hand costs about 20 ms a frame).
 
+The stem separation tests that need the real weights skip unless `ATOMIK_STEM_MODELS` names a folder with the four
+`.pth` files of [DEPENDENCIES.md](DEPENDENCIES.md#stem-separation-models). They check that each stem hears its own
+synthetic source, that the same input gives the same bits and that silence stays silent; the speed test separates
+`ATOMIK_STEM_SECONDS` seconds (default 20) and prints the time:
+
+```
+ATOMIK_STEM_MODELS=/path/to/models/stems cargo test --release -p atomik-stems --test separation -- --nocapture
+```
+
 Hand checks with a real camera, by `vision-demo` (`cargo run --release -p atomik-vision --bin vision-demo -- ...`):
 
 - `cameras` lists the cameras; `models` shows the state of the model files and `models --download` asks y/N and
