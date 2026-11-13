@@ -7,7 +7,8 @@ use atomik_model::console::OutputDest;
 use atomik_model::{Command, ConsoleCommand, RackDoc};
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::{
-    ChannelMeters, ConsoleView, DisplayList, Key, Modifiers, PointerButton, UiAction, UiEvent,
+    ChannelMeters, ConsoleView, DisplayList, Key, MeterKind, Modifiers, PointerButton, UiAction,
+    UiEvent,
 };
 use support::console::*;
 use support::starter;
@@ -977,4 +978,141 @@ fn the_master_plate_has_a_menu_with_only_the_meter_panels() {
         )),
         "{a:?}"
     );
+}
+
+// ---------------------------------------------------------------- the meter button
+
+fn meter_actions(a: &[UiAction]) -> Vec<(String, MeterKind, bool)> {
+    a.iter()
+        .filter_map(|x| match x {
+            UiAction::MeterButton {
+                device,
+                kind,
+                toggle,
+            } => Some((device.0.clone(), *kind, *toggle)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn master_key(doc: &RackDoc) -> atomik_model::DeviceKey {
+    doc.console
+        .master
+        .clone()
+        .expect("the project has a master")
+}
+
+fn paint_console(
+    v: &mut ConsoleView,
+    doc: &RackDoc,
+    reg: &atomik_device_sdk::Registry,
+) -> DisplayList {
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, doc, reg);
+    dl
+}
+
+#[test]
+fn every_strip_and_the_master_have_a_meter_button_that_toggles_the_spectrum_panel() {
+    let (doc, reg, mut v) = setup();
+    let mut keys = v.strip_keys();
+    keys.push(master_key(&doc));
+    for k in keys {
+        let p = v
+            .meter_button_center(&k)
+            .unwrap_or_else(|| panic!("{k:?} has a meter button"));
+        let a = click(&mut v, &doc, &reg, p);
+        assert_eq!(
+            meter_actions(&a),
+            [(k.0.clone(), MeterKind::Spectrum, true)],
+            "{k:?}"
+        );
+        // It opens no menu.
+        assert!(v.menu_items().is_empty(), "{k:?}");
+    }
+}
+
+#[test]
+fn the_meter_button_has_a_menu_of_the_spectrum_and_the_phase_meter() {
+    let (doc, reg, mut v) = setup();
+    let mut keys = v.strip_keys();
+    keys.push(master_key(&doc));
+    for k in keys {
+        let p = v.meter_button_center(&k).unwrap();
+        let a = v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
+        assert!(a.is_empty(), "{a:?}");
+        assert_eq!(v.menu_items(), ["Spectrum", "Phase"], "{k:?}");
+        let a = pick(&mut v, &doc, &reg, "Phase");
+        assert_eq!(
+            meter_actions(&a),
+            [(k.0.clone(), MeterKind::Phase, false)],
+            "a menu row opens, it never closes"
+        );
+        assert!(v.menu_items().is_empty(), "the menu closed");
+        let p = v.meter_button_center(&k).unwrap();
+        v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
+        let a = pick(&mut v, &doc, &reg, "Spectrum");
+        assert_eq!(meter_actions(&a), [(k.0, MeterKind::Spectrum, false)]);
+    }
+}
+
+#[test]
+fn the_meter_button_lights_while_a_panel_of_its_strip_is_open_and_the_other_buttons_stay_put() {
+    let (doc, reg, mut v) = setup();
+    let plain = paint_console(&mut v, &doc, &reg);
+    assert!(
+        plain.texts().iter().filter(|t| **t == "FFT").count() >= 6,
+        "one per strip"
+    );
+    v.set_meters_open(&[key("ch-lead")]);
+    let lit = paint_console(&mut v, &doc, &reg);
+    assert_ne!(plain.to_json(), lit.to_json(), "the button changed");
+    v.set_meters_open(&[]);
+    assert_eq!(paint_console(&mut v, &doc, &reg).to_json(), plain.to_json());
+    // The RACK and SEQ buttons beside it still answer.
+    for k in v.strip_keys().iter().filter(|k| k.0.starts_with("ch-")) {
+        assert!(v.rack_button_center(k).is_some(), "{k:?}");
+        assert!(v.seq_button_center(k).is_some(), "{k:?}");
+        assert!(v.meter_button_center(k).is_some(), "{k:?}");
+    }
+}
+
+fn french_golden(name: &str, list: &DisplayList) {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden/fr")
+        .join(name);
+    let actual = list.to_json();
+    if std::env::var_os("ATOMIK_UPDATE_GOLDEN").is_some_and(|v| v == "1") {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &actual).unwrap();
+        return;
+    }
+    let expected = std::fs::read_to_string(&path)
+        .unwrap_or_else(|_| panic!("missing golden {}", path.display()))
+        .replace("\r\n", "\n");
+    assert!(expected == actual, "{name} differs from its golden");
+}
+
+#[test]
+fn the_strips_with_the_meter_button_are_goldens_wide_and_narrow_in_english_and_french() {
+    let (doc, reg, mut wide) = setup();
+    wide.set_meters_open(&[key("ch-lead")]);
+    let english = paint_console(&mut wide, &doc, &reg);
+    starter::check_golden("console_meter_button_wide_1x.json", &english.to_json());
+    let french = atomik_ui::i18n::with_language(atomik_ui::Lang::French, || {
+        let (doc, reg, mut v) = setup();
+        v.set_meters_open(&[key("ch-lead")]);
+        paint_console(&mut v, &doc, &reg)
+    });
+    french_golden("console_meter_button_wide_1x.json", &french);
+    assert!(french.texts().contains(&"FFT"));
+    // A narrow pane shows the first strips only; the button is on each of them.
+    let (doc, reg) = (bus_doc(), console_registry());
+    let mut narrow = ConsoleView::new(atomik_ui::Theme::dark());
+    narrow.set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 560.0, 420.0));
+    narrow.sync(&doc, &reg);
+    let dl = paint_console(&mut narrow, &doc, &reg);
+    starter::check_golden("console_meter_button_narrow_1x.json", &dl.to_json());
+    let first = narrow.strip_keys()[0].clone();
+    assert!(narrow.meter_button_center(&first).is_some());
 }

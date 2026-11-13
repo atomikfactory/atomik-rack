@@ -46,6 +46,13 @@ pub struct AnalyserData {
     /// tilted for display, [`atomik_dsp::spectrum::FLOOR_DB`] for a band without a level. Empty
     /// without a reference.
     pub reference: Vec<f32>,
+    /// The second curve of a Spectrum device in dB, one value per column of the plot (empty:
+    /// none).
+    pub second: Vec<f32>,
+    /// The choices of the REF list of a Spectrum device, the first being "no second curve".
+    pub second_sources: Vec<crate::meter_panels::CurveSource>,
+    /// The chosen row of `second_sources`.
+    pub second_source: usize,
     /// The short-term loudness history of the loudness meter, one LUFS value a second, oldest
     /// first.
     pub loudness_history: Vec<f32>,

@@ -270,6 +270,15 @@ pub enum UiAction {
     /// device's key on a worker, learns a duck curve from the hits in it and puts the curve into
     /// the device in one undo step.
     LearnDuck(DeviceKey),
+    /// A row of the list the REF button of a Spectrum device opens: row `index` of the sources the
+    /// app listed in [`crate::analyser::AnalyserData::second_sources`] (the first is "no second
+    /// curve"). The app keeps the choice with the device in one undo step.
+    SpectrumCurve {
+        /// The Spectrum device.
+        device: DeviceKey,
+        /// The chosen row.
+        index: usize,
+    },
     /// Open the sample editor on this sampler (double-click on a sampler panel, or its Edit
     /// button): call [`crate::SampleEditorView::open`] and show it in place of the
     /// arrangement, like the piano roll.
@@ -599,6 +608,16 @@ pub enum UiAction {
     /// A box or button of the Separate Stems dialog (the stems to make, the consent to download
     /// the models, the progress, a failure).
     StemsDialog(crate::stems_dialog::StemsDialogChoice),
+    /// The meter button of a console strip (or its menu): open the meter panel of `kind` on
+    /// `device`, or with `toggle` close it when one of that kind is open.
+    MeterButton {
+        /// The strip.
+        device: DeviceKey,
+        /// Which meter.
+        kind: crate::meter_panels::MeterKind,
+        /// A press on the button itself closes an open panel; a menu row only opens.
+        toggle: bool,
+    },
     /// A press on a floating meter panel: close it, step its FFT size or pick its second curve.
     MeterPanel(crate::meter_panels::MeterPanelAction),
     /// Open the plugin parameter pane (the panel's PARAMS button): call

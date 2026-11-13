@@ -123,6 +123,7 @@ impl RackView {
         self.hover_cable = None;
         self.rename = None;
         self.sc_menu = None;
+        self.ref_menu = None;
         self.macro_menu = None;
         self.crumb_hover = None;
         self.pending_scope = None;
@@ -476,6 +477,10 @@ impl RackView {
             UiAction::FindResonances(d) => UiAction::FindResonances(k(d)),
             UiAction::CutResonances(d) => UiAction::CutResonances(k(d)),
             UiAction::LearnDuck(d) => UiAction::LearnDuck(k(d)),
+            UiAction::SpectrumCurve { device, index } => UiAction::SpectrumCurve {
+                device: k(device),
+                index,
+            },
             UiAction::OpenSampleEditor(d) => UiAction::OpenSampleEditor(k(d)),
             UiAction::OpenSliceEditor(d) => UiAction::OpenSliceEditor(k(d)),
             UiAction::OpenStepEditor { device, clip } => UiAction::OpenStepEditor {
