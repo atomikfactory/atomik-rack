@@ -1062,3 +1062,46 @@ fn the_output_tap_is_off_until_the_live_flag_then_carries_the_main_output() {
     assert_eq!(bits(&off), bits(&on), "the tap does not touch the signal");
     assert_eq!(bits(&tapped), bits(&on), "the main output after the fader");
 }
+
+#[test]
+fn the_pre_flag_taps_the_master_before_its_fader_and_leaves_the_output_alone() {
+    let play = |pre: bool, fader: f32| {
+        let mut h = master();
+        h.set_param("fader", fader);
+        let tap = h.device().scope_tap().expect("a prepared master has a tap");
+        tap.set_live(true);
+        tap.set_pre(pre);
+        let mut out = Vec::new();
+        for i in 0..30 {
+            let x: Vec<f32> = (0..BATCH)
+                .map(|k| 0.3 * ((i * BATCH + k) as f32 * 0.05).sin())
+                .collect();
+            h.input_mut("bus_l").copy_from_slice(&x);
+            h.input_mut("bus_r").copy_from_slice(&x);
+            out.extend(h.render(1, &MAIN).swap_remove(0));
+        }
+        let (mut l, mut r) = (vec![0.0f32; 30 * BATCH], vec![0.0f32; 30 * BATCH]);
+        tap.read_latest(&mut l, &mut r);
+        (out, l)
+    };
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    let (out_pre, pre) = play(true, 0.5);
+    let (out_post, post) = play(false, 0.5);
+    assert_eq!(
+        bits(&out_pre),
+        bits(&out_post),
+        "the point never alters the output"
+    );
+    assert_eq!(bits(&post), bits(&out_post), "post is the main output");
+    assert_ne!(
+        bits(&pre),
+        bits(&post),
+        "pre shows the signal before the fader"
+    );
+    let (_, pre_loud) = play(true, 1.0);
+    assert_eq!(
+        bits(&pre),
+        bits(&pre_loud),
+        "the fader does not show before it"
+    );
+}

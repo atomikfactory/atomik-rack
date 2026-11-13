@@ -2418,3 +2418,126 @@ fn e_mode_makes_the_bells_follow_their_gain_and_matches_the_drawn_curve() {
     };
     assert_eq!(flat(0.0), flat(1.0));
 }
+
+/// Plays 60 batches of two tones through a strip with an EQ boost and the fader at `fader`,
+/// with the tap live. `how` chooses the point: the Spectrum EQ switch, the tap's pre flag, or
+/// the default output point. Returns the strip's output and the tap's frames.
+fn play_point(fader: f32, how: &str) -> (Vec<f32>, Vec<f32>) {
+    let mut h = channel();
+    h.set_param("fader", fader);
+    h.set_param("pan", 0.3);
+    h.set_param("eq.on", 1.0);
+    h.set_param("eq.hmf.gain", 6.0);
+    let tap = tap_of(&h);
+    tap.set_live(true);
+    match how {
+        "switch" => h.set_param("internal.tap_live", 1.0),
+        "flag" => tap.set_pre(true),
+        _ => {}
+    }
+    let (mut out, mut frames) = (Vec::new(), vec![0.0f32; 60 * BATCH]);
+    for i in 0..60 {
+        let x: Vec<f32> = (0..BATCH)
+            .map(|k| {
+                let n = (i * BATCH + k) as f32;
+                0.2 * (n * 0.31).sin() + 0.1 * (n * 1.7).sin()
+            })
+            .collect();
+        h.input_mut("in_l").copy_from_slice(&x);
+        h.input_mut("in_r").copy_from_slice(&x);
+        out.extend_from_slice(&h.render(1, &OUT)[0]);
+    }
+    let mut r = vec![0.0f32; 60 * BATCH];
+    tap.read_latest(&mut frames, &mut r);
+    (out, frames)
+}
+
+#[test]
+fn the_pre_flag_taps_the_signal_before_the_fader_exactly_like_the_switch() {
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    let (out_switch, by_switch) = play_point(0.5, "switch");
+    let (out_flag, by_flag) = play_point(0.5, "flag");
+    assert_eq!(bits(&by_flag), bits(&by_switch), "the same frames");
+    assert_eq!(bits(&out_flag), bits(&out_switch), "and the same output");
+    // The fader does not show before it: another fader gives the same tap, another output.
+    let (out_loud, loud_tap) = play_point(1.0, "flag");
+    assert_eq!(bits(&loud_tap), bits(&by_flag));
+    assert_ne!(bits(&out_loud), bits(&out_flag));
+    // Post is the default and shows the fader.
+    let (out_post, post_tap) = play_point(0.5, "post");
+    assert_eq!(bits(&post_tap), bits(&out_post));
+    assert_ne!(bits(&post_tap), bits(&by_flag));
+    assert_eq!(
+        bits(&out_post),
+        bits(&out_flag),
+        "the point never alters the output"
+    );
+}
+
+#[test]
+fn the_pre_flag_alone_writes_nothing_while_the_tap_is_not_live() {
+    let mut h = channel();
+    let tap = tap_of(&h);
+    tap.set_pre(true);
+    for _ in 0..8 {
+        *h.input_mut("in_l") = [0.4; BATCH];
+        h.render(1, &OUT);
+    }
+    assert_eq!(tap.head(), 0, "a tap nobody shows stays silent");
+}
+
+#[test]
+fn a_large_ring_on_a_strip_keeps_the_bins_of_a_65536_window_and_the_output_bit_exact() {
+    use atomik_dsp::spectrum::{ChannelMode, Settings, Spectrum as Display, WindowKind};
+    let run = |large: bool| {
+        let mut h = channel();
+        let tap = tap_of(&h);
+        tap.set_live(true);
+        if large {
+            tap.reserve_large();
+        }
+        let mut out = Vec::new();
+        let tone = |n: usize| 0.2 * (n as f32 * 0.31).sin() + 0.1 * (n as f32 * 1.7).sin();
+        for i in 0..1200 {
+            let x: Vec<f32> = (0..BATCH).map(|k| tone(i * BATCH + k)).collect();
+            h.input_mut("in_l").copy_from_slice(&x);
+            h.input_mut("in_r").copy_from_slice(&x);
+            out.extend_from_slice(&h.render(1, &OUT)[0]);
+        }
+        (out, tap)
+    };
+    let (small_out, _) = run(false);
+    let (big_out, big) = run(true);
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    assert_eq!(
+        bits(&small_out),
+        bits(&big_out),
+        "a bounce never sees the ring"
+    );
+    let (mut l, mut r) = (vec![0.0; 65_536], vec![0.0; 65_536]);
+    assert_eq!(big.read_latest(&mut l, &mut r).0, 65_536);
+    // The bins of the large window equal a window of the same frames from the device ring.
+    let bins = |l: &[f32], r: &[f32]| {
+        let mut d = Display::new();
+        let s = Settings {
+            size: 65_536,
+            window: WindowKind::Hann,
+            channel: ChannelMode::Sum,
+            averaging_ms: 0.0,
+            ..Settings::default()
+        };
+        d.update(l, r, 0, 48_000.0, &s, 200);
+        d.trace().to_vec()
+    };
+    let n = 65_536;
+    let from_big = bins(&l[..n], &r[..n]);
+    // The newest 16384 frames of the large window are the frames a small tap holds.
+    let mut small = (vec![0.0; 16_384], vec![0.0; 16_384]);
+    let (_, small_tap) = run(false);
+    small_tap.read_latest(&mut small.0, &mut small.1);
+    assert_eq!(bits(&l[n - 16_384..n]), bits(&small.0));
+    assert!(
+        from_big.iter().any(|v| *v > -100.0),
+        "a spectrum was measured"
+    );
+}
