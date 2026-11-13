@@ -561,6 +561,8 @@ pub struct Shell<B: AudioBackend> {
     update_notice: Option<UpdateNotice>,
     /// The consent dialog of the hand model download, while it shows.
     camera_dialog: Option<atomik_ui::CameraDialogView>,
+    /// The Separate Stems dialog, while it shows.
+    stems_dialog: Option<atomik_ui::StemsDialogView>,
     /// The camera preview box (it paints while the camera is on and the preview is on).
     camera_preview: atomik_ui::CameraPreviewView,
     /// The floating meter panels of console strips and plugin devices.
@@ -985,6 +987,7 @@ impl<B: AudioBackend> Shell<B> {
             updater: Updater::new(updates_path),
             update_notice: None,
             camera_dialog: None,
+            stems_dialog: None,
             camera_preview: atomik_ui::CameraPreviewView::new(),
             meter_panels: atomik_ui::MeterPanelsView::new(),
             cpu_hint: None,
@@ -6707,6 +6710,10 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(requests) = self.camera_dialog_event(event) {
             return requests;
         }
+        // So is the Separate Stems dialog.
+        if let Some(requests) = self.stems_dialog_event(event) {
+            return requests;
+        }
         if let Some(dialog) = &mut self.dialog {
             self.repaint = true;
             // Learning a chord needs the keys as they are pressed (numpad keys included).
@@ -8881,6 +8888,13 @@ impl<B: AudioBackend> Shell<B> {
                 self.close_menubars();
                 Vec::new()
             }
+            AppCommand::SeparateStems => {
+                // A refusal says why in the status line; the dialog opens on the next frame.
+                let _ = self.core.separate_stems();
+                self.sync_stems_ui();
+                self.close_menubars();
+                Vec::new()
+            }
             AppCommand::DetectKeyFromAudio => {
                 self.core.detect_key_from_audio();
                 self.close_menubars();
@@ -10375,6 +10389,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core.frame();
         self.run_camera_commands();
         self.sync_camera_ui();
+        self.sync_stems_ui();
         self.sync_meter_panels();
         self.sync_plugin_ui();
         self.sync_library_ui();
@@ -11663,6 +11678,7 @@ impl<B: AudioBackend> Shell<B> {
         self.paint_meter_panels(canvas, &theme);
         self.paint_camera_preview(canvas, &theme);
         self.paint_camera_dialog(canvas, &theme);
+        self.paint_stems_dialog(canvas, &theme);
         canvas.pop_transform();
     }
 }
@@ -11787,6 +11803,9 @@ mod film_impl;
 
 #[path = "shell_audio_setup.rs"]
 mod audio_setup_impl;
+
+#[path = "shell_stems.rs"]
+mod stems_impl;
 
 #[path = "shell_camera.rs"]
 mod camera_impl;

@@ -171,6 +171,13 @@ pub(crate) enum Msg {
         job: u64,
         result: Box<Result<Option<atomik_model::energy_map::EnergyMap>, String>>,
     },
+    /// A stem separation finished (`Ok(None)`: it was cancelled), or failed: see
+    /// [`crate::stems_worker`].
+    Stems {
+        generation: u64,
+        job: u64,
+        result: Box<Result<Option<crate::stems_worker::Done>, String>>,
+    },
     /// The master measurement of the Delivery panel finished (`Ok(None)`: it was cancelled), or
     /// failed: see [`crate::delivery_worker`].
     Delivery {

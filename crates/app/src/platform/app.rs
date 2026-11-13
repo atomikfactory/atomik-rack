@@ -253,6 +253,9 @@ pub fn run(cli: Cli) -> Result<(), String> {
     shell
         .core_mut()
         .set_vision(Arc::new(crate::vision_link::SystemVision::new(&config.dir)));
+    shell
+        .core_mut()
+        .set_stems(Arc::new(crate::stems_link::SystemStems::new(&config.dir)));
     if cli.screenshot.is_none() && !cli.stress && !cli.stress_song_loads() {
         shell.start_update_check();
     }
