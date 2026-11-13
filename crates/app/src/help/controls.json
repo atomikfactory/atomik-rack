@@ -584,6 +584,11 @@
     "text": "Cuts the marked resonances with the free bands. The cuts are dynamic: they act only while the peak sounds.",
     "more": "Devices"
   },
+  "rack.spectrum_ref": {
+    "title": "Second curve",
+    "text": "Draws another strip or the reference track as a second curve over the spectrum, so the two can be compared. The choice is saved with the device.",
+    "more": "Devices"
+  },
   "rack.duck_learn": {
     "title": "Learn the duck curve",
     "text": "Listens to the range between the locators at the key and draws the duck curve from the shape of its hits.",
