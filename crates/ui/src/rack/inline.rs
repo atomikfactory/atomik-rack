@@ -195,6 +195,7 @@ pub(super) fn flatten(doc: &RackDoc) -> Option<RackDoc> {
         references: Vec::new(),
         delivery: None,
         video: None,
+        camera: None,
     })
 }
 

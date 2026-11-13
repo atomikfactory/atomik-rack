@@ -278,6 +278,9 @@ pub struct CameraPrefs {
     /// (default off: the camera is a controller, not an instrument, so a track listening to
     /// all inputs never gets its notes).
     pub play_notes: bool,
+    /// The command each gesture runs (default: none, so nothing happens by surprise; see
+    /// [`crate::camera_gestures`]). Saved only when it has a row.
+    pub gestures: Vec<crate::camera_gestures::GestureBinding>,
 }
 
 impl Default for CameraPrefs {
@@ -291,6 +294,7 @@ impl Default for CameraPrefs {
             preview: true,
             mode: CameraMode::Knob,
             play_notes: false,
+            gestures: Vec::new(),
         }
     }
 }
@@ -347,6 +351,11 @@ impl CameraPrefs {
                 .get("play_notes")
                 .and_then(Value::as_bool)
                 .unwrap_or(defaults.play_notes),
+            gestures: obj
+                .get("gestures")
+                .and_then(Value::as_array)
+                .map(|rows| gesture_rows(rows))
+                .unwrap_or_default(),
         }
     }
 
@@ -363,8 +372,44 @@ impl CameraPrefs {
         map.insert("preview".into(), Value::Bool(self.preview));
         map.insert("mode".into(), Value::String(self.mode.id().into()));
         map.insert("play_notes".into(), Value::Bool(self.play_notes));
+        if !self.gestures.is_empty() {
+            let rows = self
+                .gestures
+                .iter()
+                .map(|b| {
+                    let mut row = Map::new();
+                    row.insert("gesture".into(), Value::String(b.gesture.id().into()));
+                    row.insert("hand".into(), Value::String(b.hand.id().into()));
+                    row.insert("command".into(), Value::String(b.command.clone()));
+                    Value::Object(row)
+                })
+                .collect();
+            map.insert("gestures".into(), Value::Array(rows));
+        }
         Value::Object(map)
     }
+}
+
+/// The rows of a `gestures` array: a row that is not a known gesture of a known hand with a
+/// sane command id is dropped, and so is everything past the limit.
+fn gesture_rows(rows: &[Value]) -> Vec<crate::camera_gestures::GestureBinding> {
+    rows.iter()
+        .filter_map(|row| {
+            let row = row.as_object()?;
+            let gesture = atomik_model::CameraGesture::from_id(row.get("gesture")?.as_str()?)?;
+            let hand = HandChoice::from_id(row.get("hand")?.as_str()?)?;
+            let command = row.get("command")?.as_str()?;
+            (!command.is_empty()
+                && command.chars().count() <= atomik_model::MAX_COMMAND_CHARS
+                && !command.chars().any(char::is_control))
+            .then(|| crate::camera_gestures::GestureBinding {
+                gesture,
+                hand,
+                command: command.to_owned(),
+            })
+        })
+        .take(crate::camera_gestures::MAX_ROWS)
+        .collect()
 }
 
 /// How many automatic versions a save keeps when the preference is not set.
@@ -1645,6 +1690,18 @@ mod camera_tests {
                 preview: false,
                 mode: CameraMode::Both,
                 play_notes: true,
+                gestures: vec![
+                    crate::camera_gestures::GestureBinding {
+                        gesture: atomik_model::CameraGesture::Fist,
+                        hand: HandChoice::Left,
+                        command: "transport.stop".into(),
+                    },
+                    crate::camera_gestures::GestureBinding {
+                        gesture: atomik_model::CameraGesture::SwipeRight,
+                        hand: HandChoice::Either,
+                        command: "edit.redo".into(),
+                    },
+                ],
             },
             ..WorkflowPrefs::default()
         };
@@ -1678,6 +1735,46 @@ mod camera_tests {
         assert_eq!((p.mode, p.play_notes), (CameraMode::Knob, false));
         let p = WorkflowPrefs::from_json(r#"{"camera": 7}"#).unwrap().camera;
         assert_eq!(p, CameraPrefs::default());
+    }
+
+    #[test]
+    fn the_gesture_table_is_empty_by_default_and_not_saved_while_it_is() {
+        let d = WorkflowPrefs::default();
+        assert!(d.camera.gestures.is_empty());
+        assert!(!d.to_json().contains("gestures"), "{}", d.to_json());
+    }
+
+    #[test]
+    fn bad_gesture_rows_are_dropped_and_the_good_ones_kept() {
+        let p = WorkflowPrefs::from_json(
+            r#"{"camera": {"gestures": [
+                {"gesture": "fist", "hand": "left", "command": "transport.stop"},
+                {"gesture": "wink", "hand": "left", "command": "transport.stop"},
+                {"gesture": "peace", "hand": "third", "command": "transport.stop"},
+                {"gesture": "point", "hand": "either", "command": ""},
+                {"gesture": "point", "hand": "either"},
+                7,
+                {"gesture": "thumbs_up", "hand": "either", "command": "transport.record"}
+            ]}}"#,
+        )
+        .unwrap()
+        .camera;
+        let rows: Vec<(&str, &str)> = p
+            .gestures
+            .iter()
+            .map(|b| (b.gesture.id(), b.command.as_str()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("fist", "transport.stop"),
+                ("thumbs_up", "transport.record")
+            ]
+        );
+        let p = WorkflowPrefs::from_json(r#"{"camera": {"gestures": 3}}"#)
+            .unwrap()
+            .camera;
+        assert!(p.gestures.is_empty());
     }
 
     #[test]

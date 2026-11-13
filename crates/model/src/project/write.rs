@@ -43,6 +43,7 @@ pub(crate) fn save(doc: &RackDoc) -> String {
     crate::references::write_references(w, &doc.references);
     crate::delivery::write_delivery(w, &doc.delivery);
     crate::video::write_video(w, &doc.video);
+    crate::camera_override::write_camera(w, &doc.camera);
     write_assets(w, &doc.assets);
     write_song(w, &doc.song);
     let _ = writeln!(w, "}}");

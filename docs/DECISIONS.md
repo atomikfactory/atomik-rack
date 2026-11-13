@@ -852,3 +852,37 @@ trim. A trim is one more optional field of a reference in the `references` list,
 the project format stays 45 and a build without it drops the field with the list.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AH. Webcam gestures: a fixed vocabulary, a table that is empty by default, and a per-project override
+
+**Question.** The webcam should do more than turn one knob: a second hand, a few gestures that run app commands, and
+camera settings that follow a project. Which gestures, how are they mapped to commands, what happens by default, and
+where does a per-project choice live without a format bump?
+
+**Options.** Vocabulary: (1) a set the user records; (2) a small fixed set found by plain code from the landmarks.
+Mapping: (1) only MIDI Learn on notes; (2) a table of gesture to command (a picker like the keyboard editor's), with
+the notes as well. Default: (1) a useful set on; (2) the table empty, with a Suggested button. Per project: (1) a
+format bump with a new required field; (2) an optional ignorable root field.
+
+**Implications.** A recorded gesture needs a classifier and training data the project does not have, and a false
+positive stops or records the song in front of an audience, so the vocabulary is fixed and tested on synthesized hands
+like the pinch: fist, thumbs up, point and peace (each from which fingers are extended or curled, held 300 ms), the open
+palm that already existed (a second for a command, so an ordinary pause of the hand never plays) and a swipe (half a
+frame height in 400 ms, mostly sideways, with a lockout). A command runs through the shell exactly as its key would, so
+it asks whatever that key asks and no confirmation dialog is added. A gesture fires once per hold, re-arms only after the
+hand changes pose, waits 500 ms after any command, and never fires while a hand pinches (a pinch is a knob or the pad);
+a hold that is ready inside the cooldown stays silent rather than firing late, which is the predictable choice. The same
+gestures are Camera notes 62 to 67, so MIDI Learn can map them with everything else. The two-hand pad is both hands
+pinched: the middle between the palms and their distance are X, Y and spread (controllers 24 to 26 on a third channel,
+or the last two clicked knobs, one undo step as a batch with one merge id). The per-project override is the optional root
+field `camera` (the mode and the table, ignorable, written only when set), so the format stays 45 and an older build
+plays the project as before.
+
+**Decision.** A fixed vocabulary of fist, open palm, thumbs up, point, peace, swipe left and swipe right; a table of
+gesture, hand (either, left or right) and command in Settings > Camera that is **empty by default**, with a Suggested
+button (fist = Stop, open palm held for a second = Play, thumbs up = Record); the gestures also as notes 62 to 67; the
+pad on channel 3; and the `camera` project field. The defaults are off because a gesture is the one input that fires
+without the user touching anything: a wave at a friend, a stretch or a stopped hand must never stop, play or record, so
+the user opts in, and sees what they chose.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

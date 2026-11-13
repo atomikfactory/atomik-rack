@@ -506,6 +506,7 @@ mod tests {
             references: Vec::new(),
             delivery: None,
             video: None,
+            camera: None,
         };
         let mut v = RackView::new(Theme::dark());
         v.set_navigator_visible(true);

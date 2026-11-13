@@ -21,6 +21,24 @@
 //! width of accumulated twist, so a hand shaking at a boundary does not make it flicker. The
 //! audio thread is untouched: this is all UI-thread work on a command.
 //!
+//! # The two-hand pad
+//!
+//! Both hands pinched make the **pad** (see `atomik_vision::gesture`): the midpoint of the hands
+//! is an X/Y position and the distance between them a third axis. In *Turn clicked knob* mode the
+//! pad turns the last TWO clicked knobs, the older one with the left and right movement (X) and
+//! the newer one with the height (Y), each from where it was when the pad began (moving the
+//! hands across 80% of the picture sweeps a whole range). The whole two-hand gesture is one
+//! undo step: the two `SetParam`s of a frame are one batch with one merge id. In *MIDI
+//! controller* mode the pad sends controllers 24 to 26 instead (see `crate::camera_midi`).
+//!
+//! # Gestures that run commands
+//!
+//! A fist, open palm, thumbs up, point, peace or swipe may run an app command (Settings >
+//! Camera, `crate::camera_gestures`): the core decides when one fires and queues its id, and the
+//! shell runs it like the key bound to it ([`AppCore::take_camera_commands`]). With no row in the
+//! table, nothing runs. The table, like the camera mode, may be the project's own
+//! ([`AppCore::camera_override`]).
+//!
 //! # The camera as a MIDI controller
 //!
 //! The camera's mode (Settings > Camera) says what the hands do: turn the clicked knob (the
@@ -39,20 +57,29 @@
 use super::midimap::{GestureKey, Resolved};
 use super::plugins::TOUCH_GAP_SECS;
 use super::*;
-use crate::camera_midi::CameraMidi;
-use crate::keymap_store::CameraPrefs;
+use crate::camera_gestures::{GestureBinding, GestureFirer};
+use crate::camera_midi::{CameraMidi, gesture_of, swipe_gesture};
+use crate::keymap_store::{CameraMode, CameraPrefs};
 use crate::vision_link::{
     CameraEntry, DownloadProgress, FrameReport, ModelState, NoVision, Preview, VisionBackend,
     VisionConfig, VisionError, VisionSession,
 };
+use atomik_model::{CameraGesture, CameraOverride};
 use atomik_ui::{CameraDialogState, CameraLamp, CameraPreviewState};
-use atomik_vision::gesture::{GestureEvent, HandId, HandState};
+use atomik_vision::gesture::{GestureEvent, HandId, HandState, Pad};
 use atomik_vision::tracker::TrackerEvent;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// What the indicator says when a pinch finds no target.
 pub const NO_TARGET_MESSAGE: &str = "Click a knob first";
+
+/// What the indicator says when a two-hand pad finds fewer than two knobs.
+pub const NO_PAD_TARGETS_MESSAGE: &str = "Click two knobs first";
+
+/// How much of the picture the hands cross, in one direction, to sweep a whole range with the
+/// pad.
+const PAD_RANGE: f32 = 0.8;
 
 /// The hand size (in frame heights) at or below which a hand counts as far: full range.
 const FAR_SIZE: f32 = crate::camera_midi::FAR_SIZE;
@@ -91,6 +118,19 @@ struct Pinch {
     pending: f32,
 }
 
+/// One two-hand pad in progress.
+#[derive(Debug, Clone)]
+struct PadDrag {
+    /// The merge id of its gesture (`None` while it has fewer than two knobs to move).
+    merge: Option<u64>,
+    /// The two knobs, X then Y.
+    targets: Option<[(DeviceKey, String); 2]>,
+    /// The normalised values of the knobs at the start.
+    start: [f32; 2],
+    /// Where the midpoint of the hands was when it began (known from the first frame).
+    origin: Option<(f32, f32)>,
+}
+
 /// The download of the models on its worker.
 struct Job {
     cancel: Arc<AtomicBool>,
@@ -114,7 +154,17 @@ pub(super) struct VisionCore {
     session: Option<Box<dyn VisionSession>>,
     prefs: CameraPrefs,
     target: Option<(DeviceKey, String)>,
+    /// The control clicked before the target (the pad's X).
+    previous: Option<(DeviceKey, String)>,
     pinch: Option<Pinch>,
+    /// The two-hand pad in progress.
+    pad: Option<PadDrag>,
+    /// The pad of the last frame report (for the preview's crosshair).
+    pad_now: Option<Pad>,
+    /// Decides which gesture runs which command.
+    firer: GestureFirer,
+    /// The commands the gestures ran, for the shell to run.
+    commands: Vec<String>,
     /// The last state of each hand followed.
     hands: BTreeMap<HandId, HandState>,
     /// When each plugin param last changed (the touch of a plugin that sends no gesture begin).
@@ -154,7 +204,12 @@ impl Default for VisionCore {
             preview_on: prefs.preview,
             prefs,
             target: None,
+            previous: None,
             pinch: None,
+            pad: None,
+            pad_now: None,
+            firer: GestureFirer::new(),
+            commands: Vec::new(),
             hands: BTreeMap::new(),
             seen: BTreeMap::new(),
             dialog: None,
@@ -217,6 +272,43 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    // ------------------------------------------------------------------ the project's own
+
+    /// The camera settings the project keeps of its own, if it has any.
+    pub fn camera_override(&self) -> Option<&CameraOverride> {
+        self.doc().camera.as_ref()
+    }
+
+    /// Sets or clears the project's own camera settings (one undo step). False when the model
+    /// refused them.
+    pub fn set_camera_override(&mut self, new: Option<CameraOverride>) -> bool {
+        if self.doc().camera == new {
+            return true;
+        }
+        self.apply_command(Command::SetCameraOverride(new)).is_ok()
+    }
+
+    /// The camera mode in force: the project's own while it has one, else the settings'.
+    pub fn camera_mode(&self) -> CameraMode {
+        self.camera_override()
+            .and_then(|c| CameraMode::from_id(&c.mode))
+            .unwrap_or(self.vision.prefs.mode)
+    }
+
+    /// The gesture command table in force: the project's own while it has one, else the
+    /// settings'.
+    pub fn camera_gesture_table(&self) -> Vec<GestureBinding> {
+        match self.camera_override() {
+            Some(c) => crate::camera_gestures::from_override(c),
+            None => self.vision.prefs.gestures.clone(),
+        }
+    }
+
+    /// The commands the gestures ran since the last call; the shell runs them like keys.
+    pub fn take_camera_commands(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.vision.commands)
+    }
+
     /// The cameras the system lists now.
     pub fn camera_list(&self) -> Vec<CameraEntry> {
         self.vision.backend.cameras()
@@ -254,7 +346,11 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         // A pinch in progress keeps the control it began on; the next pinch uses the new one.
-        self.vision.target = Some((device.clone(), param.to_owned()));
+        // The one before it is the pad's other knob.
+        self.vision.previous = self
+            .vision
+            .target
+            .replace((device.clone(), param.to_owned()));
         self.vision.message = None;
         self.sync_camera_marks();
     }
@@ -286,6 +382,14 @@ impl<S: EngineSink> AppCore<S> {
             .target
             .as_ref()
             .is_some_and(|(d, p)| self.resolve_param(d, p).is_none());
+        let previous_gone = self
+            .vision
+            .previous
+            .as_ref()
+            .is_some_and(|(d, p)| self.resolve_param(d, p).is_none());
+        if previous_gone {
+            self.vision.previous = None;
+        }
         if gone {
             self.vision.target = None;
             self.sync_camera_marks();
@@ -370,8 +474,11 @@ impl<S: EngineSink> AppCore<S> {
             session.stop();
         }
         self.end_pinch();
+        self.end_pad();
         self.camera_midi_release();
         self.vision.midi.reset();
+        self.vision.firer.reset();
+        self.vision.pad_now = None;
         self.vision.hands.clear();
         self.vision.preview = None;
         self.vision.lamp = CameraLamp::Off;
@@ -473,7 +580,8 @@ impl<S: EngineSink> AppCore<S> {
             .vision
             .pinch
             .as_ref()
-            .is_some_and(|p| p.merge.is_some());
+            .is_some_and(|p| p.merge.is_some())
+            || self.vision.pad.as_ref().is_some_and(|p| p.merge.is_some());
         CameraPreviewState {
             lamp: self.vision.lamp,
             picture: self
@@ -502,6 +610,12 @@ impl<S: EngineSink> AppCore<S> {
             fps: self.vision.fps,
             infer_ms: self.vision.infer_ms,
             controls: self.camera_controls_state(),
+            pad: self
+                .vision
+                .pad_now
+                .filter(|_| self.vision.session.is_some())
+                // The preview is mirrored: moving to the right of it is a smaller x.
+                .map(|p| (1.0 - p.x, p.y, p.spread)),
         }
     }
 
@@ -599,10 +713,12 @@ impl<S: EngineSink> AppCore<S> {
         self.vision.infer_ms = report.infer_ms;
         self.vision.clock = report.t;
         self.vision.hands = report.hands.iter().map(|h| (h.id, *h)).collect();
+        self.vision.pad_now = report.pad;
         let any = report.hands.iter().any(|h| h.present);
         let flags = self.camera_flags();
         let midi_pinch = flags.midi && report.hands.iter().any(|h| h.present && h.pinch);
-        self.vision.lamp = if self.vision.pinch.is_some() || midi_pinch {
+        self.vision.lamp = if self.vision.pinch.is_some() || self.vision.pad.is_some() || midi_pinch
+        {
             CameraLamp::Pinch
         } else if any {
             CameraLamp::Hand
@@ -630,7 +746,9 @@ impl<S: EngineSink> AppCore<S> {
                 self.twist(pending);
             }
         }
-        self.camera_midi_frame(report.t, &report.hands);
+        self.pad_move(report.pad);
+        self.camera_midi_frame(report.t, &report.hands, report.pad);
+        self.camera_poll_commands();
     }
 
     // ------------------------------------------------------------------ the gesture
@@ -640,16 +758,26 @@ impl<S: EngineSink> AppCore<S> {
         if flags.midi {
             self.camera_midi_gesture(&event, flags.twist);
         }
+        self.camera_gesture_command(&event);
         match event {
             GestureEvent::PinchStart { hand, handedness } => {
                 if !flags.turns
                     || !self.vision.prefs.hand.allows(handedness.letter())
                     || self.vision.pinch.is_some()
+                    || self.vision.pad.is_some()
                 {
                     return;
                 }
                 self.begin_pinch(hand);
             }
+            GestureEvent::PadStart => {
+                if flags.turns {
+                    // Two hands take over from the one that pinched first.
+                    self.end_pinch();
+                    self.begin_pad();
+                }
+            }
+            GestureEvent::PadEnd => self.end_pad(),
             GestureEvent::Twist {
                 hand,
                 delta_radians,
@@ -663,7 +791,176 @@ impl<S: EngineSink> AppCore<S> {
                     self.end_pinch();
                 }
             }
-            GestureEvent::OpenPalmStart { .. } | GestureEvent::OpenPalmEnd { .. } => {}
+            GestureEvent::OpenPalmStart { .. }
+            | GestureEvent::OpenPalmEnd { .. }
+            | GestureEvent::PoseStart { .. }
+            | GestureEvent::PoseEnd { .. }
+            | GestureEvent::Swipe { .. } => {}
+        }
+    }
+
+    /// Tells the firer what the hands did and queues the commands that are due.
+    fn camera_gesture_command(&mut self, event: &GestureEvent) {
+        let t = self.vision.clock;
+        match *event {
+            GestureEvent::PoseStart {
+                hand,
+                handedness,
+                pose,
+            } => self
+                .vision
+                .firer
+                .start(t, hand, handedness, gesture_of(pose)),
+            GestureEvent::OpenPalmStart { hand, handedness } => {
+                self.vision
+                    .firer
+                    .start(t, hand, handedness, CameraGesture::OpenPalm);
+            }
+            GestureEvent::PoseEnd { hand, pose } => {
+                self.vision.firer.end(hand, gesture_of(pose));
+            }
+            GestureEvent::OpenPalmEnd { hand } => {
+                self.vision.firer.end(hand, CameraGesture::OpenPalm);
+            }
+            GestureEvent::Swipe {
+                handedness,
+                direction,
+                ..
+            } => {
+                let table = self.camera_gesture_table();
+                let pinching = self.camera_pinching();
+                if let Some(command) = self.vision.firer.swipe(
+                    t,
+                    handedness,
+                    swipe_gesture(direction),
+                    &table,
+                    pinching,
+                ) {
+                    self.vision.commands.push(command);
+                }
+            }
+            _ => return,
+        }
+        self.camera_poll_commands();
+    }
+
+    /// Queues the commands of the holds that are ready.
+    fn camera_poll_commands(&mut self) {
+        let table = self.camera_gesture_table();
+        let pinching = self.camera_pinching();
+        let t = self.vision.clock;
+        let ready = self.vision.firer.poll(t, &table, pinching);
+        self.vision.commands.extend(ready);
+    }
+
+    /// Whether any hand is pinched (a knob, or the pad, is being turned).
+    fn camera_pinching(&self) -> bool {
+        self.vision.pinch.is_some()
+            || self.vision.pad.is_some()
+            || self.vision.hands.values().any(|h| h.present && h.pinch)
+    }
+
+    // ------------------------------------------------------------------ the pad
+
+    /// Both hands pinched: the last two clicked knobs are the pad's X and Y.
+    fn begin_pad(&mut self) {
+        let pair = match (&self.vision.previous, &self.vision.target) {
+            (Some(x), Some(y)) => Some([x.clone(), y.clone()]),
+            _ => None,
+        };
+        let starts = pair.as_ref().and_then(|[x, y]| {
+            let value = |(d, p): &(DeviceKey, String)| match self.resolve_param(d, p) {
+                Some(Resolved::Param { key, desc }) => {
+                    let plain = self
+                        .doc()
+                        .param_value(&key, desc.key, &self.registry)
+                        .unwrap_or(desc.default);
+                    Some(desc.to_normalized(plain))
+                }
+                _ => None,
+            };
+            Some([value(x)?, value(y)?])
+        });
+        self.vision.lamp = CameraLamp::Pinch;
+        let Some((targets, start)) = pair.zip(starts) else {
+            self.vision.message = Some(NO_PAD_TARGETS_MESSAGE.to_owned());
+            self.vision.pad = Some(PadDrag {
+                merge: None,
+                targets: None,
+                start: [0.0; 2],
+                origin: None,
+            });
+            self.report(NO_PAD_TARGETS_MESSAGE);
+            return;
+        };
+        let merge = self.midi.gesture(GestureKey::Camera, true);
+        self.vision.message = None;
+        self.vision.pad = Some(PadDrag {
+            merge: Some(merge),
+            targets: Some(targets),
+            start,
+            origin: None,
+        });
+    }
+
+    /// The hands moved: both knobs follow, in one batch.
+    fn pad_move(&mut self, pad: Option<Pad>) {
+        let Some(pad) = pad else { return };
+        let Some(drag) = &mut self.vision.pad else {
+            return;
+        };
+        let (Some(merge), Some(targets)) = (drag.merge, drag.targets.clone()) else {
+            return;
+        };
+        let origin = *drag.origin.get_or_insert((pad.x, pad.y));
+        // To the right of the mirrored preview is a smaller x; up is a smaller y.
+        let moved = [
+            (origin.0 - pad.x) / PAD_RANGE,
+            (origin.1 - pad.y) / PAD_RANGE,
+        ];
+        let start = drag.start;
+        let mut commands = Vec::new();
+        let mut changed = false;
+        for (i, (device, param)) in targets.iter().enumerate() {
+            let Some(Resolved::Param { key, desc }) = self.resolve_param(device, param) else {
+                // A knob went away under the hands.
+                self.end_pad();
+                return;
+            };
+            let plain = desc.from_normalized((start[i] + moved[i]).clamp(0.0, 1.0));
+            let old = self.doc().param_value(&key, desc.key, &self.registry);
+            changed |= old.is_none_or(|o| o.to_bits() != plain.to_bits());
+            commands.push(Command::SetParam {
+                key,
+                param: desc.key.to_owned(),
+                value: plain,
+                merge: Some(merge),
+            });
+        }
+        if changed {
+            // A rejection (a macro-driven knob, a frozen track) is shown like any other.
+            let _ = self.apply_command(Command::Batch(commands));
+        }
+    }
+
+    /// Lets go of the pad: the gesture closes, so both moves are one undo step.
+    fn end_pad(&mut self) {
+        let Some(pad) = self.vision.pad.take() else {
+            return;
+        };
+        if pad.merge.is_some() && self.midi.close_gesture(&GestureKey::Camera) {
+            self.document.end_merge();
+            self.release_automation();
+        }
+        if self.vision.lamp == CameraLamp::Pinch && self.vision.pinch.is_none() {
+            self.vision.lamp = if self.vision.session.is_some() {
+                CameraLamp::Hand
+            } else {
+                CameraLamp::Off
+            };
+        }
+        if pad.merge.is_some() {
+            self.vision.message = None;
         }
     }
 

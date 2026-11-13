@@ -65,8 +65,12 @@ pub struct Spec {
     pub score: f32,
     /// Noise on every landmark, in frame heights.
     pub noise: f32,
-    /// How far the four fingers are folded into the palm: 0 open, 1 a fist.
+    /// How far the fingers are folded into the palm: 0 open, 1 a fist.
     pub curl: f32,
+    /// Which of the index, middle, ring and little fingers the curl folds (all by default).
+    pub folded: [bool; 4],
+    /// The thumb stands up above the fist.
+    pub thumb_up: bool,
 }
 
 impl Spec {
@@ -80,6 +84,8 @@ impl Spec {
             score: 0.95,
             noise: 0.0,
             curl: 0.0,
+            folded: [true; 4],
+            thumb_up: false,
         }
     }
     pub fn left() -> Self {
@@ -109,7 +115,10 @@ pub fn hand(spec: &Spec, noise: &mut Noise) -> HandObservation {
     );
     // A curled finger folds its three upper joints back towards the wrist, the tip furthest.
     if spec.curl > 0.0 {
-        for mcp in [5usize, 9, 13, 17] {
+        for (n, mcp) in [5usize, 9, 13, 17].into_iter().enumerate() {
+            if !spec.folded[n] {
+                continue;
+            }
             let (mx, my) = BASE[mcp];
             for (joint, back) in [(mcp + 1, 0.0), (mcp + 2, 0.2), (mcp + 3, 0.45)] {
                 let folded = (mx, my * (1.0 - back) - 0.05 + 0.1 * back);
@@ -120,6 +129,12 @@ pub fn hand(spec: &Spec, noise: &mut Noise) -> HandObservation {
                 );
             }
         }
+    }
+    // A thumb up: the thumb stands straight above the knuckles.
+    if spec.thumb_up {
+        pts[2] = (-0.4, 0.5);
+        pts[3] = (-0.45, 1.0);
+        pts[4] = (-0.5, 1.5);
     }
     // Where the palm is: the mean of the wrist and the four knuckles.
     let (mut px, mut py) = (0.0, 0.0);
@@ -299,6 +314,103 @@ pub fn open_flash() -> Vec<Observation> {
     })
 }
 
+/// A fist held, then the hand opens.
+pub fn fist() -> Vec<Observation> {
+    sequence(60, |_, t| {
+        vec![Spec {
+            curl: if t < 1.2 { 1.0 } else { 0.0 },
+            noise: 0.0008,
+            ..Spec::right()
+        }]
+    })
+}
+
+/// A thumbs up held, then the fingers open.
+pub fn thumbs_up() -> Vec<Observation> {
+    sequence(60, |_, t| {
+        let up = t < 1.2;
+        vec![Spec {
+            curl: if up { 1.0 } else { 0.0 },
+            thumb_up: up,
+            noise: 0.0008,
+            ..Spec::right()
+        }]
+    })
+}
+
+/// The index finger up (the others folded), held, then the hand opens.
+pub fn point() -> Vec<Observation> {
+    sequence(60, |_, t| {
+        vec![Spec {
+            curl: if t < 1.2 { 1.0 } else { 0.0 },
+            folded: [false, true, true, true],
+            noise: 0.0008,
+            ..Spec::right()
+        }]
+    })
+}
+
+/// The index and middle fingers up (the others folded), held, then the hand opens.
+pub fn peace() -> Vec<Observation> {
+    sequence(60, |_, t| {
+        vec![Spec {
+            curl: if t < 1.2 { 1.0 } else { 0.0 },
+            folded: [false, false, true, true],
+            noise: 0.0008,
+            ..Spec::right()
+        }]
+    })
+}
+
+/// An open hand that waits, then sweeps across the frame in 300 ms (`to_left`: the palm goes
+/// to the left of the raw image), then rests.
+pub fn swipe(to_left: bool) -> Vec<Observation> {
+    sequence(60, |_, t| {
+        let t = t as f32;
+        let (a, b) = if to_left { (0.8, 0.25) } else { (0.25, 0.8) };
+        let f = (t - 0.5) / 0.3;
+        vec![Spec {
+            center: (lerp(a, b, f), 0.55),
+            noise: 0.0008,
+            ..Spec::right()
+        }]
+    })
+}
+
+/// The same sweep, but over two seconds: a drift, not a swipe.
+pub fn drift() -> Vec<Observation> {
+    sequence(90, |_, t| {
+        let f = (t as f32 - 0.2) / 2.4;
+        vec![Spec {
+            center: (lerp(0.8, 0.25, f), 0.55),
+            noise: 0.0008,
+            ..Spec::right()
+        }]
+    })
+}
+
+/// Both hands pinch (the left at 0.3 s, the right at 0.5 s), move apart and up
+/// between 1.0 and 1.6 s while pinched, and open at 2 s.
+pub fn two_hand_pad() -> Vec<Observation> {
+    sequence(90, |_, t| {
+        let t = t as f32;
+        let f = (t - 1.0) / 0.6;
+        let left = Spec {
+            center: (lerp(0.4, 0.2, f), lerp(0.6, 0.4, f)),
+            pinch_ratio: if (0.3..2.0).contains(&t) { 0.06 } else { 1.0 },
+            noise: 0.0004,
+            ..Spec::left()
+        };
+        let right = Spec {
+            center: (lerp(0.6, 0.8, f), lerp(0.6, 0.4, f)),
+            pinch_ratio: if (0.5..2.0).contains(&t) { 0.06 } else { 1.0 },
+            noise: 0.0004,
+            ..Spec::right()
+        };
+        vec![left, right]
+    })
+}
+
 /// Every fixture: file name and frames.
 pub fn fixtures() -> Vec<(&'static str, Vec<Observation>)> {
     vec![
@@ -309,6 +421,14 @@ pub fn fixtures() -> Vec<(&'static str, Vec<Observation>)> {
         ("two_hands.json", two_hands()),
         ("open_palm.json", open_palm()),
         ("open_flash.json", open_flash()),
+        ("fist.json", fist()),
+        ("thumbs_up.json", thumbs_up()),
+        ("point.json", point()),
+        ("peace.json", peace()),
+        ("swipe_left.json", swipe(true)),
+        ("swipe_right.json", swipe(false)),
+        ("drift.json", drift()),
+        ("two_hand_pad.json", two_hand_pad()),
     ]
 }
 

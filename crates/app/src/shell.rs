@@ -4082,6 +4082,7 @@ impl<B: AudioBackend> Shell<B> {
             )
             .with_themes(self.theme_rows(), self.system_dark);
         dialog.set_camera_models(self.core.camera_models());
+        dialog.set_camera_project(self.core.camera_override());
         if let Some(tab) = tab {
             dialog.show_tab(tab);
         }
@@ -6719,7 +6720,11 @@ impl<B: AudioBackend> Shell<B> {
                 DialogOutcome::Apply(settings) => {
                     let prefs = dialog.preferences();
                     let profiles = dialog.profile_changes();
+                    let project = dialog.has_camera_tab().then(|| dialog.camera_project());
                     self.dialog = None;
+                    if let Some(camera) = project {
+                        self.apply_camera_project(camera);
+                    }
                     self.save_profile_options(profiles);
                     self.apply_preferences(prefs);
                     self.apply_settings(settings);
@@ -10362,6 +10367,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_language();
         let busy = self.core.is_busy();
         self.core.frame();
+        self.run_camera_commands();
         self.sync_camera_ui();
         self.sync_meter_panels();
         self.sync_plugin_ui();

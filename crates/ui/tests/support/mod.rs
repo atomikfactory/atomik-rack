@@ -105,6 +105,7 @@ pub fn reference_doc() -> RackDoc {
         references: Vec::new(),
         delivery: None,
         video: None,
+        camera: None,
     }
 }
 

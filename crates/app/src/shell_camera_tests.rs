@@ -309,3 +309,53 @@ fn delete_downloaded_models_in_the_camera_tab_turns_the_camera_off_and_deletes()
         1
     );
 }
+
+// ---- Gestures that run commands -----------------------------------------------------------------
+
+fn gesture_frame(t: f64) -> atomik_vision::tracker::TrackerEvent {
+    atomik_vision::tracker::TrackerEvent::Frame(crate::vision_link::FrameReport {
+        t,
+        hands: Vec::new(),
+        pad: None,
+        fps: 30.0,
+        infer_ms: 20.0,
+    })
+}
+
+fn fist() -> atomik_vision::tracker::TrackerEvent {
+    atomik_vision::tracker::TrackerEvent::Gesture(atomik_vision::gesture::GestureEvent::PoseStart {
+        hand: atomik_vision::gesture::HandId(0),
+        handedness: atomik_vision::Handedness::Right,
+        pose: atomik_vision::gesture::Pose::Fist,
+    })
+}
+
+#[test]
+fn a_gesture_runs_its_command_in_the_shell_like_its_key_and_by_default_nothing_runs() {
+    let (mut s, fake) = shell(ModelState::Ready);
+    s.core_mut().camera_on();
+    s.core_mut()
+        .apply_command(atomik_model::Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.poly-synth".into(),
+            key: Some(atomik_model::DeviceKey("synth".into())),
+        })
+        .unwrap();
+    let devices = |s: &Shell<NullBackend>| s.core().doc().devices.len();
+    let before = devices(&s);
+    // No row in the table: the fist does nothing.
+    fake.push(vec![gesture_frame(1.0), fist()]);
+    s.frame();
+    assert_eq!(devices(&s), before, "defaults off");
+    // The fist runs Undo, exactly as Ctrl+Z would: the device goes.
+    let mut prefs = s.core().camera_prefs().clone();
+    prefs.gestures = vec![crate::camera_gestures::GestureBinding {
+        gesture: atomik_model::CameraGesture::Fist,
+        hand: crate::keymap_store::HandChoice::Either,
+        command: "edit.undo".into(),
+    }];
+    s.core_mut().set_camera_prefs(prefs);
+    fake.push(vec![gesture_frame(5.0), fist()]);
+    s.frame();
+    assert!(devices(&s) < before, "the gesture ran Undo");
+}

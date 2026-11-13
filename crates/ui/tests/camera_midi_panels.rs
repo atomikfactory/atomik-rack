@@ -57,6 +57,7 @@ fn midi_preview(learning: bool) -> CameraPreviewState {
         fps: 29.6,
         infer_ms: 21.4,
         controls: Some(controls(learning)),
+        pad: None,
     }
 }
 
@@ -99,6 +100,7 @@ fn the_midi_preview_shows_six_bars_under_the_hand_and_its_channel() {
     );
     let plain = CameraPreviewState {
         controls: None,
+        pad: None,
         ..midi_preview(false)
     };
     assert_eq!(

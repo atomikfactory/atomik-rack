@@ -78,7 +78,7 @@
 {"fill":{"rrect":[476.00,366.00,606.00,394.00,6.00]},"brush":"#262a30ff"},
 {"text":"Supprimer","at":[541.00,384.00],"size":12.00,"weight":400,"align":"center","color":"#ece8e1ff"},
 {"fill":{"rrect":[614.00,366.00,744.00,394.00,6.00]},"brush":"#262a30ff"},
-{"text":"Edit...","at":[679.00,384.00],"size":12.00,"weight":400,"align":"center","color":"#ece8e1ff"},
+{"text":"Modifier...","at":[679.00,384.00],"size":12.00,"weight":400,"align":"center","color":"#ece8e1ff"},
 {"fill":{"rrect":[200.00,402.00,330.00,430.00,6.00]},"brush":"#262a30ff"},
 {"text":"Importer...","at":[265.00,420.00],"size":12.00,"weight":400,"align":"center","color":"#ece8e1ff"},
 {"fill":{"rrect":[338.00,402.00,468.00,430.00,6.00]},"brush":"#262a30ff"},

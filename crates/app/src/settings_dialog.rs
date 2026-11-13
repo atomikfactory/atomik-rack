@@ -656,11 +656,41 @@ impl SettingsDialog {
             .map(|p| p.camera.layout(self.panel(view)))
     }
 
+    /// Where the parts of the Camera tab's gesture commands page are, while it is open.
+    pub fn camera_page_layout(&self, view: Size) -> Option<crate::camera_gestures_tab::PageLayout> {
+        if self.tab != Tab::Camera {
+            return None;
+        }
+        self.prefs
+            .as_ref()
+            .and_then(|p| p.camera.page_layout(self.panel(view)))
+    }
+
     /// Shows the state of the hand models in the Camera tab.
     pub fn set_camera_models(&mut self, models: crate::vision_link::ModelState) {
         if let Some(p) = &mut self.prefs {
             p.camera.set_models(models);
         }
+    }
+
+    /// Hands the Camera tab the open project's own camera settings (`None`: it has none).
+    pub fn set_camera_project(&mut self, camera: Option<&atomik_model::CameraOverride>) {
+        if let Some(p) = &mut self.prefs {
+            p.camera.set_project(camera);
+        }
+    }
+
+    /// The project's own camera settings as edited in the Camera tab (`None`: the project uses
+    /// the settings'; also `None` for the audio-only dialog).
+    pub fn camera_project(&self) -> Option<atomik_model::CameraOverride> {
+        self.prefs
+            .as_ref()
+            .and_then(|p| p.camera.project_override())
+    }
+
+    /// Whether the Camera tab can say what the project keeps (the dialog has preferences).
+    pub fn has_camera_tab(&self) -> bool {
+        self.prefs.is_some()
     }
 
     /// Shows the cameras the system listed in the Camera tab.

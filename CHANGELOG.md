@@ -26,6 +26,18 @@ may break APIs and the patch and project formats.
   renders the mix over the time selection (or the loop) on a worker, measures its integrated loudness and the
   reference's over the same seconds, and sets the matched gain from them; the slow match leaves it alone until
   Match Reference Level is turned off and on.
+- **More webcam gestures: a two-hand pad, gestures that run commands, and settings per project.** Pinch with both
+  hands and the middle between them is an X/Y position and the distance between them a third axis. In Turn clicked knob
+  mode the pad turns the last two knobs you clicked (the older with left and right, the newer with height), the whole
+  gesture one undo step; in MIDI controller mode it sends controllers 24 to 26 on channel 3, absolute and rate limited
+  like the others, and the preview shows an X/Y crosshair. The camera also knows a fist, a thumbs up, a point (index
+  finger), a peace sign and a fast swipe left or right, held for 300 ms or swept half a frame in 400 ms, from the
+  landmarks alone. Settings > Camera > Gesture commands maps each one, for either hand, the left or the right, to any
+  command with a picker that searches the command list; the table is empty by default so nothing happens by surprise,
+  Suggested fills in fist = Stop, open palm held for a second = Play and thumbs up = Record, a gesture runs once per
+  hold, waits half a second after any command and never runs while you pinch. Gestures are also Camera notes 62 to 67
+  that MIDI Learn can map. Use for this project only keeps the camera mode and the gesture table in the project (an
+  optional field, the format stays 45).
 - **The camera as a MIDI controller.** The webcam is now also an input named Camera that MIDI Learn can map to
   anything it maps today, so you can put hand height on a filter and a twist on a send at the same time. Each hand
   has fixed controls (the right hand on channel 1, the left on channel 2): the twist while pinched is an endless

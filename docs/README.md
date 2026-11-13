@@ -305,6 +305,12 @@ it is view state (never saved with a project) and deleting its device clears it.
   | Palm left and right | Controller 22, the same range; moving your hand to the right (in the preview) raises it |
   | Hand closeness | Controller 23, from a far hand (0) to one near the camera (127) |
   | Open palm | Note 61, all four fingers extended and the thumb clear of the index finger for 300 ms |
+  | Fist | Note 62, all four fingers curled for 300 ms |
+  | Thumbs up | Note 63, a fist with the thumb standing up above the knuckles for 300 ms |
+  | Point | Note 64, the index finger up and the other three curled for 300 ms |
+  | Peace | Note 65, the index and middle fingers up and the other two curled for 300 ms |
+  | Swipe left, swipe right | Notes 66 and 67, on and off at once: the palm sweeps half a frame height sideways in 400 ms (left and right as the preview shows them) |
+  | Two-hand pad | Controllers 24 (left and right), 25 (height) and 26 (spread) on **channel 3**, while both hands are pinched |
 
   A learned twist is made an endless encoder (one full turn of the twist setting sweeps a mapping's whole range at the
   default encoder step). The controllers send only when their value moves by a step of 1 or more, at most 60 times a
@@ -314,6 +320,29 @@ it is view state (never saved with a project) and deleting its device clears it.
   MIDI in a plugin window) the camera sends all its controls whatever the mode, a pinch turns no knob, and the preview
   says so, so you can learn a control without switching mode. In the MIDI controller mode the preview shows six small
   bars with the live values (twist, height, left and right, closeness, pinch and palm).
+- **The two-hand pad.** Pinch with both hands: the middle between the hands is an X/Y position and the distance between
+  them a third axis. In **Turn clicked knob** mode the pad turns the last **two** knobs you clicked, the older one with
+  the left and right movement and the newer one with the height, each from where it was when you pinched (moving your
+  hands across 80% of the picture sweeps a whole range), so you can sweep a filter's cutoff and resonance together. The
+  whole two-hand gesture is one undo step. With fewer than two knobs clicked the indicator says "Click two knobs first".
+  In **MIDI controller** mode the pad sends controllers 24 to 26 on channel 3 ("both hands", in the table above):
+  absolute, at most 60 times a second each, holding their last values when you let go. In **Both** mode the pad turns
+  the knobs and sends only its spread. The preview shows an X/Y crosshair, with a ring as wide as the distance between
+  your hands, while the pad is active.
+- **Gestures that run commands.** The camera knows a small fixed set of gestures: **fist** (all fingers curled), **open
+  palm**, **thumbs up**, **point** (index finger up), **peace** (index and middle fingers up) and **swipe left or
+  right**. Settings > Camera > **Gesture commands** says which command each one runs, for either hand, the left or the
+  right: pick any command from the list (it has a search field, like the keyboard shortcuts), or None. **The table is
+  empty by default, so nothing happens by surprise.** **Suggested** fills in fist = Stop, open palm held for a second =
+  Play and thumbs up = Record; **Clear** empties it. A gesture runs its command once each time you make it (hold the
+  pose for 300 ms; the open palm for a second) and again only after your hand has changed pose; no gesture runs within
+  half a second of another command, and none runs while you pinch. A command runs exactly as the key bound to it would,
+  with the same confirmations, and a command that does not apply in the current view says so in the status line. The
+  gestures also arrive as notes (62 to 67, in the table above), so MIDI Learn can map them too.
+- **For this project only.** In Settings > Camera, **Use for this project only** keeps the mode and the gesture table
+  in the open project instead of in your settings: while it is on, those two settings edit the project's copy, other
+  projects and your settings are untouched, and turning it off goes back to your settings. It is saved with the project
+  (an optional field, so older builds open the project and ignore it) and is one undo step.
 - **Notes and tracks.** The camera is a controller, not an instrument: a note track that listens to all inputs never
   receives the pinch and open palm notes, and you can map them to a toggle or a command. To play with them on purpose,
   turn on **Camera notes play the selected instrument** in Settings > Camera: they then play the selected instrument
@@ -325,7 +354,8 @@ it is view state (never saved with a project) and deleting its device clears it.
   and the milliseconds the models took.
 - **Settings.** The Camera tab: the camera (the list is asked for with Refresh, so opening the settings never
   touches a camera), which hand (either, left or right), the full turn, fine control, the pinch sensitivity and the
-  preview. They are saved with the other settings (`workflow.json`), never in a project.
+  preview, and the gesture commands. They are saved with the other settings (`workflow.json`), except what **Use for
+  this project only** keeps in the project.
 - **Privacy.** Frames live in memory only: they are never written to disk, logged, sent anywhere, put in a project or
   kept after the camera stops, and a lit dot shows whenever the camera runs. See [Privacy](#privacy).
 

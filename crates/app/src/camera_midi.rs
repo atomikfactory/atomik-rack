@@ -20,6 +20,11 @@
 //!   preview (moving the hand to the right raises it).
 //! * **closeness**: controller 23, from a hand far away (0) to one near the camera (127).
 //! * **open palm**: note 61.
+//! * **poses and swipes**: fist note 62, thumbs up 63, point 64, peace 65 (each on while the pose
+//!   is held, off when it ends), swipe left 66 and swipe right 67 (on and off at once).
+//! * **the pad** (both hands pinched), on channel 3: the midpoint as controllers 24 (left and
+//!   right, like controller 22) and 25 (height, like controller 21) and the distance between the
+//!   hands as controller 26. They hold their values when the hands let go.
 //!
 //! # The rate
 //!
@@ -31,11 +36,11 @@
 
 use atomik_core::{ChannelMessage, MessageKind};
 use atomik_model::{
-    CLOSENESS_CC, CameraControl, CameraHand, HEIGHT_CC, OPEN_PALM_NOTE, PINCH_NOTE, SIDE_CC,
-    TWIST_CC,
+    BOTH_HANDS_CHANNEL, CLOSENESS_CC, CameraControl, CameraGesture, CameraHand, HEIGHT_CC,
+    OPEN_PALM_NOTE, PAD_SPREAD_CC, PAD_X_CC, PAD_Y_CC, PINCH_NOTE, SIDE_CC, TWIST_CC,
 };
 use atomik_vision::Handedness;
-use atomik_vision::gesture::{HandId, HandState};
+use atomik_vision::gesture::{HandId, HandState, Pad, Pose, SwipeDirection};
 use std::collections::BTreeMap;
 
 /// The most messages one control sends in a second.
@@ -82,6 +87,34 @@ pub fn closeness_value(size: f32) -> u8 {
     unit_to_cc((size - FAR_SIZE) / (NEAR_SIZE - FAR_SIZE))
 }
 
+/// The distance between the hands (in frame heights) at or below which the pad's spread is 0.
+pub const SPREAD_MIN: f32 = 0.15;
+/// The distance between the hands at or above which the pad's spread is 127.
+pub const SPREAD_MAX: f32 = 1.2;
+
+/// The spread controller of hands `spread` frame heights apart.
+pub fn spread_value(spread: f32) -> u8 {
+    unit_to_cc((spread - SPREAD_MIN) / (SPREAD_MAX - SPREAD_MIN))
+}
+
+/// The gesture a pose is.
+pub fn gesture_of(pose: Pose) -> CameraGesture {
+    match pose {
+        Pose::Fist => CameraGesture::Fist,
+        Pose::ThumbsUp => CameraGesture::ThumbsUp,
+        Pose::Point => CameraGesture::Point,
+        Pose::Peace => CameraGesture::Peace,
+    }
+}
+
+/// The gesture a swipe is.
+pub fn swipe_gesture(direction: SwipeDirection) -> CameraGesture {
+    match direction {
+        SwipeDirection::Left => CameraGesture::SwipeLeft,
+        SwipeDirection::Right => CameraGesture::SwipeRight,
+    }
+}
+
 /// A controller that sends only when it moved.
 #[derive(Debug, Clone, Copy, Default)]
 struct Absolute {
@@ -119,6 +152,8 @@ struct Out {
     closeness: Absolute,
     pinch: bool,
     palm: bool,
+    /// The pose whose note is on.
+    pose: Option<Pose>,
 }
 
 impl Out {
@@ -134,14 +169,24 @@ impl Out {
             closeness: Absolute::default(),
             pinch: false,
             palm: false,
+            pose: None,
         }
     }
+}
+
+/// What the pad has sent.
+#[derive(Debug, Clone, Copy, Default)]
+struct PadOut {
+    x: Absolute,
+    y: Absolute,
+    spread: Absolute,
 }
 
 /// The messages the camera's hands send. See the module documentation.
 #[derive(Debug, Clone, Default)]
 pub struct CameraMidi {
     hands: BTreeMap<HandId, Out>,
+    pad: PadOut,
 }
 
 /// One control of the preview: a bar showing what the camera sent last.
@@ -189,6 +234,66 @@ impl CameraMidi {
     /// Forgets every hand and what it sent (the camera was switched off or the mode changed).
     pub fn reset(&mut self) {
         self.hands.clear();
+        self.pad = PadOut::default();
+    }
+
+    /// The pad (both hands pinched) at `t`: its controllers on the third channel, only when they
+    /// moved. With `xy` off only the spread is sent (the position is turning two knobs). A pad
+    /// that has ended sends nothing: the controllers hold their last values.
+    pub fn pad(&mut self, t: f64, pad: Option<Pad>, xy: bool, out: &mut Vec<ChannelMessage>) {
+        let Some(pad) = pad else { return };
+        let channel = BOTH_HANDS_CHANNEL;
+        if xy {
+            if let Some(v) = self.pad.x.update(t, side_value(pad.x)) {
+                out.push(cc(channel, PAD_X_CC, v));
+            }
+            if let Some(v) = self.pad.y.update(t, height_value(pad.y)) {
+                out.push(cc(channel, PAD_Y_CC, v));
+            }
+        }
+        if let Some(v) = self.pad.spread.update(t, spread_value(pad.spread)) {
+            out.push(cc(channel, PAD_SPREAD_CC, v));
+        }
+    }
+
+    /// A pose has been held long enough: its note goes on.
+    pub fn pose_start(
+        &mut self,
+        id: HandId,
+        handedness: Handedness,
+        pose: Pose,
+        out: &mut Vec<ChannelMessage>,
+    ) {
+        let hand = hand_of(handedness);
+        let o = self.out(id, hand);
+        if o.pose != Some(pose) {
+            if let Some(old) = o.pose.replace(pose) {
+                out.push(note(hand.channel(), gesture_of(old).note(), false));
+            }
+            out.push(note(hand.channel(), gesture_of(pose).note(), true));
+        }
+    }
+
+    /// The pose ended (or the hand was lost): its note goes off.
+    pub fn pose_end(&mut self, id: HandId, out: &mut Vec<ChannelMessage>) {
+        if let Some(o) = self.hands.get_mut(&id)
+            && let Some(pose) = o.pose.take()
+        {
+            out.push(note(o.hand.channel(), gesture_of(pose).note(), false));
+        }
+    }
+
+    /// A swipe: its note goes on and off at once.
+    pub fn swipe(
+        &mut self,
+        handedness: Handedness,
+        direction: SwipeDirection,
+        out: &mut Vec<ChannelMessage>,
+    ) {
+        let channel = hand_of(handedness).channel();
+        let key = swipe_gesture(direction).note();
+        out.push(note(channel, key, true));
+        out.push(note(channel, key, false));
     }
 
     /// A frame: the absolute controllers of every hand that is in view. A hand that is not in
@@ -320,12 +425,17 @@ impl CameraMidi {
             if std::mem::take(&mut o.palm) {
                 out.push(note(o.hand.channel(), OPEN_PALM_NOTE, false));
             }
+            if let Some(pose) = o.pose.take() {
+                out.push(note(o.hand.channel(), gesture_of(pose).note(), false));
+            }
         }
     }
 
     /// Whether any note is held.
     pub fn holds_notes(&self) -> bool {
-        self.hands.values().any(|o| o.pinch || o.palm)
+        self.hands
+            .values()
+            .any(|o| o.pinch || o.palm || o.pose.is_some())
     }
 
     /// The hand the preview shows (the first in view, else the first seen) and one bar for each
@@ -369,6 +479,7 @@ mod tests {
             hand_size: size,
             depth_proxy: size,
             open_palm: false,
+            pose: None,
         }
     }
 
@@ -603,5 +714,124 @@ mod tests {
         assert_eq!(hand, CameraHand::Left);
         assert_eq!(bars.map(|b| b.control), CameraControl::ALL);
         assert_eq!(bars[1].value, 1.0, "the palm is at the top");
+    }
+
+    // ---- Poses, swipes and the pad ----------------------------------------------------------
+
+    #[test]
+    fn each_pose_is_a_note_on_its_hands_channel_while_it_is_held() {
+        let mut m = CameraMidi::new();
+        let mut out = Vec::new();
+        for (pose, key) in [
+            (Pose::Fist, 62),
+            (Pose::ThumbsUp, 63),
+            (Pose::Point, 64),
+            (Pose::Peace, 65),
+        ] {
+            out.clear();
+            m.pose_start(HandId(0), Handedness::Right, pose, &mut out);
+            assert_eq!(out, vec![note(0, key, true)]);
+            assert!(m.holds_notes());
+            out.clear();
+            m.pose_end(HandId(0), &mut out);
+            assert_eq!(out, vec![note(0, key, false)]);
+            assert!(!m.holds_notes());
+        }
+        out.clear();
+        m.pose_start(HandId(1), Handedness::Left, Pose::Peace, &mut out);
+        assert_eq!(out, vec![note(1, 65, true)], "the left hand is channel 2");
+        out.clear();
+        m.pose_end(HandId(1), &mut out);
+        m.pose_end(HandId(1), &mut out);
+        assert_eq!(out.len(), 1, "one note off for one note on");
+    }
+
+    #[test]
+    fn a_swipe_is_a_note_on_and_off_at_once() {
+        let mut m = CameraMidi::new();
+        let mut out = Vec::new();
+        m.swipe(Handedness::Right, SwipeDirection::Left, &mut out);
+        m.swipe(Handedness::Left, SwipeDirection::Right, &mut out);
+        assert_eq!(
+            out,
+            vec![
+                note(0, 66, true),
+                note(0, 66, false),
+                note(1, 67, true),
+                note(1, 67, false)
+            ]
+        );
+        assert!(!m.holds_notes());
+    }
+
+    #[test]
+    fn the_pad_sends_three_controllers_on_channel_3_and_only_when_they_move() {
+        let mut m = CameraMidi::new();
+        let mut out = Vec::new();
+        let pad = |x, y, spread| Some(Pad { x, y, spread });
+        m.pad(0.0, pad(0.5, 0.5, 0.675), true, &mut out);
+        assert_eq!(
+            out,
+            vec![
+                cc(2, 24, side_value(0.5)),
+                cc(2, 25, height_value(0.5)),
+                cc(2, 26, spread_value(0.675)),
+            ]
+        );
+        assert!(
+            [cc(2, 26, 63), cc(2, 26, 64)].contains(&out[2]),
+            "half way between the two ends"
+        );
+        out.clear();
+        m.pad(0.1, pad(0.5, 0.5, 0.675), true, &mut out);
+        assert!(out.is_empty(), "nothing moved");
+        // Only the height moved; then it moves again inside the pause of 1/60 s and waits.
+        m.pad(0.2, pad(0.5, 0.3, 0.675), true, &mut out);
+        assert_eq!(out, vec![cc(2, 25, height_value(0.3))]);
+        out.clear();
+        m.pad(0.205, pad(0.5, 0.5, 0.675), true, &mut out);
+        assert!(out.is_empty(), "inside the pause");
+        m.pad(0.3, pad(0.5, 0.5, 0.675), true, &mut out);
+        assert_eq!(out, vec![cc(2, 25, height_value(0.5))]);
+        // The pad ends: no more messages, the controllers hold their values.
+        out.clear();
+        m.pad(0.3, None, true, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn with_the_position_driving_knobs_only_the_spread_is_sent() {
+        let mut m = CameraMidi::new();
+        let mut out = Vec::new();
+        m.pad(
+            0.0,
+            Some(Pad {
+                x: 0.2,
+                y: 0.8,
+                spread: 0.3,
+            }),
+            false,
+            &mut out,
+        );
+        assert_eq!(out, vec![cc(2, 26, spread_value(0.3))]);
+    }
+
+    #[test]
+    fn the_spread_runs_from_the_hands_touching_to_the_width_of_the_frame() {
+        assert_eq!(spread_value(0.0), 0);
+        assert_eq!(spread_value(SPREAD_MIN), 0);
+        assert_eq!(spread_value(SPREAD_MAX), 127);
+        assert_eq!(spread_value(2.0), 127);
+        assert!(spread_value(0.8) > spread_value(0.4));
+    }
+
+    #[test]
+    fn release_all_ends_a_held_pose_too() {
+        let mut m = CameraMidi::new();
+        let mut out = Vec::new();
+        m.pose_start(HandId(0), Handedness::Right, Pose::Fist, &mut out);
+        out.clear();
+        m.release_all(&mut out);
+        assert_eq!(out, vec![note(0, 62, false)]);
     }
 }
