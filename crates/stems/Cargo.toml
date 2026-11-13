@@ -1,0 +1,20 @@
+[package]
+name = "atomik-stems"
+description = "Atomik Rack stem separation: the Open-Unmix network in pure Rust, its weight files, the STFT and the chunked, cancellable, deterministic separation of a song into vocals, drums, bass and other."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+atomik-download.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

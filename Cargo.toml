@@ -40,6 +40,7 @@ atomik-plugin-hostd = { path = "crates/plugin-hostd" }
 atomik-video = { path = "crates/video" }
 atomik-update = { path = "crates/update" }
 atomik-download = { path = "crates/download" }
+atomik-stems = { path = "crates/stems" }
 atomik-vision = { path = "crates/vision" }
 memmap2 = "0.9.11"
 libc = "0.2.190"

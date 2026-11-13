@@ -596,6 +596,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomik-stems"
+version = "0.4.0-rc.2"
+dependencies = [
+ "atomik-download",
+ "proptest",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "atomik-test-clap"
 version = "0.4.0-rc.2"
 dependencies = [
