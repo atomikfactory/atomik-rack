@@ -313,8 +313,8 @@ pub use song::{
     DEFAULT_TRACK_HEIGHT, FadeCurve, FrameClock, GainPoint, Lane, LaneKind, MAX_CLIP_NAME_CHARS,
     MAX_GAIN_POINTS, MAX_LANE_NAME_CHARS, MAX_MARKER_NAME, MAX_NOTE_LANES, MAX_TICK,
     MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT, Marker, MetaChange, MeterEvent, Note, NoteList,
-    RangeMarker, Song, SongCommand, StepGrid, StepResolution, TempoEvent, Track, TrackGroove,
-    clip_name_ok, empty_song,
+    RangeMarker, Song, SongCommand, StemTrack, StepGrid, StepResolution, TempoEvent, Track,
+    TrackGroove, clip_name_ok, empty_song,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
