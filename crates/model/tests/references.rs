@@ -20,6 +20,7 @@ fn refs() -> Vec<Reference> {
         Reference {
             path: "other/second.flac".into(),
             cue_ms: Some(42_000),
+            trim_tenths: -25,
         },
     ]
 }
@@ -91,4 +92,34 @@ fn a_copy_of_the_document_keeps_the_list() {
     one_step(&mut d, &r, Command::SetReferences(refs()));
     let copy = d.doc().clone();
     assert_eq!(copy, *d.doc());
+}
+
+#[test]
+fn a_trim_is_saved_only_when_it_is_set_and_loads_back() {
+    let (mut d, r) = doc();
+    one_step(&mut d, &r, Command::SetReferences(refs()));
+    let saved = text(&d);
+    assert!(saved.contains("\"trim_db\": -2.5"), "{saved}");
+    assert_eq!(
+        saved.matches("trim_db").count(),
+        1,
+        "the untrimmed one writes none"
+    );
+    let back = load_project(&saved, &r).unwrap();
+    assert_eq!(back.references[1].trim_tenths, -25);
+    assert_eq!(back.references[0].trim_tenths, 0);
+    assert_eq!(save_project(&back), saved, "save, load, save");
+}
+
+#[test]
+fn a_trim_beyond_twelve_decibels_is_refused_by_the_command_and_the_loader() {
+    let (mut d, r) = doc();
+    let mut list = refs();
+    list[0].trim_tenths = 121;
+    let e = rejected(&mut d, &r, Command::SetReferences(list));
+    assert!(matches!(e, ModelError::OutOfRange(_)), "{e:?}");
+    one_step(&mut d, &r, Command::SetReferences(refs()));
+    let bad = text(&d).replacen("\"trim_db\": -2.5", "\"trim_db\": 13.0", 1);
+    let e = load_project(&bad, &r).unwrap_err().to_string();
+    assert!(e.contains("references[1].trim_db"), "{e}");
 }
