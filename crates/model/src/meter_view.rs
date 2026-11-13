@@ -14,7 +14,8 @@
 //!   curve: the reference track of the song or another console strip. A device without a row
 //!   draws none.
 //!
-//! A key whose device is gone is dropped when the project is written, so the lists do not grow
+//! A key whose device is gone is dropped when the project is written (a Spectrum device inside a
+//! container is named by its path key), so the lists do not grow
 //! with every deleted strip. The loader and the commands enforce the same limits.
 
 use crate::history::{Edit, Swap};
@@ -117,7 +118,7 @@ pub(crate) fn write_curves(w: &mut String, doc: &RackDoc) {
     let rows: Vec<String> = doc
         .spectrum_curves
         .iter()
-        .filter(|r| doc.device(&r.device).is_some())
+        .filter(|r| doc.resolve(&r.device).is_some())
         .filter(|r| match &r.from {
             CurveFrom::Reference => true,
             CurveFrom::Strip(k) => doc.device(k).is_some(),
