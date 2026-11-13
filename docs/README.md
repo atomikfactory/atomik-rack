@@ -275,15 +275,22 @@ singer, a bass, a lead. Press VOCAL in its toolbar, or 3.
 
 ## Meter panels
 
-Right-click a channel, a bus or the master in the console, or a plugin device in the rack, and choose **Show
-Spectrum** or **Show Phase Meter**. A panel with the drawing of the analyser devices opens over the window; nothing is
-added to the song. It shows the strip's output after its fader (a plugin device: its output after the bypass), you drag
-it by its title, you can open several, and it closes with the strip or device it belongs to. Panels are not saved.
+Click the small **FFT** button in the top right corner of the name plate of a channel, a bus or the master in the
+console to open its spectrum panel (click it again to close it; the button is lit while a panel of that strip is
+open). Right-click the button for the spectrum or the phase meter. The menu of a strip or a plugin device in the rack
+has **Show Spectrum** and **Show Phase Meter** too. A panel with the drawing of the analyser devices opens over the
+window; nothing is added to the song. It shows the strip's output after its fader (a plugin device: its output after
+the bypass), you drag it by its title, you can open several, and it closes with the strip or device it belongs to.
+Panels are not saved.
 
-- **Spectrum.** The SIZE arrows step the FFT from 1024 to 16384 points: larger shows more detail and moves more slowly. The
-  Spectrum device itself goes up to 65536. The **REF** button opens a list: another strip, or the reference track, drawn
-  as a second curve over the trace so the two can be compared. The reference track is drawn at the level it is
-  heard at (the matched gain and the trim).
+- **Spectrum.** The SIZE arrows step the FFT from 1024 to 65536 points: larger shows more detail and moves more slowly.
+  The **REF** button opens a list: another strip, or the reference track, drawn as a second curve over the trace so
+  the two can be compared. The reference track is drawn at the level it is heard at (the matched gain and the trim).
+  The Spectrum device has the same REF button on its plot, and keeps its choice in the project.
+- **PRE and POST.** The chip beside the size arrows taps the strip before its fader (PRE) or after it (POST, the
+  default), so you can see what the fader does. A plugin device is tapped before the plugin or after it.
+- **Large sizes.** The two largest sizes need more history than a strip keeps: the first time a panel picks one, the
+  strip gets a 1 MiB buffer for it, and a window that has not filled yet shows what it has.
 - **Phase meter.** The goniometer of the newest frames, the correlation as a bar and a number, and the level of each side.
 - **Cost.** A strip only writes what the panel reads while a panel is open; with none open the audio thread does nothing
   extra, and a bounce is the same to the bit.
@@ -292,8 +299,9 @@ it by its title, you can open several, and it closes with the strip or device it
 
 Mixer > Reference holds up to 16 reference files per song, one key to switch between the mix and the selected
 reference, and the References and Decision Zone panel. While you listen to a reference that follows the playhead, moving
-the playhead moves the reference to the same song position; a reference with its own start (Start at Playhead
-Position) stays where it is. The **TRIM** row of the panel adds up to 12 dB either way to the matched level, 0.1 dB a
+the playhead moves the reference to the same song position, and so does the jump back at the end of a loop while the
+song plays with the loop on; a reference with its own start (Start at Playhead Position) stays where it is.
+The **TRIM** row of the panel adds up to 12 dB either way to the matched level, 0.1 dB a
 click (1 dB with Shift), and is saved with the reference. **MATCH OVER SELECTION** measures the loudness of the mix and
 of the reference over the time selection (or the loop, when nothing is selected) and sets the matched level from them; turn
 Match Reference Level off and on to go back to the slow match of the loudest section.
