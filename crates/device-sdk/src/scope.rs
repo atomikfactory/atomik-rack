@@ -262,8 +262,8 @@ mod tests {
         big.push(&l, &r);
         let (mut a, mut b) = (vec![0.0; 65_536], vec![0.0; 65_536]);
         assert_eq!(big.read_latest(&mut a, &mut b), (65_536, 70_000));
-        assert_eq!(a[65_535], 69_999.0);
-        assert_eq!(a[0], (70_000 - 65_536) as f32);
+        assert_eq!(a[65_535].to_bits(), 69_999.0f32.to_bits());
+        assert_eq!(a[0].to_bits(), ((70_000 - 65_536) as f32).to_bits());
         let small = ScopeTap::new();
         small.push(&l, &r);
         assert_eq!(

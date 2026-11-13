@@ -1813,7 +1813,7 @@ fn the_strip_tap_shows_the_same_spectrum_as_a_spectrum_device_after_the_strip() 
     };
     let a = analyse(tap_of(&strip));
     let b = analyse(meter.device().scope_tap().unwrap());
-    assert_eq!(a.0, b.0);
+    assert_eq!(a.0.to_bits(), b.0.to_bits());
     assert!((a.1 - b.1).abs() < 1e-3, "{} {}", a.1, b.1);
     assert!(a.2.iter().zip(&b.2).all(|(x, y)| (x - y).abs() < 1e-3));
 }
