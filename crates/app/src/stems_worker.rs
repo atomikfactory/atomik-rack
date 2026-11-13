@@ -1,5 +1,4 @@
-//! The stem worker: downloads the models when the user said yes, reads the audio file of a clip,
-//! separates it and stores each stem in the project's bundle (see
+//! The stem worker: reads the audio file of a clip, separates it and stores each stem in the project's bundle (see
 //! [`crate::AppCore::separate_stems`]).
 //!
 //! It owns what it needs (a clone of the bundle, the backend) and talks to the UI thread only
@@ -15,38 +14,32 @@ use crate::stems_link::StemBackend;
 use atomik_audio_file::{AudioData, Bundle, resample};
 use atomik_stems::{Stem, StemError, StemSink};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
 
 /// What the worker is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Phase {
-    /// Fetching the model files.
-    Download = 0,
     /// Reading the file of the clip.
-    Read = 1,
-    /// Running the networks.
-    Separate = 2,
+    Read = 0,
+    /// Running the split.
+    Separate = 1,
     /// Writing the stems.
-    Store = 3,
+    Store = 2,
 }
 
 /// The progress the UI thread reads once a frame.
 #[derive(Debug)]
 pub(crate) struct StemShared {
     phase: AtomicU8,
-    received: AtomicU64,
-    total: AtomicU64,
     fraction: AtomicU32,
 }
 
 impl StemShared {
     /// A progress that has not started.
-    pub(crate) fn new(first: Phase) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            phase: AtomicU8::new(first as u8),
-            received: AtomicU64::new(0),
-            total: AtomicU64::new(0),
+            phase: AtomicU8::new(Phase::Read as u8),
             fraction: AtomicU32::new(0.0f32.to_bits()),
         }
     }
@@ -58,19 +51,10 @@ impl StemShared {
     /// What the worker is doing.
     pub(crate) fn phase(&self) -> Phase {
         match self.phase.load(Ordering::Relaxed) {
-            0 => Phase::Download,
-            1 => Phase::Read,
-            2 => Phase::Separate,
+            0 => Phase::Read,
+            1 => Phase::Separate,
             _ => Phase::Store,
         }
-    }
-
-    /// The bytes received and expected of the download.
-    pub(crate) fn download(&self) -> (u64, u64) {
-        (
-            self.received.load(Ordering::Relaxed),
-            self.total.load(Ordering::Relaxed),
-        )
     }
 
     /// How far the separation is, `0.0..=1.0`.
@@ -94,11 +78,9 @@ pub(crate) struct Work {
     pub name: String,
     /// The stems to keep.
     pub wanted: Vec<Stem>,
-    /// Fetch the models first.
-    pub download: bool,
     /// The decoded size above which an asset streams.
     pub threshold: u64,
-    /// The separation and the download.
+    /// The separation.
     pub backend: Arc<dyn StemBackend>,
 }
 
@@ -136,24 +118,9 @@ fn run(work: Work, shared: &StemShared, cancel: &AtomicBool) -> Result<Option<Do
         asset,
         name,
         wanted,
-        download,
         threshold,
         backend,
     } = work;
-    if download {
-        shared.set_phase(Phase::Download);
-        let got = backend.download(
-            &mut |received, total| {
-                shared.received.store(received, Ordering::Relaxed);
-                shared.total.store(total, Ordering::Relaxed);
-            },
-            cancel,
-        );
-        if cancel.load(Ordering::Relaxed) {
-            return Ok(None);
-        }
-        got?;
-    }
     shared.set_phase(Phase::Read);
     let data = bundle.load(&asset).map_err(|e| e.to_string())?;
     let source_rate = data.sample_rate;

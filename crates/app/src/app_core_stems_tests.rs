@@ -80,7 +80,7 @@ fn track_count(c: &AppCore<RecordingSink>) -> usize {
 #[test]
 fn the_command_makes_a_track_per_stem_with_the_clip_at_the_same_place() {
     let dir = Tmp::new("tracks");
-    let fake = FakeStems::new(true, FAKE_RATE);
+    let fake = FakeStems::new(FAKE_RATE);
     let mut c = core(&fake);
     let at = atomik_core::PPQ * 4;
     let id = stereo(&mut c, &dir, at);
@@ -124,7 +124,7 @@ fn the_command_makes_a_track_per_stem_with_the_clip_at_the_same_place() {
 #[test]
 fn the_stem_files_are_in_the_bundle_and_carry_the_source_scaled() {
     let dir = Tmp::new("files");
-    let fake = FakeStems::new(true, FAKE_RATE);
+    let fake = FakeStems::new(FAKE_RATE);
     let mut c = core(&fake);
     stereo(&mut c, &dir, 0);
     let before = track_count(&c);
@@ -149,7 +149,7 @@ fn the_stem_files_are_in_the_bundle_and_carry_the_source_scaled() {
 #[test]
 fn it_is_one_undo_step_and_undo_removes_everything() {
     let dir = Tmp::new("undo");
-    let fake = FakeStems::new(true, FAKE_RATE);
+    let fake = FakeStems::new(FAKE_RATE);
     let mut c = core(&fake);
     let id = stereo(&mut c, &dir, 0);
     let before_doc = c.doc().clone();
@@ -166,7 +166,7 @@ fn it_is_one_undo_step_and_undo_removes_everything() {
 #[test]
 fn the_original_stays_unmuted_when_the_box_is_off_and_only_checked_stems_are_made() {
     let dir = Tmp::new("options");
-    let fake = FakeStems::new(true, FAKE_RATE);
+    let fake = FakeStems::new(FAKE_RATE);
     let mut c = core(&fake);
     let id = stereo(&mut c, &dir, 0);
     let before = track_count(&c);
@@ -192,7 +192,7 @@ fn the_original_stays_unmuted_when_the_box_is_off_and_only_checked_stems_are_mad
 #[test]
 fn with_no_stem_checked_nothing_starts() {
     let dir = Tmp::new("none");
-    let fake = FakeStems::new(true, FAKE_RATE);
+    let fake = FakeStems::new(FAKE_RATE);
     let mut c = core(&fake);
     stereo(&mut c, &dir, 0);
     c.separate_stems().unwrap();
@@ -208,7 +208,7 @@ fn with_no_stem_checked_nothing_starts() {
 #[test]
 fn a_mono_file_gives_mono_stems() {
     let dir = Tmp::new("mono");
-    let fake = FakeStems::new(true, FAKE_RATE);
+    let fake = FakeStems::new(FAKE_RATE);
     let mut c = core(&fake);
     import(&mut c, &dir, vec![sine(1.0)], 0);
     let before = track_count(&c);
@@ -220,69 +220,9 @@ fn a_mono_file_gives_mono_stems() {
 }
 
 #[test]
-fn nothing_is_fetched_before_the_user_agrees_and_then_it_separates() {
-    let dir = Tmp::new("consent");
-    let fake = FakeStems::new(false, FAKE_RATE);
-    let mut c = core(&fake);
-    stereo(&mut c, &dir, 0);
-    let before = track_count(&c);
-    c.separate_stems().unwrap();
-    c.stems_dialog_choice(Choice::Separate);
-    match c.stems_dialog() {
-        Some(State::Consent { source, bytes }) => {
-            assert_eq!(source, "models.example");
-            assert!(bytes > 100_000_000);
-        }
-        other => panic!("the consent question: {other:?}"),
-    }
-    c.wait_background();
-    assert_eq!(fake.downloads(), 0, "nothing is fetched before Download");
-    assert_eq!(fake.separations(), 0);
-    assert_eq!(track_count(&c), before);
-    // Cancel closes it and still nothing was fetched.
-    c.stems_dialog_choice(Choice::Cancel);
-    assert!(c.stems_dialog().is_none());
-    assert_eq!(fake.downloads(), 0);
-    // Ask again, agree: the download, then the separation.
-    c.separate_stems().unwrap();
-    c.stems_dialog_choice(Choice::Separate);
-    c.stems_dialog_choice(Choice::Download);
-    c.wait_background();
-    assert_eq!(fake.downloads(), 1);
-    assert_eq!(fake.separations(), 1);
-    assert_eq!(track_count(&c), before + 4);
-}
-
-#[test]
-fn a_failed_download_can_be_tried_again() {
-    let dir = Tmp::new("failed");
-    let fake = FakeStems::new(false, FAKE_RATE);
-    fake.fail_download("no connection");
-    let mut c = core(&fake);
-    stereo(&mut c, &dir, 0);
-    let before = track_count(&c);
-    c.separate_stems().unwrap();
-    c.stems_dialog_choice(Choice::Separate);
-    c.stems_dialog_choice(Choice::Download);
-    c.wait_background();
-    match c.stems_dialog() {
-        Some(State::Failed { message, retry }) => {
-            assert!(message.contains("no connection"));
-            assert!(retry);
-        }
-        other => panic!("the failure: {other:?}"),
-    }
-    assert_eq!(track_count(&c), before);
-    c.stems_dialog_choice(Choice::Retry);
-    c.wait_background();
-    assert!(c.stems_dialog().is_none());
-    assert_eq!(track_count(&c), before + 4);
-}
-
-#[test]
 fn the_worker_cancels_cleanly_and_nothing_is_added() {
     let dir = Tmp::new("cancel");
-    let fake = FakeStems::new(true, FAKE_RATE);
+    let fake = FakeStems::new(FAKE_RATE);
     fake.hold();
     let mut c = core(&fake);
     stereo(&mut c, &dir, 0);
@@ -310,7 +250,7 @@ fn the_worker_cancels_cleanly_and_nothing_is_added() {
 #[test]
 fn the_dialog_needs_exactly_one_audio_clip() {
     let dir = Tmp::new("selection");
-    let fake = FakeStems::new(true, FAKE_RATE);
+    let fake = FakeStems::new(FAKE_RATE);
     let mut c = core(&fake);
     let a = stereo(&mut c, &dir, 0);
     let b = stereo(&mut c, &dir, atomik_core::PPQ * 16);
@@ -329,7 +269,7 @@ fn the_dialog_needs_exactly_one_audio_clip() {
 #[test]
 fn a_clip_that_went_while_the_worker_ran_gets_nothing() {
     let dir = Tmp::new("gone");
-    let fake = FakeStems::new(true, FAKE_RATE);
+    let fake = FakeStems::new(FAKE_RATE);
     fake.hold();
     let mut c = core(&fake);
     let id = stereo(&mut c, &dir, 0);
@@ -341,4 +281,94 @@ fn a_clip_that_went_while_the_worker_ran_gets_nothing() {
     c.wait_background();
     assert_eq!(c.doc().song.tracks, tracks);
     assert!(c.last_rejection().is_some_and(|m| m.contains("changed")));
+}
+
+#[test]
+fn the_dialog_says_when_the_clip_is_mono() {
+    let dir = Tmp::new("monoflag");
+    let fake = FakeStems::new(FAKE_RATE);
+    let mut c = core(&fake);
+    import(&mut c, &dir, vec![sine(1.0)], 0);
+    c.separate_stems().unwrap();
+    assert!(matches!(
+        c.stems_dialog(),
+        Some(State::Options { mono: true, .. })
+    ));
+    c.stems_dialog_choice(Choice::Cancel);
+    stereo(&mut c, &dir, atomik_core::PPQ * 8);
+    c.separate_stems().unwrap();
+    assert!(matches!(
+        c.stems_dialog(),
+        Some(State::Options { mono: false, .. })
+    ));
+}
+
+#[test]
+fn a_core_separates_with_the_signal_processing_split_and_the_stems_add_up() {
+    // No backend is installed: the core's own split runs, with no model and no network.
+    let dir = Tmp::new("dsp");
+    let mut c = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+    c.set_warp_imports(crate::import_warp::WarpImports::Off);
+    c.sink_mut().take();
+    let l: Vec<f32> = (0..2 * SR as usize)
+        .map(|i| 0.3 * (i as f32 * 0.01).sin() + 0.2 * (i as f32 * 0.4).sin())
+        .collect();
+    let r: Vec<f32> = l.iter().map(|v| v * 0.7).collect();
+    let id = import(&mut c, &dir, vec![l, r], 0);
+    let asset = match &c.doc().song.clip(id).unwrap().2.content {
+        ClipContent::Audio(a) => a.asset.clone(),
+        _ => panic!("audio"),
+    };
+    let before = track_count(&c);
+    separate(&mut c);
+    assert!(c.last_rejection().is_some_and(|m| m.contains("Separated")));
+    assert_eq!(track_count(&c), before + 4);
+    let bundle = c.import_bundle().unwrap();
+    let original = bundle.load(&asset).unwrap();
+    let mut sum = vec![vec![0f32; original.channels[0].len()]; 2];
+    for track in &c.doc().song.tracks[before..] {
+        let ClipContent::Audio(a) = &track.lanes[0].clips[0].content else {
+            panic!("audio")
+        };
+        let stem = bundle.load(&a.asset).unwrap();
+        assert_eq!(stem.sample_rate, SR);
+        for (s, x) in sum.iter_mut().zip(&stem.channels) {
+            for (s, v) in s.iter_mut().zip(x) {
+                *s += v;
+            }
+        }
+    }
+    // Two resamplings (48 kHz to 44.1 kHz and back) are the only loss.
+    for (s, o) in sum.iter().zip(&original.channels) {
+        let worst = s
+            .iter()
+            .zip(o)
+            .skip(2000)
+            .take(o.len() - 4000)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0f32, f32::max);
+        assert!(worst < 0.02, "the stems add up to the clip: {worst}");
+    }
+}
+
+#[test]
+fn the_stem_code_uses_no_network() {
+    // Nothing of the separation reaches the network: the crate has no dependency but its error
+    // type, and the app's stem modules use no download crate.
+    let manifest = include_str!("../../stems/Cargo.toml");
+    let deps = manifest
+        .split("[dependencies]")
+        .nth(1)
+        .and_then(|d| d.split('[').next())
+        .unwrap();
+    assert_eq!(deps.trim(), "thiserror.workspace = true");
+    for (name, source) in [
+        ("stems_link", include_str!("stems_link.rs")),
+        ("app_core_stems", include_str!("app_core_stems.rs")),
+        ("stems_worker", include_str!("stems_worker.rs")),
+    ] {
+        for word in ["atomik_download", "ureq", "TcpStream", "https://"] {
+            assert!(!source.contains(word), "{name} mentions {word}");
+        }
+    }
 }

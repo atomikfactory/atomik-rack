@@ -1,5 +1,5 @@
-//! The Separate Stems dialog: the options, the consent to download the models, the progress and a
-//! failure. The view is pure: it draws a state it is given. Each state's display list matches its
+//! The Separate Stems dialog: the options, the progress and a failure (there is no model to
+//! download). The view is pure: it draws a state it is given. Each state's display list matches its
 //! golden, in English here and in French in `french_goldens.rs`.
 
 mod support;
@@ -18,6 +18,16 @@ fn options() -> StemsDialogState {
         clip: "Verse Guitar".into(),
         stems: [true, true, false, true],
         mute_original: true,
+        mono: false,
+    }
+}
+
+fn options_mono() -> StemsDialogState {
+    StemsDialogState::Options {
+        clip: "Verse Guitar".into(),
+        stems: [true, true, false, true],
+        mute_original: true,
+        mono: true,
     }
 }
 
@@ -25,20 +35,7 @@ fn options() -> StemsDialogState {
 fn states() -> Vec<(&'static str, StemsDialogState)> {
     vec![
         ("options", options()),
-        (
-            "consent",
-            StemsDialogState::Consent {
-                source: "zenodo.org".into(),
-                bytes: 142_551_184,
-            },
-        ),
-        (
-            "downloading",
-            StemsDialogState::Downloading {
-                received: 50_000_000,
-                total: 142_551_184,
-            },
-        ),
+        ("options_mono", options_mono()),
         (
             "working",
             StemsDialogState::Working {
@@ -49,8 +46,7 @@ fn states() -> Vec<(&'static str, StemsDialogState)> {
         (
             "failed",
             StemsDialogState::Failed {
-                message: "The server answered 500".into(),
-                retry: true,
+                message: "cannot read the file".into(),
             },
         ),
     ]
@@ -127,41 +123,50 @@ fn a_press_on_a_box_or_button_asks_the_app_and_nothing_else_does() {
 }
 
 #[test]
-fn the_consent_says_what_is_downloaded_from_where_and_how_big() {
-    let mut v = dialog(states().remove(1).1);
+fn the_options_say_it_is_a_signal_processing_split_with_bleed_and_nothing_is_downloaded() {
+    let mut v = dialog(options());
     let t = texts(&mut v);
-    assert!(t.iter().any(|s| s == "Download the stem models?"), "{t:?}");
     assert!(
         t.iter()
-            .any(|s| s.contains("142.6 MB") && s.contains("zenodo.org")),
-        "the size and the place: {t:?}"
+            .any(|s| s == "Signal-processing split: expect some bleed between stems."),
+        "{t:?}"
     );
-    assert!(t.iter().any(|s| s.contains("Nothing about you")), "{t:?}");
+    assert!(!t.iter().any(|s| s.contains("Mono clip")), "{t:?}");
+    assert!(
+        !t.iter()
+            .any(|s| s.to_lowercase().contains("download") || s.contains("MB")),
+        "there is no model to download: {t:?}"
+    );
+    let ones: Vec<_> = v.choices().iter().map(|c| c.0).collect();
     assert_eq!(
-        v.choices().iter().map(|c| c.0).collect::<Vec<_>>(),
-        vec![StemsDialogChoice::Download, StemsDialogChoice::Cancel]
+        ones,
+        vec![StemsDialogChoice::Separate, StemsDialogChoice::Cancel]
     );
-    assert!(v.boxes().is_empty());
 }
 
 #[test]
-fn progress_and_failure_offer_cancel_close_and_retry() {
+fn a_mono_clip_is_told_about_its_vocals() {
+    let mut v = dialog(options_mono());
+    let t = texts(&mut v);
+    assert!(
+        t.iter().any(|s| s.starts_with("Mono clip: the vocals")),
+        "{t:?}"
+    );
+    // The check boxes move down with the extra line and stay inside the card.
+    let card = v.card();
+    for (_, r) in v.boxes() {
+        assert!(r.y1 < card.y1 - 44.0, "{r:?}");
+    }
+}
+
+#[test]
+fn progress_and_failure_offer_cancel_and_close() {
     let mut v = dialog(states().remove(2).1);
-    assert!(texts(&mut v).iter().any(|s| s == "50.0 MB of 142.6 MB"));
-    assert_eq!(v.choices().len(), 1);
-    v.set_state(states().remove(3).1);
     let t = texts(&mut v);
     assert!(t.iter().any(|s| s == "Separating: 42%"), "{t:?}");
+    assert_eq!(v.choices().len(), 1);
     assert_eq!(v.choices()[0].0, StemsDialogChoice::Cancel);
-    v.set_state(states().remove(4).1);
-    assert_eq!(
-        v.choices().iter().map(|c| c.0).collect::<Vec<_>>(),
-        vec![StemsDialogChoice::Retry, StemsDialogChoice::Close]
-    );
-    v.set_state(StemsDialogState::Failed {
-        message: "cannot read the file".into(),
-        retry: false,
-    });
+    v.set_state(states().remove(3).1);
     assert_eq!(
         v.choices().iter().map(|c| c.0).collect::<Vec<_>>(),
         vec![StemsDialogChoice::Close]

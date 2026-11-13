@@ -451,20 +451,16 @@ fn the_stems_dialog_in_french() {
                 clip: "Verse Guitar".into(),
                 stems: [true, true, false, true],
                 mute_original: true,
+                mono: false,
             },
         ),
         (
-            "consent",
-            StemsDialogState::Consent {
-                source: "zenodo.org".into(),
-                bytes: 142_551_184,
-            },
-        ),
-        (
-            "downloading",
-            StemsDialogState::Downloading {
-                received: 50_000_000,
-                total: 142_551_184,
+            "options_mono",
+            StemsDialogState::Options {
+                clip: "Verse Guitar".into(),
+                stems: [true, true, false, true],
+                mute_original: true,
+                mono: true,
             },
         ),
         (
@@ -477,8 +473,7 @@ fn the_stems_dialog_in_french() {
         (
             "failed",
             StemsDialogState::Failed {
-                message: "The server answered 500".into(),
-                retry: true,
+                message: "cannot read the file".into(),
             },
         ),
     ];

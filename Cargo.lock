@@ -267,7 +267,6 @@ dependencies = [
  "atomik-core",
  "atomik-device-sdk",
  "atomik-devices",
- "atomik-download",
  "atomik-dsp",
  "atomik-engine",
  "atomik-library",
@@ -601,7 +600,6 @@ dependencies = [
 name = "atomik-stems"
 version = "0.4.0-rc.2"
 dependencies = [
- "atomik-download",
  "proptest",
  "thiserror 2.0.21",
 ]

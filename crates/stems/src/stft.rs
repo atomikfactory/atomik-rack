@@ -1,6 +1,6 @@
-//! The short-time Fourier transform the network was trained with: a periodic window, frames
-//! centred on `hop * i` with the signal reflected at both ends, and the overlap-add inverse that
-//! divides by the summed squared window.
+//! The short-time Fourier transform of a stereo signal: a periodic window, frames centred on
+//! `hop * i` with the signal reflected at both ends, and the overlap-add inverse that divides by
+//! the summed squared window, so analysis then synthesis returns the signal.
 
 use std::f64::consts::PI;
 

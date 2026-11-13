@@ -1,18 +1,18 @@
-//! The **Separate Stems** dialog: which stems to make, then (the first time) the question to
-//! download the models, the download's progress, the separation's progress and a failure.
+//! The **Separate Stems** dialog: which stems to make, a note that the split is signal processing
+//! with some bleed, the separation's progress and a failure.
 //!
 //! It is a pure view drawn by the app: the host hands it a [`StemsDialogState`] and acts on the
 //! [`UiAction::StemsDialog`] choices it returns. It never reads a file or touches the network, so
-//! a test renders it from a plain state. Nothing is fetched before **Download** is pressed.
+//! a test renders it from a plain state. There is no model to download: the split is computed from
+//! the audio alone.
 //!
 //! * Options: four check boxes (vocals, drums, bass, other), "Mute the original clip" and the
-//!   buttons **Separate** and **Cancel**.
-//! * Consent: what is downloaded, from where and how big, with **Download** and **Cancel**.
-//! * Downloading, Working: a bar with **Cancel**.
-//! * Failed: a plain message with **Close** (and **Retry** after a failed download).
+//!   buttons **Separate** and **Cancel**, under the note about bleed (and, for a mono clip, about
+//!   the vocals).
+//! * Working: a bar with **Cancel**.
+//! * Failed: a plain message with **Close**.
 
 use crate::action::UiAction;
-use crate::camera_panel::megabytes;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun};
 use crate::event::{Key, PointerButton, UiEvent};
 use crate::i18n::{tf, tr};
@@ -31,7 +31,7 @@ pub const STEM_LABELS: [&str; STEM_COUNT] = ["Vocals", "Drums", "Bass", "Other"]
 pub enum StemsPhase {
     /// Reading the clip's file.
     Reading,
-    /// Running the networks.
+    /// Running the split.
     Separating,
     /// Writing the stems.
     Storing,
@@ -48,20 +48,8 @@ pub enum StemsDialogState {
         stems: [bool; STEM_COUNT],
         /// Mute the original clip.
         mute_original: bool,
-    },
-    /// The question: download the models?
-    Consent {
-        /// Where they come from (a host name).
-        source: String,
-        /// How many bytes the download is.
-        bytes: u64,
-    },
-    /// The download is running.
-    Downloading {
-        /// Bytes received so far.
-        received: u64,
-        /// Bytes expected.
-        total: u64,
+        /// The clip is mono: the vocals are a band at a lower weight, and the dialog says so.
+        mono: bool,
     },
     /// The separation is running.
     Working {
@@ -74,8 +62,6 @@ pub enum StemsDialogState {
     Failed {
         /// Why, in plain words.
         message: String,
-        /// Offer to try the download again.
-        retry: bool,
     },
 }
 
@@ -86,14 +72,10 @@ pub enum StemsDialogChoice {
     Toggle(usize),
     /// Switch "Mute the original clip".
     ToggleMute,
-    /// Start (asks to download first when the models are missing).
+    /// Start.
     Separate,
-    /// Start the download.
-    Download,
     /// Close the dialog, or stop what runs.
     Cancel,
-    /// Try the download again.
-    Retry,
     /// Close the message.
     Close,
 }
@@ -103,9 +85,7 @@ impl StemsDialogChoice {
     pub fn label(self) -> &'static str {
         match self {
             StemsDialogChoice::Separate => "Separate",
-            StemsDialogChoice::Download => "Download",
             StemsDialogChoice::Cancel => "Cancel",
-            StemsDialogChoice::Retry => "Retry",
             StemsDialogChoice::Close => "Close",
             StemsDialogChoice::Toggle(i) => STEM_LABELS[i.min(STEM_COUNT - 1)],
             StemsDialogChoice::ToggleMute => "Mute the original clip",
@@ -114,7 +94,8 @@ impl StemsDialogChoice {
 }
 
 const DIALOG_W: f64 = 520.0;
-const OPTIONS_H: f64 = 292.0;
+/// The height of the options below their text, and the room the text takes above them.
+const OPTIONS_BELOW: f64 = 210.0;
 const OTHER_H: f64 = 190.0;
 const BUTTON_W: f64 = 96.0;
 const BUTTON_H: f64 = 28.0;
@@ -183,10 +164,16 @@ impl StemsDialogView {
 
     fn height(&self) -> f64 {
         if matches!(self.state, StemsDialogState::Options { .. }) {
-            OPTIONS_H
+            self.boxes_top() + OPTIONS_BELOW
         } else {
             OTHER_H
         }
+    }
+
+    /// The top of the first check box, below the lines of text of the options.
+    fn boxes_top(&self) -> f64 {
+        let lines = self.lines().1.len() as f64;
+        56.0 + 18.0 * (lines - 1.0) + 8.0
     }
 
     /// The card, centred in the window.
@@ -204,15 +191,16 @@ impl StemsDialogView {
             return Vec::new();
         }
         let card = self.card();
+        let top = self.boxes_top();
         let mut out = Vec::new();
         for i in 0..STEM_COUNT {
-            let y = card.y0 + 82.0 + i as f64 * ROW_H;
+            let y = card.y0 + top + i as f64 * ROW_H;
             out.push((
                 StemsDialogChoice::Toggle(i),
                 Rect::new(card.x0 + 18.0, y, card.x1 - 18.0, y + ROW_H),
             ));
         }
-        let y = card.y0 + 82.0 + STEM_COUNT as f64 * ROW_H + 10.0;
+        let y = card.y0 + top + STEM_COUNT as f64 * ROW_H + 10.0;
         out.push((
             StemsDialogChoice::ToggleMute,
             Rect::new(card.x0 + 18.0, y, card.x1 - 18.0, y + ROW_H),
@@ -224,23 +212,11 @@ impl StemsDialogView {
     pub fn choices(&self) -> Vec<(StemsDialogChoice, Rect)> {
         let card = self.card();
         let list: Vec<StemsDialogChoice> = match &self.state {
-            StemsDialogState::Options { stems, .. } => {
-                let _ = stems;
+            StemsDialogState::Options { .. } => {
                 vec![StemsDialogChoice::Separate, StemsDialogChoice::Cancel]
             }
-            StemsDialogState::Consent { .. } => {
-                vec![StemsDialogChoice::Download, StemsDialogChoice::Cancel]
-            }
-            StemsDialogState::Downloading { .. } | StemsDialogState::Working { .. } => {
-                vec![StemsDialogChoice::Cancel]
-            }
-            StemsDialogState::Failed { retry, .. } => {
-                if *retry {
-                    vec![StemsDialogChoice::Retry, StemsDialogChoice::Close]
-                } else {
-                    vec![StemsDialogChoice::Close]
-                }
-            }
+            StemsDialogState::Working { .. } => vec![StemsDialogChoice::Cancel],
+            StemsDialogState::Failed { .. } => vec![StemsDialogChoice::Close],
         };
         let y = card.y1 - PAD * 2.0 - BUTTON_H;
         list.iter()
@@ -255,35 +231,20 @@ impl StemsDialogView {
     /// The title and the lines of text of the state, in the interface language.
     pub fn lines(&self) -> (String, Vec<String>) {
         match &self.state {
-            StemsDialogState::Options { clip, .. } => (
-                tr("Separate Stems").into_owned(),
-                vec![
+            StemsDialogState::Options { clip, mono, .. } => {
+                let mut lines = vec![
                     tf("Clip: {name}", &[("name", clip)]),
                     tr("Each stem becomes a new track under the clip.").into_owned(),
-                ],
-            ),
-            StemsDialogState::Consent { source, bytes } => (
-                tr("Download the stem models?").into_owned(),
-                vec![
-                    tf(
-                        "Stem separation needs four model files ({size}) from {source}.",
-                        &[("size", &megabytes(*bytes)), ("source", source)],
-                    ),
-                    tr("Nothing about you or this computer is sent.").into_owned(),
-                    tr("The models are open source (MIT licence) and are downloaded once.")
-                        .into_owned(),
-                ],
-            ),
-            StemsDialogState::Downloading { received, total } => (
-                tr("Downloading the stem models").into_owned(),
-                vec![tf(
-                    "{received} of {total}",
-                    &[
-                        ("received", &megabytes(*received)),
-                        ("total", &megabytes(*total)),
-                    ],
-                )],
-            ),
+                    tr("Signal-processing split: expect some bleed between stems.").into_owned(),
+                ];
+                if *mono {
+                    lines.push(
+                        tr("Mono clip: the vocals are the 200 Hz-5 kHz band, at a lower weight.")
+                            .into_owned(),
+                    );
+                }
+                (tr("Separate Stems").into_owned(), lines)
+            }
             StemsDialogState::Working { phase, progress } => (
                 tr("Separating stems").into_owned(),
                 vec![
@@ -295,10 +256,10 @@ impl StemsDialogView {
                         ),
                         StemsPhase::Storing => tr("Writing the stems").into_owned(),
                     },
-                    tr("The song keeps playing. This can take a few minutes.").into_owned(),
+                    tr("The song keeps playing while the stems are made.").into_owned(),
                 ],
             ),
-            StemsDialogState::Failed { message, .. } => (
+            StemsDialogState::Failed { message } => (
                 tr("Stem separation did not finish").into_owned(),
                 wrap(message, 62),
             ),
@@ -414,11 +375,6 @@ impl StemsDialogView {
             }
         }
         let bar = match &self.state {
-            StemsDialogState::Downloading { received, total } => Some(if *total == 0 {
-                0.0
-            } else {
-                (*received as f64 / *total as f64).clamp(0.0, 1.0)
-            }),
             StemsDialogState::Working { phase, progress } => Some(match phase {
                 StemsPhase::Reading => 0.0,
                 StemsPhase::Separating => f64::from(progress.clamp(0.0, 1.0)),
@@ -473,11 +429,7 @@ impl StemsDialogView {
         let (choice, r) = self.choices().into_iter().find(|(_, r)| r.contains(pos))?;
         let text = match choice {
             StemsDialogChoice::Separate => "Make a track for each stem that is checked",
-            StemsDialogChoice::Download => {
-                "Download the four model files once and separate the clip"
-            }
             StemsDialogChoice::Cancel => "Close this, or stop what is running",
-            StemsDialogChoice::Retry => "Try the download again",
             StemsDialogChoice::Close => "Close this message",
             StemsDialogChoice::Toggle(_) | StemsDialogChoice::ToggleMute => return None,
         };

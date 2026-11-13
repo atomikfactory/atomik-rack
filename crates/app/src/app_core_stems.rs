@@ -4,10 +4,10 @@
 //!
 //! [`AppCore::separate_stems`] opens the dialog ([`atomik_ui::StemsDialogView`]) for the one
 //! selected audio clip: which stems to make and whether the original is muted. **Separate**
-//! starts the worker ([`crate::stems_worker`]); when the models are not on the disk it asks first
-//! (what is downloaded, from where, how big) and fetches nothing until **Download**. The
-//! download, the reading of the clip's file, the separation and the writing of the stems all run
-//! on the worker with progress and **Cancel**; nothing is changed until it is done.
+//! starts the worker ([`crate::stems_worker`]). The separation is a signal-processing split that
+//! needs no model, so there is nothing to download and no network is used. The reading of the
+//! clip's file, the separation and the writing of the stems all run on the worker with progress
+//! and **Cancel**; nothing is changed until it is done.
 //!
 //! When it is done the stems are in the project's bundle and registered, and one
 //! `SongCommand::AddStemTracks` step adds the tracks: a copy of the clip on each (the same place,
@@ -20,7 +20,7 @@
 //! message says so.
 
 use super::*;
-use crate::stems_link::{NoStems, StemBackend};
+use crate::stems_link::{DspStems, StemBackend};
 use crate::stems_worker::{self, Done, Phase, StemShared, Work};
 use atomik_model::{AssetMeta, StemTrack};
 use atomik_stems::Stem;
@@ -32,12 +32,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 enum Stage {
     /// The choices.
     Options,
-    /// Asking to download the models.
-    Consent,
-    /// The worker runs (downloading, reading, separating or writing).
+    /// The worker runs (reading, separating or writing).
     Running,
     /// It did not finish.
-    Failed { message: String, retry: bool },
+    Failed { message: String },
 }
 
 /// The dialog and what it was opened for.
@@ -45,6 +43,8 @@ struct Dialog {
     clip: ClipId,
     /// The asset id of the clip's file.
     asset: String,
+    /// The file has one channel.
+    mono: bool,
     /// The clip's name for the dialog and the stem files.
     name: String,
     stems: [bool; STEM_COUNT],
@@ -70,7 +70,7 @@ pub(super) struct StemsState {
 impl Default for StemsState {
     fn default() -> Self {
         Self {
-            backend: Arc::new(NoStems),
+            backend: Arc::new(DspStems),
             dialog: None,
             running: None,
             next_job: 0,
@@ -89,8 +89,8 @@ impl StemsState {
 }
 
 impl<S: EngineSink> AppCore<S> {
-    /// Installs the separation backend. Only the application window calls it: a core without one
-    /// has no models and cannot download them.
+    /// Installs another separation backend (a learned model, when one exists, or a test fake).
+    /// A core starts with the signal-processing split.
     pub fn set_stems(&mut self, backend: Arc<dyn StemBackend>) {
         self.stems.reset();
         self.stems.backend = backend;
@@ -131,9 +131,14 @@ impl<S: EngineSink> AppCore<S> {
             doc.device(&track.device)
                 .map_or_else(|| track.device.0.clone(), |d| d.name.clone())
         });
+        let mono = doc
+            .assets
+            .get(&one.content.asset)
+            .is_some_and(|m| m.channels == 1);
         self.stems.dialog = Some(Dialog {
             clip: one.id,
             asset: one.content.asset.clone(),
+            mono,
             name,
             stems: [true; STEM_COUNT],
             mute_original: true,
@@ -150,41 +155,24 @@ impl<S: EngineSink> AppCore<S> {
                 clip: d.name.clone(),
                 stems: d.stems,
                 mute_original: d.mute_original,
-            },
-            Stage::Consent => StemsDialogState::Consent {
-                source: self.stems.backend.download_source(),
-                bytes: self.stems.backend.download_bytes(),
+                mono: d.mono,
             },
             Stage::Running => match &self.stems.running {
-                Some(r) => match r.shared.phase() {
-                    Phase::Download => {
-                        let (received, total) = r.shared.download();
-                        StemsDialogState::Downloading {
-                            received,
-                            total: if total == 0 {
-                                self.stems.backend.download_bytes()
-                            } else {
-                                total
-                            },
-                        }
-                    }
-                    phase => StemsDialogState::Working {
-                        phase: match phase {
-                            Phase::Separate => StemsPhase::Separating,
-                            Phase::Store => StemsPhase::Storing,
-                            _ => StemsPhase::Reading,
-                        },
-                        progress: r.shared.fraction(),
+                Some(r) => StemsDialogState::Working {
+                    phase: match r.shared.phase() {
+                        Phase::Separate => StemsPhase::Separating,
+                        Phase::Store => StemsPhase::Storing,
+                        Phase::Read => StemsPhase::Reading,
                     },
+                    progress: r.shared.fraction(),
                 },
                 None => StemsDialogState::Working {
                     phase: StemsPhase::Reading,
                     progress: 0.0,
                 },
             },
-            Stage::Failed { message, retry } => StemsDialogState::Failed {
+            Stage::Failed { message } => StemsDialogState::Failed {
                 message: message.clone(),
-                retry: *retry,
             },
         })
     }
@@ -218,30 +206,23 @@ impl<S: EngineSink> AppCore<S> {
                     .is_some_and(|d| !d.stems.contains(&true))
                 {
                     self.reject("Check at least one stem".to_owned());
-                } else if self.stems.backend.models() == atomik_download::Status::Ready {
-                    self.start_stems(false);
-                } else if let Some(d) = &mut self.stems.dialog {
-                    // Nothing is fetched before the user says yes.
-                    d.stage = Stage::Consent;
+                } else {
+                    self.start_stems();
                 }
-            }
-            (StemsDialogChoice::Download, Stage::Consent)
-            | (StemsDialogChoice::Retry, Stage::Failed { retry: true, .. }) => {
-                self.start_stems(true);
             }
             (StemsDialogChoice::Cancel, Stage::Running) => {
                 if let Some(r) = &self.stems.running {
                     r.cancel.store(true, Ordering::Relaxed);
                 }
             }
-            (StemsDialogChoice::Cancel, Stage::Options | Stage::Consent)
+            (StemsDialogChoice::Cancel, Stage::Options)
             | (StemsDialogChoice::Close, Stage::Failed { .. }) => self.stems.dialog = None,
             _ => {}
         }
     }
 
-    /// Starts the worker for the open dialog; `download` fetches the models first.
-    fn start_stems(&mut self, download: bool) {
+    /// Starts the worker for the open dialog.
+    fn start_stems(&mut self) {
         let Some(d) = &self.stems.dialog else {
             return;
         };
@@ -253,10 +234,7 @@ impl<S: EngineSink> AppCore<S> {
         let fail = |core: &mut Self, message: String| {
             core.reject(message.clone());
             if let Some(d) = &mut core.stems.dialog {
-                d.stage = Stage::Failed {
-                    message,
-                    retry: false,
-                };
+                d.stage = Stage::Failed { message };
             }
         };
         let bundle = match self.import_bundle() {
@@ -264,11 +242,7 @@ impl<S: EngineSink> AppCore<S> {
             Err(e) => return fail(self, e),
         };
         let cancel = Arc::new(AtomicBool::new(false));
-        let shared = Arc::new(StemShared::new(if download {
-            Phase::Download
-        } else {
-            Phase::Read
-        }));
+        let shared = Arc::new(StemShared::new());
         let job = self.stems.next_job;
         self.stems.next_job += 1;
         let work = Work {
@@ -276,7 +250,6 @@ impl<S: EngineSink> AppCore<S> {
             asset,
             name,
             wanted,
-            download,
             threshold: self.stream_threshold(),
             backend: Arc::clone(&self.stems.backend),
         };
@@ -307,17 +280,11 @@ impl<S: EngineSink> AppCore<S> {
         if self.stems.running.take_if(|r| r.job == job).is_none() {
             return;
         }
-        let downloading = self.stems.backend.models() != atomik_download::Status::Ready;
         match result {
             Err(message) => {
                 self.reject(format!("Stem separation failed: {message}"));
                 if let Some(d) = &mut self.stems.dialog {
-                    // A failed download can be tried again; a failed separation cannot be helped
-                    // by trying the same thing.
-                    d.stage = Stage::Failed {
-                        message,
-                        retry: downloading,
-                    };
+                    d.stage = Stage::Failed { message };
                 }
             }
             Ok(None) => {
