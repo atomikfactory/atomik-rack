@@ -209,7 +209,7 @@ fn linked_phases_keep_the_inter_channel_phase_of_panned_sources() {
             right[i] += (0.3 * gr * (w + off).sin()) as f32;
         }
     }
-    let src = vec![left, right];
+    let src = [left, right];
     let p = StretchParams {
         link_stereo: true,
         ..StretchParams::new(StretchMode::Tonal, 1.0, SR)

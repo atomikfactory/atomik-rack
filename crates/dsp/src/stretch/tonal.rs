@@ -284,8 +284,8 @@ pub(crate) fn tonal(
         }
         if shifted {
             for (a, (yr, yi)) in an.iter().zip(spec.iter_mut()) {
-                for j in 0..=half {
-                    mag[j] = (a.ar[j] * a.ar[j] + a.ai[j] * a.ai[j]).sqrt();
+                for (m, (re, im)) in mag.iter_mut().zip(a.ar.iter().zip(&a.ai)) {
+                    *m = (re * re + im * im).sqrt();
                 }
                 envelope.log_envelope(&fft, &mag, &mut zr, &mut zi, &mut log_env);
                 formant::gains(&log_env, options.env_scale, &mut gain);
