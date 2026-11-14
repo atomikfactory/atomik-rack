@@ -62,6 +62,14 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Hands the views the core's state; called once a frame.
     pub(super) fn sync_camera_ui(&mut self) {
+        if let Some(prefs) = self.core.take_camera_calibrated() {
+            // A calibration finished: its twist settings are the user's from now on (only those,
+            // so a project's own mode or gestures never reach the settings).
+            self.workflow.camera.full_turn = prefs.full_turn;
+            self.workflow.camera.dead_zone = prefs.dead_zone;
+            self.workflow.camera.reverse = prefs.reverse;
+            self.save_workflow();
+        }
         let size = self.size();
         match self.core.camera_dialog().cloned() {
             Some(state) => {
