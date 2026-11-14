@@ -177,6 +177,7 @@ pub fn notes_to_text(s: &NoteSnapshot) -> Result<String, ModelError> {
         param_lanes: Vec::new(),
         midi: Default::default(),
         groove: None,
+        follow_song_key: true,
         content: ClipContent::Notes(notes.into()),
     };
     save_clip_file(&ClipFile {

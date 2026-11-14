@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Follow Song Key per clip.** The piano roll's Scale menu has a Follow Song Key check, on by default. Turn it off and
+  the clip is not highlighted or snapped by the song key, without giving it a scale of its own. It is an optional
+  clip field written only when off, so the project format stays 45. It changes the editor only: Key & Chord and
+  the CV Quantizer still follow the song key for that clip's notes, because a note carries no clip in the engine.
+  Decision AI in `docs/DECISIONS.md`.
+- **Detect Chords from Notes in MIDI import.** File > Import > Detect Chords from Notes (off by default) makes
+  Import MIDI as Song write the chords of the imported notes to the chord lane, per beat, when the file names none;
+  chord symbols in the file win over it. It is part of the import's one undo step.
+- **Chords in the Sound Analyst.** A sound with several notes at once (a chord) is now found: the panel names the
+  chord and its notes (`Chord: Am (A3, C4, E4)`), the proposed poly synth plays all of them on enough voices, Make
+  Patch adds a clip with the chord, and the match leaves the single-pitch curve out. A single note is analysed as
+  before.
 - **Meter panels on console strips and plugin devices.** Right-click a channel, a bus, the master or a plugin device
   and choose Show Spectrum or Show Phase Meter: a floating panel with the drawing of the analyser devices opens
   over the window, without inserting anything. It looks at the output after the fader (a plugin: after its

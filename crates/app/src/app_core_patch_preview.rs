@@ -135,6 +135,7 @@ pub(super) fn phrase_clip(phrase: Phrase) -> Clip {
         param_lanes: Vec::new(),
         midi: Default::default(),
         groove: None,
+        follow_song_key: true,
         controllers: Vec::new(),
         name: None,
         color: None,

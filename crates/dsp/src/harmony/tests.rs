@@ -417,3 +417,41 @@ fn the_stretch_runner_reads_polyphonic_notes() {
     .unwrap();
     assert_eq!(notes, extract_poly_notes(&[&x], SR, &p));
 }
+
+// ---- the chord of one sound -------------------------------------------------------------
+
+fn held(keys: &[u8]) -> Vec<f32> {
+    let mut x = vec![0.0f32; frames(1.5)];
+    for k in keys {
+        tone(&mut x, f64::from(*k), 0.0, 1.4, 0.1, 0.5);
+    }
+    x
+}
+
+#[test]
+fn a_three_note_chord_is_found_with_its_notes_and_name() {
+    let x = held(&[57, 60, 64]);
+    let c = detect_sound_chord(&[&x], SR).expect("a chord");
+    assert_eq!(c.keys, [57, 60, 64]);
+    assert_eq!((c.root, c.quality, c.bass), (9, ChordKind::Minor, None));
+    assert!(c.confidence > 0.5, "{}", c.confidence);
+    assert_eq!(detect_sound_chord(&[&x], SR), Some(c), "deterministic");
+}
+
+#[test]
+fn an_inversion_names_its_bass() {
+    let x = held(&[52, 55, 60]);
+    let c = detect_sound_chord(&[&x], SR).expect("a chord");
+    assert_eq!(c.keys, [52, 55, 60]);
+    assert_eq!((c.root, c.quality, c.bass), (0, ChordKind::Major, Some(4)));
+}
+
+#[test]
+fn a_single_note_an_octave_and_silence_are_not_chords() {
+    for keys in [&[57u8][..], &[45, 57][..], &[48][..]] {
+        let x = held(keys);
+        assert_eq!(detect_sound_chord(&[&x], SR), None, "{keys:?}");
+    }
+    assert_eq!(detect_sound_chord(&[&vec![0.0f32; 20_000]], SR), None);
+    assert_eq!(detect_sound_chord(&[&[]], SR), None);
+}

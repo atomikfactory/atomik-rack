@@ -17,6 +17,7 @@
 use super::*;
 use crate::sound_worker::{self, Analysed, Outcome, Work};
 use atomik_core::PPQ;
+use atomik_dsp::harmony::SoundChord;
 use atomik_dsp::sound_analysis::{
     Distances, HarmonicKind, PitchMotion, STATIC_OCTAVES, SoundProfile,
 };
@@ -122,8 +123,19 @@ fn curves(target: &SoundProfile, made: Option<&SoundProfile>) -> (Curve, Curve, 
     )
 }
 
-/// The numbers of a profile, one line each.
-fn numbers(p: &SoundProfile) -> Vec<String> {
+/// The chord of a sound as a line: its name and its notes, `Chord: Am (A3, C4, E4)`.
+fn chord_line(c: &SoundChord) -> String {
+    let notes: Vec<String> = c.keys.iter().map(|k| note_name(f32::from(*k))).collect();
+    format!(
+        "Chord: {} ({})",
+        atomik_model::format_chord(c.root, c.quality, c.bass),
+        notes.join(", ")
+    )
+}
+
+/// The numbers of a profile, one line each. A sound that holds a chord shows it in place of its
+/// pitch.
+fn numbers(p: &SoundProfile, chord: Option<&SoundChord>) -> Vec<String> {
     let e = &p.envelope;
     let envelope = if e.sustain > 0.0 {
         format!(
@@ -155,6 +167,7 @@ fn numbers(p: &SoundProfile) -> Vec<String> {
         format!("Brightness: steady around {:.0} Hz", b.mean_hz)
     };
     let pitch = match p.pitch {
+        _ if chord.is_some() => chord.map(chord_line).unwrap_or_default(),
         Some(PitchMotion {
             fundamental_hz,
             key,
@@ -304,11 +317,19 @@ impl<S: EngineSink> AppCore<S> {
             param_lanes: Vec::new(),
             midi: Default::default(),
             groove: None,
+            follow_song_key: true,
             controllers: Vec::new(),
             name: None,
             color: None,
             grid: None,
-            content: ClipContent::Notes(vec![Note::new(0, note, proposal.key, 1.0)].into()),
+            content: ClipContent::Notes(
+                proposal
+                    .keys()
+                    .into_iter()
+                    .map(|key| Note::new(0, note, key, 1.0))
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
         }
     }
 
@@ -459,7 +480,7 @@ impl<S: EngineSink> AppCore<S> {
         SoundAnalystData {
             file: Some(format!("{}, {:.1} s", analysed.name, profile.duration_s)),
             running,
-            numbers: numbers(profile),
+            numbers: numbers(profile, analysed.chord.as_ref()),
             plan: analysed.fit.proposal.reasons.clone(),
             level,
             brightness,
@@ -490,9 +511,10 @@ impl<S: EngineSink> AppCore<S> {
                 let message = format!(
                     "{}: {}; proposed {} ({:.0} % match)",
                     a.name,
-                    match a.profile.pitch {
-                        Some(p) => format!("pitched at {:.0} Hz", p.fundamental_hz),
-                        None => "unpitched".to_owned(),
+                    match (&a.chord, a.profile.pitch) {
+                        (Some(c), _) => format!("a chord, {}", chord_line(c)),
+                        (None, Some(p)) => format!("pitched at {:.0} Hz", p.fundamental_hz),
+                        (None, None) => "unpitched".to_owned(),
                     },
                     a.fit
                         .proposal

@@ -53,6 +53,7 @@ fn song(keys: &[u8], expression: Vec<NoteExpression>) -> RackDoc {
                 }
                 .into(),
                 groove: None,
+                follow_song_key: true,
                 controllers: Vec::new(),
                 grid: None,
                 content: ClipContent::Notes(

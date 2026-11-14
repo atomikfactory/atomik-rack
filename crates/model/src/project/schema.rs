@@ -504,6 +504,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(NoteClip, "color", 37).ignorable(),
     field(NoteClip, "grid", 5),
     field(NoteClip, "scale", 16),
+    field(NoteClip, "follow_song_key", 45).ignorable(),
     field(NoteClip, "controllers", 19),
     field(NoteClip, "param_lanes", 41),
     field(NoteClip, "programs", 43).ignorable(),

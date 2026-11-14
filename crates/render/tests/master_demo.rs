@@ -79,6 +79,7 @@ fn clip(notes: Vec<(i64, i64, u8)>, velocity: f32) -> Clip {
         param_lanes: Vec::new(),
         midi: Default::default(),
         groove: None,
+        follow_song_key: true,
         controllers: Vec::new(),
         name: None,
         color: None,

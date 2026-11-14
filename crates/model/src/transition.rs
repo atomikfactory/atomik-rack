@@ -326,6 +326,7 @@ fn automation_clip(start: i64, length: i64, points: Vec<AutomationPoint>) -> Cli
         param_lanes: Vec::new(),
         midi: Default::default(),
         groove: None,
+        follow_song_key: true,
         content: ClipContent::Automation(points),
     }
 }

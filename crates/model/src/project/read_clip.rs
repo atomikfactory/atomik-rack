@@ -148,6 +148,7 @@ pub(super) fn load_clip(
             param_lanes: Vec::new(),
             midi: Default::default(),
             groove: None,
+            follow_song_key: true,
             controllers: Vec::new(),
             name,
             color,
@@ -196,6 +197,15 @@ pub(super) fn load_clip(
         scale: match obj.get("scale") {
             Some(s) => Some(load_scale(s, &path.field("scale"))?),
             None => None,
+        },
+        follow_song_key: match obj.get("follow_song_key") {
+            Some(Value::Bool(false)) => false,
+            Some(_) => {
+                return Err(path
+                    .field("follow_song_key")
+                    .error("only false is stored (leave the field out to follow the song key)"));
+            }
+            None => true,
         },
         param_lanes: match obj.get("param_lanes") {
             Some(l) => load_param_lanes(l, &path.field("param_lanes"))?,

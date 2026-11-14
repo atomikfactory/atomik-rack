@@ -162,6 +162,7 @@ fn the_starter_bounces_silently_and_one_synth_sounds_on_outputs_one_and_two() {
                 param_lanes: Vec::new(),
                 midi: Default::default(),
                 groove: None,
+                follow_song_key: true,
                 controllers: Vec::new(),
                 name: None,
                 color: None,

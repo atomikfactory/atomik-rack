@@ -583,6 +583,7 @@ pub(crate) fn plan(
                 param_lanes: Vec::new(),
                 midi: Default::default(),
                 groove: None,
+                follow_song_key: true,
                 content: ClipContent::Notes(Vec::new().into()),
             };
             new.put(
@@ -783,6 +784,7 @@ pub(crate) fn slot_target(doc: &RackDoc, command: &SongCommand) -> Option<ClipId
         | SongCommand::SetClipMidi { clip, .. }
         | SongCommand::SetClipParamLanes { clip, .. }
         | SongCommand::SetClipScale { clip, .. }
+        | SongCommand::SetClipFollowKey { clip, .. }
         | SongCommand::QuantizeNotes { clip, .. } => *clip,
         _ => return None,
     };

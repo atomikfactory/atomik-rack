@@ -703,6 +703,7 @@ fn a_copy_in_one_song_pastes_in_the_song_the_calls_are_routed_to_next() {
         param_lanes: Vec::new(),
         midi: Default::default(),
         groove: None,
+        follow_song_key: true,
         controllers: Vec::new(),
         name: None,
         color: None,

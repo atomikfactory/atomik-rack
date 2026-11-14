@@ -944,6 +944,7 @@ fn a_detached_rack_repaints_when_the_automation_moves_a_control() {
                 param_lanes: Vec::new(),
                 midi: Default::default(),
                 groove: None,
+                follow_song_key: true,
                 controllers: Vec::new(),
                 name: None,
                 color: None,

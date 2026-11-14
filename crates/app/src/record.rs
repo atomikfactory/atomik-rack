@@ -727,6 +727,7 @@ impl Take {
                         .canonical(),
                     ),
                     groove: None,
+                    follow_song_key: true,
                     grid: None,
                     content: ClipContent::Notes(content),
                 },

@@ -1612,6 +1612,7 @@ fn delete_channel_takes_the_instrument_and_asks_first_when_its_track_has_clips()
         param_lanes: Vec::new(),
         midi: Default::default(),
         groove: None,
+        follow_song_key: true,
         controllers: Vec::new(),
         name: None,
         color: None,

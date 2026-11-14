@@ -762,7 +762,8 @@ pub(crate) fn take_target(doc: &RackDoc, command: &SongCommand) -> Option<ClipId
         | SongCommand::SetClipControllers { clip, .. }
         | SongCommand::SetClipMidi { clip, .. }
         | SongCommand::SetClipParamLanes { clip, .. }
-        | SongCommand::SetClipScale { clip, .. } => *clip,
+        | SongCommand::SetClipScale { clip, .. }
+        | SongCommand::SetClipFollowKey { clip, .. } => *clip,
         _ => return None,
     };
     is_take(doc, id).then_some(id)

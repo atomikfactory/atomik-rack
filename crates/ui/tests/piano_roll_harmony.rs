@@ -236,6 +236,60 @@ fn snap_to_scale_and_the_fold_use_the_song_key() {
     assert_eq!(notes_of(&d).last().unwrap().key, 61, "C# is in C# major");
 }
 
+#[test]
+fn a_clip_that_opted_out_is_not_highlighted_or_snapped_by_the_song_key() {
+    let (mut v, mut d, reg) = setup(
+        Harmony {
+            key: Some(Key::new(0, ScaleKind::Major)),
+            ..Harmony::default()
+        },
+        Vec::new(),
+    );
+    assert!(v.clip_follows_key());
+    assert!(v.tools().follow_key);
+    let out = run_cmd(&mut v, &mut d, &reg, "editor.follow_song_key");
+    assert!(matches!(out, CommandOutcome::Handled(_)));
+    assert!(!v.clip_follows_key());
+    assert!(!v.tools().follow_key, "the menu shows it off");
+    assert_eq!(v.scale(), None, "nothing is highlighted");
+    assert!(!v.follows_song_key());
+    v.set_tool(Tool::Pencil);
+    v.set_snap_to_scale(true);
+    click_draw(&mut v, &mut d, &reg, 0, 61);
+    assert_eq!(keys(&notes_of(&d)), [61], "C# stays where it was drawn");
+    v.set_fold(Fold::Scale);
+    assert_eq!(v.rows().len(), 128, "the fold has no scale to use");
+    // A scale of its own still counts, and the toggle brings the song key back.
+    run_cmd(&mut v, &mut d, &reg, "editor.follow_song_key");
+    assert!(v.clip_follows_key());
+    assert_eq!(v.scale(), Some(Scale::new(0, ScaleKind::Major)));
+    d.undo().unwrap();
+    v.sync(d.doc(), &reg);
+    assert!(!v.clip_follows_key(), "one undo step per toggle");
+}
+
+#[test]
+fn an_opted_out_clip_keeps_a_scale_of_its_own() {
+    let (mut v, mut d, reg) = setup(
+        Harmony {
+            key: Some(a_minor()),
+            ..Harmony::default()
+        },
+        Vec::new(),
+    );
+    let dorian = Scale::new(2, ScaleKind::Dorian);
+    d.apply(
+        Command::Song(SongCommand::SetClipScale {
+            clip: ClipId(1),
+            scale: Some(dorian),
+        }),
+        &reg,
+    )
+    .unwrap();
+    run_cmd(&mut v, &mut d, &reg, "editor.follow_song_key");
+    assert_eq!(v.scale(), Some(dorian));
+}
+
 // ---------------------------------------------------------------- the song chord stamp
 
 #[test]

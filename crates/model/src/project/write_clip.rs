@@ -302,6 +302,13 @@ pub(super) fn write_clip(w: &mut String, c: &Clip, sep: &str) {
         }
         ClipContent::Notes(notes) => {
             write_note_clip_tail(w, c, notes, indent);
+            if !c.follow_song_key {
+                let _ = write!(
+                    w,
+                    ",
+{indent}\"follow_song_key\": false"
+                );
+            }
             write_param_lanes(w, c, indent);
             write_midi_data(w, c, indent);
             write_clip_groove(w, c, indent);

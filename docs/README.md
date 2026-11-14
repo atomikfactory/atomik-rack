@@ -166,6 +166,11 @@ and a few tools. They change how the song sounds only through the devices you as
 - **The piano roll follows the key.** A clip that has no scale of its own shows the scale of the song key at the clip's
   start: the scale highlighting, snap to scale and the fold work with it, and the scale bar shows it. A scale you set
   on the clip still wins. A new note clip has no scale, so it follows the song until you give it one.
+- **Follow song key.** The piano roll's Scale menu has a Follow Song Key check, on for every clip. Turn it off and the
+  clip is neither highlighted nor snapped by the song key, with no scale of its own to take its place (a scale you set
+  still counts). It is one undo step per click, and it only changes the editor: the devices that follow the song key
+  (Key & Chord, the CV Quantizer) keep following it for that clip's notes, because a note that reaches a device does
+  not say which clip it came from.
 - **Chords in the piano roll.** The Chord Stamp menu has Song Chord: the pencil drops the chord of the chord lane at the
   place you draw (a single note where the lane has no chord), with its bass note below the chord. Fit Notes to Chords
   (in the Chords menu) moves each selected note that falls outside the chord at its position to the nearest chord
@@ -180,7 +185,10 @@ and a few tools. They change how the song sounds only through the devices you as
   playhead. Bounces sound exactly like playback.
 - **Chords from a MIDI file.** Importing a MIDI file as a song also reads the chord symbols written in it (text,
   lyric or marker events such as Am7 or C/G, each lasting until the next) into the chord lane, and its key signature
-  as the song key when the song has none, all in the import's one undo step.
+  as the song key when the song has none, all in the import's one undo step. File > Import > Detect Chords from Notes
+  (off by default, kept until you quit) adds a guess for a file that names no chords: per beat, each pitch class counts
+  by how long and how loud its notes sound, matched against the same chord shapes as Detect Chords from Audio, with the
+  lowest note as the bass. Chord symbols written in the file always win over the guess.
 - **Detect Song Key.** Transport > Detect Song Key reads every note clip and sets the key it finds, as one undo
   step: the longer a note, the more it counts. The status line says how clear the answer was; Undo puts the old key
   back. It is a guess, and it only finds major and natural minor. A song with no notes but with audio clips is read
