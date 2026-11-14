@@ -5,15 +5,24 @@
 //! # The rules
 //!
 //! * **Pinch.** The distance from the thumb tip to the index tip, divided by the size of the
-//!   hand (the wrist to the knuckle of the middle finger). It starts below
+//!   hand (the wrist to the knuckle of the middle finger, or the knuckle line over
+//!   [`KNUCKLE_SPAN`] when that is longer: fingers pointing at the camera shorten the first).
+//!   The distance counts the model's depth of the two tips as well, so a grip on a knob that
+//!   faces the camera lets go when the thumb comes off towards it. It starts below
 //!   [`GestureConfig::pinch_on`] (0.25) and ends above [`GestureConfig::pinch_off`] (0.40): the
 //!   gap between the two is the hysteresis, so a hand that hovers near one number does not
 //!   flicker. The two numbers were chosen on the synthetic hands of the tests (the thumb and
 //!   finger of a closed pinch are about 0.05 apart, an open hand 1.0) and wait for hand checks
 //!   with a real camera.
-//! * **Twist.** The angle of the wrist-to-knuckle vector, measured in a square unit (the width
-//!   is multiplied by the aspect ratio of the frame), unwrapped so it never jumps at 180
-//!   degrees, and smoothed by a One Euro filter. A positive twist turns clockwise as the user
+//! * **Twist.** How far the hand has turned in the picture, measured in a square unit (the width
+//!   is multiplied by the aspect ratio of the frame) on two lines of the hand: the wrist to the
+//!   middle knuckle, and the knuckles of the index and little fingers. Each frame the turn of
+//!   each line is weighted by how long the line is in the picture (in this frame and the last),
+//!   so the line that is seen edge-on counts for nothing: a palm facing the camera turns like a
+//!   dial on a wall, and fingers pointing at the camera (a pinch on a knob or a bottle cap, the
+//!   forearm rolling) turn the knuckle line while the wrist-to-knuckle line shrinks to a few
+//!   wandering pixels. The sum is unwrapped so it never jumps at 180 degrees, and smoothed by a
+//!   One Euro filter. A positive twist turns clockwise as the user
 //!   sees their own mirrored image. The twist of a pinch is measured from the angle at the
 //!   moment it began (a ratchet: open the hand, turn it back and pinch again, and the next
 //!   twist starts from zero again). A [`GestureEvent::Twist`] carries the change since the last
@@ -82,7 +91,8 @@ pub struct HandState {
     pub palm_center: (f32, f32),
     /// The length of the palm along the hand, in frame heights.
     pub palm_height: f32,
-    /// Wrist to the knuckle of the middle finger, in frame heights.
+    /// Wrist to the knuckle of the middle finger, in frame heights (from the knuckle line when
+    /// the hand is seen along its length, see [`KNUCKLE_SPAN`]).
     pub hand_size: f32,
     /// How near the hand is: the smoothed hand size in frame heights (a closer hand is bigger).
     pub depth_proxy: f32,
@@ -266,9 +276,22 @@ impl Default for GestureConfig {
     }
 }
 
+/// The knuckle line (index to little finger) over the wrist-to-middle-knuckle length, a little
+/// over a real hand's: the hand size is never taken smaller than the knuckle line over this, so
+/// a hand seen along its length keeps its size, and a hand seen flat keeps the usual one.
+pub const KNUCKLE_SPAN: f64 = 0.85;
+
+/// The two lines of the hand whose turn is the twist: the wrist to the middle knuckle, and the
+/// index knuckle to the little finger's.
+const AXES: [(usize, usize); 2] = [
+    (joint::WRIST, joint::MIDDLE_MCP),
+    (joint::INDEX_MCP, joint::PINKY_MCP),
+];
+
 /// What is measured on one hand in one frame, before any smoothing.
 struct Measure {
-    angle: f64,
+    /// The angle and the length in the picture of each line of [`AXES`].
+    axes: [(f64, f64); 2],
     size: f64,
     ratio: f64,
     palm: (f32, f32),
@@ -300,18 +323,29 @@ fn measure(hand: &HandObservation, aspect: f32) -> Option<Measure> {
     let (wx, wy) = at(joint::WRIST);
     let (mx, my) = at(joint::MIDDLE_MCP);
     let (dx, dy) = (mx - wx, my - wy);
-    let size = dx.hypot(dy);
-    if !size.is_finite() || size < 1e-4 {
+    let length = dx.hypot(dy);
+    // The image y grows downwards: flip it so the angle is the usual one.
+    let axes = AXES.map(|(a, b)| {
+        let ((ax, ay), (bx, by)) = (at(a), at(b));
+        ((ay - by).atan2(bx - ax), (bx - ax).hypot(by - ay))
+    });
+    let size = length.max(axes[1].1 / KNUCKLE_SPAN);
+    if !size.is_finite() || size < 1e-4 || !length.is_finite() {
         return None;
     }
+    // The fingertips in depth too (the model's depth is in the scale of the frame width): a grip
+    // pointing at the camera opens towards it, where the picture alone barely sees it part.
     let (tx, ty) = at(joint::THUMB_TIP);
     let (ix, iy) = at(joint::INDEX_TIP);
-    let ratio = (tx - ix).hypot(ty - iy) / size;
-    // The image y grows downwards: flip it so the angle is the usual one.
-    let angle = (-dy).atan2(dx);
+    let tz = f64::from(p[joint::THUMB_TIP].z - p[joint::INDEX_TIP].z) * a;
+    let ratio = (tx - ix).hypot(ty - iy).hypot(tz) / size;
     let mut palm = (0.0f32, 0.0f32);
     let mut along = (f64::MAX, f64::MIN);
-    let (ux, uy) = (dx / size, dy / size);
+    let (ux, uy) = if length > 1e-9 {
+        (dx / length, dy / length)
+    } else {
+        (0.0, -1.0)
+    };
     for i in [
         joint::WRIST,
         joint::INDEX_MCP,
@@ -373,7 +407,7 @@ fn measure(hand: &HandObservation, aspect: f32) -> Option<Measure> {
         u
     };
     Some(Measure {
-        angle,
+        axes,
         size,
         ratio,
         palm,
@@ -382,6 +416,22 @@ fn measure(hand: &HandObservation, aspect: f32) -> Option<Measure> {
         pose,
         palm_unit,
     })
+}
+
+/// How far the hand turned between two frames: the turn of each line, weighted by the square of
+/// its length in both frames, so a line seen edge-on in either one counts for (almost) nothing.
+fn turn(before: &[(f64, f64); 2], now: &[(f64, f64); 2]) -> f64 {
+    let (mut sum, mut weight) = (0.0, 0.0);
+    for ((a0, l0), (a1, l1)) in before.iter().zip(now) {
+        let w = (l0 * l1).powi(2);
+        sum += w * wrap(a1 - a0);
+        weight += w;
+    }
+    if weight > 0.0 && weight.is_finite() {
+        sum / weight
+    } else {
+        0.0
+    }
 }
 
 fn wrap(a: f64) -> f64 {
@@ -401,7 +451,9 @@ struct Track {
     last_seen: f64,
     present: bool,
     palm: (f32, f32),
-    raw_angle: f64,
+    /// The angle and length of each line of [`AXES`] in the last frame.
+    axes: [(f64, f64); 2],
+    /// The turn of the hand added up over the frames, never wrapped.
     unwrapped: f64,
     angle: OneEuro,
     x: OneEuro,
@@ -431,8 +483,8 @@ impl Track {
             last_seen: t,
             present: true,
             palm: m.palm,
-            raw_angle: m.angle,
-            unwrapped: m.angle,
+            axes: m.axes,
+            unwrapped: 0.0,
             angle: OneEuro::new(cfg.angle_filter),
             x: OneEuro::new(cfg.position_filter),
             y: OneEuro::new(cfg.position_filter),
@@ -476,8 +528,8 @@ impl Track {
         self.present = true;
         self.last_seen = t;
         self.palm = m.palm;
-        self.unwrapped += wrap(m.angle - self.raw_angle);
-        self.raw_angle = m.angle;
+        self.unwrapped += turn(&self.axes, &m.axes);
+        self.axes = m.axes;
         let angle = self.angle.filter(t, self.unwrapped);
         let x = self.x.filter(t, f64::from(m.palm.0));
         let y = self.y.filter(t, f64::from(m.palm.1));

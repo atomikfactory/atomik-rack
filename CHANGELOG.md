@@ -222,6 +222,13 @@ may break APIs and the patch and project formats.
   test plugin library goes through a real plugin process there (load, audio, state, crash, hang, a library that
   fails or never returns, many instances in a row, the edge-case plugins and an editor gesture). The project format
   is unchanged (45).
+- **The webcam twist works like turning a bottle cap.** With the fingers pointing at the camera (a pinch on a knob
+  that faces you, the forearm rolling), the twist was read from the wrist-to-knuckle line, which the camera then sees
+  end-on: a quarter turn could read as a third of a turn the wrong way, a still hand drifted, and the pinch did not
+  end when the grip loosened, so turning the hand back to take another turn turned the knob back too. The twist is
+  now the turn of two lines of the hand (wrist to middle knuckle, and the knuckle line), each weighted by how much of
+  it the camera sees; the hand size falls back to the knuckle line, and the pinch counts the depth of the fingertips.
+  Loosen the grip, turn back and pinch again: the knob keeps its value and the next turn adds to it.
 
 ## [0.4.0-rc.2] - 2026-11-10
 
