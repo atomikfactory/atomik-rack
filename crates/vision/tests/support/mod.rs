@@ -65,6 +65,8 @@ pub struct Spec {
     pub score: f32,
     /// Noise on every landmark, in frame heights.
     pub noise: f32,
+    /// How far the four fingers are folded into the palm: 0 open, 1 a fist.
+    pub curl: f32,
 }
 
 impl Spec {
@@ -77,6 +79,7 @@ impl Spec {
             pinch_ratio: 1.0,
             score: 0.95,
             noise: 0.0,
+            curl: 0.0,
         }
     }
     pub fn left() -> Self {
@@ -104,6 +107,20 @@ pub fn hand(spec: &Spec, noise: &mut Noise) -> HandObservation {
         ix + dx / len * spec.pinch_ratio,
         iy + dy / len * spec.pinch_ratio,
     );
+    // A curled finger folds its three upper joints back towards the wrist, the tip furthest.
+    if spec.curl > 0.0 {
+        for mcp in [5usize, 9, 13, 17] {
+            let (mx, my) = BASE[mcp];
+            for (joint, back) in [(mcp + 1, 0.0), (mcp + 2, 0.2), (mcp + 3, 0.45)] {
+                let folded = (mx, my * (1.0 - back) - 0.05 + 0.1 * back);
+                let open = BASE[joint];
+                pts[joint] = (
+                    open.0 + (folded.0 - open.0) * spec.curl,
+                    open.1 + (folded.1 - open.1) * spec.curl,
+                );
+            }
+        }
+    }
     // Where the palm is: the mean of the wrist and the four knuckles.
     let (mut px, mut py) = (0.0, 0.0);
     for i in [0, 5, 9, 13, 17] {
@@ -258,6 +275,30 @@ pub fn two_hands() -> Vec<Observation> {
     })
 }
 
+/// A fist, then an open palm held for a while, then a fist again.
+pub fn open_palm() -> Vec<Observation> {
+    sequence(90, |_, t| {
+        let open = (0.4..1.8).contains(&t);
+        vec![Spec {
+            curl: if open { 0.0 } else { 1.0 },
+            noise: 0.0008,
+            ..Spec::right()
+        }]
+    })
+}
+
+/// The palm opens for 200 ms only: a flash that must not count.
+pub fn open_flash() -> Vec<Observation> {
+    sequence(60, |_, t| {
+        let open = (0.4..0.6).contains(&t);
+        vec![Spec {
+            curl: if open { 0.0 } else { 1.0 },
+            noise: 0.0008,
+            ..Spec::right()
+        }]
+    })
+}
+
 /// Every fixture: file name and frames.
 pub fn fixtures() -> Vec<(&'static str, Vec<Observation>)> {
     vec![
@@ -266,6 +307,8 @@ pub fn fixtures() -> Vec<(&'static str, Vec<Observation>)> {
         ("cross_180.json", cross_180(true)),
         ("threshold_hover.json", threshold_hover()),
         ("two_hands.json", two_hands()),
+        ("open_palm.json", open_palm()),
+        ("open_flash.json", open_flash()),
     ]
 }
 

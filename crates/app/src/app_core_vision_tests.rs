@@ -66,6 +66,7 @@ fn hand_state(depth: f32, pinch: bool) -> HandState {
         palm_height: 0.2,
         hand_size: depth,
         depth_proxy: depth,
+        open_palm: false,
     }
 }
 
@@ -971,3 +972,7 @@ fn calibration_results_are_kept_inside_the_limits() {
     assert_eq!(r.dead_zone(), crate::keymap_store::MIN_DEAD_ZONE);
     assert_eq!(calibrate::format_tenths(15), "1.5");
 }
+
+// The camera as a MIDI controller has its own file.
+#[path = "app_core_camera_midi_tests.rs"]
+mod camera_midi;

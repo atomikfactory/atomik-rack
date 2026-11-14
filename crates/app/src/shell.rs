@@ -3321,6 +3321,8 @@ impl<B: AudioBackend> Shell<B> {
             .iter()
             .map(|i| i.name.clone())
             .collect();
+        // The camera is an input like the ports (a mapping learned from it names it).
+        ports.push(atomik_model::CAMERA_PORT.to_owned());
         for m in &self.core.doc().midi_maps {
             if let Some(p) = &m.source.port
                 && !ports.contains(p)

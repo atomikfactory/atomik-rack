@@ -319,6 +319,7 @@ fn calibrate_in_the_camera_tab_applies_closes_and_a_finished_calibration_is_save
                 present: true,
                 handedness: atomik_vision::Handedness::Right,
                 pinch: true,
+                open_palm: false,
                 pinch_strength: 1.0,
                 twist_angle: angle.to_radians(),
                 palm_center: (0.5, 0.5),

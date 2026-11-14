@@ -23,6 +23,13 @@
 //! twist the other way, and the tracker holds back twists under the `dead_zone`; a twist
 //! calibration (`camera.calibrate`, see [`calibrate`]) measures all three for the user's hand.
 //!
+//! # The camera as a MIDI controller
+//!
+//! The camera's mode (Settings > Camera) says what the hands do: turn the clicked knob (the
+//! default), send MIDI (the camera is then an input named Camera that MIDI Learn can map to
+//! anything, see `app_core_camera_midi.rs`), or both. With MIDI Learn armed the camera sends its
+//! messages whatever the mode, so a control can be learned without switching.
+//!
 //! # The camera
 //!
 //! The camera is off until the user turns it on (the transport bar's CAMERA button, the
@@ -34,6 +41,7 @@
 use super::midimap::{GestureKey, Resolved};
 use super::plugins::TOUCH_GAP_SECS;
 use super::*;
+use crate::camera_midi::CameraMidi;
 use crate::keymap_store::CameraPrefs;
 use crate::vision_link::{
     CameraEntry, DownloadProgress, FrameReport, ModelState, NoVision, Preview, VisionBackend,
@@ -49,9 +57,9 @@ use std::sync::{Arc, Mutex};
 pub const NO_TARGET_MESSAGE: &str = "Click a knob first";
 
 /// The hand size (in frame heights) at or below which a hand counts as far: full range.
-const FAR_SIZE: f32 = 0.12;
+const FAR_SIZE: f32 = crate::camera_midi::FAR_SIZE;
 /// The hand size at or above which a hand counts as near: half the range.
-const NEAR_SIZE: f32 = 0.30;
+const NEAR_SIZE: f32 = crate::camera_midi::NEAR_SIZE;
 /// The smallest scale fine control gives a move.
 const FINE_SCALE: f32 = 0.5;
 
@@ -127,6 +135,12 @@ pub(super) struct VisionCore {
     preview: Option<Preview>,
     /// The preview box is shown (it needs the camera on to have a picture).
     preview_on: bool,
+    /// What the hands send as MIDI.
+    midi: CameraMidi,
+    /// Routes the camera's notes to the selected instrument when the settings say so.
+    notes: crate::target::NoteRouter,
+    /// The time of the last frame report (the tracker's clock), for the rate of the messages.
+    clock: f64,
     /// The twist calibration running, if one is.
     calibration: Option<calibrate::Calibration>,
     /// The settings the last calibration made, until the shell saves them.
@@ -161,6 +175,9 @@ impl Default for VisionCore {
             fps: 0.0,
             infer_ms: 0.0,
             preview: None,
+            midi: CameraMidi::new(),
+            notes: crate::target::NoteRouter::new(),
+            clock: 0.0,
             calibration: None,
             calibrated: None,
         }
@@ -191,6 +208,12 @@ impl<S: EngineSink> AppCore<S> {
         let tracker_changed = prefs.sensitivity != self.vision.prefs.sensitivity
             || prefs.dead_zone != self.vision.prefs.dead_zone;
         let preview_changed = prefs.preview != self.vision.prefs.preview;
+        let mode_changed = prefs.mode != self.vision.prefs.mode
+            || prefs.play_notes != self.vision.prefs.play_notes;
+        if mode_changed {
+            // Notes held under the old settings end before the new ones apply.
+            self.camera_midi_release();
+        }
         self.vision.prefs = prefs;
         if preview_changed {
             self.vision.preview_on = self.vision.prefs.preview;
@@ -365,6 +388,8 @@ impl<S: EngineSink> AppCore<S> {
             session.stop();
         }
         self.end_pinch();
+        self.camera_midi_release();
+        self.vision.midi.reset();
         self.vision.hands.clear();
         self.vision.preview = None;
         self.vision.lamp = CameraLamp::Off;
@@ -495,6 +520,7 @@ impl<S: EngineSink> AppCore<S> {
             message: self.vision.message.clone(),
             fps: self.vision.fps,
             infer_ms: self.vision.infer_ms,
+            controls: self.camera_controls_state(),
         }
     }
 
@@ -590,12 +616,15 @@ impl<S: EngineSink> AppCore<S> {
     fn camera_report(&mut self, report: &FrameReport) {
         self.vision.fps = report.fps;
         self.vision.infer_ms = report.infer_ms;
+        self.vision.clock = report.t;
         self.vision.hands = report.hands.iter().map(|h| (h.id, *h)).collect();
         if self.vision.calibration.is_some() {
             self.camera_calibration_frame(report);
         }
         let any = report.hands.iter().any(|h| h.present);
-        self.vision.lamp = if self.vision.pinch.is_some() {
+        let flags = self.camera_flags();
+        let midi_pinch = flags.midi && report.hands.iter().any(|h| h.present && h.pinch);
+        self.vision.lamp = if self.vision.pinch.is_some() || midi_pinch {
             CameraLamp::Pinch
         } else if any {
             CameraLamp::Hand
@@ -623,18 +652,26 @@ impl<S: EngineSink> AppCore<S> {
                 self.twist(pending);
             }
         }
+        if self.vision.calibration.is_none() {
+            self.camera_midi_frame(report.t, &report.hands);
+        }
     }
 
     // ------------------------------------------------------------------ the gesture
 
     fn camera_gesture(&mut self, event: GestureEvent) {
         if self.vision.calibration.is_some() {
-            // A calibration reads the hands of each frame; no knob turns meanwhile.
+            // A calibration reads the hands of each frame; no knob turns and no MIDI is sent.
             return;
+        }
+        let flags = self.camera_flags();
+        if flags.midi {
+            self.camera_midi_gesture(&event, flags.twist);
         }
         match event {
             GestureEvent::PinchStart { hand, handedness } => {
-                if !self.vision.prefs.hand.allows(handedness.letter())
+                if !flags.turns
+                    || !self.vision.prefs.hand.allows(handedness.letter())
                     || self.vision.pinch.is_some()
                 {
                     return;
@@ -654,6 +691,7 @@ impl<S: EngineSink> AppCore<S> {
                     self.end_pinch();
                 }
             }
+            GestureEvent::OpenPalmStart { .. } | GestureEvent::OpenPalmEnd { .. } => {}
         }
     }
 
@@ -777,6 +815,9 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 }
+
+#[path = "app_core_camera_midi.rs"]
+mod camera_midi_ops;
 
 #[cfg(test)]
 #[path = "app_core_vision_tests.rs"]

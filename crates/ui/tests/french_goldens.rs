@@ -51,6 +51,8 @@ fn is_name_or_value(text: &str) -> bool {
         "Line Mixer",
         "Bass",
         "Lead",
+        "Lead Cutoff",
+        "Lead Mute",
         "Kick",
         "Master",
         "Drums",
@@ -381,6 +383,7 @@ fn the_camera_views_in_french() {
                 message: message.map(str::to_owned),
                 fps: 29.6,
                 infer_ms: 21.4,
+                controls: None,
             });
             let mut dl = DisplayList::new();
             v.paint(&mut dl, &Theme::dark());
@@ -417,4 +420,100 @@ fn the_camera_views_in_french() {
             dl
         });
     }
+}
+
+/// The camera's MIDI controls in the preview box, and a MIDI Mappings list with camera sources,
+/// in French.
+#[test]
+fn the_camera_midi_views_in_french() {
+    use atomik_model::{
+        CameraControl, CameraHand, DeviceKey, MapMode, MapOptions, MidiMapping, MidiSource,
+        MidiTarget, RelativeKind,
+    };
+    use atomik_ui::{
+        CameraBar, CameraControlsState, CameraLamp, CameraPicture, CameraPreviewState,
+        CameraPreviewView, MidiMapRow, MidiMapsView,
+    };
+    for (name, learning) in [("midi", false), ("midi_learn", true)] {
+        french(&format!("camera_preview_{name}_1x.json"), move || {
+            let bar = |label, value, centred| CameraBar {
+                label,
+                value,
+                centred,
+            };
+            let mut v = CameraPreviewView::new();
+            v.set_origin(atomik_ui::kurbo::Point::new(660.0, 330.0));
+            v.set_state(CameraPreviewState {
+                lamp: CameraLamp::Pinch,
+                picture: Some(CameraPicture {
+                    width: 2,
+                    height: 2,
+                    rgb: vec![10; 12],
+                }),
+                hands: vec![
+                    (0..21)
+                        .map(|i| (0.2 + 0.03 * i as f32, 0.9 - 0.035 * i as f32))
+                        .collect(),
+                ],
+                target: None,
+                value: None,
+                message: None,
+                fps: 29.6,
+                infer_ms: 21.4,
+                controls: Some(CameraControlsState {
+                    hand: "Right hand, channel 1",
+                    bars: vec![
+                        bar("Twist", 0.4, true),
+                        bar("Height", 0.8, false),
+                        bar("Left/right", 0.5, false),
+                        bar("Closeness", 0.65, false),
+                        bar("Pinch", 1.0, false),
+                        bar("Palm", 0.0, false),
+                    ],
+                    learning,
+                }),
+            });
+            let mut dl = DisplayList::new();
+            v.paint(&mut dl, &Theme::dark());
+            dl
+        });
+    }
+    french("midi_maps_camera_1x.json", || {
+        let row = |id: u32, source: MidiSource, mode: MapMode, name: &str| MidiMapRow {
+            mapping: MidiMapping {
+                id,
+                source,
+                target: MidiTarget::Param {
+                    device: DeviceKey("ch".into()),
+                    param: "fader".into(),
+                },
+                options: MapOptions {
+                    mode,
+                    ..MapOptions::default()
+                },
+            },
+            target: name.to_owned(),
+            missing: false,
+        };
+        let mut v = MidiMapsView::new(Theme::dark());
+        v.set_bounds(Rect::new(0.0, 0.0, 1100.0, 400.0));
+        v.set_rows(vec![
+            row(
+                1,
+                MidiSource::camera(CameraHand::Right, CameraControl::Twist),
+                MapMode::Relative(RelativeKind::TwosComplement),
+                "Lead Cutoff",
+            ),
+            row(
+                2,
+                MidiSource::camera(CameraHand::Left, CameraControl::OpenPalm),
+                MapMode::Toggle,
+                "Lead Mute",
+            ),
+        ]);
+        v.set_ports(vec!["Pads".into(), atomik_model::CAMERA_PORT.into()]);
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl);
+        dl
+    });
 }

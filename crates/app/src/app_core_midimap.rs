@@ -99,6 +99,9 @@ pub(super) struct MidiControl {
     origin: Option<String>,
     /// The surface of the last message the learner was fed, for the source it finds.
     learn_surface: Option<String>,
+    /// The last message the learner was fed came from the camera: the source it finds names the
+    /// camera as its port.
+    learn_camera: bool,
 }
 
 impl MidiControl {
@@ -119,6 +122,7 @@ impl MidiControl {
             locks: BTreeMap::new(),
             origin: None,
             learn_surface: None,
+            learn_camera: false,
         }
     }
 
@@ -433,12 +437,35 @@ impl<S: EngineSink> AppCore<S> {
     /// The last message the input received, as text (`Pad: CC 7 ch 1 = 64`), for a status line.
     pub fn midi_last_message(&self) -> Option<String> {
         let (port, m) = self.midi.last.as_ref()?;
+        let port = if &**port == atomik_model::CAMERA_PORT {
+            "Camera"
+        } else {
+            port
+        };
         Some(format!("{port}: {}", describe_message(m)))
     }
 
     /// Messages received in all (tests and the status line).
     pub fn midi_received(&self) -> u64 {
         self.midi.received
+    }
+
+    /// Handles one message of the camera (the webcam hand tracker) like one of a hardware input:
+    /// counted, shown in the status line, learned from and run through the mappings. Only the
+    /// mappings that name the camera hear it. Returns true when a mapping that consumes its
+    /// message heard it (it then plays no note).
+    pub(super) fn camera_message(&mut self, msg: ChannelMessage) -> bool {
+        let port: Arc<str> = Arc::from(atomik_model::CAMERA_PORT);
+        self.midi.received += 1;
+        self.midi.last = Some((Arc::clone(&port), msg));
+        let consumed = !self.midi.learning()
+            && self.doc().midi_maps.iter().any(|m| {
+                m.options.consume
+                    && m.source.is_camera()
+                    && m.source.matches_from(&port, None, &msg)
+            });
+        self.midi_message_from(&port, None, msg);
+        consumed
     }
 
     fn midi_message(&mut self, port: &Arc<str>, msg: ChannelMessage) {
@@ -457,10 +484,12 @@ impl<S: EngineSink> AppCore<S> {
     /// one. Learning takes its source (tied to the surface when there is one); otherwise every
     /// mapping that hears it runs.
     fn midi_message_from(&mut self, port: &Arc<str>, surface: Option<&str>, msg: ChannelMessage) {
+        let camera = &**port == atomik_model::CAMERA_PORT;
         if self.midi.learning() {
             // Learning: nothing runs; with a target armed the first control becomes its source.
             if self.midi.armed.is_some() {
                 self.midi.learn_surface = surface.map(str::to_owned);
+                self.midi.learn_camera = camera;
                 if let Some(source) = self.midi.learner.feed(port, msg, self.midi.now) {
                     self.finish_learn(source);
                 }
@@ -471,6 +500,7 @@ impl<S: EngineSink> AppCore<S> {
             .doc()
             .midi_maps
             .iter()
+            .filter(|m| m.source.is_camera() == camera)
             .filter(|m| m.source.matches_from(port, surface, &msg))
             .cloned()
             .collect();
@@ -480,6 +510,7 @@ impl<S: EngineSink> AppCore<S> {
             self.doc()
                 .midi_maps
                 .iter()
+                .filter(|m| m.source.is_camera() == camera)
                 .filter(|m| m.source.matches_param(port, surface, msg.channel, &e))
                 .cloned()
                 .collect()
@@ -498,6 +529,9 @@ impl<S: EngineSink> AppCore<S> {
 
     fn finish_learn(&mut self, mut source: MidiSource) {
         source.surface = self.midi.learn_surface.take();
+        if std::mem::take(&mut self.midi.learn_camera) {
+            source.port = Some(atomik_model::CAMERA_PORT.to_owned());
+        }
         let Some(target) = self.midi.armed.take() else {
             return;
         };

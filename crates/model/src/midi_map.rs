@@ -18,6 +18,9 @@
 //! controller surface of the settings. A source with a surface hears that surface only; one
 //! without hears every surface and every port, so older projects map as they did.
 //!
+//! The **camera** is an input too: a source whose port is [`crate::CAMERA_PORT`] hears the
+//! webcam hand tracker only (its controls are in `camera_source.rs`), and hardware never drives it.
+//!
 //! # Options
 //!
 //! [`MapOptions`] holds the range (`min` and `max` as fractions of the target's own range, so a
@@ -187,8 +190,16 @@ impl MidiSource {
         let channel = self
             .channel
             .map_or_else(|| "any ch".to_owned(), |c| format!("ch {}", c + 1));
+        if let Some((hand, control)) = self.camera_control() {
+            return format!(
+                "Camera, {} {} ({what} {channel})",
+                hand.label(),
+                control.label()
+            );
+        }
         match (&self.surface, &self.port) {
             (Some(s), _) => format!("{what} {channel} [{s}]"),
+            (None, Some(p)) if p == crate::CAMERA_PORT => format!("{what} {channel} (Camera)"),
             (None, Some(p)) => format!("{what} {channel} ({p})"),
             (None, None) => format!("{what} {channel}"),
         }
@@ -575,6 +586,18 @@ impl MapOptions {
                 _ => MapMode::Absolute,
             },
             ..Self::default()
+        }
+    }
+
+    /// The options a learned `source` starts with: those of [`Self::for_source`], except that the
+    /// camera's twist is an endless encoder (two's complement), the way it sends.
+    pub fn for_learned(source: &MidiSource) -> Self {
+        match source.camera_control() {
+            Some((_, crate::CameraControl::Twist)) => Self {
+                mode: MapMode::Relative(RelativeKind::TwosComplement),
+                ..Self::default()
+            },
+            _ => Self::for_source(source.kind),
         }
     }
 
@@ -1416,12 +1439,12 @@ pub(crate) fn plan(
                     if let Some(problem) = existing.options.problem(&source) {
                         // A relative encoder cannot take a button: the options start over.
                         let _ = problem;
-                        existing.options = MapOptions::for_source(source.kind);
+                        existing.options = MapOptions::for_learned(&source);
                     }
                     existing.source = source;
                 }
                 None => {
-                    let options = MapOptions::for_source(source.kind);
+                    let options = MapOptions::for_learned(&source);
                     new.push(MidiMapping {
                         id: next_id(&old),
                         source,

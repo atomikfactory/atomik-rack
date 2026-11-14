@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **The camera as a MIDI controller.** The webcam is now also an input named Camera that MIDI Learn can map to
+  anything it maps today, so you can put hand height on a filter and a twist on a send at the same time. Each hand
+  has fixed controls (the right hand on channel 1, the left on channel 2): the twist while pinched is an endless
+  relative encoder (controller 20), the pinch is note 60, the palm height controller 21, left and right controller 22,
+  how near the hand is controller 23, and an open palm (all fingers out for 300 ms, new in the recogniser) is note 61.
+  They send only when a value moves, at most 60 times a second each, hold their value when the hand is lost, and never
+  leave the app. Settings > Camera has a mode: Turn clicked knob (the default), MIDI controller or Both (the twist then
+  turns the clicked knob and is not sent). With MIDI Learn armed the camera sends in any mode, and the preview says so;
+  in the MIDI controller mode it shows six bars with the live values. A mapping learned from the camera is saved with
+  the fields every mapping has (its port is Camera), so the project format is unchanged, it listens to the camera only
+  and reads "Camera, right hand twist" in the MIDI Mappings list. A new setting lets the camera's notes play the
+  selected instrument; by default no track hears them. Decision AF in `docs/DECISIONS.md`.
 - **Turn the last clicked knob with your hand.** The webcam is now a controller. The last knob, slider or fader you
   press (on a rack panel, in the parameter pane, on a console strip, or in a plugin's own window) is the camera
   target and gets a small lens and a ring while the camera is on. Pinch your thumb and index finger and twist your

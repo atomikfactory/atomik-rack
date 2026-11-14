@@ -50,6 +50,7 @@ fn preview_state(
         message: message.map(str::to_owned),
         fps: 29.6,
         infer_ms: 21.4,
+        controls: None,
     }
 }
 

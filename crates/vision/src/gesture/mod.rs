@@ -19,8 +19,13 @@
 //!   twist starts from zero again). A [`GestureEvent::Twist`] carries the change since the last
 //!   one, and only once it is larger than the dead zone (1.5 degrees), so a still hand does not
 //!   drift.
+//! * **Open palm.** All four fingers extended (each tip further from the wrist than its middle
+//!   joint and well past its knuckle), the thumb tip clear of the index tip
+//!   ([`GestureConfig::open_spread`]) and no pinch, held for [`GestureConfig::open_hold`] (300 ms):
+//!   [`GestureEvent::OpenPalmStart`]. Any finger folding, or a pinch, ends it. Like the pinch
+//!   numbers these wait for hand checks with a real camera.
 //! * **Loss.** A hand that is not in a frame keeps its pinch for [`GestureConfig::loss_tolerance`]
-//!   (150 ms); after that the pinch ends. A hand the model is unsure about
+//!   (150 ms); after that the pinch and the open palm end. A hand the model is unsure about
 //!   ([`GestureConfig::min_score`]) counts as not there.
 //! * **Two hands** are tracked one by one. A hand keeps its [`HandId`] from frame to frame by the
 //!   model's handedness and the nearest palm.
@@ -64,6 +69,8 @@ pub struct HandState {
     pub hand_size: f32,
     /// How near the hand is: the smoothed hand size in frame heights (a closer hand is bigger).
     pub depth_proxy: f32,
+    /// Whether the palm is open: every finger extended and held for [`GestureConfig::open_hold`].
+    pub open_palm: bool,
 }
 
 /// A change in a gesture.
@@ -85,6 +92,19 @@ pub enum GestureEvent {
     },
     /// The fingers opened, or the hand was lost for too long.
     PinchEnd {
+        /// The hand.
+        hand: HandId,
+    },
+    /// The palm has been open (every finger extended, not pinched) for the hold time.
+    OpenPalmStart {
+        /// The hand.
+        hand: HandId,
+        /// The model's label of the hand.
+        handedness: Handedness,
+    },
+    /// The fingers closed or the thumb came to the index finger, or the hand was lost for too
+    /// long.
+    OpenPalmEnd {
         /// The hand.
         hand: HandId,
     },
@@ -112,6 +132,11 @@ pub struct GestureConfig {
     pub loss_tolerance: f64,
     /// A hand the model scores lower than this is ignored.
     pub min_score: f32,
+    /// The palm counts as open after this many seconds with every finger extended.
+    pub open_hold: f64,
+    /// The thumb tip must be at least this far from the index tip (over the hand size) for the
+    /// palm to count as open: a pinch, or a thumb tucked against the finger, is not an open palm.
+    pub open_spread: f32,
     /// The farthest a palm may move between two frames and still be the same hand.
     pub match_radius: f32,
     /// The filter of the angle.
@@ -128,6 +153,8 @@ impl Default for GestureConfig {
             dead_zone: 1.5f32.to_radians(),
             loss_tolerance: 0.15,
             min_score: 0.5,
+            open_hold: 0.3,
+            open_spread: 0.6,
             match_radius: 0.4,
             angle_filter: OneEuroParams {
                 min_cutoff: 1.5,
@@ -150,7 +177,12 @@ struct Measure {
     ratio: f64,
     palm: (f32, f32),
     palm_height: f64,
+    /// Every one of the four fingers is extended.
+    extended: bool,
 }
+
+/// The four fingers' joints: knuckle, middle joint and tip.
+const FINGERS: [[usize; 3]; 4] = [[5, 6, 8], [9, 10, 12], [13, 14, 16], [17, 18, 20]];
 
 fn measure(hand: &HandObservation, aspect: f32) -> Option<Measure> {
     let a = f64::from(aspect);
@@ -185,12 +217,23 @@ fn measure(hand: &HandObservation, aspect: f32) -> Option<Measure> {
         let s = (x - wx) * ux + (y - wy) * uy;
         along = (along.0.min(s), along.1.max(s));
     }
+    // A finger is extended when its tip is further from the wrist than its middle joint and
+    // well past its knuckle: a curled finger folds the tip back.
+    let from_wrist = |i: usize| {
+        let (x, y) = at(i);
+        (x - wx).hypot(y - wy)
+    };
+    let extended = FINGERS.iter().all(|[mcp, pip, tip]| {
+        let tip = from_wrist(*tip);
+        tip > from_wrist(*pip) * 1.05 && tip > from_wrist(*mcp) * 1.3
+    });
     Some(Measure {
         angle,
         size,
         ratio,
         palm,
         palm_height: along.1 - along.0,
+        extended,
     })
 }
 
@@ -220,6 +263,9 @@ struct Track {
     pinching: bool,
     base: f64,
     emitted: f64,
+    /// Since when every finger has been extended, while they are.
+    open_since: Option<f64>,
+    palm_open: bool,
     last: HandState,
 }
 
@@ -240,6 +286,8 @@ impl Track {
             pinching: false,
             base: 0.0,
             emitted: 0.0,
+            open_since: None,
+            palm_open: false,
             last: HandState {
                 id,
                 present: true,
@@ -251,6 +299,7 @@ impl Track {
                 palm_height: 0.0,
                 hand_size: 0.0,
                 depth_proxy: 0.0,
+                open_palm: false,
             },
         }
     }
@@ -300,6 +349,24 @@ impl Track {
                 self.emitted = twist;
             }
         }
+        // The palm: every finger out and the thumb clear of the index finger, held.
+        let open = m.extended && m.ratio >= f64::from(cfg.open_spread) && !self.pinching;
+        if open {
+            let since = *self.open_since.get_or_insert(t);
+            if !self.palm_open && t - since >= cfg.open_hold - 1e-9 {
+                self.palm_open = true;
+                events.push(GestureEvent::OpenPalmStart {
+                    hand: self.id,
+                    handedness: h.handedness,
+                });
+            }
+        } else {
+            self.open_since = None;
+            if self.palm_open {
+                self.palm_open = false;
+                events.push(GestureEvent::OpenPalmEnd { hand: self.id });
+            }
+        }
         self.last = HandState {
             id: self.id,
             present: true,
@@ -311,6 +378,7 @@ impl Track {
             palm_height: m.palm_height as f32,
             hand_size: m.size as f32,
             depth_proxy: size as f32,
+            open_palm: self.palm_open,
         };
     }
 }
@@ -403,6 +471,9 @@ impl Recogniser {
             if t.pinching {
                 events.push(GestureEvent::PinchEnd { hand: t.id });
             }
+            if t.palm_open {
+                events.push(GestureEvent::OpenPalmEnd { hand: t.id });
+            }
             false
         });
 
@@ -411,15 +482,18 @@ impl Recogniser {
         Update { states, events }
     }
 
-    /// Forgets every hand and returns the end of every pinch that was open (for a camera that
-    /// stops or is switched).
+    /// Forgets every hand and returns the end of every pinch and open palm that was open (for a
+    /// camera that stops or is switched).
     pub fn reset(&mut self) -> Vec<GestureEvent> {
-        let ended = self
-            .tracks
-            .iter()
-            .filter(|t| t.pinching)
-            .map(|t| GestureEvent::PinchEnd { hand: t.id })
-            .collect();
+        let mut ended = Vec::new();
+        for t in &self.tracks {
+            if t.pinching {
+                ended.push(GestureEvent::PinchEnd { hand: t.id });
+            }
+            if t.palm_open {
+                ended.push(GestureEvent::OpenPalmEnd { hand: t.id });
+            }
+        }
         self.tracks.clear();
         ended
     }

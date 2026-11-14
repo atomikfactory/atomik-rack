@@ -15,7 +15,7 @@
 //! The span from the left end to the right end becomes the twist for the full range (within the
 //! full-turn limits), and a right twist that reads as a left one sets `reverse`. Letting go in the
 //! middle starts again from step 1; [`TIMEOUT_SECS`] without finishing changes nothing. While it
-//! runs a pinch turns no knob. The angle is the tracker's twist since the pinch began, before
+//! runs a pinch turns no knob and the camera sends no MIDI. The angle is the tracker's twist since the pinch began, before
 //! the `reverse` setting, so a calibration never depends on the one before it.
 
 use super::*;
@@ -162,6 +162,8 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         self.end_pinch();
+        // Notes the camera's MIDI holds end, so nothing sticks while the hands are measured.
+        self.camera_midi_release();
         let preview_was = self.vision.preview_on;
         self.vision.calibration = Some(Calibration {
             step: CalibrationStep::Still,
