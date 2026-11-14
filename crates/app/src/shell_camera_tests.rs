@@ -255,19 +255,99 @@ fn the_camera_tab_edits_the_settings_and_apply_saves_them_in_workflow_json() {
     let draft = s.dialog.as_ref().unwrap().preferences().unwrap().1.camera;
     assert_eq!(
         (draft.hand, draft.full_turn, draft.fine, draft.sensitivity),
-        (crate::keymap_store::HandChoice::Left, 240, false, 90)
+        (crate::keymap_store::HandChoice::Left, 130, false, 90)
     );
     // Apply reaches the core and the file.
     let (apply, _) = s.dialog.as_ref().unwrap().buttons(size);
     click(&mut s, apply.center());
-    assert_eq!(s.core().camera_prefs().full_turn, 240);
+    assert_eq!(s.core().camera_prefs().full_turn, 130);
     assert_eq!(
         s.workflow().camera.hand,
         crate::keymap_store::HandChoice::Left
     );
     let text = std::fs::read_to_string(dir.join("workflow.json")).unwrap();
-    assert!(text.contains("\"full_turn\": 240"), "{text}");
+    assert!(text.contains("\"full_turn\": 130"), "{text}");
     assert!(text.contains("\"camera\": \"fake-0\""), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn calibrate_in_the_camera_tab_applies_closes_and_a_finished_calibration_is_saved() {
+    use atomik_vision::gesture::{HandId, HandState};
+    use atomik_vision::tracker::{FrameReport, TrackerEvent};
+    let dir = std::env::temp_dir().join(format!("atomik-shell-calibrate-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let session = LiveSession::new(NullBackend, AudioSettings::default(), false);
+    let mut s = Shell::new(
+        AppCore::new(session),
+        ShellOptions {
+            os: Some(atomik_ui::keymap::Os::Windows),
+            profile: None,
+            in_window_menu: true,
+            settings_path: Some(dir.join("settings.json")),
+            ui_state_path: None,
+            library_path: None,
+            library_root: Some(dir.join("Library")),
+        },
+    );
+    s.handle(&UiEvent::ScaleChanged(1.0));
+    s.handle(&UiEvent::Resize(Size::new(1000.0, 800.0)));
+    let fake = FakeVision::new(ModelState::Ready);
+    s.core_mut().set_vision(Arc::new(fake.clone()));
+    s.open_settings(Some(crate::settings_dialog::Tab::Camera));
+    let size = Size::new(1000.0, 800.0);
+    let at = s
+        .dialog
+        .as_ref()
+        .unwrap()
+        .camera_layout(size)
+        .unwrap()
+        .calibrate
+        .button
+        .center();
+    click(&mut s, at);
+    assert!(s.dialog.is_none(), "the dialog was applied and closed");
+    assert!(s.core().camera_is_on());
+    assert!(s.core().camera_calibration_step().is_some());
+    // Pinch, hold still, twist 40 degrees right and hold, 40 left of the start and hold.
+    let report = |t: f64, angle: f32| {
+        TrackerEvent::Frame(FrameReport {
+            t,
+            hands: vec![HandState {
+                id: HandId(0),
+                present: true,
+                handedness: atomik_vision::Handedness::Right,
+                pinch: true,
+                pinch_strength: 1.0,
+                twist_angle: angle.to_radians(),
+                palm_center: (0.5, 0.5),
+                palm_height: 0.2,
+                hand_size: 0.1,
+                depth_proxy: 0.1,
+            }],
+            fps: 30.0,
+            infer_ms: 20.0,
+        })
+    };
+    let mut t = 0.0;
+    while t < 7.0 {
+        let angle = if t < 2.0 {
+            0.0
+        } else if t < 3.5 {
+            40.0
+        } else {
+            -40.0
+        };
+        fake.push([report(t, angle)]);
+        s.frame();
+        t += 1.0 / 30.0;
+    }
+    assert_eq!(s.core().camera_calibration_step(), None);
+    assert_eq!(s.workflow().camera.full_turn, 80);
+    let text = std::fs::read_to_string(dir.join("workflow.json")).unwrap();
+    assert!(text.contains("\"full_turn\": 80"), "{text}");
+    assert!(text.contains("\"dead_zone\": 5"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

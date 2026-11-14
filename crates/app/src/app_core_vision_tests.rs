@@ -38,6 +38,10 @@ fn core() -> (AppCore<RecordingSink>, FakeVision) {
     c.sink_mut().take();
     let fake = FakeVision::new(ModelState::Ready);
     c.set_vision(Arc::new(fake.clone()));
+    // The twist tests below count in a 270 degree turn (the default is 150).
+    let mut prefs = c.camera_prefs().clone();
+    prefs.full_turn = 270;
+    c.set_camera_prefs(prefs);
     c.camera_on();
     assert!(c.camera_is_on());
     (c, fake)
@@ -258,7 +262,7 @@ fn one_pinch_is_one_undo_step() {
 fn fine_control_scales_the_move_by_the_distance_of_the_hand() {
     let (mut c, fake) = core();
     touch(&mut c, "a", CUTOFF);
-    // A near hand (big): a quarter of the move.
+    // A near hand (big): half the move.
     set_norm(&mut c, "a", CUTOFF, 0.25);
     feed(
         &mut c,
@@ -266,7 +270,7 @@ fn fine_control_scales_the_move_by_the_distance_of_the_hand() {
         vec![frame(0.4), pinch_start(), twist(135.0), pinch_end()],
     );
     assert!(
-        near(norm(&c, "a", CUTOFF), 0.25 + 0.125),
+        near(norm(&c, "a", CUTOFF), 0.25 + 0.25),
         "{}",
         norm(&c, "a", CUTOFF)
     );
@@ -301,7 +305,7 @@ fn a_hand_whose_size_is_not_known_yet_gets_its_scale_from_the_next_frame() {
     assert!(near(norm(&c, "a", CUTOFF), 0.25), "waiting");
     feed(&mut c, &fake, vec![frame(0.4)]);
     assert!(
-        near(norm(&c, "a", CUTOFF), 0.375),
+        near(norm(&c, "a", CUTOFF), 0.5),
         "{}",
         norm(&c, "a", CUTOFF)
     );
@@ -705,13 +709,13 @@ fn deleting_the_models_turns_the_camera_off() {
 }
 
 #[test]
-fn the_fine_scale_runs_from_a_quarter_to_the_whole_range() {
+fn the_fine_scale_runs_from_half_to_the_whole_range() {
     assert_eq!(fine_scale(true, 0.0), 1.0);
     assert_eq!(fine_scale(true, 0.12), 1.0);
-    assert_eq!(fine_scale(true, 0.30), 0.25);
-    assert_eq!(fine_scale(true, 0.9), 0.25);
+    assert_eq!(fine_scale(true, 0.30), 0.5);
+    assert_eq!(fine_scale(true, 0.9), 0.5);
     let mid = fine_scale(true, 0.21);
-    assert!(mid > 0.25 && mid < 1.0);
+    assert!(mid > 0.5 && mid < 1.0);
     assert_eq!(fine_scale(false, 0.9), 1.0);
     assert_eq!(fine_scale(true, f32::NAN), 1.0);
 }
@@ -722,4 +726,248 @@ fn a_core_without_a_camera_cannot_turn_one_on() {
     c.camera_toggle();
     assert!(!c.camera_is_on());
     assert!(c.camera_list().is_empty());
+}
+
+// ---- Calibration and the twist settings -------------------------------------------------------
+
+/// A frame at `t` seconds with the hand pinched (`angle` degrees of twist since the pinch) or
+/// open.
+fn cal_frame(t: f64, pinch: bool, angle: f32) -> TrackerEvent {
+    let mut h = hand_state(0.1, pinch);
+    h.twist_angle = angle.to_radians();
+    TrackerEvent::Frame(FrameReport {
+        t,
+        hands: vec![h],
+        fps: 30.0,
+        infer_ms: 20.0,
+    })
+}
+
+/// Frames every 1/30 s from `from` to `to` seconds, the angle given by `angle(t)`.
+fn cal_run(
+    c: &mut AppCore<RecordingSink>,
+    fake: &FakeVision,
+    from: f64,
+    to: f64,
+    angle: impl Fn(f64) -> f32,
+) {
+    let mut t = from;
+    while t < to {
+        feed(c, fake, vec![cal_frame(t, true, angle(t))]);
+        t += 1.0 / 30.0;
+    }
+}
+
+/// Hold still (jitter of 0.4 degrees either way), twist to `right` and hold, twist to `left` and
+/// hold.
+fn calibrate_with(c: &mut AppCore<RecordingSink>, fake: &FakeVision, right: f32, left: f32) {
+    let jitter = |t: f64| {
+        if (t * 30.0).round() as i64 % 2 == 0 {
+            0.4
+        } else {
+            -0.4
+        }
+    };
+    cal_run(c, fake, 0.0, 2.0, jitter);
+    assert_eq!(c.camera_calibration_step(), Some(CalibrationStep::Right));
+    // Half a second to get there, then held.
+    cal_run(c, fake, 2.0, 2.5, |t| right * ((t - 2.0) / 0.5) as f32);
+    cal_run(c, fake, 2.5, 3.6, |_| right);
+    assert_eq!(c.camera_calibration_step(), Some(CalibrationStep::Left));
+    cal_run(c, fake, 3.6, 4.4, |t| {
+        right + (left - right) * ((t - 3.6) / 0.8).min(1.0) as f32
+    });
+    cal_run(c, fake, 4.4, 5.6, |_| left);
+}
+
+#[test]
+fn a_calibration_measures_the_twist_range_and_the_jitter() {
+    let (mut c, fake) = core();
+    set_norm(&mut c, "a", CUTOFF, 0.5);
+    touch(&mut c, "a", CUTOFF);
+    c.camera_calibrate();
+    assert_eq!(c.camera_calibration_step(), Some(CalibrationStep::Still));
+    assert_eq!(
+        c.camera_preview_state().message.as_deref(),
+        Some(calibrate::STILL_MESSAGE)
+    );
+    // A pinch and a twist during the calibration turn no knob.
+    feed(&mut c, &fake, vec![pinch_start(), twist(90.0)]);
+    calibrate_with(&mut c, &fake, 35.0, -30.0);
+    assert!(near(norm(&c, "a", CUTOFF), 0.5), "nothing turned");
+    assert_eq!(c.camera_calibration_step(), None, "done");
+    let p = c.camera_prefs().clone();
+    assert_eq!(p.full_turn, 65, "from the left end to the right end");
+    // Peak to peak 0.8 degrees: 0.75 x 0.8 + 0.3 = 0.9.
+    assert_eq!(p.dead_zone, 9);
+    assert!(!p.reverse);
+    assert_eq!(c.take_camera_calibrated(), Some(p.clone()), "for the shell");
+    assert_eq!(c.take_camera_calibrated(), None, "once");
+    assert!(
+        c.camera_preview_state()
+            .message
+            .is_some_and(|m| m.starts_with("Calibration done: 65"))
+    );
+    // The tracker started again with the new dead zone.
+    assert_eq!(fake.stats.dead_zone.load(Ordering::SeqCst), 900);
+    assert!(c.camera_is_on());
+    // And the new range turns the knob: 32.5 degrees is half the range.
+    feed(
+        &mut c,
+        &fake,
+        vec![frame(0.1), pinch_start(), twist(32.5), pinch_end()],
+    );
+    assert!(
+        near(norm(&c, "a", CUTOFF), 1.0),
+        "{}",
+        norm(&c, "a", CUTOFF)
+    );
+}
+
+#[test]
+fn a_right_twist_that_reads_as_left_sets_reverse_and_reverse_turns_the_other_way() {
+    let (mut c, fake) = core();
+    c.camera_calibrate();
+    calibrate_with(&mut c, &fake, -40.0, 20.0);
+    let p = c.camera_prefs().clone();
+    assert!(p.reverse);
+    assert_eq!(p.full_turn, 60);
+    // Reversed: the tracker's negative twist turns the knob up.
+    set_norm(&mut c, "a", CUTOFF, 0.25);
+    touch(&mut c, "a", CUTOFF);
+    feed(
+        &mut c,
+        &fake,
+        vec![frame(0.1), pinch_start(), twist(-30.0), pinch_end()],
+    );
+    assert!(
+        near(norm(&c, "a", CUTOFF), 0.75),
+        "{}",
+        norm(&c, "a", CUTOFF)
+    );
+}
+
+#[test]
+fn letting_go_in_the_middle_starts_the_calibration_again() {
+    let (mut c, fake) = core();
+    c.camera_calibrate();
+    cal_run(&mut c, &fake, 0.0, 2.0, |_| 0.0);
+    assert_eq!(c.camera_calibration_step(), Some(CalibrationStep::Right));
+    feed(&mut c, &fake, vec![cal_frame(2.1, false, 0.0)]);
+    assert_eq!(c.camera_calibration_step(), Some(CalibrationStep::Still));
+    assert_eq!(
+        c.camera_preview_state().message.as_deref(),
+        Some(calibrate::AGAIN_MESSAGE)
+    );
+    // A new pinch goes through again.
+    cal_run(&mut c, &fake, 3.0, 5.0, |_| 0.0);
+    assert_eq!(c.camera_calibration_step(), Some(CalibrationStep::Right));
+}
+
+#[test]
+fn a_twist_end_must_be_held_and_far_enough() {
+    let (mut c, fake) = core();
+    c.camera_calibrate();
+    cal_run(&mut c, &fake, 0.0, 2.0, |_| 0.0);
+    // Too small a twist, however long it is held.
+    cal_run(&mut c, &fake, 2.0, 4.0, |_| 5.0);
+    assert_eq!(c.camera_calibration_step(), Some(CalibrationStep::Right));
+    // Still moving: not held.
+    cal_run(&mut c, &fake, 4.0, 6.0, |t| 10.0 + 20.0 * (t - 4.0) as f32);
+    assert_eq!(c.camera_calibration_step(), Some(CalibrationStep::Right));
+    cal_run(&mut c, &fake, 6.0, 7.0, |_| 50.0);
+    assert_eq!(c.camera_calibration_step(), Some(CalibrationStep::Left));
+}
+
+#[test]
+fn a_calibration_times_out_or_is_cancelled_without_changing_anything() {
+    let (mut c, fake) = core();
+    let before = c.camera_prefs().clone();
+    c.camera_calibrate();
+    feed(&mut c, &fake, vec![cal_frame(0.0, false, 0.0)]);
+    feed(&mut c, &fake, vec![cal_frame(31.0, false, 0.0)]);
+    assert_eq!(c.camera_calibration_step(), None);
+    assert_eq!(
+        c.camera_preview_state().message.as_deref(),
+        Some(calibrate::TIMEOUT_MESSAGE)
+    );
+    assert_eq!(c.camera_prefs(), &before);
+    assert_eq!(c.take_camera_calibrated(), None);
+    // The command again cancels.
+    c.camera_calibrate();
+    c.camera_calibrate();
+    assert_eq!(c.camera_calibration_step(), None);
+    assert_eq!(
+        c.camera_preview_state().message.as_deref(),
+        Some(calibrate::CANCEL_MESSAGE)
+    );
+    // So does turning the camera off.
+    c.camera_calibrate();
+    c.camera_off(None);
+    assert_eq!(c.camera_calibration_step(), None);
+    assert_eq!(c.camera_prefs(), &before);
+}
+
+#[test]
+fn a_calibration_turns_the_camera_and_the_preview_on_and_gives_the_preview_back() {
+    let (mut c, _fake) = core();
+    c.camera_off(None);
+    c.camera_preview_toggle();
+    assert!(!c.camera_preview_on());
+    c.camera_calibrate();
+    assert!(c.camera_is_on());
+    assert!(c.camera_preview_on(), "the steps show in the preview box");
+    c.camera_calibrate();
+    assert!(!c.camera_preview_on(), "given back");
+}
+
+#[test]
+fn the_dead_zone_reaches_the_tracker_and_a_change_restarts_it() {
+    let (mut c, fake) = core();
+    assert_eq!(fake.stats.dead_zone.load(Ordering::SeqCst), 1500);
+    let started = fake.started();
+    let mut prefs = c.camera_prefs().clone();
+    prefs.dead_zone = 8;
+    c.set_camera_prefs(prefs);
+    assert_eq!(fake.started(), started + 1);
+    assert_eq!(fake.stats.dead_zone.load(Ordering::SeqCst), 800);
+}
+
+#[test]
+fn a_30_degree_full_turn_is_allowed() {
+    let (mut c, fake) = core();
+    let mut prefs = c.camera_prefs().clone();
+    prefs.full_turn = 30;
+    c.set_camera_prefs(prefs);
+    set_norm(&mut c, "a", CUTOFF, 0.25);
+    touch(&mut c, "a", CUTOFF);
+    feed(
+        &mut c,
+        &fake,
+        vec![frame(0.1), pinch_start(), twist(7.5), pinch_end()],
+    );
+    assert!(
+        near(norm(&c, "a", CUTOFF), 0.5),
+        "{}",
+        norm(&c, "a", CUTOFF)
+    );
+}
+
+#[test]
+fn calibration_results_are_kept_inside_the_limits() {
+    let r = CalibrationResult {
+        jitter: 40.0,
+        right: 5.0,
+        left: -5.0,
+    };
+    assert_eq!(r.full_turn(), crate::keymap_store::MIN_FULL_TURN);
+    assert_eq!(r.dead_zone(), crate::keymap_store::MAX_DEAD_ZONE);
+    let r = CalibrationResult {
+        jitter: 0.0,
+        right: 300.0,
+        left: -300.0,
+    };
+    assert_eq!(r.full_turn(), crate::keymap_store::MAX_FULL_TURN);
+    assert_eq!(r.dead_zone(), crate::keymap_store::MIN_DEAD_ZONE);
+    assert_eq!(calibrate::format_tenths(15), "1.5");
 }

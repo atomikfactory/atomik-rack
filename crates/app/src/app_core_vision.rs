@@ -16,10 +16,12 @@
 //! closes it. That is the path a mapped controller takes ([`GestureKey`], `set_resolved`), so one
 //! pinch is one undo step, Touch-mode automation writes while the fingers are together, and a
 //! plugin's parameter moves like any other. A twist changes the target by `delta / full_turn` of
-//! its normalised range; with fine control a hand near the camera (a big hand) moves it a quarter
+//! its normalised range; with fine control a hand near the camera (a big hand) moves it half
 //! as far, a far one all the way ([`fine_scale`]). A stepped param moves one step for each step
 //! width of accumulated twist, so a hand shaking at a boundary does not make it flicker. The
-//! audio thread is untouched: this is all UI-thread work on a command.
+//! audio thread is untouched: this is all UI-thread work on a command. `reverse` turns the
+//! twist the other way, and the tracker holds back twists under the `dead_zone`; a twist
+//! calibration (`camera.calibrate`, see [`calibrate`]) measures all three for the user's hand.
 //!
 //! # The camera
 //!
@@ -48,10 +50,10 @@ pub const NO_TARGET_MESSAGE: &str = "Click a knob first";
 
 /// The hand size (in frame heights) at or below which a hand counts as far: full range.
 const FAR_SIZE: f32 = 0.12;
-/// The hand size at or above which a hand counts as near: a quarter of the range.
+/// The hand size at or above which a hand counts as near: half the range.
 const NEAR_SIZE: f32 = 0.30;
 /// The smallest scale fine control gives a move.
-const FINE_SCALE: f32 = 0.25;
+const FINE_SCALE: f32 = 0.5;
 
 /// How much of the range one turn moves, given the hand size at the pinch: 1 for a far hand,
 /// [`FINE_SCALE`] for a near one, in between linearly. Always 1 with fine control off.
@@ -62,6 +64,11 @@ pub fn fine_scale(fine: bool, depth: f32) -> f32 {
     let t = ((depth - FAR_SIZE) / (NEAR_SIZE - FAR_SIZE)).clamp(0.0, 1.0);
     1.0 - t * (1.0 - FINE_SCALE)
 }
+
+#[path = "app_core_vision_calibrate.rs"]
+pub mod calibrate;
+#[cfg(test)]
+use calibrate::{CalibrationResult, CalibrationStep};
 
 /// One pinch in progress.
 #[derive(Debug, Clone)]
@@ -120,6 +127,10 @@ pub(super) struct VisionCore {
     preview: Option<Preview>,
     /// The preview box is shown (it needs the camera on to have a picture).
     preview_on: bool,
+    /// The twist calibration running, if one is.
+    calibration: Option<calibrate::Calibration>,
+    /// The settings the last calibration made, until the shell saves them.
+    calibrated: Option<CameraPrefs>,
 }
 
 impl std::fmt::Debug for VisionCore {
@@ -150,6 +161,8 @@ impl Default for VisionCore {
             fps: 0.0,
             infer_ms: 0.0,
             preview: None,
+            calibration: None,
+            calibrated: None,
         }
     }
 }
@@ -175,14 +188,15 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         let camera_changed = prefs.camera != self.vision.prefs.camera;
-        let sensitivity_changed = prefs.sensitivity != self.vision.prefs.sensitivity;
+        let tracker_changed = prefs.sensitivity != self.vision.prefs.sensitivity
+            || prefs.dead_zone != self.vision.prefs.dead_zone;
         let preview_changed = prefs.preview != self.vision.prefs.preview;
         self.vision.prefs = prefs;
         if preview_changed {
             self.vision.preview_on = self.vision.prefs.preview;
             self.sync_camera_preview();
         }
-        if sensitivity_changed && self.vision.session.is_some() {
+        if tracker_changed && self.vision.session.is_some() {
             // The thresholds are the tracker's: start it again with the new ones.
             self.camera_off(None);
             self.camera_on();
@@ -322,6 +336,7 @@ impl<S: EngineSink> AppCore<S> {
         let config = VisionConfig {
             camera: self.vision.prefs.camera.clone(),
             sensitivity: f32::from(self.vision.prefs.sensitivity) / 100.0,
+            dead_zone_deg: f32::from(self.vision.prefs.dead_zone) / 10.0,
         };
         match self.vision.backend.start(&config) {
             Ok(mut session) => {
@@ -343,6 +358,9 @@ impl<S: EngineSink> AppCore<S> {
     /// Turns the camera off: the tracker stops (the camera is released at once), an open pinch
     /// ends and the last picture is forgotten. `why` is said to the user when there is one.
     pub fn camera_off(&mut self, why: Option<&str>) {
+        if self.vision.calibration.is_some() {
+            self.camera_calibration_end(Some(calibrate::CANCEL_MESSAGE));
+        }
         if let Some(mut session) = self.vision.session.take() {
             session.stop();
         }
@@ -373,6 +391,7 @@ impl<S: EngineSink> AppCore<S> {
             (Choice::Cancel | Choice::Close, Some(_)) => {
                 self.vision.job = None;
                 self.vision.dialog = None;
+                self.camera_calibration_end(None);
             }
             _ => {}
         }
@@ -572,6 +591,9 @@ impl<S: EngineSink> AppCore<S> {
         self.vision.fps = report.fps;
         self.vision.infer_ms = report.infer_ms;
         self.vision.hands = report.hands.iter().map(|h| (h.id, *h)).collect();
+        if self.vision.calibration.is_some() {
+            self.camera_calibration_frame(report);
+        }
         let any = report.hands.iter().any(|h| h.present);
         self.vision.lamp = if self.vision.pinch.is_some() {
             CameraLamp::Pinch
@@ -606,6 +628,10 @@ impl<S: EngineSink> AppCore<S> {
     // ------------------------------------------------------------------ the gesture
 
     fn camera_gesture(&mut self, event: GestureEvent) {
+        if self.vision.calibration.is_some() {
+            // A calibration reads the hands of each frame; no knob turns meanwhile.
+            return;
+        }
         match event {
             GestureEvent::PinchStart { hand, handedness } => {
                 if !self.vision.prefs.hand.allows(handedness.letter())
@@ -677,14 +703,20 @@ impl<S: EngineSink> AppCore<S> {
 
     /// A twist of `radians` (positive: clockwise) turns the target.
     fn twist(&mut self, radians: f32) {
-        let full_turn = f32::from(self.vision.prefs.full_turn).clamp(90.0, 360.0);
+        let full_turn = f32::from(self.vision.prefs.full_turn).clamp(
+            f32::from(crate::keymap_store::MIN_FULL_TURN),
+            f32::from(crate::keymap_store::MAX_FULL_TURN),
+        );
+        let reverse = self.vision.prefs.reverse;
         let Some(pinch) = &mut self.vision.pinch else {
             return;
         };
         let Some(scale) = pinch.scale else {
+            // Kept as the tracker gave it: `reverse` applies when it is replayed.
             pinch.pending += radians;
             return;
         };
+        let radians = if reverse { -radians } else { radians };
         if pinch.merge.is_none() {
             return;
         }

@@ -340,6 +340,9 @@ pub enum DialogOutcome {
     ListCameras,
     /// The Camera tab asks for the downloaded hand models to be deleted (the dialog stays open).
     DeleteCameraModels,
+    /// The Camera tab asks for a twist calibration: the settings are applied as with
+    /// [`DialogOutcome::Apply`], the dialog closes and the calibration starts.
+    CalibrateCamera(AudioSettings),
     /// The Controllers tab asks for the set-up wizard (the dialog stays open).
     SetUpController,
     /// The Controllers tab asks for a file to export the controller profile to.
@@ -1850,6 +1853,9 @@ impl SettingsDialog {
             TabOutcome::PickBackupFolder => DialogOutcome::PickBackupFolder,
             TabOutcome::ListCameras => DialogOutcome::ListCameras,
             TabOutcome::DeleteCameraModels => DialogOutcome::DeleteCameraModels,
+            TabOutcome::CalibrateCamera => {
+                DialogOutcome::CalibrateCamera(self.draft.clone().sanitized())
+            }
             TabOutcome::Theme(action) => {
                 if let ThemeAction::Use(id) = &action {
                     self.use_theme(id);

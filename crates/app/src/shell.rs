@@ -6708,6 +6708,15 @@ impl<B: AudioBackend> Shell<B> {
                     self.apply_preferences(prefs);
                     self.apply_settings(settings);
                 }
+                DialogOutcome::CalibrateCamera(settings) => {
+                    let prefs = dialog.preferences();
+                    let profiles = dialog.profile_changes();
+                    self.dialog = None;
+                    self.save_profile_options(profiles);
+                    self.apply_preferences(prefs);
+                    self.apply_settings(settings);
+                    self.core.camera_calibrate();
+                }
                 DialogOutcome::ExportKeymap => return vec![ShellRequest::PickExportKeymap],
                 DialogOutcome::ImportKeymap => return vec![ShellRequest::PickImportKeymap],
                 DialogOutcome::PickLibraryFolder => return vec![ShellRequest::PickLibraryFolder],
@@ -9286,6 +9295,10 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::ToggleCameraPreview => {
                 self.core.camera_preview_toggle();
+                Vec::new()
+            }
+            AppCommand::CalibrateCamera => {
+                self.core.camera_calibrate();
                 Vec::new()
             }
             AppCommand::ToggleBigMeter => {

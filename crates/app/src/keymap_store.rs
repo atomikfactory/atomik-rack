@@ -194,14 +194,19 @@ impl HandChoice {
     }
 }
 
-/// The least a full turn of the twist may be, in degrees.
-pub const MIN_FULL_TURN: u16 = 90;
+/// The least a full turn of the twist may be, in degrees (a calibration of a short wrist twist
+/// goes this low).
+pub const MIN_FULL_TURN: u16 = 30;
 /// The most a full turn of the twist may be, in degrees.
 pub const MAX_FULL_TURN: u16 = 360;
 /// The least the pinch sensitivity may be, in percent.
 pub const MIN_SENSITIVITY: u16 = 50;
 /// The most the pinch sensitivity may be, in percent.
 pub const MAX_SENSITIVITY: u16 = 150;
+/// The least twist dead zone, in tenths of a degree.
+pub const MIN_DEAD_ZONE: u16 = 5;
+/// The most twist dead zone, in tenths of a degree.
+pub const MAX_DEAD_ZONE: u16 = 60;
 
 /// The webcam controller's settings (saved in `workflow.json` under `camera`, never in a
 /// project).
@@ -212,8 +217,13 @@ pub struct CameraPrefs {
     /// Which hand turns the knob.
     pub hand: HandChoice,
     /// The twist of a whole range, in degrees ([`MIN_FULL_TURN`] to [`MAX_FULL_TURN`], default
-    /// 270).
+    /// 150: about what a wrist turns from one side to the other). Calibration measures it.
     pub full_turn: u16,
+    /// A twist smaller than this is held back, in tenths of a degree ([`MIN_DEAD_ZONE`] to
+    /// [`MAX_DEAD_ZONE`], default 15). Calibration sets it from how much a still hand shakes.
+    pub dead_zone: u16,
+    /// The twist turns the other way (calibration sets it when twisting right reads as left).
+    pub reverse: bool,
     /// A hand near the camera turns the knob finer (default on).
     pub fine: bool,
     /// How easily a pinch is seen, in percent of the default thresholds ([`MIN_SENSITIVITY`] to
@@ -228,7 +238,9 @@ impl Default for CameraPrefs {
         Self {
             camera: None,
             hand: HandChoice::Either,
-            full_turn: 270,
+            full_turn: 150,
+            dead_zone: 15,
+            reverse: false,
             fine: true,
             sensitivity: 100,
             preview: true,
@@ -265,6 +277,16 @@ impl CameraPrefs {
                 MAX_FULL_TURN,
                 defaults.full_turn,
             ),
+            dead_zone: number(
+                "dead_zone",
+                MIN_DEAD_ZONE,
+                MAX_DEAD_ZONE,
+                defaults.dead_zone,
+            ),
+            reverse: obj
+                .get("reverse")
+                .and_then(Value::as_bool)
+                .unwrap_or(defaults.reverse),
             fine: obj
                 .get("fine")
                 .and_then(Value::as_bool)
@@ -290,6 +312,8 @@ impl CameraPrefs {
         }
         map.insert("hand".into(), Value::String(self.hand.id().into()));
         map.insert("full_turn".into(), Value::from(self.full_turn));
+        map.insert("dead_zone".into(), Value::from(self.dead_zone));
+        map.insert("reverse".into(), Value::Bool(self.reverse));
         map.insert("fine".into(), Value::Bool(self.fine));
         map.insert("sensitivity".into(), Value::from(self.sensitivity));
         map.insert("preview".into(), Value::Bool(self.preview));
@@ -1537,18 +1561,20 @@ mod camera_tests {
     use super::*;
 
     #[test]
-    fn the_camera_settings_default_to_a_270_degree_turn_with_fine_control_and_the_preview_on() {
+    fn the_camera_settings_default_to_a_150_degree_turn_with_fine_control_and_the_preview_on() {
         let d = WorkflowPrefs::default().camera;
         assert_eq!(
             (
                 d.camera.clone(),
                 d.hand,
                 d.full_turn,
+                d.dead_zone,
+                d.reverse,
                 d.fine,
                 d.sensitivity,
                 d.preview
             ),
-            (None, HandChoice::Either, 270, true, 100, true)
+            (None, HandChoice::Either, 150, 15, false, true, 100, true)
         );
     }
 
@@ -1559,6 +1585,8 @@ mod camera_tests {
                 camera: Some("Front Camera".into()),
                 hand: HandChoice::Right,
                 full_turn: 180,
+                dead_zone: 8,
+                reverse: true,
                 fine: false,
                 sensitivity: 120,
                 preview: false,
@@ -1580,11 +1608,13 @@ mod camera_tests {
     #[test]
     fn bad_values_are_clamped_or_defaulted() {
         let p = WorkflowPrefs::from_json(
-            r#"{"camera": {"full_turn": 5, "sensitivity": 900, "hand": "both", "fine": 3, "camera": ""}}"#,
+            r#"{"camera": {"full_turn": 5, "dead_zone": 900, "reverse": 1, "sensitivity": 900, "hand": "both", "fine": 3, "camera": ""}}"#,
         )
         .unwrap()
         .camera;
         assert_eq!(p.full_turn, MIN_FULL_TURN);
+        assert_eq!(p.dead_zone, MAX_DEAD_ZONE);
+        assert!(!p.reverse, "not a flag: the default");
         assert_eq!(p.sensitivity, MAX_SENSITIVITY);
         assert_eq!(p.hand, HandChoice::Either);
         assert!(p.fine, "not a flag: the default");

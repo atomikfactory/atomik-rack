@@ -46,6 +46,8 @@ pub struct VisionConfig {
     pub camera: Option<String>,
     /// Scales the pinch thresholds: above 1 the fingers may be further apart.
     pub sensitivity: f32,
+    /// A twist smaller than this, in degrees, is held back.
+    pub dead_zone_deg: f32,
 }
 
 /// What a download tells while it runs.
@@ -235,6 +237,7 @@ impl VisionBackend for SystemVision {
             gesture: GestureConfig {
                 pinch_on: base.pinch_on * scale,
                 pinch_off: base.pinch_off * scale,
+                dead_zone: config.dead_zone_deg.clamp(0.1, 10.0).to_radians(),
                 ..base
             },
             ..TrackerConfig::default()
@@ -337,6 +340,8 @@ pub struct FakeStats {
     pub camera: Mutex<Option<String>>,
     /// The last sensitivity asked for, as thousandths.
     pub sensitivity: AtomicUsize,
+    /// The last dead zone asked for, in thousandths of a degree.
+    pub dead_zone: AtomicUsize,
 }
 
 /// A backend for tests: scripted events, scripted cameras and models that a download makes
@@ -500,6 +505,10 @@ impl VisionBackend for FakeVision {
         *self.stats.camera.lock().unwrap_or_else(|e| e.into_inner()) = config.camera.clone();
         self.stats.sensitivity.store(
             (config.sensitivity * 1000.0).round() as usize,
+            Ordering::SeqCst,
+        );
+        self.stats.dead_zone.store(
+            (config.dead_zone_deg * 1000.0).round() as usize,
             Ordering::SeqCst,
         );
         Ok(Box::new(FakeSession {
