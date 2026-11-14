@@ -122,7 +122,11 @@ impl<S: EngineSink> AppCore<S> {
     /// A gesture change: the pinch and open palm notes, and (when `twist`) the twist encoder.
     pub(super) fn camera_midi_gesture(&mut self, event: &GestureEvent, twist: bool) {
         let t = self.vision.clock;
-        let full_turn = f32::from(self.vision.prefs.full_turn).clamp(90.0, 360.0);
+        let full_turn = f32::from(self.vision.prefs.full_turn).clamp(
+            f32::from(crate::keymap_store::MIN_FULL_TURN),
+            f32::from(crate::keymap_store::MAX_FULL_TURN),
+        );
+        let reverse = self.vision.prefs.reverse;
         let mut out = Vec::new();
         match *event {
             GestureEvent::PinchStart { hand, handedness } => {
@@ -134,9 +138,12 @@ impl<S: EngineSink> AppCore<S> {
                 delta_radians,
             } => {
                 if twist {
-                    self.vision
-                        .midi
-                        .twist(t, hand, delta_radians, full_turn, &mut out);
+                    let delta = if reverse {
+                        -delta_radians
+                    } else {
+                        delta_radians
+                    };
+                    self.vision.midi.twist(t, hand, delta, full_turn, &mut out);
                 }
             }
             GestureEvent::OpenPalmStart { hand, handedness } => {

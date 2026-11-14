@@ -4179,6 +4179,7 @@ mod midimap;
 
 #[path = "app_core_vision.rs"]
 mod vision;
+pub use vision::calibrate::{CalibrationResult, CalibrationStep, format_tenths};
 
 #[path = "app_core_jacks.rs"]
 mod jack_ops;
