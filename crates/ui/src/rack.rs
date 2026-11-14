@@ -2871,6 +2871,21 @@ impl RackView {
         self.repaint = true;
     }
 
+    /// [`Self::open_browser_create`] whose chosen row goes to `slot` (top level only), as a
+    /// browser opened by a "+" handle does: the Create item of the rack's right-click menu
+    /// creates in the column that was clicked.
+    pub fn open_browser_create_at(
+        &mut self,
+        kind: CreateKind,
+        registry: &Registry,
+        slot: Option<RackSlot>,
+    ) {
+        self.open_browser_create(kind, registry);
+        if let Some(slot) = slot.filter(|_| self.scope.is_empty()) {
+            self.set_insert(Some(slot));
+        }
+    }
+
     /// The kind the browser was opened to create (`None`: the normal browser).
     pub fn browser_create(&self) -> Option<CreateKind> {
         self.browser.create
