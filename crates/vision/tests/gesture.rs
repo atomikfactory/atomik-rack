@@ -2,7 +2,9 @@
 
 mod support;
 
-use atomik_vision::gesture::{GestureConfig, GestureEvent, HandId, HandState, Recogniser};
+use atomik_vision::gesture::{
+    GestureConfig, GestureEvent, HandId, HandState, Pose, Recogniser, SwipeDirection,
+};
 use atomik_vision::{Handedness, Observation};
 use support::{Spec, load};
 
@@ -291,7 +293,8 @@ fn a_fist_is_not_an_open_palm() {
         }]
     });
     let (events, _) = run(&frames);
-    assert!(events.is_empty(), "{events:?}");
+    assert_eq!(count(&events, is_palm_start), 0, "{events:?}");
+    assert_eq!(count(&events, is_start), 0, "{events:?}");
 }
 
 #[test]
@@ -327,4 +330,338 @@ fn a_reset_ends_the_open_palm() {
     }
     let ended = r.reset();
     assert!(ended.iter().any(is_palm_end), "{ended:?}");
+}
+
+// ---- The poses --------------------------------------------------------------------------------
+
+fn is_pose_start(pose: Pose) -> impl Fn(&GestureEvent) -> bool {
+    move |e| matches!(e, GestureEvent::PoseStart { pose: p, .. } if *p == pose)
+}
+fn is_pose_end(pose: Pose) -> impl Fn(&GestureEvent) -> bool {
+    move |e| matches!(e, GestureEvent::PoseEnd { pose: p, .. } if *p == pose)
+}
+fn any_pose(e: &GestureEvent) -> bool {
+    matches!(
+        e,
+        GestureEvent::PoseStart { .. } | GestureEvent::PoseEnd { .. }
+    )
+}
+fn swipes(events: &[GestureEvent]) -> Vec<SwipeDirection> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            GestureEvent::Swipe { direction, .. } => Some(*direction),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Each pose of the vocabulary starts once after the 300 ms hold, shows in the state while it
+/// lasts, and ends when the hand opens, whatever the other poses do.
+#[test]
+fn each_pose_starts_after_300_ms_and_ends_when_the_hand_opens() {
+    for (name, pose) in [
+        ("fist.json", Pose::Fist),
+        ("thumbs_up.json", Pose::ThumbsUp),
+        ("point.json", Pose::Point),
+        ("peace.json", Pose::Peace),
+    ] {
+        let frames = load(name);
+        let (events, states) = run(&frames);
+        assert_eq!(count(&events, is_pose_start(pose)), 1, "{name}: {events:?}");
+        assert_eq!(count(&events, is_pose_end(pose)), 1, "{name}: {events:?}");
+        assert_eq!(
+            count(&events, any_pose),
+            2,
+            "{name} is the only pose: {events:?}"
+        );
+        // The hand holds the pose from the first frame: the start comes 300 ms later (frame 9).
+        let start = frame_of(&frames, is_pose_start(pose)).unwrap();
+        assert!((8..=10).contains(&start), "{name} started at frame {start}");
+        // It opens at 1.2 s (frame 36).
+        let end = frame_of(&frames, is_pose_end(pose)).unwrap();
+        assert!((36..=37).contains(&end), "{name} ended at frame {end}");
+        assert_eq!(states[start][0].pose, Some(pose), "{name}");
+        assert_eq!(states[start - 1][0].pose, None, "{name}");
+        assert_eq!(states[end][0].pose, None, "{name}");
+        // None of them is a pinch, and the open hand afterwards is an open palm.
+        assert_eq!(count(&events, is_start), 0, "{name}: {events:?}");
+        assert_eq!(count(&events, is_palm_start), 1, "{name}: {events:?}");
+    }
+}
+
+#[test]
+fn an_open_hand_is_no_pose() {
+    let frames = support::sequence(60, |_, _| vec![Spec::right()]);
+    let (events, states) = run(&frames);
+    assert_eq!(count(&events, any_pose), 0, "{events:?}");
+    assert!(states.iter().all(|f| f[0].pose.is_none()));
+}
+
+#[test]
+fn a_pose_held_for_less_than_300_ms_is_not_a_pose() {
+    // A fist for 200 ms between two open hands.
+    let frames = support::sequence(60, |_, t| {
+        vec![Spec {
+            curl: if (0.4..0.6).contains(&t) { 1.0 } else { 0.0 },
+            ..Spec::right()
+        }]
+    });
+    let (events, _) = run(&frames);
+    assert_eq!(count(&events, any_pose), 0, "{events:?}");
+}
+
+#[test]
+fn a_pose_that_changes_to_another_ends_and_the_other_starts_after_its_own_hold() {
+    // A point for a second, then a peace for a second.
+    let frames = support::sequence(60, |_, t| {
+        vec![Spec {
+            curl: 1.0,
+            folded: if t < 1.0 {
+                [false, true, true, true]
+            } else {
+                [false, false, true, true]
+            },
+            ..Spec::right()
+        }]
+    });
+    let (events, _) = run(&frames);
+    let point_end = events.iter().position(is_pose_end(Pose::Point)).unwrap();
+    let peace_start = events.iter().position(is_pose_start(Pose::Peace)).unwrap();
+    assert!(point_end < peace_start, "{events:?}");
+    assert_eq!(count(&events, is_pose_start(Pose::Point)), 1);
+    assert_eq!(count(&events, is_pose_start(Pose::Peace)), 1);
+    let at = frame_of(&frames, is_pose_start(Pose::Peace)).unwrap();
+    assert!(
+        (38..=40).contains(&at),
+        "the peace holds 300 ms from 1.0 s: frame {at}"
+    );
+}
+
+#[test]
+fn a_pose_is_held_again_after_the_hand_changes_pose() {
+    // Fist, open, fist: the second fist starts a second time (that is how a command re-arms).
+    let frames = support::sequence(90, |_, t| {
+        vec![Spec {
+            curl: if (1.0..1.8).contains(&t) { 0.0 } else { 1.0 },
+            ..Spec::right()
+        }]
+    });
+    let (events, _) = run(&frames);
+    assert_eq!(count(&events, is_pose_start(Pose::Fist)), 2, "{events:?}");
+    assert_eq!(count(&events, is_pose_end(Pose::Fist)), 1, "{events:?}");
+}
+
+#[test]
+fn no_pose_while_the_fingers_are_pinched() {
+    // A hand with the other fingers folded and the thumb on the index finger is a pinch.
+    let frames = support::sequence(60, |_, _| {
+        vec![Spec {
+            curl: 1.0,
+            folded: [false, true, true, true],
+            pinch_ratio: 0.05,
+            ..Spec::right()
+        }]
+    });
+    let (events, _) = run(&frames);
+    assert_eq!(count(&events, is_start), 1, "{events:?}");
+    assert_eq!(count(&events, any_pose), 0, "{events:?}");
+}
+
+#[test]
+fn losing_the_hand_ends_the_pose_and_a_reset_does_too() {
+    let frames = drop_frames(load("fist.json"), 20, 40);
+    let (events, _) = run(&frames);
+    assert_eq!(count(&events, is_pose_end(Pose::Fist)), 1, "{events:?}");
+
+    let frames = load("peace.json");
+    let mut r = Recogniser::new(GestureConfig::default());
+    for f in &frames[..20] {
+        r.update(f);
+    }
+    let ended = r.reset();
+    assert!(ended.iter().any(is_pose_end(Pose::Peace)), "{ended:?}");
+}
+
+#[test]
+fn a_fist_of_one_hand_is_told_apart_by_hand() {
+    let frames = support::sequence(40, |_, _| {
+        vec![
+            Spec {
+                center: (0.25, 0.55),
+                curl: 1.0,
+                ..Spec::left()
+            },
+            Spec {
+                center: (0.75, 0.55),
+                ..Spec::right()
+            },
+        ]
+    });
+    let (events, _) = run(&frames);
+    let hand = events
+        .iter()
+        .find_map(|e| match e {
+            GestureEvent::PoseStart { handedness, .. } => Some(*handedness),
+            _ => None,
+        })
+        .expect("the left fist starts");
+    assert_eq!(hand, Handedness::Left);
+    assert_eq!(count(&events, any_pose), 1);
+}
+
+// ---- The swipe --------------------------------------------------------------------------------
+
+#[test]
+fn a_fast_sweep_across_the_frame_is_one_swipe_in_its_direction() {
+    // The raw image is not mirrored: a palm that goes to the left of the raw image goes to the
+    // right of the preview the user looks at, and that is a swipe right.
+    let (events, _) = run(&load("swipe_left.json"));
+    assert_eq!(swipes(&events), vec![SwipeDirection::Right], "{events:?}");
+    let (events, _) = run(&load("swipe_right.json"));
+    assert_eq!(swipes(&events), vec![SwipeDirection::Left], "{events:?}");
+}
+
+#[test]
+fn a_slow_drift_over_the_same_distance_is_no_swipe() {
+    let (events, _) = run(&load("drift.json"));
+    assert!(swipes(&events).is_empty(), "{events:?}");
+}
+
+#[test]
+fn a_swipe_carries_the_hand_and_comes_once_per_stroke() {
+    let frames = support::sequence(100, |_, t| {
+        let t = t as f32;
+        // Right, rest, back: two strokes of 300 ms.
+        let x = if t < 0.5 {
+            0.25
+        } else if t < 0.8 {
+            support::lerp(0.25, 0.8, (t - 0.5) / 0.3)
+        } else if t < 1.6 {
+            0.8
+        } else if t < 1.9 {
+            support::lerp(0.8, 0.25, (t - 1.6) / 0.3)
+        } else {
+            0.25
+        };
+        vec![Spec {
+            center: (x, 0.55),
+            ..Spec::left()
+        }]
+    });
+    let (events, _) = run(&frames);
+    assert_eq!(
+        swipes(&events),
+        vec![SwipeDirection::Left, SwipeDirection::Right],
+        "{events:?}"
+    );
+    assert!(events.iter().all(|e| match e {
+        GestureEvent::Swipe { handedness, .. } => *handedness == Handedness::Left,
+        _ => true,
+    }));
+}
+
+#[test]
+fn a_pinched_hand_that_moves_fast_is_no_swipe() {
+    let frames = support::sequence(60, |_, t| {
+        let f = (t as f32 - 0.5) / 0.3;
+        vec![Spec {
+            center: (support::lerp(0.8, 0.25, f), 0.55),
+            pinch_ratio: 0.05,
+            ..Spec::right()
+        }]
+    });
+    let (events, _) = run(&frames);
+    assert!(swipes(&events).is_empty(), "{events:?}");
+}
+
+#[test]
+fn a_vertical_sweep_is_no_swipe() {
+    let frames = support::sequence(60, |_, t| {
+        let f = (t as f32 - 0.5) / 0.3;
+        vec![Spec {
+            center: (0.5, support::lerp(0.85, 0.2, f)),
+            ..Spec::right()
+        }]
+    });
+    let (events, _) = run(&frames);
+    assert!(swipes(&events).is_empty(), "{events:?}");
+}
+
+// ---- The two-hand pad -------------------------------------------------------------------------
+
+fn pad_events(events: &[GestureEvent]) -> (usize, usize) {
+    (
+        count(events, |e| matches!(e, GestureEvent::PadStart)),
+        count(events, |e| matches!(e, GestureEvent::PadEnd)),
+    )
+}
+
+#[test]
+fn both_hands_pinched_make_a_pad_with_the_midpoint_and_the_spread() {
+    let frames = load("two_hand_pad.json");
+    let mut r = Recogniser::new(GestureConfig::default());
+    let mut events = Vec::new();
+    let mut pads = Vec::new();
+    for f in &frames {
+        let u = r.update(f);
+        events.extend(u.events);
+        pads.push(u.pad);
+    }
+    assert_eq!(pad_events(&events), (1, 1), "{events:?}");
+    let start = events
+        .iter()
+        .position(|e| matches!(e, GestureEvent::PadStart))
+        .unwrap();
+    assert_eq!(
+        events[..start].iter().filter(|e| is_start(e)).count(),
+        2,
+        "the pad starts after both pinches: {events:?}"
+    );
+    // No pad before the right hand pinches at 0.5 s (frame 15) and none after 2 s (frame 60).
+    assert!(pads[..15].iter().all(Option::is_none));
+    assert!(pads[66..].iter().all(Option::is_none));
+    // At 0.93 s the hands are still at 0.4 and 0.6: the midpoint is the middle of the frame.
+    let early = pads[28].expect("pad at 0.93 s");
+    assert!((early.x - 0.5).abs() < 0.02, "x {}", early.x);
+    assert!((early.y - 0.6).abs() < 0.02, "y {}", early.y);
+    // The spread is the distance between the palms in frame heights (0.2 of the width).
+    let want = 0.2 * support::ASPECT;
+    assert!(
+        (early.spread - want).abs() < 0.03,
+        "spread {}",
+        early.spread
+    );
+    // At 1.93 s the hands are at 0.2 and 0.8, both at 0.4 high: spread 0.6 of the width, y up.
+    let late = pads[58].expect("pad at 1.93 s");
+    assert!((late.x - 0.5).abs() < 0.03, "x {}", late.x);
+    assert!((late.y - 0.4).abs() < 0.03, "y {}", late.y);
+    let want = 0.6 * support::ASPECT;
+    assert!((late.spread - want).abs() < 0.05, "spread {}", late.spread);
+    assert!(late.spread > early.spread);
+}
+
+#[test]
+fn one_pinched_hand_is_no_pad() {
+    let (events, _) = run(&load("pinch_twist.json"));
+    assert_eq!(pad_events(&events), (0, 0));
+}
+
+#[test]
+fn the_pad_ends_when_either_hand_lets_go_or_is_lost() {
+    let frames = load("two_hand_pad.json");
+    // Both hands vanish at 1.5 s for good: the pad ends once the tolerance is over.
+    let lost = drop_frames(frames.clone(), 45, 90);
+    let (events, _) = run(&lost);
+    assert_eq!(pad_events(&events), (1, 1), "{events:?}");
+    // A reset ends it too.
+    let mut r = Recogniser::new(GestureConfig::default());
+    for f in &frames[..40] {
+        r.update(f);
+    }
+    let ended = r.reset();
+    assert!(
+        ended.iter().any(|e| matches!(e, GestureEvent::PadEnd)),
+        "{ended:?}"
+    );
 }

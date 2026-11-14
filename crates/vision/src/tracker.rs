@@ -48,6 +48,8 @@ pub struct FrameReport {
     pub t: f64,
     /// Every hand followed.
     pub hands: Vec<HandState>,
+    /// The two-hand pad, while both hands are pinched.
+    pub pad: Option<crate::gesture::Pad>,
     /// Frames per second, smoothed.
     pub fps: f32,
     /// Milliseconds the models took for this frame, smoothed.
@@ -396,6 +398,7 @@ fn work(
                 queue.push(TrackerEvent::Frame(FrameReport {
                     t,
                     hands: update.states.clone(),
+                    pad: update.pad,
                     fps: pace.fps,
                     infer_ms: pace.infer_ms,
                 }));

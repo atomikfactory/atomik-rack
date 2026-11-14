@@ -24,6 +24,23 @@
 //!   ([`GestureConfig::open_spread`]) and no pinch, held for [`GestureConfig::open_hold`] (300 ms):
 //!   [`GestureEvent::OpenPalmStart`]. Any finger folding, or a pinch, ends it. Like the pinch
 //!   numbers these wait for hand checks with a real camera.
+//! * **Poses.** Four more held shapes, each from which fingers are extended or curled (a finger
+//!   is curled when its tip is no further from the wrist than its knuckle, with a little room):
+//!   a **fist** (all four curled), a **thumbs up** (all four curled and the thumb tip the highest
+//!   point of the hand, well above the knuckles, wherever the hand is turned), a **point** (the
+//!   index finger extended, the other three curled) and a **peace** sign (index and middle
+//!   extended, ring and little curled). A pose counts after [`GestureConfig::pose_hold`] (300 ms)
+//!   and ends when the shape goes; a pinch is never a pose. The thumb is free in a point and a
+//!   peace, and a pose changes to another one only after the first has ended. Like the pinch
+//!   numbers these wait for hand checks with a real camera.
+//! * **Swipe.** The palm (not pinched) moves at least [`GestureConfig::swipe_distance`] (half a
+//!   frame height) along the picture within [`GestureConfig::swipe_window`] (400 ms) and mostly
+//!   sideways: one [`GestureEvent::Swipe`], then [`GestureConfig::swipe_lockout`] before the
+//!   next, so a stroke is one swipe whichever way the hand comes back. The direction is the one
+//!   the user sees in the mirrored preview.
+//! * **Pad.** Both hands pinched: [`Update::pad`] is the midpoint of the two palms and the
+//!   distance between them (in frame heights); [`GestureEvent::PadStart`] and
+//!   [`GestureEvent::PadEnd`] frame it.
 //! * **Loss.** A hand that is not in a frame keeps its pinch for [`GestureConfig::loss_tolerance`]
 //!   (150 ms); after that the pinch and the open palm end. A hand the model is unsure about
 //!   ([`GestureConfig::min_score`]) counts as not there.
@@ -71,6 +88,42 @@ pub struct HandState {
     pub depth_proxy: f32,
     /// Whether the palm is open: every finger extended and held for [`GestureConfig::open_hold`].
     pub open_palm: bool,
+    /// The pose held for [`GestureConfig::pose_hold`], if any.
+    pub pose: Option<Pose>,
+}
+
+/// A held shape of the hand (the open palm and the pinch have events of their own).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Pose {
+    /// Every finger curled.
+    Fist,
+    /// Every finger curled and the thumb standing up.
+    ThumbsUp,
+    /// The index finger up, the others curled.
+    Point,
+    /// The index and middle fingers up, the others curled.
+    Peace,
+}
+
+/// Which way a swipe went, as the user sees the mirrored preview.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum SwipeDirection {
+    /// To the left of the preview.
+    Left,
+    /// To the right of the preview.
+    Right,
+}
+
+/// Both hands pinched: where they are and how far apart.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pad {
+    /// The middle of the two palms, from the left of the image (0 to 1; the raw image, so
+    /// the preview the user sees is mirrored).
+    pub x: f32,
+    /// The middle of the two palms, from the top of the image (0 to 1).
+    pub y: f32,
+    /// The distance between the palms in frame heights.
+    pub spread: f32,
 }
 
 /// A change in a gesture.
@@ -108,6 +161,35 @@ pub enum GestureEvent {
         /// The hand.
         hand: HandId,
     },
+    /// A pose has been held for the hold time.
+    PoseStart {
+        /// The hand.
+        hand: HandId,
+        /// The model's label of the hand.
+        handedness: Handedness,
+        /// The pose.
+        pose: Pose,
+    },
+    /// The pose ended (the shape changed, or the hand was lost for too long).
+    PoseEnd {
+        /// The hand.
+        hand: HandId,
+        /// The pose.
+        pose: Pose,
+    },
+    /// The palm swept sideways fast.
+    Swipe {
+        /// The hand.
+        hand: HandId,
+        /// The model's label of the hand.
+        handedness: Handedness,
+        /// Which way, as the user sees the mirrored preview.
+        direction: SwipeDirection,
+    },
+    /// Both hands are pinched: [`Update::pad`] has a value from now on.
+    PadStart,
+    /// One of the two hands let go or was lost.
+    PadEnd,
 }
 
 /// What one frame gave.
@@ -117,6 +199,8 @@ pub struct Update {
     pub states: Vec<HandState>,
     /// The changes, in order.
     pub events: Vec<GestureEvent>,
+    /// The pad, while both hands are pinched.
+    pub pad: Option<Pad>,
 }
 
 /// The numbers of the recogniser. [`Default`] is what the program uses.
@@ -137,6 +221,14 @@ pub struct GestureConfig {
     /// The thumb tip must be at least this far from the index tip (over the hand size) for the
     /// palm to count as open: a pinch, or a thumb tucked against the finger, is not an open palm.
     pub open_spread: f32,
+    /// A pose counts after this many seconds.
+    pub pose_hold: f64,
+    /// A swipe is at least this far (in frame heights).
+    pub swipe_distance: f64,
+    /// A swipe is made within this many seconds.
+    pub swipe_window: f64,
+    /// No other swipe for this many seconds after one.
+    pub swipe_lockout: f64,
     /// The farthest a palm may move between two frames and still be the same hand.
     pub match_radius: f32,
     /// The filter of the angle.
@@ -155,6 +247,10 @@ impl Default for GestureConfig {
             min_score: 0.5,
             open_hold: 0.3,
             open_spread: 0.6,
+            pose_hold: 0.3,
+            swipe_distance: 0.5,
+            swipe_window: 0.4,
+            swipe_lockout: 0.4,
             match_radius: 0.4,
             angle_filter: OneEuroParams {
                 min_cutoff: 1.5,
@@ -179,6 +275,18 @@ struct Measure {
     palm_height: f64,
     /// Every one of the four fingers is extended.
     extended: bool,
+    /// The candidate pose of this frame (no pinch is looked at here).
+    pose: Option<Pose>,
+    /// The palm in one unit (the width scaled by the aspect ratio), for the swipe.
+    palm_unit: (f64, f64),
+}
+
+/// What one finger looks like.
+#[derive(Clone, Copy, PartialEq)]
+enum Finger {
+    Extended,
+    Curled,
+    Between,
 }
 
 /// The four fingers' joints: knuckle, middle joint and tip.
@@ -223,10 +331,47 @@ fn measure(hand: &HandObservation, aspect: f32) -> Option<Measure> {
         let (x, y) = at(i);
         (x - wx).hypot(y - wy)
     };
-    let extended = FINGERS.iter().all(|[mcp, pip, tip]| {
-        let tip = from_wrist(*tip);
-        tip > from_wrist(*pip) * 1.05 && tip > from_wrist(*mcp) * 1.3
+    let fingers = FINGERS.map(|[mcp, pip, tip]| {
+        let tip = from_wrist(tip);
+        if tip > from_wrist(pip) * 1.05 && tip > from_wrist(mcp) * 1.3 {
+            Finger::Extended
+        } else if tip < from_wrist(mcp) * 1.1 {
+            Finger::Curled
+        } else {
+            Finger::Between
+        }
     });
+    let extended = fingers.iter().all(|f| *f == Finger::Extended);
+    // The thumb stands up when its tip is the highest point of the hand by a good margin.
+    let top = [
+        0usize, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    ]
+    .iter()
+    .map(|i| at(*i).1)
+    .fold(f64::MAX, f64::min);
+    let thumb_up = at(joint::THUMB_TIP).1 < top - 0.35 * size;
+    use Finger::{Curled as C, Extended as E};
+    let pose = match fingers {
+        [C, C, C, C] if thumb_up => Some(Pose::ThumbsUp),
+        [C, C, C, C] => Some(Pose::Fist),
+        [E, C, C, C] => Some(Pose::Point),
+        [E, E, C, C] => Some(Pose::Peace),
+        _ => None,
+    };
+    let palm_unit = {
+        let mut u = (0.0, 0.0);
+        for i in [
+            joint::WRIST,
+            joint::INDEX_MCP,
+            joint::MIDDLE_MCP,
+            joint::RING_MCP,
+            joint::PINKY_MCP,
+        ] {
+            let (x, y) = at(i);
+            u = (u.0 + x / 5.0, u.1 + y / 5.0);
+        }
+        u
+    };
     Some(Measure {
         angle,
         size,
@@ -234,6 +379,8 @@ fn measure(hand: &HandObservation, aspect: f32) -> Option<Measure> {
         palm,
         palm_height: along.1 - along.0,
         extended,
+        pose,
+        palm_unit,
     })
 }
 
@@ -266,6 +413,13 @@ struct Track {
     /// Since when every finger has been extended, while they are.
     open_since: Option<f64>,
     palm_open: bool,
+    /// The candidate pose of the last frames and since when it has been the same.
+    pose_since: Option<(Pose, f64)>,
+    pose: Option<Pose>,
+    /// The palm in one unit over the last [`GestureConfig::swipe_window`].
+    trail: Vec<(f64, f64, f64)>,
+    /// No swipe before this time.
+    swipe_after: f64,
     last: HandState,
 }
 
@@ -288,6 +442,10 @@ impl Track {
             emitted: 0.0,
             open_since: None,
             palm_open: false,
+            pose_since: None,
+            pose: None,
+            trail: Vec::new(),
+            swipe_after: f64::MIN,
             last: HandState {
                 id,
                 present: true,
@@ -300,6 +458,7 @@ impl Track {
                 hand_size: 0.0,
                 depth_proxy: 0.0,
                 open_palm: false,
+                pose: None,
             },
         }
     }
@@ -367,6 +526,60 @@ impl Track {
                 events.push(GestureEvent::OpenPalmEnd { hand: self.id });
             }
         }
+        // The poses: the same candidate for the hold time, never while pinched.
+        let candidate = if self.pinching { None } else { m.pose };
+        match (candidate, self.pose_since) {
+            (Some(c), Some((p, _))) if c == p => {}
+            (Some(c), _) => self.pose_since = Some((c, t)),
+            (None, _) => self.pose_since = None,
+        }
+        if self.pose.is_some()
+            && self.pose != candidate
+            && let Some(pose) = self.pose.take()
+        {
+            events.push(GestureEvent::PoseEnd {
+                hand: self.id,
+                pose,
+            });
+        }
+        if self.pose.is_none()
+            && let Some((pose, since)) = self.pose_since
+            && t - since >= cfg.pose_hold - 1e-9
+        {
+            self.pose = Some(pose);
+            events.push(GestureEvent::PoseStart {
+                hand: self.id,
+                handedness: h.handedness,
+                pose,
+            });
+        }
+        // The swipe: far and fast along the picture, never pinched, once per stroke.
+        if self.pinching {
+            self.trail.clear();
+        } else {
+            self.trail.push((t, m.palm_unit.0, m.palm_unit.1));
+            self.trail.retain(|(at, _, _)| t - at <= cfg.swipe_window);
+            if t >= self.swipe_after
+                && let Some(&(_, x0, y0)) = self.trail.first()
+            {
+                let (dx, dy) = (m.palm_unit.0 - x0, m.palm_unit.1 - y0);
+                if dx.abs() >= cfg.swipe_distance && dy.abs() <= dx.abs() * 0.6 {
+                    // The raw image is not mirrored: a palm going to the left of it goes to
+                    // the right of the preview.
+                    events.push(GestureEvent::Swipe {
+                        hand: self.id,
+                        handedness: h.handedness,
+                        direction: if dx < 0.0 {
+                            SwipeDirection::Right
+                        } else {
+                            SwipeDirection::Left
+                        },
+                    });
+                    self.swipe_after = t + cfg.swipe_lockout;
+                    self.trail.clear();
+                }
+            }
+        }
         self.last = HandState {
             id: self.id,
             present: true,
@@ -379,6 +592,7 @@ impl Track {
             hand_size: m.size as f32,
             depth_proxy: size as f32,
             open_palm: self.palm_open,
+            pose: self.pose,
         };
     }
 }
@@ -388,6 +602,7 @@ pub struct Recogniser {
     cfg: GestureConfig,
     tracks: Vec<Track>,
     next_id: u32,
+    pad_on: bool,
 }
 
 impl Recogniser {
@@ -397,6 +612,7 @@ impl Recogniser {
             cfg,
             tracks: Vec::new(),
             next_id: 0,
+            pad_on: false,
         }
     }
 
@@ -474,12 +690,39 @@ impl Recogniser {
             if t.palm_open {
                 events.push(GestureEvent::OpenPalmEnd { hand: t.id });
             }
+            if let Some(pose) = t.pose {
+                events.push(GestureEvent::PoseEnd { hand: t.id, pose });
+            }
             false
         });
 
+        // Both hands pinched make the pad.
+        let pinched: Vec<&Track> = self.tracks.iter().filter(|t| t.pinching).collect();
+        let pad = (pinched.len() == 2).then(|| {
+            let (a, b) = (pinched[0].last.palm_center, pinched[1].last.palm_center);
+            Pad {
+                x: (a.0 + b.0) / 2.0,
+                y: (a.1 + b.1) / 2.0,
+                spread: (f64::from(a.0 - b.0) * f64::from(obs.aspect)).hypot(f64::from(a.1 - b.1))
+                    as f32,
+            }
+        });
+        if pad.is_some() != self.pad_on {
+            self.pad_on = pad.is_some();
+            events.push(if self.pad_on {
+                GestureEvent::PadStart
+            } else {
+                GestureEvent::PadEnd
+            });
+        }
+
         let mut states: Vec<HandState> = self.tracks.iter().map(|t| t.last).collect();
         states.sort_by_key(|s| s.id);
-        Update { states, events }
+        Update {
+            states,
+            events,
+            pad,
+        }
     }
 
     /// Forgets every hand and returns the end of every pinch and open palm that was open (for a
@@ -493,6 +736,12 @@ impl Recogniser {
             if t.palm_open {
                 ended.push(GestureEvent::OpenPalmEnd { hand: t.id });
             }
+            if let Some(pose) = t.pose {
+                ended.push(GestureEvent::PoseEnd { hand: t.id, pose });
+            }
+        }
+        if std::mem::take(&mut self.pad_on) {
+            ended.push(GestureEvent::PadEnd);
         }
         self.tracks.clear();
         ended

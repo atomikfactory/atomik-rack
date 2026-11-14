@@ -38,6 +38,7 @@ fn report(t: f64, hands: Vec<HandState>) -> TrackerEvent {
     TrackerEvent::Frame(FrameReport {
         t,
         hands,
+        pad: None,
         fps: 30.0,
         infer_ms: 20.0,
     })

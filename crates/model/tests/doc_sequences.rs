@@ -117,6 +117,8 @@ enum WfOp {
     References(u8),
     /// The delivery target: none or one of the table's entries.
     Delivery(u8),
+    /// The project's own camera settings: none, or one of three tables.
+    Camera(u8),
     /// The song's video: set, remove, move, trim or relink (the first value picks which).
     Video(u8, u8),
     Take(TakeOp),
@@ -342,6 +344,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0u8..3).prop_map(WfOp::Sort),
         (0u8..4).prop_map(WfOp::References),
         (0u8..5).prop_map(WfOp::Delivery),
+        (0u8..4).prop_map(WfOp::Camera),
         (0u8..6, 0u8..4).prop_map(|(k, v)| WfOp::Video(k, v)),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
@@ -925,6 +928,43 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 .get(usize::from(*step))
                 .map(atomik_model::Delivery::of),
         ),
+        WfOp::Camera(step) => {
+            let row = |gesture, hand, command: &str| atomik_model::GestureRow {
+                gesture,
+                hand,
+                command: command.into(),
+            };
+            Command::SetCameraOverride(match step {
+                0 => None,
+                1 => Some(atomik_model::CameraOverride {
+                    mode: "knob".into(),
+                    gestures: Vec::new(),
+                }),
+                2 => Some(atomik_model::CameraOverride {
+                    mode: "midi".into(),
+                    gestures: vec![row(
+                        atomik_model::CameraGesture::Fist,
+                        atomik_model::GestureHand::Either,
+                        "transport.stop",
+                    )],
+                }),
+                _ => Some(atomik_model::CameraOverride {
+                    mode: "both".into(),
+                    gestures: vec![
+                        row(
+                            atomik_model::CameraGesture::SwipeLeft,
+                            atomik_model::GestureHand::Left,
+                            "edit.undo",
+                        ),
+                        row(
+                            atomik_model::CameraGesture::Point,
+                            atomik_model::GestureHand::Right,
+                            "transport.play",
+                        ),
+                    ],
+                }),
+            })
+        }
         WfOp::Video(kind, v) => {
             let facts = |secs: u64| atomik_model::VideoFacts {
                 duration_us: secs * 1_000_000,

@@ -22,6 +22,8 @@ pub mod backup_tab;
 pub mod bass_read_worker;
 pub mod blind_ab;
 pub mod browser_workers;
+pub mod camera_gestures;
+pub mod camera_gestures_tab;
 pub mod camera_midi;
 pub mod camera_tab;
 pub mod cli;

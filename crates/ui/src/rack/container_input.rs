@@ -243,6 +243,7 @@ impl RackView {
             references: Vec::new(),
             delivery: None,
             video: None,
+            camera: None,
         })
     }
 

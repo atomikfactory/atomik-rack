@@ -3,6 +3,7 @@
   "version": 45,
   "compat": 44,
   "ignorable": {
+    "camera": 45,
     "song.chords": 45,
     "song.chords[].bass": 45,
     "song.chords[].length": 45,

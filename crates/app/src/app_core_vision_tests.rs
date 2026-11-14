@@ -67,6 +67,7 @@ fn hand_state(depth: f32, pinch: bool) -> HandState {
         hand_size: depth,
         depth_proxy: depth,
         open_palm: false,
+        pose: None,
     }
 }
 
@@ -75,6 +76,7 @@ fn frame(depth: f32) -> TrackerEvent {
     TrackerEvent::Frame(FrameReport {
         t: 0.0,
         hands: vec![hand_state(depth, false)],
+        pad: None,
         fps: 30.0,
         infer_ms: 20.0,
     })
@@ -171,7 +173,7 @@ fn the_target_is_marked_in_the_views_while_the_camera_is_on_and_never_saved() {
         "the ring"
     );
     let saved = atomik_model::save_project(c.doc());
-    assert!(!saved.contains("camera"), "view state only");
+    assert!(!saved.contains("\"camera\": {"), "view state only");
     c.camera_off(None);
     assert_eq!(c.midi_marks().camera, None, "no ring with the camera off");
     assert!(c.camera_target().is_some(), "the target is kept");
@@ -739,6 +741,7 @@ fn cal_frame(t: f64, pinch: bool, angle: f32) -> TrackerEvent {
     TrackerEvent::Frame(FrameReport {
         t,
         hands: vec![h],
+        pad: None,
         fps: 30.0,
         infer_ms: 20.0,
     })
@@ -972,6 +975,10 @@ fn calibration_results_are_kept_inside_the_limits() {
     assert_eq!(r.dead_zone(), crate::keymap_store::MIN_DEAD_ZONE);
     assert_eq!(calibrate::format_tenths(15), "1.5");
 }
+
+// The gestures, the pad and the project's own settings have their own file.
+#[path = "app_core_camera_gestures_tests.rs"]
+mod gestures;
 
 // The camera as a MIDI controller has its own file.
 #[path = "app_core_camera_midi_tests.rs"]

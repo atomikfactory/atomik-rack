@@ -51,6 +51,7 @@ fn preview_state(
         fps: 29.6,
         infer_ms: 21.4,
         controls: None,
+        pad: None,
     }
 }
 
@@ -67,7 +68,17 @@ fn previews() -> Vec<(&'static str, CameraPreviewState)> {
             "no_target",
             preview_state(CameraLamp::Pinch, 1, None, Some("Click a knob first")),
         ),
+        ("pad", pad_preview()),
     ]
+}
+
+/// Both hands pinched: the crosshair of the two-hand pad, a little right of the middle of the
+/// preview and as wide as the hands are far apart.
+fn pad_preview() -> CameraPreviewState {
+    CameraPreviewState {
+        pad: Some((0.62, 0.4, 0.5)),
+        ..preview_state(CameraLamp::Pinch, 2, Some(("Lead Cutoff", "2.4 kHz")), None)
+    }
 }
 
 fn preview(state: CameraPreviewState) -> CameraPreviewView {

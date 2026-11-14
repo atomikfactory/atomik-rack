@@ -107,6 +107,11 @@ swaps! {
         doc.delivery.clone_from(new);
         Ok(vec![SyncOp::ViewChanged])
     };
+    /// The project's own camera settings (see [`crate::CameraOverride`]).
+    Camera {}: Option<crate::CameraOverride> => |doc, new| {
+        doc.camera.clone_from(new);
+        Ok(vec![SyncOp::ViewChanged])
+    };
     /// The song's video (see [`crate::VideoClip`]).
     Video {}: Option<crate::VideoClip> => |doc, new| {
         doc.video.clone_from(new);

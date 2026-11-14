@@ -1453,6 +1453,146 @@ fn golden_camera() {
     golden("settings_camera_chosen", &d);
 }
 
+fn page_layout(d: &SettingsDialog) -> crate::camera_gestures_tab::PageLayout {
+    d.camera_page_layout(VIEW)
+        .expect("the gesture commands page is open")
+}
+
+fn open_gestures(d: &mut SettingsDialog) {
+    goto(d, Tab::Camera);
+    d.set_camera_models(crate::vision_link::ModelState::Ready);
+    let at = camera_layout(d).gestures.edit.center();
+    down(d, at);
+}
+
+#[test]
+fn golden_camera_gestures() {
+    use atomik_model::CameraGesture;
+    let mut d = dialog();
+    open_gestures(&mut d);
+    golden("settings_camera_gestures", &d);
+    // Suggested fills in three rows and the hand of the fist is the left one.
+    let at = page_layout(&d).suggested.center();
+    down(&mut d, at);
+    let fist = page_layout(&d)
+        .rows
+        .iter()
+        .find(|r| r.gesture == CameraGesture::Fist)
+        .unwrap()
+        .hand
+        .center();
+    down(&mut d, fist);
+    golden("settings_camera_gestures_suggested", &d);
+    // The picker for the point gesture, narrowed by a search.
+    let point = page_layout(&d)
+        .rows
+        .iter()
+        .find(|r| r.gesture == CameraGesture::Point)
+        .unwrap()
+        .command
+        .center();
+    down(&mut d, point);
+    type_text(&mut d, "play");
+    golden("settings_camera_gestures_picker", &d);
+}
+
+#[test]
+fn the_gesture_table_is_empty_by_default_and_apply_returns_what_was_chosen() {
+    use atomik_model::CameraGesture;
+    let mut d = dialog();
+    open_gestures(&mut d);
+    assert!(d.preferences().unwrap().1.camera.gestures.is_empty());
+    let at = page_layout(&d).suggested.center();
+    down(&mut d, at);
+    let rows = d.preferences().unwrap().1.camera.gestures;
+    assert_eq!(rows, crate::camera_gestures::suggested());
+    // A command picked by typing: the point gesture runs Undo.
+    let point = page_layout(&d)
+        .rows
+        .iter()
+        .find(|r| r.gesture == CameraGesture::Point)
+        .unwrap()
+        .command
+        .center();
+    down(&mut d, point);
+    type_text(&mut d, "undo");
+    press(&mut d, "Enter", Os::Windows);
+    let rows = d.preferences().unwrap().1.camera.gestures;
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[3].gesture, CameraGesture::Point);
+    assert_eq!(rows[3].command, "edit.undo");
+    // Escape goes back to the settings, not out of the dialog.
+    assert!(matches!(
+        press(&mut d, "Escape", Os::Windows),
+        DialogOutcome::Open
+    ));
+    assert!(d.camera_page_layout(VIEW).is_none());
+    assert!(
+        camera_layout(&d).gestures.status.starts_with('4'),
+        "{}",
+        camera_layout(&d).gestures.status
+    );
+}
+
+#[test]
+fn use_for_this_project_only_edits_a_copy_that_apply_hands_to_the_project() {
+    use atomik_model::{CameraGesture, CameraOverride, GestureHand, GestureRow};
+    let mut d = dialog();
+    goto(&mut d, Tab::Camera);
+    assert_eq!(d.camera_project(), None);
+    // On: the project keeps a copy of what is set now.
+    let at = camera_layout(&d).project.rect.center();
+    down(&mut d, at);
+    assert_eq!(
+        d.camera_project(),
+        Some(CameraOverride {
+            mode: "knob".into(),
+            gestures: Vec::new()
+        })
+    );
+    // The mode and the table now edit the project's copy; the settings keep theirs.
+    let midi = camera_layout(&d).mode.choices[1].1.center();
+    down(&mut d, midi);
+    let at = camera_layout(&d).gestures.edit.center();
+    down(&mut d, at);
+    let at = page_layout(&d).suggested.center();
+    down(&mut d, at);
+    let project = d.camera_project().unwrap();
+    assert_eq!(project.mode, "midi");
+    assert_eq!(project.gestures.len(), 3);
+    assert_eq!(
+        project.gestures[0],
+        GestureRow {
+            gesture: CameraGesture::Fist,
+            hand: GestureHand::Either,
+            command: "transport.stop".into()
+        }
+    );
+    let own = d.preferences().unwrap().1.camera;
+    assert_eq!(own.mode, crate::keymap_store::CameraMode::Knob);
+    assert!(own.gestures.is_empty());
+    // Off: back to the settings, and the project keeps nothing.
+    press(&mut d, "Escape", Os::Windows);
+    let at = camera_layout(&d).project.rect.center();
+    down(&mut d, at);
+    assert_eq!(d.camera_project(), None);
+    // A project that has its own settings opens with the switch on and its copy shown.
+    let mut d = dialog();
+    d.set_camera_project(Some(&CameraOverride {
+        mode: "both".into(),
+        gestures: vec![GestureRow {
+            gesture: CameraGesture::Peace,
+            hand: GestureHand::Left,
+            command: "edit.redo".into(),
+        }],
+    }));
+    goto(&mut d, Tab::Camera);
+    let l = camera_layout(&d);
+    assert!(l.project.on);
+    assert!(l.gestures.status.starts_with('1'), "{}", l.gestures.status);
+    assert_eq!(d.camera_project().unwrap().mode, "both");
+}
+
 #[test]
 fn the_camera_tab_edits_the_drafts_and_apply_returns_them() {
     let mut d = dialog();
