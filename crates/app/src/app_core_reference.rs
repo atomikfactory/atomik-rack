@@ -22,6 +22,11 @@
 //! ([`AppCore::reference_after_seek`]: a new stream from there, the old one cut, no gap in the
 //! settings). A reference with a cue is not time-aligned with the song and stays where it is.
 //!
+//! The same goes for the **loop**: while the transport plays with the loop on and the playhead
+//! wraps at the loop end (the engine counts the laps), the reference that follows the playhead
+//! jumps back with it ([`AppCore::reference_loop_frame`], the same new stream as after a seek), so the reference
+//! and the mix stay on the same bar from one lap to the next.
+//!
 //! # Level match
 //!
 //! While any reference exists the engine measures the mix (K-weighted short-term loudness, 3 s,
@@ -678,6 +683,17 @@ impl<S: EngineSink> AppCore<S> {
             len,
         );
         self.start_reference_stream(&audio, from, wanted.name());
+    }
+
+    /// One frame of the transport: the engine counted another loop wrap while the song plays (the
+    /// playhead went from the loop end back to the loop start), so a reference that follows the
+    /// playhead goes back too (see the module docs). The count is the engine's, so a seek of
+    /// the user never counts as a wrap and a wrap never counts twice.
+    pub(super) fn reference_loop_frame(&mut self, playing: bool, loop_count: u64) {
+        let seen = self.reference_loops_seen.replace(loop_count);
+        if playing && seen.is_some_and(|s| loop_count > s) {
+            self.reference_after_seek();
+        }
     }
 
     /// The song position, in seconds, the reference stream last started from (`None` while the

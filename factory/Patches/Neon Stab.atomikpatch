@@ -4,6 +4,7 @@
   "compat": 44,
   "ignorable": {
     "camera": 45,
+    "inserts_folded": 45,
     "song.chords": 45,
     "song.chords[].bass": 45,
     "song.chords[].length": 45,
@@ -34,7 +35,8 @@
     "song.tracks[].lanes[].clips[].follow_song_key": 45,
     "song.tracks[].lanes[].take_groups[].takes[].audio.pitch_edits": 45,
     "song.tracks[].lanes[].take_groups[].takes[].expression": 45,
-    "song.tracks[].lanes[].take_groups[].takes[].follow_song_key": 45
+    "song.tracks[].lanes[].take_groups[].takes[].follow_song_key": 45,
+    "spectrum_curves": 45
   },
   "sample_rate": 48000,
   "tempo_bpm": 120,

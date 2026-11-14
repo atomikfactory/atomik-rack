@@ -2,7 +2,7 @@
 
 use super::{
     ConsoleButton, ConsoleView, Drag, Hit, Jump, STRIP_W, Target, colour_rect, insert_b_rect,
-    insert_e_rect, insert_x_rect, jump_rects,
+    insert_e_rect, insert_x_rect, jump_rects, meter_rect,
 };
 use crate::console_layout::CtrlKind;
 use crate::console_vca::{VcaPart, vca_layout};
@@ -218,6 +218,20 @@ impl ConsoleView {
                         Jump::Rack => "Show this channel's device in the rack",
                         Jump::Seq => "Show this channel's track in the arrangement",
                     },
+                )
+            }
+            Hit::Meter(i) => {
+                let l = self.layout_of(self.strips.get(i)?.desc)?;
+                help(
+                    meter_rect(l.name) + Vec2::new(self.strip_x(i), top),
+                    "Show the spectrum of this strip (right-click: phase meter)",
+                )
+            }
+            Hit::MasterMeter => {
+                let l = self.master_layout.as_ref()?;
+                help(
+                    meter_rect(l.name) + Vec2::new(self.master_x()?, top),
+                    "Show the spectrum of the master (right-click: phase meter)",
                 )
             }
             Hit::Name(_) | Hit::Menu(_) | Hit::MenuArea | Hit::Empty => None,

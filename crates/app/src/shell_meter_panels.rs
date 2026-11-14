@@ -18,6 +18,9 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Hands the view the core's panels; called once a frame.
     pub(super) fn sync_meter_panels(&mut self) {
+        // The meter buttons of the console light while a panel of their strip is open.
+        let open = self.core.meter_panel_targets();
+        self.core.console_mut().set_meters_open(&open);
         if self.meter_panels.is_empty() && self.core.meter_panel_ids().is_empty() {
             return;
         }

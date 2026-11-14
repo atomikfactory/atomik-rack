@@ -42,6 +42,7 @@ fn spectrum(id: u32, source: usize) -> MeterPanelState {
         peak_hz: 1250.0,
         peak_db: -9.4,
         size: 4096,
+        pre: false,
         second: if source == 0 {
             Vec::new()
         } else {
@@ -74,6 +75,7 @@ fn phase(id: u32) -> MeterPanelState {
         peak_hz: 0.0,
         peak_db: -120.0,
         size: 4096,
+        pre: false,
         second: Vec::new(),
         sources: sources(),
         source: 0,
@@ -330,6 +332,7 @@ fn every_part_has_a_short_tooltip() {
         v.size_rect(1, true).unwrap(),
         v.size_rect(1, false).unwrap(),
         v.source_rect(1).unwrap(),
+        v.point_rect(1).unwrap(),
     ] {
         let help = v.help_at(centre(r)).expect("a tooltip");
         assert!(help.text.len() <= 90, "{}", help.text);
@@ -344,4 +347,61 @@ fn every_part_has_a_short_tooltip() {
     assert!(v.help_at(Point::new(-4.0, -4.0)).is_none());
     let _ = paint(&mut v);
     let _ = PointerButton::Primary;
+}
+
+/// A spectrum panel that taps before the fader at the largest size.
+fn spectrum_pre_large(id: u32) -> MeterPanelState {
+    MeterPanelState {
+        pre: true,
+        size: 65_536,
+        ..spectrum(id, 1)
+    }
+}
+
+#[test]
+fn a_panel_with_pre_selected_and_a_large_size_is_a_golden_in_english_and_french() {
+    let mut v = view_of(vec![spectrum_pre_large(1)]);
+    let english = paint(&mut v);
+    support::starter::check_golden("meter_panel_pre_large_1x.json", &english.to_json());
+    assert!(english.texts().contains(&"PRE") && english.texts().contains(&"65536"));
+    let (french, misses) = atomik_ui::i18n::with_misses(|| {
+        atomik_ui::i18n::with_language(Lang::French, || {
+            let mut v = view_of(vec![spectrum_pre_large(1)]);
+            paint(&mut v)
+        })
+    });
+    french_golden("meter_panel_pre_large_1x.json", &french);
+    let missing: Vec<&String> = misses
+        .iter()
+        .filter(|m| m.as_str() != "Lead" && m.as_str() != "Drums")
+        .collect();
+    assert!(missing.is_empty(), "no French entry: {missing:?}");
+    assert!(french.texts().contains(&"PR\u{c9}"));
+    // POST is the default and reads POST; the phase panel has the same chip.
+    let post = paint(&mut view_of(vec![spectrum(1, 0)]));
+    assert!(post.texts().contains(&"POST") && !post.texts().contains(&"PRE"));
+    let phase = paint(&mut view_of(vec![phase(2)]));
+    assert!(phase.texts().contains(&"POST"));
+}
+
+#[test]
+fn the_pre_post_chip_emits_a_point_action_on_both_panels() {
+    for (id, state) in [(3, spectrum(3, 0)), (4, phase(4))] {
+        let mut alone = view_of(vec![state]);
+        let chip = centre(alone.point_rect(id).unwrap());
+        assert_eq!(click(&mut alone, chip), [MeterPanelAction::Point { id }]);
+    }
+    let v = view_of(vec![spectrum(3, 0), phase(4)]);
+    // The chip sits clear of the size arrows and the source button.
+    let p = v.point_rect(3).unwrap();
+    for r in [
+        v.size_rect(3, true).unwrap(),
+        v.size_rect(3, false).unwrap(),
+        v.source_rect(3).unwrap(),
+    ] {
+        assert!(p.intersect(r).area() == 0.0, "{p:?} {r:?}");
+    }
+    // The phase chip is inside its panel.
+    let (b, chip) = (v.bounds(4).unwrap(), v.point_rect(4).unwrap());
+    assert!(b.contains(Point::new(chip.x1 - 1.0, chip.y1 - 1.0)));
 }

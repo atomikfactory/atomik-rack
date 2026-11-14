@@ -262,3 +262,21 @@ fn a_plugin_device_writes_its_output_to_the_scope_tap_only_while_the_tap_is_live
     h.process();
     assert_eq!(tap.head(), BATCH as u64, "off again: no new frames");
 }
+
+#[test]
+fn the_pre_flag_taps_what_goes_into_the_plugin() {
+    let (probe, shared) = Probe::new();
+    shared.set_out(ProbeOut::Gain(0.5));
+    let (mut h, _r) = harness(rig("io.tap_pre", &fx_layout(), Box::new(probe)));
+    let tap = h.device().scope_tap().expect("a plugin device has a tap");
+    tap.set_live(true);
+    tap.set_pre(true);
+    *h.input_mut("in_l") = ramp(1.0);
+    *h.input_mut("in_r") = ramp(-2.0);
+    h.process();
+    let (mut l, mut r) = (vec![0.0; BATCH], vec![0.0; BATCH]);
+    assert_eq!(tap.read_latest(&mut l, &mut r).0, BATCH);
+    assert_eq!(&l[..], &ramp(1.0)[..], "the input, before the plugin");
+    assert_eq!(&r[..], &ramp(-2.0)[..]);
+    assert_ne!(&l[..], &h.output("out_l")[..], "not the plugin's output");
+}

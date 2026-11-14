@@ -147,7 +147,9 @@
 //!   strip's output (after the width, the fader, the mute and the pan) into the same ring. The
 //!   flag is one relaxed load per batch; with it off nothing is written and the strip is
 //!   bit-identical to one without a tap. The pre-fader point of `internal.tap_live` wins when
-//!   both are on.
+//!   both are on. A panel can ask for the pre-fader point too ([`ScopeTap::set_pre`]): with the
+//!   live flag on and the pre flag on, the same push after the EQ, the inserts and the parallel
+//!   compressor is made and the output push is skipped.
 
 use crate::bus::S_FOLLOW_OUT;
 use crate::cv_in::batch_mean;
@@ -1564,7 +1566,11 @@ impl Channel {
             self.dyn_and_eq(&mut l, &mut r);
         }
         self.parallel_stage(&mut l, &mut r);
-        if let (true, Some(tap)) = (self.on(P_TAP_LIVE), &self.tap) {
+        // The Spectrum EQ window's switch, or a meter panel that asked for the point before the
+        // fader (the tap's live and pre flags: two relaxed loads, the second only while live).
+        if let Some(tap) = &self.tap
+            && (self.on(P_TAP_LIVE) || (tap.is_live() && tap.is_pre()))
+        {
             tap.push(&l, &r);
         }
         *ctx.output(SocketId(S_GR)) = self.gr;
@@ -1599,6 +1605,7 @@ impl Channel {
         // the pan; the Spectrum EQ window's pre-fader point wins while it is on.
         if let (false, Some(tap)) = (self.on(P_TAP_LIVE), &self.tap)
             && tap.is_live()
+            && !tap.is_pre()
         {
             tap.push(&out_l, &out_r);
         }

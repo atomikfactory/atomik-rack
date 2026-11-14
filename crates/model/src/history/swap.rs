@@ -112,6 +112,16 @@ swaps! {
         doc.camera.clone_from(new);
         Ok(vec![SyncOp::ViewChanged])
     };
+    /// Which insert areas of the rack are folded (see [`crate::meter_view`]).
+    InsertsFolded {}: Vec<DeviceKey> => |doc, new| {
+        doc.folded_inserts.clone_from(new);
+        Ok(vec![SyncOp::ViewChanged])
+    };
+    /// What each Spectrum device draws as its second curve (see [`crate::meter_view`]).
+    SpectrumCurves {}: Vec<crate::SpectrumCurve> => |doc, new| {
+        doc.spectrum_curves.clone_from(new);
+        Ok(vec![SyncOp::ViewChanged])
+    };
     /// The song's video (see [`crate::VideoClip`]).
     Video {}: Option<crate::VideoClip> => |doc, new| {
         doc.video.clone_from(new);

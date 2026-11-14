@@ -67,6 +67,30 @@ impl RackView {
         changed
     }
 
+    /// The devices whose insert area is folded, sorted. The app saves them with the project.
+    pub fn folded_inserts(&self) -> Vec<DeviceKey> {
+        self.inserts_hidden.iter().cloned().collect()
+    }
+
+    /// Folds exactly the insert areas of `keys` and shows every other one (the project was
+    /// loaded, or an undo changed the saved fold state). Returns whether anything changed.
+    pub fn set_folded_inserts(&mut self, keys: &[DeviceKey]) -> bool {
+        let mut changed = false;
+        let shown: Vec<DeviceKey> = self
+            .inserts_hidden
+            .iter()
+            .filter(|k| !keys.contains(k))
+            .cloned()
+            .collect();
+        for k in &shown {
+            changed |= self.set_inserts_shown(k, true);
+        }
+        for k in keys {
+            changed |= self.set_inserts_shown(k, false);
+        }
+        changed
+    }
+
     // ------------------------------------------------------------------ panel data
 
     /// Re-reads what the mix channel panels show from `doc`: the insert chain's bypass state,

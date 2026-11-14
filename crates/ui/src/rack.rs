@@ -70,6 +70,8 @@ mod name_input;
 mod player_input;
 mod plugin_input;
 mod selection;
+mod spectrum_ref;
+pub(crate) use spectrum_ref::button as spectrum_ref_button;
 mod wave_drag;
 
 pub use crate::paint::Side as Flip;
@@ -185,6 +187,8 @@ enum Hit {
     ScButton(usize),
     /// The FIND or CUT button of a dynamic EQ plot.
     Resonance(usize, crate::resonance_marks::ResonanceBtn),
+    /// The REF button of a Spectrum plot: the list of its second curve.
+    SpecRef(usize),
     /// The curve plot of a Sidechain Tool panel (points and segments are picked by position).
     DuckPlot(usize),
     /// The LEARN button of a Sidechain Tool panel.
@@ -268,6 +272,7 @@ impl Hit {
             | Hit::EqPlot(i)
             | Hit::ScButton(i)
             | Hit::Resonance(i, _)
+            | Hit::SpecRef(i)
             | Hit::DuckPlot(i)
             | Hit::DuckLearn(i)
             | Hit::TableEdit(i)
@@ -708,6 +713,8 @@ pub struct RackView {
     sample_peaks: BTreeMap<String, Arc<PeakPyramid>>,
     /// The open "SC from" list of a compressor panel.
     sc_menu: Option<ScMenu>,
+    /// The open list of the second curve of a Spectrum panel.
+    ref_menu: Option<spectrum_ref::RefMenu>,
     /// The open pick list of a long choice (the master's control-room source).
     choice_menu: Option<master_input::ChoiceMenu>,
     /// The Audio I/O panel's state: host channels, lamps, levels, clip flags.
@@ -1043,6 +1050,7 @@ impl RackView {
             pads: BTreeMap::new(),
             sens: BTreeMap::new(),
             sc_menu: None,
+            ref_menu: None,
             choice_menu: None,
             io: crate::io_panel::IoView::default(),
             big: crate::big_meter::BigMeter::default(),
@@ -2104,6 +2112,10 @@ impl RackView {
                                 for (btn, r) in crate::resonance_marks::buttons(fx.plot) {
                                     tree.add(dn, r + off, Hit::Resonance(i, btn), false);
                                 }
+                            }
+                            if fx.kind == FxKind::Spectrum {
+                                let b = spectrum_ref::button(fx.plot);
+                                tree.add(dn, b + off, Hit::SpecRef(i), false);
                             }
                             if fx.kind == FxKind::Duck {
                                 let area = crate::duck_panel::inner(fx.plot).inflate(8.0, 4.0);
@@ -3645,6 +3657,9 @@ impl RackView {
         if self.sc_menu.is_some() {
             self.sc_hover(pos);
         }
+        if self.ref_menu.is_some() {
+            self.ref_hover(pos);
+        }
         if self.choice_menu.is_some() {
             self.choice_hover(pos);
         }
@@ -3792,7 +3807,10 @@ impl RackView {
         if self.macro_press(pos, out) || self.plugin_menu_press(pos) {
             return;
         }
-        if self.sc_press(pos, doc, registry, out) || self.choice_press(pos, out) {
+        if self.sc_press(pos, doc, registry, out)
+            || self.ref_press(pos, out)
+            || self.choice_press(pos, out)
+        {
             return;
         }
         if self.crumb_press(pos, button) {
@@ -4040,6 +4058,7 @@ impl RackView {
             (Hit::Preset(i, n), PointerButton::Primary) => self.preset_down(i, n, out),
             (Hit::ScButton(i), PointerButton::Primary) => self.sc_open(i, doc, registry),
             (Hit::Resonance(i, btn), PointerButton::Primary) => self.resonance_down(i, btn, out),
+            (Hit::SpecRef(i), PointerButton::Primary) => self.ref_open(i, out),
             (Hit::DuckPlot(i), PointerButton::Primary) => self.duck_down(i, rp, clicks, out),
             (Hit::DuckLearn(i), PointerButton::Primary) => self.duck_learn_down(i, out),
             (Hit::TableEdit(i), PointerButton::Primary) => {
@@ -4084,6 +4103,7 @@ impl RackView {
                 | Hit::Plugin(i, _)
                 | Hit::ScButton(i)
                 | Hit::Resonance(i, _)
+                | Hit::SpecRef(i)
                 | Hit::DuckPlot(i)
                 | Hit::DuckLearn(i)
                 | Hit::TableEdit(i)
@@ -4379,6 +4399,7 @@ impl RackView {
         out: &mut Vec<UiAction>,
     ) {
         self.sc_menu = None;
+        self.ref_menu = None;
         self.choice_menu = None;
         self.macro_menu = None;
         self.plugin_menu = None;
@@ -4743,6 +4764,7 @@ impl RackView {
         };
         match key {
             Key::Escape if self.sc_menu.take().is_some() => {}
+            Key::Escape if self.ref_close() => {}
             Key::Escape if self.choice_menu.take().is_some() => {}
             Key::Escape if self.macro_menu.take().is_some() => {}
             Key::Escape if self.plugin_menu.take().is_some() => {}
@@ -5208,6 +5230,7 @@ impl RackView {
             }
         }
         self.paint_sc_menu(c);
+        self.paint_ref_menu(c);
         self.paint_choice_menu(c);
         self.paint_macro_menu(c);
         self.paint_plugin_menu(c);

@@ -201,6 +201,8 @@ impl RackDoc {
             delivery: self.delivery.clone(),
             video: self.video.clone(),
             camera: self.camera.clone(),
+            folded_inserts: self.folded_inserts.clone(),
+            spectrum_curves: self.spectrum_curves.clone(),
         })
     }
 }

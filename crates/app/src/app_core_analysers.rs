@@ -179,6 +179,12 @@ struct State {
     /// What the reference of `data` was built for: the choice, the stored curve's serial and
     /// whether the spectrogram hides it.
     reference_key: Option<(usize, u64, bool)>,
+    /// The analysis of the strip a Spectrum device draws as its second curve.
+    second: Spectrum,
+    /// The tap head `second` was computed at.
+    second_head: u64,
+    /// The source `second` was built for.
+    second_from: Option<atomik_model::CurveFrom>,
 }
 
 /// What the display of one device needs besides the frames.
@@ -211,6 +217,9 @@ impl State {
             integrated: FLOOR_DB,
             capture_on: false,
             reference_key: None,
+            second: Spectrum::new(),
+            second_head: 0,
+            second_from: None,
         }
     }
 
@@ -455,6 +464,9 @@ impl<S: EngineSink> AppCore<S> {
             };
             let state = a.states.entry(key.clone()).or_insert_with(State::new);
             if *kind == FxKind::Spectrum {
+                if self.feed_second_curve(key, state, &settings, view, sample_rate) {
+                    self.view.set_analyser(key, &state.data);
+                }
                 if capture && !state.capture_on && state.fed {
                     captured = Some(state.spectrum.band_levels());
                 }
@@ -498,6 +510,114 @@ impl<S: EngineSink> AppCore<S> {
         if let Some(bands) = captured {
             self.store_reference(bands);
         }
+    }
+
+    /// The second curve of the Spectrum device `key` (module docs of `app_core_meter_panels`): the
+    /// reference track's long-term spectrum or the analysis of another strip's tap, and the list
+    /// of sources its REF button offers. Returns whether anything the display shows changed.
+    fn feed_second_curve(
+        &self,
+        key: &DeviceKey,
+        state: &mut State,
+        settings: &Settings,
+        view: SpectrumView,
+        sample_rate: f32,
+    ) -> bool {
+        let strips: Vec<DeviceKey> = self
+            .console
+            .strip_names()
+            .into_iter()
+            .map(|(k, _, _)| k)
+            .collect();
+        // A strip that is gone is no source any more.
+        let curve = self
+            .doc()
+            .spectrum_curves
+            .iter()
+            .find(|r| &r.device == key)
+            .map(|r| r.from.clone())
+            .filter(|from| match from {
+                atomik_model::CurveFrom::Reference => true,
+                atomik_model::CurveFrom::Strip(k) => strips.contains(k),
+            });
+        let (sources, chosen) = self.spectrum_curve_sources(key, curve.as_ref());
+        let mut second: Vec<f32> = Vec::new();
+        if state.second_from != curve {
+            state.second = Spectrum::new();
+            state.second_head = 0;
+            state.second_from.clone_from(&curve);
+        }
+        if !view.spectrogram {
+            match &curve {
+                Some(atomik_model::CurveFrom::Reference) => {
+                    let shift = self.reference_curve_shift();
+                    if let Some(t) = self.reference_trace() {
+                        second = t.iter().map(|v| v + shift).collect();
+                    }
+                }
+                Some(atomik_model::CurveFrom::Strip(strip)) => {
+                    if let Some(other) = self.ids.get(strip).copied() {
+                        let size = settings.size;
+                        let mut left = vec![0.0f32; size];
+                        let mut right = vec![0.0f32; size];
+                        if let Some((n, head)) =
+                            self.sink.read_device_scope(other, &mut left, &mut right)
+                            && head != 0
+                            && head != state.second_head
+                        {
+                            let elapsed = head.saturating_sub(state.second_head);
+                            state.second_head = head;
+                            state.second.update(
+                                &left[..n],
+                                &right[..n],
+                                elapsed,
+                                sample_rate,
+                                settings,
+                                TRACE_COLUMNS,
+                            );
+                        }
+                        second = state.second.trace().to_vec();
+                    }
+                }
+                None => {}
+            }
+        }
+        let d = &mut state.data;
+        if d.second == second && d.second_sources == sources && d.second_source == chosen {
+            return false;
+        }
+        d.second = second;
+        d.second_sources = sources;
+        d.second_source = chosen;
+        true
+    }
+
+    /// The Spectrum devices whose second curve is a strip, with the window size they read it at:
+    /// the taps of those strips must be live.
+    pub(super) fn spectrum_curve_taps(&self) -> Vec<(DeviceKey, usize)> {
+        let mut out = Vec::new();
+        for (key, kind) in &self.analysers.devices {
+            if *kind != FxKind::Spectrum {
+                continue;
+            }
+            let Some(atomik_model::CurveFrom::Strip(strip)) = self
+                .doc()
+                .spectrum_curves
+                .iter()
+                .find(|r| &r.device == key)
+                .map(|r| &r.from)
+            else {
+                continue;
+            };
+            let Some((dev, desc)) = self.analyser_device(key) else {
+                continue;
+            };
+            if param(desc, dev, "bypass") >= 0.5 || spectrum_view(desc, dev).spectrogram {
+                continue;
+            }
+            out.push((strip.clone(), spectrum_settings(desc, dev).size));
+        }
+        out
     }
 
     /// Keeps `bands` as the reference curve and writes it to the user's file.

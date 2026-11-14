@@ -95,6 +95,7 @@ use crate::console_vca::{self as cv, VCA_LEVEL, VcaPart, VcaView};
 use crate::display_list::DisplayList;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::keymap::{CommandOutcome, GestureClass, Role, Roles};
+use crate::meter_panels::MeterKind;
 use crate::paint::{self, fit_label};
 use crate::pick_list::PickList;
 use crate::seq_paint::{self as sp, SeqTheme};
@@ -289,6 +290,10 @@ enum Hit {
     Plate(usize),
     /// A strip's RACK or SEQ jump button.
     Jump(usize, Jump),
+    /// A strip's meter button (top right of its name plate): opens its spectrum panel.
+    Meter(usize),
+    /// The master's meter button.
+    MasterMeter,
     /// A strip's output selector.
     OutputSel(usize),
     /// A part of VCA strip `i`.
@@ -339,6 +344,13 @@ fn jump_rects(name: Rect) -> [(Jump, Rect); 2] {
     [(Jump::Rack, rack), (Jump::Seq, seq)]
 }
 
+/// The meter button in the top right corner of a name plate: a small FFT button that opens the
+/// spectrum panel of the strip. The strip name keeps the rest of the plate's width.
+fn meter_rect(name: Rect) -> Rect {
+    let r = plate_rect(name);
+    Rect::new(r.x1 - 21.0, r.y0 + 6.0, r.x1 - 4.0, r.y0 + 16.0)
+}
+
 /// The colour plate hotspot: the top band of a name plate (a little deeper than it is drawn).
 fn colour_rect(name: Rect) -> Rect {
     let r = plate_rect(name);
@@ -363,6 +375,8 @@ enum MenuItem {
     RenameBus(DeviceKey),
     /// Delete this bus.
     DeleteBus(DeviceKey),
+    /// Open the meter panel of this kind on the strip (the meter button's menu).
+    Meter(DeviceKey, MeterKind),
     /// Put the menu's strips in this VCA group, or (`None`) take them out of any.
     AssignVca(Option<u32>),
     /// "New VCA...": a group named after the menu's `new_vca_name` over the menu's strips.
@@ -555,6 +569,8 @@ struct StripView {
     has_track: bool,
     /// The first chain slot the INSERTS section shows (a chain longer than its rows scrolls).
     insert_scroll: usize,
+    /// A meter panel of this strip is open (its meter button is lit).
+    meter_open: bool,
     /// The name plate caption ("CH 1", "BUS 1").
     caption: String,
     /// Where the output goes, as the selector reads it.
@@ -607,6 +623,7 @@ impl StripView {
             insert_scroll: 0,
             source: None,
             has_track: false,
+            meter_open: false,
             caption: String::new(),
             output: String::new(),
             selected: false,
@@ -1305,6 +1322,49 @@ impl ConsoleView {
             .iter()
             .find(|s| &s.key == channel)
             .is_some_and(|s| !s.on("solo"))
+    }
+
+    /// Lights the meter button of every strip (and the master) in `open`: the strips that have a
+    /// meter panel open. The app sends it once a frame.
+    pub fn set_meters_open(&mut self, open: &[DeviceKey]) {
+        let mut changed = false;
+        for s in self.strips.iter_mut().chain(self.master.iter_mut()) {
+            let lit = open.contains(&s.key);
+            if s.meter_open != lit {
+                s.meter_open = lit;
+                s.revision += 1;
+                changed = true;
+            }
+        }
+        if changed {
+            self.repaint = true;
+        }
+    }
+
+    /// The menu of a meter button: the spectrum or the phase meter of the strip.
+    fn open_meter_menu(&mut self, key: DeviceKey, pos: Point) {
+        let items = vec![
+            (
+                "Spectrum".to_string(),
+                MenuItem::Meter(key.clone(), MeterKind::Spectrum),
+            ),
+            ("Phase".to_string(), MenuItem::Meter(key, MeterKind::Phase)),
+        ];
+        let origin = self.menu_origin(pos, items.len());
+        self.menu = Some(Menu::plain(items, origin));
+    }
+
+    /// Centre of the meter button of a strip or of the master, when it is on screen.
+    pub fn meter_button_center(&self, key: &DeviceKey) -> Option<Point> {
+        if let Some(i) = self.strips.iter().position(|s| &s.key == key) {
+            let l = self.layout_of(self.strips[i].desc)?;
+            let p = (meter_rect(l.name) + Vec2::new(self.strip_x(i), self.area_top())).center();
+            return matches!(self.hit(p), Hit::Meter(_)).then_some(p);
+        }
+        self.master.as_ref().filter(|m| &m.key == key)?;
+        let l = self.master_layout.as_ref()?;
+        let p = (meter_rect(l.name) + Vec2::new(self.master_x()?, self.area_top())).center();
+        matches!(self.hit(p), Hit::MasterMeter).then_some(p)
     }
 
     /// Switches link faders on or off (see the module documentation).
@@ -2058,6 +2118,9 @@ impl ConsoleView {
                     return Hit::Ctrl(Target::Master, i);
                 }
                 if l.name.contains(lp) {
+                    if meter_rect(l.name).contains(lp) {
+                        return Hit::MasterMeter;
+                    }
                     return Hit::MasterName;
                 }
                 return Hit::Empty;
@@ -2114,6 +2177,9 @@ impl ConsoleView {
                 lp + Vec2::new(0.0, self.scroll.y)
             };
             if pinned && l.name.contains(lp) {
+                if meter_rect(l.name).contains(lp) {
+                    return Hit::Meter(i);
+                }
                 if s.source.is_some()
                     && let Some((j, _)) =
                         jump_rects(l.name).into_iter().find(|(_, r)| r.contains(lp))
@@ -2847,6 +2913,34 @@ impl ConsoleView {
             (Hit::Vca(i, part), PointerButton::Primary) => self.vca_down(i, part, clicks, out),
             (Hit::OutputSel(i), PointerButton::Primary) => self.open_output_menu(i, pos, doc),
             (Hit::PeakReset, PointerButton::Primary) => self.reset_peaks(),
+            (Hit::Meter(i), PointerButton::Primary) => {
+                if let Some(key) = self.strips.get(i).map(|s| s.key.clone()) {
+                    out.push(UiAction::MeterButton {
+                        device: key,
+                        kind: MeterKind::Spectrum,
+                        toggle: true,
+                    });
+                }
+            }
+            (Hit::MasterMeter, PointerButton::Primary) => {
+                if let Some(key) = self.master.as_ref().map(|m| m.key.clone()) {
+                    out.push(UiAction::MeterButton {
+                        device: key,
+                        kind: MeterKind::Spectrum,
+                        toggle: true,
+                    });
+                }
+            }
+            (Hit::Meter(i), PointerButton::Secondary) => {
+                if let Some(key) = self.strips.get(i).map(|s| s.key.clone()) {
+                    self.open_meter_menu(key, pos);
+                }
+            }
+            (Hit::MasterMeter, PointerButton::Secondary) => {
+                if let Some(key) = self.master.as_ref().map(|m| m.key.clone()) {
+                    self.open_meter_menu(key, pos);
+                }
+            }
             (Hit::MasterName, PointerButton::Primary) => self.select_master(),
             (Hit::MasterName, PointerButton::Secondary) => {
                 self.select_master();
@@ -3411,6 +3505,15 @@ impl ConsoleView {
                 }
                 .to_owned(),
                 arg: Some(vca.to_string()),
+            });
+            return;
+        }
+        // A meter panel of the strip the meter button belongs to.
+        if let MenuItem::Meter(device, kind) = &item {
+            out.push(UiAction::MeterButton {
+                device: device.clone(),
+                kind: *kind,
+                toggle: false,
             });
             return;
         }
@@ -5954,6 +6057,7 @@ fn record_strip(
         s.silenced,
         s.selected,
         s.source.is_some(),
+        Some(s.meter_open),
     );
     if let Some((color, _)) = s.vca {
         cv::chip(pinned, l.name, color);
@@ -6110,6 +6214,7 @@ fn name_plate(
     dim: bool,
     selected: bool,
     jumps: bool,
+    meter: Option<bool>,
 ) {
     let t = &st.base;
     let name_rect = r;
@@ -6122,7 +6227,11 @@ fn name_plate(
     let col = if dim { t.text_muted } else { t.text };
     c.text(
         &TextRun::new(
-            crate::paint::fit_label_raw(name, r.width() - 8.0, 10.0),
+            crate::paint::fit_label_raw(
+                name,
+                r.width() - 8.0 - if meter.is_some() { 20.0 } else { 0.0 },
+                10.0,
+            ),
             pt(r.x0 + 5.0, r.y0 + 15.0),
             10.0,
             col,
@@ -6136,6 +6245,17 @@ fn name_plate(
     );
     let led = pt(r.x1 - 7.0, r.y1 - 6.0);
     c.fill_with(Circle::new(led, 2.2), if dim { t.led_off } else { accent });
+    if let Some(lit) = meter {
+        small_button(
+            c,
+            st,
+            meter_rect(name_rect),
+            "FFT",
+            lit.then_some(t.highlight),
+            true,
+            5.2,
+        );
+    }
     if jumps {
         for (jump, rect) in jump_rects(name_rect) {
             let label = if jump == Jump::Rack { "RACK" } else { "SEQ" };
@@ -6282,6 +6402,7 @@ fn record_master(
         false,
         m.selected,
         false,
+        Some(m.meter_open),
     );
 }
 

@@ -2306,11 +2306,27 @@ the audio.
 The same spectrum and phase meter are also available as **meter panels** without a device: Show
 Spectrum and Show Phase Meter in the right-click menu of a console strip (a channel, a bus, the master)
 and of a plugin device open a floating panel of the same drawing, larger. The strip's output after its
-fader (a plugin device: its output after the bypass) is tapped only while a panel is open. A strip
-has a 32 768 frame ring, so its spectrum panel offers 1024 to 16384 points. The spectrum panel has a
-REF list that draws a second curve over the trace: another strip, or the reference track (its long-term
-average spectrum, moved by the matched gain and the trim). Neither the panels nor the second curve are
-saved. The spectrum device does not have the second curve yet.
+fader (a plugin device: its output after the bypass) is tapped only while a panel is open. The chip
+beside the size arrows (and under the readouts of the phase panel) switches between POST, the default, and
+PRE, the signal before the fader (a plugin device: what goes into the plugin). The point belongs to the
+strip's tap, so a strip is PRE while any of its panels asks for it; the audio thread reads the live flag
+once per block and the point flag only while the tap is live. A strip has a 32 768 frame ring, enough for
+windows up to 16384 points. The sizes 32768 and 65536 ask the tap for a second ring of 131 072 frames
+(1 MiB): the interface allocates it when a panel picks such a size, once per strip and engine, and
+stores it in a `OnceLock` that the audio thread reads without a lock or an allocation, so only a strip
+that someone looks at with a large window pays the megabyte. Until the large ring has filled, the window
+holds the frames it has. The spectrum panel has a REF list that draws a second curve over the trace:
+another strip, or the reference track (its long-term average spectrum, moved by the matched gain and the
+trim). The panels are not saved.
+
+**Second curve in the device.** The spectrum device has the same REF button in the top right corner of its
+plot, with the name of the chosen source beside it, and the same list: Off, every console strip, and the
+reference track when the song has one. The curve is a line in the warning colour over the trace (not over
+the spectrogram, which has no level axis for it). The choice is kept with the device in the project, as
+the optional root field `spectrum_curves` of format 45 (ignorable: an older reader plays the project as
+before), one undo step per choice; a strip that is deleted clears it. The strip is read through its own
+tap at the device's `size`, so a size above 16384 asks that tap for its large ring too. It is a display
+setting: the audio of the device is untouched and a bounce is the same to the bit.
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
@@ -2356,9 +2372,9 @@ params by key, so older projects load as they were, with the new ones at their d
 - **Larger transform and smoothing.** `size` goes up to 65536 points (0.73 Hz per bin at 48 kHz; 16384
   points are 2.9 Hz). The FFT runs in the UI on the newest frames of the tap, never on the audio
   thread, so the size costs the audio nothing; the one thing it costs is the larger ring above, which
-  only the spectrum device has. A large size reads a bass tone to a fraction of a bin, moves slowly (65536
-  frames are 1.4 s) and shows ragged noise. `smoothing` averages the
-  power of the bins over a twelfth, a sixth or a third of an octave around each bin before the
+  the spectrum device has from the start and a strip tap gets on request. A large size reads a bass tone
+  to a fraction of a bin, moves slowly (65536 frames are 1.4 s) and shows ragged noise. `smoothing`
+  averages the power of the bins over a twelfth, a sixth or a third of an octave around each bin before the
   fine trace is drawn (a window that grows with the frequency, so the bass keeps its detail and the
   treble is smooth); the bands and the loudest-bin readout are never smoothed.
 - **K-weighting.** `weighting` K multiplies every bin by the response of the BS.1770-4

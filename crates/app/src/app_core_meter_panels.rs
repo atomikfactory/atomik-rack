@@ -15,14 +15,27 @@
 //! audio thread only reads it once per batch. The pre-fader switch of the Spectrum EQ window wins
 //! when it looks at the same strip.
 //!
+//! # PRE and POST
+//!
+//! A panel taps the strip **after** its fader by default; its PRE switch taps the signal before
+//! the fader instead (a plugin device: what goes into the plugin). The point belongs to the tap,
+//! which a strip has once, so it is sent per strip: PRE when any open panel of that strip asks for
+//! it ([`EngineSink::set_device_scope_point`], sent every frame with the live flag). Taking a
+//! strip as a second curve does not change its point. The strip still writes nothing while no
+//! panel is open and one flag check per batch is all the audio thread pays.
+//!
 //! # The analysis
 //!
 //! The FFT is the one the panel of the spectrum device runs ([`atomik_dsp::spectrum`]), done here
 //! once a frame on the newest frames of the tap and never on the audio thread; a tap that did not
 //! move since the last frame (a stopped engine) is skipped. The ring of a strip holds 32768
-//! frames, so its panel offers sizes up to 16384; the spectrum *device* has a larger ring and
-//! reaches 65536. The phase panel keeps the newest 2048 frames for the goniometer and measures
-//! their correlation and the level of each side.
+//! frames, enough for sizes up to 16384. A panel that picks 32768 or 65536 first asks the tap for
+//! its large ring ([`EngineSink::reserve_device_scope_large`], 1 MiB, allocated here on the UI
+//! thread, once per device and engine; the audio thread picks it up through a `OnceLock` without
+//! a lock or an allocation, see `atomik_device_sdk::ScopeTap`), so only a strip somebody looks at
+//! with a large window pays the megabyte. Until the large ring has filled, the window holds what
+//! it has. The phase panel keeps the newest 2048 frames for the goniometer and measures their
+//! correlation and the level of each side.
 //!
 //! # The second curve
 //!
@@ -39,10 +52,15 @@ use atomik_ui::analyser::{SCOPE_READ_FRAMES, TRACE_COLUMNS};
 use atomik_ui::{CurveSource, MeterKind, MeterPanelAction, MeterPanelState};
 use std::collections::BTreeSet;
 
-/// The FFT sizes a strip panel offers: up to half its ring.
+/// The FFT sizes a strip panel offers: all of the spectrum device's (the large ring makes the
+/// biggest ones possible).
 fn strip_sizes() -> &'static [usize] {
-    let n = SIZES.iter().take_while(|s| **s <= SCOPE_FRAMES / 2).count();
-    &SIZES[..n]
+    &SIZES
+}
+
+/// Whether a window of `size` points needs the large ring of the tap.
+pub(super) fn needs_large(size: usize) -> bool {
+    size > SCOPE_FRAMES / 2
 }
 
 /// The size a new panel starts at.
@@ -65,6 +83,8 @@ struct Panel {
     target: DeviceKey,
     kind: MeterKind,
     size: usize,
+    /// Tap the signal before the fader.
+    pre: bool,
     from: CurveFrom,
     spectrum: Spectrum,
     second: Spectrum,
@@ -88,12 +108,18 @@ pub(super) struct MeterPanelsState {
     next_id: u32,
     /// The engine devices whose tap was told to be live.
     live: BTreeSet<DeviceInstanceId>,
+    /// The engine devices whose tap already got its large ring.
+    large: BTreeSet<DeviceInstanceId>,
+    /// The folded insert areas the rack view showed at the last frame (`None` until the first
+    /// frame of a project).
+    inserts_last: Option<Vec<DeviceKey>>,
 }
 
 impl MeterPanelsState {
     /// A new engine: every tap is new and off.
     pub(super) fn restart(&mut self) {
         self.live.clear();
+        self.large.clear();
         for p in &mut self.panels {
             p.head = 0;
             p.second_head = 0;
@@ -104,6 +130,8 @@ impl MeterPanelsState {
     pub(super) fn clear(&mut self) {
         self.panels.clear();
         self.live.clear();
+        self.large.clear();
+        self.inserts_last = None;
     }
 }
 
@@ -145,6 +173,7 @@ impl<S: EngineSink> AppCore<S> {
             target: target.clone(),
             kind,
             size: DEFAULT_SIZE,
+            pre: false,
             from: CurveFrom::Off,
             spectrum: Spectrum::new(),
             second: Spectrum::new(),
@@ -166,6 +195,58 @@ impl<S: EngineSink> AppCore<S> {
     /// Closes panel `id`.
     pub fn close_meter_panel(&mut self, id: u32) {
         self.meter_panels.panels.retain(|p| p.id != id);
+        self.feed_meter_panels();
+    }
+
+    /// Opens a panel of `kind` on `target`, or closes it when one is open: the meter button of a
+    /// strip. Returns whether a panel is open afterwards.
+    pub fn toggle_meter_panel(&mut self, target: &DeviceKey, kind: MeterKind) -> bool {
+        let open = self
+            .meter_panels
+            .panels
+            .iter()
+            .find(|p| &p.target == target && p.kind == kind)
+            .map(|p| p.id);
+        match open {
+            Some(id) => {
+                self.close_meter_panel(id);
+                false
+            }
+            None => self.open_meter_panel(target, kind).is_ok(),
+        }
+    }
+
+    /// The strips and devices that have a panel open (the meter buttons of the console light).
+    pub fn meter_panel_targets(&self) -> Vec<DeviceKey> {
+        let mut keys: Vec<DeviceKey> = Vec::new();
+        for p in &self.meter_panels.panels {
+            if !keys.contains(&p.target) {
+                keys.push(p.target.clone());
+            }
+        }
+        keys
+    }
+
+    /// Whether panel `id` taps the signal before the fader.
+    pub fn meter_panel_pre(&self, id: u32) -> Option<bool> {
+        self.meter_panels
+            .panels
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.pre)
+    }
+
+    /// Sets the point panel `id` taps: before (`true`) or after the fader. The panel starts again
+    /// from the new signal.
+    pub fn set_meter_panel_pre(&mut self, id: u32, pre: bool) {
+        let Some(p) = self.meter_panels.panels.iter_mut().find(|p| p.id == id) else {
+            return;
+        };
+        if p.pre == pre {
+            return;
+        }
+        p.pre = pre;
+        p.head = 0;
         self.feed_meter_panels();
     }
 
@@ -216,6 +297,63 @@ impl<S: EngineSink> AppCore<S> {
         out
     }
 
+    /// The rows of the REF list of the Spectrum device `key` and the chosen one (0: no second
+    /// curve): the same choices as a panel's, in the same order.
+    pub(super) fn spectrum_curve_sources(
+        &self,
+        key: &DeviceKey,
+        from: Option<&atomik_model::CurveFrom>,
+    ) -> (Vec<CurveSource>, usize) {
+        let choices = self.meter_curve_choices(key);
+        let wanted = match from {
+            None => CurveFrom::Off,
+            Some(atomik_model::CurveFrom::Reference) => CurveFrom::Reference,
+            Some(atomik_model::CurveFrom::Strip(k)) => CurveFrom::Strip(k.clone()),
+        };
+        let chosen = choices.iter().position(|(c, _)| *c == wanted).unwrap_or(0);
+        let sources = choices
+            .iter()
+            .map(|(c, name)| match c {
+                CurveFrom::Off => CurveSource::Off,
+                CurveFrom::Strip(_) => CurveSource::Strip(name.clone()),
+                CurveFrom::Reference => CurveSource::Reference,
+            })
+            .collect();
+        (sources, chosen)
+    }
+
+    /// Row `index` of the REF list of the Spectrum device `device` (the list its button opened):
+    /// keeps the choice with the device, one undo step. A row that is not there, or the choice
+    /// that is already made, does nothing.
+    pub fn pick_spectrum_curve(&mut self, device: &DeviceKey, index: usize) {
+        let Some((from, _)) = self.meter_curve_choices(device).into_iter().nth(index) else {
+            return;
+        };
+        let new = match from {
+            CurveFrom::Off => None,
+            CurveFrom::Reference => Some(atomik_model::CurveFrom::Reference),
+            CurveFrom::Strip(k) => Some(atomik_model::CurveFrom::Strip(k)),
+        };
+        let mut rows: Vec<atomik_model::SpectrumCurve> = self
+            .doc()
+            .spectrum_curves
+            .iter()
+            .filter(|r| &r.device != device)
+            .cloned()
+            .collect();
+        if let Some(from) = new {
+            rows.push(atomik_model::SpectrumCurve {
+                device: device.clone(),
+                from,
+            });
+        }
+        rows.sort();
+        if rows == self.doc().spectrum_curves {
+            return;
+        }
+        let _ = self.apply_command(Command::SetSpectrumCurves(rows));
+    }
+
     /// Picks the second curve of panel `id`.
     pub fn set_meter_panel_curve(&mut self, id: u32, from: CurveFrom) {
         let Some(at) = self.meter_panels.panels.iter().position(|p| p.id == id) else {
@@ -258,6 +396,11 @@ impl<S: EngineSink> AppCore<S> {
         match action {
             MeterPanelAction::Close(id) => self.close_meter_panel(id),
             MeterPanelAction::Size { id, up } => self.step_meter_panel_size(id, up),
+            MeterPanelAction::Point { id } => {
+                if let Some(pre) = self.meter_panel_pre(id) {
+                    self.set_meter_panel_pre(id, !pre);
+                }
+            }
             MeterPanelAction::Source { id, index } => {
                 let Some(target) = self.meter_panel_target(id).cloned() else {
                     return;
@@ -302,6 +445,7 @@ impl<S: EngineSink> AppCore<S> {
                     peak_hz: p.spectrum.peak_hz(),
                     peak_db: p.spectrum.peak_db(),
                     size: p.size,
+                    pre: p.pre,
                     second,
                     sources,
                     source,
@@ -331,6 +475,37 @@ impl<S: EngineSink> AppCore<S> {
         self.meter_panels.clear();
     }
 
+    /// Keeps the fold state of the insert areas of the rack and the project the same, once a frame
+    /// (see `atomik_model::meter_view`). The rack view owns the toggle: when its set changed since
+    /// the last frame the project takes it (one undo step); when only the project's changed (an
+    /// undo, another file) the view takes that. Keys of devices that are gone are ignored on both
+    /// sides, so deleting a strip is no fold change.
+    pub(super) fn sync_inserts_folded(&mut self) {
+        let doc_known: Vec<DeviceKey> = self
+            .doc()
+            .folded_inserts
+            .iter()
+            .filter(|k| self.doc().device(k).is_some())
+            .cloned()
+            .collect();
+        let view_now = self.view.folded_inserts();
+        match self.meter_panels.inserts_last.take() {
+            None => {
+                self.view.set_folded_inserts(&doc_known);
+            }
+            Some(last) => {
+                if doc_known != view_now {
+                    if view_now != last {
+                        let _ = self.apply_command(Command::SetInsertsFolded(view_now));
+                    } else {
+                        self.view.set_folded_inserts(&doc_known);
+                    }
+                }
+            }
+        }
+        self.meter_panels.inserts_last = Some(self.view.folded_inserts());
+    }
+
     /// Whether the tap of the strip or device `key` is switched on for a panel.
     pub fn meter_tap_live(&self, key: &DeviceKey) -> bool {
         self.ids
@@ -340,7 +515,11 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Feeds the panels (module docs); once per frame from [`Self::frame`].
     pub(super) fn feed_meter_panels(&mut self) {
-        if self.meter_panels.panels.is_empty() && self.meter_panels.live.is_empty() {
+        let curve_taps = self.spectrum_curve_taps();
+        if self.meter_panels.panels.is_empty()
+            && self.meter_panels.live.is_empty()
+            && curve_taps.is_empty()
+        {
             return;
         }
         // A strip or device that is gone closes its panels; a second curve that is gone clears.
@@ -369,29 +548,57 @@ impl<S: EngineSink> AppCore<S> {
                 p.second_head = 0;
             }
         }
-        // The taps that should write: every panel target and every strip drawn as a curve.
+        // The taps that should write: every panel target and every strip drawn as a curve, in
+        // a panel or in a Spectrum device. A tap is PRE when a panel of that strip asks for it
+        // and needs the large ring when a window of its reader is larger than the small one.
         let mut wanted: BTreeSet<DeviceInstanceId> = BTreeSet::new();
+        let mut pre: BTreeSet<DeviceInstanceId> = BTreeSet::new();
+        let mut large: BTreeSet<DeviceInstanceId> = BTreeSet::new();
         for p in &self.meter_panels.panels {
             if let Some(id) = self.ids.get(&p.target) {
                 wanted.insert(*id);
+                if p.pre {
+                    pre.insert(*id);
+                }
+                if needs_large(p.size) && p.kind == MeterKind::Spectrum {
+                    large.insert(*id);
+                }
             }
             if let CurveFrom::Strip(k) = &p.from
                 && let Some(id) = self.ids.get(k)
             {
                 wanted.insert(*id);
+                if needs_large(p.size) {
+                    large.insert(*id);
+                }
+            }
+        }
+        for (key, size) in &curve_taps {
+            if let Some(id) = self.ids.get(key) {
+                wanted.insert(*id);
+                if needs_large(*size) {
+                    large.insert(*id);
+                }
             }
         }
         for id in self.meter_panels.live.clone() {
             if !wanted.contains(&id) {
                 // The device may be gone: a refusal is nothing to show.
                 self.sink.set_device_scope_live(id, false);
+                self.sink.set_device_scope_point(id, false);
                 self.meter_panels.live.remove(&id);
             }
         }
         for id in &wanted {
             // Sent every frame: a replaced device has a new tap that starts off.
             self.sink.set_device_scope_live(*id, true);
+            self.sink.set_device_scope_point(*id, pre.contains(id));
             self.meter_panels.live.insert(*id);
+            // The large ring once per device and engine, never on the audio thread.
+            if large.contains(id) && !self.meter_panels.large.contains(id) {
+                self.sink.reserve_device_scope_large(*id);
+                self.meter_panels.large.insert(*id);
+            }
         }
         let sample_rate = self.doc().sample_rate as f32;
         let mut state = std::mem::take(&mut self.meter_panels);

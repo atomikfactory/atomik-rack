@@ -42,5 +42,7 @@
 {"fill":{"rrect":[230.00,324.00,444.00,340.00,3.00]},"brush":"#0e1013ff"},
 {"text":"RÉF","at":[236.00,336.00],"size":9.00,"weight":600,"align":"start","color":"#8f96a0ff"},
 {"text":"Piste de référence","at":[260.00,336.00],"size":9.50,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"▾","at":[436.00,336.00],"size":9.00,"weight":400,"align":"center","color":"#8f96a0ff"}
+{"text":"▾","at":[436.00,336.00],"size":9.00,"weight":400,"align":"center","color":"#8f96a0ff"},
+{"fill":{"rrect":[194.00,324.00,226.00,340.00,3.00]},"brush":"#0e1013ff"},
+{"text":"POST","at":[210.00,336.00],"size":9.00,"weight":600,"align":"center","color":"#8f96a0ff"}
 ]}

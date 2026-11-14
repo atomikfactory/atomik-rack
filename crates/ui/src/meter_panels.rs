@@ -13,12 +13,13 @@
 //!
 //! The trace over a log frequency axis (20 Hz to 20 kHz) and a 90 dB range, the loudest bin as a
 //! readout, **SIZE** arrows for the FFT size and **REF** with a list: another strip, or the
-//! reference track, drawn as a second curve over the trace for comparison.
+//! reference track, drawn as a second curve over the trace for comparison. The **PRE/POST** chip
+//! beside the size taps the strip before its fader or after it (the default).
 //!
 //! # The phase panel
 //!
 //! The goniometer of the recent frames, the correlation as a bar and a number, and the level of
-//! each side.
+//! each side, and the same PRE/POST chip under the readouts.
 
 use crate::action::UiAction;
 use crate::analyser::{
@@ -87,6 +88,8 @@ pub struct MeterPanelState {
     pub peak_db: f32,
     /// The FFT size in points.
     pub size: usize,
+    /// The panel taps the signal before the fader (PRE) instead of after it (POST).
+    pub pre: bool,
     /// The second curve in dB, one value per column of the plot (empty: none).
     pub second: Vec<f32>,
     /// The choices of the reference list, the first being "no second curve"; the other rows are
@@ -119,7 +122,7 @@ pub enum CurveSource {
 
 impl CurveSource {
     /// The row's label: a strip name is the user's and drawn as typed.
-    fn label(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         match self {
             CurveSource::Off => crate::i18n::tr("Off").into_owned(),
             CurveSource::Strip(n) => n.clone(),
@@ -140,6 +143,11 @@ pub enum MeterPanelAction {
         /// Up (a larger size) or down.
         up: bool,
     },
+    /// Switches panel `id` between the point before the fader (PRE) and the one after it (POST).
+    Point {
+        /// The panel.
+        id: u32,
+    },
     /// Row `index` of the reference list of panel `id`.
     Source {
         /// The panel.
@@ -154,6 +162,7 @@ enum Part {
     Close,
     SizeDown,
     SizeUp,
+    Point,
     Source,
     Title,
 }
@@ -338,6 +347,22 @@ impl MeterPanelsView {
         })
     }
 
+    /// The PRE/POST chip: beside the size arrows of the spectrum, under the readouts of the phase
+    /// meter.
+    pub fn point_rect(&self, id: u32) -> Option<Rect> {
+        let b = self.bounds(id)?;
+        Some(match self.slot(id)?.state.kind {
+            MeterKind::Spectrum => {
+                let y = b.y1 - 22.0;
+                Rect::new(b.x0 + PAD + 114.0, y, b.x0 + PAD + 146.0, y + 16.0)
+            }
+            MeterKind::Phase => {
+                let r = self.plot_rect(id)?;
+                Rect::new(r.x1 + 14.0, r.y1 - 18.0, r.x1 + 58.0, r.y1 - 2.0)
+            }
+        })
+    }
+
     /// The button that opens the reference list.
     pub fn source_rect(&self, id: u32) -> Option<Rect> {
         let b = self.bounds(id)?;
@@ -376,6 +401,9 @@ impl MeterPanelsView {
         }
         if self.close_rect(id)?.contains(pos) {
             return Some(Part::Close);
+        }
+        if self.point_rect(id)?.contains(pos) {
+            return Some(Part::Point);
         }
         if self.slot(id)?.state.kind == MeterKind::Spectrum {
             if self.size_rect(id, false)?.contains(pos) {
@@ -453,6 +481,10 @@ impl MeterPanelsView {
             Part::SizeUp => help(
                 self.size_rect(id, true)?,
                 "A larger FFT: finer, slower to move",
+            ),
+            Part::Point => help(
+                self.point_rect(id)?,
+                "Tap the strip before its fader (PRE) or after it (POST)",
             ),
             Part::Source => help(
                 self.source_rect(id)?,
@@ -559,6 +591,7 @@ impl MeterPanelsView {
             Some(Part::Close) => action(MeterPanelAction::Close(id)),
             Some(Part::SizeDown) => action(MeterPanelAction::Size { id, up: false }),
             Some(Part::SizeUp) => action(MeterPanelAction::Size { id, up: true }),
+            Some(Part::Point) => action(MeterPanelAction::Point { id }),
             Some(Part::Source) => {
                 // Opens (the press that closed it does not reopen it).
                 if !closed && let Some(slot) = self.slots.iter_mut().find(|s| s.state.id == id) {
@@ -636,6 +669,34 @@ impl MeterPanelsView {
             MeterKind::Spectrum => self.paint_spectrum(c, t, i),
             MeterKind::Phase => self.paint_phase(c, t, i),
         }
+        self.paint_point(c, t, i);
+    }
+
+    /// The PRE/POST chip: lit while the strip is tapped before its fader.
+    fn paint_point(&self, c: &mut dyn Canvas, t: &Theme, i: usize) {
+        let st = &self.slots[i].state;
+        let Some(a) = self.point_rect(st.id) else {
+            return;
+        };
+        let hot = self.hover.is_some_and(|p| a.contains(p));
+        let face = if st.pre {
+            t.focus.with_alpha(0.3)
+        } else if hot {
+            t.browser_row
+        } else {
+            t.background
+        };
+        c.fill_with(RoundedRect::from_rect(a, 3.0), face);
+        c.text(
+            &TextRun::new(
+                if st.pre { "PRE" } else { "POST" },
+                pt(a.center().x, a.y0 + 12.0),
+                9.0,
+                if st.pre { t.text } else { t.text_muted },
+            )
+            .align(Align::Center)
+            .weight(600),
+        );
     }
 
     fn paint_spectrum(&self, c: &mut dyn Canvas, t: &Theme, i: usize) {

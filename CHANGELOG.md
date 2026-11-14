@@ -9,6 +9,22 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A meter button on every console strip.** The name plate of a channel, a bus and the master has a small FFT button
+  that opens its spectrum panel and closes it again; it is lit while a panel of that strip is open, and a
+  right-click offers the spectrum or the phase meter. The strip name keeps the rest of the plate.
+- **PRE and POST on the meter panels.** A chip on each panel taps the strip before its fader or after it (the
+  default); a plugin device is tapped before or after the plugin. The audio thread reads one more flag only while a
+  panel is open, and a bounce is the same to the bit.
+- **FFT sizes up to 65536 on the strip and plugin panels.** A strip tap holds 32768 frames; when a panel picks 32768 or
+  65536 points the interface gives the tap a second ring of 1 MiB (on its own thread, once per strip), and the audio
+  thread reaches it without a lock or an allocation. Decision AL in `docs/DECISIONS.md`.
+- **A second curve in the Spectrum device.** A REF button on its plot lists Off, the strips and the reference track and
+  draws the choice over the trace. It is saved with the device in the project (an optional field of format 45 that an
+  older version drops), one undo step per choice.
+- **The reference follows the loop.** While the song plays with the loop on and a reference that follows the playhead is
+  heard, the reference jumps back with the playhead at the loop wrap, as it does after a seek.
+- **The fold state of the insert areas is saved.** Folding or unfolding the inserts of a strip in the rack is kept in
+  the project (an optional field of format 45 that an older version drops), restored on load and undoable.
 - **Separate Stems.** Right-click an audio clip and choose Separate Stems (or find it in the command palette): a small
   dialog asks which stems to make (vocals, drums, bass, other) and whether to mute the original clip, and each stem
   becomes a new audio track under the clip, named after it, with a copy of the clip at the same place with the same

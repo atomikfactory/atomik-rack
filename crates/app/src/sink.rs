@@ -160,6 +160,18 @@ pub trait EngineSink {
     fn set_device_scope_live(&mut self, _id: DeviceInstanceId, _live: bool) -> bool {
         false
     }
+    /// [`atomik_device_sdk::ScopeTap::set_pre`] of the scope tap of a device: whether a meter
+    /// panel wants the signal before the fader (a plugin device: before the plugin) instead of
+    /// after it. Sent every frame like the live flag. Returns whether the device has a tap.
+    fn set_device_scope_point(&mut self, _id: DeviceInstanceId, _pre: bool) -> bool {
+        false
+    }
+    /// [`atomik_device_sdk::ScopeTap::reserve_large`] of the scope tap of a device: allocates the
+    /// large ring (1 MiB, on the calling thread, which is never the audio thread) so that
+    /// analysis windows of 32768 and 65536 points work. Returns whether the device has a tap.
+    fn reserve_device_scope_large(&mut self, _id: DeviceInstanceId) -> bool {
+        false
+    }
     /// The output port each MIDI Out device chose, by device id (`None`: the settings' port).
     /// The sink sends the device's messages there. The default does nothing (no MIDI).
     fn set_midi_out_ports(&mut self, _ports: &[(DeviceInstanceId, Option<String>)]) {}
@@ -419,6 +431,11 @@ pub struct RecordingSink {
     pub device_scopes: BTreeMap<DeviceInstanceId, (Vec<f32>, Vec<f32>, u64)>,
     /// The devices [`EngineSink::set_device_scope_live`] switched on and not off again.
     pub scopes_live: std::collections::BTreeSet<DeviceInstanceId>,
+    /// The devices [`EngineSink::set_device_scope_point`] last asked for the pre-fader point.
+    pub scopes_pre: std::collections::BTreeSet<DeviceInstanceId>,
+    /// The devices [`EngineSink::reserve_device_scope_large`] was called for, with the number of
+    /// calls.
+    pub scopes_large: BTreeMap<DeviceInstanceId, u32>,
     /// The PDC report of the last submitted routing.
     pub pdc: Option<atomik_engine::PdcReport>,
     /// What [`EngineSink::stream_threshold_bytes`] returns.
@@ -665,6 +682,20 @@ impl EngineSink for RecordingSink {
         } else {
             self.scopes_live.remove(&id);
         }
+        true
+    }
+
+    fn set_device_scope_point(&mut self, id: DeviceInstanceId, pre: bool) -> bool {
+        if pre {
+            self.scopes_pre.insert(id);
+        } else {
+            self.scopes_pre.remove(&id);
+        }
+        true
+    }
+
+    fn reserve_device_scope_large(&mut self, id: DeviceInstanceId) -> bool {
+        *self.scopes_large.entry(id).or_default() += 1;
         true
     }
 

@@ -66,6 +66,71 @@ const GRID_HZ: [f64; 28] = [
     20_000.0, 20.0,
 ];
 
+/// The second curve of a Spectrum device: a line over the trace, in the warning colour.
+fn second_curve<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    r: Rect,
+    data: &AnalyserData,
+    range_db: f32,
+    dim: f32,
+) {
+    let n = data.second.len();
+    if n < 2 {
+        return;
+    }
+    let mut path = BezPath::new();
+    let mut down = false;
+    for (i, v) in data.second.iter().enumerate() {
+        if *v <= -150.0 {
+            down = false;
+            continue;
+        }
+        let x = r.x0 + (i as f64 + 0.5) / n as f64 * r.width();
+        let p = pt(x, level_y(r, *v, range_db));
+        if down {
+            path.line_to(p);
+        } else {
+            path.move_to(p);
+            down = true;
+        }
+    }
+    if !path.elements().is_empty() {
+        c.stroke_with(path, 1.5, alpha(theme.warning, 0.9 * dim));
+    }
+}
+
+/// The REF button in the corner of the plot, with the name of the chosen source to its left.
+fn reference_button<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect, data: &AnalyserData) {
+    let b = crate::rack::spectrum_ref_button(r);
+    let chosen = data
+        .second_sources
+        .get(data.second_source)
+        .filter(|_| data.second_source > 0);
+    crate::paint::button_sized(
+        c,
+        theme,
+        b,
+        "REF",
+        !data.second_sources.is_empty(),
+        8.5,
+        0.8,
+    );
+    if let Some(source) = chosen {
+        let label = source.label();
+        c.text(
+            &TextRun::verbatim(
+                crate::paint::fit_label_raw(&label, 110.0, 8.5),
+                pt(b.x0 - 5.0, b.y1 - 3.5),
+                8.5,
+                alpha(theme.warning, 0.95),
+            )
+            .align(Align::End)
+            .weight(600),
+        );
+    }
+}
+
 fn bypassed_banner<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect) {
     c.text(
         &TextRun::new(
@@ -179,6 +244,7 @@ pub fn spectrum<C: Canvas + ?Sized>(
     }
     if !look.spectrogram {
         reference_line(c, theme, r, data, look.range_db, dim);
+        second_curve(c, theme, r, data, look.range_db, dim);
     }
     c.pop_clip();
     // Axis labels.
@@ -237,6 +303,10 @@ pub fn spectrum<C: Canvas + ?Sized>(
             None,
         );
         db += step;
+    }
+    // The REF button and, when a second curve is chosen, its name in the curve's colour.
+    if !look.spectrogram {
+        reference_button(c, theme, r, data);
     }
     // The loudest bin.
     let ro = fx.readout;
