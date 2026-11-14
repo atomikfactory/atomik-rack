@@ -461,6 +461,13 @@ const COMMANDS: &[CommandDef] = &[
     ),
     cmd("browser.move_down", "Browser Down", G::Browser, C::Browser).rep(),
     cmd("browser.move_up", "Browser Up", G::Browser, C::Browser).rep(),
+    cmd(
+        "camera.calibrate",
+        "Calibrate Camera Twist",
+        G::View,
+        C::Global,
+    )
+    .menu(),
     cmd("camera.preview", "Camera Preview", G::View, C::Global).menu(),
     cmd("camera.toggle", "Camera", G::View, C::Global).menu(),
     cmd(
