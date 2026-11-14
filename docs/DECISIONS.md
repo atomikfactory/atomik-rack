@@ -776,14 +776,25 @@ action.
 **Decision.** (2), (2), (2), (2). The camera target is the last control pressed, a `(device or strip, param key)` in
 view state only: never saved, cleared when its device goes (a delete or the undo of its creation), marked with a ring
 and a small lens while the camera is on. A twist of `d` radians adds `d / full_turn` of the normalised range, where
-`full_turn` is the setting "Twist for full range" (90 to 360 degrees, default 270); with "Fine control by distance" the
-hand size at the pinch scales it from 1 (a hand of 0.12 frame heights or smaller, far away) to 0.25 (0.30 or larger,
+`full_turn` is the setting "Twist for full range" (30 to 360 degrees, default 150); with "Fine control by distance" the
+hand size at the pinch scales it from 1 (a hand of 0.12 frame heights or smaller, far away) to 0.5 (0.30 or larger,
 near), linearly in between. A stepped param counts steps from where the pinch began, one for each step width of turn,
 and takes a step back only after a whole step width the other way. The turn is kept inside the range, so there is no
 wind-up. A pinch with no target changes nothing and says "Click a knob first". The camera is off by default, on only
 after the user turns it on (the CAM button, `camera.toggle`, View > Panels > Camera), and off when turned off, when the
 app quits and on any camera error; the hand models download only after the consent dialog's Download. The settings
-(camera, hand, full turn, fine control, pinch sensitivity, preview) are workflow preferences in a `camera` object of
-`workflow.json`, never in a project. The format is not changed.
+(camera, hand, full turn, dead zone, reverse, fine control, pinch sensitivity, preview) are workflow preferences in a
+`camera` object of `workflow.json`, never in a project. The format is not changed.
+
+**Calibration (added after the first hand check).** A wrist turns about 150 degrees from one side to the other, so the
+first defaults (270 degrees, a quarter near the camera) asked for far more twist than a hand gives, and "Pinch
+sensitivity" was read as a twist setting. The default is now 150 degrees, the near scale 0.5, the setting is called
+"Pinch detection", and `camera.calibrate` measures the user: a held still pinch (1.5 s after 0.3 s to settle) gives
+the jitter `j` (peak to peak), then the right end and the left end (each held 0.8 s within max(2, 2j) degrees, the
+right at least 10 degrees from the start, the left at least 20 from the right). `full_turn` is the span between the
+ends, the dead zone (a tracker setting, 0.5 to 6 degrees, default 1.5) is `0.75 j + 0.3`, and `reverse` is set when
+the right end reads below the left. The angle is the tracker's, before `reverse`, so a calibration never depends on
+the last one. Letting go starts again from the still step; 30 s without finishing, the command again or the camera
+going off change nothing. A pinch turns no knob while it runs, and the result is saved to `workflow.json` at once.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
