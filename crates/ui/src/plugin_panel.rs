@@ -375,8 +375,8 @@ fn one_line(reason: &str) -> String {
         .join(" | ")
 }
 
-/// The status lines of a device (MISSING beats CRASHED beats FAILED beats LOADING beats the
-/// meter state).
+/// The status lines of a device (MISSING beats QUARANTINED beats CRASHED beats FAILED beats
+/// LOADING beats the meter state).
 pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines {
     let meter = |i: usize| meters.get(i).copied().unwrap_or(0.0);
     let latency =
@@ -387,6 +387,18 @@ pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines 
             error: true,
             latency: None,
             detail: r.clone(),
+        };
+    }
+    if let Some(reason) = &status.quarantined {
+        return StatusLines {
+            state: "QUARANTINED".into(),
+            error: true,
+            latency: None,
+            detail: if reason.is_empty() {
+                "it failed three times in a row: LOAD ANYWAY tries it".into()
+            } else {
+                one_line(reason)
+            },
         };
     }
     if status.crashed.is_some() || meter(METER_STATE).round() as i32 == 5 {
@@ -604,7 +616,15 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
                 led_button(c, theme, r, b.label(), Some(on), true, accent)
             }
             PluginButton::ToChannel => panel_button(c, theme, r, b.label(), !info.has_channel),
-            PluginButton::Reload => panel_button(c, theme, r, b.label(), !info.status.loading),
+            PluginButton::Reload => {
+                // A quarantined plugin was not loaded: the same button loads it.
+                let label = if info.status.quarantined.is_some() {
+                    fit_label("LOAD ANYWAY", r.width() - 6.0, 7.2)
+                } else {
+                    b.label().to_owned()
+                };
+                panel_button(c, theme, r, &label, !info.status.loading);
+            }
             PluginButton::OpenGui | PluginButton::Params | PluginButton::Relink => {
                 panel_button(c, theme, r, b.label(), true);
             }

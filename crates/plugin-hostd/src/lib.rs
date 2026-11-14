@@ -13,6 +13,7 @@ mod builtin;
 mod control;
 mod driver;
 mod editor;
+mod group;
 mod notify;
 mod panic_report;
 mod winit_driver;
@@ -23,7 +24,7 @@ use std::ffi::OsString;
 use std::process::ExitCode;
 
 /// Usage line.
-pub const USAGE: &str = "usage: atomik-plugin-host clap|vst3|null <plugin-file> <plugin-id> --block <path> --doorbell <name> --parent-pid <pid>";
+pub const USAGE: &str = "usage: atomik-plugin-host clap|vst3|null <plugin-file> <plugin-id> --block <path> --doorbell <name> --parent-pid <pid>\n       atomik-plugin-host --group clap|vst3|null --parent-pid <pid>";
 
 /// How long a child lives on after its parent is gone: enough for the main loop to see the
 /// closed channel and end cleanly, which it does first when it is not stuck.
@@ -31,6 +32,9 @@ const PARENT_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Runs the child with its arguments (without the program name).
 pub fn run(args: Vec<OsString>) -> ExitCode {
+    if args::is_group(&args) {
+        return run_group(&args);
+    }
     let args = match args::parse(&args) {
         Ok(a) => {
             args::with_format_override(a, std::env::var(args::FORMAT_OVERRIDE_ENV).ok().as_deref())
@@ -90,4 +94,32 @@ pub fn run(args: Vec<OsString>) -> ExitCode {
         Err(control) => driver::run_plain(*control),
     };
     ExitCode::from(code)
+}
+
+/// Runs a group child: `--group <format> --parent-pid <pid>`. The instances arrive over the
+/// control channel (`ToGroup::Attach`).
+fn run_group(args: &[OsString]) -> ExitCode {
+    let args = match args::parse_group(args) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("atomik-plugin-host: {e}\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    let frames = match atomik_plugin_ipc::take_frame_stdout() {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("atomik-plugin-host: cannot take the control channel's stdout: {e}");
+            return ExitCode::from(control::EXIT_MISMATCH);
+        }
+    };
+    atomik_plugin_ipc::lifetime::watch_parent(args.parent_pid, PARENT_GRACE);
+    mark_main_thread();
+    let host = group::GroupHost::new(
+        args.format,
+        args.parent_pid,
+        std::env::var(args::FORMAT_OVERRIDE_ENV).ok(),
+        Box::new(frames),
+    );
+    ExitCode::from(group::run(host))
 }

@@ -12,7 +12,9 @@
 use crate::control::{Control, Event, WindowInput};
 use crate::driver::{Post, spawn_reader, spawn_ticker};
 use crate::editor::{NewWindow, WindowSystem, owner_hwnd, reported_size};
+use crate::group::{self, GroupEvent, GroupHost, PostGroup, SlotSystems};
 use atomik_plugin_host::NativeParent;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use winit::application::ApplicationHandler;
@@ -242,13 +244,9 @@ impl ApplicationHandler<Event> for App {
     }
 }
 
-/// Runs the child on a winit event loop and returns its exit code. When the system cannot make an
-/// event loop (no display) the control comes back for the caller to run another way.
-///
-/// # Errors
-/// The control itself, untouched, when no event loop could be made.
-pub fn run(control: Control) -> Result<u8, Box<Control>> {
-    let mut builder = EventLoop::<Event>::with_user_event();
+/// The winit event loop of a child, with the platform choices of the editor windows.
+fn make_event_loop<T: 'static>() -> Result<EventLoop<T>, winit::error::EventLoopError> {
+    let mut builder = EventLoop::<T>::with_user_event();
     // The child is a helper of the application: no Dock icon or menu bar of its own while an
     // editor is open (its windows still show and take the keyboard).
     #[cfg(target_os = "macos")]
@@ -264,7 +262,16 @@ pub fn run(control: Control) -> Result<u8, Box<Control>> {
             builder.with_x11();
         }
     }
-    let event_loop = match builder.build() {
+    builder.build()
+}
+
+/// Runs the child on a winit event loop and returns its exit code. When the system cannot make an
+/// event loop (no display) the control comes back for the caller to run another way.
+///
+/// # Errors
+/// The control itself, untouched, when no event loop could be made.
+pub fn run(control: Control) -> Result<u8, Box<Control>> {
+    let event_loop = match make_event_loop::<Event>() {
         Ok(l) => l,
         Err(e) => {
             eprintln!("atomik-plugin-host: no window system, editors are unavailable: {e}");
@@ -295,6 +302,186 @@ impl App {
         let mut none = crate::driver::NoWindows;
         self.control.shutdown(&mut none);
     }
+}
+
+impl PostGroup for EventLoopProxy<GroupEvent> {
+    fn post(&self, event: GroupEvent) -> bool {
+        self.send_event(event).is_ok()
+    }
+}
+
+/// The window systems of a group: one winit window per slot, valid inside one callback.
+struct SlotWindows<'a> {
+    map: &'a mut BTreeMap<u32, Option<Window>>,
+    event_loop: &'a ActiveEventLoop,
+    current: u32,
+}
+
+impl SlotWindows<'_> {
+    fn with<R>(&mut self, f: impl FnOnce(&mut Windows<'_>) -> R) -> R {
+        let mut windows = Windows {
+            window: self.map.entry(self.current).or_default(),
+            event_loop: self.event_loop,
+        };
+        f(&mut windows)
+    }
+}
+
+impl WindowSystem for SlotWindows<'_> {
+    fn create(
+        &mut self,
+        title: &str,
+        owner: Option<NativeParent>,
+        size: (u32, u32),
+    ) -> Result<NewWindow, String> {
+        self.with(|w| w.create(title, owner, size))
+    }
+
+    fn resize(&mut self, w: u32, h: u32) {
+        self.with(|windows| windows.resize(w, h));
+    }
+
+    fn show(&mut self) {
+        self.with(|w| w.show());
+    }
+
+    fn hide(&mut self) {
+        self.with(|w| w.hide());
+    }
+
+    fn destroy(&mut self) {
+        self.with(|w| w.destroy());
+    }
+
+    fn frame(&self) -> Option<(i32, i32, u32, u32)> {
+        match frame_of(self.map.get(&self.current)?.as_ref()?)? {
+            WindowInput::Frame { x, y, w, h } => Some((x, y, w, h)),
+            _ => None,
+        }
+    }
+}
+
+impl SlotSystems for SlotWindows<'_> {
+    fn select(&mut self, slot: u32) -> &mut dyn WindowSystem {
+        self.current = slot;
+        self
+    }
+
+    fn forget(&mut self, slot: u32) {
+        self.map.remove(&slot);
+    }
+}
+
+struct GroupApp {
+    host: GroupHost,
+    windows: BTreeMap<u32, Option<Window>>,
+    tick_pending: Arc<AtomicBool>,
+    exit: Option<u8>,
+}
+
+impl GroupApp {
+    fn finish(&mut self, event_loop: &ActiveEventLoop, code: Option<u8>) {
+        if let Some(code) = code {
+            self.exit = Some(code);
+            // The windows go before the loop does.
+            self.windows.clear();
+            event_loop.exit();
+        }
+    }
+}
+
+impl ApplicationHandler<GroupEvent> for GroupApp {
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: GroupEvent) {
+        if self.exit.is_some() {
+            return;
+        }
+        if matches!(event, GroupEvent::Tick) {
+            self.tick_pending.store(false, Ordering::Release);
+        }
+        let code = {
+            let mut systems = SlotWindows {
+                map: &mut self.windows,
+                event_loop,
+                current: 0,
+            };
+            self.host.on_event(event, &mut systems)
+        };
+        self.finish(event_loop, code);
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        let Some((slot, window)) = self
+            .windows
+            .iter()
+            .find_map(|(slot, w)| w.as_ref().filter(|w| w.id() == id).map(|w| (*slot, w)))
+        else {
+            return;
+        };
+        let inputs = match event {
+            WindowEvent::CloseRequested => vec![WindowInput::CloseRequested],
+            WindowEvent::Resized(size) if size.width > 0 && size.height > 0 => {
+                let (w, h) = reported_size(
+                    (size.width, size.height),
+                    window.scale_factor(),
+                    cfg!(target_os = "macos"),
+                );
+                vec![WindowInput::Resized(w, h)]
+                    .into_iter()
+                    .chain(frame_of(window))
+                    .collect()
+            }
+            WindowEvent::Moved(_) => frame_of(window).into_iter().collect(),
+            _ => return,
+        };
+        for input in inputs {
+            let code = {
+                let mut systems = SlotWindows {
+                    map: &mut self.windows,
+                    event_loop,
+                    current: slot,
+                };
+                self.host.on_window(slot, input, &mut systems)
+            };
+            self.finish(event_loop, code);
+            if self.exit.is_some() {
+                return;
+            }
+        }
+    }
+}
+
+/// Runs a group child on a winit event loop and returns its exit code. When the system cannot make
+/// an event loop (no display) the group comes back for the caller to run another way.
+///
+/// # Errors
+/// The group itself, untouched, when no event loop could be made.
+pub fn run_group(host: GroupHost) -> Result<u8, Box<GroupHost>> {
+    let event_loop = match make_event_loop::<GroupEvent>() {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("atomik-plugin-host: no window system, editors are unavailable: {e}");
+            return Err(Box::new(host));
+        }
+    };
+    let proxy = event_loop.create_proxy();
+    let tick_pending = Arc::new(AtomicBool::new(false));
+    group::spawn_reader(proxy.clone());
+    group::spawn_ticker(proxy, Arc::clone(&tick_pending));
+    let mut app = GroupApp {
+        host,
+        windows: BTreeMap::new(),
+        tick_pending,
+        exit: None,
+    };
+    if let Err(e) = event_loop.run_app(&mut app) {
+        eprintln!("atomik-plugin-host: the event loop failed: {e}");
+        let mut none = group::NoSlotWindows::default();
+        app.host.on_event(GroupEvent::Eof, &mut none);
+        return Ok(1);
+    }
+    Ok(app.exit.unwrap_or(0))
 }
 
 #[cfg(test)]

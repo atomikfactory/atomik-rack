@@ -63,6 +63,12 @@ fn is_name_or_value(text: &str) -> bool {
         "KEY & CHORD",
         "Arpeggiator",
         "ARPEGGIATOR",
+        // The plugins of the plugin fixture and one of their params.
+        "Test Synth",
+        "TEST SYNTH",
+        "Test Fx",
+        "TEST FX",
+        "Filter Mode",
     ];
     // A shortcut, a level at minus infinity, a file name: values, not words.
     let shortcut = text.contains('+') && text.split('+').all(|k| !k.is_empty() && k.len() < 12);
@@ -525,6 +531,83 @@ fn the_camera_midi_views_in_french() {
             ),
         ]);
         v.set_ports(vec!["Pads".into(), atomik_model::CAMERA_PORT.into()]);
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl);
+        dl
+    });
+}
+
+#[test]
+fn a_quarantined_plugin_device_in_french() {
+    use atomik_ui::plugin_data::PluginDeviceStatus;
+    use support::container::paint_rack;
+    use support::plugin::plugin_rack;
+    let d = plugin_rack();
+    let reg = registry();
+    french("plugin_panel_quarantined_1x.json", || {
+        let mut v = plain_view(d.doc(), &reg);
+        v.set_plugin_status(
+            &key("synth"),
+            PluginDeviceStatus {
+                quarantined: Some("Crashed 3 times in a row: exited with code 3".into()),
+                ..PluginDeviceStatus::default()
+            },
+        );
+        paint_rack(&mut v, d.doc())
+    });
+}
+
+#[test]
+fn the_plugin_manager_with_its_process_column_and_a_quarantine_reason_in_french() {
+    use atomik_device_sdk::PluginFormat;
+    use atomik_ui::plugin_data::{PluginEntryStatus, PluginProcessChoice};
+    use atomik_ui::{PluginManagerData, PluginManagerRow, PluginManagerView};
+    let row = |id: &str, name: &str, status, process| PluginManagerRow {
+        type_id: Some(id.to_owned()),
+        name: name.to_owned(),
+        vendor: "Vendor 1".to_owned(),
+        format: PluginFormat::Clap,
+        category: "Effect".to_owned(),
+        status,
+        process,
+        path: format!("/p/{name}.clap"),
+        scanned_secs: 1,
+        scanned: "2026-11-01 10:00".to_owned(),
+        favourite: false,
+        tags: Vec::new(),
+    };
+    french("plugin_manager_1x.json", || {
+        let mut v = PluginManagerView::new(
+            Theme::dark(),
+            PluginManagerData {
+                rows: vec![
+                    row(
+                        "clap.a",
+                        "Alpha 1",
+                        PluginEntryStatus::Ok,
+                        PluginProcessChoice::Default,
+                    ),
+                    row(
+                        "clap.b",
+                        "Beta 2",
+                        PluginEntryStatus::Quarantined(
+                            "Crashed 3 times in a row: exited with code 3".into(),
+                        ),
+                        PluginProcessChoice::Own,
+                    ),
+                    row(
+                        "clap.c",
+                        "Gamma 3",
+                        PluginEntryStatus::Ok,
+                        PluginProcessChoice::Shared,
+                    ),
+                ],
+                scan: None,
+                scanner_available: true,
+                plugins_on: true,
+            },
+        );
+        v.set_bounds(Rect::new(0.0, 0.0, 1000.0, 700.0));
         let mut dl = DisplayList::new();
         v.paint(&mut dl);
         dl

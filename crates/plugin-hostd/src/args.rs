@@ -104,6 +104,59 @@ pub fn parse(args: &[OsString]) -> Result<Args, String> {
     })
 }
 
+/// The parsed command line of a group child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupArgs {
+    /// The plugin format every instance of the group has.
+    pub format: Format,
+    /// The parent's process id.
+    pub parent_pid: u32,
+}
+
+/// True when the command line asks for a group child (`--group` anywhere).
+pub fn is_group(args: &[OsString]) -> bool {
+    args.iter().any(|a| a.to_str() == Some("--group"))
+}
+
+/// Parses `--group <format> --parent-pid <pid>` (in any order). The error is a short sentence for
+/// stderr.
+pub fn parse_group(args: &[OsString]) -> Result<GroupArgs, String> {
+    let mut format = None;
+    let mut parent_pid = None;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.to_str() {
+            Some("--group") => {
+                let value = it.next().ok_or("--group needs a format")?;
+                format = Some(match value.to_str() {
+                    Some("clap") => Format::Clap,
+                    Some("vst3") => Format::Vst3,
+                    Some("null") => Format::Null,
+                    _ => {
+                        return Err(format!(
+                            "unknown format {} (clap, vst3 or null)",
+                            value.to_string_lossy()
+                        ));
+                    }
+                });
+            }
+            Some("--parent-pid") => {
+                let value = it.next().ok_or("--parent-pid needs a value")?;
+                let t = text(value, "--parent-pid")?;
+                parent_pid = Some(
+                    t.parse::<u32>()
+                        .map_err(|_| format!("--parent-pid is not a process id: {t}"))?,
+                );
+            }
+            _ => return Err(format!("unexpected argument {}", arg.to_string_lossy())),
+        }
+    }
+    Ok(GroupArgs {
+        format: format.ok_or("--group is missing")?,
+        parent_pid: parent_pid.ok_or("--parent-pid is missing")?,
+    })
+}
+
 fn text(value: &OsString, what: &str) -> Result<String, String> {
     value
         .to_str()
@@ -209,6 +262,45 @@ mod tests {
         let mut v = FULL.to_vec();
         v.truncate(8);
         assert!(parse(&os(&v)).unwrap_err().contains("--parent-pid"));
+    }
+
+    #[test]
+    fn a_group_command_line_is_recognised_and_parsed_in_any_order() {
+        let a = os(&["--group", "vst3", "--parent-pid", "9"]);
+        assert!(is_group(&a));
+        assert_eq!(
+            parse_group(&a).unwrap(),
+            GroupArgs {
+                format: Format::Vst3,
+                parent_pid: 9
+            }
+        );
+        let b = os(&["--parent-pid", "3", "--group", "null"]);
+        assert_eq!(parse_group(&b).unwrap().format, Format::Null);
+        assert!(
+            !is_group(&os(&FULL)),
+            "an ungrouped command line is not one"
+        );
+    }
+
+    #[test]
+    fn a_bad_group_command_line_is_refused_with_a_reason() {
+        assert!(parse_group(&os(&["--group"])).is_err());
+        assert!(
+            parse_group(&os(&["--group", "vst2", "--parent-pid", "1"]))
+                .unwrap_err()
+                .contains("vst2")
+        );
+        assert!(
+            parse_group(&os(&["--group", "clap"]))
+                .unwrap_err()
+                .contains("--parent-pid")
+        );
+        assert!(
+            parse_group(&os(&["--group", "clap", "--parent-pid", "1", "x"]))
+                .unwrap_err()
+                .contains('x')
+        );
     }
 
     #[test]

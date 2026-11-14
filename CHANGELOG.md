@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Plugins that share a process.** Settings > Plugins has a PROCESSES button: one process per plugin (the default,
+  as before), one per plugin file, or one shared by all sandboxed plugins of a format. The plugin manager has a
+  PROCESS column where one plugin asks for its own process or the shared one. A group holds up to 16 plugins (the
+  17th starts another process); each plugin in it keeps its own audio block and audio thread. A crash or a hang of
+  one plugin stops every plugin in its process: each device shows CRASHED with a reason that names the group, and
+  RELOAD starts a new one. A change applies to plugins loaded after it. Decision AJ in `docs/DECISIONS.md`.
+- **A quarantined plugin stays out of the projects that use it.** The plugin manager says why a plugin is
+  quarantined (Crashed, Hung or Could not load three times in a row, with the plugin's own words) in the status
+  column and its tooltip. A project that uses it opens normally, but the devices of that plugin are not loaded: they
+  say QUARANTINED with the reason, and LOAD ANYWAY loads one for the session. TRY AGAIN in the manager lifts the
+  quarantine. The project file is unchanged. The sandboxed editor stays a window of its own with the Learn strip
+  docked to it; embedding it in an app window is not built (see decision AJ).
 - **Follow Song Key per clip.** The piano roll's Scale menu has a Follow Song Key check, on by default. Turn it off and
   the clip is not highlighted or snapped by the song key, without giving it a scale of its own. It is an optional
   clip field written only when off, so the project format stays 45. It changes the editor only: Key & Chord and

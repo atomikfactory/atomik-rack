@@ -12,8 +12,8 @@ use atomik_device_sdk::{PluginFormat, PluginRef};
 use atomik_ui::kurbo::{Point, Rect, Vec2};
 use atomik_ui::plugin_banner::BannerKind;
 use atomik_ui::plugin_data::{
-    FailedFileInfo, PluginBannerAction, PluginEntryStatus, PluginRescan, PluginSettingsAction,
-    PluginSettingsData, ScanProgressInfo, SettingsPluginRow,
+    FailedFileInfo, PluginBannerAction, PluginEntryStatus, PluginProcessMode, PluginRescan,
+    PluginSettingsAction, PluginSettingsData, ScanProgressInfo, SettingsPluginRow,
 };
 use atomik_ui::{
     DisplayList, Modifiers, PluginBannerView, PluginSettingsView, PointerButton, Theme, UiAction,
@@ -73,6 +73,7 @@ fn on_data() -> PluginSettingsData {
         log: vec!["[Test Synth] loaded".into(), "[Test Fx] latency 128".into()],
         sandbox: true,
         running_sandboxed: true,
+        process: PluginProcessMode::PerPlugin,
     }
 }
 
@@ -299,6 +300,40 @@ fn the_sandbox_row_says_what_it_does_and_when_it_applies_and_toggles() {
         click_at(&mut v, p)
     };
     assert_eq!(settings(&acts), [PluginSettingsAction::SetSandbox(true)]);
+}
+
+#[test]
+fn the_process_row_steps_through_the_ways_plugins_share_processes() {
+    let mut v = view(on_data());
+    let texts = texts_of(&v);
+    assert!(
+        has(&texts, "PROCESSES: ONE PER PLUGIN"),
+        "the default is today's: {texts:?}"
+    );
+    for (from, to) in [
+        (PluginProcessMode::PerPlugin, PluginProcessMode::PerFile),
+        (PluginProcessMode::PerFile, PluginProcessMode::Shared),
+        (PluginProcessMode::Shared, PluginProcessMode::PerPlugin),
+    ] {
+        let mut data = on_data();
+        data.process = from;
+        let mut v = view(data);
+        let p = v.process_button_rect().unwrap().center();
+        assert_eq!(
+            settings(&click_at(&mut v, p)),
+            [PluginSettingsAction::SetProcessMode(to)]
+        );
+    }
+    let mut data = on_data();
+    data.process = PluginProcessMode::Shared;
+    assert!(has(&texts_of(&view(data)), "PROCESSES: ONE SHARED"));
+    // The row is there with plugins off, like the sandbox row.
+    assert!(
+        view(PluginSettingsData::default())
+            .process_button_rect()
+            .is_some()
+    );
+    let _ = &mut v;
 }
 
 #[test]

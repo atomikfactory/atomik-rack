@@ -1,19 +1,24 @@
 //! The plugin manager's side of the core: what the manager panel shows of the plugins, what its
 //! buttons do, and the quarantine counter.
 //!
-//! The user's decisions (stars, tags, disabled plugins, the quarantine) live in
-//! [`crate::plugins_user::PluginsUser`], keyed by the plugin's stable id, and are saved by the
-//! shell to `plugins_user.json` when [`AppCore::take_plugins_user_change`] says they changed. They
-//! never touch the catalog or the registry: a plugin the user disabled (or that was quarantined)
-//! is hidden from the browser and the menus, and a project that uses it still loads it.
+//! The user's decisions (stars, tags, disabled plugins, the quarantine, the process each plugin
+//! asks for) live in [`crate::plugins_user::PluginsUser`], keyed by the plugin's stable id, and
+//! are saved by the shell to `plugins_user.json` when [`AppCore::take_plugins_user_change`] says
+//! they changed. They never touch the catalog or the registry: a plugin the user disabled (or
+//! that was quarantined) is hidden from the browser and the menus. A project that uses a
+//! disabled plugin still loads it; a project that uses a quarantined one does not: its device
+//! says QUARANTINED with the reason, and LOAD ANYWAY (the RELOAD button) loads it.
 //!
 //! A plugin that crashes (its process ends), or fails to load, three times in a row is
-//! quarantined and a message says so once. An instance that ends without a fault, or a load that
-//! works after a failed one, starts the count again; TRY AGAIN clears the quarantine.
+//! quarantined and a message says so once; the reason of the last failure is kept with it and
+//! shown in the table. An instance that ends without a fault, or a load that works after a failed
+//! one, starts the count again; TRY AGAIN clears the quarantine.
 
 use super::*;
 use crate::plugins_user::QUARANTINE_AFTER;
 use atomik_device_sdk::PluginKindHint;
+use atomik_plugin_host::ProcessChoice;
+use atomik_ui::plugin_data::PluginProcessChoice;
 use atomik_ui::{PluginManagerAction, PluginManagerData, PluginManagerRow};
 
 /// What the plugin says it is, as the manager's category column writes it.
@@ -22,6 +27,14 @@ fn category_of(kind: PluginKindHint) -> &'static str {
         PluginKindHint::Instrument => "Instrument",
         PluginKindHint::Effect => "Effect",
         PluginKindHint::NoteEffect => "Note effect",
+    }
+}
+
+fn process_pick(choice: ProcessChoice) -> PluginProcessChoice {
+    match choice {
+        ProcessChoice::Default => PluginProcessChoice::Default,
+        ProcessChoice::Own => PluginProcessChoice::Own,
+        ProcessChoice::Shared => PluginProcessChoice::Shared,
     }
 }
 
@@ -43,6 +56,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.user = user;
         self.plugins.user_changed = false;
         self.plugins.catalog_dirty = true;
+        self.apply_process_grouping();
     }
 
     /// The decisions after a change, once: the shell saves them.
@@ -55,10 +69,12 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.catalog_dirty = true;
     }
 
-    /// A plugin crashed or failed to load. The third failure in a row quarantines it, and says so
-    /// once.
-    pub(crate) fn plugin_failed_in_a_row(&mut self, type_id: &str) {
-        let newly = self.plugins.user.record_failure(type_id);
+    /// A plugin crashed or failed to load (`kind` says which: "Crashed", "Hung" or "Could not
+    /// load", then the plugin's own `detail`). The third failure in a row quarantines it, keeps
+    /// why, and says so once.
+    pub(crate) fn plugin_failed_in_a_row(&mut self, type_id: &str, kind: &str, detail: &str) {
+        let why = format!("{kind} {QUARANTINE_AFTER} times in a row: {detail}");
+        let newly = self.plugins.user.record_failure_because(type_id, &why);
         self.user_changed();
         if newly {
             let name = PluginRef::from_type_id(type_id)
@@ -103,7 +119,9 @@ impl<S: EngineSink> AppCore<S> {
                 let id = e.plugin.type_id();
                 let status = match entry_status(&e.status) {
                     PluginEntryStatus::Ok if user.is_quarantined(&id) => {
-                        PluginEntryStatus::Quarantined
+                        PluginEntryStatus::Quarantined(
+                            user.quarantine_reason(&id).unwrap_or_default().to_owned(),
+                        )
                     }
                     PluginEntryStatus::Ok if user.is_disabled(&id) => PluginEntryStatus::Disabled,
                     PluginEntryStatus::Ok => match self.plugins.settings.crashed.get(&id) {
@@ -120,12 +138,13 @@ impl<S: EngineSink> AppCore<S> {
                 PluginManagerRow {
                     favourite: user.is_favourite(&id),
                     tags: user.tags_of(&id).to_vec(),
-                    type_id: Some(id),
+                    type_id: Some(id.clone()),
                     name: e.name.clone(),
                     vendor: e.vendor.clone(),
                     format: e.plugin.format,
                     category: category_of(e.kind).to_owned(),
                     status,
+                    process: process_pick(user.process_of(&id)),
                     path: e.path.to_string_lossy().into_owned(),
                     scanned_secs,
                     scanned: stamp(scanned_secs),
@@ -139,6 +158,7 @@ impl<S: EngineSink> AppCore<S> {
             format: f.format,
             category: String::new(),
             status: PluginEntryStatus::Failed(f.reason.clone()),
+            process: PluginProcessChoice::Default,
             path: f.path.to_string_lossy().into_owned(),
             scanned_secs: f.date_secs,
             scanned: stamp(f.date_secs),
@@ -181,9 +201,23 @@ impl<S: EngineSink> AppCore<S> {
                     self.settings_changed();
                 }
             }
+            PluginManagerAction::SetProcess { type_id, choice } => {
+                let choice = match choice {
+                    PluginProcessChoice::Default => ProcessChoice::Default,
+                    PluginProcessChoice::Own => ProcessChoice::Own,
+                    PluginProcessChoice::Shared => ProcessChoice::Shared,
+                };
+                if self.plugins.user.set_process(type_id, choice) {
+                    self.user_changed();
+                    // Instances loaded from now on follow it; running ones keep their process.
+                    self.apply_process_grouping();
+                }
+            }
             PluginManagerAction::TryAgain(type_ids) => {
+                let mut lifted = false;
                 for id in type_ids {
                     let cleared = self.plugins.user.try_again(id);
+                    lifted |= cleared;
                     if self.plugins.settings.clear_crashed(id) {
                         self.plugins.settings_changed = true;
                     }
@@ -193,6 +227,10 @@ impl<S: EngineSink> AppCore<S> {
                     }
                 }
                 self.plugins.catalog_dirty = true;
+                if lifted {
+                    // The devices that waited behind a quarantine load now.
+                    self.refresh_plugin_catalog();
+                }
             }
             PluginManagerAction::AddTag { type_ids, tag } => {
                 for id in type_ids {

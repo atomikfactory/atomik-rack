@@ -51,8 +51,8 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-plugin-vst3` | [crates/plugin-vst3](../crates/plugin-vst3) | core, device-sdk, plugin-host (vst3, libloading) | `crate` | The VST3 backend, hosting `.vst3` modules through the `vst3` bindings (every `unsafe` block has a `SAFETY:` comment) |
 | `atomik-plugin-scan` | [crates/plugin-scan](../crates/plugin-scan) | device-sdk, plugin-host, plugin-clap, plugin-vst3 | none | The out-of-process scanner (bin `atomik-plugin-scan`) |
 | `atomik-plugin-ipc` | [crates/plugin-ipc](../crates/plugin-ipc) | core, device-sdk, plugin-host (memmap2, windows-sys, libc) | `crate` | The sandbox wire: the shared audio block, the doorbell, the control-channel frames and messages; the only sandbox crate with `unsafe` |
-| `atomik-plugin-sandbox` | [crates/plugin-sandbox](../crates/plugin-sandbox) | core, device-sdk, plugin-host, plugin-ipc | none | The sandbox, app side: `SandboxBackend`, one child process per plugin instance |
-| `atomik-plugin-hostd` | [crates/plugin-hostd](../crates/plugin-hostd) | core, device-sdk, plugin-host, plugin-ipc, plugin-clap, plugin-vst3 (winit) | `tests/support/owner_window.rs` (a test helper) | The sandbox child (bin `atomik-plugin-host`): hosts one plugin instance |
+| `atomik-plugin-sandbox` | [crates/plugin-sandbox](../crates/plugin-sandbox) | core, device-sdk, plugin-host, plugin-ipc | none | The sandbox, app side: `SandboxBackend`, one child process per plugin instance, or one for a group of up to 16 |
+| `atomik-plugin-hostd` | [crates/plugin-hostd](../crates/plugin-hostd) | core, device-sdk, plugin-host, plugin-ipc, plugin-clap, plugin-vst3 (winit) | `tests/support/owner_window.rs` (a test helper) | The sandbox child (bin `atomik-plugin-host`): hosts one plugin instance, or a group of them (`--group`) |
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), model | none | Platform-independent views, widgets, display lists, theme |
@@ -5042,6 +5042,15 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   itself). The child hosts the instance with the real CLAP or VST3 backend; its main thread is the
   plugin main thread (control channel, timers, the editor window) and an audio thread serves the
   shared block. The parent never loads a plugin file.
+  - *Groups.* With Settings > Plugins > PROCESSES (or a choice of one plugin in the plugin manager) several
+    instances share a child, `atomik-plugin-host --group <format> --parent-pid <pid>`, up to 16 (a 17th starts
+    another child), per plugin file or per format. The child's stdin and stdout then carry slot frames (a `u32`
+    slot, a `u32` length, one ordinary control frame): slot 0 is the group (`Attach`, `AttachFailed`, `Detached`),
+    every other slot is one instance with its own shared block, doorbell, audio thread, control and editor
+    window. The app gives each instance a virtual transport over the shared child, so `Link` and `RemoteInstance`
+    are unchanged and nothing on the audio path knows about groups. The crash domain is the process: when it
+    ends or is stopped every member is lost and each reason names the group. An instance that is dropped leaves
+    its slot and the process goes on. With the default setting the wire is the ungrouped one.
   - *Control channel.* The child's stdin and stdout carry frames (a little-endian `u32` length, a
     JSON message, an optional binary payload such as a state blob). Every request has an id and
     exactly one reply; plugin callbacks come back as notifications and reach the instance's
@@ -5170,7 +5179,8 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   matrix, and have not been checked by hand with a window; the editor window of the child is a
   utility window on X11 (a hint) and its macOS process is an accessory (no Dock icon), neither
   checked by hand; one process per
-  instance costs memory with many instances; a sandboxed editor is a separate window, not embedded.
+  instance costs memory with many instances (a group shares one, and shares its fate); a sandboxed editor is a
+  separate window, not embedded (see decision AJ).
 
 ## 6g. Input, commands and the keymap
 

@@ -1259,6 +1259,7 @@ mod tests {
                 )]
                 .into(),
                 sandbox: false,
+                process: atomik_plugin_host::ProcessMode::PerFile,
             },
             surfaces: vec![SurfaceSettings {
                 name: "Desk".into(),

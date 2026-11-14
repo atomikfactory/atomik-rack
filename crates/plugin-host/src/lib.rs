@@ -60,7 +60,10 @@ pub use scan::{
     ALL_FORMATS, FailureKind, MAX_PARALLEL_SCANS, RescanMode, ScanEnv, ScanError, ScanFailure,
     ScanJob, ScanProgress, ScanReport, ScanRequest, ScanResult, ScanRunner, parallel_scans, rescan,
 };
-pub use settings::{DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, PluginSettings};
+pub use settings::{
+    DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, PluginSettings, ProcessChoice,
+    ProcessMode,
+};
 pub use slot::{
     DeviceEnd, DeviceState, HostMessenger, InstanceId, LogLevel, MESSAGE_CAPACITY, ManagerEnd,
     ParamPhase, PluginMessage, PluginSlot, ReapItem, ReaperQueue, plugin_channel, warm, warmed,

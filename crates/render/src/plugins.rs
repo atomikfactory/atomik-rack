@@ -17,11 +17,12 @@ use atomik_device_sdk::{PluginFormat, PluginRef, Registry, RunMode};
 use atomik_plugin_clap::ClapBackend;
 use atomik_plugin_host::{
     BackendError, CachedFile, FileStamp, HostHandle, LoadStatus, ManagerEvent, PluginBackend,
-    PluginCache, PluginCatalog, PluginInstance, PluginManager, PluginSettings, RegisterReport,
-    SCANNER_VERSION, ScannedPlugin, mark_main_thread,
+    PluginCache, PluginCatalog, PluginInstance, PluginManager, PluginSettings, ProcessChoice,
+    ProcessMode, RegisterReport, SCANNER_VERSION, ScannedPlugin, mark_main_thread,
 };
 use atomik_plugin_sandbox::{HostCommand, SandboxBackend, SandboxConfig};
 use atomik_plugin_vst3::Vst3Backend;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -253,6 +254,26 @@ impl PluginHost {
             Backends::InProcess { .. } => false,
             Backends::Sandbox { .. } => true,
             Backends::Custom { sandboxed } => *sandboxed,
+        }
+    }
+
+    /// Tells the sandbox how instances created from now on share child processes: `mode` for
+    /// every plugin and `choices` for the plugins that ask for something else. Nothing happens
+    /// in process (there is no child), and running instances keep the child they have.
+    pub fn set_process_grouping(
+        &self,
+        mode: ProcessMode,
+        choices: &BTreeMap<PluginRef, ProcessChoice>,
+    ) {
+        if let Backends::Sandbox { clap, vst3 } = &self.backends {
+            for backend in [clap, vst3] {
+                let own: BTreeMap<PluginRef, ProcessChoice> = choices
+                    .iter()
+                    .filter(|(p, _)| p.format == backend.format())
+                    .map(|(p, c)| (p.clone(), *c))
+                    .collect();
+                backend.set_grouping(mode, own);
+            }
         }
     }
 

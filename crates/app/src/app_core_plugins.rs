@@ -103,8 +103,8 @@ use atomik_plugin_host::{
 use atomik_render::plugins::{PluginHost, PluginIsolation};
 use atomik_ui::plugin_data::{
     FailedFileInfo, PluginBannerAction, PluginDeviceStatus, PluginEntryInfo, PluginEntryStatus,
-    PluginMarks, PluginRescan, PluginSettingsAction, PluginSettingsData, PresetItem,
-    ScanProgressInfo, SettingsPluginRow,
+    PluginMarks, PluginProcessMode, PluginRescan, PluginSettingsAction, PluginSettingsData,
+    PresetItem, ScanProgressInfo, SettingsPluginRow,
 };
 use atomik_ui::{BannerKind, PluginGestureMerger, PluginParamsView, UiAction};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -453,6 +453,9 @@ pub(super) struct PluginState {
     load_failed: BTreeSet<String>,
     /// Instances that crashed or failed: their end is not a success.
     bad: BTreeSet<InstanceId>,
+    /// Devices whose quarantined plugin the user chose to load anyway (until the document is
+    /// replaced).
+    load_anyway: BTreeSet<DeviceKey>,
 }
 
 impl PluginState {
@@ -518,6 +521,7 @@ impl PluginState {
             user_changed: false,
             load_failed: BTreeSet::new(),
             bad: BTreeSet::new(),
+            load_anyway: BTreeSet::new(),
         }
     }
 
@@ -582,7 +586,11 @@ fn entry_infos(catalog: &PluginCatalog, user: &PluginsUser) -> Vec<PluginEntryIn
         .map(|e| {
             let id = e.plugin.type_id();
             let status = match entry_status(&e.status) {
-                PluginEntryStatus::Ok if user.is_quarantined(&id) => PluginEntryStatus::Quarantined,
+                PluginEntryStatus::Ok if user.is_quarantined(&id) => {
+                    PluginEntryStatus::Quarantined(
+                        user.quarantine_reason(&id).unwrap_or_default().to_owned(),
+                    )
+                }
                 PluginEntryStatus::Ok if user.is_disabled(&id) => PluginEntryStatus::Disabled,
                 status => status,
             };
@@ -680,6 +688,7 @@ impl<S: EngineSink> AppCore<S> {
         p.paths = config.paths;
         p.runner = config.runner;
         p.previous_crash = config.previous_crash;
+        self.apply_process_grouping();
         self.refresh_plugin_catalog();
         if let Some(crashed) = self.plugins.previous_crash.clone() {
             let has_recovery = self
@@ -821,7 +830,10 @@ impl<S: EngineSink> AppCore<S> {
                 if !alike {
                     rebuild = true;
                 }
-            } else if installed && !self.plugins.pending.contains(&key) {
+            } else if installed
+                && !self.plugins.pending.contains(&key)
+                && !self.quarantine_blocks(&plugin, &key)
+            {
                 self.plugins.failed.remove(&key);
                 self.plugins.pending.push_back(key);
                 self.plugins.batch_total += 1;
@@ -833,6 +845,28 @@ impl<S: EngineSink> AppCore<S> {
     /// True when `plugin` can be used now: plugins are on and the catalog lists it OK.
     fn plugin_usable(&self, plugin: &PluginRef) -> bool {
         self.plugins.settings.enabled && self.plugins.host.is_installed(plugin)
+    }
+
+    /// True when the quarantine keeps the instance of `key` from being created: the plugin is
+    /// quarantined and the user has not chosen LOAD ANYWAY for this device. The device stays a
+    /// stand-in that says QUARANTINED, and the rest of the project opens as usual.
+    fn quarantine_blocks(&self, plugin: &PluginRef, key: &DeviceKey) -> bool {
+        self.plugins.user.is_quarantined(&plugin.type_id())
+            && !self.plugins.load_anyway.contains(key)
+    }
+
+    /// Tells the sandbox how instances created from now on share child processes: the setting,
+    /// and what single plugins ask for in the plugin manager.
+    pub(crate) fn apply_process_grouping(&self) {
+        use atomik_plugin_host::ProcessMode;
+        let mode = if self.plugins.settings.sandbox {
+            self.plugins.settings.process
+        } else {
+            ProcessMode::PerPlugin
+        };
+        self.plugins
+            .host
+            .set_process_grouping(mode, &self.plugins.user.process_choices());
     }
 
     // ------------------------------------------------------------------ insert path
@@ -901,7 +935,11 @@ impl<S: EngineSink> AppCore<S> {
         let descriptor = factory.descriptor;
         let standin = self.registry.create(&type_id)?;
         self.plugins.live_desc.remove(key);
-        if usable && !self.plugins.failed.contains_key(key) && !self.plugins.pending.contains(key) {
+        if usable
+            && !self.plugins.failed.contains_key(key)
+            && !self.plugins.pending.contains(key)
+            && !self.quarantine_blocks(&plugin, key)
+        {
             self.plugins.pending.push_back(key.clone());
             self.plugins.batch_total += 1;
         }
@@ -992,6 +1030,7 @@ impl<S: EngineSink> AppCore<S> {
             self.plugins.dirty.clear();
             self.plugins.failed.clear();
             self.plugins.crashed.clear();
+            self.plugins.load_anyway.clear();
             self.plugins.no_capture.clear();
             self.plugins.live_desc.clear();
         }
@@ -1065,6 +1104,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.failed.remove(flat);
         self.plugins.crashed.remove(flat);
         self.plugins.auto_reloads.remove(flat);
+        self.plugins.load_anyway.remove(flat);
         self.plugins.no_capture.remove(flat);
         self.plugins.shown.remove(flat);
         self.view
@@ -1270,7 +1310,12 @@ impl<S: EngineSink> AppCore<S> {
                         self.plugins.settings_changed = true;
                         // Three in a row quarantine it (see the plugin manager).
                         self.plugins.bad.insert(instance);
-                        self.plugin_failed_in_a_row(&type_id);
+                        let kind = if reason.starts_with(HUNG) {
+                            "Hung"
+                        } else {
+                            "Crashed"
+                        };
+                        self.plugin_failed_in_a_row(&type_id, kind, &reason);
                     }
                     let hung = reason.starts_with(HUNG);
                     self.plugins.crashed.insert(key.clone(), reason);
@@ -1441,10 +1486,10 @@ impl<S: EngineSink> AppCore<S> {
             Err(e) => {
                 let message = e.to_string();
                 self.plugins.log(format!("[{key}] cannot load: {message}"));
-                self.plugins.failed.insert(key, message);
+                self.plugins.failed.insert(key, message.clone());
                 let type_id = plugin.type_id();
                 self.plugins.load_failed.insert(type_id.clone());
-                self.plugin_failed_in_a_row(&type_id);
+                self.plugin_failed_in_a_row(&type_id, "Could not load", &message);
             }
         }
     }
@@ -1966,7 +2011,10 @@ impl<S: EngineSink> AppCore<S> {
         let (powered, pinned, plugin) = (pd.powered, pd.run_on_audio_thread, pd.plugin_ref());
         let Some(id) = self.plugins.instances.get(device).copied() else {
             // A stand-in whose plugin changed (a relink): queue the new one.
-            if self.plugin_usable(&plugin) && !self.plugins.pending.contains(device) {
+            if self.plugin_usable(&plugin)
+                && !self.plugins.pending.contains(device)
+                && !self.quarantine_blocks(&plugin, device)
+            {
                 self.plugins.failed.remove(device);
                 self.plugins.pending.push_back(device.clone());
                 self.plugins.batch_total += 1;
@@ -2236,6 +2284,8 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::ClosePluginParams => self.close_plugin_params(),
             UiAction::ReloadPlugin { device } => {
                 self.plugins.auto_reloads.remove(device);
+                // RELOAD on a quarantined plugin is LOAD ANYWAY.
+                self.plugins.load_anyway.insert(device.clone());
                 self.reload_plugin(device);
             }
             UiAction::LoadPluginPreset { device, preset } => {
@@ -2332,6 +2382,10 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Queues the creation of an instance for `device` (one per frame), or says why not.
     fn queue_instance(&mut self, device: &DeviceKey, plugin: &PluginRef) {
+        if self.quarantine_blocks(plugin, device) {
+            // The device says QUARANTINED; LOAD ANYWAY is the user's decision.
+            return;
+        }
         if self.plugin_usable(plugin) {
             if !self.plugins.pending.contains(device) {
                 self.plugins.pending.push_back(device.clone());
@@ -2494,6 +2548,7 @@ impl<S: EngineSink> AppCore<S> {
                 missing: None,
                 failed,
                 crashed: self.plugins.crashed.get(key).cloned(),
+                quarantined: None,
                 loading: false,
                 waiting,
             },
@@ -2502,9 +2557,28 @@ impl<S: EngineSink> AppCore<S> {
                 missing: None,
                 failed,
                 crashed: None,
+                quarantined: None,
                 loading: true,
                 waiting: None,
             },
+            // The plugin is installed but quarantined: the project did not load it.
+            None if self.plugin_usable(plugin) && self.quarantine_blocks(plugin, key) => {
+                PluginDeviceStatus {
+                    has_editor: false,
+                    missing: None,
+                    failed,
+                    crashed: None,
+                    quarantined: Some(
+                        self.plugins
+                            .user
+                            .quarantine_reason(&plugin.type_id())
+                            .unwrap_or_default()
+                            .to_owned(),
+                    ),
+                    loading: false,
+                    waiting: None,
+                }
+            }
             // The plugin is installed but its instance could not be created: FAILED with the
             // reason (RELOAD tries again), not MISSING.
             None if failed.is_some() && self.plugin_usable(plugin) => PluginDeviceStatus {
@@ -2512,6 +2586,7 @@ impl<S: EngineSink> AppCore<S> {
                 missing: None,
                 failed,
                 crashed: None,
+                quarantined: None,
                 loading: false,
                 waiting: None,
             },
@@ -2520,6 +2595,7 @@ impl<S: EngineSink> AppCore<S> {
                 missing: Some(self.missing_reason(plugin)),
                 failed,
                 crashed: None,
+                quarantined: None,
                 loading: false,
                 waiting: None,
             },
@@ -2650,6 +2726,11 @@ impl<S: EngineSink> AppCore<S> {
             last_scan: self.plugins.scan_note.clone(),
             log: self.plugins.log.iter().cloned().collect(),
             sandbox: self.plugins.settings.sandbox,
+            process: match self.plugins.settings.process {
+                atomik_plugin_host::ProcessMode::PerPlugin => PluginProcessMode::PerPlugin,
+                atomik_plugin_host::ProcessMode::PerFile => PluginProcessMode::PerFile,
+                atomik_plugin_host::ProcessMode::Shared => PluginProcessMode::Shared,
+            },
             running_sandboxed: self.plugin_sandboxed(),
         }
     }
@@ -2686,6 +2767,16 @@ impl<S: EngineSink> AppCore<S> {
                 // Saved now, applied at the next start: this run's host is not touched.
                 self.plugins.settings.sandbox = *on;
                 self.plugins.settings_changed = true;
+            }
+            PluginSettingsAction::SetProcessMode(mode) => {
+                self.plugins.settings.process = match mode {
+                    PluginProcessMode::PerPlugin => atomik_plugin_host::ProcessMode::PerPlugin,
+                    PluginProcessMode::PerFile => atomik_plugin_host::ProcessMode::PerFile,
+                    PluginProcessMode::Shared => atomik_plugin_host::ProcessMode::Shared,
+                };
+                self.plugins.settings_changed = true;
+                // Plugins loaded from now on follow it; running ones keep their process.
+                self.apply_process_grouping();
             }
             PluginSettingsAction::SetPluginDisabled { type_id, disabled } => {
                 if *disabled {
