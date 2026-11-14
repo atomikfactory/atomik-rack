@@ -211,6 +211,7 @@ Affichage
     Vidéo
     Caméra
     Aperçu de la caméra
+    Calibrer la rotation de la caméra
     Navigateur du rack
     Tri du rack >
       Aucun groupement

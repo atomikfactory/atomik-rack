@@ -37,6 +37,11 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Hands the views the core's state; called once a frame.
     pub(super) fn sync_camera_ui(&mut self) {
+        if let Some(prefs) = self.core.take_camera_calibrated() {
+            // A calibration finished: its settings are the user's from now on.
+            self.workflow.camera = prefs;
+            self.save_workflow();
+        }
         let size = self.size();
         match self.core.camera_dialog().cloned() {
             Some(state) => {
