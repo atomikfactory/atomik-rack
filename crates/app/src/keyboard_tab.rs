@@ -54,6 +54,8 @@ pub(crate) enum TabOutcome {
     ListCameras,
     /// The Camera tab asks for the downloaded hand models to be deleted.
     DeleteCameraModels,
+    /// The Camera tab asks for a twist calibration (the dialog is applied and closes).
+    CalibrateCamera,
     /// The Themes tab asks the shell for something.
     Theme(crate::themes_tab::ThemeAction),
 }

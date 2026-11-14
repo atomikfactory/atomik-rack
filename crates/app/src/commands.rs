@@ -268,6 +268,9 @@ pub enum AppCommand {
     ToggleCamera,
     /// Shows or hides the camera preview box.
     ToggleCameraPreview,
+    /// Measures the user's wrist twist and still-hand jitter and sets the twist settings
+    /// (turning the camera on); a second time cancels it.
+    CalibrateCamera,
     /// View > Tempo Lane: the tempo curve lane between the ruler and the track lanes in the
     /// arrangement (saved with the view state).
     ToggleTempoLane,
@@ -1038,6 +1041,7 @@ impl AppCommand {
             AppCommand::ToggleBigMeter => ("view.toggle_big_meter", None),
             AppCommand::ToggleCamera => ("camera.toggle", None),
             AppCommand::ToggleCameraPreview => ("camera.preview", None),
+            AppCommand::CalibrateCamera => ("camera.calibrate", None),
             AppCommand::ToggleTempoLane => ("view.toggle_tempo_lane", None),
             AppCommand::ToggleEnergyLane => ("view.toggle_energy_lane", None),
             AppCommand::ToggleKeyLane => ("view.toggle_key_lane", None),
@@ -1453,6 +1457,7 @@ impl AppCommand {
             ("view.toggle_big_meter", None) => AppCommand::ToggleBigMeter,
             ("camera.toggle", None) => AppCommand::ToggleCamera,
             ("camera.preview", None) => AppCommand::ToggleCameraPreview,
+            ("camera.calibrate", None) => AppCommand::CalibrateCamera,
             ("view.toggle_tempo_lane", None) => AppCommand::ToggleTempoLane,
             ("view.toggle_energy_lane", None) => AppCommand::ToggleEnergyLane,
             ("view.toggle_key_lane", None) => AppCommand::ToggleKeyLane,
@@ -3353,6 +3358,7 @@ fn menus_in_english(
                             AppCommand::ToggleCameraPreview,
                             state.camera_preview,
                         ),
+                        item("Calibrate Camera Twist", AppCommand::CalibrateCamera),
                         check(
                             "Rack Navigator",
                             AppCommand::ToggleRackNavigator,
@@ -4898,6 +4904,7 @@ mod tests {
             AppCommand::ToggleBigMeter,
             AppCommand::ToggleCamera,
             AppCommand::ToggleCameraPreview,
+            AppCommand::CalibrateCamera,
             AppCommand::ToggleTempoLane,
             AppCommand::ToggleEnergyLane,
             AppCommand::RefreshEnergyLane,
