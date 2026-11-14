@@ -577,3 +577,77 @@ fn an_insert_dropped_on_another_channel_moves_chains_in_one_step() {
     assert_eq!(chain(&d, &r, &second), vec![moved]);
     assert_stacked(&d, &r);
 }
+
+#[test]
+fn moving_an_instrument_to_another_column_takes_its_channel_and_inserts() {
+    let (mut d, r, ch) = rack(2);
+    let before = chain(&d, &r, &ch);
+    run(&mut d, &r, [Command::AddRackColumn]);
+    one_step(
+        &mut d,
+        &r,
+        wf(WorkflowCommand::MoveDevicesToSlot {
+            keys: vec![key("synth")],
+            slot: RackSlot {
+                column: 1,
+                index: 0,
+            },
+            route: true,
+        }),
+    );
+    let column = |d: &Document, k: &DeviceKey| d.doc().device(k).unwrap().column;
+    assert_eq!(column(&d, &key("synth")), 1);
+    assert_eq!(column(&d, &ch), 1, "the channel came along");
+    let all = order(&d);
+    let at = all.iter().position(|k| k == &key("synth")).unwrap();
+    assert_eq!(all[at + 1], ch, "right under its instrument");
+    assert_eq!(chain(&d, &r, &ch), before, "the chain is untouched");
+    assert_stacked(&d, &r);
+    // One undo puts all of it back.
+    assert!(d.undo().is_some());
+    assert_eq!(column(&d, &key("synth")), 0);
+    assert_eq!(column(&d, &ch), 0);
+}
+
+#[test]
+fn moving_an_instrument_along_its_column_keeps_its_channel_under_it() {
+    let (mut d, r, ch) = rack(1);
+    run(&mut d, &r, [add(usize::MAX, "atomik.eq", Some("tail"))]);
+    run(
+        &mut d,
+        &r,
+        [wf(WorkflowCommand::MoveDevices {
+            keys: vec![key("synth")],
+            to: usize::MAX,
+            route: false,
+        })],
+    );
+    let all = order(&d);
+    let at = all.iter().position(|k| k == &key("synth")).unwrap();
+    assert_eq!(all[at + 1], ch, "{all:?}");
+    assert!(
+        all.iter().position(|k| k == &key("tail")).unwrap() < at,
+        "the block went below the other device: {all:?}"
+    );
+    assert_stacked(&d, &r);
+}
+
+#[test]
+fn a_channel_moved_by_itself_leaves_its_instrument() {
+    let (mut d, r, ch) = rack(0);
+    run(&mut d, &r, [Command::AddRackColumn]);
+    run(
+        &mut d,
+        &r,
+        [wf(WorkflowCommand::MoveDevicesToSlot {
+            keys: vec![ch.clone()],
+            slot: RackSlot {
+                column: 1,
+                index: 0,
+            },
+            route: false,
+        })],
+    );
+    assert_eq!(d.doc().device(&ch).unwrap().column, 1);
+    assert_eq!(d.doc().device(&key("synth")).unwrap().column, 0);
+}

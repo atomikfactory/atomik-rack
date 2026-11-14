@@ -20,7 +20,8 @@
 //! While the mode is not Free, every edit that adds, removes or moves a top-level device ends
 //! with the layout that mode asks for, inside the same compound edit, so one undo step undoes
 //! the edit and its re-sorting together. A move of one device in such a mode moves its whole
-//! group. [`crate::Command::SetRackSort`] changes the mode and arranges the rack in one step.
+//! group. In every mode an instrument that moves takes its console channel (with the channel's
+//! inserts) along. [`crate::Command::SetRackSort`] changes the mode and arranges the rack in one step.
 //! The mode is view data: it never changes a sound and reports
 //! [`crate::SyncOp::ViewChanged`] only. It is saved as the root field `"rack_sort"` (project
 //! format 42, ignorable) only when it is not Free.
@@ -325,6 +326,18 @@ pub(crate) fn expand_moves(doc: &RackDoc, registry: &Registry, command: &mut cra
         return;
     }
     let mut all: BTreeSet<DeviceKey> = keys.iter().cloned().collect();
+    // An instrument takes its console channel along (and so the channel's inserts), wherever
+    // it goes: in another column the mix channel stays with its instrument. A channel moved by
+    // itself moves alone.
+    let channels: Vec<DeviceKey> = keys
+        .iter()
+        .filter_map(|k| doc.console.channel_of(k).map(|c| c.channel.clone()))
+        .filter(|c| doc.device(c).is_some())
+        .collect();
+    for c in channels {
+        all.insert(c.clone());
+        all.extend(crate::insert_chain(doc, registry, &c));
+    }
     for k in keys.iter() {
         if doc.console.channel_index(k).is_some() || doc.console.bus_index(k).is_some() {
             all.extend(crate::insert_chain(doc, registry, k));
