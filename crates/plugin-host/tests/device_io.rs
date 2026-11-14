@@ -240,3 +240,25 @@ fn param_events_never_carry_the_bypass_param() {
         "bypass is host-owned"
     );
 }
+
+#[test]
+fn a_plugin_device_writes_its_output_to_the_scope_tap_only_while_the_tap_is_live() {
+    let (probe, shared) = Probe::new();
+    shared.set_out(ProbeOut::Gain(0.5));
+    let (mut h, _r) = harness(rig("io.tap", &fx_layout(), Box::new(probe)));
+    let tap = h.device().scope_tap().expect("a plugin device has a tap");
+    *h.input_mut("in_l") = ramp(1.0);
+    *h.input_mut("in_r") = ramp(-2.0);
+    h.process();
+    assert_eq!(tap.head(), 0, "nothing is written while nobody looks");
+    tap.set_live(true);
+    h.process();
+    assert_eq!(tap.head(), BATCH as u64);
+    let (mut l, mut r) = (vec![0.0; BATCH], vec![0.0; BATCH]);
+    assert_eq!(tap.read_latest(&mut l, &mut r).0, BATCH);
+    assert_eq!(&l[..], &h.output("out_l")[..], "the device's own output");
+    assert_eq!(&r[..], &h.output("out_r")[..]);
+    tap.set_live(false);
+    h.process();
+    assert_eq!(tap.head(), BATCH as u64, "off again: no new frames");
+}

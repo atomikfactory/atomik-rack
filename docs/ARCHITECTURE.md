@@ -5181,7 +5181,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (567) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (569) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5996,6 +5996,14 @@ Device::process                              AppCore::feed_device_scopes
   and then checks that the writer did not lap the part it copied (a lapped copy is retried, then
   reported as empty). No `unsafe`, no lock, no allocation after `ScopeTap::new`, which the device
   calls when it is built, so the tap outlives a `prepare`.
+- **Size and the live flag.** `ScopeTap::new` holds 32 768 frames (a read returns at most half of them),
+  `ScopeTap::large` 131 072 frames for the spectrum device, whose analysis reaches 65536 points.
+  `set_live`/`is_live` is one relaxed flag: a console strip (channel, bus, master) and a plugin device
+  push their output after the fader (the plugin: after its bypass mix) only while it is on, so a tap nobody
+  shows costs one load per batch and the output is bit-identical either way. The meter panels set it
+  through `EngineSink::set_device_scope_live`, every frame, so that a rebuilt engine is picked up
+  ([app_core_meter_panels.rs](../crates/app/src/app_core_meter_panels.rs)). The pre-fader switch
+  `internal.tap_live` of the Spectrum EQ window wins when both are on.
 - **Opt-in.** `Device::scope_tap()` (default `None`, non-RT) returns the device's `Arc<ScopeTap>`;
   `Bypassable` forwards it. `EngineHandle::insert_device` and `submit_plan` read it and register it
   in `Meters` (`Meters::scope_tap(id)`, a short `Mutex<Vec>` that only the control side and the
@@ -6009,7 +6017,7 @@ Device::process                              AppCore::feed_device_scopes
   position), so the display does not depend on how often it is drawn.
   [app_core_analysers.rs](../crates/app/src/app_core_analysers.rs) keeps one analysis state per
   analyser device of the flat rack (inside containers by path key), reads the device's settings from
-  the document (`size` up to 16384, `window`, `channel`, `mode`, `averaging`, `hold`, `decay`,
+  the document (`size` up to 65536, `window`, `channel`, `mode`, `averaging`, `hold`, `decay`,
   `tilt`, `smoothing`, `weighting`, `reference`), skips a device whose tap did not move (a paused
   engine costs no view work) and a bypassed device (its panel keeps the last picture and says
   `BYPASSED`), and hands `RackView::set_analyser` an `AnalyserData`: the spectrum trace and peaks

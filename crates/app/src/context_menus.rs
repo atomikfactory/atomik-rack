@@ -838,6 +838,9 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                         enabled: true,
                         checked: Some(e.learn_midi),
                     },
+                    Spec::Separator,
+                    item("mixer.show_spectrum", true),
+                    item("mixer.show_phase_meter", true),
                 ]);
             }
             v

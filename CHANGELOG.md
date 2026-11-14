@@ -9,6 +9,23 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Meter panels on console strips and plugin devices.** Right-click a channel, a bus, the master or a plugin device
+  and choose Show Spectrum or Show Phase Meter: a floating panel with the drawing of the analyser devices opens
+  over the window, without inserting anything. It looks at the output after the fader (a plugin: after its
+  bypass), several can be open at once, you drag one by its title, and it closes with its strip or device. The
+  spectrum panel has size arrows (1024 to 16384 points) and a REF list that draws a second curve over the
+  trace: any other strip, or the reference track at the level it is heard at. A tap that nobody shows is not
+  written: the audio thread reads one flag per block, and bounces are the same to the bit. Panels are not
+  saved. Decision AG in `docs/DECISIONS.md`.
+- **Larger FFT in the Spectrum device.** The size goes up to 32768 and 65536 points (0.73 Hz a bin at 48 kHz). The
+  analysis runs in the interface, so the audio thread pays nothing; the device has a 1 MiB ring for it.
+- **Reference tracks follow seeks, have a trim and match a section.** While a reference that follows the playhead is
+  heard, moving the playhead moves the reference to the same song position (a reference with its own start stays
+  where it is). The References and Decision Zone panel has a TRIM row: 0.1 dB a click (1 dB with Shift) up to 12 dB
+  either way, added to the matched gain and saved with the reference (the format stays 45). MATCH OVER SELECTION
+  renders the mix over the time selection (or the loop) on a worker, measures its integrated loudness and the
+  reference's over the same seconds, and sets the matched gain from them; the slow match leaves it alone until
+  Match Reference Level is turned off and on.
 - **The camera as a MIDI controller.** The webcam is now also an input named Camera that MIDI Learn can map to
   anything it maps today, so you can put hand height on a filter and a twist on a send at the same time. Each hand
   has fixed controls (the right hand on channel 1, the left on channel 2): the twist while pinched is an endless

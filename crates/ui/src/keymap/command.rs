@@ -1554,6 +1554,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd(
+        "mixer.show_phase_meter",
+        "Show Phase Meter",
+        G::Mixer,
+        C::Global,
+    ),
+    cmd("mixer.show_spectrum", "Show Spectrum", G::Mixer, C::Global),
+    cmd(
         "mixer.snapshot_effects",
         "Snapshot Includes Effects",
         G::Mixer,

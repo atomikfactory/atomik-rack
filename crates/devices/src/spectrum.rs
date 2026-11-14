@@ -7,7 +7,8 @@
 //!
 //! * **Audio path.** Each batch the device copies the two inputs to the two outputs bit for bit
 //!   and pushes the same 64 frames into its [`ScopeTap`](atomik_device_sdk::ScopeTap), a
-//!   lock-free ring of the last 32 768 frames: 128 relaxed atomic stores and one release store.
+//!   lock-free ring of the last 131 072 frames (1 MiB: the analysis of 65536 points needs a
+//!   ring twice its size): 128 relaxed atomic stores and one release store.
 //!   No FFT, no allocation, no lock, no latency, and nothing in the output depends on the
 //!   settings, so a bounce with the device equals a bounce without it, to the bit.
 //! * **The analysis is the UI's.** The app reads the tap at the display rate and runs
@@ -15,7 +16,7 @@
 //!   `averaging`, the peak `hold` and `decay`, the `tilt`, the 20 Hz to 20 kHz log axis over the
 //!   `range` dB below 0 dBFS, and with `mode` 1 the one-third-octave bands, with `mode` 2 a
 //!   spectrogram: the same fine trace as a scrolling image, newest row on top). `size` goes up
-//!   to 16384 points, `smoothing` averages the fine trace across neighbouring bins over a
+//!   to 65536 points (the FFT runs in the UI, never on the audio thread), `smoothing` averages the fine trace across neighbouring bins over a
 //!   fraction of an octave and `weighting` applies the K-weighting of the loudness meters. The
 //!   `reference` choice draws a stored band curve over the trace (as captured, or shifted to
 //!   the level of the signal) and a rising edge of `reference.capture` stores the current
@@ -36,9 +37,9 @@ use atomik_device_sdk::{
 use std::sync::Arc;
 
 /// Transform sizes of the `size` choice.
-pub const SIZES: [usize; 5] = [1024, 2048, 4096, 8192, 16_384];
+pub const SIZES: [usize; 7] = [1024, 2048, 4096, 8192, 16_384, 32_768, 65_536];
 /// Names of the `size` choice.
-pub const SIZE_NAMES: [&str; 5] = ["1024", "2048", "4096", "8192", "16384"];
+pub const SIZE_NAMES: [&str; 7] = ["1024", "2048", "4096", "8192", "16384", "32768", "65536"];
 /// Names of the `window` choice.
 pub const WINDOW_NAMES: [&str; 2] = ["Hann", "B-Harris"];
 /// Names of the `channel` choice.
@@ -101,7 +102,7 @@ static PARAMS: [ParamDescriptor; 14] = [
         "size",
         "FFT size",
         0.0,
-        4.0,
+        6.0,
         2.0,
         Unit::Choice(&SIZE_NAMES),
         true,
@@ -302,7 +303,7 @@ impl Spectrum {
     /// A device with its tap (allocated here, not in `prepare`: the tap outlives re-prepares).
     pub fn new() -> Self {
         Self {
-            tap: Arc::new(ScopeTap::new()),
+            tap: Arc::new(ScopeTap::large()),
             peaks: [RecentPeak::default(); 2],
             meters: [0.0; 2],
         }

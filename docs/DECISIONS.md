@@ -820,3 +820,35 @@ play the selected instrument", off by default: a note track on all inputs never 
 per-track input choice yet, so that setting stands for choosing Camera as an input.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AG. Meter panels on strips and plugin devices: where the tap sits, what it costs, how big the FFT may be
+
+**Question.** A console strip or a plugin device should be able to show a spectrum or a phase meter without a device
+being inserted in a chain. Where does the panel get its signal, what does that cost while nobody looks, and how large an
+FFT may it run?
+
+**Options.** Signal: (1) an analyser device that the app inserts and hides; (2) a second tap in each strip with a switch
+param of its own; (3) the tap the strips already have, with the point after the fader and a flag in the tap that the UI
+sets. Cost: the flag is read once per block, or the tap always writes. Size: raise the ring of every tap, or give
+the large ring to the spectrum device only.
+
+**Implications.** (1) changes the graph, the latency report and every bounce, and has to be undone when the panel
+closes. (2) adds a param to every strip and plugin (the plugin layout is versioned and part of its saved state) for
+something that is not part of the sound. (3) adds nothing to a descriptor or the format: the flag lives in the
+`ScopeTap` the engine already hands to the UI, `Arc` shared, so the UI sets it without a message to the audio thread
+and the device checks it with one relaxed load per batch. A plugin device has no tap yet and gets one the same way. A
+ring of 131 072 frames is 1 MiB: every strip and plugin would pay that for a size almost nobody uses, so the strips and
+plugins keep 32 768 frames, which serves analyses up to 16384 points (a read is capped at half a ring so the writer can
+never lap it), and only the spectrum device has the large ring and the sizes 32768 and 65536. The analysis is the UI's
+already (`atomik_dsp::spectrum`), so the size is not a real-time question; a 65536-point FFT is about a millisecond.
+
+**Decision.** (3), the flag read once per batch, the large ring on the spectrum device only. The point is after the fader and the
+pan of a channel or bus, after the fader of the master and after the bypass mix of a plugin device; the pre-fader point of
+the Spectrum EQ window wins on a strip it also shows. With the flag off nothing is written and the output is
+bit-identical, with it on the output is still bit-identical, because the tap only copies. The panels are view state, not saved.
+The second curve of a spectrum panel is another strip (its own tap, switched on too) or the reference track, whose
+long-term average spectrum is measured with the file on the worker that decodes it and moved by the matched gain and the
+trim. A trim is one more optional field of a reference in the `references` list, written only when it is not zero, so
+the project format stays 45 and a build without it drops the field with the list.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

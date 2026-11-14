@@ -1507,6 +1507,7 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.export.reset();
         self.audio.masking.reset();
         self.audio.energy.reset();
+        self.meter_panels_clear();
         self.repetition.reset();
         self.bass_read.reset();
         self.delivery.reset();

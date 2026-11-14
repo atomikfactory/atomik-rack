@@ -206,7 +206,8 @@ pub use read_limit::{
 };
 pub use record_over::{covering_note_clip, layered_clip, merge_laps};
 pub use references::{
-    MAX_REFERENCE_CUE_MS, MAX_REFERENCE_PATH_CHARS, MAX_REFERENCES, Reference, check_references,
+    MAX_REFERENCE_CUE_MS, MAX_REFERENCE_PATH_CHARS, MAX_REFERENCE_TRIM_TENTHS, MAX_REFERENCES,
+    Reference, check_references,
 };
 pub use replace_device::{lost_lanes as replace_lost_lanes, replace_reason};
 pub use slices::{

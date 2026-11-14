@@ -621,7 +621,12 @@ fn vca_items(v: &ConsoleView) -> Vec<String> {
     // The quick sidechain rows of a channel strip are not VCA entries.
     items[..items.len() - SETTINGS_ITEMS.len()]
         .iter()
-        .filter(|i| !i.starts_with("Duck from") && *i != "Gentle pump" && *i != "Remove ducking")
+        .filter(|i| {
+            !i.starts_with("Duck from")
+                && !i.starts_with("Show ")
+                && *i != "Gentle pump"
+                && *i != "Remove ducking"
+        })
         .cloned()
         .collect()
 }

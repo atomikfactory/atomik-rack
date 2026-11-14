@@ -65,7 +65,8 @@ fn descriptor_validates_and_follows_the_effect_conventions() {
     assert_eq!(DESCRIPTOR.type_id, "atomik.spectrum");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Effect);
     assert_eq!(SIZES.len(), SIZE_NAMES.len());
-    assert_eq!(SIZES[SIZES.len() - 1], 16_384);
+    assert_eq!(SIZES[SIZES.len() - 1], 65_536);
+    assert_eq!(SIZES[4], 16_384, "the first five sizes keep their places");
     let size_max = DESCRIPTOR.param_by_key("size").unwrap().max as usize;
     assert_eq!(size_max, SIZES.len() - 1);
     assert_eq!(
@@ -185,10 +186,16 @@ fn the_meter_values_are_the_recent_peaks_of_the_two_inputs() {
 
 #[test]
 fn the_analysis_of_the_tap_finds_the_tone_that_went_in() {
-    for (f, size) in [(220.0f32, 4096usize), (1000.0, 8192), (7000.0, 2048)] {
+    for (f, size) in [
+        (220.0f32, 4096usize),
+        (1000.0, 8192),
+        (7000.0, 2048),
+        (330.0, 32_768),
+        (110.0, 65_536),
+    ] {
         let mut h = device();
         let tap = h.device().scope_tap().unwrap();
-        run(&mut h, 0, 200, |_, n| {
+        run(&mut h, 0, 1100, |_, n| {
             (0.25 * (std::f64::consts::TAU * f64::from(f) * n as f64 / 48_000.0).sin()) as f32
         });
         let (mut l, mut r) = (vec![0.0; size], vec![0.0; size]);

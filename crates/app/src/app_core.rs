@@ -485,6 +485,8 @@ pub struct AppCore<S: EngineSink> {
     /// The video row of the arrangement: its thumbnail worker.
     thumbs: video_thumbs::ThumbState,
     speq: spectrum_eq::SpectrumEqState,
+    /// The floating meter panels of strips and plugin devices (`app_core_meter_panels.rs`).
+    meter_panels: meter_panels::MeterPanelsState,
     keys_router: crate::target::NoteRouter,
     browser: browser::BrowserState,
     /// The templates folder as it was last listed ([`AppCore::templates`]).
@@ -686,6 +688,7 @@ impl<S: EngineSink> AppCore<S> {
             viewer: video_view::ViewerState::default(),
             thumbs: video_thumbs::ThumbState::default(),
             speq: spectrum_eq::SpectrumEqState::default(),
+            meter_panels: meter_panels::MeterPanelsState::default(),
             keys_router: crate::target::NoteRouter::new(),
             browser: browser::BrowserState::default(),
             templates: templates::TemplatesState::default(),
@@ -1767,6 +1770,7 @@ impl<S: EngineSink> AppCore<S> {
         self.eq_live.restart();
         self.blind.restart();
         self.speq.restart();
+        self.meter_panels.restart();
         self.next_id = 1;
         self.sent_loop = None;
         // Containers are compiled away: the engine gets the expanded rack.
@@ -1845,6 +1849,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_device_scopes();
         self.feed_tuners();
         self.feed_spectrum_eq();
+        self.feed_meter_panels();
         self.video_frame();
         self.feed_eq_analysers();
         self.poll_resonances();
@@ -3704,6 +3709,8 @@ impl<S: EngineSink> AppCore<S> {
         self.clear_override();
         self.send_transport(TransportCommand::Locate(Ticks(tick)));
         self.position = tick;
+        // A reference that is heard and follows the playhead goes where the playhead went.
+        self.reference_after_seek();
     }
 
     fn start_recording(&mut self) {
@@ -4089,6 +4096,10 @@ pub use sampling::{SAMPLE_SECONDS, SamplingInput, TRIGGER_DB, sampling_inputs};
 #[path = "app_core_spectrum_eq.rs"]
 mod spectrum_eq;
 
+#[path = "app_core_meter_panels.rs"]
+mod meter_panels;
+pub use meter_panels::CurveFrom;
+
 #[path = "app_core_eq_live.rs"]
 mod eq_live;
 
@@ -4373,6 +4384,10 @@ mod takes_tests;
 #[cfg(test)]
 #[path = "app_core_spectrum_eq_tests.rs"]
 mod spectrum_eq_tests;
+
+#[cfg(test)]
+#[path = "app_core_meter_panels_tests.rs"]
+mod meter_panels_tests;
 
 #[cfg(test)]
 #[path = "app_core_eq_live_tests.rs"]
