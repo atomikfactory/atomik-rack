@@ -559,6 +559,10 @@ pub struct Shell<B: AudioBackend> {
     updater: Updater,
     /// The question or the news of the update check, while it shows.
     update_notice: Option<UpdateNotice>,
+    /// The consent dialog of the hand model download, while it shows.
+    camera_dialog: Option<atomik_ui::CameraDialogView>,
+    /// The camera preview box (it paints while the camera is on and the preview is on).
+    camera_preview: atomik_ui::CameraPreviewView,
     /// The suggestion to freeze the heaviest track, while it shows (shell state, never saved).
     cpu_hint: Option<CpuHintCard>,
     /// The newer release the news is about (what its buttons act on).
@@ -978,6 +982,8 @@ impl<B: AudioBackend> Shell<B> {
             start_screen_waiting: false,
             updater: Updater::new(updates_path),
             update_notice: None,
+            camera_dialog: None,
+            camera_preview: atomik_ui::CameraPreviewView::new(),
             cpu_hint: None,
             update_release: None,
             guide: None,
@@ -4033,6 +4039,7 @@ impl<B: AudioBackend> Shell<B> {
             self.workflow.backup_audio,
         );
         self.core.set_preview_db(self.workflow.preview_db);
+        self.core.set_camera_prefs(self.workflow.camera.clone());
         self.core
             .view_mut()
             .set_value_tips(self.workflow.value_tooltips);
@@ -4062,6 +4069,7 @@ impl<B: AudioBackend> Shell<B> {
                 self.workflow.clone(),
             )
             .with_themes(self.theme_rows(), self.system_dark);
+        dialog.set_camera_models(self.core.camera_models());
         if let Some(tab) = tab {
             dialog.show_tab(tab);
         }
@@ -4556,6 +4564,8 @@ impl<B: AudioBackend> Shell<B> {
             console_links: view.show_console_links(),
             cpu_meters: self.core.cpu_meters_on(),
             big_meter: view.big_meter_visible(),
+            camera: self.core.camera_is_on(),
+            camera_preview: self.core.camera_preview_on(),
             tempo_lane: self.core.arrangement().tempo_lane_visible(),
             energy_lane: self.core.arrangement().energy_lane_visible(),
             key_lane: self.core.arrangement().key_lane_visible(),
@@ -5813,6 +5823,10 @@ impl<B: AudioBackend> Shell<B> {
             self.forward_modifiers();
             return Vec::new();
         }
+        // The preview of the camera takes only the clicks that land on its box.
+        if let Some(requests) = self.camera_preview_event(window, event) {
+            return requests;
+        }
         // The notice of the update check takes only the events that land on its card.
         if let Some(requests) = self.update_notice_event(window, event) {
             return requests;
@@ -6671,6 +6685,10 @@ impl<B: AudioBackend> Shell<B> {
                 AboutOutcome::OpenUrl(url) => vec![ShellRequest::OpenUrl(url)],
             };
         }
+        // The consent to download the hand models is modal.
+        if let Some(requests) = self.camera_dialog_event(event) {
+            return requests;
+        }
         if let Some(dialog) = &mut self.dialog {
             self.repaint = true;
             // Learning a chord needs the keys as they are pressed (numpad keys included).
@@ -6690,12 +6708,26 @@ impl<B: AudioBackend> Shell<B> {
                     self.apply_preferences(prefs);
                     self.apply_settings(settings);
                 }
+                DialogOutcome::CalibrateCamera(settings) => {
+                    let prefs = dialog.preferences();
+                    let profiles = dialog.profile_changes();
+                    self.dialog = None;
+                    self.save_profile_options(profiles);
+                    self.apply_preferences(prefs);
+                    self.apply_settings(settings);
+                    self.core.camera_calibrate();
+                }
                 DialogOutcome::ExportKeymap => return vec![ShellRequest::PickExportKeymap],
                 DialogOutcome::ImportKeymap => return vec![ShellRequest::PickImportKeymap],
                 DialogOutcome::PickLibraryFolder => return vec![ShellRequest::PickLibraryFolder],
                 DialogOutcome::PickScratchFolder => return vec![ShellRequest::PickScratchFolder],
                 DialogOutcome::PickFfmpegFolder => return vec![ShellRequest::PickFfmpegFolder],
                 DialogOutcome::PickBackupFolder => return vec![ShellRequest::PickBackupFolder],
+                DialogOutcome::ListCameras => dialog.set_camera_list(self.core.camera_list()),
+                DialogOutcome::DeleteCameraModels => {
+                    self.core.camera_delete_models();
+                    dialog.set_camera_models(self.core.camera_models());
+                }
                 DialogOutcome::SetUpController => self.open_controller_wizard(),
                 DialogOutcome::ExportController => {
                     return vec![ShellRequest::PickExportController];
@@ -7773,6 +7805,7 @@ impl<B: AudioBackend> Shell<B> {
             audio: core.arrangement().audio_menu(),
             freeze: core.freeze_menu(),
             lens_small: core.lens().voicing == atomik_engine::LensVoicing::SmallSpeaker,
+            camera: core.camera_is_on(),
             lens_club: core.lens().voicing == atomik_engine::LensVoicing::ClubSub,
             lens_mono: core.lens().mono,
             lens_off: core.lens().is_neutral(),
@@ -9256,6 +9289,18 @@ impl<B: AudioBackend> Shell<B> {
                 self.ui_changed();
                 Vec::new()
             }
+            AppCommand::ToggleCamera => {
+                self.core.camera_toggle();
+                Vec::new()
+            }
+            AppCommand::ToggleCameraPreview => {
+                self.core.camera_preview_toggle();
+                Vec::new()
+            }
+            AppCommand::CalibrateCamera => {
+                self.core.camera_calibrate();
+                Vec::new()
+            }
             AppCommand::ToggleBigMeter => {
                 let view = self.core.view_mut();
                 let show = !view.big_meter_visible();
@@ -9925,11 +9970,14 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::CloseSongWindow => {
                 // A save still writing must reach the disk before the song goes.
                 self.core.settle_save();
+                self.core.camera_off(None);
                 vec![ShellRequest::CloseSong]
             }
             AppCommand::Quit => {
-                // A save still writing must reach the disk before the process ends.
+                // A save still writing must reach the disk before the process ends, and the
+                // camera is off when the app is.
                 self.core.settle_save();
+                self.core.camera_off(None);
                 vec![ShellRequest::Quit]
             }
             AppCommand::StressRack => {
@@ -10309,6 +10357,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_language();
         let busy = self.core.is_busy();
         self.core.frame();
+        self.sync_camera_ui();
         self.sync_plugin_ui();
         self.sync_library_ui();
         self.sync_video_ui();
@@ -11593,6 +11642,8 @@ impl<B: AudioBackend> Shell<B> {
         {
             notice.paint(canvas, &theme, self.size());
         }
+        self.paint_camera_preview(canvas, &theme);
+        self.paint_camera_dialog(canvas, &theme);
         canvas.pop_transform();
     }
 }
@@ -11718,6 +11769,8 @@ mod film_impl;
 #[path = "shell_audio_setup.rs"]
 mod audio_setup_impl;
 
+#[path = "shell_camera.rs"]
+mod camera_impl;
 #[path = "shell_cpu.rs"]
 mod cpu_impl;
 #[path = "shell_update.rs"]
@@ -11983,6 +12036,10 @@ mod versions_tests;
 #[cfg(test)]
 #[path = "shell_backup_tests.rs"]
 mod backup_tests;
+
+#[cfg(test)]
+#[path = "shell_camera_tests.rs"]
+mod camera_tests;
 
 #[cfg(test)]
 #[path = "shell_plugin_manager_tests.rs"]

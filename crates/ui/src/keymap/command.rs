@@ -462,6 +462,15 @@ const COMMANDS: &[CommandDef] = &[
     cmd("browser.move_down", "Browser Down", G::Browser, C::Browser).rep(),
     cmd("browser.move_up", "Browser Up", G::Browser, C::Browser).rep(),
     cmd(
+        "camera.calibrate",
+        "Calibrate Camera Twist",
+        G::View,
+        C::Global,
+    )
+    .menu(),
+    cmd("camera.preview", "Camera Preview", G::View, C::Global).menu(),
+    cmd("camera.toggle", "Camera", G::View, C::Global).menu(),
+    cmd(
         "controller.knob_page_next",
         "Controller Knobs: Next Page",
         G::Mixer,
@@ -3319,7 +3328,7 @@ mod tests {
             let expected: &[&str] = match d.group {
                 Group::Global => &["file", "audio", "help", "options", "video"],
                 Group::Transport => &["transport", "sync", "launcher"],
-                Group::View => &["view", "window"],
+                Group::View => &["view", "window", "camera"],
                 Group::Edit => &["edit"],
                 Group::Rack => &["rack", "plugin"],
                 Group::Sequencer => &["sequencer"],

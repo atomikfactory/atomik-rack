@@ -569,6 +569,8 @@ impl<S: EngineSink> AppCore<S> {
     /// Records that `param` of `device` is being touched and, when following, shows its lane.
     pub(super) fn param_touched(&mut self, device: &DeviceKey, param: &str) {
         self.macros.touched.insert(device.clone(), param.to_owned());
+        // The last control pressed is the one the camera turns.
+        self.camera_aim(device, param);
         self.plugin_learn_pane_touch(device, param);
         if self.macros.follow && !self.midi.learning() {
             self.follow_param(device, param, true, false);

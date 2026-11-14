@@ -86,6 +86,7 @@ Cables(HideAutoRouted) | Cables: Hide Auto-routed
 Cables(HoverOnly) | Cables: Hover
 Cables(SelectedOnly) | Cables: Selected
 Cables(Show) | Cables: Show
+CalibrateCamera | Calibrate Camera Twist
 CancelArchive | Cancel Project Archive
 CancelCollect | Cancel Collect or Move
 CancelVideo | Cancel Video Job
@@ -402,6 +403,8 @@ StressSong | Stress Song
 ThemeManager | Theme Manager…
 ToggleBigMeter | Big Meter
 ToggleBrowser | Device Browser
+ToggleCamera | Camera
+ToggleCameraPreview | Camera Preview
 ToggleChase | Chase Notes
 ToggleChordLane | Chord Lane
 ToggleClockIn | Follow MIDI Clock

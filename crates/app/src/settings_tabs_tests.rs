@@ -154,6 +154,7 @@ fn the_tab_strip_exists_only_with_preferences_and_switches_the_tab() {
             Tab::Sync,
             Tab::Video,
             Tab::Backup,
+            Tab::Camera,
             Tab::Themes
         ]
     );
@@ -1429,6 +1430,179 @@ fn golden_backup() {
     golden("settings_backup", &d);
 }
 
+// ------------------------------------------------------------------ camera
+
+fn camera_layout(d: &SettingsDialog) -> crate::camera_tab::CameraLayout {
+    d.camera_layout(VIEW).unwrap()
+}
+
+#[test]
+fn golden_camera() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Camera);
+    d.set_camera_models(crate::vision_link::ModelState::Ready);
+    golden("settings_camera", &d);
+    // With the camera list asked for, a camera chosen and the models missing.
+    d.set_camera_list(vec![crate::vision_link::CameraEntry {
+        id: "cam-1".into(),
+        name: "Desk Camera".into(),
+    }]);
+    let at = camera_layout(&d).camera.next.center();
+    down(&mut d, at);
+    d.set_camera_models(crate::vision_link::ModelState::Missing);
+    golden("settings_camera_chosen", &d);
+}
+
+#[test]
+fn the_camera_tab_edits_the_drafts_and_apply_returns_them() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Camera);
+    let defaults = d.preferences().unwrap().1.camera;
+    assert_eq!(defaults, crate::keymap_store::CameraPrefs::default());
+    let l = camera_layout(&d);
+    assert_eq!(l.turn.value, "150\u{b0}");
+    assert_eq!(l.sensitivity.value, "100%");
+    // The hand: left.
+    down(&mut d, l.hand.choices[1].1.center());
+    assert_eq!(
+        d.preferences().unwrap().1.camera.hand,
+        crate::keymap_store::HandChoice::Left
+    );
+    // The twist: 10 degrees a press, never under 30 or over 360.
+    for _ in 0..30 {
+        let at = camera_layout(&d).turn.less.center();
+        down(&mut d, at);
+    }
+    assert_eq!(d.preferences().unwrap().1.camera.full_turn, 30);
+    for _ in 0..40 {
+        let at = camera_layout(&d).turn.more.center();
+        down(&mut d, at);
+    }
+    assert_eq!(d.preferences().unwrap().1.camera.full_turn, 360);
+    // The check boxes and the sensitivity.
+    let at = camera_layout(&d).fine.rect.center();
+    down(&mut d, at);
+    let at = camera_layout(&d).preview.rect.center();
+    down(&mut d, at);
+    for _ in 0..20 {
+        let at = camera_layout(&d).sensitivity.more.center();
+        down(&mut d, at);
+    }
+    let at = camera_layout(&d).reverse.rect.center();
+    down(&mut d, at);
+    let camera = d.preferences().unwrap().1.camera;
+    assert!(!camera.fine && !camera.preview);
+    assert!(camera.reverse);
+    assert_eq!(camera.sensitivity, 150);
+    // The row shows the dead zone, and Calibrate hands the drafts back to be applied.
+    let l = camera_layout(&d);
+    assert!(
+        l.calibrate.text.starts_with("Dead zone 1.5"),
+        "{}",
+        l.calibrate.text
+    );
+    assert!(matches!(
+        down(&mut d, l.calibrate.button.center()),
+        DialogOutcome::CalibrateCamera(_)
+    ));
+    // The other drafts are as they were.
+    assert_eq!(
+        d.preferences().unwrap().1.backup_keep,
+        crate::keymap_store::DEFAULT_BACKUP_KEEP
+    );
+}
+
+#[test]
+fn the_camera_list_is_asked_for_only_by_refresh_and_the_arrows_walk_it() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Camera);
+    let l = camera_layout(&d);
+    assert!(l.camera.name.starts_with("Automatic"), "{}", l.camera.name);
+    // Arrows with no list stay on Automatic.
+    assert!(matches!(
+        down(&mut d, l.camera.next.center()),
+        DialogOutcome::Open
+    ));
+    assert_eq!(d.preferences().unwrap().1.camera.camera, None);
+    assert_eq!(
+        down(&mut d, l.camera.refresh.center()),
+        DialogOutcome::ListCameras
+    );
+    d.set_camera_list(
+        ["a", "b"]
+            .into_iter()
+            .map(|n| crate::vision_link::CameraEntry {
+                id: format!("id-{n}"),
+                name: format!("Camera {n}"),
+            })
+            .collect(),
+    );
+    let pick = |d: &mut SettingsDialog, next: bool| {
+        let l = camera_layout(d);
+        down(d, if next { l.camera.next } else { l.camera.prev }.center());
+        d.preferences().unwrap().1.camera.camera
+    };
+    assert_eq!(pick(&mut d, true), Some("id-a".to_owned()));
+    assert_eq!(camera_layout(&d).camera.name, "Camera a");
+    assert_eq!(pick(&mut d, true), Some("id-b".to_owned()));
+    assert_eq!(pick(&mut d, true), None, "back to Automatic");
+    assert_eq!(pick(&mut d, false), Some("id-b".to_owned()));
+}
+
+#[test]
+fn delete_downloaded_models_asks_the_shell_only_when_there_is_something_to_delete() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Camera);
+    d.set_camera_models(crate::vision_link::ModelState::Missing);
+    let l = camera_layout(&d);
+    assert!(!l.models.can_delete);
+    assert_eq!(down(&mut d, l.models.delete.center()), DialogOutcome::Open);
+    d.set_camera_models(crate::vision_link::ModelState::Ready);
+    let l = camera_layout(&d);
+    assert!(l.models.can_delete);
+    assert_eq!(
+        down(&mut d, l.models.delete.center()),
+        DialogOutcome::DeleteCameraModels
+    );
+    d.set_camera_models(crate::vision_link::ModelState::Corrupt);
+    assert!(
+        camera_layout(&d).models.can_delete,
+        "a damaged file can go too"
+    );
+}
+
+#[test]
+fn the_camera_tab_stays_inside_its_panel_and_no_row_overlaps() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Camera);
+    let l = camera_layout(&d);
+    let panel = d.panel(VIEW);
+    let rows = [
+        l.camera.rect,
+        l.hand.rect,
+        l.turn.rect,
+        l.fine.rect,
+        l.sensitivity.rect,
+        l.preview.rect,
+        l.models.rect,
+    ];
+    for r in rows {
+        assert!(
+            panel.contains(r.center()) && r.x1 <= panel.x1 && r.y1 <= panel.y1,
+            "{r:?}"
+        );
+    }
+    for pair in rows.windows(2) {
+        assert!(pair[0].y1 <= pair[1].y0, "rows do not overlap");
+    }
+    for (_, r) in &l.hand.choices {
+        assert!(r.x0 >= l.camera.rect.x0 && r.x1 <= l.camera.rect.x1);
+    }
+    let (apply, _) = d.buttons(VIEW);
+    assert!(l.models.rect.y1 <= apply.y0 && l.notes.iter().all(|(p, _)| p.y < apply.y0));
+    assert!(l.camera.prev.x1 <= l.camera.next.x0 && l.camera.next.x1 <= l.camera.refresh.x0);
+}
+
 #[test]
 fn golden_backup_off() {
     let mut d = dialog();
@@ -2090,7 +2264,7 @@ fn the_themes_tab_lists_the_builtin_themes_with_the_one_in_use_marked() {
         assert!(panel.contains(r.center()));
     }
     let strip = d.tab_strip(VIEW);
-    assert_eq!(strip.len(), 9);
+    assert_eq!(strip.len(), 10);
     for pair in strip.windows(2) {
         assert!(pair[0].0.x1 <= pair[1].0.x0, "tabs do not overlap");
     }

@@ -56,7 +56,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), model | none | Platform-independent views, widgets, display lists, theme |
-| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, video, update, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
+| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, video, update, vision, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
 
@@ -3018,6 +3018,7 @@ edit is an ordinary `UiAction::Command` (`SetModSlot`, `SetParam` on `modN_amoun
 | `atomik-update` | update check: one request for the list of releases, only after the user said Yes, at most once a day (one short-lived thread per request, a timeout of 8 s; the shell polls its answer on the frame) | Yes (network) |
 | `atomik-vision` | hand tracking: the worker of a `Tracker` finds the hands in each camera frame, runs the gesture recogniser and sends events on a bounded queue; never on the audio thread; it exists only while the user has the camera on, and ends (releasing the camera) on stop, drop or failure | Yes (CPU) |
 | `atomik-camera` | hand tracking: reads the camera and hands the newest frame to the worker (a one-frame slot; older frames are dropped); opens the device and releases it when it ends | Yes (the camera) |
+| `atomik-vision-download` | webcam control: the one-time download of the two hand models, started by the user after the consent dialog's Download (progress and cancel through shared cells the core reads once a frame; nothing is fetched before Download; a failure deletes what was written) | Yes (network, disk) |
 | `atomik-library` | library: copies the audio of a saved item into its sibling bundle | Yes (disk) |
 | `atomik-adopt` | library: copies the audio of a loaded item into the session bundle, then decodes and builds peaks like `atomik-load` | Yes (disk) |
 | MIDI callback (midir) | maps event times to frames, pushes live notes; parses every message once more for the control path and queues it in the control hub (a short mutex, never held by the audio thread), consuming it when a mapping listens | Yes, then one wait-free push |
@@ -5180,7 +5181,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (565) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (568) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -6925,6 +6926,30 @@ each note on that note's channel. Atomik keeps that as data of the note and play
   device (`mpe.send`, the last param) turns notes into `PluginEventKind::Midi` raw messages (wire tag 9) on member
   channels 2 to 16; the CLAP processor passes them to a plugin that takes MIDI and the VST3 processor ignores them
   (those plugins get note expression events). Both devices are allocation free on the audio thread.
+
+## 6q. Webcam control in the app
+
+The app side of `atomik-vision` is one seam and one module. `vision_link.rs` holds the `VisionBackend` trait (the
+cameras, the state of the model files, starting a tracker, the download, deleting the models) and `VisionSession` (a
+running tracker the core polls once a frame); `SystemVision` wraps the crate, `FakeVision` serves the tests with no
+camera, no models and no network, and `NoVision` is what every shell that is not the application window has.
+`app_core_vision.rs` is everything else, in view state that is never saved:
+
+- **The target.** `AppCore::camera_target` is the `(device or strip, param key)` last pressed. It is set where every
+  press already goes (`param_touched`, from `UiAction::ParamTouched`, which the rack panels, the parameter pane and the
+  console strips emit) and by the touch detection of a plugin's own window (`camera_plugin_touch`, a gesture begin or
+  the first change after `TOUCH_GAP_SECS`, whether or not a Learn mode is armed). `camera_prune` clears it when its
+  device is gone. `MidiMarks::camera` makes the views draw a ring and a small lens on it while the camera is on.
+- **The gesture.** A pinch opens the gesture `GestureKey::Camera` (a held gesture with its own merge id, the one the
+  mapped controllers use), every twist is `set_resolved` within it (`Command::SetParam` with that merge id), and the
+  release closes it with `end_merge` and `release_automation`: one undo step, Touch automation writes while the
+  fingers are together, a plugin parameter moves like any other and the audio thread is untouched. `fine_scale` turns
+  the hand size at the pinch into the scale of the move.
+- **The switch.** `camera_toggle` turns the camera on (opening the consent dialog when the models are missing and
+  fetching nothing), `camera_off` stops the tracker and ends an open pinch; the `atomik-vision-download` worker
+  reports through shared cells that `camera_frame` reads. The shell owns the two `atomik_ui` views (`CameraDialogView`,
+  `CameraPreviewView`) and feeds them once a frame (`shell_camera.rs`); the CAM button is a part of the transport
+  bar's cluster (`ClusterPart::Camera`).
 
 ## 7. The UI crate
 

@@ -143,6 +143,8 @@ pub struct TransportState {
     pub quantize: Option<i64>,
     /// The transport follows an external MIDI clock: the position controls do not repeat.
     pub following: bool,
+    /// The webcam controller is on (the CAMERA button is lit).
+    pub camera: bool,
 }
 
 /// A transport bar button.

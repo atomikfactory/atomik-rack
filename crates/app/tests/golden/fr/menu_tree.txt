@@ -209,6 +209,9 @@ Affichage
     Détacher la table de mixage [Ctrl+Maj+F5]
     Égaliseur à spectre [F2]
     Vidéo
+    Caméra
+    Aperçu de la caméra
+    Calibrer la rotation de la caméra
     Navigateur du rack
     Tri du rack >
       Aucun groupement

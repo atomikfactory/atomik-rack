@@ -593,6 +593,9 @@ pub enum UiAction {
         /// What to arm or disarm.
         request: crate::plugin_learn::PluginLearnRequest,
     },
+    /// A button of the camera dialog (the consent to download the hand models, the progress, a
+    /// failure).
+    CameraDialog(crate::camera_panel::CameraDialogChoice),
     /// Open the plugin parameter pane (the panel's PARAMS button): call
     /// [`crate::PluginParamsView::open`] and show it in place of the arrangement, like the
     /// sample editor. `device` is the **path key**.

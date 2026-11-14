@@ -113,6 +113,7 @@ use std::sync::Arc;
 
 #[path = "app_core_plugin_learn.rs"]
 mod learn;
+pub(super) use learn::TOUCH_GAP_SECS;
 
 /// Seconds between recovery snapshots of a changed project while a plugin is loaded.
 pub const RECOVERY_PERIOD_SECS: f64 = 60.0;
@@ -2034,6 +2035,8 @@ impl<S: EngineSink> AppCore<S> {
             ParamPhase::Begin => {
                 // Learn acts on the touch first; the edit then goes through as usual.
                 self.plugin_learn_begin(&key, param);
+                // A touch is a click for the camera too, whether or not Learn is armed.
+                self.camera_plugin_touch(&key, param, false, self.plugins.clock);
                 self.plugins.gesture_touched.insert(key.clone());
                 self.plugins.open_gestures.insert((key.clone(), param));
                 self.plugins.merger.begin(&key, param)
@@ -2042,6 +2045,7 @@ impl<S: EngineSink> AppCore<S> {
                 if !self.plugins.open_gestures.contains(&(key.clone(), param)) {
                     // A plugin that sends no gesture begin: its first change is the touch.
                     self.plugin_learn_change(&key, param);
+                    self.camera_plugin_touch(&key, param, true, self.plugins.clock);
                     // Not a gesture: a patch change or an internal modulation. Not stored.
                     return;
                 }

@@ -109,6 +109,11 @@
     "text": "The key of the song at the playhead. Click to set it; the piano roll, the browser and the chord tools follow it.",
     "more": "The main window"
   },
+  "transport.camera": {
+    "title": "Camera",
+    "text": "Turns the webcam control on or off. Click a knob, pinch your thumb and index finger and twist your wrist to turn it. The first time it asks before it downloads the hand models. The camera picture stays in memory and is never saved or sent.",
+    "more": "Webcam control"
+  },
   "transport.more": {
     "title": "More transport controls",
     "text": "The bar has no room for every control in a narrow window. This menu holds the ones that did not fit.",

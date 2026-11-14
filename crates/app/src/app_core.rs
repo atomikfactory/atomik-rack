@@ -237,6 +237,9 @@ pub struct AppCore<S: EngineSink> {
     midi: midimap::MidiControl,
     /// The current macro bank, the last touched params, the search index (see `app_core_macros.rs`).
     macros: macro_ops::MacroState,
+    /// The webcam controller: the camera target, the pinch, the camera and the model download
+    /// (see `app_core_vision.rs`).
+    vision: vision::VisionCore,
     /// The control surfaces that are set up, each with its own driver and ports (see
     /// `app_core_surface.rs`).
     surfaces: Vec<crate::surface::SurfaceHost>,
@@ -583,6 +586,7 @@ impl<S: EngineSink> AppCore<S> {
             morph_seconds: snapshots::DEFAULT_MORPH_SECONDS,
             midi: midimap::MidiControl::new(hub),
             macros: macro_ops::MacroState::default(),
+            vision: vision::VisionCore::default(),
             surfaces: Vec::new(),
             rack_focus_request: false,
             selection_changed: false,
@@ -1024,6 +1028,7 @@ impl<S: EngineSink> AppCore<S> {
                     self.console.set_snapshot_hint(hint);
                 }
                 self.sync_ops(&ops);
+                self.camera_prune();
                 let mut ops = ops;
                 if let (Some((vca, kind, value)), false, Some(master)) = (
                     vca_move,
@@ -1808,6 +1813,7 @@ impl<S: EngineSink> AppCore<S> {
         self.sink.collect_garbage();
         self.plugins_frame();
         self.poll_background();
+        self.camera_frame();
         // The kick and bass worker's answer is taken before the panels read it: the platform
         // stops ticking once nothing is busy, so a frame that read the old progress would be
         // the last one painted.
@@ -3921,6 +3927,7 @@ impl<S: EngineSink> AppCore<S> {
             overrides: self.autorec.overridden.len().min(usize::from(u8::MAX)) as u8,
             quantize: self.quantize.grid(),
             following: self.sink.sync_status().following,
+            camera: self.camera_is_on(),
         });
     }
 
@@ -4158,6 +4165,10 @@ mod snapshots;
 
 #[path = "app_core_midimap.rs"]
 mod midimap;
+
+#[path = "app_core_vision.rs"]
+mod vision;
+pub use vision::calibrate::{CalibrationResult, CalibrationStep, format_tenths};
 
 #[path = "app_core_jacks.rs"]
 mod jack_ops;

@@ -360,6 +360,7 @@ pub mod blind_panel;
 pub mod breadcrumb;
 pub mod browser;
 pub mod cables;
+pub mod camera_panel;
 pub mod canvas;
 pub mod character_panel;
 pub mod character_screen;
@@ -497,6 +498,11 @@ pub use backup_panel::{BackupAction, BackupItem, BackupView};
 pub use bass_read_panel::{BassLevel, BassReadAction, BassReadData, BassReadView, BassReadingRow};
 pub use blind_panel::{BlindAction, BlindInfo, BlindView};
 pub use browser::device_rows;
+pub use camera_panel::{
+    CameraDialogChoice, CameraDialogState, CameraDialogView, CameraLamp, CameraPicture,
+    CameraPreviewState, CameraPreviewView, PREVIEW_HEIGHT as CAMERA_PREVIEW_HEIGHT,
+    PREVIEW_WIDTH as CAMERA_PREVIEW_WIDTH,
+};
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
 pub use chords_panel::{
     ChordChanges, ChordsAction, ChordsPreview, ChordsRow, ChordsValues, ChordsView, PreviewChord,

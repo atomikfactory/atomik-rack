@@ -751,3 +751,50 @@ landmarks of one frame frame the next), so a followed hand costs one run of the 
 own thread with a one-frame handoff (the newest frame wins, nothing queues).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AE. Webcam knob: the camera target, the gesture and the switch
+
+**Question.** A pinch and twist of the hand must turn "a knob". Which one, how far does a twist move it, how does it
+join the undo history and the automation, and when is the camera on?
+
+**Options.** Target: (1) the control under a pointer that follows the hand (needs the camera to see the screen);
+(2) the control last pressed with the mouse; (3) the selected device's first param. Move: (1) a position of the hand
+sets the value; (2) a ratchet of the twist adds to it. History: (1) every twist is a step; (2) a pinch is one gesture
+through the path a mapped controller uses. Switch: (1) a setting that starts with the app; (2) a switch the user turns
+on each time.
+
+**Implications.** (1) of the target would need the camera to find the screen and the pointer. (3) hides what will
+move. (2) is what the user already sees and does with the mouse, and every press on a control already reaches the app as
+one event (`ParamTouched`), so there is one place to set it and no second hit test. A plugin's own window is not
+the app's: its touch detection (a gesture begin, or the first change after half a second) is reused, whether or not a
+Learn mode is armed. A position of the hand (1) jumps the value when the pinch starts; the ratchet adds the twist to
+the value the control has, so it never jumps. The gesture reuses the merge id and the held gesture of the mapped
+controllers (`GestureKey`), so one pinch is one undo step, Touch automation writes while the fingers are together and a
+plugin parameter moves like any other. A switch that starts with the app would put a camera in use without a user
+action.
+
+**Decision.** (2), (2), (2), (2). The camera target is the last control pressed, a `(device or strip, param key)` in
+view state only: never saved, cleared when its device goes (a delete or the undo of its creation), marked with a ring
+and a small lens while the camera is on. A twist of `d` radians adds `d / full_turn` of the normalised range, where
+`full_turn` is the setting "Twist for full range" (30 to 360 degrees, default 150); with "Fine control by distance" the
+hand size at the pinch scales it from 1 (a hand of 0.12 frame heights or smaller, far away) to 0.5 (0.30 or larger,
+near), linearly in between. A stepped param counts steps from where the pinch began, one for each step width of turn,
+and takes a step back only after a whole step width the other way. The turn is kept inside the range, so there is no
+wind-up. A pinch with no target changes nothing and says "Click a knob first". The camera is off by default, on only
+after the user turns it on (the CAM button, `camera.toggle`, View > Panels > Camera), and off when turned off, when the
+app quits and on any camera error; the hand models download only after the consent dialog's Download. The settings
+(camera, hand, full turn, dead zone, reverse, fine control, pinch sensitivity, preview) are workflow preferences in a
+`camera` object of `workflow.json`, never in a project. The format is not changed.
+
+**Calibration (added after the first hand check).** A wrist turns about 150 degrees from one side to the other, so the
+first defaults (270 degrees, a quarter near the camera) asked for far more twist than a hand gives, and "Pinch
+sensitivity" was read as a twist setting. The default is now 150 degrees, the near scale 0.5, the setting is called
+"Pinch detection", and `camera.calibrate` measures the user: a held still pinch (1.5 s after 0.3 s to settle) gives
+the jitter `j` (peak to peak), then the right end and the left end (each held 0.8 s within max(2, 2j) degrees, the
+right at least 10 degrees from the start, the left at least 20 from the right). `full_turn` is the span between the
+ends, the dead zone (a tracker setting, 0.5 to 6 degrees, default 1.5) is `0.75 j + 0.3`, and `reverse` is set when
+the right end reads below the left. The angle is the tracker's, before `reverse`, so a calibration never depends on
+the last one. Letting go starts again from the still step; 30 s without finishing, the command again or the camera
+going off change nothing. A pinch turns no knob while it runs, and the result is saved to `workflow.json` at once.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

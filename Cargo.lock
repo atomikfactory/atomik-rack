@@ -280,6 +280,7 @@ dependencies = [
  "atomik-ui",
  "atomik-update",
  "atomik-video",
+ "atomik-vision",
  "clap",
  "embed-resource",
  "hound",

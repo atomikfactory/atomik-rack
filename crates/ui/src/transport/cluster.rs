@@ -32,8 +32,9 @@ const QREC_W: f64 = 40.0;
 const GRID_W: f64 = 54.0;
 const QUANT_W: f64 = 58.0;
 const KEY_W: f64 = 56.0;
+const CAM_W: f64 = 52.0;
 /// How many groups the cluster has.
-const GROUPS: usize = 5;
+const GROUPS: usize = 6;
 /// The seconds a held Rewind or Forward waits before it repeats.
 pub const REPEAT_DELAY: f64 = 0.4;
 /// The seconds between two repeats.
@@ -64,6 +65,8 @@ pub enum ClusterPart {
     Quantize,
     /// The song key at the playhead; a click sets the song key.
     Key,
+    /// The webcam controller's switch.
+    Camera,
     /// The overflow button.
     More,
 }
@@ -145,7 +148,7 @@ fn grid_index(ticks: i64) -> Option<usize> {
     GRIDS.iter().position(|g| g.1 == ticks)
 }
 
-/// The group widths: helpers, locators, click level, quantize, key.
+/// The group widths: helpers, locators, click level, quantize, key, camera.
 fn group_widths() -> [f64; GROUPS] {
     [
         2.0 * SMALL_W + TAP_W + 2.0 * IN_GAP,
@@ -153,6 +156,7 @@ fn group_widths() -> [f64; GROUPS] {
         CLICK_W,
         QREC_W + GRID_W + QUANT_W + 2.0 * IN_GAP,
         KEY_W,
+        CAM_W,
     ]
 }
 
@@ -233,6 +237,11 @@ impl TransportBar {
                 4 => {
                     out.parts.push((ClusterPart::Key, boxed(x, KEY_W, 28.0)));
                     x += KEY_W;
+                }
+                5 => {
+                    out.parts
+                        .push((ClusterPart::Camera, boxed(x, CAM_W, BUTTON_H)));
+                    x += CAM_W;
                 }
                 _ => {
                     for (part, w) in [
@@ -468,6 +477,10 @@ impl TransportBar {
             ClusterPart::Key => out.push(UiAction::HarmonyPicker(
                 crate::harmony_picker::HarmonyTarget::SongKey,
             )),
+            ClusterPart::Camera => out.push(UiAction::RunCommand {
+                id: "camera.toggle".into(),
+                arg: None,
+            }),
             ClusterPart::More => out.push(UiAction::ContextMenu {
                 target: crate::action::ContextTarget::TransportMore,
                 at: pos,
@@ -582,6 +595,7 @@ impl TransportBar {
                 ClusterPart::Grid => "transport.q_rec_grid",
                 ClusterPart::Quantize => "transport.quantize",
                 ClusterPart::Key => "transport.song_key",
+                ClusterPart::Camera => "transport.camera",
                 ClusterPart::More => "transport.more",
             };
             let found = match part {
@@ -624,6 +638,11 @@ impl TransportBar {
                     *r,
                     "Song key at the playhead: click to set the song key",
                     Some("transport.set_song_key"),
+                ),
+                ClusterPart::Camera => help(
+                    *r,
+                    "Webcam control: pinch and twist to turn the last knob you clicked",
+                    Some("camera.toggle"),
                 ),
                 ClusterPart::More => help(*r, "More transport controls", None),
             };
@@ -680,6 +699,20 @@ impl TransportBar {
                     hover,
                 ),
                 ClusterPart::Quantize => sp::button(c, st, *r, "QUANT", None, hover),
+                ClusterPart::Camera => {
+                    sp::button(
+                        c,
+                        st,
+                        *r,
+                        "CAM",
+                        self.state.camera.then_some(st.record),
+                        hover,
+                    );
+                    // The lit indicator: a dot that shows whenever the camera runs.
+                    if self.state.camera {
+                        c.fill_with(Circle::new(pt(r.x0 + 8.0, r.y0 + 7.0), 2.5), t.on_accent);
+                    }
+                }
                 ClusterPart::More => sp::button(c, st, *r, "...", None, hover),
                 ClusterPart::Grid => {
                     sp::lcd(c, st, *r, None);

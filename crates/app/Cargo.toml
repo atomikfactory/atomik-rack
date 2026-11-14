@@ -37,6 +37,8 @@ atomik-library.workspace = true
 atomik-video.workspace = true
 # The optional daily check for a newer release (the only network request the app makes).
 atomik-update.workspace = true
+# The webcam controller: the camera, the hand models, the gesture recogniser and the one-time model download.
+atomik-vision.workspace = true
 # The audio recording writer thread writes its in-progress WAV files incrementally.
 hound.workspace = true
 # The song → engine input conversion shared with project bounces (one implementation).

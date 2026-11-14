@@ -9,6 +9,27 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Turn the last clicked knob with your hand.** The webcam is now a controller. The last knob, slider or fader you
+  press (on a rack panel, in the parameter pane, on a console strip, or in a plugin's own window) is the camera
+  target and gets a small lens and a ring while the camera is on. Pinch your thumb and index finger and twist your
+  wrist like a knob: the target turns by the twist over a full turn of 150 degrees (30 to 360 in Settings > Camera),
+  a hand near the camera turns it half as far (fine control, on by default) and a stepped control moves one step
+  for each step width of twist without flickering at a boundary. One pinch is one undo step, Touch automation writes
+  while the fingers are together, and it is the path a mapped MIDI controller takes. A pinch with no target says
+  "Click a knob first". The CAM button in the transport bar (also View > Panels > Camera and the `camera.toggle`
+  command) turns the camera on and shows a lit dot while it runs; the first time it asks before downloading the two
+  hand models (7.8 MB, from one address, nothing about you or your computer is sent) and shows the progress, with
+  Cancel and Retry. A small preview box over the main window (View > Panels > Camera Preview) shows the camera like a
+  mirror with the hand drawn on it, NO HAND, HAND or PINCH, and the knob and its value while you turn it; its
+  tooltip gives the frames per second and the time the models took. The new Camera tab of the settings holds the
+  camera, which hand, the full turn, Reverse twist direction, Twist calibration, fine control, Pinch detection and
+  Delete downloaded models. **Calibrate** (also View > Panels > Calibrate Camera Twist, `camera.calibrate`) measures
+  your own twist: pinch and hold still, twist right as far as is comfortable and hold, then left and hold. The span
+  between the two ends becomes the full turn, the shake of the still hand sets the dead zone (a twist smaller than it
+  is ignored), and a right twist that reads as left turns on Reverse; the steps show in the preview box, letting go
+  starts again, and 30 seconds without finishing changes nothing. The camera
+  stops when you turn it off, when the app quits and on any camera error, with a message. Camera pictures stay in
+  memory: they are never saved, logged, sent or put in a project. Decision AE in `docs/DECISIONS.md`.
 - **Hand tracking core for webcam control.** A new crate, `atomik-vision`, is the engine room of a coming webcam
   controller (nothing in the application uses it yet). The camera is read through a trait (Media Foundation on
   Windows, AVFoundation on macOS, Video4Linux on Linux; a fake replays frames for tests) on a capture thread that

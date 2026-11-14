@@ -139,8 +139,186 @@ pub struct WorkflowPrefs {
     pub backup_keep: u32,
     /// Whether a backup copy brings the audio the project uses (default on).
     pub backup_audio: bool,
+    /// The webcam controller's settings.
+    pub camera: CameraPrefs,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
+}
+
+/// Which hand turns the knob.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HandChoice {
+    /// Either hand.
+    #[default]
+    Either,
+    /// Only the left hand.
+    Left,
+    /// Only the right hand.
+    Right,
+}
+
+impl HandChoice {
+    /// Every choice, in button order.
+    pub const ALL: [HandChoice; 3] = [HandChoice::Either, HandChoice::Left, HandChoice::Right];
+
+    /// The id used in `workflow.json`.
+    pub fn id(self) -> &'static str {
+        match self {
+            HandChoice::Either => "either",
+            HandChoice::Left => "left",
+            HandChoice::Right => "right",
+        }
+    }
+
+    /// The choice with this id.
+    pub fn from_id(id: &str) -> Option<HandChoice> {
+        HandChoice::ALL.into_iter().find(|m| m.id() == id)
+    }
+
+    /// The text on the settings button.
+    pub fn label(self) -> &'static str {
+        match self {
+            HandChoice::Either => "Either",
+            HandChoice::Left => "Left",
+            HandChoice::Right => "Right",
+        }
+    }
+
+    /// Whether a hand the model labels `letter` (`L` or `R`) may turn the knob.
+    pub fn allows(self, letter: char) -> bool {
+        match self {
+            HandChoice::Either => true,
+            HandChoice::Left => letter == 'L',
+            HandChoice::Right => letter == 'R',
+        }
+    }
+}
+
+/// The least a full turn of the twist may be, in degrees (a calibration of a short wrist twist
+/// goes this low).
+pub const MIN_FULL_TURN: u16 = 30;
+/// The most a full turn of the twist may be, in degrees.
+pub const MAX_FULL_TURN: u16 = 360;
+/// The least the pinch sensitivity may be, in percent.
+pub const MIN_SENSITIVITY: u16 = 50;
+/// The most the pinch sensitivity may be, in percent.
+pub const MAX_SENSITIVITY: u16 = 150;
+/// The least twist dead zone, in tenths of a degree.
+pub const MIN_DEAD_ZONE: u16 = 5;
+/// The most twist dead zone, in tenths of a degree.
+pub const MAX_DEAD_ZONE: u16 = 60;
+
+/// The webcam controller's settings (saved in `workflow.json` under `camera`, never in a
+/// project).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CameraPrefs {
+    /// The camera to use (`None`: the first one).
+    pub camera: Option<String>,
+    /// Which hand turns the knob.
+    pub hand: HandChoice,
+    /// The twist of a whole range, in degrees ([`MIN_FULL_TURN`] to [`MAX_FULL_TURN`], default
+    /// 150: about what a wrist turns from one side to the other). Calibration measures it.
+    pub full_turn: u16,
+    /// A twist smaller than this is held back, in tenths of a degree ([`MIN_DEAD_ZONE`] to
+    /// [`MAX_DEAD_ZONE`], default 15). Calibration sets it from how much a still hand shakes.
+    pub dead_zone: u16,
+    /// The twist turns the other way (calibration sets it when twisting right reads as left).
+    pub reverse: bool,
+    /// A hand near the camera turns the knob finer (default on).
+    pub fine: bool,
+    /// How easily a pinch is seen, in percent of the default thresholds ([`MIN_SENSITIVITY`] to
+    /// [`MAX_SENSITIVITY`], default 100).
+    pub sensitivity: u16,
+    /// The camera preview box shows while the camera is on (default on).
+    pub preview: bool,
+}
+
+impl Default for CameraPrefs {
+    fn default() -> Self {
+        Self {
+            camera: None,
+            hand: HandChoice::Either,
+            full_turn: 150,
+            dead_zone: 15,
+            reverse: false,
+            fine: true,
+            sensitivity: 100,
+            preview: true,
+        }
+    }
+}
+
+impl CameraPrefs {
+    /// The prefs of a `camera` object, bad or missing fields taking their defaults.
+    fn from_value(value: Option<&Value>) -> CameraPrefs {
+        let defaults = CameraPrefs::default();
+        let Some(obj) = value.and_then(Value::as_object) else {
+            return defaults;
+        };
+        let number = |name: &str, min: u16, max: u16, default: u16| {
+            obj.get(name)
+                .and_then(Value::as_u64)
+                .map_or(default, |n| n.clamp(u64::from(min), u64::from(max)) as u16)
+        };
+        CameraPrefs {
+            camera: obj
+                .get("camera")
+                .and_then(Value::as_str)
+                .filter(|c| !c.is_empty() && c.len() <= 200 && !c.chars().any(char::is_control))
+                .map(str::to_owned),
+            hand: obj
+                .get("hand")
+                .and_then(Value::as_str)
+                .and_then(HandChoice::from_id)
+                .unwrap_or(defaults.hand),
+            full_turn: number(
+                "full_turn",
+                MIN_FULL_TURN,
+                MAX_FULL_TURN,
+                defaults.full_turn,
+            ),
+            dead_zone: number(
+                "dead_zone",
+                MIN_DEAD_ZONE,
+                MAX_DEAD_ZONE,
+                defaults.dead_zone,
+            ),
+            reverse: obj
+                .get("reverse")
+                .and_then(Value::as_bool)
+                .unwrap_or(defaults.reverse),
+            fine: obj
+                .get("fine")
+                .and_then(Value::as_bool)
+                .unwrap_or(defaults.fine),
+            sensitivity: number(
+                "sensitivity",
+                MIN_SENSITIVITY,
+                MAX_SENSITIVITY,
+                defaults.sensitivity,
+            ),
+            preview: obj
+                .get("preview")
+                .and_then(Value::as_bool)
+                .unwrap_or(defaults.preview),
+        }
+    }
+
+    /// The `camera` object of `workflow.json`.
+    fn to_value(&self) -> Value {
+        let mut map = Map::new();
+        if let Some(camera) = &self.camera {
+            map.insert("camera".into(), Value::String(camera.clone()));
+        }
+        map.insert("hand".into(), Value::String(self.hand.id().into()));
+        map.insert("full_turn".into(), Value::from(self.full_turn));
+        map.insert("dead_zone".into(), Value::from(self.dead_zone));
+        map.insert("reverse".into(), Value::Bool(self.reverse));
+        map.insert("fine".into(), Value::Bool(self.fine));
+        map.insert("sensitivity".into(), Value::from(self.sensitivity));
+        map.insert("preview".into(), Value::Bool(self.preview));
+        Value::Object(map)
+    }
 }
 
 /// How many automatic versions a save keeps when the preference is not set.
@@ -255,6 +433,7 @@ impl Default for WorkflowPrefs {
             backup_folder: None,
             backup_keep: DEFAULT_BACKUP_KEEP,
             backup_audio: true,
+            camera: CameraPrefs::default(),
             extra: BTreeMap::new(),
         }
     }
@@ -393,6 +572,7 @@ impl WorkflowPrefs {
                     n.clamp(1, u64::from(MAX_BACKUP_KEEP)) as u32
                 }),
             backup_audio: flag("backup_audio", defaults.backup_audio),
+            camera: CameraPrefs::from_value(obj.get("camera")),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -434,6 +614,7 @@ impl WorkflowPrefs {
                             | "backup_folder"
                             | "backup_keep"
                             | "backup_audio"
+                            | "camera"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -529,6 +710,7 @@ impl WorkflowPrefs {
         map.insert("preview_db".into(), Value::from(f64::from(self.preview_db)));
         map.insert("backup_keep".into(), Value::from(self.backup_keep));
         map.insert("backup_audio".into(), Value::Bool(self.backup_audio));
+        map.insert("camera".into(), self.camera.to_value());
         if let Some(folder) = &self.library_folder {
             map.insert(
                 "library_folder".into(),
@@ -1371,5 +1553,80 @@ mod packaging_tests {
         assert_eq!((p.default_song, p.scratch_folder), (None, None));
         let old = WorkflowPrefs::from_json("{}").unwrap();
         assert_eq!(old.default_song, None);
+    }
+}
+
+#[cfg(test)]
+mod camera_tests {
+    use super::*;
+
+    #[test]
+    fn the_camera_settings_default_to_a_150_degree_turn_with_fine_control_and_the_preview_on() {
+        let d = WorkflowPrefs::default().camera;
+        assert_eq!(
+            (
+                d.camera.clone(),
+                d.hand,
+                d.full_turn,
+                d.dead_zone,
+                d.reverse,
+                d.fine,
+                d.sensitivity,
+                d.preview
+            ),
+            (None, HandChoice::Either, 150, 15, false, true, 100, true)
+        );
+    }
+
+    #[test]
+    fn they_round_trip_through_workflow_json_and_are_not_extra_fields() {
+        let set = WorkflowPrefs {
+            camera: CameraPrefs {
+                camera: Some("Front Camera".into()),
+                hand: HandChoice::Right,
+                full_turn: 180,
+                dead_zone: 8,
+                reverse: true,
+                fine: false,
+                sensitivity: 120,
+                preview: false,
+            },
+            ..WorkflowPrefs::default()
+        };
+        let text = set.to_json();
+        assert!(text.contains("\"camera\": {"), "{text}");
+        assert!(text.contains("\"full_turn\": 180"), "{text}");
+        let back = WorkflowPrefs::from_json(&text).unwrap();
+        assert_eq!(back, set);
+        assert!(
+            back.extra.is_empty(),
+            "the field is known, not kept as extra"
+        );
+        assert_eq!(back.to_json(), text, "the text is canonical");
+    }
+
+    #[test]
+    fn bad_values_are_clamped_or_defaulted() {
+        let p = WorkflowPrefs::from_json(
+            r#"{"camera": {"full_turn": 5, "dead_zone": 900, "reverse": 1, "sensitivity": 900, "hand": "both", "fine": 3, "camera": ""}}"#,
+        )
+        .unwrap()
+        .camera;
+        assert_eq!(p.full_turn, MIN_FULL_TURN);
+        assert_eq!(p.dead_zone, MAX_DEAD_ZONE);
+        assert!(!p.reverse, "not a flag: the default");
+        assert_eq!(p.sensitivity, MAX_SENSITIVITY);
+        assert_eq!(p.hand, HandChoice::Either);
+        assert!(p.fine, "not a flag: the default");
+        assert_eq!(p.camera, None);
+        let p = WorkflowPrefs::from_json(r#"{"camera": 7}"#).unwrap().camera;
+        assert_eq!(p, CameraPrefs::default());
+    }
+
+    #[test]
+    fn the_hand_choice_filters_by_the_models_label() {
+        assert!(HandChoice::Either.allows('L') && HandChoice::Either.allows('R'));
+        assert!(HandChoice::Left.allows('L') && !HandChoice::Left.allows('R'));
+        assert!(HandChoice::Right.allows('R') && !HandChoice::Right.allows('L'));
     }
 }

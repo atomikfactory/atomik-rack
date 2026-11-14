@@ -248,6 +248,11 @@ pub fn run(cli: Cli) -> Result<(), String> {
     // cannot reach the network). It is used for the optional update check: with no answer to the
     // question yet the notice asks it and nothing is sent. A screenshot or stress run never checks.
     shell.set_update_http(Arc::new(atomik_update::UreqGet));
+    // The camera, the hand models and their one-time download: the application window only, and
+    // never before the user turns the camera on.
+    shell
+        .core_mut()
+        .set_vision(Arc::new(crate::vision_link::SystemVision::new(&config.dir)));
     if cli.screenshot.is_none() && !cli.stress && !cli.stress_song_loads() {
         shell.start_update_check();
     }
