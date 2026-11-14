@@ -5,9 +5,12 @@
 //! **mode** (turn the clicked knob, send MIDI as the controller Camera, or both), the
 //! **hand** that turns the knob (either, left or right), **Camera notes** (let the pinch and open
 //! palm notes play the selected instrument too), **Twist for full range** (how far the
-//! wrist turns to sweep a whole range, 90 to 360 degrees), **Fine control by distance** (a hand
-//! near the camera turns the knob finer), **Pinch sensitivity** (scales how close the fingers must
-//! come), **Show camera preview**, and **Delete downloaded models**. The values are workflow
+//! wrist turns to sweep a whole range, 30 to 360 degrees), **Reverse twist direction**, **Twist
+//! calibration** (its **Calibrate** button applies the dialog, closes it and measures the user's
+//! twist, which sets the full range, the dead zone shown on the row and the direction; see
+//! `app_core_vision_calibrate.rs`), **Fine control by distance** (a hand near the camera turns
+//! the knob finer), **Pinch detection** (scales how close the fingers must come; it does not
+//! change the twist), **Show camera preview**, and **Delete downloaded models**. The values are workflow
 //! preferences ([`crate::keymap_store::CameraPrefs`]) edited in a draft and merged back when the
 //! dialog is applied. **Use for this project only** keeps the mode and the gesture table in the
 //! open project instead (`atomik_model::CameraOverride`): while it is on, the mode buttons and
@@ -34,7 +37,7 @@ const STEP_W: f64 = 28.0;
 const BUTTON_W: f64 = 64.0;
 const MODE_W: f64 = 124.0;
 /// How many degrees one press of the twist buttons moves, and with Shift.
-const TURN_STEP: u16 = 15;
+const TURN_STEP: u16 = 10;
 const TURN_BIG: u16 = 45;
 /// How many percent one press of the sensitivity buttons moves, and with Shift.
 const SENS_STEP: u16 = 10;
@@ -119,6 +122,17 @@ pub struct GesturesRow {
     pub edit: Rect,
 }
 
+/// A row with a line of text and one button.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ButtonRow {
+    /// The whole row.
+    pub rect: Rect,
+    /// The line under the title.
+    pub text: String,
+    /// The button.
+    pub button: Rect,
+}
+
 /// The models row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelsRow {
@@ -143,9 +157,13 @@ pub struct CameraLayout {
     pub hand: HandRow,
     /// Twist for full range.
     pub turn: StepRow,
+    /// Reverse twist direction.
+    pub reverse: CheckRow,
+    /// Twist calibration: the dead zone as text and the Calibrate button.
+    pub calibrate: ButtonRow,
     /// Fine control by distance.
     pub fine: CheckRow,
-    /// Pinch sensitivity.
+    /// Pinch detection.
     pub sensitivity: StepRow,
     /// Show camera preview.
     pub preview: CheckRow,
@@ -375,6 +393,16 @@ impl CameraTab {
             check: Rect::new(rect.x0 + 8.0, rect.y0 + 6.0, rect.x0 + 24.0, rect.y0 + 22.0),
             on,
         };
+        let reverse = check_row(next_row(), self.prefs.reverse);
+        let rect = next_row();
+        let calibrate = ButtonRow {
+            rect,
+            text: format!(
+                "Dead zone {}\u{b0}. Pinch, hold still, twist right, then left",
+                crate::app_core::format_tenths(self.prefs.dead_zone)
+            ),
+            button: button(rect, rect.x1, 96.0),
+        };
         let fine = check_row(next_row(), self.prefs.fine);
         let sensitivity = step_row(next_row(), format!("{}%", self.prefs.sensitivity));
         let preview = check_row(next_row(), self.prefs.preview);
@@ -426,6 +454,8 @@ impl CameraTab {
             mode,
             hand,
             turn,
+            reverse,
+            calibrate,
             fine,
             sensitivity,
             preview,
@@ -446,7 +476,7 @@ impl CameraTab {
             .iter()
             .map(|n| 16.0 * wrap(n, crate::video_tab::WRAP + 8).len() as f64 + 6.0)
             .sum();
-        11.0 * ROW + 10.0 * GAP + 12.0 + notes
+        13.0 * ROW + 12.0 * GAP + 12.0 + notes
     }
 
     /// Handles an event inside `panel`.
@@ -505,6 +535,10 @@ impl CameraTab {
                         .clamp(MIN_FULL_TURN, MAX_FULL_TURN);
                 } else if l.turn.more.contains(*pos) {
                     self.prefs.full_turn = (self.prefs.full_turn + turn).min(MAX_FULL_TURN);
+                } else if l.reverse.rect.contains(*pos) {
+                    self.prefs.reverse = !self.prefs.reverse;
+                } else if l.calibrate.button.contains(*pos) {
+                    return TabOutcome::CalibrateCamera;
                 } else if l.fine.rect.contains(*pos) {
                     self.prefs.fine = !self.prefs.fine;
                 } else if l.sensitivity.less.contains(*pos) {
@@ -646,6 +680,19 @@ impl CameraTab {
         );
         check(
             canvas,
+            &l.reverse,
+            "Reverse twist direction",
+            "Twisting right turns the knob down",
+        );
+        title(
+            canvas,
+            l.calibrate.rect,
+            "Twist calibration",
+            &l.calibrate.text,
+        );
+        button(canvas, l.calibrate.button, "Calibrate", false, true);
+        check(
+            canvas,
             &l.fine,
             "Fine control by distance",
             "A hand close to the camera turns the knob finer",
@@ -653,8 +700,8 @@ impl CameraTab {
         step(
             canvas,
             &l.sensitivity,
-            "Pinch sensitivity",
-            "Higher: the fingers may be further apart",
+            "Pinch detection",
+            "Higher: a looser pinch counts. It does not change the twist",
         );
         check(
             canvas,

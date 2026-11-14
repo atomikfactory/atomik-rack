@@ -510,14 +510,15 @@ fn the_pad_takes_over_from_the_first_hand_that_pinched() {
     touch(&mut c, "a", CUTOFF);
     touch(&mut c, "b", RESONANCE);
     // One hand pinches and twists the newer knob.
-    // (A hand of 0.2 frame heights turns it at two thirds of the full scale.)
+    // (A hand of 0.2 frame heights turns it at seven ninths of the full scale: 81 degrees of a
+    // 270 degree turn moves it 0.3 x 7/9.)
     feed(
         &mut c,
         &fake,
         vec![open_frame(0.0), pinch_start(), twist(81.0)],
     );
     assert!(
-        near(norm(&c, "b", RESONANCE), 0.45),
+        near(norm(&c, "b", RESONANCE), 0.25 + 0.3 * 7.0 / 9.0),
         "{}",
         norm(&c, "b", RESONANCE)
     );
@@ -540,7 +541,7 @@ fn the_pad_takes_over_from_the_first_hand_that_pinched() {
     assert!(c.undo());
     assert!(near(norm(&c, "a", CUTOFF), 0.25));
     assert!(
-        near(norm(&c, "b", RESONANCE), 0.45),
+        near(norm(&c, "b", RESONANCE), 0.25 + 0.3 * 7.0 / 9.0),
         "the twist is still there"
     );
     assert!(c.undo());
