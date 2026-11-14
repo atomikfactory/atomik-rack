@@ -7368,7 +7368,14 @@ impl<B: AudioBackend> Shell<B> {
     fn open_create(&mut self, kind: CreateKind) {
         self.show_rack();
         self.set_focus(Pane::Rack);
-        self.core.open_create_browser(kind);
+        // From the rack's right-click menu the device goes where the rack was clicked; the
+        // place is forgotten whenever the menu closes, so a key never finds a stale one.
+        self.core.open_create_browser_from_menu(kind);
+    }
+
+    /// Forgets where the rack's menu was opened (the paste and create place): the menu closed.
+    fn forget_menu_place(&mut self) {
+        let _ = self.core.view_mut().take_context_slot();
     }
 
     /// Sends a key no command took to the focused view (numpad keys as the characters they
@@ -7871,6 +7878,10 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Opens the context menu of `target` at the window point `at`, built from the registry.
     fn open_context_menu(&mut self, pane: Pane, target: ContextTarget, at: Point) {
+        // Only the menu of the empty rack has a place to paste or create at.
+        if target != ContextTarget::Rack {
+            self.forget_menu_place();
+        }
         let enable = self.menu_enable(pane);
         let mut specs = context_menus::specs(target, &enable);
         // The rack menus list the device types by family.
@@ -8022,6 +8033,7 @@ impl<B: AudioBackend> Shell<B> {
     /// Closes the context menu without choosing.
     pub fn close_context_menu(&mut self) {
         if self.context_menu.take().is_some() {
+            self.forget_menu_place();
             self.repaint = true;
         }
     }
@@ -8038,6 +8050,7 @@ impl<B: AudioBackend> Shell<B> {
         if open.window != window && pointer_pos(event).is_some() {
             if matches!(event, UiEvent::PointerDown { .. }) {
                 self.context_menu = None;
+                self.forget_menu_place();
                 self.repaint = true;
             }
             return Vec::new();
@@ -8055,6 +8068,7 @@ impl<B: AudioBackend> Shell<B> {
         }
         if open.menu.wants_close(event) {
             self.context_menu = None;
+            self.forget_menu_place();
             self.repaint = true;
             return Vec::new();
         }
@@ -8075,6 +8089,7 @@ impl<B: AudioBackend> Shell<B> {
                 self.set_focus(pane);
                 let ran = self.run_command(&command, arg.as_deref());
                 self.duck_menu = None;
+                self.forget_menu_place();
                 ran.unwrap_or_default()
             }
             MenuOutcome::Consumed | MenuOutcome::Ignored => {

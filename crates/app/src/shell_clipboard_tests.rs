@@ -1534,6 +1534,98 @@ fn a_stale_menu_position_does_not_steer_a_later_keyboard_paste() {
     assert!(placed(&s).iter().all(|(_, c)| *c != 2), "{:?}", placed(&s));
 }
 
+/// Runs `command` as a pick in the open context menu does: the command, then the menu closes.
+fn run_from_menu(s: &mut Shell<NullBackend>, command: &str, arg: Option<&str>) {
+    assert!(s.context_menu().is_some(), "a menu is open");
+    s.run_command(command, arg);
+    s.close_context_menu();
+}
+
+/// The columns of the devices of type `type_id`, in rack order.
+fn columns_of(s: &Shell<NullBackend>, type_id: &str) -> Vec<u16> {
+    s.core()
+        .doc()
+        .devices
+        .iter()
+        .filter(|d| d.type_id == type_id)
+        .map(|d| d.column)
+        .collect()
+}
+
+#[test]
+fn a_device_type_created_from_the_rack_menu_lands_in_the_clicked_column() {
+    let mut s = columns_rack();
+    // The selection is in column 0; the right click is on the empty column 2.
+    let a = plate(&s, "a");
+    click(&mut s, a, Modifiers::NONE);
+    let before = columns_of(&s, SYNTH);
+    let empty = in_column(&s, 2, 200.0);
+    open_menu(&mut s, empty);
+    run_from_menu(&mut s, "create.device", Some(SYNTH));
+    let after = columns_of(&s, SYNTH);
+    assert_eq!(after.len(), before.len() + 1, "{after:?}");
+    assert!(
+        after.contains(&2),
+        "the new synth is in column 2: {after:?}"
+    );
+    // Below `c` in column 1, an effect joins column 1.
+    let below_c = in_column(&s, 1, 3.0 * f64::from(atomik_device_sdk::RACK_UNIT) * 4.0);
+    open_menu(&mut s, below_c);
+    run_from_menu(&mut s, "create.device", Some(DELAY));
+    assert_eq!(
+        columns_of(&s, DELAY).iter().filter(|c| **c == 1).count(),
+        2,
+        "{:?}",
+        placed(&s)
+    );
+}
+
+#[test]
+fn the_create_browser_opened_from_the_rack_menu_creates_in_the_clicked_column() {
+    let mut s = columns_rack();
+    let a = plate(&s, "a");
+    click(&mut s, a, Modifiers::NONE);
+    let before = s.core().doc().devices.len();
+    let empty = in_column(&s, 2, 200.0);
+    open_menu(&mut s, empty);
+    run_from_menu(&mut s, "create.instrument", None);
+    tap(&mut s, Os::Windows, "Enter");
+    let doc = s.core().doc();
+    assert!(doc.devices.len() > before, "an instrument was created");
+    let new = doc
+        .devices
+        .iter()
+        .find(|d| {
+            !atomik_model::console::is_console_type(&d.type_id)
+                && !["a", "b", "c"].contains(&d.key.0.as_str())
+        })
+        .expect("the new instrument");
+    assert_eq!(new.column, 2, "{:?}", placed(&s));
+}
+
+#[test]
+fn a_dismissed_rack_menu_does_not_steer_a_later_create() {
+    let mut s = columns_rack();
+    let a = plate(&s, "a");
+    click(&mut s, a, Modifiers::NONE);
+    let empty = in_column(&s, 2, 200.0);
+    open_menu(&mut s, empty);
+    tap(&mut s, Os::Windows, "Escape");
+    assert!(s.context_menu().is_none());
+    s.run_command("create.device", Some(SYNTH));
+    assert!(!columns_of(&s, SYNTH).contains(&2), "{:?}", placed(&s));
+    // Nor does the menu of a device opened after a right click on the empty rack (the first
+    // right click on the device closes the open menu, the second opens the device's).
+    let empty = in_column(&s, 2, 200.0);
+    open_menu(&mut s, empty);
+    let a = plate(&s, "a");
+    open_menu(&mut s, a);
+    assert!(s.context_menu().is_none());
+    open_menu(&mut s, a);
+    run_from_menu(&mut s, "create.device", Some(DELAY));
+    assert!(!columns_of(&s, DELAY).contains(&2), "{:?}", placed(&s));
+}
+
 #[test]
 fn a_lane_range_copies_cuts_deletes_and_pastes_the_parts_of_the_clips_inside_it() {
     let mut s = with_clips();
