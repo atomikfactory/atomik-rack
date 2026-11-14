@@ -289,6 +289,9 @@ pub enum AppCommand {
     /// Transport > Detect Song Key: reads the key from the notes of every note clip and sets it
     /// (one undo step).
     DetectKey,
+    /// Edit > Audio Edits > Separate Stems... and the clip menu: opens the dialog that splits the
+    /// selected audio clip into vocals, drums, bass and other, each on a new track.
+    SeparateStems,
     /// Transport > Detect Key from Audio: reads the key from the audio of the selected clips (or
     /// of every audio clip) and sets it (one undo step).
     DetectKeyFromAudio,
@@ -1045,6 +1048,7 @@ impl AppCommand {
             AppCommand::ToggleChordLane => ("view.toggle_chord_lane", None),
             AppCommand::SetSongKey => ("transport.set_song_key", None),
             AppCommand::DetectKey => ("transport.detect_key", None),
+            AppCommand::SeparateStems => ("audio.separate_stems", None),
             AppCommand::DetectKeyFromAudio => ("sequencer.detect_key_from_audio", None),
             AppCommand::DetectChordsFromAudio => ("sequencer.detect_chords_from_audio", None),
             AppCommand::RefreshEnergyLane => ("view.refresh_energy_lane", None),
@@ -1460,6 +1464,7 @@ impl AppCommand {
             ("view.toggle_chord_lane", None) => AppCommand::ToggleChordLane,
             ("transport.set_song_key", None) => AppCommand::SetSongKey,
             ("transport.detect_key", None) => AppCommand::DetectKey,
+            ("audio.separate_stems", None) => AppCommand::SeparateStems,
             ("sequencer.detect_key_from_audio", None) => AppCommand::DetectKeyFromAudio,
             ("sequencer.detect_chords_from_audio", None) => AppCommand::DetectChordsFromAudio,
             ("view.refresh_energy_lane", None) => AppCommand::RefreshEnergyLane,
@@ -3205,6 +3210,11 @@ fn menus_in_english(
                             AppCommand::AudioQuantize,
                             state.audio.can_warp,
                         ),
+                        enabled(
+                            "Separate Stems\u{2026}",
+                            AppCommand::SeparateStems,
+                            state.audio.can_edit,
+                        ),
                     ],
                 }),
                 MenuEntry::Submenu(Submenu {
@@ -4904,6 +4914,7 @@ mod tests {
             AppCommand::DetectKey,
             AppCommand::DetectKeyFromAudio,
             AppCommand::DetectChordsFromAudio,
+            AppCommand::SeparateStems,
             AppCommand::ToggleVideoRow,
             AppCommand::ToggleMarkerStrip,
             AppCommand::ToggleInspector,

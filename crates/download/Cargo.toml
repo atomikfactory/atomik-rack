@@ -1,0 +1,18 @@
+[package]
+name = "atomik-download"
+description = "Atomik Rack one-time model download: the pinned file list, the Fetcher trait (HTTPS only, no redirect) and the verified store that leaves nothing behind on a failure."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+sha2.workspace = true
+ureq.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

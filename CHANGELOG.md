@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Separate Stems.** Right-click an audio clip and choose Separate Stems (or find it in the command palette): a small
+  dialog asks which stems to make (vocals, drums, bass, other) and whether to mute the original clip, and each stem
+  becomes a new audio track under the clip, named after it, with a copy of the clip at the same place with the same
+  offset, gain, fades and warp. It is one undo step. It is a fast signal-processing split, not a learned model: there
+  is no model, no download and no network, and expect some bleed between stems. The drums are the percussive part of a
+  harmonic/percussive split, the bass is the harmonic part below about 150 Hz, the vocals are the harmonic part above
+  it that sits in the centre of the stereo image (for a mono clip, the 200 Hz to 5 kHz band at a lower weight), and
+  other is what is left, so the four add up to the clip. The work runs on a worker with progress and Cancel; a
+  3-minute stereo song takes a few seconds in a release build, and the same input gives the same result every time.
+  The new `atomik-stems` crate holds it, and the download code moved into the shared `atomik-download` crate. A
+  learned model is left for when one exists whose weights and training data both allow commercial use. Decision AK in
+  `docs/DECISIONS.md`. 572 commands.
 - **Plugins that share a process.** Settings > Plugins has a PROCESSES button: one process per plugin (the default,
   as before), one per plugin file, or one shared by all sandboxed plugins of a format. The plugin manager has a
   PROCESS column where one plugin asks for its own process or the shared one. A group holds up to 16 plugins (the

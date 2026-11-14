@@ -10,9 +10,8 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+atomik-download.workspace = true
 tract-tflite = "0.23.10"
-sha2.workspace = true
-ureq.workspace = true
 zune-jpeg.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -428,6 +428,14 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("audio.restart", "Restart Audio", G::Global, C::Global).menu(),
+    cmd(
+        "audio.separate_stems",
+        "Separate Stems",
+        G::Global,
+        C::Global,
+    )
+    .menu()
+    .decline(),
     cmd("audio.settings", "Settings", G::Global, C::Global).menu(),
     cmd(
         "automation.clear_control",

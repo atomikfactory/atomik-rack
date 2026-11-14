@@ -100,6 +100,7 @@ fn song_label(c: &SongCommand) -> &'static str {
         SongCommand::AddTrack { .. }
         | SongCommand::AddAudioTrack { .. }
         | SongCommand::AddRenderedTrack { .. } => "Add Track",
+        SongCommand::AddStemTracks { .. } => "Separate Stems",
         SongCommand::RemoveTrack { .. } => "Delete Track",
         SongCommand::SetTrackFlags { .. } => "Change Track",
         SongCommand::MoveTrack { .. } => "Move Track",

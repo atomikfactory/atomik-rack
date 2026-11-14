@@ -1811,6 +1811,29 @@ pub enum SongCommand {
         /// Clips to mute (the originals), by id.
         mute: Vec<ClipId>,
     },
+    /// Separates an audio clip into stems (one undo step): for each stem a new audio track, in
+    /// order right after the clip's own track (in its folder, with its colour), holding a copy of
+    /// the clip that plays the stem's file instead: the same place, length, source offset, gain,
+    /// fades, envelope and warp. With `mute_original` the clip is muted in the same step. The
+    /// stem files must be registered ([`crate::Command::RegisterAsset`]) and have as many frames
+    /// as the clip's own file.
+    AddStemTracks {
+        /// The clip that was separated.
+        clip: ClipId,
+        /// The stems, in track order.
+        stems: Vec<StemTrack>,
+        /// Mute the original clip.
+        mute_original: bool,
+    },
+}
+
+/// One stem of [`SongCommand::AddStemTracks`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StemTrack {
+    /// The name of the new track.
+    pub name: String,
+    /// The stem's file, an asset id in [`crate::RackDoc::assets`].
+    pub asset: String,
 }
 
 /// An empty song at the given tempo, 4/4, loop bars 1–5 disabled, end at bar 17.

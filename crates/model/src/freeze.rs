@@ -894,6 +894,82 @@ pub(crate) fn plan_rendered_track(
     Ok((Edit::Compound(edits), id))
 }
 
+/// Plans [`SongCommand::AddStemTracks`]: for each stem a new audio track right after the previous
+/// one (the first after the track of `clip`), holding a copy of the clip that plays the stem's
+/// file, and the original muted when `mute_original` is set. Returns the edit and the ids of the
+/// new clips, in track order.
+pub(crate) fn plan_stem_tracks(
+    doc: &RackDoc,
+    registry: &Registry,
+    clip: ClipId,
+    stems: &[crate::song::StemTrack],
+    mute_original: bool,
+) -> Result<(Edit, Vec<ClipId>), ModelError> {
+    const MOST_STEMS: usize = 16;
+    if stems.is_empty() || stems.len() > MOST_STEMS {
+        return Err(bad(format!("a separation makes 1 to {MOST_STEMS} stems")));
+    }
+    let (source, _, original) = find_clip(doc, clip)?;
+    let ClipContent::Audio(content) = &original.content else {
+        return Err(bad(format!("clip {} is not an audio clip", clip.0)));
+    };
+    let mut scratch = doc.clone();
+    let mut edits = Vec::new();
+    let mut ids = Vec::new();
+    let mut after = source.clone();
+    for stem in stems {
+        let mut audio = content.clone();
+        audio.asset = stem.asset.clone();
+        check_audio(&scratch, &audio)?;
+        let track = add_audio_track(&scratch, registry, Some(stem.name.clone()), Some(&after))?;
+        let known: Vec<DeviceKey> = scratch
+            .song
+            .tracks
+            .iter()
+            .map(|t| t.device.clone())
+            .collect();
+        track.perform(&mut scratch)?;
+        let device = scratch
+            .song
+            .tracks
+            .iter()
+            .find(|t| !known.contains(&t.device))
+            .map(|t| t.device.clone())
+            .ok_or_else(|| bad("the new audio track is missing"))?;
+        // Next to the original the new tracks are in its folder and show its colour.
+        let join = crate::organise_cmd::join_track(&scratch, &device, &source);
+        if let Some(join) = &join {
+            join.perform(&mut scratch)?;
+        }
+        let lane = audio_lane(&scratch, &device)?;
+        let stem_clip = Clip {
+            muted: false,
+            content: ClipContent::Audio(audio),
+            ..original.clone()
+        };
+        let (insert, id) = insert_new(&scratch, device.clone(), lane, stem_clip)?;
+        insert.perform(&mut scratch)?;
+        edits.push(track);
+        edits.extend(join);
+        edits.push(insert);
+        ids.push(id);
+        after = device;
+    }
+    if mute_original && !original.muted {
+        let (device, lane, c) = find_clip(doc, clip)?;
+        edits.push(Edit::Clip {
+            device,
+            lane,
+            old: Some(c.clone()),
+            new: Some(Clip {
+                muted: true,
+                ..c.clone()
+            }),
+        });
+    }
+    Ok((Edit::Compound(edits), ids))
+}
+
 /// The length in ticks of a clip that plays `frames` frames starting at `start_tick`: the
 /// smallest whole number of ticks whose span, through the song's tempo map
 /// ([`crate::song::Song::frame_at`]), is at least `frames` (audio is not stretched). At least 1,

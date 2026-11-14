@@ -1,0 +1,14 @@
+{"ops":[
+{"transform":[1.00,0.00,0.00,1.00,0.00,0.00]},
+{"fill":{"rect":[0.00,0.00,900.00,600.00]},"brush":"#0e101399"},
+{"fill":{"rrect":[190.00,205.00,710.00,395.00,10.00]},"brush":"#16181bff"},
+{"stroke":{"rrect":[190.00,205.00,710.00,395.00,10.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"text":"Séparation des stems","at":[208.00,235.00],"size":15.00,"weight":600,"align":"start","color":"#ece8e1ff"},
+{"text":"Séparation : 42 %","at":[208.00,261.00],"size":11.50,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"La lecture continue pendant la création des stems.","at":[208.00,279.00],"size":11.50,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"fill":{"rrect":[208.00,305.00,692.00,315.00,4.00]},"brush":"#262a30ff"},
+{"fill":{"rrect":[208.00,305.00,411.28,315.00,4.00]},"brush":"#7cc4ffff"},
+{"fill":{"rrect":[598.00,351.00,694.00,379.00,6.00]},"brush":"#262a30ff"},
+{"text":"Annuler","at":[646.00,369.00],"size":12.00,"weight":400,"align":"center","color":"#ece8e1ff"},
+{"pop_transform":true}
+]}
