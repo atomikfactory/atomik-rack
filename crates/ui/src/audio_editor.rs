@@ -24,11 +24,15 @@
 //! * **Slice** edits the warp markers. A marker pins a source frame to a tick of the clip: a new
 //!   marker is pinned where the audio already plays, so adding markers changes no sound. Entering
 //!   Slice mode with warp off switches warp on at the song tempo at the clip start (one undo step,
-//!   like Quantize Audio); the first marker added to such a clip does both in one step. A reversed
-//!   clip cannot be warped and cannot be sliced.
+//!   like Quantize Audio); the first marker added to such a clip does both in one step. The
+//!   markers of a reversed clip are drawn where the reversed audio plays them and **To slicer**
+//!   works on it (the slices play backwards, last span first); moving them needs the clip
+//!   un-reversed.
 //! * **Vocal** edits the pitch and timing of a monophonic clip (a voice, a bass, a lead): see the
 //!   Vocal mode section below.
-//! * **Comp** is listed and disabled.
+//! * **Comp** shows the takes of the clip's take group as stacked lanes under a comp lane and
+//!   edits the comp: see the [`comp`] module. The Overview toolbar also holds the Keep formants
+//!   controls of a Tonal clip (the toggle, the formant shift and the stereo link).
 //!
 //! The mode is view state ([`AudioEditorView::mode`], [`AudioEditorView::set_mode`]); the app
 //! persists it. Opening another clip keeps it.
@@ -114,6 +118,8 @@ use std::sync::Arc;
 use vello::kurbo::{Point, Rect};
 use vello::peniko::Color;
 
+mod comp;
+mod formants;
 mod paint;
 mod vocal;
 mod vocal_paint;
@@ -138,6 +144,45 @@ const SNAP_PX: f64 = 8.0;
 const DEFAULT_SENSITIVITY: u8 = 50;
 const SENSITIVITY_STEP: u8 = 10;
 
+/// The markers of a clip with its two ends (empty without warp) and the curve of where its audio
+/// plays: `(ticks from the clip start, source frames from its offset)`, ascending in tick. A
+/// reversed clip's frames descend; its markers are the clip's, turned around the clip length
+/// (the warped span is reversed as a whole), so they are drawn where the reversed audio plays
+/// them.
+fn framed_and_curve(
+    song: &Song,
+    rate: u32,
+    start: i64,
+    length: i64,
+    a: &AudioClipContent,
+) -> (Vec<WarpMarker>, Vec<(f64, f64)>) {
+    let span = |a: &AudioClipContent| {
+        (source_at_tick(song, rate, start, a, start + length) - a.source_offset as f64).max(0.0)
+    };
+    if a.warp.enabled {
+        let mut framed = slice_edit::framed(&a.warp, rate, length);
+        if a.reverse {
+            framed = framed
+                .iter()
+                .rev()
+                .map(|m| WarpMarker {
+                    tick: length - m.tick,
+                    source: m.source,
+                })
+                .collect();
+        }
+        let curve = framed
+            .iter()
+            .map(|m| (m.tick as f64, m.source as f64))
+            .collect();
+        (framed, curve)
+    } else if a.reverse {
+        (Vec::new(), vec![(0.0, span(a)), (length as f64, 0.0)])
+    } else {
+        (Vec::new(), vec![(0.0, 0.0), (length as f64, span(a))])
+    }
+}
+
 /// The editing mode of the audio clip editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -149,7 +194,7 @@ pub enum AudioMode {
     Slice,
     /// Edit the pitch and timing of the notes of a monophonic clip.
     Vocal,
-    /// Listed, not available yet.
+    /// Choose, for the clip's take group, which take plays where.
     Comp,
 }
 
@@ -189,10 +234,7 @@ impl AudioMode {
 
     /// Whether the mode can be chosen.
     pub fn is_enabled(self) -> bool {
-        matches!(
-            self,
-            AudioMode::Overview | AudioMode::Slice | AudioMode::Vocal
-        )
+        true
     }
 }
 
@@ -218,6 +260,17 @@ enum Hit {
     Reset,
     ScaleToggle,
     Cancel,
+    /// A take's lane in Comp mode, by its take index.
+    CompLane(usize),
+    /// The comp lane at the top of Comp mode.
+    CompTop,
+    XfadeDown,
+    XfadeUp,
+    FlattenComp,
+    KeepFormants,
+    FormantDown,
+    FormantUp,
+    LinkStereo,
     /// An interior marker, by its index in the framed list.
     Marker(usize),
     /// A note of Vocal mode, by its index in the analysis.
@@ -257,6 +310,8 @@ enum Drag {
     Audition,
     /// A note of Vocal mode is moved.
     Note(Box<vocal::NoteDrag>),
+    /// A range is dragged on a take's lane in Comp mode.
+    Comp(comp::CompDrag),
     /// A rubber band selects notes.
     Band(vocal::Band),
     /// The flatten amount is dragged: the press's y and the amount then.
@@ -296,6 +351,15 @@ struct Layout {
     reset: Rect,
     scale: Rect,
     cancel: Rect,
+    /// Comp mode: the crossfade buttons and Flatten Comp.
+    xfade_down: Rect,
+    xfade_up: Rect,
+    flatten_comp: Rect,
+    /// Overview mode: Keep formants, the formant shift and the stereo link.
+    keep: Rect,
+    formant_down: Rect,
+    formant_up: Rect,
+    link: Rect,
     /// The piano keys left of the pitch grid (Vocal mode; empty otherwise).
     keys: Rect,
     ruler: Rect,
@@ -349,6 +413,8 @@ pub struct AudioEditorView {
     repaint: bool,
     /// Vocal mode.
     vocal: vocal::Vocal,
+    /// Comp mode.
+    comp: comp::Comp,
 }
 
 impl AudioEditorView {
@@ -400,6 +466,7 @@ impl AudioEditorView {
             focused: false,
             repaint: true,
             vocal: vocal::Vocal::default(),
+            comp: comp::Comp::default(),
         }
     }
 
@@ -469,6 +536,7 @@ impl AudioEditorView {
     /// that is not available is ignored.
     pub fn set_mode(&mut self, mode: AudioMode) {
         if mode.is_enabled() && mode != self.mode {
+            self.leave_mode_view(mode);
             self.mode = mode;
             self.drag = Drag::None;
             self.repaint = true;
@@ -714,6 +782,13 @@ impl AudioEditorView {
         let flatten_value = Rect::new(flatten.x1 + 2.0, y0, flatten.x1 + 46.0, y1);
         let reset = Rect::new(flatten_value.x1 + 12.0, y0, flatten_value.x1 + 68.0, y1);
         let scale = Rect::new(reset.x1 + 4.0, y0, reset.x1 + 60.0, y1);
+        let xfade_down = Rect::new(stretch.x0 + 4.0, y0, stretch.x0 + 24.0, y1);
+        let xfade_up = Rect::new(xfade_down.x1 + 64.0, y0, xfade_down.x1 + 84.0, y1);
+        let flatten_comp = Rect::new(xfade_up.x1 + 16.0, y0, xfade_up.x1 + 120.0, y1);
+        let keep = Rect::new(stretch.x0, y0, stretch.x0 + 112.0, y1);
+        let formant_down = Rect::new(keep.x1 + 46.0, y0, keep.x1 + 66.0, y1);
+        let formant_up = Rect::new(formant_down.x1 + 56.0, y0, formant_down.x1 + 76.0, y1);
+        let link = Rect::new(formant_up.x1 + 12.0, y0, formant_up.x1 + 104.0, y1);
         let footer = rect(b.x0, b.y1 - FOOTER_HEIGHT, b.x1, b.y1);
         let cancel = Rect::new(
             footer.x1 - 70.0,
@@ -755,6 +830,13 @@ impl AudioEditorView {
             reset,
             scale,
             cancel,
+            xfade_down,
+            xfade_up,
+            flatten_comp,
+            keep,
+            formant_down,
+            formant_up,
+            link,
             keys,
             ruler,
             wave,
@@ -762,12 +844,33 @@ impl AudioEditorView {
         }
     }
 
+    /// The length of what the axis shows: the clip, or the whole take group in Comp mode.
     fn length(&self) -> i64 {
+        if self.mode == AudioMode::Comp
+            && let Some((_, length)) = self.comp_span()
+        {
+            return length;
+        }
         self.info.as_ref().map_or(0, |i| i.length)
     }
 
+    /// The song tick the axis starts at: the clip's start, or the group's in Comp mode.
     fn start(&self) -> i64 {
+        if self.mode == AudioMode::Comp
+            && let Some((start, _)) = self.comp_span()
+        {
+            return start;
+        }
         self.info.as_ref().map_or(0, |i| i.start)
+    }
+
+    /// The zoom and scroll belong to the axis of the mode: Comp mode has its own, so they start
+    /// over when it is entered or left.
+    fn leave_mode_view(&mut self, next: AudioMode) {
+        if next == AudioMode::Comp || self.mode == AudioMode::Comp {
+            self.zoom = 1.0;
+            self.scroll = 0.0;
+        }
     }
 
     /// Logical pixels per tick at zoom 1: the clip fills the waveform.
@@ -813,6 +916,11 @@ impl AudioEditorView {
             && self.meta.is_some()
             && self.info.as_ref().is_some_and(|i| !i.content.reverse)
             && self.length() >= 2
+    }
+
+    /// Whether the clip can go to a loop slicer: open, with its file, a reversed clip too.
+    fn can_slice(&self) -> bool {
+        self.present && self.meta.is_some() && self.length() >= 2
     }
 
     fn slicing(&self) -> bool {
@@ -904,6 +1012,7 @@ impl AudioEditorView {
             .map_or(self.st.base.highlight, |d| self.st.base.accent_for(d));
         let bars = Bars::of(&doc.song);
         self.vocal.key = doc.song.harmony.key_at(clip.start).map(|k| k.as_scale());
+        self.sync_comp(doc);
         if !self.present
             || self.info.as_ref() != Some(&info)
             || self.meta != meta
@@ -928,26 +1037,8 @@ impl AudioEditorView {
 
     fn rebuild(&mut self, song: &Song) {
         let Some(info) = &self.info else { return };
-        let a = &info.content;
-        let length = info.length;
-        self.framed.clear();
-        self.curve.clear();
-        if a.reverse {
-            let span = source_at_tick(song, self.rate, info.start, a, info.start + length)
-                - a.source_offset as f64;
-            self.curve = vec![(0.0, span.max(0.0)), (length as f64, 0.0)];
-        } else if a.warp.enabled {
-            self.framed = slice_edit::framed(&a.warp, self.rate, length);
-            self.curve = self
-                .framed
-                .iter()
-                .map(|m| (m.tick as f64, m.source as f64))
-                .collect();
-        } else {
-            let span = source_at_tick(song, self.rate, info.start, a, info.start + length)
-                - a.source_offset as f64;
-            self.curve = vec![(0.0, 0.0), (length as f64, span.max(0.0))];
-        }
+        (self.framed, self.curve) =
+            framed_and_curve(song, self.rate, info.start, info.length, &info.content);
         if let Some(s) = self.selected
             && !(1..self.framed.len().saturating_sub(1)).contains(&s)
         {
@@ -980,6 +1071,30 @@ impl AudioEditorView {
         }
         if l.speaker.contains(pos) {
             return Hit::Speaker;
+        }
+        if self.mode == AudioMode::Comp {
+            for (r, h) in [
+                (l.xfade_down, Hit::XfadeDown),
+                (l.xfade_up, Hit::XfadeUp),
+                (l.flatten_comp, Hit::FlattenComp),
+            ] {
+                if r.contains(pos) {
+                    return h;
+                }
+            }
+            return self.comp_hit(pos);
+        }
+        if self.mode == AudioMode::Overview && self.formants_shown() {
+            for (r, h) in [
+                (l.keep, Hit::KeepFormants),
+                (l.formant_down, Hit::FormantDown),
+                (l.formant_up, Hit::FormantUp),
+                (l.link, Hit::LinkStereo),
+            ] {
+                if r.contains(pos) {
+                    return h;
+                }
+            }
         }
         if self.mode == AudioMode::Slice {
             for (r, h) in [
@@ -1067,7 +1182,10 @@ impl AudioEditorView {
                         )
                         .with_command("editor.audio_mode_vocal"),
                     ),
-                    _ => help(l.modes[i], "Not available yet"),
+                    AudioMode::Comp => help(
+                        l.modes[i],
+                        "Choose which take of the clip plays where, on stacked lanes",
+                    ),
                 }
             }
             Hit::Stretch => help(l.stretch, "Dragging a marker stretches the audio around it"),
@@ -1135,6 +1253,24 @@ impl AudioEditorView {
                 )
                 .with_command("tool.speaker"),
             ),
+            Hit::XfadeDown => help(l.xfade_down, "Shorter crossfade at the cuts of the comp"),
+            Hit::XfadeUp => help(l.xfade_up, "Longer crossfade at the cuts of the comp"),
+            Hit::FlattenComp => help(
+                l.flatten_comp,
+                "Render the comp to one new audio file and replace the takes by it",
+            ),
+            Hit::KeepFormants => help(
+                l.keep,
+                "Keep the formants of the sound while it is transposed (Tonal mode)",
+            ),
+            Hit::FormantDown => help(l.formant_down, "Move the formants down, in semitones"),
+            Hit::FormantUp => help(l.formant_up, "Move the formants up, in semitones"),
+            Hit::LinkStereo => help(
+                l.link,
+                "Keep the phase between left and right while stretching (Tonal mode)",
+            ),
+            Hit::CompLane(_) => None,
+            Hit::CompTop => None,
             Hit::Marker(_) | Hit::Note(_) | Hit::Wave | Hit::None => None,
         }
     }
@@ -1252,6 +1388,13 @@ impl AudioEditorView {
                 self.vocal.analysis = vocal::Analysis::None;
                 out.push(UiAction::CancelVocalAnalysis);
             }
+            Hit::XfadeDown => self.comp_step_xfade(false, doc),
+            Hit::XfadeUp => self.comp_step_xfade(true, doc),
+            Hit::FlattenComp => self.comp_flatten(out),
+            Hit::CompLane(_) | Hit::CompTop => self.comp_press(hit, pos, doc, out),
+            Hit::KeepFormants | Hit::FormantDown | Hit::FormantUp | Hit::LinkStereo => {
+                self.formant_press(hit, out)
+            }
             Hit::Marker(_) | Hit::Note(_) | Hit::Wave if self.speaker => {
                 self.start_audition(pos, doc, out)
             }
@@ -1327,6 +1470,10 @@ impl AudioEditorView {
             Drag::Flatten(y, orig) => {
                 let (y, orig) = (*y, *orig);
                 self.drag_flatten(orig, pos.y - y);
+                return;
+            }
+            Drag::Comp(_) => {
+                self.comp_move(pos);
                 return;
             }
             Drag::Note(_) => {
@@ -1413,6 +1560,7 @@ impl AudioEditorView {
         }
         match std::mem::replace(&mut self.drag, Drag::None) {
             Drag::Marker(d) if d.emitted => out.push(UiAction::EndMerge),
+            Drag::Comp(d) => self.comp_release(d, out),
             Drag::Note(d) if d.emitted => out.push(UiAction::EndMerge),
             // A click on a note of a selection, without a move: that note alone.
             Drag::Note(d) if d.axis.is_none() => {
@@ -1446,6 +1594,10 @@ impl AudioEditorView {
             }
             Drag::Flatten(_, orig) => {
                 self.vocal.flatten = orig;
+                return;
+            }
+            Drag::Comp(d) => {
+                self.comp_cancel(d, out);
                 return;
             }
             Drag::None | Drag::Audition => return,
@@ -1510,6 +1662,8 @@ impl AudioEditorView {
                     out.push(UiAction::CloseAudioEditor);
                 }
             }
+            Key::Up if self.mode == AudioMode::Comp => self.comp_step(true, out),
+            Key::Down if self.mode == AudioMode::Comp => self.comp_step(false, out),
             Key::Up => out.extend(self.neighbour(doc, false)),
             Key::Down => out.extend(self.neighbour(doc, true)),
             _ => {}
@@ -1564,9 +1718,11 @@ impl AudioEditorView {
         if !mode.is_enabled() || mode == self.mode {
             return;
         }
+        self.leave_mode_view(mode);
         self.mode = mode;
         self.drag = Drag::None;
         self.selected = None;
+        self.clamp_view();
         if mode == AudioMode::Vocal {
             self.vocal.selected.clear();
             if self.vocal.analysis == vocal::Analysis::None {
@@ -1579,7 +1735,9 @@ impl AudioEditorView {
         }
         let Some(info) = &self.info else { return };
         if info.content.reverse {
-            self.status = "A reversed clip cannot be sliced: un-reverse it to place markers".into();
+            self.status =
+                "The markers of a reversed clip are shown, not moved: un-reverse it to edit them"
+                    .into();
             return;
         }
         if !info.content.warp.enabled
@@ -1839,7 +1997,7 @@ impl AudioEditorView {
 
     fn send_to_slicer(&mut self, out: &mut Vec<UiAction>) {
         let Some(id) = self.clip else { return };
-        if !self.editable() {
+        if !self.can_slice() {
             return;
         }
         if self.framed.len() <= 2 {

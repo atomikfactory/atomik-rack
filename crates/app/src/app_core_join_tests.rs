@@ -5,6 +5,7 @@ use super::*;
 use crate::sink::RecordingSink;
 use atomik_audio_file::{AudioData, write_wav_f32};
 use atomik_core::PPQ;
+use atomik_engine::SongAsset;
 use atomik_model::{ClipId, Command, SongCommand, WorkflowCommand, new_project_doc};
 use atomik_ui::ImportTarget;
 use std::path::PathBuf;
@@ -146,5 +147,120 @@ fn clips_of_one_file_still_join_without_a_render() {
         panic!("audio");
     };
     assert_eq!(joined.asset, asset, "still the original file");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// ------------------------------------------------------------------ Flatten Comp
+
+/// Two takes of one bar over the same bar on one track: the first file ramps up to 0.5, the
+/// second to 0.25. Take 0 plays the first half of the bar, take 1 the second half.
+fn comped() -> (AppCore<RecordingSink>, u32, PathBuf) {
+    static N: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("atomik-app-flatten-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut c = AppCore::with_doc(RecordingSink::new(), new_project_doc(), None);
+    c.import_audio(
+        vec![scratch_wav(&dir, "one.wav", 96_000, 0.5)],
+        ImportTarget::NewTracks,
+        0,
+    );
+    c.wait_background();
+    let track = c.doc().song.tracks[0].device.clone();
+    c.import_audio(
+        vec![scratch_wav(&dir, "two.wav", 96_000, 0.25)],
+        ImportTarget::ExistingTrack(track.clone()),
+        0,
+    );
+    c.wait_background();
+    let ids: Vec<ClipId> = c.doc().song.tracks[0].lanes[0]
+        .clips
+        .iter()
+        .map(|k| k.id)
+        .collect();
+    assert_eq!(ids.len(), 2);
+    c.apply_command(Command::Song(SongCommand::GroupAsTakes {
+        device: track,
+        lane: 0,
+        clips: ids,
+        extra: Vec::new(),
+    }))
+    .unwrap();
+    let group = c.doc().song.take_groups().next().unwrap().2.id;
+    c.apply_command(Command::Song(SongCommand::SetCompSegment {
+        group,
+        take: 0,
+        start: 0,
+        end: BAR / 2,
+    }))
+    .unwrap();
+    c.apply_command(Command::Song(SongCommand::SetCompSegment {
+        group,
+        take: 1,
+        start: BAR / 2,
+        end: BAR,
+    }))
+    .unwrap();
+    (c, group, dir)
+}
+
+#[test]
+fn flatten_comp_renders_the_comp_to_one_file_in_one_undo_step() {
+    let (mut c, group, dir) = comped();
+    let before = c.doc().song.tracks.clone();
+    c.flatten_comp(group);
+    // The render runs on the freeze worker: nothing changes until it is done.
+    assert!(c.freeze_busy());
+    assert_eq!(c.doc().song.tracks, before);
+    c.wait_background();
+    assert!(
+        c.doc().song.take_groups().next().is_none(),
+        "the group is gone"
+    );
+    let clips = &c.doc().song.tracks[0].lanes[0].clips;
+    assert_eq!(clips.len(), 1);
+    let clip = &clips[0];
+    assert_eq!((clip.start, clip.length), (0, BAR));
+    let ClipContent::Audio(a) = &clip.content else {
+        panic!("an audio clip");
+    };
+    assert_eq!(
+        c.doc().assets[&a.asset].frames,
+        96_000,
+        "the render covers the comp"
+    );
+    // The file plays what the comp played: the first file's ramp in the first half, the second
+    // file's in the second, each scaled by the same track gain.
+    let SongAsset::Memory { data, .. } = &c.audio.assets[&a.asset] else {
+        panic!("the render is in memory");
+    };
+    let ramp = |level: f32, i: usize| level * i as f32 / 96_000.0;
+    let k0 = data[0][20_000] / ramp(0.5, 20_000);
+    let k1 = data[0][70_000] / ramp(0.25, 70_000);
+    assert!(k0 > 0.1, "{k0}");
+    assert!((k0 - k1).abs() < 1.0e-3, "{k0} against {k1}");
+    // One undo brings the takes and the comp back.
+    c.undo();
+    assert_eq!(c.doc().song.tracks, before);
+    assert_eq!(c.doc().song.take_groups().count(), 1);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn flatten_comp_refuses_an_empty_comp_and_a_gone_group() {
+    let (mut c, group, dir) = comped();
+    c.flatten_comp(group + 40);
+    assert!(!c.freeze_busy());
+    assert!(c.last_rejection().is_some_and(|m| m.contains("gone")));
+    c.apply_command(Command::Song(SongCommand::SetCompSilence {
+        group,
+        start: 0,
+        end: BAR,
+    }))
+    .unwrap();
+    c.flatten_comp(group);
+    assert!(!c.freeze_busy());
+    assert!(c.last_rejection().is_some_and(|m| m.contains("nothing")));
     let _ = std::fs::remove_dir_all(dir);
 }

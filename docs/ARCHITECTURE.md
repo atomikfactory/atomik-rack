@@ -5194,7 +5194,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (572) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (573) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -7360,7 +7360,8 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   clip waits for a worker (the clip plays an interim read meanwhile, at the right timing and, through
   the real-time stretcher, at the right pitch, a little rougher than the finished buffer; a streamed
   asset plays unwarped, and so does a reversed clip, backwards, until its buffer is ready); the
-  Tonal mode does not keep formants when transposing (2.18).
+  Tonal mode keeps the formants of any material only when the clip asks for it (Keep formants) and
+  only in the finished buffer: the interim read moves them with the pitch (2.18).
 - **Tempo and meter.** Tempo ramps are linear in BPM only (no other curve shapes), meter changes
   only start on bar lines, and tempo-synced devices follow a ramp in steps of one 64-frame batch.
   The LFO of the modulation effects computes its synced phase from the absolute frame and the tempo

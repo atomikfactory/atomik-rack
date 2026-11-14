@@ -16,11 +16,7 @@ fn run(
     ratio: f64,
 ) -> Vec<Vec<f32>> {
     let refs: Vec<&[f32]> = source.iter().map(Vec::as_slice).collect();
-    let params = StretchParams {
-        mode,
-        pitch_ratio: ratio,
-        sample_rate: SR,
-    };
+    let params = StretchParams::new(mode, ratio, SR);
     stretch(&refs, map, frames, &params, &never).expect("not cancelled")
 }
 
@@ -302,11 +298,7 @@ fn the_result_is_repeatable_and_a_cancel_stops_it() {
         let b = run(&src, &TimeMap::linear(0.7), 30_000, mode, 1.3);
         assert_eq!(a, b, "{mode:?}");
         let refs: Vec<&[f32]> = src.iter().map(Vec::as_slice).collect();
-        let params = StretchParams {
-            mode,
-            pitch_ratio: 1.0,
-            sample_rate: SR,
-        };
+        let params = StretchParams::new(mode, 1.0, SR);
         assert!(stretch(&refs, &TimeMap::linear(0.7), 30_000, &params, &|| true).is_none());
     }
 }

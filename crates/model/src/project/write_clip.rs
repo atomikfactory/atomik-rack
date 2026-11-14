@@ -39,6 +39,15 @@ pub(super) fn audio_json(a: &AudioClipContent) -> String {
         if ws.transpose_cents != 0 {
             let _ = write!(warp, ", \"transpose\": {}", ws.transpose_cents);
         }
+        if ws.keep_formants {
+            warp.push_str(", \"keep_formants\": true");
+        }
+        if ws.formant_cents != 0 {
+            let _ = write!(warp, ", \"formant\": {}", ws.formant_cents);
+        }
+        if ws.link_stereo {
+            warp.push_str(", \"link_stereo\": true");
+        }
         if !ws.markers.is_empty() {
             let markers: Vec<String> = ws
                 .markers

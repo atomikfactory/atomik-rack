@@ -105,7 +105,7 @@ fn opening_shows_the_clip_and_keeps_the_mode_across_clips() {
     assert!(v.is_present());
     assert_eq!(v.mode(), AudioMode::Overview);
     v.set_mode(AudioMode::Comp);
-    assert_eq!(v.mode(), AudioMode::Overview, "a disabled mode is ignored");
+    assert_eq!(v.mode(), AudioMode::Comp, "every mode can be chosen");
     v.set_mode(AudioMode::Slice);
     v.open(ClipId(11));
     v.sync(d.doc(), &reg);

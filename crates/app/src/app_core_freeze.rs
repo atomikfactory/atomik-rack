@@ -108,6 +108,8 @@ enum Kind {
     /// Replace these audio clips of different files by one clip of the render (dry, the clips
     /// alone).
     Join { clips: Vec<ClipId> },
+    /// Flatten Comp: the render of the comp of this take group (dry) replaces the group.
+    FlattenComp { group: u32 },
     /// Render the frozen track again through the same effects and swap the render in.
     Refreeze,
     /// Build a rumble layer from the render (a kick) and put it on a new track after the kick's
@@ -255,7 +257,7 @@ impl<S: EngineSink> AppCore<S> {
         let verb = match running.job.kind {
             Kind::Freeze => "Freezing",
             Kind::Bounce { .. } => "Bouncing",
-            Kind::Loop { .. } | Kind::Join { .. } => "Rendering",
+            Kind::Loop { .. } | Kind::Join { .. } | Kind::FlattenComp { .. } => "Rendering",
             Kind::Refreeze => "Re-rendering",
             Kind::Rumble { .. } => "Building a rumble from",
             Kind::ReverseReverb { .. } => "Printing a reverse reverb of",
@@ -731,6 +733,48 @@ impl<S: EngineSink> AppCore<S> {
         None
     }
 
+    /// `UiAction::FlattenComp`: renders the comp of take group `group` (its compiled clips, dry:
+    /// each take's gain, fades and envelope, the crossfades at the cuts, before the insert
+    /// effects and the strip) to one new audio file on the freeze worker and queue, then replaces
+    /// the group by one clip of that file in one undo step (`SongCommand::FlattenComp`). A group
+    /// of note takes, an empty comp and a frozen track refuse with a message.
+    pub fn flatten_comp(&mut self, group: u32) {
+        let doc = self.doc();
+        let Some((track, _, g)) = doc.song.take_group(group) else {
+            return self.reject("That take group is gone".to_owned());
+        };
+        let name = self.track_name(&track.device);
+        if track.frozen.is_some() {
+            return self.reject(format!("{name} is frozen: unfreeze it to flatten its comp"));
+        }
+        if !g.takes.iter().all(|t| t.content.is_audio()) {
+            return self.reject("Only a comp of audio takes can be rendered to a file".to_owned());
+        }
+        let (Some(first), Some(last)) = (g.comp.first(), g.comp.last()) else {
+            return self.reject("The comp plays nothing: there is nothing to render".to_owned());
+        };
+        let (span, clips, device) = (
+            (first.start, last.end),
+            g.clips.clone(),
+            track.device.clone(),
+        );
+        let job = Job {
+            id: self.next_freeze_job(),
+            kind: Kind::FlattenComp { group },
+            request: FreezeRequest {
+                device,
+                effects: 0,
+                strip: false,
+                clips: Some(clips),
+                span,
+                tail_seconds: 0.0,
+            },
+            name,
+        };
+        self.audio.freeze.queue.push_back(job);
+        self.start_next_job();
+    }
+
     /// Stops the running render and drops the ones that wait.
     pub fn cancel_freeze(&mut self) {
         let waiting = std::mem::take(&mut self.audio.freeze.queue);
@@ -897,6 +941,7 @@ impl<S: EngineSink> AppCore<S> {
                 Kind::Bounce { .. } => "bounce",
                 Kind::Loop { .. } => "loop",
                 Kind::Join { .. } => "joined",
+                Kind::FlattenComp { .. } => "comp",
                 Kind::Refreeze => "frozen",
                 Kind::Rumble { .. } => "rumble",
                 Kind::ReverseReverb { .. } => "reverse reverb",
@@ -1066,6 +1111,13 @@ impl<S: EngineSink> AppCore<S> {
                 }));
                 if applied.is_ok() {
                     self.reject(format!("Converted the loop of {} to one clip", job.name));
+                }
+            }
+            Kind::FlattenComp { group } => {
+                let applied =
+                    self.apply_command(Command::Song(SongCommand::FlattenComp { group, audio }));
+                if applied.is_ok() {
+                    self.reject(format!("Rendered the comp of {} to one file", job.name));
                 }
             }
             Kind::Join { clips } => {

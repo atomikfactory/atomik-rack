@@ -779,6 +779,21 @@ pub(super) fn load_warp(v: &Value, path: &JsonPath) -> Result<WarpSettings, Mode
                 })?
         }
     };
+    let keep_formants = flag(w, path, "keep_formants")?;
+    let link_stereo = flag(w, path, "link_stereo")?;
+    let formant_cents = match w.get("formant") {
+        None => 0,
+        Some(t) => {
+            let fp = path.field("formant");
+            let n = int(t, &fp)?;
+            i32::try_from(n)
+                .ok()
+                .filter(|c| c.abs() <= WARP_FORMANT_MAX_CENTS)
+                .ok_or_else(|| {
+                    fp.error(format!("{n} cents is outside ±{WARP_FORMANT_MAX_CENTS}"))
+                })?
+        }
+    };
     let markers = match w.get("markers") {
         None => Vec::new(),
         Some(m) => {
@@ -801,6 +816,9 @@ pub(super) fn load_warp(v: &Value, path: &JsonPath) -> Result<WarpSettings, Mode
         mode,
         source_bpm,
         transpose_cents,
+        keep_formants,
+        formant_cents,
+        link_stereo,
         markers,
     };
     settings.validate().map_err(|e| path.error(e))?;

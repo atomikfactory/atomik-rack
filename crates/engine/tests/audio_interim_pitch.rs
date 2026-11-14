@@ -176,11 +176,7 @@ fn the_stretched_preview_meets_the_finished_buffer_in_time_and_hands_off_without
     let ratio = pitch_ratio_for_cents(500);
     // The worker's buffer: the offline Beats stretch of the same map and transposition.
     let refs: Vec<&[f32]> = source.iter().map(Vec::as_slice).collect();
-    let params = StretchParams {
-        mode: StretchMode::Beats,
-        pitch_ratio: ratio,
-        sample_rate: SR as u32,
-    };
+    let params = StretchParams::new(StretchMode::Beats, ratio, SR as u32);
     let buffer = stretch(&refs, &TimeMap::new(&map).unwrap(), len, &params, &|| false).unwrap();
     let assets = vec![
         SongAsset::memory(source.into()),

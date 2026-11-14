@@ -13,8 +13,10 @@
 //! `UiAction::ClipToSlicer` adds a loop slicer at the end of the rack and gives it the slices of
 //! the clip: one slice per span between the clip's warp markers, cut from the clip's span of
 //! its file (the slices keep their positions in the file), with `loop.beats` set from the clip
-//! length at the song tempo. The device and its slices are **one undo step**. A clip without
-//! markers, a reversed clip and a clip whose file is missing are refused with a message.
+//! length at the song tempo. The device and its slices are **one undo step**. A reversed clip is
+//! sliced the way it sounds: the first slice is the last span of its file and every slice plays
+//! backwards. A clip without markers and a clip whose file is missing are refused with a
+//! message.
 //!
 //! # Vocal mode
 //!
@@ -33,8 +35,8 @@ use crate::audio_import::{VocalFound, spawn_clip_onsets, spawn_vocal};
 use crate::sink::EngineSink;
 use atomik_model::slice_edit;
 use atomik_model::{
-    ClipContent, ClipId, Command, DeviceKey, default_loop_beats, slices_from_markers,
-    source_at_tick,
+    ClipContent, ClipId, Command, DeviceKey, SLICE_KEY_BASE, default_loop_beats,
+    slices_from_markers, source_at_tick,
 };
 use atomik_ui::{AudioEditorView, AudioMode};
 use std::sync::Arc;
@@ -547,9 +549,6 @@ impl<S: EngineSink> AppCore<S> {
         let ClipContent::Audio(a) = &clip.content else {
             return;
         };
-        if a.reverse {
-            return self.reject("A reversed clip cannot be sliced".to_owned());
-        }
         let Some(meta) = doc.assets.get(&a.asset) else {
             return self.reject("The audio file of the clip is missing".to_owned());
         };
@@ -578,6 +577,18 @@ impl<S: EngineSink> AppCore<S> {
             z.end += offset;
             z.loop_start += offset;
             z.loop_end += offset;
+        }
+        if a.reverse {
+            // A reversed clip plays the last span of its file first and each span backwards: the
+            // first slice (the lowest key) is the last span, and every slice plays reversed, so
+            // the keys in order play the clip as it sounds.
+            let n = zones.len();
+            for (i, z) in zones.iter_mut().enumerate() {
+                let key = SLICE_KEY_BASE + (n - 1 - i) as u8;
+                (z.key_lo, z.key_hi, z.root_key) = (key, key, key);
+                z.reverse = true;
+            }
+            zones.sort_by_key(|z| z.key_lo);
         }
         let beats = default_loop_beats(span, rate, doc.tempo_bpm);
         let before: Vec<DeviceKey> = doc

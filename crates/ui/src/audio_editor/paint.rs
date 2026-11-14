@@ -17,7 +17,11 @@ pub(super) fn paint(v: &AudioEditorView, c: &mut dyn Canvas) {
     if v.present {
         toolbar(v, c);
         ruler(v, c);
-        waveform(v, c);
+        if v.mode == AudioMode::Comp {
+            v.paint_comp(c);
+        } else {
+            waveform(v, c);
+        }
         footer(v, c);
     } else {
         sp::label(
@@ -38,7 +42,7 @@ pub(super) fn paint(v: &AudioEditorView, c: &mut dyn Canvas) {
     c.pop_transform();
 }
 
-fn muted_label(v: &AudioEditorView, c: &mut dyn Canvas, text: &str, x: f64, y: f64) {
+pub(super) fn muted_label(v: &AudioEditorView, c: &mut dyn Canvas, text: &str, x: f64, y: f64) {
     c.text(
         &TextRun::new(text, pt(x, y), 7.0, v.st.base.text_muted)
             .weight(700)
@@ -126,6 +130,12 @@ fn toolbar(v: &AudioEditorView, c: &mut dyn Canvas) {
     );
     if v.mode == AudioMode::Vocal {
         return vocal_paint::toolbar(v, c);
+    }
+    if v.mode == AudioMode::Comp {
+        return v.paint_comp_toolbar(c);
+    }
+    if v.mode == AudioMode::Overview {
+        return v.paint_formants_toolbar(c);
     }
     if v.mode != AudioMode::Slice {
         return;
@@ -236,6 +246,7 @@ fn ruler(v: &AudioEditorView, c: &mut dyn Canvas) {
     // Detected transients: short ticks under the ruler, where the clip plays them.
     if let Some(info) = &v.info
         && !v.transients.is_empty()
+        && v.mode != AudioMode::Comp
     {
         let offset = info.content.source_offset as f64;
         for f in &v.transients {
@@ -328,7 +339,7 @@ fn waveform(v: &AudioEditorView, c: &mut dyn Canvas) {
     {
         sp::label(
             c,
-            "A reversed clip cannot be sliced: un-reverse it to place markers",
+            "The markers of a reversed clip are shown, not moved",
             w.center().x,
             w.y0 + 14.0,
             10.0,
@@ -463,6 +474,8 @@ fn footer(v: &AudioEditorView, c: &mut dyn Canvas) {
     let (text, color) = if v.mode == AudioMode::Vocal {
         let (text, lit) = vocal_paint::footer_text(v);
         (text, if lit { t.text } else { t.text_muted })
+    } else if v.mode == AudioMode::Comp && v.status.is_empty() {
+        (v.comp_hint(), t.text_muted)
     } else if v.status.is_empty() {
         (v.hint(), t.text_muted)
     } else {
@@ -476,6 +489,16 @@ fn footer(v: &AudioEditorView, c: &mut dyn Canvas) {
         sp::label(
             c,
             &info_text,
+            l.footer.x1 - 8.0,
+            y,
+            9.0,
+            t.text_muted,
+            Align::End,
+        );
+    } else if v.mode == AudioMode::Comp {
+        sp::label(
+            c,
+            &v.comp_footer_info(),
             l.footer.x1 - 8.0,
             y,
             9.0,

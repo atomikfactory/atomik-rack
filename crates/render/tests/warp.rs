@@ -300,7 +300,7 @@ fn warped_bounces_are_bit_identical_across_runs_blocks_and_workers() {
                 mode: WarpMode::Tonal,
                 source_bpm: 130.0,
                 transpose_cents: -300,
-                markers: Vec::new(),
+                ..WarpSettings::default()
             },
         );
     });

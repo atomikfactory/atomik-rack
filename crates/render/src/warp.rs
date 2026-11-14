@@ -119,9 +119,14 @@ pub fn render_warp(
         Some(map) if !source.is_empty() && frames > 0 => {
             let refs: Vec<&[f32]> = source.iter().map(Vec::as_slice).collect();
             let params = StretchParams {
-                mode: stretch_mode(job.mode),
-                pitch_ratio: pitch_ratio_for_cents(job.transpose_cents),
-                sample_rate: job.sample_rate,
+                keep_formants: job.keep_formants,
+                formant_ratio: pitch_ratio_for_cents(job.formant_cents),
+                link_stereo: job.link_stereo,
+                ..StretchParams::new(
+                    stretch_mode(job.mode),
+                    pitch_ratio_for_cents(job.transpose_cents),
+                    job.sample_rate,
+                )
             };
             stretch(&refs, &map, frames, &params, cancel)?
         }

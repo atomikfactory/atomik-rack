@@ -273,6 +273,43 @@ singer, a bass, a lead. Press VOCAL in its toolbar, or 3.
 - **Saving.** The edits are saved with the clip, as an optional field that an older version drops with a warning
   (project format 45).
 
+## Comp mode
+
+A clip that has several takes (loop recording, or recording over a clip) keeps them in a take group, and the
+arrangement shows the comp strip under the lane. The audio clip editor has the same comp in a larger and exact view:
+open a take or the comped clip and press COMP in its toolbar. The comp lane at the top shows which take plays where (a
+gap is silence), and under it each take has a lane with its waveform, the newest on top; the parts of a take that the
+comp plays are tinted.
+
+- **Hear a take.** Press on a take's lane to hear that take from the pointer until you release, as it is in its file.
+  Nothing changes.
+- **Choose.** Drag on a take's lane to put the dragged range of that take into the comp. The cut gets a crossfade,
+  10 ms to start with; XFADE - and + change its length for the next ones (the comp strip of the arrangement sets the
+  crossfade of an existing cut). The range stays selected.
+- **Keys.** Up and Down move the selected range to the take above or below; without a range they move the selected
+  lane. Click the comp lane to select the stretch that plays there. Escape during a drag chooses nothing.
+- **Flatten Comp.** FLATTEN COMP renders the comp to one new audio file in the project's audio folder and replaces the
+  take group by one clip of it, in one undo step. The render is made in the background (the same one Join Clips of
+  different files uses) with each take's gain, fades and envelope and the crossfades at the cuts, before the track's
+  insert effects. The takes go with the group: undo brings them back.
+- Every choice, and Flatten Comp, is one undo step. Comp mode needs audio takes: a group of note takes says so.
+
+## Keep formants
+
+The Overview mode of the audio clip editor has three controls for a clip warped in the Tonal mode (set the mode in the
+warp panel). They are saved with the clip, and a bounce, Bounce in Place, Freeze and Export hear them.
+
+- **KEEP FORMANTS** keeps the spectral envelope of the sound (its formants, the character of a voice or an
+  instrument) where it was while the clip is transposed, so a transposed chord or a whole clip does not turn into a
+  chipmunk or a giant. It works on any material, where the Vocal mode's shift needs one voice at a time.
+- **SHIFT** moves the formants on their own, up to 12 semitones either way, with KEEP FORMANTS on: a deeper or a
+  brighter voice at the same pitch.
+- **STEREO LINK** keeps the phase between left and right while the clip is stretched, so the stereo image stays. It is
+  off for clips made before it existed, so their sound does not change.
+
+The envelope is moved in the rendered buffer. While the buffer is still rendering, the live preview plays the clip
+with the formants moving with the pitch, as before.
+
 ## Meter panels
 
 Click the small **FFT** button in the top right corner of the name plate of a channel, a bus or the master in the

@@ -1636,6 +1636,33 @@ pub enum SongCommand {
         /// Group id.
         group: u32,
     },
+    /// Make `[start, end)` play from a take like `SetCompSegment`, and give the cuts at `start`
+    /// and `end` (where another take plays) a crossfade of `xfade` ticks, in one undo step. The
+    /// crossfade is ignored where no other take meets the range and in a group whose takes are
+    /// not audio. This is what the audio clip editor's Comp mode does for a drag on a take.
+    SetCompRange {
+        /// Group id.
+        group: u32,
+        /// Take index.
+        take: usize,
+        /// First tick.
+        start: i64,
+        /// End tick (exclusive).
+        end: i64,
+        /// Crossfade length in ticks at the two cuts (0 for the short dip of a plain cut).
+        xfade: u64,
+    },
+    /// Flatten Comp: the audio of the group's comp, rendered to one file by the app, replaces the
+    /// group. The group and its compiled clips go and one plain audio clip of `audio` takes their
+    /// place, from the first tick the comp plays to the last. `audio` is a plain clip of the
+    /// registered render (no warp, no reverse). One undo step. An error for a group whose takes
+    /// are not audio, whose comp is empty, or when the render is not registered.
+    FlattenComp {
+        /// Group id.
+        group: u32,
+        /// The clip's audio: the render from its first frame.
+        audio: AudioClipContent,
+    },
     /// Quantize the notes of these clips (swing, groove and humanize as well) in one undo step:
     /// see [`crate::groove`]. Clips that are not plain note clips (audio, automation, the takes
     /// of a take group) are skipped; an error when no note changes. Reports

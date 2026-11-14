@@ -506,7 +506,10 @@ use crate::steps::{
 use crate::takes::{CompSegment, TakeGroup, check_comp};
 use crate::takes_cmd::MAX_TAKES;
 use crate::theory::{Scale, ScaleKind};
-use crate::warp::{MAX_WARP_MARKERS, WARP_TRANSPOSE_MAX_CENTS, WarpMarker, WarpMode, WarpSettings};
+use crate::warp::{
+    MAX_WARP_MARKERS, WARP_FORMANT_MAX_CENTS, WARP_TRANSPOSE_MAX_CENTS, WarpMarker, WarpMode,
+    WarpSettings,
+};
 use crate::{AssetMeta, ZoneDoc, is_valid_asset_hash};
 use crate::{DeviceKey, ModelError, PATCH_FORMAT, RackDoc, TEMPO_MAX, TEMPO_MIN, WriteMode, rules};
 use atomik_core::{VCA_MAX_DB, VCA_MIN_DB};

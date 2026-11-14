@@ -27,6 +27,8 @@ pub const WARP_BPM_MIN: f64 = 20.0;
 pub const WARP_BPM_MAX: f64 = 999.0;
 /// Largest transposition in cents (two octaves either way).
 pub const WARP_TRANSPOSE_MAX_CENTS: i32 = 2400;
+/// Largest formant shift in cents (an octave either way).
+pub const WARP_FORMANT_MAX_CENTS: i32 = 1200;
 /// Most warp markers on one clip.
 pub const MAX_WARP_MARKERS: usize = 512;
 /// Frames between two knots inside a tempo ramp.
@@ -94,6 +96,15 @@ pub struct WarpSettings {
     /// changes pitch without changing length (Beats and Tonal; Repitch ignores it), also when
     /// `enabled` is off.
     pub transpose_cents: i32,
+    /// Tonal only: keep the formants (the spectral envelope) of the source where they were while
+    /// the pitch moves, so a transposed chord or a whole clip keeps its timbre.
+    pub keep_formants: bool,
+    /// With `keep_formants`: move the formants by this many cents on their own (100 per
+    /// semitone), within ±[`WARP_FORMANT_MAX_CENTS`].
+    pub formant_cents: i32,
+    /// Tonal only: the left and right channels of a stereo source keep their phase relation
+    /// while the clip is stretched, so the image stays. Off is the older, per-channel phasing.
+    pub link_stereo: bool,
     /// Markers, strictly increasing in tick and in source frame, at most [`MAX_WARP_MARKERS`].
     pub markers: Vec<WarpMarker>,
 }
@@ -105,6 +116,9 @@ impl Default for WarpSettings {
             mode: WarpMode::Beats,
             source_bpm: 120.0,
             transpose_cents: 0,
+            keep_formants: false,
+            formant_cents: 0,
+            link_stereo: false,
             markers: Vec::new(),
         }
     }
@@ -114,7 +128,20 @@ impl WarpSettings {
     /// True when the clip is rendered through the stretcher: it follows the tempo, or it is
     /// transposed with an engine that can transpose.
     pub fn active(&self) -> bool {
-        self.enabled || self.effective_cents() != 0
+        self.enabled || self.effective_cents() != 0 || self.keeps_formants()
+    }
+
+    /// True when the formant work runs: Tonal mode, the toggle on, and a pitch or formant shift
+    /// to compensate.
+    pub fn keeps_formants(&self) -> bool {
+        self.mode == WarpMode::Tonal
+            && self.keep_formants
+            && (self.transpose_cents != 0 || self.formant_cents != 0)
+    }
+
+    /// True when the channels are phase-linked: Tonal mode with the option on.
+    pub fn links_stereo(&self) -> bool {
+        self.mode == WarpMode::Tonal && self.link_stereo
     }
 
     /// The transposition that sounds, in cents (0 for Repitch).
@@ -162,6 +189,12 @@ impl WarpSettings {
             return Err(format!(
                 "transpose {} cents is outside ±{WARP_TRANSPOSE_MAX_CENTS}",
                 self.transpose_cents
+            ));
+        }
+        if self.formant_cents.abs() > WARP_FORMANT_MAX_CENTS {
+            return Err(format!(
+                "formant shift {} cents is outside ±{WARP_FORMANT_MAX_CENTS}",
+                self.formant_cents
             ));
         }
         if self.markers.len() > MAX_WARP_MARKERS {
@@ -356,6 +389,12 @@ pub struct WarpJob {
     /// The clip plays backwards: the buffer is the warped span turned around, so it plays
     /// forward like any other.
     pub reverse: bool,
+    /// The formants stay where they were (Tonal with a pitch or formant shift).
+    pub keep_formants: bool,
+    /// The formant shift in cents (0 unless `keep_formants`).
+    pub formant_cents: i32,
+    /// The channels are phase-linked (Tonal).
+    pub link_stereo: bool,
     /// The clip's pitch edits that change something and overlap the span the map reads (asset
     /// frames, see [`crate::pitch_edit`]): applied to the asset before the time map.
     pub pitch: Vec<crate::PitchEdit>,
@@ -377,6 +416,11 @@ impl WarpJob {
         eat(&self.frames.to_le_bytes());
         eat(&self.sample_rate.to_le_bytes());
         eat(&[u8::from(self.reverse)]);
+        // Only a clip that uses them hashes them: the buffers of older clips keep their key.
+        if self.keep_formants || self.link_stereo {
+            eat(&[u8::from(self.keep_formants), u8::from(self.link_stereo)]);
+            eat(&self.formant_cents.to_le_bytes());
+        }
         for (a, b) in &self.knots {
             eat(&a.to_bits().to_le_bytes());
             eat(&b.to_bits().to_le_bytes());
@@ -499,6 +543,13 @@ pub fn warp_job(
         frames,
         sample_rate,
         reverse: a.reverse,
+        keep_formants: a.warp.keeps_formants(),
+        formant_cents: if a.warp.keeps_formants() {
+            a.warp.formant_cents
+        } else {
+            0
+        },
+        link_stereo: a.warp.links_stereo(),
         pitch,
     })
 }

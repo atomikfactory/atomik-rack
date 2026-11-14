@@ -168,6 +168,9 @@ fn set_audio_clip_takes_warp_and_undo_restores_it() {
             mode: WarpMode::Tonal,
             source_bpm: 96.5,
             transpose_cents: -250,
+            keep_formants: true,
+            formant_cents: 300,
+            link_stereo: true,
             markers: vec![WarpMarker {
                 tick: 100,
                 source: 2000,
@@ -250,13 +253,17 @@ fn the_format_round_trips_warp_and_omits_the_default() {
     let (reg, mut d) = setup();
     let plain = put(&mut d, &reg, 0, PPQ, audio(1));
     let text = save_project(d.doc());
-    assert!(!text.contains("warp"));
+    // The ignorable header names the warp fields; a clip without warp writes no warp object.
+    assert!(!text.contains("\"warp\": {"));
     let rich = AudioClipContent {
         warp: WarpSettings {
             enabled: true,
             mode: WarpMode::Repitch,
             source_bpm: 93.25,
             transpose_cents: 700,
+            keep_formants: false,
+            formant_cents: 0,
+            link_stereo: false,
             markers: vec![
                 WarpMarker { tick: 0, source: 0 },
                 WarpMarker {
@@ -1045,4 +1052,94 @@ fn quantize_moves_the_transients_of_a_reversed_clip_by_where_they_play() {
             2.0
         ));
     }
+}
+
+fn warp_in(doc: &atomik_model::RackDoc, id: atomik_model::ClipId) -> WarpSettings {
+    match &doc_clip(doc, id).content {
+        ClipContent::Audio(a) => a.warp.clone(),
+        _ => panic!("not audio"),
+    }
+}
+
+fn tonal_clip() -> AudioClipContent {
+    let mut a = audio(1);
+    a.warp = WarpSettings {
+        enabled: true,
+        mode: WarpMode::Tonal,
+        transpose_cents: 500,
+        ..WarpSettings::default()
+    };
+    a
+}
+
+#[test]
+fn keep_formants_and_the_stereo_link_round_trip_and_old_files_load() {
+    let (reg, mut d) = setup();
+    let plain = put(&mut d, &reg, 0, PPQ, tonal_clip());
+    let old = save_project(d.doc());
+    // A clip that uses neither writes neither.
+    assert!(!old.contains("\"keep_formants\": ") && !old.contains("\"link_stereo\": "));
+    assert!(!old.contains("\"formant\": "));
+    let loaded = load_project(&old, &reg).unwrap();
+    assert!(!warp_in(&loaded, plain).keep_formants);
+    set(&mut d, &reg, plain, |a| {
+        a.warp.keep_formants = true;
+        a.warp.formant_cents = -400;
+        a.warp.link_stereo = true;
+    })
+    .unwrap();
+    let text = save_project(d.doc());
+    assert!(text.contains("\"keep_formants\": true"), "{text}");
+    assert!(text.contains("\"formant\": -400"));
+    assert!(text.contains("\"link_stereo\": true"));
+    let back = load_project(&text, &reg).unwrap();
+    let w = warp_in(&back, plain);
+    assert_eq!(
+        (w.keep_formants, w.formant_cents, w.link_stereo),
+        (true, -400, true)
+    );
+}
+
+#[test]
+fn the_formant_shift_is_limited_to_an_octave() {
+    let (reg, mut d) = setup();
+    let id = put(&mut d, &reg, 0, PPQ, tonal_clip());
+    assert!(set(&mut d, &reg, id, |a| a.warp.formant_cents = 1201).is_err());
+    assert!(set(&mut d, &reg, id, |a| a.warp.formant_cents = -1200).is_ok());
+}
+
+#[test]
+fn the_job_carries_the_formant_options_only_for_tonal_and_keeps_old_keys() {
+    let (reg, mut d) = setup();
+    let id = put(&mut d, &reg, 0, 2 * PPQ, tonal_clip());
+    let key_of = |d: &Document, id| {
+        let (_, _, c) = d.doc().song.clip(id).unwrap();
+        let ClipContent::Audio(a) = &c.content else {
+            panic!()
+        };
+        warp_job(&d.doc().song, 48_000, c.start, c.length, a).unwrap()
+    };
+    let before = key_of(&d, id);
+    assert!(!before.keep_formants && !before.link_stereo);
+    set(&mut d, &reg, id, |a| {
+        a.warp.keep_formants = true;
+        a.warp.link_stereo = true;
+    })
+    .unwrap();
+    let after = key_of(&d, id);
+    assert!(after.keep_formants && after.link_stereo);
+    assert_ne!(before.key(), after.key());
+    // Beats ignores both: the buffer and its key are those of a plain Beats clip.
+    set(&mut d, &reg, id, |a| a.warp.mode = WarpMode::Beats).unwrap();
+    let beats = key_of(&d, id);
+    assert!(!beats.keep_formants && !beats.link_stereo);
+    // A formant shift alone (no transposition) still renders.
+    set(&mut d, &reg, id, |a| {
+        a.warp.mode = WarpMode::Tonal;
+        a.warp.enabled = false;
+        a.warp.transpose_cents = 0;
+        a.warp.formant_cents = 200;
+    })
+    .unwrap();
+    assert!(key_of(&d, id).keep_formants);
 }

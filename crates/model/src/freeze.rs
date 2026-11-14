@@ -542,6 +542,8 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | SongCommand::MoveTake { group, .. }
                 | SongCommand::DeleteUnusedTakes { group }
                 | SongCommand::SetCompXfade { group, .. }
+                | SongCommand::SetCompRange { group, .. }
+                | SongCommand::FlattenComp { group, .. }
                 | SongCommand::UnlinkTakeGroup { group }
                 | SongCommand::SetCompSilence { group, .. }
                 | SongCommand::SetTake { group, .. }

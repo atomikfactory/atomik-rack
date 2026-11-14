@@ -932,7 +932,13 @@ Hand checks, not automated (they need your ears):
 - Warp a sustained pad, a chord progression and a vocal in Tonal mode at 0.5x, 0.75x and 1.5x and
   listen for phasiness, warble and the loss of the low end; transpose them by a semitone, a fifth
   and an octave and listen for the missing formants (a vocal does sound like a chipmunk or a giant:
-  the formants move, as the follow-ups note).
+  the formants move). Then press KEEP FORMANTS in the audio clip editor's Overview mode: the pitch stays,
+  the character comes back (the preview of a clip still rendering plays it without); try SHIFT of plus and
+  minus 4 semitones, and STEREO LINK on a wide stereo pad (the image should not drift or collapse).
+- Record two or three takes over a part (loop recording), press COMP in the audio clip editor, press on each take to
+  hear it, drag ranges from different takes into the comp, listen to the crossfade at the cuts (XFADE - and +), move a
+  range with Up and Down, then FLATTEN COMP: the new clip must sound the same as the comp did, and one undo must give
+  the takes back.
 - Transpose a bass line down an octave in Beats and Tonal and listen to its attacks. Transpose a drum loop up and down.
 - Quantize Audio on a loosely played drum recording at 1/8 and 1/16 at 100% and 50%, listen for
   flams and double hits, and undo it in one step; trim and split a quantized clip and check that the

@@ -108,6 +108,62 @@ fn clip_to_slicer_is_one_step_and_slices_at_the_markers() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+#[test]
+fn a_reversed_clip_slices_the_way_it_sounds() {
+    let (mut c, id, dir) = core_with_clip();
+    let clip = c.doc().song.clip(id).unwrap().2.clone();
+    let ClipContent::Audio(a) = &clip.content else {
+        panic!("audio")
+    };
+    let mut content = a.clone();
+    content.reverse = true;
+    content.warp.enabled = true;
+    content.warp.source_bpm = 120.0;
+    let spt = 60.0 * 48_000.0 / (120.0 * atomik_core::PPQ as f64);
+    let at = |t: i64| WarpMarker {
+        tick: t,
+        source: (t as f64 * spt).round() as u64,
+    };
+    content.warp.markers = vec![at(0), at(10_000), at(20_000)];
+    c.apply_command(Command::Song(SongCommand::SetAudioClip {
+        id,
+        start: clip.start,
+        length: clip.length,
+        muted: clip.muted,
+        content,
+        merge: None,
+    }))
+    .unwrap();
+    let depth = c.document().undo_depth();
+    c.clip_to_slicer(id);
+    assert!(c.last_rejection().is_none(), "{:?}", c.last_rejection());
+    assert_eq!(c.document().undo_depth(), depth + 1, "one undo step");
+    let slicer = c
+        .doc()
+        .devices
+        .iter()
+        .find(|d| d.type_id == "atomik.loop-slicer")
+        .expect("a slicer");
+    let mut zones = slicer.zones.clone();
+    zones.sort_by_key(|z| z.key_lo);
+    assert_eq!(zones.len(), 3);
+    // Slice 1 is the last span of the file, every slice plays backwards, and the spans run from
+    // the end of the file to its start in key order.
+    assert!(zones.iter().all(|z| z.reverse));
+    assert!(zones[0].start > zones[1].start && zones[1].start > zones[2].start);
+    assert_eq!(zones[1].start, at(10_000).source);
+    assert_eq!(zones[2].start, 0);
+    assert_eq!(zones[0].end, zones[0].end.max(zones[0].start + 1));
+    c.undo();
+    assert!(
+        c.doc()
+            .devices
+            .iter()
+            .all(|d| d.type_id != "atomik.loop-slicer")
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 // ------------------------------------------------------------------ transients
 
 /// Silence with three noise bursts, at frames 10 000, 40 000 and 70 000.

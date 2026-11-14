@@ -99,9 +99,8 @@ fn merges(actions: &[UiAction]) -> Vec<Option<u64>> {
 }
 
 #[test]
-fn vocal_mode_is_available_and_comp_is_not() {
+fn vocal_mode_is_available() {
     assert!(AudioMode::Vocal.is_enabled());
-    assert!(!AudioMode::Comp.is_enabled());
     let (_, _, v) = setup();
     assert_eq!(v.mode(), AudioMode::Vocal);
     assert!(v.vocal_ready());

@@ -1382,6 +1382,8 @@ pub(crate) fn plan(
         | SongCommand::SetCompSilence { .. }
         | SongCommand::SetTake { .. }
         | SongCommand::SetTakeLoop { .. }
+        | SongCommand::SetCompRange { .. }
+        | SongCommand::FlattenComp { .. }
         | SongCommand::FlattenTakes { .. } => crate::takes_cmd::plan(doc, registry, command)?,
         SongCommand::GroupTracks { .. }
         | SongCommand::Ungroup { .. }
