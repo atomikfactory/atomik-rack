@@ -9,6 +9,11 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A larger spectrum panel, with a cursor readout and a peak hold.** Show Spectrum's panel (and the phase meter's)
+  can be resized by the grip in its corner and filled to the window with the button beside the close cross or a
+  double click on its title. A larger spectrum asks for a finer trace (up to 1024 columns) and labels more
+  frequencies and the dB lines. The pointer over the plot reads out the frequency, the nearest note and the level;
+  **HOLD** draws the peaks as a slowly falling line, and a click on the plot starts it again.
 - **Comp mode in the audio clip editor.** Press COMP for a clip with takes: a comp lane over one lane per take,
   newest on top. Press on a take to hear it from there, drag a range of it into the comp (one `SetCompRange`, one
   undo step, with a crossfade at the cuts, 10 ms to start with and settable), Up and Down move the range to the take
