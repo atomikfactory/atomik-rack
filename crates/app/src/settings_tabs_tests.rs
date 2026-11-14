@@ -1460,7 +1460,7 @@ fn the_camera_tab_edits_the_drafts_and_apply_returns_them() {
     let defaults = d.preferences().unwrap().1.camera;
     assert_eq!(defaults, crate::keymap_store::CameraPrefs::default());
     let l = camera_layout(&d);
-    assert_eq!(l.turn.value, "270\u{b0}");
+    assert_eq!(l.turn.value, "150\u{b0}");
     assert_eq!(l.sensitivity.value, "100%");
     // The hand: left.
     down(&mut d, l.hand.choices[1].1.center());
@@ -1468,13 +1468,13 @@ fn the_camera_tab_edits_the_drafts_and_apply_returns_them() {
         d.preferences().unwrap().1.camera.hand,
         crate::keymap_store::HandChoice::Left
     );
-    // The twist: 15 degrees a press, never under 90 or over 360.
+    // The twist: 10 degrees a press, never under 30 or over 360.
     for _ in 0..30 {
         let at = camera_layout(&d).turn.less.center();
         down(&mut d, at);
     }
-    assert_eq!(d.preferences().unwrap().1.camera.full_turn, 90);
-    for _ in 0..30 {
+    assert_eq!(d.preferences().unwrap().1.camera.full_turn, 30);
+    for _ in 0..40 {
         let at = camera_layout(&d).turn.more.center();
         down(&mut d, at);
     }
@@ -1488,9 +1488,23 @@ fn the_camera_tab_edits_the_drafts_and_apply_returns_them() {
         let at = camera_layout(&d).sensitivity.more.center();
         down(&mut d, at);
     }
+    let at = camera_layout(&d).reverse.rect.center();
+    down(&mut d, at);
     let camera = d.preferences().unwrap().1.camera;
     assert!(!camera.fine && !camera.preview);
+    assert!(camera.reverse);
     assert_eq!(camera.sensitivity, 150);
+    // The row shows the dead zone, and Calibrate hands the drafts back to be applied.
+    let l = camera_layout(&d);
+    assert!(
+        l.calibrate.text.starts_with("Dead zone 1.5"),
+        "{}",
+        l.calibrate.text
+    );
+    assert!(matches!(
+        down(&mut d, l.calibrate.button.center()),
+        DialogOutcome::CalibrateCamera(_)
+    ));
     // The other drafts are as they were.
     assert_eq!(
         d.preferences().unwrap().1.backup_keep,
