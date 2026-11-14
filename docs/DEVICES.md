@@ -2303,9 +2303,18 @@ All of them are display settings: the device stores them (they are saved with th
 automated or preset like any param) and the UI reads them from the document; none of them reaches
 the audio.
 
+The same spectrum and phase meter are also available as **meter panels** without a device: Show
+Spectrum and Show Phase Meter in the right-click menu of a console strip (a channel, a bus, the master)
+and of a plugin device open a floating panel of the same drawing, larger. The strip's output after its
+fader (a plugin device: its output after the bypass) is tapped only while a panel is open. A strip
+has a 32 768 frame ring, so its spectrum panel offers 1024 to 16384 points. The spectrum panel has a
+REF list that draws a second curve over the trace: another strip, or the reference track (its long-term
+average spectrum, moved by the matched gain and the trim). Neither the panels nor the second curve are
+saved. The spectrum device does not have the second curve yet.
+
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
-| `size` | 0 to 4: 1024, 2048, 4096, 8192, 16384 points | 2 (4096) | choice | Linear | yes |
+| `size` | 0 to 6: 1024, 2048, 4096, 8192, 16384, 32768, 65536 points | 2 (4096) | choice | Linear | yes |
 | `window` | 0 to 1: Hann, B-Harris (Blackman-Harris) | 0 | choice | Linear | yes |
 | `channel` | 0 to 4: Left, Right, Mid, Side, Sum | 4 (Sum) | choice | Linear | yes |
 | `mode` | 0 to 2: Fine (log-frequency trace), 1/3 oct (31 bands), Spectrogram | 0 | choice | Linear | yes |
@@ -2327,8 +2336,9 @@ params by key, so older projects load as they were, with the new ones at their d
 
 - **Audio path.** Each batch the device copies `in_l`/`in_r` to `out_l`/`out_r` **bit for bit**
   (non-finite samples included), with **no latency**, and pushes the same 64 frames into its
-  `ScopeTap` (`atomik_device_sdk::ScopeTap`): a lock-free ring of the last 32 768 stereo frames made
-  of `AtomicU32`s, 128 relaxed stores and one release store per batch. It never allocates (the ring
+  `ScopeTap` (`atomik_device_sdk::ScopeTap`): a lock-free ring of the last 131 072 stereo frames made
+  of `AtomicU32`s (1 MiB: an analysis of 65536 points needs a ring twice its size), 128 relaxed
+  stores and one release store per batch. It never allocates (the ring
   is made when the device is built), locks or computes a transform, and nothing in the output
   depends on a param, so a bounce with the device is bit-identical to a bounce without it. See
   [ARCHITECTURE.md](ARCHITECTURE.md#6k-analysers-the-scope-tap-spectrum-and-phase-meter).
@@ -2343,8 +2353,11 @@ params by key, so older projects load as they were, with the new ones at their d
   inside its edges, a straddling bin in proportion, divided by the window's noise bandwidth). Peaks
   keep each column's highest value for `hold` and then fall `decay` dB per second; `tilt` adds
   `tilt * log2(f / 1 kHz)` dB to the display.
-- **Larger transform and smoothing.** `size` goes up to 16384 points (2.9 Hz per bin at 48 kHz),
-  which reads a bass tone to a fraction of a bin but shows ragged noise. `smoothing` averages the
+- **Larger transform and smoothing.** `size` goes up to 65536 points (0.73 Hz per bin at 48 kHz; 16384
+  points are 2.9 Hz). The FFT runs in the UI on the newest frames of the tap, never on the audio
+  thread, so the size costs the audio nothing; the one thing it costs is the larger ring above, which
+  only the spectrum device has. A large size reads a bass tone to a fraction of a bin, moves slowly (65536
+  frames are 1.4 s) and shows ragged noise. `smoothing` averages the
   power of the bins over a twelfth, a sixth or a third of an octave around each bin before the
   fine trace is drawn (a window that grows with the frequency, so the bass keeps its detail and the
   treble is smooth); the bands and the loudest-bin readout are never smoothed.

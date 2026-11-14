@@ -45,7 +45,7 @@ pub use samples::{
     ZONE_TRANSPOSE_RANGE, ZONE_TUNE_RANGE, Zone, ZoneEnv, ZoneExt, ZoneFilter, velocity_fade,
     velocity_to_7bit,
 };
-pub use scope::{SCOPE_FRAMES, ScopeTap};
+pub use scope::{LARGE_SCOPE_FRAMES, SCOPE_FRAMES, ScopeTap};
 
 use atomik_core::{ParamId, SampleRate};
 use std::sync::Arc;

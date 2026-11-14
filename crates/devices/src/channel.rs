@@ -142,6 +142,12 @@
 //!   lock-free ring the UI analyses), so the spectrum is what the strip hears before its level.
 //!   The ring is allocated in `prepare`; with the switch off nothing is written and the strip is
 //!   bit-identical to one without a tap.
+//! * **Output tap** (the tap's live flag, [`ScopeTap::set_live`], set by the app while a meter
+//!   panel shows the strip): with `internal.tap_live` off and the flag on, stage 1 pushes the
+//!   strip's output (after the width, the fader, the mute and the pan) into the same ring. The
+//!   flag is one relaxed load per batch; with it off nothing is written and the strip is
+//!   bit-identical to one without a tap. The pre-fader point of `internal.tap_live` wins when
+//!   both are on.
 
 use crate::bus::S_FOLLOW_OUT;
 use crate::cv_in::batch_mean;
@@ -1589,6 +1595,13 @@ impl Channel {
         }
         *ctx.output(SocketId(S_OUT_L)) = out_l;
         *ctx.output(SocketId(S_OUT_R)) = out_r;
+        // A meter panel (the tap's live flag) looks at the strip's output, after the fader and
+        // the pan; the Spectrum EQ window's pre-fader point wins while it is on.
+        if let (false, Some(tap)) = (self.on(P_TAP_LIVE), &self.tap)
+            && tap.is_live()
+        {
+            tap.push(&out_l, &out_r);
+        }
         let follow = ctx
             .is_connected(SocketId(S_FOLLOW_IN))
             .then(|| *ctx.input(SocketId(S_FOLLOW_IN)));

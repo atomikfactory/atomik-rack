@@ -61,3 +61,52 @@ pub fn render_blocks(
     }
     Ok(blocks)
 }
+
+/// Renders the master of `doc` over `span` (no tail) and returns its audio at the project's rate.
+/// A stopped render returns `None`; `bundle_root` is the folder the project's audio lives in, as
+/// for a bounce.
+///
+/// # Errors
+/// The span is empty or out of range, the document has no master section, or the bounce of the
+/// document fails.
+pub fn render_master_span(
+    doc: &RackDoc,
+    registry: &Registry,
+    (options, bundle_root): (&ProjectOptions, Option<&Path>),
+    plugins: &mut PluginBounce<'_>,
+    span: ExportSpan,
+    control: RenderControl<'_>,
+) -> Result<Option<atomik_audio_file::AudioData>, RenderError> {
+    let sources: Vec<_> = atomik_model::stem_sources(doc, registry)
+        .into_iter()
+        .filter(|s| s.kind == StemKind::Master)
+        .collect();
+    if sources.is_empty() {
+        return Err(RenderError::Project(
+            "the song has no master section to measure".to_owned(),
+        ));
+    }
+    let request = StemRequest {
+        span,
+        tail_seconds: 0.0,
+        strip: StemStrip::Full,
+        sources,
+    };
+    let mut audio = None;
+    let mut take = |stem: Stem| {
+        audio = Some(stem.audio);
+        Ok(())
+    };
+    let done = render_stems(
+        doc,
+        registry,
+        (options, bundle_root),
+        plugins,
+        &request,
+        (control, &mut take),
+    )?;
+    if done.is_none() {
+        return Ok(None);
+    }
+    Ok(audio)
+}

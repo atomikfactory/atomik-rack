@@ -17,8 +17,10 @@
 //!
 //! A reference with a cue ([`atomik_model::Reference::cue_ms`]) always starts at its cue, so the
 //! chorus of the reference can be set against the chorus of the mix. A reference without one
-//! follows the playhead: it starts at the file position equal to the song position in seconds. The
-//! start is taken when the key is pressed; the reference does not follow later seeks.
+//! follows the playhead: it starts at the file position equal to the song position in seconds, and
+//! while it is heard a seek of the playhead moves it to the new song position
+//! ([`AppCore::reference_after_seek`]: a new stream from there, the old one cut, no gap in the
+//! settings). A reference with a cue is not time-aligned with the song and stays where it is.
 //!
 //! # Level match
 //!
@@ -28,7 +30,24 @@
 //! [`measure_loudest`]), so the two sit at the same level in their strong parts. The gain is
 //! updated slowly while the mix plays: at most 0.5 dB every quarter of a second, the first
 //! reading at once, and only from readings above -60 LUFS (a stopped song keeps the last gain).
-//! The gain is shown ([`ReferenceInfo::gain_db`]); it is never stored in the project.
+//! The gain is shown ([`ReferenceInfo::gain_db`]); the matched part is never stored in the project.
+//!
+//! # Trim
+//!
+//! Each reference has a **trim** of up to 12 dB either way in 0.1 dB steps ([`Reference::trim_tenths`],
+//! saved with the reference), added to the matched gain (and to 0 dB with the match off), so a
+//! preference such as "the reference a little quieter" survives the slow match.
+//! [`AppCore::set_reference_trim`] edits it as one undo step.
+//!
+//! # Matching over a section
+//!
+//! [`AppCore::match_reference_section`] measures the integrated loudness of the mix and of the
+//! reference over the time selection (or the loop locators), the reference from the same seconds
+//! (from its cue, counted from the start of the section, when it has one), and sets the matched
+//! gain to the difference. The mix is rendered offline on a worker (`atomik-reference-match`,
+//! the master over that range, progress and cancel as the other analysis workers); the reference
+//! is measured at once from the decoded file. The slow match of the loudest section stops while
+//! the section gain is held; turning **Match Reference Level** off and on again resumes it.
 //!
 //! # Band and side solo
 //!
@@ -39,6 +58,7 @@ use super::AppCore;
 use crate::sink::EngineSink;
 use atomik_audio_file::{AudioData, decode_file_with};
 use atomik_devices::mastering::loudness::LoudnessMeter;
+use atomik_dsp::spectrum::{Settings, Spectrum};
 use atomik_engine::{
     PreviewFeed, ReferenceBand, ReferenceSettings, ReferenceSolo, preview_channel,
 };
@@ -46,6 +66,7 @@ use atomik_model::audio_trim::TempoMap;
 use atomik_model::{Command, MAX_REFERENCES, Reference};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
 
@@ -67,6 +88,20 @@ struct Loaded {
     audio: Arc<AudioData>,
     /// Short-term loudness of its loudest section in LUFS (`None` for a silent file).
     loudest: Option<f32>,
+    /// Its long-term average spectrum in dB, one value per column of the meter panels (the
+    /// reference curve of a spectrum panel).
+    trace: Vec<f32>,
+}
+
+/// A measurement of the mix over a section that runs on a worker.
+struct SectionJob {
+    result: Receiver<Result<Option<f32>, String>>,
+    cancel: Arc<AtomicBool>,
+    progress: Arc<AtomicU32>,
+    /// The loudness of the reference over its part of the section, in LUFS.
+    reference_lufs: f32,
+    /// The reference the job measured (a changed selection drops the result).
+    path: PathBuf,
 }
 
 /// A decode that runs on the worker.
@@ -92,6 +127,12 @@ pub(crate) struct ReferenceState {
     frames: u32,
     /// The settings the engine holds, to send only changes.
     sent: Option<ReferenceSettings>,
+    /// The file frame the reference stream last started from, while it is heard.
+    from_frame: Option<usize>,
+    /// The matched gain was set from a section and the slow match leaves it alone.
+    section_held: bool,
+    /// The section measurement that runs.
+    section: Option<SectionJob>,
 }
 
 impl ReferenceState {
@@ -110,6 +151,9 @@ impl ReferenceState {
             frames: 0,
             // A new engine holds the default settings: only a change is ever sent.
             sent: Some(ReferenceSettings::default()),
+            from_frame: None,
+            section_held: false,
+            section: None,
         }
     }
 }
@@ -133,6 +177,12 @@ pub struct ReferenceInfo {
     pub gain_db: Option<f32>,
     /// Whether the level match is on.
     pub level_match: bool,
+    /// The trim of the selected reference in dB (0 when there is none).
+    pub trim_db: f32,
+    /// The matched gain was set from a section of the song and is held there.
+    pub section_held: bool,
+    /// How far the measurement of a section is, `0.0..=1.0`, while one runs.
+    pub matching: Option<f32>,
     /// The band solo.
     pub band: ReferenceBand,
     /// The stereo solo.
@@ -178,11 +228,144 @@ fn load_reference(path: &Path) -> Result<Loaded, String> {
         return Err("the file has no audio".to_owned());
     }
     let loudest = measure_loudest(&audio);
+    let trace = average_spectrum(&audio);
     Ok(Loaded {
         path: path.to_path_buf(),
         audio: Arc::new(audio),
         loudest,
+        trace,
     })
+}
+
+/// The most analysis windows of the long-term spectrum.
+const TRACE_WINDOWS: usize = 400;
+
+/// The long-term average spectrum of `audio` in dB, one value per column of the meter panels:
+/// the power of up to [`TRACE_WINDOWS`] evenly spread 4096-point windows averaged, silent windows
+/// skipped. Empty for a file shorter than one window or with nothing audible.
+pub fn average_spectrum(audio: &AudioData) -> Vec<f32> {
+    use atomik_ui::analyser::TRACE_COLUMNS;
+    const SIZE: usize = 4096;
+    let Some(left) = audio.channels.first() else {
+        return Vec::new();
+    };
+    let right = audio.channels.get(1).unwrap_or(left);
+    let len = left.len().min(right.len());
+    if len < SIZE {
+        return Vec::new();
+    }
+    let rate = audio.sample_rate as f32;
+    let step = ((len - SIZE) / TRACE_WINDOWS).max(SIZE);
+    let settings = Settings {
+        size: SIZE,
+        averaging_ms: 0.0,
+        hold_ms: 0.0,
+        ..Settings::default()
+    };
+    let mut spectrum = Spectrum::new();
+    let mut power = vec![0.0f64; TRACE_COLUMNS];
+    let mut windows = 0u32;
+    let mut at = 0;
+    while at + SIZE <= len {
+        spectrum.update(
+            &left[at..at + SIZE],
+            &right[at..at + SIZE],
+            SIZE as u64,
+            rate,
+            &settings,
+            TRACE_COLUMNS,
+        );
+        let trace = spectrum.trace();
+        if trace.len() == TRACE_COLUMNS && trace.iter().any(|v| *v > -90.0) {
+            for (p, v) in power.iter_mut().zip(trace) {
+                *p += 10f64.powf(f64::from(*v) / 10.0);
+            }
+            windows += 1;
+        }
+        at += step;
+    }
+    if windows == 0 {
+        return Vec::new();
+    }
+    power
+        .iter()
+        .map(|p| (10.0 * (p / f64::from(windows)).log10()) as f32)
+        .collect()
+}
+
+/// The integrated loudness in LUFS of `frames` frames of `audio` from frame `from`, `None` for
+/// silence or fewer frames than the 400 ms the loudness gate needs.
+pub fn section_lufs(audio: &AudioData, from: usize, frames: usize) -> Option<f32> {
+    let left = audio.channels.first()?;
+    let right = audio.channels.get(1).unwrap_or(left);
+    let end = (from + frames).min(left.len()).min(right.len());
+    if end <= from || ((end - from) as f64) < f64::from(audio.sample_rate) * 0.4 {
+        return None;
+    }
+    let mut meter = LoudnessMeter::new(f64::from(audio.sample_rate));
+    let mut at = from;
+    while at < end {
+        let next = (at + 4_096).min(end);
+        meter.process(&left[at..next], &right[at..next]);
+        at = next;
+    }
+    let lufs = meter.integrated();
+    (lufs > -70.0).then_some(lufs)
+}
+
+/// What the worker of a section match does: renders the master of `doc` over `span` and measures
+/// its integrated loudness. `None`: it was stopped.
+fn measure_mix_section(
+    work: SectionWork,
+    control: atomik_render::plugin_pass::RenderControl<'_>,
+) -> Result<Option<f32>, String> {
+    use atomik_device_sdk::RunMode;
+    use atomik_render::plugins::MissingPlugins;
+    use atomik_render::project::{PluginBounce, ProjectOptions};
+    let SectionWork {
+        doc,
+        bundle_root,
+        plugins,
+        span,
+    } = work;
+    let mut registry = atomik_render::default_registry();
+    let mut host =
+        crate::freeze_worker::plugin_host(&doc, plugins, &mut registry, "the reference match")?;
+    atomik_model::register_stand_ins(&doc, &mut registry).map_err(|e| e.to_string())?;
+    let options = ProjectOptions {
+        host_block: std::num::NonZeroUsize::new(512).unwrap_or(std::num::NonZeroUsize::MIN),
+        workers: 0,
+        loop_count: None,
+    };
+    let mut bounce = PluginBounce {
+        host: host.as_mut(),
+        mode: RunMode::Offline,
+        missing: MissingPlugins::Error,
+    };
+    let Some(audio) = atomik_render::energy::render_master_span(
+        &doc,
+        &registry,
+        (&options, bundle_root.as_deref()),
+        &mut bounce,
+        span,
+        control,
+    )
+    .map_err(|e| e.to_string())?
+    else {
+        return Ok(None);
+    };
+    let frames = audio.channels.first().map_or(0, Vec::len);
+    section_lufs(&audio, 0, frames)
+        .map(Some)
+        .ok_or_else(|| "the mix is silent over the section".to_owned())
+}
+
+/// What the worker of a section match owns.
+struct SectionWork {
+    doc: atomik_model::RackDoc,
+    bundle_root: Option<PathBuf>,
+    plugins: crate::freeze_worker::PluginEnv,
+    span: atomik_render::export::ExportSpan,
 }
 
 /// Fills `feed` from `audio` starting at frame `from`, until the file ends or the engine lets go
@@ -230,6 +413,12 @@ impl<S: EngineSink> AppCore<S> {
             mix_lufs: st.mix_lufs,
             gain_db: if st.level_match { st.gain_db } else { None },
             level_match: st.level_match,
+            trim_db: self.selected_reference().map_or(0.0, |r| r.trim_db()),
+            section_held: st.section_held,
+            matching: st
+                .section
+                .as_ref()
+                .map(|j| f32::from_bits(j.progress.load(Ordering::Relaxed)).clamp(0.0, 1.0)),
             band: st.band,
             solo: st.solo,
             error: st.error.clone(),
@@ -364,6 +553,8 @@ impl<S: EngineSink> AppCore<S> {
     /// Turns the level match on or off (off: the reference plays at its own level).
     pub fn set_reference_level_match(&mut self, on: bool) {
         self.reference.level_match = on;
+        // On again: the slow match of the loudest section takes over from a section gain.
+        self.reference.section_held = false;
         self.push_reference_settings();
     }
 
@@ -389,6 +580,7 @@ impl<S: EngineSink> AppCore<S> {
         if !on {
             if self.reference.listening {
                 self.reference.listening = false;
+                self.reference.from_frame = None;
                 self.push_reference_settings();
                 self.report("Listening to the mix");
             }
@@ -416,33 +608,10 @@ impl<S: EngineSink> AppCore<S> {
         let len = audio.channels.first().map_or(0, Vec::len);
         let rate = f64::from(audio.sample_rate);
         let from = start_frame(wanted.cue_ms, self.playhead_seconds(), rate, len);
-        let (mut feed, stream) = preview_channel();
-        feed.set_source_rate(audio.sample_rate);
-        // The first part is in the ring before the engine sees the stream: no gap at the start.
-        let pushed = feed.push(&audio.channels, from);
         self.reference.listening = true;
-        let settings = self.reference_settings();
-        if let Err(e) = self.sink.reference_start(stream, settings) {
+        if !self.start_reference_stream(&audio, from, wanted.name()) {
             self.reference.listening = false;
-            self.report(format!("reference: {e}"));
             return;
-        }
-        self.reference.sent = Some(settings);
-        let next = from + pushed;
-        if next >= len {
-            feed.finish();
-            if from >= len {
-                self.report(format!(
-                    "The reference {} ends before this position",
-                    wanted.name()
-                ));
-            }
-        } else if std::thread::Builder::new()
-            .name("atomik-reference-feed".into())
-            .spawn(move || feeder(&audio, next, feed))
-            .is_err()
-        {
-            log::warn!("reference: the feeder thread could not start");
         }
         let gain = match (self.reference.level_match, self.reference.gain_db) {
             (true, Some(g)) => format!(", matched {g:+.1} dB"),
@@ -454,14 +623,287 @@ impl<S: EngineSink> AppCore<S> {
         ));
     }
 
-    /// The settings the engine voice should hold now.
-    fn reference_settings(&self) -> ReferenceSettings {
+    /// Gives the engine a stream of `audio` from file frame `from` and the settings now in force
+    /// (a stream that was loaded is cut). False when the engine refused.
+    fn start_reference_stream(&mut self, audio: &Arc<AudioData>, from: usize, name: &str) -> bool {
+        let len = audio.channels.first().map_or(0, Vec::len);
+        let (mut feed, stream) = preview_channel();
+        feed.set_source_rate(audio.sample_rate);
+        // The first part is in the ring before the engine sees the stream: no gap at the start.
+        let pushed = feed.push(&audio.channels, from);
+        let settings = self.reference_settings();
+        if let Err(e) = self.sink.reference_start(stream, settings) {
+            self.report(format!("reference: {e}"));
+            return false;
+        }
+        self.reference.sent = Some(settings);
+        self.reference.from_frame = Some(from);
+        let next = from + pushed;
+        if next >= len {
+            feed.finish();
+            if from >= len {
+                self.report(format!("The reference {name} ends before this position"));
+            }
+        } else {
+            let audio = Arc::clone(audio);
+            if std::thread::Builder::new()
+                .name("atomik-reference-feed".into())
+                .spawn(move || feeder(&audio, next, feed))
+                .is_err()
+            {
+                log::warn!("reference: the feeder thread could not start");
+            }
+        }
+        true
+    }
+
+    /// The playhead was moved ([`AppCore::locate`]): a reference that is heard and follows the
+    /// playhead (it has no cue of its own) starts again from the new song position.
+    pub(super) fn reference_after_seek(&mut self) {
+        if !self.reference.listening {
+            return;
+        }
+        let Some(wanted) = self.selected_reference().filter(|r| r.cue_ms.is_none()) else {
+            return;
+        };
+        let Some(loaded) = self.selected_loaded() else {
+            return;
+        };
+        let audio = Arc::clone(&loaded.audio);
+        let len = audio.channels.first().map_or(0, Vec::len);
+        let from = start_frame(
+            None,
+            self.playhead_seconds(),
+            f64::from(audio.sample_rate),
+            len,
+        );
+        self.start_reference_stream(&audio, from, wanted.name());
+    }
+
+    /// The song position, in seconds, the reference stream last started from (`None` while the
+    /// mix is heard).
+    pub fn reference_start_seconds(&self) -> Option<f64> {
+        let from = self
+            .reference
+            .from_frame
+            .filter(|_| self.reference.listening)?;
+        let rate = f64::from(self.selected_loaded()?.audio.sample_rate);
+        Some(from as f64 / rate)
+    }
+
+    /// The long-term spectrum of the selected reference once it is decoded (the reference curve of
+    /// a spectrum panel).
+    pub(super) fn reference_trace(&self) -> Option<&Vec<f32>> {
+        self.selected_loaded()
+            .map(|l| &l.trace)
+            .filter(|t| !t.is_empty())
+    }
+
+    /// How far the reference curve moves from its own level to the level it is heard at: the
+    /// matched gain (when there is one) and the trim, in dB.
+    pub(super) fn reference_curve_shift(&self) -> f32 {
         let st = &self.reference;
-        let gain_db = if st.level_match {
+        let matched = if st.level_match {
             st.gain_db.unwrap_or(0.0)
         } else {
             0.0
         };
+        matched + self.selected_reference().map_or(0.0, |r| r.trim_db())
+    }
+
+    /// Sets the trim of the selected reference to `tenths` of a dB (clamped to 12 dB either way).
+    /// One undo step; nothing changes when it is the value already.
+    pub fn set_reference_trim(&mut self, tenths: i16) {
+        let limit = atomik_model::MAX_REFERENCE_TRIM_TENTHS;
+        let tenths = tenths.clamp(-limit, limit);
+        let mut list = self.doc().references.clone();
+        let Some(r) = list.get_mut(self.reference.selected) else {
+            self.report("Add a reference track first");
+            return;
+        };
+        if r.trim_tenths == tenths {
+            return;
+        }
+        r.trim_tenths = tenths;
+        let message = format!("Reference {} trim {:+.1} dB", r.name(), r.trim_db());
+        if self.apply_command(Command::SetReferences(list)).is_ok() {
+            self.push_reference_settings();
+            self.report(message);
+        }
+    }
+
+    /// Moves the trim of the selected reference by `delta` tenths of a dB.
+    pub fn step_reference_trim(&mut self, delta: i16) {
+        let now = self
+            .selected_reference()
+            .map_or(0, |r| i32::from(r.trim_tenths));
+        let next = (now + i32::from(delta)).clamp(
+            -i32::from(atomik_model::MAX_REFERENCE_TRIM_TENTHS),
+            i32::from(atomik_model::MAX_REFERENCE_TRIM_TENTHS),
+        );
+        self.set_reference_trim(next as i16);
+    }
+
+    /// The range a section match measures: the time selection of the arrangement, else the loop
+    /// locators, as `(start, end)` ticks.
+    pub fn reference_section(&self) -> Option<(i64, i64)> {
+        self.export_selection().or_else(|| {
+            let (a, b) = self.doc().song.loop_range;
+            (a < b).then_some((a, b))
+        })
+    }
+
+    /// The integrated loudness in LUFS of the decoded selected reference over `seconds` of the
+    /// file from `from_seconds` (`None` before it is decoded, for silence, or under 0.4 s).
+    pub fn reference_lufs_over(&self, from_seconds: f64, seconds: f64) -> Option<f32> {
+        let audio = &self.selected_loaded()?.audio;
+        let rate = f64::from(audio.sample_rate);
+        section_lufs(
+            audio,
+            (from_seconds.max(0.0) * rate).round() as usize,
+            (seconds.max(0.0) * rate).round() as usize,
+        )
+    }
+
+    /// Matches the loudness of the selected reference to the mix over the time selection (or
+    /// the loop locators), see the module docs.
+    ///
+    /// # Errors
+    /// There is no reference or it is not decoded yet, there is no section or it is shorter
+    /// than 0.4 s, the reference is silent over it, or a measurement already runs (the reason
+    /// is also in the status line).
+    pub fn match_reference_section(&mut self) -> Result<(), String> {
+        let refusal = self.try_match_reference_section();
+        if let Err(why) = &refusal {
+            self.reject(why.clone());
+        }
+        refusal
+    }
+
+    fn try_match_reference_section(&mut self) -> Result<(), String> {
+        if self.reference.section.is_some() {
+            return Err("The reference is already being measured".to_owned());
+        }
+        let wanted = self
+            .selected_reference()
+            .ok_or_else(|| "Add a reference track first".to_owned())?;
+        let (start, end) = self
+            .reference_section()
+            .ok_or_else(|| "Select a time range or set the loop locators first".to_owned())?;
+        let (audio, path) = {
+            let loaded = self
+                .selected_loaded()
+                .ok_or_else(|| format!("The reference {} is still loading", wanted.name()))?;
+            (Arc::clone(&loaded.audio), loaded.path.clone())
+        };
+        let tempo = TempoMap::new(&self.doc().song.tempo);
+        let (from_s, to_s) = (
+            tempo.seconds_at_tick(start as f64),
+            tempo.seconds_at_tick(end as f64),
+        );
+        // The reference part of the section: the same seconds, or from the cue.
+        let ref_from_s = wanted.cue_ms.map_or(from_s, |ms| ms as f64 / 1000.0);
+        let rate = f64::from(audio.sample_rate);
+        let from = (ref_from_s.max(0.0) * rate).round() as usize;
+        let frames = ((to_s - from_s).max(0.0) * rate).round() as usize;
+        let reference_lufs = section_lufs(&audio, from, frames).ok_or_else(|| {
+            format!(
+                "The reference {} is silent or too short over that section",
+                wanted.name()
+            )
+        })?;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let progress = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let (tx, rx) = channel();
+        let work = SectionWork {
+            doc: self.doc().clone(),
+            bundle_root: self.bundle_root().map(Path::to_path_buf),
+            plugins: crate::freeze_worker::PluginEnv {
+                cache: self.plugins.cache.clone(),
+                settings: self.plugins.settings.clone(),
+                isolation: self.plugins.freeze_isolation.clone(),
+            },
+            span: atomik_render::export::ExportSpan::Range(start, end),
+        };
+        let (stop, step) = (Arc::clone(&cancel), Arc::clone(&progress));
+        std::thread::Builder::new()
+            .name("atomik-reference-match".into())
+            .spawn(move || {
+                let report = |p: f32| step.store(p.to_bits(), Ordering::Relaxed);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    measure_mix_section(
+                        work,
+                        atomik_render::plugin_pass::RenderControl {
+                            cancel: Some(&stop),
+                            progress: Some(&report),
+                        },
+                    )
+                }))
+                .unwrap_or_else(|_| Err("a device failed while the mix was measured".to_owned()));
+                let _ = tx.send(result);
+            })
+            .map_err(|e| format!("cannot start the measurement: {e}"))?;
+        self.reference.section = Some(SectionJob {
+            result: rx,
+            cancel,
+            progress,
+            reference_lufs,
+            path,
+        });
+        self.report("Measuring the mix over the section");
+        Ok(())
+    }
+
+    /// Stops the measurement of a section.
+    pub fn cancel_reference_match(&mut self) {
+        if let Some(job) = &self.reference.section {
+            job.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Takes the result of the section measurement when it is done.
+    fn poll_reference_section(&mut self) {
+        let Some(job) = &self.reference.section else {
+            return;
+        };
+        let outcome = match job.result.try_recv() {
+            Ok(r) => r,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err("the measurement stopped".to_owned()),
+        };
+        let Some(job) = self.reference.section.take() else {
+            return;
+        };
+        // The selection changed while it ran: the result is for another file.
+        let same = self.selected_loaded().is_some_and(|l| l.path == job.path);
+        match outcome {
+            Err(e) => self.reject(format!("Reference match failed: {e}")),
+            Ok(None) => self.reject("Reference match cancelled".to_owned()),
+            Ok(Some(mix_lufs)) if same => {
+                let gain = (mix_lufs - job.reference_lufs).clamp(GAIN_RANGE_DB.0, GAIN_RANGE_DB.1);
+                self.reference.gain_db = Some(gain);
+                self.reference.mix_lufs = Some(mix_lufs);
+                self.reference.section_held = true;
+                self.reference.level_match = true;
+                self.push_reference_settings();
+                self.report(format!(
+                    "Reference matched over the section: {gain:+.1} dB (mix {mix_lufs:.1}, reference {:.1} LUFS)",
+                    job.reference_lufs
+                ));
+            }
+            Ok(Some(_)) => {}
+        }
+    }
+
+    /// The settings the engine voice should hold now.
+    fn reference_settings(&self) -> ReferenceSettings {
+        let st = &self.reference;
+        let matched = if st.level_match {
+            st.gain_db.unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        let gain_db = matched + self.selected_reference().map_or(0.0, |r| r.trim_db());
         ReferenceSettings {
             listening: st.listening,
             gain: linear(gain_db),
@@ -499,6 +941,10 @@ impl<S: EngineSink> AppCore<S> {
         self.reference.error = None;
         self.reference.gain_db = None;
         self.reference.mix_lufs = None;
+        self.reference.section_held = false;
+        if let Some(job) = self.reference.section.take() {
+            job.cancel.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Starts decoding and measuring the selected file on a worker.
@@ -585,6 +1031,7 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
         }
+        self.poll_reference_section();
         self.reference.frames += 1;
         if self.reference.frames >= MATCH_EVERY_FRAMES {
             self.reference.frames = 0;
@@ -595,7 +1042,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Moves the matched gain toward the loudest-section match.
     fn update_reference_gain(&mut self) {
-        if !self.reference.level_match {
+        if !self.reference.level_match || self.reference.section_held {
             return;
         }
         let Some(loudest) = self.selected_loaded().and_then(|l| l.loudest) else {

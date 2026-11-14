@@ -20,7 +20,12 @@
 //! * a click on a reference (or Up and Down) emits [`ZoneAction::Select`];
 //! * `REFRESH` (and Enter) emits [`ZoneAction::Refresh`]: the app renders the mix again;
 //! * `LISTEN` emits [`ZoneAction::Listen`], the reference key of the Mixer menu;
-//! * `CLOSE` emits [`ZoneAction::Close`]; the app also closes the panel on Esc.
+//! * `CLOSE` emits [`ZoneAction::Close`]; the app also closes the panel on Esc;
+//! * the **TRIM** row under the title moves the level of the selected reference by 0.1 dB a click
+//!   (1 dB with Shift) and `RESET` takes it back to 0 ([`ZoneAction::Trim`],
+//!   [`ZoneAction::TrimReset`]); `MATCH OVER SELECTION` measures the mix and the reference over the
+//!   time selection and sets the matched gain from them ([`ZoneAction::MatchSection`], and
+//!   [`ZoneAction::CancelMatch`] while it runs).
 //!
 //! Each attribute draws the lowest-to-highest reading of the references as a band and the mix as
 //! a marker; the marker is lit while the mix is inside the band, and the text says `inside`,
@@ -37,6 +42,10 @@ use vello::kurbo::{Affine, Point, Rect};
 
 const PAD: f64 = 14.0;
 const HEADER_H: f64 = 34.0;
+/// The row of the trim and the section match under the header.
+const CTRL_H: f64 = 30.0;
+/// Where the references start: under the header and the control row.
+const TOP_H: f64 = HEADER_H + CTRL_H;
 const SECTION_H: f64 = 22.0;
 const REF_H: f64 = 20.0;
 const ROW_H: f64 = 38.0;
@@ -59,6 +68,14 @@ pub enum ZoneAction {
     Refresh,
     /// Switch between the mix and the selected reference.
     Listen,
+    /// Move the trim of the selected reference by this many tenths of a dB.
+    Trim(i16),
+    /// Take the trim of the selected reference back to 0 dB.
+    TrimReset,
+    /// Match the loudness of the reference to the mix over the time selection.
+    MatchSection,
+    /// Stop the measurement of the section.
+    CancelMatch,
     /// Close the panel.
     Close,
 }
@@ -124,6 +141,10 @@ pub struct ZoneData {
     pub busy: bool,
     /// True while the reference is what is heard.
     pub listening: bool,
+    /// The trim of the selected reference in dB (`None` without a reference).
+    pub trim_db: Option<f32>,
+    /// How far the measurement of a section is, `0.0..=1.0`, while one runs.
+    pub matching: Option<f32>,
 }
 
 /// The references and decision zone panel. See the module documentation.
@@ -208,7 +229,7 @@ impl ZoneView {
     }
 
     fn height(&self) -> f64 {
-        HEADER_H
+        TOP_H
             + SECTION_H
             + self.shown() as f64 * REF_H
             + SECTION_H
@@ -249,15 +270,50 @@ impl ZoneView {
         Rect::new(l.x0 - 8.0 - 84.0, l.y0, l.x0 - 8.0, l.y1)
     }
 
+    /// The control row under the header.
+    fn ctrl_row(&self) -> Rect {
+        let p = self.panel();
+        Rect::new(
+            p.x0 + PAD,
+            p.y0 + HEADER_H + 4.0,
+            p.x1 - PAD,
+            p.y0 + TOP_H - 2.0,
+        )
+    }
+
+    /// The `-` button of the trim.
+    pub fn trim_down_rect(&self) -> Rect {
+        let r = self.ctrl_row();
+        Rect::new(r.x0 + 40.0, r.y0, r.x0 + 40.0 + 24.0, r.y1)
+    }
+
+    /// The `+` button of the trim.
+    pub fn trim_up_rect(&self) -> Rect {
+        let r = self.trim_down_rect();
+        Rect::new(r.x1 + 70.0, r.y0, r.x1 + 70.0 + 24.0, r.y1)
+    }
+
+    /// The `RESET` button of the trim.
+    pub fn trim_reset_rect(&self) -> Rect {
+        let r = self.trim_up_rect();
+        Rect::new(r.x1 + 8.0, r.y0, r.x1 + 8.0 + 52.0, r.y1)
+    }
+
+    /// The `MATCH OVER SELECTION` button (`CANCEL` while it measures).
+    pub fn match_rect(&self) -> Rect {
+        let r = self.ctrl_row();
+        Rect::new(r.x1 - 190.0, r.y0, r.x1, r.y1)
+    }
+
     /// The box of the listed reference `n` (counted on the screen, from the first listed).
     fn ref_rect(&self, n: usize) -> Rect {
         let p = self.panel();
-        let y = p.y0 + HEADER_H + SECTION_H + n as f64 * REF_H;
+        let y = p.y0 + TOP_H + SECTION_H + n as f64 * REF_H;
         Rect::new(p.x0 + PAD, y, p.x1 - PAD, y + REF_H)
     }
 
     fn rows_top(&self) -> f64 {
-        self.panel().y0 + HEADER_H + SECTION_H + self.shown() as f64 * REF_H + SECTION_H
+        self.panel().y0 + TOP_H + SECTION_H + self.shown() as f64 * REF_H + SECTION_H
     }
 
     /// The box of attribute row `i`.
@@ -298,6 +354,34 @@ impl ZoneView {
                 "Render the mix again and measure it against the references",
             );
         }
+        for (rect, text) in [
+            (
+                self.trim_down_rect(),
+                "Lower the reference by 0.1 dB (Shift: 1 dB)",
+            ),
+            (
+                self.trim_up_rect(),
+                "Raise the reference by 0.1 dB (Shift: 1 dB)",
+            ),
+            (
+                self.trim_reset_rect(),
+                "Take the trim of the reference back to 0 dB",
+            ),
+        ] {
+            if rect.contains(pos) {
+                return help(rect, text);
+            }
+        }
+        if self.match_rect().contains(pos) {
+            return help(
+                self.match_rect(),
+                if self.data.matching.is_some() {
+                    "Stop measuring the section"
+                } else {
+                    "Match the reference to the mix over the time selection or the loop"
+                },
+            );
+        }
         let first = self.first();
         for n in 0..self.shown() {
             if first + n < self.data.references.len() && self.ref_rect(n).contains(pos) {
@@ -323,11 +407,25 @@ impl ZoneView {
             UiEvent::PointerDown {
                 pos,
                 button: PointerButton::Primary,
+                modifiers,
                 ..
             } => {
                 self.repaint = true;
+                let step = if modifiers.shift { 10 } else { 1 };
                 if self.close_rect().contains(*pos) {
                     out.push(UiAction::Zone(ZoneAction::Close));
+                } else if self.trim_down_rect().contains(*pos) {
+                    out.push(UiAction::Zone(ZoneAction::Trim(-step)));
+                } else if self.trim_up_rect().contains(*pos) {
+                    out.push(UiAction::Zone(ZoneAction::Trim(step)));
+                } else if self.trim_reset_rect().contains(*pos) {
+                    out.push(UiAction::Zone(ZoneAction::TrimReset));
+                } else if self.match_rect().contains(*pos) {
+                    out.push(UiAction::Zone(if self.data.matching.is_some() {
+                        ZoneAction::CancelMatch
+                    } else {
+                        ZoneAction::MatchSection
+                    }));
                 } else if self.listen_rect().contains(*pos) {
                     out.push(UiAction::Zone(ZoneAction::Listen));
                 } else if self.refresh_rect().contains(*pos) {
@@ -366,6 +464,54 @@ impl ZoneView {
     }
 
     // ------------------------------------------------------------------ painting
+
+    /// The trim and section match row.
+    fn paint_controls(&self, c: &mut dyn Canvas, hovered: &dyn Fn(Rect) -> bool) {
+        let st = &self.st;
+        let t = &st.base;
+        let r = self.ctrl_row();
+        sp::label(
+            c,
+            "TRIM",
+            r.x0,
+            r.y0 + 15.0,
+            FONT,
+            t.text_muted,
+            Align::Start,
+        );
+        let (down, up, reset, matched) = (
+            self.trim_down_rect(),
+            self.trim_up_rect(),
+            self.trim_reset_rect(),
+            self.match_rect(),
+        );
+        sp::button(c, st, down, "-", None, hovered(down));
+        sp::button(c, st, up, "+", None, hovered(up));
+        sp::button(c, st, reset, "RESET", None, hovered(reset));
+        let value = self
+            .data
+            .trim_db
+            .map_or_else(|| "--".to_owned(), |db| format!("{db:+.1} dB"));
+        c.text(
+            &crate::canvas::TextRun::verbatim(
+                value,
+                Point::new((down.x1 + up.x0) / 2.0, r.y0 + 15.0),
+                FONT,
+                t.text,
+            )
+            .align(Align::Center)
+            .weight(600),
+        );
+        let label = match self.data.matching {
+            Some(p) => crate::i18n::tf(
+                "MEASURING {percent}%",
+                &[("percent", &format!("{:.0}", p * 100.0))],
+            ),
+            None => crate::i18n::tr("MATCH OVER SELECTION").into_owned(),
+        };
+        let lit = self.data.matching.map(|_| st.record);
+        sp::button(c, st, matched, &label, lit, hovered(matched));
+    }
 
     fn number(value: f32, digits: u8, unit: &str) -> String {
         let digits = usize::from(digits);
@@ -410,8 +556,9 @@ impl ZoneView {
         sp::button(c, st, listen, "LISTEN", listening, hovered(listen));
         sp::button(c, st, close, "CLOSE", None, hovered(close));
 
+        self.paint_controls(c, &hovered);
         // The references.
-        let top = p.y0 + HEADER_H;
+        let top = p.y0 + TOP_H;
         sp::label(
             c,
             "References",
@@ -692,6 +839,70 @@ mod tests {
             vec![UiAction::Zone(ZoneAction::Select(1))]
         );
         assert!(click(&mut v, Point::new(1.0, 1.0)).is_empty());
+    }
+
+    #[test]
+    fn the_trim_and_match_buttons_emit_their_actions_and_the_trim_reads_out() {
+        let mut d = data();
+        d.trim_db = Some(-1.5);
+        let mut v = ZoneView::new(Theme::dark(), d);
+        v.set_bounds(Rect::new(0.0, 0.0, 900.0, 700.0));
+        let at = v.trim_down_rect().center();
+        assert_eq!(
+            click(&mut v, at),
+            vec![UiAction::Zone(ZoneAction::Trim(-1))]
+        );
+        let at = v.trim_up_rect().center();
+        assert_eq!(click(&mut v, at), vec![UiAction::Zone(ZoneAction::Trim(1))]);
+        // Shift is ten steps: 1 dB.
+        let shifted = UiEvent::PointerDown {
+            pos: v.trim_up_rect().center(),
+            button: PointerButton::Primary,
+            modifiers: crate::event::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+            clicks: 1,
+        };
+        assert_eq!(
+            v.handle(&shifted),
+            vec![UiAction::Zone(ZoneAction::Trim(10))]
+        );
+        let at = v.trim_reset_rect().center();
+        assert_eq!(
+            click(&mut v, at),
+            vec![UiAction::Zone(ZoneAction::TrimReset)]
+        );
+        let at = v.match_rect().center();
+        assert_eq!(
+            click(&mut v, at),
+            vec![UiAction::Zone(ZoneAction::MatchSection)]
+        );
+        // While it measures the same button stops it.
+        let mut busy = v.data().clone();
+        busy.matching = Some(0.4);
+        v.set_data(busy);
+        let at = v.match_rect().center();
+        assert_eq!(
+            click(&mut v, at),
+            vec![UiAction::Zone(ZoneAction::CancelMatch)]
+        );
+        // The buttons do not overlap each other, the title or the references below.
+        let rects = [
+            v.trim_down_rect(),
+            v.trim_up_rect(),
+            v.trim_reset_rect(),
+            v.match_rect(),
+        ];
+        for (i, a) in rects.iter().enumerate() {
+            for b in &rects[i + 1..] {
+                assert!(a.intersect(*b).area() <= 0.0, "{a:?} {b:?}");
+            }
+            assert!(a.y1 <= v.ref_rect(0).y0, "above the references");
+        }
+        for r in rects {
+            assert!(v.help_at(r.center()).is_some(), "{r:?} has a tooltip");
+        }
     }
 
     #[test]

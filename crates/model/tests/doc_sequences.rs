@@ -915,6 +915,7 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 atomik_model::Reference {
                     path: "two.wav".into(),
                     cue_ms: Some(1500),
+                    trim_tenths: 0,
                 },
             ],
             _ => vec![atomik_model::Reference::new("three.wav")],

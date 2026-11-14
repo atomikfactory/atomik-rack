@@ -239,3 +239,18 @@ fn before_the_first_analysis_the_panel_says_to_refresh() {
     assert_eq!(data.references.len(), 1);
     assert_eq!(data.references[0].name, "a.wav");
 }
+
+#[test]
+fn the_panel_shows_the_trim_of_the_selected_reference_and_a_running_match() {
+    let t = Tmp::new("trim");
+    let mut c = empty_core();
+    assert_eq!(c.zone_data().trim_db, None, "no reference, no trim");
+    c.add_reference(&t.tone("a.wav", 0.1)).unwrap();
+    assert_eq!(c.zone_data().trim_db, Some(0.0));
+    assert!(!c.zone_data().references[0].detail.contains("trim"));
+    c.set_reference_trim(-15);
+    let data = c.zone_data();
+    assert_eq!(data.trim_db, Some(-1.5));
+    assert!(data.references[0].detail.contains("trim -1.5 dB"));
+    assert_eq!(data.matching, None);
+}

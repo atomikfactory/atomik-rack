@@ -3,7 +3,9 @@
 //! [`RackDoc::references`] lists up to [`MAX_REFERENCES`] files, each a path (a project-relative
 //! path once Collect Files has copied the file next to the project, otherwise the path the user
 //! picked) and an optional **cue**: the position in the file, in milliseconds, the reference
-//! starts from when the user does not want it to follow the song position. The list is project
+//! starts from when the user does not want it to follow the song position, and a **trim**: a
+//! level offset of up to 12 dB either way, in steps of 0.1 dB, added to the gain the level match
+//! finds (`trim_db` in the file, written only when it is not zero). The list is project
 //! data with no part in the sound (a reference plays after the master chain, live only, and is
 //! never part of a bounce or an export). It is empty for a new project, saved as the root field
 //! `"references"` only when it holds an entry (project format 44, ignorable) and edited with
@@ -12,11 +14,12 @@
 //! # Limits
 //!
 //! A path is one line of 1 to [`MAX_REFERENCE_PATH_CHARS`] characters without control
-//! characters; a cue is at most [`MAX_REFERENCE_CUE_MS`] (24 hours). The same path may not be
+//! characters; a cue is at most [`MAX_REFERENCE_CUE_MS`] (24 hours); a trim is within
+//! [`MAX_REFERENCE_TRIM_TENTHS`] tenths of a dB either way. The same path may not be
 //! listed twice. The loader and the command enforce the same rules.
 
 use crate::history::{Edit, Swap};
-use crate::patch::{JsonPath, array, json_str, object, string, uint};
+use crate::patch::{JsonPath, array, json_str, number, object, string, uint};
 use crate::{ModelError, RackDoc};
 use serde_json::Value;
 use std::fmt::Write as _;
@@ -28,7 +31,10 @@ pub const MAX_REFERENCE_PATH_CHARS: usize = 1_000;
 /// Largest cue in milliseconds (24 hours).
 pub const MAX_REFERENCE_CUE_MS: u64 = 86_400_000;
 
-const FIELDS: &[&str] = &["path", "cue_ms"];
+/// Largest trim in tenths of a dB, either way (12 dB).
+pub const MAX_REFERENCE_TRIM_TENTHS: i16 = 120;
+
+const FIELDS: &[&str] = &["path", "cue_ms", "trim_db"];
 
 /// One reference track.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +43,8 @@ pub struct Reference {
     pub path: String,
     /// Where the reference starts from, in milliseconds (`None`: it follows the song position).
     pub cue_ms: Option<u64>,
+    /// A level offset added to the matched gain, in tenths of a dB (`-120..=120`; 0 is none).
+    pub trim_tenths: i16,
 }
 
 impl Reference {
@@ -45,7 +53,13 @@ impl Reference {
         Self {
             path: path.into(),
             cue_ms: None,
+            trim_tenths: 0,
         }
+    }
+
+    /// The trim in dB.
+    pub fn trim_db(&self) -> f32 {
+        f32::from(self.trim_tenths) / 10.0
     }
 
     /// The file name without its folder, for lists.
@@ -96,6 +110,9 @@ fn check_one(r: &Reference) -> Result<(), String> {
     if r.cue_ms.is_some_and(|c| c > MAX_REFERENCE_CUE_MS) {
         return Err(format!("the cue is beyond {MAX_REFERENCE_CUE_MS} ms"));
     }
+    if r.trim_tenths.abs() > MAX_REFERENCE_TRIM_TENTHS {
+        return Err("the trim is beyond 12 dB".into());
+    }
     Ok(())
 }
 
@@ -122,9 +139,16 @@ pub(crate) fn write_references(w: &mut String, list: &[Reference]) {
     }
     let rows: Vec<String> = list
         .iter()
-        .map(|r| match r.cue_ms {
-            Some(c) => format!("    {{\"path\": {}, \"cue_ms\": {c}}}", json_str(&r.path)),
-            None => format!("    {{\"path\": {}}}", json_str(&r.path)),
+        .map(|r| {
+            let mut row = format!("    {{\"path\": {}", json_str(&r.path));
+            if let Some(c) = r.cue_ms {
+                let _ = write!(row, ", \"cue_ms\": {c}");
+            }
+            if r.trim_tenths != 0 {
+                let _ = write!(row, ", \"trim_db\": {:.1}", r.trim_db());
+            }
+            row.push('}');
+            row
         })
         .collect();
     let _ = writeln!(w, "  \"references\": [\n{}\n  ],", rows.join(",\n"));
@@ -142,9 +166,20 @@ pub(crate) fn load_references(v: &Value, path: &JsonPath) -> Result<Vec<Referenc
             Some(c) => Some(uint(c, &p.field("cue_ms"), MAX_REFERENCE_CUE_MS)?),
             None => None,
         };
+        let trim_tenths = match o.get("trim_db") {
+            Some(t) => {
+                let db = number(t, &p.field("trim_db"))?;
+                if !db.is_finite() || db.abs() > f64::from(MAX_REFERENCE_TRIM_TENTHS) / 10.0 {
+                    return Err(p.field("trim_db").error("the trim is beyond 12 dB"));
+                }
+                (db * 10.0).round() as i16
+            }
+            None => 0,
+        };
         let r = Reference {
             path: file.to_owned(),
             cue_ms,
+            trim_tenths,
         };
         check_one(&r).map_err(|m| p.error(m))?;
         list.push(r);
@@ -178,6 +213,7 @@ mod tests {
         let far = Reference {
             path: "a.wav".into(),
             cue_ms: Some(MAX_REFERENCE_CUE_MS + 1),
+            trim_tenths: 0,
         };
         assert!(check_references(&[far]).is_err());
     }
@@ -189,6 +225,12 @@ mod tests {
             Reference {
                 path: "dir/ref \"two\".wav".into(),
                 cue_ms: Some(61_500),
+                trim_tenths: -15,
+            },
+            Reference {
+                path: "loud.wav".into(),
+                cue_ms: None,
+                trim_tenths: 120,
             },
         ];
         let mut text = String::from("{\n");

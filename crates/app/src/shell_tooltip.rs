@@ -120,6 +120,11 @@ impl<B: AudioBackend> Shell<B> {
             return Some(help);
         }
         if window == WindowKind::Main
+            && let Some(help) = self.meter_panels.help_at(pos)
+        {
+            return Some(help);
+        }
+        if window == WindowKind::Main
             && self.update_notice_reachable()
             && let Some(v) = &self.update_notice
             && let Some(help) = v.help_at(self.size(), pos)

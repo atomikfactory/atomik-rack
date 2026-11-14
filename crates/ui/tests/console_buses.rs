@@ -640,8 +640,10 @@ fn a_channel_strip_menu_has_the_quick_sidechain_rows_and_a_bus_strip_menu_has_no
         .position(|i| i == ducking[0])
         .expect("the rows");
     assert_eq!(items[at..at + 4], ducking.map(str::to_owned));
+    assert_eq!(items[at + 4], "Show spectrum", "the meter panels follow");
+    assert_eq!(items[at + 5], "Show phase meter");
     assert_eq!(
-        items[at + 4],
+        items[at + 6],
         "Cut strip",
         "before the channel settings rows"
     );
@@ -881,7 +883,12 @@ fn vca_items(v: &ConsoleView) -> Vec<String> {
     // The quick sidechain rows of a channel strip are not VCA entries.
     items[..items.len() - SETTINGS_ITEMS.len()]
         .iter()
-        .filter(|i| !i.starts_with("Duck from") && *i != "Gentle pump" && *i != "Remove ducking")
+        .filter(|i| {
+            !i.starts_with("Duck from")
+                && !i.starts_with("Show ")
+                && *i != "Gentle pump"
+                && *i != "Remove ducking"
+        })
         .cloned()
         .collect()
 }
@@ -922,4 +929,52 @@ fn a_click_in_a_bus_name_field_places_the_caret_and_a_triple_click_selects_all()
     let _ = atomik_ui::take_field_menu();
     v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
     assert!(atomik_ui::take_field_menu().is_some());
+}
+
+#[test]
+fn every_strip_menu_and_the_master_menu_offer_the_meter_panels() {
+    let (doc, reg, mut v) = setup();
+    for name in ["ch-lead", "bus"] {
+        let p = name_at(&v, name);
+        v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
+        let items = v.menu_items();
+        assert!(
+            items.iter().any(|i| i == "Show spectrum"),
+            "{name}: {items:?}"
+        );
+        let a = pick(&mut v, &doc, &reg, "Show spectrum");
+        assert!(
+            a.iter().any(|x| matches!(
+                x,
+                UiAction::RunCommand { id, arg: None } if id == "mixer.show_spectrum"
+            )),
+            "{a:?}"
+        );
+        v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
+        let a = pick(&mut v, &doc, &reg, "Show phase meter");
+        assert!(
+            a.iter().any(|x| matches!(
+                x,
+                UiAction::RunCommand { id, arg: None } if id == "mixer.show_phase_meter"
+            )),
+            "{a:?}"
+        );
+    }
+}
+
+#[test]
+fn the_master_plate_has_a_menu_with_only_the_meter_panels() {
+    let (doc, reg, mut v) = setup();
+    let p = v.master_name_center().expect("a master plate");
+    let a = v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
+    assert!(a.is_empty(), "{a:?}");
+    assert_eq!(v.menu_items(), ["Show spectrum", "Show phase meter"]);
+    let a = pick(&mut v, &doc, &reg, "Show phase meter");
+    assert!(
+        a.iter().any(|x| matches!(
+            x,
+            UiAction::RunCommand { id, arg: None } if id == "mixer.show_phase_meter"
+        )),
+        "{a:?}"
+    );
 }

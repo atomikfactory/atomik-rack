@@ -153,6 +153,13 @@ pub trait EngineSink {
     ) -> Option<(usize, u64)> {
         None
     }
+    /// [`atomik_device_sdk::ScopeTap::set_live`] of the scope tap of a device: tells a console
+    /// strip or a plugin device that a meter panel looks at its output (the device writes its
+    /// tap only while this is on). Returns whether the device has a tap; without an engine it
+    /// does nothing and returns false.
+    fn set_device_scope_live(&mut self, _id: DeviceInstanceId, _live: bool) -> bool {
+        false
+    }
     /// The output port each MIDI Out device chose, by device id (`None`: the settings' port).
     /// The sink sends the device's messages there. The default does nothing (no MIDI).
     fn set_midi_out_ports(&mut self, _ports: &[(DeviceInstanceId, Option<String>)]) {}
@@ -410,6 +417,8 @@ pub struct RecordingSink {
     /// What [`EngineSink::read_device_scope`] returns per device: the frames (left, right) and
     /// the tap's write position.
     pub device_scopes: BTreeMap<DeviceInstanceId, (Vec<f32>, Vec<f32>, u64)>,
+    /// The devices [`EngineSink::set_device_scope_live`] switched on and not off again.
+    pub scopes_live: std::collections::BTreeSet<DeviceInstanceId>,
     /// The PDC report of the last submitted routing.
     pub pdc: Option<atomik_engine::PdcReport>,
     /// What [`EngineSink::stream_threshold_bytes`] returns.
@@ -648,6 +657,15 @@ impl EngineSink for RecordingSink {
         left[..n].copy_from_slice(&l[l.len() - n..]);
         right[..n].copy_from_slice(&r[r.len() - n..]);
         Some((n, *head))
+    }
+
+    fn set_device_scope_live(&mut self, id: DeviceInstanceId, live: bool) -> bool {
+        if live {
+            self.scopes_live.insert(id);
+        } else {
+            self.scopes_live.remove(&id);
+        }
+        true
     }
 
     fn stream_primed(&self) -> bool {

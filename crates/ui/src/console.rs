@@ -2848,6 +2848,21 @@ impl ConsoleView {
             (Hit::OutputSel(i), PointerButton::Primary) => self.open_output_menu(i, pos, doc),
             (Hit::PeakReset, PointerButton::Primary) => self.reset_peaks(),
             (Hit::MasterName, PointerButton::Primary) => self.select_master(),
+            (Hit::MasterName, PointerButton::Secondary) => {
+                self.select_master();
+                let items = vec![
+                    (
+                        "Show spectrum".to_string(),
+                        MenuItem::Run("mixer.show_spectrum"),
+                    ),
+                    (
+                        "Show phase meter".to_string(),
+                        MenuItem::Run("mixer.show_phase_meter"),
+                    ),
+                ];
+                let origin = self.menu_origin(pos, items.len());
+                self.menu = Some(Menu::plain(items, origin));
+            }
             (Hit::Insert(t, slot), PointerButton::Primary) => {
                 let filled = self.view_of(t).is_some_and(|v| slot < v.inserts.len());
                 if filled {
@@ -3585,6 +3600,13 @@ impl ConsoleView {
             ] {
                 items.push((label.to_string(), MenuItem::Run(id)));
             }
+        }
+        // A meter panel of the strip, without inserting a device.
+        for (label, id) in [
+            ("Show spectrum", "mixer.show_spectrum"),
+            ("Show phase meter", "mixer.show_phase_meter"),
+        ] {
+            items.push((label.to_string(), MenuItem::Run(id)));
         }
         // The channel settings commands act on the selection; the strip clicked joins it first
         // when it is not in it.

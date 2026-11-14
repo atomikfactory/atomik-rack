@@ -1,6 +1,7 @@
 //! Reference tracks in the app core: the list as undo steps, the switch with its start position,
 //! the level match and the settings that reach the engine.
 
+use super::reference_ops::section_lufs;
 use super::*;
 use crate::sink::{RecordingSink, SinkCall};
 use atomik_audio_file::{AudioData, write_wav_f32};
@@ -316,4 +317,382 @@ fn saving_to_a_new_place_copies_the_references_into_the_project_in_one_undo_step
     assert!(c.undo());
     assert!(c.doc().references[0].path.contains("outside.wav"));
     assert!(!c.doc().references[0].path.contains("Files"));
+}
+
+// ------------------------------------------------------------------ seek follow
+
+/// The tick of `beats` quarter notes (120 BPM: half a second each).
+fn beat(beats: i64) -> i64 {
+    beats * atomik_core::PPQ
+}
+
+fn starts(c: &AppCore<RecordingSink>) -> usize {
+    reference_calls(c)
+        .iter()
+        .filter(|call| matches!(call, SinkCall::ReferenceStart(_)))
+        .count()
+}
+
+#[test]
+fn a_seek_moves_a_reference_that_follows_the_playhead_to_the_same_song_position() {
+    let tmp = Tmp::new("seek");
+    let path = tmp.tone("long.wav", 0.1, 12);
+    let mut c = core();
+    c.add_reference(&path).unwrap();
+    wait_loaded(&mut c);
+    c.transport_action(TransportAction::Locate(beat(4)));
+    c.toggle_reference();
+    assert!(c.reference_listening());
+    assert_eq!(starts(&c), 1);
+    assert!((c.reference_start_seconds().unwrap() - 2.0).abs() < 1e-3);
+    // Seeking while it plays: a new stream from the new position, and it keeps listening.
+    c.transport_action(TransportAction::Locate(beat(12)));
+    assert_eq!(starts(&c), 2);
+    assert!((c.reference_start_seconds().unwrap() - 6.0).abs() < 1e-3);
+    c.transport_action(TransportAction::Locate(beat(1)));
+    assert!((c.reference_start_seconds().unwrap() - 0.5).abs() < 1e-3);
+    assert!(c.reference_listening());
+    // Past the end of the file it ends there, no further.
+    c.transport_action(TransportAction::Locate(beat(100)));
+    assert!((c.reference_start_seconds().unwrap() - 12.0).abs() < 1e-3);
+    // The settings in force travel with the new stream.
+    c.set_reference_trim(-20);
+    c.transport_action(TransportAction::Locate(beat(2)));
+    let last = reference_calls(&c)
+        .into_iter()
+        .rev()
+        .find_map(|call| match call {
+            SinkCall::ReferenceStart(s) => Some(s),
+            _ => None,
+        });
+    let last = last.expect("started");
+    assert!(last.listening);
+    assert!(
+        (20.0 * last.gain.log10() + 2.0).abs() < 0.01,
+        "{}",
+        last.gain
+    );
+}
+
+#[test]
+fn a_seek_leaves_a_reference_with_a_cue_and_the_mix_alone() {
+    let tmp = Tmp::new("seek-cue");
+    let path = tmp.tone("long.wav", 0.1, 12);
+    let mut c = core();
+    c.add_reference(&path).unwrap();
+    wait_loaded(&mut c);
+    // The mix is heard: a seek sends nothing to the reference.
+    c.transport_action(TransportAction::Locate(beat(6)));
+    assert_eq!(starts(&c), 0);
+    // A cue is not time-aligned with the song: the reference stays at its cue.
+    c.set_reference_cue(0, true);
+    c.toggle_reference();
+    assert_eq!(starts(&c), 1);
+    let at = c.reference_start_seconds().unwrap();
+    assert!((at - 3.0).abs() < 1e-3, "{at}");
+    c.transport_action(TransportAction::Locate(beat(2)));
+    assert_eq!(starts(&c), 1, "no new stream");
+    assert!((c.reference_start_seconds().unwrap() - 3.0).abs() < 1e-3);
+    // Back to the mix: no position to report.
+    c.toggle_reference();
+    assert_eq!(c.reference_start_seconds(), None);
+}
+
+// ------------------------------------------------------------------ trim
+
+#[test]
+fn the_trim_is_added_to_the_matched_gain_one_undo_step_and_saved_with_the_reference() {
+    let tmp = Tmp::new("trim");
+    let path = tmp.tone("loud.wav", 0.2, 5);
+    let mut c = core();
+    c.add_reference(&path).unwrap();
+    wait_loaded(&mut c);
+    assert!((c.reference_info().trim_db).abs() < f32::EPSILON);
+    let sent_gain = |c: &AppCore<RecordingSink>| {
+        let last = reference_calls(c)
+            .into_iter()
+            .rev()
+            .find_map(|call| match call {
+                SinkCall::ReferenceSet(s) => Some(s),
+                _ => None,
+            });
+        20.0 * last.expect("sent").gain.log10()
+    };
+    // The match first: a mix at -18 LUFS.
+    c.sink_mut().mix_lufs = Some(-18.0);
+    for _ in 0..16 {
+        c.frame();
+    }
+    let matched = c.reference_info().gain_db.expect("matched");
+    // 0.1 dB steps, in either direction, and the gain the voice is told follows.
+    let depth = c.document().undo_depth();
+    c.step_reference_trim(15);
+    assert!((c.reference_info().trim_db - 1.5).abs() < 1e-6);
+    assert_eq!(c.document().undo_depth(), depth + 1, "one undo step");
+    assert!((sent_gain(&c) - (matched + 1.5)).abs() < 0.01);
+    c.step_reference_trim(-1);
+    assert!((c.reference_info().trim_db - 1.4).abs() < 1e-6);
+    // The shown matched gain is the match alone: the trim is its own number.
+    assert!((c.reference_info().gain_db.unwrap() - matched).abs() < 1e-6);
+    // The limits are 12 dB either way.
+    c.set_reference_trim(500);
+    assert!((c.reference_info().trim_db - 12.0).abs() < 1e-6);
+    c.set_reference_trim(-500);
+    assert!((c.reference_info().trim_db + 12.0).abs() < 1e-6);
+    c.set_reference_trim(-25);
+    // Saved with the reference, and the same after a load.
+    let text = atomik_model::save_project(c.doc());
+    assert!(text.contains("\"trim_db\": -2.5"), "{text}");
+    let back = atomik_model::load_project(&text, c.registry()).unwrap();
+    assert_eq!(back.references, c.doc().references);
+    assert_eq!(back.references[0].trim_tenths, -25);
+    // Undo walks it back.
+    c.undo();
+    assert!((c.reference_info().trim_db + 12.0).abs() < 1e-6);
+    // With the match off the trim still moves the reference from its own level.
+    c.set_reference_level_match(false);
+    c.set_reference_trim(30);
+    assert!((sent_gain(&c) - 3.0).abs() < 0.01, "{}", sent_gain(&c));
+}
+
+#[test]
+fn a_trim_without_a_reference_says_so() {
+    let mut c = core();
+    c.set_reference_trim(10);
+    assert!(
+        c.last_rejection()
+            .is_some_and(|m| m.contains("Add a reference"))
+    );
+    assert!(c.reference_info().items.is_empty());
+}
+
+// ------------------------------------------------------------------ section match
+
+const BAR: i64 = 4 * atomik_core::PPQ;
+
+fn sustained(start: i64, length: i64, keys: &[u8]) -> atomik_model::Clip {
+    atomik_model::Clip {
+        id: atomik_model::ClipId(0),
+        start,
+        length,
+        offset: 0,
+        loop_length: None,
+        muted: false,
+        scale: None,
+        param_lanes: Vec::new(),
+        midi: Default::default(),
+        groove: None,
+        controllers: Vec::new(),
+        name: None,
+        color: None,
+        grid: None,
+        content: atomik_model::ClipContent::Notes(
+            keys.iter()
+                .map(|&k| atomik_model::Note::new(0, length, k, 0.9))
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+    }
+}
+
+/// Two bars at -24 dB of a held chord, then two bars of the same chord at -6 dB.
+fn two_levels() -> AppCore<RecordingSink> {
+    use atomik_model::{
+        CreateOptions, CreateSource, SongCommand, WorkflowCommand, new_project_doc,
+    };
+    let mut c = AppCore::with_doc(RecordingSink::new(), new_project_doc(), None);
+    for (k, level, start) in [("quiet", -24.0, 0), ("loud", -6.0, 2 * BAR)] {
+        let key = atomik_model::DeviceKey(k.to_owned());
+        c.apply_command(Command::Workflow(WorkflowCommand::CreateInstrument {
+            index: usize::MAX,
+            source: CreateSource::Type("atomik.poly-synth".into()),
+            key: Some(key.clone()),
+            options: CreateOptions::default(),
+        }))
+        .unwrap();
+        for (p, v) in [
+            ("osc1.wave", 0.0),
+            ("master.level", level),
+            ("env.amp.attack", 5.0),
+            ("env.amp.sustain", 1.0),
+        ] {
+            c.apply_command(Command::SetParam {
+                key: key.clone(),
+                param: p.into(),
+                value: v,
+                merge: None,
+            })
+            .unwrap();
+        }
+        c.apply_command(Command::Song(SongCommand::AddClip {
+            device: key,
+            lane: 0,
+            clip: sustained(start, 2 * BAR, &[48, 55]),
+        }))
+        .unwrap();
+    }
+    c.apply_command(Command::Song(SongCommand::SetSongEnd(4 * BAR)))
+        .unwrap();
+    c
+}
+
+/// Runs frames until the section measurement is done.
+#[allow(clippy::disallowed_methods)] // a real worker is waited for in real time
+fn wait_matched(c: &mut AppCore<RecordingSink>) {
+    let start = Instant::now();
+    while c.reference_info().matching.is_some() {
+        c.frame();
+        assert!(
+            start.elapsed() < Duration::from_secs(60),
+            "the measurement did not finish"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    c.frame();
+}
+
+/// The integrated loudness of the master over `[from, to)` ticks, rendered here the same way.
+fn mix_lufs(c: &AppCore<RecordingSink>, from: i64, to: i64) -> f32 {
+    use atomik_render::project::{PluginBounce, ProjectOptions};
+    let registry = atomik_render::default_registry();
+    let options = ProjectOptions::default();
+    let mut bounce = PluginBounce::default();
+    let audio = atomik_render::energy::render_master_span(
+        c.doc(),
+        &registry,
+        (&options, None),
+        &mut bounce,
+        atomik_render::export::ExportSpan::Range(from, to),
+        Default::default(),
+    )
+    .unwrap()
+    .expect("rendered");
+    let frames = audio.channels[0].len();
+    section_lufs(&audio, 0, frames).expect("audible")
+}
+
+#[test]
+fn the_section_loudness_of_two_sine_files_is_the_level_difference() {
+    let rate = 48_000u32;
+    let tone = |amp: f32| -> AudioData {
+        let ch: Vec<f32> = (0..rate as usize * 3)
+            .map(|n| amp * (std::f32::consts::TAU * 1000.0 * n as f32 / rate as f32).sin())
+            .collect();
+        AudioData::new(rate, vec![ch.clone(), ch]).unwrap()
+    };
+    let (loud, quiet) = (tone(0.4), tone(0.1));
+    let a = section_lufs(&loud, 0, 3 * rate as usize).unwrap();
+    let b = section_lufs(&quiet, 0, 3 * rate as usize).unwrap();
+    // Four times the amplitude is 12.04 dB.
+    assert!((a - b - 12.04).abs() < 0.05, "{a} {b}");
+    // Only the frames asked for count, and too short a part reads nothing.
+    assert!((section_lufs(&loud, rate as usize, rate as usize).unwrap() - a).abs() < 0.05);
+    assert_eq!(section_lufs(&loud, 0, 100), None);
+    assert_eq!(
+        section_lufs(
+            &AudioData::new(rate, vec![vec![0.0; 96_000]]).unwrap(),
+            0,
+            96_000
+        ),
+        None
+    );
+}
+
+#[test]
+fn the_section_match_uses_the_time_selection_and_sets_the_gain_from_both_loudnesses() {
+    let tmp = Tmp::new("section");
+    let path = tmp.tone("ref.wav", 0.1, 10);
+    let mut c = two_levels();
+    c.add_reference(&path).unwrap();
+    wait_loaded(&mut c);
+    let ref_lufs = c.reference_lufs_over(0.0, 4.0).expect("audible");
+    // Without a selection the loop locators (the whole song) are the section.
+    assert_eq!(c.reference_section(), Some((0, 4 * BAR)));
+    // The quiet half.
+    c.arrangement_mut()
+        .set_lane_range(atomik_model::DeviceKey("quiet".to_owned()), 0, 0, 2 * BAR);
+    c.match_reference_section().expect("starts");
+    assert!(c.reference_info().matching.is_some());
+    assert!(c.match_reference_section().is_err(), "one at a time");
+    wait_matched(&mut c);
+    let quiet = c.reference_info().gain_db.expect("matched");
+    let expect_quiet = mix_lufs(&c, 0, 2 * BAR) - ref_lufs;
+    assert!((quiet - expect_quiet).abs() < 0.1, "{quiet} {expect_quiet}");
+    assert!(c.reference_info().section_held);
+    // The loud half, with the loop locators set to the quiet half: the selection wins.
+    c.apply_command(Command::Song(atomik_model::SongCommand::SetLoop {
+        range: (0, 2 * BAR),
+        enabled: true,
+    }))
+    .unwrap();
+    c.arrangement_mut().set_lane_range(
+        atomik_model::DeviceKey("loud".to_owned()),
+        0,
+        2 * BAR,
+        4 * BAR,
+    );
+    assert_eq!(c.reference_section(), Some((2 * BAR, 4 * BAR)));
+    c.match_reference_section().expect("starts");
+    wait_matched(&mut c);
+    let loud = c.reference_info().gain_db.expect("matched");
+    let expect_loud = mix_lufs(&c, 2 * BAR, 4 * BAR) - ref_lufs;
+    assert!((loud - expect_loud).abs() < 0.1, "{loud} {expect_loud}");
+    // The levels of the two tracks are 18 dB apart.
+    assert!((loud - quiet - 18.0).abs() < 1.0, "{loud} {quiet}");
+    // The slow match of the loudest section leaves a section gain alone ...
+    c.sink_mut().mix_lufs = Some(-30.0);
+    for _ in 0..40 {
+        c.frame();
+    }
+    assert!((c.reference_info().gain_db.unwrap() - loud).abs() < 1e-6);
+    // ... until the match is switched off and on again.
+    c.set_reference_level_match(false);
+    c.set_reference_level_match(true);
+    assert!(!c.reference_info().section_held);
+    // Without a selection the loop locators are the section.
+    c.arrangement_mut().clear_lane_range();
+    assert_eq!(c.reference_section(), Some((0, 2 * BAR)));
+    c.match_reference_section().expect("starts");
+    wait_matched(&mut c);
+    let located = c.reference_info().gain_db.unwrap();
+    assert!((located - quiet).abs() < 0.1, "{located} {quiet}");
+    // The match is the gain the voice is told, and the trim goes on top of it.
+    c.set_reference_trim(20);
+    let sent = reference_calls(&c)
+        .into_iter()
+        .rev()
+        .find_map(|call| match call {
+            SinkCall::ReferenceSet(s) => Some(s),
+            _ => None,
+        });
+    assert!((20.0 * sent.expect("sent").gain.log10() - (located + 2.0)).abs() < 0.01);
+}
+
+#[test]
+fn a_section_match_needs_a_decoded_reference_and_a_long_enough_section() {
+    let tmp = Tmp::new("section-refuse");
+    let path = tmp.tone("ref.wav", 0.1, 10);
+    let mut c = two_levels();
+    // No reference.
+    c.arrangement_mut()
+        .set_lane_range(atomik_model::DeviceKey("quiet".to_owned()), 0, 0, BAR);
+    assert!(c.match_reference_section().is_err());
+    assert!(
+        c.last_rejection()
+            .is_some_and(|m| m.contains("Add a reference"))
+    );
+    // Not decoded yet.
+    c.add_reference(&path).unwrap();
+    assert!(c.match_reference_section().is_err());
+    wait_loaded(&mut c);
+    // A section of a fifth of a beat is too short to read.
+    c.arrangement_mut().set_lane_range(
+        atomik_model::DeviceKey("quiet".to_owned()),
+        0,
+        0,
+        atomik_core::PPQ / 5,
+    );
+    let e = c.match_reference_section().unwrap_err();
+    assert!(e.contains("silent or too short"), "{e}");
+    assert_eq!(c.reference_info().gain_db, None);
 }

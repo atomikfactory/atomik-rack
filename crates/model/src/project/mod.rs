@@ -30,7 +30,7 @@
 //!   "info"?: { "title"?, "author"?, "email"?, "url"?, "notes"? }  (v38; written only when set),
 //!   "tune_cents"?: number                  (v40, -100..=100 around A = 440 Hz; written only when not 0),
 //!   "rack_sort"?: "per_track" | "auto_group"  (v42, ignorable; written only when not free),
-//!   "references"?: [{ "path", "cue_ms"? }…]  (v44, ignorable; written only when non-empty),
+//!   "references"?: [{ "path", "cue_ms"?, "trim_db"? }…]  (v44, ignorable; written only when non-empty),
 //!   "delivery"?: { "name", "lufs", "ceiling" }  (v44, ignorable; written only when set),
 //!   "video"?: { "path", "start_us", "in_us", "out_us", "duration_us", "fps_num", "fps_den",
 //!               "width", "height", "timecode"?, "audio"?,

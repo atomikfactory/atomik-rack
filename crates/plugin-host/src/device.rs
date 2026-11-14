@@ -58,10 +58,11 @@ use atomik_core::{
 };
 use atomik_device_sdk::{
     Channels, Device, DeviceDescriptor, DeviceKind, MAX_AUX_OUTPUTS, PLUGIN_CV_INPUTS,
-    PluginLayout, PrepareInfo, ProcessContext, RunMode, SocketId,
+    PluginLayout, PrepareInfo, ProcessContext, RunMode, ScopeTap, SocketId,
 };
 use rtrb::{Consumer, Producer, PushError};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 
 /// Number of meter values a plugin device publishes: input peak, output peak, state, latency
 /// frames, dropped events, late batches (sandbox: batches whose result did not arrive in time).
@@ -179,6 +180,9 @@ pub struct PluginDevice {
 
     in_peak: f32,
     out_peak: f32,
+    /// The device's output after the bypass mix, for a meter panel. Written only while the tap
+    /// is live (something looks at it).
+    scope: Arc<ScopeTap>,
     dropped: u64,
     /// Batches whose result did not arrive in time (sandbox).
     late: u64,
@@ -350,6 +354,7 @@ impl PluginDevice {
             events_out: EventList::with_capacity(MAX_EVENTS_PER_BATCH),
             in_peak: 0.0,
             out_peak: 0.0,
+            scope: Arc::new(ScopeTap::new()),
             dropped: 0,
             late: 0,
             refused: 0,
@@ -1280,7 +1285,18 @@ impl Device for PluginDevice {
             self.run_plugin(ctx, &raw, bypassed, powered)
         };
         self.write_outputs(ctx, &dry, wet_valid, bypassed);
+        if self.scope.is_live()
+            && let Some(out_l) = self.sockets.out_l
+        {
+            let left = *ctx.output(out_l);
+            let right = self.sockets.out_r.map_or(left, |r| *ctx.output(r));
+            self.scope.push(&left, &right);
+        }
         self.slot.publish_state(self.state);
+    }
+
+    fn scope_tap(&self) -> Option<Arc<ScopeTap>> {
+        Some(Arc::clone(&self.scope))
     }
 
     fn has_meter_values(&self) -> bool {

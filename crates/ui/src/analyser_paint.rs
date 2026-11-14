@@ -367,7 +367,7 @@ fn reference_line<C: Canvas + ?Sized>(
 // ------------------------------------------------------------------ phase meter
 
 /// A bipolar horizontal bar: the fill runs from the centre to `value` (-1..=1).
-fn centre_bar<C: Canvas + ?Sized>(c: &mut C, r: Rect, value: f32, color: Color) {
+pub(crate) fn centre_bar<C: Canvas + ?Sized>(c: &mut C, r: Rect, value: f32, color: Color) {
     c.fill_with(r, alpha(Color::BLACK, 0.55));
     let mid = r.center().x;
     let x = mid + f64::from(value.clamp(-1.0, 1.0)) * r.width() / 2.0;
@@ -389,7 +389,7 @@ fn centre_bar<C: Canvas + ?Sized>(c: &mut C, r: Rect, value: f32, color: Color) 
     );
 }
 
-fn corr_color(v: f32) -> Color {
+pub(crate) fn corr_color(v: f32) -> Color {
     if v >= 0.0 {
         hsl(140.0, 0.55, 0.5)
     } else if v > -0.5 {
@@ -400,7 +400,7 @@ fn corr_color(v: f32) -> Color {
 }
 
 /// The goniometer in `r`: guides, then the recent frames as a thin line.
-fn goniometer<C: Canvas + ?Sized>(
+pub(crate) fn goniometer<C: Canvas + ?Sized>(
     c: &mut C,
     theme: &Theme,
     r: Rect,

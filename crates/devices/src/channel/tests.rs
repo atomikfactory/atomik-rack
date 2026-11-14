@@ -1691,6 +1691,133 @@ fn the_tap_carries_the_signal_after_the_eq_and_before_the_fader() {
     assert_eq!(l, r);
 }
 
+/// Plays 40 batches of a tone through a strip with the fader and pan moved off unity; the live
+/// flag and the pre-fader switch are chosen by the caller. Returns the output and the tap.
+fn play_with_flags(
+    mut h: DeviceHarness,
+    live: bool,
+    pre: bool,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>, u64) {
+    h.set_param("fader", 0.5);
+    h.set_param("pan", -0.4);
+    if pre {
+        h.set_param("internal.tap_live", 1.0);
+    }
+    tap_of(&h).set_live(live);
+    let tone = sine(440.0, 0.3);
+    let (key_l, key_r) = (
+        h.device().descriptor().sockets[0].key,
+        h.device().descriptor().sockets[1].key,
+    );
+    let (mut out_l, mut out_r) = (Vec::new(), Vec::new());
+    for i in 0..40 {
+        let x: Vec<f32> = (0..BATCH).map(|k| tone(i * BATCH + k)).collect();
+        h.input_mut(key_l).copy_from_slice(&x);
+        h.input_mut(key_r).copy_from_slice(&x);
+        let o = h.render(1, &OUT);
+        out_l.extend_from_slice(&o[0]);
+        out_r.extend_from_slice(&o[1]);
+    }
+    let head = tap_of(&h).head();
+    let (mut l, mut r) = (vec![0.0; 40 * BATCH], vec![0.0; 40 * BATCH]);
+    tap_of(&h).read_latest(&mut l, &mut r);
+    let _ = r;
+    (out_l, out_r, l, head)
+}
+
+#[test]
+fn the_output_tap_is_off_until_the_live_flag_and_never_changes_the_output() {
+    let (off_l, off_r, _, off_head) = play_with_flags(channel(), false, false);
+    let (on_l, on_r, _, on_head) = play_with_flags(channel(), true, false);
+    assert_eq!(off_head, 0, "no data while the flag is off");
+    assert_eq!(on_head, 40 * BATCH as u64);
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    assert_eq!(
+        bits(&off_l),
+        bits(&on_l),
+        "the tap does not touch the signal"
+    );
+    assert_eq!(bits(&off_r), bits(&on_r));
+}
+
+#[test]
+fn the_output_tap_carries_the_signal_after_the_fader_and_the_pan() {
+    let (out_l, _, tap_l, head) = play_with_flags(channel(), true, false);
+    assert_eq!(head, 40 * BATCH as u64);
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    assert_eq!(
+        bits(&tap_l),
+        bits(&out_l),
+        "what the strip hands on, frame for frame"
+    );
+    // The pre-fader switch wins while both are on: that is the signal before the fader.
+    let (_, _, pre_l, _) = play_with_flags(channel(), true, true);
+    let peak = |v: &[f32]| {
+        v[v.len() - 1024..]
+            .iter()
+            .fold(0.0f32, |m, x| m.max(x.abs()))
+    };
+    assert!(
+        peak(&pre_l) > 1.5 * peak(&tap_l),
+        "{} {}",
+        peak(&pre_l),
+        peak(&tap_l)
+    );
+}
+
+#[test]
+fn a_bus_has_the_same_output_tap() {
+    let (out_l, _, tap_l, head) =
+        play_with_flags(harness(Box::new(crate::bus::new())), true, false);
+    assert_eq!(head, 40 * BATCH as u64);
+    assert_eq!(
+        tap_l.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+        out_l.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn the_strip_tap_shows_the_same_spectrum_as_a_spectrum_device_after_the_strip() {
+    use atomik_dsp::spectrum::{ChannelMode, Settings, Spectrum as Display, WindowKind};
+    let mut strip = channel();
+    strip.set_param("fader", 0.6);
+    tap_of(&strip).set_live(true);
+    let mut meter = harness(Box::new(crate::spectrum::Spectrum::new()));
+    let tone = |n: usize| 0.2 * (n as f32 * 0.31).sin() + 0.1 * (n as f32 * 1.7).sin();
+    for i in 0..200 {
+        let x: Vec<f32> = (0..BATCH).map(|k| tone(i * BATCH + k)).collect();
+        strip.input_mut("in_l").copy_from_slice(&x);
+        strip.input_mut("in_r").copy_from_slice(&x);
+        let o = strip.render(1, &OUT);
+        meter.input_mut("in_l").copy_from_slice(&o[0]);
+        meter.input_mut("in_r").copy_from_slice(&o[1]);
+        meter.process();
+    }
+    let analyse = |tap: Arc<ScopeTap>| {
+        let (mut l, mut r) = (vec![0.0; 4096], vec![0.0; 4096]);
+        assert_eq!(tap.read_latest(&mut l, &mut r).0, 4096);
+        let mut display = Display::new();
+        let s = Settings {
+            size: 4096,
+            window: WindowKind::Hann,
+            channel: ChannelMode::Sum,
+            averaging_ms: 0.0,
+            ..Settings::default()
+        };
+        display.update(&l, &r, 0, 48_000.0, &s, 200);
+        (
+            display.peak_hz(),
+            display.peak_db(),
+            display.trace().to_vec(),
+        )
+    };
+    let a = analyse(tap_of(&strip));
+    let b = analyse(meter.device().scope_tap().unwrap());
+    assert_eq!(a.0.to_bits(), b.0.to_bits());
+    assert!((a.1 - b.1).abs() < 1e-3, "{} {}", a.1, b.1);
+    assert!(a.2.iter().zip(&b.2).all(|(x, y)| (x - y).abs() < 1e-3));
+}
+
 #[test]
 fn a_strip_that_was_never_prepared_has_no_tap() {
     assert!(Channel::new().scope_tap().is_none());

@@ -56,8 +56,9 @@ pub const DISPLAY_LO_HZ: f32 = 20.0;
 pub const DISPLAY_HI_HZ: f32 = 20_000.0;
 /// Smallest analysis size.
 pub const MIN_SIZE: usize = 256;
-/// Largest analysis size (the scope tap holds twice as many frames).
-pub const MAX_SIZE: usize = 16_384;
+/// Largest analysis size (a scope tap holds twice as many frames: the spectrum device's large
+/// tap holds 131072, a strip's tap 32768 and so serves sizes up to 16384).
+pub const MAX_SIZE: usize = 65_536;
 /// Number of one-third-octave bands from 20 Hz to 20 kHz.
 pub const BAND_COUNT: usize = 31;
 /// A power below this reads as silence (dB).

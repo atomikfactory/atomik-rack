@@ -1030,3 +1030,35 @@ fn the_level_cv_is_finite_for_any_input() {
         assert!(h.output("main_l").iter().all(|x| x.is_finite()));
     }
 }
+
+#[test]
+fn the_output_tap_is_off_until_the_live_flag_then_carries_the_main_output() {
+    let play = |live: bool| {
+        let mut h = master();
+        h.set_param("fader", 0.5);
+        h.device()
+            .scope_tap()
+            .expect("a prepared master has a tap")
+            .set_live(live);
+        let (mut out, mut tap_frames) = (Vec::new(), vec![0.0f32; 30 * BATCH]);
+        for i in 0..30 {
+            let x: Vec<f32> = (0..BATCH)
+                .map(|k| 0.3 * ((i * BATCH + k) as f32 * 0.05).sin())
+                .collect();
+            h.input_mut("bus_l").copy_from_slice(&x);
+            h.input_mut("bus_r").copy_from_slice(&x);
+            out.extend(h.render(1, &MAIN).swap_remove(0));
+        }
+        let tap = h.device().scope_tap().unwrap();
+        let mut r = vec![0.0f32; 30 * BATCH];
+        let n = tap.read_latest(&mut tap_frames, &mut r).0;
+        (out, tap_frames, n, tap.head())
+    };
+    let (off, _, off_n, off_head) = play(false);
+    let (on, tapped, on_n, on_head) = play(true);
+    assert_eq!((off_n, off_head), (0, 0), "no data while the flag is off");
+    assert_eq!((on_n, on_head), (30 * BATCH, (30 * BATCH) as u64));
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(&off), bits(&on), "the tap does not touch the signal");
+    assert_eq!(bits(&tapped), bits(&on), "the main output after the fader");
+}
