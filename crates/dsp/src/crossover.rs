@@ -4,7 +4,8 @@
 //! bands are both 6 dB down at the corner and in phase, so their sum is an all-pass: the
 //! magnitude of low plus high is exactly flat. Coefficients come from the RBJ design of [`crate::BiquadCoeffs`] and
 //! are recomputed only when the frequency changes; the filter state is `f64` direct form I, so a
-//! frequency change while running is click-free for slow sweeps (the device smooths it).
+//! frequency change while running is click-free for slow sweeps (a caller that moves the corner
+//! quickly smooths the frequency itself and sets it at most once per batch).
 
 use crate::{Biquad, BiquadCoeffs, BiquadShape};
 

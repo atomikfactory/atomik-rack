@@ -178,6 +178,7 @@ pub fn fx_visual<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info
         FxKind::Modulation => modulation(c, theme, fx, info, &p),
         FxKind::Mastering => mastering(c, theme, fx, info, &p),
         FxKind::Character => crate::character_panel::paint_front(c, theme, &fx, info),
+        FxKind::StereoTool => crate::stereo_panel::paint_front(c, theme, &fx, info),
         FxKind::GainTool => crate::gain_panel::paint_front(c, theme, &fx, info),
         FxKind::Spectrum => crate::analyser_paint::spectrum(
             c,

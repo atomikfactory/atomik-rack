@@ -4328,6 +4328,23 @@ impl RackView {
             (ControlKind::Toggle, PointerButton::Primary) => {
                 out.push(param_cmd(&key, p.key, widget::toggled(p, value), None));
             }
+            // The stereo tool's SOLO: a press picks the button under the pointer, a right click
+            // opens the MIDI menu of the param (a radio does not step backwards).
+            (ControlKind::Choice, PointerButton::Secondary) if self.is_stereo_solo(i, p.key) => {
+                out.push(UiAction::ControlMenu {
+                    device: key,
+                    param: p.key.to_owned(),
+                    at: self.pointer,
+                });
+            }
+            (ControlKind::Choice, PointerButton::Primary) if self.is_stereo_solo(i, p.key) => {
+                let rp = self.view_to_rack(self.pointer);
+                if let Some(v) = self.stereo_solo_at(i, rp)
+                    && (v - value).abs() > 0.5
+                {
+                    out.push(param_cmd(&key, p.key, v, None));
+                }
+            }
             (ControlKind::Choice, PointerButton::Primary)
                 if crate::master_panel::is_pick_list(p) =>
             {
@@ -4454,6 +4471,10 @@ impl RackView {
             ControlKind::Knob | ControlKind::Fader => {
                 // A VCA fader stops at 0 dB.
                 self.stepped_value(i, p, value, notches, fine)
+            }
+            // A radio stops at its ends: HI does not jump back to NORMAL.
+            ControlKind::Choice if self.is_stereo_solo(i, p.key) => {
+                p.clamp(p.clamp(value) + if notches > 0.0 { 1.0 } else { -1.0 })
             }
             ControlKind::Choice => widget::cycle_choice(p, value, notches > 0.0),
             ControlKind::Toggle => widget::toggled(p, value),

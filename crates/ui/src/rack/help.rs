@@ -292,6 +292,12 @@ impl RackView {
                     rect,
                     Cow::Owned(format!("{label}: click to switch on or off")),
                 ))),
+                ControlKind::Choice if self.is_stereo_solo(i, p.key) => Some(with_id(Help::new(
+                    rect,
+                    Cow::Borrowed(
+                        "Solo: click NORMAL, LO or HI to hear both bands, the low band or the high band",
+                    ),
+                ))),
                 ControlKind::Choice if crate::master_panel::is_pick_list(p) => {
                     Some(with_id(Help::new(
                         rect,

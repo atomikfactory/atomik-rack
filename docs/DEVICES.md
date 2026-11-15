@@ -4362,37 +4362,68 @@ Sockets: `in_l`, `in_r`, `aux_l`, `aux_r` (Audio in), `out_l`, `out_r` (Audio ou
 
 ### Stereo Tool: `atomik.stereo-tool` (Effect)
 
-Polarity, phase rotation, width with a bass bypass, balance, mono and mid/side conversion.
+A dual-band stereo imager: polarity, phase rotation, a width for the lows and one for the highs, solo, balance,
+mono and mid/side conversion, with correlation meters, CV and an output per band.
 Source: [stereo_tool.rs](../crates/devices/src/stereo_tool.rs).
 
-Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
+Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out), `lo_width_cv`, `hi_width_cv`, `xover_cv` (CV in),
+`lo_out_l`, `lo_out_r`, `hi_out_l`, `hi_out_r` (Audio out, each band after its width).
 
 | Key | Range | Default | Unit |
 |---|---|---|---|
 | `mode` | 0 to 2: stereo, encode, decode | 0 | choice |
 | `invert_l`, `invert_r` | 0 or 1 | 0 | toggle |
-| `width` | 0 to 2 | 1 | none |
-| `low_bypass` | 20 to 500 (20 = off) | 20 | Hz |
+| `width` (the high band) | 0 to 2 | 1 | none |
+| `low_bypass` (X-over) | 20 to 6000 (20 = no split) | 20 | Hz |
 | `balance` | -1 to 1 | 0 | none |
 | `mono` | 0 or 1 | 0 | toggle |
 | `rotate` | 0 to 180 (degrees) | 0 | none |
 | `rotate_hz` | 20 to 1000 | 100 | Hz |
 | `bypass` | 0 or 1 | 0 | toggle |
+| `lo_width` | 0 to 2 | 1 | none |
+| `solo` | 0 to 2: normal, lo, hi | 0 | choice |
+| `lo_width_cv_trim`, `hi_width_cv_trim`, `xover_cv_trim` | -1 to 1 | 0 | percent |
 
-- **Order:** polarity, rotation, width, balance, the mid/side mode, then mono. Encode writes
-  `(L + R) / 2` to `out_l` and `(L - R) / 2` to `out_r`; decode reads them back as mid and side.
+- **Order:** polarity, rotation, the split at the X-over, the width of each band, the sum, solo, balance, the
+  mid/side mode, then mono. Encode writes `(L + R) / 2` to `out_l` and `(L - R) / 2` to `out_r`; decode reads them
+  back as mid and side.
 - **Mono** is the last stage: both outputs become `(L + R) / 2` of what the mode produced (10 ms
   ramp), so the output is mono in every mode, an encoded signal included.
-- **Low bypass.** Above 20 Hz the signal is split by a fourth-order Linkwitz-Riley crossover at
-  that frequency; only the band above it is widened, the bass stays as it was.
+- **Two bands.** Above 20.5 Hz the signal is split by a fourth-order Linkwitz-Riley crossover at the X-over
+  frequency. `width` widens the band above it, `lo_width` the band below it; at 1 a band is left as it was, so the
+  bass stays centred when the high width grows. At 20.5 Hz or below there is no split: the whole signal is the
+  high band, `width` applies to all of it, `lo_width` does nothing and the low outputs are silent. Both widths at 1
+  skip the stage, which is the input bit for bit. The key `low_bypass` is the one of the first release, where the
+  knob was called Low bypass.
+- **Solo** plays the low band alone or the high band alone (each after its width), after the sum and before
+  balance. With no split solo lo is silence and solo hi is everything. A switch ramps over 10 ms.
+- **Meters.** Per band, after its width: a correlation from -1 (opposite) through 0 to +1 (mono), smoothed over
+  about 300 ms at any sample rate and 0 when the band is silent, and an ACTIVE flag that is on while the band has
+  signal (above about -60 dBFS) and a width other than 1. Meter values, in order: low correlation, high
+  correlation, low active, high active, split on.
+- **CV.** `lo_width_cv` and `hi_width_cv` add `trim * cv * 2` to a width (the sum clamped to 0 to 2);
+  `xover_cv` multiplies the X-over by `2^(trim * cv * 4)`, smoothed over 20 ms and kept within 20.6 Hz to 6 kHz.
+  The trims default to 0, so a CV does nothing until it is turned up. The X-over CV needs a split: it neither
+  creates nor ends one. CV is read as the mean of each 64-sample batch.
 - **Rotation.** `rotate` turns the phase of both channels by that angle at `rotate_hz` with a first-order
   all-pass: the level is the same at every frequency, the turn is smaller below `rotate_hz` and larger above
   it (up to 180 degrees), and 180 is a polarity inversion (`-x` exactly). It reshapes the waveform of a bass
   or a kick without changing what it sounds like alone, and so changes how it adds to the other one (the
   Kick and Bass Check in the Analyze menu uses it, and finds an angle for you). At 0 the stage is skipped.
-  The angle and the frequency switch at once, like the mode, so set them with the signal stopped. The
-  params were added after the first release, before `bypass`: a project from before them plays the same bits.
-- Width 1, balance 0, polarity and mono off, rotation 0, mode stereo: the output is the input bit for bit.
+  The angle and the frequency switch at once, like the mode, so set them with the signal stopped.
+- The rotation and band params and sockets were added after the first release, after the original ones and
+  (for ids 10 and up) after `bypass`: a project from before them plays the same bits.
+- **Panel.** A 3 U panel of its own (see [stereo_panel.rs](../crates/ui/src/stereo_panel.rs)). The top row reads
+  left to right: LO BAND (a big width knob with a MONO, ORIGINAL (top) and WIDE scale, an ACTIVE lamp and a
+  correlation bar from -1 to +1 with the centre marked), X-OVER (a big knob from 20 Hz, where it reads `off`, to
+  6 kHz, with a SPLIT lamp), HI BAND (the same, for `width`) and SOLO (three radio buttons: SOLO HI BAND, SOLO LO
+  BAND, NORMAL). The row under it has POLARITY (the two switches), ROTATE and its frequency, BALANCE, M/S MODE and
+  the MONO switch. The lamps and bars read the meter values above. Every knob follows the usual gestures: a drag
+  is one undo step, Shift is fine, Esc puts it back, the wheel steps it, a double click resets it and a right
+  click opens its MIDI menu; a press on a SOLO button picks it. The back has AUDIO IN, AUDIO OUT, CV IN (three
+  jacks, each with its trim knob under it, on the back only) and BAND OUTPUTS (low L and R, high L and R).
+- Both widths 1, balance 0, polarity and mono off, rotation 0, mode stereo, solo normal: the output is the
+  input bit for bit.
 
 ### Gate: `atomik.gate` (Effect)
 
