@@ -203,3 +203,120 @@ fn params_at_their_limits_keep_the_output_finite() {
     *h.input_mut("in_r") = [-0.9; BATCH];
     sweep_params_min_max(&mut h, &DESCRIPTOR);
 }
+
+// ----- regression guard: projects saved before the upgrade must sound bit-identical -----
+
+fn fnv(h: &mut u64, v: f32) {
+    for b in v.to_bits().to_le_bytes() {
+        *h ^= u64::from(b);
+        *h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+}
+
+/// Renders `batches` batches; `setup` sets params and the inputs of each batch before it runs.
+/// Returns the FNV-1a hash of every output sample (left then right per batch).
+fn render_hash(
+    batches: usize,
+    mut setup: impl FnMut(&mut DeviceHarness, usize, &mut [[f32; BATCH]; 6]),
+) -> u64 {
+    let mut h = tool();
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for b in 0..batches {
+        // in_l, in_r, aux_l, aux_r, gain cv, pan cv
+        let mut io = [[0.0f32; BATCH]; 6];
+        for i in 0..BATCH {
+            let n = b * BATCH + i;
+            io[0][i] = noise(n, 11);
+            io[1][i] = noise(n, 12);
+            io[2][i] = noise(n, 13) * 0.5;
+            io[3][i] = noise(n, 14) * 0.5;
+        }
+        setup(&mut h, b, &mut io);
+        for (k, key) in ["in_l", "in_r", "aux_l", "aux_r", "gain_cv_in", "pan_cv_in"]
+            .iter()
+            .enumerate()
+        {
+            *h.input_mut(key) = io[k];
+        }
+        h.process();
+        for key in ["out_l", "out_r"] {
+            for v in h.output(key) {
+                fnv(&mut hash, *v);
+            }
+        }
+    }
+    hash
+}
+
+#[test]
+fn existing_projects_sound_bit_identical_after_the_upgrade() {
+    // Gain: -60, +24, in-between, with mid-ramp changes.
+    let gain = render_hash(600, |h, b, _| match b {
+        0 => h.set_param("gain", -60.0),
+        100 => h.set_param("gain", 24.0),
+        230 => h.set_param("gain", -7.3),
+        233 => h.set_param("gain", 3.1),
+        _ => {}
+    });
+    // Balance and width.
+    let pan_width = render_hash(600, |h, b, _| match b {
+        0 => h.set_param("pan", -1.0),
+        100 => h.set_param("pan", 0.3),
+        200 => h.set_param("pan", 1.0),
+        300 => {
+            h.set_param("pan", 0.0);
+            h.set_param("width", 0.0);
+        }
+        400 => h.set_param("width", 2.0),
+        500 => h.set_param("width", 0.7),
+        _ => {}
+    });
+    // Mix then xfade with the aux input.
+    let aux = render_hash(500, |h, b, _| match b {
+        0 => {
+            h.set_param("mode", 1.0);
+            h.set_param("blend", 0.3);
+        }
+        120 => h.set_param("blend", 1.0),
+        200 => {
+            h.set_param("mode", 2.0);
+            h.set_param("blend", 0.8);
+        }
+        300 => h.set_param("blend", 0.0),
+        400 => h.set_param("blend", 0.45),
+        _ => {}
+    });
+    // Mute toggling mid-run, also before a ramp has settled.
+    let mute = render_hash(500, |h, b, _| match b {
+        10 | 130 | 133 | 300 => h.set_param("mute", 1.0),
+        60 | 131 | 136 | 400 => h.set_param("mute", 0.0),
+        _ => {}
+    });
+    // Gain and balance CV, with other trims.
+    let cv = render_hash(500, |h, b, io| {
+        match b {
+            0 => h.set_param("pan_cv_trim", 1.0),
+            200 => {
+                h.set_param("gain_cv_trim", 0.5);
+                h.set_param("pan_cv_trim", -0.5);
+            }
+            _ => {}
+        }
+        for i in 0..BATCH {
+            let t = (b * BATCH + i) as f32;
+            io[4][i] = (t * 0.0031).sin();
+            io[5][i] = (t * 0.0017).cos() * 0.9;
+        }
+    });
+    assert_eq!(
+        [gain, pan_width, aux, mute, cv],
+        [
+            0xb96f_c873_de7f_41a0,
+            0xe2b4_126d_f257_9897,
+            0xf1c7_d588_1f6c_abc6,
+            0x18b9_d3fa_1012_1779,
+            0x8ad6_7e7d_733b_6a04
+        ],
+        "{gain:#018x} {pan_width:#018x} {aux:#018x} {mute:#018x} {cv:#018x}"
+    );
+}
