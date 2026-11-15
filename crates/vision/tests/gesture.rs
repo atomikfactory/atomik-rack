@@ -665,3 +665,85 @@ fn the_pad_ends_when_either_hand_lets_go_or_is_lost() {
         "{ended:?}"
     );
 }
+
+/// A hand gripping a knob that faces the camera, as on a bottle cap: the fingers point at the
+/// camera (85 degrees of lean) and sway a little, so the wrist-to-knuckle line is a few pixels
+/// long and points anywhere. The sway is the same in every test that uses it.
+fn grip(t: f32, angle: f32, pinch_ratio: f32) -> Spec {
+    Spec {
+        tilt: 85f32.to_radians(),
+        sway: 12f32.to_radians() * (t * 2.0 * std::f32::consts::PI * 1.7).sin(),
+        angle,
+        pinch_ratio,
+        noise: 0.0008,
+        ..Spec::right()
+    }
+}
+
+#[test]
+fn a_grip_towards_the_camera_twists_like_a_bottle_cap() {
+    // Pinch, roll the forearm a quarter turn, hold, let go.
+    let frames = support::sequence(90, |_, t| {
+        let t = t as f32;
+        let ratio = if (0.5..2.5).contains(&t) { 0.05 } else { 1.0 };
+        let angle = support::lerp(0.0, std::f32::consts::FRAC_PI_2, (t - 1.0) / 1.0);
+        vec![grip(t, angle, ratio)]
+    });
+    let (events, _) = run(&frames);
+    assert_eq!(count(&events, is_start), 1, "{events:?}");
+    assert_eq!(count(&events, is_end), 1, "{events:?}");
+    let total = twist_sum(&events, HandId(0)).to_degrees();
+    assert!((total - 90.0).abs() < 10.0, "turned {total} degrees");
+}
+
+#[test]
+fn a_still_grip_towards_the_camera_does_not_drift() {
+    let frames = support::sequence(90, |_, t| vec![grip(t as f32, 0.3, 0.05)]);
+    let (events, _) = run(&frames);
+    let total = twist_sum(&events, HandId(0)).to_degrees();
+    assert!(total.abs() < 4.0, "drifted {total} degrees");
+}
+
+#[test]
+fn loosening_a_grip_towards_the_camera_lets_go() {
+    // The thumb comes off the finger towards the camera: in the picture the tips barely part.
+    let frames = support::sequence(60, |_, t| {
+        let t = t as f32;
+        let ratio = if (0.3..1.0).contains(&t) { 0.05 } else { 0.6 };
+        vec![grip(t, 0.0, ratio)]
+    });
+    let (events, _) = run(&frames);
+    assert_eq!(count(&events, is_start), 1, "{events:?}");
+    assert_eq!(count(&events, is_end), 1, "{events:?}");
+}
+
+#[test]
+fn a_ratchet_towards_the_camera_adds_up() {
+    // Pinch, turn 60 degrees, loosen, turn back, pinch, turn 60 again: 120 degrees in all.
+    let frames = support::sequence(150, |_, t| {
+        let t = t as f32;
+        let (angle, ratio) = if t < 0.3 {
+            (0.0, 1.0)
+        } else if t < 1.5 {
+            (
+                support::lerp(0.0, 60f32.to_radians(), (t - 0.5) / 0.8),
+                0.05,
+            )
+        } else if t < 2.5 {
+            (support::lerp(60f32.to_radians(), 0.0, (t - 1.7) / 0.6), 0.6)
+        } else if t < 4.5 {
+            (
+                support::lerp(0.0, 60f32.to_radians(), (t - 2.8) / 0.8),
+                0.05,
+            )
+        } else {
+            (60f32.to_radians(), 0.6)
+        };
+        vec![grip(t, angle, ratio)]
+    });
+    let (events, _) = run(&frames);
+    assert_eq!(count(&events, is_start), 2, "{events:?}");
+    assert_eq!(count(&events, is_end), 2, "{events:?}");
+    let total = twist_sum(&events, HandId(0)).to_degrees();
+    assert!((total - 120.0).abs() < 12.0, "turned {total} degrees");
+}

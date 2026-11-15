@@ -71,6 +71,13 @@ pub struct Spec {
     pub folded: [bool; 4],
     /// The thumb stands up above the fist.
     pub thumb_up: bool,
+    /// How far the fingers lean towards the camera, in radians: 0 is a palm facing it with the
+    /// fingers up, a right angle the fingers pointing at it (a bottle cap or a knob grip). The
+    /// lean shortens the hand along its length in the picture and gives the landmarks a depth.
+    pub tilt: f32,
+    /// The fingers swaying sideways, in radians (a hand pointing at the camera is never still):
+    /// the hand leans to its side by this much before it is turned.
+    pub sway: f32,
 }
 
 impl Spec {
@@ -86,6 +93,8 @@ impl Spec {
             curl: 0.0,
             folded: [true; 4],
             thumb_up: false,
+            tilt: 0.0,
+            sway: 0.0,
         }
     }
     pub fn left() -> Self {
@@ -143,16 +152,34 @@ pub fn hand(spec: &Spec, noise: &mut Noise) -> HandObservation {
         py += pts[i].1 / 5.0;
     }
     let (s, c) = spec.angle.sin_cos();
+    let (lean_s, lean_c) = spec.tilt.sin_cos();
+    let sway = spec.sway.sin();
+    let tilted = spec.tilt != 0.0 || spec.sway != 0.0;
     let mut landmarks = [Point3::default(); LANDMARKS];
     for (i, (x, y)) in pts.iter().enumerate() {
-        let (x, y) = (x - px, y - py);
+        // Along the hand from the wrist: what leans towards the camera and sways.
+        let along = y - BASE[0].1;
+        let (x, y) = (x - px + along * sway, y - py);
+        // The lean: the length along the hand shrinks in the picture and becomes depth
+        // (towards the camera is a smaller depth, as the model gives it).
+        let (y, depth) = if tilted {
+            (y * lean_c, -along * lean_s)
+        } else {
+            (y, 0.0)
+        };
         let (rx, ry) = (x * c - y * s, x * s + y * c);
         let nx = noise.next() * spec.noise;
         let ny = noise.next() * spec.noise;
+        let z = if tilted {
+            let nz = noise.next() * spec.noise;
+            round((depth * spec.size + nz) / ASPECT)
+        } else {
+            0.0
+        };
         landmarks[i] = Point3::new(
             round(spec.center.0 + rx * spec.size / ASPECT + nx / ASPECT),
             round(spec.center.1 - ry * spec.size + ny),
-            0.0,
+            z,
         );
     }
     HandObservation {

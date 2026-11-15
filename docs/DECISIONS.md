@@ -745,7 +745,12 @@ pinch is the thumb tip to index tip distance over the hand size (wrist to middle
 ends above 0.40, so a hand near one number does not flicker; the numbers come from the synthetic hands of the tests
 and wait for hand checks. The twist is a ratchet: the angle of the wrist-to-knuckle line, unwrapped, smoothed with a
 One Euro filter and measured from the angle at the moment the pinch began, so a user can open the hand, turn it back
-and pinch again to keep turning; a change under 1.5 degrees is held back, so a still hand does not drift. A hand that
+and pinch again to keep turning; a change under 1.5 degrees is held back, so a still hand does not drift. *Revised
+(Nov 14, from a hand check):* a wrist cannot turn half a turn, and a user turns a knob that faces the camera like a
+bottle cap, fingers pointing at the lens, which leaves the wrist-to-knuckle line a few wandering pixels long. The
+twist is now the turn of that line and of the knuckle line (index to little finger), each weighted by the square of
+its length in the picture in this frame and the last; the hand size is never under the knuckle line over 0.85; and
+the pinch distance counts the model's depth of the two fingertips, so loosening a grip towards the camera lets go. A hand that
 is lost keeps its pinch for 150 ms, then the pinch ends. The palm detector runs only when no hand is followed (the
 landmarks of one frame frame the next), so a followed hand costs one run of the landmark model. The capture is on its
 own thread with a one-frame handoff (the newest frame wins, nothing queues).

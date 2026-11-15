@@ -14,12 +14,15 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 const SIDE: u32 = 4;
+/// The height of the tiny frames: 4 by 3, the aspect ratio the synthetic hands are drawn for, so a
+/// turned hand stays the same shape.
+const HEIGHT: u32 = 3;
 
 /// A frame of 4 by 4 grey pixels whose first byte says which frame it is.
 fn tiny_frames(n: usize) -> Vec<Vec<u8>> {
     (0..n)
         .map(|i| {
-            let mut f = vec![i as u8; (SIDE * SIDE * 3) as usize];
+            let mut f = vec![i as u8; (SIDE * HEIGHT * 3) as usize];
             f[0] = i as u8;
             f
         })
@@ -90,7 +93,7 @@ fn camera_with(frames: Vec<Vec<u8>>, repeat: bool) -> (Arc<FakeCamera>, CameraId
     let mut cam = FakeCamera::new();
     let id = cam.add(
         "fake",
-        (SIDE, SIDE),
+        (SIDE, HEIGHT),
         frames,
         Duration::from_millis(if repeat { 2 } else { 0 }),
         Duration::from_micros(33_333),
@@ -107,7 +110,7 @@ fn frames_in_events_out_and_a_clean_end() {
     let mut paced = FakeCamera::new();
     let id2 = paced.add(
         "fake",
-        (SIDE, SIDE),
+        (SIDE, HEIGHT),
         tiny_frames(script.len()),
         Duration::from_millis(3),
         Duration::from_micros(33_333),
@@ -209,7 +212,7 @@ fn a_camera_the_system_refuses_is_a_failure_not_a_hang() {
     let mut cam = FakeCamera::new();
     let id = cam.add(
         "fake",
-        (SIDE, SIDE),
+        (SIDE, HEIGHT),
         tiny_frames(3),
         Duration::ZERO,
         Duration::ZERO,
@@ -262,7 +265,7 @@ fn switching_cameras_releases_the_first_and_ends_open_pinches() {
         .collect();
     let a = cam.add(
         "a",
-        (SIDE, SIDE),
+        (SIDE, HEIGHT),
         held,
         Duration::from_millis(2),
         Duration::from_micros(33_333),
@@ -270,7 +273,7 @@ fn switching_cameras_releases_the_first_and_ends_open_pinches() {
     );
     let b = cam.add(
         "b",
-        (SIDE, SIDE),
+        (SIDE, HEIGHT),
         tiny_frames(5),
         Duration::from_millis(2),
         Duration::from_micros(33_333),
@@ -321,7 +324,7 @@ fn the_capture_keeps_only_the_newest_frame() {
     let mut cam = FakeCamera::new();
     let id = cam.add(
         "fast",
-        (SIDE, SIDE),
+        (SIDE, HEIGHT),
         tiny_frames(50),
         Duration::ZERO,
         Duration::from_millis(1),
@@ -348,7 +351,7 @@ fn a_full_queue_never_blocks_the_worker_and_keeps_the_gestures() {
     let mut paced = FakeCamera::new();
     let id = paced.add(
         "fake",
-        (SIDE, SIDE),
+        (SIDE, HEIGHT),
         tiny_frames(script.len()),
         Duration::from_millis(1),
         Duration::from_micros(33_333),
@@ -430,7 +433,7 @@ fn the_fake_camera_lists_and_refuses_unknown_ids() {
     let mut cam = FakeCamera::new();
     let id = cam.add(
         "one",
-        (SIDE, SIDE),
+        (SIDE, HEIGHT),
         tiny_frames(1),
         Duration::ZERO,
         Duration::ZERO,
