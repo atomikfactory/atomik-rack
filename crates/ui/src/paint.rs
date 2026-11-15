@@ -1140,7 +1140,14 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     // The mix channel's fader is its own horizontal track (drawn with the panel).
                     continue;
                 }
-                if info.spec.fx.is_some() {
+                if info.spec.fx.is_some_and(|f| f.eq.is_some()) {
+                    // The EQ paints its choice cells itself (the graph, the shape sketches).
+                    if pc.kind != ControlKind::Choice {
+                        let label = crate::eq_panel::label(p.key)
+                            .map_or_else(|| crate::fx_layout::fx_label(p), str::to_string);
+                        control_labelled(c, theme, pc, p, value, info.accent, &label);
+                    }
+                } else if info.spec.fx.is_some() {
                     let label = crate::fx_layout::fx_label(p);
                     control_labelled(c, theme, pc, p, value, info.accent, &label);
                 } else if info.spec.plugin.is_some() {
@@ -1367,6 +1374,8 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     crate::modsrc_panel::modsrc_socket_label(s.key).unwrap_or(s.name)
                 } else if let Some(label) = &master_label {
                     label.as_str()
+                } else if info.spec.fx.is_some_and(|f| f.eq.is_some()) {
+                    crate::eq_panel::socket_label(s.key).unwrap_or(s.name)
                 } else if info.device.is_some() && crate::mix_panel::is_mix_type(desc.type_id) {
                     crate::mix_panel::socket_label(s.key).unwrap_or(s.name)
                 } else {
@@ -1383,10 +1392,16 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                 let value = info.device.map_or(p.default, |d| current_value(d, p));
                 let label = if info.spec.drum.is_some() {
                     "Trim".to_string()
+                } else if info.spec.fx.is_some_and(|f| f.eq.is_some()) {
+                    crate::eq_panel::label(p.key)
+                        .map_or_else(|| crate::fx_layout::fx_label(p), str::to_string)
                 } else {
                     crate::fx_layout::fx_label(p)
                 };
                 control_labelled(c, theme, pc, p, value, info.accent, &label);
+            }
+            if let Some(fx) = info.spec.fx.filter(|f| f.eq.is_some()) {
+                crate::eq_panel::paint_back(c, theme, &fx, info);
             }
             if !info.automated.is_empty() {
                 automated_marks(c, theme, desc, info, true);

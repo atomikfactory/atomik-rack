@@ -387,6 +387,7 @@ pub mod delivery_panel;
 pub mod display_list;
 pub mod drum_gen_panel;
 pub mod duck_panel;
+pub mod eq_panel;
 pub mod event;
 pub mod export_panel;
 pub mod file_browser;

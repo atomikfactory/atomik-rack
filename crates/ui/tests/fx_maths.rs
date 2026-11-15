@@ -4,8 +4,8 @@
 
 use atomik_dsp::{BiquadCoeffs, BiquadShape, static_gain_reduction_knee_db};
 use atomik_ui::fx::{
-    self, EqBand, EqShape, compressor_gr_db, compressor_out_db, distortion_transfer,
-    eq_band_response_db, eq_response_db, lfo_wave, reverb_sketch,
+    EqBand, EqShape, compressor_gr_db, compressor_out_db, distortion_transfer, eq_band_response_db,
+    eq_response_db, lfo_wave, reverb_sketch,
 };
 
 const SR: f64 = 48_000.0;
@@ -120,7 +120,20 @@ fn eq_cut_slopes_are_butterworth_cascades() {
 
 #[test]
 fn eq_total_response_sums_the_active_bands() {
-    let mut bands = fx::default_eq_bands();
+    let flat = |shape| EqBand {
+        shape,
+        on: true,
+        freq: 500.0,
+        gain: 0.0,
+        q: 1.0,
+        slope: 0,
+    };
+    let mut bands = [
+        flat(EqShape::LowShelf),
+        flat(EqShape::Peak),
+        flat(EqShape::Peak),
+        flat(EqShape::HighShelf),
+    ];
     assert!(
         eq_response_db(&bands, 1000.0, SR).abs() < 1e-9,
         "flat by default"

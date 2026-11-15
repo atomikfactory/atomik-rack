@@ -213,6 +213,7 @@ pub fn character_layout(desc: &DeviceDescriptor) -> PanelSpec {
             aux: Rect::ZERO,
             button: None,
             character: Some(geom),
+            eq: None,
         }),
         seq: None,
         drum_gen: None,

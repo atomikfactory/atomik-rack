@@ -5,7 +5,7 @@
 //! |---|---|---|---|
 //! | reverb | decay sketch, output meters | left, 196 wide | SPACE, TONE, BALANCE, OUTPUT, DUCK, KEY GATE |
 //! | compressor | transfer curve, level/GR meters, SC button | left, 172 wide | DETECTOR, GAIN, SIDECHAIN, OUTPUT |
-//! | EQ | response curve, draggable handles, analyser | across the top, 170 high | LOW CUT, LOW SHELF, PEAK 1, PEAK 2, HIGH SHELF, HIGH CUT, OUTPUT |
+//! | EQ | graph with spectrum, band tints and handles, a strip per band, output, meters, stereo mode | its own 7 U layout, [`crate::eq_panel`] | RESPONSE, OUTPUT (and a strip per band) |
 //! | distortion | transfer curve, in/out meters | left, 172 wide | DRIVE, TONE, CUT, BODY, CRUSH, OUTPUT |
 //! | guitar amp | the speakers of the cabinet with the mic, in/out and gate meters | left, 168 wide | SETUP, INPUT, PREAMP, TONE, POWER, CABINET, CHORUS, DELAY, REVERB |
 //! | modulation | LFO sketch (left and right) | left, 196 wide | LFO, VOICE, OUTPUT |
@@ -109,57 +109,8 @@ fn sections(kind: FxKind) -> Def {
             ("SIDECHAIN", &["sc_enable", "sc_hp", "sc_lp"]),
             ("OUTPUT", &["makeup", "auto_makeup", "mix"]),
         ],
-        FxKind::Eq => &[
-            (
-                "LOW CUT",
-                &["band1.on", "band1.freq", "band1.q", "lowcut.slope"],
-            ),
-            (
-                "LOW SHELF",
-                &[
-                    "band2.on",
-                    "band2.freq",
-                    "band2.gain",
-                    "band2.gain_cv_trim",
-                    "band2.q",
-                ],
-            ),
-            (
-                "PEAK 1",
-                &[
-                    "band3.on",
-                    "band3.freq",
-                    "band3.gain",
-                    "band3.gain_cv_trim",
-                    "band3.q",
-                ],
-            ),
-            (
-                "PEAK 2",
-                &[
-                    "band4.on",
-                    "band4.freq",
-                    "band4.gain",
-                    "band4.gain_cv_trim",
-                    "band4.q",
-                ],
-            ),
-            (
-                "HIGH SHELF",
-                &[
-                    "band5.on",
-                    "band5.freq",
-                    "band5.gain",
-                    "band5.gain_cv_trim",
-                    "band5.q",
-                ],
-            ),
-            (
-                "HIGH CUT",
-                &["band6.on", "band6.freq", "band6.q", "highcut.slope"],
-            ),
-            ("OUTPUT", &["output"]),
-        ],
+        // Laid out by `eq_panel::eq_layout`, not by these sections.
+        FxKind::Eq => &[],
         FxKind::Distortion => &[
             ("DRIVE", &["curve", "drive", "drive_cv_trim", "bias"]),
             ("TONE", &["tone"]),
@@ -369,6 +320,9 @@ pub fn audio_track_layout(desc: &DeviceDescriptor, tuner_on: bool) -> PanelSpec 
 }
 
 fn layout(kind: FxKind, desc: &DeviceDescriptor, tuner_on: bool) -> PanelSpec {
+    if kind == FxKind::Eq {
+        return crate::eq_panel::eq_layout(desc);
+    }
     if kind == FxKind::Character {
         return crate::character_panel::character_layout(desc);
     }
@@ -556,6 +510,7 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
         aux,
         button,
         character: None,
+        eq: None,
     }
 }
 

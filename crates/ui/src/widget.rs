@@ -128,6 +128,10 @@ pub fn wheel_value(p: &ParamDescriptor, plain: f32, notches: f64, fine: bool) ->
 
 /// Next (or previous) choice, wrapping.
 pub fn cycle_choice(p: &ParamDescriptor, plain: f32, forward: bool) -> f32 {
+    // The slopes of the EQ's cuts are stored 12, 24, 48, 6, 36: a click goes up the steepness.
+    if matches!(p.key, "lowcut.slope" | "highcut.slope") {
+        return crate::eq_panel::cycle_slope(p.clamp(plain), forward);
+    }
     let v = p.clamp(plain);
     let (lo, hi) = (p.min.round(), p.max.round());
     let next = if forward { v + 1.0 } else { v - 1.0 };

@@ -5,7 +5,6 @@
 //! tested against the DSP or the device it mirrors (`tests/fx_maths.rs`).
 
 use crate::widget::current_value;
-use atomik_core::ParamDescriptor;
 use atomik_device_sdk::DeviceDescriptor;
 use atomik_model::RackDevice;
 use std::f64::consts::{FRAC_1_SQRT_2, PI};
@@ -397,16 +396,6 @@ impl EqShape {
     }
 }
 
-/// The shapes of bands 1 to 6.
-pub const EQ_SHAPES: [EqShape; 6] = [
-    EqShape::LowCut,
-    EqShape::LowShelf,
-    EqShape::Peak,
-    EqShape::Peak,
-    EqShape::HighShelf,
-    EqShape::HighCut,
-];
-
 /// One EQ band as the device reads it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EqBand {
@@ -437,64 +426,6 @@ pub struct EqKeys {
     pub q: String,
     /// `lowcut.slope` / `highcut.slope` (cuts only).
     pub slope: Option<String>,
-}
-
-/// Param keys of band `i` (0-based).
-pub fn eq_keys(i: usize) -> EqKeys {
-    let n = i + 1;
-    EqKeys {
-        on: format!("band{n}.on"),
-        freq: format!("band{n}.freq"),
-        gain: (!EQ_SHAPES[i].is_cut()).then(|| format!("band{n}.gain")),
-        q: format!("band{n}.q"),
-        slope: match i {
-            0 => Some("lowcut.slope".to_string()),
-            5 => Some("highcut.slope".to_string()),
-            _ => None,
-        },
-    }
-}
-
-/// The device's defaults (every band flat; bands 1 and 6 off).
-pub fn default_eq_bands() -> [EqBand; 6] {
-    let b = |i: usize, on: bool, freq: f64, q: f64| EqBand {
-        shape: EQ_SHAPES[i],
-        on,
-        freq,
-        gain: 0.0,
-        q,
-        slope: 0,
-    };
-    [
-        b(0, false, 80.0, FRAC_1_SQRT_2),
-        b(1, true, 120.0, FRAC_1_SQRT_2),
-        b(2, true, 500.0, 1.0),
-        b(3, true, 2500.0, 1.0),
-        b(4, true, 8000.0, FRAC_1_SQRT_2),
-        b(5, false, 16000.0, FRAC_1_SQRT_2),
-    ]
-}
-
-/// Reads the six bands from a document device (descriptor defaults for unstored params).
-pub fn eq_bands_of(desc: &DeviceDescriptor, device: Option<&RackDevice>) -> [EqBand; 6] {
-    let mut bands = default_eq_bands();
-    let get = |key: &str| -> Option<f64> {
-        let p: &ParamDescriptor = desc.params.iter().find(|p| p.key == key)?;
-        Some(f64::from(device.map_or(p.default, |d| current_value(d, p))))
-    };
-    for (i, band) in bands.iter_mut().enumerate() {
-        let keys = eq_keys(i);
-        band.on = get(&keys.on).unwrap_or(0.0) >= 0.5;
-        band.freq = get(&keys.freq).unwrap_or(band.freq);
-        band.q = get(&keys.q).unwrap_or(band.q);
-        if let Some(g) = &keys.gain {
-            band.gain = get(g).unwrap_or(0.0);
-        }
-        if let Some(s) = &keys.slope {
-            band.slope = (get(s).unwrap_or(0.0).round().max(0.0) as usize).min(2);
-        }
-    }
-    bands
 }
 
 /// The shapes of the dynamic EQ's five bands: a low shelf, three bells and a high shelf.
@@ -550,31 +481,14 @@ pub fn dyneq_range_of(desc: &DeviceDescriptor, device: Option<&RackDevice>, i: u
     })
 }
 
-/// The handle keys of band `i` of an effect with a response plot (the EQ or the dynamic EQ).
-pub fn handle_keys(kind: FxKind, i: usize) -> EqKeys {
-    if kind == FxKind::DynamicEq {
-        dyneq_keys(i)
-    } else {
-        eq_keys(i)
-    }
+/// The handle keys of band `i` of the dynamic EQ's response plot.
+pub fn handle_keys(i: usize) -> EqKeys {
+    dyneq_keys(i)
 }
 
-/// Whether band `i` of the plot's effect is a cut (a handle that only moves along the 0 dB line).
-pub fn handle_is_cut(kind: FxKind, i: usize) -> bool {
-    kind == FxKind::Eq && EQ_SHAPES.get(i).is_some_and(|s| s.is_cut())
-}
-
-/// The bands whose handles a response plot draws, in band order.
-pub fn handle_bands(
-    kind: FxKind,
-    desc: &DeviceDescriptor,
-    device: Option<&RackDevice>,
-) -> Vec<EqBand> {
-    if kind == FxKind::DynamicEq {
-        dyneq_bands_of(desc, device).to_vec()
-    } else {
-        eq_bands_of(desc, device).to_vec()
-    }
+/// The bands whose handles the dynamic EQ's response plot draws, in band order.
+pub fn handle_bands(desc: &DeviceDescriptor, device: Option<&RackDevice>) -> Vec<EqBand> {
+    dyneq_bands_of(desc, device).to_vec()
 }
 
 const BUTTER_Q: [&[f64]; 3] = [
