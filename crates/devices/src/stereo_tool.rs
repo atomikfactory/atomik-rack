@@ -717,4 +717,6 @@ impl Device for StereoTool {
 }
 
 #[cfg(test)]
+mod legacy;
+#[cfg(test)]
 mod tests;

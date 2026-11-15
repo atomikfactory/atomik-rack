@@ -286,26 +286,36 @@ fn rotation_agrees_with_the_analysis_rotator() {
 }
 
 // ----- regression guard: projects saved before the upgrade must sound bit-identical -----
+//
+// Every scenario runs through the frozen pre-upgrade device (`legacy.rs`) and the new device with
+// the same input and the same param moves, and the outputs must match bit for bit. Comparing the
+// two live (not against pinned hashes) keeps the check true on every OS, whatever the platform
+// libm does to `tan` or `sin_cos`.
 
-fn fnv(h: &mut u64, v: f32) {
-    for b in v.to_bits().to_le_bytes() {
-        *h ^= u64::from(b);
-        *h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
+/// A deterministic tone with no libm: a parabolic sine from a phase fraction.
+fn tone_det(n: usize, hz: f64, rate: f64) -> f32 {
+    let phase = (n as f64 * hz / rate).fract();
+    let x = 2.0 * phase - 1.0;
+    (4.0 * x * (1.0 - x.abs())) as f32
 }
 
-/// Renders `batches` batches of noise; `setup` sets params before each batch runs. Returns the
-/// FNV-1a hash of every output sample (left then right per batch).
-fn render_hash(batches: usize, mut setup: impl FnMut(&mut DeviceHarness, usize)) -> u64 {
-    let mut h = tool();
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+/// Renders `batches` batches of tone and noise through `device`; `setup` sets params before each
+/// batch runs. Returns the bits of every output sample (left then right per batch).
+fn render_bits(
+    device: Box<dyn Device>,
+    rate: f64,
+    batches: usize,
+    setup: &impl Fn(&mut DeviceHarness, usize),
+) -> Vec<u32> {
+    let mut h = DeviceHarness::new(device, rate);
+    let mut bits = Vec::new();
     for b in 0..batches {
         let mut xl = [0.0f32; BATCH];
         let mut xr = [0.0f32; BATCH];
         for i in 0..BATCH {
             let n = b * BATCH + i;
             // A tone and noise, with the right channel partly correlated with the left.
-            let t = (2.0 * std::f32::consts::PI * 110.0 * n as f32 / SR as f32).sin();
+            let t = tone_det(n, 110.0, rate);
             xl[i] = 0.4 * t + 0.5 * noise(n, 21);
             xr[i] = 0.2 * t + 0.5 * noise(n, 22);
         }
@@ -314,20 +324,52 @@ fn render_hash(batches: usize, mut setup: impl FnMut(&mut DeviceHarness, usize))
         *h.input_mut("in_r") = xr;
         h.process();
         for key in ["out_l", "out_r"] {
-            for v in h.output(key) {
-                fnv(&mut hash, *v);
-            }
+            bits.extend(h.output(key).iter().map(|v| v.to_bits()));
         }
     }
-    hash
+    bits
+}
+
+/// Runs one scenario through the old and the new device and asserts identical bits.
+fn assert_same_as_legacy(
+    name: &str,
+    rate: f64,
+    batches: usize,
+    setup: impl Fn(&mut DeviceHarness, usize),
+) {
+    let old = render_bits(
+        Box::new(super::legacy::LegacyStereoTool::new()),
+        rate,
+        batches,
+        &setup,
+    );
+    let new = render_bits(Box::new(StereoTool::new()), rate, batches, &setup);
+    assert_eq!(old.len(), new.len(), "{name}: output length");
+    if let Some(i) = (0..old.len()).find(|&i| old[i] != new[i]) {
+        let per_batch = 2 * BATCH;
+        panic!(
+            "{name}: first differing sample {i} (batch {}, {} channel, sample {}): legacy {:#010x} ({}), new {:#010x} ({})",
+            i / per_batch,
+            if i % per_batch < BATCH {
+                "left"
+            } else {
+                "right"
+            },
+            i % BATCH,
+            old[i],
+            f32::from_bits(old[i]),
+            new[i],
+            f32::from_bits(new[i]),
+        );
+    }
 }
 
 #[test]
 fn existing_projects_sound_bit_identical_after_the_upgrade() {
     // Defaults: the input passes untouched.
-    let defaults = render_hash(200, |_, _| {});
+    assert_same_as_legacy("defaults", SR, 200, |_, _| {});
     // Width without a split, with changes mid-ramp.
-    let width = render_hash(400, |h, b| match b {
+    assert_same_as_legacy("width", SR, 400, |h, b| match b {
         0 => h.set_param("width", 0.0),
         100 => h.set_param("width", 2.0),
         200 => h.set_param("width", 0.7),
@@ -336,7 +378,7 @@ fn existing_projects_sound_bit_identical_after_the_upgrade() {
         _ => {}
     });
     // Width with the low band kept: several corners, a corner moved mid-run, width back to 1.
-    let split = render_hash(500, |h, b| match b {
+    assert_same_as_legacy("split", SR, 500, |h, b| match b {
         0 => {
             h.set_param("low_bypass", 200.0);
             h.set_param("width", 0.0);
@@ -350,7 +392,7 @@ fn existing_projects_sound_bit_identical_after_the_upgrade() {
         _ => {}
     });
     // Rotation, with polarity, balance and mono around it.
-    let rotation = render_hash(400, |h, b| match b {
+    assert_same_as_legacy("rotation", SR, 400, |h, b| match b {
         0 => {
             h.set_param("rotate", 90.0);
             h.set_param("rotate_hz", 80.0);
@@ -370,7 +412,7 @@ fn existing_projects_sound_bit_identical_after_the_upgrade() {
         _ => {}
     });
     // The mid/side modes, with width and a split in front.
-    let modes = render_hash(400, |h, b| match b {
+    assert_same_as_legacy("modes", SR, 400, |h, b| match b {
         0 => {
             h.set_param("mode", 1.0);
             h.set_param("width", 1.3);
@@ -388,47 +430,6 @@ fn existing_projects_sound_bit_identical_after_the_upgrade() {
         }
         _ => {}
     });
-    assert_eq!(
-        [defaults, width, split, rotation, modes],
-        [
-            0x3fb4_3677_e7a5_9101,
-            0x8f2c_dbdb_62c9_43e2,
-            0x7a55_cd14_3bbc_a144,
-            0x812c_01ee_6ae4_bb24,
-            0x90ca_9bed_b584_3767
-        ],
-        "{defaults:#018x} {width:#018x} {split:#018x} {rotation:#018x} {modes:#018x}"
-    );
-}
-
-/// `render_hash` at another sample rate; `setup` gets the harness before each batch.
-fn render_hash_at(
-    rate: f64,
-    batches: usize,
-    mut setup: impl FnMut(&mut DeviceHarness, usize),
-) -> u64 {
-    let mut h = DeviceHarness::new(Box::new(StereoTool::new()), rate);
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for b in 0..batches {
-        let mut xl = [0.0f32; BATCH];
-        let mut xr = [0.0f32; BATCH];
-        for i in 0..BATCH {
-            let n = b * BATCH + i;
-            let t = (2.0 * std::f64::consts::PI * 110.0 * n as f64 / rate).sin() as f32;
-            xl[i] = 0.4 * t + 0.5 * noise(n, 21);
-            xr[i] = 0.2 * t + 0.5 * noise(n, 22);
-        }
-        setup(&mut h, b);
-        *h.input_mut("in_l") = xl;
-        *h.input_mut("in_r") = xr;
-        h.process();
-        for key in ["out_l", "out_r"] {
-            for v in h.output(key) {
-                fnv(&mut hash, *v);
-            }
-        }
-    }
-    hash
 }
 
 #[test]
@@ -441,7 +442,7 @@ fn more_legacy_behaviour_stays_bit_identical() {
         });
     };
     // reset() mid-run, with a split, a width and a rotation.
-    let reset = render_hash(400, |h, b| match b {
+    assert_same_as_legacy("reset", SR, 400, |h, b| match b {
         0 => {
             h.set_param("low_bypass", 150.0);
             h.set_param("width", 0.4);
@@ -451,7 +452,7 @@ fn more_legacy_behaviour_stays_bit_identical() {
         _ => {}
     });
     // prepare() mid-run at the same rate.
-    let reprepare = render_hash(400, |h, b| match b {
+    assert_same_as_legacy("reprepare", SR, 400, |h, b| match b {
         0 => {
             h.set_param("low_bypass", 300.0);
             h.set_param("width", 1.6);
@@ -460,7 +461,7 @@ fn more_legacy_behaviour_stays_bit_identical() {
         _ => {}
     });
     // A second sample rate.
-    let rate96 = render_hash_at(96_000.0, 400, |h, b| match b {
+    assert_same_as_legacy("rate96", 96_000.0, 400, |h, b| match b {
         0 => {
             h.set_param("low_bypass", 250.0);
             h.set_param("width", 0.2);
@@ -468,15 +469,16 @@ fn more_legacy_behaviour_stays_bit_identical() {
         200 => h.set_param("low_bypass", 90.0),
         _ => {}
     });
-    let rate44 = render_hash_at(44_100.0, 300, |h, b| {
+    assert_same_as_legacy("rate44", 44_100.0, 300, |h, b| {
         if b == 0 {
-            h.set_param("low_bypass", 1_000.0);
+            // 500 Hz was the top of the old range; the old device clamps anything above it.
+            h.set_param("low_bypass", 500.0);
             h.set_param("width", 1.5);
             h.set_param("mono", 1.0);
         }
     });
     // Rotation, split and width together, the corner moved and the width back to 1.
-    let rot_split = render_hash(500, |h, b| match b {
+    assert_same_as_legacy("rot_split", SR, 500, |h, b| match b {
         0 => {
             h.set_param("rotate", 120.0);
             h.set_param("rotate_hz", 200.0);
@@ -488,7 +490,7 @@ fn more_legacy_behaviour_stays_bit_identical() {
         _ => {}
     });
     // A corner between 20 and 20.5 Hz is no split: the same bits as 20.
-    let near20 = render_hash(300, |h, b| match b {
+    assert_same_as_legacy("near20", SR, 300, |h, b| match b {
         0 => {
             h.set_param("low_bypass", 20.3);
             h.set_param("width", 0.5);
@@ -496,18 +498,6 @@ fn more_legacy_behaviour_stays_bit_identical() {
         150 => h.set_param("width", 1.5),
         _ => {}
     });
-    assert_eq!(
-        [reset, reprepare, rate96, rate44, rot_split, near20],
-        [
-            0x1bda_df42_8d8a_53f8,
-            0x320a_4d17_3060_c887,
-            0x9521_0f67_8922_f677,
-            0xd751_c0bf_eb3d_6ba9,
-            0x709f_dcd8_dec4_a332,
-            0x3e6c_48c5_025c_c186
-        ],
-        "{reset:#018x} {reprepare:#018x} {rate96:#018x} {rate44:#018x} {rot_split:#018x} {near20:#018x}"
-    );
 }
 
 // ----- the two bands, solo, meters, CV and band outputs -----
