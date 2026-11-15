@@ -1140,6 +1140,12 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     // The mix channel's fader is its own horizontal track (drawn with the panel).
                     continue;
                 }
+                if info.spec.fx.is_some_and(|f| f.stereo.is_some())
+                    && crate::stereo_panel::custom_painted(p.key)
+                {
+                    // The stereo tool paints its big knobs and its solo buttons with its panel.
+                    continue;
+                }
                 if info.spec.fx.is_some_and(|f| f.eq.is_some()) {
                     // The EQ paints its choice cells itself (the graph, the shape sketches).
                     if pc.kind != ControlKind::Choice {
@@ -1376,6 +1382,8 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     label.as_str()
                 } else if info.spec.fx.is_some_and(|f| f.eq.is_some()) {
                     crate::eq_panel::socket_label(s.key).unwrap_or(s.name)
+                } else if info.spec.fx.is_some_and(|f| f.stereo.is_some()) {
+                    crate::stereo_panel::socket_label(s.key).unwrap_or(s.name)
                 } else if info.device.is_some() && crate::mix_panel::is_mix_type(desc.type_id) {
                     crate::mix_panel::socket_label(s.key).unwrap_or(s.name)
                 } else {

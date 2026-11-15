@@ -9,6 +9,11 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A panel of its own for the Stereo Tool.** The Stereo Tool is a 3 U imager: a big width knob for each band with a
+  MONO, ORIGINAL and WIDE scale, an ACTIVE lamp and a correlation bar under it, the X-OVER knob between them (it reads
+  `off` at the bottom, where there is no split) with a SPLIT lamp, and SOLO as three buttons. Polarity, rotation,
+  balance, M/S mode and mono sit in a row under them. The back is grouped: audio in, audio out, the three CV inputs
+  with their trims under the jacks, and the band outputs. Existing projects open unchanged.
 - **A two-band Stereo Tool.** The Stereo Tool splits the signal at an X-over frequency (the old Low bypass knob, now
   20 Hz to 6 kHz) into a low and a high band and gives each its own width (Width is the high band's, the new Low
   width the low band's). SOLO listens to the low band or the high band alone, without a click. Each band has a

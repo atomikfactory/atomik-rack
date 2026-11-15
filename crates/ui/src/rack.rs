@@ -4306,6 +4306,23 @@ impl RackView {
             (ControlKind::Toggle, PointerButton::Primary) => {
                 out.push(param_cmd(&key, p.key, widget::toggled(p, value), None));
             }
+            // The stereo tool's SOLO: a press picks the button under the pointer, a right click
+            // opens the MIDI menu of the param (a radio does not step backwards).
+            (ControlKind::Choice, PointerButton::Secondary) if self.is_stereo_solo(i, p.key) => {
+                out.push(UiAction::ControlMenu {
+                    device: key,
+                    param: p.key.to_owned(),
+                    at: self.pointer,
+                });
+            }
+            (ControlKind::Choice, PointerButton::Primary) if self.is_stereo_solo(i, p.key) => {
+                let rp = self.view_to_rack(self.pointer);
+                if let Some(v) = self.stereo_solo_at(i, rp)
+                    && (v - value).abs() > 0.5
+                {
+                    out.push(param_cmd(&key, p.key, v, None));
+                }
+            }
             (ControlKind::Choice, PointerButton::Primary)
                 if crate::master_panel::is_pick_list(p) =>
             {

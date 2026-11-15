@@ -113,6 +113,9 @@ pub struct FxPanel {
     pub character: Option<crate::character_panel::CharacterGeom>,
     /// The EQ panel's graph, band strips, right column and back grid.
     pub eq: Option<crate::eq_panel::EqGeom>,
+    /// The stereo tool's knobs, lamps, correlation meters and solo buttons (see
+    /// [`crate::stereo_panel`]).
+    pub stereo: Option<crate::stereo_panel::StereoGeom>,
 }
 
 /// A labelled group.
@@ -181,6 +184,10 @@ impl PanelSpec {
             || self
                 .fx
                 .and_then(|f| f.eq)
+                .is_some_and(|g| g.back_params.contains(&pc.param))
+            || self
+                .fx
+                .and_then(|f| f.stereo)
                 .is_some_and(|g| g.back_params.contains(&pc.param))
             || self.drum.is_some_and(|d| d.back_params.contains(&pc.param))
     }

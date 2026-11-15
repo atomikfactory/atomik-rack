@@ -464,6 +464,7 @@ pub mod spectrum_eq;
 pub mod stems_dialog;
 pub mod step_drag;
 pub mod step_editor;
+pub mod stereo_panel;
 pub mod tempo_lane;
 pub mod text;
 pub mod text_field;

@@ -4375,6 +4375,15 @@ Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out), `lo_width_cv`,
   The angle and the frequency switch at once, like the mode, so set them with the signal stopped.
 - The rotation and band params and sockets were added after the first release, after the original ones and
   (for ids 10 and up) after `bypass`: a project from before them plays the same bits.
+- **Panel.** A 3 U panel of its own (see [stereo_panel.rs](../crates/ui/src/stereo_panel.rs)). The top row reads
+  left to right: LO BAND (a big width knob with a MONO, ORIGINAL (top) and WIDE scale, an ACTIVE lamp and a
+  correlation bar from -1 to +1 with the centre marked), X-OVER (a big knob from 20 Hz, where it reads `off`, to
+  6 kHz, with a SPLIT lamp), HI BAND (the same, for `width`) and SOLO (three radio buttons: SOLO HI BAND, SOLO LO
+  BAND, NORMAL). The row under it has POLARITY (the two switches), ROTATE and its frequency, BALANCE, M/S MODE and
+  the MONO switch. The lamps and bars read the meter values above. Every knob follows the usual gestures: a drag
+  is one undo step, Shift is fine, Esc puts it back, the wheel steps it, a double click resets it and a right
+  click opens its MIDI menu; a press on a SOLO button picks it. The back has AUDIO IN, AUDIO OUT, CV IN (three
+  jacks, each with its trim knob under it, on the back only) and BAND OUTPUTS (low L and R, high L and R).
 - Both widths 1, balance 0, polarity and mono off, rotation 0, mode stereo, solo normal: the output is the
   input bit for bit.
 

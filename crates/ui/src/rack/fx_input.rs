@@ -724,3 +724,23 @@ fn row_rect(menu: Rect, i: usize) -> Rect {
 fn row_at(menu: &ScMenu, rp: Point) -> Option<usize> {
     (0..menu.entries.len().min(SC_MAX_ROWS)).find(|&i| row_rect(menu.rect, i).contains(rp))
 }
+
+/// The stereo tool's SOLO radio buttons: three buttons on one `Choice` param
+/// ([`crate::stereo_panel`]).
+impl RackView {
+    /// Whether param `key` of device `i` is the stereo tool's `solo`.
+    pub(super) fn is_stereo_solo(&self, i: usize, key: &str) -> bool {
+        key == "solo"
+            && self
+                .devices
+                .get(i)
+                .is_some_and(|d| d.fx == Some(FxKind::StereoTool))
+    }
+
+    /// The `solo` value of the button under `rp` (rack coordinates) on stereo tool `i`.
+    pub(super) fn stereo_solo_at(&self, i: usize, rp: Point) -> Option<f32> {
+        let d = self.devices.get(i)?;
+        let g = d.spec.fx.and_then(|f| f.stereo)?;
+        Some(g.solo_at(rp - d.offset()))
+    }
+}
