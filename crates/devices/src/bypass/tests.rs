@@ -354,10 +354,10 @@ fn every_effect_descriptor_ends_with_the_host_style_bypass_param() {
         let d = r.descriptor(id).unwrap();
         // Trailing `internal.` params (display switches the app sets) and `hidden.` ones (data
         // of a panel's editor) may follow it.
-        // The EQ is the one exception: it gained params after it shipped, and its param ids stay
-        // as they were (saved projects key params by key, not by id), so the new ones follow
-        // `bypass` (id 29) instead of renumbering it.
-        let at = if id == "atomik.eq" {
+        // The EQ and the gain tool are the exceptions: they gained params after they shipped,
+        // and their param ids stay as they were (saved projects key params by key, not by id),
+        // so the new ones follow `bypass` instead of renumbering it.
+        let at = if id == "atomik.eq" || id == "atomik.gain-tool" {
             d.params.iter().position(|q| q.key == "bypass").unwrap()
         } else {
             d.params
@@ -583,10 +583,14 @@ fn a_plus_six_db_stage_reads_like_its_input_with_match_on() {
     // 14 s: the windows are full and the gain has settled for a long time.
     let (i, o) = short_term_pair(&mut h, 14 * 48_000 / BATCH, 0.2);
     assert!((i - o).abs() < 0.5, "input {i} LUFS, output {o} LUFS");
-    let mut m = [0.0f32; 8];
+    let mut m = [0.0f32; 16];
     let n = h.device().meter_values(&mut m);
     let (db, before) = match_gain_of(&m[..n]).expect("the gain is published");
-    assert_eq!(before, 0);
+    assert_eq!(
+        before,
+        crate::gain_tool::METER_COUNT,
+        "after the tool's own meters"
+    );
     assert!((db + 6.0).abs() < 0.5, "applied {db} dB");
 }
 
@@ -608,8 +612,12 @@ fn match_is_silent_and_exact_until_it_is_switched_on_and_after_it_is_off_again()
     for h in [&mut a, &mut b] {
         h.set_param("gain", 6.0);
     }
-    let mut m = [0.0f32; 8];
-    assert_eq!(a.device().meter_values(&mut m), 0, "nothing published");
+    let mut m = [0.0f32; 16];
+    assert_eq!(
+        a.device().meter_values(&mut m),
+        crate::gain_tool::METER_COUNT,
+        "only the tool's own meters"
+    );
     // On for a while, then off: the gain walks back to exactly 1.
     a.set_param(MATCH_KEY, 1.0);
     let mut n = Noise::new();
@@ -620,7 +628,11 @@ fn match_is_silent_and_exact_until_it_is_switched_on_and_after_it_is_off_again()
     for _ in 0..12 * 48_000 / BATCH {
         step(&mut a, &mut n, 0.2);
     }
-    assert_eq!(a.device().meter_values(&mut m), 0, "back to nothing");
+    assert_eq!(
+        a.device().meter_values(&mut m),
+        crate::gain_tool::METER_COUNT,
+        "back to its own meters"
+    );
     let (mut na, mut nb) = (Noise::new(), Noise::new());
     for _ in 0..20 {
         let (_, oa) = step(&mut a, &mut na, 0.2);
@@ -637,7 +649,7 @@ fn match_holds_its_gain_over_silence_and_never_exceeds_the_limit() {
     h.set_param("gain", 24.0);
     h.set_param(MATCH_KEY, 1.0);
     short_term_pair(&mut h, 14 * 48_000 / BATCH, 0.001);
-    let mut m = [0.0f32; 8];
+    let mut m = [0.0f32; 16];
     let n = h.device().meter_values(&mut m);
     let (db, _) = match_gain_of(&m[..n]).unwrap();
     assert!(
