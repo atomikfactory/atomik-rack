@@ -215,6 +215,9 @@ may break APIs and the patch and project formats.
   bit-identical; the project format is unchanged (45).
 
 ### Fixed
+- **An instrument moved in the rack takes its mix channel along.** Dragging an instrument to another column (or along
+  its own) now moves its console channel, with the channel's inserts, right under it in the same undo step, in every
+  rack sort mode. A channel moved by itself still moves alone.
 - **Create from the rack's right-click menu lands where you clicked.** Create ▸ a device type, and the device chosen in
   the Create Instrument / Effect browser opened from that menu, now go to the column and place that was right-clicked
   on the empty rack, as Paste already did, instead of after the selected device. A right click past the last column
