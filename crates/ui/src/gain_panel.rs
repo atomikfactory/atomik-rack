@@ -394,6 +394,15 @@ pub fn hidden(desc: &DeviceDescriptor, device: Option<&RackDevice>, param: usize
     mode < MODE_GAIN + 0.5
 }
 
+/// Whether the gain tool `desc` shows its BLEND knob with `device` (always `true` for other
+/// devices, which have none to hide).
+pub fn blend_shown(desc: &DeviceDescriptor, device: Option<&RackDevice>) -> bool {
+    desc.params
+        .iter()
+        .position(|p| p.key == "blend")
+        .is_none_or(|b| !hidden(desc, device, b))
+}
+
 // ------------------------------------------------------------------ painting
 
 fn value(info: &PanelInfo<'_>, key: &str) -> f32 {

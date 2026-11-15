@@ -1275,6 +1275,11 @@ impl RackView {
                             .as_ref()
                             .is_some_and(|s| plugin_signature(s) == plugin_signature(d))
                         && v.desc_id == descriptor_id(registry, d)
+                        // The gain tool's BLEND knob comes and goes with its mode.
+                        && v.desc.as_ref().is_none_or(|desc| {
+                            crate::gain_panel::blend_shown(desc, v.device.as_ref())
+                                == crate::gain_panel::blend_shown(desc, Some(d))
+                        })
                         // An audio track's panel opens and closes with its tuner.
                         && (v.fx != Some(FxKind::AudioTrack)
                             || v.spec.fx.is_some() == v.analyser.tuner_on))
@@ -4262,8 +4267,7 @@ impl RackView {
         // The gain tool's RESET is momentary: nothing is stored, the app pulses the param.
         if button == PointerButton::Primary
             && kind == ControlKind::Toggle
-            && self.devices[i].fx == Some(FxKind::GainTool)
-            && p.key == crate::gain_panel::PEAK_RESET_KEY
+            && self.is_momentary(i, p.key)
         {
             out.push(UiAction::PulseParam {
                 device: key,
@@ -4443,11 +4447,13 @@ impl RackView {
         {
             return None;
         }
+        if self.is_momentary(i, p.key) {
+            return None;
+        }
         let new = match kind {
             ControlKind::Knob | ControlKind::Fader => {
-                let v = widget::wheel_value(p, value, notches, fine);
                 // A VCA fader stops at 0 dB.
-                self.gain_fader_limit(i, p.key, v)
+                self.stepped_value(i, p, value, notches, fine)
             }
             ControlKind::Choice => widget::cycle_choice(p, value, notches > 0.0),
             ControlKind::Toggle => widget::toggled(p, value),
@@ -4887,6 +4893,15 @@ impl RackView {
                     && let Some((_, kind, _)) = self.param_of(i, s)
                     && matches!(kind, ControlKind::Toggle | ControlKind::Choice)
                 {
+                    if let Some((p, _, _)) = self.param_of(i, s)
+                        && self.is_momentary(i, p.key)
+                    {
+                        out.push(UiAction::PulseParam {
+                            device: self.devices[i].key.clone(),
+                            param: p.key.to_owned(),
+                        });
+                        return;
+                    }
                     out.extend(self.step_control(i, s, 1.0, false));
                 }
             }

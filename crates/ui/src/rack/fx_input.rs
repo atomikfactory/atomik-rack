@@ -736,6 +736,16 @@ impl RackView {
                 .is_some_and(|d| d.fx == Some(FxKind::GainTool))
     }
 
+    /// Whether param `key` of device `i` is momentary: it stores nothing and the app pulses it
+    /// (the gain tool's RESET).
+    pub(super) fn is_momentary(&self, i: usize, key: &str) -> bool {
+        key == crate::gain_panel::PEAK_RESET_KEY
+            && self
+                .devices
+                .get(i)
+                .is_some_and(|d| d.fx == Some(FxKind::GainTool))
+    }
+
     /// Whether the gain tool `i` has its fader in VCA mode.
     fn gain_is_vca(&self, i: usize) -> bool {
         let d = &self.devices[i];
@@ -778,6 +788,32 @@ impl RackView {
         } else {
             drag
         }
+    }
+
+    /// The stored value after a wheel or key step of `notches` on a knob or fader. On the
+    /// gain tool's VCA fader (which stops at 0 dB) an up step from a stored boost does nothing
+    /// and a down step starts from 0 dB.
+    pub(super) fn stepped_value(
+        &self,
+        i: usize,
+        p: &ParamDescriptor,
+        value: f32,
+        notches: f64,
+        fine: bool,
+    ) -> f32 {
+        let vca = self.is_gain_fader(i, p.key) && self.gain_is_vca(i);
+        if vca && value > 0.0 {
+            return if notches > 0.0 {
+                value
+            } else {
+                crate::widget::wheel_value(p, 0.0, notches, fine).min(0.0)
+            };
+        }
+        self.gain_fader_limit(
+            i,
+            p.key,
+            crate::widget::wheel_value(p, value, notches, fine),
+        )
     }
 
     /// `v` held at the fader's limit when the param is the gain tool's VCA fader.

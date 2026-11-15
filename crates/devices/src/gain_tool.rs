@@ -434,6 +434,17 @@ impl Device for GainTool {
         let muted = self.mute || self.mute_gate.is_high();
         let fade_on = self.fade_ms > 0.0;
 
+        let db_with_cv = self.gain_db + self.gain_trim * clean(cv_gain) * CV_GAIN_DB;
+        let normal = if self.vca {
+            if self.gain_db <= VCA_BOTTOM_DB {
+                0.0
+            } else {
+                exp2_det(db_with_cv.min(0.0) * LOG2_10_20)
+            }
+        } else {
+            exp2_det(db_with_cv * LOG2_10_20)
+        };
+
         // Mute fade position and the gain it gives over this batch.
         let fade_s = f64::from(self.fade_ms) * 0.001;
         let target_pos = if muted { 0.0 } else { 1.0 };
@@ -441,11 +452,21 @@ impl Device for GainTool {
             self.fade_pos = if fade_on { target_pos } else { 1.0 };
         } else if fade_on != self.fade_on {
             if fade_on {
-                // Fades start here. A muted gain that has not reached silence yet keeps going
-                // down on the old smoothing, so the fade begins from open to stay continuous.
+                // Fades start here. A muted gain that has not reached silence yet is still
+                // coming down on the old smoothing: the fade starts from that level (so the
+                // output never swells back), and the smoother goes to the open gain, the
+                // fade now doing the lowering.
                 self.fade_pos = 1.0;
-                if muted && self.gain.value() < 1e-6 {
-                    self.fade_pos = 0.0;
+                if muted {
+                    let level = f64::from(self.gain.value());
+                    let open = f64::from(normal);
+                    self.fade_pos = if open > 1e-9 && level > open * 1e-4 {
+                        (1.0 + 20.0 * (level / open).log10() / f64::from(FADE_RANGE_DB))
+                            .clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    self.gain.set_immediate(open as f32);
                 }
             } else {
                 // Fades end: hand the faded level to the gain smoother so nothing jumps.
@@ -472,16 +493,6 @@ impl Device for GainTool {
         };
         let mf_inc = (mf1 - mf0) / BATCH as f32;
 
-        let db_with_cv = self.gain_db + self.gain_trim * clean(cv_gain) * CV_GAIN_DB;
-        let normal = if self.vca {
-            if self.gain_db <= VCA_BOTTOM_DB {
-                0.0
-            } else {
-                exp2_det(db_with_cv.min(0.0) * LOG2_10_20)
-            }
-        } else {
-            exp2_det(db_with_cv * LOG2_10_20)
-        };
         let gain_target = if muted && !fade_on { 0.0 } else { normal };
         let (bl, br) = balance_gains(self.pan + self.pan_trim * clean(cv_pan));
         let (ll, lr) = law_gains(self.pan_law, self.pan_pos[0]);

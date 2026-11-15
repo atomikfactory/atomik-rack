@@ -689,3 +689,22 @@ fn nan_is_safe_with_every_new_stage_on() {
     assert!(l.iter().chain(&r).all(|x| *x == 0.0));
     assert!(meters(&h).iter().all(|x| x.is_finite()));
 }
+
+#[test]
+fn switching_the_fade_on_while_muting_never_swells_back() {
+    let mut h = tool();
+    run(&mut h, |_| 0.5, |_| 0.5, 20);
+    h.set_param("mute", 1.0);
+    // A few batches into the smoothed mute, the level is partway down.
+    let (l, _) = run(&mut h, |_| 0.5, |_| 0.5, 2);
+    let level = last(&l);
+    assert!(level > 0.0 && level < 0.5, "{level}");
+    h.set_param("fade", 1000.0);
+    let (l, _) = run(&mut h, |_| 0.5, |_| 0.5, batches_for(1.2));
+    let mut prev = level;
+    for x in &l {
+        assert!(*x <= prev + 1e-6, "swelled: {x} after {prev}");
+        prev = *x;
+    }
+    assert_eq!(last(&l), 0.0);
+}

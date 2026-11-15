@@ -502,6 +502,125 @@ fn blend_shows_only_while_the_mode_blends() {
     assert_eq!(blend(2.0), (true, true), "xfade");
 }
 
+/// Presses on the BLEND cell and drags up: whether that sets `blend`.
+fn blend_hit(document: &Document, v: &mut RackView) -> bool {
+    let reg = registry();
+    let desc = reg.get(GAIN_TOOL_TYPE).unwrap().descriptor;
+    let spec = atomik_ui::fx_layout::fx_layout(FxKind::GainTool, desc);
+    let cell = spec
+        .front
+        .iter()
+        .find(|c| desc.params[c.param].key == "blend")
+        .unwrap()
+        .rect;
+    let top = v.device_rect(&key("fx")).unwrap().y0;
+    let at = v.rack_to_view(Point::new(cell.center().x, top + cell.y0 + 21.0));
+    let a = v.handle(&down(at), document.doc(), &reg);
+    let b = v.handle(&mv(Point::new(at.x, at.y - 30.0)), document.doc(), &reg);
+    let c = v.handle(&up(at), document.doc(), &reg);
+    set_params(&[a, b, c].concat())
+        .iter()
+        .any(|s| s.0 == "blend")
+}
+
+fn set_mode(document: &mut Document, v: &mut RackView, mode: f32) {
+    let reg = registry();
+    document
+        .apply(
+            Command::SetParam {
+                key: key("fx"),
+                param: "mode".into(),
+                value: mode,
+                merge: None,
+            },
+            &reg,
+        )
+        .unwrap();
+    v.sync(document.doc(), &reg);
+}
+
+#[test]
+fn the_blend_knob_follows_a_mode_change_on_the_same_view() {
+    let (mut document, mut v) = rig_with(&[("mode", 0.0)]);
+    assert!(!blend_hit(&document, &mut v), "gain: no hit");
+    set_mode(&mut document, &mut v, 1.0);
+    assert!(
+        blend_hit(&document, &mut v),
+        "gain -> mix: the knob is live"
+    );
+    set_mode(&mut document, &mut v, 0.0);
+    assert!(
+        !blend_hit(&document, &mut v),
+        "mix -> gain: no invisible cell"
+    );
+}
+
+#[test]
+fn only_the_primary_click_pulses_reset_wheel_arrows_and_enter_are_safe() {
+    let reg = registry();
+    let (mut document, mut v) = rig();
+    let depth = document.undo_depth();
+    let at = center(&v, "peak_reset");
+    let a = v.handle(
+        &UiEvent::Wheel {
+            delta: Vec2::new(0.0, 1.0),
+            pos: at,
+            modifiers: Modifiers::NONE,
+        },
+        document.doc(),
+        &reg,
+    );
+    assert!(a.is_empty(), "wheel: {a:?}");
+    // Focus it with a click, then the keys.
+    let _ = click(&mut document, &mut v, at, 1);
+    let key_ev = |k: Key| UiEvent::Key {
+        key: k,
+        modifiers: Modifiers::NONE,
+        pressed: true,
+    };
+    for k in [Key::Up, Key::Down, Key::PageUp, Key::PageDown] {
+        let a = v.handle(&key_ev(k), document.doc(), &reg);
+        assert!(commands(&a).is_empty(), "{a:?}");
+    }
+    for k in [Key::Enter, Key::Space] {
+        let a = v.handle(&key_ev(k), document.doc(), &reg);
+        assert!(commands(&a).is_empty(), "no SetParam: {a:?}");
+        assert!(
+            a.contains(&UiAction::PulseParam {
+                device: key("fx"),
+                param: "peak_reset".into()
+            }),
+            "{a:?}"
+        );
+    }
+    assert_eq!(param(&document, "peak_reset"), 0.0);
+    assert_eq!(document.undo_depth(), depth);
+}
+
+#[test]
+fn stepping_up_from_a_vca_boost_leaves_it_and_down_starts_from_zero() {
+    let reg = registry();
+    let step = |dir: f32| {
+        let (mut document, mut v) = rig_with(&[("fader_mode", 1.0), ("gain", 12.0)]);
+        let (c, _) = fader_track(&v);
+        let a = v.handle(
+            &UiEvent::Wheel {
+                delta: Vec2::new(0.0, f64::from(dir)),
+                pos: c,
+                modifiers: Modifiers::NONE,
+            },
+            document.doc(),
+            &reg,
+        );
+        apply(&mut document, &mut v, &a);
+        (set_params(&a).len(), param(&document, "gain"))
+    };
+    assert_eq!(step(1.0), (0, 12.0), "up leaves the boost");
+    let (n, g) = step(-1.0);
+    assert_eq!(n, 1);
+    assert!(g < 0.0 && g > -3.0, "down starts from 0 dB: {g}");
+}
+
 // ------------------------------------------------------------------ meters, lamps, readout
 
 fn with_meters(meters: &[f32], params: &[(&str, f32)]) -> Vec<String> {
