@@ -151,7 +151,7 @@ fn gr_bar<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect, label: &str, gr
     );
 }
 
-fn polyline(points: impl Iterator<Item = Point>) -> BezPath {
+pub(crate) fn polyline(points: impl Iterator<Item = Point>) -> BezPath {
     let mut path = BezPath::new();
     for (i, p) in points.enumerate() {
         if i == 0 {
@@ -169,7 +169,7 @@ pub fn fx_visual<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info
     match fx.kind {
         FxKind::Reverb => reverb(c, theme, fx, info, &p),
         FxKind::Compressor => compressor(c, theme, fx, info, &p),
-        FxKind::Eq => eq(c, theme, fx, info),
+        FxKind::Eq => crate::eq_panel::paint_front(c, theme, &fx, info),
         FxKind::DynamicEq => dynamic_eq(c, theme, fx, info),
         FxKind::Distortion => distortion(c, theme, fx, info, &p),
         FxKind::Clipper => clipper(c, theme, fx, info, &p),
@@ -553,90 +553,6 @@ fn eq_axes<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect) {
             None,
         );
     }
-}
-
-fn eq<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info: &PanelInfo<'_>) {
-    let r = fx.plot;
-    lcd(c, theme, r);
-    let Some(desc) = info.desc else { return };
-    let bands = fx::eq_bands_of(desc, info.device);
-    c.push_clip(&r.into());
-    eq_grid(c, theme, r);
-    // Analyser bars.
-    for k in 0..fx::EQ_BANDS_ANALYSER {
-        let db = meter(info, k, LEVEL_FLOOR_DB);
-        let n = level_norm(db, -84.0, -6.0);
-        if n <= 0.0 {
-            continue;
-        }
-        let f = fx::analyser_centre(k);
-        let (xa, xb) = (eq_x_of(r, f / 1.19), eq_x_of(r, f * 1.19));
-        let h = n * r.height() * 0.6;
-        c.fill_with(
-            Rect::new(xa + 1.0, r.y1 - h, xb - 1.0, r.y1),
-            alpha(info.accent, 0.28),
-        );
-    }
-    // The response curve.
-    let steps = (r.width() / 2.0).floor().max(2.0) as usize;
-    let pts: Vec<Point> = (0..=steps)
-        .map(|k| {
-            let t = k as f64 / steps as f64;
-            let f = fx::eq_freq_at(t);
-            let db = fx::eq_response_db(&bands, f, EQ_DRAW_RATE);
-            pt(r.x0 + t * r.width(), eq_y_of(r, db))
-        })
-        .collect();
-    let zero = eq_y_of(r, 0.0);
-    let mut fill = polyline(pts.iter().copied());
-    fill.line_to(pt(r.x1, zero));
-    fill.line_to(pt(r.x0, zero));
-    fill.close_path();
-    c.fill_with(fill, alpha(info.accent, 0.14));
-    c.stroke_with(
-        polyline(pts.iter().copied()),
-        1.75,
-        mix(info.accent, Color::WHITE, 0.35),
-    );
-    // Handles.
-    for (i, b) in bands.iter().enumerate() {
-        let at = eq_handle_pos(r, b);
-        let col = band_color(i);
-        if b.on {
-            c.fill_with(Circle::new(at, EQ_HANDLE_R + 3.0), alpha(col, 0.2));
-            c.fill_with(Circle::new(at, EQ_HANDLE_R), col);
-        } else {
-            c.fill_with(Circle::new(at, EQ_HANDLE_R), alpha(Color::BLACK, 0.5));
-            c.stroke_with(Circle::new(at, EQ_HANDLE_R - 0.5), 1.25, alpha(col, 0.6));
-        }
-        c.text(
-            &TextRun::new(
-                format!("{}", i + 1),
-                pt(at.x, at.y + 2.6),
-                7.0,
-                if b.on { Color::BLACK } else { theme.text_muted },
-            )
-            .align(Align::Center)
-            .weight(700),
-        );
-    }
-    c.pop_clip();
-    eq_axes(c, theme, r);
-    level_bars(
-        c,
-        theme,
-        Rect::new(
-            fx.meters.x0,
-            fx.meters.y0,
-            fx.meters.x1,
-            fx.meters.y1 + 10.0,
-        ),
-        &[
-            ("L", meter(info, 16, LEVEL_FLOOR_DB)),
-            ("R", meter(info, 17, LEVEL_FLOOR_DB)),
-        ],
-        10.0,
-    );
 }
 
 // ------------------------------------------------------------------ dynamic EQ

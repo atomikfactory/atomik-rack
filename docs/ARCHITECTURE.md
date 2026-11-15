@@ -4588,7 +4588,7 @@ parameter tables are in [DEVICES.md](DEVICES.md).
 | `atomik.convolver` | Convolution reverb: an impulse response from the project pool, a 256-sample direct head plus uniform frequency-domain partitions (zero latency), built a few partitions per batch and crossfaded on a swap. |
 | `atomik.vocoder` | 4 to 32 band channel vocoder with an internal noise carrier and a consonant hiss path; latency 0. |
 | `atomik.compressor` | Peak or RMS detector, soft knee, auto release, key filters, sidechain input, look-ahead 0 to 5 ms reported as latency. |
-| `atomik.eq` | Six bands (cut slopes 12/24/48 dB per octave), coarse band levels published for the analyser. |
+| `atomik.eq` | Seven bands with selectable shapes (bell, shelves, notch), 6 to 48 dB per octave cuts with resonance, Mid/Side modes, CV on every band, a scope tap for the spectrum behind its curve, coarse band levels published for the analyser. |
 | `atomik.distortion` | Ten curves (the last five with ADAA, see [shaper.rs](../crates/dsp/src/shaper.rs)), cut and body sections, off/2x/4x halfband oversampling; the oversampler latency is reported and the dry path is delayed to match. |
 | `atomik.clipper` | Clipper: a hard-to-soft curve ([clipper.rs](../crates/dsp/src/clipper.rs)) with symmetry and a DC blocker, off/2x/4x/8x oversampling (latency 0/29/35/37 reported, dry and delta aligned), a 2 or 3 band mode on the mastering crossovers, a delta switch and published clip activity. |
 | `atomik.echo` | Stereo echo on the dsp `Echo` line (glided time, wobble): colour, crush and diffusion in the loop, ducking, triggered and roll modes; latency 0. |

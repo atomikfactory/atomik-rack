@@ -30,7 +30,9 @@ fn preview_pngs() {
     let mut text = TextEngine::new();
     for kind in FxKind::EFFECTS {
         let doc = fx_doc(kind);
-        let h = if matches!(kind, FxKind::Eq | FxKind::GuitarAmp) {
+        let h = if kind == FxKind::Eq {
+            620.0
+        } else if kind == FxKind::GuitarAmp {
             560.0
         } else {
             420.0
@@ -40,7 +42,7 @@ fn preview_pngs() {
         let _ = v.handle(&UiEvent::ScaleChanged(SCALE), &doc, &reg);
         v.set_device_meter_values(&key("fx"), &raw_meters(kind));
         match kind {
-            FxKind::Spectrum => v.set_analyser(&key("fx"), &spectrum_data(false)),
+            FxKind::Spectrum | FxKind::Eq => v.set_analyser(&key("fx"), &spectrum_data(false)),
             FxKind::PhaseMeter => v.set_analyser(&key("fx"), &scope_data()),
             _ => {}
         }

@@ -93,7 +93,13 @@ impl RackView {
         };
         if !matches!(
             self.devices[i].fx,
-            Some(FxKind::Spectrum | FxKind::PhaseMeter | FxKind::AudioTrack | FxKind::Tuner)
+            Some(
+                FxKind::Spectrum
+                    | FxKind::PhaseMeter
+                    | FxKind::AudioTrack
+                    | FxKind::Tuner
+                    | FxKind::Eq
+            )
         ) || self.devices[i].analyser == *data
         {
             return;
@@ -169,7 +175,13 @@ impl RackView {
         let d = &self.devices[self.device_index(key)?];
         matches!(
             d.fx,
-            Some(FxKind::Spectrum | FxKind::PhaseMeter | FxKind::AudioTrack | FxKind::Tuner)
+            Some(
+                FxKind::Spectrum
+                    | FxKind::PhaseMeter
+                    | FxKind::AudioTrack
+                    | FxKind::Tuner
+                    | FxKind::Eq
+            )
         )
         .then_some(&d.analyser)
     }
@@ -259,7 +271,8 @@ impl RackView {
 
     // ------------------------------------------------------------------ geometry for hosts and tests
 
-    /// Centre of an EQ band's handle (logical view coordinates), front side only.
+    /// Centre of an EQ band's handle (logical view coordinates), front side only. The EQ's bands
+    /// are numbered as its strips (0 LCF, 1..=5, 6 HCF), the dynamic EQ's in band order.
     pub fn eq_handle_center(&self, key: &DeviceKey, band: usize) -> Option<Point> {
         if self.flip != super::Flip::Front {
             return None;
@@ -269,8 +282,15 @@ impl RackView {
             .spec
             .fx
             .filter(|f| matches!(f.kind, FxKind::Eq | FxKind::DynamicEq))?;
-        let bands = fx::handle_bands(fx.kind, &d.desc?, d.device.as_ref());
-        let p = fx_layout::eq_handle_pos(fx.plot, bands.get(band)?);
+        let desc = d.desc?;
+        let p = if fx.kind == FxKind::Eq {
+            let bands = crate::eq_panel::bands_of(&desc, d.device.as_ref());
+            let range = crate::eq_panel::range_of(&desc, d.device.as_ref());
+            crate::eq_panel::handle_pos(fx.plot, range, band, bands.get(band)?)
+        } else {
+            let bands = fx::handle_bands(&desc, d.device.as_ref());
+            fx_layout::eq_handle_pos(fx.plot, bands.get(band)?)
+        };
         Some(self.rack_to_view(p + d.offset()))
     }
 
@@ -347,33 +367,19 @@ impl RackView {
         desc.params.iter().find(|p| p.key == key)
     }
 
+    /// The plot of the dynamic EQ panel `i` (its handles, see [`Self::eq_down`]).
     fn eq_plot(&self, i: usize) -> Option<Rect> {
         let d = self.devices.get(i)?;
-        let fx = d
-            .spec
-            .fx
-            .filter(|f| matches!(f.kind, FxKind::Eq | FxKind::DynamicEq))?;
+        let fx = d.spec.fx.filter(|f| f.kind == FxKind::DynamicEq)?;
         Some(fx.plot + d.offset())
-    }
-
-    /// The effect kind of the response plot of panel `i` (the EQ unless it is the dynamic EQ).
-    fn plot_kind(&self, i: usize) -> FxKind {
-        match self.devices.get(i).and_then(|d| d.fx) {
-            Some(FxKind::DynamicEq) => FxKind::DynamicEq,
-            _ => FxKind::Eq,
-        }
     }
 
     fn eq_bands(&self, i: usize) -> Option<Vec<fx::EqBand>> {
         let d = self.devices.get(i)?;
-        Some(fx::handle_bands(
-            self.plot_kind(i),
-            &d.desc?,
-            d.device.as_ref(),
-        ))
+        Some(fx::handle_bands(&d.desc?, d.device.as_ref()))
     }
 
-    /// A press on an EQ plot: picks a handle (double-click toggles its band) or selects the
+    /// A press on the dynamic EQ plot: picks a handle (double-click toggles its band) or selects the
     /// device.
     pub(super) fn eq_down(&mut self, i: usize, rp: Point, clicks: u8, out: &mut Vec<UiAction>) {
         let (Some(plot), Some(bands)) = (self.eq_plot(i), self.eq_bands(i)) else {
@@ -383,7 +389,7 @@ impl RackView {
             self.select(i, out);
             return;
         };
-        let keys = fx::handle_keys(self.plot_kind(i), band);
+        let keys = fx::handle_keys(band);
         let key = self.devices[i].key.clone();
         if clicks >= 2 {
             let on = if bands[band].on { 0.0 } else { 1.0 };
@@ -415,8 +421,8 @@ impl RackView {
         let Some(plot) = self.eq_plot(e.dev) else {
             return;
         };
-        let kind = self.plot_kind(e.dev);
-        let cut = fx::handle_is_cut(kind, e.band);
+        let kind = FxKind::DynamicEq;
+        let cut = false;
         let mut grabbed = false;
         if e.axis.is_none() {
             let (dx, dy) = (rp.x - e.origin.x, rp.y - e.origin.y);
@@ -432,7 +438,7 @@ impl RackView {
             grabbed = true;
         }
         let target = rp + e.grab;
-        let keys = fx::handle_keys(kind, e.band);
+        let keys = fx::handle_keys(e.band);
         let key = self.devices[e.dev].key.clone();
         // Moving the handle of a dynamic EQ band that is off is asking for that band: it comes
         // on (every band of a new dynamic EQ is off, and a band that is off makes no sound).
@@ -474,7 +480,7 @@ impl RackView {
 
     /// Esc during an EQ drag: restores the start value of the param the drag moved.
     pub(super) fn eq_cancel(&mut self, e: &EqDrag, out: &mut Vec<UiAction>) {
-        let keys = fx::handle_keys(self.plot_kind(e.dev), e.band);
+        let keys = fx::handle_keys(e.band);
         let key = self.devices[e.dev].key.clone();
         match e.axis {
             Some(EqAxis::Freq) if e.freq.to_bits() != e.start_freq.to_bits() => {
@@ -499,13 +505,16 @@ impl RackView {
         fine: bool,
         out: &mut Vec<UiAction>,
     ) -> bool {
+        if self.is_eq(i) {
+            return self.eq_graph_wheel(i, rp, notches, fine, out);
+        }
         let (Some(plot), Some(bands)) = (self.eq_plot(i), self.eq_bands(i)) else {
             return false;
         };
         let Some(band) = fx_layout::eq_pick(plot, &bands, rp) else {
             return false;
         };
-        let keys = fx::handle_keys(self.plot_kind(i), band);
+        let keys = fx::handle_keys(band);
         if let Some(p) = self.param_of_key(i, &keys.q) {
             let q = bands[band].q as f32;
             let new = widget::wheel_value(p, q, notches, fine);

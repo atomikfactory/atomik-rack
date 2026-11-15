@@ -1,8 +1,9 @@
 //! The EQ analyser switch in the app core.
 //!
-//! The 16-band analyser of the EQ (and the two of the dynamic EQ) costs more than the bands
-//! themselves, and only a panel that shows the display needs it. Once per frame the core asks the
-//! rack view which EQ and dynamic EQ panels are on screen ([`atomik_ui::RackView::visible_panels`])
+//! The analysers of the dynamic EQ (two 16-band banks) cost more than the bands themselves, and
+//! only a panel that shows the display needs them. (The EQ panel reads only the output peaks, so
+//! its 16-band bank stays off.) Once per frame the core asks the
+//! rack view which dynamic EQ panels are on screen ([`atomik_ui::RackView::visible_panels`])
 //! and keeps `internal.analyser_live` of exactly those devices at 1, every other one at 0 (the
 //! engine's default). The value is sent only when it
 //! changed, again after an engine restart, and again for a device that was added anew (a new
@@ -13,13 +14,13 @@ use super::*;
 use atomik_ui::fx::FxKind;
 use std::collections::BTreeMap;
 
-/// The `internal.analyser_live` param of the EQ.
+/// The `internal.analyser_live` param of the dynamic EQ.
 const ANALYSER_LIVE_PARAM: &str = "internal.analyser_live";
 
 /// The effects with an analyser switch, in the order of [`EqLive::sent`].
-const ANALYSER_KINDS: [FxKind; 2] = [FxKind::Eq, FxKind::DynamicEq];
+const ANALYSER_KINDS: [FxKind; 1] = [FxKind::DynamicEq];
 
-/// What the engine was told per EQ and dynamic EQ: its engine id and whether the analyser runs.
+/// What the engine was told per dynamic EQ: its engine id and whether the analyser runs.
 #[derive(Debug, Default)]
 pub(super) struct EqLive {
     sent: [BTreeMap<DeviceKey, (DeviceInstanceId, bool)>; ANALYSER_KINDS.len()],
@@ -35,9 +36,9 @@ impl EqLive {
 }
 
 impl<S: EngineSink> AppCore<S> {
-    /// Switches the analyser on for the EQ panels in view and off for the others (module docs);
+    /// Switches the analyser on for the dynamic EQ panels in view and off for the others (module docs);
     /// once per frame from [`Self::frame`]. Allocation-light: one key list per frame, and only
-    /// while an EQ exists.
+    /// while a dynamic EQ exists.
     pub(super) fn feed_eq_analysers(&mut self) {
         for (slot, kind) in ANALYSER_KINDS.into_iter().enumerate() {
             self.feed_analyser_switch(slot, kind);

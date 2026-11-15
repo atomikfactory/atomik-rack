@@ -46,6 +46,8 @@ pub enum BiquadShape {
     Lowpass,
     /// Second-order highpass, resonance `q` (gain ignored).
     Highpass,
+    /// Notch (band-reject): infinite depth at `freq`, bandwidth set by `q` (gain ignored).
+    Notch,
     /// First-order lowpass (bilinear, −3.01 dB at `freq`; `q` and gain ignored).
     FirstOrderLowpass,
     /// First-order highpass (bilinear, −3.01 dB at `freq`; `q` and gain ignored).
@@ -145,6 +147,7 @@ impl BiquadCoeffs {
                 -2.0 * cs,
                 1.0 - alpha,
             ),
+            BiquadShape::Notch => (1.0, -2.0 * cs, 1.0, 1.0 + alpha, -2.0 * cs, 1.0 - alpha),
             BiquadShape::FirstOrderLowpass => {
                 let k = (w0 / 2.0).tan();
                 (k, k, 0.0, 1.0 + k, k - 1.0, 0.0)
@@ -454,6 +457,7 @@ mod tests {
             BiquadShape::Highpass => mag2(1.0, 0.0, 0.0, 1.0, 1.0 / q, 1.0),
             BiquadShape::FirstOrderLowpass => mag2(0.0, 0.0, 1.0, 0.0, 1.0, 1.0),
             BiquadShape::FirstOrderHighpass => mag2(0.0, 1.0, 0.0, 0.0, 1.0, 1.0),
+            BiquadShape::Notch => mag2(1.0, 0.0, 1.0, 1.0, 1.0 / q, 1.0),
         };
         10.0 * m2.log10()
     }

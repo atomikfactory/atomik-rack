@@ -50,6 +50,7 @@ mod device_drag;
 mod device_maps;
 mod drum_input;
 mod duck_input;
+mod eq_input;
 mod fx_input;
 mod group_chip;
 mod handles;
@@ -548,6 +549,8 @@ enum Drag {
     },
     /// An EQ handle is dragged (see [`EqDrag`]).
     Eq(EqDrag),
+    /// A handle of the EQ graph is dragged (see [`eq_input::BandDrag`]).
+    EqBand(eq_input::BandDrag),
     /// The waveform of a granular sampler is dragged: it sets the position.
     Wave(wave_drag::WaveDrag),
     /// A point or a segment of a Sidechain Tool's curve is dragged (see [`duck_input`]).
@@ -720,6 +723,8 @@ pub struct RackView {
     ref_menu: Option<spectrum_ref::RefMenu>,
     /// The open pick list of a long choice (the master's control-room source).
     choice_menu: Option<master_input::ChoiceMenu>,
+    /// The open menu of an EQ graph handle.
+    eq_menu: Option<eq_input::EqMenu>,
     /// The Audio I/O panel's state: host channels, lamps, levels, clip flags.
     io: crate::io_panel::IoView,
     /// The Big Meter overlay (View > Big Meter).
@@ -1056,6 +1061,7 @@ impl RackView {
             sc_menu: None,
             ref_menu: None,
             choice_menu: None,
+            eq_menu: None,
             io: crate::io_panel::IoView::default(),
             big: crate::big_meter::BigMeter::default(),
             edits: BTreeMap::new(),
@@ -2110,7 +2116,12 @@ impl RackView {
                         }
                         if let Some(fx) = d.spec.fx {
                             if matches!(fx.kind, FxKind::Eq | FxKind::DynamicEq) {
-                                tree.add(dn, fx.plot.inset(8.0) + off, Hit::EqPlot(i), false);
+                                let area = if fx.kind == FxKind::Eq {
+                                    fx.plot.inflate(8.0, 8.0)
+                                } else {
+                                    fx.plot.inset(8.0)
+                                };
+                                tree.add(dn, area + off, Hit::EqPlot(i), false);
                             }
                             if fx.kind == FxKind::DynamicEq {
                                 for (btn, r) in crate::resonance_marks::buttons(fx.plot) {
@@ -3679,6 +3690,9 @@ impl RackView {
         if self.ref_menu.is_some() {
             self.ref_hover(pos);
         }
+        if self.eq_menu.is_some() {
+            self.eq_menu_hover(pos);
+        }
         if self.choice_menu.is_some() {
             self.choice_hover(pos);
         }
@@ -3691,6 +3705,7 @@ impl RackView {
         self.crumb_hover_at(pos);
         match self.drag.clone() {
             Drag::Eq(e) => self.eq_move(e, rp, out),
+            Drag::EqBand(e) => self.eq_graph_move(e, rp, out),
             Drag::Wave(w) => self.wave_move(w, rp, out),
             Drag::Duck(d) => self.duck_move(d, rp, out),
             Drag::Drum(d) => self.drum_move(d, pos, out),
@@ -3830,6 +3845,7 @@ impl RackView {
         if self.sc_press(pos, doc, registry, out)
             || self.ref_press(pos, out)
             || self.choice_press(pos, out)
+            || self.eq_menu_press(pos, out)
         {
             return;
         }
@@ -4072,6 +4088,11 @@ impl RackView {
             }
             (Hit::Player(i, b), PointerButton::Primary) => {
                 self.player_down(i, b, modifiers, clicks, out);
+            }
+            (Hit::EqPlot(i), PointerButton::Primary | PointerButton::Secondary)
+                if self.is_eq(i) =>
+            {
+                self.eq_graph_down(i, rp, pos, button, modifiers, clicks, out);
             }
             (Hit::EqPlot(i), PointerButton::Primary) => self.eq_down(i, rp, clicks, out),
             (Hit::Wave(i), PointerButton::Primary) => self.wave_down(i, rp, out),
@@ -4349,7 +4370,9 @@ impl RackView {
             Drag::Pad { device, key } => out.push(audition_off(device, key)),
             Drag::Sens { .. } => {}
             Drag::Assign { device, param, .. } => self.assign_up(&device, &param, pos, out),
-            Drag::Eq(_) | Drag::Wave(_) | Drag::Duck(_) => out.push(UiAction::EndMerge),
+            Drag::Eq(_) | Drag::EqBand(_) | Drag::Wave(_) | Drag::Duck(_) => {
+                out.push(UiAction::EndMerge);
+            }
             Drag::Drum(d) => self.drum_up(&d, out),
             Drag::Value { .. } => {
                 self.tree.release_capture();
@@ -4423,6 +4446,7 @@ impl RackView {
         self.sc_menu = None;
         self.ref_menu = None;
         self.choice_menu = None;
+        self.eq_menu = None;
         self.macro_menu = None;
         self.plugin_menu = None;
         if self.navigator_wheel(delta, pos, modifiers) {
@@ -4789,6 +4813,7 @@ impl RackView {
             Key::Escape if self.sc_menu.take().is_some() => {}
             Key::Escape if self.ref_close() => {}
             Key::Escape if self.choice_menu.take().is_some() => {}
+            Key::Escape if self.eq_menu.take().is_some() => {}
             Key::Escape if self.macro_menu.take().is_some() => {}
             Key::Escape if self.plugin_menu.take().is_some() => {}
             Key::Escape if self.escape_goes_up() => self.go_up(1),
@@ -4902,6 +4927,7 @@ impl RackView {
             Drag::Pad { device, key } => out.push(audition_off(device, key)),
             Drag::Sens { dev, start, .. } => self.store_sens(dev, start),
             Drag::Eq(e) => self.eq_cancel(&e, out),
+            Drag::EqBand(e) => self.eq_graph_cancel(&e, out),
             Drag::Wave(w) => self.wave_cancel(&w, out),
             Drag::Duck(d) => self.duck_cancel(&d, out),
             Drag::Drum(d) => self.drum_cancel(&d, out),
@@ -5255,6 +5281,7 @@ impl RackView {
         self.paint_sc_menu(c);
         self.paint_ref_menu(c);
         self.paint_choice_menu(c);
+        self.paint_eq_menu(c);
         self.paint_macro_menu(c);
         self.paint_plugin_menu(c);
         self.paint_drag_feedback(c);

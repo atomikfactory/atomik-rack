@@ -38,6 +38,11 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
             set(&mut d, "band5.gain", 4.0);
             set(&mut d, "band6.on", 1.0);
             set(&mut d, "highcut.slope", 1.0);
+            set(&mut d, "band7.gain", 3.5);
+            set(&mut d, "band7.shape", 1.0);
+            set(&mut d, "band2.shape", 3.0);
+            set(&mut d, "lowcut.slope", 3.0);
+            set(&mut d, "stereo.mode", 1.0);
         }
         FxKind::Distortion => {
             set(&mut d, "curve", 2.0);

@@ -111,6 +111,8 @@ pub struct FxPanel {
     pub button: Option<Rect>,
     /// The Character panel's matrix, screen, badge and meter strip.
     pub character: Option<crate::character_panel::CharacterGeom>,
+    /// The EQ panel's graph, band strips, right column and back grid.
+    pub eq: Option<crate::eq_panel::EqGeom>,
 }
 
 /// A labelled group.
@@ -176,6 +178,10 @@ impl PanelSpec {
         self.fx
             .and_then(|f| f.character)
             .is_some_and(|g| g.back_params.contains(&pc.param))
+            || self
+                .fx
+                .and_then(|f| f.eq)
+                .is_some_and(|g| g.back_params.contains(&pc.param))
             || self.drum.is_some_and(|d| d.back_params.contains(&pc.param))
     }
 
