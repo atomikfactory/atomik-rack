@@ -84,9 +84,9 @@
 //! The mono mix `(L + R) / 2` of the *output* feeds a fixed bank of 16 band-pass biquads (RBJ
 //! constant 0 dB peak gain) with centres log-spaced from 40 Hz to 16 kHz (ratio 1.4915 per band,
 //! Q = 2.485), computed once in `prepare`. The bank runs only while the app has set
-//! `internal.analyser_live` (never stored, default off; the rack view turns it on for the panels
-//! on screen), so an EQ nobody looks at costs the bands alone and its band energies read
-//! zero; the bank starts from silence each time it is switched on, and the audio output is the
+//! `internal.analyser_live` (never stored, default off; the app no longer sets it for the EQ, whose panel
+//! reads only the output peaks, values 16 and 17), so the EQ costs the bands alone and its band
+//! energies read zero unless a host sets it; the bank starts from silence each time it is switched on, and the audio output is the
 //! same either way. While it runs it works at the full sample rate on the audio
 //! thread (16 `f64` biquads per sample, a few million multiply-adds per second at 48 kHz, small
 //! next to the EQ bands, so no decimation or round-robin was needed) and the mean square of
@@ -290,7 +290,7 @@ const BASE: [u32; NB] = [0, 4, 8, 12, 16, 20, 31];
 const P_OUTPUT: u32 = 24;
 /// First gain-CV trim param (bands 2..5 in order).
 const P_GAIN_TRIM: u32 = 25;
-/// The analyser switch (`internal.analyser_live`), set by the app for the panels on screen.
+/// The analyser switch (`internal.analyser_live`), not set by the app for the EQ (its panel reads only the peaks).
 const P_ANALYSER_LIVE: u32 = 30;
 /// The band 7 params `on, freq, gain, q` are 31..=34.
 const P_BAND7: u32 = 31;
@@ -1090,7 +1090,9 @@ impl Device for Equalizer {
         let mut ramp: Option<(f32, f32)> = None;
         let mut switch = false;
         if self.mode != self.mode_applied {
-            ramp = Some((1.0, 0.0));
+            // The output is still silent when the fade-in of the last change is pending: stay
+            // silent and start the cycle again, instead of ramping down from a level never reached.
+            ramp = Some(if self.mode_in { (0.0, 0.0) } else { (1.0, 0.0) });
             switch = true;
         } else if self.mode_in {
             ramp = Some((0.0, 1.0));

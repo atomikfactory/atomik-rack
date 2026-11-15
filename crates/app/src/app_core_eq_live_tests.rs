@@ -50,27 +50,22 @@ fn live_calls_of(core: &mut AppCore<RecordingSink>, type_id: &str) -> Vec<(Devic
 }
 
 #[test]
-fn an_eq_in_view_runs_its_analyser_and_a_folded_one_stops_it() {
+fn an_eq_never_runs_its_sixteen_band_analyser() {
     let mut core = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
     add(&mut core, "eq");
-    let id = core.device_id(&key("eq")).unwrap();
-    core.frame();
-    assert_eq!(live_calls(&mut core), vec![(id, 1.0)]);
-    // Nothing is sent again while nothing changes.
     core.frame();
     core.frame();
-    assert!(live_calls(&mut core).is_empty());
-    // Folded: the display is not drawn.
+    assert!(
+        live_calls(&mut core).is_empty(),
+        "the EQ panel reads only the peaks"
+    );
     core.apply_command(Command::SetFolded {
         key: key("eq"),
         folded: true,
     })
     .unwrap();
     core.frame();
-    assert_eq!(live_calls(&mut core), vec![(id, 0.0)]);
-    core.frame();
     assert!(live_calls(&mut core).is_empty());
-    // It is UI state: never in the document.
     assert!(
         !core
             .doc()
@@ -84,13 +79,13 @@ fn an_eq_in_view_runs_its_analyser_and_a_folded_one_stops_it() {
 #[test]
 fn the_switch_is_sent_again_after_an_engine_restart() {
     let mut core = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
-    add(&mut core, "eq");
+    add_of(&mut core, DYNAMIC_EQ, "dyn");
     core.frame();
-    live_calls(&mut core);
+    live_calls_of(&mut core, DYNAMIC_EQ);
     core.rebuild_engine();
     core.frame();
-    let id = core.device_id(&key("eq")).unwrap();
-    assert_eq!(live_calls(&mut core), vec![(id, 1.0)]);
+    let id = core.device_id(&key("dyn")).unwrap();
+    assert_eq!(live_calls_of(&mut core, DYNAMIC_EQ), vec![(id, 1.0)]);
 }
 
 #[test]
@@ -128,7 +123,7 @@ fn a_dynamic_eq_in_view_runs_its_analysers_and_a_folded_one_stops_them() {
 }
 
 #[test]
-fn an_eq_and_a_dynamic_eq_are_switched_independently() {
+fn a_dynamic_eq_is_switched_and_an_eq_beside_it_is_not() {
     let mut core = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
     add(&mut core, "eq");
     add_of(&mut core, DYNAMIC_EQ, "dyn");
@@ -152,7 +147,7 @@ fn an_eq_and_a_dynamic_eq_are_switched_independently() {
             )
             .count()
     };
-    assert_eq!(sent(EQ), 1);
+    assert_eq!(sent(EQ), 0, "the EQ is never switched on");
     assert_eq!(sent(DYNAMIC_EQ), 1);
     core.rebuild_engine();
     core.frame();
@@ -171,8 +166,8 @@ fn an_eq_and_a_dynamic_eq_are_switched_independently() {
             )
             .count()
     };
-    assert_eq!(again(EQ), 1, "an engine restart sends it again");
-    assert_eq!(again(DYNAMIC_EQ), 1);
+    assert_eq!(again(EQ), 0);
+    assert_eq!(again(DYNAMIC_EQ), 1, "an engine restart sends it again");
 }
 
 fn core_param(type_id: &str) -> atomik_core::ParamId {

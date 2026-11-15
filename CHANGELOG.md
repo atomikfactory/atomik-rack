@@ -25,7 +25,8 @@ may break APIs and the patch and project formats.
   changes the Q, a double-click on a handle resets the band, a double-click on empty graph switches on the nearest
   band that is free, and a right-click on a handle chooses its shape or slope, switches it or resets it. Projects
   saved before keep their sound, band for band; the spectrum is analysed only while the panel is on screen with the
-  switch on and the device not bypassed.
+  switch on and the device not bypassed. The cut slopes and the Q of bands 1 and 5 cover wider ranges now, so
+  existing MIDI or controller mappings on them reach different values than before.
 - **Comp mode in the audio clip editor.** Press COMP for a clip with takes: a comp lane over one lane per take,
   newest on top. Press on a take to hear it from there, drag a range of it into the comp (one `SetCompRange`, one
   undo step, with a crossfade at the cuts, 10 ms to start with and settable), Up and Down move the range to the take

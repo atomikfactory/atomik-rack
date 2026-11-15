@@ -52,7 +52,8 @@ pub(super) struct BandDrag {
 /// The open menu of a handle.
 #[derive(Debug, Clone)]
 pub(super) struct EqMenu {
-    dev: usize,
+    /// The device the menu opened on, by key: its index moves when the devices change.
+    key: DeviceKey,
     rows: Vec<MenuRow>,
     list: CompactList,
 }
@@ -236,13 +237,16 @@ impl RackView {
         let mut sets: Vec<(&str, f32)> = Vec::new();
         match e.mode {
             DragMode::Move => {
-                if e.freq.to_bits() != (e.start.freq as f32).to_bits() {
-                    sets.push((k.freq, e.start.freq as f32));
-                }
-                if let Some(g) = k.gain
-                    && e.gain.to_bits() != (e.start.gain as f32).to_bits()
+                // The same shape as the moves (both params of a bell or shelf as one batch), so
+                // the restore merges into the drag's undo step.
+                let has_gain = k.gain.is_some() && e.start.shape != 3;
+                if e.freq.to_bits() != (e.start.freq as f32).to_bits()
+                    || (has_gain && e.gain.to_bits() != (e.start.gain as f32).to_bits())
                 {
-                    sets.push((g, e.start.gain as f32));
+                    sets.push((k.freq, e.start.freq as f32));
+                    if let (true, Some(g)) = (has_gain, k.gain) {
+                        sets.push((g, e.start.gain as f32));
+                    }
                 }
             }
             DragMode::Q => {
@@ -299,7 +303,7 @@ impl RackView {
         );
         let y0 = (rp.y + 4.0).min(bottom - h).max(top);
         self.eq_menu = Some(EqMenu {
-            dev: i,
+            key: self.devices[i].key.clone(),
             rows,
             list: CompactList::new(Rect::new(x0, y0, x0 + MENU_W, y0 + h), ROW_H),
         });
@@ -313,8 +317,10 @@ impl RackView {
         };
         self.repaint = true;
         let rp = self.view_to_rack(pos);
-        if let Some(row) = menu.list.row_at(menu.rows.len(), rp) {
-            out.extend(self.eq_set_cmd(menu.dev, &menu.rows[row].sets, None));
+        if let Some(row) = menu.list.row_at(menu.rows.len(), rp)
+            && let Some(dev) = self.devices.iter().position(|d| d.key == menu.key)
+        {
+            out.extend(self.eq_set_cmd(dev, &menu.rows[row].sets, None));
         }
         true
     }

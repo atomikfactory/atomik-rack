@@ -941,3 +941,134 @@ fn the_dynamic_eq_keeps_its_own_panel() {
     assert_eq!(spec.height_units, 9);
     assert!(spec.fx.unwrap().eq.is_none());
 }
+
+// ------------------------------------------------------------------ review fixes
+
+#[test]
+fn escape_during_a_drag_leaves_no_extra_undo_step() {
+    // A bell, a shelf (gain and frequency), and a cut or notch (frequency only).
+    for band in [2usize, 6, 0, 1] {
+        let (mut document, mut v) = rig();
+        let k = &KEYS[band];
+        let names: Vec<&str> = [Some(k.freq), k.gain].into_iter().flatten().collect();
+        let before: Vec<f32> = names.iter().map(|n| param(&document, n)).collect();
+        let depth = document.undo_depth();
+        let h = handle(&v, band);
+        send(&mut document, &mut v, &down(h));
+        for i in 1..6 {
+            send(
+                &mut document,
+                &mut v,
+                &mv(Point::new(h.x + 10.0 * f64::from(i), h.y)),
+            );
+        }
+        assert_eq!(document.undo_depth(), depth + 1, "band {band}: one step");
+        send(
+            &mut document,
+            &mut v,
+            &support::song::press(atomik_ui::Key::Escape, Modifiers::NONE),
+        );
+        for (n, b) in names.iter().zip(&before) {
+            assert!((param(&document, n) - b).abs() < 1e-3, "band {band} {n}");
+        }
+        assert_eq!(
+            document.undo_depth(),
+            depth + 1,
+            "band {band}: the restore merged into the drag's step"
+        );
+        document.undo();
+        assert_eq!(document.undo_depth(), depth, "band {band}");
+    }
+}
+
+#[test]
+fn alt_drag_escape_leaves_no_extra_undo_step() {
+    let (mut document, mut v) = rig();
+    let q0 = param(&document, "band3.q");
+    let depth = document.undo_depth();
+    let h = handle(&v, 2);
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::NONE
+    };
+    send(
+        &mut document,
+        &mut v,
+        &UiEvent::PointerDown {
+            pos: h,
+            button: PointerButton::Primary,
+            modifiers: alt,
+            clicks: 1,
+        },
+    );
+    for i in 1..6 {
+        send(
+            &mut document,
+            &mut v,
+            &mv(Point::new(h.x, h.y - 8.0 * f64::from(i))),
+        );
+    }
+    assert_ne!(param(&document, "band3.q"), q0);
+    send(
+        &mut document,
+        &mut v,
+        &support::song::press(atomik_ui::Key::Escape, Modifiers::NONE),
+    );
+    assert!((param(&document, "band3.q") - q0).abs() < 1e-3);
+    assert_eq!(document.undo_depth(), depth + 1);
+}
+
+#[test]
+fn a_handle_menu_never_applies_to_another_device_after_the_list_changed() {
+    let reg = registry();
+    // The device list changes under the open menu: another device takes the index.
+    let (mut document, mut v) = rig();
+    let h = handle(&v, 2);
+    send(
+        &mut document,
+        &mut v,
+        &down_with(h, PointerButton::Secondary, 1),
+    );
+    let row = v.eq_menu_row_center(1).unwrap();
+    let mut doc = document.doc().clone();
+    doc.devices.remove(0);
+    doc.devices.insert(0, device("other", "atomik.eq", "Other"));
+    v.sync(&doc, &reg);
+    let a = v.handle(&down(row), &doc, &reg);
+    assert!(
+        sets(&a).is_empty(),
+        "the device of the menu is gone: {:?}",
+        commands(&a)
+    );
+    v.handle(&up(row), &doc, &reg);
+
+    // Another device in front of it: the row still goes to the device of the menu.
+    let (mut document, mut v) = rig();
+    let h = handle(&v, 2);
+    send(
+        &mut document,
+        &mut v,
+        &down_with(h, PointerButton::Secondary, 1),
+    );
+    let row = v.eq_menu_row_center(1).unwrap();
+    let mut doc = document.doc().clone();
+    doc.devices.insert(0, device("other", "atomik.eq", "Other"));
+    v.sync(&doc, &reg);
+    let a = v.handle(&down(row), &doc, &reg);
+    let keys: Vec<_> = commands(&a)
+        .iter()
+        .flat_map(|c| match c {
+            Command::SetParam { key, .. } => vec![key.clone()],
+            Command::Batch(cs) => cs
+                .iter()
+                .filter_map(|c| match c {
+                    Command::SetParam { key, .. } => Some(key.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => vec![],
+        })
+        .collect();
+    assert!(!keys.is_empty());
+    assert!(keys.iter().all(|k| *k == key("fx")), "{keys:?}");
+}

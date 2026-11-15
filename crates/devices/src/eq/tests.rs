@@ -1709,3 +1709,43 @@ proptest! {
         }
     }
 }
+
+/// Max sample-to-sample step after the stereo mode is set to each `(batch, mode)` of `changes`.
+fn mode_schedule_jump(changes: &[(usize, f32)]) -> f32 {
+    let mut h = eq();
+    let src = sine(300.0, 0.5);
+    let mut all = Vec::new();
+    for b in 0..160 {
+        for (at, mode) in changes {
+            if *at == b {
+                h.set_param("stereo.mode", *mode);
+            }
+        }
+        let mut x = [0.0f32; BATCH];
+        for (i, v) in x.iter_mut().enumerate() {
+            *v = src(b * BATCH + i);
+        }
+        *h.input_mut("in_l") = x;
+        *h.input_mut("in_r") = x;
+        h.process();
+        all.extend_from_slice(h.output("out_l"));
+    }
+    max_step(&all[40 * BATCH - 8..])
+}
+
+#[test]
+fn a_second_mode_change_while_the_fade_in_is_pending_does_not_click() {
+    // Back-to-back batches: the second change lands while the first fade-in is pending.
+    let back_to_back = mode_schedule_jump(&[(40, 1.0), (41, 2.0)]);
+    // Three changes in a row, ending on the starting mode.
+    let three = mode_schedule_jump(&[(40, 1.0), (41, 2.0), (42, 0.0)]);
+    // Two sets inside one batch gap: only the last one counts.
+    let same_gap = mode_schedule_jump(&[(40, 1.0), (40, 3.0), (41, 2.0), (41, 0.0)]);
+    for (name, step) in [
+        ("back to back", back_to_back),
+        ("three in a row", three),
+        ("same gap", same_gap),
+    ] {
+        assert!(step < 0.1, "{name}: max step {step}");
+    }
+}
