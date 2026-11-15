@@ -100,6 +100,7 @@ fn heights_in_rack_units_are_pinned() {
     assert_eq!(units(FxKind::Clipper), 3);
     assert_eq!(units(FxKind::DynamicEq), 9);
     assert_eq!(units(FxKind::Duck), 4);
+    assert_eq!(units(FxKind::GainTool), 3);
 }
 
 fn overlaps(a: &Rect, b: &Rect) -> bool {

@@ -1275,6 +1275,11 @@ impl RackView {
                             .as_ref()
                             .is_some_and(|s| plugin_signature(s) == plugin_signature(d))
                         && v.desc_id == descriptor_id(registry, d)
+                        // The gain tool's BLEND knob comes and goes with its mode.
+                        && v.desc.as_ref().is_none_or(|desc| {
+                            crate::gain_panel::blend_shown(desc, v.device.as_ref())
+                                == crate::gain_panel::blend_shown(desc, Some(d))
+                        })
                         // An audio track's panel opens and closes with its tuner.
                         && (v.fx != Some(FxKind::AudioTrack)
                             || v.spec.fx.is_some() == v.analyser.tuner_on))
@@ -2172,7 +2177,9 @@ impl RackView {
                             }
                         }
                         for (slot, pc) in d.spec.front.iter().enumerate() {
-                            if !d.spec.on_back(pc) {
+                            if !d.spec.on_back(pc)
+                                && !crate::gain_panel::hidden(&desc, d.device.as_ref(), pc.param)
+                            {
                                 tree.add(dn, pc.rect + off, Hit::Control(i, slot), true);
                             }
                         }
@@ -3126,6 +3133,7 @@ impl RackView {
                 let text = (d.fx == Some(FxKind::Character))
                     .then(|| crate::fx::character_value_text(p.key, *value))
                     .flatten()
+                    .or_else(|| self.gain_fader_text(*dev, p.key, *value))
                     .unwrap_or_else(|| mix_input::value_text(p, *value));
                 Some(format!("{}  {}", autolayout::control_label(p), text))
             }
@@ -3721,7 +3729,7 @@ impl RackView {
                 let Some((p, _, _)) = self.param_of(dev, slot) else {
                     return;
                 };
-                let horizontal = self.is_mix_fader(dev, p.key);
+                let horizontal = self.is_mix_fader(dev, p.key) || self.is_gain_fader(dev, p.key);
                 let (along, delta) = if horizontal {
                     (pos.x, pos.x - last_y)
                 } else {
@@ -4256,6 +4264,17 @@ impl RackView {
             return;
         }
         let key = self.devices[i].key.clone();
+        // The gain tool's RESET is momentary: nothing is stored, the app pulses the param.
+        if button == PointerButton::Primary
+            && kind == ControlKind::Toggle
+            && self.is_momentary(i, p.key)
+        {
+            out.push(UiAction::PulseParam {
+                device: key,
+                param: p.key.to_owned(),
+            });
+            return;
+        }
         match (kind, button) {
             // A right click on a knob, a fader or a switch opens its MIDI menu.
             (
@@ -4274,8 +4293,11 @@ impl RackView {
                     out.push(param_cmd(&key, p.key, p.clamp(p.default), None));
                 } else {
                     // The mix channel's fader runs along its track: its length is the range.
-                    let horizontal = self.is_mix_fader(i, p.key);
-                    let ppr = if horizontal {
+                    let gain_fader = self.is_gain_fader(i, p.key);
+                    let horizontal = self.is_mix_fader(i, p.key) || gain_fader;
+                    let ppr = if gain_fader {
+                        self.gain_fader_pixels(i)
+                    } else if horizontal {
                         let (x0, x1, _) = self.mix_travel(i, p.key);
                         (x1 - x0) * self.zoom
                     } else if kind == ControlKind::Fader {
@@ -4288,7 +4310,7 @@ impl RackView {
                     self.drag = Drag::Value {
                         dev: i,
                         slot,
-                        drag: ValueDrag::new(p, value, ppr * self.knob_range.travel()),
+                        drag: self.value_drag(i, p, value, ppr * self.knob_range.travel()),
                         merge,
                         last_y: if horizontal {
                             self.pointer.x
@@ -4425,8 +4447,14 @@ impl RackView {
         {
             return None;
         }
+        if self.is_momentary(i, p.key) {
+            return None;
+        }
         let new = match kind {
-            ControlKind::Knob | ControlKind::Fader => widget::wheel_value(p, value, notches, fine),
+            ControlKind::Knob | ControlKind::Fader => {
+                // A VCA fader stops at 0 dB.
+                self.stepped_value(i, p, value, notches, fine)
+            }
             ControlKind::Choice => widget::cycle_choice(p, value, notches > 0.0),
             ControlKind::Toggle => widget::toggled(p, value),
             ControlKind::Display => return None,
@@ -4865,6 +4893,15 @@ impl RackView {
                     && let Some((_, kind, _)) = self.param_of(i, s)
                     && matches!(kind, ControlKind::Toggle | ControlKind::Choice)
                 {
+                    if let Some((p, _, _)) = self.param_of(i, s)
+                        && self.is_momentary(i, p.key)
+                    {
+                        out.push(UiAction::PulseParam {
+                            device: self.devices[i].key.clone(),
+                            param: p.key.to_owned(),
+                        });
+                        return;
+                    }
                     out.extend(self.step_control(i, s, 1.0, false));
                 }
             }
