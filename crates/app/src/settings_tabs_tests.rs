@@ -169,10 +169,19 @@ fn the_audio_tab_is_the_same_with_and_without_preferences() {
     let plain = SettingsDialog::new(AudioSettings::default(), DeviceLists::default());
     let with = dialog();
     let (a, b) = (plain.layout(VIEW), with.layout(VIEW));
-    assert_eq!(a.panel, b.panel);
-    assert_eq!(a.options, b.options);
-    assert_eq!(a.apply, b.apply);
-    assert_eq!(a.content, b.content);
+    // The same rows in the same order; with the preferences they sit right of the sidebar.
+    let rows = |l: &DialogLayout| -> Vec<(String, Choice)> {
+        l.options
+            .iter()
+            .map(|(_, t, c)| (t.clone(), c.clone()))
+            .collect()
+    };
+    assert_eq!(rows(&a), rows(&b));
+    assert!(b.panel.x0 >= with.frame(VIEW).x0 + crate::settings_dialog::SIDEBAR - 0.5);
+    assert!(
+        plain.tab_strip(VIEW).is_empty(),
+        "no sidebar without the preferences"
+    );
     let mut la = DisplayList::new();
     let mut lb = DisplayList::new();
     plain.paint(&mut la, &Theme::dark(), VIEW);
@@ -1090,23 +1099,34 @@ fn the_tab_strip_leaves_room_for_the_title_of_every_tab() {
 }
 
 fn tab_strip_leaves_room() {
+    let mut size = None;
     for tab in Tab::ALL {
         let mut d = dialog();
         goto(&mut d, tab);
         let strip = d.tab_strip(VIEW);
         assert_eq!(strip.len(), Tab::ALL.len());
         let panel = d.panel(VIEW);
-        let first = strip.first().unwrap().0;
-        // The title is drawn at 16 px from the panel's padding; ask for its measured width.
-        let title = crate::menubar::text_width(atomik_ui::i18n::t(tab.title())) * 16.0 / 13.0;
-        assert!(
-            first.x0 > panel.x0 + PAD + title + 8.0,
-            "{tab:?}: the tabs start at {} but the title ends at {}",
-            first.x0,
-            panel.x0 + PAD + title
+        let frame = d.frame(VIEW);
+        // One size for every tab: switching never moves the dialog.
+        assert_eq!(
+            *size.get_or_insert(frame),
+            frame,
+            "{tab:?} changes the size"
         );
+        // The sidebar is a column left of the tab's panel, the title has the panel's width.
+        let title = crate::menubar::text_width(atomik_ui::i18n::t(tab.title())) * 16.0 / 13.0;
+        assert!(PAD + title < panel.width() - 8.0, "{tab:?}: the title fits");
+        for (r, t) in &strip {
+            assert!(
+                r.x0 >= frame.x0 && r.x1 <= panel.x0,
+                "{t:?} is in the sidebar"
+            );
+            assert!(r.y1 <= frame.y1, "{t:?} is inside the dialog");
+            let label = crate::menubar::text_width(atomik_ui::i18n::t(t.label()));
+            assert!(label + 12.0 <= r.width(), "{t:?}: its label fits its row");
+        }
         for pair in strip.windows(2) {
-            assert!(pair[0].0.x1 <= pair[1].0.x0, "tabs do not overlap");
+            assert!(pair[0].0.y1 <= pair[1].0.y0, "rows do not overlap");
         }
     }
 }
@@ -2326,17 +2346,14 @@ fn the_tab_strip_fits_in_french() {
         let strip = d.tab_strip(VIEW);
         assert_eq!(strip.len(), Tab::ALL.len());
         for pair in strip.windows(2) {
-            assert!(pair[0].0.x1 <= pair[1].0.x0 + 0.5, "tabs overlap");
+            assert!(pair[0].0.y1 <= pair[1].0.y0 + 0.5, "tabs overlap");
         }
-        let panel = d.layout(VIEW).panel;
+        let frame = d.frame(VIEW);
         for (r, tab) in &strip {
-            assert!(
-                r.x1 <= panel.x1 && r.x0 >= panel.x0,
-                "{tab:?} leaves the dialog"
-            );
+            assert!(frame.contains(r.center()), "{tab:?} leaves the dialog");
             let label = atomik_ui::i18n::t(tab.label());
             assert!(
-                crate::menubar::text_width(label) * 12.0 / 13.0 <= r.width() + 8.0,
+                crate::menubar::text_width(label) + 12.0 <= r.width(),
                 "{label} does not fit its tab"
             );
         }
@@ -2406,7 +2423,7 @@ fn the_themes_tab_lists_the_builtin_themes_with_the_one_in_use_marked() {
     let strip = d.tab_strip(VIEW);
     assert_eq!(strip.len(), 10);
     for pair in strip.windows(2) {
-        assert!(pair[0].0.x1 <= pair[1].0.x0, "tabs do not overlap");
+        assert!(pair[0].0.y1 <= pair[1].0.y0, "tabs do not overlap");
     }
 }
 

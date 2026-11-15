@@ -219,6 +219,12 @@ may break APIs and the patch and project formats.
   clips play as before (unwarped until their buffer is ready). Offline bounces never hear the preview and stay
   bit-identical; the project format is unchanged (45).
 
+### Changed
+- **The Settings window keeps one size and lists its tabs in a sidebar.** Switching tabs no longer resizes or moves
+  the window: it is as wide as 920 px allows and as tall as its tallest tab (at least 600 px), within the window. The
+  ten tabs are a column on the left with labels at the normal size, instead of a cramped row of small labels beside the
+  title; a tab's content takes the rest, and a long one scrolls as before.
+
 ### Fixed
 - **An instrument moved in the rack takes its mix channel along.** Dragging an instrument to another column (or along
   its own) now moves its console channel, with the channel's inserts, right under it in the same undo step, in every
