@@ -4252,6 +4252,18 @@ channels are processed independently.
 - Knob, mix, output and the auto-level gain are smoothed per batch (10 ms). Non-finite input
   samples count as 0. `process`, `set_param` (the oversampling too) and `reset` never allocate.
 
+### Panel
+
+A custom 1 U panel, left to right: the big SATURATION knob (eleven ticks, the ones up to the value lit,
+and OFF at the minimum), a DRIVE lamp beside it that reads the `drive` meter (dark at 0, then brighter
+with a wider glow), the vertical SATURATION TYPE switch (KEEP HIGH on top, NEUTRAL, KEEP LOW at the
+bottom), then MIX, OUTPUT, the AUTO LEVEL toggle and the OVERSAMPLING selector. Every knob takes a drag
+(one undo step, Shift for fine, Esc to restore), the wheel, a double click to reset and a right click for
+the MIDI menu. On the type switch a press on a label or a position picks it, a drag steps through the
+three (up is up), and the wheel and the arrow keys step without wrapping. The back has AUDIO IN, CV IN
+(the `saturation_cv_in` jack with its trim knob beside it: a 1 U panel has no room under it) and AUDIO
+OUT. Source: [crates/ui/src/saturation_panel.rs](../crates/ui/src/saturation_panel.rs).
+
 ### Suits
 
 A little on the master or a drum bus in neutral thickens it; keep low on a bass or a kick adds

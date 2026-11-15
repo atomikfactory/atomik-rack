@@ -446,6 +446,7 @@ pub mod repetition_panel;
 pub mod resonance_marks;
 pub mod reverb_send_panel;
 pub mod sample_editor;
+pub mod saturation_panel;
 pub mod scale_panel;
 pub mod scene_canvas;
 pub mod search_field;

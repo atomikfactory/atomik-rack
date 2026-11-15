@@ -63,6 +63,7 @@ mod live_panels;
 mod macro_drag;
 mod navigator;
 mod pad_lights;
+mod sat_input;
 pub use jacks::{JackChoice, JackGroup, JackMenu, JackOp, JackPeer};
 pub use navigator::NAVIGATOR_WIDTH;
 mod master_input;
@@ -3126,6 +3127,7 @@ impl RackView {
                 let text = (d.fx == Some(FxKind::Character))
                     .then(|| crate::fx::character_value_text(p.key, *value))
                     .flatten()
+                    .or_else(|| self.sat_knob_text(*dev, p.key, *value))
                     .unwrap_or_else(|| mix_input::value_text(p, *value));
                 Some(format!("{}  {}", autolayout::control_label(p), text))
             }
@@ -4306,6 +4308,9 @@ impl RackView {
             (ControlKind::Toggle, PointerButton::Primary) => {
                 out.push(param_cmd(&key, p.key, widget::toggled(p, value), None));
             }
+            (ControlKind::Choice, PointerButton::Primary) if self.is_sat_type(i, p.key) => {
+                self.sat_type_down(i, slot, p, value, out);
+            }
             (ControlKind::Choice, PointerButton::Primary)
                 if crate::master_panel::is_pick_list(p) =>
             {
@@ -4427,6 +4432,9 @@ impl RackView {
         }
         let new = match kind {
             ControlKind::Knob | ControlKind::Fader => widget::wheel_value(p, value, notches, fine),
+            ControlKind::Choice if self.is_sat_type(i, p.key) => {
+                crate::saturation_panel::type_step(value, notches)
+            }
             ControlKind::Choice => widget::cycle_choice(p, value, notches > 0.0),
             ControlKind::Toggle => widget::toggled(p, value),
             ControlKind::Display => return None,
@@ -4865,6 +4873,14 @@ impl RackView {
                     && let Some((_, kind, _)) = self.param_of(i, s)
                     && matches!(kind, ControlKind::Toggle | ControlKind::Choice)
                 {
+                    // The saturation type switch cycles round, down and then back to the top.
+                    if let Some((p, _, value)) = self.param_of(i, s)
+                        && self.is_sat_type(i, p.key)
+                    {
+                        let next = widget::cycle_choice(p, value, true);
+                        out.push(param_cmd(&self.devices[i].key, p.key, next, None));
+                        return;
+                    }
                     out.extend(self.step_control(i, s, 1.0, false));
                 }
             }
