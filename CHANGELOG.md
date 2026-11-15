@@ -14,6 +14,18 @@ may break APIs and the patch and project formats.
   double click on its title. A larger spectrum asks for a finer trace (up to 1024 columns) and labels more
   frequencies and the dB lines. The pointer over the plot reads out the frequency, the nearest note and the level;
   **HOLD** draws the peaks as a slowly falling line, and a click on the plot starts it again.
+- **A bigger EQ.** The EQ has seven bands: LCF, 1 to 5 and HCF. Each of the five middle bands is a bell, a low shelf,
+  a high shelf or a notch, the cuts run at 6, 12, 24, 36 or 48 dB per octave and have a resonance, and a new fourth
+  bell is there when you need it. A STEREO mode runs the bands on the mid or the side only (and solos either), and
+  every band has a CV input for its frequency, its Q or resonance and, for the middle bands, its gain, with a trim
+  knob under each jack on the back (a grid: rows FREQ, GAIN and Q, columns LCF to HCF). The panel is taller: a big
+  graph with the real spectrum of the EQ output behind the curve (a SPECTRUM switch), each band tinted in its colour,
+  numbered handles and a range of ±6, ±12 or ±24 dB, then one strip per band with its values, and the output with
+  level meters. In the graph a drag moves a handle in frequency and gain as one undo step, Alt-drag or the wheel
+  changes the Q, a double-click on a handle resets the band, a double-click on empty graph switches on the nearest
+  band that is free, and a right-click on a handle chooses its shape or slope, switches it or resets it. Projects
+  saved before keep their sound, band for band; the spectrum is analysed only while the panel is on screen with the
+  switch on and the device not bypassed.
 - **Comp mode in the audio clip editor.** Press COMP for a clip with takes: a comp lane over one lane per take,
   newest on top. Press on a take to hear it from there, drag a range of it into the comp (one `SetCompRange`, one
   undo step, with a crossfade at the cuts, 10 ms to start with and settable), Up and Down move the range to the take

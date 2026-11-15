@@ -312,6 +312,8 @@ pub struct AppCore<S: EngineSink> {
     tuners: tuner::Tuners,
     /// The EQs whose analyser the engine was told to run.
     eq_live: eq_live::EqLive,
+    /// The EQs whose scope tap shows their spectrum (see `app_core_eq_spectrum.rs`).
+    eq_spectra: eq_spectrum::EqSpectra,
     /// The resonance finder of the dynamic EQ (see `app_core_resonance.rs`).
     resonance: resonance_finder::Finder,
     /// Learn from kick of the Sidechain Tool (see `app_core_duck_learn.rs`).
@@ -636,6 +638,7 @@ impl<S: EngineSink> AppCore<S> {
             analysers: analysers::Analysers::default(),
             tuners: tuner::Tuners::default(),
             eq_live: eq_live::EqLive::default(),
+            eq_spectra: eq_spectrum::EqSpectra::default(),
             resonance: resonance_finder::Finder::default(),
             duck_learn: duck_learner::Learner::default(),
             blind: blind::Blind::default(),
@@ -1788,6 +1791,7 @@ impl<S: EngineSink> AppCore<S> {
         self.analysers.restart();
         self.tuners.restart();
         self.eq_live.restart();
+        self.eq_spectra.restart();
         self.blind.restart();
         self.speq.restart();
         self.meter_panels.restart();
@@ -1874,6 +1878,7 @@ impl<S: EngineSink> AppCore<S> {
         self.sync_inserts_folded();
         self.video_frame();
         self.feed_eq_analysers();
+        self.feed_eq_spectra();
         self.poll_resonances();
         self.poll_duck_learn();
         self.feed_match_gains();
@@ -4124,6 +4129,8 @@ pub use meter_panels::CurveFrom;
 
 #[path = "app_core_eq_live.rs"]
 mod eq_live;
+#[path = "app_core_eq_spectrum.rs"]
+mod eq_spectrum;
 
 #[path = "app_core_blind.rs"]
 mod blind;
@@ -4418,6 +4425,9 @@ mod meter_panels_tests;
 #[cfg(test)]
 #[path = "app_core_eq_live_tests.rs"]
 mod eq_live_tests;
+#[cfg(test)]
+#[path = "app_core_eq_spectrum_tests.rs"]
+mod eq_spectrum_tests;
 
 #[cfg(test)]
 #[path = "app_core_tuner_tests.rs"]

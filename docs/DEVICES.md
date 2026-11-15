@@ -1596,59 +1596,103 @@ per sample).
 
 ## EQ: `atomik.eq` (Effect)
 
-A six-band stereo parametric EQ with an analyser feed. Source:
-[crates/devices/src/eq.rs](../crates/devices/src/eq.rs), filters from `atomik_dsp::SmoothedBiquad`.
+A seven-band stereo parametric EQ with selectable band shapes, 6 to 48 dB/oct cuts with resonance,
+Mid/Side modes, CV on every band, and a scope tap for the spectrum behind its curve. Source:
+[crates/devices/src/eq.rs](../crates/devices/src/eq.rs), filters from `atomik_dsp::SmoothedBiquad`;
+panel: [crates/ui/src/eq_panel.rs](../crates/ui/src/eq_panel.rs).
 
 ### Sockets
 
-`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
+`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out), and 19 CV inputs: `bandN_freq_cv_in` and
+`bandN_q_cv_in` for every band N = 1 to 7 (the Q input is the resonance of a cut), and
+`bandN_gain_cv_in` for the middle bands N = 2, 3, 4, 5, 7.
+
+### The bands
+
+The panel shows the bands in the order **LCF, 1, 2, 3, 4, 5, HCF**. The keys keep the numbers they
+had before the seventh band was added, so band 4 on the panel is `band7`:
+
+| Panel | Keys | Kind |
+|---|---|---|
+| LCF | `band1.on` / `.freq` / `.q`, `lowcut.slope` | low cut (high-pass) |
+| 1 | `band2.on` / `.freq` / `.gain` / `.q` / `.shape` | middle, a low shelf by default |
+| 2 | `band3.*` | middle, a bell by default |
+| 3 | `band4.*` | middle, a bell by default |
+| 4 | `band7.*` | middle, a bell by default (new; 0 dB, so off until it is used) |
+| 5 | `band5.*` | middle, a high shelf by default |
+| HCF | `band6.on` / `.freq` / `.q`, `highcut.slope` | high cut (low-pass) |
 
 ### Params
 
 | Key | Range | Default | Unit | Discrete |
 |---|---|---|---|---|
-| `band1.on` / `.freq` / `.q` (low cut) | 0 or 1 / 20 to 2000 Hz / 0.3 to 4 | 0 / 80 / 0.707 | toggle / Hz / none | on: yes |
-| `lowcut.slope` | 0 to 2: 12, 24, 48 dB/oct | 0 | choice | yes |
-| `band2.on` / `.freq` / `.gain` / `.q` (low shelf) | 0 or 1 / 20 to 5000 Hz / −24 to 24 dB / 0.3 to 2 | 1 / 120 / 0 / 0.707 | toggle / Hz / dB / none | on: yes |
-| `band3.on` / `.freq` / `.gain` / `.q` (peak 1) | 0 or 1 / 20 to 20000 Hz / −24 to 24 dB / 0.1 to 18 | 1 / 500 / 0 / 1 | toggle / Hz / dB / none | on: yes |
-| `band4.on` / `.freq` / `.gain` / `.q` (peak 2) | 0 or 1 / 20 to 20000 Hz / −24 to 24 dB / 0.1 to 18 | 1 / 2500 / 0 / 1 | toggle / Hz / dB / none | on: yes |
-| `band5.on` / `.freq` / `.gain` / `.q` (high shelf) | 0 or 1 / 500 to 20000 Hz / −24 to 24 dB / 0.3 to 2 | 1 / 8000 / 0 / 0.707 | toggle / Hz / dB / none | on: yes |
-| `band6.on` / `.freq` / `.q` (high cut) | 0 or 1 / 1000 to 20000 Hz / 0.3 to 4 | 0 / 16000 / 0.707 | toggle / Hz / none | on: yes |
-| `highcut.slope` | 0 to 2: 12, 24, 48 dB/oct | 0 | choice | yes |
+| `band1.on` / `.freq` / `.q` (LCF) | 0 or 1 / 20 to 2000 Hz / 0.3 to 4 (resonance) | 0 / 80 / 0.707 | toggle / Hz / none | on: yes |
+| `lowcut.slope`, `highcut.slope` | 0 to 4: 12, 24, 48, 6, 36 dB/oct (shown 6, 12, 24, 36, 48) | 0 | choice | yes |
+| `bandN.on` / `.freq` / `.gain` / `.q` (N = 2, 3, 4, 7, 5) | 0 or 1 / 20 to 20000 Hz (band2 to 5000, band5 from 500) / −24 to 24 dB / 0.1 to 18 | see the table above | toggle / Hz / dB / none | on: yes |
+| `bandN.shape` (N = 2, 3, 4, 7, 5) | 0 to 3: Bell, Low shelf, High shelf, Notch | 1 (band2), 2 (band5), else 0 | choice | yes |
+| `band6.on` / `.freq` / `.q` (HCF) | 0 or 1 / 1000 to 20000 Hz / 0.3 to 4 (resonance) | 0 / 16000 / 0.707 | toggle / Hz / none | on: yes |
 | `output` | −24 to 24 | 0 | dB | no |
-| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+| `stereo.mode` | 0 to 4: Stereo, Mid, Side, Mid solo, Side solo | 0 | choice | yes |
+| `spectrum.on` | 0 or 1: the spectrum behind the curve (a display setting) | 1 | toggle | yes |
+| `display.range` | 0 to 2: ±6, ±12, ±24 dB (a display setting) | 1 | choice | yes |
+| `bandN.freq_cv_trim`, `bandN.q_cv_trim` (N = 1 to 7), `bandN.gain_cv_trim` (N = 2, 3, 4, 5, 7) | −1 to 1 | 1 | percent | no |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | yes |
 
-Frequencies and Q use the exponential taper, gains and `output` the linear one. The bands run in the
-order 1 to 6; the param ids are in that order too (`band1.on` is 0, `output` is 24).
+Frequencies and Q use the exponential taper, gains and `output` the linear one. `internal.analyser_live`
+(never stored) is set by the app. Projects saved before the upgrade keep their sound: the old keys
+mean what they meant, the shapes default to the old fixed types and the new params default to
+"off" or "flat".
 
 ### Behaviour (as built)
 
 - **Filters.** RBJ cookbook sections with `f64` coefficients and state. Frequency (log₂ Hz), Q (ln
   Q) and gain (dB) are smoothed with a 10 ms one-pole and the coefficients are recomputed every 16
-  samples while a parameter moves (the parameters are interpolated, so sweeps do not zipper).
-  Measured against the RBJ response (7 shelf and peak settings × 10 frequencies) the sine-sweep
-  error is below 0.001 dB; the cut filters match the closed-form Butterworth response
-  (bilinear-warped) to the same accuracy.
-- **Cut slopes.** 12 dB/oct is one 2nd-order section (Q = `q`), 24 dB/oct a 4th-order Butterworth (Q
-  0.5412 and 1.3066), 48 dB/oct an 8th-order one (Q 0.5098, 0.6013, 0.8999, 2.5629). `q` of a cut
-  scales the highest-Q section by `q / 0.7071`, so the default is the exact Butterworth (−3.01 dB at
-  the corner) and a larger `q` adds resonance (at 12 dB/oct the gain at the corner is `q`). Measured
-  slopes 12.0 / 24.1 / 48.2 dB/oct (low cut). A slope change fades the band out (3 ms), rebuilds it
-  and fades it in (10 ms) so it does not click.
-- **Off bands are bit-transparent.** Every band has a bypass weight (10 ms fade, snapping to exactly
-  0 after about 100 ms). A band that is off, and a shelf or peak with exactly 0 dB gain, is skipped,
-  so with every band off and `output` 0 dB the output equals the input bit for bit (also the default
-  state).
-- **Analyser.** It runs only while the app sets `internal.analyser_live` (never stored; the rack view
-  sets it for the EQ panels on screen), the audio output is the same either way, and the band
-  energies read 0 while it is off. The mono mix of the output feeds a fixed bank of 16 RBJ band-pass biquads (0 dB peak
-  gain, Q 2.485) with centres log-spaced from 40 Hz to 16 kHz (ratio 1.4915), designed in `prepare`.
-  It runs at the full sample rate on the audio thread (16 `f64` biquads per sample; no FFT, no
-  decimation) and the mean square of every band is taken per batch and smoothed with a 50 ms
-  one-pole. `meter_values` (18): `[0..16)` band energies (linear power; a sine of peak A at a band
-  centre reads about A²/2, use 10·log10 for dB), `[16]` output peak L, `[17]` output peak R.
-  `atomik_devices::eq::analyser_centres(sr)` gives the centre frequencies.
+  samples while a parameter moves, so sweeps do not zipper.
+- **Shapes.** A middle band is a bell, a low shelf, a high shelf or a notch. A bell or shelf with
+  exactly 0 dB counts as off; a notch ignores the gain and is active whenever the band is on.
+  Shelves use a Q of 0.3 to 2, bells and notches 0.1 to 18. A shape change fades the band out
+  (3 ms), rebuilds it and fades it in (10 ms), so it does not click.
+- **Cut slopes.** 6 dB/oct is one first-order section, 12 dB/oct one 2nd-order section (Q = `q`),
+  24, 36 and 48 dB/oct are 4th, 6th and 8th-order Butterworths. `q` of a cut (its resonance)
+  scales the highest-Q section by `q / 0.7071`, so the default is the exact Butterworth (−3.01 dB
+  at the corner) and a larger `q` adds resonance. A slope change is faded like a shape change.
+- **Off bands are bit-transparent.** A band that is off, and a bell or shelf with exactly 0 dB gain,
+  is skipped, so with every band off and `output` 0 dB the output equals the input bit for bit.
+- **Stereo mode.** Stereo runs L and R through the bands. Mid and Side run the bands on `M = (L +
+  R) / 2` or `S = (L − R) / 2` and leave the other part as it was; Mid solo and Side solo send the
+  EQ'd part to both outputs. A change fades the output for one batch and clears the filter state.
+- **CV.** Each CV is the batch mean clamped to −1..+1 times its trim: gain adds `cv · trim · 24` dB,
+  frequency is multiplied by `2^(cv · trim · 4)`, Q by `2^(cv · trim · 2)`. Unconnected: bit-identical.
+- **Spectrum tap.** The device owns a scope tap with the output after the output gain; the app keeps
+  it live only while the panel is on screen with `spectrum.on` set and the device not bypassed, runs
+  an FFT on it on the UI thread and draws the trace behind the curve.
+- **Analyser.** It runs only while the app sets `internal.analyser_live`. The mono mix of the output
+  feeds a fixed bank of 16 RBJ band-pass biquads (Q 2.485, centres log-spaced from 40 Hz to 16 kHz).
+  `meter_values` (18): `[0..16)` band energies (linear power), `[16]` output peak L, `[17]` output
+  peak R (the panel's L/R meters).
 - **Latency** 0. Non-finite input is treated as 0.
+
+### The panel
+
+A 7 U panel. The top is the response graph (the dB range is `display.range`): the spectrum of the
+output, each active band tinted in its colour, the summed curve and a numbered handle per band (a
+cut's handle is a pill on its own curve at the corner, a notch sits on the 0 dB line, a band that is
+off has a hollow handle). The curve is computed with the same biquad designs as the DSP, so it matches
+the sound for every shape and slope. Below it is one strip per band (ON, shape or slope, FREQ, GAIN,
+Q or RESO, each with its value) and, at the right, OUTPUT with the L/R level meters, the stereo mode,
+the SPECTRUM switch and the range.
+
+- **Drag a handle:** frequency and gain together (a cut or a notch: the frequency), one undo step;
+  Alt-drag changes the Q (the resonance of a cut); Esc cancels.
+- **Wheel over a handle:** steps its Q.
+- **Double-click a handle:** resets the band (frequency, gain, Q).
+- **Double-click on the empty graph:** switches on the nearest middle band that is not in use and puts
+  it there.
+- **Right-click a handle:** the shape (middle bands) or the slope (cuts), Band on, Reset band.
+
+The back is a grid of the CV inputs: the rows FREQ, GAIN and Q/RESO, the columns LCF, 1 to 5, HCF; each
+cell is a jack with its trim knob under it (no GAIN cell for the cuts). The audio sockets are at the
+right.
 
 ---
 

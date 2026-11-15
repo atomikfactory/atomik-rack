@@ -132,13 +132,24 @@ fn an_eq_and_a_dynamic_eq_are_switched_independently() {
     let mut core = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
     add(&mut core, "eq");
     add_of(&mut core, DYNAMIC_EQ, "dyn");
+    // Both panels must be on screen: the EQ is 7 U tall.
+    let _ = core.handle_event(&atomik_ui::UiEvent::Resize(atomik_ui::kurbo::Size::new(
+        820.0, 3_000.0,
+    )));
     core.frame();
     let calls = core.sink_mut().take();
+    let (eq_id, dyn_id) = (
+        core.device_id(&key("eq")).unwrap(),
+        core.device_id(&key("dyn")).unwrap(),
+    );
     let sent = |type_id: &str| {
+        let want = if type_id == EQ { eq_id } else { dyn_id };
         let pid = core_param(type_id);
         calls
             .iter()
-            .filter(|c| matches!(c, SinkCall::Param { param, .. } if *param == pid))
+            .filter(
+                |c| matches!(c, SinkCall::Param { id, param, .. } if *param == pid && *id == want),
+            )
             .count()
     };
     assert_eq!(sent(EQ), 1);
@@ -146,11 +157,18 @@ fn an_eq_and_a_dynamic_eq_are_switched_independently() {
     core.rebuild_engine();
     core.frame();
     let calls = core.sink_mut().take();
+    let (eq_id, dyn_id) = (
+        core.device_id(&key("eq")).unwrap(),
+        core.device_id(&key("dyn")).unwrap(),
+    );
     let again = |type_id: &str| {
+        let want = if type_id == EQ { eq_id } else { dyn_id };
         let pid = core_param(type_id);
         calls
             .iter()
-            .filter(|c| matches!(c, SinkCall::Param { param, .. } if *param == pid))
+            .filter(
+                |c| matches!(c, SinkCall::Param { id, param, .. } if *param == pid && *id == want),
+            )
             .count()
     };
     assert_eq!(again(EQ), 1, "an engine restart sends it again");
