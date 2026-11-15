@@ -1667,7 +1667,8 @@ their sound: the old keys mean what they meant, the shapes default to the old fi
   it live only while the panel is on screen with `spectrum.on` set and the device not bypassed, runs
   an FFT on it on the UI thread and draws the trace behind the curve.
 - **Analyser.** It runs only while `internal.analyser_live` is set (the app leaves it off: the
-  panel reads only the peaks). The mono mix of the output feeds a fixed bank of 16 RBJ band-pass biquads (Q 2.485, centres log-spaced from 40 Hz to 16 kHz).
+  panel reads only the peaks). The mono mix of the output feeds a fixed bank of 16 RBJ band-pass
+  biquads (Q 2.485, centres log-spaced from 40 Hz to 16 kHz).
   `meter_values` (18): `[0..16)` band energies (linear power), `[16]` output peak L, `[17]` output
   peak R (the panel's L/R meters).
 - **Latency** 0. Non-finite input is treated as 0.
