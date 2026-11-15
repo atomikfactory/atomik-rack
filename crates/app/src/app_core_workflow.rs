@@ -325,6 +325,17 @@ impl<S: EngineSink> AppCore<S> {
         self.view.open_browser_create(kind, &self.registry);
     }
 
+    /// [`Self::open_create_browser`] from the rack's right-click menu: the device chosen goes to
+    /// the slot that was clicked on the empty rack, if any, or a new column when the click was
+    /// past the last one (a note player still joins the stack of the selection).
+    pub fn open_create_browser_from_menu(&mut self, kind: CreateKind) {
+        let slot = self
+            .view
+            .take_create_slot()
+            .filter(|_| kind != CreateKind::Player);
+        self.view.open_browser_create_at(kind, &self.registry, slot);
+    }
+
     /// Closes the editor that shows in place of the arrangement (piano roll, sample, step,
     /// slice, sequencer, container or plugin parameter pane); false when none is open.
     pub fn close_open_editor(&mut self) -> bool {

@@ -199,7 +199,24 @@ impl RackView {
     /// The slot under the last right click on the empty rack, once: a paste from the rack's
     /// menu lands there. Any other click or key clears it.
     pub fn take_context_slot(&mut self) -> Option<RackSlot> {
+        self.context_new_column = false;
         self.context_slot.take()
+    }
+
+    /// [`Self::take_context_slot`] for a device created from the rack's menu: a right click
+    /// past the last column asks for a new column on the right (the slot then is
+    /// `columns`, which the model appends in the same undo step as the device).
+    pub fn take_create_slot(&mut self) -> Option<RackSlot> {
+        let new_column = std::mem::take(&mut self.context_new_column);
+        let slot = self.context_slot.take()?;
+        Some(if new_column && self.can_add_column() {
+            RackSlot {
+                column: self.columns,
+                index: 0,
+            }
+        } else {
+            slot
+        })
     }
 
     // ------------------------------------------------------------------ navigator seam

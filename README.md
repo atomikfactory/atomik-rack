@@ -13,6 +13,10 @@ The project is original work, released under the GPL-3.0-or-later. It is pre-1.0
 
 ☕ Buy me a coffe: https://buymeacoffee.com/atomik.factory
 
+🌐 **Website, downloads and tutorials:** [atomikcircus.com/atomik-rack](https://atomikcircus.com/atomik-rack/) ·
+[Download](https://atomikcircus.com/atomik-rack/download/) ·
+[Step-by-step video tutorials](https://atomikcircus.com/atomik-rack/tutorials/)
+
 ## Status
 
 - **Windows (x86-64) and Ubuntu (x86-64, 26.04) are the main platforms.** The application is developed and hand-tested on both, including ASIO audio on Windows. On Linux, distributions other than Ubuntu and other audio setups have not been checked yet, so expect rough edges and please report them.

@@ -44,15 +44,30 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Creates a device of the built-in type `type_id` as picking its row in the device browser
     /// does (an instrument gets its track and channel, an effect goes after the selected
-    /// device, a player into its stack). A refusal is the message.
+    /// device, a player into its stack). From a right click on the empty rack it goes to the
+    /// place that was clicked, in that column, as a paste does, and past the last column into
+    /// a new column (a player still joins the stack of the selection). A refusal is the
+    /// message.
     pub fn create_device_of_type(&mut self, type_id: &str) {
         let Some(desc) = self.registry.descriptor(type_id) else {
             self.report(format!("There is no device type '{type_id}'"));
             return;
         };
-        let action =
-            self.view
-                .add_device_action_for(desc, self.document.doc(), atomik_ui::Modifiers::NONE);
+        let slot = self
+            .view
+            .take_create_slot()
+            .filter(|_| !atomik_ui::browser::is_player(type_id));
+        let action = match slot {
+            Some(slot) => {
+                self.view
+                    .add_device_slot_action_for(desc, slot, atomik_ui::Modifiers::NONE)
+            }
+            None => self.view.add_device_action_for(
+                desc,
+                self.document.doc(),
+                atomik_ui::Modifiers::NONE,
+            ),
+        };
         self.handle_action(action);
     }
 

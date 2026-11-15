@@ -655,6 +655,9 @@ pub struct RackView {
     column_target: u16,
     /// The slot under the last right click on the empty rack, for a paste from its menu.
     context_slot: Option<RackSlot>,
+    /// Whether that right click was past the last column (a device created from the menu
+    /// then gets a new column).
+    context_new_column: bool,
     /// The clock of the last auto-scroll tick, while one is running.
     tick_clock: Option<f64>,
     /// The clock of the last pad light fade, while a light is on.
@@ -1023,6 +1026,7 @@ impl RackView {
             columns: 1,
             column_target: 0,
             context_slot: None,
+            context_new_column: false,
             tick_clock: None,
             lights_clock: None,
             insert_at: None,
@@ -2871,6 +2875,21 @@ impl RackView {
         self.repaint = true;
     }
 
+    /// [`Self::open_browser_create`] whose chosen row goes to `slot` (top level only), as a
+    /// browser opened by a "+" handle does: the Create item of the rack's right-click menu
+    /// creates in the column that was clicked.
+    pub fn open_browser_create_at(
+        &mut self,
+        kind: CreateKind,
+        registry: &Registry,
+        slot: Option<RackSlot>,
+    ) {
+        self.open_browser_create(kind, registry);
+        if let Some(slot) = slot.filter(|_| self.scope.is_empty()) {
+            self.set_insert(Some(slot));
+        }
+    }
+
     /// The kind the browser was opened to create (`None`: the normal browser).
     pub fn browser_create(&self) -> Option<CreateKind> {
         self.browser.create
@@ -3799,6 +3818,7 @@ impl RackView {
     ) {
         self.toast = None;
         self.context_slot = None;
+        self.context_new_column = false;
         self.pointer = pos;
         self.repaint = true;
         if self.big_meter_press(pos, button) {
@@ -4135,6 +4155,8 @@ impl RackView {
             (Hit::Rack, PointerButton::Secondary) => {
                 self.column_target = self.column_at(rp.x);
                 self.context_slot = self.slot_at(rp, doc);
+                self.context_new_column =
+                    self.context_slot.is_some() && self.drop_column(rp.x) == self.columns;
                 out.push(UiAction::ContextMenu {
                     target: ContextTarget::Rack,
                     at: pos,
@@ -4690,6 +4712,7 @@ impl RackView {
     ) {
         self.repaint = true;
         self.context_slot = None;
+        self.context_new_column = false;
         // A name or a search being typed takes the letter chords (undo, copy, paste, ...) itself.
         let typing_chord = self.is_text_owner() && matches!(key, Key::Char(_));
         // Chords with the primary modifier are commands (undo, duplicate, ...): the shell
