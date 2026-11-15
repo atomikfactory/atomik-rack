@@ -159,7 +159,7 @@
 {"text":"OUTPUT","at":[486.00,11.50],"size":8.00,"weight":600,"align":"start","color":"#8f96a0ff","spacing":1.00},
 {"stroke":{"line":[519.84,8.50,610.00,8.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
 {"text":"OVERSAMPLING","at":[616.00,11.50],"size":8.00,"weight":600,"align":"start","color":"#8f96a0ff","spacing":1.00},
-{"stroke":{"line":[677.68,8.50,708.00,8.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"stroke":{"line":[677.68,8.50,736.00,8.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
 {"stroke":{"path":"M439.04 46.96 C432.99 40.91 432.99 31.09 439.04 25.04 C445.09 18.99 454.91 18.99 460.96 25.04 C467.01 31.09 467.01 40.91 460.96 46.96 "},"width":2.60,"cap":"round","join":"round","brush":"#141518ff"},
 {"stroke":{"path":"M439.04 46.96 C434.29 42.21 433.14 34.95 436.19 28.96 C439.24 22.98 445.79 19.64 452.42 20.69 C459.06 21.74 464.26 26.94 465.31 33.58 "},"width":2.60,"cap":"round","join":"round","brush":"#5ad891ff"},
 {"fill":{"circle":[450.00,38.00,12.00]},"brush":"#0000008c"},

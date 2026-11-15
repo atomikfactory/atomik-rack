@@ -4424,6 +4424,19 @@ impl RackView {
     }
 
     fn step_control(&self, i: usize, slot: usize, notches: f64, fine: bool) -> Option<UiAction> {
+        self.step_control_wrap(i, slot, notches, fine, false)
+    }
+
+    /// [`Rack::step_control`]; with `wrap` the saturation type switch cycles round (down, then
+    /// back to the top) instead of stopping at its ends, as Space and Enter do.
+    fn step_control_wrap(
+        &self,
+        i: usize,
+        slot: usize,
+        notches: f64,
+        fine: bool,
+        wrap: bool,
+    ) -> Option<UiAction> {
         let (p, kind, value) = self.param_of(i, slot)?;
         if self.driven_by(i, p.key).is_some()
             && !(self.scope.is_empty() && !inline::is_inner(&self.devices[i].key))
@@ -4432,6 +4445,9 @@ impl RackView {
         }
         let new = match kind {
             ControlKind::Knob | ControlKind::Fader => widget::wheel_value(p, value, notches, fine),
+            ControlKind::Choice if self.is_sat_type(i, p.key) && wrap => {
+                widget::cycle_choice(p, value, true)
+            }
             ControlKind::Choice if self.is_sat_type(i, p.key) => {
                 crate::saturation_panel::type_step(value, notches)
             }
@@ -4873,15 +4889,9 @@ impl RackView {
                     && let Some((_, kind, _)) = self.param_of(i, s)
                     && matches!(kind, ControlKind::Toggle | ControlKind::Choice)
                 {
-                    // The saturation type switch cycles round, down and then back to the top.
-                    if let Some((p, _, value)) = self.param_of(i, s)
-                        && self.is_sat_type(i, p.key)
-                    {
-                        let next = widget::cycle_choice(p, value, true);
-                        out.push(param_cmd(&self.devices[i].key, p.key, next, None));
-                        return;
-                    }
-                    out.extend(self.step_control(i, s, 1.0, false));
+                    // The saturation type switch cycles round, down and then back to the top
+                    // (through the same guards as every other step: driven params stay put).
+                    out.extend(self.step_control_wrap(i, s, 1.0, false, true));
                 }
             }
             Key::Home => self.set_scroll(0.0),

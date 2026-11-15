@@ -127,15 +127,26 @@ fn param_sweep_stays_finite() {
 }
 
 #[test]
-fn off_is_bit_exact_without_oversampling_for_every_type() {
+fn off_is_bit_exact_without_oversampling_in_neutral() {
     let x = noise(0.9, secs(0.3), 5);
-    for ty in [0.0, 1.0, 2.0] {
+    let mut h = make(0.0, 1.0, 0.0, true);
+    let (l, r) = run(&mut h, |n| x[n], x.len());
+    for (i, &v) in x.iter().enumerate() {
+        assert_eq!(l[i].to_bits(), v.to_bits(), "L {i}");
+        assert_eq!(r[i].to_bits(), v.to_bits(), "R {i}");
+    }
+}
+
+#[test]
+fn off_in_the_keep_types_is_the_crossover_all_pass() {
+    // Keep low / keep high route the dry signal through the all-pass of the same crossover, so
+    // OFF keeps the energy (flat magnitude) and the mix can never comb.
+    let x = noise(0.5, secs(1.0), 5);
+    for ty in [0.0, 2.0] {
         let mut h = make(0.0, ty, 0.0, true);
-        let (l, r) = run(&mut h, |n| x[n], x.len());
-        for (i, &v) in x.iter().enumerate() {
-            assert_eq!(l[i].to_bits(), v.to_bits(), "type {ty} L {i}");
-            assert_eq!(r[i].to_bits(), v.to_bits(), "type {ty} R {i}");
-        }
+        let y = run_l(&mut h, |n| x[n], x.len());
+        let (a, b) = (rms_of(&x[secs(0.2)..]), rms_of(&y[secs(0.2)..]));
+        assert!(db(b / a).abs() < 0.05, "type {ty}: {} dB", db(b / a));
     }
 }
 
@@ -272,7 +283,8 @@ fn auto_level_adds_gain_to_the_shaped_signal() {
 fn mix_zero_is_the_dry_input_latency_aligned() {
     let x = noise(0.8, secs(0.3), 9);
     for (os, lat) in [(0.0, 0usize), (1.0, 29), (2.0, 35)] {
-        let mut h = make(1.0, 2.0, os, true);
+        // Neutral: the dry path is the plain input (the keep types use the all-pass).
+        let mut h = make(1.0, 1.0, os, true);
         h.set_param("mix", 0.0);
         let l = run_l(&mut h, |n| x[n], x.len());
         // The mix smoother glides from its default: skip the first 100 ms.
@@ -584,4 +596,188 @@ fn channels_are_independent() {
     let l = y.remove(0);
     assert!(rms_of(&l[secs(0.2)..]) > 0.1);
     assert!(r.iter().all(|v| *v == 0.0), "a silent right stays silent");
+}
+
+/// The expected linear response of keep low (`ty` 2) / keep high (`ty` 0) at full knob: the clean
+/// band plus the level gain times the saturated band, from the same crossover. Returns the
+/// wet and the all-pass dry signals.
+fn keep_reference(ty: usize, hz: f64, amp: f64, len: usize) -> (Vec<f32>, Vec<f32>) {
+    let mut split = Crossover::new(SR as f32);
+    split.set_freq(SPLIT_HZ);
+    let level = level_gain(level_table(), ty, 1.0);
+    let x = sine(hz, amp);
+    let (mut wet, mut dry) = (Vec::new(), Vec::new());
+    for n in 0..len {
+        let (low, high) = split.process(x(n));
+        let (clean, sat) = if ty == 2 { (low, high) } else { (high, low) };
+        wet.push(clean + level * sat);
+        dry.push(low + high);
+    }
+    (wet, dry)
+}
+
+#[test]
+fn keep_types_have_no_notch_at_the_crossover() {
+    // -40 dBFS: the curve is nearly linear, so the response is the linear one.
+    let amp = 0.01;
+    for ty in [0.0f32, 2.0] {
+        for hz in [
+            50.0, 100.0, 200.0, 300.0, 400.0, 500.0, 800.0, 1500.0, 3000.0, 5000.0,
+        ] {
+            let mut h = make(1.0, ty, 0.0, true);
+            let y = run_l(&mut h, sine(hz, amp), secs(1.5));
+            let start = secs(1.0);
+            let got = tone_amplitude(&y[start..], hz, start);
+            let (want_wet, _) = keep_reference(ty as usize, hz, amp, secs(1.5));
+            let want = tone_amplitude(&want_wet[start..], hz, start);
+            assert!(
+                db((got / want) as f32).abs() < 1.0,
+                "type {ty} {hz} Hz: {got} vs {want}"
+            );
+            // Never a notch: at least the lower of the two band gains.
+            let floor = amp * f64::from(level_gain(level_table(), ty as usize, 1.0)).min(1.0);
+            assert!(got > 0.7 * floor, "type {ty} {hz} Hz notch: {got}");
+        }
+    }
+}
+
+#[test]
+fn keep_types_at_half_mix_do_not_comb() {
+    let amp = 0.01;
+    for ty in [0.0f32, 2.0] {
+        for hz in [100.0, 300.0, 400.0, 500.0, 1000.0, 3000.0] {
+            let mut h = make(1.0, ty, 0.0, true);
+            h.set_param("mix", 0.5);
+            let y = run_l(&mut h, sine(hz, amp), secs(1.5));
+            let start = secs(1.0);
+            let got = tone_amplitude(&y[start..], hz, start);
+            let (wet, dry) = keep_reference(ty as usize, hz, amp, secs(1.5));
+            let mixed: Vec<f32> = wet
+                .iter()
+                .zip(&dry)
+                .map(|(w, d)| 0.5 * w + 0.5 * d)
+                .collect();
+            let want = tone_amplitude(&mixed[start..], hz, start);
+            assert!(
+                db((got / want) as f32).abs() < 1.0,
+                "type {ty} {hz} Hz: {got} vs {want}"
+            );
+        }
+    }
+}
+
+#[test]
+fn switching_the_oversampling_live_does_not_drop_out_or_step() {
+    let x = sine(200.0, 0.3);
+    let seg = secs(0.2);
+    let mut h = make(0.5, 1.0, 0.0, true);
+    let mut y = run_l(&mut h, &x, seg);
+    let before = meters(&h)[meter::DRIVE];
+    let mut lamp_after = Vec::new();
+    for (i, os) in [1.0, 2.0, 0.0].into_iter().enumerate() {
+        h.set_param("oversampling", os);
+        let b = run_signal(
+            &mut h,
+            &["in_l", "in_r"],
+            |n| x(n + (i + 1) * seg),
+            seg.div_ceil(BATCH),
+            &["out_l"],
+        );
+        lamp_after.push(meters(&h)[meter::DRIVE]);
+        y.extend_from_slice(&b[0]);
+    }
+    let step = |s: &[f32]| {
+        s.windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max)
+    };
+    let steady = step(&y[seg - secs(0.05)..seg - 1]);
+    let steady_rms = rms_of(&y[seg - secs(0.05)..seg]);
+    for k in 1..=3 {
+        let at = k * seg;
+        let across = step(&y[at - 4..at + secs(0.01)]);
+        assert!(
+            across < steady * 2.5 + 0.01,
+            "switch {k}: step {across} vs {steady}"
+        );
+        // No dropout: every 4 ms window after the switch keeps most of the level.
+        let win = secs(0.004);
+        for w in (at..at + secs(0.02)).step_by(win) {
+            let r = rms_of(&y[w..w + win]);
+            assert!(
+                r > 0.75 * steady_rms,
+                "switch {k} window {w}: {r} vs {steady_rms}"
+            );
+        }
+    }
+    // The lamp does not jump to 1 on a switch.
+    for l in lamp_after {
+        assert!((l - before).abs() < 0.2 && l < 0.9, "lamp {l} vs {before}");
+    }
+}
+
+#[test]
+fn a_quiet_tail_passes_at_a_low_knob() {
+    // -90 dBFS: the curve must be a straight line there, with no rounding noise from `tanh`.
+    for knob in [0.005f32, 0.0003] {
+        let mut h = make(knob, 1.0, 0.0, false);
+        let x = sine(1000.0, 3.16e-5);
+        let y = run_l(&mut h, &x, secs(0.5));
+        let mut worst = 0.0f32;
+        for (n, &v) in y.iter().enumerate().skip(secs(0.1)) {
+            worst = worst.max((v - x(n)).abs());
+        }
+        // Better than -140 dBFS absolute (-50 dB relative to the tail).
+        assert!(worst < 1.0e-7, "knob {knob}: error {worst}");
+        let xs: Vec<f32> = (secs(0.2)..secs(0.5)).map(&x).collect();
+        let ratio = rms_of(&y[secs(0.2)..]) / rms_of(&xs);
+        assert!(
+            (ratio - 1.0).abs() < 1e-3,
+            "knob {knob}: muted or boosted, {ratio}"
+        );
+    }
+}
+
+#[test]
+fn off_with_a_partial_mix_is_still_bit_exact() {
+    let x = noise(0.7, secs(0.3), 21);
+    for (os, lat) in [(0.0, 0usize), (1.0, 29)] {
+        let mut h = make(0.0, 1.0, os, true);
+        h.set_param("mix", 0.3);
+        let l = run_l(&mut h, |n| x[n], x.len());
+        for i in lat..x.len() {
+            assert_eq!(l[i].to_bits(), x[i - lat].to_bits(), "os {os} sample {i}");
+        }
+    }
+}
+
+#[test]
+fn settling_into_off_does_not_step() {
+    let x = sine(220.0, 0.3);
+    let mut h = make(0.8, 1.0, 0.0, true);
+    let mut y = run_l(&mut h, &x, secs(0.3));
+    h.set_param("saturation", 0.0);
+    let b = run_signal(
+        &mut h,
+        &["in_l", "in_r"],
+        |n| x(n + secs(0.3)),
+        secs(0.7).div_ceil(BATCH),
+        &["out_l"],
+    );
+    y.extend_from_slice(&b[0]);
+    // The error against the dry input, from the knob going down on.
+    let d: Vec<f32> = y.iter().enumerate().map(|(n, v)| v - x(n)).collect();
+    let tail = secs(0.3);
+    let snap = (tail..d.len())
+        .rev()
+        .find(|&n| d[n] != 0.0)
+        .map_or(tail, |n| n + 1);
+    assert!(snap < d.len() - BATCH, "never settled on the dry path");
+    let worst = (snap.saturating_sub(2 * BATCH)..snap + 2)
+        .map(|n| (d[n] - d[n - 1]).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        worst < 1.0e-6,
+        "step at the snap: {worst} (-120 dB is 1e-6)"
+    );
 }

@@ -166,7 +166,9 @@ pub fn saturation_layout(desc: &DeviceDescriptor) -> PanelSpec {
     let toggle = |x: f64, w: f64| Rect::new(x, c + 12.0, x + w, c + 12.0 + 28.0);
     let choice = |x: f64, w: f64| Rect::new(x, c + 10.0, x + w, c + 10.0 + 36.0);
 
-    let knob = cell(x0, 110.0);
+    // The hit rect is the knob's own 58 x 58 (the scale included), centred in its 110 px slot;
+    // the OFF caption beside it is a label, not a target.
+    let knob = cell(x0 + 26.0, 58.0);
     let lamp = cell(x0 + 116.0, 32.0);
     let switch = cell(x0 + 168.0, 122.0);
     put("saturation", ControlKind::Knob, knob);
@@ -216,11 +218,12 @@ pub fn saturation_layout(desc: &DeviceDescriptor) -> PanelSpec {
         rect: Rect::new(a, title_y, b, title_y + TITLE_H),
     };
     let front_sections = vec![
-        title("SATURATION", knob.x0, lamp.x1),
+        title("SATURATION", x0, lamp.x1),
         title("SATURATION TYPE", switch.x0, switch.x1),
         title("MIX", mix_x, mix_x + KNOB_W),
         title("OUTPUT", mix_x + 60.0, mix_x + 60.0 + 124.0),
-        title("OVERSAMPLING", os_x, os_x + 92.0),
+        // Wider than the selector: the French name is 18 letters.
+        title("OVERSAMPLING", os_x, x1),
     ];
     let back_sections = vec![
         title("AUDIO IN", x0, x0 + 110.0),

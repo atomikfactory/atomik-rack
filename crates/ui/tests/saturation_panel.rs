@@ -224,13 +224,14 @@ fn the_panel_is_one_unit_and_every_part_is_inside_it() {
     for r in [g.knob, g.lamp, g.switch] {
         assert!(r.y0 >= 0.0 && r.y1 <= h && r.x1 <= atomik_ui::autolayout::CONTENT_X.1);
     }
-    // The big knob has a cell much wider than the small ones.
+    // The big knob's hit rect is its own size (about 58 px), not the 110 px slot.
     let mix = spec
         .front
         .iter()
         .find(|c| d.params[c.param].key == "mix")
         .unwrap();
-    assert!(g.knob.width() > 2.0 * mix.rect.width());
+    assert!(g.knob.width() > mix.rect.width() && g.knob.width() <= 60.0);
+    assert!(g.knob.height() <= 60.0);
     assert!(
         g.knob.x1 <= g.lamp.x0 && g.lamp.x1 <= g.switch.x0,
         "left to right"
@@ -742,5 +743,72 @@ fn preview_png() {
             .join(format!("../../target/preview/saturation_{name}.png"));
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, png).unwrap();
+    }
+}
+
+#[test]
+fn every_french_section_title_fits_its_section() {
+    use atomik_ui::i18n::{self, Lang};
+    let reg = registry();
+    let d = reg.get(SATURATION_TYPE).unwrap().descriptor;
+    let spec = atomik_ui::fx_layout::fx_layout(FxKind::Saturation, d);
+    let theme = Theme::dark();
+    i18n::with_language(Lang::French, || {
+        for s in spec.front_sections.iter().chain(&spec.back_sections) {
+            let text = i18n::tr(&s.label);
+            // Painted with 1 px of letter spacing; keep the rule's 6 px gap too.
+            let w = atomik_ui::paint::estimate_width(&text, theme.section_size)
+                + text.chars().count() as f64
+                + 6.0;
+            assert!(w <= s.rect.width(), "{text}: {w} > {}", s.rect.width());
+        }
+    });
+}
+
+#[test]
+fn enter_on_the_type_switch_wraps_and_goes_through_the_shared_step() {
+    use atomik_model::MacroAssign;
+    let reg = registry();
+    // Free: Enter cycles down and wraps from keep low back to keep high.
+    let (mut document, mut v) = rig_with(&[("type", 1.0)]);
+    let at = center(&v, "type");
+    let r = v.handle(&down(at), document.doc(), &reg);
+    apply(&mut document, &mut v, &r);
+    let r = v.handle(&up(at), document.doc(), &reg);
+    apply(&mut document, &mut v, &r);
+    // The click picked the middle position; Enter goes down to keep low, then wraps to the top.
+    for want in [2.0, 0.0] {
+        let r = v.handle(&key_event(Key::Enter), document.doc(), &reg);
+        apply(&mut document, &mut v, &r);
+        assert_eq!(param(&document, "type"), want);
+    }
+    // Driven by a macro.
+    let mut doc = fx_doc(FxKind::Saturation);
+    doc.devices[0].params.insert("type".into(), 1.0);
+    let mut bank = device("bank", "atomik.macro-bank", "Macro Bank");
+    bank.params.insert("macro1".into(), 0.5);
+    doc.devices.push(bank);
+    doc.macros.assigns.push(MacroAssign {
+        id: 1,
+        bank: key("bank"),
+        index: 0,
+        device: key("fx"),
+        param: "type".into(),
+        min: 0.0,
+        max: 2.0,
+        invert: false,
+        curve: Default::default(),
+        smooth_ms: 0,
+    });
+    let mut v = plain_view(&doc, &reg);
+    let at = v.control_center(&key("fx"), "type").unwrap();
+    let _ = v.handle(&down(at), &doc, &reg);
+    let _ = v.handle(&up(at), &doc, &reg);
+    for (n, k) in [Key::Enter, Key::Space].into_iter().enumerate() {
+        let a = v.handle(&key_event(k), &doc, &reg);
+        // In the rack proper a driven control still edits through its macro, like every other
+        // control: exactly one command, and it comes from the shared step (which blocks a driven
+        // param inside a container).
+        assert_eq!(set_params(&a).len(), 1, "key {n}: {a:?}");
     }
 }

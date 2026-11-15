@@ -7,10 +7,11 @@
 //! ```text
 //! x -> split at 400 Hz: low, high (24 dB/oct Linkwitz-Riley)
 //!   in  = n * x + l * low + h * high         (the part that is saturated)
-//!   keep = x - in                            (the part that stays clean)
+//!   keep = l * high + h * low                (the part that stays clean: the OTHER band)
 //!   shaped = [oversample -> f(g * in) / g -> filter]
 //!   wet = keep + L * (in + DC block(shaped - in))        (all delayed by the latency)
-//! out = (dry * (1 - mix) + wet * mix) * output gain      (dry: x delayed by the latency)
+//! out = (dry * (1 - mix) + wet * mix) * output gain
+//!   dry = x delayed by the latency (neutral), low + high delayed (keep low / keep high)
 //! ```
 //!
 //! * **Knob.** `saturation` 0..100 % maps to a drive gain `g = 15.85 * (16^k - 1) / 15`: 0 at
@@ -27,9 +28,14 @@
 //!   band goes through the curve as one signal, intermodulation included; the crossover is not
 //!   in the path), `(0, 0, 1)` for *keep low* (only what is above the split is saturated, the
 //!   lows pass clean and the harmonics land above them) and `(0, 1, 0)` for *keep high* (only
-//!   the lows and low mids are saturated). The clean part is the exact complement
-//!   `x - in`, so with no drive every type sums back to the input whatever the crossover's
-//!   phase. The weights are smoothed over 20 ms, so a switch is a crossfade, not a click.
+//!   the lows and low mids are saturated). The clean part is the other band of the same
+//!   crossover, so the two bands sum to the Linkwitz-Riley all-pass (flat magnitude): the
+//!   gain `L` scales only the saturated band and the sum has no notch at the split, whatever
+//!   `L` is. (`x - band` would not be the other band: both LR bands are -0.5 x at the split.)
+//!   In the keep types the dry signal for the mix goes through the same all-pass (`low +
+//!   high`), so the mix cannot comb; OFF in a keep type is that all-pass signal (not bit for
+//!   bit the input), and mix 0 likewise. Neutral keeps the plain delayed input.
+//!   The weights are smoothed over 20 ms, so a switch is a crossfade, not a click.
 //! * **Auto level.** `auto_level` (on by default) multiplies the shaped part by a static gain
 //!   `L(knob)` that depends only on the knob and the type, never on the signal: no pumping. The
 //!   table behind it is computed when the device is built: the gain that gives back the RMS
@@ -42,10 +48,15 @@
 //! * **Oversampling.** `oversampling` off, 2x or 4x runs the curve between the halfband stages
 //!   of [`atomik_dsp::oversample::Oversampler`]; the reported latency is 0, 29 or 35 samples and
 //!   changes with the setting (`variable_latency`). The dry path and the clean part are delayed
-//!   by the same amount.
-//! * **Transparent when off.** With `saturation` 0 (after the CV and the smoothing) the output
-//!   is the dry input (times `output`): bit for bit when `oversampling` is off and `output` is
-//!   0 dB, and the input delayed by the latency, bit for bit, when oversampling is on.
+//!   by the same amount. A live change crossfades the old and the new path over one batch (the
+//!   new oversampler is first fed the recent history, so it comes in aligned) and leaves the
+//!   drive lamp alone for that batch.
+//! * **Transparent when off.** With `saturation` 0 (after the CV and the smoothing, and the
+//!   auto-level gain back at 1) the output is the dry path (times `output`), at any mix: the
+//!   input bit for bit in neutral when `oversampling` is off and `output` is 0 dB, and the
+//!   input delayed by the latency, bit for bit, when oversampling is on; in the keep types the
+//!   all-pass of the crossover. The output settles onto it by a one-batch crossfade, once the
+//!   DC blocker's tail is below -140 dBFS, so no step is heard.
 //! * **CV.** `saturation_cv_in` adds `saturation_cv_trim * cv` (the batch mean, clamped to
 //!   -1..+1) to the knob in 0..1 and clamps the sum to 0..1. The trim is 0 by default.
 //! * **Meters** (`meter_values`): `drive` 0..1 (how hard the curve is working: one minus the
@@ -102,6 +113,8 @@ const G_MAX: f32 = 15.848_932;
 const TANH_BIAS: f32 = 0.099_667_995;
 /// Below this drive gain the curve is a straight line (the error is under 1e-3 of the signal).
 const G_LINEAR: f32 = 1.0e-3;
+/// Below this `|u|` `tanh` comes from its series (error under 1e-9 relative).
+const TANH_SERIES_BELOW: f32 = 0.05;
 /// The split between the lows and the rest, Hz.
 const SPLIT_HZ: f32 = 400.0;
 /// Points of the auto-level table (0..=TABLE knob positions).
@@ -193,9 +206,15 @@ pub fn drive_gain(k: f32) -> f32 {
     }
 }
 
-/// `tanh(v)` from the deterministic exponential.
+/// `tanh(v)` from the deterministic exponential. Small arguments use the odd series: the
+/// exponential form cancels (`1 - 2 / (1 + e)`) and its `f32` rounding error, divided by the
+/// drive gain, would mute a quiet tail at a low knob.
 #[inline]
 fn tanh_det(v: f32) -> f32 {
+    if v.abs() < TANH_SERIES_BELOW {
+        let u2 = v * v;
+        return v * (1.0 + u2 * (-1.0 / 3.0 + u2 * (2.0 / 15.0 + u2 * (-17.0 / 315.0))));
+    }
     let v = v.clamp(-15.0, 15.0);
     1.0 - 2.0 / (1.0 + exp2_det(2.0 * std::f32::consts::LOG2_E * v))
 }
@@ -282,14 +301,27 @@ fn weights_of(ty: u8) -> [f32; 3] {
     }
 }
 
+/// The DC blocker output below which OFF may settle on the dry path (-140 dBFS).
+const SETTLED: f32 = 1.0e-7;
+/// Longest delay line: a batch plus the largest latency, with headroom.
+const DELAY_MAX: usize = 128;
+
 /// The state of one channel.
 #[derive(Debug, Clone)]
 struct Lane {
     split: Crossover,
     os: Oversampler,
+    /// The previous oversampler, still running while a factor change crossfades.
+    os_prev: Oversampler,
+    /// The factor change of this batch is being crossfaded.
+    fading: bool,
     dry: DelayLine,
     sat: DelayLine,
+    keep: DelayLine,
     dc: DcBlock,
+    dc_prev: DcBlock,
+    /// 1 once the output has settled on the dry path (OFF), 0 while the curve is on.
+    snap: f32,
 }
 
 impl Lane {
@@ -301,18 +333,46 @@ impl Lane {
         Self {
             split,
             os,
-            dry: DelayLine::new(64),
-            sat: DelayLine::new(64),
+            os_prev: Oversampler::new(BATCH),
+            fading: false,
+            dry: DelayLine::new(DELAY_MAX),
+            sat: DelayLine::new(DELAY_MAX),
+            keep: DelayLine::new(DELAY_MAX),
             dc: DcBlock::new(sample_rate),
+            dc_prev: DcBlock::new(sample_rate),
+            snap: 1.0,
         }
     }
 
     fn reset(&mut self) {
         self.split.reset();
         self.os.reset();
+        self.os_prev.reset();
+        self.fading = false;
         self.dry.clear();
         self.sat.clear();
+        self.keep.clear();
         self.dc.reset();
+        self.dc_prev.reset();
+        self.snap = 1.0;
+    }
+
+    /// Moves to a new oversampling factor without a gap: the running oversampler stays alive as
+    /// `os_prev` for one crossfaded batch, and the new one is first fed the history of the
+    /// curve's input so that its output is already aligned and settled.
+    fn begin_switch(&mut self, factor: OversampleFactor) {
+        std::mem::swap(&mut self.os, &mut self.os_prev);
+        self.dc_prev = self.dc;
+        self.os.set_factor(factor);
+        self.os.reset();
+        let mut history = [0.0f32; BATCH];
+        for (i, h) in history.iter_mut().enumerate() {
+            *h = self.sat.read((BATCH - i) as f32);
+        }
+        let mut sink = [0.0f32; BATCH];
+        let _ = self.os.upsample(&history);
+        self.os.downsample(&mut sink);
+        self.fading = true;
     }
 }
 
@@ -326,8 +386,6 @@ struct Batch {
     w: [[f32; BATCH]; 3],
     /// Every drive gain of the batch is 0.
     off: bool,
-    latency: usize,
-    ratio: usize,
 }
 
 /// What one lane gives for one batch.
@@ -338,6 +396,73 @@ struct LaneOut {
     /// Energy before and after the curve (aligned).
     e_in: f32,
     e_shaped: f32,
+    /// The output is the dry path exactly (OFF, settled): the mix must not touch it.
+    exact: bool,
+    /// The oversampling factor changed in this batch.
+    switched: bool,
+}
+
+/// One oversampling path of a batch, aligned by its latency.
+struct Aligned {
+    wet: [f32; BATCH],
+    dry: [f32; BATCH],
+    e_in: f32,
+    e_shaped: f32,
+    /// Largest magnitude the DC blocker still adds to the output.
+    residue_peak: f32,
+}
+
+/// The three delay lines of a lane.
+struct Delays<'a> {
+    dry: &'a DelayLine,
+    sat: &'a DelayLine,
+    keep: &'a DelayLine,
+}
+
+/// Runs the curve (through `os`) over `inp` and aligns everything by the latency of `os`. The
+/// delay lines already hold this batch, so sample `n` of a signal delayed by `latency` is
+/// `latency + BATCH - n` samples back.
+fn render_path(
+    os: &mut Oversampler,
+    dc: &mut DcBlock,
+    d: &Delays<'_>,
+    b: &Batch,
+    inp: &[f32; BATCH],
+) -> Aligned {
+    let factor = os.factor();
+    let latency = factor.latency_frames() as usize;
+    let mut shaped = [0.0f32; BATCH];
+    if factor == OversampleFactor::X1 {
+        for n in 0..BATCH {
+            shaped[n] = shape(inp[n], b.g[n]);
+        }
+    } else {
+        let ratio = factor.ratio();
+        for (i, v) in os.upsample(inp).iter_mut().enumerate() {
+            *v = shape(*v, b.g[i / ratio]);
+        }
+        os.downsample(&mut shaped);
+    }
+    let mut out = Aligned {
+        wet: [0.0; BATCH],
+        dry: [0.0; BATCH],
+        e_in: 0.0,
+        e_shaped: 0.0,
+        residue_peak: 0.0,
+    };
+    for (n, &shaped_n) in shaped.iter().enumerate() {
+        let back = (latency + BATCH - n) as f32;
+        let dry_d = d.dry.read(back);
+        let sat_in_d = d.sat.read(back);
+        let clean_d = d.keep.read(back);
+        let residue = dc.process(shaped_n - sat_in_d);
+        out.residue_peak = out.residue_peak.max(residue.abs());
+        out.wet[n] = clean_d + b.level[n] * (sat_in_d + residue);
+        out.dry[n] = dry_d;
+        out.e_in += sat_in_d * sat_in_d;
+        out.e_shaped += shaped_n * shaped_n;
+    }
+    out
 }
 
 /// The saturation device.
@@ -422,61 +547,87 @@ impl Saturation {
     }
 
     /// One batch of one channel.
-    fn run_lane(lane: &mut Lane, b: &Batch, input: &[f32; BATCH]) -> LaneOut {
-        let mut x = [0.0f32; BATCH];
+    fn run_lane(
+        lane: &mut Lane,
+        b: &Batch,
+        input: &[f32; BATCH],
+        factor: OversampleFactor,
+    ) -> LaneOut {
+        let switched = lane.os.factor() != factor;
+        if switched {
+            lane.begin_switch(factor);
+        }
         let mut inp = [0.0f32; BATCH];
         let mut in_peak = 0.0f32;
         for n in 0..BATCH {
             let v = finite(input[n]);
             let (low, high) = lane.split.process(v);
-            let sat = b.w[0][n] * v + b.w[1][n] * low + b.w[2][n] * high;
-            x[n] = v;
-            inp[n] = sat;
+            // The saturated part, the clean part (the other band of the same crossover, so the
+            // two sum to the all-pass, never to a notch) and the dry signal on the matching
+            // all-pass (the plain input in neutral).
+            let keep = (b.w[1][n] + b.w[2][n]).clamp(0.0, 1.0);
+            let dry_a = if keep <= 0.0 {
+                v
+            } else {
+                (1.0 - keep) * v + keep * (low + high)
+            };
+            inp[n] = b.w[0][n] * v + b.w[1][n] * low + b.w[2][n] * high;
+            lane.keep.write(b.w[1][n] * high + b.w[2][n] * low);
+            lane.dry.write(dry_a);
+            lane.sat.write(inp[n]);
             in_peak = in_peak.max(v.abs());
         }
-        let mut shaped = [0.0f32; BATCH];
-        if lane.os.factor() == OversampleFactor::X1 {
-            for n in 0..BATCH {
-                shaped[n] = shape(inp[n], b.g[n]);
+        let mut cur = {
+            let d = Delays {
+                dry: &lane.dry,
+                sat: &lane.sat,
+                keep: &lane.keep,
+            };
+            let cur = render_path(&mut lane.os, &mut lane.dc, &d, b, &inp);
+            if lane.fading {
+                let old = render_path(&mut lane.os_prev, &mut lane.dc_prev, &d, b, &inp);
+                let mut mixed = cur;
+                for n in 0..BATCH {
+                    let f = (n + 1) as f32 / BATCH as f32;
+                    mixed.wet[n] = old.wet[n] * (1.0 - f) + mixed.wet[n] * f;
+                    mixed.dry[n] = old.dry[n] * (1.0 - f) + mixed.dry[n] * f;
+                }
+                mixed
+            } else {
+                cur
+            }
+        };
+        lane.fading = false;
+        // OFF: settle on the dry path once the DC blocker has decayed (below -140 dBFS; until
+        // then the curve's tail goes on), through a one-batch crossfade, and from then on it is
+        // exactly the dry path.
+        let mut exact = false;
+        if b.off && (lane.snap >= 1.0 || cur.residue_peak < SETTLED) {
+            if lane.snap >= 1.0 {
+                cur.wet = cur.dry;
+                exact = true;
+            } else {
+                for n in 0..BATCH {
+                    let s = (n + 1) as f32 / BATCH as f32;
+                    cur.wet[n] = if s >= 1.0 {
+                        cur.dry[n]
+                    } else {
+                        cur.wet[n] * (1.0 - s) + cur.dry[n] * s
+                    };
+                }
+                lane.snap = 1.0;
             }
         } else {
-            for (i, v) in lane.os.upsample(&inp).iter_mut().enumerate() {
-                *v = shape(*v, b.g[i / b.ratio]);
-            }
-            lane.os.downsample(&mut shaped);
-        }
-        let mut wet = [0.0f32; BATCH];
-        let mut dry = [0.0f32; BATCH];
-        let (mut e_in, mut e_shaped) = (0.0f32, 0.0f32);
-        for n in 0..BATCH {
-            // Delay the dry input, the clean part and the curve's input by the latency.
-            let (dry_d, sat_in_d) = if b.latency == 0 {
-                (x[n], inp[n])
-            } else {
-                (
-                    lane.dry.read(b.latency as f32),
-                    lane.sat.read(b.latency as f32),
-                )
-            };
-            lane.dry.write(x[n]);
-            lane.sat.write(inp[n]);
-            let keep_d = dry_d - sat_in_d;
-            let residue = lane.dc.process(shaped[n] - sat_in_d);
-            wet[n] = if b.off {
-                dry_d
-            } else {
-                keep_d + b.level[n] * (sat_in_d + residue)
-            };
-            dry[n] = dry_d;
-            e_in += sat_in_d * sat_in_d;
-            e_shaped += shaped[n] * shaped[n];
+            lane.snap = 0.0;
         }
         LaneOut {
-            wet,
-            dry,
+            wet: cur.wet,
+            dry: cur.dry,
             in_peak,
-            e_in,
-            e_shaped,
+            e_in: cur.e_in,
+            e_shaped: cur.e_shaped,
+            exact,
+            switched,
         }
     }
 }
@@ -514,11 +665,8 @@ impl Device for Saturation {
             P_AUTO_LEVEL => self.auto_level = v >= 0.5,
             P_MIX => self.mix = v.clamp(0.0, 1.0),
             P_OVERSAMPLING => {
+                // The lanes follow in `process`, with a crossfade.
                 self.oversampling = v.round().clamp(0.0, 2.0) as u8;
-                let factor = self.factor();
-                for lane in &mut self.lanes {
-                    lane.os.set_factor(factor);
-                }
             }
             P_OUTPUT => self.output_db = v.clamp(-24.0, 12.0),
             P_CV_TRIM => self.cv_trim = v.clamp(-1.0, 1.0),
@@ -546,6 +694,11 @@ impl Device for Saturation {
             }
             self.mix_sm.set_immediate(self.mix);
             self.output.set_immediate(out_t);
+            // The first batch after a reset takes the factor as it is: nothing to crossfade.
+            let factor = self.factor();
+            for lane in &mut self.lanes {
+                lane.os.set_factor(factor);
+            }
             self.fresh = false;
         }
         let knob = self.knob.advance(k_target, BATCH);
@@ -564,27 +717,28 @@ impl Device for Saturation {
             level: [1.0; BATCH],
             w: [[0.0; BATCH]; 3],
             off: true,
-            latency: factor.latency_frames() as usize,
-            ratio: factor.ratio(),
         };
         for n in 0..BATCH {
             let k = knob.at(n).clamp(0.0, 1.0);
             b.g[n] = drive_gain(k);
-            b.off &= b.g[n] == 0.0;
             b.level[n] = level.at(n);
+            // OFF also waits for the auto-level gain to be back at exactly 1.
+            b.off &= b.g[n] == 0.0 && b.level[n].to_bits() == 1.0f32.to_bits();
             for (w, r) in b.w.iter_mut().zip(&weights) {
                 w[n] = r.at(n).clamp(0.0, 1.0);
             }
         }
 
         let mut outs = [[0.0f32; BATCH]; 2];
+        let mut switched = false;
         let (mut in_peak, mut out_peak) = (0.0f32, 0.0f32);
         let (mut e_in, mut e_shaped) = (0.0f32, 0.0f32);
         for (c, out) in outs.iter_mut().enumerate() {
-            let r = Self::run_lane(&mut self.lanes[c], &b, &inputs[c]);
+            let r = Self::run_lane(&mut self.lanes[c], &b, &inputs[c], factor);
+            switched |= r.switched;
             for (n, slot) in out.iter_mut().enumerate() {
                 let m = mix.at(n);
-                let mixed = if m >= 1.0 {
+                let mixed = if m >= 1.0 || r.exact {
                     r.wet[n]
                 } else {
                     r.dry[n] * (1.0 - m) + r.wet[n] * m
@@ -598,7 +752,7 @@ impl Device for Saturation {
             e_in += r.e_in;
             e_shaped += r.e_shaped;
         }
-        let lamp = if e_in > 1.0e-12 && !b.off {
+        let lamp = if e_in > 1.0e-12 && !b.off && !switched {
             (2.0 * (1.0 - (e_shaped / e_in).sqrt())).clamp(0.0, 1.0)
         } else {
             0.0

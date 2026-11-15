@@ -4217,18 +4217,26 @@ channels are processed independently.
   the bias leaves is removed by an 8 Hz high-pass on the nonlinear part only (the curve's output
   minus its input), so the linear part of the signal is never filtered.
 - **Off is transparent.** With `saturation` at 0 (after the CV and the 10 ms smoothing) the output
-  is the dry input: bit for bit when `oversampling` is off and `output` is 0 dB, and the input
-  delayed by the latency, bit for bit, when it is on. The curve is a continuous function of the
-  knob, so leaving 0 does not click.
-- **Type** is a split at 400 Hz (the 24 dB per octave Linkwitz-Riley low-pass of the mastering
-  device; the rest is the input minus the low band, so the two always add back to the input). The
-  part that goes through the curve is `a·low + b·rest` and the other part passes clean:
-  *neutral* (a = b = 1) saturates the whole band as one signal, intermodulation included, and the
-  split is invisible; *keep low* (a = 0, b = 1) leaves the lows clean and saturates what is above
-  400 Hz, so its harmonics land above it; *keep high* (a = 1, b = 0) leaves the highs clean and
-  saturates the lows and low mids. A low sine at 80 Hz makes a third harmonic in keep high and
-  neutral and almost none (under 5 % of neutral's) in keep low; a 3 kHz sine is the other way
-  round. The weights glide over 20 ms, so a switch is a crossfade.
+  is the dry path, at any `mix`: in neutral the input bit for bit when `oversampling` is off and
+  `output` is 0 dB, and the input delayed by the latency, bit for bit, when it is on (in the keep
+  types the crossover all-pass, see Type). The output settles onto the dry path through a one-batch
+  crossfade once the curve's DC-blocker tail is below -140 dBFS, so there is no step; leaving 0
+  does not click either.
+- **Type** is a split at 400 Hz (the 24 dB per octave Linkwitz-Riley crossover of the mastering
+  device: a low band and a high band that sum to an all-pass). The part that goes through the curve
+  is `a·low + b·high`, and the part that passes clean is the other band of the same crossover
+  (`b·low + a·high` for the keep types), never the input minus the saturated band: both LR bands
+  are 6 dB down at the split, so that difference would not be the other band and the auto-level
+  gain would open a notch there. With matched bands the linear sum is the all-pass whatever the
+  gain, and the gain scales only the saturated band. *Neutral* saturates the whole band as one
+  signal, intermodulation included, and the crossover is not in its path; *keep low* (saturated
+  band: high; clean band: low) leaves the lows clean and saturates what is above 400 Hz, so its
+  harmonics land above it; *keep high* (saturated: low; clean: high) leaves the highs clean and
+  saturates the lows and low mids. In the keep types the dry signal for `mix` goes through the same
+  all-pass (low plus high), so the mix never combs; OFF and `mix` 0 there are that all-pass signal
+  (flat magnitude, not the input bit for bit). A low sine at 80 Hz makes a third harmonic in keep
+  high and neutral and almost none (under 5 % of neutral's) in keep low; a 3 kHz sine is the other
+  way round. The weights glide over 20 ms, so a switch is a crossfade.
 - **Auto level.** With `auto_level` on, the curved part is multiplied by a gain that depends only
   on the knob and the type, never on the signal (no pumping). A table built when the device is
   created holds the gain that gives back the RMS of a sine of a reference level through the curve
@@ -4241,7 +4249,9 @@ channels are processed independently.
 - **Oversampling** runs the curve between the halfband stages of the shared oversampler: off, 2x
   or 4x. The reported latency is **0**, **29** or **35** samples and changes with the setting, so
   the host re-aligns the delay compensation; the dry path and the clean part are delayed by the
-  same amount, so `mix` stays aligned (`mix` 0 is the input delayed by the latency, bit for bit).
+  same amount, so `mix` stays aligned (`mix` 0 in neutral is the input delayed by the latency, bit
+  for bit). Changing it while playing crossfades the old and the new path over one batch, so there
+  is no dropout, and the drive lamp is left alone for that batch.
   On a 10 kHz sine at 0.5 and full knob the alias at 18 kHz is more than ten times lower at 4x
   than with oversampling off.
 - **CV.** `saturation_cv_in` adds `saturation_cv_trim · cv` (the batch mean, clamped to −1..+1) to
