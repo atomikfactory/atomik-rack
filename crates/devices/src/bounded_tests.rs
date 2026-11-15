@@ -265,6 +265,12 @@ proptest! {
         check_bounded("atomik.rotary-speaker", &s)?;
     }
 
+    /// The saturation device: any params, loud noise, every oversampling and type.
+    #[test]
+    fn qa_saturation_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_bounded("atomik.saturation", &s)?;
+    }
+
     /// The clipper: any params, loud noise, every oversampling and band mode.
     #[test]
     fn qa_clipper_any_params_bounded_at_every_sample_rate(s in scene()) {

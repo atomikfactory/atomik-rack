@@ -9,6 +9,13 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Saturation.** A new effect, Saturation (`atomik.saturation`): one knob (0 is off and bit-exact transparent) drives
+  a smooth, slightly asymmetric tanh curve, from nothing up to about +24 dB into it, for warmth and mostly odd harmonics.
+  A type switch picks where it works: keep low leaves the lows clean and saturates what is above 400 Hz, keep high
+  does the reverse, neutral saturates the whole band, and a switch is a crossfade, not a click. Auto level (on by
+  default) holds the loudness with a static gain, so the knob changes the colour and not the volume. Mix, output,
+  oversampling off, 2x or 4x (default 2x, reported latency 0, 29 or 35 samples, dry path aligned), a saturation CV input
+  with its trim, and a drive amount meter for a lamp. No panel of its own yet.
 - **A larger spectrum panel, with a cursor readout and a peak hold.** Show Spectrum's panel (and the phase meter's)
   can be resized by the grip in its corner and filled to the window with the button beside the close cross or a
   double click on its title. A larger spectrum asks for a finer trace (up to 1024 columns) and labels more
