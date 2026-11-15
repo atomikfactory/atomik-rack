@@ -273,6 +273,7 @@ pub fn gain_layout(desc: &DeviceDescriptor) -> PanelSpec {
             aux: Rect::ZERO,
             button: None,
             character: None,
+            eq: None,
             gain: Some(geom),
         }),
         seq: None,
