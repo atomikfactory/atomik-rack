@@ -1603,6 +1603,84 @@ fn the_create_browser_opened_from_the_rack_menu_creates_in_the_clicked_column() 
     assert_eq!(new.column, 2, "{:?}", placed(&s));
 }
 
+/// A point on the empty rack just right of the last column.
+fn past_last_column(s: &Shell<NullBackend>, y: f64) -> Point {
+    let columns = s.core().doc().columns;
+    let p = s.core().view().rack_to_view(Point::new(
+        f64::from(columns) * (f64::from(atomik_device_sdk::RACK_WIDTH) + atomik_ui::COLUMN_GAP)
+            + 20.0,
+        y,
+    ));
+    Point::new(p.x, p.y + s.layout().rack.y0)
+}
+
+#[test]
+fn a_device_created_past_the_last_column_gets_a_new_column() {
+    let mut s = columns_rack();
+    let a = plate(&s, "a");
+    click(&mut s, a, Modifiers::NONE);
+    assert_eq!(s.core().doc().columns, 3);
+    let before = saved(&s);
+    let past = past_last_column(&s, 200.0);
+    open_menu(&mut s, past);
+    run_from_menu(&mut s, "create.device", Some(SYNTH));
+    let doc = s.core().doc();
+    assert_eq!(doc.columns, 4, "a column was added: {:?}", placed(&s));
+    assert!(columns_of(&s, SYNTH).contains(&3), "{:?}", placed(&s));
+    // Its mix channel comes with it.
+    let channels = doc
+        .devices
+        .iter()
+        .filter(|d| atomik_model::console::is_console_type(&d.type_id) && d.column == 3)
+        .count();
+    assert_eq!(channels, 1, "{:?}", placed(&s));
+    // One undo step takes the device and the column away.
+    tap(&mut s, Os::Windows, "Cmd+Z");
+    assert_eq!(saved(&s), before);
+    // A right click in an existing column still creates there, with no new column.
+    let empty = in_column(&s, 2, 200.0);
+    open_menu(&mut s, empty);
+    run_from_menu(&mut s, "create.device", Some(SYNTH));
+    assert_eq!(s.core().doc().columns, 3);
+    assert!(columns_of(&s, SYNTH).contains(&2), "{:?}", placed(&s));
+}
+
+#[test]
+fn the_create_browser_opened_past_the_last_column_creates_in_a_new_column() {
+    let mut s = columns_rack();
+    let a = plate(&s, "a");
+    click(&mut s, a, Modifiers::NONE);
+    let past = past_last_column(&s, 200.0);
+    open_menu(&mut s, past);
+    run_from_menu(&mut s, "create.instrument", None);
+    tap(&mut s, Os::Windows, "Enter");
+    let doc = s.core().doc();
+    assert_eq!(doc.columns, 4, "{:?}", placed(&s));
+    let new = doc
+        .devices
+        .iter()
+        .find(|d| {
+            !atomik_model::console::is_console_type(&d.type_id)
+                && !["a", "b", "c"].contains(&d.key.0.as_str())
+        })
+        .expect("the new instrument");
+    assert_eq!(new.column, 3, "{:?}", placed(&s));
+}
+
+#[test]
+fn paste_past_the_last_column_still_lands_in_the_last_column() {
+    let mut s = columns_rack();
+    let b = plate(&s, "b");
+    click(&mut s, b, Modifiers::NONE);
+    tap(&mut s, Os::Windows, "Cmd+C");
+    let past = past_last_column(&s, 200.0);
+    let delays = columns_of(&s, DELAY).len();
+    open_menu(&mut s, past);
+    run_from_menu(&mut s, "edit.paste", None);
+    assert_eq!(columns_of(&s, DELAY).len(), delays + 1, "pasted");
+    assert_eq!(s.core().doc().columns, 3, "{:?}", placed(&s));
+}
+
 #[test]
 fn a_dismissed_rack_menu_does_not_steer_a_later_create() {
     let mut s = columns_rack();

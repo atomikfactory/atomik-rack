@@ -217,8 +217,9 @@ may break APIs and the patch and project formats.
 ### Fixed
 - **Create from the rack's right-click menu lands where you clicked.** Create ▸ a device type, and the device chosen in
   the Create Instrument / Effect browser opened from that menu, now go to the column and place that was right-clicked
-  on the empty rack, as Paste already did, instead of after the selected device. A note player still joins the stack
-  of the selection. The place is forgotten when the menu closes, so a later key never uses it.
+  on the empty rack, as Paste already did, instead of after the selected device. A right click past the last column
+  creates a new column for the device (and an instrument's mix channel), in the same undo step. A note player still
+  joins the stack of the selection. The place is forgotten when the menu closes, so a later key never uses it.
 - **Edits in a sandboxed plugin's editor are recorded.** The begin and end of a gesture made in the editor of a
   sandboxed plugin (CLAP or VST3) carry no value, and the plugin process dropped them because its messages cannot
   carry NaN, so the app saw every change outside a gesture and recorded none of them: no undo step, no automation.
