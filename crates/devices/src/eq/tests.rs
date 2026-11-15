@@ -754,3 +754,112 @@ fn cost_of_the_analyser_off_and_on() {
     let (off, on) = (time(false), time(true));
     println!("eq per batch: analyser off {off:.0} ns, on {on:.0} ns");
 }
+
+/// FNV-1a over the bits of every sample.
+fn fnv(samples: &[f32]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for v in samples {
+        for b in v.to_bits().to_le_bytes() {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    h
+}
+
+/// Renders noise through the EQ with only the params that existed before the upgrade, moving a
+/// few of them mid-run (slope change, frequency jump, an old gain CV), and hashes both outputs.
+fn legacy_render(scenario: usize) -> u64 {
+    let mut h = eq_live();
+    let setups: [&[(&str, f32)]; 4] = [
+        &[
+            ("band1.on", 1.0),
+            ("band1.freq", 90.0),
+            ("band2.gain", 5.0),
+            ("band3.gain", -7.0),
+            ("band3.q", 2.5),
+            ("band4.gain", 4.0),
+            ("band5.gain", -3.0),
+            ("output", -2.0),
+        ],
+        &[
+            ("band1.on", 1.0),
+            ("lowcut.slope", 2.0),
+            ("band1.q", 1.5),
+            ("band6.on", 1.0),
+            ("band6.freq", 9_000.0),
+            ("highcut.slope", 1.0),
+            ("band6.q", 1.2),
+            ("band3.gain", 6.0),
+        ],
+        &[
+            ("band2.freq", 300.0),
+            ("band2.gain", -9.0),
+            ("band2.q", 1.4),
+            ("band5.freq", 3_000.0),
+            ("band5.gain", 8.0),
+            ("band5.q", 0.5),
+            ("band4.freq", 5_000.0),
+            ("band4.gain", 11.0),
+            ("band4.q", 9.0),
+        ],
+        &[
+            ("band3.gain_cv_trim", 0.5),
+            ("band5.gain_cv_trim", -1.0),
+            ("band6.on", 1.0),
+            ("highcut.slope", 2.0),
+        ],
+    ];
+    set(&mut h, setups[scenario]);
+    let mut rng = Rng::new(77 + scenario as u64);
+    let mut all = Vec::new();
+    for b in 0..200 {
+        if b == 60 {
+            set(
+                &mut h,
+                &[
+                    ("lowcut.slope", 1.0),
+                    ("band3.freq", 3_500.0),
+                    ("band2.on", 0.0),
+                ],
+            );
+        }
+        if b == 120 {
+            set(&mut h, &[("band6.freq", 4_000.0), ("highcut.slope", 0.0)]);
+        }
+        let mut x = [0.0f32; BATCH];
+        let mut y = [0.0f32; BATCH];
+        for (a, c) in x.iter_mut().zip(&mut y) {
+            *a = rng.next_bipolar() * 0.5;
+            *c = rng.next_bipolar() * 0.5;
+        }
+        *h.input_mut("in_l") = x;
+        *h.input_mut("in_r") = y;
+        if scenario == 3 {
+            *h.input_mut("band3_gain_cv_in") = [0.3 * (b as f32 / 40.0).sin(); BATCH];
+            *h.input_mut("band5_gain_cv_in") = [0.2; BATCH];
+        }
+        h.process();
+        all.extend_from_slice(h.output("out_l"));
+        all.extend_from_slice(h.output("out_r"));
+    }
+    let mut m = [0.0f32; METER_COUNT];
+    h.device().meter_values(&mut m);
+    all.extend_from_slice(&m);
+    fnv(&all)
+}
+
+/// Hashes of `legacy_render` captured from the EQ before the upgrade. Any change to the sound of
+/// an existing project changes them.
+const LEGACY_HASHES: [u64; 4] = [
+    8_035_127_733_858_046_531,
+    4_963_387_877_835_014_772,
+    10_032_941_447_465_546_332,
+    2_993_201_266_270_898_146,
+];
+
+#[test]
+fn existing_projects_sound_bit_identical_after_the_upgrade() {
+    let got: Vec<u64> = (0..4).map(legacy_render).collect();
+    println!("legacy hashes: {got:#018x?}");
+    assert_eq!(got, LEGACY_HASHES);
+}
