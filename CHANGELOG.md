@@ -9,6 +9,14 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A two-band Stereo Tool.** The Stereo Tool splits the signal at an X-over frequency (the old Low bypass knob, now
+  20 Hz to 6 kHz) into a low and a high band and gives each its own width (Width is the high band's, the new Low
+  width the low band's). SOLO listens to the low band or the high band alone, without a click. Each band has a
+  correlation meter (-1 to +1, about 300 ms) and a flag that lights while the band has signal and a width other than 1.
+  On the back, CV inputs for both widths and the X-over (each with a trim, off until you turn it up) and an audio
+  output pair for each band. At X-over 20 Hz there is no split, as before. Projects saved before keep their sound
+  bit for bit; the X-over range is wider, so existing MIDI or controller mappings on it reach different values than
+  before.
 - **A larger spectrum panel, with a cursor readout and a peak hold.** Show Spectrum's panel (and the phase meter's)
   can be resized by the grip in its corner and filled to the window with the button beside the close cross or a
   double click on its title. A larger spectrum asks for a finer trace (up to 1024 columns) and labels more

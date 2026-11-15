@@ -354,10 +354,10 @@ fn every_effect_descriptor_ends_with_the_host_style_bypass_param() {
         let d = r.descriptor(id).unwrap();
         // Trailing `internal.` params (display switches the app sets) and `hidden.` ones (data
         // of a panel's editor) may follow it.
-        // The EQ is the one exception: it gained params after it shipped, and its param ids stay
-        // as they were (saved projects key params by key, not by id), so the new ones follow
-        // `bypass` (id 29) instead of renumbering it.
-        let at = if id == "atomik.eq" {
+        // The EQ and the stereo tool are the exceptions: they gained params after they shipped,
+        // and their param ids stay as they were (saved projects key params by key, not by id),
+        // so the new ones follow `bypass` instead of renumbering it.
+        let at = if id == "atomik.eq" || id == "atomik.stereo-tool" {
             d.params.iter().position(|q| q.key == "bypass").unwrap()
         } else {
             d.params

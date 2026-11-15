@@ -61,7 +61,7 @@
   "atomik.spider-cv": "Four trimmed control voltage merge inputs and two split and invert inputs.",
   "atomik.step-sequencer": "A transport-synced pattern player. Up to eight patterns of up to 64 steps, each with its own resolution and swing, play one note at a time.",
   "atomik.stereo-delay": "A stereo delay with free or tempo-synced time, feedback, dry and wet mix and ping-pong.",
-  "atomik.stereo-tool": "Polarity, phase rotation, width with a bass bypass, balance, mono and mid and side conversion.",
+  "atomik.stereo-tool": "A two-band stereo imager: polarity, phase rotation, a width for the lows and one for the highs split at the X-over, solo, correlation meters, balance, mono and mid and side conversion.",
   "atomik.transient-shaper": "Raises or lowers the attack and the sustain of a signal, whatever its level.",
   "atomik.tuner": "A chromatic tuner that passes the audio through: it shows the note, the deviation in cents and the frequency.",
   "atomik.vocoder": "Imposes the shape of one sound, usually a voice, on another, the classic talking synthesiser.",
