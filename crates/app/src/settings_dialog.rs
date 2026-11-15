@@ -213,8 +213,16 @@ pub enum Tab {
     Themes,
 }
 
-/// The size of the labels in the tab strip.
-const TAB_FONT: f32 = 10.5;
+/// The size of the labels in the tab sidebar.
+const TAB_FONT: f32 = 13.0;
+/// Width of the tab sidebar on the left of the dialog.
+pub const SIDEBAR: f64 = 168.0;
+/// Height of one tab row of the sidebar.
+const SIDEBAR_ROW: f64 = 30.0;
+/// The widest the dialog grows (sidebar included).
+const MAX_WIDTH: f64 = 920.0;
+/// The least height of the dialog when the window has room.
+const MIN_HEIGHT: f64 = 600.0;
 
 impl Tab {
     /// Every tab, in strip order.
@@ -779,10 +787,45 @@ impl SettingsDialog {
         self.tab == Tab::Keyboard && self.keyboard().is_some_and(KeyboardTab::is_capturing)
     }
 
-    /// The panel of the tab that shows.
+    /// The whole dialog: the tab sidebar and the panel of the tab. One size for every tab, so
+    /// switching tabs never moves it: as wide as [`MAX_WIDTH`] allows, as tall as the tallest
+    /// tab that does not scroll (at least [`MIN_HEIGHT`]), and never larger than the window.
+    pub fn frame(&self, view: Size) -> Rect {
+        let width = (view.width - 32.0).clamp(SIDEBAR + 240.0, MAX_WIDTH);
+        let inner = width - SIDEBAR - 2.0 * PAD;
+        let tallest = Tab::ALL
+            .into_iter()
+            .filter(|t| *t != Tab::Keyboard)
+            .map(|t| match t {
+                Tab::Audio | Tab::Surfaces | Tab::Sync => {
+                    let notes = self.notes_of(t).len() as f64 * NOTE_LINE + 6.0;
+                    TITLE + self.place(t, inner).2 + notes + FOOTER
+                }
+                _ => self.natural_panel(t, view).height(),
+            })
+            .fold(MIN_HEIGHT, f64::max);
+        let height = tallest.min((view.height - 32.0).max(240.0));
+        let x0 = ((view.width - width) / 2.0).max(0.0);
+        let y0 = ((view.height - height) / 2.0).max(0.0);
+        Rect::new(x0, y0, x0 + width, y0 + height)
+    }
+
+    /// The panel of the tab that shows: the dialog right of the sidebar (the audio-only dialog
+    /// has no sidebar and is as tall as its sections).
     pub fn panel(&self, view: Size) -> Rect {
-        match self.tab {
-            Tab::Audio | Tab::Surfaces | Tab::Sync => self.layout(view).panel,
+        if self.prefs.is_none() {
+            return self.layout(view).panel;
+        }
+        let f = self.frame(view);
+        Rect::new(f.x0 + SIDEBAR, f.y0, f.x1, f.y1)
+    }
+
+    /// The panel `tab` would have on its own (its content's height, before the dialog took one
+    /// size for every tab).
+    fn natural_panel(&self, tab: Tab, view: Size) -> Rect {
+        match tab {
+            // Measured from their sections by `frame`.
+            Tab::Audio | Tab::Surfaces | Tab::Sync => Rect::new(0.0, 0.0, 0.0, MIN_HEIGHT),
             Tab::Keyboard => {
                 let width = (view.width - 32.0).clamp(320.0, 780.0);
                 let height = (view.height - 48.0).clamp(300.0, (view.height - 32.0).max(300.0));
@@ -869,20 +912,17 @@ impl SettingsDialog {
         if self.prefs.is_none() {
             return Vec::new();
         }
-        let mut right = panel.x1 - PAD;
-        let mut out = Vec::new();
-        for tab in Tab::ALL.into_iter().rev() {
-            // Ten tabs share the title row with the heading: a smaller label, little padding
-            // and a hairline gap.
-            let w = text_width(atomik_ui::i18n::t(tab.label())) * f64::from(TAB_FONT) / 13.0 + 3.0;
-            out.push((
-                Rect::new(right - w, panel.y0 + 10.0, right, panel.y0 + 34.0),
-                tab,
-            ));
-            right -= w + 1.0;
-        }
-        out.reverse();
-        out
+        // A column of rows in the sidebar, under its heading.
+        let x0 = panel.x0 - SIDEBAR + 10.0;
+        let x1 = panel.x0 - 10.0;
+        Tab::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(i, tab)| {
+                let y = panel.y0 + TITLE + i as f64 * (SIDEBAR_ROW + 2.0);
+                (Rect::new(x0, y, x1, y + SIDEBAR_ROW), tab)
+            })
+            .collect()
     }
 
     /// The edited settings.
@@ -893,10 +933,15 @@ impl SettingsDialog {
     /// The sections: host, output device, buffer, MIDI input, workers, linger. Saved values
     /// that are no longer available are still listed (marked) so they stay selectable.
     pub fn sections(&self) -> Vec<Section> {
-        if self.tab == Tab::Sync {
+        self.sections_of(self.tab)
+    }
+
+    /// [`Self::sections`] of `tab` (the audio sections for every tab but Sync and Controllers).
+    fn sections_of(&self, tab: Tab) -> Vec<Section> {
+        if tab == Tab::Sync {
             return self.sync_sections();
         }
-        if self.tab == Tab::Surfaces {
+        if tab == Tab::Surfaces {
             return self.surface_sections();
         }
         let d = &self.draft;
@@ -1594,7 +1639,12 @@ impl SettingsDialog {
     }
 
     fn notes(&self) -> Vec<String> {
-        if self.tab == Tab::Sync {
+        self.notes_of(self.tab)
+    }
+
+    /// [`Self::notes`] of `tab`.
+    fn notes_of(&self, tab: Tab) -> Vec<String> {
+        if tab == Tab::Sync {
             let mut notes = vec![
                 "Clock out sends 24 clocks per quarter note, Start, Stop and Continue to every port switched on."
                     .to_string(),
@@ -1608,7 +1658,7 @@ impl SettingsDialog {
             notes.extend(self.lists.errors.iter().cloned());
             return notes;
         }
-        if self.tab == Tab::Surfaces {
+        if tab == Tab::Surfaces {
             let mut notes = vec![
                 "A surface shows the console: its faders, V-pots, keys and displays follow it."
                     .to_string(),
@@ -1653,16 +1703,18 @@ impl SettingsDialog {
         notes
     }
 
-    /// Lays the dialog out in a view of `view` logical size.
-    pub fn layout(&self, view: Size) -> DialogLayout {
-        let notes = self.notes();
-        let notes_h = notes.len() as f64 * NOTE_LINE + 6.0;
-        let width = (view.width - 32.0).clamp(240.0, 640.0);
-        let inner = width - 2.0 * PAD;
+    /// The section headers and options of `tab` laid out `inner` wide from the top of the
+    /// content (y 0), and the height they take.
+    #[allow(clippy::type_complexity)]
+    fn place(
+        &self,
+        tab: Tab,
+        inner: f64,
+    ) -> (Vec<(f64, &'static str)>, Vec<(Rect, String, Choice)>, f64) {
         let mut headers = Vec::new();
         let mut options = Vec::new();
         let mut y = 0.0;
-        for (si, section) in self.sections().into_iter().enumerate() {
+        for (si, section) in self.sections_of(tab).into_iter().enumerate() {
             if si > 0 {
                 y += SECTION_GAP;
             }
@@ -1690,11 +1742,25 @@ impl SettingsDialog {
                 y += ROW;
             }
         }
+        (headers, options, y)
+    }
+
+    /// Lays the dialog out in a view of `view` logical size.
+    pub fn layout(&self, view: Size) -> DialogLayout {
+        let notes = self.notes();
+        let notes_h = notes.len() as f64 * NOTE_LINE + 6.0;
+        let fixed = self.prefs.is_some().then(|| self.panel(view));
+        let width = fixed.map_or_else(|| (view.width - 32.0).clamp(240.0, 640.0), |p| p.width());
+        let inner = width - 2.0 * PAD;
+        let (headers, options, y) = self.place(self.tab, inner);
         let content_height = y;
-        let height = (TITLE + content_height + notes_h + FOOTER).min(view.height - 32.0);
-        let x0 = ((view.width - width) / 2.0).max(0.0);
-        let y0 = ((view.height - height) / 2.0).max(0.0);
-        let panel = Rect::new(x0, y0, x0 + width, y0 + height);
+        let panel = fixed.unwrap_or_else(|| {
+            let height = (TITLE + content_height + notes_h + FOOTER).min(view.height - 32.0);
+            let x0 = ((view.width - width) / 2.0).max(0.0);
+            let y0 = ((view.height - height) / 2.0).max(0.0);
+            Rect::new(x0, y0, x0 + width, y0 + height)
+        });
+        let (x0, y0) = (panel.x0, panel.y0);
         let content = Rect::new(
             x0 + PAD,
             y0 + TITLE,
@@ -1903,8 +1969,43 @@ impl SettingsDialog {
             Rect::from_origin_size(Point::ZERO, view),
             Color::from_rgba8(0, 0, 0, 140),
         );
-        let panel = RoundedRect::from_rect(panel_rect, 10.0);
+        let card = if self.prefs.is_some() {
+            Rect::new(
+                panel_rect.x0 - SIDEBAR,
+                panel_rect.y0,
+                panel_rect.x1,
+                panel_rect.y1,
+            )
+        } else {
+            panel_rect
+        };
+        let panel = RoundedRect::from_rect(card, 10.0);
         canvas.fill_with(panel, theme.browser_bg);
+        if self.prefs.is_some() {
+            // The sidebar: a darker column with the dialog's heading.
+            let side = Rect::new(card.x0, card.y0, panel_rect.x0, card.y1);
+            canvas.fill_with(
+                RoundedRect::from_rect(side, (10.0, 0.0, 0.0, 10.0)),
+                theme.background,
+            );
+            canvas.stroke_with(
+                vello::kurbo::Line::new(
+                    Point::new(panel_rect.x0 + 0.5, card.y0),
+                    Point::new(panel_rect.x0 + 0.5, card.y1),
+                ),
+                1.0,
+                theme.section_line,
+            );
+            canvas.text(
+                &TextRun::new(
+                    "Settings",
+                    Point::new(card.x0 + 18.0, card.y0 + 28.0),
+                    16.0,
+                    theme.text,
+                )
+                .weight(600),
+            );
+        }
         canvas.stroke_with(panel, 1.0, theme.section_line);
         canvas.text(
             &TextRun::new(
@@ -1922,15 +2023,12 @@ impl SettingsDialog {
             } else if self.hover.is_some_and(|p| r.contains(p)) {
                 canvas.fill_with(shape, theme.browser_row);
             }
-            canvas.text(
-                &TextRun::new(
-                    tab.label(),
-                    Point::new(r.center().x, r.y0 + 16.5),
-                    TAB_FONT,
-                    theme.text,
-                )
-                .align(Align::Center),
-            );
+            canvas.text(&TextRun::new(
+                tab.label(),
+                Point::new(r.x0 + 12.0, r.y0 + 19.5),
+                TAB_FONT,
+                theme.text,
+            ));
         }
         match (self.tab, &self.prefs) {
             (Tab::Keyboard, Some(p)) => {
