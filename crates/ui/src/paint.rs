@@ -1140,6 +1140,14 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     // The mix channel's fader is its own horizontal track (drawn with the panel).
                     continue;
                 }
+                if info.spec.fx.is_some_and(|f| f.gain.is_some())
+                    && (pc.kind == ControlKind::Fader
+                        || crate::gain_panel::hidden(desc, info.device, pc.param))
+                {
+                    // The gain tool draws its fader with its panel, and its BLEND knob only
+                    // while the mode blends.
+                    continue;
+                }
                 if info.spec.fx.is_some_and(|f| f.eq.is_some()) {
                     // The EQ paints its choice cells itself (the graph, the shape sketches).
                     if pc.kind != ControlKind::Choice {

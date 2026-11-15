@@ -477,6 +477,10 @@ impl RackView {
             UiAction::FindResonances(d) => UiAction::FindResonances(k(d)),
             UiAction::CutResonances(d) => UiAction::CutResonances(k(d)),
             UiAction::LearnDuck(d) => UiAction::LearnDuck(k(d)),
+            UiAction::PulseParam { device, param } => UiAction::PulseParam {
+                device: k(device),
+                param,
+            },
             UiAction::SpectrumCurve { device, index } => UiAction::SpectrumCurve {
                 device: k(device),
                 index,

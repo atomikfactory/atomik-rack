@@ -396,6 +396,7 @@ pub mod fm_panel;
 pub mod fx;
 pub mod fx_layout;
 pub mod fx_paint;
+pub mod gain_panel;
 pub mod granular_panel;
 pub mod harmony_picker;
 pub mod help_panel;

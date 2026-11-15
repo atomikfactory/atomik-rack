@@ -724,3 +724,74 @@ fn row_rect(menu: Rect, i: usize) -> Rect {
 fn row_at(menu: &ScMenu, rp: Point) -> Option<usize> {
     (0..menu.entries.len().min(SC_MAX_ROWS)).find(|&i| row_rect(menu.rect, i).contains(rp))
 }
+
+/// The gain tool's horizontal fader: its track and its two scales ([`crate::gain_panel`]).
+impl RackView {
+    /// Whether param `key` of device `i` is the gain tool's fader.
+    pub(super) fn is_gain_fader(&self, i: usize, key: &str) -> bool {
+        key == "gain"
+            && self
+                .devices
+                .get(i)
+                .is_some_and(|d| d.fx == Some(FxKind::GainTool))
+    }
+
+    /// Whether the gain tool `i` has its fader in VCA mode.
+    fn gain_is_vca(&self, i: usize) -> bool {
+        let d = &self.devices[i];
+        let Some(p) = d
+            .desc
+            .as_ref()
+            .and_then(|desc| desc.param_by_key("fader_mode"))
+        else {
+            return false;
+        };
+        let v = d
+            .device
+            .as_ref()
+            .map_or(p.default, |dev| crate::widget::current_value(dev, p));
+        crate::gain_panel::is_vca(v)
+    }
+
+    /// Pixels the whole range of the gain param would take along the fader track at the current
+    /// zoom: the track is the whole range in Trim and the lower part of it in VCA.
+    pub(super) fn gain_fader_pixels(&self, i: usize) -> f64 {
+        let Some(g) = self.devices[i].spec.fx.and_then(|f| f.gain) else {
+            return 1.0;
+        };
+        let (x0, x1, _) = g.travel();
+        (x1 - x0) * self.zoom / crate::gain_panel::max_norm(self.gain_is_vca(i))
+    }
+
+    /// The drag of a control's value: relative along the control, and for the gain tool's VCA
+    /// fader stopping at 0 dB.
+    pub(super) fn value_drag(
+        &self,
+        i: usize,
+        p: &ParamDescriptor,
+        value: f32,
+        pixels_per_range: f64,
+    ) -> crate::widget::ValueDrag {
+        let drag = crate::widget::ValueDrag::new(p, value, pixels_per_range);
+        if self.is_gain_fader(i, p.key) {
+            drag.limited(crate::gain_panel::max_norm(self.gain_is_vca(i)))
+        } else {
+            drag
+        }
+    }
+
+    /// `v` held at the fader's limit when the param is the gain tool's VCA fader.
+    pub(super) fn gain_fader_limit(&self, i: usize, key: &str, v: f32) -> f32 {
+        if self.is_gain_fader(i, key) && self.gain_is_vca(i) {
+            v.min(0.0)
+        } else {
+            v
+        }
+    }
+
+    /// The tooltip text of the gain fader while it is dragged.
+    pub(super) fn gain_fader_text(&self, i: usize, key: &str, value: f32) -> Option<String> {
+        self.is_gain_fader(i, key)
+            .then(|| crate::gain_panel::fader_text(value, self.gain_is_vca(i)))
+    }
+}

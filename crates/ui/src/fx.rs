@@ -43,11 +43,13 @@ pub enum FxKind {
     DynamicEq,
     /// `atomik.duck`: the drawn duck curve with draggable points and bends, and a LEARN button.
     Duck,
+    /// `atomik.gain-tool`: the strip of its own (mute with fade, meters, fader, polarity, pan).
+    GainTool,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 15] = [
+    pub const ALL: [FxKind; 16] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -63,12 +65,13 @@ impl FxKind {
         FxKind::Clipper,
         FxKind::DynamicEq,
         FxKind::Duck,
+        FxKind::GainTool,
     ];
 
     /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
     /// effect, the meters of one and a plain "meters change the painting" behaviour that the
     /// audio track's tuner does not share.
-    pub const EFFECTS: [FxKind; 14] = [
+    pub const EFFECTS: [FxKind; 15] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -83,6 +86,7 @@ impl FxKind {
         FxKind::Clipper,
         FxKind::DynamicEq,
         FxKind::Duck,
+        FxKind::GainTool,
     ];
 
     /// The kind of a device type id.
@@ -108,6 +112,7 @@ impl FxKind {
             FxKind::Clipper => "atomik.clipper",
             FxKind::DynamicEq => "atomik.dynamic-eq",
             FxKind::Duck => "atomik.duck",
+            FxKind::GainTool => "atomik.gain-tool",
         }
     }
 
@@ -128,6 +133,7 @@ impl FxKind {
             FxKind::Clipper => CLIPPER_METERS,
             FxKind::DynamicEq => DYNEQ_METERS,
             FxKind::Duck => DUCK_METERS,
+            FxKind::GainTool => GAIN_METERS,
         }
     }
 }
@@ -177,6 +183,9 @@ pub const DYNEQ_BANDS: usize = 5;
 /// The Sidechain Tool publishes `[dip, position along the drawn curve]`, both 0 to 1
 /// (`atomik_devices::duck::METERS`; a test pins the two together).
 pub const DUCK_METERS: usize = 2;
+/// The gain tool publishes `[input peak L, R, output peak L, R, held output peak (dB), signal,
+/// CV active, fading]` (`atomik_devices::gain_tool::METER_COUNT`; a test pins the two together).
+pub const GAIN_METERS: usize = 8;
 
 /// The phase meter's published values (`atomik_devices::phase_meter::value`; a test pins the
 /// two together): which index holds what.
@@ -253,6 +262,8 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::DynamicEq, i) if i < DYNEQ_PEAKS => Slot::Power,
         (FxKind::DynamicEq, DYNEQ_KEY_CABLED) => Slot::Unit,
         (FxKind::Duck, _) => Slot::Unit,
+        (FxKind::GainTool, 4) => Slot::Raw,
+        (FxKind::GainTool, 5..=7) => Slot::Unit,
         (FxKind::Mastering, 0..=3) => Slot::Raw,
         (FxKind::Mastering, _) => Slot::Gr,
         (FxKind::GuitarAmp, 2) => Slot::Gr,
