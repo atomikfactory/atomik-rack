@@ -4444,6 +4444,10 @@ impl RackView {
         }
         let new = match kind {
             ControlKind::Knob | ControlKind::Fader => widget::wheel_value(p, value, notches, fine),
+            // A radio stops at its ends: HI does not jump back to NORMAL.
+            ControlKind::Choice if self.is_stereo_solo(i, p.key) => {
+                p.clamp(p.clamp(value) + if notches > 0.0 { 1.0 } else { -1.0 })
+            }
             ControlKind::Choice => widget::cycle_choice(p, value, notches > 0.0),
             ControlKind::Toggle => widget::toggled(p, value),
             ControlKind::Display => return None,

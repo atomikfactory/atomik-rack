@@ -888,3 +888,47 @@ fn preview_pngs() {
         .unwrap();
     }
 }
+
+#[test]
+fn the_solo_radio_stops_at_its_ends_for_the_wheel_and_the_arrows() {
+    let reg = registry();
+    let wheel = |v: &mut RackView, document: &Document, at: Point, dy: f64| {
+        v.handle(
+            &UiEvent::Wheel {
+                delta: Vec2::new(0.0, dy),
+                pos: at,
+                modifiers: Modifiers::NONE,
+            },
+            document.doc(),
+            &reg,
+        )
+    };
+    // At HI, one more notch up does nothing (it used to jump to NORMAL).
+    let (document, mut v) = rig_with(&[("solo", 2.0)]);
+    let at = solo_button(&v, 0);
+    for dy in [1.0, 5.0] {
+        let a = wheel(&mut v, &document, at, dy);
+        assert!(set_params(&a).is_empty(), "{a:?}");
+    }
+    // And at NORMAL, one notch down.
+    let (document, mut v) = rig_with(&[("solo", 0.0)]);
+    let at = solo_button(&v, 2);
+    let a = wheel(&mut v, &document, at, -1.0);
+    assert!(set_params(&a).is_empty(), "{a:?}");
+    // In the middle it still steps.
+    let (mut document, mut v) = rig_with(&[("solo", 1.0)]);
+    let at = solo_button(&v, 1);
+    let a = wheel(&mut v, &document, at, 1.0);
+    apply(&mut document, &mut v, &a);
+    assert_eq!(param(&document, "solo"), 2.0);
+}
+
+#[test]
+fn the_solo_help_does_not_promise_a_step() {
+    let (_, v) = rig();
+    let at = solo_button(&v, 1);
+    let h = v.help_at(at);
+    let text = h.map(|h| h.text.to_string()).unwrap_or_default();
+    assert!(text.contains("Solo"), "{text}");
+    assert!(!text.contains("step"), "{text}");
+}

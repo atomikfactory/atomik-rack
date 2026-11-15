@@ -969,7 +969,7 @@ impl RackView {
     // ------------------------------------------------------------------ the macro menu
 
     /// Whether a press on a control opens the macro menu: inside a container, a right-click on
-    /// a knob, fader or toggle (Ctrl/Cmd + right-click on any control; a plain right-click on a
+    /// a knob, fader, toggle or the stereo tool's SOLO radio (Ctrl/Cmd + right-click on any control; a plain right-click on a
     /// choice still steps it back).
     pub(super) fn macro_menu_wanted(
         &self,
@@ -981,10 +981,11 @@ impl RackView {
         if self.macro_container(i).is_none() || button != PointerButton::Secondary {
             return false;
         }
-        let Some((_, kind, _)) = self.param_of(i, slot) else {
+        let Some((p, kind, _)) = self.param_of(i, slot) else {
             return false;
         };
-        modifiers.command() || kind != ControlKind::Choice
+        // The stereo tool's SOLO is a radio: it does not step back on a right click.
+        modifiers.command() || kind != ControlKind::Choice || self.is_stereo_solo(i, p.key)
     }
 
     pub(super) fn macro_menu_open(&mut self, i: usize, slot: usize, rp: Point) {

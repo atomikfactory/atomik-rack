@@ -401,6 +401,115 @@ fn existing_projects_sound_bit_identical_after_the_upgrade() {
     );
 }
 
+/// `render_hash` at another sample rate; `setup` gets the harness before each batch.
+fn render_hash_at(
+    rate: f64,
+    batches: usize,
+    mut setup: impl FnMut(&mut DeviceHarness, usize),
+) -> u64 {
+    let mut h = DeviceHarness::new(Box::new(StereoTool::new()), rate);
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for b in 0..batches {
+        let mut xl = [0.0f32; BATCH];
+        let mut xr = [0.0f32; BATCH];
+        for i in 0..BATCH {
+            let n = b * BATCH + i;
+            let t = (2.0 * std::f64::consts::PI * 110.0 * n as f64 / rate).sin() as f32;
+            xl[i] = 0.4 * t + 0.5 * noise(n, 21);
+            xr[i] = 0.2 * t + 0.5 * noise(n, 22);
+        }
+        setup(&mut h, b);
+        *h.input_mut("in_l") = xl;
+        *h.input_mut("in_r") = xr;
+        h.process();
+        for key in ["out_l", "out_r"] {
+            for v in h.output(key) {
+                fnv(&mut hash, *v);
+            }
+        }
+    }
+    hash
+}
+
+#[test]
+fn more_legacy_behaviour_stays_bit_identical() {
+    let prep = |h: &mut DeviceHarness, rate: f64| {
+        let sample_rate = atomik_core::SampleRate::new(rate).expect("rate");
+        h.device_mut().prepare(&PrepareInfo {
+            sample_rate,
+            seed: 0,
+        });
+    };
+    // reset() mid-run, with a split, a width and a rotation.
+    let reset = render_hash(400, |h, b| match b {
+        0 => {
+            h.set_param("low_bypass", 150.0);
+            h.set_param("width", 0.4);
+            h.set_param("rotate", 60.0);
+        }
+        150 | 300 => h.device_mut().reset(),
+        _ => {}
+    });
+    // prepare() mid-run at the same rate.
+    let reprepare = render_hash(400, |h, b| match b {
+        0 => {
+            h.set_param("low_bypass", 300.0);
+            h.set_param("width", 1.6);
+        }
+        200 => prep(h, SR),
+        _ => {}
+    });
+    // A second sample rate.
+    let rate96 = render_hash_at(96_000.0, 400, |h, b| match b {
+        0 => {
+            h.set_param("low_bypass", 250.0);
+            h.set_param("width", 0.2);
+        }
+        200 => h.set_param("low_bypass", 90.0),
+        _ => {}
+    });
+    let rate44 = render_hash_at(44_100.0, 300, |h, b| {
+        if b == 0 {
+            h.set_param("low_bypass", 1_000.0);
+            h.set_param("width", 1.5);
+            h.set_param("mono", 1.0);
+        }
+    });
+    // Rotation, split and width together, the corner moved and the width back to 1.
+    let rot_split = render_hash(500, |h, b| match b {
+        0 => {
+            h.set_param("rotate", 120.0);
+            h.set_param("rotate_hz", 200.0);
+            h.set_param("low_bypass", 400.0);
+            h.set_param("width", 0.0);
+        }
+        200 => h.set_param("low_bypass", 80.0),
+        350 => h.set_param("width", 1.7),
+        _ => {}
+    });
+    // A corner between 20 and 20.5 Hz is no split: the same bits as 20.
+    let near20 = render_hash(300, |h, b| match b {
+        0 => {
+            h.set_param("low_bypass", 20.3);
+            h.set_param("width", 0.5);
+        }
+        150 => h.set_param("width", 1.5),
+        _ => {}
+    });
+    assert_eq!(
+        [reset, reprepare, rate96, rate44, rot_split, near20],
+        [
+            0x1bda_df42_8d8a_53f8,
+            0x320a_4d17_3060_c887,
+            0x9521_0f67_8922_f677,
+            0xd751_c0bf_eb3d_6ba9,
+            0x709f_dcd8_dec4_a332,
+            0x3e6c_48c5_025c_c186
+        ],
+        "{reset:#018x} {reprepare:#018x} {rate96:#018x} {rate44:#018x} {rot_split:#018x} {near20:#018x}"
+    );
+}
+
 // ----- the two bands, solo, meters, CV and band outputs -----
 
 /// White noise of an independent stream per seed (the `noise` hash above is too weakly mixed for
@@ -879,4 +988,90 @@ fn the_split_and_the_correlation_follow_a_sample_rate_change() {
         let c = meters(&h)[METER_HI_CORR];
         assert!((c + 0.264).abs() < 0.1, "{rate}: {c}");
     }
+}
+
+// ----- review fixes -----
+
+/// Largest step between neighbouring samples of `y`.
+fn max_step(y: &[f32]) -> f32 {
+    y.windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f32::max)
+}
+
+#[test]
+fn touching_the_low_width_while_split_does_not_click() {
+    // A mono sine on the corner: the band sum is its all-pass (180 degrees there), so a hard
+    // switch between the dry input and the sum is a step of up to twice the amplitude.
+    let f = |n: usize| 0.5 * (std::f32::consts::TAU * 500.0 * n as f32 / SR as f32).sin();
+    let own = 0.5 * std::f32::consts::TAU * 500.0 / SR as f32;
+    let mut h = tool();
+    h.set_param("low_bypass", 500.0);
+    let (l, _) = run(&mut h, f, f, 200);
+    assert!(max_step(&l[l.len() / 2..]) < 1.2 * own);
+    let mut at = 200;
+    for width in [0.0, 1.0] {
+        h.set_param("lo_width", width);
+        let (l, _) = run(&mut h, |n| f(n + at * BATCH), |n| f(n + at * BATCH), 200);
+        at += 200;
+        let step = max_step(&l);
+        assert!(step < 3.0 * own, "lo_width {width}: step {step} vs {own}");
+    }
+    // Back at rest the output is the input again, bit for bit.
+    let (l, _) = run(&mut h, |n| f(n + at * BATCH), |n| f(n + at * BATCH), 20);
+    for (i, v) in l.iter().enumerate() {
+        assert_eq!(v.to_bits(), f(i + at * BATCH).to_bits());
+    }
+}
+
+#[test]
+fn a_reset_puts_the_crossover_back_on_its_param_after_a_cv() {
+    let mut h = tool();
+    h.set_param("low_bypass", 500.0);
+    h.set_param("width", 0.0);
+    h.set_param("xover_cv_trim", 1.0);
+    // +2 octaves: the corner is 2 kHz and the 1 kHz side tone is kept.
+    let o = side_tone(&mut h, 1_000.0, |_| [0.0, 0.0, 0.5]);
+    assert!(amp_at(&o[0], 1_000.0) > 0.4);
+    // What Bypassable::stop does when the effect is bypassed.
+    h.device_mut().reset();
+    let o = side_tone(&mut h, 1_000.0, no_cv);
+    assert!(amp_at(&o[0], 1_000.0) < 0.05, "{}", amp_at(&o[0], 1_000.0));
+}
+
+#[test]
+fn entering_the_split_starts_from_clean_filters() {
+    let mut h = tool();
+    h.set_param("lo_width", 0.0);
+    h.set_param("width", 0.0);
+    h.set_param("low_bypass", 200.0);
+    run(&mut h, |n| white(n, 3), |n| white(n, 4), 100);
+    // No split for a while, then silence into a split again.
+    h.set_param("low_bypass", 20.0);
+    run(&mut h, |_| 0.0, |_| 0.0, 10);
+    h.set_param("low_bypass", 200.0);
+    let o = run_all(&mut h, |_| 0.0, |_| 0.0, no_cv, 20);
+    for v in o.iter().flatten() {
+        assert_eq!(*v, 0.0);
+    }
+}
+
+#[test]
+fn the_correlation_state_never_goes_subnormal_with_one_channel_silent() {
+    let mut c = Corr::default();
+    let ca = exp2_det_f64(-std::f64::consts::LOG2_E / (0.3 * 48_000.0));
+    for _ in 0..48_000 {
+        c.push(ca, 0.3, 0.3);
+    }
+    for n in 0..12_000_000usize {
+        c.push(ca, 0.3, 0.0);
+        if n % BATCH == BATCH - 1 {
+            c.flush();
+            for v in [c.ll, c.rr, c.lr] {
+                assert!(v == 0.0 || v.is_normal(), "{v:e} at {n}");
+            }
+        }
+    }
+    assert_eq!(c.rr, 0.0);
+    assert!(c.ll > 0.0);
 }

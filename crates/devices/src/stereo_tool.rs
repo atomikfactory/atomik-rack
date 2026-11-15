@@ -55,6 +55,12 @@
 //!   `BlockSmoother`) and ramped linearly across it. A `low_bypass` param change takes effect at
 //!   once (as it always did); only the CV part of the crossover is smoothed, and the crossover
 //!   coefficients are updated once per batch at most, so a moving crossover cannot blow up.
+//! * **Crossfade.** The switch between the dry input (both widths 1) and the band sum (an
+//!   all-pass of it) stays a hard one for a project that never touches the low band or solo
+//!   (bit for bit as before). As soon as `lo_width`, its CV or solo is away from rest the output
+//!   crossfades between the two over 10 ms, and stays in that mode until the widths and the
+//!   crossfade have settled. A reset puts the crossover back on `low_bypass` (a CV had moved it)
+//!   and entering the split starts the crossover filters from silence.
 //! * **Meter values** ([`METER_COUNT`] = 5, indices are the `METER_*` consts): the correlation of
 //!   the low band and of the high band (-1..+1, each after its width, an exponentially smoothed
 //!   estimate over about 300 ms, sample-rate aware, 0 when the band is silent or one channel
@@ -235,8 +241,13 @@ impl Corr {
 
     /// Clears values that decayed to nothing so they never go denormal.
     fn flush(&mut self) {
-        if self.ll < 1e-30 && self.rr < 1e-30 {
-            *self = Self::default();
+        for v in [&mut self.ll, &mut self.rr] {
+            if *v < 1e-30 {
+                *v = 0.0;
+            }
+        }
+        if self.lr.abs() < 1e-30 {
+            self.lr = 0.0;
         }
     }
 
@@ -274,6 +285,10 @@ pub struct StereoTool {
     sample_rate: f32,
     rotor: [PhaseRotator; 2],
     fresh: bool,
+    /// Whether the last batch split (the crossover filters only run while it does).
+    was_split: bool,
+    /// The band-sum crossfade is in charge: the low band or solo is involved (or still settling).
+    xf: bool,
     split: [Crossover; 2],
     pol_l: BlockSmoother,
     pol_r: BlockSmoother,
@@ -282,6 +297,8 @@ pub struct StereoTool {
     solo_lo_sm: BlockSmoother,
     solo_hi_sm: BlockSmoother,
     xover_sm: BlockSmoother,
+    /// How much of the band sum (against the dry input) the output carries, while `xf`.
+    bs_sm: BlockSmoother,
     bal_l: BlockSmoother,
     bal_r: BlockSmoother,
     mono_sm: BlockSmoother,
@@ -317,6 +334,8 @@ impl StereoTool {
             sample_rate: 48_000.0,
             rotor: [PhaseRotator::new(); 2],
             fresh: true,
+            was_split: false,
+            xf: false,
             split: [Crossover::new(48_000.0), Crossover::new(48_000.0)],
             pol_l: BlockSmoother::new(1.0),
             pol_r: BlockSmoother::new(1.0),
@@ -325,6 +344,7 @@ impl StereoTool {
             solo_lo_sm: BlockSmoother::new(1.0),
             solo_hi_sm: BlockSmoother::new(1.0),
             xover_sm: BlockSmoother::new(0.0),
+            bs_sm: BlockSmoother::new(0.0),
             bal_l: BlockSmoother::new(1.0),
             bal_r: BlockSmoother::new(1.0),
             mono_sm: BlockSmoother::new(0.0),
@@ -388,6 +408,7 @@ impl Device for StereoTool {
             &mut self.bal_l,
             &mut self.bal_r,
             &mut self.mono_sm,
+            &mut self.bs_sm,
         ] {
             s.set_time(10.0, sr, BATCH);
         }
@@ -405,6 +426,7 @@ impl Device for StereoTool {
         self.corr = [Corr::default(); 2];
         self.meters = [0.0; METER_COUNT];
         self.fresh = true;
+        self.xf = false;
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
@@ -449,7 +471,18 @@ impl Device for StereoTool {
         let lo_target = (self.lo_width + self.lo_trim * cv_lo * WIDTH_CV_RANGE).clamp(0.0, 2.0);
         let hi_target = (self.width + self.hi_trim * cv_hi * WIDTH_CV_RANGE).clamp(0.0, 2.0);
         let (so_lo, so_hi) = self.solo_gains();
+        // Where the output sits between the dry input and the band sum.
+        let bs_target = if hi_target == 1.0 && lo_target == 1.0 {
+            0.0
+        } else {
+            1.0
+        };
         if self.fresh {
+            // A reset leaves the crossover wherever a CV had taken it: back to the param.
+            if self.low_split() {
+                self.apply_freq(self.low_bypass);
+            }
+            self.bs_sm.set_immediate(bs_target);
             self.pol_l.set_immediate(sign(self.invert_l));
             self.pol_r.set_immediate(sign(self.invert_r));
             self.width_sm.set_immediate(hi_target);
@@ -462,6 +495,8 @@ impl Device for StereoTool {
             self.mono_sm.set_immediate(mono);
             self.fresh = false;
         }
+        let (lo_start, hi_start) = (self.lo_sm.value(), self.width_sm.value());
+        let (sl_start, sh_start) = (self.solo_lo_sm.value(), self.solo_hi_sm.value());
         let pl = self.pol_l.advance(sign(self.invert_l), BATCH);
         let pr = self.pol_r.advance(sign(self.invert_r), BATCH);
         let w = self.width_sm.advance(hi_target, BATCH);
@@ -472,6 +507,33 @@ impl Device for StereoTool {
         let gr = self.bal_r.advance(br, BATCH);
         let mo = self.mono_sm.advance(mono, BATCH);
         let split = self.low_split();
+        // The old hard switch between the dry input (both widths 1) and the band sum (an all-pass
+        // of it) stays for projects that never touch the low band or solo; as soon as either is
+        // involved the output crossfades between the two (10 ms) so it does not click.
+        let involved = lo_target != 1.0
+            || lo_start != 1.0
+            || so_lo != 1.0
+            || so_hi != 1.0
+            || sl_start != 1.0
+            || sh_start != 1.0;
+        if involved {
+            self.xf = true;
+        } else if self.xf && self.bs_sm.value() == bs_target && hi_start == hi_target {
+            self.xf = false;
+        }
+        let bs_ramp = if self.xf {
+            Some(self.bs_sm.advance(bs_target, BATCH))
+        } else {
+            None
+        };
+        // Entering the split: the filters hold what they last saw, which is stale.
+        if split && !self.was_split {
+            for c in &mut self.split {
+                c.reset();
+            }
+            self.apply_freq(self.low_bypass);
+        }
+        self.was_split = split;
 
         // Crossover CV: a smoothed octave offset, applied once per batch at the batch end. With
         // no CV it never touches the corner `set_param` set.
@@ -494,6 +556,7 @@ impl Device for StereoTool {
         let mut hi_out_l = [0.0f32; BATCH];
         let mut hi_out_r = [0.0f32; BATCH];
         let ca = self.corr_coeff;
+        let mut last_skipped = false;
         for n in 0..BATCH {
             let mut l = finite(in_l[n]) * pl.at(n);
             let mut r = finite(in_r[n]) * pr.at(n);
@@ -549,7 +612,19 @@ impl Device for StereoTool {
             // The sum, then solo.
             let skipped = whi == 1.0 && (!split || wlo == 1.0);
             let (gs_l, gs_h) = (sl.at(n), sh.at(n));
-            if gs_l == 1.0 && gs_h == 1.0 {
+            last_skipped = skipped;
+            if let (Some(bsr), true) = (bs_ramp, split) {
+                let amt = bsr.at(n).max(1.0 - gs_l.min(gs_h));
+                let sum_l = gs_l * b_ll + gs_h * b_hl;
+                let sum_r = gs_l * b_lr + gs_h * b_hr;
+                if amt >= 1.0 {
+                    l = sum_l;
+                    r = sum_r;
+                } else {
+                    l = xl + amt * (sum_l - xl);
+                    r = xr + amt * (sum_r - xr);
+                }
+            } else if gs_l == 1.0 && gs_h == 1.0 {
                 if !skipped {
                     if split {
                         l = b_ll + b_hl;
@@ -604,6 +679,10 @@ impl Device for StereoTool {
             }
             out_l[n] = l;
             out_r[n] = r;
+        }
+        if !self.xf {
+            self.bs_sm
+                .set_immediate(if last_skipped { 0.0 } else { 1.0 });
         }
         *ctx.output(OUT_L) = out_l;
         *ctx.output(OUT_R) = out_r;

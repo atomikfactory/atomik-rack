@@ -927,6 +927,19 @@ fn a_right_click_on_a_free_inner_knob_offers_the_macros_of_its_container() {
 }
 
 #[test]
+fn a_plain_right_click_on_the_stereo_tools_solo_opens_the_macro_menu() {
+    let mut d = layered();
+    add_inner(&mut d, "layer", 4, "atomik.stereo-tool", "st");
+    set_open(&mut d, "layer", true);
+    let mut v = inline_view(d.doc());
+    let p = v.control_center(&key("layer/st"), "solo").unwrap();
+    let a = right_click(&mut v, d.doc(), p);
+    assert!(a.is_empty(), "{a:?}");
+    let r = rows(&v);
+    assert!(!r.is_empty() && r[0].starts_with("Map to macro 1"), "{r:?}");
+}
+
+#[test]
 fn a_right_click_on_a_knob_of_the_rack_opens_no_macro_menu() {
     let d = unfolded();
     let mut v = inline_view(d.doc());
