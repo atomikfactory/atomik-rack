@@ -257,3 +257,119 @@ fn rotation_agrees_with_the_analysis_rotator() {
         assert_eq!(*got, r.process(noise(i, 9)));
     }
 }
+
+// ----- regression guard: projects saved before the upgrade must sound bit-identical -----
+
+fn fnv(h: &mut u64, v: f32) {
+    for b in v.to_bits().to_le_bytes() {
+        *h ^= u64::from(b);
+        *h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+}
+
+/// Renders `batches` batches of noise; `setup` sets params before each batch runs. Returns the
+/// FNV-1a hash of every output sample (left then right per batch).
+fn render_hash(batches: usize, mut setup: impl FnMut(&mut DeviceHarness, usize)) -> u64 {
+    let mut h = tool();
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for b in 0..batches {
+        let mut xl = [0.0f32; BATCH];
+        let mut xr = [0.0f32; BATCH];
+        for i in 0..BATCH {
+            let n = b * BATCH + i;
+            // A tone and noise, with the right channel partly correlated with the left.
+            let t = (2.0 * std::f32::consts::PI * 110.0 * n as f32 / SR as f32).sin();
+            xl[i] = 0.4 * t + 0.5 * noise(n, 21);
+            xr[i] = 0.2 * t + 0.5 * noise(n, 22);
+        }
+        setup(&mut h, b);
+        *h.input_mut("in_l") = xl;
+        *h.input_mut("in_r") = xr;
+        h.process();
+        for key in ["out_l", "out_r"] {
+            for v in h.output(key) {
+                fnv(&mut hash, *v);
+            }
+        }
+    }
+    hash
+}
+
+#[test]
+fn existing_projects_sound_bit_identical_after_the_upgrade() {
+    // Defaults: the input passes untouched.
+    let defaults = render_hash(200, |_, _| {});
+    // Width without a split, with changes mid-ramp.
+    let width = render_hash(400, |h, b| match b {
+        0 => h.set_param("width", 0.0),
+        100 => h.set_param("width", 2.0),
+        200 => h.set_param("width", 0.7),
+        203 => h.set_param("width", 1.4),
+        300 => h.set_param("width", 1.0),
+        _ => {}
+    });
+    // Width with the low band kept: several corners, a corner moved mid-run, width back to 1.
+    let split = render_hash(500, |h, b| match b {
+        0 => {
+            h.set_param("low_bypass", 200.0);
+            h.set_param("width", 0.0);
+        }
+        100 => h.set_param("width", 1.8),
+        200 => h.set_param("low_bypass", 500.0),
+        250 => h.set_param("low_bypass", 63.0),
+        300 => h.set_param("width", 1.0),
+        400 => h.set_param("width", 0.3),
+        450 => h.set_param("low_bypass", 20.0),
+        _ => {}
+    });
+    // Rotation, with polarity, balance and mono around it.
+    let rotation = render_hash(400, |h, b| match b {
+        0 => {
+            h.set_param("rotate", 90.0);
+            h.set_param("rotate_hz", 80.0);
+        }
+        100 => {
+            h.set_param("rotate_hz", 300.0);
+            h.set_param("invert_l", 1.0);
+        }
+        200 => {
+            h.set_param("rotate", 180.0);
+            h.set_param("balance", 0.6);
+        }
+        300 => {
+            h.set_param("rotate", 35.0);
+            h.set_param("mono", 1.0);
+        }
+        _ => {}
+    });
+    // The mid/side modes, with width and a split in front.
+    let modes = render_hash(400, |h, b| match b {
+        0 => {
+            h.set_param("mode", 1.0);
+            h.set_param("width", 1.3);
+        }
+        100 => h.set_param("mode", 2.0),
+        200 => {
+            h.set_param("mode", 0.0);
+            h.set_param("low_bypass", 120.0);
+            h.set_param("width", 0.5);
+            h.set_param("balance", -0.4);
+        }
+        300 => {
+            h.set_param("mode", 1.0);
+            h.set_param("mono", 1.0);
+        }
+        _ => {}
+    });
+    assert_eq!(
+        [defaults, width, split, rotation, modes],
+        [
+            0x3fb4_3677_e7a5_9101,
+            0x8f2c_dbdb_62c9_43e2,
+            0x7a55_cd14_3bbc_a144,
+            0x812c_01ee_6ae4_bb24,
+            0x90ca_9bed_b584_3767
+        ],
+        "{defaults:#018x} {width:#018x} {split:#018x} {rotation:#018x} {modes:#018x}"
+    );
+}
