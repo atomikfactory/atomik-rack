@@ -4605,6 +4605,10 @@ mod analyser_tests;
 mod players_tests;
 
 #[cfg(test)]
+#[path = "app_core_stereo_tool_tests.rs"]
+mod stereo_tool_tests;
+
+#[cfg(test)]
 #[path = "app_core_character_tests.rs"]
 mod character_tests;
 
