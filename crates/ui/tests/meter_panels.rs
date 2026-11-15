@@ -405,3 +405,159 @@ fn the_pre_post_chip_emits_a_point_action_on_both_panels() {
     let (b, chip) = (v.bounds(4).unwrap(), v.point_rect(4).unwrap());
     assert!(b.contains(Point::new(chip.x1 - 1.0, chip.y1 - 1.0)));
 }
+
+fn double_click(v: &mut MeterPanelsView, p: Point) {
+    v.handle(&UiEvent::PointerDown {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 2,
+    });
+    v.handle(&up(p));
+}
+
+#[test]
+fn the_grip_resizes_a_panel_never_smaller_than_it_opens_nor_out_of_the_window() {
+    let mut v = view_of(vec![spectrum(1, 0)]);
+    let start = v.bounds(1).unwrap();
+    let grip = v.grip_rect(1).expect("a grip");
+    assert!(
+        (grip.x1 - start.x1).abs() < 1e-9 && (grip.y1 - start.y1).abs() < 1e-9,
+        "in the bottom right corner"
+    );
+    let at = centre(grip);
+    assert!(v.handle(&down(at)).0);
+    assert!(v.is_dragging());
+    v.handle(&mv(Point::new(at.x + 200.0, at.y + 100.0)));
+    let big = v.bounds(1).unwrap();
+    assert!(
+        (big.width() - start.width() - 200.0).abs() < 1e-9,
+        "{big:?}"
+    );
+    assert!(
+        (big.height() - start.height() - 100.0).abs() < 1e-9,
+        "{big:?}"
+    );
+    assert_eq!(big.origin(), start.origin(), "the top left stays");
+    assert!(
+        v.trace_columns(1) > 240,
+        "a wider plot asks for a finer trace"
+    );
+    // Smaller than it opens: no.
+    v.handle(&mv(Point::new(at.x - 300.0, at.y - 300.0)));
+    let small = v.bounds(1).unwrap();
+    assert!(
+        (small.width() - PANEL_WIDTH).abs() < 1e-9 && (small.height() - PANEL_HEIGHT).abs() < 1e-9
+    );
+    assert_eq!(v.trace_columns(1), 240);
+    // Past the window: stops at its edge.
+    v.handle(&mv(Point::new(5000.0, 5000.0)));
+    let edge = v.bounds(1).unwrap();
+    assert!(edge.x1 <= AREA.0 && edge.y1 <= AREA.1, "{edge:?}");
+    v.handle(&up(Point::new(5000.0, 5000.0)));
+    assert!(!v.is_dragging());
+}
+
+#[test]
+fn maximize_fills_the_window_and_puts_the_panel_back_where_it_was() {
+    let mut v = view_of(vec![spectrum(1, 0), phase(2)]);
+    let start = v.bounds(1).unwrap();
+    let at = centre(v.maximize_rect(1).unwrap());
+    click(&mut v, at);
+    assert!(v.is_maximized(1));
+    let full = v.bounds(1).unwrap();
+    assert!(
+        full.width() > AREA.0 - 20.0 && full.height() > AREA.1 - 20.0,
+        "{full:?}"
+    );
+    assert!(v.grip_rect(1).is_none(), "no grip while maximized");
+    // A maximized panel is not dragged by its title.
+    let title = Point::new(full.x0 + 120.0, full.y0 + 8.0);
+    v.handle(&down(title));
+    assert!(!v.is_dragging());
+    v.handle(&up(title));
+    // The window grows: it still fills it.
+    v.set_area(1200.0, 800.0);
+    assert!(v.bounds(1).unwrap().width() > 1180.0);
+    v.set_area(AREA.0, AREA.1);
+    // Back where it was.
+    let at = centre(v.maximize_rect(1).unwrap());
+    click(&mut v, at);
+    assert!(!v.is_maximized(1));
+    assert_eq!(v.bounds(1).unwrap(), start);
+    // A double click on the title does the same, on the phase panel too (moved clear of the
+    // spectrum panel, which lies over its title).
+    v.move_to(2, Point::new(480.0, 360.0));
+    let p = v.bounds(2).unwrap();
+    double_click(&mut v, Point::new(p.x0 + 120.0, p.y0 + 8.0));
+    assert!(v.is_maximized(2));
+    let r = v.plot_rect(2).unwrap();
+    assert!(
+        (r.width() - r.height()).abs() < 1e-9,
+        "the goniometer stays square"
+    );
+    assert!(r.height() > 300.0, "and grows: {r:?}");
+    let full = v.bounds(2).unwrap();
+    double_click(&mut v, Point::new(full.x0 + 120.0, full.y0 + 8.0));
+    assert_eq!(v.bounds(2).unwrap(), p);
+}
+
+#[test]
+fn hold_keeps_the_peaks_falling_slowly_and_a_click_on_the_plot_starts_again() {
+    let mut v = view_of(vec![spectrum(1, 0)]);
+    assert!(!v.is_holding(1));
+    let at = centre(v.hold_rect(1).unwrap());
+    click(&mut v, at);
+    assert!(v.is_holding(1));
+    let loud = spectrum(1, 0).trace;
+    assert_eq!(v.held(1), loud.as_slice());
+    // The trace drops by 30 dB: the hold falls by a little at each new trace.
+    let mut quiet = spectrum(1, 0);
+    quiet.trace = loud.iter().map(|d| d - 30.0).collect();
+    v.set_panels(vec![quiet.clone()]);
+    let fall = atomik_ui::meter_panels::HOLD_FALL_DB;
+    assert!((v.held(1)[120] - (loud[120] - fall)).abs() < 1e-4);
+    // The same trace again is no new trace: nothing falls.
+    v.set_panels(vec![quiet.clone()]);
+    assert!((v.held(1)[120] - (loud[120] - fall)).abs() < 1e-4);
+    // A click on the plot starts it again from the trace.
+    let plot = v.plot_rect(1).unwrap();
+    click(&mut v, Point::new(plot.x0 + 40.0, plot.y1 - 20.0));
+    assert_eq!(v.held(1), quiet.trace.as_slice());
+    // Off: nothing held.
+    let at = centre(v.hold_rect(1).unwrap());
+    click(&mut v, at);
+    assert!(!v.is_holding(1) && v.held(1).is_empty());
+}
+
+#[test]
+fn the_cursor_readout_names_the_frequency_the_note_and_the_level() {
+    let plot = Rect::new(0.0, 0.0, 300.0, 100.0);
+    let trace = vec![-12.0f32; 300];
+    // 440 Hz on the log axis from 20 Hz to 20 kHz.
+    let x = (440.0f64 / 20.0).ln() / 1000.0f64.ln() * 300.0;
+    let text = atomik_ui::meter_panels::cursor_text(plot, &trace, x);
+    assert!(text.starts_with("440 Hz"), "{text}");
+    assert!(text.contains("A4"), "{text}");
+    assert!(text.ends_with("-12.0 dB"), "{text}");
+    let silent = vec![-200.0f32; 300];
+    assert!(atomik_ui::meter_panels::cursor_text(plot, &silent, x).ends_with("--"));
+    // Over the plot the readout is drawn.
+    let mut v = view_of(vec![spectrum(1, 0)]);
+    let r = v.plot_rect(1).unwrap();
+    v.handle(&mv(Point::new(r.x0 + 100.0, r.y0 + 60.0)));
+    let dl = paint(&mut v);
+    assert!(dl.to_json().contains(" dB"), "a readout");
+}
+
+#[test]
+fn a_maximized_panel_and_its_cursor_are_a_golden() {
+    let mut v = view_of(vec![spectrum(1, 2)]);
+    let at = centre(v.hold_rect(1).unwrap());
+    click(&mut v, at);
+    v.toggle_maximized(1);
+    let r = v.plot_rect(1).unwrap();
+    v.handle(&mv(Point::new(r.x0 + r.width() * 0.6, r.y0 + 80.0)));
+    let dl = paint(&mut v);
+    support::starter::check_golden("meter_panel_maximized_1x.json", &dl.to_json());
+}

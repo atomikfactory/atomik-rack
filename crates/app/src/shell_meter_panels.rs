@@ -28,6 +28,14 @@ impl<B: AudioBackend> Shell<B> {
         self.meter_panels
             .set_area(size.width, size.height - STATUS_BAR_HEIGHT);
         self.meter_panels.set_panels(self.core.meter_panel_states());
+        // A larger panel asks for a finer trace.
+        let columns: Vec<(u32, usize)> = self
+            .meter_panels
+            .ids()
+            .into_iter()
+            .map(|id| (id, self.meter_panels.trace_columns(id)))
+            .collect();
+        self.core.set_meter_panel_columns(&columns);
         if self.meter_panels.needs_repaint() {
             self.repaint = true;
         }

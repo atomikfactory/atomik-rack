@@ -318,9 +318,13 @@ open). Right-click the button for the spectrum or the phase meter. The menu of a
 has **Show Spectrum** and **Show Phase Meter** too. A panel with the drawing of the analyser devices opens over the
 window; nothing is added to the song. It shows the strip's output after its fader (a plugin device: its output after
 the bypass), you drag it by its title, you can open several, and it closes with the strip or device it belongs to.
-Panels are not saved.
+Drag the grip in its bottom right corner to make it larger, or press the square beside the close cross (or
+double-click the title) to fill the window; the same again puts it back. Panels are not saved.
 
 - **Spectrum.** The SIZE arrows step the FFT from 1024 to 65536 points: larger shows more detail and moves more slowly.
+  With the pointer over the plot, a readout shows the frequency, the nearest note and the level there. **HOLD** keeps
+  the peaks as a thin line that falls slowly; click the plot to start it again. A larger panel draws a finer trace,
+  more frequency labels and the dB scale.
   The **REF** button opens a list: another strip, or the reference track, drawn as a second curve over the trace so
   the two can be compared. The reference track is drawn at the level it is heard at (the matched gain and the trim).
   The Spectrum device has the same REF button on its plot, and keeps its choice in the project.

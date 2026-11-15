@@ -99,6 +99,8 @@ struct Panel {
     scope_r: Vec<f32>,
     correlation: f32,
     peaks: [f32; 2],
+    /// How many columns the spectrum traces have (the panel's width asks for more).
+    columns: usize,
 }
 
 /// The meter panels of an open project (not saved).
@@ -140,6 +142,22 @@ fn db(x: f32) -> f32 {
 }
 
 impl<S: EngineSink> AppCore<S> {
+    /// How many columns the trace of each spectrum panel should have, from the size the panels
+    /// show at (`(panel id, columns)`). A panel whose number changed starts its traces again,
+    /// so a trace never mixes two resolutions.
+    pub fn set_meter_panel_columns(&mut self, columns: &[(u32, usize)]) {
+        for (id, n) in columns {
+            if let Some(p) = self.meter_panels.panels.iter_mut().find(|p| p.id == *id)
+                && p.kind == MeterKind::Spectrum
+                && p.columns != *n
+            {
+                p.columns = *n;
+                p.spectrum = Spectrum::new();
+                p.second = Spectrum::new();
+            }
+        }
+    }
+
     /// Whether a meter can open on `key`: a console strip or a plugin device.
     pub fn can_open_meter(&self, key: &DeviceKey) -> bool {
         self.console.strip_names().iter().any(|(k, _, _)| k == key)
@@ -177,6 +195,7 @@ impl<S: EngineSink> AppCore<S> {
             from: CurveFrom::Off,
             spectrum: Spectrum::new(),
             second: Spectrum::new(),
+            columns: TRACE_COLUMNS,
             head: 0,
             second_head: 0,
             left: Vec::new(),
@@ -629,7 +648,7 @@ impl<S: EngineSink> AppCore<S> {
                             elapsed,
                             sample_rate,
                             &settings,
-                            TRACE_COLUMNS,
+                            p.columns,
                         );
                     }
                     if let CurveFrom::Strip(key) = p.from.clone()
@@ -651,7 +670,7 @@ impl<S: EngineSink> AppCore<S> {
                                 elapsed,
                                 sample_rate,
                                 &settings,
-                                TRACE_COLUMNS,
+                                p.columns,
                             );
                         }
                     }
