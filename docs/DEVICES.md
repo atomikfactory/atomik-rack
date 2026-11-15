@@ -1639,8 +1639,8 @@ had before the seventh band was added, so band 4 on the panel is `band7`:
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | yes |
 
 Frequencies and Q use the exponential taper, gains and `output` the linear one. `internal.analyser_live`
-(never stored, default 0) is not set by the app for the EQ. Projects saved before the upgrade keep their sound: the old keys
-mean what they meant, the shapes default to the old fixed types and the new params default to
+(never stored, default 0) is not set by the app for the EQ. Projects saved before the upgrade keep
+their sound: the old keys mean what they meant, the shapes default to the old fixed types and the new params default to
 "off" or "flat".
 
 ### Behaviour (as built)
@@ -1666,8 +1666,8 @@ mean what they meant, the shapes default to the old fixed types and the new para
 - **Spectrum tap.** The device owns a scope tap with the output after the output gain; the app keeps
   it live only while the panel is on screen with `spectrum.on` set and the device not bypassed, runs
   an FFT on it on the UI thread and draws the trace behind the curve.
-- **Analyser.** It runs only while `internal.analyser_live` is set (the app leaves it off: the panel reads only the peaks). The mono mix of the output
-  feeds a fixed bank of 16 RBJ band-pass biquads (Q 2.485, centres log-spaced from 40 Hz to 16 kHz).
+- **Analyser.** It runs only while `internal.analyser_live` is set (the app leaves it off: the
+  panel reads only the peaks). The mono mix of the output feeds a fixed bank of 16 RBJ band-pass biquads (Q 2.485, centres log-spaced from 40 Hz to 16 kHz).
   `meter_values` (18): `[0..16)` band energies (linear power), `[16]` output peak L, `[17]` output
   peak R (the panel's L/R meters).
 - **Latency** 0. Non-finite input is treated as 0.
