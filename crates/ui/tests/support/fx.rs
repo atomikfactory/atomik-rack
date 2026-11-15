@@ -126,6 +126,15 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
             set(&mut d, "band5.gain", 3.0);
             set(&mut d, "band5.range", 0.0);
         }
+        FxKind::GainTool => {
+            set(&mut d, "mode", 1.0);
+            set(&mut d, "gain", -6.0);
+            set(&mut d, "fade", 3000.0);
+            set(&mut d, "invert_l", 1.0);
+            set(&mut d, "pan_l", -0.6);
+            set(&mut d, "pan_law", 2.0);
+            set(&mut d, "width", 1.4);
+        }
     }
     doc.devices.push(d);
     doc
@@ -172,6 +181,9 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
             v.extend([0.4, 0.38, 1.0]);
             v
         }
+        // Input peaks L and R, output peaks L and R (linear), the held peak (dB), then the signal,
+        // CV and fading flags.
+        FxKind::GainTool => vec![0.5, 0.4, 0.35, 0.28, -3.2, 1.0, 1.0, 1.0],
         // The audio track publishes no meter values.
         FxKind::AudioTrack | FxKind::Tuner => vec![],
     }

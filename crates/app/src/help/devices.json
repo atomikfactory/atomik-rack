@@ -26,7 +26,7 @@
   "atomik.eq": "A six-band stereo parametric equaliser with a live analyser. Drag the points on the curve to shape the tone.",
   "atomik.feedback": "The supported way to send audio back on itself: a loop through it is allowed and is delayed by one batch.",
   "atomik.fm-synth": "A four-operator frequency modulation synthesiser. Choose an algorithm, shape each operator and the modulation between them, and play bells, keys and basses.",
-  "atomik.gain-tool": "Gain, balance, width and mute at one point of a chain, with an optional second stereo input.",
+  "atomik.gain-tool": "Polarity, mono, dual pan with a pan law, width, gain (trim or VCA fader), balance and mute with an optional long fade, plus peak meters and an optional second stereo input.",
   "atomik.gate": "A stereo gate and downward expander with a sidechain key: it closes on quiet signals to remove noise and bleed.",
   "atomik.gate-processor": "Converts, divides, delays, lengthens and combines gate signals, so that one trigger can drive many things.",
   "atomik.granular": "Plays a sample as a cloud of short grains. Move the position, size, density and pitch to freeze, smear and stretch a sound.",

@@ -22,6 +22,13 @@ may break APIs and the patch and project formats.
   output pair for each band. At X-over 20 Hz there is no split, as before. Projects saved before keep their sound
   bit for bit; the X-over range is wider, so existing MIDI or controller mappings on it reach different values than
   before.
+- **A new Gain Tool.** Its own panel (3 U) replaces the plain knobs: SIGNAL, CV and FADING lamps, MUTE with a FADE
+  time of up to a minute (the gain falls in equal dB steps and a mute CV input fades the same way), input and output
+  level meters, a big horizontal gain fader that is either a TRIM (-60 to +24 dB) or a VCA (-inf to 0 dB, never a
+  boost), polarity buttons for the left and the right channel, MONO, two pans (PAN L and PAN R, so each side can be
+  placed anywhere) with a PAN LAW of 0, -3, -4.5 or -6 dB, and a PEAK HOLD readout with RESET and AUTO. The back panel
+  groups the jacks and puts the CV trims under their jacks. Projects saved with the old Gain Tool sound exactly the
+  same.
 - **A larger spectrum panel, with a cursor readout and a peak hold.** Show Spectrum's panel (and the phase meter's)
   can be resized by the grip in its corner and filled to the window with the button beside the close cross or a
   double click on its title. A larger spectrum asks for a finer trace (up to 1024 columns) and labels more

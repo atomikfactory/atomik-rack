@@ -4295,11 +4295,13 @@ deterministic `log2_det` / `exp2_det`, so a bounce is bit-identical on every pla
 
 ### Gain Tool: `atomik.gain-tool` (Effect)
 
-Gain, balance, width and mute, with an optional second stereo input.
-Source: [gain_tool.rs](../crates/devices/src/gain_tool.rs).
+A channel-strip style utility: polarity, mono, dual pan, width, gain (a trim or a VCA fader), balance and
+mute with an optional long fade, a second stereo input to add or cross-fade in, and the meters of its
+panel. Source: [gain_tool.rs](../crates/devices/src/gain_tool.rs); its panel is
+[gain_panel.rs](../crates/ui/src/gain_panel.rs).
 
 Sockets: `in_l`, `in_r`, `aux_l`, `aux_r` (Audio in), `out_l`, `out_r` (Audio out), `gain_cv_in`,
-`pan_cv_in` (CV in).
+`pan_cv_in`, `mute_cv_in` (CV in).
 
 | Key | Range | Default | Unit |
 |---|---|---|---|
@@ -4312,15 +4314,51 @@ Sockets: `in_l`, `in_r`, `aux_l`, `aux_r` (Audio in), `out_l`, `out_r` (Audio ou
 | `gain_cv_trim` | -1 to 1 | 1 | percent |
 | `pan_cv_trim` | -1 to 1 | 1 | percent |
 | `bypass` | 0 or 1 | 0 | toggle |
+| `fade` | 0 to 60000 (shown in seconds) | 0 | ms |
+| `invert_l`, `invert_r` | 0 or 1 | 0 | toggle |
+| `mono` | 0 or 1 | 0 | toggle |
+| `pan_l` | -1 to 1 | -1 | none |
+| `pan_r` | -1 to 1 | 1 | none |
+| `pan_law` | 0 to 3: 0 dB, -3 dB, -4.5 dB, -6 dB | 1 | choice |
+| `fader_mode` | 0 to 1: Trim, VCA | 0 | choice |
+| `peak_reset` | 0 or 1 (momentary) | 0 | toggle |
+| `peak_auto` | 0 or 1 | 0 | toggle |
 
-- **Modes.** gain: the input. mix: the input plus the aux input at the `blend` level. xfade: a
-  linear cross-fade from the input to the aux input.
-- **Gain** is `gain` plus the CV (`gain_cv_trim` times the CV times 24 dB); **mute** ramps it to 0.
-  **Balance** is unity at the centre and lowers the far side linearly to silence; its CV adds to
-  `pan` as in [the CV trim convention](#cv-inputs-the-trim-convention). **Width** is mid/side
-  width and is skipped at exactly 1.
-- Gain, balance, width and blend are smoothed per batch over 10 ms. At the defaults the output
-  is the input bit for bit.
+- **Order.** Polarity, mono, the aux input, dual pan, width, then gain, balance and the mute fade. Every
+  stage that is neutral is skipped or multiplies by exactly 1, so a project saved before the upgrade
+  sounds bit for bit the same. Polarity, mono, gain, balance, width, blend and the pan matrix are
+  smoothed per batch over 10 ms, so switching never clicks.
+- **Modes.** gain: the input. mix: the input plus the aux input at the `blend` level. xfade: a linear
+  cross-fade from the input to the aux input.
+- **Polarity and mono.** `invert_l` and `invert_r` flip the sign of that input channel. `mono` replaces
+  both channels by `(L + R) / 2`.
+- **Dual pan.** The left input is placed at `pan_l` and the right input at `pan_r`; the default (hard
+  left, hard right) is the identity. `pan_law` sets the level at the centre: 0 dB (unity), -3 dB
+  (constant power, the default), -4.5 dB, -6 dB (linear). At the extremes every law is exactly hard left
+  or right. **Width** is mid/side width and is skipped at exactly 1.
+- **Gain** is `gain` plus the CV (`gain_cv_trim` times the CV times 24 dB). **Trim** uses it as it is,
+  -60 to +24 dB. **VCA** uses only the -inf to 0 dB half: `gain` at -60 is silence (the CV is ignored)
+  and anything above it is `min(gain + CV, 0 dB)`, so the fader never boosts. **Balance** is unity at
+  the centre and lowers the far side linearly to silence; its CV adds to `pan` as in
+  [the CV trim convention](#cv-inputs-the-trim-convention).
+- **Mute** is `mute` or a gate on `mute_cv_in` (above 0.5 mutes, below 0.3 releases). With `fade` at 0
+  the gain ramps to 0 over 10 ms. With `fade` above 0 the gain falls in equal dB steps over exactly
+  `fade` milliseconds to -90 dB and then to exact silence, and a fade reversed half way takes half as
+  long.
+- **Meters** (`meter_values`, 8 values): input peak L and R and output peak L and R (linear, the peak of
+  the last 16 batches), the held output peak in dB (the maximum since the last reset, -120 when none),
+  signal present (input above -60 dBFS), CV active (a connected CV input moved in the last 16 batches)
+  and fading (1 during a mute fade). A rising edge of `peak_reset` clears the hold; `peak_auto` also
+  clears it every 3 s of audio.
+- **Panel.** A 3 U strip (see [gain_panel.rs](../crates/ui/src/gain_panel.rs)): the SIGNAL, CV and FADING
+  lamps, MUTE and its FADE knob, the input meter, the big horizontal gain fader, the output meter, the
+  mode and BLEND knob (only while the mode blends) and the TRIM / VCA switch, the polarity and MONO
+  switches, the peak hold readout with RESET and AUTO, PAN L, PAN R, the pan law, BALANCE and WIDTH. The
+  fader scale follows `fader_mode`: Trim marks -60 to +24 dB, VCA -inf to 0 dB with -inf at the left end.
+  A drag is one undo step, Shift is fine, a double click puts it back to 0 dB. RESET does not store
+  anything: the app sends the device 1 and, two frames later, 0, so there is no undo step. The back has
+  the audio in, the aux in, the three CV jacks (with the two trims under their jacks) and the audio out.
+- No latency, no allocation after construction; non-finite input samples count as 0.
 
 ### Stereo Tool: `atomik.stereo-tool` (Effect)
 

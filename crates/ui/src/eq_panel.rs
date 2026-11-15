@@ -761,6 +761,7 @@ pub fn eq_layout(desc: &DeviceDescriptor) -> PanelSpec {
             character: None,
             eq: Some(geom),
             stereo: None,
+            gain: None,
         }),
         seq: None,
         drum_gen: None,
