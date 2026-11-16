@@ -137,6 +137,18 @@ fn the_lens_voicings_toggle_and_mono_is_a_switch_of_its_own() {
 }
 
 #[test]
+fn the_mono_button_on_the_master_strip_follows_the_lens() {
+    let mut c = core_with(SYNTH, &[]);
+    assert!(!c.console().monitor_mono());
+    c.toggle_lens_mono();
+    assert!(c.console().monitor_mono(), "lit while mono is on");
+    c.set_lens_voicing(LensVoicing::SmallSpeaker);
+    assert!(c.console().monitor_mono(), "a voicing does not change it");
+    c.lens_off();
+    assert!(!c.console().monitor_mono(), "headphones switch it off");
+}
+
+#[test]
 fn every_change_is_sent_once_and_a_new_engine_gets_the_lens_again() {
     let mut c = core_with(SYNTH, &[]);
     assert!(lens_calls(&c).is_empty(), "nothing is sent while it is off");

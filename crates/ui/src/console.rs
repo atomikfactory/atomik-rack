@@ -159,6 +159,8 @@ pub enum ConsoleButton {
     ClearSolos,
     /// Master: clear every mute.
     ClearMutes,
+    /// Master: fold the live output to mono (the translation lens's mono switch).
+    Mono,
     /// Snapshot bar: store the mix as a new snapshot (the `+` button).
     StoreSnapshot,
     /// Snapshot bar: the A/B compare toggle.
@@ -870,6 +872,8 @@ pub struct ConsoleView {
     /// The ballistics the strip meters show.
     meter_mode: MeterMode,
     pdc_warning: bool,
+    /// The live output is folded to mono (as the app last said): the MONO button is lit.
+    monitor_mono: bool,
     maximised: bool,
     compensation: bool,
     sample_rate: u32,
@@ -965,6 +969,7 @@ impl ConsoleView {
             total_latency: 0,
             meter_mode: MeterMode::Peak,
             pdc_warning: false,
+            monitor_mono: false,
             maximised: false,
             compensation: true,
             sample_rate: 48_000,
@@ -1220,6 +1225,23 @@ impl ConsoleView {
     /// Whether the console is shown maximised (as last told by the app).
     pub fn maximised(&self) -> bool {
         self.maximised
+    }
+
+    /// Tells the view whether the live output is folded to mono (the MONO button on the master
+    /// strip is lit). A monitoring state of the app, never part of the project.
+    pub fn set_monitor_mono(&mut self, mono: bool) {
+        if mono != self.monitor_mono {
+            self.monitor_mono = mono;
+            if let Some(m) = &mut self.master {
+                m.revision += 1;
+            }
+            self.repaint = true;
+        }
+    }
+
+    /// Whether the MONO button is lit (as last told by the app).
+    pub fn monitor_mono(&self) -> bool {
+        self.monitor_mono
     }
 
     /// Shows the "compensation limit exceeded" warning in the toolbar.
@@ -1794,12 +1816,12 @@ impl ConsoleView {
             ConsoleButton::StoreSnapshot => Some(self.snapshot_layout().store),
             ConsoleButton::Compare => Some(self.snapshot_layout().compare),
             ConsoleButton::EndCompare => self.snapshot_layout().end,
-            ConsoleButton::ClearSolos | ConsoleButton::ClearMutes => {
+            ConsoleButton::ClearSolos | ConsoleButton::ClearMutes | ConsoleButton::Mono => {
                 let (l, mx) = (self.master_layout.as_ref()?, self.master_x()?);
-                let r = if button == ConsoleButton::ClearSolos {
-                    l.clear_solo
-                } else {
-                    l.clear_mute
+                let r = match button {
+                    ConsoleButton::ClearSolos => l.clear_solo,
+                    ConsoleButton::ClearMutes => l.clear_mute,
+                    _ => l.mono,
                 };
                 Some(r + Vec2::new(mx, self.area_top()))
             }
@@ -2103,6 +2125,9 @@ impl ConsoleView {
                 }
                 if l.clear_mute.contains(lp) {
                     return Hit::Button(ConsoleButton::ClearMutes);
+                }
+                if l.mono.contains(lp) {
+                    return Hit::Button(ConsoleButton::Mono);
                 }
                 if l.output.iter().any(|(item, r)| {
                     matches!(item, cl::OutputItem::PeakLeft | cl::OutputItem::PeakRight)
@@ -3078,6 +3103,10 @@ impl ConsoleView {
                     ConsoleCommand::ClearMutes,
                 )));
             }
+            ConsoleButton::Mono => out.push(UiAction::RunCommand {
+                id: "mixer.lens_mono".into(),
+                arg: None,
+            }),
             ConsoleButton::StoreSnapshot => out.push(UiAction::Command(Command::Console(
                 ConsoleCommand::StoreSnapshot {
                     name: doc.console.default_snapshot_name(),
@@ -4928,7 +4957,7 @@ impl ConsoleView {
                     m,
                     l,
                     &self.return_names,
-                    (self.any_solo, self.any_mute),
+                    (self.any_solo, self.any_mute, self.monitor_mono),
                 );
                 if let Some(m) = &mut self.master {
                     m.lists = [Some(upper), Some(pinned)];
@@ -6271,7 +6300,7 @@ fn record_master(
     m: &StripView,
     l: &MasterLayout,
     return_names: &[String],
-    (any_solo, any_mute): (bool, bool),
+    (any_solo, any_mute, monitor_mono): (bool, bool, bool),
 ) {
     let t = &st.base;
     for sec in &l.sections {
@@ -6390,6 +6419,15 @@ fn record_master(
         any_mute.then_some(st.mute),
         true,
         6.8,
+    );
+    small_button(
+        pinned,
+        st,
+        l.mono,
+        "MONO",
+        monitor_mono.then_some(t.warning),
+        true,
+        7.0,
     );
     lcd_text(pinned, st, l.output_row, "MAIN 1+2", t.text_muted, 7.0);
     name_plate(

@@ -294,6 +294,11 @@
     "text": "Un-mutes every strip at once.",
     "more": "The main window"
   },
+  "console.mono": {
+    "title": "Mono listening",
+    "text": "Folds what you hear to mono, (L + R) / 2 on both sides, to check that the mix holds up. Lit while it is on. It only changes what you hear: never saved in the project, never in a bounce or an export.",
+    "more": "The main window"
+  },
   "console.store_snapshot": {
     "title": "Store a snapshot",
     "text": "Stores the whole mix as a snapshot chip. Click the chip later to recall that mix.",
