@@ -163,6 +163,54 @@ fn the_wedges_follow_the_circle_of_fifths_with_c_at_the_top() {
 }
 
 #[test]
+fn the_36_wedge_labels_are_spelled_like_a_circle_of_fifths() {
+    let ring =
+        |r: Ring| -> Vec<String> { (0..12).map(|p| cw::wedge_label(Wedge::new(r, p))).collect() };
+    assert_eq!(
+        ring(Ring::Major),
+        [
+            "C", "G", "D", "A", "E", "B", "F#", "Db", "Ab", "Eb", "Bb", "F"
+        ]
+    );
+    assert_eq!(
+        ring(Ring::Minor),
+        [
+            "Am", "Em", "Bm", "F#m", "C#m", "G#m", "D#m", "Bbm", "Fm", "Cm", "Gm", "Dm"
+        ]
+    );
+    assert_eq!(
+        ring(Ring::Dim),
+        [
+            "B\u{b0}", "F#\u{b0}", "C#\u{b0}", "G#\u{b0}", "D#\u{b0}", "A#\u{b0}", "F\u{b0}",
+            "C\u{b0}", "G\u{b0}", "D\u{b0}", "A\u{b0}", "E\u{b0}"
+        ]
+    );
+    // Each label names the pitch class of its wedge.
+    let pc = |s: &str| -> u8 {
+        let base = match &s[..1] {
+            "C" => 0,
+            "D" => 2,
+            "E" => 4,
+            "F" => 5,
+            "G" => 7,
+            "A" => 9,
+            _ => 11,
+        };
+        match s.as_bytes().get(1) {
+            Some(b'#') => (base + 1) % 12,
+            Some(b'b') => (base + 11) % 12,
+            _ => base,
+        }
+    };
+    for r in Ring::ALL {
+        for p in 0..12 {
+            let w = Wedge::new(r, p);
+            assert_eq!(pc(&cw::wedge_label(w)), w.root(), "{r:?} {p}");
+        }
+    }
+}
+
+#[test]
 fn a_chord_belongs_to_the_wedge_of_its_root_and_family() {
     for ring in Ring::ALL {
         for pos in 0..12 {
