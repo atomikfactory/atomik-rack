@@ -3949,6 +3949,40 @@ them.
 - **Suggestions.** `suggest_next` ranks what the model offers after a chord: strong (the mood's core),
   colour or surprise.
 
+### Commands
+
+App core, [crates/app/src/app_core_chord_wheel.rs](../crates/app/src/app_core_chord_wheel.rs). They act
+on the Chord Wheel selected in the rack, or the one in the player stack of a selected track, and are in
+Track > Players and the rack's right-click menu (greyed with no Chord Wheel selected). They have no
+default key. Slots are numbered from 0 in the app core API. Every edit is a param edit (or one
+`SetHarmony`), so each press is one undo step.
+
+- **Generate Progression** (`rack.wheel_generate`). Advances `gen.seed` (past 9999 it starts again
+  at 0, so each press differs), runs `generate` with the device key, `gen.mood`, `gen.spice`, `slots`
+  and the chords of the locked slots, and writes root, quality, bass and length of the active slots
+  that are not locked. Slots past `slots` are left alone.
+- **Set a slot** (`wheel_set_chord`, for the panel). Writes root, quality and slash bass of one slot;
+  consecutive sets of one slot merge into one undo step like a value drag. `wheel_toggle_lock` and
+  `wheel_set_slots` change a lock and the slot count.
+- **Send Progression to Chord Lane** (`rack.wheel_to_chord_lane`). Writes the active slots as chord
+  lane chords (root, quality, slash bass), a slot lasting its `beats` quarter notes, from the left
+  locator (the loop start). With the loop on the progression repeats to fill the loop and the last
+  chord is cut at the loop end; with it off it is written once. The chords of the lane inside the span
+  are replaced (a chord that runs through an end keeps the part outside). With `key.source` song each
+  chord moves by the distance from `key.root` to the song key at that chord (`song_key_shift`). A
+  song with no key gets the device key. The menu command also shows the chord lane.
+- **Send Progression to Clip** (`rack.wheel_to_clip`). Send Players to Track for the track of the
+  player: the offline render of the track's stack ([crates/render/src/players.rs](../crates/render/src/players.rs))
+  becomes a clip on a new note lane named "Chord Wheel". The render is of one pass of the progression
+  from song tick 0 and is repeated over the span of Send Progression to Chord Lane, so the clip holds
+  the same chords as the lane whatever the phase of the left locator (the clip starts at the left
+  locator and ends at the loop end, or one pass later with the loop off). It needs the `transport`
+  play mode (the other modes play no notes without keys).
+- **Audition** (`wheel_audition`, for the panel). Plays one chord for a moment through what the
+  wheel's `notes_out` is cabled to, voiced at the device's register, spread and extension (root
+  position, a slash bass below), with the chord audition of the chord lane. It does nothing while the
+  song plays. The chord is not moved by the song key.
+
 ### Tests
 
 `crates/core/src/progression/tests.rs` (names, voice leading never moving more than root position,
