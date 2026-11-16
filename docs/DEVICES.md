@@ -3983,6 +3983,44 @@ default key. Slots are numbered from 0 in the app core API. Every edit is a para
   position, a slash bass below), with the chord audition of the chord lane. It does nothing while the
   song plays. The chord is not moved by the song key.
 
+### Panel
+
+The panel is five rack units, [crates/ui/src/chord_wheel_panel.rs](../crates/ui/src/chord_wheel_panel.rs)
+(input in `crates/ui/src/rack/wheel_input.rs`), with the wheel at the left and the progression and the
+controls at the right. The BYPASS switch and the play button of the name strip are the common player
+ones.
+
+- **The wheel.** Three rings of twelve wedges in fifths order with C at the top: the major chords outside,
+  their relative minors in the middle and the diminished chord on each major's leading tone inside. The seven
+  triads of the home key (`key.root`, `key.mode`) are tinted with their roman numeral, and the hub names the
+  key. A wedge stands for a triad: a chord with a seventh or an extension is marked on the wedge of its root
+  and family. The selected slot's wedge is outlined, the sounding slot's wedge (the first meter value) is lit
+  and a small numbered tag on a wedge shows which slots hold it.
+  - A click sets the selected slot to the wedge's chord, plays it (stopped transport only, the audition
+    above) and selects the next slot, wrapping past the last active one. One undo step.
+  - A right click opens a menu of qualities for the wedge's root (a major wedge: major, 7, maj7, 6, add9, 9,
+    maj9, sus2, sus4, aug; a minor wedge: minor, m7, m6, m9, sus2, sus4; a diminished wedge: dim, m7b5, dim7)
+    and a Slash Bass submenu (no slash, the chord tones, then the other notes of the key). A row sets the
+    selected slot and plays it (the `rack.wheel_pick` command, which has no key).
+  - A click with the range-select role held (Shift by default, remappable in Settings) makes the wedge's
+    chord the home key: `key.root` and `key.mode` from the major or minor ring, in one undo step. The
+    diminished ring has no key.
+  - **SUGGEST** tints the wedges by `suggest_next` after the chord of the slot before the selected one
+    (strong, colour or surprise, folded onto the triad wedges by the best strength) and puts 1, 2 and 3 on
+    the three best.
+- **The progression.** Eight cards, two rows of four: slot number, padlock, chord symbol, roman numeral and
+  length. A click selects the slot; the padlock toggles `slot.N.lock`; a vertical drag or the mouse wheel on the
+  length steps `slot.N.beats` (a drag is one merged undo step); `-` and `+` change `slots`. Slots past `slots`
+  are dimmed and cannot be selected.
+- **Controls.** GENERATE (`rack.wheel_generate` for this device), the mood, SPICE, SUGGEST, the key root and
+  mode, follow song, style, gate, strum, velocity, accent, humanize, bass, play mode, thru, voice lead,
+  register, spread and extend are the generated controls and buttons of the panel; TO LANE and TO CLIP run
+  `rack.wheel_to_chord_lane` and `rack.wheel_to_clip` for this device. `gen.seed` has no control (GENERATE
+  advances it). While the device follows the song a SONG tag names the song key.
+
+The selected slot and the SUGGEST switch are view state of the rack, kept per device and not saved with the
+project.
+
 ### Tests
 
 `crates/core/src/progression/tests.rs` (names, voice leading never moving more than root position,
@@ -3990,7 +4028,9 @@ every mood x 200 seeds inside its vocabulary at spice 0, locks, determinism and 
 progressions, V resolving first in the suggestions) and `crates/devices/src/chord_wheel/tests.rs`
 (style timing, slot changes, locate, stop, loop wrap, bypass, the play modes, the song key, humanize,
 a property test that no note hangs). A bounce test in `crates/render/tests/note_tools.rs` pins the bit
-identity across block sizes and workers.
+identity across block sizes and workers. `crates/ui/tests/chord_wheel_panel.rs` covers the panel (wedge geometry and
+ring boundaries, the actions of the wheel, cards, padlocks and lengths, the menu, display-list goldens and pixel
+goldens in dark and light at 1x and 2x) and `crates/app/src/shell_chord_wheel_tests.rs` the clicks through the shell.
 
 ---
 

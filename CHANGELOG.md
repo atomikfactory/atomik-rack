@@ -15,7 +15,9 @@ may break APIs and the patch and project formats.
   (`atomik_core::progression`: twelve moods, locks, spice, ranked next-chord suggestions). Track > Players and the
   rack menu get Generate Progression (a new seed each press, locked slots kept, one undo step), Send Progression to
   Chord Lane (from the left locator, repeated to fill the loop when it is on, transposed to the song key, replacing
-  the chords of that span, setting the song key when there is none) and Send Progression to Clip. The panel and the
+  the chords of that span, setting the song key when there is none) and Send Progression to Clip. The panel has the
+  wheel (click a wedge to set the slot and hear it, right-click for qualities and slash basses, Shift-click for the key,
+  SUGGEST to tint and rank the next chord), eight progression cards with padlocks and lengths, and every control. The
   factory patches follow.
 - **A MONO button on the master strip of the mixer.** One click folds what you hear to mono, `(L + R) / 2` on both
   sides, and a second click brings the stereo back; the button is lit while it is on, so it is not forgotten. It is
