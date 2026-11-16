@@ -46,6 +46,7 @@ pub(crate) fn save(doc: &RackDoc) -> String {
     crate::camera_override::write_camera(w, &doc.camera);
     crate::meter_view::write_folds(w, doc);
     crate::meter_view::write_curves(w, doc);
+    crate::headphone::write_all(w, doc);
     write_assets(w, &doc.assets);
     write_song(w, &doc.song);
     let _ = writeln!(w, "}}");

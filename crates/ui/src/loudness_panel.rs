@@ -251,6 +251,7 @@ pub fn loudness_layout(desc: &DeviceDescriptor) -> PanelSpec {
             gain: None,
             saturation: None,
             loudness: Some(geom),
+            headphone: None,
         }),
         seq: None,
         drum_gen: None,

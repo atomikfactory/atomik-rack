@@ -42,6 +42,8 @@ pub fn registry() -> Registry {
             r.register_with_samples(factory).unwrap();
         } else if all.takes_curves(t) {
             r.register_with_curves(factory).unwrap();
+        } else if all.takes_headphone(t) {
+            r.register_with_headphone(factory).unwrap();
         } else if all.takes_drums(t) {
             r.register_with_drums(factory).unwrap();
         } else if all.takes_player_data(t) {

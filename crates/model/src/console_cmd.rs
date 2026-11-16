@@ -391,6 +391,7 @@ fn master_device(key: DeviceKey, name: String) -> RackDevice {
         column: 0,
         patch_name: String::new(),
         midi_out: None,
+        headphone: None,
         mods: Vec::new(),
     }
 }

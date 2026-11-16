@@ -378,6 +378,12 @@ pub enum ShellRequest {
     /// Show an open-file dialog for a keymap (the Keyboard tab's Import), then call
     /// [`Shell::import_keymap_from`].
     PickImportKeymap,
+    /// Show an open-file dialog for headphone data (a frequency response or a parametric EQ
+    /// text; the device's Import Headphone Data), then call [`Shell::import_headphone_from`].
+    PickImportHeadphone {
+        /// The Headphone Correction device that takes the data.
+        device: DeviceKey,
+    },
     /// Show a save-file dialog for a theme (the Themes tab's Export...; the text is the file
     /// name to suggest), then call [`Shell::export_theme_to`].
     PickExportTheme(String),
@@ -4352,6 +4358,12 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// The file the Import Headphone Data dialog returned (see
+    /// [`ShellRequest::PickImportHeadphone`]): its numbers go into `device`, one undo step.
+    pub fn import_headphone_from(&mut self, device: &DeviceKey, path: &Path) {
+        self.core.import_headphone_file(device, path);
+    }
+
     /// Reads a keymap from `path` (the Import button): into the open dialog's draft, else
     /// applied and saved at once. A file that is not a keymap is refused with a message.
     pub fn import_keymap_from(&mut self, path: &Path) {
@@ -7197,6 +7209,28 @@ impl<B: AudioBackend> Shell<B> {
                 None => self.core.report("Select a MIDI Out device first"),
             },
             ("rack.midi_out_pick", Some(port)) => self.pick_midi_out_port(port),
+            ("rack.headphone_import", None) => match self.core.headphone_target() {
+                Some(device) => self
+                    .pending
+                    .push(ShellRequest::PickImportHeadphone { device }),
+                None => self
+                    .core
+                    .report("Select a Headphone Correction device first"),
+            },
+            ("rack.headphone_import_pick", Some(path)) => match self.core.headphone_target() {
+                Some(device) => {
+                    self.core.import_headphone_file(&device, Path::new(path));
+                }
+                None => self
+                    .core
+                    .report("Select a Headphone Correction device first"),
+            },
+            ("rack.headphone_remove", None) => match self.core.headphone_target() {
+                Some(device) => self.core.remove_headphone_data(&device),
+                None => self
+                    .core
+                    .report("Select a Headphone Correction device first"),
+            },
             ("sequencer.duck_from_pick", Some(arg)) => self.pick_duck_source(arg),
             ("video.import_audio_pick", Some(stream)) => match stream.parse::<u32>() {
                 // The core says why in a toast when it refuses.
@@ -7843,6 +7877,16 @@ impl<B: AudioBackend> Shell<B> {
                     .view()
                     .primary()
                     .is_some_and(|d| core.midi_out_port_of(&d).is_some()),
+            headphone: pane == Pane::Rack
+                && core
+                    .view()
+                    .primary()
+                    .is_some_and(|d| core.headphone_data_of(&d).is_some()),
+            headphone_data: pane == Pane::Rack
+                && core
+                    .view()
+                    .primary()
+                    .is_some_and(|d| core.headphone_data_of(&d) == Some(true)),
             assign_send: pane == Pane::Rack
                 && core
                     .view()
@@ -8162,6 +8206,18 @@ impl<B: AudioBackend> Shell<B> {
                     let requests = self.execute_command(AppCommand::MaximiseConsole);
                     self.pending.extend(requests);
                 }
+                // The IMPORT button (or the empty graph) of a Headphone Correction panel.
+                UiAction::HeadphoneImport(device) => {
+                    if self.core.headphone_data_of(device).is_some() {
+                        self.pending.push(ShellRequest::PickImportHeadphone {
+                            device: device.clone(),
+                        });
+                    } else {
+                        self.core
+                            .report("Select a Headphone Correction device first");
+                    }
+                }
+                UiAction::HeadphoneRemove(device) => self.core.remove_headphone_data(device),
                 UiAction::ImportAudioDialog => {
                     self.core.set_take_import(None);
                     self.pending.push(ShellRequest::PickImportFiles);
@@ -11924,6 +11980,10 @@ mod song_tests;
 #[cfg(test)]
 #[path = "shell_audio_tests.rs"]
 mod audio_tests;
+
+#[cfg(test)]
+#[path = "shell_headphone_tests.rs"]
+mod headphone_tests;
 
 #[cfg(test)]
 #[path = "shell_relink_tests.rs"]

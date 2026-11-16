@@ -105,9 +105,10 @@ pub enum SpectralAlgo {
     },
 }
 
-/// Radix-2 complex FFT with precomputed twiddles and bit reversal.
+/// Radix-2 complex FFT with precomputed twiddles and bit reversal; the arrays are split real and
+/// imaginary parts of `n` points each.
 #[derive(Debug, Clone)]
-pub(crate) struct Fft {
+pub struct Fft {
     n: usize,
     rev: Vec<u32>,
     cos: Vec<f32>,
@@ -115,7 +116,8 @@ pub(crate) struct Fft {
 }
 
 impl Fft {
-    pub(crate) fn new(n: usize) -> Self {
+    /// A transform of `n` points (`n` must be a power of two, at least 2).
+    pub fn new(n: usize) -> Self {
         let bits = n.trailing_zeros();
         let rev = (0..n as u32)
             .map(|i| i.reverse_bits() >> (32 - bits))
@@ -130,7 +132,7 @@ impl Fft {
     }
 
     /// In-place forward transform `X[k] = sum x[n] e^{-2 pi i k n / N}`.
-    pub(crate) fn forward(&self, re: &mut [f32], im: &mut [f32]) {
+    pub fn forward(&self, re: &mut [f32], im: &mut [f32]) {
         let n = self.n;
         for i in 0..n {
             let j = self.rev[i] as usize;
@@ -162,7 +164,7 @@ impl Fft {
     }
 
     /// In-place inverse transform including the `1/N` scale (swap trick).
-    pub(crate) fn inverse(&self, re: &mut [f32], im: &mut [f32]) {
+    pub fn inverse(&self, re: &mut [f32], im: &mut [f32]) {
         self.forward(im, re);
         let s = 1.0 / self.n as f32;
         for v in re.iter_mut().chain(im.iter_mut()) {

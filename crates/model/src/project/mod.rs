@@ -31,6 +31,8 @@
 //!   "tune_cents"?: number                  (v40, -100..=100 around A = 440 Hz; written only when not 0),
 //!   "inserts_folded"?: ["channel", ...]  (v45, ignorable; the strips whose insert area is folded),
 //!   "spectrum_curves"?: [{ "device", "from": "reference" | "strip", "strip"? }, ...]  (v45, ignorable),
+//!   "headphone"?: { path key: { "name", "response" | "filters" }, ... }  (v45, ignorable; the data
+//!       imported into Headphone Correction devices, see `headphone.rs`),
 //!   "rack_sort"?: "per_track" | "auto_group"  (v42, ignorable; written only when not free),
 //!   "references"?: [{ "path", "cue_ms"?, "trim_db"? }…]  (v44, ignorable; written only when non-empty),
 //!   "delivery"?: { "name", "lufs", "ceiling" }  (v44, ignorable; written only when set),
@@ -796,6 +798,9 @@ fn load_value(
     }
     if let Some(rows) = obj.get("spectrum_curves") {
         doc.spectrum_curves = crate::meter_view::load_curves(rows, &root.field("spectrum_curves"))?;
+    }
+    if let Some(map) = obj.get("headphone") {
+        crate::headphone::load_all(map, &root.field("headphone"), &mut doc, registry)?;
     }
     check_frozen_tracks(&doc, registry, &root.field("song").field("tracks"))?;
     Ok(doc)

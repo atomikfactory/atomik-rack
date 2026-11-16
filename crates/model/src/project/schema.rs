@@ -247,6 +247,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Root, "camera", 45).ignorable(),
     field(Root, "inserts_folded", 45).ignorable(),
     field(Root, "spectrum_curves", 45).ignorable(),
+    field(Root, "headphone", 45).ignorable(),
     field(Root, "assets", 3),
     field(Root, "song", 1).req(),
     // A device (the fields shared with the patch format come first).

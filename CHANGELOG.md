@@ -53,6 +53,25 @@ may break APIs and the patch and project formats.
   the short-term and momentary loudness over 30 s, 1 min, 5 min or 15 min (click or scroll the graph to change the
   span) and a distribution of the short-term loudness in 1 LU bars with the target marked. `session_meters` reports
   its values too.
+- **Headphone Correction.** A new effect, Headphone Correction (`atomik.headphone-correction`), for the last place on the
+  master bus while you mix on headphones: it flattens the response of your own headphones so you hear a neutral
+  reference (bypass or remove it before the export). You import your own data, from the device's right-click menu
+  (Import Headphone Data...): a frequency response (`frequency, dB` lines in a CSV or text file, comma, semicolon,
+  tab or space separated, headers and comments ignored; a third column is the right side) or a parametric EQ text
+  (`Preamp:` and `Filter 1: ON PK Fc 105 Hz Gain -3.2 dB Q 0.70` lines, with peaks, low and high shelves and low and
+  high pass, `OFF` bands skipped). The numbers are stored in the project, not the path of the file, and importing is one
+  undo step. A response is flattened to a Flat or a gentle Studio target (our own tilt, documented in the device
+  reference), or the file is taken as the correction itself ("Data is"). Amount 0 to 200 % scales the correction in
+  dB, Simulate applies the inverse (roughly how the mix would sound on those headphones), Auto gain (on by
+  default) takes the largest boost off as a preamp so the correction never goes over 0 dB, and Output adds gain.
+  The correction is a
+  4096-tap minimum-phase filter (zero latency, smoothed to 1/12 octave, limited to +-20 dB) built a few steps per batch
+  and faded in by the convolver, so a change never clicks and a bounce is the same every time. Without data it is an
+  exact passthrough. The MCP can import with `session_command` `rack.headphone_import` and a file path.
+  The panel (2 U) draws the headphone response, the target and the correction the device applies on a 20 Hz to
+  20 kHz graph (the correction follows Amount and Simulate), shows the file name, its format and the applied
+  preamp, has IMPORT and REMOVE buttons (an empty graph is itself a click to import), dims Target and Data is for
+  a parametric file, lights Simulate in a warning colour and reminds you that it is for monitoring only.
 - **Saturation.** A new effect, Saturation (`atomik.saturation`): one knob (0 is off and bit-exact transparent)
   drives a smooth, slightly asymmetric tanh curve, from nothing up to about +24 dB into it, for warmth and mostly
   odd harmonics. A type switch picks where it works: keep low leaves the lows clean and saturates what is above

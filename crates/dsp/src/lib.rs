@@ -138,7 +138,7 @@ pub use sample_read::{
 pub use shaper::{Shaper, ShaperKind};
 pub use smoother::{OnePoleSmoother, Smoother};
 pub use smoother2::{Smoother2, SmootherClass};
-pub use spectral::{Spectral, SpectralAlgo, frame_for_rate};
+pub use spectral::{Fft, Spectral, SpectralAlgo, frame_for_rate};
 pub use svf::{FilterMode, Svf, SvfOutputs};
 pub use wobble::Wobble;
 

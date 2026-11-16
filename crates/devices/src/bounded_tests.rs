@@ -62,6 +62,11 @@ fn check_bounded_to(id: &str, s: &Scene, bound: f32) -> Result<(), TestCaseError
         };
         prop_assert!(h.device_mut().swap_samples(Some(map)).is_none());
     }
+    if r.takes_headphone(id) && !s.seed.is_multiple_of(3) {
+        // Two thirds of the scenes run with data (a parametric file or a response).
+        let data = crate::test_support::headphone_player_data((s.seed % 3) as u8);
+        prop_assert!(h.device_mut().swap_player_data(Some(data)).is_none());
+    }
     let d = h.device().descriptor();
     for (p, n) in d.params.iter().zip(&s.norms) {
         h.set_param(p.key, p.from_normalized(*n));
@@ -275,6 +280,12 @@ proptest! {
     #[test]
     fn qa_loudness_meter_any_params_bounded_at_every_sample_rate(s in scene()) {
         check_bounded("atomik.loudness-meter", &s)?;
+    }
+
+    /// The headphone correction device: any params, loud noise, with and without data.
+    #[test]
+    fn qa_headphone_correction_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_bounded("atomik.headphone-correction", &s)?;
     }
 
     /// The clipper: any params, loud noise, every oversampling and band mode.

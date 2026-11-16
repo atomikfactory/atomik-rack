@@ -24,7 +24,7 @@ fn effect_ids() -> Vec<&'static str> {
         .type_ids()
         .filter(|t| r.descriptor(t).unwrap().kind == DeviceKind::Effect)
         .collect();
-    assert_eq!(ids.len(), 31, "{ids:?}");
+    assert_eq!(ids.len(), 33, "{ids:?}");
     ids
 }
 
@@ -36,9 +36,10 @@ fn raw(type_id: &str) -> DeviceHarness {
     use crate::stereo_delay;
     use crate::{
         auto_filter, character, clipper, compressor, convolver, de_esser, distortion, duck,
-        dynamic_eq, dynamics, echo, env_filter, eq, gain_tool, gate, guitar_amp, loudness_meter,
-        mastering, modulation, phase_meter, pitch_shifter, reverb, rotary_speaker, saturation,
-        space_reverb, spectrum, stereo_tool, tonal_balance, transient_shaper, tuner, vocoder,
+        dynamic_eq, dynamics, echo, env_filter, eq, gain_tool, gate, guitar_amp,
+        headphone_correction, loudness_meter, mastering, modulation, phase_meter, pitch_shifter,
+        reverb, rotary_speaker, saturation, space_reverb, spectrum, stereo_tool, tonal_balance,
+        transient_shaper, tuner, vocoder,
     };
     let d: Box<dyn Device> = match type_id {
         "atomik.reverb" => Box::new(reverb::Reverb::new()),
@@ -73,6 +74,7 @@ fn raw(type_id: &str) -> DeviceHarness {
         "atomik.clipper" => Box::new(clipper::Clipper::new()),
         "atomik.saturation" => Box::new(saturation::Saturation::new()),
         "atomik.loudness-meter" => Box::new(loudness_meter::LoudnessMeterDevice::new()),
+        "atomik.headphone-correction" => Box::new(headphone_correction::HeadphoneCorrection::new()),
         other => panic!("{other}"),
     };
     DeviceHarness::new(d, SR)

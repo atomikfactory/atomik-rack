@@ -399,6 +399,7 @@ pub mod fx_paint;
 pub mod gain_panel;
 pub mod granular_panel;
 pub mod harmony_picker;
+pub mod headphone_panel;
 pub mod help_panel;
 pub mod history_panel;
 pub mod i18n;

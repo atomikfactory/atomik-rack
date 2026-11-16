@@ -1757,6 +1757,24 @@ const COMMANDS: &[CommandDef] = &[
     .rep(),
     cmd("rack.extend_prev", "Extend Selection Up", G::Rack, C::Rack).rep(),
     cmd("rack.go_to_track", "Go to Track", G::Rack, C::Rack),
+    cmd(
+        "rack.headphone_import",
+        "Import Headphone Data",
+        G::Rack,
+        C::Rack,
+    ),
+    cmd(
+        "rack.headphone_import_pick",
+        "Pick Headphone Data File",
+        G::Rack,
+        C::Rack,
+    ),
+    cmd(
+        "rack.headphone_remove",
+        "Remove Headphone Data",
+        G::Rack,
+        C::Rack,
+    ),
     cmd("rack.jack", "Patch Jack", G::Rack, C::Rack),
     cmd("rack.midi_out_pick", "Pick MIDI Out Port", G::Rack, C::Rack),
     cmd(

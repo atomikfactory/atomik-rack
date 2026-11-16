@@ -31,6 +31,7 @@
   "atomik.gate-processor": "Converts, divides, delays, lengthens and combines gate signals, so that one trigger can drive many things.",
   "atomik.granular": "Plays a sample as a cloud of short grains. Move the position, size, density and pitch to freeze, smear and stretch a sound.",
   "atomik.guitar-amp": "A guitar amplifier with a cabinet, chorus, delay and reverb, and five factory setups.",
+  "atomik.headphone-correction": "Flattens the response of your own headphones for mixing: import a frequency response or a parametric EQ file and the device applies the correction with a zero-latency filter. Bypass it before you export.",
   "atomik.key-chord": "Locks the notes to a scale and plays chords from single notes, with inversions and voicing options.",
   "atomik.line-mixer": "Six stereo channels into a stereo master, each with its own level and pan.",
   "atomik.loop-slicer": "Plays the slices of one loop from the keys, each slice with its own gain, pan and tuning.",

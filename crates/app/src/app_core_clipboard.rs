@@ -888,6 +888,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::ResetDevice { .. }
             | WorkflowCommand::SetPatchName { .. }
             | WorkflowCommand::SetMidiOutPort { .. }
+            | WorkflowCommand::SetHeadphoneData { .. }
             | WorkflowCommand::SetModSlot { .. }
             | WorkflowCommand::AssignSend { .. }
             | WorkflowCommand::ReplaceDevice { .. }

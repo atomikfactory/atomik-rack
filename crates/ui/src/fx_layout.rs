@@ -161,7 +161,8 @@ fn sections(kind: FxKind) -> Def {
         | FxKind::StereoTool
         | FxKind::GainTool
         | FxKind::Saturation
-        | FxKind::LoudnessMeter => &[],
+        | FxKind::LoudnessMeter
+        | FxKind::HeadphoneCorrection => &[],
         FxKind::Spectrum => &[
             ("ANALYSIS", &["size", "window", "channel", "mode"]),
             ("WEIGHTING", &["weighting", "smoothing"]),
@@ -290,6 +291,7 @@ fn title(kind: FxKind) -> &'static str {
         FxKind::GainTool => "GAIN",
         FxKind::Saturation => "SATURATION",
         FxKind::LoudnessMeter => "LOUDNESS",
+        FxKind::HeadphoneCorrection => "HEADPHONES",
     }
 }
 
@@ -307,7 +309,8 @@ fn placement(kind: FxKind) -> (f64, f64) {
         | FxKind::StereoTool
         | FxKind::GainTool
         | FxKind::Saturation
-        | FxKind::LoudnessMeter => (0.0, 0.0),
+        | FxKind::LoudnessMeter
+        | FxKind::HeadphoneCorrection => (0.0, 0.0),
         FxKind::Spectrum => (0.0, TOP_SPECTRUM),
         FxKind::TonalBalance => (0.0, TOP_TONAL),
         FxKind::PhaseMeter => (0.0, TOP_PHASE),
@@ -362,6 +365,9 @@ fn layout(kind: FxKind, desc: &DeviceDescriptor, tuner_on: bool) -> PanelSpec {
     }
     if kind == FxKind::LoudnessMeter {
         return crate::loudness_panel::loudness_layout(desc);
+    }
+    if kind == FxKind::HeadphoneCorrection {
+        return crate::headphone_panel::headphone_layout(desc);
     }
     // A hidden tuner leaves no display and no settings of its own.
     let collapsed = kind == FxKind::AudioTrack && !tuner_on;
@@ -518,7 +524,8 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
         | FxKind::StereoTool
         | FxKind::GainTool
         | FxKind::Saturation
-        | FxKind::LoudnessMeter => (v, v, empty, None),
+        | FxKind::LoudnessMeter
+        | FxKind::HeadphoneCorrection => (v, v, empty, None),
         FxKind::Spectrum => {
             // The strip of correlation, peaks and clips under the axis labels.
             aux = Rect::new(v.x0 + 26.0, v.y1 - 16.0, v.x1, v.y1 - 1.0);
@@ -562,6 +569,7 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
         gain: None,
         saturation: None,
         loudness: None,
+        headphone: None,
     }
 }
 

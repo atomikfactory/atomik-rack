@@ -299,6 +299,12 @@ pub(crate) enum Edit {
         old: Option<DrumDoc>,
         new: Option<DrumDoc>,
     },
+    /// A Headphone Correction device's imported data (`None` is "no data").
+    Headphone {
+        key: DeviceKey,
+        old: Option<atomik_device_sdk::headphone::HeadphoneData>,
+        new: Option<atomik_device_sdk::headphone::HeadphoneData>,
+    },
     /// The interface's input channel count.
     InputChannels {
         old: u16,
@@ -762,6 +768,11 @@ impl Edit {
                 new: old,
             },
             Edit::Drums { key, old, new } => Edit::Drums {
+                key,
+                old: new,
+                new: old,
+            },
+            Edit::Headphone { key, old, new } => Edit::Headphone {
                 key,
                 old: new,
                 new: old,
@@ -1330,6 +1341,12 @@ impl Edit {
                     device: key.clone(),
                 }]
             }
+            Edit::Headphone { key, new, .. } => {
+                device_mut(doc, key)?.headphone.clone_from(new);
+                vec![SyncOp::PatternsChanged {
+                    device: key.clone(),
+                }]
+            }
             Edit::InputChannels { new, .. } => {
                 doc.input_channels = *new;
                 vec![SyncOp::RoutingChanged]
@@ -1801,6 +1818,7 @@ mod tests {
             column: 0,
             patch_name: String::new(),
             midi_out: None,
+            headphone: None,
             mods: Vec::new(),
         }
     }

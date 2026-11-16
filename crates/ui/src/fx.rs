@@ -56,11 +56,14 @@ pub enum FxKind {
     /// `atomik.loudness-meter`: readouts, a history graph and a distribution against a target
     /// (its own 4 U layout, [`crate::loudness_panel`]).
     LoudnessMeter,
+    /// `atomik.headphone-correction`: the frequency graph of the imported data with the target
+    /// and the correction, and the controls (its own 2 U layout, [`crate::headphone_panel`]).
+    HeadphoneCorrection,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 19] = [
+    pub const ALL: [FxKind; 21] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -81,12 +84,13 @@ impl FxKind {
         FxKind::Saturation,
         FxKind::TonalBalance,
         FxKind::LoudnessMeter,
+        FxKind::HeadphoneCorrection,
     ];
 
     /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
     /// effect, the meters of one and a plain "meters change the painting" behaviour that the
     /// audio track's tuner does not share.
-    pub const EFFECTS: [FxKind; 18] = [
+    pub const EFFECTS: [FxKind; 20] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -106,6 +110,7 @@ impl FxKind {
         FxKind::Saturation,
         FxKind::TonalBalance,
         FxKind::LoudnessMeter,
+        FxKind::HeadphoneCorrection,
     ];
 
     /// The kind of a device type id.
@@ -136,6 +141,7 @@ impl FxKind {
             FxKind::Saturation => "atomik.saturation",
             FxKind::TonalBalance => "atomik.tonal-balance",
             FxKind::LoudnessMeter => "atomik.loudness-meter",
+            FxKind::HeadphoneCorrection => "atomik.headphone-correction",
         }
     }
 
@@ -161,6 +167,7 @@ impl FxKind {
             FxKind::Saturation => SATURATION_METERS,
             FxKind::TonalBalance => TONAL_METERS,
             FxKind::LoudnessMeter => loudness::COUNT,
+            FxKind::HeadphoneCorrection => HEADPHONE_METERS,
         }
     }
 }
@@ -241,6 +248,9 @@ pub const GAIN_METERS: usize = 8;
 /// Saturation publishes `[drive 0..1, input peak, output peak]`
 /// (`atomik_devices::saturation::METERS`; a test pins the two together).
 pub const SATURATION_METERS: usize = 3;
+/// Headphone Correction publishes `[loaded, preamp dB, boost dB, busy]`
+/// (`atomik_devices::headphone_correction::METERS`; a test pins the two together).
+pub const HEADPHONE_METERS: usize = 4;
 
 /// The loudness meter's published values (`atomik_devices::loudness_meter::value`; a test pins
 /// the two together): which index holds what.
@@ -378,6 +388,8 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::LoudnessMeter, loudness::TARGET | loudness::MAX_TP) => Slot::Raw,
         (FxKind::LoudnessMeter, loudness::EPOCH..=loudness::TIME) => Slot::Count,
         (FxKind::LoudnessMeter, _) => Slot::Unit,
+        (FxKind::HeadphoneCorrection, 1 | 2) => Slot::Gain,
+        (FxKind::HeadphoneCorrection, _) => Slot::Unit,
         (FxKind::Mastering, 0..=3) => Slot::Raw,
         (FxKind::Mastering, _) => Slot::Gr,
         (FxKind::GuitarAmp, 2) => Slot::Gr,
@@ -440,7 +452,6 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
             Slot::Count => (r.clamp(0.0, 16_777_216.0), f32::INFINITY, 1.0, 0.0),
             Slot::Gain => (r.clamp(-48.0, 48.0), f32::INFINITY, 0.1, -48.0),
             Slot::Ratio => (r.clamp(-120.0, 120.0), f32::INFINITY, 0.1, -120.0),
-            Slot::Count => (r.clamp(0.0, 16_777_216.0), f32::INFINITY, 1.0, 0.0),
         };
         let old = *cell;
         let v = if new >= old {

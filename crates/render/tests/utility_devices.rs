@@ -131,6 +131,10 @@ const EFFECTS: &[(&str, &str)] = &[
         r#"{"gain": 12, "ceiling": -6, "curve": 0.5, "symmetry": 0.3, "oversample": 2}"#,
     ),
     (
+        "atomik.headphone-correction",
+        r#"{"amount": 1.5, "target": 1, "simulate": 0, "auto_gain": 1, "output": -2}"#,
+    ),
+    (
         "atomik.saturation",
         r#"{"saturation": 0.6, "type": 2, "oversampling": 1}"#,
     ),

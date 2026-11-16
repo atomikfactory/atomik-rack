@@ -54,6 +54,7 @@ pub mod freeze;
 pub mod groove;
 mod groove_cmd;
 pub mod harmony;
+mod headphone;
 mod history;
 mod history_size;
 pub mod key_detect;
@@ -434,6 +435,11 @@ pub struct RackDevice {
     /// device uses the fallback port of the app settings; always `None` on every other device
     /// type. Stored only when `Some` (project format 37). See [`MidiOutDoc`].
     pub midi_out: Option<MidiOutDoc>,
+    /// A Headphone Correction device's imported response or parametric data: `Some` once the user
+    /// imported a file, `None` while the device has no data; always `None` on every other device
+    /// type. Stored only when `Some` (project format 45, row `headphone`). See
+    /// [`RackDevice::headphone_data`].
+    pub headphone: Option<atomik_device_sdk::headphone::HeadphoneData>,
     /// The device's modulation matrix: position `n` is slot `n`, `None` an empty slot, and the
     /// list never ends in one (empty for a device with no slot in use, which is every device
     /// whose type declares no matrix). The amount of a slot is the param `mod<n>_amount`. Stored
@@ -978,6 +984,7 @@ pub enum Command {
 /// | `ApplyPatch`, `ResetDevice` (also undo/redo) | `ParamChanged` per changed param, `ZonesChanged`, `PatternsChanged`, `PluginStateChanged`, `ViewChanged` (the patch name); a container's inside: `DeviceRemoved` and `DeviceAdded` for the container |
 /// | `SetPatchName` (also undo/redo) | `ViewChanged` |
 /// | `SetMidiOutPort` (also undo/redo) | `ViewChanged` (the app re-routes the device's output) |
+/// | `SetHeadphoneData` (also undo/redo) | `PatternsChanged` (the app sends the engine the new data) |
 /// | `SetModSlot` (also undo/redo) | `ModSlotsChanged` (the slot clear also `ParamChanged` for the amount) |
 /// | `Workflow` (paste, duplicate, remove, move, disconnect devices; clip, note and point pastes) | the compound order below: `DeviceAdded` with stored params, `RoutingChanged`, `ViewChanged`, `ConsoleChanged`, `SongChanged`, then the removals; a move reports `ViewChanged` only |
 ///

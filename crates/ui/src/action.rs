@@ -270,6 +270,13 @@ pub enum UiAction {
     /// device's key on a worker, learns a duck curve from the hits in it and puts the curve into
     /// the device in one undo step.
     LearnDuck(DeviceKey),
+    /// The IMPORT button (or the empty graph) of a Headphone Correction panel: the app shows the
+    /// file dialog and imports the file into this device, as the `rack.headphone_import` command
+    /// does for the selected one.
+    HeadphoneImport(DeviceKey),
+    /// The REMOVE button of a Headphone Correction panel: the app removes the device's data in
+    /// one undo step (`rack.headphone_remove`).
+    HeadphoneRemove(DeviceKey),
     /// A momentary button of a panel (the gain tool's RESET): the app sends `param` to the device
     /// as 1 and, a moment later, as 0, through the engine only. The project does not change and
     /// there is no undo step.
