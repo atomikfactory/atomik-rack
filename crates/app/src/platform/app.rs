@@ -1395,6 +1395,21 @@ impl App {
                         self.shell.export_keymap_to(&path);
                     }
                 }
+                ShellRequest::PickImportHeadphone { device } => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Import headphone data")
+                        .add_filter(
+                            "Frequency response or parametric EQ",
+                            &["csv", "txt", "tsv", "dat", "frd", "eq"],
+                        )
+                        .add_filter("All files", &["*"]);
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(path) = dialog.pick_file() {
+                        self.shell.import_headphone_from(&device, &path);
+                    }
+                }
                 ShellRequest::PickImportKeymap => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Import keyboard shortcuts")

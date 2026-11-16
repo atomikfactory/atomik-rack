@@ -54,6 +54,10 @@ pub struct MenuEnable {
     pub assign_send: bool,
     /// Rack: the primary device is a MIDI Out device (Choose MIDI Out Port works).
     pub midi_out: bool,
+    /// Rack: the primary device is a Headphone Correction device (Import Headphone Data works).
+    pub headphone: bool,
+    /// Rack: the primary Headphone Correction device holds data (Remove Headphone Data works).
+    pub headphone_data: bool,
     /// Rack: the primary device has a modulation matrix (Modulation Matrix opens it).
     pub mod_matrix: bool,
     /// Rack: the primary device is an effect with the loudness match (Match Loudness and Blind
@@ -805,6 +809,8 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("rack.patch_next", e.selection && !e.master_only),
                 Spec::Separator,
                 item("rack.midi_out_port", e.midi_out),
+                item("rack.headphone_import", e.headphone),
+                item("rack.headphone_remove", e.headphone_data),
                 item("rack.mod_matrix", e.mod_matrix),
                 Spec::Item {
                     command: "rack.toggle_match",
@@ -1652,6 +1658,8 @@ mod tests {
                 "rack.patch_prev",
                 "rack.patch_next",
                 "rack.midi_out_port",
+                "rack.headphone_import",
+                "rack.headphone_remove",
                 "rack.mod_matrix",
                 "rack.toggle_match",
                 "rack.blind_ab",

@@ -4420,6 +4420,9 @@ mod patches;
 #[path = "app_core_midi_out.rs"]
 mod midi_out;
 
+#[path = "app_core_headphone.rs"]
+mod headphone;
+
 #[path = "app_core_mod_matrix.rs"]
 mod mod_matrix;
 
@@ -4741,6 +4744,10 @@ mod kick_bass_tests;
 #[cfg(test)]
 #[path = "app_core_midi_out_tests.rs"]
 mod midi_out_tests;
+
+#[cfg(test)]
+#[path = "app_core_headphone_tests.rs"]
+mod headphone_tests;
 
 #[cfg(test)]
 #[path = "app_core_sync_tests.rs"]

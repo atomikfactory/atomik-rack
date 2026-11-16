@@ -427,6 +427,10 @@ fn request_json(r: ShellRequest) -> Value {
             "pick_export_audio",
             "a file dialog: use session_export with a file (it writes the same file the dialog would)",
         ),
+        ShellRequest::PickImportHeadphone { .. } => (
+            "pick_headphone_data",
+            "a file dialog: run session_command with id rack.headphone_import and the file as arg (it imports the same file the dialog would)",
+        ),
         ShellRequest::PickImportMidi { .. }
         | ShellRequest::PickExportMidi(_)
         | ShellRequest::PickGrooveMidi => (
@@ -677,7 +681,7 @@ silently; `confirm` true answers the unsaved-changes question (Save, Don't Save,
             (
                 "arg",
                 "string",
-                "The command's argument, for the ones that take one: the id of a VCA group for mixer.add_to_vca, mixer.delete_vca, mixer.route_vca and mixer.unroute_vca (ids are in session_status under console.vcas; without it they act on the last group, and on the groups of the selected channels). For the snapshot commands (mixer.recall_snapshot, mixer.update_snapshot, mixer.compare_snapshot, mixer.delete_snapshot, mixer.morph_snapshot) the id or the name of a snapshot (ids, names, notes and colours are in session_status under console.snapshots; without it they act on the current snapshot); mixer.recall_snapshot also takes `<snapshot>:<scope>` with a scope of all, levels, mutes, sends, inserts or routing; mixer.store_snapshot takes the name of the new snapshot (without it the next of A, B, 1, 2, ...).",
+                "The command's argument, for the ones that take one: the id of a VCA group for mixer.add_to_vca, mixer.delete_vca, mixer.route_vca and mixer.unroute_vca (ids are in session_status under console.vcas; without it they act on the last group, and on the groups of the selected channels). For the snapshot commands (mixer.recall_snapshot, mixer.update_snapshot, mixer.compare_snapshot, mixer.delete_snapshot, mixer.morph_snapshot) the id or the name of a snapshot (ids, names, notes and colours are in session_status under console.snapshots; without it they act on the current snapshot); mixer.recall_snapshot also takes `<snapshot>:<scope>` with a scope of all, levels, mutes, sends, inserts or routing; mixer.store_snapshot takes the name of the new snapshot (without it the next of A, B, 1, 2, ...). rack.headphone_import takes the path of a headphone data file (a frequency response CSV or text, or a parametric EQ text) and imports it into the selected Headphone Correction device, else the first one: the numbers are stored in the project, as one undo step, and a file that cannot be used is refused with the line that is wrong.",
             ),
         ],
         &["id"],
@@ -689,6 +693,36 @@ fn command(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let arg = args.opt_str("arg")?;
     let confirm = args.opt_bool("confirm")?.unwrap_or(false);
     let wait = args.opt_bool("wait")?.unwrap_or(true);
+    // Headphone data comes from a file the menus cannot name: the argument is its path (inside the
+    // allowed folders), imported into the selected Headphone Correction device (else the first one).
+    if id == "rack.headphone_import" {
+        let Some(file) = arg else {
+            return Err(
+                "`arg` is the headphone data file: a frequency response or a parametric EQ text"
+                    .into(),
+            );
+        };
+        let path = server.paths().read(file)?;
+        let session = server.require_session()?;
+        let core = session.shell_mut().core_mut();
+        let Some(device) = core.headphone_target() else {
+            return Err("the rack has no Headphone Correction device".into());
+        };
+        if !core.import_headphone_file(&device, &path) {
+            return Err(core
+                .last_rejection()
+                .unwrap_or("the file was refused")
+                .to_owned());
+        }
+        let shell = session.shell_mut();
+        shell.frame();
+        return Ok(ToolOutput::json(&json!({
+            "command": id,
+            "device": device.0,
+            "status_text": session.shell().status_text(),
+            "dirty": session.shell().core().is_dirty(),
+        })));
+    }
     let session = server.require_session()?;
     // The templates are files the user may have added since the last look.
     session.shell_mut().core_mut().reload_templates();
