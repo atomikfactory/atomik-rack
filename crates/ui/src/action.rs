@@ -270,6 +270,15 @@ pub enum UiAction {
     /// device's key on a worker, learns a duck curve from the hits in it and puts the curve into
     /// the device in one undo step.
     LearnDuck(DeviceKey),
+    /// A momentary button of a panel (the gain tool's RESET): the app sends `param` to the device
+    /// as 1 and, a moment later, as 0, through the engine only. The project does not change and
+    /// there is no undo step.
+    PulseParam {
+        /// The device.
+        device: DeviceKey,
+        /// The param key.
+        param: String,
+    },
     /// A row of the list the REF button of a Spectrum device opens: row `index` of the sources the
     /// app listed in [`crate::analyser::AnalyserData::second_sources`] (the first is "no second
     /// curve"). The app keeps the choice with the device in one undo step.

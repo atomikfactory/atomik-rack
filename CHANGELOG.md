@@ -20,6 +20,26 @@ may break APIs and the patch and project formats.
   meter, a vertical type switch (keep high, neutral, keep low: click a label or a position, drag or scroll to
   step), then mix, output, auto level and oversampling. The back has audio in, audio out and the CV input with
   its trim.
+- **A panel of its own for the Stereo Tool.** The Stereo Tool is a 3 U imager: a big width knob for each band with a
+  MONO, ORIGINAL and WIDE scale, an ACTIVE lamp and a correlation bar under it, the X-OVER knob between them (it reads
+  `off` at the bottom, where there is no split) with a SPLIT lamp, and SOLO as three buttons. Polarity, rotation,
+  balance, M/S mode and mono sit in a row under them. The back is grouped: audio in, audio out, the three CV inputs
+  with their trims under the jacks, and the band outputs. Existing projects open unchanged.
+- **A two-band Stereo Tool.** The Stereo Tool splits the signal at an X-over frequency (the old Low bypass knob, now
+  20 Hz to 6 kHz) into a low and a high band and gives each its own width (Width is the high band's, the new Low
+  width the low band's). SOLO listens to the low band or the high band alone, without a click. Each band has a
+  correlation meter (-1 to +1, about 300 ms) and a flag that lights while the band has signal and a width other than 1.
+  On the back, CV inputs for both widths and the X-over (each with a trim, off until you turn it up) and an audio
+  output pair for each band. At X-over 20 Hz there is no split, as before. Projects saved before keep their sound
+  bit for bit; the X-over range is wider, so existing MIDI or controller mappings on it reach different values than
+  before.
+- **A new Gain Tool.** Its own panel (3 U) replaces the plain knobs: SIGNAL, CV and FADING lamps, MUTE with a FADE
+  time of up to a minute (the gain falls in equal dB steps and a mute CV input fades the same way), input and output
+  level meters, a big horizontal gain fader that is either a TRIM (-60 to +24 dB) or a VCA (-inf to 0 dB, never a
+  boost), polarity buttons for the left and the right channel, MONO, two pans (PAN L and PAN R, so each side can be
+  placed anywhere) with a PAN LAW of 0, -3, -4.5 or -6 dB, and a PEAK HOLD readout with RESET and AUTO. The back panel
+  groups the jacks and puts the CV trims under their jacks. Projects saved with the old Gain Tool sound exactly the
+  same.
 - **A larger spectrum panel, with a cursor readout and a peak hold.** Show Spectrum's panel (and the phase meter's)
   can be resized by the grip in its corner and filled to the window with the button beside the close cross or a
   double click on its title. A larger spectrum asks for a finer trace (up to 1024 columns) and labels more

@@ -4394,11 +4394,13 @@ deterministic `log2_det` / `exp2_det`, so a bounce is bit-identical on every pla
 
 ### Gain Tool: `atomik.gain-tool` (Effect)
 
-Gain, balance, width and mute, with an optional second stereo input.
-Source: [gain_tool.rs](../crates/devices/src/gain_tool.rs).
+A channel-strip style utility: polarity, mono, dual pan, width, gain (a trim or a VCA fader), balance and
+mute with an optional long fade, a second stereo input to add or cross-fade in, and the meters of its
+panel. Source: [gain_tool.rs](../crates/devices/src/gain_tool.rs); its panel is
+[gain_panel.rs](../crates/ui/src/gain_panel.rs).
 
 Sockets: `in_l`, `in_r`, `aux_l`, `aux_r` (Audio in), `out_l`, `out_r` (Audio out), `gain_cv_in`,
-`pan_cv_in` (CV in).
+`pan_cv_in`, `mute_cv_in` (CV in).
 
 | Key | Range | Default | Unit |
 |---|---|---|---|
@@ -4411,49 +4413,116 @@ Sockets: `in_l`, `in_r`, `aux_l`, `aux_r` (Audio in), `out_l`, `out_r` (Audio ou
 | `gain_cv_trim` | -1 to 1 | 1 | percent |
 | `pan_cv_trim` | -1 to 1 | 1 | percent |
 | `bypass` | 0 or 1 | 0 | toggle |
+| `fade` | 0 to 60000 (shown in seconds) | 0 | ms |
+| `invert_l`, `invert_r` | 0 or 1 | 0 | toggle |
+| `mono` | 0 or 1 | 0 | toggle |
+| `pan_l` | -1 to 1 | -1 | none |
+| `pan_r` | -1 to 1 | 1 | none |
+| `pan_law` | 0 to 3: 0 dB, -3 dB, -4.5 dB, -6 dB | 1 | choice |
+| `fader_mode` | 0 to 1: Trim, VCA | 0 | choice |
+| `peak_reset` | 0 or 1 (momentary) | 0 | toggle |
+| `peak_auto` | 0 or 1 | 0 | toggle |
 
-- **Modes.** gain: the input. mix: the input plus the aux input at the `blend` level. xfade: a
-  linear cross-fade from the input to the aux input.
-- **Gain** is `gain` plus the CV (`gain_cv_trim` times the CV times 24 dB); **mute** ramps it to 0.
-  **Balance** is unity at the centre and lowers the far side linearly to silence; its CV adds to
-  `pan` as in [the CV trim convention](#cv-inputs-the-trim-convention). **Width** is mid/side
-  width and is skipped at exactly 1.
-- Gain, balance, width and blend are smoothed per batch over 10 ms. At the defaults the output
-  is the input bit for bit.
+- **Order.** Polarity, mono, the aux input, dual pan, width, then gain, balance and the mute fade. Every
+  stage that is neutral is skipped or multiplies by exactly 1, so a project saved before the upgrade
+  sounds bit for bit the same. Polarity, mono, gain, balance, width, blend and the pan matrix are
+  smoothed per batch over 10 ms, so switching never clicks.
+- **Modes.** gain: the input. mix: the input plus the aux input at the `blend` level. xfade: a linear
+  cross-fade from the input to the aux input.
+- **Polarity and mono.** `invert_l` and `invert_r` flip the sign of that input channel. `mono` replaces
+  both channels by `(L + R) / 2`.
+- **Dual pan.** The left input is placed at `pan_l` and the right input at `pan_r`; the default (hard
+  left, hard right) is the identity. `pan_law` sets the level at the centre: 0 dB (unity), -3 dB
+  (constant power, the default), -4.5 dB, -6 dB (linear). At the extremes every law is exactly hard left
+  or right. **Width** is mid/side width and is skipped at exactly 1.
+- **Gain** is `gain` plus the CV (`gain_cv_trim` times the CV times 24 dB). **Trim** uses it as it is,
+  -60 to +24 dB. **VCA** uses only the -inf to 0 dB half: `gain` at -60 is silence (the CV is ignored)
+  and anything above it is `min(gain + CV, 0 dB)`, so the fader never boosts. **Balance** is unity at
+  the centre and lowers the far side linearly to silence; its CV adds to `pan` as in
+  [the CV trim convention](#cv-inputs-the-trim-convention).
+- **Mute** is `mute` or a gate on `mute_cv_in` (above 0.5 mutes, below 0.3 releases). With `fade` at 0
+  the gain ramps to 0 over 10 ms. With `fade` above 0 the gain falls in equal dB steps over exactly
+  `fade` milliseconds to -90 dB and then to exact silence, and a fade reversed half way takes half as
+  long.
+- **Meters** (`meter_values`, 8 values): input peak L and R and output peak L and R (linear, the peak of
+  the last 16 batches), the held output peak in dB (the maximum since the last reset, -120 when none),
+  signal present (input above -60 dBFS), CV active (a connected CV input moved in the last 16 batches)
+  and fading (1 during a mute fade). A rising edge of `peak_reset` clears the hold; `peak_auto` also
+  clears it every 3 s of audio.
+- **Panel.** A 3 U strip (see [gain_panel.rs](../crates/ui/src/gain_panel.rs)): the SIGNAL, CV and FADING
+  lamps, MUTE and its FADE knob, the input meter, the big horizontal gain fader, the output meter, the
+  mode and BLEND knob (only while the mode blends) and the TRIM / VCA switch, the polarity and MONO
+  switches, the peak hold readout with RESET and AUTO, PAN L, PAN R, the pan law, BALANCE and WIDTH. The
+  fader scale follows `fader_mode`: Trim marks -60 to +24 dB, VCA -inf to 0 dB with -inf at the left end.
+  A drag is one undo step, Shift is fine, a double click puts it back to 0 dB. RESET does not store
+  anything: the app sends the device 1 and, two frames later, 0, so there is no undo step. The back has
+  the audio in, the aux in, the three CV jacks (with the two trims under their jacks) and the audio out.
+- No latency, no allocation after construction; non-finite input samples count as 0.
 
 ### Stereo Tool: `atomik.stereo-tool` (Effect)
 
-Polarity, phase rotation, width with a bass bypass, balance, mono and mid/side conversion.
+A dual-band stereo imager: polarity, phase rotation, a width for the lows and one for the highs, solo, balance,
+mono and mid/side conversion, with correlation meters, CV and an output per band.
 Source: [stereo_tool.rs](../crates/devices/src/stereo_tool.rs).
 
-Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
+Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out), `lo_width_cv`, `hi_width_cv`, `xover_cv` (CV in),
+`lo_out_l`, `lo_out_r`, `hi_out_l`, `hi_out_r` (Audio out, each band after its width).
 
 | Key | Range | Default | Unit |
 |---|---|---|---|
 | `mode` | 0 to 2: stereo, encode, decode | 0 | choice |
 | `invert_l`, `invert_r` | 0 or 1 | 0 | toggle |
-| `width` | 0 to 2 | 1 | none |
-| `low_bypass` | 20 to 500 (20 = off) | 20 | Hz |
+| `width` (the high band) | 0 to 2 | 1 | none |
+| `low_bypass` (X-over) | 20 to 6000 (20 = no split) | 20 | Hz |
 | `balance` | -1 to 1 | 0 | none |
 | `mono` | 0 or 1 | 0 | toggle |
 | `rotate` | 0 to 180 (degrees) | 0 | none |
 | `rotate_hz` | 20 to 1000 | 100 | Hz |
 | `bypass` | 0 or 1 | 0 | toggle |
+| `lo_width` | 0 to 2 | 1 | none |
+| `solo` | 0 to 2: normal, lo, hi | 0 | choice |
+| `lo_width_cv_trim`, `hi_width_cv_trim`, `xover_cv_trim` | -1 to 1 | 0 | percent |
 
-- **Order:** polarity, rotation, width, balance, the mid/side mode, then mono. Encode writes
-  `(L + R) / 2` to `out_l` and `(L - R) / 2` to `out_r`; decode reads them back as mid and side.
+- **Order:** polarity, rotation, the split at the X-over, the width of each band, the sum, solo, balance, the
+  mid/side mode, then mono. Encode writes `(L + R) / 2` to `out_l` and `(L - R) / 2` to `out_r`; decode reads them
+  back as mid and side.
 - **Mono** is the last stage: both outputs become `(L + R) / 2` of what the mode produced (10 ms
   ramp), so the output is mono in every mode, an encoded signal included.
-- **Low bypass.** Above 20 Hz the signal is split by a fourth-order Linkwitz-Riley crossover at
-  that frequency; only the band above it is widened, the bass stays as it was.
+- **Two bands.** Above 20.5 Hz the signal is split by a fourth-order Linkwitz-Riley crossover at the X-over
+  frequency. `width` widens the band above it, `lo_width` the band below it; at 1 a band is left as it was, so the
+  bass stays centred when the high width grows. At 20.5 Hz or below there is no split: the whole signal is the
+  high band, `width` applies to all of it, `lo_width` does nothing and the low outputs are silent. Both widths at 1
+  skip the stage, which is the input bit for bit. The key `low_bypass` is the one of the first release, where the
+  knob was called Low bypass.
+- **Solo** plays the low band alone or the high band alone (each after its width), after the sum and before
+  balance. With no split solo lo is silence and solo hi is everything. A switch ramps over 10 ms.
+- **Meters.** Per band, after its width: a correlation from -1 (opposite) through 0 to +1 (mono), smoothed over
+  about 300 ms at any sample rate and 0 when the band is silent, and an ACTIVE flag that is on while the band has
+  signal (above about -60 dBFS) and a width other than 1. Meter values, in order: low correlation, high
+  correlation, low active, high active, split on.
+- **CV.** `lo_width_cv` and `hi_width_cv` add `trim * cv * 2` to a width (the sum clamped to 0 to 2);
+  `xover_cv` multiplies the X-over by `2^(trim * cv * 4)`, smoothed over 20 ms and kept within 20.6 Hz to 6 kHz.
+  The trims default to 0, so a CV does nothing until it is turned up. The X-over CV needs a split: it neither
+  creates nor ends one. CV is read as the mean of each 64-sample batch.
 - **Rotation.** `rotate` turns the phase of both channels by that angle at `rotate_hz` with a first-order
   all-pass: the level is the same at every frequency, the turn is smaller below `rotate_hz` and larger above
   it (up to 180 degrees), and 180 is a polarity inversion (`-x` exactly). It reshapes the waveform of a bass
   or a kick without changing what it sounds like alone, and so changes how it adds to the other one (the
   Kick and Bass Check in the Analyze menu uses it, and finds an angle for you). At 0 the stage is skipped.
-  The angle and the frequency switch at once, like the mode, so set them with the signal stopped. The
-  params were added after the first release, before `bypass`: a project from before them plays the same bits.
-- Width 1, balance 0, polarity and mono off, rotation 0, mode stereo: the output is the input bit for bit.
+  The angle and the frequency switch at once, like the mode, so set them with the signal stopped.
+- The rotation and band params and sockets were added after the first release, after the original ones and
+  (for ids 10 and up) after `bypass`: a project from before them plays the same bits.
+- **Panel.** A 3 U panel of its own (see [stereo_panel.rs](../crates/ui/src/stereo_panel.rs)). The top row reads
+  left to right: LO BAND (a big width knob with a MONO, ORIGINAL (top) and WIDE scale, an ACTIVE lamp and a
+  correlation bar from -1 to +1 with the centre marked), X-OVER (a big knob from 20 Hz, where it reads `off`, to
+  6 kHz, with a SPLIT lamp), HI BAND (the same, for `width`) and SOLO (three radio buttons: SOLO HI BAND, SOLO LO
+  BAND, NORMAL). The row under it has POLARITY (the two switches), ROTATE and its frequency, BALANCE, M/S MODE and
+  the MONO switch. The lamps and bars read the meter values above. Every knob follows the usual gestures: a drag
+  is one undo step, Shift is fine, Esc puts it back, the wheel steps it, a double click resets it and a right
+  click opens its MIDI menu; a press on a SOLO button picks it. The back has AUDIO IN, AUDIO OUT, CV IN (three
+  jacks, each with its trim knob under it, on the back only) and BAND OUTPUTS (low L and R, high L and R).
+- Both widths 1, balance 0, polarity and mono off, rotation 0, mode stereo, solo normal: the output is the
+  input bit for bit.
 
 ### Gate: `atomik.gate` (Effect)
 

@@ -43,13 +43,18 @@ pub enum FxKind {
     DynamicEq,
     /// `atomik.duck`: the drawn duck curve with draggable points and bends, and a LEARN button.
     Duck,
+    /// `atomik.stereo-tool`: two bands with their own width, the crossover, solo and a
+    /// correlation meter per band (its own 3 U layout, [`crate::stereo_panel`]).
+    StereoTool,
+    /// `atomik.gain-tool`: the strip of its own (mute with fade, meters, fader, polarity, pan).
+    GainTool,
     /// `atomik.saturation`: the big knob with its drive lamp, the type switch and a small group.
     Saturation,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 16] = [
+    pub const ALL: [FxKind; 18] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -65,13 +70,15 @@ impl FxKind {
         FxKind::Clipper,
         FxKind::DynamicEq,
         FxKind::Duck,
+        FxKind::StereoTool,
+        FxKind::GainTool,
         FxKind::Saturation,
     ];
 
     /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
     /// effect, the meters of one and a plain "meters change the painting" behaviour that the
     /// audio track's tuner does not share.
-    pub const EFFECTS: [FxKind; 15] = [
+    pub const EFFECTS: [FxKind; 17] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -86,6 +93,8 @@ impl FxKind {
         FxKind::Clipper,
         FxKind::DynamicEq,
         FxKind::Duck,
+        FxKind::StereoTool,
+        FxKind::GainTool,
         FxKind::Saturation,
     ];
 
@@ -112,6 +121,8 @@ impl FxKind {
             FxKind::Clipper => "atomik.clipper",
             FxKind::DynamicEq => "atomik.dynamic-eq",
             FxKind::Duck => "atomik.duck",
+            FxKind::StereoTool => "atomik.stereo-tool",
+            FxKind::GainTool => "atomik.gain-tool",
             FxKind::Saturation => "atomik.saturation",
         }
     }
@@ -133,6 +144,8 @@ impl FxKind {
             FxKind::Clipper => CLIPPER_METERS,
             FxKind::DynamicEq => DYNEQ_METERS,
             FxKind::Duck => DUCK_METERS,
+            FxKind::StereoTool => STEREO_METERS,
+            FxKind::GainTool => GAIN_METERS,
             FxKind::Saturation => SATURATION_METERS,
         }
     }
@@ -183,6 +196,12 @@ pub const DYNEQ_BANDS: usize = 5;
 /// The Sidechain Tool publishes `[dip, position along the drawn curve]`, both 0 to 1
 /// (`atomik_devices::duck::METERS`; a test pins the two together).
 pub const DUCK_METERS: usize = 2;
+/// The stereo tool publishes `[low band correlation, high band correlation, low active, high
+/// active, split]` (`atomik_devices::stereo_tool::METER_COUNT`; a test pins the two together).
+pub const STEREO_METERS: usize = 5;
+/// The gain tool publishes `[input peak L, R, output peak L, R, held output peak (dB), signal,
+/// CV active, fading]` (`atomik_devices::gain_tool::METER_COUNT`; a test pins the two together).
+pub const GAIN_METERS: usize = 8;
 /// Saturation publishes `[drive 0..1, input peak, output peak]`
 /// (`atomik_devices::saturation::METERS`; a test pins the two together).
 pub const SATURATION_METERS: usize = 3;
@@ -262,6 +281,10 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::DynamicEq, i) if i < DYNEQ_PEAKS => Slot::Power,
         (FxKind::DynamicEq, DYNEQ_KEY_CABLED) => Slot::Unit,
         (FxKind::Duck, _) => Slot::Unit,
+        (FxKind::StereoTool, 0 | 1) => Slot::Signed,
+        (FxKind::StereoTool, _) => Slot::Unit,
+        (FxKind::GainTool, 4) => Slot::Raw,
+        (FxKind::GainTool, 5..=7) => Slot::Unit,
         (FxKind::Saturation, 0) => Slot::Unit,
         (FxKind::Mastering, 0..=3) => Slot::Raw,
         (FxKind::Mastering, _) => Slot::Gr,

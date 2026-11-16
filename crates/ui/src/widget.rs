@@ -97,6 +97,8 @@ pub struct ValueDrag {
     pixels_per_range: f64,
     /// Upward movement lowers the value (a vertical switch whose first position is on top).
     reversed: bool,
+    /// The largest normalised value the drag reaches (1 unless [`ValueDrag::limited`]).
+    max_norm: f64,
 }
 
 impl ValueDrag {
@@ -106,7 +108,16 @@ impl ValueDrag {
             norm: f64::from(p.to_normalized(plain)),
             pixels_per_range: pixels_per_range.max(1.0),
             reversed: false,
+            max_norm: 1.0,
         }
+    }
+
+    /// The same drag, but it stops at `max_norm` (0..1 of the param's range): a fader whose track
+    /// shows only the lower part of the range (the gain tool's VCA scale).
+    pub fn limited(mut self, max_norm: f64) -> Self {
+        self.max_norm = max_norm.clamp(0.0, 1.0);
+        self.norm = self.norm.min(self.max_norm);
+        self
     }
 
     /// The same drag with the direction turned round: moving up lowers the value.
@@ -120,7 +131,7 @@ impl ValueDrag {
     pub fn update(&mut self, p: &ParamDescriptor, dy_up: f64, fine: bool) -> f32 {
         let scale = if fine { FINE_DIVISOR } else { 1.0 };
         let dy_up = if self.reversed { -dy_up } else { dy_up };
-        self.norm = (self.norm + dy_up / self.pixels_per_range / scale).clamp(0.0, 1.0);
+        self.norm = (self.norm + dy_up / self.pixels_per_range / scale).clamp(0.0, self.max_norm);
         p.from_normalized(self.norm as f32)
     }
 }

@@ -91,6 +91,16 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
             set(&mut d, "curve", 0.4);
             set(&mut d, "symmetry", 0.3);
         }
+        FxKind::StereoTool => {
+            set(&mut d, "lo_width", 0.55);
+            set(&mut d, "width", 1.4);
+            set(&mut d, "low_bypass", 220.0);
+            set(&mut d, "solo", 1.0);
+            set(&mut d, "invert_l", 1.0);
+            set(&mut d, "rotate", 45.0);
+            set(&mut d, "rotate_hz", 200.0);
+            set(&mut d, "balance", 0.2);
+        }
         FxKind::Duck => {
             set(&mut d, "mode", 3.0);
             set(&mut d, "depth", 0.9);
@@ -122,6 +132,15 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
             set(&mut d, "band4.source", 1.0);
             set(&mut d, "band5.gain", 3.0);
             set(&mut d, "band5.range", 0.0);
+        }
+        FxKind::GainTool => {
+            set(&mut d, "mode", 1.0);
+            set(&mut d, "gain", -6.0);
+            set(&mut d, "fade", 3000.0);
+            set(&mut d, "invert_l", 1.0);
+            set(&mut d, "pan_l", -0.6);
+            set(&mut d, "pan_law", 2.0);
+            set(&mut d, "width", 1.4);
         }
     }
     doc.devices.push(d);
@@ -159,6 +178,8 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
         FxKind::Clipper => vec![0.9, 0.5, 18.5, 1.4],
         // The dip and the position along the drawn curve.
         FxKind::Duck => vec![0.6, 0.3],
+        // Low and high correlation, the two ACTIVE lamps and the split lamp.
+        FxKind::StereoTool => vec![-0.35, 0.62, 1.0, 0.0, 1.0],
         // Band gains (dB), 16 input energies, 16 key energies, output peaks, key cabled.
         FxKind::DynamicEq => {
             let mut v = vec![-1.5, -4.5, 3.0, -2.0, 3.0];
@@ -167,6 +188,9 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
             v.extend([0.4, 0.38, 1.0]);
             v
         }
+        // Input peaks L and R, output peaks L and R (linear), the held peak (dB), then the signal,
+        // CV and fading flags.
+        FxKind::GainTool => vec![0.5, 0.4, 0.35, 0.28, -3.2, 1.0, 1.0, 1.0],
         // The drive lamp (0..1), the input and the output peak.
         FxKind::Saturation => vec![0.6, 0.5, 0.45],
         // The audio track publishes no meter values.

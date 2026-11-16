@@ -464,6 +464,9 @@ pub struct AppCore<S: EngineSink> {
     fx_meter_seq: BTreeMap<DeviceKey, u64>,
     /// Effect meter feed: the reused read buffer (never reallocated after construction).
     fx_meter_buf: Vec<f32>,
+    /// Momentary params (the gain tool's RESET): the device, the param and the frames left before
+    /// it is sent 0 again (see [`UiAction::PulseParam`]).
+    param_pulses: Vec<(DeviceKey, String, u8)>,
     /// The plugin parameter pane and whether it is shown.
     plugin_params: PluginParamsView,
     plugin_params_open: bool,
@@ -679,6 +682,7 @@ impl<S: EngineSink> AppCore<S> {
             restart_deferred: false,
             fx_meter_seq: BTreeMap::new(),
             fx_meter_buf: vec![0.0; FX_METER_CAPACITY],
+            param_pulses: Vec::new(),
             plugin_params: PluginParamsView::new(theme),
             file_browser: atomik_ui::FileBrowserView::new(Theme::dark()),
             piano_keys: atomik_ui::PianoKeysView::new(Theme::dark()),
@@ -1162,6 +1166,7 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::FindResonances(device) => self.find_resonances(&device),
             UiAction::CutResonances(device) => self.cut_resonances(&device),
             UiAction::LearnDuck(device) => self.learn_duck(&device),
+            UiAction::PulseParam { device, param } => self.pulse_param(device, param),
             UiAction::SpectrumCurve { device, index } => self.pick_spectrum_curve(&device, index),
             UiAction::MeterButton {
                 device,
@@ -1839,6 +1844,7 @@ impl<S: EngineSink> AppCore<S> {
     /// converts recorded live notes and shows the position in the views.
     pub fn frame(&mut self) {
         self.sink.collect_garbage();
+        self.release_pulses();
         self.plugins_frame();
         self.poll_background();
         self.camera_frame();
@@ -1889,6 +1895,42 @@ impl<S: EngineSink> AppCore<S> {
         self.energy_frame();
         self.zone_frame();
         self.browser_frame();
+    }
+
+    /// Frames a momentary param stays at 1 before it goes back to 0: the engine reads params at
+    /// the start of a batch, so it has to be up for at least one of them.
+    const PULSE_FRAMES: u8 = 2;
+
+    /// A press of a momentary button ([`UiAction::PulseParam`]): the param goes to the device as
+    /// 1 now and as 0 a couple of frames later. Through the engine only: the project keeps the
+    /// param at 0, so there is no document change and no undo step.
+    fn pulse_param(&mut self, device: DeviceKey, param: String) {
+        let momentary = containers::type_of(self.doc(), &device)
+            .and_then(|t| self.registry.get(&t))
+            .and_then(|f| f.descriptor.param_by_key(&param))
+            .is_some_and(|p| matches!(p.unit, atomik_core::Unit::Toggle));
+        if !momentary {
+            return;
+        }
+        self.send_param(&device, &param, 1.0);
+        self.param_pulses.push((device, param, Self::PULSE_FRAMES));
+    }
+
+    /// Lets go of the momentary params whose time is up (once per frame).
+    fn release_pulses(&mut self) {
+        if self.param_pulses.is_empty() {
+            return;
+        }
+        let mut pulses = std::mem::take(&mut self.param_pulses);
+        pulses.retain_mut(|(device, param, left)| {
+            *left = left.saturating_sub(1);
+            if *left > 0 {
+                return true;
+            }
+            self.send_param(device, param, 0.0);
+            false
+        });
+        self.param_pulses = pulses;
     }
 
     /// Feeds the rack view the values every metered effect publishes
@@ -4605,8 +4647,16 @@ mod analyser_tests;
 mod players_tests;
 
 #[cfg(test)]
+#[path = "app_core_stereo_tool_tests.rs"]
+mod stereo_tool_tests;
+
+#[cfg(test)]
 #[path = "app_core_character_tests.rs"]
 mod character_tests;
+
+#[cfg(test)]
+#[path = "app_core_gain_tool_tests.rs"]
+mod gain_tool_tests;
 
 #[cfg(test)]
 #[path = "app_core_setups_tests.rs"]
