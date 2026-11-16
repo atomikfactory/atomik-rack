@@ -105,6 +105,7 @@ fn id_of(hit: Hit) -> Option<&'static str> {
         Hit::Resonance(_, ResonanceBtn::Cut) => "rack.resonance_cut",
         Hit::DuckLearn(_) => "rack.duck_learn",
         Hit::SpecRef(_) => "rack.spectrum_ref",
+        Hit::SpecStats(_) => "rack.spectrum_stats",
         Hit::TableEdit(_) => "rack.table_edit",
         Hit::DuckPlot(_) => "rack.duck_plot",
         Hit::TunerButton(_) => "rack.tuner",
@@ -161,6 +162,7 @@ fn text(hit: Hit) -> Option<Cow<'static, str>> {
             "Listen to the range between the locators at the key and draw the duck curve from its hits",
         ),
         Hit::SpecRef(_) => s("Draw another strip or the reference track as a second curve"),
+        Hit::SpecStats(_) => s("Correlation, peaks and clips: click to reset the peaks and clips"),
         Hit::TableEdit(_) => {
             s("Open the table editor: draw frames, set harmonics, morph, clean up a sample")
         }

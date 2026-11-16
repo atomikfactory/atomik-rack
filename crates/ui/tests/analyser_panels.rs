@@ -54,7 +54,11 @@ fn fed(kind: FxKind, data: &AnalyserData) -> (atomik_model::RackDoc, RackView) {
 fn both_panels_are_effect_panels_with_their_own_visual_and_meter_counts() {
     assert_eq!(FxKind::of("atomik.spectrum"), Some(FxKind::Spectrum));
     assert_eq!(FxKind::of("atomik.phase-meter"), Some(FxKind::PhaseMeter));
-    assert_eq!(FxKind::Spectrum.meter_count(), 2);
+    assert_eq!(FxKind::Spectrum.meter_count(), 9);
+    assert_eq!(
+        FxKind::Spectrum.meter_count(),
+        atomik_devices::spectrum::METER_COUNT
+    );
     assert_eq!(FxKind::PhaseMeter.meter_count(), 16);
     for kind in [FxKind::Spectrum, FxKind::PhaseMeter] {
         let spec = fx_layout(kind, registry().get(kind.type_id()).unwrap().descriptor);
@@ -228,6 +232,14 @@ fn the_bands_and_the_fine_trace_paint_differently_and_the_data_changes_the_paint
     assert_ne!(fine, paint(&doc4, &mut v4).to_json());
 }
 
+/// The fine trace of a left and a right channel that differ.
+fn overlay_data() -> AnalyserData {
+    let mut d = spectrum_data(false);
+    d.overlay = d.trace.iter().rev().map(|v| v - 6.0).collect();
+    d.overlay_kind = atomik_ui::analyser::OverlayKind::LeftRight;
+    d
+}
+
 /// A spectrogram image: a tone at 1 kHz that slides up over time, newest row first.
 fn spectrogram_data() -> AnalyserData {
     let (cols, rows) = (120usize, 80usize);
@@ -367,7 +379,14 @@ fn the_new_controls_are_on_the_panels() {
     for (kind, keys) in [
         (
             FxKind::Spectrum,
-            &["smoothing", "weighting", "reference", "reference.capture"][..],
+            &[
+                "smoothing",
+                "weighting",
+                "reference",
+                "reference.capture",
+                "clip_level",
+                "stats.reset",
+            ][..],
         ),
         (FxKind::PhaseMeter, &["loudness_view", "target"][..]),
     ] {
@@ -384,6 +403,96 @@ fn the_new_controls_are_on_the_panels() {
     }
 }
 
+/// Strokes of a trace: a 1.5 px path with a point per column or more.
+fn trace_strokes(dl: &DisplayList) -> usize {
+    use atomik_ui::Op;
+    use atomik_ui::canvas::Geom;
+    dl.ops()
+        .iter()
+        .filter(|op| {
+            matches!(op, Op::Stroke { shape: Geom::Path(p), stroke, .. }
+                if (stroke.width - 1.5).abs() < 1e-9 && p.elements().len() >= 200)
+        })
+        .count()
+}
+
+#[test]
+fn an_overlay_draws_two_traces_with_a_legend_and_bands_two_bars_per_band() {
+    use atomik_ui::analyser::OverlayKind;
+    for (kind, labels) in [
+        (OverlayKind::LeftRight, ("L", "R")),
+        (OverlayKind::MidSide, ("M", "S")),
+    ] {
+        let single = spectrum_data(false);
+        let (doc, mut v) = fed(FxKind::Spectrum, &single);
+        let one = paint(&doc, &mut v);
+        assert_eq!(trace_strokes(&one), 1);
+        let mut two = spectrum_data(false);
+        two.overlay = two.trace.iter().map(|x| x - 9.0).collect();
+        two.overlay_kind = kind;
+        let (doc, mut v) = fed(FxKind::Spectrum, &two);
+        let dl = paint(&doc, &mut v);
+        assert_eq!(trace_strokes(&dl), 2, "{kind:?}");
+        let t = texts(&dl);
+        let count = |s: &str| t.iter().filter(|x| *x == s).count();
+        assert!(count(labels.1) >= 1 && count(labels.0) >= 1, "{t:?}");
+        assert_ne!(one.to_json(), dl.to_json());
+        // Bands: the second bar of each band is drawn (more fills than the single set).
+        let (doc, mut v) = fed(FxKind::Spectrum, &spectrum_data(true));
+        let single_bands = paint(&doc, &mut v).ops().len();
+        let mut bands = spectrum_data(true);
+        bands.overlay = bands.trace.iter().map(|x| x - 9.0).collect();
+        bands.overlay_kind = kind;
+        let (doc, mut v) = fed(FxKind::Spectrum, &bands);
+        assert!(paint(&doc, &mut v).ops().len() > single_bands, "{kind:?}");
+        // A stale overlay of the wrong length is ignored rather than drawn wrongly.
+        let mut bad = spectrum_data(false);
+        bad.overlay = vec![-50.0; 7];
+        bad.overlay_kind = kind;
+        let (doc, mut v) = fed(FxKind::Spectrum, &bad);
+        assert_eq!(trace_strokes(&paint(&doc, &mut v)), 1);
+    }
+}
+
+#[test]
+fn the_strip_shows_the_correlation_peaks_headroom_and_clips() {
+    let (doc, mut v) = fed(FxKind::Spectrum, &spectrum_data(false));
+    let t = texts(&paint(&doc, &mut v));
+    // The fixture: correlation 0.62 (long 0.7), sample peaks -1.2 and -3.0, true peaks -0.4 and
+    // -2.1, three clipped samples; the headroom is 0 dBFS minus the largest peak, -0.4.
+    for s in [
+        "CORR",
+        "+0.62",
+        "3s +0.70",
+        "PEAK",
+        "-1.2  -3.0",
+        "TRUE",
+        "-0.4",
+        "HEADROOM",
+        "0.4",
+        "CLIP",
+        "3",
+    ] {
+        assert!(t.iter().any(|x| x == s), "{s:?}: {t:?}");
+    }
+    // Nothing yet: dashes, no clips, a zero correlation.
+    let (doc, mut v) = rack(FxKind::Spectrum);
+    let t = texts(&paint(&doc, &mut v));
+    for s in ["+0.00", "--", "0"] {
+        assert!(t.iter().any(|x| x == s), "{s:?}: {t:?}");
+    }
+    // The strip sits under the axis labels and does not touch the plot.
+    let reg = registry();
+    let p = fx_layout(
+        FxKind::Spectrum,
+        reg.get("atomik.spectrum").unwrap().descriptor,
+    )
+    .fx
+    .unwrap();
+    assert!(p.visual.contains_rect(p.aux));
+    assert!(p.plot.y1 + 12.0 <= p.aux.y0, "{p:?}");
+}
+
 #[test]
 fn goldens_of_the_populated_panels() {
     for (name, kind, data, flip) in [
@@ -397,6 +506,12 @@ fn goldens_of_the_populated_panels() {
             "analyser_spectrum_bands_1x.json",
             FxKind::Spectrum,
             spectrum_data(true),
+            Flip::Front,
+        ),
+        (
+            "analyser_spectrum_overlay_1x.json",
+            FxKind::Spectrum,
+            overlay_data(),
             Flip::Front,
         ),
         (
@@ -438,6 +553,22 @@ fn goldens_of_the_populated_panels() {
 #[test]
 fn the_ui_copies_of_the_device_layouts_match_the_devices() {
     use atomik_devices::phase_meter::{PHASE_METERS, value};
+    {
+        use atomik_devices::spectrum as dev;
+        assert_eq!(fx::SPECTRUM_METERS, dev::METER_COUNT);
+        for (ui, device) in [
+            (fx::spectrum::CORRELATION, dev::value::CORRELATION),
+            (fx::spectrum::CORRELATION_LONG, dev::value::CORRELATION_LONG),
+            (fx::spectrum::SAMPLE_PEAK_L_DB, dev::value::SAMPLE_PEAK_L_DB),
+            (fx::spectrum::SAMPLE_PEAK_R_DB, dev::value::SAMPLE_PEAK_R_DB),
+            (fx::spectrum::TRUE_PEAK_L_DB, dev::value::TRUE_PEAK_L_DB),
+            (fx::spectrum::TRUE_PEAK_R_DB, dev::value::TRUE_PEAK_R_DB),
+            (fx::spectrum::CLIPS, dev::value::CLIPS),
+        ] {
+            assert_eq!(ui, device);
+        }
+        assert_eq!(fx::spectrum::CORRELATION, 2, "the first two stay the peaks");
+    }
     assert_eq!(fx::phase::COUNT, PHASE_METERS);
     for (ui, device) in [
         (fx::phase::PEAK_L, value::PEAK_L),

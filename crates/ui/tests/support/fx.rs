@@ -166,8 +166,9 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
         FxKind::Mastering => vec![-20.5, -21.2, -23.4, -1.8, 2.0, 3.5, 1.2, 4.0],
         // in peak, out peak, transform_eff, activity
         FxKind::Character => vec![0.5, 0.35, 0.7, 0.6],
-        // peak L, R (linear)
-        FxKind::Spectrum => vec![0.5, 0.4],
+        // peak L, R (linear), correlation, long correlation, sample peak L, R, true peak L, R
+        // (dBFS), clipped samples
+        FxKind::Spectrum => vec![0.5, 0.4, 0.62, 0.7, -1.2, -3.0, -0.4, -2.1, 3.0],
         // recent peak L R, held peak L R, RMS L R, sample peak, true peak, correlation, balance,
         // width, mid RMS, side RMS, momentary, short-term, integrated
         FxKind::PhaseMeter => vec![

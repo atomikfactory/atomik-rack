@@ -43,7 +43,7 @@ const LEFT_AMP: f64 = 168.0;
 /// Height (title included) of the visual placed above the sections.
 const TOP_EQ: f64 = 186.0;
 const TOP_MASTERING: f64 = 112.0;
-const TOP_SPECTRUM: f64 = 200.0;
+const TOP_SPECTRUM: f64 = 218.0;
 const TOP_PHASE: f64 = 148.0;
 const TOP_TUNER: f64 = 92.0;
 const TOP_DUCK: f64 = 150.0;
@@ -162,6 +162,7 @@ fn sections(kind: FxKind) -> Def {
             ("AVERAGING", &["averaging", "hold", "decay"]),
             ("DISPLAY", &["range", "tilt"]),
             ("REFERENCE", &["reference", "reference.capture"]),
+            ("PEAKS", &["clip_level", "stats.reset"]),
         ],
         FxKind::PhaseMeter => &[
             ("STEREO", &["corr_time"]),
@@ -497,12 +498,16 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
         FxKind::Character | FxKind::StereoTool | FxKind::GainTool | FxKind::Saturation => {
             (v, v, empty, None)
         }
-        FxKind::Spectrum => (
-            Rect::new(v.x0 + 26.0, v.y0 + 1.0, v.x1 - 40.0, v.y1 - 12.0),
-            Rect::new(v.x1 - 32.0, v.y0 + 1.0, v.x1, v.y1 - 12.0),
-            Rect::new(v.x0 + 32.0, v.y0 + 1.0, v.x1 - 46.0, v.y0 + 14.0),
-            None,
-        ),
+        FxKind::Spectrum => {
+            // The strip of correlation, peaks and clips under the axis labels.
+            aux = Rect::new(v.x0 + 26.0, v.y1 - 16.0, v.x1, v.y1 - 1.0);
+            (
+                Rect::new(v.x0 + 26.0, v.y0 + 1.0, v.x1 - 40.0, v.y1 - 30.0),
+                Rect::new(v.x1 - 32.0, v.y0 + 1.0, v.x1, v.y1 - 30.0),
+                Rect::new(v.x0 + 32.0, v.y0 + 1.0, v.x1 - 46.0, v.y0 + 14.0),
+                None,
+            )
+        }
         // The display fills the visual; the TUNER button is on the name plate.
         FxKind::AudioTrack | FxKind::Tuner => (
             Rect::new(v.x0, v.y0 + 1.0, v.x1, v.y1 - 1.0),

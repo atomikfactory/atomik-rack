@@ -7,18 +7,18 @@
 //! empty. A bypassed device shows what it last saw, dimmed, with `BYPASSED` over it.
 
 use crate::analyser::{
-    AnalyserData, LOUDNESS_ABOVE_LU, LOUDNESS_BELOW_LU, SPECTROGRAM_STEPS, ScopeMode, balance_text,
-    band_centre_hz, band_edges, cell_intensity, correlation_text, freq_x, grid_step_db, level_text,
-    level_y, loudness_runs, loudness_y, lra_text, peak_text, scope_point, spectrogram_step,
-    target_text, width_text,
+    AnalyserData, LOUDNESS_ABOVE_LU, LOUDNESS_BELOW_LU, OverlayKind, SPECTROGRAM_STEPS, ScopeMode,
+    balance_text, band_centre_hz, band_edges, cell_intensity, correlation_text, freq_x,
+    grid_step_db, level_text, level_y, loudness_runs, loudness_y, lra_text, peak_text, scope_point,
+    spectrogram_step, target_text, width_text,
 };
 use crate::autolayout::FxPanel;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
-use crate::fx::{LEVEL_FLOOR_DB, level_norm, phase};
+use crate::fx::{LEVEL_FLOOR_DB, level_norm, phase, spectrum as sv};
 use crate::fx_paint::{bar, lcd, meter_color, small};
 use crate::paint::PanelInfo;
 use crate::theme::{Theme, hsl, mix};
-use vello::kurbo::{BezPath, Circle, Line, Point, Rect};
+use vello::kurbo::{BezPath, Circle, Line, Point, Rect, RoundedRect};
 use vello::peniko::Color;
 
 fn alpha(c: Color, a: f32) -> Color {
@@ -28,6 +28,9 @@ fn alpha(c: Color, a: f32) -> Color {
 fn meter(info: &PanelInfo<'_>, i: usize, default: f32) -> f32 {
     info.fx_meters.get(i).copied().unwrap_or(default)
 }
+
+/// The key of the Spectrum device's momentary reset of the peaks and the clip count.
+pub const STATS_RESET_KEY: &str = "stats.reset";
 
 /// The settings of the spectrum panel the painter needs (read from the device's params).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -131,6 +134,204 @@ fn reference_button<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect, data:
     }
 }
 
+/// The colours of the two traces of an overlay (the theme's blue and green), `None` for one trace.
+fn overlay_colours(theme: &Theme, data: &AnalyserData) -> Option<(Color, Color)> {
+    (data.overlay_kind != OverlayKind::Off && !data.overlay.is_empty())
+        .then_some((theme.cable_cv, theme.cable_notes))
+}
+
+/// The legend of an overlay (`L` and `R`, or `M` and `S`) under the loudest-bin readout.
+fn overlay_legend<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    r: Rect,
+    data: &AnalyserData,
+    dim: f32,
+) {
+    let (Some((a, b)), Some((la, lb))) = (overlay_colours(theme, data), data.overlay_kind.labels())
+    else {
+        return;
+    };
+    for (k, (colour, label)) in [(a, la), (b, lb)].into_iter().enumerate() {
+        let x = r.x0 + 8.0 + k as f64 * 26.0;
+        let y = r.y0 + 22.0;
+        c.fill_with(
+            RoundedRect::from_rect(Rect::new(x, y - 6.0, x + 7.0, y + 1.0), 1.5),
+            alpha(colour, dim),
+        );
+        small(
+            c,
+            theme,
+            label,
+            pt(x + 10.0, y + 0.5),
+            Align::Start,
+            Some(alpha(theme.text, dim)),
+        );
+    }
+}
+
+/// How the strip under the plot is divided: the correlation meter, then four readouts.
+fn stats_cells(strip: Rect) -> (Rect, [Rect; 4]) {
+    let corr_w = 232.0f64.min(strip.width() * 0.36);
+    let corr = Rect::new(strip.x0, strip.y0, strip.x0 + corr_w, strip.y1);
+    let w = (strip.width() - corr_w) / 4.0;
+    let cells = std::array::from_fn(|k| {
+        let x = strip.x0 + corr_w + w * k as f64;
+        Rect::new(x, strip.y0, x + w, strip.y1)
+    });
+    (corr, cells)
+}
+
+/// The strip under the plot: the stereo correlation as a small centre bar with its number (and the
+/// long one), then the sample peak of each side, the true peak, the headroom and the clipped
+/// samples with a lamp. A click on it resets the peaks and the clips.
+fn stats_strip<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    strip: Rect,
+    info: &PanelInfo<'_>,
+    bypassed: bool,
+) {
+    if strip.width() < 100.0 {
+        return;
+    }
+    let dim = if bypassed { 0.5 } else { 1.0 };
+    lcd(c, theme, strip);
+    let (corr, cells) = stats_cells(strip);
+    let base = strip.y1 - 4.5;
+    let value = |c: &mut C, at: Rect, text: String, color: Color| {
+        c.text(
+            &TextRun::new(text, pt(at.x1 - 6.0, base), 8.5, alpha(color, dim))
+                .align(Align::End)
+                .weight(700),
+        );
+    };
+    // Correlation.
+    let v = meter(info, sv::CORRELATION, 0.0);
+    let long = meter(info, sv::CORRELATION_LONG, 0.0);
+    small(
+        c,
+        theme,
+        "CORR",
+        pt(corr.x0 + 6.0, base),
+        Align::Start,
+        None,
+    );
+    let bar = Rect::new(
+        corr.x0 + 34.0,
+        strip.y0 + 4.5,
+        corr.x0 + 34.0 + 96.0,
+        strip.y1 - 4.5,
+    );
+    centre_bar(c, bar, v, alpha(corr_color(v), dim));
+    // The long value as a tick over the bar.
+    let tick = bar.center().x + f64::from(long.clamp(-1.0, 1.0)) * bar.width() / 2.0;
+    c.fill_with(
+        Rect::new(tick - 1.0, bar.y0 - 1.5, tick + 1.0, bar.y1 + 1.5),
+        alpha(theme.text, 0.8 * dim),
+    );
+    c.text(
+        &TextRun::new(
+            correlation_text(v),
+            pt(bar.x1 + 8.0, base),
+            8.5,
+            alpha(corr_color(v), dim),
+        )
+        .align(Align::Start)
+        .weight(700),
+    );
+    small(
+        c,
+        theme,
+        format!("3s {}", correlation_text(long)),
+        pt(corr.x1 - 6.0, base),
+        Align::End,
+        None,
+    );
+    // Peaks.
+    let (sl, sr) = (
+        meter(info, sv::SAMPLE_PEAK_L_DB, -120.0),
+        meter(info, sv::SAMPLE_PEAK_R_DB, -120.0),
+    );
+    let (tl, tr) = (
+        meter(info, sv::TRUE_PEAK_L_DB, -120.0),
+        meter(info, sv::TRUE_PEAK_R_DB, -120.0),
+    );
+    let sample = sl.max(sr);
+    let true_peak = tl.max(tr);
+    let clips = meter(info, sv::CLIPS, 0.0);
+    let colour_of = |db: f32| if db >= 0.0 { theme.clip } else { theme.text };
+    small(
+        c,
+        theme,
+        "PEAK",
+        pt(cells[0].x0 + 4.0, base),
+        Align::Start,
+        None,
+    );
+    value(
+        c,
+        cells[0],
+        format!("{}  {}", level_text(sl), level_text(sr)),
+        colour_of(sample),
+    );
+    small(
+        c,
+        theme,
+        "TRUE",
+        pt(cells[1].x0 + 4.0, base),
+        Align::Start,
+        None,
+    );
+    value(c, cells[1], level_text(true_peak), colour_of(true_peak));
+    // The headroom under the largest peak.
+    let top = true_peak.max(sample);
+    small(
+        c,
+        theme,
+        "HEADROOM",
+        pt(cells[2].x0 + 4.0, base),
+        Align::Start,
+        None,
+    );
+    value(
+        c,
+        cells[2],
+        if top <= -119.9 {
+            "--".to_string()
+        } else {
+            format!("{:.1}", -top)
+        },
+        if top >= 0.0 { theme.clip } else { theme.text },
+    );
+    // The clipped samples, with the lamp lit from the first one.
+    let lamp = Rect::new(
+        cells[3].x0 + 4.0,
+        strip.y0 + 4.0,
+        cells[3].x0 + 11.0,
+        strip.y0 + 11.0,
+    );
+    let lit = clips >= 0.5;
+    c.fill_with(
+        RoundedRect::from_rect(lamp, 3.5),
+        alpha(if lit { theme.clip } else { theme.led_off }, dim),
+    );
+    small(
+        c,
+        theme,
+        "CLIP",
+        pt(lamp.x1 + 5.0, base),
+        Align::Start,
+        None,
+    );
+    value(
+        c,
+        cells[3],
+        format!("{clips:.0}"),
+        if lit { theme.clip } else { theme.text },
+    );
+}
+
 fn bypassed_banner<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect) {
     c.text(
         &TextRun::new(
@@ -188,19 +389,26 @@ pub fn spectrum<C: Canvas + ?Sized>(
     if look.spectrogram {
         // The image is drawn under the grid above.
     } else if n > 0 && data.bands {
+        // An overlay draws two thin bars per band: the first trace on the left half, the second
+        // on the right half.
+        let over = overlay_colours(theme, data).filter(|_| data.overlay.len() == n);
         for (i, v) in data.trace.iter().enumerate() {
             let (lo, hi) = band_edges(i);
             let (xa, xb) = (freq_x(r, lo), freq_x(r, hi));
-            let y = level_y(r, *v, look.range_db);
-            if y < r.y1 {
-                c.fill_with(
-                    Rect::new(xa + 1.0, y, xb - 1.0, r.y1),
-                    alpha(info.accent, 0.5 * dim),
-                );
-                c.fill_with(
-                    Rect::new(xa + 1.0, y, xb - 1.0, y + 1.5),
-                    alpha(mix(info.accent, Color::WHITE, 0.4), dim),
-                );
+            let mid = (xa + xb) / 2.0;
+            let bars: Vec<(f64, f64, f32, Color)> = match over {
+                Some((a, b)) => vec![(xa + 1.0, mid, *v, a), (mid, xb - 1.0, data.overlay[i], b)],
+                None => vec![(xa + 1.0, xb - 1.0, *v, info.accent)],
+            };
+            for (x0, x1, level, colour) in bars {
+                let y = level_y(r, level, look.range_db);
+                if y < r.y1 {
+                    c.fill_with(Rect::new(x0, y, x1, r.y1), alpha(colour, 0.5 * dim));
+                    c.fill_with(
+                        Rect::new(x0, y, x1, y + 1.5),
+                        alpha(mix(colour, Color::WHITE, 0.4), dim),
+                    );
+                }
             }
         }
         if look.hold {
@@ -228,16 +436,24 @@ pub fn spectrum<C: Canvas + ?Sized>(
             }
             path
         };
-        let mut fill = line(&data.trace);
-        fill.line_to(pt(x_of(n - 1), r.y1));
-        fill.line_to(pt(x_of(0), r.y1));
-        fill.close_path();
-        c.fill_with(fill, alpha(info.accent, 0.2 * dim));
-        c.stroke_with(
-            line(&data.trace),
-            1.5,
-            alpha(mix(info.accent, Color::WHITE, 0.35), dim),
-        );
+        let over = overlay_colours(theme, data).filter(|_| data.overlay.len() == n);
+        let mut traces = vec![(&data.trace, over.map_or(info.accent, |o| o.0))];
+        if let Some((_, second)) = over {
+            traces.push((&data.overlay, second));
+        }
+        for (values, colour) in traces {
+            let mut fill = line(values);
+            fill.line_to(pt(x_of(n - 1), r.y1));
+            fill.line_to(pt(x_of(0), r.y1));
+            fill.close_path();
+            let a = if over.is_some() { 0.12 } else { 0.2 };
+            c.fill_with(fill, alpha(colour, a * dim));
+            c.stroke_with(
+                line(values),
+                1.5,
+                alpha(mix(colour, Color::WHITE, 0.35), dim),
+            );
+        }
         if look.hold && data.peaks.len() == n {
             c.stroke_with(line(&data.peaks), 1.0, alpha(theme.ink, 0.45 * dim));
         }
@@ -307,6 +523,7 @@ pub fn spectrum<C: Canvas + ?Sized>(
     // The REF button and, when a second curve is chosen, its name in the curve's colour.
     if !look.spectrogram {
         reference_button(c, theme, r, data);
+        overlay_legend(c, theme, r, data, dim);
     }
     // The loudest bin.
     let ro = fx.readout;
@@ -323,6 +540,7 @@ pub fn spectrum<C: Canvas + ?Sized>(
     if look.bypassed {
         bypassed_banner(c, theme, r);
     }
+    stats_strip(c, theme, fx.aux, info, look.bypassed);
     // The input peaks.
     let m = fx.meters;
     let w = 10.0;

@@ -191,6 +191,9 @@ enum Hit {
     Resonance(usize, crate::resonance_marks::ResonanceBtn),
     /// The REF button of a Spectrum plot: the list of its second curve.
     SpecRef(usize),
+    /// The strip of correlation, peaks and clips under a Spectrum plot: a click resets the peaks
+    /// and the clip count.
+    SpecStats(usize),
     /// The curve plot of a Sidechain Tool panel (points and segments are picked by position).
     DuckPlot(usize),
     /// The LEARN button of a Sidechain Tool panel.
@@ -275,6 +278,7 @@ impl Hit {
             | Hit::ScButton(i)
             | Hit::Resonance(i, _)
             | Hit::SpecRef(i)
+            | Hit::SpecStats(i)
             | Hit::DuckPlot(i)
             | Hit::DuckLearn(i)
             | Hit::TableEdit(i)
@@ -2137,6 +2141,9 @@ impl RackView {
                             if fx.kind == FxKind::Spectrum {
                                 let b = spectrum_ref::button(fx.plot);
                                 tree.add(dn, b + off, Hit::SpecRef(i), false);
+                                if !fx.aux.is_zero_area() {
+                                    tree.add(dn, fx.aux + off, Hit::SpecStats(i), false);
+                                }
                             }
                             if fx.kind == FxKind::Duck {
                                 let area = crate::duck_panel::inner(fx.plot).inflate(8.0, 4.0);
@@ -4110,6 +4117,13 @@ impl RackView {
             (Hit::ScButton(i), PointerButton::Primary) => self.sc_open(i, doc, registry),
             (Hit::Resonance(i, btn), PointerButton::Primary) => self.resonance_down(i, btn, out),
             (Hit::SpecRef(i), PointerButton::Primary) => self.ref_open(i, out),
+            (Hit::SpecStats(i), PointerButton::Primary) => {
+                self.select(i, out);
+                out.push(UiAction::PulseParam {
+                    device: self.devices[i].key.clone(),
+                    param: crate::analyser_paint::STATS_RESET_KEY.to_owned(),
+                });
+            }
             (Hit::DuckPlot(i), PointerButton::Primary) => self.duck_down(i, rp, clicks, out),
             (Hit::DuckLearn(i), PointerButton::Primary) => self.duck_learn_down(i, out),
             (Hit::TableEdit(i), PointerButton::Primary) => {
@@ -4155,6 +4169,7 @@ impl RackView {
                 | Hit::ScButton(i)
                 | Hit::Resonance(i, _)
                 | Hit::SpecRef(i)
+                | Hit::SpecStats(i)
                 | Hit::DuckPlot(i)
                 | Hit::DuckLearn(i)
                 | Hit::TableEdit(i)

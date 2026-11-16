@@ -46,6 +46,11 @@ pub struct AnalyserData {
     /// tilted for display, [`atomik_dsp::spectrum::FLOOR_DB`] for a band without a level. Empty
     /// without a reference.
     pub reference: Vec<f32>,
+    /// The second trace of a Spectrum device on the `L + R` or `M + S` channel choice, same layout
+    /// as `trace` (empty: single trace). `trace` is then the left (mid) one.
+    pub overlay: Vec<f32>,
+    /// What the two traces of `overlay` are.
+    pub overlay_kind: OverlayKind,
     /// The second curve of a Spectrum device in dB, one value per column of the plot (empty:
     /// none).
     pub second: Vec<f32>,
@@ -69,6 +74,29 @@ pub struct AnalyserData {
     /// The A4 the tuner reads against in Hz: the track's `tuner_ref` shifted by the master tune.
     /// 0 shows the track's own `tuner_ref`.
     pub tuner_ref_hz: f32,
+}
+
+/// What the two traces of an overlaid Spectrum are.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OverlayKind {
+    /// One trace.
+    #[default]
+    Off,
+    /// `trace` is the left channel, `overlay` the right one.
+    LeftRight,
+    /// `trace` is the mid, `overlay` the side.
+    MidSide,
+}
+
+impl OverlayKind {
+    /// The legend of the first and the second trace.
+    pub fn labels(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            OverlayKind::Off => None,
+            OverlayKind::LeftRight => Some(("L", "R")),
+            OverlayKind::MidSide => Some(("M", "S")),
+        }
+    }
 }
 
 /// How the scope draws a pair of samples.
