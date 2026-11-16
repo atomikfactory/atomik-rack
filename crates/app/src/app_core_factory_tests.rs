@@ -365,7 +365,7 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
     );
     unique(CONTAINERS.iter().map(|c| c.name).collect());
     unique(CLIPS.iter().map(|c| c.name).collect());
-    assert!((20..=80).contains(&DEFS.len()), "{}", DEFS.len());
+    assert!((20..=100).contains(&DEFS.len()), "{}", DEFS.len());
     assert_eq!(KITS.len(), 8);
     assert_eq!(CLIPS.len(), 36);
     assert_eq!(LOOPS.len(), 12);
@@ -523,6 +523,86 @@ fn render_text(text: &str) -> Stats {
     let doc = preview_doc(&snapshot, &registry).unwrap();
     let rendered = render_doc_in(&doc, &registry, &ProjectOptions::default(), None).unwrap();
     stats_of(&rendered.channels, rendered.sample_rate)
+}
+
+#[test]
+fn the_chord_wheel_patches_are_complete_valid_progressions_that_play() {
+    use atomik_core::progression::{BEATS, Chord, Key, KeyMode, symbol_in};
+    let registry = default_registry();
+    let desc = registry.descriptor(super::factory_build::WHEEL).unwrap();
+    let defs: Vec<&Def> = DEFS
+        .iter()
+        .filter(|d| d.device == super::factory_build::WHEEL)
+        .collect();
+    assert_eq!(defs.len(), 16);
+    let mut seen = std::collections::BTreeSet::new();
+    for def in defs {
+        let text = std::fs::read_to_string(patch_file(def)).unwrap();
+        let snapshot = load_device_item(&text, &registry).unwrap();
+        let device = snapshot.single_device().unwrap();
+        // The value of a param of the patch, or the device's default.
+        let value = |key: &str| {
+            let p = desc.param_by_key(key).unwrap();
+            let v = device.params.get(key).copied().unwrap_or(p.default);
+            assert!((p.min..=p.max).contains(&v), "{}: {key} = {v}", def.name);
+            v
+        };
+        for p in desc.params {
+            value(p.key);
+        }
+        let slots = value("slots") as usize;
+        assert!((1..=8).contains(&slots), "{}: {slots} slots", def.name);
+        let key = Key::new(
+            value("key.root") as u8,
+            if value("key.mode") < 0.5 {
+                KeyMode::Major
+            } else {
+                KeyMode::Minor
+            },
+        );
+        let (mut chords, mut beats) = (Vec::new(), 0u32);
+        for n in 1..=slots {
+            let at = |f: &str| value(&format!("slot.{n}.{f}"));
+            let kind = atomik_model::theory::ChordKind::ALL[at("quality") as usize];
+            let bass = at("bass") as u8;
+            let chord = Chord {
+                root: at("root") as u8,
+                kind,
+                bass: (bass > 0).then(|| bass - 1),
+            };
+            chords.push(symbol_in(key, chord));
+            beats += u32::from(BEATS[at("beats") as usize]);
+        }
+        // Whole bars, at least two, and no patch repeats another's key and chords.
+        assert_eq!(beats % 4, 0, "{}: {beats} beats", def.name);
+        assert!(beats >= 8, "{}: {beats} beats", def.name);
+        assert!(
+            seen.insert((key.root, key.mode == KeyMode::Minor, chords.clone())),
+            "{}: {chords:?} again",
+            def.name
+        );
+        // It plays: the preview scene has the wheel cabled into a synth and is long enough
+        // for the whole progression (up to its cap).
+        let doc = preview_doc(&snapshot, &registry).unwrap();
+        let wheel = doc
+            .devices
+            .iter()
+            .find(|d| d.type_id == super::factory_build::WHEEL)
+            .unwrap();
+        assert!(
+            doc.cables.iter().any(|c| c.from.device == wheel.key),
+            "{}: the wheel is cabled on",
+            def.name
+        );
+        assert!(
+            doc.song.end >= i64::from(beats.min(32)) * PPQ,
+            "{}: the song is {} ticks",
+            def.name,
+            doc.song.end
+        );
+        let (_, _, s) = render_phrase(def);
+        assert!(s.rms_db > -45.0 && s.peak > 0.05, "{}", def.name);
+    }
 }
 
 #[test]
