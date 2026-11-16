@@ -133,6 +133,11 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
             set(&mut d, "band5.gain", 3.0);
             set(&mut d, "band5.range", 0.0);
         }
+        FxKind::TonalBalance => {
+            set(&mut d, "response", 1.0);
+            set(&mut d, "view", 2.0);
+            set(&mut d, "channel", 0.0);
+        }
         FxKind::GainTool => {
             set(&mut d, "mode", 1.0);
             set(&mut d, "gain", -6.0);
@@ -193,6 +198,8 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
         FxKind::GainTool => vec![0.5, 0.4, 0.35, 0.28, -3.2, 1.0, 1.0, 1.0],
         // The drive lamp (0..1), the input and the output peak.
         FxKind::Saturation => vec![0.6, 0.5, 0.45],
+        // Peak L, R (linear).
+        FxKind::TonalBalance => vec![0.5, 0.4],
         // The audio track publishes no meter values.
         FxKind::AudioTrack | FxKind::Tuner => vec![],
     }
@@ -237,6 +244,45 @@ pub fn scope_data() -> AnalyserData {
     AnalyserData {
         scope_l: l,
         scope_r: r,
+        ..AnalyserData::default()
+    }
+}
+
+/// A tonal balance reading against Balanced: too much low end, the highs a little quiet.
+pub fn tonal_data() -> AnalyserData {
+    use atomik_ui::tonal_panel::{TargetKind, TargetRow, TonalView};
+    let target = atomik_dsp::tonal::builtin(0);
+    let mut bands = target.bands.to_vec();
+    for (i, v) in bands.iter_mut().enumerate() {
+        if i < 9 {
+            *v += 4.0;
+        } else if i >= 24 {
+            *v -= 3.5;
+        }
+    }
+    let row = |value: f32, name: &str, kind| TargetRow {
+        value,
+        name: name.to_string(),
+        kind,
+    };
+    AnalyserData {
+        tonal: TonalView {
+            ready: true,
+            deviation: [4.2, -0.6, 1.1, -5.0],
+            tolerance: [3.0; 4],
+            bands,
+            target_bands: target.bands.to_vec(),
+            target_tol: target.tol.to_vec(),
+            target_name: "Balanced".to_string(),
+            targets: vec![
+                row(0.0, "Balanced", TargetKind::Builtin),
+                row(1.0, "Bright", TargetKind::Builtin),
+                row(2.0, "Warm", TargetKind::Builtin),
+                row(3.0, "Bass-heavy", TargetKind::Builtin),
+                row(11.0, "My reference", TargetKind::User),
+            ],
+            ..TonalView::default()
+        },
         ..AnalyserData::default()
     }
 }

@@ -427,6 +427,10 @@ impl RackView {
             self.device_rename_key(r, key, modifiers, out);
             return;
         }
+        if r.kind == RenameKind::Target {
+            self.tonal_rename_key(r, key, modifiers, out);
+            return;
+        }
         if self.devices[r.dev].spec.drum_gen.is_some() {
             self.drum_rename_key(r, key, modifiers, out);
             return;

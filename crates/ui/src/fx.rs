@@ -48,13 +48,16 @@ pub enum FxKind {
     StereoTool,
     /// `atomik.gain-tool`: the strip of its own (mute with fade, meters, fader, polarity, pan).
     GainTool,
+    /// `atomik.tonal-balance`: four region meters and the balance curve against a target (fed by
+    /// the app from the device's scope tap, [`crate::tonal_panel`]).
+    TonalBalance,
     /// `atomik.saturation`: the big knob with its drive lamp, the type switch and a small group.
     Saturation,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 18] = [
+    pub const ALL: [FxKind; 19] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -73,12 +76,13 @@ impl FxKind {
         FxKind::StereoTool,
         FxKind::GainTool,
         FxKind::Saturation,
+        FxKind::TonalBalance,
     ];
 
     /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
     /// effect, the meters of one and a plain "meters change the painting" behaviour that the
     /// audio track's tuner does not share.
-    pub const EFFECTS: [FxKind; 17] = [
+    pub const EFFECTS: [FxKind; 18] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -96,6 +100,7 @@ impl FxKind {
         FxKind::StereoTool,
         FxKind::GainTool,
         FxKind::Saturation,
+        FxKind::TonalBalance,
     ];
 
     /// The kind of a device type id.
@@ -124,6 +129,7 @@ impl FxKind {
             FxKind::StereoTool => "atomik.stereo-tool",
             FxKind::GainTool => "atomik.gain-tool",
             FxKind::Saturation => "atomik.saturation",
+            FxKind::TonalBalance => "atomik.tonal-balance",
         }
     }
 
@@ -147,6 +153,7 @@ impl FxKind {
             FxKind::StereoTool => STEREO_METERS,
             FxKind::GainTool => GAIN_METERS,
             FxKind::Saturation => SATURATION_METERS,
+            FxKind::TonalBalance => TONAL_METERS,
         }
     }
 }
@@ -172,6 +179,8 @@ pub const GR_SCALE_DB: f32 = 24.0;
 pub const CHARACTER_METERS: usize = 4;
 /// The spectrum analyser publishes the recent peaks of its two inputs.
 pub const SPECTRUM_METERS: usize = 2;
+/// The tonal balance meter publishes the recent peaks of its two inputs too.
+pub const TONAL_METERS: usize = 2;
 /// The clipper publishes `[driven peak, output peak, clipped share in percent, longest clipped
 /// run in ms]` (`atomik_devices::clipper::meter`; a test pins the two together).
 pub const CLIPPER_METERS: usize = 4;
