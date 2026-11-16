@@ -120,6 +120,8 @@ pub struct FxPanel {
     pub gain: Option<crate::gain_panel::GainGeom>,
     /// The saturation panel's big knob, lamp and type switch (see [`crate::saturation_panel`]).
     pub saturation: Option<crate::saturation_panel::SaturationGeom>,
+    /// The loudness meter's readouts, graphs and verdict (see [`crate::loudness_panel`]).
+    pub loudness: Option<crate::loudness_panel::LoudnessGeom>,
 }
 
 /// A labelled group.

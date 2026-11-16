@@ -2609,6 +2609,21 @@ and does not use it).
   reset, programme seconds]`, then 46 distribution bins. The counter changes at every reset (it never
   goes back to 0), so a reader knows the history started over.
 
+### Panel
+
+A custom 4 U panel (`crates/ui/src/loudness_panel.rs`). Top row, left to right: LOUDNESS (the integrated
+loudness as the biggest number, short-term and momentary under it), RANGE AND PEAKS (LRA, true peak, PLR,
+PSR, DR and the sample peak) and TARGET (the target in force, then the loudness line: ON TARGET in green
+within 1 LU of it, TOO LOUD or TOO QUIET with the distance in amber outside that; then the true-peak line:
+OK in green or FAIL with the overshoot in red; the true peak in the middle box turns red too). Middle row:
+the HISTORY graph (the short-term loudness as a line, the momentary loudness fainter, a line at the target,
+36 LU drawn with the target 10 LU under the top, the newest value at the right edge; a click on the graph
+steps the span, a right click steps back, the wheel steps too) and the DISTRIBUTION (one bar per LU from
+-46 to 0 LUFS as tall as the share of the tallest, the target line and a mark at the short-term loudness
+now). Bottom row: the TARGET PRESET selector, the two CUSTOM TARGET knobs (the target and the true-peak
+limit used with the preset Custom), RESET (momentary: it stores nothing, the app pulses the device) and
+HOLD, and the PROGRAMME TIME. The back has AUDIO IN and AUDIO OUT.
+
 ---
 
 ## Character: `atomik.character` (Effect)

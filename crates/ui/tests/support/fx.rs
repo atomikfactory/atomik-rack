@@ -75,6 +75,12 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
             set(&mut d, "range", 80.0);
             set(&mut d, "tilt", 2.0);
         }
+        FxKind::LoudnessMeter => {
+            set(&mut d, "preset", 0.0);
+            set(&mut d, "history_span", 1.0);
+            set(&mut d, "target_lufs", -18.0);
+            set(&mut d, "max_tp", -2.0);
+        }
         FxKind::PhaseMeter => {
             set(&mut d, "hold", 2.0);
             set(&mut d, "scope_gain", 6.0);
@@ -193,6 +199,20 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
         FxKind::GainTool => vec![0.5, 0.4, 0.35, 0.28, -3.2, 1.0, 1.0, 1.0],
         // The drive lamp (0..1), the input and the output peak.
         FxKind::Saturation => vec![0.6, 0.5, 0.45],
+        // The 16 scalars (momentary, short-term, integrated, LRA, true peak, true peak L and R,
+        // sample peak, PLR, PSR, DR, target, max true peak, reset count, history points, seconds)
+        // and the 46 distribution bins.
+        FxKind::LoudnessMeter => {
+            let mut v = vec![
+                -13.2, -14.6, -14.2, 6.4, -0.6, -0.8, -0.6, -1.1, 13.6, 11.2, 9.4, -14.0, -1.0,
+                3.0, 120.0, 95.0,
+            ];
+            v.extend((0..46).map(|i| {
+                let t = (i as f32 - 31.0) / 4.0;
+                (-t * t).exp() * 0.9 + if i == 31 { 0.1 } else { 0.0 }
+            }));
+            v
+        }
         // The audio track publishes no meter values.
         FxKind::AudioTrack | FxKind::Tuner => vec![],
     }
@@ -222,6 +242,37 @@ pub fn spectrum_data(bands: bool) -> AnalyserData {
         bands,
         peak_hz: 1000.0,
         peak_db: -20.06,
+        ..AnalyserData::default()
+    }
+}
+
+/// The loudness meter's history: the short-term and the momentary loudness every half second, a
+/// quiet passage, a loud one and a gap of silence.
+pub fn loudness_data() -> AnalyserData {
+    let short: Vec<f32> = (0..120)
+        .map(|i| {
+            let t = i as f32;
+            if (60..66).contains(&i) {
+                -120.0
+            } else {
+                -17.0 + 4.0 * (t * 0.07).sin() - if i < 30 { 6.0 } else { 0.0 }
+            }
+        })
+        .collect();
+    let momentary = short
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            if *v < -100.0 {
+                *v
+            } else {
+                v + 2.5 * (i as f32 * 0.9).sin()
+            }
+        })
+        .collect();
+    AnalyserData {
+        loud_short: short,
+        loud_momentary: momentary,
         ..AnalyserData::default()
     }
 }

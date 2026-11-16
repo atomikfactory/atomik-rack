@@ -99,6 +99,7 @@ impl RackView {
                     | FxKind::AudioTrack
                     | FxKind::Tuner
                     | FxKind::Eq
+                    | FxKind::LoudnessMeter
             )
         ) || self.devices[i].analyser == *data
         {
@@ -181,6 +182,7 @@ impl RackView {
                     | FxKind::AudioTrack
                     | FxKind::Tuner
                     | FxKind::Eq
+                    | FxKind::LoudnessMeter
             )
         )
         .then_some(&d.analyser)
@@ -757,13 +759,12 @@ impl RackView {
     }
 
     /// Whether param `key` of device `i` is momentary: it stores nothing and the app pulses it
-    /// (the gain tool's RESET).
+    /// (the gain tool's and the loudness meter's RESET).
     pub(super) fn is_momentary(&self, i: usize, key: &str) -> bool {
-        key == crate::gain_panel::PEAK_RESET_KEY
-            && self
-                .devices
-                .get(i)
-                .is_some_and(|d| d.fx == Some(FxKind::GainTool))
+        self.devices.get(i).is_some_and(|d| {
+            (key == crate::gain_panel::PEAK_RESET_KEY && d.fx == Some(FxKind::GainTool))
+                || (key == crate::loudness_panel::RESET_KEY && d.fx == Some(FxKind::LoudnessMeter))
+        })
     }
 
     /// Whether the gain tool `i` has its fader in VCA mode.
