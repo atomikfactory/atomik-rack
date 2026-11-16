@@ -224,6 +224,7 @@ pub fn character_layout(desc: &DeviceDescriptor) -> PanelSpec {
         drum_gen: None,
         arp: None,
         key_chord: None,
+        chord_wheel: None,
         modsrc: None,
         wavetable: None,
         fm: None,

@@ -66,7 +66,8 @@ impl Role {
         match self {
             Role::AlternateTool => &["viewport", "audio_editor"],
             Role::DisableSnap => &["viewport"],
-            Role::ToggleSelect | Role::RangeSelect => &["rack/selection"],
+            Role::ToggleSelect => &["rack/selection"],
+            Role::RangeSelect => &["rack/selection", "rack/wheel_input"],
             Role::CopyDrag => &["arrangement", "piano_roll", "console"],
             Role::FineAdjust => &["rack/selection", "console", "arrangement"],
             Role::ResetParam => &["rack/selection", "console", "spectrum_eq"],
@@ -477,6 +478,7 @@ mod tests {
             "viewport" => include_str!("../viewport.rs"),
             "rack/selection" => include_str!("../rack/selection.rs"),
             "rack/macro_drag" => include_str!("../rack/macro_drag.rs"),
+            "rack/wheel_input" => include_str!("../rack/wheel_input.rs"),
             "arrangement" => include_str!("../arrangement.rs"),
             "arrangement/lane_range" => include_str!("../arrangement/lane_range.rs"),
             "arrangement/stretch" => include_str!("../arrangement/stretch.rs"),

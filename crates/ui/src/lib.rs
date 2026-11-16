@@ -365,6 +365,7 @@ pub mod canvas;
 pub mod character_panel;
 pub mod character_screen;
 pub mod chord_edit;
+pub mod chord_wheel_panel;
 pub mod chords_panel;
 pub mod clipboard;
 pub mod color_picker;

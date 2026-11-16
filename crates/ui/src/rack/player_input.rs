@@ -268,6 +268,7 @@ impl RackView {
         match b {
             PlayerBtn::Seq(sb) => self.seq_down(i, sb, modifiers, clicks, out),
             PlayerBtn::Drum(db) => self.drum_down(i, db, modifiers, clicks, out),
+            PlayerBtn::Wheel(wb) => self.wheel_down(i, wb, modifiers, out),
             PlayerBtn::Mode(m) => self.choose(i, "mode", m, out),
             PlayerBtn::Rate(m) => self.choose(i, "rate", m, out),
             PlayerBtn::Step(n) => {

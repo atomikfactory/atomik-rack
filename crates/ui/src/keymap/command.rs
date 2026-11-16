@@ -1819,6 +1819,7 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu()
     .decline(),
+    cmd("rack.wheel_pick", "Pick Wheel Chord", G::Rack, C::Rack),
     cmd(
         "rack.wheel_to_chord_lane",
         "Send Progression to Chord Lane",
