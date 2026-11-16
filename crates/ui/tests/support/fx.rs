@@ -108,6 +108,13 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
             set(&mut d, "band", 1.0);
             set(&mut d, "band_freq", 90.0);
         }
+        FxKind::Saturation => {
+            set(&mut d, "saturation", 0.6);
+            set(&mut d, "type", 0.0);
+            set(&mut d, "mix", 0.8);
+            set(&mut d, "output", -2.0);
+            set(&mut d, "oversampling", 2.0);
+        }
         FxKind::DynamicEq => {
             set(&mut d, "band1.on", 1.0);
             set(&mut d, "band1.gain", 2.0);
@@ -184,6 +191,8 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
         // Input peaks L and R, output peaks L and R (linear), the held peak (dB), then the signal,
         // CV and fading flags.
         FxKind::GainTool => vec![0.5, 0.4, 0.35, 0.28, -3.2, 1.0, 1.0, 1.0],
+        // The drive lamp (0..1), the input and the output peak.
+        FxKind::Saturation => vec![0.6, 0.5, 0.45],
         // The audio track publishes no meter values.
         FxKind::AudioTrack | FxKind::Tuner => vec![],
     }

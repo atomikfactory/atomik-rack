@@ -95,6 +95,8 @@ pub fn current_value(device: &RackDevice, p: &ParamDescriptor) -> f32 {
 pub struct ValueDrag {
     norm: f64,
     pixels_per_range: f64,
+    /// Upward movement lowers the value (a vertical switch whose first position is on top).
+    reversed: bool,
     /// The largest normalised value the drag reaches (1 unless [`ValueDrag::limited`]).
     max_norm: f64,
 }
@@ -105,6 +107,7 @@ impl ValueDrag {
         Self {
             norm: f64::from(p.to_normalized(plain)),
             pixels_per_range: pixels_per_range.max(1.0),
+            reversed: false,
             max_norm: 1.0,
         }
     }
@@ -117,10 +120,17 @@ impl ValueDrag {
         self
     }
 
+    /// The same drag with the direction turned round: moving up lowers the value.
+    pub fn reversed(mut self) -> Self {
+        self.reversed = true;
+        self
+    }
+
     /// Applies `dy_up` logical pixels of upward movement (negative = down); returns the new
     /// clamped plain value.
     pub fn update(&mut self, p: &ParamDescriptor, dy_up: f64, fine: bool) -> f32 {
         let scale = if fine { FINE_DIVISOR } else { 1.0 };
+        let dy_up = if self.reversed { -dy_up } else { dy_up };
         self.norm = (self.norm + dy_up / self.pixels_per_range / scale).clamp(0.0, self.max_norm);
         p.from_normalized(self.norm as f32)
     }

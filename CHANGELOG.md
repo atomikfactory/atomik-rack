@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Saturation.** A new effect, Saturation (`atomik.saturation`): one knob (0 is off and bit-exact transparent)
+  drives a smooth, slightly asymmetric tanh curve, from nothing up to about +24 dB into it, for warmth and mostly
+  odd harmonics. A type switch picks where it works: keep low leaves the lows clean and saturates what is above
+  400 Hz, keep high does the reverse, neutral saturates the whole band, and a switch is a crossfade, not a click.
+  Auto level (on by default) holds the loudness with a static gain, so the knob changes the colour and not the
+  volume. Mix, output, oversampling off, 2x or 4x (default 2x, reported latency 0, 29 or 35 samples, dry path
+  aligned), a saturation CV input with its trim, and a drive amount meter for a lamp. It has a 1 U panel of its
+  own: a big SATURATION knob with a tick scale and OFF at its minimum, a lamp beside it that glows with the drive
+  meter, a vertical type switch (keep high, neutral, keep low: click a label or a position, drag or scroll to
+  step), then mix, output, auto level and oversampling. The back has audio in, audio out and the CV input with
+  its trim.
 - **A panel of its own for the Stereo Tool.** The Stereo Tool is a 3 U imager: a big width knob for each band with a
   MONO, ORIGINAL and WIDE scale, an ACTIVE lamp and a correlation bar under it, the X-OVER knob between them (it reads
   `off` at the bottom, where there is no split) with a SPLIT lamp, and SOLO as three buttons. Polarity, rotation,

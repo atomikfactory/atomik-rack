@@ -48,11 +48,13 @@ pub enum FxKind {
     StereoTool,
     /// `atomik.gain-tool`: the strip of its own (mute with fade, meters, fader, polarity, pan).
     GainTool,
+    /// `atomik.saturation`: the big knob with its drive lamp, the type switch and a small group.
+    Saturation,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 17] = [
+    pub const ALL: [FxKind; 18] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -70,12 +72,13 @@ impl FxKind {
         FxKind::Duck,
         FxKind::StereoTool,
         FxKind::GainTool,
+        FxKind::Saturation,
     ];
 
     /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
     /// effect, the meters of one and a plain "meters change the painting" behaviour that the
     /// audio track's tuner does not share.
-    pub const EFFECTS: [FxKind; 16] = [
+    pub const EFFECTS: [FxKind; 17] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -92,6 +95,7 @@ impl FxKind {
         FxKind::Duck,
         FxKind::StereoTool,
         FxKind::GainTool,
+        FxKind::Saturation,
     ];
 
     /// The kind of a device type id.
@@ -119,6 +123,7 @@ impl FxKind {
             FxKind::Duck => "atomik.duck",
             FxKind::StereoTool => "atomik.stereo-tool",
             FxKind::GainTool => "atomik.gain-tool",
+            FxKind::Saturation => "atomik.saturation",
         }
     }
 
@@ -141,6 +146,7 @@ impl FxKind {
             FxKind::Duck => DUCK_METERS,
             FxKind::StereoTool => STEREO_METERS,
             FxKind::GainTool => GAIN_METERS,
+            FxKind::Saturation => SATURATION_METERS,
         }
     }
 }
@@ -196,6 +202,9 @@ pub const STEREO_METERS: usize = 5;
 /// The gain tool publishes `[input peak L, R, output peak L, R, held output peak (dB), signal,
 /// CV active, fading]` (`atomik_devices::gain_tool::METER_COUNT`; a test pins the two together).
 pub const GAIN_METERS: usize = 8;
+/// Saturation publishes `[drive 0..1, input peak, output peak]`
+/// (`atomik_devices::saturation::METERS`; a test pins the two together).
+pub const SATURATION_METERS: usize = 3;
 
 /// The phase meter's published values (`atomik_devices::phase_meter::value`; a test pins the
 /// two together): which index holds what.
@@ -276,6 +285,7 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::StereoTool, _) => Slot::Unit,
         (FxKind::GainTool, 4) => Slot::Raw,
         (FxKind::GainTool, 5..=7) => Slot::Unit,
+        (FxKind::Saturation, 0) => Slot::Unit,
         (FxKind::Mastering, 0..=3) => Slot::Raw,
         (FxKind::Mastering, _) => Slot::Gr,
         (FxKind::GuitarAmp, 2) => Slot::Gr,

@@ -1,11 +1,11 @@
 # Device reference
 
-Atomik Rack ships sixty-six original devices: the poly synth (with its mono bass and dual layer
+Atomik Rack ships sixty-eight original devices: the poly synth (with its mono bass and dual layer
 variants), the semi-modular synth, the organ, the wavetable synth, the FM synth, the grain sampler, line mixer
 and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
 a hardware synth or a virtual port), the effects (reverb, space reverb, convolution reverb, vocoder, compressor, EQ,
-distortion, clipper, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
+distortion, clipper, saturation, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
 analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
 machine and the loop slicer, the utility devices (gain tool, stereo tool, gate, gate + compressor,
 sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, dynamic EQ, tuner, pitch shifter,
@@ -4180,6 +4180,105 @@ limiter) takes the short peaks that would make it pump. Chained clippers (a soft
 density, a hard one after to catch the peaks it raises), one per drum bus and one on the master
 are the classic ways to gain loudness in small steps. A little asymmetry on a bass or a drum adds
 even harmonics.
+
+## Saturation: `atomik.saturation` (Effect)
+
+A one-knob stereo saturator: a smooth, slightly asymmetric tanh curve adds warmth and mostly odd
+harmonics, a three-way `type` decides which part of the spectrum it works on, and an auto-level law
+keeps the loudness where it was, so the knob changes the colour and not the volume. Source:
+[crates/devices/src/saturation.rs](../crates/devices/src/saturation.rs).
+
+### Sockets
+
+`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out), `saturation_cv_in` (CV in). The two
+channels are processed independently.
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `saturation` | 0 (off) to 1 | 0 | percent | Linear | no |
+| `type` | 0–2: keep high, neutral, keep low | 1 | choice | Linear | yes |
+| `auto_level` | 0 or 1 (compensate the loudness the curve adds) | 1 | toggle | Linear | yes |
+| `mix` | 0 (dry) to 1 (wet) | 1 | percent | Linear | no |
+| `oversampling` | 0–2: off, 2x, 4x | 1 | choice | Linear | yes |
+| `output` | −24 to 12 | 0 | dB | Linear | no |
+| `saturation_cv_trim` | −1 to 1 | 0 | percent | Linear | no |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+### Behaviour (as built)
+
+- **The knob and the curve.** `saturation` sets a drive gain `g = 15.85·(16^k − 1) / 15`: 0 at the
+  bottom (a straight line) and about +24 dB into the curve at the top. The curve is the tanh
+  `f(u) = (tanh(u + 0.1) − tanh 0.1) / (1 − tanh² 0.1)` applied as `f(g·x) / g`, so its slope at 0
+  is 1 for every drive: a quiet signal passes untouched and a loud one is rounded off first. The
+  small bias makes it asymmetric, which adds second and fourth harmonics beside the odd ones (a
+  1 kHz tone at 0.3 peak and full knob shows its third harmonic well above its second). The offset
+  the bias leaves is removed by an 8 Hz high-pass on the nonlinear part only (the curve's output
+  minus its input), so the linear part of the signal is never filtered.
+- **Off is transparent.** With `saturation` at 0 (after the CV and the 10 ms smoothing) the output
+  is the dry path, at any `mix`: in neutral the input bit for bit when `oversampling` is off and
+  `output` is 0 dB, and the input delayed by the latency, bit for bit, when it is on (in the keep
+  types the crossover all-pass, see Type). The output settles onto the dry path through a one-batch
+  crossfade once the curve's DC-blocker tail is below -140 dBFS, so there is no step; leaving 0
+  does not click either.
+- **Type** is a split at 400 Hz (the 24 dB per octave Linkwitz-Riley crossover of the mastering
+  device: a low band and a high band that sum to an all-pass). The part that goes through the curve
+  is `a·low + b·high`, and the part that passes clean is the other band of the same crossover
+  (`b·low + a·high` for the keep types), never the input minus the saturated band: both LR bands
+  are 6 dB down at the split, so that difference would not be the other band and the auto-level
+  gain would open a notch there. With matched bands the linear sum is the all-pass whatever the
+  gain, and the gain scales only the saturated band. *Neutral* saturates the whole band as one
+  signal, intermodulation included, and the crossover is not in its path; *keep low* (saturated
+  band: high; clean band: low) leaves the lows clean and saturates what is above 400 Hz, so its
+  harmonics land above it; *keep high* (saturated: low; clean: high) leaves the highs clean and
+  saturates the lows and low mids. In the keep types the dry signal for `mix` goes through the same
+  all-pass (low plus high), so the mix never combs; OFF and `mix` 0 there are that all-pass signal
+  (flat magnitude, not the input bit for bit). A low sine at 80 Hz makes a third harmonic in keep
+  high and neutral and almost none (under 5 % of neutral's) in keep low; a 3 kHz sine is the other
+  way round. The weights glide over 20 ms, so a switch is a crossfade.
+- **Auto level.** With `auto_level` on, the curved part is multiplied by a gain that depends only
+  on the knob and the type, never on the signal (no pumping). A table built when the device is
+  created holds the gain that gives back the RMS of a sine of a reference level through the curve
+  (0.18 RMS, about −15 dBFS, for neutral; for keep low and keep high the share of a typical
+  programme above and below 400 Hz). Measured over the whole knob, a 997 Hz sine at that level
+  stays within 0.1 dB of its value at knob 0 and pink noise (high-passed at 40 Hz) at that level
+  within 1 dB. A much quieter signal stays almost linear under the curve and comes out louder at a
+  high knob, a much louder one comes out quieter: the compensation is for the reference level, by
+  design. Off, the gain is 1 and the level falls with the knob (the curve rounds the peaks off).
+- **Oversampling** runs the curve between the halfband stages of the shared oversampler: off, 2x
+  or 4x. The reported latency is **0**, **29** or **35** samples and changes with the setting, so
+  the host re-aligns the delay compensation; the dry path and the clean part are delayed by the
+  same amount, so `mix` stays aligned (`mix` 0 in neutral is the input delayed by the latency, bit
+  for bit). Changing it while playing crossfades the old and the new path over one batch, so there
+  is no dropout, and the drive lamp is left alone for that batch.
+  On a 10 kHz sine at 0.5 and full knob the alias at 18 kHz is more than ten times lower at 4x
+  than with oversampling off.
+- **CV.** `saturation_cv_in` adds `saturation_cv_trim · cv` (the batch mean, clamped to −1..+1) to
+  the knob in 0..1 and clamps the sum to 0..1. The trim is 0 until you turn it up.
+- **Meter values** (the panel reads them): `drive` 0..1 (how hard the curve is working: one minus
+  the ratio of the RMS after and before the curve, doubled and clamped, with a 150 ms release; 0
+  when off and for a quiet signal), the peak of the input and the peak of the output (linear).
+- Knob, mix, output and the auto-level gain are smoothed per batch (10 ms). Non-finite input
+  samples count as 0. `process`, `set_param` (the oversampling too) and `reset` never allocate.
+
+### Panel
+
+A custom 1 U panel, left to right: the big SATURATION knob (eleven ticks, the ones up to the value lit,
+and OFF at the minimum), a DRIVE lamp beside it that reads the `drive` meter (dark at 0, then brighter
+with a wider glow), the vertical SATURATION TYPE switch (KEEP HIGH on top, NEUTRAL, KEEP LOW at the
+bottom), then MIX, OUTPUT, the AUTO LEVEL toggle and the OVERSAMPLING selector. Every knob takes a drag
+(one undo step, Shift for fine, Esc to restore), the wheel, a double click to reset and a right click for
+the MIDI menu. On the type switch a press on a label or a position picks it, a drag steps through the
+three (up is up), and the wheel and the arrow keys step without wrapping. The back has AUDIO IN, CV IN
+(the `saturation_cv_in` jack with its trim knob beside it: a 1 U panel has no room under it) and AUDIO
+OUT. Source: [crates/ui/src/saturation_panel.rs](../crates/ui/src/saturation_panel.rs).
+
+### Suits
+
+A little on the master or a drum bus in neutral thickens it; keep low on a bass or a kick adds
+bite without loosening the low end; keep high on a vocal or a pad adds body without making it
+harsh. Leave `auto_level` on to judge by ear, off to feel how much the curve raises the level.
 
 ## Dynamic EQ: `atomik.dynamic-eq` (Effect)
 

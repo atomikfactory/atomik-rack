@@ -118,6 +118,8 @@ pub struct FxPanel {
     pub stereo: Option<crate::stereo_panel::StereoGeom>,
     /// The gain tool's lamps, meters, fader and readout (see [`crate::gain_panel`]).
     pub gain: Option<crate::gain_panel::GainGeom>,
+    /// The saturation panel's big knob, lamp and type switch (see [`crate::saturation_panel`]).
+    pub saturation: Option<crate::saturation_panel::SaturationGeom>,
 }
 
 /// A labelled group.
@@ -194,6 +196,10 @@ impl PanelSpec {
             || self
                 .fx
                 .and_then(|f| f.gain)
+                .is_some_and(|g| g.back_params.contains(&pc.param))
+            || self
+                .fx
+                .and_then(|f| f.saturation)
                 .is_some_and(|g| g.back_params.contains(&pc.param))
             || self.drum.is_some_and(|d| d.back_params.contains(&pc.param))
     }

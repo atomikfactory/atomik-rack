@@ -131,6 +131,10 @@ const EFFECTS: &[(&str, &str)] = &[
         r#"{"gain": 12, "ceiling": -6, "curve": 0.5, "symmetry": 0.3, "oversample": 2}"#,
     ),
     (
+        "atomik.saturation",
+        r#"{"saturation": 0.6, "type": 2, "oversampling": 1}"#,
+    ),
+    (
         "atomik.de-esser",
         r#"{"freq": 1000, "q": 0.5, "threshold": -60, "ratio": 20, "range": 24, "mode": 1}"#,
     ),

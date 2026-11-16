@@ -53,6 +53,7 @@
   "atomik.rotary-speaker": "A rotating speaker cabinet: a horn rotor and a drum rotor in front of two microphones, with slow and fast speeds.",
   "atomik.sample-hold": "Samples a control voltage (or noise) at each clock tick and holds it until the next.",
   "atomik.sampler": "A multi-zone sampler: drop samples on the keyboard, set key and velocity ranges, loops, envelopes and a filter, and every zone that matches a note sounds.",
+  "atomik.saturation": "A one-knob saturator: a smooth tube-like curve adds warmth and harmonics, with a keep-high, neutral or keep-low type, auto level, mix and oversampling.",
   "atomik.semi-modular": "A synthesiser built from patchable parts: oscillators, filters, envelopes and a sequencer, with sockets you can cable to each other.",
   "atomik.slew-limiter": "Limits how fast a control voltage may rise and fall, with a separate time for each direction.",
   "atomik.space-reverb": "A large, lush reverb for wide ambient tails, with a long decay, diffusion and a duck that clears the tail while the dry sound plays.",

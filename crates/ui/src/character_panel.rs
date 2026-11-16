@@ -216,6 +216,7 @@ pub fn character_layout(desc: &DeviceDescriptor) -> PanelSpec {
             eq: None,
             stereo: None,
             gain: None,
+            saturation: None,
         }),
         seq: None,
         drum_gen: None,

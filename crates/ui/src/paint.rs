@@ -39,11 +39,11 @@ pub enum Side {
     Back,
 }
 
-fn solid(c: Color) -> Brush {
+pub(crate) fn solid(c: Color) -> Brush {
     Brush::Solid(c)
 }
 
-fn with_alpha(c: Color, a: f32) -> Color {
+pub(crate) fn with_alpha(c: Color, a: f32) -> Color {
     c.with_alpha(a)
 }
 
@@ -51,13 +51,13 @@ pub(crate) fn vgrad(y0: f64, y1: f64, top: Color, bottom: Color) -> Brush {
     Brush::Gradient(Gradient::new_linear(pt(0.0, y0), pt(0.0, y1)).with_stops([top, bottom]))
 }
 
-fn arc_path(center: Point, r: f64, start: f64, sweep: f64) -> BezPath {
+pub(crate) fn arc_path(center: Point, r: f64, start: f64, sweep: f64) -> BezPath {
     Arc::new(center, (r, r), start, sweep, 0.0)
         .path_elements(0.1)
         .collect()
 }
 
-fn round_stroke(width: f64) -> Stroke {
+pub(crate) fn round_stroke(width: f64) -> Stroke {
     Stroke::new(width).with_caps(Cap::Round)
 }
 
@@ -1154,6 +1154,15 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     // while the mode blends.
                     continue;
                 }
+                if info.spec.fx.is_some_and(|f| f.saturation.is_some())
+                    && crate::saturation_panel::own_painted(
+                        desc,
+                        info.spec.param_index(desc, pc, info.pad),
+                    )
+                {
+                    // The saturation panel draws its big knob and its type switch with the panel.
+                    continue;
+                }
                 if info.spec.fx.is_some_and(|f| f.eq.is_some()) {
                     // The EQ paints its choice cells itself (the graph, the shape sketches).
                     if pc.kind != ControlKind::Choice {
@@ -1392,6 +1401,8 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     crate::eq_panel::socket_label(s.key).unwrap_or(s.name)
                 } else if info.spec.fx.is_some_and(|f| f.stereo.is_some()) {
                     crate::stereo_panel::socket_label(s.key).unwrap_or(s.name)
+                } else if info.spec.fx.is_some_and(|f| f.saturation.is_some()) {
+                    crate::saturation_panel::socket_label(s.key).unwrap_or(s.name)
                 } else if info.device.is_some() && crate::mix_panel::is_mix_type(desc.type_id) {
                     crate::mix_panel::socket_label(s.key).unwrap_or(s.name)
                 } else {

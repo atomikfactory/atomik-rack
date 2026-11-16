@@ -63,6 +63,7 @@ mod live_panels;
 mod macro_drag;
 mod navigator;
 mod pad_lights;
+mod sat_input;
 pub use jacks::{JackChoice, JackGroup, JackMenu, JackOp, JackPeer};
 pub use navigator::NAVIGATOR_WIDTH;
 mod master_input;
@@ -3134,6 +3135,7 @@ impl RackView {
                     .then(|| crate::fx::character_value_text(p.key, *value))
                     .flatten()
                     .or_else(|| self.gain_fader_text(*dev, p.key, *value))
+                    .or_else(|| self.sat_knob_text(*dev, p.key, *value))
                     .unwrap_or_else(|| mix_input::value_text(p, *value));
                 Some(format!("{}  {}", autolayout::control_label(p), text))
             }
@@ -4345,6 +4347,9 @@ impl RackView {
                     out.push(param_cmd(&key, p.key, v, None));
                 }
             }
+            (ControlKind::Choice, PointerButton::Primary) if self.is_sat_type(i, p.key) => {
+                self.sat_type_down(i, slot, p, value, out);
+            }
             (ControlKind::Choice, PointerButton::Primary)
                 if crate::master_panel::is_pick_list(p) =>
             {
@@ -4458,6 +4463,19 @@ impl RackView {
     }
 
     fn step_control(&self, i: usize, slot: usize, notches: f64, fine: bool) -> Option<UiAction> {
+        self.step_control_wrap(i, slot, notches, fine, false)
+    }
+
+    /// [`Rack::step_control`]; with `wrap` the saturation type switch cycles round (down, then
+    /// back to the top) instead of stopping at its ends, as Space and Enter do.
+    fn step_control_wrap(
+        &self,
+        i: usize,
+        slot: usize,
+        notches: f64,
+        fine: bool,
+        wrap: bool,
+    ) -> Option<UiAction> {
         let (p, kind, value) = self.param_of(i, slot)?;
         if self.driven_by(i, p.key).is_some()
             && !(self.scope.is_empty() && !inline::is_inner(&self.devices[i].key))
@@ -4471,6 +4489,12 @@ impl RackView {
             ControlKind::Knob | ControlKind::Fader => {
                 // A VCA fader stops at 0 dB.
                 self.stepped_value(i, p, value, notches, fine)
+            }
+            ControlKind::Choice if self.is_sat_type(i, p.key) && wrap => {
+                widget::cycle_choice(p, value, true)
+            }
+            ControlKind::Choice if self.is_sat_type(i, p.key) => {
+                crate::saturation_panel::type_step(value, notches)
             }
             // A radio stops at its ends: HI does not jump back to NORMAL.
             ControlKind::Choice if self.is_stereo_solo(i, p.key) => {
@@ -4923,7 +4947,8 @@ impl RackView {
                         });
                         return;
                     }
-                    out.extend(self.step_control(i, s, 1.0, false));
+                    // The saturation type switch cycles round, down and then back to the top.
+                    out.extend(self.step_control_wrap(i, s, 1.0, false, true));
                 }
             }
             Key::Home => self.set_scroll(0.0),
