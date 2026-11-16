@@ -4153,7 +4153,7 @@ mod players;
 
 #[path = "app_core_analysers.rs"]
 mod analysers;
-pub use analysers::{MeterReadout, PHASE_VALUE_NAMES};
+pub use analysers::{LOUDNESS_VALUE_NAMES, MeterReadout, PHASE_VALUE_NAMES};
 
 #[path = "app_core_sample_edit.rs"]
 mod sample_edit;
@@ -4649,6 +4649,10 @@ mod players_tests;
 #[cfg(test)]
 #[path = "app_core_stereo_tool_tests.rs"]
 mod stereo_tool_tests;
+
+#[cfg(test)]
+#[path = "app_core_loudness_meter_tests.rs"]
+mod loudness_meter_tests;
 
 #[cfg(test)]
 #[path = "app_core_character_tests.rs"]

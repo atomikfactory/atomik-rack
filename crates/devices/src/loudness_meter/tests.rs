@@ -531,7 +531,10 @@ fn the_distribution_counts_the_short_term_loudness_in_one_lu_bins() {
     let v = values(&h);
     let bins = &v[value::BINS..];
     assert_eq!(bins.len(), BINS);
-    let peak = bins.iter().position(|b| *b == 1.0).expect("a tallest bin");
+    let peak = bins
+        .iter()
+        .position(|b| (*b - 1.0).abs() < 1e-6)
+        .expect("a tallest bin");
     // -23 LUFS sits in the bin [-23, -22): index 23 from -46.
     assert_eq!(peak, 23);
     assert!(bins.iter().enumerate().all(|(i, b)| i == peak || *b < 0.1));
@@ -629,7 +632,7 @@ fn the_verdict_is_ok_within_one_lu_and_names_the_side_outside() {
 fn the_published_indices_are_pinned() {
     assert_eq!(METERS, 62);
     // The bypass wrapper adds two values after the effect's own: they must fit the bank.
-    assert!(METERS + 2 <= atomik_device_sdk::MAX_METER_VALUES);
+    const { assert!(METERS + 2 <= atomik_device_sdk::MAX_METER_VALUES) };
     assert_eq!(SCALARS + BINS, METERS);
     let order = [
         value::MOMENTARY,

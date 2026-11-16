@@ -450,8 +450,8 @@ impl LoudnessMeterDevice {
 
     /// Adds one batch to everything that accumulates.
     fn accumulate(&mut self, l: &Batch, r: &Batch, tp: [f32; 2]) {
-        for c in 0..2 {
-            self.true_peak_max[c] = self.true_peak_max[c].max(tp[c]);
+        for (m, t) in self.true_peak_max.iter_mut().zip(tp) {
+            *m = m.max(t);
         }
         self.sample_peak = self.sample_peak.max(batch_peak(l)).max(batch_peak(r));
         let mut e = 0.0f64;

@@ -1,4 +1,5 @@
-//! The analyser devices (`atomik.spectrum`, `atomik.phase-meter`, `atomik.tuner`) in the app core.
+//! The analyser devices (`atomik.spectrum`, `atomik.phase-meter`, `atomik.loudness-meter`,
+//! `atomik.tuner`) in the app core.
 //!
 //! # Live feed
 //!
@@ -26,6 +27,12 @@
 //! the loudness range since the last reset (`atomik_dsp::loudness_history`), skipping the first
 //! three seconds after a start or a reset while the meter's windows fill.
 //!
+//! The **loudness meter** keeps its own history and distribution on the audio thread: the newest
+//! frames of its tap are the short-term (left) and momentary (right) loudness every half second
+//! since its last reset, the number of them is one of its published values, and a change of the
+//! reset counter (another published value) starts the view's copy over. The feed only copies
+//! them into [`AnalyserData`]; the distribution reaches the panel as ordinary meter values.
+//!
 //! The FFT and the drawing therefore cost the audio thread nothing. A device whose tap did not
 //! move since the last feed (a paused engine) is skipped, so an idle project costs no view work;
 //! a bypassed device is skipped too, so its panel freezes on what it last showed.
@@ -41,6 +48,7 @@
 use super::AppCore;
 use crate::sink::EngineSink;
 use atomik_device_sdk::DeviceDescriptor;
+use atomik_devices::loudness_meter::value as loudness;
 use atomik_devices::phase_meter::value;
 use atomik_devices::spectrum::{CHANNEL_NAMES, SIZES, TILT_DB_PER_OCT};
 use atomik_dsp::loudness_history::LoudnessHistory;
@@ -66,8 +74,12 @@ const HISTORY_SETTLE_S: u64 = 3;
 
 /// The device types of the analyser feed.
 fn analyser_kind(type_id: &str) -> Option<FxKind> {
-    FxKind::of(type_id)
-        .filter(|k| matches!(k, FxKind::Spectrum | FxKind::PhaseMeter | FxKind::Tuner))
+    FxKind::of(type_id).filter(|k| {
+        matches!(
+            k,
+            FxKind::Spectrum | FxKind::PhaseMeter | FxKind::LoudnessMeter | FxKind::Tuner
+        )
+    })
 }
 
 /// The analyser devices of an expansion, in its order.
@@ -174,6 +186,8 @@ struct State {
     history_age: u64,
     /// The integrated loudness of the previous feed (a fall to silence is a reset).
     integrated: f32,
+    /// The loudness meter's reset counter at the previous feed.
+    loud_epoch: f32,
     /// `reference.capture` was on at the previous feed.
     capture_on: bool,
     /// What the reference of `data` was built for: the choice, the stored curve's serial and
@@ -215,6 +229,7 @@ impl State {
             history: LoudnessHistory::new(),
             history_age: 0,
             integrated: FLOOR_DB,
+            loud_epoch: -1.0,
             capture_on: false,
             reference_key: None,
             second: Spectrum::new(),
@@ -344,6 +359,20 @@ impl State {
                 d.tuner_on = true;
                 d.tuner_ref_hz = reference.1;
             }
+            FxKind::LoudnessMeter => {
+                // The history points since the last reset are the newest frames of the tap.
+                let points = extra
+                    .meters
+                    .get(loudness::HISTORY_POINTS)
+                    .map_or(0, |p| p.max(0.0) as usize)
+                    .min(left.len());
+                d.loud_short.clear();
+                d.loud_short.extend_from_slice(&left[left.len() - points..]);
+                d.loud_momentary.clear();
+                d.loud_momentary
+                    .extend_from_slice(&right[right.len() - points..]);
+                self.loud_epoch = extra.meters.get(loudness::EPOCH).copied().unwrap_or(-1.0);
+            }
             _ => {
                 d.scope_l.clear();
                 d.scope_l.extend(left.iter().step_by(2));
@@ -421,6 +450,32 @@ pub const PHASE_VALUE_NAMES: [&str; 16] = [
 
 const _: () = assert!(value::INTEGRATED + 1 == PHASE_VALUE_NAMES.len());
 
+/// The names of the loudness meter's scalar published values, in order (the 46 distribution bins
+/// after them are a display and are not reported).
+pub const LOUDNESS_VALUE_NAMES: [&str; 16] = [
+    "momentary_lufs",
+    "short_term_lufs",
+    "integrated_lufs",
+    "lra_lu",
+    "true_peak_dbtp",
+    "true_peak_l_dbtp",
+    "true_peak_r_dbtp",
+    "sample_peak_dbfs",
+    "plr_db",
+    "psr_db",
+    "dr_db",
+    "target_lufs",
+    "max_true_peak_dbtp",
+    "reset_count",
+    "history_points",
+    "programme_seconds",
+];
+
+/// Scalar published values of the loudness meter the feed reads.
+const LOUDNESS_SCALARS: usize = loudness::BINS;
+
+const _: () = assert!(loudness::TIME + 1 == LOUDNESS_VALUE_NAMES.len());
+
 impl<S: EngineSink> AppCore<S> {
     /// The device, its descriptor and bypass state for the analyser at `key`.
     fn analyser_device(&self, key: &DeviceKey) -> Option<(&RackDevice, &DeviceDescriptor)> {
@@ -483,18 +538,26 @@ impl<S: EngineSink> AppCore<S> {
                     self.view.set_analyser(key, &state.data);
                 }
             }
-            if head == 0 || (head == state.head && state.fed) {
-                continue;
-            }
-            let frames = (&a.left[..n], &a.right[..n]);
-            let mut meters = [0.0f32; atomik_devices::phase_meter::PHASE_METERS];
-            let meter_count = if *kind == FxKind::PhaseMeter {
+            let mut meters = [0.0f32; LOUDNESS_SCALARS];
+            let wants_meters = matches!(*kind, FxKind::PhaseMeter | FxKind::LoudnessMeter);
+            let meter_count = if wants_meters {
                 self.sink
                     .read_device_meter_values(id, &mut meters)
                     .map_or(0, |(n, _)| n)
             } else {
                 0
             };
+            // A loudness meter that was reset shows an empty history at once, even though no new
+            // point was written (the counter is a published value).
+            let restarted = *kind == FxKind::LoudnessMeter
+                && meters.get(loudness::EPOCH).is_some_and(|e| {
+                    meter_count > loudness::EPOCH && e.to_bits() != state.loud_epoch.to_bits()
+                });
+            let silent_start = head == 0 && *kind != FxKind::LoudnessMeter;
+            if silent_start || (head == state.head && state.fed && !restarted) {
+                continue;
+            }
+            let frames = (&a.left[..n], &a.right[..n]);
             let extra = Extra {
                 reference,
                 view,
@@ -759,6 +822,10 @@ impl<S: EngineSink> AppCore<S> {
             };
             if kind == FxKind::PhaseMeter {
                 for (name, v) in PHASE_VALUE_NAMES.iter().zip(&probe.values) {
+                    readout.values.push((*name, *v));
+                }
+            } else if kind == FxKind::LoudnessMeter {
+                for (name, v) in LOUDNESS_VALUE_NAMES.iter().zip(&probe.values) {
                     readout.values.push((*name, *v));
                 }
             } else if kind == FxKind::Tuner {
