@@ -20,6 +20,7 @@ fn button(b: ConsoleButton, rect: Rect) -> Help {
         ConsoleButton::Maximise => "console.maximise",
         ConsoleButton::ClearSolos => "console.clear_solos",
         ConsoleButton::ClearMutes => "console.clear_mutes",
+        ConsoleButton::Mono => "console.mono",
         ConsoleButton::StoreSnapshot => "console.store_snapshot",
         ConsoleButton::Compare => "console.compare",
         ConsoleButton::EndCompare => "console.end_compare",
@@ -42,6 +43,8 @@ fn button(b: ConsoleButton, rect: Rect) -> Help {
         }
         ConsoleButton::ClearSolos => help("Clear every solo"),
         ConsoleButton::ClearMutes => help("Clear every mute"),
+        ConsoleButton::Mono => help("Listen to the master in mono (monitoring only, never saved)")
+            .with_command("mixer.lens_mono"),
         ConsoleButton::StoreSnapshot => {
             help("Store the mix as a new snapshot").with_command("mixer.store_snapshot")
         }

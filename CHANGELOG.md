@@ -9,6 +9,11 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A MONO button on the master strip of the mixer.** One click folds what you hear to mono, `(L + R) / 2` on both
+  sides, and a second click brings the stereo back; the button is lit while it is on, so it is not forgotten. It is
+  the mono switch of the translation lens (the same command, `mixer.lens_mono`, so the menu, the command palette and
+  the keyboard reach it too), with the same short fade at each change. It is an ear check only: it is never saved
+  in the project, is not an undo step and does not touch a bounce, an export or stems. Each session starts with it off.
 - **Saturation.** A new effect, Saturation (`atomik.saturation`): one knob (0 is off and bit-exact transparent)
   drives a smooth, slightly asymmetric tanh curve, from nothing up to about +24 dB into it, for warmth and mostly
   odd harmonics. A type switch picks where it works: keep low leaves the lows clean and saturates what is above

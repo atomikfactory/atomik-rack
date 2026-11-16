@@ -377,6 +377,8 @@ pub struct MasterLayout {
     pub clear_solo: Rect,
     /// "Clear mutes" button.
     pub clear_mute: Rect,
+    /// The MONO button: the live output folded to mono (a monitoring switch, not saved).
+    pub mono: Rect,
     /// Name plate ("MASTER").
     pub name: Rect,
     /// The row above the name plate, aligned with the strips' output selectors: it reads the
@@ -1171,6 +1173,8 @@ pub fn master_layout(desc: &DeviceDescriptor, height: f64) -> MasterLayout {
         MS_ROW_H,
         false,
     );
+    let mono = Rect::new(inner.1 - 44.0, output_row.y0, inner.1, output_row.y1);
+    let output_row = Rect::new(output_row.x0, output_row.y0, mono.x0 - 2.0, output_row.y1);
     let half = (inner.1 - inner.0) / 2.0;
     let by = ms.header.y1 + 2.0;
     let clear_solo = Rect::new(inner.0 + 1.0, by, inner.0 + half - 1.0, by + MS_ROW_H - 4.0);
@@ -1303,6 +1307,7 @@ pub fn master_layout(desc: &DeviceDescriptor, height: f64) -> MasterLayout {
         fader_lcd,
         clear_solo,
         clear_mute,
+        mono,
         name,
         output_row,
         upper_height,

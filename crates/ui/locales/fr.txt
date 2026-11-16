@@ -2409,6 +2409,7 @@ Choose the curve to edit: pitch, pressure or timbre => Choisir la courbe à édi
 Choose the sidechain source of this effect => Choisir la source de sidechain de cet effet
 Clear every mute => Réinitialiser tous les mutes
 Clear every solo => Réinitialiser tous les solos
+Listen to the master in mono (monitoring only, never saved) => Écouter le master en mono (écoute seulement, jamais enregistré)
 Clear this note's pitch, pressure and timbre curves => Effacer les courbes de hauteur, pression et timbre de cette note
 Click to add a point, drag to move it, Alt-click to delete, drag empty space to select => Clic : ajouter un point ; glisser : le déplacer ; Alt-clic : supprimer
 Clip safe: the recording is limited so it never goes above 0 dBFS (the monitor is not) => Anti-saturation : l'enregistrement est limité à 0 dBFS (pas le monitoring)

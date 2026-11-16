@@ -6194,6 +6194,13 @@ Three tools for how the low end carries over to small speakers, club systems and
   project, not an undo step. A voicing that is on goes back to headphones when chosen again. The switches are the
   Analyze > Translation Lens submenu, five rows in the transport bar's more menu and `mixer.lens_*` commands, and the
   status line shows `LENS ...` while the lens is on.
+- **The MONO button.** The master strip of the mixer has a MONO button beside the MAIN 1+2 label
+  (`ConsoleButton::Mono`). A click emits `UiAction::RunCommand` for `mixer.lens_mono`, the same command as the
+  menu row, so the keyboard, the command palette and the MCP `session_command` reach it too. The app tells the view
+  (`ConsoleView::set_monitor_mono`) when the lens's mono switch changes and the button is lit in the theme's warning
+  colour while it is on. The fold is the lens's: after the master inserts, the master fader and the reference, so the
+  master strip's own meters (read inside the master chain) still show the stereo mix, while the interface output peaks
+  show what is heard.
 - **The meter.** `atomik_dsp::bass_read::read` cuts the mid signal into Hann windows of 8192 frames (hop 4096) with
   the in-house transform. In each window with at least -70 dB between 25 and 150 Hz the note is the lowest strong
   peak of that range; the note's energy is its fundamental plus its 2nd to 5th harmonics, and what survives is the
