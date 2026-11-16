@@ -850,10 +850,28 @@ struct Marks {
     suggest: Vec<Suggested>,
 }
 
-fn wedge_name(key: Key, w: Wedge) -> String {
-    let root = symbol_in(key, Chord::new(w.root(), ChordKind::Major));
+/// The root names of the wedges of each ring at positions 0 to 11, spelled as a circle of fifths
+/// is written: sharps from B round to F#, flats from Db on. The minor ring is the relative minor
+/// of the major above it (D#m under F#, Bbm under Db) and the diminished ring the leading tone
+/// of that major (E#, written F, under F#).
+const WHEEL_ROOTS: [[&str; 12]; 3] = [
+    [
+        "C", "G", "D", "A", "E", "B", "F#", "Db", "Ab", "Eb", "Bb", "F",
+    ],
+    [
+        "A", "E", "B", "F#", "C#", "G#", "D#", "Bb", "F", "C", "G", "D",
+    ],
+    [
+        "B", "F#", "C#", "G#", "D#", "A#", "F", "C", "G", "D", "A", "E",
+    ],
+];
+
+/// The label of a wedge: a fixed spelling for each position, whatever the home key is (the cards,
+/// the readout and the wedge menu spell the chord for the home key instead).
+pub fn wedge_label(w: Wedge) -> String {
+    let root = WHEEL_ROOTS[w.ring.index()][usize::from(w.pos % 12)];
     match w.ring {
-        Ring::Major => root,
+        Ring::Major => root.to_string(),
         Ring::Minor => format!("{root}m"),
         Ring::Dim => format!("{root}\u{b0}"),
     }
@@ -928,7 +946,7 @@ fn paint_wheel<C: Canvas + ?Sized>(
             } else {
                 theme.text.with_alpha(0.7)
             };
-            let name = wedge_name(key, w);
+            let name = wedge_label(w);
             let numeral = diatonic.then(|| roman(key, w.chord()));
             let dy = if numeral.is_some() {
                 -1.5
