@@ -50,7 +50,7 @@ use atomik_dsp::spectrum::{
     band_centres, reference_curve,
 };
 use atomik_model::{DeviceKey, ExpandedRack, RackDevice};
-use atomik_ui::analyser::{AnalyserData, SCOPE_READ_FRAMES, TRACE_COLUMNS};
+use atomik_ui::analyser::{AnalyserData, OverlayKind, SCOPE_READ_FRAMES, TRACE_COLUMNS};
 use atomik_ui::fx::FxKind;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -102,6 +102,10 @@ pub fn spectrum_settings(desc: &DeviceDescriptor, dev: &RackDevice) -> Settings 
             1 => ChannelMode::Right,
             2 => ChannelMode::Mid,
             3 => ChannelMode::Side,
+            // The overlays: this is the first trace, `overlay_channel` the second. The
+            // spectrogram has room for one image and shows the sum.
+            5 if choice("mode", 2) != 2 => ChannelMode::Left,
+            6 if choice("mode", 2) != 2 => ChannelMode::Mid,
             _ => ChannelMode::Sum,
         },
         // Mode 2, the spectrogram, shows the fine trace as an image.
@@ -124,9 +128,28 @@ pub fn spectrum_settings(desc: &DeviceDescriptor, dev: &RackDevice) -> Settings 
     }
 }
 
+/// The channel of the second trace of a spectrum device whose `channel` is `L + R` or `M + S`,
+/// and what the two traces are. `None` for the single-trace choices and in the spectrogram mode.
+pub fn overlay_channel(
+    desc: &DeviceDescriptor,
+    dev: &RackDevice,
+) -> Option<(ChannelMode, OverlayKind)> {
+    let choice = |key: &str, max: usize| (param(desc, dev, key).round().max(0.0) as usize).min(max);
+    if choice("mode", 2) == 2 {
+        return None;
+    }
+    match choice("channel", CHANNEL_NAMES.len() - 1) {
+        5 => Some((ChannelMode::Right, OverlayKind::LeftRight)),
+        6 => Some((ChannelMode::Side, OverlayKind::MidSide)),
+        _ => None,
+    }
+}
+
 /// What a spectrum device shows besides the trace itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SpectrumView {
+    /// The second trace of an overlay choice.
+    overlay: Option<(ChannelMode, OverlayKind)>,
     /// Display mode 2: the spectrogram image instead of the trace.
     spectrogram: bool,
     /// The `reference` choice: 0 off, 1 as stored, 2 shifted to the level of the signal.
@@ -136,6 +159,7 @@ struct SpectrumView {
 fn spectrum_view(desc: &DeviceDescriptor, dev: &RackDevice) -> SpectrumView {
     let choice = |key: &str, max: usize| (param(desc, dev, key).round().max(0.0) as usize).min(max);
     SpectrumView {
+        overlay: overlay_channel(desc, dev),
         spectrogram: choice("mode", 2) == 2,
         reference: choice("reference", 2),
     }
@@ -179,6 +203,8 @@ struct State {
     /// What the reference of `data` was built for: the choice, the stored curve's serial and
     /// whether the spectrogram hides it.
     reference_key: Option<(usize, u64, bool)>,
+    /// The second trace of the `L + R` and `M + S` channel choices.
+    overlay: Spectrum,
     /// The analysis of the strip a Spectrum device draws as its second curve.
     second: Spectrum,
     /// The tap head `second` was computed at.
@@ -217,6 +243,7 @@ impl State {
             integrated: FLOOR_DB,
             capture_on: false,
             reference_key: None,
+            overlay: Spectrum::new(),
             second: Spectrum::new(),
             second_head: 0,
             second_from: None,
@@ -299,6 +326,20 @@ impl State {
                 d.peaks.clear();
                 if settings.hold_ms > 0.0 {
                     d.peaks.extend_from_slice(self.spectrum.peaks());
+                }
+                if let Some((channel, kind)) = extra.view.overlay {
+                    let second = Settings {
+                        channel,
+                        ..*settings
+                    };
+                    self.overlay
+                        .update(left, right, elapsed, sample_rate, &second, TRACE_COLUMNS);
+                    d.overlay.clear();
+                    d.overlay.extend_from_slice(self.overlay.trace());
+                    d.overlay_kind = kind;
+                } else if d.overlay_kind != OverlayKind::Off {
+                    d.overlay.clear();
+                    d.overlay_kind = OverlayKind::Off;
                 }
                 d.bands = settings.bands;
                 d.peak_hz = self.spectrum.peak_hz();
@@ -770,6 +811,22 @@ impl<S: EngineSink> AppCore<S> {
             } else {
                 readout.values.push(("peak_hz", state.data.peak_hz));
                 readout.values.push(("peak_db", state.data.peak_db));
+                if kind == FxKind::Spectrum {
+                    use atomik_devices::spectrum::value as sv;
+                    let get = |i: usize| probe.values.get(i).copied().unwrap_or(0.0);
+                    let sample = get(sv::SAMPLE_PEAK_L_DB).max(get(sv::SAMPLE_PEAK_R_DB));
+                    let true_peak = get(sv::TRUE_PEAK_L_DB).max(get(sv::TRUE_PEAK_R_DB));
+                    readout.values.extend([
+                        ("correlation", get(sv::CORRELATION)),
+                        ("correlation_long", get(sv::CORRELATION_LONG)),
+                        ("sample_peak_l_db", get(sv::SAMPLE_PEAK_L_DB)),
+                        ("sample_peak_r_db", get(sv::SAMPLE_PEAK_R_DB)),
+                        ("true_peak_l_db", get(sv::TRUE_PEAK_L_DB)),
+                        ("true_peak_r_db", get(sv::TRUE_PEAK_R_DB)),
+                        ("headroom_db", -sample.max(true_peak)),
+                        ("clips", get(sv::CLIPS)),
+                    ]);
+                }
                 // The bands, whatever the device displays: one fresh average of the last frames.
                 let bands = Settings {
                     bands: true,

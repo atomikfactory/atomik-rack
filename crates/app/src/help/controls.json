@@ -594,6 +594,11 @@
     "text": "Draws another strip or the reference track as a second curve over the spectrum, so the two can be compared. The choice is saved with the device.",
     "more": "Devices"
   },
+  "rack.spectrum_stats": {
+    "title": "Correlation, peaks and clips",
+    "text": "The stereo correlation (the tick is the 3 s value), the sample peak of each side, the true peak, the headroom under the largest peak and the number of clipped samples since the last reset. Click to reset the peaks and the clips.",
+    "more": "Devices"
+  },
   "rack.duck_learn": {
     "title": "Learn the duck curve",
     "text": "Listens to the range between the locators at the key and draws the duck curve from the shape of its hits.",

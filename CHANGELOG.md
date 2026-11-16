@@ -14,6 +14,16 @@ may break APIs and the patch and project formats.
   the mono switch of the translation lens (the same command, `mixer.lens_mono`, so the menu, the command palette and
   the keyboard reach it too), with the same short fade at each change. It is an ear check only: it is never saved
   in the project, is not an undo step and does not touch a bounce, an export or stems. Each session starts with it off.
+- **The Spectrum analyser measures correlation, peaks and clips, and overlays the two channels.** The channel
+  choice has two new entries at its end, L + R and M + S: the left and the right (or the mid and the side) spectrum
+  are drawn together in two colours of the theme with an L/R legend (in the 1/3 octave mode as two thin bars per
+  band; the spectrogram shows the sum). A strip under the plot shows the stereo correlation as a small centre bar
+  with its number (300 ms, and a 3 s tick), the sample peak of each side, the true peak, the headroom under the
+  largest peak and the number of clipped samples with a CLIP lamp. They are measured by the device on every sample,
+  not read back from the display: the true peak is 4x oversampled like the limiter's, a sample at or over the new
+  Clip level (0 dBFS by default) counts as a clip, and a click on the strip (or the new reset switch) clears the
+  peaks and the clips. The audio still passes bit for bit. The values are meter values 2 to 8 and `session_meters`
+  reports them. Older projects open unchanged.
 - **Saturation.** A new effect, Saturation (`atomik.saturation`): one knob (0 is off and bit-exact transparent)
   drives a smooth, slightly asymmetric tanh curve, from nothing up to about +24 dB into it, for warmth and mostly
   odd harmonics. A type switch picks where it works: keep low leaves the lows clean and saturates what is above

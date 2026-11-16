@@ -170,8 +170,28 @@ pub const BAND_FALL_DB: f32 = 2.0;
 pub const GR_SCALE_DB: f32 = 24.0;
 /// Character publishes `[in peak, out peak, transform_eff, activity]`.
 pub const CHARACTER_METERS: usize = 4;
-/// The spectrum analyser publishes the recent peaks of its two inputs.
-pub const SPECTRUM_METERS: usize = 2;
+/// The spectrum analyser publishes `[recent peak L, R, correlation, long correlation, sample peak
+/// L, R, true peak L, R (dBFS), clipped samples]` (`atomik_devices::spectrum::METER_COUNT`; a test
+/// pins the two together).
+pub const SPECTRUM_METERS: usize = 9;
+/// The spectrum analyser's published values: which index holds what (a test pins them to
+/// `atomik_devices::spectrum::value`).
+pub mod spectrum {
+    /// Stereo correlation over about 300 ms.
+    pub const CORRELATION: usize = 2;
+    /// Stereo correlation over about 3 s.
+    pub const CORRELATION_LONG: usize = 3;
+    /// Sample peak since the reset, left, dBFS.
+    pub const SAMPLE_PEAK_L_DB: usize = 4;
+    /// Sample peak since the reset, right, dBFS.
+    pub const SAMPLE_PEAK_R_DB: usize = 5;
+    /// True peak since the reset, left, dBFS.
+    pub const TRUE_PEAK_L_DB: usize = 6;
+    /// True peak since the reset, right, dBFS.
+    pub const TRUE_PEAK_R_DB: usize = 7;
+    /// Clipped samples since the reset.
+    pub const CLIPS: usize = 8;
+}
 /// The clipper publishes `[driven peak, output peak, clipped share in percent, longest clipped
 /// run in ms]` (`atomik_devices::clipper::meter`; a test pins the two together).
 pub const CLIPPER_METERS: usize = 4;
@@ -271,6 +291,8 @@ enum Slot {
     Plain,
     /// A gain in dB (negative or positive) shown as published: the device already smooths it.
     Gain,
+    /// A whole number counted by the device (the spectrum's clipped samples), no release.
+    Count,
 }
 
 fn slot(kind: FxKind, i: usize) -> Slot {
@@ -296,6 +318,9 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::PhaseMeter, phase::CORRELATION | phase::BALANCE) => Slot::Signed,
         (FxKind::PhaseMeter, phase::WIDTH) => Slot::Unit,
         (FxKind::Clipper, 2 | 3) => Slot::Plain,
+        (FxKind::Spectrum, spectrum::CORRELATION | spectrum::CORRELATION_LONG) => Slot::Signed,
+        (FxKind::Spectrum, spectrum::SAMPLE_PEAK_L_DB..=spectrum::TRUE_PEAK_R_DB) => Slot::Raw,
+        (FxKind::Spectrum, spectrum::CLIPS) => Slot::Count,
         _ => Slot::Peak,
     }
 }
@@ -318,7 +343,12 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
             match slot(kind, i) {
                 Slot::Gr => *v = 0.0,
                 Slot::Raw => *v = -120.0,
-                Slot::Unit | Slot::Activity | Slot::Signed | Slot::Plain | Slot::Gain => *v = 0.0,
+                Slot::Unit
+                | Slot::Activity
+                | Slot::Signed
+                | Slot::Plain
+                | Slot::Count
+                | Slot::Gain => *v = 0.0,
                 _ => {}
             }
         }
@@ -337,6 +367,7 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
             Slot::Activity => (r.clamp(0.0, 1.0), ACTIVITY_FALL, 0.02, 0.0),
             Slot::Signed => (r.clamp(-1.0, 1.0), f32::INFINITY, 0.01, -1.0),
             Slot::Plain => (r.clamp(0.0, 10_000.0), f32::INFINITY, 0.1, 0.0),
+            Slot::Count => (r.clamp(0.0, 16_777_216.0), f32::INFINITY, 1.0, 0.0),
             Slot::Gain => (r.clamp(-48.0, 48.0), f32::INFINITY, 0.1, -48.0),
         };
         let old = *cell;
@@ -347,7 +378,7 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
         };
         let v = if matches!(
             slot(kind, i),
-            Slot::Unit | Slot::Activity | Slot::Signed | Slot::Plain
+            Slot::Unit | Slot::Activity | Slot::Signed | Slot::Plain | Slot::Count
         ) {
             let n = (1.0f32 / step).round();
             // `+ 0.0` turns a negative zero into a zero, so a value that hovers around nothing

@@ -2344,9 +2344,9 @@ device browser with the effects.
 
 ### Params
 
-All of them are display settings: the device stores them (they are saved with the project and can be
-automated or preset like any param) and the UI reads them from the document; none of them reaches
-the audio.
+Apart from `stats.reset` and `clip_level` (below), all of them are display settings: the device stores
+them (they are saved with the project and can be automated or preset like any param) and the UI reads them
+from the document; none of them reaches the audio, and neither do those two.
 
 The same spectrum and phase meter are also available as **meter panels** without a device: Show
 Spectrum and Show Phase Meter in the right-click menu of a console strip (a channel, a bus, the master)
@@ -2377,7 +2377,7 @@ setting: the audio of the device is untouched and a bounce is the same to the bi
 |---|---|---|---|---|---|
 | `size` | 0 to 6: 1024, 2048, 4096, 8192, 16384, 32768, 65536 points | 2 (4096) | choice | Linear | yes |
 | `window` | 0 to 1: Hann, B-Harris (Blackman-Harris) | 0 | choice | Linear | yes |
-| `channel` | 0 to 4: Left, Right, Mid, Side, Sum | 4 (Sum) | choice | Linear | yes |
+| `channel` | 0 to 6: Left, Right, Mid, Side, Sum, L + R, M + S (the last two overlay two traces) | 4 (Sum) | choice | Linear | yes |
 | `mode` | 0 to 2: Fine (log-frequency trace), 1/3 oct (31 bands), Spectrogram | 0 | choice | Linear | yes |
 | `averaging` | 0 to 2000 | 150 | ms | Linear | no |
 | `hold` | 0 to 5000 (0 = no peak hold) | 1000 | ms | Linear | no |
@@ -2389,9 +2389,13 @@ setting: the audio of the device is untouched and a bounce is the same to the bi
 | `reference` | 0 to 2: Off, Stored, Stored with its level matched to the signal | 0 | choice | Linear | yes |
 | `reference.capture` | momentary toggle: a rising edge stores the bands on screen as the reference curve | 0 | toggle | Linear | yes |
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+| `stats.reset` | momentary toggle (id 14): a rising edge clears the peaks and the clip count | 0 | toggle | Linear | yes |
+| `clip_level` | -12 to 0 (id 15): a sample at or over this level counts as a clip | 0 | dB | Linear | no |
 
-Params added later were put before `bypass`, which moved from id 9 to id 13. A project stores
-params by key, so older projects load as they were, with the new ones at their defaults.
+Params added later were put before `bypass`, which moved from id 9 to id 13; the two last ones come after
+it (ids 14 and 15), and the choices added to `channel` come at its end, so no stored value changes
+meaning. A project stores params by key, so older projects load as they were, with the new ones at their
+defaults (no overlay, a clip level of 0 dBFS).
 
 ### Behaviour (as built)
 
@@ -2451,9 +2455,44 @@ params by key, so older projects load as they were, with the new ones at their d
   the bass.
 - **Bypass.** The `bypass` wrapper keeps the device's audio path (the dry path is the same signal).
   The panel shows `BYPASSED` and the app stops updating it, so it keeps the last picture.
-- **Meter values** (2): the peak of the last 16 batches (about 21 ms) of `in_l` and `in_r`, linear;
-  the panel draws them as the two bars next to the plot.
-- **Panel height.** The new controls make the panel 5 U tall (it was 4 U).
+- **Overlaid channels.** `channel` L + R draws the left and the right spectrum together, M + S the
+  mid and the side: two traces over the same axes in two colours of the theme (blue for the first,
+  green for the second) with a small legend (`L` `R` or `M` `S`) under the loudest-bin readout. The
+  app runs the analysis twice (the second one for the right or the side channel) with the same size,
+  window, averaging, smoothing, weighting and tilt. In the 1/3 oct mode each band has two thin bars,
+  the first on its left half and the second on its right half. The spectrogram has room for one image
+  and shows the sum of the two channels. The held peaks, the loudest-bin readout and the reference
+  curve belong to the first trace. The audio is untouched either way.
+- **Measurements, exact.** The device sees every sample, so what has to be exact is measured on the
+  audio side, not read back from the tap, and published as meter values: the stereo correlation (the
+  `atomik_dsp::stereo_meter` of the phase meter) averaged over about 300 ms and over 3 s; the sample
+  peak and the true peak of each channel since the reset in dBFS (the true peak is 4x oversampled, the
+  detector of the limiter and the phase meter, `atomik_devices::mastering::loudness::PeakDetector`,
+  BS.1770-4 Annex 2 style, no refinement); and the number of clipped samples since the reset, a sample
+  counting when its magnitude reaches `clip_level` (0 dBFS: a magnitude of 1.0 or more), both channels
+  together, saturating at 2^24 so that it stays exact as an `f32`. A non-finite sample counts as
+  silence in all of them (it still passes through). Everything since the reset is cleared by the device
+  being prepared and by a rising edge of `stats.reset`, not by a transport reset, so the peaks of a
+  whole mix survive a stop and a restart. The headroom is 0 dBFS minus the largest of the four peaks,
+  worked out by the UI. Nothing here changes the output: a bounce with the device is still the same to
+  the bit.
+- **The strip under the plot.** Under the axis labels the panel has a strip: the correlation as a
+  centre bar (green from 0 to +1, amber from 0 to -0.5, red below) with its number and the 3 s value
+  as a tick on the bar and `3s +0.95` beside it; then PEAK (left and right), TRUE (the larger true
+  peak), HEADROOM (`--` before any signal; red at 0 dB or under) and CLIP, a lamp that lights from the
+  first clipped sample, with the count. A click anywhere on the strip is the RESET: it sends the
+  device a pulse of `stats.reset` through the engine (a momentary param, like the gain
+  tool's RESET: nothing is stored and there is no undo step). The RESET also works from the
+  `stats.reset` switch in the PEAKS section. With the engine stopped the pulse waits for the next
+  block, so the readout clears when playback starts.
+- **Meter values** ([`METER_COUNT`](../crates/devices/src/spectrum.rs) = 9): 0 and 1 the peak of the last
+  16 batches (about 21 ms) of `in_l` and `in_r`, linear (the two bars next to the plot); 2 the
+  correlation over about 300 ms; 3 the correlation over about 3 s (-1 to +1, 0 for silence or one
+  silent side); 4 and 5 the sample peak since the reset, left and right, dBFS; 6 and 7 the true peak
+  since the reset, left and right, dBFS (-120 for none); 8 the clipped samples. The MCP
+  `session_meters` tool reports them by name (`correlation`, `correlation_long`, `sample_peak_l_db`,
+  `sample_peak_r_db`, `true_peak_l_db`, `true_peak_r_db`, `headroom_db`, `clips`).
+- **Panel height.** The strip and the PEAKS section make the panel taller than before.
 
 ---
 

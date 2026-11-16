@@ -1760,6 +1760,24 @@ fn session_meters_reads_the_reference_tone_without_an_audio_stream() {
     let hz = sp["values"]["peak_hz"].as_f64().unwrap();
     assert!((hz - 1000.0).abs() < 12.0, "{hz}");
     assert!((sp["values"]["peak_db"].as_f64().unwrap() + 23.0).abs() < 1.5);
+    // What the device measured on every sample: a stereo sine at -23 dBFS, nothing clipped.
+    let sv = |name: &str| {
+        sp["values"][name]
+            .as_f64()
+            .unwrap_or_else(|| panic!("{name} in {sp}"))
+    };
+    assert!(
+        sv("correlation") > 0.999 && sv("correlation_long") > 0.99,
+        "{sp}"
+    );
+    assert!((sv("sample_peak_l_db") + 23.0).abs() < 0.1, "{sp}");
+    assert!((sv("sample_peak_r_db") + 23.0).abs() < 0.1, "{sp}");
+    assert!(
+        sv("true_peak_l_db") >= sv("sample_peak_l_db") - 1e-6,
+        "{sp}"
+    );
+    assert!((sv("headroom_db") - 23.0).abs() < 0.3, "{sp}");
+    assert_eq!(sv("clips"), 0.0);
     let bands = sp["bands"].as_array().unwrap();
     assert_eq!(bands.len(), 31);
     let loudest = bands

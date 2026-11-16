@@ -757,13 +757,11 @@ impl RackView {
     }
 
     /// Whether param `key` of device `i` is momentary: it stores nothing and the app pulses it
-    /// (the gain tool's RESET).
+    /// (the gain tool's RESET, the spectrum analyser's peak and clip reset).
     pub(super) fn is_momentary(&self, i: usize, key: &str) -> bool {
-        key == crate::gain_panel::PEAK_RESET_KEY
-            && self
-                .devices
-                .get(i)
-                .is_some_and(|d| d.fx == Some(FxKind::GainTool))
+        let kind = self.devices.get(i).and_then(|d| d.fx);
+        (key == crate::gain_panel::PEAK_RESET_KEY && kind == Some(FxKind::GainTool))
+            || (key == crate::analyser_paint::STATS_RESET_KEY && kind == Some(FxKind::Spectrum))
     }
 
     /// Whether the gain tool `i` has its fader in VCA mode.
