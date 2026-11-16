@@ -54,6 +54,7 @@ mod eq_input;
 mod fx_input;
 mod group_chip;
 mod handles;
+mod headphone_input;
 mod help;
 mod inline;
 mod insert_area;
@@ -230,6 +231,12 @@ enum Hit {
     IoHeader(usize),
     /// The EDIT button of a master return (device index, slot 0..8).
     ReturnEdit(usize, usize),
+    /// The IMPORT button of a Headphone Correction panel.
+    HeadphoneImport(usize),
+    /// The graph of a Headphone Correction panel: a click imports while it holds no data.
+    HeadphoneGraph(usize),
+    /// The REMOVE button of a Headphone Correction panel (works while it holds data).
+    HeadphoneRemove(usize),
 }
 
 /// A button of a player panel.
@@ -295,6 +302,9 @@ impl Hit {
             | Hit::IoClip(i, _)
             | Hit::IoHeader(i)
             | Hit::ReturnEdit(i, _)
+            | Hit::HeadphoneImport(i)
+            | Hit::HeadphoneGraph(i)
+            | Hit::HeadphoneRemove(i)
             | Hit::Socket(i, _) => Some(i),
         }
     }
@@ -341,6 +351,9 @@ struct DeviceView {
     analyser: crate::analyser::AnalyserData,
     /// The resonance finder's markers and state (dynamic EQ panels).
     resonance: crate::resonance_marks::ResonanceView,
+    /// Headphone Correction panel: the curves of its data and settings, computed when they
+    /// change (see [`crate::headphone_panel::graph_of`]).
+    hp: Option<Arc<crate::headphone_panel::HpGraph>>,
     /// Master panel: the effect on each return and the key-in state.
     master: crate::master_panel::MasterData,
     /// Mix channel panel (a channel or bus): the insert bypass state, the fold state of the
@@ -1312,6 +1325,9 @@ impl RackView {
                 v.name.clone_from(&d.name);
                 v.accent = self.theme.accent_for(d);
                 v.device = Some(d.clone());
+                if v.spec.fx.is_some_and(|f| f.headphone.is_some()) {
+                    v.hp = crate::headphone_panel::graph_of(v.desc.as_ref(), d, v.hp.take());
+                }
                 if v.spec.seq.is_some() || v.spec.drum_gen.is_some() {
                     let last = pattern_count(d) - 1;
                     if v.edit > last {
@@ -1622,6 +1638,7 @@ impl RackView {
             sample: None,
             analyser: Default::default(),
             resonance: Default::default(),
+            hp: None,
             master: Default::default(),
             mix: Default::default(),
             sc: None,
@@ -1764,6 +1781,15 @@ impl RackView {
             } else {
                 None
             };
+            let hp = if spec.fx.is_some_and(|f| f.headphone.is_some()) {
+                crate::headphone_panel::graph_of(
+                    desc.as_ref(),
+                    d,
+                    prev.as_ref().and_then(|p| p.hp.clone()),
+                )
+            } else {
+                None
+            };
             let (revision, lists) = match prev {
                 Some(p)
                     if p.device.as_ref() == Some(d)
@@ -1810,6 +1836,7 @@ impl RackView {
                 sample,
                 analyser,
                 resonance,
+                hp,
                 master,
                 mix,
                 sc,
@@ -1869,6 +1896,7 @@ impl RackView {
                 sample: None,
                 analyser: Default::default(),
                 resonance: Default::default(),
+                hp: None,
                 master: Default::default(),
                 mix: Default::default(),
                 sc: None,
@@ -2143,6 +2171,11 @@ impl RackView {
                                 tree.add(dn, area + off, Hit::DuckPlot(i), false);
                                 let learn = crate::duck_panel::learn_button(fx.plot);
                                 tree.add(dn, learn + off, Hit::DuckLearn(i), false);
+                            }
+                            if let Some(h) = fx.headphone {
+                                tree.add(dn, h.plot + off, Hit::HeadphoneGraph(i), false);
+                                tree.add(dn, h.import + off, Hit::HeadphoneImport(i), false);
+                                tree.add(dn, h.remove + off, Hit::HeadphoneRemove(i), false);
                             }
                             if let Some(b) = fx.button {
                                 tree.add(dn, b + off, Hit::ScButton(i), false);
@@ -4112,6 +4145,10 @@ impl RackView {
             (Hit::SpecRef(i), PointerButton::Primary) => self.ref_open(i, out),
             (Hit::DuckPlot(i), PointerButton::Primary) => self.duck_down(i, rp, clicks, out),
             (Hit::DuckLearn(i), PointerButton::Primary) => self.duck_learn_down(i, out),
+            (
+                h @ (Hit::HeadphoneImport(i) | Hit::HeadphoneGraph(i) | Hit::HeadphoneRemove(i)),
+                PointerButton::Primary,
+            ) => self.headphone_down(i, h, out),
             (Hit::TableEdit(i), PointerButton::Primary) => {
                 self.select(i, out);
                 out.push(UiAction::EditWavetable(self.devices[i].key.clone()));
@@ -4157,6 +4194,9 @@ impl RackView {
                 | Hit::SpecRef(i)
                 | Hit::DuckPlot(i)
                 | Hit::DuckLearn(i)
+                | Hit::HeadphoneImport(i)
+                | Hit::HeadphoneGraph(i)
+                | Hit::HeadphoneRemove(i)
                 | Hit::TableEdit(i)
                 | Hit::Preview(i)
                 | Hit::TunerButton(i),
@@ -5124,6 +5164,7 @@ impl RackView {
             fx_meters: &d.meters,
             analyser: &d.analyser,
             sc_source: d.sc.as_deref(),
+            headphone: d.hp.as_deref(),
             fx_cv: d.cv,
             fx_phase: (f64::from(d.anim) * 0.03).rem_euclid(1.0) as f32,
             resonance: &d.resonance,

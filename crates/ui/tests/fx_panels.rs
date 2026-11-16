@@ -103,6 +103,7 @@ fn heights_in_rack_units_are_pinned() {
     assert_eq!(units(FxKind::StereoTool), 3);
     assert_eq!(units(FxKind::GainTool), 3);
     assert_eq!(units(FxKind::Saturation), 1);
+    assert_eq!(units(FxKind::HeadphoneCorrection), 2);
 }
 
 fn overlaps(a: &Rect, b: &Rect) -> bool {

@@ -4376,6 +4376,31 @@ A file that cannot be read is refused with a message that names the line, and no
   the target, the correction and the preamp at any number of log-spaced frequencies from the stored data, a pure
   function a panel can call to draw them.
 
+### Panel
+
+A custom 2 U panel. On the left, under HEADPHONES, a strip names the imported data (the file's name, as stored in
+the project) and its format (frequency response with its number of points, and left and right when the file has
+both; or parametric EQ with its number of bands), says `building...` while a filter is being designed (meter
+`busy`), and carries an IMPORT button (it always works, to pick another file) and a REMOVE (x) button (dim without
+data). Under it, the graph runs 20 Hz to 20 kHz on a log axis with a dB grid whose range follows the curves (6, 12 or
+24 dB each way). It draws the headphone's own RESPONSE (grey) and the TARGET (dashed), both only for a measured
+response, and the CORRECTION (highlighted, with a soft fill to 0 dB): the curve the device applies, so AMOUNT
+scales it, `simulate` inverts it (the curve and the legend turn to the warning colour and read SIMULATION) and the
++-20 dB limit shows. A legend names what is drawn. With no data the graph says "Import headphone data..." and a
+click on it runs the import, as the IMPORT button and `rack.headphone_import` do. The curves come from
+`curve::snapshot` for the data and the settings, computed when either changes (not while painting) and kept with
+the panel. The line under the graph reads "MONITOR ONLY - bypass before export": a reminder only, nothing happens
+automatically.
+
+On the right, AMOUNT (0 to 200 %, the 100 % mark on its ring), OUTPUT, the AUTO GAIN toggle with the preamp the
+device applies (meter `preamp`, in dB; a dash until the engine has built a filter), then the TARGET and DATA IS
+selectors and the SIMULATE toggle, lit in the warning colour because it colours the sound. For parametric data
+TARGET and DATA IS do not apply and are drawn dimmed (they still take a value, kept for the next response). The
+knobs take drag (one merged undo step, Shift for fine, Esc restores), the wheel, a double-click for the default and
+a right-click for the MIDI menu, like every control. The back has AUDIO IN and AUDIO OUT. Source:
+[crates/ui/src/headphone_panel.rs](../crates/ui/src/headphone_panel.rs); the test is
+[crates/ui/tests/headphone_panel.rs](../crates/ui/tests/headphone_panel.rs).
+
 ### Suits
 
 Put it last on the master bus, import the response of the headphones you mix on (or a parametric correction made for

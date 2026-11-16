@@ -115,6 +115,12 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
             set(&mut d, "output", -2.0);
             set(&mut d, "oversampling", 2.0);
         }
+        FxKind::HeadphoneCorrection => {
+            set(&mut d, "amount", 1.0);
+            set(&mut d, "target", 1.0);
+            set(&mut d, "file_kind", 0.0);
+            d.headphone = Some(sample_headphones());
+        }
         FxKind::DynamicEq => {
             set(&mut d, "band1.on", 1.0);
             set(&mut d, "band1.gain", 2.0);
@@ -193,8 +199,39 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
         FxKind::GainTool => vec![0.5, 0.4, 0.35, 0.28, -3.2, 1.0, 1.0, 1.0],
         // The drive lamp (0..1), the input and the output peak.
         FxKind::Saturation => vec![0.6, 0.5, 0.45],
+        // Loaded, the preamp (dB), the largest boost (dB), not busy.
+        FxKind::HeadphoneCorrection => vec![1.0, -4.2, 4.2, 0.0],
         // The audio track publishes no meter values.
         FxKind::AudioTrack | FxKind::Tuner => vec![],
+    }
+}
+
+/// A measured response of imaginary headphones: a bass bump, a presence peak and a treble dip,
+/// 41 points from 20 Hz to 20 kHz, rounded to a tenth of a dB.
+pub fn sample_headphones() -> atomik_device_sdk::headphone::HeadphoneData {
+    use atomik_device_sdk::headphone::{HeadphoneBody, HeadphoneData, ResponseData};
+    let bump = |f: f32, at: f32, width: f32, db: f32| {
+        let x = (f / at).log2() / width;
+        db * (-x * x).exp()
+    };
+    let freq: Vec<f32> = (0..41)
+        .map(|k| (20.0 * (k as f32 * 9.965_784 / 40.0).exp2() * 10.0).round() / 10.0)
+        .collect();
+    let left: Vec<f32> = freq
+        .iter()
+        .map(|f| {
+            let db =
+                bump(*f, 60.0, 1.2, 4.0) + bump(*f, 3000.0, 0.6, 6.0) - bump(*f, 8000.0, 0.4, 5.0);
+            (db * 10.0).round() / 10.0
+        })
+        .collect();
+    HeadphoneData {
+        name: "Studio cans.csv".to_owned(),
+        body: HeadphoneBody::Response(ResponseData {
+            freq,
+            left,
+            right: None,
+        }),
     }
 }
 

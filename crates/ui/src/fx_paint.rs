@@ -175,6 +175,7 @@ pub fn fx_visual<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info
         FxKind::Clipper => clipper(c, theme, fx, info, &p),
         FxKind::Duck => crate::duck_panel::paint(c, theme, fx.plot, info),
         FxKind::Saturation => crate::saturation_panel::paint_front(c, theme, &fx, info),
+        FxKind::HeadphoneCorrection => crate::headphone_panel::paint_front(c, theme, &fx, info),
         FxKind::GuitarAmp => guitar_amp(c, theme, fx, info, &p),
         FxKind::Modulation => modulation(c, theme, fx, info, &p),
         FxKind::Mastering => mastering(c, theme, fx, info, &p),

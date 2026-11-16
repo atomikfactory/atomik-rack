@@ -3010,3 +3010,26 @@ Remove Headphone Data => Retirer les données du casque
 Select a Headphone Correction device first => Sélectionnez d'abord un appareil Correction casque
 Removed the headphone data => Données du casque retirées
 The device has no headphone data => L'appareil n'a pas de données de casque
+
+# Headphone Correction panel
+HEADPHONES => CASQUE
+HEADPHONE CORRECTION => CORRECTION CASQUE
+AMOUNT => QUANTITÉ
+AUTO GAIN => GAIN AUTO
+DATA IS => DONNÉES
+SIMULATE => SIMULER
+SIMULATION => SIMULATION
+CORRECTION => CORRECTION
+No headphone data => Aucune donnée de casque
+building… => calcul en cours…
+Import headphone data… => Importer les données du casque…
+a frequency response or a parametric EQ text => une réponse en fréquence ou un texte d'égaliseur paramétrique
+MONITOR ONLY — bypass before export => MONITORING SEUL — contournez avant l'export
+Frequency response => Réponse en fréquence
+Parametric EQ => Égaliseur paramétrique
+{n} point => {n} point
+{n} points => {n} points
+{n} band => {n} bande
+{n} bands => {n} bandes
+Import the data of your headphones: a frequency response or a parametric EQ text => Importer les données du casque : réponse en fréquence ou texte d'égaliseur
+Remove the imported headphone data from this device => Retirer les données de casque importées de cet appareil

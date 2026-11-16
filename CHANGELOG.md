@@ -24,6 +24,10 @@ may break APIs and the patch and project formats.
   4096-tap minimum-phase filter (zero latency, smoothed to 1/12 octave, limited to +-20 dB) built a few steps per batch
   and faded in by the convolver, so a change never clicks and a bounce is the same every time. Without data it is an
   exact passthrough. The MCP can import with `session_command` `rack.headphone_import` and a file path.
+  The panel (2 U) draws the headphone response, the target and the correction the device applies on a 20 Hz to
+  20 kHz graph (the correction follows Amount and Simulate), shows the file name, its format and the applied
+  preamp, has IMPORT and REMOVE buttons (an empty graph is itself a click to import), dims Target and Data is for
+  a parametric file, lights Simulate in a warning colour and reminds you that it is for monitoring only.
 - **Saturation.** A new effect, Saturation (`atomik.saturation`): one knob (0 is off and bit-exact transparent)
   drives a smooth, slightly asymmetric tanh curve, from nothing up to about +24 dB into it, for warmth and mostly
   odd harmonics. A type switch picks where it works: keep low leaves the lows clean and saturates what is above

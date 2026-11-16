@@ -287,6 +287,7 @@ pub fn stereo_layout(desc: &DeviceDescriptor) -> PanelSpec {
             stereo: Some(geom),
             gain: None,
             saturation: None,
+            headphone: None,
         }),
         seq: None,
         drum_gen: None,

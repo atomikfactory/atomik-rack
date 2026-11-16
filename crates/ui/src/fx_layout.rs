@@ -155,7 +155,11 @@ fn sections(kind: FxKind) -> Def {
             ("OUTPUT", &["mix", "mix_cv_trim", "output"]),
         ],
         // Laid out by `character_panel::character_layout`, not by these sections.
-        FxKind::Character | FxKind::StereoTool | FxKind::GainTool | FxKind::Saturation => &[],
+        FxKind::Character
+        | FxKind::StereoTool
+        | FxKind::GainTool
+        | FxKind::Saturation
+        | FxKind::HeadphoneCorrection => &[],
         FxKind::Spectrum => &[
             ("ANALYSIS", &["size", "window", "channel", "mode"]),
             ("WEIGHTING", &["weighting", "smoothing"]),
@@ -276,6 +280,7 @@ fn title(kind: FxKind) -> &'static str {
         FxKind::StereoTool => "STEREO",
         FxKind::GainTool => "GAIN",
         FxKind::Saturation => "SATURATION",
+        FxKind::HeadphoneCorrection => "HEADPHONES",
     }
 }
 
@@ -289,9 +294,11 @@ fn placement(kind: FxKind) -> (f64, f64) {
         FxKind::GuitarAmp => (LEFT_AMP, 0.0),
         FxKind::Modulation => (LEFT_MODULATION, 0.0),
         FxKind::Mastering => (0.0, TOP_MASTERING),
-        FxKind::Character | FxKind::StereoTool | FxKind::GainTool | FxKind::Saturation => {
-            (0.0, 0.0)
-        }
+        FxKind::Character
+        | FxKind::StereoTool
+        | FxKind::GainTool
+        | FxKind::Saturation
+        | FxKind::HeadphoneCorrection => (0.0, 0.0),
         FxKind::Spectrum => (0.0, TOP_SPECTRUM),
         FxKind::PhaseMeter => (0.0, TOP_PHASE),
         FxKind::AudioTrack | FxKind::Tuner => (0.0, TOP_TUNER),
@@ -342,6 +349,9 @@ fn layout(kind: FxKind, desc: &DeviceDescriptor, tuner_on: bool) -> PanelSpec {
     }
     if kind == FxKind::Saturation {
         return crate::saturation_panel::saturation_layout(desc);
+    }
+    if kind == FxKind::HeadphoneCorrection {
+        return crate::headphone_panel::headphone_layout(desc);
     }
     // A hidden tuner leaves no display and no settings of its own.
     let collapsed = kind == FxKind::AudioTrack && !tuner_on;
@@ -494,9 +504,11 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
             None,
         ),
         // `character_layout` builds its own geometry.
-        FxKind::Character | FxKind::StereoTool | FxKind::GainTool | FxKind::Saturation => {
-            (v, v, empty, None)
-        }
+        FxKind::Character
+        | FxKind::StereoTool
+        | FxKind::GainTool
+        | FxKind::Saturation
+        | FxKind::HeadphoneCorrection => (v, v, empty, None),
         FxKind::Spectrum => (
             Rect::new(v.x0 + 26.0, v.y0 + 1.0, v.x1 - 40.0, v.y1 - 12.0),
             Rect::new(v.x1 - 32.0, v.y0 + 1.0, v.x1, v.y1 - 12.0),
@@ -533,6 +545,7 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
         stereo: None,
         gain: None,
         saturation: None,
+        headphone: None,
     }
 }
 

@@ -277,6 +277,7 @@ impl RackView {
             sample: None,
             analyser: Default::default(),
             resonance: Default::default(),
+            hp: None,
             master: Default::default(),
             mix: Default::default(),
             sc: None,

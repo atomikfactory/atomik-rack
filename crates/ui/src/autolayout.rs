@@ -120,6 +120,9 @@ pub struct FxPanel {
     pub gain: Option<crate::gain_panel::GainGeom>,
     /// The saturation panel's big knob, lamp and type switch (see [`crate::saturation_panel`]).
     pub saturation: Option<crate::saturation_panel::SaturationGeom>,
+    /// The headphone correction panel's name line, graph, buttons and readout (see
+    /// [`crate::headphone_panel`]).
+    pub headphone: Option<crate::headphone_panel::HeadphoneGeom>,
 }
 
 /// A labelled group.

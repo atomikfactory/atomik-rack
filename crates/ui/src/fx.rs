@@ -50,11 +50,14 @@ pub enum FxKind {
     GainTool,
     /// `atomik.saturation`: the big knob with its drive lamp, the type switch and a small group.
     Saturation,
+    /// `atomik.headphone-correction`: the frequency graph of the imported data with the target
+    /// and the correction, and the controls (its own 2 U layout, [`crate::headphone_panel`]).
+    HeadphoneCorrection,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 18] = [
+    pub const ALL: [FxKind; 19] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -73,12 +76,13 @@ impl FxKind {
         FxKind::StereoTool,
         FxKind::GainTool,
         FxKind::Saturation,
+        FxKind::HeadphoneCorrection,
     ];
 
     /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
     /// effect, the meters of one and a plain "meters change the painting" behaviour that the
     /// audio track's tuner does not share.
-    pub const EFFECTS: [FxKind; 17] = [
+    pub const EFFECTS: [FxKind; 18] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -96,6 +100,7 @@ impl FxKind {
         FxKind::StereoTool,
         FxKind::GainTool,
         FxKind::Saturation,
+        FxKind::HeadphoneCorrection,
     ];
 
     /// The kind of a device type id.
@@ -124,6 +129,7 @@ impl FxKind {
             FxKind::StereoTool => "atomik.stereo-tool",
             FxKind::GainTool => "atomik.gain-tool",
             FxKind::Saturation => "atomik.saturation",
+            FxKind::HeadphoneCorrection => "atomik.headphone-correction",
         }
     }
 
@@ -147,6 +153,7 @@ impl FxKind {
             FxKind::StereoTool => STEREO_METERS,
             FxKind::GainTool => GAIN_METERS,
             FxKind::Saturation => SATURATION_METERS,
+            FxKind::HeadphoneCorrection => HEADPHONE_METERS,
         }
     }
 }
@@ -205,6 +212,9 @@ pub const GAIN_METERS: usize = 8;
 /// Saturation publishes `[drive 0..1, input peak, output peak]`
 /// (`atomik_devices::saturation::METERS`; a test pins the two together).
 pub const SATURATION_METERS: usize = 3;
+/// Headphone Correction publishes `[loaded, preamp dB, boost dB, busy]`
+/// (`atomik_devices::headphone_correction::METERS`; a test pins the two together).
+pub const HEADPHONE_METERS: usize = 4;
 
 /// The phase meter's published values (`atomik_devices::phase_meter::value`; a test pins the
 /// two together): which index holds what.
@@ -286,6 +296,8 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::GainTool, 4) => Slot::Raw,
         (FxKind::GainTool, 5..=7) => Slot::Unit,
         (FxKind::Saturation, 0) => Slot::Unit,
+        (FxKind::HeadphoneCorrection, 1 | 2) => Slot::Gain,
+        (FxKind::HeadphoneCorrection, _) => Slot::Unit,
         (FxKind::Mastering, 0..=3) => Slot::Raw,
         (FxKind::Mastering, _) => Slot::Gr,
         (FxKind::GuitarAmp, 2) => Slot::Gr,
