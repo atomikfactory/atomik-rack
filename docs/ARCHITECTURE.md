@@ -263,7 +263,8 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
 - **Project files** are `.atomik` JSON, format version 45 (older versions still load; version 45 files say
-  `"compat": 44` and list the launcher, the per-note expression and the song's `"key"`, `"key_changes"` and
+  `"compat": 44` and list the root `"headphone"` map (the data imported into Headphone Correction devices, keyed by the device's
+  path key, written only when a device has any; see `crates/model/src/headphone.rs`), the launcher, the per-note expression and the song's `"key"`, `"key_changes"` and
   `"chords"` (the song key and the chord lane, written only when set; see `Song::harmony`) as ignorable, so a reader of
   44 opens them; version 44
   adds a note track's own `"controllers"` (pitch bend, aftertouch and CC lanes outside the note clips, written
@@ -5194,7 +5195,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (573) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (576) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
