@@ -1165,6 +1165,12 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     // The saturation panel draws its big knob and its type switch with the panel.
                     continue;
                 }
+                if info.spec.fx.is_some_and(|f| f.loudness.is_some())
+                    && crate::loudness_panel::custom_painted(p.key)
+                {
+                    // The loudness meter's history graph is the control of its span choice.
+                    continue;
+                }
                 if info.spec.fx.is_some_and(|f| f.eq.is_some()) {
                     // The EQ paints its choice cells itself (the graph, the shape sketches).
                     if pc.kind != ControlKind::Choice {
@@ -1405,6 +1411,8 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     crate::stereo_panel::socket_label(s.key).unwrap_or(s.name)
                 } else if info.spec.fx.is_some_and(|f| f.saturation.is_some()) {
                     crate::saturation_panel::socket_label(s.key).unwrap_or(s.name)
+                } else if info.spec.fx.is_some_and(|f| f.loudness.is_some()) {
+                    crate::loudness_panel::socket_label(s.key).unwrap_or(s.name)
                 } else if info.device.is_some() && crate::mix_panel::is_mix_type(desc.type_id) {
                     crate::mix_panel::socket_label(s.key).unwrap_or(s.name)
                 } else {

@@ -271,6 +271,12 @@ proptest! {
         check_bounded("atomik.saturation", &s)?;
     }
 
+    /// The loudness meter: any params, loud noise, every preset and rate.
+    #[test]
+    fn qa_loudness_meter_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_bounded("atomik.loudness-meter", &s)?;
+    }
+
     /// The clipper: any params, loud noise, every oversampling and band mode.
     #[test]
     fn qa_clipper_any_params_bounded_at_every_sample_rate(s in scene()) {

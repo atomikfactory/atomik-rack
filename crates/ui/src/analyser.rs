@@ -63,6 +63,11 @@ pub struct AnalyserData {
     pub loudness_history: Vec<f32>,
     /// The loudness range (LRA) of the programme since the last reset, LU.
     pub lra: Option<f32>,
+    /// The loudness meter's short-term loudness, one LUFS value every half second since its last
+    /// reset, oldest first (read from the device's tap, see [`crate::loudness_panel`]).
+    pub loud_short: Vec<f32>,
+    /// The loudness meter's momentary loudness at the same instants, LUFS.
+    pub loud_momentary: Vec<f32>,
     /// Left channel of the scope frames, oldest first.
     pub scope_l: Vec<f32>,
     /// Right channel of the scope frames, oldest first.

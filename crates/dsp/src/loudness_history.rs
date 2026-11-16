@@ -56,7 +56,9 @@ impl LoudnessHistory {
     /// An empty history.
     pub fn new() -> Self {
         Self {
-            points: VecDeque::new(),
+            // Room for the whole graph and the one value that is dropped after it, so a push
+            // never allocates (the loudness meter device records on the audio thread).
+            points: VecDeque::with_capacity(GRAPH_POINTS + 1),
             pending: 0,
             counts: vec![0; BINS],
         }

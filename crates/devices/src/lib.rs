@@ -1,6 +1,6 @@
 //! Atomik Rack built-in devices: [`poly_synth`], [`mono_bass`], [`dual_layer`], [`semi_modular`], [`organ`], [`wavetable_synth`], [`fm_synth`], [`sampler`], [`granular`], [`drum_machine`], [`loop_slicer`], [`line_mixer`], [`stereo_delay`], [`echo`], [`reverb`], the effects
 //! [`compressor`], [`eq`], [`distortion`], [`guitar_amp`], [`modulation`] and [`mastering`], the analysers
-//! [`spectrum`] and [`phase_meter`] (effects that pass the audio through and publish what they see), and the
+//! [`spectrum`], [`phase_meter`] and [`loudness_meter`] (effects that pass the audio through and publish what they see), and the
 //! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
 //!
 //! The utility devices [`gain_tool`], [`stereo_tool`], [`feedback`] (the delay stage that makes a loop legal), [`gate`], [`dynamics`] (gate then
@@ -54,6 +54,7 @@ pub mod guitar_amp;
 pub mod key_chord;
 pub mod line_mixer;
 pub mod loop_slicer;
+pub mod loudness_meter;
 pub mod macro_bank;
 pub mod master;
 pub mod mastering;
@@ -206,6 +207,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(note_repeater::factory())?;
     registry.register(note_split::factory())?;
     registry.register(phase_meter::factory())?;
+    registry.register(loudness_meter::factory())?;
     registry.register(pitch_shifter::factory())?;
     registry.register(bus::factory())?;
     registry.register(channel::factory())?;
@@ -269,6 +271,7 @@ mod tests {
         "atomik.key-chord",
         "atomik.line-mixer",
         "atomik.loop-slicer",
+        "atomik.loudness-meter",
         "atomik.macro-bank",
         "atomik.master",
         "atomik.mastering",
@@ -355,6 +358,7 @@ mod tests {
             "atomik.gain-tool",
             "atomik.gate",
             "atomik.gate-processor",
+            "atomik.loudness-meter",
             "atomik.pitch-shifter",
             "atomik.rotary-speaker",
             "atomik.sample-hold",

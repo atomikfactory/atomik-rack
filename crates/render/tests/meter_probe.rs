@@ -215,11 +215,58 @@ fn the_meters_do_not_change_the_bounce_by_a_single_bit() {
     let registry = default_registry();
     let plain = render_doc_in(project(&[]).doc(), &registry, &options(512, 0), None).unwrap();
     let metered = render_doc_in(
-        project(&["atomik.phase-meter", "atomik.spectrum"]).doc(),
+        project(&[
+            "atomik.phase-meter",
+            "atomik.spectrum",
+            "atomik.loudness-meter",
+        ])
+        .doc(),
         &registry,
         &options(512, 0),
         None,
     )
     .unwrap();
     assert_eq!(bits(&plain.channels), bits(&metered.channels));
+}
+
+#[test]
+fn a_probe_reads_the_loudness_meter_and_its_history_for_any_block_size() {
+    let d = project(&["atomik.loudness-meter"]);
+    let doc = d.doc();
+    let meter = device_of(doc, "atomik.loudness-meter");
+    let registry = default_registry();
+    let probe = |block, workers| {
+        probe_devices(
+            doc,
+            &registry,
+            &options(block, workers),
+            None,
+            10 * 48_000,
+            std::slice::from_ref(&meter),
+        )
+        .unwrap()
+        .remove(0)
+    };
+    let p = probe(512, 0);
+    assert_eq!(p.values.len(), 62);
+    // The synth is audible: loudness, a true peak and a few seconds of history.
+    assert!(p.values[2] > -60.0, "integrated {}", p.values[2]);
+    assert!(
+        p.values[4] > -60.0 && p.values[4] <= 6.0,
+        "true peak {}",
+        p.values[4]
+    );
+    let points = p.values[14] as u64;
+    assert!(points >= 10, "history points {points}");
+    assert_eq!(p.head, points, "one tap frame per history point");
+    assert_eq!(p.left.len() as u64, points.min(8192));
+    // Short-term on the left, momentary on the right: both are loudness values.
+    assert!(p.left.iter().chain(&p.right).all(|v| *v < 6.0));
+    // The same numbers for any block size and worker count.
+    let q = probe(333, 2);
+    let words = |p: &atomik_render::project::DeviceProbe| {
+        p.values.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+    };
+    assert_eq!(words(&p), words(&q));
+    assert_eq!(frame_bits(&p.left), frame_bits(&q.left));
 }

@@ -34,6 +34,7 @@
   "atomik.key-chord": "Locks the notes to a scale and plays chords from single notes, with inversions and voicing options.",
   "atomik.line-mixer": "Six stereo channels into a stereo master, each with its own level and pan.",
   "atomik.loop-slicer": "Plays the slices of one loop from the keys, each slice with its own gain, pan and tuning.",
+  "atomik.loudness-meter": "A loudness meter that passes the audio through: momentary, short-term and integrated loudness, loudness range, true peak, peak ratios, a history and a distribution, judged against a preset target.",
   "atomik.macro-bank": "Eight macro knobs that drive parameters of other devices. It makes no sound; each assignment has its own range and curve.",
   "atomik.master": "The master section of the console: the final fader, the compressor, the sends and returns, and the main outputs.",
   "atomik.mastering": "The last device of a mix: a multiband compressor, a stereo width control, a true-peak limiter and a loudness meter in one.",

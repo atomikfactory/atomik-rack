@@ -65,6 +65,7 @@ const EFFECTS: [&str; 31] = [
     "atomik.clipper",
     "atomik.saturation",
     "atomik.tonal-balance",
+    "atomik.loudness-meter",
 ];
 
 fn one_device(type_id: &str) -> Option<Document> {

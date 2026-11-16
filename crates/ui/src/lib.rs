@@ -410,6 +410,7 @@ pub mod keymap;
 pub mod kick_bass_panel;
 pub mod launcher;
 mod library_drop;
+pub mod loudness_panel;
 pub mod macro_marks;
 pub mod macros_panel;
 pub mod manual;

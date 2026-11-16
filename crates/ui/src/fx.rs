@@ -53,6 +53,9 @@ pub enum FxKind {
     TonalBalance,
     /// `atomik.saturation`: the big knob with its drive lamp, the type switch and a small group.
     Saturation,
+    /// `atomik.loudness-meter`: readouts, a history graph and a distribution against a target
+    /// (its own 4 U layout, [`crate::loudness_panel`]).
+    LoudnessMeter,
 }
 
 impl FxKind {
@@ -77,6 +80,7 @@ impl FxKind {
         FxKind::GainTool,
         FxKind::Saturation,
         FxKind::TonalBalance,
+        FxKind::LoudnessMeter,
     ];
 
     /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
@@ -101,6 +105,7 @@ impl FxKind {
         FxKind::GainTool,
         FxKind::Saturation,
         FxKind::TonalBalance,
+        FxKind::LoudnessMeter,
     ];
 
     /// The kind of a device type id.
@@ -130,6 +135,7 @@ impl FxKind {
             FxKind::GainTool => "atomik.gain-tool",
             FxKind::Saturation => "atomik.saturation",
             FxKind::TonalBalance => "atomik.tonal-balance",
+            FxKind::LoudnessMeter => "atomik.loudness-meter",
         }
     }
 
@@ -154,6 +160,7 @@ impl FxKind {
             FxKind::GainTool => GAIN_METERS,
             FxKind::Saturation => SATURATION_METERS,
             FxKind::TonalBalance => TONAL_METERS,
+            FxKind::LoudnessMeter => loudness::COUNT,
         }
     }
 }
@@ -235,6 +242,51 @@ pub const GAIN_METERS: usize = 8;
 /// (`atomik_devices::saturation::METERS`; a test pins the two together).
 pub const SATURATION_METERS: usize = 3;
 
+/// The loudness meter's published values (`atomik_devices::loudness_meter::value`; a test pins
+/// the two together): which index holds what.
+pub mod loudness {
+    /// Number of values: the scalars and the distribution bins.
+    pub const COUNT: usize = 62;
+    /// Momentary loudness, LUFS.
+    pub const MOMENTARY: usize = 0;
+    /// Short-term loudness, LUFS.
+    pub const SHORT_TERM: usize = 1;
+    /// Integrated loudness, LUFS.
+    pub const INTEGRATED: usize = 2;
+    /// Loudness range, LU (-120: none yet).
+    pub const LRA: usize = 3;
+    /// True peak since reset, dBTP.
+    pub const TRUE_PEAK: usize = 4;
+    /// True peak since reset, left, dBTP.
+    pub const TRUE_PEAK_L: usize = 5;
+    /// True peak since reset, right, dBTP.
+    pub const TRUE_PEAK_R: usize = 6;
+    /// Sample peak since reset, dBFS.
+    pub const SAMPLE_PEAK: usize = 7;
+    /// Peak to loudness ratio, dB (-120: none yet).
+    pub const PLR: usize = 8;
+    /// Peak to short-term ratio, dB (-120: none yet).
+    pub const PSR: usize = 9;
+    /// Crest factor of the programme, dB (-120: none yet).
+    pub const DR: usize = 10;
+    /// The target loudness in force, LUFS.
+    pub const TARGET: usize = 11;
+    /// The maximum true peak in force, dBTP.
+    pub const MAX_TP: usize = 12;
+    /// Counts the resets.
+    pub const EPOCH: usize = 13;
+    /// History points since the last reset.
+    pub const HISTORY_POINTS: usize = 14;
+    /// Seconds of programme since the last reset.
+    pub const TIME: usize = 15;
+    /// The first distribution bin.
+    pub const BINS: usize = 16;
+    /// Distribution bins, 1 LU each.
+    pub const BIN_COUNT: usize = 46;
+    /// The lowest LUFS of the distribution.
+    pub const DIST_LOW: f32 = -46.0;
+}
+
 /// The phase meter's published values (`atomik_devices::phase_meter::value`; a test pins the
 /// two together): which index holds what.
 pub mod phase {
@@ -300,7 +352,10 @@ enum Slot {
     Plain,
     /// A gain in dB (negative or positive) shown as published: the device already smooths it.
     Gain,
-    /// A whole number counted by the device (the spectrum's clipped samples), no release.
+    /// A ratio or a range in dB, -120 for "none" (the loudness meter's PLR, PSR, DR and LRA).
+    Ratio,
+    /// A whole number counted or published by the device (the spectrum's clipped samples, the
+    /// loudness meter's reset counter, history points and programme seconds), no release.
     Count,
 }
 
@@ -317,6 +372,12 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::GainTool, 4) => Slot::Raw,
         (FxKind::GainTool, 5..=7) => Slot::Unit,
         (FxKind::Saturation, 0) => Slot::Unit,
+        (FxKind::LoudnessMeter, i) if i < loudness::LRA => Slot::Raw,
+        (FxKind::LoudnessMeter, loudness::LRA | loudness::PLR..=loudness::DR) => Slot::Ratio,
+        (FxKind::LoudnessMeter, loudness::TRUE_PEAK..=loudness::SAMPLE_PEAK) => Slot::Raw,
+        (FxKind::LoudnessMeter, loudness::TARGET | loudness::MAX_TP) => Slot::Raw,
+        (FxKind::LoudnessMeter, loudness::EPOCH..=loudness::TIME) => Slot::Count,
+        (FxKind::LoudnessMeter, _) => Slot::Unit,
         (FxKind::Mastering, 0..=3) => Slot::Raw,
         (FxKind::Mastering, _) => Slot::Gr,
         (FxKind::GuitarAmp, 2) => Slot::Gr,
@@ -351,13 +412,13 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
         for (i, v) in shown.iter_mut().enumerate() {
             match slot(kind, i) {
                 Slot::Gr => *v = 0.0,
-                Slot::Raw => *v = -120.0,
+                Slot::Raw | Slot::Ratio => *v = -120.0,
                 Slot::Unit
                 | Slot::Activity
                 | Slot::Signed
                 | Slot::Plain
-                | Slot::Count
-                | Slot::Gain => *v = 0.0,
+                | Slot::Gain
+                | Slot::Count => *v = 0.0,
                 _ => {}
             }
         }
@@ -378,6 +439,8 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
             Slot::Plain => (r.clamp(0.0, 10_000.0), f32::INFINITY, 0.1, 0.0),
             Slot::Count => (r.clamp(0.0, 16_777_216.0), f32::INFINITY, 1.0, 0.0),
             Slot::Gain => (r.clamp(-48.0, 48.0), f32::INFINITY, 0.1, -48.0),
+            Slot::Ratio => (r.clamp(-120.0, 120.0), f32::INFINITY, 0.1, -120.0),
+            Slot::Count => (r.clamp(0.0, 16_777_216.0), f32::INFINITY, 1.0, 0.0),
         };
         let old = *cell;
         let v = if new >= old {
