@@ -12338,3 +12338,7 @@ mod launcher_tests;
 #[cfg(test)]
 #[path = "shell_duck_from_tests.rs"]
 mod duck_from_tests;
+
+#[cfg(test)]
+#[path = "shell_chord_wheel_tests.rs"]
+mod chord_wheel_tests;
