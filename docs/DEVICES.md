@@ -2535,19 +2535,24 @@ automated or preset like any param) and the UI reads them from the document; non
   and per region, is half the standard deviation of the stretches' dB values, kept between 2 and 6 dB (3 dB
   from a single stretch). Several files are analysed one after the other into the same set of stretches, so
   the spread between songs widens the range. Silent stretches are skipped.
-  - **From files.** The Learn from files... entry of the target menu opens a file dialog (one or several
+  - **From files.** The Learn from files… entry of the target menu opens a file dialog (one or several
     audio files); the files are decoded and analysed on a worker thread, off the audio thread and the UI,
     with a progress readout on the panel.
-  - **From the live signal.** The LEARN button accumulates the balance of what plays; pressing it again
-    ends the learn. The result is the learned target, shown at once and not yet saved.
-  - **Saving.** SAVE asks for a name and keeps the learned target with the user's settings, in
+  - **From the live signal.** The LEARN switch accumulates the balance of what plays while the panel is
+    shown; switching it off ends the learn. The result is the learned target, shown at once, not yet saved.
+  - **Saving.** Save learned target… asks for a name and keeps the learned target with the user's settings, in
     `tonal-targets.json` beside the library file (the same place as `spectrum-reference.json`), not in the
     project. The menu lists the built-ins, the learned one and the saved ones; a saved one can be renamed
     or deleted. A damaged file is ignored and a file from a newer version is never overwritten.
-  - **In the project.** The device stores the `target` value. A project opened where the saved target does
+  - **In the project.** The device stores the `hidden.target` value. A project opened where the saved target does
     not exist reads Balanced, and the panel says the target is missing.
-- **Panel.** A 4 U panel: the four meters on the left, the curve on the right, the target name and its menu
-  on top, then LEARN and the response, view and channel selectors. The back has audio in and audio out.
+- **Panel.** A 3 U panel on the usual effect layout: across the top a TARGET button (the name of the target
+  in force and a list under it) with a status line beside it (ANALYSING FILES, LEARNING, LEARNED, NOT SAVED,
+  TARGET MISSING, NO SIGNAL), the four meters on the left and the curve on the right (the `view` choice
+  shows either or both); under it RESPONSE and CHANNEL, VIEW and the LEARN switch. The list has the
+  built-in targets, the learned one while there is one, the saved ones, and the entries Learn from files…,
+  Save learned target…, Rename target… and Delete target. Save and Rename type the name in place of the
+  button (Enter keeps it, Escape drops it). The back has audio in and audio out.
 
 ---
 

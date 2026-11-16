@@ -269,6 +269,9 @@ pub enum ShellRequest {
     /// Show a multi-select open dialog for audio files (the sample editor's Load button), then
     /// call [`Shell::load_samples`] with the picked paths.
     PickLoadSamples,
+    /// Show a multi-select open dialog for audio files (Learn from files... in the target list of
+    /// a tonal balance panel), then call [`Shell::learn_tonal_files`] with the picked paths.
+    PickTonalFiles,
     /// Show an open dialog for one audio file (the relink panel's LOCATE...), then call
     /// [`Shell::relink_file`] with the picked path.
     PickRelinkFile,
@@ -623,6 +626,8 @@ pub struct Shell<B: AudioBackend> {
     pending: Vec<ShellRequest>,
     /// The sampler the Load dialog is for.
     load_device: Option<DeviceKey>,
+    /// The tonal balance device a Learn from files dialog was opened for.
+    tonal_device: Option<DeviceKey>,
     /// The device a patch save dialog is open for.
     patch_device: Option<DeviceKey>,
     /// The device whose patch name opened the pop-up of its folder's patches.
@@ -930,6 +935,7 @@ impl<B: AudioBackend> Shell<B> {
             geom_saved_at: f64::NEG_INFINITY,
             pending: Vec::new(),
             load_device: None,
+            tonal_device: None,
             patch_device: None,
             patch_menu: None,
             midi_out_menu: None,
@@ -1047,6 +1053,11 @@ impl<B: AudioBackend> Shell<B> {
             options_library_path
                 .as_deref()
                 .map(crate::spectrum_reference::reference_path),
+        );
+        shell.core.set_tonal_path(
+            options_library_path
+                .as_deref()
+                .map(crate::tonal_targets::targets_path),
         );
         shell.core.set_library_path(options_library_path);
         shell.sync_library_root();
@@ -5760,6 +5771,15 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// Learns a tonal balance target from the files picked in the Learn from files dialog, for the
+    /// device it was opened for (the analysis runs on a worker, see `app_core_tonal.rs`).
+    pub fn learn_tonal_files(&mut self, paths: Vec<PathBuf>) {
+        if let Some(device) = self.tonal_device.take() {
+            self.core.learn_tonal_files(&device, paths);
+        }
+        self.repaint = true;
+    }
+
     /// Imports the files picked in the Import Audio dialog: onto the selected audio track, else
     /// onto new tracks, at the snapped playhead ([`AppCore::import_dialog_target`]).
     ///
@@ -8296,6 +8316,13 @@ impl<B: AudioBackend> Shell<B> {
                     device,
                     op: atomik_ui::PatchOp::Siblings,
                 } => self.open_patch_siblings(device),
+                UiAction::TonalTarget {
+                    device,
+                    op: atomik_ui::tonal_panel::TonalOp::LearnFiles,
+                } => {
+                    self.tonal_device = Some(device.clone());
+                    self.pending.push(ShellRequest::PickTonalFiles);
+                }
                 UiAction::LoadSamplesDialog { device } => {
                     self.load_device = Some(device.clone());
                     self.pending.push(ShellRequest::PickLoadSamples);

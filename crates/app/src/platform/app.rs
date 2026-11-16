@@ -1333,6 +1333,17 @@ impl App {
                         self.shell.export_film_to(&path);
                     }
                 }
+                ShellRequest::PickTonalFiles => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Learn a tonal balance target from audio files")
+                        .add_filter("Audio files", &crate::audio_import::AUDIO_EXTENSIONS);
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(paths) = dialog.pick_files() {
+                        self.shell.learn_tonal_files(paths);
+                    }
+                }
                 ShellRequest::PickLoadSamples => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Load samples")
