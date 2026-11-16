@@ -47,6 +47,7 @@ fn the_regions_split_the_bands_at_the_documented_crossovers() {
 }
 
 #[test]
+#[allow(clippy::needless_range_loop)]
 fn a_built_in_target_has_its_formula_and_a_normalised_total() {
     let centres = band_centres();
     let k = k_gains();
