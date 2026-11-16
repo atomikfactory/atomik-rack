@@ -57,7 +57,7 @@
   "atomik.semi-modular": "A synthesiser built from patchable parts: oscillators, filters, envelopes and a sequencer, with sockets you can cable to each other.",
   "atomik.slew-limiter": "Limits how fast a control voltage may rise and fall, with a separate time for each direction.",
   "atomik.space-reverb": "A large, lush reverb for wide ambient tails, with a long decay, diffusion and a duck that clears the tail while the dry sound plays.",
-  "atomik.spectrum": "A spectrum analyser that passes the audio through untouched, with a reference curve, a spectrogram view and a choice of weightings.",
+  "atomik.spectrum": "A spectrum analyser that passes the audio through untouched, with a reference curve, a spectrogram view, a choice of weightings, an overlay of the two channels, and readouts of correlation, peaks, headroom and clips.",
   "atomik.spider-audio": "Four stereo merge inputs and a four-way stereo split, to build parallel audio paths.",
   "atomik.spider-cv": "Four trimmed control voltage merge inputs and two split and invert inputs.",
   "atomik.step-sequencer": "A transport-synced pattern player. Up to eight patterns of up to 64 steps, each with its own resolution and swing, play one note at a time.",
