@@ -59,6 +59,8 @@ fn descriptor_validates_and_follows_the_effect_conventions() {
             "reference",
             "reference.capture",
             "bypass",
+            "stats.reset",
+            "clip_level",
         ],
         &["in_l", "in_r", "out_l", "out_r"],
     );
@@ -90,6 +92,24 @@ fn descriptor_validates_and_follows_the_effect_conventions() {
         4
     );
     assert_eq!(CHANNEL_NAMES[4], "Sum");
+    // The old choices keep their values; the overlays are appended.
+    assert_eq!(&CHANNEL_NAMES[..4], &["Left", "Right", "Mid", "Side"]);
+    assert_eq!(&CHANNEL_NAMES[5..], &["L + R", "M + S"]);
+    assert_eq!(
+        DESCRIPTOR.param_by_key("channel").unwrap().max as usize,
+        CHANNEL_NAMES.len() - 1
+    );
+    // New params come after the old ones, with the old ids.
+    for (key, id) in [
+        ("reference.capture", 12),
+        ("bypass", 13),
+        ("stats.reset", 14),
+        ("clip_level", 15),
+    ] {
+        assert_eq!(DESCRIPTOR.param_by_key(key).unwrap().id.0, id, "{key}");
+    }
+    assert_eq!(DESCRIPTOR.param_by_key("clip_level").unwrap().default, 0.0);
+    assert_eq!(DESCRIPTOR.param_by_key("stats.reset").unwrap().default, 0.0);
     assert_eq!(TILT_NAMES.len(), TILT_DB_PER_OCT.len());
     // The factory wraps it with the bypass.
     let mut r = atomik_device_sdk::Registry::new();
@@ -172,8 +192,8 @@ fn the_meter_values_are_the_recent_peaks_of_the_two_inputs() {
             0.0
         }
     });
-    let mut v = [0.0f32; 8];
-    assert_eq!(h.device().meter_values(&mut v), 2);
+    let mut v = [0.0f32; 12];
+    assert_eq!(h.device().meter_values(&mut v), METER_COUNT);
     // The peak was 16 batches ago or less: the window still holds it.
     assert!(
         (v[0] - 0.8).abs() < 1e-6 && (v[1] - 0.4).abs() < 1e-6,
@@ -222,4 +242,173 @@ fn the_analysis_of_the_tap_finds_the_tone_that_went_in() {
             display.peak_db()
         );
     }
+}
+
+// ------------------------------------------------------------------ measurements
+
+fn values(h: &DeviceHarness) -> [f32; METER_COUNT] {
+    let mut v = [0.0f32; METER_COUNT];
+    assert_eq!(h.device().meter_values(&mut v), METER_COUNT);
+    v
+}
+
+fn pulse_reset(h: &mut DeviceHarness) {
+    h.set_param("stats.reset", 1.0);
+    run(h, 0, 1, |_, _| 0.0);
+    h.set_param("stats.reset", 0.0);
+}
+
+#[test]
+fn the_meter_indices_are_pinned() {
+    assert_eq!(METER_COUNT, 9);
+    assert_eq!(
+        [
+            value::PEAK_L,
+            value::PEAK_R,
+            value::CORRELATION,
+            value::CORRELATION_LONG,
+            value::SAMPLE_PEAK_L_DB,
+            value::SAMPLE_PEAK_R_DB,
+            value::TRUE_PEAK_L_DB,
+            value::TRUE_PEAK_R_DB,
+            value::CLIPS,
+        ],
+        [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    );
+}
+
+#[test]
+fn the_correlation_is_plus_one_for_equal_sides_minus_one_for_inverted_and_zero_for_noise() {
+    let tone = |n: usize| 0.5 * (n as f32 * 0.05).sin();
+    let mut h = device();
+    run(&mut h, 0, 400, |_, n| tone(n));
+    let v = values(&h);
+    assert!(v[value::CORRELATION] > 0.999, "{v:?}");
+    assert!(v[value::CORRELATION_LONG] > 0.999, "{v:?}");
+    let mut h = device();
+    run(
+        &mut h,
+        0,
+        400,
+        |c, n| if c == 0 { tone(n) } else { -tone(n) },
+    );
+    let v = values(&h);
+    assert!(v[value::CORRELATION] < -0.999, "{v:?}");
+    assert!(v[value::CORRELATION_LONG] < -0.999, "{v:?}");
+    let mut noise = [Rng::new(11), Rng::new(12)];
+    let mut h = device();
+    run(&mut h, 0, 2500, move |c, _| noise[c].next_bipolar() * 0.5);
+    let v = values(&h);
+    assert!(v[value::CORRELATION].abs() < 0.15, "{v:?}");
+    assert!(v[value::CORRELATION_LONG].abs() < 0.08, "{v:?}");
+    // Silence reads zero, not a stale value.
+    let mut h = device();
+    run(&mut h, 0, 10, |_, _| 0.0);
+    assert_eq!(values(&h)[value::CORRELATION], 0.0);
+}
+
+#[test]
+fn peaks_and_clips_are_counted_exactly() {
+    let mut h = device();
+    let v = values(&h);
+    assert_eq!(v[value::SAMPLE_PEAK_L_DB], -120.0);
+    assert_eq!(v[value::CLIPS], 0.0);
+    // A single full-scale sample on the left, half scale on the right.
+    run(&mut h, 0, 20, |c, n| match (c, n) {
+        (0, 777) => 1.0,
+        (1, 100) => -0.5,
+        _ => 0.0,
+    });
+    let v = values(&h);
+    assert_eq!(v[value::SAMPLE_PEAK_L_DB], 0.0, "{v:?}");
+    assert!((v[value::SAMPLE_PEAK_R_DB] + 6.02).abs() < 0.01, "{v:?}");
+    assert_eq!(v[value::CLIPS], 1.0);
+    assert!(v[value::TRUE_PEAK_L_DB] >= -0.0001, "{v:?}");
+    // 0 dBFS minus the largest peak is what the UI calls headroom.
+    assert_eq!(
+        -v[value::SAMPLE_PEAK_L_DB].max(v[value::SAMPLE_PEAK_R_DB]),
+        0.0
+    );
+    // The peaks hold, the clip count grows: an over (-1.5) is one clipped sample per hit, both
+    // channels count, and the audio still passes.
+    let (i, o) = run(&mut h, 0, 4, |c, n| {
+        if n % 100 == 0 {
+            if c == 0 { -1.5 } else { 1.0 }
+        } else {
+            0.0
+        }
+    });
+    assert_eq!(bits(&i[0]), bits(&o[0]));
+    let v = values(&h);
+    assert_eq!(v[value::CLIPS], 1.0 + 2.0 * 3.0, "{v:?}"); // n = 0, 100, 200 of 256 frames
+    assert!((v[value::SAMPLE_PEAK_L_DB] - 3.52).abs() < 0.01, "{v:?}");
+    // The clip level moves the threshold: -6 dB counts 0.6 but not 0.4.
+    let mut h = device();
+    h.set_param("clip_level", -6.0);
+    run(&mut h, 0, 2, |c, n| match (c, n) {
+        (0, 5) => 0.6,
+        (1, 5) => 0.4,
+        _ => 0.0,
+    });
+    assert_eq!(values(&h)[value::CLIPS], 1.0);
+}
+
+#[test]
+fn the_true_peak_sees_the_peak_between_the_samples() {
+    // A quarter-sample-rate tone at 45 degrees: every sample is 0.7071 and the waveform
+    // between them reaches 1.0.
+    let mut h = device();
+    run(&mut h, 0, 40, |_, n| {
+        (std::f32::consts::FRAC_PI_2 * n as f32 + std::f32::consts::FRAC_PI_4).sin()
+    });
+    let v = values(&h);
+    assert!((v[value::SAMPLE_PEAK_L_DB] + 3.01).abs() < 0.05, "{v:?}");
+    assert!(
+        v[value::TRUE_PEAK_L_DB] > -0.5 && v[value::TRUE_PEAK_L_DB] < 0.5,
+        "{v:?}"
+    );
+    assert!(
+        v[value::TRUE_PEAK_L_DB] > v[value::SAMPLE_PEAK_L_DB] + 2.0,
+        "{v:?}"
+    );
+    // Never below the sample peak.
+    assert_eq!(v[value::TRUE_PEAK_R_DB], v[value::TRUE_PEAK_L_DB]);
+}
+
+#[test]
+fn reset_clears_the_peaks_and_the_clips_and_a_held_toggle_does_it_once() {
+    let mut h = device();
+    run(&mut h, 0, 5, |_, n| if n == 10 { 1.0 } else { 0.0 });
+    assert_eq!(values(&h)[value::CLIPS], 2.0);
+    h.set_param("stats.reset", 1.0);
+    run(&mut h, 0, 1, |_, _| 0.0);
+    let v = values(&h);
+    assert_eq!(v[value::CLIPS], 0.0);
+    assert_eq!(v[value::SAMPLE_PEAK_L_DB], -120.0);
+    assert_eq!(v[value::TRUE_PEAK_L_DB], -120.0);
+    // Held at 1 it is one edge: new peaks stay.
+    run(&mut h, 0, 2, |_, n| if n == 3 { 0.5 } else { 0.0 });
+    assert!((values(&h)[value::SAMPLE_PEAK_L_DB] + 6.02).abs() < 0.01);
+    h.set_param("stats.reset", 0.0);
+    pulse_reset(&mut h);
+    assert_eq!(values(&h)[value::SAMPLE_PEAK_L_DB], -120.0);
+    // A transport reset leaves the peaks alone.
+    run(&mut h, 0, 2, |_, n| if n == 3 { 0.5 } else { 0.0 });
+    h.device_mut().reset();
+    assert!((values(&h)[value::SAMPLE_PEAK_L_DB] + 6.02).abs() < 0.01);
+}
+
+#[test]
+fn non_finite_samples_do_not_poison_the_measurements() {
+    let mut h = device();
+    *h.input_mut("in_l") = [f32::NAN; BATCH];
+    *h.input_mut("in_r") = [f32::INFINITY; BATCH];
+    h.process();
+    run(&mut h, 0, 400, |_, n| 0.25 * (n as f32 * 0.05).sin());
+    let v = values(&h);
+    assert!(v.iter().all(|x| x.is_finite()), "{v:?}");
+    assert!(
+        v[value::CORRELATION] > 0.99 && v[value::TRUE_PEAK_L_DB] < -11.0,
+        "{v:?}"
+    );
 }

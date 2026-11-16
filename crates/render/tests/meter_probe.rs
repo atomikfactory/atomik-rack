@@ -151,7 +151,12 @@ fn a_probe_reads_the_values_and_the_newest_frames_of_the_meters() {
     );
     assert!(p.left.iter().any(|v| v.abs() > 0.001));
     let s = probes.iter().find(|p| p.key == spectrum).unwrap();
-    assert_eq!(s.values.len(), 2);
+    // Recent peaks, correlation, the peaks since the start and the clips (nothing clips here).
+    assert_eq!(s.values.len(), 9);
+    assert!(s.values[2] > 0.0 && s.values[2] <= 1.0, "{:?}", s.values);
+    assert!(s.values[4] > -60.0 && s.values[4] < 0.0, "{:?}", s.values);
+    assert!(s.values[6] >= s.values[4] - 1e-6, "{:?}", s.values);
+    assert_eq!(s.values[8], 0.0);
     // The spectrum sits after the phase meter, which does not change the audio: they saw the
     // same frames.
     assert_eq!(frame_bits(&s.left), frame_bits(&p.left));
