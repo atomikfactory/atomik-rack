@@ -1,12 +1,12 @@
 # Device reference
 
-Atomik Rack ships sixty-eight original devices: the poly synth (with its mono bass and dual layer
+Atomik Rack ships sixty-nine original devices: the poly synth (with its mono bass and dual layer
 variants), the semi-modular synth, the organ, the wavetable synth, the FM synth, the grain sampler, line mixer
 and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
 a hardware synth or a virtual port), the effects (reverb, space reverb, convolution reverb, vocoder, compressor, EQ,
 distortion, clipper, saturation, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
-analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
+analysers (spectrum, phase meter and loudness meter), the Character effect, the audio track, the sampler, the drum
 machine and the loop slicer, the utility devices (gain tool, stereo tool, gate, gate + compressor,
 sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, dynamic EQ, tuner, pitch shifter,
 rotary speaker, the CV utilities (CV math, CV quantizer, sample and hold, slew limiter, gate processor and
@@ -2526,6 +2526,88 @@ and were put before `bypass`, which moved from id 6 to id 8.
   `[recent peak L, recent peak R, held peak L, held peak R, RMS L, RMS R]` (linear),
   `[sample peak dBFS, true peak dBTP]`, `[correlation, balance, width]`, `[mid RMS, side RMS]`
   (linear), `[momentary, short-term, integrated LUFS]`; -120 for silence or loudness off.
+
+---
+
+## Loudness Meter: `atomik.loudness-meter` (Effect)
+
+A loudness meter with a target that passes the audio through untouched: momentary, short-term and
+integrated loudness, the loudness range, true peak per channel, the ratios between peak and loudness,
+a history of the short-term loudness and a distribution of it, judged against a preset target. Source:
+[crates/devices/src/loudness_meter.rs](../crates/devices/src/loudness_meter.rs), with the loudness
+meter and the true-peak detector of `atomik.mastering` (`mastering/loudness.rs`) and the range code of
+[crates/dsp/src/loudness_history.rs](../crates/dsp/src/loudness_history.rs) that the phase meter's
+history uses.
+
+### Sockets
+
+`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `preset` | 0 to 6: Streaming -14 LUFS / -1 dBTP, Streaming -16 LUFS, Broadcast EBU R128 -23 LUFS, Broadcast ATSC A/85 -24 LKFS, Podcast -16 LUFS, Club / loud master -9 LUFS, Custom | 0 | choice | Linear | yes |
+| `target_lufs` | -40 to 0 (the target when `preset` is Custom) | -14 | LUFS | Linear | no |
+| `max_tp` | -12 to 0 (the true-peak limit when `preset` is Custom) | -1 | dB | Linear | no |
+| `history_span` | 0 to 3: 30 s, 1 min, 5 min, 15 min (the span the graph shows) | 1 (1 min) | choice | Linear | yes |
+| `reset` | momentary toggle: a rising edge clears everything that accumulates | 0 | toggle | Linear | yes |
+| `hold` | 0 or 1: pause the accumulation | 0 | toggle | Linear | yes |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+The presets are `(target, true-peak limit)` = (-14, -1), (-16, -1), (-23, -1), (-24, -2), (-16, -1)
+and (-9, -1); the names carry the numbers. `history_span` is a display setting (the device stores it
+and does not use it).
+
+### Behaviour (as built)
+
+- **Audio path.** The outputs are the inputs, bit for bit, with no latency. The meters only read;
+  everything is allocation-free after `prepare`, and a bounce with the device equals a bounce without
+  it (the render tests compare the bits).
+- **Loudness.** BS.1770-4 / EBU R128, the code of the mastering device: K-weighting designed for the
+  actual sample rate, momentary (400 ms), short-term (3 s) and integrated loudness gated at -70 LUFS
+  and 10 LU below the mean. A stereo 1 kHz sine at -23 dBFS peak reads -23.0 LUFS in all three.
+- **LRA** (EBU Tech 3342): the short-term loudness once a second goes into a histogram of 0.1 LU bins;
+  the relative gate is 20 LU below the mean energy of the values above -70 LUFS, and the range is the
+  95th minus the 10th percentile of what passes. A steady tone reads 0 LU; a programme that spends
+  half its time at -33 and half at -23 reads 10 LU. A fade into silence adds the few values it passes
+  through, and the silence itself counts for nothing.
+- **True peak** (4x oversampled) per channel and overall in dBTP, and the **sample peak** in dBFS,
+  all since the last reset.
+- **Ratios**, in dB, `-120` (shown as `--`) while there is nothing to compare:
+  - **PLR** (peak to loudness ratio) = true peak since reset - integrated loudness. A programme
+    property: how much headroom its loudness leaves.
+  - **PSR** (peak to short-term ratio) = the largest true peak of the last 3 s - the short-term
+    loudness now. It follows the signal, so a loud transient raises it for three seconds.
+  - **DR**, the crest factor of the programme = sample peak since reset - the RMS level of
+    everything since reset (both channels together, unweighted, in dBFS). A full-scale sine reads
+    3.0 dB, a sine in one channel only 6.0 dB; dense, limited masters read a few dB, open
+    recordings 15 or more. It is a plain crest factor, not a loudness measure, so it needs no gate.
+- **Distribution.** The short-term loudness once a second, counted in 1 LU bins from -46 to 0 LUFS
+  (quieter and louder values land in the first and the last bin, silence below -70 LUFS is not
+  counted), published as each bin's share of the tallest one.
+- **History.** Every half second the short-term and the momentary loudness go into the device's
+  `ScopeTap` (a frame whose left value is short-term and whose right value is momentary, in LUFS);
+  the tap keeps the 15 minutes of the longest span and the UI draws the newest points of the span the
+  panel asks for.
+- **Accumulation.** Like the phase meter, the device measures what flows through it, so nothing
+  accumulates while the engine is stopped. The integrated loudness, the LRA, the peaks, the ratios,
+  the distribution and the history start from nothing after a reset (the `reset` rising edge,
+  `reset()`, `prepare`); the distribution, the LRA and the history also leave out the first 3 s
+  after that, while the short-term window fills. There is no reset at the start of the transport:
+  press RESET or let the device start over with the project, as the phase meter does.
+- **`hold`** pauses the accumulation: the integrated loudness, the LRA, the peaks, the ratios, the
+  distribution, the history and the programme time stay where they are, while the momentary and
+  short-term loudness go on following the signal. Letting go resumes from there.
+- **Target.** The preset (or `target_lufs` and `max_tp` for Custom) names the target loudness and the
+  maximum true peak. The programme is **on target** when its integrated loudness is within 1 LU of
+  the target (both ends included), **too loud** above that and **too quiet** below; its true peak
+  **fails** only when it is above the maximum. The target in force is published.
+- **Meter values** (62, `atomik_devices::loudness_meter::value`): `[momentary, short-term,
+  integrated LUFS]`, `[LRA LU]`, `[true peak, true peak L, true peak R dBTP]`, `[sample peak dBFS]`,
+  `[PLR, PSR, DR dB]`, `[target LUFS, max true peak dBTP]`, `[reset counter, history points since
+  reset, programme seconds]`, then 46 distribution bins. The counter changes at every reset (it never
+  goes back to 0), so a reader knows the history started over.
 
 ---
 

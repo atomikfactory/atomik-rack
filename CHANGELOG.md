@@ -9,6 +9,16 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Loudness Meter.** A new analyser, Loudness Meter (`atomik.loudness-meter`), that passes the audio through bit for
+  bit with no latency and measures it to BS.1770-4 / EBU R128: momentary, short-term and gated integrated loudness,
+  the loudness range (LRA, EBU Tech 3342), the true peak of each channel and the sample peak, and three ratios in dB:
+  PLR (true peak minus integrated loudness), PSR (the true peak of the last 3 s minus the short-term loudness) and DR
+  (the crest factor of the programme: sample peak minus its RMS). It keeps a history of the short-term and momentary
+  loudness (up to 15 minutes) and a distribution of the short-term loudness in 1 LU bins. A preset names the target:
+  Streaming -14 LUFS / -1 dBTP, Streaming -16 LUFS, Broadcast EBU R128 -23 LUFS, Broadcast ATSC A/85 -24 LKFS, Podcast
+  -16 LUFS, Club / loud master -9 LUFS, or Custom with its own target and true-peak limit. RESET starts the
+  accumulation over and HOLD pauses it while the momentary and short-term loudness keep following the signal. No panel
+  of its own yet.
 - **Saturation.** A new effect, Saturation (`atomik.saturation`): one knob (0 is off and bit-exact transparent)
   drives a smooth, slightly asymmetric tanh curve, from nothing up to about +24 dB into it, for warmth and mostly
   odd harmonics. A type switch picks where it works: keep low leaves the lows clean and saturates what is above
