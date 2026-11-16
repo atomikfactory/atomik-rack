@@ -173,6 +173,17 @@ impl<S: EngineSink> AppCore<S> {
     /// Renders the notes the stack of `device` generates into a clip on a new note lane named
     /// `lane_name`.
     fn send_stack_to_track(&mut self, device: &DeviceKey, lane_name: &str) {
+        self.send_stack_window(device, lane_name, None);
+    }
+
+    /// [`Self::send_stack_to_track`], or with a `window` the clip of that span (see
+    /// [`SendWindow`]). True when the lane and the clip were written.
+    pub(super) fn send_stack_window(
+        &mut self,
+        device: &DeviceKey,
+        lane_name: &str,
+        window: Option<SendWindow>,
+    ) -> bool {
         let at_limit = self
             .doc()
             .song
@@ -182,11 +193,23 @@ impl<S: EngineSink> AppCore<S> {
             self.reject(format!(
                 "{device} is frozen or has no room for another note lane"
             ));
-            return;
+            return false;
         }
         let bundle = self.bundle_root().map(std::path::Path::to_path_buf);
+        // A window renders the first `cycle` ticks of the song only: a copy of the document with
+        // that song end, so nothing of the song (or the undo history) is touched.
+        let short;
+        let doc = match window {
+            Some(w) => {
+                let mut copy = self.doc().clone();
+                copy.song_mut().end = w.cycle;
+                short = copy;
+                &short
+            }
+            None => self.doc(),
+        };
         let notes = match atomik_render::players::render_player_notes(
-            self.doc(),
+            doc,
             &self.registry,
             &atomik_render::project::ProjectOptions::default(),
             bundle.as_deref(),
@@ -195,21 +218,31 @@ impl<S: EngineSink> AppCore<S> {
             Ok(notes) => notes,
             Err(e) => {
                 self.reject(format!("rendering the players of {device} failed: {e}"));
-                return;
+                return false;
             }
         };
         if notes.is_empty() {
             self.reject(format!("the players of {device} generated no notes"));
-            return;
+            return false;
         }
         let song = &self.doc().song;
-        let last = notes.iter().map(|n| n.tick + n.length).max().unwrap_or(0);
-        let end = song.meter_table().map().next_bar_line((last - 1).max(0));
+        let (start, length, notes) = match window {
+            Some(w) => (w.from, (w.to - w.from).max(1), w.tile(&notes)),
+            None => {
+                let last = notes.iter().map(|n| n.tick + n.length).max().unwrap_or(0);
+                let end = song.meter_table().map().next_bar_line((last - 1).max(0));
+                let notes = notes
+                    .iter()
+                    .map(|n| Note::new(n.tick, n.length, n.key, n.velocity))
+                    .collect::<Vec<_>>();
+                (0, end.max(last).max(1), notes)
+            }
+        };
         let new_lane = song.track(device).map_or(0, |t| t.note_lane_count());
         let clip = Clip {
             id: ClipId(0),
-            start: 0,
-            length: end.max(last).max(1),
+            start,
+            length,
             offset: 0,
             loop_length: None,
             muted: false,
@@ -222,13 +255,7 @@ impl<S: EngineSink> AppCore<S> {
             groove: None,
             follow_song_key: true,
             controllers: Vec::new(),
-            content: ClipContent::Notes(
-                notes
-                    .iter()
-                    .map(|n| Note::new(n.tick, n.length, n.key, n.velocity))
-                    .collect::<Vec<_>>()
-                    .into(),
-            ),
+            content: ClipContent::Notes(notes.into()),
         };
         let applied = self.apply_as_one_step(vec![
             Command::Song(SongCommand::AddNoteLane {
@@ -245,6 +272,42 @@ impl<S: EngineSink> AppCore<S> {
         if applied {
             self.arrangement.set_selected_lane(device, new_lane);
         }
+        applied
+    }
+}
+
+/// The span Send to Clip of a periodic player (the Chord Wheel) writes: the player's first
+/// `cycle` ticks are rendered (the stack as it plays from tick 0) and repeated from `from` up to
+/// `to`, so the clip holds what the progression written to the chord lane over the same span
+/// holds, whatever the phase of `from` against the cycle.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SendWindow {
+    /// The ticks of one pass of the player (`> 0`).
+    pub cycle: i64,
+    /// The first tick of the clip.
+    pub from: i64,
+    /// The first tick after the clip (`> from`).
+    pub to: i64,
+}
+
+impl SendWindow {
+    /// The notes of one rendered cycle laid end to end over the span, as clip notes (ticks from
+    /// the start of the clip); a note is cut where the span ends.
+    fn tile(&self, notes: &[atomik_render::players::PlayerNote]) -> Vec<Note> {
+        let span = (self.to - self.from).max(1);
+        let mut out = Vec::new();
+        let mut shift = 0;
+        while shift < span {
+            for n in notes.iter().filter(|n| n.tick < self.cycle) {
+                let tick = n.tick + shift;
+                if tick < span {
+                    let length = n.length.min(self.cycle - n.tick).min(span - tick).max(1);
+                    out.push(Note::new(tick, length, n.key, n.velocity));
+                }
+            }
+            shift += self.cycle;
+        }
+        out
     }
 }
 

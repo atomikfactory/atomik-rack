@@ -7859,6 +7859,11 @@ impl<B: AudioBackend> Shell<B> {
                     .primary()
                     .is_some_and(|d| core.is_player_device(&d)),
             previewing: core.previewing_player().is_some(),
+            wheel: pane == Pane::Rack
+                && core
+                    .view()
+                    .primary()
+                    .is_some_and(|d| core.is_chord_wheel(&d)),
             plugin: pane == Pane::Rack
                 && core
                     .view()
@@ -8933,6 +8938,29 @@ impl<B: AudioBackend> Shell<B> {
                     AppCommand::AddPatternLane => self.core.create_pattern_lane(),
                     AppCommand::PatternLaneToNotes => self.core.pattern_lane_to_notes(),
                     _ => self.core.bypass_all_players(),
+                }
+                self.close_menubars();
+                Vec::new()
+            }
+            // The Chord Wheel commands act on the selected Chord Wheel and are one undo step each.
+            AppCommand::WheelGenerate | AppCommand::WheelToChordLane | AppCommand::WheelToClip => {
+                match command {
+                    AppCommand::WheelGenerate => {
+                        self.core.wheel_generate_selected();
+                    }
+                    AppCommand::WheelToChordLane => {
+                        if self.core.wheel_to_chord_lane_selected()
+                            && !self.core.arrangement().chord_lane_visible()
+                        {
+                            // The progression is shown where it was written.
+                            self.core.arrangement_mut().set_chord_lane(true);
+                            self.ui.show_chord_lane = true;
+                            self.ui_changed();
+                        }
+                    }
+                    _ => {
+                        self.core.wheel_to_clip_selected();
+                    }
                 }
                 self.close_menubars();
                 Vec::new()

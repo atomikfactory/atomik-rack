@@ -1812,6 +1812,30 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.toggle_match", "Match Loudness", G::Rack, C::Rack),
     cmd("rack.uncombine", "Uncombine", G::Rack, C::Rack).menu(),
     cmd(
+        "rack.wheel_generate",
+        "Generate Progression",
+        G::Rack,
+        C::Rack,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "rack.wheel_to_chord_lane",
+        "Send Progression to Chord Lane",
+        G::Rack,
+        C::Rack,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "rack.wheel_to_clip",
+        "Send Progression to Clip",
+        G::Rack,
+        C::Rack,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.add_note_lane",
         "Add Note Lane",
         G::Sequencer,
