@@ -34,11 +34,13 @@
 
 use super::*;
 use atomik_core::PPQ;
+use atomik_core::progression::{BEATS, MAX_SLOTS};
 use atomik_device_sdk::{DeviceDescriptor, DeviceKind, Direction, SocketKind};
 use atomik_engine::{PreviewFeed, preview_channel};
 use atomik_model::console::BUS_TYPE;
 use atomik_model::{
-    Clip, ConsoleCommand, DeviceSnapshot, InsertEffect, ItemKind, Note, load_device_item,
+    Cable, Clip, ConsoleCommand, DeviceSnapshot, InsertEffect, ItemKind, Note, SocketRef,
+    load_device_item,
 };
 use atomik_render::Rendered;
 use atomik_render::project::{ProjectOptions, render_doc_in};
@@ -237,21 +239,117 @@ pub(super) fn preview_doc(
     let mut base = new_project_doc();
     base.assets.clone_from(&snapshot.assets);
     let mut doc = Document::new(base);
+    let mut beats = SONG_BEATS;
     if snapshot
         .devices
         .iter()
         .any(|d| holds_instrument(d, registry))
     {
         instrument_scene(&mut doc, snapshot, registry)?;
+    } else if is_player_item(snapshot, registry) {
+        player_scene(&mut doc, snapshot, registry)?;
+        beats = player_beats(snapshot);
     } else {
         effect_scene(&mut doc, snapshot, registry)?;
     }
     applied(
         &mut doc,
         registry,
-        Command::Song(SongCommand::SetSongEnd(SONG_BEATS * PPQ)),
+        Command::Song(SongCommand::SetSongEnd(beats * PPQ)),
     )?;
     Ok(doc.doc().clone())
+}
+
+/// The longest song a player preview plays, in beats: sixteen seconds at 120 BPM.
+const PLAYER_MAX_BEATS: i64 = 32;
+
+/// Whether every device of the item is a note player.
+fn is_player_item(snapshot: &DeviceSnapshot, registry: &Registry) -> bool {
+    snapshot.devices.iter().all(|d| {
+        registry
+            .descriptor(&d.type_id)
+            .is_some_and(atomik_model::is_note_player)
+    })
+}
+
+/// The song length of a player preview in beats: one pass of a Chord Wheel's progression, at
+/// most [`PLAYER_MAX_BEATS`] and at least [`SONG_BEATS`].
+fn player_beats(snapshot: &DeviceSnapshot) -> i64 {
+    let longest = snapshot
+        .devices
+        .iter()
+        .filter(|d| d.type_id == chord_wheel_ops::CHORD_WHEEL)
+        .map(|d| {
+            let value = |key: &str, default: f32| d.params.get(key).copied().unwrap_or(default);
+            let slots = (value("slots", 4.0).round() as usize).clamp(1, MAX_SLOTS);
+            (1..=slots)
+                .map(|n| {
+                    let index = value(&format!("slot.{n}.beats"), 3.0).round() as usize;
+                    i64::from(BEATS[index.min(BEATS.len() - 1)])
+                })
+                .sum::<i64>()
+        })
+        .max()
+        .unwrap_or(0);
+    longest.clamp(SONG_BEATS, PLAYER_MAX_BEATS)
+}
+
+/// The note players of an item in front of a built-in synth: the players are cabled in the item's
+/// order into the synth and a track plays the instrument phrase into the first of them (a player
+/// that makes its own notes from the transport, like the Chord Wheel, plays them by itself).
+fn player_scene(
+    doc: &mut Document,
+    snapshot: &DeviceSnapshot,
+    registry: &Registry,
+) -> Result<(), String> {
+    let source = DeviceKey(SOURCE_KEY.to_string());
+    applied(
+        doc,
+        registry,
+        Command::AddDevice {
+            index: usize::MAX,
+            type_id: SOURCE_TYPE.to_string(),
+            key: Some(source.clone()),
+        },
+    )?;
+    let mut chain = snapshot.clone();
+    chain.cables.clear();
+    let before = keys_of(doc);
+    applied(
+        doc,
+        registry,
+        Command::Workflow(WorkflowCommand::PasteDevices {
+            snapshot: chain,
+            container: None,
+            at: usize::MAX,
+            route: false,
+        }),
+    )?;
+    let players: Vec<DeviceKey> = added_since(doc, &before)
+        .into_iter()
+        .filter(|k| *k != source)
+        .collect();
+    let Some(first) = players.first().cloned() else {
+        return Err("it holds no note player".into());
+    };
+    let targets = players.iter().skip(1).chain(std::iter::once(&source));
+    for (from, to) in players.iter().zip(targets) {
+        applied(
+            doc,
+            registry,
+            Command::Connect(Cable {
+                from: SocketRef {
+                    device: from.clone(),
+                    socket: "notes_out".to_owned(),
+                },
+                to: SocketRef {
+                    device: to.clone(),
+                    socket: "notes_in".to_owned(),
+                },
+            }),
+        )?;
+    }
+    play_track(doc, registry, &first, INSTRUMENT_PHRASE)
 }
 
 /// The pasted items of an instrument patch, wired to the master, with a track that plays the
