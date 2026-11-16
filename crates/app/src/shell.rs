@@ -640,6 +640,8 @@ pub struct Shell<B: AudioBackend> {
     patch_menu: Option<DeviceKey>,
     /// The MIDI Out device whose port pop-up is open.
     midi_out_menu: Option<DeviceKey>,
+    /// The Chord Wheel whose wedge menu is open: its rows run `rack.wheel_pick` for it.
+    wheel_menu: Option<DeviceKey>,
     /// The track whose quick sidechain menu item is running (set while that command runs).
     duck_menu: Option<DeviceKey>,
     /// The plugin banner above the rack: the project uses plugins, or the last run
@@ -945,6 +947,7 @@ impl<B: AudioBackend> Shell<B> {
             patch_device: None,
             patch_menu: None,
             midi_out_menu: None,
+            wheel_menu: None,
             duck_menu: None,
             banner,
             plugin_settings: None,
@@ -7209,6 +7212,18 @@ impl<B: AudioBackend> Shell<B> {
                 None => self.core.report("Select a MIDI Out device first"),
             },
             ("rack.midi_out_pick", Some(port)) => self.pick_midi_out_port(port),
+            ("rack.wheel_pick", Some(arg)) => {
+                let device = self
+                    .wheel_menu
+                    .take()
+                    .or_else(|| self.core.chord_wheel_selected());
+                match device {
+                    Some(device) => {
+                        self.core.wheel_pick(&device, arg);
+                    }
+                    None => self.core.report("Select a Chord Wheel first"),
+                }
+            }
             ("rack.headphone_import", None) => match self.core.headphone_target() {
                 Some(device) => self
                     .pending
@@ -8179,6 +8194,18 @@ impl<B: AudioBackend> Shell<B> {
                 UiAction::ControlMenu { device, param, at } => {
                     self.control_target = Some((device.clone(), param.clone()));
                     (ContextTarget::Control, *at)
+                }
+                UiAction::WheelMenu {
+                    device,
+                    entries,
+                    at,
+                } => {
+                    let at = self.rack_window_point(*at);
+                    self.wheel_menu = Some(device.clone());
+                    let (window, size) = self.menu_window(pane);
+                    let menu = ContextMenu::from_entries(entries.clone(), at, size);
+                    self.show_context_menu(pane, window, menu);
+                    continue;
                 }
                 UiAction::JackMenu { socket, at } => {
                     let at = self.rack_window_point(*at);

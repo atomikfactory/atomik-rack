@@ -304,6 +304,29 @@ impl<S: EngineSink> AppCore<S> {
             .is_ok()
     }
 
+    /// A chord chosen on the panel (a wedge, or a row of its menu): sets slot `slot` to `chord`
+    /// like [`Self::wheel_set_chord`] and plays it like [`Self::wheel_audition`].
+    pub fn wheel_choose(&mut self, wheel: &DeviceKey, slot: usize, chord: Chord) -> bool {
+        let set = self.wheel_set_chord(wheel, slot, chord);
+        if set {
+            self.wheel_audition(wheel, chord);
+        }
+        set
+    }
+
+    /// A row of the wheel's right-click menu (`arg` as [`atomik_ui::chord_wheel_panel::pick_arg`]
+    /// writes it): sets the slot it names to its chord and plays it. A message for an argument
+    /// that is not one.
+    pub fn wheel_pick(&mut self, wheel: &DeviceKey, arg: &str) -> bool {
+        match atomik_ui::chord_wheel_panel::parse_pick(arg) {
+            Some((slot, chord)) => self.wheel_choose(wheel, slot, chord),
+            None => {
+                self.reject(format!("{arg} is not a Chord Wheel chord"));
+                false
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ send
 
     /// The span the progression of `wheel` is sent to, `(from, to, repeat)`: from the left
