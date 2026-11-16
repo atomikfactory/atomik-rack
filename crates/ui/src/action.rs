@@ -288,6 +288,15 @@ pub enum UiAction {
         /// The chosen row.
         index: usize,
     },
+    /// An action of the target list of a tonal balance device (see [`crate::tonal_panel`]): the
+    /// app learns from files, saves the learned target, renames or deletes the saved target in
+    /// force. Picking a target is the device's `target` param, an ordinary command.
+    TonalTarget {
+        /// The tonal balance device.
+        device: DeviceKey,
+        /// What to do.
+        op: crate::tonal_panel::TonalOp,
+    },
     /// Open the sample editor on this sampler (double-click on a sampler panel, or its Edit
     /// button): call [`crate::SampleEditorView::open`] and show it in place of the
     /// arrangement, like the piano roll.

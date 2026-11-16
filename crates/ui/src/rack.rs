@@ -64,6 +64,7 @@ mod macro_drag;
 mod navigator;
 mod pad_lights;
 mod sat_input;
+mod tonal_input;
 pub use jacks::{JackChoice, JackGroup, JackMenu, JackOp, JackPeer};
 pub use navigator::NAVIGATOR_WIDTH;
 mod master_input;
@@ -194,6 +195,8 @@ enum Hit {
     /// The strip of correlation, peaks and clips under a Spectrum plot: a click resets the peaks
     /// and the clip count.
     SpecStats(usize),
+    /// The TARGET button of a tonal balance panel: the list of its targets.
+    Tonal(usize),
     /// The curve plot of a Sidechain Tool panel (points and segments are picked by position).
     DuckPlot(usize),
     /// The LEARN button of a Sidechain Tool panel.
@@ -279,6 +282,7 @@ impl Hit {
             | Hit::Resonance(i, _)
             | Hit::SpecRef(i)
             | Hit::SpecStats(i)
+            | Hit::Tonal(i)
             | Hit::DuckPlot(i)
             | Hit::DuckLearn(i)
             | Hit::TableEdit(i)
@@ -726,6 +730,8 @@ pub struct RackView {
     sc_menu: Option<ScMenu>,
     /// The open list of the second curve of a Spectrum panel.
     ref_menu: Option<spectrum_ref::RefMenu>,
+    /// The open target list of a tonal balance panel.
+    tonal_menu: Option<tonal_input::TonalMenu>,
     /// The open pick list of a long choice (the master's control-room source).
     choice_menu: Option<master_input::ChoiceMenu>,
     /// The open menu of an EQ graph handle.
@@ -828,6 +834,8 @@ enum RenameKind {
     Pattern,
     /// A macro name of a container panel.
     Macro,
+    /// The name of a target of a tonal balance panel, typed in place of its TARGET button.
+    Target,
     /// The name of the device itself, on its plate.
     Device,
 }
@@ -1065,6 +1073,7 @@ impl RackView {
             sens: BTreeMap::new(),
             sc_menu: None,
             ref_menu: None,
+            tonal_menu: None,
             choice_menu: None,
             eq_menu: None,
             io: crate::io_panel::IoView::default(),
@@ -2144,6 +2153,10 @@ impl RackView {
                                 if !fx.aux.is_zero_area() {
                                     tree.add(dn, fx.aux + off, Hit::SpecStats(i), false);
                                 }
+                            }
+                            if fx.kind == FxKind::TonalBalance {
+                                let b = crate::tonal_panel::geometry(fx.visual, 2).target;
+                                tree.add(dn, b + off, Hit::Tonal(i), false);
                             }
                             if fx.kind == FxKind::Duck {
                                 let area = crate::duck_panel::inner(fx.plot).inflate(8.0, 4.0);
@@ -3704,6 +3717,9 @@ impl RackView {
         if self.sc_menu.is_some() {
             self.sc_hover(pos);
         }
+        if self.tonal_menu.is_some() {
+            self.tonal_hover(pos);
+        }
         if self.ref_menu.is_some() {
             self.ref_hover(pos);
         }
@@ -3861,6 +3877,7 @@ impl RackView {
         }
         if self.sc_press(pos, doc, registry, out)
             || self.ref_press(pos, out)
+            || self.tonal_press(pos, out)
             || self.choice_press(pos, out)
             || self.eq_menu_press(pos, out)
         {
@@ -4124,6 +4141,7 @@ impl RackView {
                     param: crate::analyser_paint::STATS_RESET_KEY.to_owned(),
                 });
             }
+            (Hit::Tonal(i), PointerButton::Primary) => self.tonal_open(i, out),
             (Hit::DuckPlot(i), PointerButton::Primary) => self.duck_down(i, rp, clicks, out),
             (Hit::DuckLearn(i), PointerButton::Primary) => self.duck_learn_down(i, out),
             (Hit::TableEdit(i), PointerButton::Primary) => {
@@ -4170,6 +4188,7 @@ impl RackView {
                 | Hit::Resonance(i, _)
                 | Hit::SpecRef(i)
                 | Hit::SpecStats(i)
+                | Hit::Tonal(i)
                 | Hit::DuckPlot(i)
                 | Hit::DuckLearn(i)
                 | Hit::TableEdit(i)
@@ -4533,6 +4552,7 @@ impl RackView {
     ) {
         self.sc_menu = None;
         self.ref_menu = None;
+        self.tonal_menu = None;
         self.choice_menu = None;
         self.eq_menu = None;
         self.macro_menu = None;
@@ -4900,6 +4920,7 @@ impl RackView {
         match key {
             Key::Escape if self.sc_menu.take().is_some() => {}
             Key::Escape if self.ref_close() => {}
+            Key::Escape if self.tonal_close() => {}
             Key::Escape if self.choice_menu.take().is_some() => {}
             Key::Escape if self.eq_menu.take().is_some() => {}
             Key::Escape if self.macro_menu.take().is_some() => {}
@@ -5117,6 +5138,11 @@ impl RackView {
         let mut list = DisplayList::cached(d.cache_id * 2 + side as u64, d.revision);
         let info = PanelInfo {
             name: d.plate_name(),
+            tonal_edit: self
+                .rename
+                .as_ref()
+                .filter(|r| r.dev == i && r.kind == RenameKind::Target)
+                .map(|r| &r.field),
             editing_name: self
                 .rename
                 .as_ref()
@@ -5378,6 +5404,7 @@ impl RackView {
         }
         self.paint_sc_menu(c);
         self.paint_ref_menu(c);
+        self.paint_tonal_menu(c);
         self.paint_choice_menu(c);
         self.paint_eq_menu(c);
         self.paint_macro_menu(c);

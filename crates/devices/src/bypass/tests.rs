@@ -24,7 +24,7 @@ fn effect_ids() -> Vec<&'static str> {
         .type_ids()
         .filter(|t| r.descriptor(t).unwrap().kind == DeviceKind::Effect)
         .collect();
-    assert_eq!(ids.len(), 30, "{ids:?}");
+    assert_eq!(ids.len(), 31, "{ids:?}");
     ids
 }
 
@@ -38,7 +38,7 @@ fn raw(type_id: &str) -> DeviceHarness {
         auto_filter, character, clipper, compressor, convolver, de_esser, distortion, duck,
         dynamic_eq, dynamics, echo, env_filter, eq, gain_tool, gate, guitar_amp, mastering,
         modulation, phase_meter, pitch_shifter, reverb, rotary_speaker, saturation, space_reverb,
-        spectrum, stereo_tool, transient_shaper, tuner, vocoder,
+        spectrum, stereo_tool, tonal_balance, transient_shaper, tuner, vocoder,
     };
     let d: Box<dyn Device> = match type_id {
         "atomik.reverb" => Box::new(reverb::Reverb::new()),
@@ -51,6 +51,7 @@ fn raw(type_id: &str) -> DeviceHarness {
         "atomik.character" => Box::new(character::Character::new()),
         "atomik.stereo-delay" => Box::new(stereo_delay::StereoDelay::new()),
         "atomik.spectrum" => Box::new(spectrum::Spectrum::new()),
+        "atomik.tonal-balance" => Box::new(tonal_balance::TonalBalance::new()),
         "atomik.phase-meter" => Box::new(phase_meter::PhaseMeter::new()),
         "atomik.gain-tool" => Box::new(gain_tool::GainTool::new()),
         "atomik.stereo-tool" => Box::new(stereo_tool::StereoTool::new()),

@@ -1,12 +1,12 @@
 # Device reference
 
-Atomik Rack ships sixty-eight original devices: the poly synth (with its mono bass and dual layer
+Atomik Rack ships sixty-nine original devices: the poly synth (with its mono bass and dual layer
 variants), the semi-modular synth, the organ, the wavetable synth, the FM synth, the grain sampler, line mixer
 and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
 a hardware synth or a virtual port), the effects (reverb, space reverb, convolution reverb, vocoder, compressor, EQ,
 distortion, clipper, saturation, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
-analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
+analysers (spectrum, phase meter and tonal balance), the Character effect, the audio track, the sampler, the drum
 machine and the loop slicer, the utility devices (gain tool, stereo tool, gate, gate + compressor,
 sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, dynamic EQ, tuner, pitch shifter,
 rotary speaker, the CV utilities (CV math, CV quantizer, sample and hold, slew limiter, gate processor and
@@ -2493,6 +2493,105 @@ defaults (no overlay, a clip level of 0 dBFS).
   `session_meters` tool reports them by name (`correlation`, `correlation_long`, `sample_peak_l_db`,
   `sample_peak_r_db`, `true_peak_l_db`, `true_peak_r_db`, `headroom_db`, `clips`).
 - **Panel height.** The strip and the PEAKS section make the panel taller than before.
+
+---
+
+## Tonal Balance: `atomik.tonal-balance` (Effect)
+
+A tonal balance meter that passes the audio through untouched. Put it on the master bus: it compares the
+spectral balance of the mix with a target and shows, for four regions, whether each is too loud or too
+quiet. Source: [crates/devices/src/tonal_balance.rs](../crates/devices/src/tonal_balance.rs); the maths is
+[crates/dsp/src/tonal.rs](../crates/dsp/src/tonal.rs), run by the app on the UI side
+([crates/app/src/app_core_tonal.rs](../crates/app/src/app_core_tonal.rs)); the saved targets are
+[crates/app/src/tonal_targets.rs](../crates/app/src/tonal_targets.rs). It appears in the device browser with
+the effects.
+
+### Sockets
+
+`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out). An unconnected input reads silence.
+
+### Params
+
+All of them are display settings: the device stores them (they are saved with the project and can be
+automated or preset like any param) and the UI reads them from the document; none of them reaches the audio.
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `response` | 0 to 2: Fast (1.5 s), Medium (4 s), Slow (10 s) averaging | 1 | choice | Linear | yes |
+| `view` | 0 to 2: Bands (the four meters), Curve (the detailed curve), Both | 2 | choice | Linear | yes |
+| `channel` | 0 to 2: Sum (mean of the left and right power), Mid, Side | 0 | choice | Linear | yes |
+| `learn` | toggle: on while the live signal is learned | 0 | toggle | Linear | yes |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+| `hidden.target` | 0 to 1000: 0 to 3 a built-in target, 4 the learned one not saved yet, 10 + n a saved target | 0 | none | Linear | yes |
+
+### Behaviour (as built)
+
+- **Audio path.** As the spectrum analyser's: each batch the device copies `in_l`/`in_r` to `out_l`/`out_r`
+  **bit for bit** with **no latency** and pushes the same 64 frames into its `ScopeTap` (32 768 frames,
+  room for the 16 384-point analysis). Nothing in the output depends on a param, so a bounce with the device
+  is bit-identical to a bounce without it. Meter values (2): the recent peaks of the two inputs.
+- **Analysis (UI side).** While the panel is on screen and the device is not bypassed, the app reads the
+  newest 16 384 frames of the tap every UI frame (the tap costs the audio thread nothing more) and runs
+  the spectrum analyser's FFT (`atomik_dsp::spectrum`: Hann window, the `channel`, a one-pole average over
+  the `response` time measured in frames of audio) to the 31 one-third-octave band levels. The reading is
+  not made for a device whose panel is folded, scrolled out or on the back face, or that is bypassed.
+- **Regions.** The four regions group the one-third-octave bands by their centre frequency:
+
+  | Region | Crossover | Bands |
+  |---|---|---|
+  | LOW | below 150 Hz | 20 Hz to 125 Hz (9 bands) |
+  | LOW-MID | 150 Hz to 1 kHz | 160 Hz to 800 Hz (8 bands) |
+  | HIGH-MID | 1 kHz to 5 kHz | 1 kHz to 4 kHz (7 bands) |
+  | HIGH | 5 kHz and above | 5 kHz to 20 kHz (7 bands) |
+
+  A region's level is the energy of its bands, in dB.
+- **Shape, not level.** The band powers are divided by the K-weighted energy of the core bands, 160 Hz to
+  4 kHz (the BS.1770 K-weighting at each band centre), where the loudness of a mix is decided. A louder or
+  quieter version of the same mix reads the same. Anchoring on the core keeps an excess of bass or treble on
+  its own meter instead of pulling the others down. A region's deviation is the mix's level minus the
+  target's, in dB: positive is too loud, negative too quiet.
+- **Meters and range.** Each region has a vertical meter around the target's level (0 dB at its middle),
+  over plus and minus 9 dB. The shaded range is the target plus or minus its tolerance; the marker is the
+  mix. The marker is in the OK colour while it is inside the range and in the warning colour outside, and the
+  number beside it is the deviation in dB. The curve view draws the target's curve with its range and the
+  mix's band curve over it, 20 Hz to 20 kHz.
+- **Built-in targets.** Our own shapes on the one-third-octave band levels: with `x = log2(f / 1 kHz)`,
+  `L(f) = tilt * x + low / (1 + (f / f_low)^2) + high * f^2 / (f^2 + f_high^2)` dB, then normalised as above.
+  A flat band level is pink noise (equal energy per octave); the usual mix falls about 4.5 dB per octave.
+
+  | Target | tilt (dB/oct) | low shelf | high shelf |
+  |---|---|---|---|
+  | Balanced | -4.5 | +2 dB, corner 100 Hz | none |
+  | Bright | -4.0 | none | +3 dB, corner 5 kHz |
+  | Warm | -5.0 | +1.5 dB, corner 150 Hz | -2 dB, corner 6 kHz |
+  | Bass-heavy | -4.5 | +6 dB, corner 200 Hz | none |
+
+  The range of a built-in is plus and minus 3 dB (4.5 dB on the three outermost bands at each end of the
+  curve). No third-party curve data is used.
+- **Learned targets.** The balance of the reference is observed in stretches of about 3 s of a file (2 s of
+  the live signal): each stretch is the power average of half-overlapping 16 384-point windows, normalised
+  as above. The target's curve is the power mean of the stretches, normalised again; its tolerance, per band
+  and per region, is half the standard deviation of the stretches' dB values, kept between 2 and 6 dB (3 dB
+  from a single stretch). Several files are analysed one after the other into the same set of stretches, so
+  the spread between songs widens the range. Silent stretches are skipped.
+  - **From files.** The Learn from files… entry of the target menu opens a file dialog (one or several
+    audio files); the files are decoded and analysed on a worker thread, off the audio thread and the UI,
+    with a progress readout on the panel.
+  - **From the live signal.** The LEARN switch accumulates the balance of what plays while the panel is
+    shown; switching it off ends the learn. The result is the learned target, shown at once, not yet saved.
+  - **Saving.** Save learned target… asks for a name and keeps the learned target with the user's settings, in
+    `tonal-targets.json` beside the library file (the same place as `spectrum-reference.json`), not in the
+    project. The menu lists the built-ins, the learned one and the saved ones; a saved one can be renamed
+    or deleted. A damaged file is ignored and a file from a newer version is never overwritten.
+  - **In the project.** The device stores the `hidden.target` value. A project opened where the saved target does
+    not exist reads Balanced, and the panel says the target is missing.
+- **Panel.** A 3 U panel on the usual effect layout: across the top a TARGET button (the name of the target
+  in force and a list under it) with a status line beside it (ANALYSING FILES, LEARNING, LEARNED, NOT SAVED,
+  TARGET MISSING, NO SIGNAL), the four meters on the left and the curve on the right (the `view` choice
+  shows either or both); under it RESPONSE and CHANNEL, VIEW and the LEARN switch. The list has the
+  built-in targets, the learned one while there is one, the saved ones, and the entries Learn from files…,
+  Save learned target…, Rename target… and Delete target. Save and Rename type the name in place of the
+  button (Enter keeps it, Escape drops it). The back has audio in and audio out.
 
 ---
 

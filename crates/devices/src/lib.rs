@@ -87,6 +87,7 @@ pub mod spider;
 pub mod step_sequencer;
 pub mod stereo_delay;
 pub mod stereo_tool;
+pub mod tonal_balance;
 mod tool_support;
 pub mod transient_shaper;
 pub mod tuner;
@@ -215,6 +216,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(saturation::factory())?;
     registry.register(slew_limiter::factory())?;
     registry.register(spectrum::factory())?;
+    registry.register(tonal_balance::factory())?;
     registry.register(spider::audio_factory())?;
     registry.register(spider::cv_factory())?;
     registry.register(transient_shaper::factory())?;
@@ -231,7 +233,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 68] = [
+    const TYPE_IDS: [&str; 69] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.auto-filter",
@@ -296,6 +298,7 @@ mod tests {
         "atomik.step-sequencer",
         "atomik.stereo-delay",
         "atomik.stereo-tool",
+        "atomik.tonal-balance",
         "atomik.transient-shaper",
         "atomik.tuner",
         "atomik.vocoder",
@@ -303,7 +306,7 @@ mod tests {
     ];
 
     #[test]
-    // Name kept; it now covers all sixty-eight devices.
+    // Name kept; it now covers all sixty-nine devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
@@ -360,6 +363,7 @@ mod tests {
             "atomik.spider-audio",
             "atomik.spider-cv",
             "atomik.stereo-tool",
+            "atomik.tonal-balance",
             "atomik.transient-shaper",
             "atomik.tuner",
         ] {

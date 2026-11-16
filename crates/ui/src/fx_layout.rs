@@ -44,6 +44,7 @@ const LEFT_AMP: f64 = 168.0;
 const TOP_EQ: f64 = 186.0;
 const TOP_MASTERING: f64 = 112.0;
 const TOP_SPECTRUM: f64 = 218.0;
+const TOP_TONAL: f64 = 150.0;
 const TOP_PHASE: f64 = 148.0;
 const TOP_TUNER: f64 = 92.0;
 const TOP_DUCK: f64 = 150.0;
@@ -164,6 +165,11 @@ fn sections(kind: FxKind) -> Def {
             ("REFERENCE", &["reference", "reference.capture"]),
             ("PEAKS", &["clip_level", "stats.reset"]),
         ],
+        FxKind::TonalBalance => &[
+            ("RESPONSE", &["response", "channel"]),
+            ("VIEW", &["view"]),
+            ("LEARN", &["learn"]),
+        ],
         FxKind::PhaseMeter => &[
             ("STEREO", &["corr_time"]),
             ("LEVEL", &["hold", "meter.reset"]),
@@ -270,6 +276,7 @@ fn title(kind: FxKind) -> &'static str {
         FxKind::Mastering => "LOUDNESS AND BANDS",
         FxKind::Character => "SCREEN",
         FxKind::Spectrum => "SPECTRUM",
+        FxKind::TonalBalance => "TONAL BALANCE",
         FxKind::PhaseMeter => "STEREO IMAGE AND LEVELS",
         FxKind::AudioTrack | FxKind::Tuner => "TUNER",
         FxKind::Clipper => "CURVE",
@@ -294,6 +301,7 @@ fn placement(kind: FxKind) -> (f64, f64) {
             (0.0, 0.0)
         }
         FxKind::Spectrum => (0.0, TOP_SPECTRUM),
+        FxKind::TonalBalance => (0.0, TOP_TONAL),
         FxKind::PhaseMeter => (0.0, TOP_PHASE),
         FxKind::AudioTrack | FxKind::Tuner => (0.0, TOP_TUNER),
         FxKind::Clipper => (LEFT_CLIPPER, 0.0),
@@ -515,6 +523,8 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
             empty,
             None,
         ),
+        // The panel paints itself inside the visual: [`crate::tonal_panel::geometry`].
+        FxKind::TonalBalance => (v, v, empty, None),
         FxKind::PhaseMeter => {
             // Goniometer square, stereo bars, level bars with their scale, loudness readouts.
             let s = (v.height() - 2.0).clamp(80.0, 140.0);
@@ -607,6 +617,7 @@ pub fn fx_label(p: &atomik_core::ParamDescriptor) -> String {
         "early" => "Early/late".to_string(),
         "meter.reset" => "Reset".to_string(),
         "reference" => "Curve".to_string(),
+        "learn" => "Learn".to_string(),
         "reference.capture" => "Capture".to_string(),
         "loudness_view" => "View".to_string(),
         "target" => "Target".to_string(),

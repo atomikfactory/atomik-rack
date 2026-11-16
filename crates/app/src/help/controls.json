@@ -599,6 +599,11 @@
     "text": "The stereo correlation (the tick is the 3 s value), the sample peak of each side, the true peak, the headroom under the largest peak and the number of clipped samples since the last reset. Click to reset the peaks and the clips.",
     "more": "Devices"
   },
+  "rack.tonal_target": {
+    "title": "Target",
+    "text": "Opens the list of targets the mix is compared with: four built-in ones, the target you just learned, and the ones you saved. It also learns a target from audio files, and saves, renames or deletes one. The choice is saved with the device; the saved targets are kept with your settings.",
+    "more": "Devices"
+  },
   "rack.duck_learn": {
     "title": "Learn the duck curve",
     "text": "Listens to the range between the locators at the key and draws the duck curve from the shape of its hits.",

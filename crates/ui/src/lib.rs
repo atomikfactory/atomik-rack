@@ -474,6 +474,7 @@ pub mod theme;
 pub mod theme_doc;
 pub mod theme_editor;
 pub mod timeline;
+pub mod tonal_panel;
 pub mod tooltip;
 pub mod track_panel;
 pub mod transport;

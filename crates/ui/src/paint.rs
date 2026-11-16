@@ -394,6 +394,8 @@ pub struct PanelInfo<'a> {
     pub name: &'a str,
     /// The name being typed in place on the plate (a field with a caret replaces the name).
     pub editing_name: Option<&'a crate::text_field::TextField>,
+    /// A tonal balance panel: the name of a target being typed in place of its TARGET button.
+    pub tonal_edit: Option<&'a crate::text_field::TextField>,
     /// Small caption under the name (descriptor name, upper case).
     pub caption: &'a str,
     /// Device accent.

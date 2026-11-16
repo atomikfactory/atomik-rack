@@ -24,6 +24,22 @@ may break APIs and the patch and project formats.
   Clip level (0 dBFS by default) counts as a clip, and a click on the strip (or the new reset switch) clears the
   peaks and the clips. The audio still passes bit for bit. The values are meter values 2 to 8 and `session_meters`
   reports them. Older projects open unchanged.
+- **Tonal Balance.** A new analysis effect, Tonal Balance (`atomik.tonal-balance`), for the master bus: the audio
+  passes through bit for bit and the panel (3 U) compares the spectral shape of the mix with a target, in four
+  regions: LOW below 150 Hz, LOW-MID to 1 kHz, HIGH-MID to 5 kHz and HIGH above. Each region has a vertical meter
+  around the target's level with the accepted range shaded, a marker in the OK colour inside it and the warning
+  colour outside, and the deviation in dB (positive is too loud); a curve view draws the target's range and the
+  mix's one-third-octave curve from 20 Hz to 20 kHz, and the view switch shows either or both. The comparison is
+  of shape, not level: it is normalised on the K-weighted energy of 160 Hz to 4 kHz, so a louder mix reads the
+  same and an excess of bass stays on its own meter. The averaging is fast, medium or slow (1.5, 4 or 10 s) and the
+  channel is the sum, the mid or the side. Targets: four of our own (Balanced, Bright, Warm and Bass-heavy, each a
+  spectral tilt with a low and a high shelf, documented in the device reference), and targets you learn from
+  reference tracks: Learn from files... analyses one or several audio files on a worker thread into one average
+  long-term balance, or LEARN accumulates what plays; the range of a learned target is half the spread of what it
+  heard, between 2 and 6 dB. Save learned target... names it and keeps it in `tonal-targets.json` beside the
+  library file (with the user's settings, not in the project, like the spectrum's reference curve); a saved target
+  can be renamed or deleted. The project keeps which target is in force, and a project opened where a saved target
+  does not exist reads Balanced and says the target is missing.
 - **Saturation.** A new effect, Saturation (`atomik.saturation`): one knob (0 is off and bit-exact transparent)
   drives a smooth, slightly asymmetric tanh curve, from nothing up to about +24 dB into it, for warmth and mostly
   odd harmonics. A type switch picks where it works: keep low leaves the lows clean and saturates what is above

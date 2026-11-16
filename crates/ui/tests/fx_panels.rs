@@ -57,6 +57,9 @@ fn record(kind: FxKind, flip: Flip, meters: bool) -> String {
         if kind == FxKind::Eq {
             v.set_analyser(&key("fx"), &spectrum_data(false));
         }
+        if kind == FxKind::TonalBalance {
+            v.set_analyser(&key("fx"), &tonal_data());
+        }
     }
     v.set_flip(flip);
     let mut dl = DisplayList::new();
@@ -70,6 +73,9 @@ fn texts(kind: FxKind, meters: bool) -> Vec<String> {
         v.set_device_meter_values(&key("fx"), &raw_meters(kind));
         if kind == FxKind::Eq {
             v.set_analyser(&key("fx"), &spectrum_data(false));
+        }
+        if kind == FxKind::TonalBalance {
+            v.set_analyser(&key("fx"), &tonal_data());
         }
     }
     let mut dl = DisplayList::new();
@@ -103,6 +109,7 @@ fn heights_in_rack_units_are_pinned() {
     assert_eq!(units(FxKind::StereoTool), 3);
     assert_eq!(units(FxKind::GainTool), 3);
     assert_eq!(units(FxKind::Saturation), 1);
+    assert_eq!(units(FxKind::TonalBalance), 3);
 }
 
 fn overlaps(a: &Rect, b: &Rect) -> bool {

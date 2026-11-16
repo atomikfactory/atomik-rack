@@ -99,6 +99,7 @@ impl RackView {
                     | FxKind::AudioTrack
                     | FxKind::Tuner
                     | FxKind::Eq
+                    | FxKind::TonalBalance
             )
         ) || self.devices[i].analyser == *data
         {
@@ -181,6 +182,7 @@ impl RackView {
                     | FxKind::AudioTrack
                     | FxKind::Tuner
                     | FxKind::Eq
+                    | FxKind::TonalBalance
             )
         )
         .then_some(&d.analyser)

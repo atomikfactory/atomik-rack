@@ -106,6 +106,7 @@ fn id_of(hit: Hit) -> Option<&'static str> {
         Hit::DuckLearn(_) => "rack.duck_learn",
         Hit::SpecRef(_) => "rack.spectrum_ref",
         Hit::SpecStats(_) => "rack.spectrum_stats",
+        Hit::Tonal(_) => "rack.tonal_target",
         Hit::TableEdit(_) => "rack.table_edit",
         Hit::DuckPlot(_) => "rack.duck_plot",
         Hit::TunerButton(_) => "rack.tuner",
@@ -163,6 +164,9 @@ fn text(hit: Hit) -> Option<Cow<'static, str>> {
         ),
         Hit::SpecRef(_) => s("Draw another strip or the reference track as a second curve"),
         Hit::SpecStats(_) => s("Correlation, peaks and clips: click to reset the peaks and clips"),
+        Hit::Tonal(_) => s(
+            "Choose the target the mix is compared with, learn one from files, or save, rename or delete one",
+        ),
         Hit::TableEdit(_) => {
             s("Open the table editor: draw frames, set harmonics, morph, clean up a sample")
         }

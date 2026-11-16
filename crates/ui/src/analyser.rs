@@ -74,6 +74,8 @@ pub struct AnalyserData {
     /// The A4 the tuner reads against in Hz: the track's `tuner_ref` shifted by the master tune.
     /// 0 shows the track's own `tuner_ref`.
     pub tuner_ref_hz: f32,
+    /// The tonal balance meter: the regions, the curves and the targets the app fed.
+    pub tonal: crate::tonal_panel::TonalView,
 }
 
 /// What the two traces of an overlaid Spectrum are.
