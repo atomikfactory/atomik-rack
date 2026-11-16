@@ -8186,6 +8186,18 @@ impl<B: AudioBackend> Shell<B> {
                     let requests = self.execute_command(AppCommand::MaximiseConsole);
                     self.pending.extend(requests);
                 }
+                // The IMPORT button (or the empty graph) of a Headphone Correction panel.
+                UiAction::HeadphoneImport(device) => {
+                    if self.core.headphone_data_of(device).is_some() {
+                        self.pending.push(ShellRequest::PickImportHeadphone {
+                            device: device.clone(),
+                        });
+                    } else {
+                        self.core
+                            .report("Select a Headphone Correction device first");
+                    }
+                }
+                UiAction::HeadphoneRemove(device) => self.core.remove_headphone_data(device),
                 UiAction::ImportAudioDialog => {
                     self.core.set_take_import(None);
                     self.pending.push(ShellRequest::PickImportFiles);
@@ -11941,6 +11953,10 @@ mod song_tests;
 #[cfg(test)]
 #[path = "shell_audio_tests.rs"]
 mod audio_tests;
+
+#[cfg(test)]
+#[path = "shell_headphone_tests.rs"]
+mod headphone_tests;
 
 #[cfg(test)]
 #[path = "shell_relink_tests.rs"]

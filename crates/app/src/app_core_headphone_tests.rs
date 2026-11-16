@@ -159,3 +159,55 @@ fn the_target_is_the_selected_headphone_device_else_the_first_one() {
     c.view_mut().set_selected(Some(key("synth")));
     assert_eq!(c.headphone_target(), Some(key("hp")));
 }
+
+#[test]
+fn the_panel_gets_the_meters_and_the_imported_data_through_the_view() {
+    let mut c = core();
+    add(&mut c, TYPE, "hp");
+    let id = *c.ids.get(&key("hp")).unwrap();
+    assert_eq!(
+        atomik_ui::fx::FxKind::HeadphoneCorrection.meter_count(),
+        atomik_devices::headphone_correction::METERS
+    );
+    // Loaded, the preamp, the boost, busy: the dB ones keep their sign.
+    c.sink_mut()
+        .device_values
+        .insert(id, (vec![1.0, -4.24, 4.24, 1.0], 1));
+    c.frame();
+    let shown = c.view().device_meters(&key("hp")).to_vec();
+    let want = [1.0, -4.2, 4.2, 1.0];
+    assert!(
+        shown.len() == 4 && shown.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-4),
+        "{shown:?}"
+    );
+    // Data imported through the core shows in the panel: its name and format are painted, and
+    // the empty-state message is gone.
+    let painted = |c: &mut AppCore<RecordingSink>| {
+        let mut dl = atomik_ui::DisplayList::new();
+        c.paint(&mut dl);
+        dl.texts()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let before = painted(&mut c);
+    assert!(
+        before.iter().any(|t| t == "Import headphone data..."),
+        "{before:?}"
+    );
+    assert!(c.import_headphone_text(&key("hp"), RESPONSE, "My Cans.csv"));
+    let after = painted(&mut c);
+    assert!(after.iter().any(|t| t == "My Cans.csv"), "{after:?}");
+    assert!(
+        after.iter().any(|t| t == "Frequency response, 3 points"),
+        "{after:?}"
+    );
+    assert!(!after.iter().any(|t| t == "Import headphone data..."));
+    // Undo takes it off the panel again.
+    c.undo();
+    let undone = painted(&mut c);
+    assert!(
+        undone.iter().any(|t| t == "Import headphone data..."),
+        "{undone:?}"
+    );
+}
