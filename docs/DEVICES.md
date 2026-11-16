@@ -3993,8 +3993,11 @@ ones.
 - **The wheel.** Three rings of twelve wedges in fifths order with C at the top: the major chords outside,
   their relative minors in the middle and the diminished chord on each major's leading tone inside. The seven
   triads of the home key (`key.root`, `key.mode`) are tinted with their roman numeral, and the hub names the
-  key. A wedge stands for a triad: a chord with a seventh or an extension is marked on the wedge of its root
-  and family. The selected slot's wedge is outlined, the sounding slot's wedge (the first meter value) is lit
+  key. The wedges are spelled like a circle of fifths whatever the key is (outside C G D A E B F# Db Ab
+  Eb Bb F, in the middle Am Em Bm F#m C#m G#m D#m Bbm Fm Cm Gm Dm, inside B° F#° C#° G#° D#° A#° F° C° G°
+  D° A° E°), while the cards, the readout and the wedge menu spell a chord for the home key (flats in a
+  flat key). A wedge stands for a triad: a chord with a seventh or an extension is marked on the wedge of
+  its root and family. The selected slot's wedge is outlined, the sounding slot's wedge (the first meter value) is lit
   and a small numbered tag on a wedge shows which slots hold it.
   - A click sets the selected slot to the wedge's chord, plays it (stopped transport only, the audition
     above) and selects the next slot, wrapping past the last active one. One undo step.
@@ -4020,6 +4023,37 @@ ones.
 
 The selected slot and the SUGGEST switch are view state of the rack, kept per device and not saved with the
 project.
+
+### Factory patches
+
+Sixteen patches of the Chord Wheel are in the Factory root (category Chords, author Atomik), each a
+complete setup: key, slots, chords, lengths, mood, spice, rhythm style and voicing. They come from the
+factory generator ([crates/app/src/app_core_factory_build.rs](../crates/app/src/app_core_factory_build.rs));
+a patch lists only the params that differ from a new device.
+
+| Patch | Key | Chords | Style |
+|---|---|---|---|
+| Four Chord Pop | C | I V vi IV | pulse 1/8 |
+| Sad Ballad | C | vi IV I V | strum, open |
+| Two-Five-One | C | ii7 V7 Imaj7 (two bars) | offbeat stabs |
+| Neo Soul Loop | C | Imaj9 iii7 vi9 IVmaj7/V | 3-3-2, open |
+| Lo-fi Sevenths | E flat | Imaj7 vi7 IVmaj7 V7 | sustain, soft strum, humanized |
+| Epic Minor | C minor | i bVI bIII bVII | push, wide |
+| Andalusian Fall | A minor | i bVII bVI V | strum |
+| Twelve-Bar Blues | E | the twelve bars as seven chords | pulse 1/8 |
+| Dorian Vamp | D minor | i7 IV7 | offbeat stabs |
+| Dreamy Lydian | F | Imaj7 IIadd9 | sustain, open |
+| Cinematic Mediants | C | I bVI III Vsus4 | sustain, wide |
+| Anthem Rise | C | IV V vi I | push |
+| Canon Steps | D | I V vi iii IV I IV V (eight slots) | pulse 1/8 |
+| Gospel Plagal | A flat | I IVadd9 iv I/3 | sustain, open |
+| Minor Pulse | E minor | i iv VII III | pulse 1/8, pulse bass |
+| Broken Ballad | G | I V/3 vi IVadd9 | broken, open |
+
+Space on a patch of a player in the browser plays it without loading it: the player is cabled into a
+built-in synth in a scratch project and the transport plays one pass of the progression (at least two
+bars, at most 16 seconds at 120 BPM). A test loads every patch, checks every param against its range,
+the slots and the lengths (whole bars, no two patches with the same key and chords) and renders it.
 
 ### Tests
 
