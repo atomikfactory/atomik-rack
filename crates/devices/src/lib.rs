@@ -23,6 +23,7 @@ pub mod bypass;
 mod chain_clock;
 pub mod channel;
 pub mod character;
+pub mod chord_wheel;
 pub mod clipper;
 pub mod compressor;
 pub mod container;
@@ -118,8 +119,9 @@ pub fn panel_layout(type_id: &str) -> Option<&'static atomik_device_sdk::PanelLa
 
 /// Type ids of the note players (step sequencer, arpeggiator). They are `DeviceKind::Utility`; a
 /// browser that groups by kind can list these under a "Players" heading with this hook.
-pub const PLAYER_TYPE_IDS: [&str; 8] = [
+pub const PLAYER_TYPE_IDS: [&str; 9] = [
     "atomik.arpeggiator",
+    "atomik.chord-wheel",
     "atomik.cv-sequencer",
     "atomik.drum-generator",
     "atomik.key-chord",
@@ -168,6 +170,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register_with_samples(drum_machine::factory())?;
     registry.register_with_samples(loop_slicer::factory())?;
     registry.register(key_chord::factory())?;
+    registry.register(chord_wheel::factory())?;
     registry.register(line_mixer::factory())?;
     registry.register_with_curves(cv_sequencer::factory())?;
     registry.register_with_drums(drum_generator::factory())?;
@@ -237,13 +240,14 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 71] = [
+    const TYPE_IDS: [&str; 72] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.auto-filter",
         "atomik.bus",
         "atomik.channel",
         "atomik.character",
+        "atomik.chord-wheel",
         "atomik.clipper",
         "atomik.compressor",
         "atomik.container",
@@ -312,7 +316,7 @@ mod tests {
     ];
 
     #[test]
-    // Name kept; it now covers all sixty-nine devices.
+    // Name kept; it now covers all seventy-two devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
