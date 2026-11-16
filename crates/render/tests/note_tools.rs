@@ -493,3 +493,50 @@ fn drum_generator_params_and_mute_change_what_the_drum_machine_plays() {
     // The same project bounces to the same samples twice.
     assert!(bounce_in_bundle(&generator_into_drums(&[]), 512, 0) == plain);
 }
+
+// ---------------------------------------------------------------- chord wheel
+
+/// A chord wheel with four one-beat chords into the synth (the clip only gives the track a song).
+fn wheel_doc(set: &[(&str, f32)]) -> RackDoc {
+    let mut s: Vec<(&str, f32)> = vec![
+        ("slot.1.beats", 0.0),
+        ("slot.2.beats", 0.0),
+        ("slot.3.beats", 0.0),
+        ("slot.4.beats", 0.0),
+    ];
+    s.extend_from_slice(set);
+    through_device("atomik.chord-wheel", &s)
+}
+
+#[test]
+fn chord_wheel_bounce_is_bit_identical_across_blocks_and_workers() {
+    let doc = wheel_doc(&[
+        ("style", 6.0),
+        ("humanize", 0.6),
+        ("strum", 0.3),
+        ("bass", 2.0),
+        ("voice.spread", 1.0),
+    ]);
+    let reference = bounce(&doc, 512, 0);
+    assert!(
+        reference.iter().any(|b| f32::from_bits(*b).abs() > 1e-3),
+        "the wheel sounds"
+    );
+    for (block, workers) in [(64, 0), (333, 0), (512, 2), (1000, 3)] {
+        assert!(
+            bounce(&doc, block, workers) == reference,
+            "block {block}, workers {workers}"
+        );
+    }
+}
+
+#[test]
+fn chord_wheel_params_change_what_the_synth_plays() {
+    let plain = bounce(&wheel_doc(&[]), 512, 0);
+    assert!(plain.iter().any(|b| f32::from_bits(*b).abs() > 1e-3));
+    assert!(bounce(&wheel_doc(&[("style", 2.0)]), 512, 0) != plain);
+    assert!(bounce(&wheel_doc(&[("slot.1.root", 2.0)]), 512, 0) != plain);
+    // A bypassed wheel plays nothing of its own.
+    let bypassed = bounce(&wheel_doc(&[("bypass", 1.0)]), 512, 0);
+    assert!(bypassed != plain);
+}

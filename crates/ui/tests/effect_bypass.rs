@@ -19,7 +19,7 @@ use support::container::{apply, check, paint_rack};
 use support::plugin::plugin_rack;
 use support::*;
 
-const PLAYERS: [&str; 8] = [
+const PLAYERS: [&str; 9] = [
     "atomik.arpeggiator",
     "atomik.cv-sequencer",
     "atomik.drum-generator",
@@ -28,6 +28,7 @@ const PLAYERS: [&str; 8] = [
     "atomik.key-chord",
     "atomik.note-repeater",
     "atomik.note-delay",
+    "atomik.chord-wheel",
 ];
 
 /// The container: its inside is left out while it is bypassed.
