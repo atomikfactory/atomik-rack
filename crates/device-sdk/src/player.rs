@@ -5,6 +5,7 @@
 //! afterwards; an edit is a new value. All arrays are fixed-size so a device reads it without
 //! allocating or copying.
 
+use crate::headphone::HeadphoneData;
 use std::sync::Arc;
 
 /// Pattern slots held by every kind of player data (the capacity of the fixed arrays); what a
@@ -400,7 +401,7 @@ impl DrumData {
 // The value only ever lives in an `Arc` ([`PlayerDataRef`]), so the size of the smaller variants
 // costs nothing worth a second allocation.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PlayerData {
     /// Step sequencer patterns.
     StepSeq(StepSeqData),
@@ -408,6 +409,8 @@ pub enum PlayerData {
     CvSeq(CvSeqData),
     /// Drum generator patterns.
     Drums(DrumData),
+    /// A headphone response or correction (the Headphone Correction device).
+    Headphone(HeadphoneData),
 }
 
 impl PlayerData {
@@ -416,7 +419,7 @@ impl PlayerData {
         match self {
             Self::StepSeq(d) => Some(d),
             Self::CvSeq(d) => Some(&d.notes),
-            Self::Drums(_) => None,
+            Self::Drums(_) | Self::Headphone(_) => None,
         }
     }
 
@@ -428,11 +431,19 @@ impl PlayerData {
         }
     }
 
+    /// The headphone data; `None` for any other data.
+    pub fn headphone(&self) -> Option<&HeadphoneData> {
+        match self {
+            Self::Headphone(d) => Some(d),
+            _ => None,
+        }
+    }
+
     /// Curve row `row` of pattern `pattern`; `None` for data without curves (the device then
     /// plays flat zeros) or beyond the arrays.
     pub fn curve(&self, pattern: usize, row: usize) -> Option<&[CurveStep; MAX_STEPS]> {
         match self {
-            Self::StepSeq(_) | Self::Drums(_) => None,
+            Self::StepSeq(_) | Self::Drums(_) | Self::Headphone(_) => None,
             Self::CvSeq(d) => d.curves.get(pattern)?.get(row),
         }
     }

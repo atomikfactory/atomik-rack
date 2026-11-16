@@ -51,6 +51,7 @@ pub mod gate;
 pub mod gate_processor;
 pub mod granular;
 pub mod guitar_amp;
+pub mod headphone_correction;
 pub mod key_chord;
 pub mod line_mixer;
 pub mod loop_slicer;
@@ -195,6 +196,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(gate::factory())?;
     registry.register(gate_processor::factory())?;
     registry.register(guitar_amp::factory())?;
+    registry.register_with_headphone(headphone_correction::factory())?;
     registry.register(macro_bank::factory())?;
     registry.register(mastering::factory())?;
     registry.register(midi_out::factory())?;
@@ -231,7 +233,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 68] = [
+    const TYPE_IDS: [&str; 69] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.auto-filter",
@@ -264,6 +266,7 @@ mod tests {
         "atomik.gate-processor",
         "atomik.granular",
         "atomik.guitar-amp",
+        "atomik.headphone-correction",
         "atomik.key-chord",
         "atomik.line-mixer",
         "atomik.loop-slicer",
@@ -303,7 +306,7 @@ mod tests {
     ];
 
     #[test]
-    // Name kept; it now covers all sixty-eight devices.
+    // Name kept; it now covers all sixty-nine devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
@@ -326,11 +329,17 @@ mod tests {
                 r.takes_player_data(id),
                 id == "atomik.step-sequencer"
                     || id == "atomik.cv-sequencer"
-                    || id == "atomik.drum-generator",
+                    || id == "atomik.drum-generator"
+                    || id == "atomik.headphone-correction",
                 "{id}"
             );
             assert_eq!(r.takes_curves(id), id == "atomik.cv-sequencer", "{id}");
             assert_eq!(r.takes_drums(id), id == "atomik.drum-generator", "{id}");
+            assert_eq!(
+                r.takes_headphone(id),
+                id == "atomik.headphone-correction",
+                "{id}"
+            );
         }
     }
 
@@ -352,6 +361,7 @@ mod tests {
             "atomik.gain-tool",
             "atomik.gate",
             "atomik.gate-processor",
+            "atomik.headphone-correction",
             "atomik.pitch-shifter",
             "atomik.rotary-speaker",
             "atomik.sample-hold",
@@ -457,7 +467,9 @@ mod tests {
                     assert!(assert_no_alloc(|| h.device_mut().swap_samples(Some(first))).is_none());
                 }
                 if r.takes_player_data(id) {
-                    let first = if r.takes_drums(id) {
+                    let first = if r.takes_headphone(id) {
+                        crate::test_support::headphone_player_data(1)
+                    } else if r.takes_drums(id) {
                         crate::test_support::drum_player_data(1)
                     } else {
                         crate::test_support::seq_player_data(1)
@@ -521,7 +533,9 @@ mod tests {
                     h.process(); // guarded by assert_no_alloc inside the harness
                 }
                 if r.takes_player_data(id) {
-                    let next = if r.takes_drums(id) {
+                    let next = if r.takes_headphone(id) {
+                        crate::test_support::headphone_player_data(2)
+                    } else if r.takes_drums(id) {
                         crate::test_support::drum_player_data(2)
                     } else {
                         crate::test_support::seq_player_data(2)
@@ -560,7 +574,9 @@ mod tests {
                 let _ = h.device_mut().swap_samples(Some(map));
             }
             if r.takes_player_data(id) {
-                let data = if r.takes_drums(id) {
+                let data = if r.takes_headphone(id) {
+                    crate::test_support::headphone_player_data(1)
+                } else if r.takes_drums(id) {
                     crate::test_support::drum_player_data(1)
                 } else {
                     crate::test_support::seq_player_data(1)
