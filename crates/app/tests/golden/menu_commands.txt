@@ -476,6 +476,9 @@ UnrouteVca(Some(1)) | Drums
 UnrouteVca(Some(2)) | Bass
 UpdateSnapshot(None) | Update Snapshot
 Versions | Versions…
+WheelGenerate | Generate Progression
+WheelToChordLane | Send Progression to Chord Lane
+WheelToClip | Send Progression to Clip
 ZoomIn | Zoom In
 ZoomOut | Zoom Out
 ZoomReset | Actual Size

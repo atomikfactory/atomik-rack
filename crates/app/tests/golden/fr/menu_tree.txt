@@ -456,6 +456,10 @@ Piste
     Enregistrement direct
     Replier tous les players
     Contourner tous les players
+    ---
+    Générer une progression
+    Envoyer la progression vers la voie d'accords
+    Envoyer la progression vers un clip
   ---
   Ajouter une voie de motif
   Voie de motif vers notes
