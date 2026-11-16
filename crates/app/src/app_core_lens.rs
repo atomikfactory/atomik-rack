@@ -71,6 +71,8 @@ impl<S: EngineSink> AppCore<S> {
     fn lens_changed(&mut self) {
         self.push_lens();
         let settings = self.lens.settings;
+        // The MONO button on the master strip of the mixer follows the lens mono switch.
+        self.console.set_monitor_mono(settings.mono);
         self.reject(if settings.is_neutral() {
             "Translation lens off: the master as it is".to_owned()
         } else {
