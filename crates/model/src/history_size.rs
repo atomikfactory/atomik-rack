@@ -100,6 +100,9 @@ impl Edit {
                         + new.as_ref().map_or(0, |d| d.patterns.len()))
                         * PATTERN_BYTES
                 }
+                Edit::Headphone { old, new, .. } => {
+                    headphone_bytes(old.as_ref()) + headphone_bytes(new.as_ref())
+                }
                 Edit::Splits { old, new, .. } => (old.len() + new.len()) * ENTRY_BYTES,
                 Edit::Macro { old, new, .. } => {
                     (old.targets.len() + new.targets.len()) * ENTRY_BYTES
@@ -113,6 +116,17 @@ impl Edit {
     }
 }
 
+/// Bytes of a device's imported headphone data (its numbers).
+fn headphone_bytes(d: Option<&atomik_device_sdk::headphone::HeadphoneData>) -> usize {
+    use atomik_device_sdk::headphone::{Filter, HeadphoneBody};
+    d.map_or(0, |d| match &d.body {
+        HeadphoneBody::Response(r) => {
+            (r.freq.len() + r.left.len() + r.right.as_ref().map_or(0, Vec::len)) * 4
+        }
+        HeadphoneBody::Filters(f) => f.filters.len() * size_of::<Filter>(),
+    })
+}
+
 fn device_bytes(d: &RackDevice) -> usize {
     size_of::<RackDevice>()
         + d.params.len() * ENTRY_BYTES
@@ -120,6 +134,7 @@ fn device_bytes(d: &RackDevice) -> usize {
         + d.steps.as_ref().map_or(0, |s| s.patterns.len()) * PATTERN_BYTES
         + d.curves.as_ref().map_or(0, |c| c.patterns.len()) * PATTERN_BYTES
         + d.drums.as_ref().map_or(0, |c| c.patterns.len()) * PATTERN_BYTES
+        + headphone_bytes(d.headphone.as_ref())
         + d.inner.as_ref().map_or(0, |c| {
             c.devices.iter().map(device_bytes).sum::<usize>()
                 + c.cables.len() * size_of::<Cable>()

@@ -739,6 +739,21 @@ impl ContainerDoc {
                     ModelError::BadPatterns(format!("{} does not take drum data", d.type_id)),
                 ));
             }
+            if d.headphone.is_some() && !registry.takes_headphone(&d.type_id) {
+                return Err(v(
+                    dev("headphone"),
+                    ModelError::BadPatterns(format!("{} does not take headphone data", d.type_id)),
+                ));
+            }
+            if d.steps.is_some() && registry.takes_headphone(&d.type_id) {
+                return Err(v(
+                    dev("steps"),
+                    ModelError::BadPatterns(format!(
+                        "{} takes headphone data, not steps",
+                        d.type_id
+                    )),
+                ));
+            }
             if d.steps.is_some() && registry.takes_drums(&d.type_id) {
                 return Err(v(
                     dev("steps"),
@@ -1005,8 +1020,10 @@ pub(crate) fn new_device(
         folded: false,
         color: None,
         zones: Vec::new(),
-        steps: (registry.takes_player_data(desc.type_id) && !registry.takes_drums(desc.type_id))
-            .then(crate::StepSeqDoc::default),
+        steps: (registry.takes_player_data(desc.type_id)
+            && !registry.takes_drums(desc.type_id)
+            && !registry.takes_headphone(desc.type_id))
+        .then(crate::StepSeqDoc::default),
         curves: None,
         drums: registry
             .takes_drums(desc.type_id)
@@ -1016,6 +1033,7 @@ pub(crate) fn new_device(
         column: 0,
         patch_name: String::new(),
         midi_out: None,
+        headphone: None,
         mods: Vec::new(),
     }
 }

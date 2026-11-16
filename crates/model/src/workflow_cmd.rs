@@ -819,6 +819,18 @@ pub enum WorkflowCommand {
         /// characters.
         port: Option<String>,
     },
+    /// Sets the imported data of a Headphone Correction device (`None` removes it): a frequency
+    /// response or a parametric EQ read by [`atomik_device_sdk::headphone::parse`]. The data is
+    /// stored in the project itself. One undo step. Reports `PatternsChanged`. Refused on any
+    /// other device type, for invalid data (see
+    /// [`atomik_device_sdk::headphone::HeadphoneData::validate`]) and when the device already
+    /// holds the same data.
+    SetHeadphoneData {
+        /// The device (path key).
+        device: DeviceKey,
+        /// The data, or `None` to remove it.
+        data: Option<atomik_device_sdk::headphone::HeadphoneData>,
+    },
     /// Sets slot `slot` of a device's modulation matrix, or clears it (`None`, which also puts the
     /// slot's amount back to 0). The ids must be inside the device's source and target tables; a
     /// device without a matrix, a slot outside `0..MOD_SLOTS` or a slot that already holds the
@@ -1071,6 +1083,12 @@ pub(crate) fn plan(
             doc,
             &device,
             port.as_deref(),
+        )),
+        WorkflowCommand::SetHeadphoneData { device, data } => plain(crate::headphone::plan_set(
+            doc,
+            registry,
+            &device,
+            data.as_ref(),
         )),
         WorkflowCommand::SetModSlot {
             device,

@@ -603,6 +603,8 @@ pub(crate) fn load_device(
         column,
         patch_name,
         midi_out,
+        // Attached by the project loader from the root field `headphone`.
+        headphone: None,
         mods,
     })
 }
