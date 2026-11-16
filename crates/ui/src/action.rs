@@ -270,6 +270,13 @@ pub enum UiAction {
     /// device's key on a worker, learns a duck curve from the hits in it and puts the curve into
     /// the device in one undo step.
     LearnDuck(DeviceKey),
+    /// The IMPORT button (or the empty graph) of a Headphone Correction panel: the app shows the
+    /// file dialog and imports the file into this device, as the `rack.headphone_import` command
+    /// does for the selected one.
+    HeadphoneImport(DeviceKey),
+    /// The REMOVE button of a Headphone Correction panel: the app removes the device's data in
+    /// one undo step (`rack.headphone_remove`).
+    HeadphoneRemove(DeviceKey),
     /// A momentary button of a panel (the gain tool's RESET): the app sends `param` to the device
     /// as 1 and, a moment later, as 0, through the engine only. The project does not change and
     /// there is no undo step.
@@ -287,6 +294,15 @@ pub enum UiAction {
         device: DeviceKey,
         /// The chosen row.
         index: usize,
+    },
+    /// An action of the target list of a tonal balance device (see [`crate::tonal_panel`]): the
+    /// app learns from files, saves the learned target, renames or deletes the saved target in
+    /// force. Picking a target is the device's `target` param, an ordinary command.
+    TonalTarget {
+        /// The tonal balance device.
+        device: DeviceKey,
+        /// What to do.
+        op: crate::tonal_panel::TonalOp,
     },
     /// Open the sample editor on this sampler (double-click on a sampler panel, or its Edit
     /// button): call [`crate::SampleEditorView::open`] and show it in place of the

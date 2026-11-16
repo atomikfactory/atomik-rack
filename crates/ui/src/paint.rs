@@ -394,6 +394,8 @@ pub struct PanelInfo<'a> {
     pub name: &'a str,
     /// The name being typed in place on the plate (a field with a caret replaces the name).
     pub editing_name: Option<&'a crate::text_field::TextField>,
+    /// A tonal balance panel: the name of a target being typed in place of its TARGET button.
+    pub tonal_edit: Option<&'a crate::text_field::TextField>,
     /// Small caption under the name (descriptor name, upper case).
     pub caption: &'a str,
     /// Device accent.
@@ -430,6 +432,8 @@ pub struct PanelInfo<'a> {
     pub analyser: &'a crate::analyser::AnalyserData,
     /// Compressor panel: the name of the device cabled to its sidechain input, if any.
     pub sc_source: Option<&'a str>,
+    /// Headphone Correction panel: the curves of the device's data (none without data).
+    pub headphone: Option<&'a crate::headphone_panel::HpGraph>,
     /// Character panel: whether the Transform and the Dry/Wet CV inputs have a cable.
     pub fx_cv: [bool; 2],
     /// Character panel: the animation phase of the screen, in cycles (it advances while the
@@ -1163,6 +1167,21 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     // The saturation panel draws its big knob and its type switch with the panel.
                     continue;
                 }
+                if info.spec.fx.is_some_and(|f| f.loudness.is_some())
+                    && crate::loudness_panel::custom_painted(p.key)
+                {
+                    // The loudness meter's history graph is the control of its span choice.
+                    continue;
+                }
+                if info.spec.fx.is_some_and(|f| f.headphone.is_some())
+                    && crate::headphone_panel::own_painted(
+                        desc,
+                        info.spec.param_index(desc, pc, info.pad),
+                    )
+                {
+                    // The headphone panel draws its SIMULATE lamp in the warning colour.
+                    continue;
+                }
                 if info.spec.fx.is_some_and(|f| f.eq.is_some()) {
                     // The EQ paints its choice cells itself (the graph, the shape sketches).
                     if pc.kind != ControlKind::Choice {
@@ -1403,6 +1422,8 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     crate::stereo_panel::socket_label(s.key).unwrap_or(s.name)
                 } else if info.spec.fx.is_some_and(|f| f.saturation.is_some()) {
                     crate::saturation_panel::socket_label(s.key).unwrap_or(s.name)
+                } else if info.spec.fx.is_some_and(|f| f.loudness.is_some()) {
+                    crate::loudness_panel::socket_label(s.key).unwrap_or(s.name)
                 } else if info.device.is_some() && crate::mix_panel::is_mix_type(desc.type_id) {
                     crate::mix_panel::socket_label(s.key).unwrap_or(s.name)
                 } else {

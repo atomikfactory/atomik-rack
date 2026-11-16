@@ -75,6 +75,12 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
             set(&mut d, "range", 80.0);
             set(&mut d, "tilt", 2.0);
         }
+        FxKind::LoudnessMeter => {
+            set(&mut d, "preset", 0.0);
+            set(&mut d, "history_span", 1.0);
+            set(&mut d, "target_lufs", -18.0);
+            set(&mut d, "max_tp", -2.0);
+        }
         FxKind::PhaseMeter => {
             set(&mut d, "hold", 2.0);
             set(&mut d, "scope_gain", 6.0);
@@ -115,6 +121,12 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
             set(&mut d, "output", -2.0);
             set(&mut d, "oversampling", 2.0);
         }
+        FxKind::HeadphoneCorrection => {
+            set(&mut d, "amount", 1.0);
+            set(&mut d, "target", 1.0);
+            set(&mut d, "file_kind", 0.0);
+            d.headphone = Some(sample_headphones());
+        }
         FxKind::DynamicEq => {
             set(&mut d, "band1.on", 1.0);
             set(&mut d, "band1.gain", 2.0);
@@ -132,6 +144,11 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
             set(&mut d, "band4.source", 1.0);
             set(&mut d, "band5.gain", 3.0);
             set(&mut d, "band5.range", 0.0);
+        }
+        FxKind::TonalBalance => {
+            set(&mut d, "response", 1.0);
+            set(&mut d, "view", 2.0);
+            set(&mut d, "channel", 0.0);
         }
         FxKind::GainTool => {
             set(&mut d, "mode", 1.0);
@@ -166,8 +183,9 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
         FxKind::Mastering => vec![-20.5, -21.2, -23.4, -1.8, 2.0, 3.5, 1.2, 4.0],
         // in peak, out peak, transform_eff, activity
         FxKind::Character => vec![0.5, 0.35, 0.7, 0.6],
-        // peak L, R (linear)
-        FxKind::Spectrum => vec![0.5, 0.4],
+        // peak L, R (linear), correlation, long correlation, sample peak L, R, true peak L, R
+        // (dBFS), clipped samples
+        FxKind::Spectrum => vec![0.5, 0.4, 0.62, 0.7, -1.2, -3.0, -0.4, -2.1, 3.0],
         // recent peak L R, held peak L R, RMS L R, sample peak, true peak, correlation, balance,
         // width, mid RMS, side RMS, momentary, short-term, integrated
         FxKind::PhaseMeter => vec![
@@ -193,8 +211,55 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
         FxKind::GainTool => vec![0.5, 0.4, 0.35, 0.28, -3.2, 1.0, 1.0, 1.0],
         // The drive lamp (0..1), the input and the output peak.
         FxKind::Saturation => vec![0.6, 0.5, 0.45],
+        // Peak L, R (linear).
+        FxKind::TonalBalance => vec![0.5, 0.4],
+        // The 16 scalars (momentary, short-term, integrated, LRA, true peak, true peak L and R,
+        // sample peak, PLR, PSR, DR, target, max true peak, reset count, history points, seconds)
+        // and the 46 distribution bins.
+        FxKind::LoudnessMeter => {
+            let mut v = vec![
+                -13.2, -14.6, -14.2, 6.4, -0.6, -0.8, -0.6, -1.1, 13.6, 11.2, 9.4, -14.0, -1.0,
+                3.0, 120.0, 95.0,
+            ];
+            v.extend((0..46).map(|i| {
+                let t = (i as f32 - 31.0) / 4.0;
+                (-t * t).exp() * 0.9 + if i == 31 { 0.1 } else { 0.0 }
+            }));
+            v
+        }
+        // Loaded, the preamp (dB), the largest boost (dB), not busy.
+        FxKind::HeadphoneCorrection => vec![1.0, -4.2, 4.2, 0.0],
         // The audio track publishes no meter values.
         FxKind::AudioTrack | FxKind::Tuner => vec![],
+    }
+}
+
+/// A measured response of imaginary headphones: a bass bump, a presence peak and a treble dip,
+/// 41 points from 20 Hz to 20 kHz, rounded to a tenth of a dB.
+pub fn sample_headphones() -> atomik_device_sdk::headphone::HeadphoneData {
+    use atomik_device_sdk::headphone::{HeadphoneBody, HeadphoneData, ResponseData};
+    let bump = |f: f32, at: f32, width: f32, db: f32| {
+        let x = (f / at).log2() / width;
+        db * (-x * x).exp()
+    };
+    let freq: Vec<f32> = (0..41)
+        .map(|k| (20.0 * (k as f32 * 9.965_784 / 40.0).exp2() * 10.0).round() / 10.0)
+        .collect();
+    let left: Vec<f32> = freq
+        .iter()
+        .map(|f| {
+            let db =
+                bump(*f, 60.0, 1.2, 4.0) + bump(*f, 3000.0, 0.6, 6.0) - bump(*f, 8000.0, 0.4, 5.0);
+            (db * 10.0).round() / 10.0
+        })
+        .collect();
+    HeadphoneData {
+        name: "Studio cans.csv".to_owned(),
+        body: HeadphoneBody::Response(ResponseData {
+            freq,
+            left,
+            right: None,
+        }),
     }
 }
 
@@ -226,6 +291,37 @@ pub fn spectrum_data(bands: bool) -> AnalyserData {
     }
 }
 
+/// The loudness meter's history: the short-term and the momentary loudness every half second, a
+/// quiet passage, a loud one and a gap of silence.
+pub fn loudness_data() -> AnalyserData {
+    let short: Vec<f32> = (0..120)
+        .map(|i| {
+            let t = i as f32;
+            if (60..66).contains(&i) {
+                -120.0
+            } else {
+                -17.0 + 4.0 * (t * 0.07).sin() - if i < 30 { 6.0 } else { 0.0 }
+            }
+        })
+        .collect();
+    let momentary = short
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            if *v < -100.0 {
+                *v
+            } else {
+                v + 2.5 * (i as f32 * 0.9).sin()
+            }
+        })
+        .collect();
+    AnalyserData {
+        loud_short: short,
+        loud_momentary: momentary,
+        ..AnalyserData::default()
+    }
+}
+
 /// Scope frames: a Lissajous of a slightly detuned pair, so the figure is an ellipse.
 pub fn scope_data() -> AnalyserData {
     let (l, r): (Vec<f32>, Vec<f32>) = (0..1024)
@@ -237,6 +333,45 @@ pub fn scope_data() -> AnalyserData {
     AnalyserData {
         scope_l: l,
         scope_r: r,
+        ..AnalyserData::default()
+    }
+}
+
+/// A tonal balance reading against Balanced: too much low end, the highs a little quiet.
+pub fn tonal_data() -> AnalyserData {
+    use atomik_ui::tonal_panel::{TargetKind, TargetRow, TonalView};
+    let target = atomik_dsp::tonal::builtin(0);
+    let mut bands = target.bands.to_vec();
+    for (i, v) in bands.iter_mut().enumerate() {
+        if i < 9 {
+            *v += 4.0;
+        } else if i >= 24 {
+            *v -= 3.5;
+        }
+    }
+    let row = |value: f32, name: &str, kind| TargetRow {
+        value,
+        name: name.to_string(),
+        kind,
+    };
+    AnalyserData {
+        tonal: TonalView {
+            ready: true,
+            deviation: [4.2, -0.6, 1.1, -5.0],
+            tolerance: [3.0; 4],
+            bands,
+            target_bands: target.bands.to_vec(),
+            target_tol: target.tol.to_vec(),
+            target_name: "Balanced".to_string(),
+            targets: vec![
+                row(0.0, "Balanced", TargetKind::Builtin),
+                row(1.0, "Bright", TargetKind::Builtin),
+                row(2.0, "Warm", TargetKind::Builtin),
+                row(3.0, "Bass-heavy", TargetKind::Builtin),
+                row(11.0, "My reference", TargetKind::User),
+            ],
+            ..TonalView::default()
+        },
         ..AnalyserData::default()
     }
 }

@@ -448,6 +448,29 @@ pub fn drum_player_data(variant: u8) -> atomik_device_sdk::PlayerDataRef {
     std::sync::Arc::new(PlayerData::Drums(d))
 }
 
+/// Headphone data for harness checks: variant 1 a parametric file (a bass shelf and a presence
+/// peak), variant 2 a response (a bass lift and a treble dip).
+pub fn headphone_player_data(variant: u8) -> atomik_device_sdk::PlayerDataRef {
+    use atomik_device_sdk::PlayerData;
+    use atomik_device_sdk::headphone::parse;
+    let text = if variant == 1 {
+        "Preamp: -4 dB
+Filter 1: ON LSC Fc 100 Hz Gain 5 dB Q 0.7
+         Filter 2: ON PK Fc 3000 Hz Gain -4 dB Q 1.5
+"
+    } else {
+        "20, 6
+100, 4
+1000, 0
+5000, -2
+10000, -5
+20000, -8
+"
+    };
+    let data = parse(text, "test").expect("the test data parses");
+    std::sync::Arc::new(PlayerData::Headphone(data))
+}
+
 /// A controller event on a notes socket.
 fn ctl_event(offset: u16, controller: u8, raw: u8) -> NoteEvent {
     NoteEvent {

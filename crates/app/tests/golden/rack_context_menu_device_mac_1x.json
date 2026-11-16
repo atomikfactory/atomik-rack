@@ -1,7 +1,7 @@
 {"ops":[
-{"fill":{"rrect":[232.00,1127.00,492.00,1819.00,6.00]},"brush":"#0000005a"},
-{"fill":{"rrect":[230.00,1124.00,490.00,1816.00,6.00]},"brush":"#16181bff"},
-{"stroke":{"rrect":[230.00,1124.00,490.00,1816.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"fill":{"rrect":[232.00,1127.00,492.00,1867.00,6.00]},"brush":"#0000005a"},
+{"fill":{"rrect":[230.00,1124.00,490.00,1864.00,6.00]},"brush":"#16181bff"},
+{"stroke":{"rrect":[230.00,1124.00,490.00,1864.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
 {"text":"Cut","at":[262.00,1144.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Cmd+X","at":[476.00,1144.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"Copy","at":[262.00,1168.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
@@ -41,8 +41,10 @@
 {"text":"Cmd+Right","at":[476.00,1675.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"fill":{"rect":[240.00,1687.00,480.00,1688.00]},"brush":"#ffffff1c"},
 {"text":"Choose MIDI Out Port","at":[262.00,1708.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
-{"text":"Modulation Matrix","at":[262.00,1732.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
-{"text":"Match Loudness","at":[262.00,1756.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"Blind A/B Test...","at":[262.00,1780.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"Preview Player","at":[262.00,1804.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"}
+{"text":"Import Headphone Data","at":[262.00,1732.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"Remove Headphone Data","at":[262.00,1756.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"Modulation Matrix","at":[262.00,1780.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"Match Loudness","at":[262.00,1804.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Blind A/B Test...","at":[262.00,1828.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Preview Player","at":[262.00,1852.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"}
 ]}

@@ -25,7 +25,7 @@ fn shell() -> Shell<NullBackend> {
         },
     );
     s.handle(&UiEvent::ScaleChanged(1.0));
-    s.handle(&UiEvent::Resize(Size::new(1400.0, 2800.0)));
+    s.handle(&UiEvent::Resize(Size::new(1400.0, 3200.0)));
     s.core_mut().view_mut().set_navigator_visible(false);
     s.set_focus(Pane::Rack);
     s

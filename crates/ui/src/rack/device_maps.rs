@@ -113,6 +113,7 @@ mod tests {
             column: 0,
             patch_name: String::new(),
             midi_out: None,
+            headphone: None,
             mods: Vec::new(),
         };
         if let Some(devices) = inner {

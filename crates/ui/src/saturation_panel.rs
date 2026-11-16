@@ -254,6 +254,8 @@ pub fn saturation_layout(desc: &DeviceDescriptor) -> PanelSpec {
             stereo: None,
             gain: None,
             saturation: Some(geom),
+            loudness: None,
+            headphone: None,
         }),
         seq: None,
         drum_gen: None,

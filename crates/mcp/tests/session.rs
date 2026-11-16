@@ -1661,6 +1661,11 @@ fn audio_to_notes_validates_its_arguments_and_reports_nothing_found() {
 /// level of the loudness reference) for three seconds, with a phase meter and a spectrum on its
 /// channel's inserts, and the project file's path.
 fn meter_project(tag: &str, right_gain: f32) -> String {
+    meter_project_with(tag, right_gain, &["atomik.phase-meter", "atomik.spectrum"])
+}
+
+/// [`meter_project`] with the insert effects `inserts` on the channel.
+fn meter_project_with(tag: &str, right_gain: f32, inserts: &[&str]) -> String {
     use atomik_app::AppCore;
     use atomik_app::session::{LiveSession, NullBackend};
     use atomik_app::settings::AudioSettings;
@@ -1692,10 +1697,7 @@ fn meter_project(tag: &str, right_gain: f32) -> String {
         .unwrap()
         .channel
         .clone();
-    for (slot, type_id) in ["atomik.phase-meter", "atomik.spectrum"]
-        .into_iter()
-        .enumerate()
-    {
+    for (slot, type_id) in inserts.iter().copied().enumerate() {
         core.apply_command(Command::Console(ConsoleCommand::SetInsert {
             channel: channel.clone(),
             slot,
@@ -1760,6 +1762,24 @@ fn session_meters_reads_the_reference_tone_without_an_audio_stream() {
     let hz = sp["values"]["peak_hz"].as_f64().unwrap();
     assert!((hz - 1000.0).abs() < 12.0, "{hz}");
     assert!((sp["values"]["peak_db"].as_f64().unwrap() + 23.0).abs() < 1.5);
+    // What the device measured on every sample: a stereo sine at -23 dBFS, nothing clipped.
+    let sv = |name: &str| {
+        sp["values"][name]
+            .as_f64()
+            .unwrap_or_else(|| panic!("{name} in {sp}"))
+    };
+    assert!(
+        sv("correlation") > 0.999 && sv("correlation_long") > 0.99,
+        "{sp}"
+    );
+    assert!((sv("sample_peak_l_db") + 23.0).abs() < 0.1, "{sp}");
+    assert!((sv("sample_peak_r_db") + 23.0).abs() < 0.1, "{sp}");
+    assert!(
+        sv("true_peak_l_db") >= sv("sample_peak_l_db") - 1e-6,
+        "{sp}"
+    );
+    assert!((sv("headroom_db") - 23.0).abs() < 0.3, "{sp}");
+    assert_eq!(sv("clips"), 0.0);
     let bands = sp["bands"].as_array().unwrap();
     assert_eq!(bands.len(), 31);
     let loudest = bands
@@ -1826,6 +1846,35 @@ fn session_meters_reads_the_reference_tone_without_an_audio_stream() {
             < -28.0
     );
     ok(&mut s, "session_close", json!({}));
+}
+
+#[test]
+fn session_meters_reads_the_loudness_meter() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({
+            "path": meter_project_with("loud", 1.0, &["atomik.loudness-meter"]),
+            "height": 3600
+        }),
+    );
+    let v = ok(&mut s, "session_meters", json!({"at_s": 2.9}));
+    assert_eq!(v["devices"].as_array().unwrap().len(), 1);
+    let l = &device_of(&v, "atomik.loudness-meter")["values"];
+    let get = |k: &str| l[k].as_f64().unwrap_or_else(|| panic!("no {k} in {l}"));
+    // The reference tone: -23 dBFS stereo reads -23 LUFS and -23 dBTP, a crest of 3 dB.
+    assert!((get("integrated_lufs") + 23.0).abs() < 0.2, "{l}");
+    assert!((get("momentary_lufs") + 23.0).abs() < 0.2, "{l}");
+    assert!((get("true_peak_dbtp") + 23.0).abs() < 0.4, "{l}");
+    assert!((get("sample_peak_dbfs") + 23.0).abs() < 0.1, "{l}");
+    assert!((get("dr_db") - 3.01).abs() < 0.2, "{l}");
+    assert!(get("plr_db").abs() < 0.5, "{l}");
+    // The first preset: -14 LUFS and -1 dBTP; nothing recorded in the 3 s the window fills.
+    assert_eq!(get("target_lufs"), -14.0);
+    assert_eq!(get("max_true_peak_dbtp"), -1.0);
+    assert_eq!(get("history_points"), 0.0);
+    assert!(get("programme_seconds") > 2.8, "{l}");
 }
 
 #[test]

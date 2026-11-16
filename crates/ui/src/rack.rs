@@ -54,6 +54,7 @@ mod eq_input;
 mod fx_input;
 mod group_chip;
 mod handles;
+mod headphone_input;
 mod help;
 mod inline;
 mod insert_area;
@@ -64,6 +65,7 @@ mod macro_drag;
 mod navigator;
 mod pad_lights;
 mod sat_input;
+mod tonal_input;
 pub use jacks::{JackChoice, JackGroup, JackMenu, JackOp, JackPeer};
 pub use navigator::NAVIGATOR_WIDTH;
 mod master_input;
@@ -191,6 +193,11 @@ enum Hit {
     Resonance(usize, crate::resonance_marks::ResonanceBtn),
     /// The REF button of a Spectrum plot: the list of its second curve.
     SpecRef(usize),
+    /// The strip of correlation, peaks and clips under a Spectrum plot: a click resets the peaks
+    /// and the clip count.
+    SpecStats(usize),
+    /// The TARGET button of a tonal balance panel: the list of its targets.
+    Tonal(usize),
     /// The curve plot of a Sidechain Tool panel (points and segments are picked by position).
     DuckPlot(usize),
     /// The LEARN button of a Sidechain Tool panel.
@@ -230,6 +237,12 @@ enum Hit {
     IoHeader(usize),
     /// The EDIT button of a master return (device index, slot 0..8).
     ReturnEdit(usize, usize),
+    /// The IMPORT button of a Headphone Correction panel.
+    HeadphoneImport(usize),
+    /// The graph of a Headphone Correction panel: a click imports while it holds no data.
+    HeadphoneGraph(usize),
+    /// The REMOVE button of a Headphone Correction panel (works while it holds data).
+    HeadphoneRemove(usize),
 }
 
 /// A button of a player panel.
@@ -275,6 +288,8 @@ impl Hit {
             | Hit::ScButton(i)
             | Hit::Resonance(i, _)
             | Hit::SpecRef(i)
+            | Hit::SpecStats(i)
+            | Hit::Tonal(i)
             | Hit::DuckPlot(i)
             | Hit::DuckLearn(i)
             | Hit::TableEdit(i)
@@ -295,6 +310,9 @@ impl Hit {
             | Hit::IoClip(i, _)
             | Hit::IoHeader(i)
             | Hit::ReturnEdit(i, _)
+            | Hit::HeadphoneImport(i)
+            | Hit::HeadphoneGraph(i)
+            | Hit::HeadphoneRemove(i)
             | Hit::Socket(i, _) => Some(i),
         }
     }
@@ -341,6 +359,9 @@ struct DeviceView {
     analyser: crate::analyser::AnalyserData,
     /// The resonance finder's markers and state (dynamic EQ panels).
     resonance: crate::resonance_marks::ResonanceView,
+    /// Headphone Correction panel: the curves of its data and settings, computed when they
+    /// change (see [`crate::headphone_panel::graph_of`]).
+    hp: Option<Arc<crate::headphone_panel::HpGraph>>,
     /// Master panel: the effect on each return and the key-in state.
     master: crate::master_panel::MasterData,
     /// Mix channel panel (a channel or bus): the insert bypass state, the fold state of the
@@ -722,6 +743,8 @@ pub struct RackView {
     sc_menu: Option<ScMenu>,
     /// The open list of the second curve of a Spectrum panel.
     ref_menu: Option<spectrum_ref::RefMenu>,
+    /// The open target list of a tonal balance panel.
+    tonal_menu: Option<tonal_input::TonalMenu>,
     /// The open pick list of a long choice (the master's control-room source).
     choice_menu: Option<master_input::ChoiceMenu>,
     /// The open menu of an EQ graph handle.
@@ -824,6 +847,8 @@ enum RenameKind {
     Pattern,
     /// A macro name of a container panel.
     Macro,
+    /// The name of a target of a tonal balance panel, typed in place of its TARGET button.
+    Target,
     /// The name of the device itself, on its plate.
     Device,
 }
@@ -1061,6 +1086,7 @@ impl RackView {
             sens: BTreeMap::new(),
             sc_menu: None,
             ref_menu: None,
+            tonal_menu: None,
             choice_menu: None,
             eq_menu: None,
             io: crate::io_panel::IoView::default(),
@@ -1312,6 +1338,9 @@ impl RackView {
                 v.name.clone_from(&d.name);
                 v.accent = self.theme.accent_for(d);
                 v.device = Some(d.clone());
+                if v.spec.fx.is_some_and(|f| f.headphone.is_some()) {
+                    v.hp = crate::headphone_panel::graph_of(v.desc.as_ref(), d, v.hp.take());
+                }
                 if v.spec.seq.is_some() || v.spec.drum_gen.is_some() {
                     let last = pattern_count(d) - 1;
                     if v.edit > last {
@@ -1622,6 +1651,7 @@ impl RackView {
             sample: None,
             analyser: Default::default(),
             resonance: Default::default(),
+            hp: None,
             master: Default::default(),
             mix: Default::default(),
             sc: None,
@@ -1764,6 +1794,15 @@ impl RackView {
             } else {
                 None
             };
+            let hp = if spec.fx.is_some_and(|f| f.headphone.is_some()) {
+                crate::headphone_panel::graph_of(
+                    desc.as_ref(),
+                    d,
+                    prev.as_ref().and_then(|p| p.hp.clone()),
+                )
+            } else {
+                None
+            };
             let (revision, lists) = match prev {
                 Some(p)
                     if p.device.as_ref() == Some(d)
@@ -1810,6 +1849,7 @@ impl RackView {
                 sample,
                 analyser,
                 resonance,
+                hp,
                 master,
                 mix,
                 sc,
@@ -1869,6 +1909,7 @@ impl RackView {
                 sample: None,
                 analyser: Default::default(),
                 resonance: Default::default(),
+                hp: None,
                 master: Default::default(),
                 mix: Default::default(),
                 sc: None,
@@ -2137,12 +2178,24 @@ impl RackView {
                             if fx.kind == FxKind::Spectrum {
                                 let b = spectrum_ref::button(fx.plot);
                                 tree.add(dn, b + off, Hit::SpecRef(i), false);
+                                if !fx.aux.is_zero_area() {
+                                    tree.add(dn, fx.aux + off, Hit::SpecStats(i), false);
+                                }
+                            }
+                            if fx.kind == FxKind::TonalBalance {
+                                let b = crate::tonal_panel::geometry(fx.visual, 2).target;
+                                tree.add(dn, b + off, Hit::Tonal(i), false);
                             }
                             if fx.kind == FxKind::Duck {
                                 let area = crate::duck_panel::inner(fx.plot).inflate(8.0, 4.0);
                                 tree.add(dn, area + off, Hit::DuckPlot(i), false);
                                 let learn = crate::duck_panel::learn_button(fx.plot);
                                 tree.add(dn, learn + off, Hit::DuckLearn(i), false);
+                            }
+                            if let Some(h) = fx.headphone {
+                                tree.add(dn, h.plot + off, Hit::HeadphoneGraph(i), false);
+                                tree.add(dn, h.import + off, Hit::HeadphoneImport(i), false);
+                                tree.add(dn, h.remove + off, Hit::HeadphoneRemove(i), false);
                             }
                             if let Some(b) = fx.button {
                                 tree.add(dn, b + off, Hit::ScButton(i), false);
@@ -3697,6 +3750,9 @@ impl RackView {
         if self.sc_menu.is_some() {
             self.sc_hover(pos);
         }
+        if self.tonal_menu.is_some() {
+            self.tonal_hover(pos);
+        }
         if self.ref_menu.is_some() {
             self.ref_hover(pos);
         }
@@ -3854,6 +3910,7 @@ impl RackView {
         }
         if self.sc_press(pos, doc, registry, out)
             || self.ref_press(pos, out)
+            || self.tonal_press(pos, out)
             || self.choice_press(pos, out)
             || self.eq_menu_press(pos, out)
         {
@@ -4110,8 +4167,20 @@ impl RackView {
             (Hit::ScButton(i), PointerButton::Primary) => self.sc_open(i, doc, registry),
             (Hit::Resonance(i, btn), PointerButton::Primary) => self.resonance_down(i, btn, out),
             (Hit::SpecRef(i), PointerButton::Primary) => self.ref_open(i, out),
+            (Hit::SpecStats(i), PointerButton::Primary) => {
+                self.select(i, out);
+                out.push(UiAction::PulseParam {
+                    device: self.devices[i].key.clone(),
+                    param: crate::analyser_paint::STATS_RESET_KEY.to_owned(),
+                });
+            }
+            (Hit::Tonal(i), PointerButton::Primary) => self.tonal_open(i, out),
             (Hit::DuckPlot(i), PointerButton::Primary) => self.duck_down(i, rp, clicks, out),
             (Hit::DuckLearn(i), PointerButton::Primary) => self.duck_learn_down(i, out),
+            (
+                h @ (Hit::HeadphoneImport(i) | Hit::HeadphoneGraph(i) | Hit::HeadphoneRemove(i)),
+                PointerButton::Primary,
+            ) => self.headphone_down(i, h, out),
             (Hit::TableEdit(i), PointerButton::Primary) => {
                 self.select(i, out);
                 out.push(UiAction::EditWavetable(self.devices[i].key.clone()));
@@ -4155,8 +4224,13 @@ impl RackView {
                 | Hit::ScButton(i)
                 | Hit::Resonance(i, _)
                 | Hit::SpecRef(i)
+                | Hit::SpecStats(i)
+                | Hit::Tonal(i)
                 | Hit::DuckPlot(i)
                 | Hit::DuckLearn(i)
+                | Hit::HeadphoneImport(i)
+                | Hit::HeadphoneGraph(i)
+                | Hit::HeadphoneRemove(i)
                 | Hit::TableEdit(i)
                 | Hit::Preview(i)
                 | Hit::TunerButton(i),
@@ -4518,6 +4592,7 @@ impl RackView {
     ) {
         self.sc_menu = None;
         self.ref_menu = None;
+        self.tonal_menu = None;
         self.choice_menu = None;
         self.eq_menu = None;
         self.macro_menu = None;
@@ -4885,6 +4960,7 @@ impl RackView {
         match key {
             Key::Escape if self.sc_menu.take().is_some() => {}
             Key::Escape if self.ref_close() => {}
+            Key::Escape if self.tonal_close() => {}
             Key::Escape if self.choice_menu.take().is_some() => {}
             Key::Escape if self.eq_menu.take().is_some() => {}
             Key::Escape if self.macro_menu.take().is_some() => {}
@@ -5102,6 +5178,11 @@ impl RackView {
         let mut list = DisplayList::cached(d.cache_id * 2 + side as u64, d.revision);
         let info = PanelInfo {
             name: d.plate_name(),
+            tonal_edit: self
+                .rename
+                .as_ref()
+                .filter(|r| r.dev == i && r.kind == RenameKind::Target)
+                .map(|r| &r.field),
             editing_name: self
                 .rename
                 .as_ref()
@@ -5124,6 +5205,7 @@ impl RackView {
             fx_meters: &d.meters,
             analyser: &d.analyser,
             sc_source: d.sc.as_deref(),
+            headphone: d.hp.as_deref(),
             fx_cv: d.cv,
             fx_phase: (f64::from(d.anim) * 0.03).rem_euclid(1.0) as f32,
             resonance: &d.resonance,
@@ -5363,6 +5445,7 @@ impl RackView {
         }
         self.paint_sc_menu(c);
         self.paint_ref_menu(c);
+        self.paint_tonal_menu(c);
         self.paint_choice_menu(c);
         self.paint_eq_menu(c);
         self.paint_macro_menu(c);

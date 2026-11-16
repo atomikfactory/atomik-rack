@@ -57,7 +57,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-plugin-hostd` | [crates/plugin-hostd](../crates/plugin-hostd) | core, device-sdk, plugin-host, plugin-ipc, plugin-clap, plugin-vst3 (winit) | `tests/support/owner_window.rs` (a test helper) | The sandbox child (bin `atomik-plugin-host`): hosts one plugin instance, or a group of them (`--group`) |
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
-| `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), model | none | Platform-independent views, widgets, display lists, theme |
+| `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), devices (the headphone panel draws the device's own curve snapshot), model | none | Platform-independent views, widgets, display lists, theme |
 | `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
@@ -263,7 +263,8 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
 - **Project files** are `.atomik` JSON, format version 45 (older versions still load; version 45 files say
-  `"compat": 44` and list the launcher, the per-note expression and the song's `"key"`, `"key_changes"` and
+  `"compat": 44` and list the root `"headphone"` map (the data imported into Headphone Correction devices, keyed by the device's
+  path key, written only when a device has any; see `crates/model/src/headphone.rs`), the launcher, the per-note expression and the song's `"key"`, `"key_changes"` and
   `"chords"` (the song key and the chord lane, written only when set; see `Song::harmony`) as ignorable, so a reader of
   44 opens them; version 44
   adds a note track's own `"controllers"` (pitch bend, aftertouch and CC lanes outside the note clips, written
@@ -5194,7 +5195,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (573) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (576) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -6194,6 +6195,13 @@ Three tools for how the low end carries over to small speakers, club systems and
   project, not an undo step. A voicing that is on goes back to headphones when chosen again. The switches are the
   Analyze > Translation Lens submenu, five rows in the transport bar's more menu and `mixer.lens_*` commands, and the
   status line shows `LENS ...` while the lens is on.
+- **The MONO button.** The master strip of the mixer has a MONO button beside the MAIN 1+2 label
+  (`ConsoleButton::Mono`). A click emits `UiAction::RunCommand` for `mixer.lens_mono`, the same command as the
+  menu row, so the keyboard, the command palette and the MCP `session_command` reach it too. The app tells the view
+  (`ConsoleView::set_monitor_mono`) when the lens's mono switch changes and the button is lit in the theme's warning
+  colour while it is on. The fold is the lens's: after the master inserts, the master fader and the reference, so the
+  master strip's own meters (read inside the master chain) still show the stereo mix, while the interface output peaks
+  show what is heard.
 - **The meter.** `atomik_dsp::bass_read::read` cuts the mid signal into Hann windows of 8192 frames (hop 4096) with
   the in-house transform. In each window with at least -70 dB between 25 and 150 Hz the note is the lowest strong
   peak of that range; the note's energy is its fundamental plus its 2nd to 5th harmonics, and what survives is the

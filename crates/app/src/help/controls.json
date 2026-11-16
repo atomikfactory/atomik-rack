@@ -294,6 +294,11 @@
     "text": "Un-mutes every strip at once.",
     "more": "The main window"
   },
+  "console.mono": {
+    "title": "Mono listening",
+    "text": "Folds what you hear to mono, (L + R) / 2 on both sides, to check that the mix holds up. Lit while it is on. It only changes what you hear: never saved in the project, never in a bounce or an export.",
+    "more": "The main window"
+  },
   "console.store_snapshot": {
     "title": "Store a snapshot",
     "text": "Stores the whole mix as a snapshot chip. Click the chip later to recall that mix.",
@@ -587,6 +592,16 @@
   "rack.spectrum_ref": {
     "title": "Second curve",
     "text": "Draws another strip or the reference track as a second curve over the spectrum, so the two can be compared. The choice is saved with the device.",
+    "more": "Devices"
+  },
+  "rack.spectrum_stats": {
+    "title": "Correlation, peaks and clips",
+    "text": "The stereo correlation (the tick is the 3 s value), the sample peak of each side, the true peak, the headroom under the largest peak and the number of clipped samples since the last reset. Click to reset the peaks and the clips.",
+    "more": "Devices"
+  },
+  "rack.tonal_target": {
+    "title": "Target",
+    "text": "Opens the list of targets the mix is compared with: four built-in ones, the target you just learned, and the ones you saved. It also learns a target from audio files, and saves, renames or deletes one. The choice is saved with the device; the saved targets are kept with your settings.",
     "more": "Devices"
   },
   "rack.duck_learn": {

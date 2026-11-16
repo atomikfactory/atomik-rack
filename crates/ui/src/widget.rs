@@ -351,6 +351,7 @@ mod tests {
             column: 0,
             patch_name: String::new(),
             midi_out: None,
+            headphone: None,
             mods: Vec::new(),
         };
         assert!(close(current_value(&dev, &LIN), 0.25));

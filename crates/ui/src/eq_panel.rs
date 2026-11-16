@@ -763,6 +763,8 @@ pub fn eq_layout(desc: &DeviceDescriptor) -> PanelSpec {
             stereo: None,
             gain: None,
             saturation: None,
+            loudness: None,
+            headphone: None,
         }),
         seq: None,
         drum_gen: None,

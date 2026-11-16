@@ -419,6 +419,7 @@ fn flat_twin(doc: &RackDoc, registry: &atomik_device_sdk::Registry) -> RackDoc {
             column: 0,
             patch_name: String::new(),
             midi_out: None,
+            headphone: None,
             mods: Vec::new(),
         })
         .collect();
@@ -818,6 +819,7 @@ fn expanded_patch_ids_never_collide_with_user_keys() {
         column: 0,
         patch_name: String::new(),
         midi_out: None,
+        headphone: None,
         mods: Vec::new(),
     });
     let e2 = tricky.expand(&registry);

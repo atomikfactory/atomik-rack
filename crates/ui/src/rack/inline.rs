@@ -124,6 +124,7 @@ fn strip_entry(container: &str, out: bool, column: u16) -> RackDevice {
         column,
         patch_name: String::new(),
         midi_out: None,
+        headphone: None,
         mods: Vec::new(),
     }
 }
@@ -276,6 +277,7 @@ impl RackView {
             sample: None,
             analyser: Default::default(),
             resonance: Default::default(),
+            hp: None,
             master: Default::default(),
             mix: Default::default(),
             sc: None,

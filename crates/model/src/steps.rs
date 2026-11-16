@@ -328,6 +328,10 @@ pub fn player_data_for(device: &RackDevice, registry: &Registry) -> Option<Playe
     if !registry.takes_player_data(&device.type_id) {
         return None;
     }
+    if registry.takes_headphone(&device.type_id) {
+        // No data: the device gets none either, and passes the signal through.
+        return Some(Arc::new(PlayerData::Headphone(device.headphone.clone()?)));
+    }
     if registry.takes_drums(&device.type_id) {
         let drums = device.drums.clone().unwrap_or_default();
         return Some(Arc::new(drums.to_player_data()));

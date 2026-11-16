@@ -89,6 +89,9 @@ pub struct LoudnessMeter {
     momentary: f32,
     short_term: f32,
     integrated: f32,
+    /// New blocks join the gated integration (the default); off, the integrated loudness
+    /// stays where it is while the windows keep running.
+    accumulate: bool,
 }
 
 impl LoudnessMeter {
@@ -110,7 +113,15 @@ impl LoudnessMeter {
             momentary: FLOOR_DB,
             short_term: FLOOR_DB,
             integrated: FLOOR_DB,
+            accumulate: true,
         }
+    }
+
+    /// Lets new blocks join the gated integration (`true`, the default) or freezes it: the
+    /// momentary and short-term readings keep following the signal, the integrated loudness
+    /// holds its value. A setting: [`LoudnessMeter::reset`] leaves it as it is.
+    pub fn set_accumulate(&mut self, on: bool) {
+        self.accumulate = on;
     }
 
     /// Clears the filters, windows and the gating histogram (no allocation).
@@ -179,7 +190,7 @@ impl LoudnessMeter {
         let z400 = self.mean_last(MOMENTARY_SUBS);
         self.momentary = lufs(z400) as f32;
         self.short_term = lufs(self.mean_last(SHORT_SUBS)) as f32;
-        if self.filled >= MOMENTARY_SUBS {
+        if self.filled >= MOMENTARY_SUBS && self.accumulate {
             let l = lufs(z400);
             if l > ABS_GATE {
                 let idx = (((l - ABS_GATE) / BIN) as usize).min(BINS - 1);

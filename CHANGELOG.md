@@ -9,6 +9,69 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A MONO button on the master strip of the mixer.** One click folds what you hear to mono, `(L + R) / 2` on both
+  sides, and a second click brings the stereo back; the button is lit while it is on, so it is not forgotten. It is
+  the mono switch of the translation lens (the same command, `mixer.lens_mono`, so the menu, the command palette and
+  the keyboard reach it too), with the same short fade at each change. It is an ear check only: it is never saved
+  in the project, is not an undo step and does not touch a bounce, an export or stems. Each session starts with it off.
+- **The Spectrum analyser measures correlation, peaks and clips, and overlays the two channels.** The channel
+  choice has two new entries at its end, L + R and M + S: the left and the right (or the mid and the side) spectrum
+  are drawn together in two colours of the theme with an L/R legend (in the 1/3 octave mode as two thin bars per
+  band; the spectrogram shows the sum). A strip under the plot shows the stereo correlation as a small centre bar
+  with its number (300 ms, and a 3 s tick), the sample peak of each side, the true peak, the headroom under the
+  largest peak and the number of clipped samples with a CLIP lamp. They are measured by the device on every sample,
+  not read back from the display: the true peak is 4x oversampled like the limiter's, a sample at or over the new
+  Clip level (0 dBFS by default) counts as a clip, and a click on the strip (or the new reset switch) clears the
+  peaks and the clips. The audio still passes bit for bit. The values are meter values 2 to 8 and `session_meters`
+  reports them. Older projects open unchanged.
+- **Tonal Balance.** A new analysis effect, Tonal Balance (`atomik.tonal-balance`), for the master bus: the audio
+  passes through bit for bit and the panel (3 U) compares the spectral shape of the mix with a target, in four
+  regions: LOW below 150 Hz, LOW-MID to 1 kHz, HIGH-MID to 5 kHz and HIGH above. Each region has a vertical meter
+  around the target's level with the accepted range shaded, a marker in the OK colour inside it and the warning
+  colour outside, and the deviation in dB (positive is too loud); a curve view draws the target's range and the
+  mix's one-third-octave curve from 20 Hz to 20 kHz, and the view switch shows either or both. The comparison is
+  of shape, not level: it is normalised on the K-weighted energy of 160 Hz to 4 kHz, so a louder mix reads the
+  same and an excess of bass stays on its own meter. The averaging is fast, medium or slow (1.5, 4 or 10 s) and the
+  channel is the sum, the mid or the side. Targets: four of our own (Balanced, Bright, Warm and Bass-heavy, each a
+  spectral tilt with a low and a high shelf, documented in the device reference), and targets you learn from
+  reference tracks: Learn from files... analyses one or several audio files on a worker thread into one average
+  long-term balance, or LEARN accumulates what plays; the range of a learned target is half the spread of what it
+  heard, between 2 and 6 dB. Save learned target... names it and keeps it in `tonal-targets.json` beside the
+  library file (with the user's settings, not in the project, like the spectrum's reference curve); a saved target
+  can be renamed or deleted. The project keeps which target is in force, and a project opened where a saved target
+  does not exist reads Balanced and says the target is missing.
+- **Loudness Meter.** A new analyser, Loudness Meter (`atomik.loudness-meter`), that passes the audio through bit for
+  bit with no latency and measures it to BS.1770-4 / EBU R128: momentary, short-term and gated integrated loudness,
+  the loudness range (LRA, EBU Tech 3342), the true peak of each channel and the sample peak, and three ratios in dB:
+  PLR (true peak minus integrated loudness), PSR (the true peak of the last 3 s minus the short-term loudness) and DR
+  (the crest factor of the programme: sample peak minus its RMS). A preset names the target: Streaming -14 LUFS / -1
+  dBTP, Streaming -16 LUFS, Broadcast EBU R128 -23 LUFS, Broadcast ATSC A/85 -24 LKFS, Podcast -16 LUFS, Club / loud
+  master -9 LUFS, or Custom with its own target and true-peak limit. RESET starts the accumulation over and HOLD
+  pauses it while the momentary and short-term loudness keep following the signal. Its 4 U panel shows the integrated
+  loudness as the biggest number with short-term and momentary under it, the range, true peak and ratios, a pass or
+  fail line against the target (on target within 1 LU, too loud, too quiet, true peak OK or FAIL), a history graph of
+  the short-term and momentary loudness over 30 s, 1 min, 5 min or 15 min (click or scroll the graph to change the
+  span) and a distribution of the short-term loudness in 1 LU bars with the target marked. `session_meters` reports
+  its values too.
+- **Headphone Correction.** A new effect, Headphone Correction (`atomik.headphone-correction`), for the last place on the
+  master bus while you mix on headphones: it flattens the response of your own headphones so you hear a neutral
+  reference (bypass or remove it before the export). You import your own data, from the device's right-click menu
+  (Import Headphone Data...): a frequency response (`frequency, dB` lines in a CSV or text file, comma, semicolon,
+  tab or space separated, headers and comments ignored; a third column is the right side) or a parametric EQ text
+  (`Preamp:` and `Filter 1: ON PK Fc 105 Hz Gain -3.2 dB Q 0.70` lines, with peaks, low and high shelves and low and
+  high pass, `OFF` bands skipped). The numbers are stored in the project, not the path of the file, and importing is one
+  undo step. A response is flattened to a Flat or a gentle Studio target (our own tilt, documented in the device
+  reference), or the file is taken as the correction itself ("Data is"). Amount 0 to 200 % scales the correction in
+  dB, Simulate applies the inverse (roughly how the mix would sound on those headphones), Auto gain (on by
+  default) takes the largest boost off as a preamp so the correction never goes over 0 dB, and Output adds gain.
+  The correction is a
+  4096-tap minimum-phase filter (zero latency, smoothed to 1/12 octave, limited to +-20 dB) built a few steps per batch
+  and faded in by the convolver, so a change never clicks and a bounce is the same every time. Without data it is an
+  exact passthrough. The MCP can import with `session_command` `rack.headphone_import` and a file path.
+  The panel (2 U) draws the headphone response, the target and the correction the device applies on a 20 Hz to
+  20 kHz graph (the correction follows Amount and Simulate), shows the file name, its format and the applied
+  preamp, has IMPORT and REMOVE buttons (an empty graph is itself a click to import), dims Target and Data is for
+  a parametric file, lights Simulate in a warning colour and reminds you that it is for monitoring only.
 - **Saturation.** A new effect, Saturation (`atomik.saturation`): one knob (0 is off and bit-exact transparent)
   drives a smooth, slightly asymmetric tanh curve, from nothing up to about +24 dB into it, for warmth and mostly
   odd harmonics. A type switch picks where it works: keep low leaves the lows clean and saturates what is above

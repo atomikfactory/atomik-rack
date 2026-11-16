@@ -347,6 +347,37 @@ fn master_clears_solos_and_mutes() {
     );
 }
 
+#[test]
+fn the_mono_button_asks_for_the_mono_command_and_is_lit_as_the_app_says() {
+    let (doc, reg, mut v) = setup();
+    let b = v
+        .button_center(ConsoleButton::Mono)
+        .expect("on the master strip");
+    let actions = click(&mut v, &doc, &reg, b);
+    assert!(
+        actions.iter().any(|a| matches!(
+            a,
+            UiAction::RunCommand { id, arg: None } if id == "mixer.lens_mono"
+        )),
+        "{actions:?}"
+    );
+    // The click changes nothing by itself: the app owns the state and tells the view.
+    assert!(!v.monitor_mono());
+    let paint = |v: &mut ConsoleView| {
+        let mut list = DisplayList::new();
+        v.paint(&mut list, &doc, &reg);
+        assert!(list.texts().contains(&"MONO"), "the button is on the strip");
+        format!("{list:?}")
+    };
+    let off = paint(&mut v);
+    v.set_monitor_mono(true);
+    assert!(v.monitor_mono());
+    let on = paint(&mut v);
+    assert_ne!(off, on, "the button is drawn lit");
+    v.set_monitor_mono(false);
+    assert_eq!(paint(&mut v), off);
+}
+
 // ---------------------------------------------------------------- console commands
 
 #[test]

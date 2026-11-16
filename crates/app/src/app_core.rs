@@ -314,6 +314,8 @@ pub struct AppCore<S: EngineSink> {
     eq_live: eq_live::EqLive,
     /// The EQs whose scope tap shows their spectrum (see `app_core_eq_spectrum.rs`).
     eq_spectra: eq_spectrum::EqSpectra,
+    /// The tonal balance meters, their targets and learning (see `app_core_tonal.rs`).
+    tonal: tonal::Tonal,
     /// The resonance finder of the dynamic EQ (see `app_core_resonance.rs`).
     resonance: resonance_finder::Finder,
     /// Learn from kick of the Sidechain Tool (see `app_core_duck_learn.rs`).
@@ -642,6 +644,7 @@ impl<S: EngineSink> AppCore<S> {
             tuners: tuner::Tuners::default(),
             eq_live: eq_live::EqLive::default(),
             eq_spectra: eq_spectrum::EqSpectra::default(),
+            tonal: tonal::Tonal::default(),
             resonance: resonance_finder::Finder::default(),
             duck_learn: duck_learner::Learner::default(),
             blind: blind::Blind::default(),
@@ -1168,6 +1171,7 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::LearnDuck(device) => self.learn_duck(&device),
             UiAction::PulseParam { device, param } => self.pulse_param(device, param),
             UiAction::SpectrumCurve { device, index } => self.pick_spectrum_curve(&device, index),
+            UiAction::TonalTarget { device, op } => self.tonal_action(&device, op),
             UiAction::MeterButton {
                 device,
                 kind,
@@ -1797,6 +1801,7 @@ impl<S: EngineSink> AppCore<S> {
         self.tuners.restart();
         self.eq_live.restart();
         self.eq_spectra.restart();
+        self.tonal.restart();
         self.blind.restart();
         self.speq.restart();
         self.meter_panels.restart();
@@ -1885,6 +1890,7 @@ impl<S: EngineSink> AppCore<S> {
         self.video_frame();
         self.feed_eq_analysers();
         self.feed_eq_spectra();
+        self.feed_tonal();
         self.poll_resonances();
         self.poll_duck_learn();
         self.feed_match_gains();
@@ -4153,7 +4159,7 @@ mod players;
 
 #[path = "app_core_analysers.rs"]
 mod analysers;
-pub use analysers::{MeterReadout, PHASE_VALUE_NAMES};
+pub use analysers::{LOUDNESS_VALUE_NAMES, MeterReadout, PHASE_VALUE_NAMES};
 
 #[path = "app_core_sample_edit.rs"]
 mod sample_edit;
@@ -4173,6 +4179,8 @@ pub use meter_panels::CurveFrom;
 mod eq_live;
 #[path = "app_core_eq_spectrum.rs"]
 mod eq_spectrum;
+#[path = "app_core_tonal.rs"]
+mod tonal;
 
 #[path = "app_core_blind.rs"]
 mod blind;
@@ -4420,6 +4428,9 @@ mod patches;
 #[path = "app_core_midi_out.rs"]
 mod midi_out;
 
+#[path = "app_core_headphone.rs"]
+mod headphone;
+
 #[path = "app_core_mod_matrix.rs"]
 mod mod_matrix;
 
@@ -4470,6 +4481,9 @@ mod eq_live_tests;
 #[cfg(test)]
 #[path = "app_core_eq_spectrum_tests.rs"]
 mod eq_spectrum_tests;
+#[cfg(test)]
+#[path = "app_core_tonal_tests.rs"]
+mod tonal_tests;
 
 #[cfg(test)]
 #[path = "app_core_tuner_tests.rs"]
@@ -4651,6 +4665,10 @@ mod players_tests;
 mod stereo_tool_tests;
 
 #[cfg(test)]
+#[path = "app_core_loudness_meter_tests.rs"]
+mod loudness_meter_tests;
+
+#[cfg(test)]
 #[path = "app_core_character_tests.rs"]
 mod character_tests;
 
@@ -4741,6 +4759,10 @@ mod kick_bass_tests;
 #[cfg(test)]
 #[path = "app_core_midi_out_tests.rs"]
 mod midi_out_tests;
+
+#[cfg(test)]
+#[path = "app_core_headphone_tests.rs"]
+mod headphone_tests;
 
 #[cfg(test)]
 #[path = "app_core_sync_tests.rs"]

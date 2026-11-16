@@ -258,7 +258,7 @@ pub fn factory() -> DeviceFactory {
 }
 
 /// `20 log10(x)` of a linear amplitude, `-120` below -120 dB or at silence.
-fn db(x: f32) -> f32 {
+pub(crate) fn db(x: f32) -> f32 {
     if x > 1e-6 {
         (6.020_6 * log2_det(x)).max(FLOOR_DB)
     } else {

@@ -76,6 +76,8 @@ pub struct Registry {
     curved: BTreeSet<&'static str>,
     /// Types that take drum pattern data.
     drummed: BTreeSet<&'static str>,
+    /// Types that take headphone data.
+    headphoned: BTreeSet<&'static str>,
     /// Types with a modulation matrix, and their tables.
     modulated: BTreeMap<&'static str, &'static ModTables>,
     /// Dynamically registered plugin types. Kept apart from `factories`, so the
@@ -159,6 +161,19 @@ impl Registry {
     /// Whether `type_id` was registered with [`Registry::register_with_drums`].
     pub fn takes_drums(&self, type_id: &str) -> bool {
         self.drummed.contains(type_id)
+    }
+
+    /// Registers a factory whose devices take headphone data ([`crate::PlayerData::Headphone`]);
+    /// such a type is also listed by [`Registry::takes_player_data`].
+    pub fn register_with_headphone(&mut self, factory: DeviceFactory) -> Result<(), RegistryError> {
+        self.register_with_player_data(factory)?;
+        self.headphoned.insert(factory.descriptor.type_id);
+        Ok(())
+    }
+
+    /// Whether `type_id` was registered with [`Registry::register_with_headphone`].
+    pub fn takes_headphone(&self, type_id: &str) -> bool {
+        self.headphoned.contains(type_id)
     }
 
     /// Registers a factory whose devices have a modulation matrix: the tables are checked

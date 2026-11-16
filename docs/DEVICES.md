@@ -1,18 +1,17 @@
 # Device reference
 
-Atomik Rack ships sixty-eight original devices: the poly synth (with its mono bass and dual layer
+Atomik Rack ships sixty-nine original devices: the poly synth (with its mono bass and dual layer
 variants), the semi-modular synth, the organ, the wavetable synth, the FM synth, the grain sampler, line mixer
 and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
 a hardware synth or a virtual port), the effects (reverb, space reverb, convolution reverb, vocoder, compressor, EQ,
-distortion, clipper, saturation, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
-analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
-machine and the loop slicer, the utility devices (gain tool, stereo tool, gate, gate + compressor,
-sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, dynamic EQ, tuner, pitch shifter,
-rotary speaker, the CV utilities (CV math, CV quantizer, sample and hold, slew limiter, gate processor and
-envelope follower) and the two spiders), the note players (step sequencer, arpeggiator,
-note filter, key &
-chord, note repeater and note delay), the container and its internal note split, and the console
+distortion, clipper, saturation, headphone correction, modulation, mastering), the guitar amp (with its cabinet,
+effects and setups), the analysers (spectrum, phase meter, tonal balance and loudness meter), the Character effect,
+the audio track, the sampler, the drum machine and the loop slicer, the utility devices (gain tool, stereo tool,
+gate, gate + compressor, sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, dynamic EQ,
+tuner, pitch shifter, rotary speaker, the CV utilities (CV math, CV quantizer, sample and hold, slew limiter, gate
+processor and envelope follower) and the two spiders), the note players (step sequencer, arpeggiator, note filter,
+key & chord, note repeater and note delay), the container and its internal note split, and the console
 devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the
 static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code
 differ, the code wins.
@@ -2344,9 +2343,9 @@ device browser with the effects.
 
 ### Params
 
-All of them are display settings: the device stores them (they are saved with the project and can be
-automated or preset like any param) and the UI reads them from the document; none of them reaches
-the audio.
+Apart from `stats.reset` and `clip_level` (below), all of them are display settings: the device stores
+them (they are saved with the project and can be automated or preset like any param) and the UI reads them
+from the document; none of them reaches the audio, and neither do those two.
 
 The same spectrum and phase meter are also available as **meter panels** without a device: Show
 Spectrum and Show Phase Meter in the right-click menu of a console strip (a channel, a bus, the master)
@@ -2377,7 +2376,7 @@ setting: the audio of the device is untouched and a bounce is the same to the bi
 |---|---|---|---|---|---|
 | `size` | 0 to 6: 1024, 2048, 4096, 8192, 16384, 32768, 65536 points | 2 (4096) | choice | Linear | yes |
 | `window` | 0 to 1: Hann, B-Harris (Blackman-Harris) | 0 | choice | Linear | yes |
-| `channel` | 0 to 4: Left, Right, Mid, Side, Sum | 4 (Sum) | choice | Linear | yes |
+| `channel` | 0 to 6: Left, Right, Mid, Side, Sum, L + R, M + S (the last two overlay two traces) | 4 (Sum) | choice | Linear | yes |
 | `mode` | 0 to 2: Fine (log-frequency trace), 1/3 oct (31 bands), Spectrogram | 0 | choice | Linear | yes |
 | `averaging` | 0 to 2000 | 150 | ms | Linear | no |
 | `hold` | 0 to 5000 (0 = no peak hold) | 1000 | ms | Linear | no |
@@ -2389,9 +2388,13 @@ setting: the audio of the device is untouched and a bounce is the same to the bi
 | `reference` | 0 to 2: Off, Stored, Stored with its level matched to the signal | 0 | choice | Linear | yes |
 | `reference.capture` | momentary toggle: a rising edge stores the bands on screen as the reference curve | 0 | toggle | Linear | yes |
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+| `stats.reset` | momentary toggle (id 14): a rising edge clears the peaks and the clip count | 0 | toggle | Linear | yes |
+| `clip_level` | -12 to 0 (id 15): a sample at or over this level counts as a clip | 0 | dB | Linear | no |
 
-Params added later were put before `bypass`, which moved from id 9 to id 13. A project stores
-params by key, so older projects load as they were, with the new ones at their defaults.
+Params added later were put before `bypass`, which moved from id 9 to id 13; the two last ones come after
+it (ids 14 and 15), and the choices added to `channel` come at its end, so no stored value changes
+meaning. A project stores params by key, so older projects load as they were, with the new ones at their
+defaults (no overlay, a clip level of 0 dBFS).
 
 ### Behaviour (as built)
 
@@ -2451,9 +2454,143 @@ params by key, so older projects load as they were, with the new ones at their d
   the bass.
 - **Bypass.** The `bypass` wrapper keeps the device's audio path (the dry path is the same signal).
   The panel shows `BYPASSED` and the app stops updating it, so it keeps the last picture.
-- **Meter values** (2): the peak of the last 16 batches (about 21 ms) of `in_l` and `in_r`, linear;
-  the panel draws them as the two bars next to the plot.
-- **Panel height.** The new controls make the panel 5 U tall (it was 4 U).
+- **Overlaid channels.** `channel` L + R draws the left and the right spectrum together, M + S the
+  mid and the side: two traces over the same axes in two colours of the theme (blue for the first,
+  green for the second) with a small legend (`L` `R` or `M` `S`) under the loudest-bin readout. The
+  app runs the analysis twice (the second one for the right or the side channel) with the same size,
+  window, averaging, smoothing, weighting and tilt. In the 1/3 oct mode each band has two thin bars,
+  the first on its left half and the second on its right half. The spectrogram has room for one image
+  and shows the sum of the two channels. The held peaks, the loudest-bin readout and the reference
+  curve belong to the first trace. The audio is untouched either way.
+- **Measurements, exact.** The device sees every sample, so what has to be exact is measured on the
+  audio side, not read back from the tap, and published as meter values: the stereo correlation (the
+  `atomik_dsp::stereo_meter` of the phase meter) averaged over about 300 ms and over 3 s; the sample
+  peak and the true peak of each channel since the reset in dBFS (the true peak is 4x oversampled, the
+  detector of the limiter and the phase meter, `atomik_devices::mastering::loudness::PeakDetector`,
+  BS.1770-4 Annex 2 style, no refinement); and the number of clipped samples since the reset, a sample
+  counting when its magnitude reaches `clip_level` (0 dBFS: a magnitude of 1.0 or more), both channels
+  together, saturating at 2^24 so that it stays exact as an `f32`. A non-finite sample counts as
+  silence in all of them (it still passes through). Everything since the reset is cleared by the device
+  being prepared and by a rising edge of `stats.reset`, not by a transport reset, so the peaks of a
+  whole mix survive a stop and a restart. The headroom is 0 dBFS minus the largest of the four peaks,
+  worked out by the UI. Nothing here changes the output: a bounce with the device is still the same to
+  the bit.
+- **The strip under the plot.** Under the axis labels the panel has a strip: the correlation as a
+  centre bar (green from 0 to +1, amber from 0 to -0.5, red below) with its number and the 3 s value
+  as a tick on the bar and `3s +0.95` beside it; then PEAK (left and right), TRUE (the larger true
+  peak), HEADROOM (`--` before any signal; red at 0 dB or under) and CLIP, a lamp that lights from the
+  first clipped sample, with the count. A click anywhere on the strip is the RESET: it sends the
+  device a pulse of `stats.reset` through the engine (a momentary param, like the gain
+  tool's RESET: nothing is stored and there is no undo step). The RESET also works from the
+  `stats.reset` switch in the PEAKS section. With the engine stopped the pulse waits for the next
+  block, so the readout clears when playback starts.
+- **Meter values** ([`METER_COUNT`](../crates/devices/src/spectrum.rs) = 9): 0 and 1 the peak of the last
+  16 batches (about 21 ms) of `in_l` and `in_r`, linear (the two bars next to the plot); 2 the
+  correlation over about 300 ms; 3 the correlation over about 3 s (-1 to +1, 0 for silence or one
+  silent side); 4 and 5 the sample peak since the reset, left and right, dBFS; 6 and 7 the true peak
+  since the reset, left and right, dBFS (-120 for none); 8 the clipped samples. The MCP
+  `session_meters` tool reports them by name (`correlation`, `correlation_long`, `sample_peak_l_db`,
+  `sample_peak_r_db`, `true_peak_l_db`, `true_peak_r_db`, `headroom_db`, `clips`).
+- **Panel height.** The strip and the PEAKS section make the panel taller than before.
+
+---
+
+## Tonal Balance: `atomik.tonal-balance` (Effect)
+
+A tonal balance meter that passes the audio through untouched. Put it on the master bus: it compares the
+spectral balance of the mix with a target and shows, for four regions, whether each is too loud or too
+quiet. Source: [crates/devices/src/tonal_balance.rs](../crates/devices/src/tonal_balance.rs); the maths is
+[crates/dsp/src/tonal.rs](../crates/dsp/src/tonal.rs), run by the app on the UI side
+([crates/app/src/app_core_tonal.rs](../crates/app/src/app_core_tonal.rs)); the saved targets are
+[crates/app/src/tonal_targets.rs](../crates/app/src/tonal_targets.rs). It appears in the device browser with
+the effects.
+
+### Sockets
+
+`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out). An unconnected input reads silence.
+
+### Params
+
+All of them are display settings: the device stores them (they are saved with the project and can be
+automated or preset like any param) and the UI reads them from the document; none of them reaches the audio.
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `response` | 0 to 2: Fast (1.5 s), Medium (4 s), Slow (10 s) averaging | 1 | choice | Linear | yes |
+| `view` | 0 to 2: Bands (the four meters), Curve (the detailed curve), Both | 2 | choice | Linear | yes |
+| `channel` | 0 to 2: Sum (mean of the left and right power), Mid, Side | 0 | choice | Linear | yes |
+| `learn` | toggle: on while the live signal is learned | 0 | toggle | Linear | yes |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+| `hidden.target` | 0 to 1000: 0 to 3 a built-in target, 4 the learned one not saved yet, 10 + n a saved target | 0 | none | Linear | yes |
+
+### Behaviour (as built)
+
+- **Audio path.** As the spectrum analyser's: each batch the device copies `in_l`/`in_r` to `out_l`/`out_r`
+  **bit for bit** with **no latency** and pushes the same 64 frames into its `ScopeTap` (32 768 frames,
+  room for the 16 384-point analysis). Nothing in the output depends on a param, so a bounce with the device
+  is bit-identical to a bounce without it. Meter values (2): the recent peaks of the two inputs.
+- **Analysis (UI side).** While the panel is on screen and the device is not bypassed, the app reads the
+  newest 16 384 frames of the tap every UI frame (the tap costs the audio thread nothing more) and runs
+  the spectrum analyser's FFT (`atomik_dsp::spectrum`: Hann window, the `channel`, a one-pole average over
+  the `response` time measured in frames of audio) to the 31 one-third-octave band levels. The reading is
+  not made for a device whose panel is folded, scrolled out or on the back face, or that is bypassed.
+- **Regions.** The four regions group the one-third-octave bands by their centre frequency:
+
+  | Region | Crossover | Bands |
+  |---|---|---|
+  | LOW | below 150 Hz | 20 Hz to 125 Hz (9 bands) |
+  | LOW-MID | 150 Hz to 1 kHz | 160 Hz to 800 Hz (8 bands) |
+  | HIGH-MID | 1 kHz to 5 kHz | 1 kHz to 4 kHz (7 bands) |
+  | HIGH | 5 kHz and above | 5 kHz to 20 kHz (7 bands) |
+
+  A region's level is the energy of its bands, in dB.
+- **Shape, not level.** The band powers are divided by the K-weighted energy of the core bands, 160 Hz to
+  4 kHz (the BS.1770 K-weighting at each band centre), where the loudness of a mix is decided. A louder or
+  quieter version of the same mix reads the same. Anchoring on the core keeps an excess of bass or treble on
+  its own meter instead of pulling the others down. A region's deviation is the mix's level minus the
+  target's, in dB: positive is too loud, negative too quiet.
+- **Meters and range.** Each region has a vertical meter around the target's level (0 dB at its middle),
+  over plus and minus 9 dB. The shaded range is the target plus or minus its tolerance; the marker is the
+  mix. The marker is in the OK colour while it is inside the range and in the warning colour outside, and the
+  number beside it is the deviation in dB. The curve view draws the target's curve with its range and the
+  mix's band curve over it, 20 Hz to 20 kHz.
+- **Built-in targets.** Our own shapes on the one-third-octave band levels: with `x = log2(f / 1 kHz)`,
+  `L(f) = tilt * x + low / (1 + (f / f_low)^2) + high * f^2 / (f^2 + f_high^2)` dB, then normalised as above.
+  A flat band level is pink noise (equal energy per octave); the usual mix falls about 4.5 dB per octave.
+
+  | Target | tilt (dB/oct) | low shelf | high shelf |
+  |---|---|---|---|
+  | Balanced | -4.5 | +2 dB, corner 100 Hz | none |
+  | Bright | -4.0 | none | +3 dB, corner 5 kHz |
+  | Warm | -5.0 | +1.5 dB, corner 150 Hz | -2 dB, corner 6 kHz |
+  | Bass-heavy | -4.5 | +6 dB, corner 200 Hz | none |
+
+  The range of a built-in is plus and minus 3 dB (4.5 dB on the three outermost bands at each end of the
+  curve). No third-party curve data is used.
+- **Learned targets.** The balance of the reference is observed in stretches of about 3 s of a file (2 s of
+  the live signal): each stretch is the power average of half-overlapping 16 384-point windows, normalised
+  as above. The target's curve is the power mean of the stretches, normalised again; its tolerance, per band
+  and per region, is half the standard deviation of the stretches' dB values, kept between 2 and 6 dB (3 dB
+  from a single stretch). Several files are analysed one after the other into the same set of stretches, so
+  the spread between songs widens the range. Silent stretches are skipped.
+  - **From files.** The Learn from files… entry of the target menu opens a file dialog (one or several
+    audio files); the files are decoded and analysed on a worker thread, off the audio thread and the UI,
+    with a progress readout on the panel.
+  - **From the live signal.** The LEARN switch accumulates the balance of what plays while the panel is
+    shown; switching it off ends the learn. The result is the learned target, shown at once, not yet saved.
+  - **Saving.** Save learned target… asks for a name and keeps the learned target with the user's settings, in
+    `tonal-targets.json` beside the library file (the same place as `spectrum-reference.json`), not in the
+    project. The menu lists the built-ins, the learned one and the saved ones; a saved one can be renamed
+    or deleted. A damaged file is ignored and a file from a newer version is never overwritten.
+  - **In the project.** The device stores the `hidden.target` value. A project opened where the saved target does
+    not exist reads Balanced, and the panel says the target is missing.
+- **Panel.** A 3 U panel on the usual effect layout: across the top a TARGET button (the name of the target
+  in force and a list under it) with a status line beside it (ANALYSING FILES, LEARNING, LEARNED, NOT SAVED,
+  TARGET MISSING, NO SIGNAL), the four meters on the left and the curve on the right (the `view` choice
+  shows either or both); under it RESPONSE and CHANNEL, VIEW and the LEARN switch. The list has the
+  built-in targets, the learned one while there is one, the saved ones, and the entries Learn from files…,
+  Save learned target…, Rename target… and Delete target. Save and Rename type the name in place of the
+  button (Enter keeps it, Escape drops it). The back has audio in and audio out.
 
 ---
 
@@ -2526,6 +2663,103 @@ and were put before `bypass`, which moved from id 6 to id 8.
   `[recent peak L, recent peak R, held peak L, held peak R, RMS L, RMS R]` (linear),
   `[sample peak dBFS, true peak dBTP]`, `[correlation, balance, width]`, `[mid RMS, side RMS]`
   (linear), `[momentary, short-term, integrated LUFS]`; -120 for silence or loudness off.
+
+---
+
+## Loudness Meter: `atomik.loudness-meter` (Effect)
+
+A loudness meter with a target that passes the audio through untouched: momentary, short-term and
+integrated loudness, the loudness range, true peak per channel, the ratios between peak and loudness,
+a history of the short-term loudness and a distribution of it, judged against a preset target. Source:
+[crates/devices/src/loudness_meter.rs](../crates/devices/src/loudness_meter.rs), with the loudness
+meter and the true-peak detector of `atomik.mastering` (`mastering/loudness.rs`) and the range code of
+[crates/dsp/src/loudness_history.rs](../crates/dsp/src/loudness_history.rs) that the phase meter's
+history uses.
+
+### Sockets
+
+`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `preset` | 0 to 6: Streaming -14 LUFS / -1 dBTP, Streaming -16 LUFS, Broadcast EBU R128 -23 LUFS, Broadcast ATSC A/85 -24 LKFS, Podcast -16 LUFS, Club / loud master -9 LUFS, Custom | 0 | choice | Linear | yes |
+| `target_lufs` | -40 to 0 (the target when `preset` is Custom) | -14 | LUFS | Linear | no |
+| `max_tp` | -12 to 0 (the true-peak limit when `preset` is Custom) | -1 | dB | Linear | no |
+| `history_span` | 0 to 3: 30 s, 1 min, 5 min, 15 min (the span the graph shows) | 1 (1 min) | choice | Linear | yes |
+| `reset` | momentary toggle: a rising edge clears everything that accumulates | 0 | toggle | Linear | yes |
+| `hold` | 0 or 1: pause the accumulation | 0 | toggle | Linear | yes |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+The presets are `(target, true-peak limit)` = (-14, -1), (-16, -1), (-23, -1), (-24, -2), (-16, -1)
+and (-9, -1); the names carry the numbers. `history_span` is a display setting (the device stores it
+and does not use it).
+
+### Behaviour (as built)
+
+- **Audio path.** The outputs are the inputs, bit for bit, with no latency. The meters only read;
+  everything is allocation-free after `prepare`, and a bounce with the device equals a bounce without
+  it (the render tests compare the bits).
+- **Loudness.** BS.1770-4 / EBU R128, the code of the mastering device: K-weighting designed for the
+  actual sample rate, momentary (400 ms), short-term (3 s) and integrated loudness gated at -70 LUFS
+  and 10 LU below the mean. A stereo 1 kHz sine at -23 dBFS peak reads -23.0 LUFS in all three.
+- **LRA** (EBU Tech 3342): the short-term loudness once a second goes into a histogram of 0.1 LU bins;
+  the relative gate is 20 LU below the mean energy of the values above -70 LUFS, and the range is the
+  95th minus the 10th percentile of what passes. A steady tone reads 0 LU; a programme that spends
+  half its time at -33 and half at -23 reads 10 LU. A fade into silence adds the few values it passes
+  through, and the silence itself counts for nothing.
+- **True peak** (4x oversampled) per channel and overall in dBTP, and the **sample peak** in dBFS,
+  all since the last reset.
+- **Ratios**, in dB, `-120` (shown as `--`) while there is nothing to compare:
+  - **PLR** (peak to loudness ratio) = true peak since reset - integrated loudness. A programme
+    property: how much headroom its loudness leaves.
+  - **PSR** (peak to short-term ratio) = the largest true peak of the last 3 s - the short-term
+    loudness now. It follows the signal, so a loud transient raises it for three seconds.
+  - **DR**, the crest factor of the programme = sample peak since reset - the RMS level of
+    everything since reset (both channels together, unweighted, in dBFS). A full-scale sine reads
+    3.0 dB, a sine in one channel only 6.0 dB; dense, limited masters read a few dB, open
+    recordings 15 or more. It is a plain crest factor, not a loudness measure, so it needs no gate.
+- **Distribution.** The short-term loudness once a second, counted in 1 LU bins from -46 to 0 LUFS
+  (quieter and louder values land in the first and the last bin, silence below -70 LUFS is not
+  counted), published as each bin's share of the tallest one.
+- **History.** Every half second the short-term and the momentary loudness go into the device's
+  `ScopeTap` (a frame whose left value is short-term and whose right value is momentary, in LUFS);
+  the tap keeps the 15 minutes of the longest span and the UI draws the newest points of the span the
+  panel asks for.
+- **Accumulation.** Like the phase meter, the device measures what flows through it, so nothing
+  accumulates while the engine is stopped. The integrated loudness, the LRA, the peaks, the ratios,
+  the distribution and the history start from nothing after a reset (the `reset` rising edge,
+  `reset()`, `prepare`); the distribution, the LRA and the history also leave out the first 3 s
+  after that, while the short-term window fills. There is no reset at the start of the transport:
+  press RESET or let the device start over with the project, as the phase meter does.
+- **`hold`** pauses the accumulation: the integrated loudness, the LRA, the peaks, the ratios, the
+  distribution, the history and the programme time stay where they are, while the momentary and
+  short-term loudness go on following the signal. Letting go resumes from there.
+- **Target.** The preset (or `target_lufs` and `max_tp` for Custom) names the target loudness and the
+  maximum true peak. The programme is **on target** when its integrated loudness is within 1 LU of
+  the target (both ends included), **too loud** above that and **too quiet** below; its true peak
+  **fails** only when it is above the maximum. The target in force is published.
+- **Meter values** (62, `atomik_devices::loudness_meter::value`): `[momentary, short-term,
+  integrated LUFS]`, `[LRA LU]`, `[true peak, true peak L, true peak R dBTP]`, `[sample peak dBFS]`,
+  `[PLR, PSR, DR dB]`, `[target LUFS, max true peak dBTP]`, `[reset counter, history points since
+  reset, programme seconds]`, then 46 distribution bins. The counter changes at every reset (it never
+  goes back to 0), so a reader knows the history started over.
+
+### Panel
+
+A custom 4 U panel (`crates/ui/src/loudness_panel.rs`). Top row, left to right: LOUDNESS (the integrated
+loudness as the biggest number, short-term and momentary under it), RANGE AND PEAKS (LRA, true peak, PLR,
+PSR, DR and the sample peak) and TARGET (the target in force, then the loudness line: ON TARGET in green
+within 1 LU of it, TOO LOUD or TOO QUIET with the distance in amber outside that; then the true-peak line:
+OK in green or FAIL with the overshoot in red; the true peak in the middle box turns red too). Middle row:
+the HISTORY graph (the short-term loudness as a line, the momentary loudness fainter, a line at the target,
+36 LU drawn with the target 10 LU under the top, the newest value at the right edge; a click on the graph
+steps the span, a right click steps back, the wheel steps too) and the DISTRIBUTION (one bar per LU from
+-46 to 0 LUFS as tall as the share of the tallest, the target line and a mark at the short-term loudness
+now). Bottom row: the TARGET PRESET selector, the two CUSTOM TARGET knobs (the target and the true-peak
+limit used with the preset Custom), RESET (momentary: it stores nothing, the app pulses the device) and
+HOLD, and the PROGRAMME TIME. The back has AUDIO IN and AUDIO OUT.
 
 ---
 
@@ -4279,6 +4513,132 @@ OUT. Source: [crates/ui/src/saturation_panel.rs](../crates/ui/src/saturation_pan
 A little on the master or a drum bus in neutral thickens it; keep low on a bass or a kick adds
 bite without loosening the low end; keep high on a vocal or a pad adds body without making it
 harsh. Leave `auto_level` on to judge by ear, off to feel how much the curve raises the level.
+
+## Headphone Correction: `atomik.headphone-correction` (Effect)
+
+The last device on the master bus while you mix on headphones: it flattens the response of **your own**
+headphones so the mix is heard against a neutral reference. Bypass it (or remove it) before the export: it is a
+monitoring correction, not part of the mix. The device ships with no headphone data and with no target curve but
+its own two; you import a file of your own. Source:
+[crates/devices/src/headphone_correction.rs](../crates/devices/src/headphone_correction.rs) and
+[curve.rs](../crates/devices/src/headphone_correction/curve.rs); the file reader is
+[crates/device-sdk/src/headphone.rs](../crates/device-sdk/src/headphone.rs).
+
+### Sockets
+
+`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out). There is no CV input. The reported latency is 0.
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `amount` | 0 to 2 (0 to 200 % of the correction in dB) | 1 | percent | Linear | no |
+| `target` | 0–1: flat, studio | 0 | choice | Linear | yes |
+| `file_kind` | 0–1: measured response, correction curve ("Data is") | 0 | choice | Linear | yes |
+| `simulate` | 0 or 1 (apply the inverse) | 0 | toggle | Linear | yes |
+| `auto_gain` | 0 or 1 (take the largest boost off as a preamp) | 1 | toggle | Linear | yes |
+| `output` | −24 to 12 | 0 | dB | Linear | no |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+### Meter values
+
+Four values (`atomik_devices::headphone_correction::METERS`): `loaded` (1 when data is installed), `preamp` (the
+preamp the filter applies, in dB), `boost` (the largest boost of the correction before the preamp, in dB) and
+`busy` (1 while a filter is being built).
+
+### Importing data
+
+Right-click the device in the rack and choose **Import Headphone Data...**, then pick a file; **Remove Headphone
+Data** takes it away again. Both are one undo step. In a headless session (the MCP) `session_command` with the id
+`rack.headphone_import` and the file's path as `arg` does the same. The project keeps the numbers that were read, not
+the path (the file name is a display name only), so a project opens on another computer with its correction. The
+numbers are the root `headphone` field of the project file (format 45, ignorable, written only when a device has
+data). Two formats are read, told apart by their lines:
+
+- **A frequency response** (CSV or plain text): one `frequency, dB` pair per line, separated by a comma, a semicolon,
+  a tab or spaces (with a semicolon a comma is a decimal comma). Text lines before the first number are a header;
+  lines that start with `#`, `*`, `//` or `%` are comments; frequencies must rise (1 Hz to 200 kHz, levels within
+  ±200 dB). A third column is read as the right channel (the second is the left), unless the header names it `phase`.
+  A file of more than 4096 rows is averaged down onto a 1/96-octave grid. The numbers may be absolute (an SPL) or
+  relative: the response is levelled at 1 kHz.
+- **Parametric EQ text**: an optional `Preamp: -6.2 dB` line and one line per band, for example
+  `Filter 1: ON PK Fc 105 Hz Gain -3.2 dB Q 0.70`. The types are `PK` (peak), `LSC`, `LS` (low shelf), `HSC`, `HS`
+  (high shelf), `LP` and `HP` (second-order low and high pass). A shelf or peak without a Q takes 0.71; `OFF` bands are
+  skipped; up to 64 bands. A parametric file already is a correction: `Data is` and `Target` do not apply to it.
+
+A file that cannot be read is refused with a message that names the line, and nothing changes.
+
+### Behaviour (as built)
+
+- **The correction curve.** On a dB grid of 96 points per octave from 20 Hz to 20.48 kHz (held at its end values
+  beyond): the response is read at the grid frequencies (linear in dB over log frequency) and smoothed over 1/12 octave
+  (a parametric file is not smoothed: it is the sum of the cookbook magnitude responses of its bands at the device's
+  sample rate). With `Data is` = measured response the correction is `target − (response − response at 1 kHz)`; with
+  correction curve the data is the correction. The correction in dB is multiplied by `amount`, negated by `simulate`
+  and limited to ±20 dB.
+- **The studio target** is a gentle tilt of our own, `T(f) = 3 / (1 + (f / 120)²) − clamp(log2(f / 1000), 0, log2 10)`
+  dB: a low shelf of +3 dB at the bottom (+1.5 dB at 120 Hz, under +0.3 dB above 400 Hz) and a slope of −1 dB per
+  octave above 1 kHz that reaches −3.3 dB at 10 kHz and stays there. The flat target is 0 dB. No other target curve is
+  built in.
+- **Simulate** applies the inverse of the correction: the headphone's own deviation from the target instead of its
+  correction. Heard on other headphones or on speakers it gives a rough idea of how the mix would sound on the
+  imported ones. It is an approximation (a magnitude-only inverse of a smoothed curve, limited to ±20 dB; it does not
+  model distortion, fit or the ear).
+- **Preamp.** With `auto_gain` on, the preamp is minus the largest boost of the curve, so the correction never exceeds
+  0 dB and cannot clip on its own; the applied value is the `preamp` meter. Off, the preamp is the parametric file's own
+  `Preamp` (times `amount`, negated by `simulate`) and 0 dB for a response. `output` adds gain on top, smoothed over 30
+  ms.
+- **The filter.** The curve becomes a 4096-tap minimum-phase FIR by the real-cepstrum method on a 16384-point FFT
+  (inverse FFT of the log magnitude, fold, FFT, exponential, inverse FFT; the last eighth is faded out), for either
+  format, scaled by the preamp, and runs in the zero-latency partitioned convolver of the convolution reverb. A
+  minimum-phase filter has the least phase shift a magnitude can have and no pre-ringing. A flat curve (amount 0, a
+  response that already is the target) is an exact unit impulse.
+- **Rebuilds** (new data, `amount`, `target`, `Data is`, `simulate`, `auto_gain`, a sample-rate change) take a few
+  steps, at most one FFT or eight partitions per channel per batch, never a long stall; the old filter keeps sounding
+  and the convolver crossfades to the new one over 256 samples, so a change does not click. The steps are counted in
+  batches, so a bounce is bit-identical at any host block size, and a knob that is dragged finishes one rebuild before
+  starting the next.
+- **First filter and removal.** The first filter after a project opens or after the data was removed fades in over 10
+  ms from the dry signal (the convolver starts from silence); removing the data fades out the same way and the device
+  is the exact passthrough again, bit for bit at `output` 0 dB.
+- **Stereo.** Both channels use the same curve, unless the response file has a third column: then the left and the
+  right have their own.
+- **Without data** the device copies its input (bit for bit at `output` 0 dB). Non-finite input samples count as 0.
+  `process`, `set_param` and `reset` never allocate.
+- **The curve for a panel.** `atomik_devices::headphone_correction::curve::snapshot` returns the response (levelled),
+  the target, the correction and the preamp at any number of log-spaced frequencies from the stored data, a pure
+  function a panel can call to draw them.
+
+### Panel
+
+A custom 2 U panel. On the left, under HEADPHONES, a strip names the imported data (the file's name, as stored in
+the project) and its format (frequency response with its number of points, and left and right when the file has
+both; or parametric EQ with its number of bands), says `building...` while a filter is being designed (meter
+`busy`), and carries an IMPORT button (it always works, to pick another file) and a REMOVE (x) button (dim without
+data). Under it, the graph runs 20 Hz to 20 kHz on a log axis with a dB grid whose range follows the curves (6, 12 or
+24 dB each way). It draws the headphone's own RESPONSE (grey) and the TARGET (dashed), both only for a measured
+response, and the CORRECTION (highlighted, with a soft fill to 0 dB): the curve the device applies, so AMOUNT
+scales it, `simulate` inverts it (the curve and the legend turn to the warning colour and read SIMULATION) and the
++-20 dB limit shows. A legend names what is drawn. With no data the graph says "Import headphone data..." and a
+click on it runs the import, as the IMPORT button and `rack.headphone_import` do. The curves come from
+`curve::snapshot` for the data and the settings, computed when either changes (not while painting) and kept with
+the panel. The line under the graph reads "MONITOR ONLY - bypass before export": a reminder only, nothing happens
+automatically.
+
+On the right, AMOUNT (0 to 200 %, the 100 % mark on its ring), OUTPUT, the AUTO GAIN toggle with the preamp the
+device applies (meter `preamp`, in dB; a dash until the engine has built a filter), then the TARGET and DATA IS
+selectors and the SIMULATE toggle, lit in the warning colour because it colours the sound. For parametric data
+TARGET and DATA IS do not apply and are drawn dimmed (they still take a value, kept for the next response). The
+knobs take drag (one merged undo step, Shift for fine, Esc restores), the wheel, a double-click for the default and
+a right-click for the MIDI menu, like every control. The back has AUDIO IN and AUDIO OUT. Source:
+[crates/ui/src/headphone_panel.rs](../crates/ui/src/headphone_panel.rs); the test is
+[crates/ui/tests/headphone_panel.rs](../crates/ui/tests/headphone_panel.rs).
+
+### Suits
+
+Put it last on the master bus, import the response of the headphones you mix on (or a parametric correction made for
+them), leave `auto_gain` on, and bypass it for the bounce. `simulate` is for a quick check of how the mix may translate
+to those headphones from another listening position.
 
 ## Dynamic EQ: `atomik.dynamic-eq` (Effect)
 

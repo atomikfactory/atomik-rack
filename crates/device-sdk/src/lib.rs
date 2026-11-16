@@ -5,6 +5,7 @@
 
 mod context;
 mod descriptor;
+pub mod headphone;
 mod midi_tap;
 mod modulation;
 mod panel;

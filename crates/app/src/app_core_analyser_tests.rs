@@ -340,6 +340,13 @@ fn the_probe_reads_the_same_tone_without_an_audio_stream() {
     let spec = readouts.iter().find(|r| r.key == key("spec")).unwrap();
     let value = |r: &MeterReadout, n: &str| r.values.iter().find(|(k, _)| *k == n).unwrap().1;
     assert!((value(spec, "peak_hz") - 440.0).abs() < 15.0, "{spec:?}");
+    // What the device measured on every sample comes along.
+    assert!(value(spec, "correlation") > 0.9, "{spec:?}");
+    assert!(value(spec, "sample_peak_l_db") < 0.0 && value(spec, "sample_peak_l_db") > -60.0);
+    assert!(value(spec, "true_peak_l_db") >= value(spec, "sample_peak_l_db") - 1e-6);
+    let top = value(spec, "true_peak_l_db").max(value(spec, "true_peak_r_db"));
+    assert!((value(spec, "headroom_db") + top).abs() < 1e-4, "{spec:?}");
+    assert_eq!(value(spec, "clips"), 0.0);
     assert_eq!(spec.bands.len(), 31);
     let loudest = spec
         .bands
@@ -868,4 +875,110 @@ fn a_bypassed_phase_meter_keeps_its_history() {
     c.sink_mut().device_scopes.insert(id, (t.0, t.1, head));
     c.frame();
     assert_eq!(data(&c, "ph"), live);
+}
+
+// ------------------------------------------------------------------ overlays and the new params
+
+#[test]
+fn the_overlay_choices_analyse_two_channels_and_fall_back_in_the_spectrogram() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, SPECTRUM, "spec");
+    set(&mut c, "spec", "averaging", 0.0);
+    let id = c.device_id(&key("spec")).unwrap();
+    let desc = c.registry().descriptor(SPECTRUM).unwrap();
+    let dev = |c: &AppCore<RecordingSink>| c.doc().resolve(&key("spec")).unwrap().clone();
+    // The old choices are unchanged: one trace, no overlay.
+    assert_eq!(analysers::overlay_channel(desc, &dev(&c)), None);
+    let mut head = 0;
+    let mut feed = |c: &mut AppCore<RecordingSink>, hz_l: f64, hz_r: f64| {
+        head += 48_000;
+        let (l, _, _) = tone(hz_l, 8192, head, 1.0);
+        let (r, _, _) = tone(hz_r, 8192, head, 1.0);
+        c.sink_mut().device_scopes.insert(id, (l, r, head));
+        c.frame();
+    };
+    feed(&mut c, 1000.0, 4000.0);
+    assert!(data(&c, "spec").overlay.is_empty());
+    // L + R: the first trace is the left channel, the second the right.
+    set(&mut c, "spec", "channel", 5.0);
+    assert_eq!(
+        analysers::overlay_channel(desc, &dev(&c)).map(|o| o.1),
+        Some(atomik_ui::analyser::OverlayKind::LeftRight)
+    );
+    feed(&mut c, 1000.0, 4000.0);
+    let d = data(&c, "spec");
+    assert_eq!(d.overlay_kind, atomik_ui::analyser::OverlayKind::LeftRight);
+    assert_eq!(d.overlay.len(), d.trace.len());
+    assert!(
+        (d.peak_hz - 1000.0).abs() < 12.0,
+        "the first trace is the left: {}",
+        d.peak_hz
+    );
+    let loudest = |t: &[f32]| {
+        let i = (0..t.len()).max_by(|&a, &b| t[a].total_cmp(&t[b])).unwrap();
+        atomik_dsp::spectrum::column_edge_hz(i as f64 + 0.5, t.len())
+    };
+    assert!(
+        (loudest(&d.trace) - 1000.0).abs() < 100.0,
+        "{}",
+        loudest(&d.trace)
+    );
+    assert!(
+        (loudest(&d.overlay) - 4000.0).abs() < 400.0,
+        "{}",
+        loudest(&d.overlay)
+    );
+    // M + S of two equal channels: all in the mid, nothing in the side.
+    set(&mut c, "spec", "channel", 6.0);
+    feed(&mut c, 1000.0, 1000.0);
+    let d = data(&c, "spec");
+    assert_eq!(d.overlay_kind, atomik_ui::analyser::OverlayKind::MidSide);
+    assert!(d.trace.iter().cloned().fold(-200.0, f32::max) > -20.0);
+    assert!(d.overlay.iter().cloned().fold(-200.0, f32::max) < -90.0);
+    // The 1/3 octave mode keeps both, 31 bands each.
+    set(&mut c, "spec", "mode", 1.0);
+    feed(&mut c, 1000.0, 1000.0);
+    let d = data(&c, "spec");
+    assert!(d.bands && d.trace.len() == 31 && d.overlay.len() == 31);
+    // The spectrogram shows the sum: no overlay.
+    set(&mut c, "spec", "mode", 2.0);
+    assert_eq!(analysers::overlay_channel(desc, &dev(&c)), None);
+    assert_eq!(
+        analysers::spectrum_settings(desc, &dev(&c)).channel,
+        atomik_dsp::spectrum::ChannelMode::Sum
+    );
+    feed(&mut c, 1000.0, 1000.0);
+    let d = data(&c, "spec");
+    assert!(d.overlay.is_empty() && d.overlay_kind == atomik_ui::analyser::OverlayKind::Off);
+}
+
+#[test]
+fn a_project_saved_before_the_new_params_loads_their_defaults() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, SPECTRUM, "spec");
+    // Strip the keys of the new params, as an old project has it: only the old ones are there.
+    let mut doc = c.doc().clone();
+    let old = doc
+        .devices
+        .iter_mut()
+        .find(|d| d.key == key("spec"))
+        .unwrap();
+    old.params
+        .retain(|k, _| !matches!(k.as_str(), "stats.reset" | "clip_level"));
+    old.params.insert("channel".into(), 4.0);
+    let json = serde_json::to_string(&old.params).unwrap();
+    assert!(!json.contains("clip_level") && !json.contains("stats.reset"));
+    let desc = c.registry().descriptor(SPECTRUM).unwrap();
+    let value = |k: &str| {
+        let p = desc.params.iter().find(|p| p.key == k).unwrap();
+        atomik_ui::widget::current_value(old, p)
+    };
+    assert_eq!(value("stats.reset"), 0.0);
+    assert_eq!(value("clip_level"), 0.0);
+    assert_eq!(value("channel"), 4.0, "Sum is still Sum");
+    assert_eq!(analysers::overlay_channel(desc, old), None);
+    assert_eq!(
+        analysers::spectrum_settings(desc, old).channel,
+        atomik_dsp::spectrum::ChannelMode::Sum
+    );
 }

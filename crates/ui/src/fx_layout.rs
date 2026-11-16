@@ -14,6 +14,7 @@
 //! | stereo tool | two band knobs with active lamps and correlation meters, crossover, solo | its own 3 U layout, [`crate::stereo_panel`] | LO BAND, X-OVER, HI BAND, SOLO, POLARITY, ROTATE, BALANCE, M/S MODE, OUTPUT |
 //! | gain tool | lamps, in/out meters, fader, peak hold | its own 3 U layout, [`crate::gain_panel`] | MUTE, INPUT, GAIN, OUTPUT, MODE, POLARITY, PEAK HOLD, PAN, IMAGE |
 //! | saturation | big knob with tick scale and drive lamp, type switch, mix, output, auto level, oversampling | its own 1 U layout, [`crate::saturation_panel`] | SATURATION, SATURATION TYPE, MIX, OUTPUT, OVERSAMPLING |
+//! | loudness meter | readouts, history graph, distribution, verdict against a target | its own 4 U layout, [`crate::loudness_panel`] | LOUDNESS, RANGE AND PEAKS, TARGET, HISTORY, DISTRIBUTION, TARGET PRESET, CUSTOM TARGET, METER, PROGRAMME TIME |
 //! | dynamic EQ | static and live response curves, input and key spectra, a handle per band, output peaks | across the top, 170 high | LOW SHELF, BELL 1-3, HIGH SHELF, OUTPUT |
 //! | spectrum | log-frequency plot or 1/3-octave bars, peak hold, loudest-bin readout, input peaks | across the top, 200 high | ANALYSIS, SMOOTHING, DISPLAY |
 //! | audio track | the tuner display (needle, note, cents, Hz), only while the TUNER button of its name plate is on | across the top, 92 high | INPUT, TUNER (with the display) |
@@ -43,7 +44,8 @@ const LEFT_AMP: f64 = 168.0;
 /// Height (title included) of the visual placed above the sections.
 const TOP_EQ: f64 = 186.0;
 const TOP_MASTERING: f64 = 112.0;
-const TOP_SPECTRUM: f64 = 200.0;
+const TOP_SPECTRUM: f64 = 218.0;
+const TOP_TONAL: f64 = 150.0;
 const TOP_PHASE: f64 = 148.0;
 const TOP_TUNER: f64 = 92.0;
 const TOP_DUCK: f64 = 150.0;
@@ -155,13 +157,24 @@ fn sections(kind: FxKind) -> Def {
             ("OUTPUT", &["mix", "mix_cv_trim", "output"]),
         ],
         // Laid out by `character_panel::character_layout`, not by these sections.
-        FxKind::Character | FxKind::StereoTool | FxKind::GainTool | FxKind::Saturation => &[],
+        FxKind::Character
+        | FxKind::StereoTool
+        | FxKind::GainTool
+        | FxKind::Saturation
+        | FxKind::LoudnessMeter
+        | FxKind::HeadphoneCorrection => &[],
         FxKind::Spectrum => &[
             ("ANALYSIS", &["size", "window", "channel", "mode"]),
             ("WEIGHTING", &["weighting", "smoothing"]),
             ("AVERAGING", &["averaging", "hold", "decay"]),
             ("DISPLAY", &["range", "tilt"]),
             ("REFERENCE", &["reference", "reference.capture"]),
+            ("PEAKS", &["clip_level", "stats.reset"]),
+        ],
+        FxKind::TonalBalance => &[
+            ("RESPONSE", &["response", "channel"]),
+            ("VIEW", &["view"]),
+            ("LEARN", &["learn"]),
         ],
         FxKind::PhaseMeter => &[
             ("STEREO", &["corr_time"]),
@@ -269,6 +282,7 @@ fn title(kind: FxKind) -> &'static str {
         FxKind::Mastering => "LOUDNESS AND BANDS",
         FxKind::Character => "SCREEN",
         FxKind::Spectrum => "SPECTRUM",
+        FxKind::TonalBalance => "TONAL BALANCE",
         FxKind::PhaseMeter => "STEREO IMAGE AND LEVELS",
         FxKind::AudioTrack | FxKind::Tuner => "TUNER",
         FxKind::Clipper => "CURVE",
@@ -276,6 +290,8 @@ fn title(kind: FxKind) -> &'static str {
         FxKind::StereoTool => "STEREO",
         FxKind::GainTool => "GAIN",
         FxKind::Saturation => "SATURATION",
+        FxKind::LoudnessMeter => "LOUDNESS",
+        FxKind::HeadphoneCorrection => "HEADPHONES",
     }
 }
 
@@ -289,10 +305,14 @@ fn placement(kind: FxKind) -> (f64, f64) {
         FxKind::GuitarAmp => (LEFT_AMP, 0.0),
         FxKind::Modulation => (LEFT_MODULATION, 0.0),
         FxKind::Mastering => (0.0, TOP_MASTERING),
-        FxKind::Character | FxKind::StereoTool | FxKind::GainTool | FxKind::Saturation => {
-            (0.0, 0.0)
-        }
+        FxKind::Character
+        | FxKind::StereoTool
+        | FxKind::GainTool
+        | FxKind::Saturation
+        | FxKind::LoudnessMeter
+        | FxKind::HeadphoneCorrection => (0.0, 0.0),
         FxKind::Spectrum => (0.0, TOP_SPECTRUM),
+        FxKind::TonalBalance => (0.0, TOP_TONAL),
         FxKind::PhaseMeter => (0.0, TOP_PHASE),
         FxKind::AudioTrack | FxKind::Tuner => (0.0, TOP_TUNER),
         FxKind::Clipper => (LEFT_CLIPPER, 0.0),
@@ -342,6 +362,12 @@ fn layout(kind: FxKind, desc: &DeviceDescriptor, tuner_on: bool) -> PanelSpec {
     }
     if kind == FxKind::Saturation {
         return crate::saturation_panel::saturation_layout(desc);
+    }
+    if kind == FxKind::LoudnessMeter {
+        return crate::loudness_panel::loudness_layout(desc);
+    }
+    if kind == FxKind::HeadphoneCorrection {
+        return crate::headphone_panel::headphone_layout(desc);
     }
     // A hidden tuner leaves no display and no settings of its own.
     let collapsed = kind == FxKind::AudioTrack && !tuner_on;
@@ -494,15 +520,22 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
             None,
         ),
         // `character_layout` builds its own geometry.
-        FxKind::Character | FxKind::StereoTool | FxKind::GainTool | FxKind::Saturation => {
-            (v, v, empty, None)
+        FxKind::Character
+        | FxKind::StereoTool
+        | FxKind::GainTool
+        | FxKind::Saturation
+        | FxKind::LoudnessMeter
+        | FxKind::HeadphoneCorrection => (v, v, empty, None),
+        FxKind::Spectrum => {
+            // The strip of correlation, peaks and clips under the axis labels.
+            aux = Rect::new(v.x0 + 26.0, v.y1 - 16.0, v.x1, v.y1 - 1.0);
+            (
+                Rect::new(v.x0 + 26.0, v.y0 + 1.0, v.x1 - 40.0, v.y1 - 30.0),
+                Rect::new(v.x1 - 32.0, v.y0 + 1.0, v.x1, v.y1 - 30.0),
+                Rect::new(v.x0 + 32.0, v.y0 + 1.0, v.x1 - 46.0, v.y0 + 14.0),
+                None,
+            )
         }
-        FxKind::Spectrum => (
-            Rect::new(v.x0 + 26.0, v.y0 + 1.0, v.x1 - 40.0, v.y1 - 12.0),
-            Rect::new(v.x1 - 32.0, v.y0 + 1.0, v.x1, v.y1 - 12.0),
-            Rect::new(v.x0 + 32.0, v.y0 + 1.0, v.x1 - 46.0, v.y0 + 14.0),
-            None,
-        ),
         // The display fills the visual; the TUNER button is on the name plate.
         FxKind::AudioTrack | FxKind::Tuner => (
             Rect::new(v.x0, v.y0 + 1.0, v.x1, v.y1 - 1.0),
@@ -510,6 +543,8 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
             empty,
             None,
         ),
+        // The panel paints itself inside the visual: [`crate::tonal_panel::geometry`].
+        FxKind::TonalBalance => (v, v, empty, None),
         FxKind::PhaseMeter => {
             // Goniometer square, stereo bars, level bars with their scale, loudness readouts.
             let s = (v.height() - 2.0).clamp(80.0, 140.0);
@@ -533,6 +568,8 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
         stereo: None,
         gain: None,
         saturation: None,
+        loudness: None,
+        headphone: None,
     }
 }
 
@@ -602,6 +639,7 @@ pub fn fx_label(p: &atomik_core::ParamDescriptor) -> String {
         "early" => "Early/late".to_string(),
         "meter.reset" => "Reset".to_string(),
         "reference" => "Curve".to_string(),
+        "learn" => "Learn".to_string(),
         "reference.capture" => "Capture".to_string(),
         "loudness_view" => "View".to_string(),
         "target" => "Target".to_string(),
@@ -618,6 +656,9 @@ pub fn fx_label(p: &atomik_core::ParamDescriptor) -> String {
         "peak_reset" => "Peak reset".to_string(),
         "peak_auto" => "Auto".to_string(),
         "scope_gain" => "Gain".to_string(),
+        "target_lufs" => "Target".to_string(),
+        "max_tp" => "Max TP".to_string(),
+        "reset" => "Reset".to_string(),
         "saturation_cv_trim" | "gain_cv_trim" | "pan_cv_trim" | "lo_width_cv_trim"
         | "hi_width_cv_trim" | "xover_cv_trim" | "transform_cv_trim" | "mix_cv_trim"
         | "drive_cv_trim" | "feedback_cv_trim" | "band2.gain_cv_trim" | "band3.gain_cv_trim"

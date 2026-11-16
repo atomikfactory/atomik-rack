@@ -26,7 +26,7 @@ fn current(
             d.type_id
         )));
     }
-    if !registry.takes_player_data(&d.type_id) {
+    if !registry.takes_player_data(&d.type_id) || registry.takes_headphone(&d.type_id) {
         return Err(bad(format!(
             "{key} ({}) does not take pattern data",
             d.type_id

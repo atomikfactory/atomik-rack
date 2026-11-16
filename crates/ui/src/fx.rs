@@ -48,13 +48,22 @@ pub enum FxKind {
     StereoTool,
     /// `atomik.gain-tool`: the strip of its own (mute with fade, meters, fader, polarity, pan).
     GainTool,
+    /// `atomik.tonal-balance`: four region meters and the balance curve against a target (fed by
+    /// the app from the device's scope tap, [`crate::tonal_panel`]).
+    TonalBalance,
     /// `atomik.saturation`: the big knob with its drive lamp, the type switch and a small group.
     Saturation,
+    /// `atomik.loudness-meter`: readouts, a history graph and a distribution against a target
+    /// (its own 4 U layout, [`crate::loudness_panel`]).
+    LoudnessMeter,
+    /// `atomik.headphone-correction`: the frequency graph of the imported data with the target
+    /// and the correction, and the controls (its own 2 U layout, [`crate::headphone_panel`]).
+    HeadphoneCorrection,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 18] = [
+    pub const ALL: [FxKind; 21] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -73,12 +82,15 @@ impl FxKind {
         FxKind::StereoTool,
         FxKind::GainTool,
         FxKind::Saturation,
+        FxKind::TonalBalance,
+        FxKind::LoudnessMeter,
+        FxKind::HeadphoneCorrection,
     ];
 
     /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
     /// effect, the meters of one and a plain "meters change the painting" behaviour that the
     /// audio track's tuner does not share.
-    pub const EFFECTS: [FxKind; 17] = [
+    pub const EFFECTS: [FxKind; 20] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -96,6 +108,9 @@ impl FxKind {
         FxKind::StereoTool,
         FxKind::GainTool,
         FxKind::Saturation,
+        FxKind::TonalBalance,
+        FxKind::LoudnessMeter,
+        FxKind::HeadphoneCorrection,
     ];
 
     /// The kind of a device type id.
@@ -124,6 +139,9 @@ impl FxKind {
             FxKind::StereoTool => "atomik.stereo-tool",
             FxKind::GainTool => "atomik.gain-tool",
             FxKind::Saturation => "atomik.saturation",
+            FxKind::TonalBalance => "atomik.tonal-balance",
+            FxKind::LoudnessMeter => "atomik.loudness-meter",
+            FxKind::HeadphoneCorrection => "atomik.headphone-correction",
         }
     }
 
@@ -147,6 +165,9 @@ impl FxKind {
             FxKind::StereoTool => STEREO_METERS,
             FxKind::GainTool => GAIN_METERS,
             FxKind::Saturation => SATURATION_METERS,
+            FxKind::TonalBalance => TONAL_METERS,
+            FxKind::LoudnessMeter => loudness::COUNT,
+            FxKind::HeadphoneCorrection => HEADPHONE_METERS,
         }
     }
 }
@@ -170,8 +191,30 @@ pub const BAND_FALL_DB: f32 = 2.0;
 pub const GR_SCALE_DB: f32 = 24.0;
 /// Character publishes `[in peak, out peak, transform_eff, activity]`.
 pub const CHARACTER_METERS: usize = 4;
-/// The spectrum analyser publishes the recent peaks of its two inputs.
-pub const SPECTRUM_METERS: usize = 2;
+/// The spectrum analyser publishes `[recent peak L, R, correlation, long correlation, sample peak
+/// L, R, true peak L, R (dBFS), clipped samples]` (`atomik_devices::spectrum::METER_COUNT`; a test
+/// pins the two together).
+pub const SPECTRUM_METERS: usize = 9;
+/// The spectrum analyser's published values: which index holds what (a test pins them to
+/// `atomik_devices::spectrum::value`).
+pub mod spectrum {
+    /// Stereo correlation over about 300 ms.
+    pub const CORRELATION: usize = 2;
+    /// Stereo correlation over about 3 s.
+    pub const CORRELATION_LONG: usize = 3;
+    /// Sample peak since the reset, left, dBFS.
+    pub const SAMPLE_PEAK_L_DB: usize = 4;
+    /// Sample peak since the reset, right, dBFS.
+    pub const SAMPLE_PEAK_R_DB: usize = 5;
+    /// True peak since the reset, left, dBFS.
+    pub const TRUE_PEAK_L_DB: usize = 6;
+    /// True peak since the reset, right, dBFS.
+    pub const TRUE_PEAK_R_DB: usize = 7;
+    /// Clipped samples since the reset.
+    pub const CLIPS: usize = 8;
+}
+/// The tonal balance meter publishes the recent peaks of its two inputs.
+pub const TONAL_METERS: usize = 2;
 /// The clipper publishes `[driven peak, output peak, clipped share in percent, longest clipped
 /// run in ms]` (`atomik_devices::clipper::meter`; a test pins the two together).
 pub const CLIPPER_METERS: usize = 4;
@@ -205,6 +248,54 @@ pub const GAIN_METERS: usize = 8;
 /// Saturation publishes `[drive 0..1, input peak, output peak]`
 /// (`atomik_devices::saturation::METERS`; a test pins the two together).
 pub const SATURATION_METERS: usize = 3;
+/// Headphone Correction publishes `[loaded, preamp dB, boost dB, busy]`
+/// (`atomik_devices::headphone_correction::METERS`; a test pins the two together).
+pub const HEADPHONE_METERS: usize = 4;
+
+/// The loudness meter's published values (`atomik_devices::loudness_meter::value`; a test pins
+/// the two together): which index holds what.
+pub mod loudness {
+    /// Number of values: the scalars and the distribution bins.
+    pub const COUNT: usize = 62;
+    /// Momentary loudness, LUFS.
+    pub const MOMENTARY: usize = 0;
+    /// Short-term loudness, LUFS.
+    pub const SHORT_TERM: usize = 1;
+    /// Integrated loudness, LUFS.
+    pub const INTEGRATED: usize = 2;
+    /// Loudness range, LU (-120: none yet).
+    pub const LRA: usize = 3;
+    /// True peak since reset, dBTP.
+    pub const TRUE_PEAK: usize = 4;
+    /// True peak since reset, left, dBTP.
+    pub const TRUE_PEAK_L: usize = 5;
+    /// True peak since reset, right, dBTP.
+    pub const TRUE_PEAK_R: usize = 6;
+    /// Sample peak since reset, dBFS.
+    pub const SAMPLE_PEAK: usize = 7;
+    /// Peak to loudness ratio, dB (-120: none yet).
+    pub const PLR: usize = 8;
+    /// Peak to short-term ratio, dB (-120: none yet).
+    pub const PSR: usize = 9;
+    /// Crest factor of the programme, dB (-120: none yet).
+    pub const DR: usize = 10;
+    /// The target loudness in force, LUFS.
+    pub const TARGET: usize = 11;
+    /// The maximum true peak in force, dBTP.
+    pub const MAX_TP: usize = 12;
+    /// Counts the resets.
+    pub const EPOCH: usize = 13;
+    /// History points since the last reset.
+    pub const HISTORY_POINTS: usize = 14;
+    /// Seconds of programme since the last reset.
+    pub const TIME: usize = 15;
+    /// The first distribution bin.
+    pub const BINS: usize = 16;
+    /// Distribution bins, 1 LU each.
+    pub const BIN_COUNT: usize = 46;
+    /// The lowest LUFS of the distribution.
+    pub const DIST_LOW: f32 = -46.0;
+}
 
 /// The phase meter's published values (`atomik_devices::phase_meter::value`; a test pins the
 /// two together): which index holds what.
@@ -271,6 +362,11 @@ enum Slot {
     Plain,
     /// A gain in dB (negative or positive) shown as published: the device already smooths it.
     Gain,
+    /// A ratio or a range in dB, -120 for "none" (the loudness meter's PLR, PSR, DR and LRA).
+    Ratio,
+    /// A whole number counted or published by the device (the spectrum's clipped samples, the
+    /// loudness meter's reset counter, history points and programme seconds), no release.
+    Count,
 }
 
 fn slot(kind: FxKind, i: usize) -> Slot {
@@ -286,6 +382,14 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::GainTool, 4) => Slot::Raw,
         (FxKind::GainTool, 5..=7) => Slot::Unit,
         (FxKind::Saturation, 0) => Slot::Unit,
+        (FxKind::LoudnessMeter, i) if i < loudness::LRA => Slot::Raw,
+        (FxKind::LoudnessMeter, loudness::LRA | loudness::PLR..=loudness::DR) => Slot::Ratio,
+        (FxKind::LoudnessMeter, loudness::TRUE_PEAK..=loudness::SAMPLE_PEAK) => Slot::Raw,
+        (FxKind::LoudnessMeter, loudness::TARGET | loudness::MAX_TP) => Slot::Raw,
+        (FxKind::LoudnessMeter, loudness::EPOCH..=loudness::TIME) => Slot::Count,
+        (FxKind::LoudnessMeter, _) => Slot::Unit,
+        (FxKind::HeadphoneCorrection, 1 | 2) => Slot::Gain,
+        (FxKind::HeadphoneCorrection, _) => Slot::Unit,
         (FxKind::Mastering, 0..=3) => Slot::Raw,
         (FxKind::Mastering, _) => Slot::Gr,
         (FxKind::GuitarAmp, 2) => Slot::Gr,
@@ -296,6 +400,9 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::PhaseMeter, phase::CORRELATION | phase::BALANCE) => Slot::Signed,
         (FxKind::PhaseMeter, phase::WIDTH) => Slot::Unit,
         (FxKind::Clipper, 2 | 3) => Slot::Plain,
+        (FxKind::Spectrum, spectrum::CORRELATION | spectrum::CORRELATION_LONG) => Slot::Signed,
+        (FxKind::Spectrum, spectrum::SAMPLE_PEAK_L_DB..=spectrum::TRUE_PEAK_R_DB) => Slot::Raw,
+        (FxKind::Spectrum, spectrum::CLIPS) => Slot::Count,
         _ => Slot::Peak,
     }
 }
@@ -317,8 +424,13 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
         for (i, v) in shown.iter_mut().enumerate() {
             match slot(kind, i) {
                 Slot::Gr => *v = 0.0,
-                Slot::Raw => *v = -120.0,
-                Slot::Unit | Slot::Activity | Slot::Signed | Slot::Plain | Slot::Gain => *v = 0.0,
+                Slot::Raw | Slot::Ratio => *v = -120.0,
+                Slot::Unit
+                | Slot::Activity
+                | Slot::Signed
+                | Slot::Plain
+                | Slot::Gain
+                | Slot::Count => *v = 0.0,
                 _ => {}
             }
         }
@@ -337,7 +449,9 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
             Slot::Activity => (r.clamp(0.0, 1.0), ACTIVITY_FALL, 0.02, 0.0),
             Slot::Signed => (r.clamp(-1.0, 1.0), f32::INFINITY, 0.01, -1.0),
             Slot::Plain => (r.clamp(0.0, 10_000.0), f32::INFINITY, 0.1, 0.0),
+            Slot::Count => (r.clamp(0.0, 16_777_216.0), f32::INFINITY, 1.0, 0.0),
             Slot::Gain => (r.clamp(-48.0, 48.0), f32::INFINITY, 0.1, -48.0),
+            Slot::Ratio => (r.clamp(-120.0, 120.0), f32::INFINITY, 0.1, -120.0),
         };
         let old = *cell;
         let v = if new >= old {
@@ -347,7 +461,7 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
         };
         let v = if matches!(
             slot(kind, i),
-            Slot::Unit | Slot::Activity | Slot::Signed | Slot::Plain
+            Slot::Unit | Slot::Activity | Slot::Signed | Slot::Plain | Slot::Count
         ) {
             let n = (1.0f32 / step).round();
             // `+ 0.0` turns a negative zero into a zero, so a value that hovers around nothing

@@ -269,6 +269,9 @@ pub enum ShellRequest {
     /// Show a multi-select open dialog for audio files (the sample editor's Load button), then
     /// call [`Shell::load_samples`] with the picked paths.
     PickLoadSamples,
+    /// Show a multi-select open dialog for audio files (Learn from files... in the target list of
+    /// a tonal balance panel), then call [`Shell::learn_tonal_files`] with the picked paths.
+    PickTonalFiles,
     /// Show an open dialog for one audio file (the relink panel's LOCATE...), then call
     /// [`Shell::relink_file`] with the picked path.
     PickRelinkFile,
@@ -375,6 +378,12 @@ pub enum ShellRequest {
     /// Show an open-file dialog for a keymap (the Keyboard tab's Import), then call
     /// [`Shell::import_keymap_from`].
     PickImportKeymap,
+    /// Show an open-file dialog for headphone data (a frequency response or a parametric EQ
+    /// text; the device's Import Headphone Data), then call [`Shell::import_headphone_from`].
+    PickImportHeadphone {
+        /// The Headphone Correction device that takes the data.
+        device: DeviceKey,
+    },
     /// Show a save-file dialog for a theme (the Themes tab's Export...; the text is the file
     /// name to suggest), then call [`Shell::export_theme_to`].
     PickExportTheme(String),
@@ -623,6 +632,8 @@ pub struct Shell<B: AudioBackend> {
     pending: Vec<ShellRequest>,
     /// The sampler the Load dialog is for.
     load_device: Option<DeviceKey>,
+    /// The tonal balance device a Learn from files dialog was opened for.
+    tonal_device: Option<DeviceKey>,
     /// The device a patch save dialog is open for.
     patch_device: Option<DeviceKey>,
     /// The device whose patch name opened the pop-up of its folder's patches.
@@ -930,6 +941,7 @@ impl<B: AudioBackend> Shell<B> {
             geom_saved_at: f64::NEG_INFINITY,
             pending: Vec::new(),
             load_device: None,
+            tonal_device: None,
             patch_device: None,
             patch_menu: None,
             midi_out_menu: None,
@@ -1047,6 +1059,11 @@ impl<B: AudioBackend> Shell<B> {
             options_library_path
                 .as_deref()
                 .map(crate::spectrum_reference::reference_path),
+        );
+        shell.core.set_tonal_path(
+            options_library_path
+                .as_deref()
+                .map(crate::tonal_targets::targets_path),
         );
         shell.core.set_library_path(options_library_path);
         shell.sync_library_root();
@@ -4341,6 +4358,12 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// The file the Import Headphone Data dialog returned (see
+    /// [`ShellRequest::PickImportHeadphone`]): its numbers go into `device`, one undo step.
+    pub fn import_headphone_from(&mut self, device: &DeviceKey, path: &Path) {
+        self.core.import_headphone_file(device, path);
+    }
+
     /// Reads a keymap from `path` (the Import button): into the open dialog's draft, else
     /// applied and saved at once. A file that is not a keymap is refused with a message.
     pub fn import_keymap_from(&mut self, path: &Path) {
@@ -5756,6 +5779,15 @@ impl<B: AudioBackend> Shell<B> {
     pub fn load_samples(&mut self, paths: Vec<PathBuf>) {
         if let Some(device) = self.load_device.take() {
             self.core.import_samples(paths, device, None);
+        }
+        self.repaint = true;
+    }
+
+    /// Learns a tonal balance target from the files picked in the Learn from files dialog, for the
+    /// device it was opened for (the analysis runs on a worker, see `app_core_tonal.rs`).
+    pub fn learn_tonal_files(&mut self, paths: Vec<PathBuf>) {
+        if let Some(device) = self.tonal_device.take() {
+            self.core.learn_tonal_files(&device, paths);
         }
         self.repaint = true;
     }
@@ -7177,6 +7209,28 @@ impl<B: AudioBackend> Shell<B> {
                 None => self.core.report("Select a MIDI Out device first"),
             },
             ("rack.midi_out_pick", Some(port)) => self.pick_midi_out_port(port),
+            ("rack.headphone_import", None) => match self.core.headphone_target() {
+                Some(device) => self
+                    .pending
+                    .push(ShellRequest::PickImportHeadphone { device }),
+                None => self
+                    .core
+                    .report("Select a Headphone Correction device first"),
+            },
+            ("rack.headphone_import_pick", Some(path)) => match self.core.headphone_target() {
+                Some(device) => {
+                    self.core.import_headphone_file(&device, Path::new(path));
+                }
+                None => self
+                    .core
+                    .report("Select a Headphone Correction device first"),
+            },
+            ("rack.headphone_remove", None) => match self.core.headphone_target() {
+                Some(device) => self.core.remove_headphone_data(&device),
+                None => self
+                    .core
+                    .report("Select a Headphone Correction device first"),
+            },
             ("sequencer.duck_from_pick", Some(arg)) => self.pick_duck_source(arg),
             ("video.import_audio_pick", Some(stream)) => match stream.parse::<u32>() {
                 // The core says why in a toast when it refuses.
@@ -7823,6 +7877,16 @@ impl<B: AudioBackend> Shell<B> {
                     .view()
                     .primary()
                     .is_some_and(|d| core.midi_out_port_of(&d).is_some()),
+            headphone: pane == Pane::Rack
+                && core
+                    .view()
+                    .primary()
+                    .is_some_and(|d| core.headphone_data_of(&d).is_some()),
+            headphone_data: pane == Pane::Rack
+                && core
+                    .view()
+                    .primary()
+                    .is_some_and(|d| core.headphone_data_of(&d) == Some(true)),
             assign_send: pane == Pane::Rack
                 && core
                     .view()
@@ -8142,6 +8206,18 @@ impl<B: AudioBackend> Shell<B> {
                     let requests = self.execute_command(AppCommand::MaximiseConsole);
                     self.pending.extend(requests);
                 }
+                // The IMPORT button (or the empty graph) of a Headphone Correction panel.
+                UiAction::HeadphoneImport(device) => {
+                    if self.core.headphone_data_of(device).is_some() {
+                        self.pending.push(ShellRequest::PickImportHeadphone {
+                            device: device.clone(),
+                        });
+                    } else {
+                        self.core
+                            .report("Select a Headphone Correction device first");
+                    }
+                }
+                UiAction::HeadphoneRemove(device) => self.core.remove_headphone_data(device),
                 UiAction::ImportAudioDialog => {
                     self.core.set_take_import(None);
                     self.pending.push(ShellRequest::PickImportFiles);
@@ -8296,6 +8372,13 @@ impl<B: AudioBackend> Shell<B> {
                     device,
                     op: atomik_ui::PatchOp::Siblings,
                 } => self.open_patch_siblings(device),
+                UiAction::TonalTarget {
+                    device,
+                    op: atomik_ui::tonal_panel::TonalOp::LearnFiles,
+                } => {
+                    self.tonal_device = Some(device.clone());
+                    self.pending.push(ShellRequest::PickTonalFiles);
+                }
                 UiAction::LoadSamplesDialog { device } => {
                     self.load_device = Some(device.clone());
                     self.pending.push(ShellRequest::PickLoadSamples);
@@ -11897,6 +11980,10 @@ mod song_tests;
 #[cfg(test)]
 #[path = "shell_audio_tests.rs"]
 mod audio_tests;
+
+#[cfg(test)]
+#[path = "shell_headphone_tests.rs"]
+mod headphone_tests;
 
 #[cfg(test)]
 #[path = "shell_relink_tests.rs"]
