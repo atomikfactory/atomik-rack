@@ -58,6 +58,17 @@ may break APIs and the patch and project formats.
   project is opened or created. Transport > Practice and the command palette have every control (`practice.speed`,
   `practice.speed_up`, `practice.speed_down`, `practice.count_in`, `practice.trainer`, `practice.loop_selection`
   and the trainer's values).
+- **A fretboard under the Tab Editor staff.** A neck for the clip's tuning, any string count from 1 to 12 with the high
+  string on top as in tab, frets spaced logarithmically and fitted to the width, inlays with the pair at the octave,
+  the string names, the capo as a bar (a partial capo covers only its strings) and a short string such as the banjo's
+  drone starting at its own fret with a peg. While the song plays it shows the notes sounding at the playhead on their
+  string and fret and ghosts the next notes or chord; stopped, it shows the notes under the tab cursor. The dots say
+  the note names, the fret numbers or the intervals to the chord's root, the voicing of the chord at the playhead can
+  be drawn under them (with its finger numbers on the notes it fingers), and the neck can be mirrored for a
+  left-handed player. View > Editors > Fretboard shows or hides it, Detach Fretboard moves it to a window of its own
+  (closing the window puts it back), and Fretboard Options holds the three choices, which are remembered
+  (`view.toggle_fretboard`, `view.detach_fretboard`, `view.fretboard_left_handed`, `view.fretboard_voicing`,
+  `view.fretboard_labels`). The MCP session tools take `fretboard` as a window.
 - **Guitar tab import and export.** File > Import > Import Tab or Score File... reads a Guitar Pro file (`.gp3`, `.gp4`,
   `.gp5`, `.gpx`, `.gp`) or a MusicXML file (`.musicxml`, `.xml`, `.mxl`) and makes one track per part, each with a
   note clip that keeps the tab: the string and fret of every note, hammer-ons, pull-offs, slides, bends, vibrato,

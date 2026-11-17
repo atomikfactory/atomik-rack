@@ -5197,7 +5197,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (625) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (630) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -7387,6 +7387,43 @@ sheet is edited as text) and the strip and body start under it.
 - **Commands.** `practice.speed` (25 to 150 by 5), `speed_up`, `speed_down`, `count_in` (`off`, `1`, `2`), `trainer`,
   `trainer_start`, `trainer_step`, `trainer_after`, `trainer_target` (`up`, `down`), `loop_selection`; group
   Transport, context Global, no default keys. `AppCommand::Practice(PracticeAction)` maps them for the menus.
+
+## 6z. The fretboard
+
+A horizontal neck for the clip the Tab Editor shows ([`FretboardView`](../crates/ui/src/fretboard.rs)), drawn for any
+string count (1 to 12) with the high string on top as in tab and the nut on the left (mirrored for a left-handed
+player). Frets are spaced logarithmically and compressed so the instrument's whole neck fits the width; it draws
+inlays (a pair at the octave), the string names of the tuning, the capo as a bar over the strings it covers (a
+partial capo spans only those) with the covered side dimmed, and a short string such as the banjo's drone starting at
+its own fret with a peg there. Fret numbers of the tab are relative to the capo: a dot sits at the capo's fret plus
+the tab fret, an open string at the capo (or left of the nut, or at the peg of a short string).
+
+- **Data and feed.** `FretboardData` is the tab of one clip as the neck needs it (tuning, capo, notes with string and
+  fret, the chord lane); `TabEditorView` builds it as an `Arc` when it reads the clip (`sync_from`) and hands a
+  `FretboardFeed { data, tick, playing }` (`fretboard_feed`): the playhead's content tick while playing, else the tab
+  cursor. `live_notes(data, tick)` is pure: the notes sounding at the tick (start <= tick < start + length) and the
+  first group that starts after it. `FretboardView::set_feed` compares what would be drawn and reports a change only
+  then, so a playhead that moves without changing the notes does not repaint.
+- **Drawing.** Sounding notes are filled dots, the next group ghosted (outlined). A dot says the note name, the fret
+  number or the interval to the chord's root (`FretLabels`; without a chord, to the lowest note shown). With
+  `chord_voicing` the voicing of the chord at the tick (the last diagram at or before it) is drawn under the notes as
+  rings, muted strings as crosses; a note gets a finger badge when that voicing fingers its string and fret (the tab
+  sidecar keeps no per-note finger, so the chord diagram is where fingers come from).
+- **Two hosts, one view.** Under the staff the strip is part of the tab editor pane (`FRETBOARD_HEIGHT` 136 px at the
+  bottom; `staff`'s line spacing is computed from the height left, and the strip is left out when the pane is too tall
+  for the staff at its smallest, see `fretboard_rect`). Detached, `AppCore` owns a second `FretboardView` as
+  `Pane::Fretboard` in `WindowKind::Fretboard` (title "Fretboard", a floating window like Piano Keys: the main layout
+  gives it no room, `DetachState::detached` means open, default 1000 x 136); `AppCore::sync_fretboard` feeds it from
+  the tab editor on every transport refresh, tab event and document change while the window is open. While the window
+  is open the strip under the staff is off; closing the window (or `view.detach_fretboard` again) puts it back.
+- **Options** (`FretboardOptions`: left-handed, labels, chord voicing) and whether the strip shows are `ui-state.json`
+  fields (`show_fretboard` default true, `fretboard_left_handed`, `fretboard_labels`, `fretboard_voicing`); the shell
+  pushes them to both views (`apply_fretboard_ui`). The three chips in the header of the strip are
+  `UiAction::RunCommand`s.
+- **Commands** (group View, context Global, no default keys, all in View > Editors): `view.toggle_fretboard` (while
+  detached it closes the window and hides the neck), `view.detach_fretboard`, `view.fretboard_left_handed`,
+  `view.fretboard_voicing`, `view.fretboard_labels` (`notes`, `frets`, `intervals`). MCP: `window` `fretboard` on the
+  session tools, opened with `session_command view.detach_fretboard`.
 
 ## 7. The UI crate
 
