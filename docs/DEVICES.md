@@ -636,6 +636,11 @@ by 30 dB within eight seconds. `atomik_devices::plucked::factory_patch_for(instr
 an instrument of the tab catalogue (`guitar6`, `bass4`, `banjo5`, ...; an unknown id gets Steel Acoustic), and
 `INSTRUMENT_PATCHES` is the whole table.
 
+Importing a tab file (File > Import > Tab or Score File..., the file browser, a drop) puts every fretted track on a
+new Plucked Strings device that has the patch of its instrument loaded, in the same undo step as the tracks: a bass
+is Electric Bass Finger, a banjo Banjo, a ukulele Ukulele, a 12-string guitar 12-String. Percussion tracks keep
+the plain import instrument. Changing a clip's instrument in the Tab Editor changes the tab, not the device.
+
 ### Tests
 
 The unit tests in [plucked/tests.rs](../crates/devices/src/plucked/tests.rs) and

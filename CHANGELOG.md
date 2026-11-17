@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Tab files play Plucked Strings.** Importing a Guitar Pro or MusicXML file now gives every fretted track a
+  Plucked Strings device with the factory patch of its instrument already loaded (Steel Acoustic for a guitar,
+  Electric Bass Finger for a bass, Banjo, Ukulele, Mandolin, 12-String, Bouzouki, Dobro, Nylon Classical for a lute),
+  in the same undo step as the tracks; before, they played the poly synth. A drum track keeps the plain instrument.
+  The import takes a sound per track (`MidiImport.sounds`), and a MIDI import is unchanged. Tests bounce a clip with a
+  palm mute, a harmonic, a dead note and a bend through the device and check that each is heard, and that the
+  technique codes the model writes are the ones the device reads.
+- **Tab exercises in the factory library.** The Projects section has an Exercises folder of eleven practice songs
+  for the Tab Editor, made up for the library: C major and A minor pentatonic scales, fingerpicking arpeggios and G C
+  D Em chord changes for guitar, a technique sampler (palm mutes, dead notes, hammer-ons, slides, a bend, harmonics,
+  let ring, accents), bass root-and-fifth lines, banjo forward, backward and alternating-thumb rolls, ukulele strum
+  patterns and C Am F G changes, and a mandolin tremolo study and scale. Each opens as a new song with the clip on the
+  right instrument and patch, chord diagrams and a chord lane where it has chords, and a chord sheet to follow.
 - **Tab and chord sheets as PDF.** File > Export > Export Tab as PDF... prints the selected note clip, or the song, as
   a tab: a header with the title and credits, each track's tuning and capo, a legend of the chords it uses, then
   systems of bars fitted to the page with fret numbers on one line per string (a banjo's drone, a bass's four, the

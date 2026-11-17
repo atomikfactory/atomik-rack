@@ -6491,6 +6491,15 @@ items are ordinary project texts, plus one small new file type.
   `open_template`, so it opens as an untitled song and Save asks for a place. The tests build each example from the
   tables and the shipped kits (so the text is the same on every platform), check its length, devices and samples,
   and bounce it.
+  Beside them, `Projects/Exercises/<name>/<name>.atomik` holds eleven practice songs for the Tab Editor
+  (`app_core_factory_exercises.rs`, category Exercise): scales, arpeggios, chord-change drills, a technique sampler,
+  banjo rolls, ukulele strums, bass root-and-fifth lines and a mandolin tremolo study, all made up for the library.
+  An `ExerciseDef` names a `Part` (notes as string and fret, chords with diagrams, section markers) and a bracket-form
+  chord sheet; `build_exercise` makes a `TabScore`, imports it as a song through the same `apply_tab` a tab file uses
+  (so the track plays Plucked Strings on the patch of its instrument and the clip holds the tab), adds the sheet and
+  the song info, and saves the project. The text depends only on the table and the shipped Plucked patches, and a test
+  compares it with the committed file. The start screen's example cards skip the `Exercises` folder (it holds no
+  `Exercises.atomik`).
 - **What the library does not write.** Everything outside the library folder and the session bundle
   is read only. Items do not carry project-level state: macro assignments, song tracks (a patch has
   none) and console settings are not saved with a patch, and a pasted instrument gets its console
@@ -7136,8 +7145,13 @@ and `Shell`, the menu and the dialogs reach it the way they reach MIDI files.
   playhead and the song's tempo and meter stay; with it they start at tick 0 and the file's maps replace the song's.
   What the file holds that the song cannot (reader warnings, notes beyond the neck) follows the message, up to three
   lines, as the instrument import does. `tab_file::instrument_for(instrument_id)` is the one place that chooses the
-  instrument of the new tracks: today the poly synth (what a MIDI import uses); the Plucked Strings device replaces it
-  there, and `MidiImport` will then need an instrument per track.
+  instrument of the new tracks: Plucked Strings (`atomik.plucked`) for every fretted track, whatever its id, and
+  `tab_file::patch_for` the factory patch of its instrument (`atomik_devices::plucked::factory_patch_for`; a custom
+  tuning gets Steel Acoustic). `MidiImport.sounds` (`TrackSound { instrument, patch }`, entry `i` for track `i`, empty
+  for a plain MIDI import) lets `ImportMidi` give each new track its own instrument and a device patch applied in the
+  same undo step; the app reads the patch from `<factory>/Patches/<name>.atomikpatch` (`track_sounds`), and without a
+  factory folder the track is a new Plucked Strings device. A percussion track keeps the import instrument (the poly
+  synth), with no patch. The Tab Editor's instrument and tuning dialog changes the tab, not the device.
 - **Where files come from.** The file browser lists `.gp3 .gp4 .gp5 .gpx .gp .musicxml .mxl` (`FileKind::Tab`,
   `atomik_library::TAB_EXTENSIONS`; a plain `.xml` is not listed because only its bytes say whether it is MusicXML);
   a double click or Enter is File > Import > Import Tab or Score File. A tab file (or an `.xml` whose bytes are
