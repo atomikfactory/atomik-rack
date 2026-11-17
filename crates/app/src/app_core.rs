@@ -4695,6 +4695,10 @@ mod song_tests;
 mod tab_editor_tests;
 
 #[cfg(test)]
+#[path = "app_core_chord_sheet_tests.rs"]
+mod chord_sheet_tests;
+
+#[cfg(test)]
 #[path = "app_core_console_tests.rs"]
 mod console_tests;
 

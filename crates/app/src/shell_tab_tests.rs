@@ -150,3 +150,42 @@ fn a_musicxml_file_with_any_extension_but_xml_is_found_by_its_bytes_only_as_xml(
     );
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+#[test]
+fn the_chord_sheet_pane_opens_from_the_view_menu_takes_the_text_context_and_closes() {
+    let mut s = shell();
+    assert!(item(&s, "Chord Sheet").enabled);
+    assert!(!s.menu_state().chord_sheet);
+    s.execute(AppCommand::ToggleChordSheet);
+    assert!(s.core().chord_sheet_open());
+    assert_eq!(s.lower_pane(), Pane::ChordSheet);
+    assert!(s.menu_state().chord_sheet);
+    // The pane binds no keys of its own: the global ones run while it is read.
+    assert_eq!(s.context_stack().contexts(), [Context::Global]);
+    // A text in the pane owns the keys: the context is Text, and Esc leaves it.
+    let sheet = atomik_tab::sheet::parse_sheet("title: Made Up\n\nAm      F\nla la la la\n")
+        .unwrap()
+        .sheet;
+    s.core_mut()
+        .apply_command(atomik_model::Command::Song(
+            atomik_model::SongCommand::SetSheets(vec![sheet]),
+        ))
+        .unwrap();
+    s.run_command("editor.sheet_edit_text", None);
+    assert!(s.core().chord_sheet().editing());
+    assert_eq!(
+        s.context_stack().contexts(),
+        [Context::Text, Context::Global]
+    );
+    s.handle(&UiEvent::Key {
+        key: atomik_ui::Key::Escape,
+        modifiers: atomik_ui::Modifiers::NONE,
+        pressed: true,
+    });
+    assert!(!s.core().chord_sheet().editing());
+    assert_eq!(s.context_stack().contexts(), [Context::Global]);
+    // The same command closes it and the arrangement shows again.
+    s.execute(AppCommand::ToggleChordSheet);
+    assert!(!s.core().chord_sheet_open());
+    assert_eq!(s.lower_pane(), Pane::Arrangement);
+}

@@ -240,6 +240,7 @@ View
     Step Editor
     Slice Editor
     Tab Editor
+    Chord Sheet
     Switch Piano Roll and Tab
   Launcher >
     Launcher

@@ -240,6 +240,7 @@ Affichage
     Éditeur de pas
     Éditeur de découpe
     Éditeur de tablature
+    Grille d'accords
     Basculer entre piano roll et tablature
   Lanceur >
     Lanceur [F10]

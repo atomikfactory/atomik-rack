@@ -11,6 +11,7 @@ pub mod pixel;
 pub mod plugin;
 pub mod sampler;
 pub mod seq;
+pub mod sheet;
 pub mod slicer;
 pub mod song;
 pub mod starter;
