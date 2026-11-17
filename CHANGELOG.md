@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Guitar tab import and export.** File > Import > Import Tab or Score File... reads a Guitar Pro file (`.gp3`, `.gp4`,
+  `.gp5`, `.gpx`, `.gp`) or a MusicXML file (`.musicxml`, `.xml`, `.mxl`) and makes one track per part, each with a
+  note clip that keeps the tab: the string and fret of every note, hammer-ons, pull-offs, slides, bends, vibrato,
+  palm mutes, harmonics and the other techniques, the tuning and capo of the instrument (guitars, basses, ukuleles,
+  banjos and the rest of the catalogue) and its chord diagrams and lyrics. The bends, slides and vibrato are
+  also played as note expression. Import Tab or Score as Song... starts at the beginning and takes the file's tempo
+  map, time signatures, section markers, chords and key as well. The file browser lists the tab files, a double click
+  imports one, and a tab file dropped on the window imports as new tracks at the playhead. Import Chord Sheet...
+  reads a chords-over-lyrics or bracket-form text file into the song's chord sheets. File > Export > Export Tab as
+  MusicXML... (a `.mxl` name writes the compressed form), Export Tab as Text... (ASCII tab) and Export Chord Sheet
+  as Text... write the selected clip, or the song when no clip is selected. A clip without tab is placed on the
+  neck automatically (a track named Bass on a bass, and so on). What the file holds that Atomik Rack cannot keep is
+  listed after the message. The imported tracks play the poly synth for now. The QA server has `session_tab`.
 - **A MONO button on the master strip of the mixer.** One click folds what you hear to mono, `(L + R) / 2` on both
   sides, and a second click brings the stereo back; the button is lit while it is on, so it is not forgotten. It is
   the mono switch of the translation lens (the same command, `mixer.lens_mono`, so the menu, the command palette and

@@ -59,7 +59,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), devices (the headphone panel draws the device's own curve snapshot), model | none | Platform-independent views, widgets, display lists, theme |
-| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
+| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, tab, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
 
@@ -7117,6 +7117,50 @@ score. Import only; there is no Guitar Pro writer.
 | Trills, ornaments, fingering, rasgueado, tenuto, dynamics marks on the staff | ignored (trills with a warning) |
 | Note length as a percentage, beaming, line breaks, page layout, fonts, colours | ignored |
 | Anacrusis, free time, fermatas, triplet feel, automations other than tempo, mixer changes other than tempo | ignored |
+
+## 6u. Tab files in the app
+
+[tab_file.rs](../crates/app/src/tab_file.rs) converts between a `TabScore` and the song; the app core in
+[app_core_tab.rs](../crates/app/src/app_core_tab.rs) reads and writes the files and applies an import as one undo step,
+and `Shell`, the menu and the dialogs reach it the way they reach MIDI files.
+
+- **Import** (File > Import > Import Tab or Score File..., `file.import_tab`; Import Tab or Score as Song...,
+  `file.import_tab_song`). The format comes from the first bytes (`tab_file::sniff_tab`: MusicXML by its root
+  element, else Guitar Pro), the file is read and converted before anything is applied, so a bad file is reported by
+  name and changes nothing; files above 64 MiB are refused. `tab_file::tab_song` makes one `MidiTrack` per tab track
+  and a `MidiSong`, so the existing `WorkflowCommand::ImportMidi` plans the tracks, tempo map, meter map, markers,
+  chords and key in one step (`AppCore::apply_midi_with` takes the instrument). A clip holds the notes (sounding
+  pitch of each string and fret, ties joined into one long note), the tab sidecar (instrument, tuning, capo, string,
+  fret and techniques of every note, chord diagrams, lyrics) and the expression `tab_render::render_all` makes of the
+  techniques; a percussion track holds its drum keys as plain notes. Without "as Song" the tracks start at the snapped
+  playhead and the song's tempo and meter stay; with it they start at tick 0 and the file's maps replace the song's.
+  What the file holds that the song cannot (reader warnings, notes beyond the neck) follows the message, up to three
+  lines, as the instrument import does. `tab_file::instrument_for(instrument_id)` is the one place that chooses the
+  instrument of the new tracks: today the poly synth (what a MIDI import uses); the Plucked Strings device replaces it
+  there, and `MidiImport` will then need an instrument per track.
+- **Where files come from.** The file browser lists `.gp3 .gp4 .gp5 .gpx .gp .musicxml .mxl` (`FileKind::Tab`,
+  `atomik_library::TAB_EXTENSIONS`; a plain `.xml` is not listed because only its bytes say whether it is MusicXML);
+  a double click or Enter is File > Import > Import Tab or Score File. A tab file (or an `.xml` whose bytes are
+  MusicXML, `tab_file::is_tab_path`) dropped anywhere on the window imports as tracks at the playhead; it is taken
+  out of the drop before the audio import sees it. A dropped file does not land on the lane under the pointer.
+- **Chord sheets.** File > Import > Import Chord Sheet... (`file.import_sheet`) reads a text file of at most 4 MiB
+  (chords over lyrics or the bracket form, detected by `parse_sheet`) and adds it to `Song::sheets` with
+  `SetSheets`; the title falls back to the file name. File > Export > Export Chord Sheet as Text... writes the first
+  sheet as chords over lyrics.
+- **Export** (File > Export > Export Tab as MusicXML..., Export Tab as Text...; `file.export_tab_musicxml`,
+  `file.export_tab_text`). The scope is the selected note clip when there is one (from its own start), else every
+  note track; `AppCore::export_tab_of` takes an explicit `MidiExport` scope (clip, track, song) for the QA server.
+  `tab_file::score_from_song` reads the played note lanes the way the engine flattens them (loops and overlaps
+  resolved, `audible_pieces`), takes the string and fret of each note from the clip's sidecar, and places the notes
+  that have no entry with the fretter, on the sidecar's instrument or, for a track without tab, on the one its name
+  suggests (`instrument_for_name`: bass, banjo, ukulele, mandolin, bouzouki, 12-string, else guitar; a track named
+  like a drum kit is written as percussion). Notes no string can play are left out and listed. Song tempo, meter, key,
+  markers and the chord lane travel too. A `.mxl` file name writes the compressed MusicXML. Ties are not stored in a
+  clip, so a tied note exports as one long note.
+- **The QA server** has `session_tab` (MCP.md): `session_midi` takes `.mid` only and its dialogs are answered per
+  format, so tab files, chord sheets and the format and scope choices of the exports have a tool of their own.
+- The registry ids `file.import_tab`, `file.import_tab_song`, `file.import_sheet`, `file.export_tab_musicxml`,
+  `file.export_tab_text` and `file.export_sheet_text` have no key.
 
 ## 7. The UI crate
 
