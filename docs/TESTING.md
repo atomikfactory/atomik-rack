@@ -123,7 +123,10 @@ toolchain, so the crate is its own workspace and no normal build or test touches
 presets and the library database), [smf_read](../fuzz/fuzz_targets/smf_read.rs),
 [audio_decode](../fuzz/fuzz_targets/audio_decode.rs) (the symphonia decoder, the WAV readers and the
 preview decoder), [instrument_read](../fuzz/fuzz_targets/instrument_read.rs) (the SFZ and SoundFont
-readers) and [ipc_frame](../fuzz/fuzz_targets/ipc_frame.rs) (the sandbox control channel).
+readers), [ipc_frame](../fuzz/fuzz_targets/ipc_frame.rs) (the sandbox control channel),
+[tab_gp](../fuzz/fuzz_targets/tab_gp.rs) (Guitar Pro files of every format),
+[tab_ascii](../fuzz/fuzz_targets/tab_ascii.rs) (plain-text tab) and
+[chord_sheet](../fuzz/fuzz_targets/chord_sheet.rs) (chords over lyrics and the bracket form).
 To run one:
 
 ```sh
@@ -2226,3 +2229,31 @@ chord name reads back as the same chord; transposing keeps the quality and never
 without a key; any text is read as a sheet or as ASCII tab without a panic and within the caps; sheets and
 ASCII tab written by the crate read back to the same chords, notes and techniques. Lyrics and tab in the tests are
 made up.
+
+### Guitar Pro readers
+
+No real Guitar Pro song is in the repository (none may be: they are other people's music). The readers are tested
+with files that the tests make themselves, in `crates/tab/tests/gp_fixtures`:
+
+- `binary.rs` is a small encoder for the binary layout (versions 3.00, 4.00, 5.00 and 5.10) with bars, tracks, beats,
+  chord diagrams, every note and beat effect, repeats and alternative endings, a mix table with a tempo, lyrics
+  and a second voice (5.x). `gpif.rs` builds the XML score with ids handed out as parts are added. `containers.rs`
+  writes a zip (stored or deflated, with a real CRC) and a `.gpx` file system, plain or bit-compressed with a small
+  compressor that finds repeats, so the `BCFZ` decoder runs on literals and on copies.
+- `gp_binary.rs`, `gp_gpif.rs` and the unit tests beside the modules round-trip each technique (hammer-on and
+  pull-off moved to the destination note, the six slide kinds, bends with points in cents, harmonics, ghost, dead,
+  accent, palm mute, let ring, tremolo picking, grace notes, ties, strokes, slap and pop, the tremolo bar), the
+  tunings of a guitar, a four-string bass, a five-string banjo (drone start fret kept) and a seven-string guitar, dotted
+  and tuplet values (a bar of septuplets adds up exactly), meter, key and marker maps, tempo changes (also restated
+  after a repeat jump) and repeat expansion, including alternative endings and a cap on endless repeats.
+- Because the encoder and the reader were written from the same understanding of the format, these tests check
+  the reader's logic and its self-consistency, not agreement with files of the original program. Which layouts
+  and units are assumptions is listed in the Guitar Pro section of ARCHITECTURE.md; a hand check with a file
+  from the real program is the open item.
+- `gp_robust.rs`: every strict prefix of a binary file is an error; every prefix of the XML, zip and `.gpx` forms is
+  read without a panic; thousands of seeded byte flips, random garbage, random bytes behind a valid header (proptest),
+  a `BCFZ` that claims 4 GiB, one whose copies blow up past the cap, a zip bomb (130 MiB of zeros in a deflate stream
+  that says it is 10 bytes), a zip directory that lies, XML nested 20 000 deep or with more than 3 million elements,
+  a bar naming one beat thousands of times, a bar count that lies, and a file over the size cap.
+- The fuzz targets tab_gp, tab_ascii and chord_sheet are seeded by `scripts/fuzz-seed.sh`; the Guitar Pro
+  seeds are written by the ignored test `write_fuzz_seeds` (nothing is downloaded).

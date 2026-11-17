@@ -45,7 +45,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-vision` | [crates/vision](../crates/vision) | download (tract-tflite, nokhwa on Windows and macOS, linuxvideo on Linux, zune-jpeg, serde, serde_json, thiserror, log, clap, ctrlc) | none | Hand tracking for the webcam controller, pure library with no dependency on the application: the `Camera` and `FrameSource` traits (`SystemCamera`, `FakeCamera`), the capture thread with a one-frame handoff (`Capture`), the palm detector and hand landmark models run in pure Rust (`HandModels`, `HandPipeline`, the detector only while no hand is followed), the list of the two hand model files (their addresses, sizes and SHA-256 are pinned in `download.rs`; the store and the download are in `atomik-download`), the gesture recogniser (`Recogniser`: pinch with hysteresis, ratcheted twist, One Euro smoothing, a dead zone, loss tolerance, two hands) and the `Tracker` worker with its bounded `TrackerEvent` queue. The `vision-demo` tool lists cameras and models and prints or records the hand |
 | `atomik-download` | [crates/download](../crates/download) | none (sha2, ureq, thiserror) | none | The one-time download of model files, shared by the hand models and the stem models: `ModelFile` (name, one fixed HTTPS address, exact size and SHA-256, all constants in the crate that owns the files), `ModelStore` (`status`, `verified_paths` which checks again before a file is loaded, and `download`, which writes under temporary names, checks each file and only then renames them all into place, so a failure, a mismatch or a cancel leaves nothing behind), the `Fetcher` trait with `UreqFetcher` (rustls, HTTPS only, no redirect, a generic User-Agent, nothing about the user or the machine) and `FakeFetcher` for tests |
 | `atomik-stems` | [crates/stems](../crates/stems) | none (thiserror) | none | Stem separation by signal processing, pure and deterministic, with no model and no download: an STFT (`Stft`, 2048 points, hop 512) and `separate`: chunks of 20 s with 1 s of context and a linear crossfade, a harmonic/percussive split by median filters across time and across frequency (soft masks) for the drums, the harmonic part below a 150 Hz crossover for the bass, the centred harmonic part above it for the vocals (a mono input gets the 200 Hz to 5 kHz band at a lower weight) and the residual for the other stem, so the four add up to the mix; a progress callback, a cancel flag and a `StemSink` that receives the finished samples in order |
-| `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror) | none | Fretted-instrument tablature, pure and headless, no file-format dependency yet: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`) and ASCII tab read and write (`ascii.rs`) |
+| `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror, quick-xml, flate2) | none | Fretted-instrument tablature, pure and headless: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`), ASCII tab read and write (`ascii.rs`) and the Guitar Pro readers for `.gp3`, `.gp4`, `.gp5`, `.gpx` and `.gp` (`gp/`, see 6t) |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk, tab | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`), the tab sidecar of note clips (`tab_data.rs`), its edit operations (`tab_edit.rs`) and the technique renderer (`tab_render.rs`), the song chord sheets (`chord_sheets.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
@@ -7054,6 +7054,69 @@ tab is a sidecar that says where each note is played and how.
   only: sheets never reach the engine) after `check_sheets`.
 - **Chord symbols.** `chord_symbol::parse_chord` and `format_chord` delegate to `atomik_tab::ChordSymbol` (one
   grammar), mapping the result to the stamp `ChordKind` with the same tones.
+
+## 6t. Guitar Pro import
+
+`atomik_tab::gp::read_gp(bytes)` reads a Guitar Pro file into a `TabScore` and a list of `ImportWarning`s (what could
+not be carried over, counted when it repeats). It tells the format from the first bytes, never from the file name:
+`FICHIER GUITAR PRO v3.xx / 4.xx / 5.xx` (binary), `BCFZ` or `BCFS` (`.gpx`), `PK` (`.gp`, a zip) or a bare GPIF XML
+score. Import only; there is no Guitar Pro writer.
+
+- **Shape.** Every format is first read into a small neutral document (`gp/dom.rs`: master bars, tracks, bars, voices,
+  beats, notes; durations in 1/180 180 tick so that tuplets of 3 to 13 add up exactly; strings in tab order; beat
+  effects already folded into the notes' techniques) and one converter (`gp/convert.rs`) makes the score: repeats and
+  alternative endings unrolled into a linear timeline, ties that take the fret of the note before, the hammer-on and
+  pull-off mark moved to the destination note (hammer when the fret rises, pull-off when it falls), the tempo, meter,
+  key and marker maps, chord diagrams and chord symbols, lyric syllables laid on the beats with notes, the
+  catalogue instrument whose open pitches match the tuning (the banjo keeps its drone start fret; a tuning the
+  catalogue lacks stays custom with the family its string count and range suggest). `TabScore::bars` has one entry per
+  bar of the file with the tick of its first play; `meter` bar numbers and every tick are in the unrolled timeline.
+- **Readers.** `gp/binary` (versions 3.00 to 5.10, one reader parameterised by version), `gp/container.rs` (`BCFZ`
+  bit-level decompression, then the `BCFS` sector file system, entry `score.gpif`), `gp/zip.rs` (a small zip reader
+  over `flate2`'s raw deflate, `Content/score.gpif`), `gp/xml.rs` (a capped tree over `quick-xml`) and `gp/gpif.rs`.
+- **Caps.** File 64 MiB; a container decompresses to at most 128 MiB (the deflate stream is read through a limit, so a
+  zip that lies about its size is cut at the cap); the XML tree at 3 million elements and 64 levels; 128 tracks,
+  20 000 bars, 4096 beats in a bar, 2 million beats and 1 million notes in all; the unrolled song at 20 000 bars and
+  72 000 quarter notes. Ids in GPIF only name lists (no recursion), and the number of beat visits is counted.
+- **Assumptions** (no public description of the format and no file of the original program were used; the tests
+  encode the same layout, so they check consistency, not agreement). Binary: the position of every field per
+  version, the stored repeat count (before version 5 the number of repeats, from 5 the number of plays), the
+  alternative-ending byte (before 5 "the n-th ending", from 5 a bit mask), the stroke bytes (down speed, then up speed),
+  slide values of version 4 (1 shift, 2 legato, 3 out down, 4 out up, 5 or -1 in from below, 6 or -2 in from above),
+  dynamics 1 to 8 as velocities 15 to 127 (95 is the default and a dynamic holds until the next), bend values
+  (50 per semitone, positions 0 to 60), the version 3 tremolo bar (a dive of the stored value held to the middle),
+  chord diagram frets taken as absolute. GPIF: string 0 is the lowest string and `Tuning` lists pitches lowest first
+  (tab order is the reverse), bend and whammy values are 1/50 semitone with offsets in percent of the note, a tempo
+  value is `bpm unit` (1 eighth, 2 quarter, 3 dotted quarter, 4 half, 5 dotted half), tremolo picking `1/4`, `1/2`,
+  `3/4` are 8th, 16th and 32nd strokes, a beat with `GraceNotes` takes no time and decorates the next beat.
+
+| Guitar Pro feature | Result |
+| --- | --- |
+| Title, artist, album, words, music, copyright, transcriber, notices | read |
+| Tempo, tempo changes (mix table in the binary formats, automations in GPIF) | read; tempo name and "hide tempo" ignored |
+| Meter changes, key signatures, section markers | read (key and markers per played bar) |
+| Repeats, alternative endings | read, unrolled; `BarInfo` keeps the original structure |
+| D.C., D.S., coda, segno, fine and the other jump directions | ignored (a warning in GPIF) |
+| Tracks: name, tuning, string count 1 to 7 (binary) or 12 (GPIF), capo, fret count, MIDI program | read |
+| Drum tracks | read, the MIDI key is stored in `fret`; GPIF kits map element and variation to the key |
+| Partial capo, transposition, track volume, pan, effects and sound banks, equaliser | ignored |
+| Durations, dots, tuplets 3 to 13, rests | read (double dots in GPIF; an odd tuplet in the binary formats is read plain, with a warning) |
+| Two voices (5.x) and up to four (GPIF) | read, each voice keeps its own ties and hammer links |
+| Chord diagrams | read into `diagrams` and, when the name parses, `chords` |
+| Beat text | ignored (a warning) |
+| Lyrics (4.x and later) | read, syllables split at spaces and hyphens, laid on the beats with notes of the track |
+| Ties, dead, ghost, accent, heavy accent, staccato, let ring, palm mute, vibrato (normal, wide) | read |
+| Hammer-on, pull-off | read, mark moved to the destination |
+| Slides: shift, legato, out down, out up, in from below, in from above | read (the first kind when several are set) |
+| Bends with points, pre-bends, releases | read as a curve in cents |
+| Tremolo bar (whammy) | read as a curve in cents |
+| Harmonics: natural, artificial, tapped, pinch, semi | read (the touched fret of tapped and GPIF artificial kept); the pitch bytes of binary artificial harmonics ignored |
+| Tremolo picking, grace notes (before or on the beat) | read; a dead grace note ignored |
+| Strokes, picking strokes, arpeggio, brush | read as a strum direction (the speed is ignored) |
+| Slap, pop, tapping, fade in | read |
+| Trills, ornaments, fingering, rasgueado, tenuto, dynamics marks on the staff | ignored (trills with a warning) |
+| Note length as a percentage, beaming, line breaks, page layout, fonts, colours | ignored |
+| Anacrusis, free time, fermatas, triplet feel, automations other than tempo, mixer changes other than tempo | ignored |
 
 ## 7. The UI crate
 

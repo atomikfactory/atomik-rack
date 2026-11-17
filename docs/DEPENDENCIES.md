@@ -84,6 +84,21 @@ The hand tracking crate (`atomik-vision`) added three groups of dependencies; th
   configured as the update check is: HTTPS only, no redirect, timeouts), `zune-jpeg`, `clap` and `ctrlc` (the demo
   tool only).
 
+The Guitar Pro readers of `atomik-tab` added two dependencies, both declared once in the workspace and used by that
+crate only. **`quick-xml` 0.41** (`MIT`, no dependencies besides `memchr`, which the workspace already builds) reads the
+XML score (`score.gpif`) of `.gpx` and `.gp` files; the file is read once into a capped tree of at most 3 million
+elements and 64 levels, entities other than the five predefined ones are never expanded, and the crate was already in
+`Cargo.lock` (through `wayland-scanner` on Linux). The alternatives were `roxmltree` (a whole-document tree with no
+element cap) and a hand-written parser (an XML reader is where hostile input hurts most). **`flate2` 1.1** with
+`default-features = false` and the `rust_backend` feature (`MIT OR Apache-2.0`, over `miniz_oxide`, pure Rust) inflates
+the entries of the zip that a `.gp` file is; `png` already pulls the same version of `flate2`. The zip container
+itself is read by about 100 lines in `crates/tab/src/gp/zip.rs` (the central directory, stored and deflated entries,
+refusing everything else): the `zip` crate would add a writer, encryption, several compression methods and a handful
+of crates for one entry of one file, and every extra method is more code that reads hostile input. The deflate stream
+is read through a size limit, so a small entry that inflates to gigabytes is cut at the cap. The `.gpx` container
+(`BCFZ` bit-level decompression and the `BCFS` sector file system) needs no dependency. `cargo deny check` passes with
+the licences the policy already allows.
+
 ## Model files
 
 The hand tracking models are not part of the installer, the repository or `Cargo.lock`. The user downloads them once
