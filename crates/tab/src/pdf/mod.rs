@@ -67,6 +67,18 @@ impl PageSize {
             _ => PageSize::A4,
         }
     }
+
+    /// The paper for a locale such as `en-US`, `fr_CA.UTF-8` or `fr` (A4 when it has no region).
+    pub fn for_locale(locale: &str) -> PageSize {
+        let region: String = locale
+            .split(['-', '_'])
+            .nth(1)
+            .unwrap_or("")
+            .chars()
+            .take_while(char::is_ascii_alphabetic)
+            .collect();
+        PageSize::for_region(&region)
+    }
 }
 
 /// Why a printout could not be made.
@@ -329,6 +341,10 @@ mod tests {
     fn paper_follows_the_region() {
         assert_eq!(PageSize::for_region("us"), PageSize::Letter);
         assert_eq!(PageSize::for_region("FR"), PageSize::A4);
+        assert_eq!(PageSize::for_locale("en-US"), PageSize::Letter);
+        assert_eq!(PageSize::for_locale("fr_CA.UTF-8"), PageSize::Letter);
+        assert_eq!(PageSize::for_locale("fr-FR"), PageSize::A4);
+        assert_eq!(PageSize::for_locale("fr"), PageSize::A4);
         assert_eq!(PageSize::A4.points().0.round(), 595.0);
     }
 
