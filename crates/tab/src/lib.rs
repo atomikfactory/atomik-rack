@@ -15,8 +15,9 @@
 //!   reader and writer converts to and from.
 //! * [`ascii`]: plain-text tab, read and written.
 //!
-//! Every parser caps its input (bytes, lines, notes) and never panics on hostile text.
-#![forbid(unsafe_code)]
+//! Every parser caps its input (bytes, lines, notes) and never panics on hostile text. The crate has
+//! no `unsafe` code (the workspace denies it, and a policy test keeps the word out of the pure
+//! crates).
 
 pub mod ascii;
 pub mod chord;
