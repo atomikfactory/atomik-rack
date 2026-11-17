@@ -1143,15 +1143,16 @@ mod tests {
     use atomik_devices::{
         auto_filter, cv_math, cv_quantizer, de_esser, dual_layer, duck, dynamics, env_filter,
         envelope_follower, gain_tool, gate, gate_processor, line_mixer, mono_bass, organ,
-        pitch_shifter, poly_synth, rotary_speaker, sample_hold, slew_limiter, spider, stereo_delay,
-        stereo_tool, transient_shaper,
+        pitch_shifter, plucked, poly_synth, rotary_speaker, sample_hold, slew_limiter, spider,
+        stereo_delay, stereo_tool, transient_shaper,
     };
 
-    fn all() -> [&'static DeviceDescriptor; 25] {
+    fn all() -> [&'static DeviceDescriptor; 26] {
         [
             &poly_synth::DESCRIPTOR,
             &mono_bass::DESCRIPTOR,
             &organ::DESCRIPTOR,
+            &plucked::DESCRIPTOR,
             dual_layer::descriptor(),
             &line_mixer::DESCRIPTOR,
             &stereo_delay::DESCRIPTOR,
