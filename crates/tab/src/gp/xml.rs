@@ -29,14 +29,14 @@ struct Node {
 
 /// A parsed document.
 #[derive(Debug)]
-pub(super) struct Xml {
+pub(crate) struct Xml {
     names: Vec<String>,
     nodes: Vec<Node>,
 }
 
 /// A reference to one element of an [`Xml`] document.
 #[derive(Clone, Copy)]
-pub(super) struct El<'a> {
+pub(crate) struct El<'a> {
     xml: &'a Xml,
     id: u32,
 }
@@ -57,7 +57,7 @@ impl Xml {
     }
 
     /// Parses a document.
-    pub(super) fn parse(bytes: &[u8]) -> Result<Xml, GpError> {
+    pub(crate) fn parse(bytes: &[u8]) -> Result<Xml, GpError> {
         let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
         let mut reader = Reader::from_reader(bytes);
         let mut buf = Vec::new();
@@ -135,7 +135,7 @@ impl Xml {
     }
 
     /// The root element.
-    pub(super) fn root(&self) -> El<'_> {
+    pub(crate) fn root(&self) -> El<'_> {
         let id = self.nodes[0].first;
         El { xml: self, id }
     }
@@ -217,17 +217,17 @@ impl<'a> El<'a> {
     }
 
     /// The element name without a namespace prefix.
-    pub(super) fn name(&self) -> &'a str {
+    pub(crate) fn name(&self) -> &'a str {
         &self.xml.names[usize::from(self.node().name)]
     }
 
     /// The text of the element (trimmed), `""` when it has none.
-    pub(super) fn text(&self) -> &'a str {
+    pub(crate) fn text(&self) -> &'a str {
         &self.node().text
     }
 
     /// An attribute value.
-    pub(super) fn attr(&self, name: &str) -> Option<&'a str> {
+    pub(crate) fn attr(&self, name: &str) -> Option<&'a str> {
         let id = self.xml.name_id(name)?;
         self.node()
             .attrs
@@ -237,7 +237,7 @@ impl<'a> El<'a> {
     }
 
     /// The child elements in document order.
-    pub(super) fn children(&self) -> Children<'a> {
+    pub(crate) fn children(&self) -> Children<'a> {
         Children {
             xml: self.xml,
             next: self.node().first,
@@ -245,28 +245,28 @@ impl<'a> El<'a> {
     }
 
     /// The first child with this name.
-    pub(super) fn child(&self, name: &str) -> Option<El<'a>> {
+    pub(crate) fn child(&self, name: &str) -> Option<El<'a>> {
         self.children().find(|c| c.name() == name)
     }
 
     /// The children with this name.
-    pub(super) fn all<'n>(&self, name: &'n str) -> impl Iterator<Item = El<'a>> + use<'a, 'n> {
+    pub(crate) fn all<'n>(&self, name: &'n str) -> impl Iterator<Item = El<'a>> + use<'a, 'n> {
         self.children().filter(move |c| c.name() == name)
     }
 
     /// The text of the first child with this name.
-    pub(super) fn child_text(&self, name: &str) -> Option<&'a str> {
+    pub(crate) fn child_text(&self, name: &str) -> Option<&'a str> {
         self.child(name).map(|c| c.text())
     }
 
     /// Whether a child with this name exists.
-    pub(super) fn has(&self, name: &str) -> bool {
+    pub(crate) fn has(&self, name: &str) -> bool {
         self.child(name).is_some()
     }
 }
 
 /// Iterates the children of an element.
-pub(super) struct Children<'a> {
+pub(crate) struct Children<'a> {
     xml: &'a Xml,
     next: u32,
 }

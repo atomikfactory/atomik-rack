@@ -69,7 +69,7 @@ fn entries(data: &[u8]) -> Result<Vec<Entry<'_>>, GpError> {
 }
 
 /// The score of a `.gp` file: `Content/score.gpif`.
-pub(super) fn extract_score(data: &[u8]) -> Result<Vec<u8>, GpError> {
+pub(crate) fn extract_score(data: &[u8]) -> Result<Vec<u8>, GpError> {
     let list = entries(data)?;
     let entry = list
         .iter()
@@ -78,6 +78,24 @@ pub(super) fn extract_score(data: &[u8]) -> Result<Vec<u8>, GpError> {
             list.iter()
                 .find(|e| e.name.to_ascii_lowercase().ends_with(b"score.gpif"))
         })
+        .ok_or(GpError::NoScore)?;
+    read_entry(data, entry)
+}
+
+/// The names of the entries of the archive.
+pub(crate) fn names(data: &[u8]) -> Result<Vec<String>, GpError> {
+    Ok(entries(data)?
+        .iter()
+        .map(|e| String::from_utf8_lossy(e.name).into_owned())
+        .collect())
+}
+
+/// The contents of the entry called `name` (compared without regard to case).
+pub(crate) fn read_named(data: &[u8], name: &str) -> Result<Vec<u8>, GpError> {
+    let list = entries(data)?;
+    let entry = list
+        .iter()
+        .find(|e| e.name.eq_ignore_ascii_case(name.as_bytes()))
         .ok_or(GpError::NoScore)?;
     read_entry(data, entry)
 }

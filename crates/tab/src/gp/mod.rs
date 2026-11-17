@@ -15,11 +15,11 @@
 
 mod binary;
 mod container;
-mod convert;
-mod dom;
+pub(crate) mod convert;
+pub(crate) mod dom;
 mod gpif;
-mod xml;
-mod zip;
+pub(crate) mod xml;
+pub(crate) mod zip;
 
 use std::collections::BTreeMap;
 
