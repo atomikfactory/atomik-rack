@@ -630,6 +630,12 @@ pub enum AppCommand {
     FoldPlayers,
     /// Track > Bypass All Players.
     BypassPlayers,
+    /// Track > Players and the rack menu: Generate Progression on the selected Chord Wheel.
+    WheelGenerate,
+    /// Track > Players and the rack menu: Send Progression to Chord Lane.
+    WheelToChordLane,
+    /// Track > Players and the rack menu: Send Progression to Clip.
+    WheelToClip,
     /// Track > Add Pattern Lane: the lane of the selected device's `pattern` param.
     AddPatternLane,
     /// Track > Add Reverb Send...: opens the wizard that gives the selected track a send to a new
@@ -1220,6 +1226,9 @@ impl AppCommand {
             AppCommand::SendPlayersToTrack => ("sequencer.send_players_to_track", None),
             AppCommand::FoldPlayers => ("sequencer.fold_players", None),
             AppCommand::BypassPlayers => ("sequencer.bypass_players", None),
+            AppCommand::WheelGenerate => ("rack.wheel_generate", None),
+            AppCommand::WheelToChordLane => ("rack.wheel_to_chord_lane", None),
+            AppCommand::WheelToClip => ("rack.wheel_to_clip", None),
             AppCommand::AddPatternLane => ("sequencer.add_pattern_lane", None),
             AppCommand::AddReverbSend => ("sequencer.add_reverb_send", None),
             AppCommand::DuckFrom => ("sequencer.duck_from", None),
@@ -1670,6 +1679,9 @@ impl AppCommand {
             ("sequencer.send_players_to_track", None) => AppCommand::SendPlayersToTrack,
             ("sequencer.fold_players", None) => AppCommand::FoldPlayers,
             ("sequencer.bypass_players", None) => AppCommand::BypassPlayers,
+            ("rack.wheel_generate", None) => AppCommand::WheelGenerate,
+            ("rack.wheel_to_chord_lane", None) => AppCommand::WheelToChordLane,
+            ("rack.wheel_to_clip", None) => AppCommand::WheelToClip,
             ("sequencer.add_pattern_lane", None) => AppCommand::AddPatternLane,
             ("sequencer.add_reverb_send", None) => AppCommand::AddReverbSend,
             ("sequencer.duck_from", None) => AppCommand::DuckFrom,
@@ -2626,6 +2638,8 @@ pub struct FreezeMenu {
     pub players_folded: bool,
     /// Every player of the selected stacks is bypassed.
     pub players_bypassed: bool,
+    /// A Chord Wheel is selected, or sits in the stack of a selected track (its commands work).
+    pub wheel: bool,
 }
 
 /// One menu item.
@@ -4138,6 +4152,22 @@ fn menus_in_english(
                             AppCommand::BypassPlayers,
                             state.freeze.players,
                         ),
+                        MenuEntry::Separator,
+                        enabled(
+                            "Generate Progression",
+                            AppCommand::WheelGenerate,
+                            state.freeze.wheel,
+                        ),
+                        enabled(
+                            "Send Progression to Chord Lane",
+                            AppCommand::WheelToChordLane,
+                            state.freeze.wheel,
+                        ),
+                        enabled(
+                            "Send Progression to Clip",
+                            AppCommand::WheelToClip,
+                            state.freeze.wheel,
+                        ),
                     ],
                 }),
                 MenuEntry::Separator,
@@ -5037,6 +5067,9 @@ mod tests {
             AppCommand::SendPlayersToTrack,
             AppCommand::FoldPlayers,
             AppCommand::BypassPlayers,
+            AppCommand::WheelGenerate,
+            AppCommand::WheelToChordLane,
+            AppCommand::WheelToClip,
             AppCommand::BounceClipDry,
             AppCommand::AddPatternLane,
             AppCommand::PatternLaneToNotes,

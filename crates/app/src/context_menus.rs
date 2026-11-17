@@ -69,6 +69,8 @@ pub struct MenuEnable {
     pub player: bool,
     /// A player preview runs (the item reads Stop Preview).
     pub previewing: bool,
+    /// Rack: the primary device is a Chord Wheel (its progression commands work).
+    pub wheel: bool,
     /// Rack: Combine can work on the selection (the model would accept it).
     pub combine: bool,
     /// Rack: Uncombine can work on the selection (the model would accept it).
@@ -826,6 +828,10 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 } else {
                     item("rack.preview_player", e.player)
                 },
+                Spec::Separator,
+                item("rack.wheel_generate", e.wheel),
+                item("rack.wheel_to_chord_lane", e.wheel),
+                item("rack.wheel_to_clip", e.wheel),
             ]);
             if e.plugin {
                 v.extend([
@@ -1664,6 +1670,9 @@ mod tests {
                 "rack.toggle_match",
                 "rack.blind_ab",
                 "rack.preview_player",
+                "rack.wheel_generate",
+                "rack.wheel_to_chord_lane",
+                "rack.wheel_to_clip",
             ]
         );
     }

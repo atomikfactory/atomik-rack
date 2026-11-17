@@ -819,6 +819,30 @@
         "wide"
       ]
     },
+    "Patches/Andalusian Fall.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "flamenco",
+        "progression",
+        "minor",
+        "descending"
+      ]
+    },
+    "Patches/Anthem Rise.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "anthem",
+        "progression",
+        "uplifting",
+        "push"
+      ]
+    },
     "Patches/Aurora Stack.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -891,6 +915,30 @@
         "percussive"
       ]
     },
+    "Patches/Broken Ballad.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "ballad",
+        "progression",
+        "broken",
+        "descending bass"
+      ]
+    },
+    "Patches/Canon Steps.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "classical",
+        "progression",
+        "descent",
+        "eight chords"
+      ]
+    },
     "Patches/Cassette Kit.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -913,6 +961,18 @@
         "bright",
         "wide",
         "airy"
+      ]
+    },
+    "Patches/Cinematic Mediants.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "cinematic",
+        "progression",
+        "mediant",
+        "wide"
       ]
     },
     "Patches/Circuit Kit.atomikpatch": {
@@ -1011,6 +1071,18 @@
         "room"
       ]
     },
+    "Patches/Dorian Vamp.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "modal",
+        "progression",
+        "dorian",
+        "vamp"
+      ]
+    },
     "Patches/Dotted Slap.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1033,6 +1105,18 @@
         "drawn",
         "bell",
         "bright"
+      ]
+    },
+    "Patches/Dreamy Lydian.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "dreamy",
+        "progression",
+        "lydian",
+        "slow"
       ]
     },
     "Patches/Drum Bus De-harsh.atomikpatch": {
@@ -1095,6 +1179,18 @@
         "curve"
       ]
     },
+    "Patches/Epic Minor.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "cinematic",
+        "progression",
+        "minor",
+        "wide"
+      ]
+    },
     "Patches/Fine Dust Shimmer.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1129,6 +1225,18 @@
         "drone",
         "fold",
         "evolving"
+      ]
+    },
+    "Patches/Four Chord Pop.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "pop",
+        "progression",
+        "major",
+        "eighths"
       ]
     },
     "Patches/Four Floor Pump.atomikpatch": {
@@ -1201,6 +1309,18 @@
         "full",
         "bright",
         "church"
+      ]
+    },
+    "Patches/Gospel Plagal.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "gospel",
+        "progression",
+        "plagal",
+        "warm"
       ]
     },
     "Patches/Gravel Drive.atomikpatch": {
@@ -1311,6 +1431,18 @@
         "tame"
       ]
     },
+    "Patches/Lo-fi Sevenths.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "lo-fi",
+        "progression",
+        "sevenths",
+        "mellow"
+      ]
+    },
     "Patches/Long Plate.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1347,6 +1479,18 @@
         "lead"
       ]
     },
+    "Patches/Minor Pulse.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "edm",
+        "progression",
+        "minor",
+        "pulse"
+      ]
+    },
     "Patches/Mist Bed.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1369,6 +1513,18 @@
         "mono",
         "reset phase",
         "clean"
+      ]
+    },
+    "Patches/Neo Soul Loop.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "neo soul",
+        "progression",
+        "ninths",
+        "syncopated"
       ]
     },
     "Patches/Neon Stab.atomikpatch": {
@@ -1465,6 +1621,18 @@
         "metallic",
         "inharmonic",
         "ringing"
+      ]
+    },
+    "Patches/Sad Ballad.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "ballad",
+        "progression",
+        "melancholy",
+        "strum"
       ]
     },
     "Patches/Scatter Dust.atomikpatch": {
@@ -1717,6 +1885,30 @@
         "electric",
         "mellow",
         "tine"
+      ]
+    },
+    "Patches/Twelve-Bar Blues.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "blues",
+        "progression",
+        "sevenths",
+        "twelve bars"
+      ]
+    },
+    "Patches/Two-Five-One.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "jazz",
+        "progression",
+        "sevenths",
+        "comping"
       ]
     },
     "Patches/Velvet Tines.atomikpatch": {

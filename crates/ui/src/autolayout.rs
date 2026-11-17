@@ -158,6 +158,8 @@ pub struct PanelSpec {
     pub arp: Option<crate::arp_panel::ArpPanel>,
     /// The Key & Chord panel of an `atomik.key-chord` (see [`crate::key_chord_panel`]).
     pub key_chord: Option<crate::key_chord_panel::KeyChordPanel>,
+    /// The Chord Wheel panel of an `atomik.chord-wheel` (see [`crate::chord_wheel_panel`]).
+    pub chord_wheel: Option<crate::chord_wheel_panel::ChordWheelPanel>,
     /// The Mod Source panel of an `atomik.mod-source` (see [`crate::modsrc_panel`]).
     pub modsrc: Option<crate::modsrc_panel::ModSourcePanel>,
     /// The wavetable synth panel of an `atomik.wavetable-synth` (see
@@ -408,6 +410,7 @@ fn layout_with(
         drum_gen: None,
         arp: None,
         key_chord: None,
+        chord_wheel: None,
         modsrc: None,
         wavetable: None,
         fm: None,
@@ -927,6 +930,7 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
         drum_gen: None,
         arp: None,
         key_chord: None,
+        chord_wheel: None,
         modsrc: None,
         wavetable: None,
         fm: None,
@@ -1066,6 +1070,7 @@ pub fn slicer_layout(desc: &DeviceDescriptor) -> PanelSpec {
         drum_gen: None,
         arp: None,
         key_chord: None,
+        chord_wheel: None,
         modsrc: None,
         wavetable: None,
         fm: None,
@@ -1124,6 +1129,7 @@ pub fn from_panel_layout(layout: &PanelLayout, desc: &DeviceDescriptor) -> Panel
         drum_gen: None,
         arp: None,
         key_chord: None,
+        chord_wheel: None,
         modsrc: None,
         wavetable: None,
         fm: None,

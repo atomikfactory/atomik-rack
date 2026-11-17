@@ -320,6 +320,7 @@ impl<S: EngineSink> AppCore<S> {
             direct_record,
             players_folded,
             players_bypassed,
+            wheel: self.chord_wheel_selected().is_some(),
             can_freeze: !busy && tracks.iter().any(freezable),
             can_unfreeze: tracks
                 .iter()

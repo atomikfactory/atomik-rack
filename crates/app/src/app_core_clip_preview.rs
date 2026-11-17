@@ -185,6 +185,9 @@ pub(super) struct LiveClipPreview {
     path: PathBuf,
     /// The instrument track the notes go to.
     device: DeviceKey,
+    /// A note player of that track the notes enter instead (they reach what its `notes_out` is
+    /// cabled to), for the Chord Wheel audition; `None`: the notes go to `device`.
+    via: Option<DeviceKey>,
     /// Note ons and offs in time order.
     events: Vec<Event>,
     /// The next event to send.
@@ -280,6 +283,53 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Plays `keys` together for a moment as a chord audition of the note player `via` on
+    /// `track`: through what the player's `notes_out` is cabled to (the players below it and the
+    /// instrument), or the built-in voice when it goes nowhere. Silent while the song plays or
+    /// without audio; it never touches the document.
+    pub(super) fn audition_keys_via(
+        &mut self,
+        track: Option<&DeviceKey>,
+        via: &DeviceKey,
+        keys: &[u8],
+        velocity: f32,
+    ) {
+        if self.playing || !self.sink.has_engine() || keys.is_empty() {
+            return;
+        }
+        self.stop_preview();
+        let notes: Vec<TimedNote> = keys
+            .iter()
+            .map(|key| TimedNote {
+                start: 0.0,
+                end: CHORD_SECONDS,
+                key: *key,
+                velocity,
+            })
+            .collect();
+        let span = span_of(&notes);
+        let routed = track.filter(|_| !self.audition_targets(via).is_empty());
+        let started = if let Some(track) = routed {
+            self.clip_preview = Some(LiveClipPreview {
+                path: PathBuf::new(),
+                device: track.clone(),
+                via: Some(via.clone()),
+                events: events_of(&notes),
+                next: 0,
+                started: self.now_seconds,
+                span,
+                down: Vec::new(),
+            });
+            self.feed_clip_preview(self.now_seconds);
+            Ok(())
+        } else {
+            self.start_built_in_preview(Path::new(""), notes, span)
+        };
+        if let Err(message) = started {
+            log::warn!("chord wheel audition: {message}");
+        }
+    }
+
     /// Starts the preview of `notes` (`path`: what the browser row shows as playing, empty for
     /// none).
     fn start_notes_preview(&mut self, path: &Path, notes: Vec<TimedNote>) -> Result<(), String> {
@@ -289,6 +339,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.clip_preview = Some(LiveClipPreview {
                     path: path.to_path_buf(),
                     device,
+                    via: None,
                     events: events_of(&notes),
                     next: 0,
                     started: self.now_seconds,
@@ -343,7 +394,10 @@ impl<S: EngineSink> AppCore<S> {
             return;
         };
         for key in preview.down {
-            self.live_note_to(&preview.device, NoteKind::Off { key });
+            self.live_note_to(
+                preview.via.as_ref().unwrap_or(&preview.device),
+                NoteKind::Off { key },
+            );
         }
         self.view_preview(None, 0.0);
     }
@@ -386,7 +440,7 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 _ => {}
             }
-            self.live_note_to(&preview.device, event.kind);
+            self.live_note_to(preview.via.as_ref().unwrap_or(&preview.device), event.kind);
             preview.next += 1;
         }
         if preview.next >= preview.events.len() {

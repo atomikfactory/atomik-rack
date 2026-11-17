@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use support::container::{apply, paint_rack};
 use support::*;
 
-const PLAYERS: [&str; 8] = [
+const PLAYERS: [&str; 9] = [
     "atomik.arpeggiator",
     "atomik.cv-sequencer",
     "atomik.drum-generator",
@@ -30,6 +30,7 @@ const PLAYERS: [&str; 8] = [
     "atomik.key-chord",
     "atomik.note-repeater",
     "atomik.note-delay",
+    "atomik.chord-wheel",
 ];
 
 const UPDATE_ENV: &str = "ATOMIK_UPDATE_GOLDEN";

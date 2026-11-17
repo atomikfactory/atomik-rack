@@ -277,6 +277,50 @@ pub enum UiAction {
     /// The REMOVE button of a Headphone Correction panel: the app removes the device's data in
     /// one undo step (`rack.headphone_remove`).
     HeadphoneRemove(DeviceKey),
+    /// A wedge of a Chord Wheel panel was clicked (or a row of its menu chosen): the app sets
+    /// slot `slot` (0-based) of the wheel to `chord` in one undo step and plays the chord
+    /// while the transport is stopped.
+    WheelSetChord {
+        /// The Chord Wheel.
+        device: DeviceKey,
+        /// The slot, `0..8`.
+        slot: u8,
+        /// The chord.
+        chord: atomik_core::progression::Chord,
+    },
+    /// The padlock of a slot card of a Chord Wheel panel: the app toggles the slot's lock.
+    WheelToggleLock {
+        /// The Chord Wheel.
+        device: DeviceKey,
+        /// The slot, `0..8`.
+        slot: u8,
+    },
+    /// The `-` and `+` of a Chord Wheel panel: the app sets the number of active slots (1 to 8).
+    WheelSetSlots {
+        /// The Chord Wheel.
+        device: DeviceKey,
+        /// The number of slots.
+        slots: u8,
+    },
+    /// GENERATE on a Chord Wheel panel: the app generates the progression of that device
+    /// (`rack.wheel_generate`).
+    WheelGenerate(DeviceKey),
+    /// TO LANE on a Chord Wheel panel: the app sends that device's progression to the song's
+    /// chord lane (`rack.wheel_to_chord_lane`).
+    WheelToChordLane(DeviceKey),
+    /// TO CLIP on a Chord Wheel panel: the app sends that device's progression to a note clip
+    /// (`rack.wheel_to_clip`).
+    WheelToClip(DeviceKey),
+    /// A right click on a wedge of a Chord Wheel panel: the shell opens a menu of `entries` at
+    /// `at` (rack view coordinates). Each row runs `rack.wheel_pick` for `device`.
+    WheelMenu {
+        /// The Chord Wheel.
+        device: DeviceKey,
+        /// The menu's rows.
+        entries: Vec<crate::context_menu::Entry>,
+        /// Where the pointer is, rack view coordinates.
+        at: vello::kurbo::Point,
+    },
     /// A momentary button of a panel (the gain tool's RESET): the app sends `param` to the device
     /// as 1 and, a moment later, as 0, through the engine only. The project does not change and
     /// there is no undo step.

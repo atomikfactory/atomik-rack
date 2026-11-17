@@ -1166,6 +1166,29 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::OpenSampleEditor(key) => self.open_sample_editor(key),
             UiAction::SetTuner { device, on } => self.set_tuner(device, on),
             UiAction::PreviewPlayer(device) => self.toggle_player_preview(&device),
+            // The Chord Wheel panel: the wheel, the cards and the buttons of one device.
+            UiAction::WheelSetChord {
+                device,
+                slot,
+                chord,
+            } => {
+                self.wheel_choose(&device, usize::from(slot), chord);
+            }
+            UiAction::WheelToggleLock { device, slot } => {
+                self.wheel_toggle_lock(&device, usize::from(slot));
+            }
+            UiAction::WheelSetSlots { device, slots } => {
+                self.wheel_set_slots(&device, usize::from(slots));
+            }
+            UiAction::WheelGenerate(device) => {
+                self.wheel_generate(&device);
+            }
+            UiAction::WheelToChordLane(device) => {
+                self.wheel_to_chord_lane(&device);
+            }
+            UiAction::WheelToClip(device) => {
+                self.wheel_to_clip(&device);
+            }
             UiAction::FindResonances(device) => self.find_resonances(&device),
             UiAction::CutResonances(device) => self.cut_resonances(&device),
             UiAction::LearnDuck(device) => self.learn_duck(&device),
@@ -4346,6 +4369,8 @@ mod delivery;
 #[path = "app_core_duck_from.rs"]
 mod duck_from;
 pub use duck_from::DuckMenu;
+#[path = "app_core_chord_wheel.rs"]
+mod chord_wheel_ops;
 #[path = "app_core_chords.rs"]
 mod chords;
 #[path = "app_core_energy.rs"]

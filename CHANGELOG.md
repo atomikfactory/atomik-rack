@@ -9,6 +9,24 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Chord Wheel, a ninth note player (`atomik.chord-wheel`, "Players").** The fastest way to get a chord
+  progression idea and hear it. Eight chord slots play in time with the transport through eight rhythm styles
+  (sustain, pulses, offbeat, push, strum, broken, 3-3-2) with a bass, strum, accent and humanize, voice-led around
+  a register, in transport, held or step mode, and following the song key; it has the common player BYPASS and play
+  button and stacks with the other players. The progressions come from a mood-based generator
+  (`atomik_core::progression`: twelve moods, spice, locks, ranked next-chord suggestions). Track > Players and the
+  rack menu get Generate Progression (a new seed each press, locked slots kept, one undo step), Send Progression to
+  Chord Lane (from the left locator, repeated to fill the loop when it is on, transposed to the song key, replacing
+  the chords of that span, setting the song key when there is none) and Send Progression to Clip. The panel has the
+  wheel, spelled like a circle of fifths (C G D A E B F# Db Ab Eb Bb F, the minors and diminished chords to match;
+  the cards, the readout and the wedge menu spell the chords for the home key): click a wedge to set the slot and
+  hear it, right-click for qualities and slash basses, Shift-click for the key, SUGGEST to tint and rank the next
+  chord; eight progression cards with padlocks and lengths; and every control. Sixteen factory patches (Four Chord
+  Pop, Sad Ballad, Two-Five-One, Neo Soul Loop, Lo-fi Sevenths, Epic Minor, Andalusian Fall, Twelve-Bar Blues,
+  Dorian Vamp, Dreamy Lydian, Cinematic Mediants, Anthem Rise, Canon Steps, Gospel Plagal, Minor Pulse and Broken
+  Ballad) are in the Factory root under the category Chords, and the browser's Space preview plays a patch of a
+  player through a built-in synth for one pass of its progression (up to 16 seconds). The Factory root now holds
+  99 patches. Format unchanged (45).
 - **A MONO button on the master strip of the mixer.** One click folds what you hear to mono, `(L + R) / 2` on both
   sides, and a second click brings the stereo back; the button is lit while it is on, so it is not forgotten. It is
   the mono switch of the translation lens (the same command, `mixer.lens_mono`, so the menu, the command palette and
