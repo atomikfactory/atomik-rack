@@ -9,6 +9,16 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Plucked Strings.** A new instrument, `atomik.plucked`, a physical model of a plucked string for guitars,
+  basses, banjos, mandolins and harps. Each key plucks a waveguide string (an extended Karplus-Strong loop with a
+  tuned fractional delay, loop damping that follows the pitch and a dispersion for stiffness) with a pick you set
+  by position and hardness, through one of ten instrument bodies (steel, nylon, electric, bass, upright, ukulele,
+  banjo, mandolin, resonator, harp). Notes are within a cent of their key over MIDI 28 to 100 at 44.1, 48 and
+  96 kHz. It has a decay, a finger-mute or let-ring release, a palm mute, a unison or octave course (mandolin,
+  12-string), a stereo spread and velocity sensitivity, and it reads the per-note expression of its notes:
+  tuning glides the pitch (bends, slides and vibrato do not click), slide is the palm-mute amount, and pressure
+  selects a harmonic or a dead note. Sixteen voices, the same key struck again plucks its own string. It uses the
+  generic panel for now; factory patches and a panel follow.
 - **A MONO button on the master strip of the mixer.** One click folds what you hear to mono, `(L + R) / 2` on both
   sides, and a second click brings the stereo back; the button is lit while it is on, so it is not forgotten. It is
   the mono switch of the translation lens (the same command, `mixer.lens_mono`, so the menu, the command palette and
