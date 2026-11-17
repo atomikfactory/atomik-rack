@@ -721,7 +721,15 @@ fn scanners_run_in_parallel_up_to_the_core_count_and_the_cache_order_is_determin
     assert_eq!(paths, sorted);
     let mut again = PluginCache::default();
     run(&s, &mut again, &Fake::ok(), RescanMode::Incremental);
-    assert_eq!(again.to_json(), cache.to_json());
+    // Each run stamps the wall-clock second it scanned in, and the two runs may straddle a second
+    // boundary: compare everything but the scan times.
+    let unstamped = |json: String| {
+        json.lines()
+            .filter(|l| !l.trim_start().starts_with("\"scanned\":"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(unstamped(again.to_json()), unstamped(cache.to_json()));
     let _ = std::fs::remove_dir_all(&d);
 }
 

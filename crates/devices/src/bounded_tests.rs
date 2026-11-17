@@ -282,10 +282,13 @@ proptest! {
         check_bounded("atomik.loudness-meter", &s)?;
     }
 
-    /// The headphone correction device: any params, loud noise, with and without data.
+    /// The headphone correction device: any params, loud noise, with and without data. With auto
+    /// gain off the curve may boost up to +20 dB and the output adds +12 dB, so noise at amp 2
+    /// legitimately peaks near 2 * 10^(32/20) ≈ 80 (times the filter's crest): the bound is well
+    /// above that and still catches a runaway.
     #[test]
     fn qa_headphone_correction_any_params_bounded_at_every_sample_rate(s in scene()) {
-        check_bounded("atomik.headphone-correction", &s)?;
+        check_bounded_to("atomik.headphone-correction", &s, 1024.0)?;
     }
 
     /// The clipper: any params, loud noise, every oversampling and band mode.
