@@ -8,7 +8,7 @@
 //! [`dither`] (the requantiser of an audio export), [`amp`] (the guitar amp: input stage, preamp, tone stack, power amp and synthesised cabinet), [`shaper`] (drive curves), [`leveller`] (peak-linked upward leveller), [`crossover`]
 //! (flat-sum 24 dB/oct split), [`phaser`], [`chorus`], [`echo`], [`comb`], [`room`] (small box
 //! and large room on [`Fdn8`]), [`ringmod`], [`bitcrush`], [`noise`] (white, pink, rumble,
-//! crackle, presence gate), [`spectral`] (STFT stage), [`spectrum`] (the analyser display: FFT power, 1/3-octave bands, peak hold), [`tonal`] (the tonal balance meter: loudness-normalised regions against built-in and learned targets), [`stereo_meter`] (correlation, balance and width), [`modal`], [`wavetable`] (the band-limited factory wavetables of the wavetable synth), [`fm`] (the FM synth's operator routings and bandwidth limiter), [`grain`] (the granular sampler's windows, grain pool, clock and anti-aliased read), [`ladder`] (a 24 dB/oct ladder lowpass with an anti-aliased drive stage), [`wobble`] and [`smoother2`], and the offline [`stretch`] (time-stretch and pitch-shift), [`tuner`] (pitch, note and cents for the audio track tuner) and [`notes`] (audio to notes: a YIN pitch tracker for monophonic audio and a drum hit classifier).
+//! crackle, presence gate), [`spectral`] (STFT stage), [`spectrum`] (the analyser display: FFT power, 1/3-octave bands, peak hold), [`tonal`] (the tonal balance meter: loudness-normalised regions against built-in and learned targets), [`stereo_meter`] (correlation, balance and width), [`modal`], [`wavetable`] (the band-limited factory wavetables of the wavetable synth), [`fm`] (the FM synth's operator routings and bandwidth limiter), [`grain`] (the granular sampler's windows, grain pool, clock and anti-aliased read), [`ladder`] (a 24 dB/oct ladder lowpass with an anti-aliased drive stage), [`wobble`] and [`smoother2`], and the offline [`stretch`] (time-stretch and pitch-shift), [`tuner`] (pitch, note and cents for the audio track tuner), [`listen`] (the streaming note tracker of the practice grader) and [`notes`] (audio to notes: a YIN pitch tracker for monophonic audio and a drum hit classifier).
 //! They are all deterministic (see [`exp2_det`] and the module docs), allocation-free
 //! in `process`, and offer a per-sample call plus a block call that is bit-identical for any
 //! chunking.
@@ -49,6 +49,7 @@ pub mod ladder;
 pub mod lens;
 pub mod leveller;
 mod lfo;
+pub mod listen;
 pub mod loudness_history;
 pub mod masking;
 pub mod mixcheck;
