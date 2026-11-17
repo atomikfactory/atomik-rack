@@ -2020,6 +2020,48 @@ const COMMANDS: &[CommandDef] = &[
     .arg(PRACTICE_COUNT_IN_ARGS)
     .menu(),
     cmd(
+        "practice.listen",
+        "Practice: Listen and Grade",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "practice.listen_calibrate",
+        "Practice: Calibrate Listening Latency",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "practice.listen_clear",
+        "Practice: Clear Results",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "practice.listen_input",
+        "Practice: Next Listening Input",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "practice.listen_offset",
+        "Practice: Listening Offset",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_TRAINER_ARGS),
+    cmd(
+        "practice.listen_threshold",
+        "Practice: Clean Pass Accuracy",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_TRAINER_ARGS),
+    cmd(
         "practice.loop_selection",
         "Practice: Loop Selection",
         G::Transport,

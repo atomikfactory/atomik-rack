@@ -171,6 +171,9 @@ pub struct FretboardFeed {
     pub tick: Option<i64>,
     /// The transport is running.
     pub playing: bool,
+    /// The verdicts of the last graded pass by place (listen and grade): a sounding note that has
+    /// one is drawn in its colour.
+    pub grades: Option<Arc<Vec<crate::grading::FretGrade>>>,
 }
 
 /// The notes of a tick: what sounds, and what comes next.
@@ -303,7 +306,13 @@ impl FretboardView {
             (Some(d), Some(t)) => d.chords.iter().rposition(|c| c.tick <= t),
             _ => None,
         };
+        let same_grades = match (&self.feed.grades, &feed.grades) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b) || **a == **b,
+            (None, None) => true,
+            _ => false,
+        };
         let changed = !same_data
+            || !same_grades
             || live != self.live
             || chord_of(feed) != chord_of(&self.feed)
             || feed.playing != self.feed.playing
@@ -709,7 +718,22 @@ impl FretboardView {
             }
             return;
         }
-        c.fill_with(Circle::new(pt(x, y), r), t.highlight);
+        let verdict = self.feed.grades.as_ref().and_then(|g| {
+            g.iter()
+                .find(|x| x.tick == n.tick && x.string == n.string && x.fret == n.fret)
+                .map(|x| x.verdict)
+        });
+        let fill = verdict.map_or(t.highlight, |v| crate::grading::colour(&self.st.base, v));
+        c.fill_with(Circle::new(pt(x, y), r), fill);
+        if let Some(badge) = verdict.and_then(crate::grading::badge)
+            && r >= 4.5
+        {
+            c.text(
+                &TextRun::verbatim(badge, pt(x - r * 0.8, y - r * 0.5), (r * 1.1) as f32, fill)
+                    .align(Align::Center)
+                    .weight(700),
+            );
+        }
         if r >= 4.5 {
             c.text(
                 &TextRun::verbatim(label, pt(x, y + r * 0.38), (r * 1.1) as f32, t.on_accent)

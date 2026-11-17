@@ -3376,6 +3376,36 @@ Speed trainer: how much the speed rises each time => Entraîneur : de combien la
 Speed trainer: clean passes before each rise => Entraîneur : passages propres avant chaque montée
 Speed trainer: the speed it stops at => Entraîneur : la vitesse où il s'arrête
 
+# Listen and grade
+Practice: Listen and Grade => Pratique : écouter et noter
+Practice: Calibrate Listening Latency => Pratique : calibrer la latence d'écoute
+Practice: Clear Results => Pratique : effacer les résultats
+Practice: Next Listening Input => Pratique : entrée d'écoute suivante
+Practice: Listening Offset => Pratique : décalage d'écoute
+Practice: Clean Pass Accuracy => Pratique : précision d'un passage propre
+Listen and Grade => Écouter et noter
+Next Listening Input => Entrée d'écoute suivante
+Calibrate Listening Latency => Calibrer la latence d'écoute
+Clear Results => Effacer les résultats
+Listen => Écoute
+Input {n} => Entrée {n}
+Inputs {a}-{b} => Entrées {a}-{b}
+no input => aucune entrée
+Listen: hear the instrument on the audio input and grade each pass of the loop => Écoute : entend l'instrument sur l'entrée audio et note chaque passage de la boucle
+Input: {input}. Click for the next input => Entrée : {input}. Clic pour la suivante
+Calibrate: play along the click for a few beats. Offset {ms} ms => Calibrer : jouez avec le clic pendant quelques temps. Décalage {ms} ms
+Accuracy of the last pass, and notes right in a row (best {best}). A pass is clean from {threshold}% => Précision du dernier passage et notes justes d'affilée (record {best}). Un passage est propre à partir de {threshold} %
+Accuracy of the latest passes (this session only) => Précision des derniers passages (cette session seulement)
+Clear the results of this session => Effacer les résultats de cette session
+The audio interface has no inputs to listen to => L'interface audio n'a pas d'entrée à écouter
+Listening to {input} => Écoute de {input}
+Listening offset {ms} ms => Décalage d'écoute : {ms} ms
+Latency offset set to {ms} ms => Décalage de latence réglé à {ms} ms
+A pass is clean from {n}% => Un passage est propre à partir de {n} %
+Play along the click: {n} notes set the latency offset => Jouez avec le clic : {n} notes règlent le décalage de latence
+Not enough notes heard: play along the click on the listening input, then try again => Pas assez de notes entendues : jouez avec le clic sur l'entrée d'écoute, puis recommencez
+Listening is paused while a take or a sample records => L'écoute est en pause pendant une prise ou un échantillonnage
+
 # Fretboard
 Fretboard => Manche
 Detach Fretboard => Détacher le manche

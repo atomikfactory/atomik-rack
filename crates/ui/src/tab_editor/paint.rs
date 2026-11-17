@@ -7,6 +7,7 @@ use super::tech::{self, Tech};
 use super::{DIAGRAM_WIDTH, Placed, RULER_HEIGHT, TOP_BAR_HEIGHT, TabEditorView, TopButton};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::chord_diagram::{self, Diagram};
+use crate::grading;
 use crate::practice_bar::PRACTICE_BAR_HEIGHT;
 use crate::seq_paint as sp;
 use crate::theme::mix;
@@ -439,7 +440,32 @@ impl TabEditorView {
                 let text = fret_text(p);
                 let tw = text.chars().count() as f64 * f64::from(size) * 0.6 + 3.0;
                 let r = Rect::new(x - tw / 2.0, y - lh * 0.42, x + tw / 2.0, y + lh * 0.42);
+                let verdict = self
+                    .grades
+                    .as_ref()
+                    .and_then(|g| grading::verdict_of(g, p.tick, p.key));
                 c.fill_with(r, self.st.background);
+                if let Some(v) = verdict {
+                    // The note sits on a patch of its verdict's colour, with a badge that tells
+                    // early, late, wrong and missed apart without it.
+                    let col = grading::colour(t, v);
+                    c.fill_with(
+                        RoundedRect::from_rect(r.inflate(1.5, 1.0), 3.0),
+                        mix(col, self.st.background, 0.55),
+                    );
+                    if let Some(badge) = grading::badge(v) {
+                        c.text(
+                            &TextRun::verbatim(
+                                badge,
+                                pt(r.x1 + 3.0, y - lh * 0.28),
+                                (size * 0.85).max(7.5),
+                                col,
+                            )
+                            .align(Align::Center)
+                            .weight(700),
+                        );
+                    }
+                }
                 c.text(
                     &TextRun::verbatim(text, pt(x, y + f64::from(size) * 0.36), size, t.text)
                         .align(Align::Center)

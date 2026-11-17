@@ -59,6 +59,67 @@ impl Default for TrainerState {
     }
 }
 
+/// Width of the history bars.
+const HISTORY_WIDTH: f64 = 4.0 + 7.0 * HISTORY_SHOWN as f64;
+
+/// Passes of the listening history the bar draws.
+pub const HISTORY_SHOWN: usize = 8;
+
+/// What the bar shows of listen-and-grade (the app owns it, see `atomik_tab::grade::Session`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ListenState {
+    /// Listening is on.
+    pub on: bool,
+    /// A latency calibration is running.
+    pub calibrating: bool,
+    /// The input: its first channel (0-based) and whether it is that channel alone. `None` when
+    /// the interface has no input.
+    pub input: Option<(u16, bool)>,
+    /// The accuracy of the last graded pass, percent.
+    pub last_percent: Option<u8>,
+    /// The notes right in a row now.
+    pub streak: u32,
+    /// The longest run this session.
+    pub best: u32,
+    /// The accuracy a clean pass needs, percent.
+    pub threshold: u8,
+    /// The manual latency offset, milliseconds.
+    pub offset_ms: i16,
+    /// How many of `history` are valid.
+    pub history_len: u8,
+    /// The newest passes' accuracy, percent, oldest first.
+    pub history: [u8; HISTORY_SHOWN],
+}
+
+impl Default for ListenState {
+    fn default() -> Self {
+        Self {
+            on: false,
+            calibrating: false,
+            input: None,
+            last_percent: None,
+            streak: 0,
+            best: 0,
+            threshold: 90,
+            offset_ms: 0,
+            history_len: 0,
+            history: [0; HISTORY_SHOWN],
+        }
+    }
+}
+
+impl ListenState {
+    /// The passes of the history, oldest first.
+    pub fn passes(&self) -> &[u8] {
+        &self.history[..usize::from(self.history_len).min(HISTORY_SHOWN)]
+    }
+
+    /// Whether there is anything to show beyond the switch: listening, or results to look at.
+    pub fn is_shown(&self) -> bool {
+        self.on || self.last_percent.is_some()
+    }
+}
+
 /// What the bar shows; the app pushes it with every transport refresh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PracticeState {
@@ -72,6 +133,8 @@ pub struct PracticeState {
     pub looping: bool,
     /// The speed trainer.
     pub trainer: TrainerState,
+    /// Listen and grade.
+    pub listen: ListenState,
 }
 
 impl Default for PracticeState {
@@ -82,6 +145,7 @@ impl Default for PracticeState {
             metronome: false,
             looping: false,
             trainer: TrainerState::default(),
+            listen: ListenState::default(),
         }
     }
 }
@@ -145,6 +209,18 @@ pub enum PracticeItem {
     Faster,
     /// The speed readout.
     Readout,
+    /// The listen switch.
+    Listen,
+    /// The listening input (a click cycles through the interface's inputs).
+    Input,
+    /// Calibrate the latency offset against the click.
+    Latency,
+    /// The accuracy of the last pass and the streak.
+    Accuracy,
+    /// The accuracy of the newest passes as small bars.
+    History,
+    /// Clear the results.
+    ClearResults,
     /// The trainer switch.
     Trainer,
     /// The trainer's pass count.
@@ -253,6 +329,15 @@ impl PracticeBar {
         f.put(18.0, PracticeItem::Faster);
         f.put(36.0, PracticeItem::Readout);
         f.gap(8.0);
+        f.put(46.0, PracticeItem::Listen);
+        if self.state.listen.is_shown() {
+            f.put(46.0, PracticeItem::Input);
+            f.put(52.0, PracticeItem::Latency);
+            f.put(78.0, PracticeItem::Accuracy);
+            f.put(HISTORY_WIDTH, PracticeItem::History);
+            f.put(40.0, PracticeItem::ClearResults);
+        }
+        f.gap(8.0);
         f.put(56.0, PracticeItem::Trainer);
         if self.state.trainer.enabled {
             f.put(84.0, PracticeItem::Passes);
@@ -326,6 +411,11 @@ impl PracticeBar {
             PracticeItem::Arrow(v, up) => {
                 out.push(Self::run(v.command(), Some(if up { "up" } else { "down" })))
             }
+            PracticeItem::Listen => out.push(Self::run("practice.listen", None)),
+            PracticeItem::Input => out.push(Self::run("practice.listen_input", None)),
+            PracticeItem::Latency => out.push(Self::run("practice.listen_calibrate", None)),
+            PracticeItem::ClearResults => out.push(Self::run("practice.listen_clear", None)),
+            PracticeItem::Accuracy | PracticeItem::History => {}
             PracticeItem::Readout | PracticeItem::Passes | PracticeItem::Value(_) => {}
         }
         true
@@ -403,6 +493,48 @@ impl PracticeBar {
                 "Speed trainer: raise the speed after clean passes of the loop",
             )
             .with_command("practice.trainer"),
+            PracticeItem::Listen => Help::new(
+                rect,
+                "Listen: hear the instrument on the audio input and grade each pass of the loop",
+            )
+            .with_command("practice.listen"),
+            PracticeItem::Input => {
+                let name = self.state.listen.input.map_or_else(
+                    || i18n::tr("no input").into_owned(),
+                    |(first, mono)| input_label(first, mono),
+                );
+                Help::new(
+                    rect,
+                    i18n::tf(
+                        "Input: {input}. Click for the next input",
+                        &[("input", &name)],
+                    ),
+                )
+                .with_command("practice.listen_input")
+            }
+            PracticeItem::Latency => Help::new(
+                rect,
+                i18n::tf(
+                    "Calibrate: play along the click for a few beats. Offset {ms} ms",
+                    &[("ms", &self.state.listen.offset_ms.to_string())],
+                ),
+            )
+            .with_command("practice.listen_calibrate"),
+            PracticeItem::Accuracy => Help::new(
+                rect,
+                i18n::tf(
+                    "Accuracy of the last pass, and notes right in a row (best {best}). A pass is clean from {threshold}%",
+                    &[
+                        ("best", &self.state.listen.best.to_string()),
+                        ("threshold", &self.state.listen.threshold.to_string()),
+                    ],
+                ),
+            ),
+            PracticeItem::History => {
+                Help::new(rect, "Accuracy of the latest passes (this session only)")
+            }
+            PracticeItem::ClearResults => Help::new(rect, "Clear the results of this session")
+                .with_command("practice.listen_clear"),
             PracticeItem::Passes => {
                 Help::new(rect, "Passes of the loop and clean passes at this speed")
             }
@@ -495,6 +627,27 @@ impl PracticeBar {
                         .weight(700),
                     );
                 }
+                PracticeItem::Listen => {
+                    sp::button(c, st, r, "Listen", s.listen.on.then_some(t.highlight), hot);
+                }
+                PracticeItem::Input => {
+                    let label = s.listen.input.map_or_else(
+                        || "-".to_owned(),
+                        |(first, mono)| short_input_label(first, mono),
+                    );
+                    paint_verbatim_button(c, st, r, &label, None, hot);
+                }
+                PracticeItem::Latency => sp::button(
+                    c,
+                    st,
+                    r,
+                    "Latency",
+                    s.listen.calibrating.then_some(t.highlight),
+                    hot,
+                ),
+                PracticeItem::Accuracy => self.paint_accuracy(c, st, r),
+                PracticeItem::History => self.paint_history(c, st, r),
+                PracticeItem::ClearResults => sp::button(c, st, r, "Clear", None, hot),
                 PracticeItem::Trainer => sp::button(
                     c,
                     st,
@@ -530,6 +683,50 @@ impl PracticeBar {
         }
     }
 
+    /// The accuracy of the last pass (green from the threshold) and the streak.
+    fn paint_accuracy(&self, c: &mut dyn Canvas, st: &SeqTheme, r: Rect) {
+        let t = &st.base;
+        let l = &self.state.listen;
+        let (text, colour) = match l.last_percent {
+            Some(p) if p >= l.threshold => (format!("{p}%"), t.meter_low),
+            Some(p) => (format!("{p}%"), t.warning),
+            None if l.on => ("...".to_owned(), t.text_muted),
+            None => ("-".to_owned(), t.text_muted),
+        };
+        c.text(
+            &TextRun::verbatim(text, pt(r.x0 + 2.0, r.center().y + 4.0), 11.0, colour).weight(700),
+        );
+        if l.streak > 0 {
+            c.text(&TextRun::verbatim(
+                format!("x{}", l.streak),
+                pt(r.x0 + 40.0, r.center().y + 3.5),
+                10.0,
+                t.text_muted,
+            ));
+        }
+    }
+
+    /// The newest passes as bars, tallest for 100 %.
+    fn paint_history(&self, c: &mut dyn Canvas, st: &SeqTheme, r: Rect) {
+        let t = &st.base;
+        let l = &self.state.listen;
+        let passes = l.passes();
+        let (base, tall) = (r.y1 - 2.0, r.height() - 4.0);
+        for (i, p) in passes.iter().enumerate() {
+            let x = r.x0 + 2.0 + i as f64 * 7.0;
+            let h = (tall * f64::from(*p) / 100.0).max(1.0);
+            let colour = if *p >= l.threshold {
+                t.meter_low
+            } else {
+                t.warning
+            };
+            c.fill_with(Rect::new(x, base - h, x + 5.0, base), colour);
+        }
+        if passes.is_empty() {
+            sp::line(c, r.x0 + 2.0, base, r.x1 - 2.0, base, t.text_muted);
+        }
+    }
+
     fn paint_slider(&self, c: &mut dyn Canvas, st: &SeqTheme, r: Rect) {
         let t = &st.base;
         let mid = r.center().y;
@@ -542,6 +739,30 @@ impl PracticeBar {
         let speed = self.state.speed.clamp(MIN_SPEED_PERCENT, MAX_SPEED_PERCENT);
         let colour = if speed == 100 { t.text } else { t.highlight };
         c.fill_with(Circle::new(pt(at(speed), mid), 5.0), colour);
+    }
+}
+
+/// The name of an interface input: `Inputs 1-2` or `Input 3`.
+pub fn input_label(first: u16, mono: bool) -> String {
+    if mono {
+        i18n::tf("Input {n}", &[("n", &(first + 1).to_string())])
+    } else {
+        i18n::tf(
+            "Inputs {a}-{b}",
+            &[
+                ("a", &(first + 1).to_string()),
+                ("b", &(first + 2).to_string()),
+            ],
+        )
+    }
+}
+
+/// The short name on the bar: `1` or `1-2`.
+fn short_input_label(first: u16, mono: bool) -> String {
+    if mono {
+        format!("In {}", first + 1)
+    } else {
+        format!("{}-{}", first + 1, first + 2)
     }
 }
 

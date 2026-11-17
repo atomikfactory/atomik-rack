@@ -51,6 +51,7 @@ use crate::fretboard::{
     FRETBOARD_HEIGHT, FretChord, FretNote, FretboardData, FretboardFeed, FretboardOptions,
     FretboardView,
 };
+use crate::grading::{self, FretGrade, GradeMark};
 use crate::keymap::CommandOutcome;
 use crate::practice_bar::{PRACTICE_BAR_HEIGHT, PracticeBar, PracticeItem, PracticeState};
 use crate::seq_edit;
@@ -214,6 +215,10 @@ pub struct TabEditorView {
     /// The strip is wanted (it still needs the room, see [`Self::fretboard_rect`]).
     fretboard_on: bool,
     fb_data: Option<Arc<FretboardData>>,
+    /// The verdicts of the last graded pass (listen and grade), by content tick and key, and the
+    /// same by place for the neck.
+    grades: Option<Arc<Vec<GradeMark>>>,
+    fb_grades: Option<Arc<Vec<FretGrade>>>,
     axis: TimeAxis,
     clip_id: Option<ClipId>,
     clip: Option<Clip>,
@@ -321,6 +326,8 @@ impl TabEditorView {
             fretboard: FretboardView::new(theme.clone()),
             fretboard_on: false,
             fb_data: None,
+            grades: None,
+            fb_grades: None,
             axis: TimeAxis::new(GUTTER_WIDTH, 260.0),
             clip_id: None,
             clip: None,
@@ -401,6 +408,7 @@ impl TabEditorView {
     pub fn fretboard_feed(&self) -> FretboardFeed {
         FretboardFeed {
             data: self.fb_data.clone(),
+            grades: self.fb_grades.clone(),
             tick: if self.playing {
                 self.playhead_content()
             } else {
@@ -408,6 +416,50 @@ impl TabEditorView {
             },
             playing: self.playing,
         }
+    }
+
+    /// Shows the verdicts of the last graded pass over the notes (and on the neck); `None`
+    /// clears them. True when what is shown changed.
+    pub fn set_grades(&mut self, grades: Option<Arc<Vec<GradeMark>>>) -> bool {
+        let same = match (&self.grades, &grades) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b) || **a == **b,
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            return false;
+        }
+        self.grades = grades;
+        self.rebuild_fb_grades();
+        self.refresh_fretboard();
+        self.repaint = true;
+        true
+    }
+
+    /// The verdicts shown.
+    pub fn grades(&self) -> Option<&Arc<Vec<GradeMark>>> {
+        self.grades.as_ref()
+    }
+
+    /// The verdicts by place, for the neck.
+    fn rebuild_fb_grades(&mut self) {
+        let (Some(marks), Some(w)) = (&self.grades, &self.work) else {
+            self.fb_grades = None;
+            return;
+        };
+        let by_place: Vec<FretGrade> = w
+            .placed
+            .iter()
+            .filter_map(|p| {
+                grading::verdict_of(marks, p.tick, p.key).map(|verdict| FretGrade {
+                    tick: p.tick,
+                    string: p.string,
+                    fret: p.fret,
+                    verdict,
+                })
+            })
+            .collect();
+        self.fb_grades = Some(Arc::new(by_place));
     }
 
     /// Feeds the strip; true when what it draws changed.
@@ -474,6 +526,8 @@ impl TabEditorView {
         self.clip_rev = None;
         self.work = None;
         self.fb_data = None;
+        self.grades = None;
+        self.fb_grades = None;
         self.device = None;
         self.digits.clear();
         self.merge_open = None;
@@ -967,6 +1021,7 @@ impl TabEditorView {
             self.clip = None;
         }
         self.fb_data = self.work.as_ref().map(fretboard_data);
+        self.rebuild_fb_grades();
         let last = u8::try_from(self.strings().saturating_sub(1)).unwrap_or(u8::MAX);
         self.cursor.1 = self.cursor.1.min(last);
         self.cursor.0 = self.cursor.0.clamp(0, (self.end_tick() - 1).max(0));

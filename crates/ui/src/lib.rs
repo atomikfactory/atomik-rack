@@ -400,6 +400,7 @@ pub mod fx;
 pub mod fx_layout;
 pub mod fx_paint;
 pub mod gain_panel;
+pub mod grading;
 pub mod granular_panel;
 pub mod harmony_picker;
 pub mod headphone_panel;
@@ -548,6 +549,7 @@ pub use film_panel::{
     FilmView,
 };
 pub use fretboard::{FRETBOARD_HEIGHT, FretLabels, FretboardFeed, FretboardOptions, FretboardView};
+pub use grading::{FretGrade, GradeMark};
 pub use harmony_picker::{HarmonyPickerAction, HarmonyPickerView, HarmonyTarget, PickerValue};
 pub use help_panel::{HELP_PANEL_HEIGHT, HelpCard};
 pub use history_panel::{HISTORY_PANEL_WIDTH, HistoryRow, HistoryView};
@@ -592,8 +594,8 @@ pub use plugin_manager::{
 pub use plugin_params::{PluginGestureMerger, PluginParamsView};
 pub use plugin_settings::PluginSettingsView;
 pub use practice_bar::{
-    MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, PracticeBar, PracticeItem, PracticeState,
-    SPEED_STEP_PERCENT, TrainerState, TrainerValue,
+    HISTORY_SHOWN, ListenState, MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, PracticeBar, PracticeItem,
+    PracticeState, SPEED_STEP_PERCENT, TrainerState, TrainerValue, input_label,
 };
 pub use quantize_panel::{GrooveEntry, QuantizeAction, QuantizeRow, QuantizeValues, QuantizeView};
 pub use rack::{
