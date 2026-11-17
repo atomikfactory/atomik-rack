@@ -12,6 +12,7 @@ publish = false
 [dependencies]
 atomik-core.workspace = true
 atomik-device-sdk.workspace = true
+atomik-tab.workspace = true
 serde.workspace = true
 # Correctly rounded float parsing: params and tempo round-trip exactly through patch files.
 # atomik-render enables it too, so every build reads patch numbers identically.

@@ -46,7 +46,9 @@ fn wants_info(row: &FileRow) -> bool {
         FileKind::Patch | FileKind::Container | FileKind::Clip | FileKind::Project => {
             row.item.is_none()
         }
-        FileKind::Folder | FileKind::Midi | FileKind::Device | FileKind::Preset => false,
+        FileKind::Folder | FileKind::Midi | FileKind::Tab | FileKind::Device | FileKind::Preset => {
+            false
+        }
     }
 }
 
@@ -454,7 +456,7 @@ impl FileBrowserView {
                 is_audio(r),
                 is_file(r),
                 // A MIDI file opens (imports) on a double click like a library item loads.
-                r.kind.is_item() || r.kind == FileKind::Midi,
+                r.kind.is_item() || matches!(r.kind, FileKind::Midi | FileKind::Tab),
                 r.kind == FileKind::Patch,
             )
         };
@@ -658,7 +660,7 @@ impl FileBrowserView {
             self.menu = Some(Menu::new(vec![load], Vec::new(), at, self.bounds));
             return;
         }
-        if kind == FileKind::Midi {
+        if matches!(kind, FileKind::Midi | FileKind::Tab) {
             items.push(MenuItem::new("Import", Act::Load(path.clone())));
             items.push(MenuItem::separator());
         } else if kind.is_item() {
@@ -1063,6 +1065,7 @@ impl FileBrowserView {
                         | FileKind::Clip
                         | FileKind::Project
                         | FileKind::Midi
+                        | FileKind::Tab
                         | FileKind::Device
                         | FileKind::Preset => BrowseAction::Load(r.path.clone()),
                     };

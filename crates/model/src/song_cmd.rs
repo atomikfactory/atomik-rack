@@ -1918,6 +1918,13 @@ pub(crate) fn plan(
                 new: Box::new(harmony),
             }
         }
+        SongCommand::SetSheets(sheets) => {
+            crate::chord_sheets::check_sheets(&sheets).map_err(range)?;
+            Edit::Sheets {
+                old: song.sheets.clone(),
+                new: sheets,
+            }
+        }
         SongCommand::SetMarkers(markers) | SongCommand::DragMarkers { markers, .. } => {
             let markers = check_markers(markers)?;
             Edit::Markers {

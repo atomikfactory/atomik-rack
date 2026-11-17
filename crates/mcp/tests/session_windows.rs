@@ -257,7 +257,7 @@ fn window_unknown_name_is_refused() {
     let mut s = attached();
     let m = fails(&mut s, "session_texts", json!({"window": "sidebar"}));
     assert!(
-        m.contains("main, rack, console, spectrum-eq, browser, piano-keys or video")
+        m.contains("main, rack, console, spectrum-eq, browser, piano-keys, video or fretboard")
             && m.contains("sidebar"),
         "{m}"
     );
@@ -278,4 +278,45 @@ fn session_window_close_main_is_refused() {
         json!({"action": "close", "window": "main"}),
     );
     assert!(m.contains("session_close"), "{m}");
+}
+
+#[test]
+fn the_fretboard_is_a_window_kind_that_opens_shows_and_closes() {
+    let mut s = attached();
+    let want = "the fretboard window is not open: run view.detach_fretboard";
+    assert_eq!(
+        fails(&mut s, "session_texts", json!({"window": "fretboard"})),
+        want
+    );
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "view.detach_fretboard"}),
+    );
+    let fb = window(&mut s, "fretboard");
+    assert_eq!(fb["detached"], true);
+    assert_eq!(fb["logical"]["height"], 136.0);
+    // No clip is open in the Tab Editor: the empty state names what to do.
+    let texts = ok(&mut s, "session_texts", json!({"window": "fretboard"}));
+    assert!(
+        texts_of(&texts)
+            .iter()
+            .any(|t| t == "Open a note clip in the Tab Editor"),
+        "{texts}"
+    );
+    let shot = ok(&mut s, "session_screenshot", json!({"window": "fretboard"}));
+    assert_eq!(shot["window"], "fretboard");
+    ok(
+        &mut s,
+        "session_window",
+        json!({"action": "focus", "window": "fretboard"}),
+    );
+    assert_eq!(window(&mut s, "fretboard")["focused"], true);
+    // Closing the window puts the neck back under the tab staff.
+    ok(
+        &mut s,
+        "session_window",
+        json!({"action": "close", "window": "fretboard"}),
+    );
+    assert_eq!(window(&mut s, "fretboard"), Value::Null);
 }

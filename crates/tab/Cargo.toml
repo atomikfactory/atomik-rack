@@ -1,0 +1,23 @@
+[package]
+name = "atomik-tab"
+description = "Atomik Rack tablature: instruments and tunings, fretting, chord names and voicings, chord sheets, ASCII tab and the neutral tab score."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+atomik-core.workspace = true
+thiserror.workspace = true
+quick-xml.workspace = true
+flate2.workspace = true
+pdf-writer.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

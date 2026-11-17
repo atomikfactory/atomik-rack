@@ -1547,6 +1547,9 @@ impl RackView {
             (Some(d), _) if type_id == crate::granular_panel::GRANULAR_TYPE => {
                 crate::granular_panel::granular_layout(d)
             }
+            (Some(d), _) if type_id == crate::plucked_panel::PLUCKED_TYPE => {
+                crate::plucked_panel::plucked_layout(d)
+            }
             (Some(d), _) if type_id == crate::arp_panel::ARP_TYPE => {
                 crate::arp_panel::arp_layout(d)
             }

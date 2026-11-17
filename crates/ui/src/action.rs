@@ -935,6 +935,8 @@ pub enum ContextTarget {
     Lane,
     /// The grid of the piano roll (notes are selected there).
     Notes,
+    /// The staff of the tab editor (the notes under the cursor or the selection are worked on).
+    TabStaff,
     /// The root field of the piano roll's scale bar (a menu of the twelve notes).
     PianoScaleRoot,
     /// The scale field of the piano roll's scale bar (a menu of the scales).

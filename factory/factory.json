@@ -783,6 +783,19 @@
         "pulsing"
       ]
     },
+    "Patches/12-String.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "guitar",
+        "12-string",
+        "acoustic",
+        "chime",
+        "wide"
+      ]
+    },
     "Patches/Acid Squelch.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -855,6 +868,19 @@
         "bell"
       ]
     },
+    "Patches/Banjo.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "banjo",
+        "bright",
+        "twangy",
+        "folk",
+        "bluegrass"
+      ]
+    },
     "Patches/Basalt Kit.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -901,6 +927,18 @@
         "percussion",
         "hand",
         "shakers"
+      ]
+    },
+    "Patches/Bouzouki.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "bouzouki",
+        "double course",
+        "folk",
+        "metallic"
       ]
     },
     "Patches/Brass Rail.atomikpatch": {
@@ -987,6 +1025,18 @@
         "punchy"
       ]
     },
+    "Patches/Clean Electric.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "guitar",
+        "electric",
+        "clean",
+        "bright"
+      ]
+    },
     "Patches/Clean Kick Sub.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1069,6 +1119,19 @@
         "drums",
         "boxy",
         "room"
+      ]
+    },
+    "Patches/Dobro.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "dobro",
+        "resonator",
+        "slide",
+        "metallic",
+        "blues"
       ]
     },
     "Patches/Dorian Vamp.atomikpatch": {
@@ -1177,6 +1240,32 @@
         "chop",
         "rhythm",
         "curve"
+      ]
+    },
+    "Patches/Electric Bass Finger.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "bass",
+        "electric",
+        "finger",
+        "round",
+        "low"
+      ]
+    },
+    "Patches/Electric Bass Pick.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "bass",
+        "electric",
+        "pick",
+        "bright",
+        "punchy"
       ]
     },
     "Patches/Epic Minor.atomikpatch": {
@@ -1359,6 +1448,19 @@
         "bright"
       ]
     },
+    "Patches/Harp Pluck.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "harp",
+        "soft",
+        "long",
+        "airy",
+        "glissando"
+      ]
+    },
     "Patches/Hollow Flute.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1455,6 +1557,19 @@
         "bright"
       ]
     },
+    "Patches/Mandolin.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "mandolin",
+        "double course",
+        "bright",
+        "tremolo",
+        "folk"
+      ]
+    },
     "Patches/Master Peak Trim.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1515,6 +1630,19 @@
         "clean"
       ]
     },
+    "Patches/Muted Electric.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "guitar",
+        "electric",
+        "palm mute",
+        "tight",
+        "rhythm"
+      ]
+    },
     "Patches/Neo Soul Loop.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1537,6 +1665,18 @@
         "bright",
         "stab",
         "echo"
+      ]
+    },
+    "Patches/Nylon Classical.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "guitar",
+        "nylon",
+        "classical",
+        "soft"
       ]
     },
     "Patches/Pebble Mallet.atomikpatch": {
@@ -1779,6 +1919,18 @@
         "electronic"
       ]
     },
+    "Patches/Steel Acoustic.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "guitar",
+        "acoustic",
+        "steel",
+        "bright"
+      ]
+    },
     "Patches/Sub Only Duck.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1911,6 +2063,32 @@
         "comping"
       ]
     },
+    "Patches/Ukulele.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "ukulele",
+        "small",
+        "bright",
+        "strummed",
+        "folk"
+      ]
+    },
+    "Patches/Upright Bass.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "bass",
+        "upright",
+        "acoustic",
+        "woody",
+        "jazz"
+      ]
+    },
     "Patches/Velvet Tines.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1993,6 +2171,144 @@
         "buses",
         "groups",
         "automation"
+      ]
+    },
+    "Projects/Exercises/Banjo Rolls/Banjo Rolls.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "banjo",
+        "roll",
+        "forward roll",
+        "backward roll",
+        "open G"
+      ]
+    },
+    "Projects/Exercises/Bass Root and Fifth Lines/Bass Root and Fifth Lines.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "bass",
+        "root",
+        "fifth",
+        "octave",
+        "line"
+      ]
+    },
+    "Projects/Exercises/Guitar C Major Scale/Guitar C Major Scale.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "guitar",
+        "scale",
+        "open position",
+        "C major"
+      ]
+    },
+    "Projects/Exercises/Guitar Chord Changes G C D Em/Guitar Chord Changes G C D Em.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "guitar",
+        "chords",
+        "chord change",
+        "strumming",
+        "drill"
+      ]
+    },
+    "Projects/Exercises/Guitar Fingerpicking Arpeggios/Guitar Fingerpicking Arpeggios.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "guitar",
+        "arpeggio",
+        "fingerpicking",
+        "chords"
+      ]
+    },
+    "Projects/Exercises/Guitar Minor Pentatonic Box/Guitar Minor Pentatonic Box.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "guitar",
+        "scale",
+        "pentatonic",
+        "A minor",
+        "box"
+      ]
+    },
+    "Projects/Exercises/Guitar Technique Sampler/Guitar Technique Sampler.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "guitar",
+        "technique",
+        "palm mute",
+        "bend",
+        "slide",
+        "harmonic"
+      ]
+    },
+    "Projects/Exercises/Mandolin G Major Scale/Mandolin G Major Scale.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "mandolin",
+        "scale",
+        "G major",
+        "first position"
+      ]
+    },
+    "Projects/Exercises/Mandolin Tremolo Study/Mandolin Tremolo Study.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "mandolin",
+        "tremolo",
+        "picking",
+        "study"
+      ]
+    },
+    "Projects/Exercises/Ukulele Chord Changes C Am F G/Ukulele Chord Changes C Am F G.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "ukulele",
+        "chords",
+        "chord change",
+        "drill"
+      ]
+    },
+    "Projects/Exercises/Ukulele Strum Patterns/Ukulele Strum Patterns.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "ukulele",
+        "strum",
+        "pattern",
+        "chords"
       ]
     },
     "Projects/Moonrise Modular/Moonrise Modular.atomik": {

@@ -347,6 +347,16 @@ pub(crate) fn auto_layout_with_strip(
     )
 }
 
+/// Like [`auto_layout`] with `prefix_of` choosing the section of each param key and the sections
+/// in the order of `order` (sections not named follow in descriptor order); nothing is reserved.
+pub(crate) fn auto_layout_with_sections(
+    desc: &DeviceDescriptor,
+    prefix_of: for<'a> fn(&'a str) -> &'a str,
+    order: &[&str],
+) -> PanelSpec {
+    layout_with(desc, 0.0, false, prefix_of, order, 0.0, usize::MAX)
+}
+
 /// Like [`auto_layout_with_strip`] with the sections in the order of `order` (the prefixes
 /// `prefix_of` returns; sections not named follow in descriptor order), so a panel can put
 /// sections that pack well side by side.
@@ -1149,15 +1159,16 @@ mod tests {
     use atomik_devices::{
         auto_filter, cv_math, cv_quantizer, de_esser, dual_layer, duck, dynamics, env_filter,
         envelope_follower, gain_tool, gate, gate_processor, line_mixer, mono_bass, organ,
-        pitch_shifter, poly_synth, rotary_speaker, sample_hold, slew_limiter, spider, stereo_delay,
-        stereo_tool, transient_shaper,
+        pitch_shifter, plucked, poly_synth, rotary_speaker, sample_hold, slew_limiter, spider,
+        stereo_delay, stereo_tool, transient_shaper,
     };
 
-    fn all() -> [&'static DeviceDescriptor; 25] {
+    fn all() -> [&'static DeviceDescriptor; 26] {
         [
             &poly_synth::DESCRIPTOR,
             &mono_bass::DESCRIPTOR,
             &organ::DESCRIPTOR,
+            &plucked::DESCRIPTOR,
             dual_layer::descriptor(),
             &line_mixer::DESCRIPTOR,
             &stereo_delay::DESCRIPTOR,

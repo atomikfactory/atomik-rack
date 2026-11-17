@@ -764,8 +764,11 @@ fn a_global_binding_that_takes_a_chord_a_context_holds_is_noted() {
     let Rebind::Applied { notes } = out else {
         panic!("{out:?}");
     };
-    assert_eq!(notes.len(), 3, "{notes:?}");
-    assert!(notes[0].contains("keeps S in the sequencer"), "{notes:?}");
+    assert_eq!(notes.len(), 4, "{notes:?}");
+    assert!(
+        notes.iter().any(|n| n.contains("keeps S in the sequencer")),
+        "{notes:?}"
+    );
     assert!(find_conflicts(e.keymap()).is_empty());
 }
 

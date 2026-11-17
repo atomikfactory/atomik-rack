@@ -96,7 +96,8 @@ fn oracle(
                     }
                     TransportCommand::Metronome { .. }
                     | TransportCommand::PlayWithPreRoll(_)
-                    | TransportCommand::Launch(_) => {}
+                    | TransportCommand::Launch(_)
+                    | TransportCommand::Speed(_) => {}
                 }
             }
         }

@@ -81,6 +81,17 @@ frame '{"t":"Activate","id":8,"sample_rate":48000.0,"frames":64,"offline":false}
 frame '{"t":"Ok","id":9}' > "$corpus/ipc_frame/ok"
 { frame '{"t":"Hello","protocol":1}'; frame '{"t":"Ok","id":1}'; } > "$corpus/ipc_frame/two"
 
+# Guitar Pro and MusicXML files, tab and chord sheets: the file seeds are made by the test encoders of
+# crates/tab (nothing is downloaded); the text seeds are written here.
+mkdir -p "$corpus/tab_gp" "$corpus/tab_musicxml" "$corpus/tab_ascii" "$corpus/chord_sheet"
+ATOMIK_FUZZ_SEED_DIR="$corpus/tab_gp" cargo test -q -p atomik-tab --test gp_robust write_fuzz_seeds -- --ignored
+ATOMIK_FUZZ_SEED_DIR="$corpus/tab_musicxml" cargo test -q -p atomik-tab --test musicxml_robust write_fuzz_seeds -- --ignored
+printf '%s\n' 'e|---0---3---|---5---|' 'B|---1-------|---5---|' 'G|-----0-----|-------|' \
+  'D|---2-------|---7---|' 'A|---3-------|-------|' 'E|-----------|-------|' > "$corpus/tab_ascii/guitar.txt"
+printf '%s\n' 'G|--0h2p0--|' 'D|----------|' 'A|----------|' 'E|--3b5r3~--|' > "$corpus/tab_ascii/marks.txt"
+printf '%s\n' '[Verse]' 'Am       F' 'Words made up here' 'C        G' 'More made up words' > "$corpus/chord_sheet/over.txt"
+printf '%s\n' '{title: Made Up}' '{capo: 2}' '[Am]Words [F]made up [C]here' > "$corpus/chord_sheet/inline.txt"
+
 # Regression inputs: every file under fuzz/regressions/<target>/ joins that target's corpus.
 for dir in fuzz/regressions/*/; do
   [ -d "$dir" ] || continue

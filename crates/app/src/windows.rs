@@ -54,6 +54,8 @@ pub enum WindowKind {
     /// The Video window (the song's film at the song position): a floating window of its own
     /// while open.
     Video,
+    /// The fretboard, while detached from under the Tab Editor staff: a window of its own.
+    Fretboard,
 }
 
 impl WindowKind {
@@ -69,6 +71,7 @@ impl WindowKind {
             Self::Browser => format!("Browser \u{2014} {project}"),
             Self::PianoKeys => format!("Piano Keys \u{2014} {project}"),
             Self::Video => format!("Video \u{2014} {project}"),
+            Self::Fretboard => format!("Fretboard \u{2014} {project}"),
         }
     }
 }
@@ -142,6 +145,8 @@ pub struct WindowsState {
     pub piano_keys: DetachState,
     /// The Video window (`detached` means open).
     pub video: DetachState,
+    /// The Fretboard window (`detached` means it left the Tab Editor).
+    pub fretboard: DetachState,
 }
 
 impl WindowsState {
@@ -155,6 +160,7 @@ impl WindowsState {
             WindowKind::Browser => self.browser.detached,
             WindowKind::PianoKeys => self.piano_keys.detached,
             WindowKind::Video => self.video.detached,
+            WindowKind::Fretboard => self.fretboard.detached,
         }
     }
 
@@ -168,6 +174,7 @@ impl WindowsState {
             WindowKind::Browser => self.browser.detached = detached,
             WindowKind::PianoKeys => self.piano_keys.detached = detached,
             WindowKind::Video => self.video.detached = detached,
+            WindowKind::Fretboard => self.fretboard.detached = detached,
         }
     }
 
@@ -181,6 +188,7 @@ impl WindowsState {
             WindowKind::Browser => self.browser.geom.as_ref(),
             WindowKind::PianoKeys => self.piano_keys.geom.as_ref(),
             WindowKind::Video => self.video.geom.as_ref(),
+            WindowKind::Fretboard => self.fretboard.geom.as_ref(),
         }
     }
 
@@ -194,6 +202,7 @@ impl WindowsState {
             WindowKind::Browser => self.browser.geom = Some(geom),
             WindowKind::PianoKeys => self.piano_keys.geom = Some(geom),
             WindowKind::Video => self.video.geom = Some(geom),
+            WindowKind::Fretboard => self.fretboard.geom = Some(geom),
         }
     }
 
@@ -207,6 +216,7 @@ impl WindowsState {
             WindowKind::Browser,
             WindowKind::PianoKeys,
             WindowKind::Video,
+            WindowKind::Fretboard,
         ]
         .into_iter()
         .filter(|&k| k == WindowKind::Main || self.detached(k))
@@ -224,6 +234,7 @@ impl WindowsState {
         self.browser.geom = keep(self.browser.geom);
         self.piano_keys.geom = keep(self.piano_keys.geom);
         self.video.geom = keep(self.video.geom);
+        self.fretboard.geom = keep(self.fretboard.geom);
         self
     }
 }

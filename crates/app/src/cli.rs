@@ -216,6 +216,7 @@ fn parse_detach(name: &str) -> Result<WindowKind, String> {
         "browser" => Ok(WindowKind::Browser),
         "piano-keys" | "keys" => Ok(WindowKind::PianoKeys),
         "video" => Ok(WindowKind::Video),
+        "fretboard" => Ok(WindowKind::Fretboard),
         _ => Err(format!(
             "unknown pane {name:?} (expected rack, console, spectrum-eq, browser)"
         )),

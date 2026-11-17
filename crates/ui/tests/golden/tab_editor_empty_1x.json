@@ -1,0 +1,10 @@
+{"ops":[
+{"transform":[1.00,0.00,0.00,1.00,0.00,0.00]},
+{"clip":{"rect":[0.00,0.00,1000.00,420.00]}},
+{"fill":{"rect":[0.00,0.00,1000.00,420.00]},"brush":"#0e1013ff"},
+{"text":"No clip open","at":[500.00,210.00],"size":11.00,"weight":400,"align":"center","color":"#8f96a0ff"},
+{"fill":{"rect":[0.00,0.00,1000.00,28.00]},"brush":"#1c1e23ff"},
+{"stroke":{"line":[0.00,27.50,1000.00,27.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"pop_clip":true},
+{"pop_transform":true}
+]}

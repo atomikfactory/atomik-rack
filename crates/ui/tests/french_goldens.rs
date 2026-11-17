@@ -65,6 +65,9 @@ fn is_name_or_value(text: &str) -> bool {
         "ARPEGGIATOR",
         // The plugins of the plugin fixture and one of their params.
         "Test Synth",
+        "Plucked",
+        "Strings",
+        "PLUCKED STRINGS",
         "TEST SYNTH",
         "Test Fx",
         "TEST FX",
@@ -657,6 +660,20 @@ fn the_plugin_manager_with_its_process_column_and_a_quarantine_reason_in_french(
         v.set_bounds(Rect::new(0.0, 0.0, 1000.0, 700.0));
         let mut dl = DisplayList::new();
         v.paint(&mut dl);
+        dl
+    });
+}
+
+#[test]
+fn the_plucked_strings_panel_in_french() {
+    let mut doc = reference_doc();
+    doc.devices = vec![device("pl", "atomik.plucked", "Plucked Strings")];
+    doc.cables.clear();
+    let reg = registry();
+    french("plucked_panel_1x.json", || {
+        let mut v = view(&doc, &reg);
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl, &doc, &reg);
         dl
     });
 }

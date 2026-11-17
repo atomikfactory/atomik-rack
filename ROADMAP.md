@@ -222,6 +222,19 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 - **Quantize and groove follow-ups.** A groove from an audio loop, device-parameter lanes and a track's own controller lanes that move with the notes of a quantize (only the lanes of a note clip do today), and a quantize of the note lengths to a length grid (the grid per note picks the start grid from each note's length).
 - **MIDI file follow-ups.** Typing the bytes of a SysEx message (the piano roll adds General MIDI System On, moves, deletes and clears messages).
 - **Note lane follow-ups.** An S button on the chip of lane 0 (the chip shares the header's second line with the track's own buttons and has no room for a third control: use the Solo Lane menu item), a click on the record dot of a lane header to arm it (the dot shows the armed state; the Record to Lane menu item arms it today), and splitting the incoming notes between armed lanes by a rule (every armed lane gets the whole take today).
+- **Guitar tab follow-ups.** Done: reading Guitar Pro (`.gp3` to `.gp5`, `.gpx`, `.gp`), MusicXML and ASCII tab and chord
+  sheets; writing MusicXML, text and PDF; a Tab Editor with techniques, re-fret, tuning and capo for 24 instruments; a
+  Chord Sheet pane; practice speed, count-in, loop, speed trainer and listen and grade; a fretboard; a Chord Trainer; the
+  Plucked Strings device with factory patches; eleven exercise projects (see [docs/TAB.md](docs/TAB.md)). Still to
+  come: a linked standard-notation staff under the tab (out of scope for the first version); checking the Guitar Pro
+  and MusicXML readers against real files from other programs (the tests use files this program wrote, so the unit
+  assumptions of bends, slide numbers, repeat counts and string order are not confirmed by outside files); a drum sound
+  for imported percussion tracks (they play on the plain synth now); the system clipboard for tab, and copy and paste
+  between the Tab Editor and the piano roll (the clip clipboard and the library do not carry the tab either); chord
+  sheet display state saved with the project, an editor for the links between sheet lines and bars, and Send Chords to
+  the chord lane; a Chord Trainer in a window of its own, with a count-in before a drill and a setup that is
+  remembered; PDF text in Unicode fonts (a PDF is Latin-1 only now) and a print options dialog (bars per line, margins,
+  text size); Android later.
 
 ## Phase 3: Audio
 

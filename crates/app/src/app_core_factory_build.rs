@@ -29,6 +29,8 @@ use std::path::Path;
 pub(in crate::app_core) mod clips;
 #[path = "app_core_factory_examples.rs"]
 pub(in crate::app_core) mod examples;
+#[path = "app_core_factory_exercises.rs"]
+pub(in crate::app_core) mod exercises;
 #[path = "app_core_factory_kits.rs"]
 pub(in crate::app_core) mod kits;
 #[path = "app_core_factory_loops.rs"]
@@ -40,6 +42,7 @@ pub(in crate::app_core) mod templates;
 
 pub(in crate::app_core) use clips::{CLIPS, ClipDef, clip_notes, clip_text};
 pub(in crate::app_core) use examples::{EXAMPLES, write_examples};
+pub(in crate::app_core) use exercises::{EXERCISES, exercise_path, write_exercises};
 pub(in crate::app_core) use kits::{
     KITS, KitDef, build_kit, kit_item, write_audio, write_audio_for,
 };
@@ -58,6 +61,7 @@ pub(super) const SEMI: &str = "atomik.semi-modular";
 pub(super) const DYNAMIC_EQ: &str = "atomik.dynamic-eq";
 pub(super) const CLIPPER: &str = "atomik.clipper";
 pub(super) const DUCK: &str = "atomik.duck";
+pub(super) const PLUCKED: &str = "atomik.plucked";
 pub(super) const WHEEL: &str = "atomik.chord-wheel";
 
 /// The author every factory item carries.
@@ -2597,6 +2601,266 @@ pub(super) const DEFS: &[Def] = &[
         ],
         mods: &[],
     },
+    Def {
+        name: "Steel Acoustic",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["guitar", "acoustic", "steel", "bright"],
+        sound: "A steel-string guitar strummed or picked with a medium pick: a bright attack and a \
+                few seconds of ring through a dreadnought-sized body.",
+        params: &[
+            ("out.gain", -3.0),
+            ("body", 1.0),
+            ("pick.hardness", 0.55),
+            ("decay", 3500.0),
+            ("brightness", 0.6),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Nylon Classical",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["guitar", "nylon", "classical", "soft"],
+        sound: "A nylon-string guitar plucked with the fingertips: a round, dark attack, a shorter \
+                ring and a warm wooden body.",
+        params: &[
+            ("out.gain", -2.0),
+            ("body", 2.0),
+            ("pick.hardness", 0.15),
+            ("pick.position", 0.2),
+            ("brightness", 0.35),
+            ("decay", 2600.0),
+            ("sustain", 0.4),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Clean Electric",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["guitar", "electric", "clean", "bright"],
+        sound: "An electric guitar with a clean pickup sound: a snappy pick attack, a long even \
+                ring and no body of wood. Put an amp or an effect after it.",
+        params: &[
+            ("out.gain", -2.5),
+            ("body", 3.0),
+            ("pick.hardness", 0.8),
+            ("pick.position", 0.25),
+            ("brightness", 0.65),
+            ("decay", 4000.0),
+            ("sustain", 0.5),
+            ("stereo.width", 0.25),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Muted Electric",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["guitar", "electric", "palm mute", "tight", "rhythm"],
+        sound: "An electric guitar with the palm resting on the strings: a short, dark chug that \
+                stops almost at once, for riffs and rhythm parts.",
+        params: &[
+            ("out.gain", -3.0),
+            ("body", 3.0),
+            ("pick.hardness", 0.85),
+            ("brightness", 0.5),
+            ("decay", 2500.0),
+            ("palm_mute", 0.8),
+            ("sustain", 0.1),
+            ("stereo.width", 0.25),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Electric Bass Finger",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["bass", "electric", "finger", "round", "low"],
+        sound: "A four-string electric bass plucked with two fingers: a round, deep note with a \
+                soft attack and a medium ring.",
+        params: &[
+            ("out.gain", 1.5),
+            ("body", 4.0),
+            ("pick.hardness", 0.2),
+            ("pick.position", 0.35),
+            ("brightness", 0.4),
+            ("decay", 2200.0),
+            ("sustain", 0.3),
+            ("stereo.width", 0.1),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Electric Bass Pick",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["bass", "electric", "pick", "bright", "punchy"],
+        sound: "A four-string electric bass played with a pick: a hard, bright attack and a clear \
+                note that rings for a second or two.",
+        params: &[
+            ("out.gain", 6.5),
+            ("body", 4.0),
+            ("pick.hardness", 0.9),
+            ("pick.position", 0.2),
+            ("brightness", 0.65),
+            ("decay", 1800.0),
+            ("sustain", 0.25),
+            ("stereo.width", 0.1),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Upright Bass",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["bass", "upright", "acoustic", "woody", "jazz"],
+        sound: "A double bass plucked with the fingers: a woody thump, a quick fall and a note \
+                that stops when the key is let go.",
+        params: &[
+            ("body", 5.0),
+            ("pick.hardness", 0.1),
+            ("pick.position", 0.35),
+            ("brightness", 0.3),
+            ("decay", 1200.0),
+            ("sustain", 0.0),
+            ("stereo.width", 0.1),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Ukulele",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["ukulele", "small", "bright", "strummed", "folk"],
+        sound: "A small nylon-string ukulele: a light, bright pluck with a short ring and a tiny \
+                wooden body.",
+        params: &[
+            ("out.gain", -2.5),
+            ("body", 6.0),
+            ("pick.hardness", 0.3),
+            ("brightness", 0.55),
+            ("decay", 1500.0),
+            ("sustain", 0.3),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Banjo",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["banjo", "bright", "twangy", "folk", "bluegrass"],
+        sound: "A five-string banjo with a drum head: a hard, metallic twang with a short ring \
+                and a slightly stretched ring in the upper partials.",
+        params: &[
+            ("out.gain", -3.0),
+            ("body", 7.0),
+            ("pick.hardness", 1.0),
+            ("pick.position", 0.15),
+            ("brightness", 0.9),
+            ("decay", 1200.0),
+            ("sustain", 0.2),
+            ("stiffness", 0.3),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Mandolin",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["mandolin", "double course", "bright", "tremolo", "folk"],
+        sound: "A mandolin with paired strings: each note sounds two strings a few cents apart, \
+                for the shimmer and the bright, quick ring of a flat pick.",
+        params: &[
+            ("out.gain", -2.5),
+            ("body", 8.0),
+            ("pick.hardness", 0.85),
+            ("pick.position", 0.15),
+            ("brightness", 0.75),
+            ("decay", 1400.0),
+            ("sustain", 0.2),
+            ("course.mode", 1.0),
+            ("course.detune", 12.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "12-String",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["guitar", "12-string", "acoustic", "chime", "wide"],
+        sound: "A twelve-string guitar: every note is doubled an octave above by a second string, \
+                which gives the chiming, wide sound of a strummed chord.",
+        params: &[
+            ("out.gain", -7.0),
+            ("body", 1.0),
+            ("pick.hardness", 0.55),
+            ("brightness", 0.6),
+            ("decay", 3500.0),
+            ("course.mode", 2.0),
+            ("course.detune", 4.0),
+            ("stereo.width", 0.6),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Bouzouki",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["bouzouki", "double course", "folk", "metallic"],
+        sound: "A long-necked bouzouki with doubled strings, the low ones paired with their \
+                octave: a ringing, metallic pluck with a lot of body.",
+        params: &[
+            ("out.gain", -7.0),
+            ("body", 8.0),
+            ("pick.hardness", 0.7),
+            ("pick.position", 0.18),
+            ("brightness", 0.65),
+            ("decay", 2200.0),
+            ("sustain", 0.3),
+            ("course.mode", 2.0),
+            ("course.detune", 6.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Dobro",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["dobro", "resonator", "slide", "metallic", "blues"],
+        sound: "A resonator guitar: a steel string through a metal cone, with a nasal, metallic \
+                ring that lasts and a slightly stretched upper register.",
+        params: &[
+            ("out.gain", -3.0),
+            ("body", 9.0),
+            ("pick.hardness", 0.6),
+            ("brightness", 0.6),
+            ("decay", 3200.0),
+            ("sustain", 0.45),
+            ("stiffness", 0.4),
+            ("bend.range", 12.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Harp Pluck",
+        device: PLUCKED,
+        category: "Plucked",
+        tags: &["harp", "soft", "long", "airy", "glissando"],
+        sound: "A harp string plucked with the flesh of the finger: a soft, clear note that rings \
+                for several seconds with a gentle, hollow body.",
+        params: &[
+            ("body", 10.0),
+            ("pick.hardness", 0.3),
+            ("pick.position", 0.25),
+            ("brightness", 0.45),
+            ("decay", 6000.0),
+            ("sustain", 0.6),
+            ("stereo.width", 0.55),
+        ],
+        mods: &[],
+    },
 ];
 
 /// Runs `command` on `doc`, naming the item when the model refuses it.
@@ -3993,6 +4257,13 @@ pub(super) fn marks() -> Vec<Mark> {
         out.push(Mark {
             path: examples::project_path(e.name),
             category: examples::CATEGORY,
+            tags: e.tags,
+        });
+    }
+    for e in EXERCISES {
+        out.push(Mark {
+            path: exercise_path(e.name),
+            category: exercises::CATEGORY,
             tags: e.tags,
         });
     }

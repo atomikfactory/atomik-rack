@@ -51,6 +51,7 @@
   "atomik.organ": "A drawbar organ with nine drawbars, percussion, key click, a vibrato and chorus scanner and an overdrive. Send it to the Rotary Speaker for the classic sound.",
   "atomik.phase-meter": "A stereo and level meter that passes the audio through: goniometer, correlation, balance, width, peaks, RMS and loudness.",
   "atomik.pitch-shifter": "A real-time pitch shifter of up to an octave either way, with a fixed latency that is reported to the song.",
+  "atomik.plucked": "A plucked-string instrument: a physical model of a guitar, bass, banjo, mandolin or harp string with a body, palm mute, harmonics, bends and slides from the notes' own expression.",
   "atomik.poly-synth": "A subtractive synthesiser with up to 16 voices: two oscillators and noise, two filters, envelopes, two LFOs, glide, chorus and echo, and a modulation matrix. A good first instrument.",
   "atomik.reverb": "A stereo reverb with three algorithms. Set the size, decay, damping and pre-delay to put a sound in a space.",
   "atomik.rotary-speaker": "A rotating speaker cabinet: a horn rotor and a drum rotor in front of two microphones, with slow and fast speeds.",

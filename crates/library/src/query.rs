@@ -54,6 +54,7 @@ enum KindTerm {
     Folder,
     Audio,
     Midi,
+    Tab,
     Format(AudioFormat),
     Patch,
     Container,
@@ -76,6 +77,8 @@ impl KindTerm {
             Self::Audio
         } else if is("midi") || is("mid") {
             Self::Midi
+        } else if is("tab") || is("score") {
+            Self::Tab
         } else if is("wav") || is("wave") {
             Self::Format(AudioFormat::Wav)
         } else if is("aif") || is("aiff") {
@@ -110,6 +113,7 @@ impl KindTerm {
             Self::Folder => kind == FileKind::Folder,
             Self::Audio => matches!(kind, FileKind::Audio(_)),
             Self::Midi => kind == FileKind::Midi,
+            Self::Tab => kind == FileKind::Tab,
             Self::Format(f) => kind == FileKind::Audio(f),
             Self::Patch => kind == FileKind::Patch,
             Self::Container => kind == FileKind::Container,

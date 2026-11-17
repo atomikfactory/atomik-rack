@@ -27,13 +27,16 @@ pub enum Context {
     /// The Piano Keys strip while it has the focus in Keys mode: letters play notes (the shell
     /// resolves them as the `keys.*` commands) instead of running commands.
     Keys,
+    /// The tab editor: fret digits, the cursor and the note values (the shell resolves it before
+    /// `Global`, so its plain letters and arrows do not reach the editors or the transport).
+    Tab,
     /// Any text owner: tempo field, rename, browser filter, file search, settings text.
     Text,
 }
 
 impl Context {
     /// Every context, `Global` first, in listing order.
-    pub const ALL: [Context; 10] = [
+    pub const ALL: [Context; 11] = [
         Context::Global,
         Context::Rack,
         Context::Sequencer,
@@ -43,6 +46,7 @@ impl Context {
         Context::Browser,
         Context::Files,
         Context::Keys,
+        Context::Tab,
         Context::Text,
     ];
 
@@ -58,6 +62,7 @@ impl Context {
             Context::Browser => "browser",
             Context::Files => "files",
             Context::Keys => "keys",
+            Context::Tab => "tab",
             Context::Text => "text",
         }
     }

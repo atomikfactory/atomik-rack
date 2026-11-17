@@ -224,6 +224,7 @@ fn write_midi_data(w: &mut String, c: &Clip, indent: &str) {
         });
     }
     write_expression(w, c, indent);
+    super::tab_json::write_tab(w, c, indent);
 }
 
 /// Writes a note clip's `"expression"`: one `[tick, key, pitch, pressure, timbre]` per note that

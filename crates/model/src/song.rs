@@ -815,6 +815,10 @@ pub struct Song {
     /// default, and written only when it holds something (project format 45, optional fields
     /// an older reader skips).
     pub harmony: crate::harmony::Harmony,
+    /// The chord sheets: chords over lyrics, one per song or section of the repertoire (see
+    /// [`crate::chord_sheets`]). Empty by default, and written only when it holds something
+    /// (project format 45, an optional field an older reader skips).
+    pub sheets: Vec<atomik_tab::sheet::ChordSheet>,
 }
 
 /// A named point in the song. The id is only for telling markers apart while editing; files do
@@ -1271,6 +1275,10 @@ pub enum SongCommand {
         /// Drag-merge group.
         merge: u64,
     },
+    /// Replace the song's chord sheets (see [`crate::chord_sheets`]; the list must pass
+    /// [`crate::chord_sheets::check_sheets`]). One undo step. Reports [`crate::SyncOp::ViewChanged`]
+    /// only: sheets never reach the engine.
+    SetSheets(Vec<atomik_tab::sheet::ChordSheet>),
     /// Replace the marker list (ids unique, names valid; the model sorts it by `(tick, id)`).
     /// Reports [`crate::SyncOp::ViewChanged`] only: markers never reach the engine.
     SetMarkers(Vec<Marker>),
@@ -1887,6 +1895,7 @@ pub fn empty_song(bpm: f64) -> Song {
         tails: false,
         launcher: crate::launcher::Launcher::default(),
         harmony: crate::harmony::Harmony::default(),
+        sheets: Vec::new(),
     }
 }
 
@@ -1894,8 +1903,8 @@ mod flatten;
 
 pub use crate::automation_view::automation_value_at;
 pub use flatten::{
-    AudioRegion, Crossfade, FlatExpression, FlatMidiData, FlatParam, audible_spans, crossfades,
-    effective_tracks, flatten_audio, flatten_automation, flatten_clip_controllers,
+    AudioRegion, Crossfade, FlatExpression, FlatMidiData, FlatParam, audible_pieces, audible_spans,
+    crossfades, effective_tracks, flatten_audio, flatten_automation, flatten_clip_controllers,
     flatten_controllers, flatten_expression, flatten_midi_data, flatten_notes, flatten_notes_with,
     flatten_param_lanes, flatten_track_notes,
 };

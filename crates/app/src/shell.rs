@@ -145,7 +145,9 @@
 //! [`ShellRequest`]s.
 
 use crate::about_box::{AboutBox, AboutOutcome};
-use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed};
+use crate::app_core::{
+    AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed, TabExportFormat,
+};
 use crate::commands::{AppCommand, Menu, MenuState, ScaleStep, SongList, menus_with_songs};
 use crate::context_menus::{self, MenuEnable};
 use crate::cpu_hint::CpuHintCard;
@@ -255,6 +257,25 @@ pub enum ShellRequest {
         /// Import as a song: new tracks from the start, with the tempo, meter and markers.
         as_song: bool,
     },
+    /// Show an open dialog for a tab or score file (File > Import Tab or Score File), then call
+    /// [`Shell::import_tab`] with the picked path.
+    PickImportTab {
+        /// Import as a song: new tracks from the start, with the tempo, meter, markers, chords
+        /// and key.
+        as_song: bool,
+    },
+    /// Show an open dialog for a chord sheet text file (File > Import Chord Sheet), then call
+    /// [`Shell::import_sheet`] with the picked path.
+    PickImportSheet,
+    /// Show a save dialog for tab (File > Export Tab as MusicXML / as Text), named by
+    /// [`Shell::tab_export_name`], then call [`Shell::export_tab_to`] with the format and the path.
+    PickExportTab(TabExportFormat),
+    /// Show a save dialog for the chord sheet text (File > Export Chord Sheet as Text), then call
+    /// [`Shell::export_sheet_to`] with the path.
+    PickExportSheet,
+    /// Show a save dialog for the chord sheet PDF (File > Export Chord Sheet as PDF), then call
+    /// [`Shell::export_sheet_pdf_to`] with the path.
+    PickExportSheetPdf,
     /// Show a save dialog for an audio file (File > Export Song / Loop as Audio File): a WAV file
     /// named by [`Shell::export_audio_name`], starting in [`Shell::export_audio_dir`], then call
     /// [`Shell::export_audio_to`] with the scope and the path.
@@ -1116,6 +1137,8 @@ impl<B: AudioBackend> Shell<B> {
         self.core.console_mut().set_link_faders(self.ui.link_faders);
         self.core.console_mut().set_meter_mode(self.ui.meter_mode);
         self.core.set_morph_seconds(self.ui.morph_seconds);
+        self.core.set_listen_offset_ms(self.ui.listen_offset_ms);
+        self.core.set_trainer_scores(self.ui.trainer_scores());
         {
             let arrangement = self.core.arrangement_mut();
             arrangement.set_tempo_lane(self.ui.show_tempo_lane);
@@ -4495,6 +4518,18 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])
             }
             Pane::PianoRoll => ContextStack::new(&[Context::Editor, Context::Sequencer]),
+            Pane::TabEditor if self.core.tab_editor().is_text_owner() => {
+                ContextStack::new(&[Context::Text])
+            }
+            Pane::TabEditor => ContextStack::new(&[Context::Tab]),
+            Pane::ChordSheet if self.core.chord_sheet().is_text_owner() => {
+                ContextStack::new(&[Context::Text])
+            }
+            Pane::ChordTrainer if self.core.chord_trainer().is_text_owner() => {
+                ContextStack::new(&[Context::Text])
+            }
+            Pane::ChordTrainer => ContextStack::global(),
+            Pane::ChordSheet => ContextStack::global(),
             Pane::AudioEditor if self.core.audio_editor().is_text_owner() => {
                 ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])
             }
@@ -4533,6 +4568,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::PluginParams
             | Pane::SpectrumEq
             | Pane::Video
+            | Pane::Fretboard
             | Pane::TrackPanel
             | Pane::History => ContextStack::global(),
         }
@@ -4580,6 +4616,9 @@ impl<B: AudioBackend> Shell<B> {
             lens: self.core.lens(),
             song_visible: self.ui.show_song,
             piano_roll: self.core.piano_roll_open(),
+            tab_editor: self.core.tab_editor_open(),
+            chord_sheet: self.core.chord_sheet_open(),
+            chord_trainer: self.core.chord_trainer_open(),
             sample_editor: self.core.sample_editor_device().is_some(),
             step_editor: self.core.step_editor_device().is_some(),
             slice_editor: self.core.slice_editor_device().is_some(),
@@ -4589,6 +4628,10 @@ impl<B: AudioBackend> Shell<B> {
             metronome: self.core.metronome(),
             auto_lanes: self.core.auto_create_lanes(),
             pre_count: self.core.pre_count_bars() > 0,
+            practice_speed: self.core.practice().speed(),
+            practice_count_in: self.core.practice().count_in(),
+            practice_trainer: self.core.practice().trainer().enabled,
+            practice_listen: self.core.listen_on(),
             clock_out: self.core.sink().settings().sync.clock_out,
             clock_while_stopped: self.core.sink().settings().sync.send_while_stopped,
             follow_clock: self.core.sink().settings().sync.follow_clock,
@@ -4624,6 +4667,11 @@ impl<B: AudioBackend> Shell<B> {
             spectrum_eq: self.detached(WindowKind::SpectrumEq),
             video_window: self.detached(WindowKind::Video),
             video_overlay: self.core.video_window().prefs().overlay.any(),
+            fretboard: self.ui.show_fretboard || self.detached(WindowKind::Fretboard),
+            fretboard_detached: self.detached(WindowKind::Fretboard),
+            fretboard_left_handed: self.ui.fretboard_left_handed,
+            fretboard_labels: self.ui.fretboard_labels,
+            fretboard_voicing: self.ui.fretboard_voicing,
             browser_detached: self.browser_detached(),
             sequencer_only: self.in_sequencer_only(),
             editor: !self.lower_is_console()
@@ -4641,6 +4689,8 @@ impl<B: AudioBackend> Shell<B> {
             midi_clip: self.core.can_export_midi(MidiExport::Clip),
             midi_track: self.core.can_export_midi(MidiExport::Track),
             midi_song: self.core.can_export_midi(MidiExport::Song),
+            tab_export: self.core.can_export_tab(),
+            sheet_export: self.core.can_export_sheet(),
             export_song: self.core.can_export_audio(ExportScope::Song),
             export_loop: self.core.can_export_audio(ExportScope::Loop),
             export_selection: self.core.can_export_audio(ExportScope::Selection),
@@ -4851,6 +4901,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(song) = l.song {
             self.core.arrangement_mut().set_bounds(song);
             self.core.piano_roll_mut().set_bounds(song);
+            self.core.tab_editor_mut().set_bounds(song);
+            self.core.chord_sheet_mut().set_bounds(song);
+            self.core.chord_trainer_mut().set_bounds(song);
             self.core.sample_editor_mut().set_bounds(song);
             self.core.step_editor_mut().set_bounds(song);
             self.core.slice_editor_mut().set_bounds(song);
@@ -4867,6 +4920,9 @@ impl<B: AudioBackend> Shell<B> {
         }
         if let Some((_, rect)) = self.pane_rect(Pane::SpectrumEq) {
             self.core.spectrum_eq_mut().set_bounds(rect);
+        }
+        if let Some((_, rect)) = self.pane_rect(Pane::Fretboard) {
+            self.core.fretboard_mut().set_bounds(rect);
         }
         if let Some((_, rect)) = self.pane_rect(Pane::Video) {
             self.core.video_window_mut().set_bounds(rect);
@@ -5119,6 +5175,12 @@ impl<B: AudioBackend> Shell<B> {
             Pane::ContainerEditor
         } else if self.core.plugin_params_device().is_some() {
             Pane::PluginParams
+        } else if self.core.chord_trainer_open() {
+            Pane::ChordTrainer
+        } else if self.core.chord_sheet_open() {
+            Pane::ChordSheet
+        } else if self.core.tab_editor_open() {
+            Pane::TabEditor
         } else if self.core.piano_roll_open() {
             Pane::PianoRoll
         } else if self.core.audio_editor_clip().is_some() {
@@ -5150,6 +5212,9 @@ impl<B: AudioBackend> Shell<B> {
             Pane::FileBrowser if self.browser_detached() => Pane::FileBrowser,
             Pane::Arrangement
             | Pane::PianoRoll
+            | Pane::TabEditor
+            | Pane::ChordSheet
+            | Pane::ChordTrainer
             | Pane::Console
             | Pane::SampleEditor
             | Pane::StepEditor
@@ -5164,6 +5229,9 @@ impl<B: AudioBackend> Shell<B> {
             }
             Pane::Arrangement
             | Pane::PianoRoll
+            | Pane::TabEditor
+            | Pane::ChordSheet
+            | Pane::ChordTrainer
             | Pane::Console
             | Pane::SampleEditor
             | Pane::StepEditor
@@ -5179,6 +5247,7 @@ impl<B: AudioBackend> Shell<B> {
             Pane::Rack if self.launcher_on_top() => Pane::Launcher,
             Pane::FileBrowser if !self.ui.file_browser_visible => self.live_pane(Pane::Rack),
             Pane::PianoKeys if !self.detached(WindowKind::PianoKeys) => self.live_pane(Pane::Rack),
+            Pane::Fretboard if !self.detached(WindowKind::Fretboard) => self.live_pane(Pane::Rack),
             Pane::TrackPanel if !self.core.track_panel_visible() => self.live_pane(Pane::Rack),
             Pane::History if !self.core.history_visible() => self.live_pane(Pane::Rack),
             Pane::Rack if self.maximised() => Pane::Console,
@@ -5196,6 +5265,15 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .piano_roll_mut()
             .set_focused(pane == Pane::PianoRoll);
+        self.core
+            .tab_editor_mut()
+            .set_focused(pane == Pane::TabEditor);
+        self.core
+            .chord_sheet_mut()
+            .set_focused(pane == Pane::ChordSheet);
+        self.core
+            .chord_trainer_mut()
+            .set_focused(pane == Pane::ChordTrainer);
         self.core
             .sample_editor_mut()
             .set_focused(pane == Pane::SampleEditor);
@@ -5249,6 +5327,7 @@ impl<B: AudioBackend> Shell<B> {
                 WindowKind::Browser => Pane::FileBrowser,
                 WindowKind::PianoKeys => Pane::PianoKeys,
                 WindowKind::Video => Pane::Video,
+                WindowKind::Fretboard => Pane::Fretboard,
                 _ => Pane::Rack,
             };
             let (_, rect) = self.pane_rect(pane)?;
@@ -5409,6 +5488,12 @@ impl<B: AudioBackend> Shell<B> {
                     rest.into_iter().partition(|p| is_share_item(p));
                 if let Some(share) = shares.into_iter().next() {
                     self.open_share_file(&share);
+                }
+                let (tabs, rest): (Vec<PathBuf>, Vec<PathBuf>) = rest
+                    .into_iter()
+                    .partition(|p| crate::tab_file::is_tab_path(p));
+                for path in &tabs {
+                    self.import_tab(path, false);
                 }
                 let (midi, rest): (Vec<PathBuf>, Vec<PathBuf>) = rest
                     .into_iter()
@@ -8864,7 +8949,29 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::ExportMidiClip => self.export_midi_request(MidiExport::Clip),
             AppCommand::ExportMidiTrack => self.export_midi_request(MidiExport::Track),
+            AppCommand::ImportTab => vec![ShellRequest::PickImportTab { as_song: false }],
+            AppCommand::ImportTabSong => vec![ShellRequest::PickImportTab { as_song: true }],
+            AppCommand::ImportSheet => vec![ShellRequest::PickImportSheet],
             AppCommand::ExportMidiSong => self.export_midi_request(MidiExport::Song),
+            AppCommand::ExportTabMusicXml => self.export_tab_request(TabExportFormat::MusicXml),
+            AppCommand::ExportTabText => self.export_tab_request(TabExportFormat::Text),
+            AppCommand::ExportTabPdf => self.export_tab_request(TabExportFormat::Pdf),
+            AppCommand::ExportSheetPdf => {
+                if self.core.can_export_sheet() {
+                    vec![ShellRequest::PickExportSheetPdf]
+                } else {
+                    self.notify("the song has no chord sheet to export");
+                    Vec::new()
+                }
+            }
+            AppCommand::ExportSheetText => {
+                if self.core.can_export_sheet() {
+                    vec![ShellRequest::PickExportSheet]
+                } else {
+                    self.notify("the song has no chord sheet to export");
+                    Vec::new()
+                }
+            }
             AppCommand::ExportSongAudio => self.export_audio_request(ExportScope::Song),
             AppCommand::ExportLoopAudio => self.export_audio_request(ExportScope::Loop),
             AppCommand::ExportSelectionAudio => self.export_audio_request(ExportScope::Selection),
@@ -9331,6 +9438,71 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 Vec::new()
             }
+            AppCommand::ToggleTabEditor => {
+                if self.core.tab_editor_open() {
+                    self.core.close_tab_editor();
+                } else if self.core.open_tab_editor_default() {
+                    if !self.ui.show_song || self.lower_is_console() {
+                        self.ui.show_song = true;
+                        self.ui.show_console = false;
+                        self.console_changed();
+                    }
+                    self.reveal_lower_pane();
+                    self.set_focus(Pane::TabEditor);
+                } else {
+                    self.notify("no note clip to open: draw or record one in the arrangement");
+                }
+                Vec::new()
+            }
+            AppCommand::ToggleChordSheet => {
+                if self.core.chord_sheet_open() {
+                    self.core.close_chord_sheet();
+                } else {
+                    self.core.open_chord_sheet();
+                    if !self.ui.show_song || self.lower_is_console() {
+                        self.ui.show_song = true;
+                        self.ui.show_console = false;
+                        self.console_changed();
+                    }
+                    self.reveal_lower_pane();
+                    self.set_focus(Pane::ChordSheet);
+                }
+                Vec::new()
+            }
+            AppCommand::ToggleChordTrainer => {
+                if self.core.chord_trainer_open() {
+                    self.core.close_chord_trainer();
+                } else {
+                    self.core.open_chord_trainer();
+                    if !self.ui.show_song || self.lower_is_console() {
+                        self.ui.show_song = true;
+                        self.ui.show_console = false;
+                        self.console_changed();
+                    }
+                    self.reveal_lower_pane();
+                    self.set_focus(Pane::ChordTrainer);
+                }
+                Vec::new()
+            }
+            AppCommand::ToggleTabOrPianoRoll => {
+                if self.core.toggle_tab_or_piano_roll() {
+                    if !self.ui.show_song || self.lower_is_console() {
+                        self.ui.show_song = true;
+                        self.ui.show_console = false;
+                        self.console_changed();
+                    }
+                    self.reveal_lower_pane();
+                    let pane = if self.core.tab_editor_open() {
+                        Pane::TabEditor
+                    } else {
+                        Pane::PianoRoll
+                    };
+                    self.set_focus(pane);
+                } else {
+                    self.notify("no note clip to open: draw or record one in the arrangement");
+                }
+                Vec::new()
+            }
             AppCommand::CreateInstrument => {
                 self.open_create(CreateKind::Instrument);
                 Vec::new()
@@ -9386,6 +9558,40 @@ impl<B: AudioBackend> Shell<B> {
                 self.set_detached(WindowKind::Video, !self.detached(WindowKind::Video));
                 Vec::new()
             }
+            AppCommand::ToggleFretboard => {
+                if self.detached(WindowKind::Fretboard) {
+                    // Closing the window leaves the strip off too: the toggle hides the neck.
+                    self.ui.show_fretboard = false;
+                    self.set_detached(WindowKind::Fretboard, false);
+                } else {
+                    self.ui.show_fretboard = !self.ui.show_fretboard;
+                }
+                self.apply_fretboard_ui();
+                self.write_ui_state();
+                Vec::new()
+            }
+            AppCommand::DetachFretboard => {
+                self.set_detached(WindowKind::Fretboard, !self.detached(WindowKind::Fretboard));
+                Vec::new()
+            }
+            AppCommand::FretboardLeftHanded => {
+                self.ui.fretboard_left_handed = !self.ui.fretboard_left_handed;
+                self.apply_fretboard_ui();
+                self.write_ui_state();
+                Vec::new()
+            }
+            AppCommand::FretboardVoicing => {
+                self.ui.fretboard_voicing = !self.ui.fretboard_voicing;
+                self.apply_fretboard_ui();
+                self.write_ui_state();
+                Vec::new()
+            }
+            AppCommand::SetFretLabels(labels) => {
+                self.ui.fretboard_labels = labels;
+                self.apply_fretboard_ui();
+                self.write_ui_state();
+                Vec::new()
+            }
             AppCommand::ToggleVideoOverlay => {
                 self.core.toggle_video_overlay();
                 self.save_video_prefs();
@@ -9431,6 +9637,10 @@ impl<B: AudioBackend> Shell<B> {
                 } else {
                     self.notify("no loop slicer to open: add one from the device browser");
                 }
+                Vec::new()
+            }
+            AppCommand::Practice(action) => {
+                self.core.practice_action(action);
                 Vec::new()
             }
             AppCommand::Transport(action) => {
@@ -10543,6 +10753,54 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// Imports the tab or score file picked in the Import Tab dialog, dropped on the window or
+    /// opened in the file browser (see [`AppCore::import_tab`]).
+    pub fn import_tab(&mut self, path: &Path, as_song: bool) {
+        self.core.import_tab(path, as_song);
+        self.repaint = true;
+    }
+
+    /// Imports the chord sheet picked in the Import Chord Sheet dialog (see
+    /// [`AppCore::import_sheet`]).
+    pub fn import_sheet(&mut self, path: &Path) {
+        self.core.import_sheet(path);
+        self.repaint = true;
+    }
+
+    /// Writes the tab of the selected clip or the song to `path` (the answer is shown in the
+    /// view).
+    pub fn export_tab_to(&mut self, format: TabExportFormat, path: &Path) {
+        self.core.export_tab(format, path);
+        self.repaint = true;
+    }
+
+    /// Writes the song's first chord sheet to `path` as text.
+    pub fn export_sheet_to(&mut self, path: &Path) {
+        self.core.export_sheet(path);
+        self.repaint = true;
+    }
+
+    /// Writes the song's chord sheet to `path` as a PDF.
+    pub fn export_sheet_pdf_to(&mut self, path: &Path) {
+        self.core.export_sheet_pdf(path);
+        self.repaint = true;
+    }
+
+    /// The file name (without extension) the Export Tab dialog offers.
+    pub fn tab_export_name(&self) -> String {
+        self.core.tab_export_name()
+    }
+
+    /// File > Export Tab: the save dialog, or what to do first when there is nothing to write.
+    fn export_tab_request(&mut self, format: TabExportFormat) -> Vec<ShellRequest> {
+        if self.core.can_export_tab() {
+            vec![ShellRequest::PickExportTab(format)]
+        } else {
+            self.notify("the song has no note tracks to export");
+            Vec::new()
+        }
+    }
+
     /// Shows a message in the view until the next click.
     pub fn notify(&mut self, message: impl Into<String>) {
         self.core.report(message);
@@ -10553,6 +10811,14 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_language();
         let busy = self.core.is_busy();
         self.core.frame();
+        if let Some(ms) = self.core.take_listen_offset_change() {
+            self.ui.listen_offset_ms = ms;
+            self.ui_changed();
+        }
+        if let Some(scores) = self.core.take_trainer_scores_change() {
+            self.ui.set_trainer_scores(&scores);
+            self.ui_changed();
+        }
         self.run_camera_commands();
         self.sync_camera_ui();
         self.sync_stems_ui();
@@ -10629,6 +10895,8 @@ impl<B: AudioBackend> Shell<B> {
             self.ui_changed();
         }
         self.core.piano_roll_tick(now_seconds);
+        self.core.tab_editor_tick(now_seconds);
+        self.core.chord_sheet_tick(now_seconds);
         self.tick_tooltip(now_seconds);
         // A pointer resting on a scroll strip of a menu bar list scrolls it.
         if self.any_bar_open() {
@@ -11467,6 +11735,7 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::Main if self.ui.show_song => {
                 let song = match self.song_pane() {
                     Pane::PianoRoll => self.core.piano_roll().cursor(),
+                    Pane::TabEditor => self.core.tab_editor().cursor(),
                     Pane::Arrangement => self.core.arrangement().cursor(),
                     _ => CursorHint::Default,
                 };
@@ -11520,6 +11789,7 @@ impl<B: AudioBackend> Shell<B> {
                     Pane::Rack => self.core.view().cursor(),
                     Pane::Arrangement => self.core.arrangement().cursor(),
                     Pane::PianoRoll => self.core.piano_roll().cursor(),
+                    Pane::TabEditor => self.core.tab_editor().cursor(),
                     _ => return None,
                 };
                 Some(if self.capture_over == Some(pane) {
@@ -11569,6 +11839,9 @@ impl<B: AudioBackend> Shell<B> {
                 return self.repaint || win.dirty || self.core.file_browser().needs_repaint();
             }
             WindowKind::PianoKeys => return self.repaint || win.dirty,
+            WindowKind::Fretboard => {
+                return self.repaint || win.dirty || self.core.fretboard().needs_repaint();
+            }
             WindowKind::Video => {
                 return self.repaint || win.dirty || self.core.video_window().needs_repaint();
             }
@@ -11587,6 +11860,9 @@ impl<B: AudioBackend> Shell<B> {
             || (self.ui.show_song
                 && match self.song_pane() {
                     Pane::PianoRoll => self.core.piano_roll().needs_repaint(),
+                    Pane::TabEditor => self.core.tab_editor().needs_repaint(),
+                    Pane::ChordSheet => self.core.chord_sheet().needs_repaint(),
+                    Pane::ChordTrainer => self.core.chord_trainer().needs_repaint(),
                     Pane::SampleEditor => self.core.sample_editor().needs_repaint(),
                     Pane::StepEditor => self.core.step_editor().needs_repaint(),
                     Pane::SliceEditor => self.core.slice_editor().needs_repaint(),
@@ -11618,6 +11894,7 @@ impl<B: AudioBackend> Shell<B> {
             | WindowKind::Console
             | WindowKind::SpectrumEq
             | WindowKind::Video
+            | WindowKind::Fretboard
             | WindowKind::PianoKeys
             | WindowKind::Browser => {
                 self.paint_detached(window, canvas);
@@ -12053,6 +12330,10 @@ mod quantize_tests;
 mod midi_tests;
 
 #[cfg(test)]
+#[path = "shell_tab_tests.rs"]
+mod tab_tests;
+
+#[cfg(test)]
 #[path = "shell_console_tests.rs"]
 mod console_tests;
 
@@ -12338,6 +12619,10 @@ mod launcher_tests;
 #[cfg(test)]
 #[path = "shell_duck_from_tests.rs"]
 mod duck_from_tests;
+
+#[cfg(test)]
+#[path = "shell_fretboard_tests.rs"]
+mod fretboard_tests;
 
 #[cfg(test)]
 #[path = "shell_chord_wheel_tests.rs"]

@@ -136,6 +136,7 @@ DeleteVca(Some(2)) | Bass
 DeliveryTargets | Delivery Targets…
 DetachBrowser | Detach Browser
 DetachConsole | Detach Mixer
+DetachFretboard | Detach Fretboard
 DetachRack | Detach Rack
 DetectChordsFromAudio | Detect Chords from Audio…
 DetectKey | Detect Song Key
@@ -164,8 +165,13 @@ ExportMidiSong | Export MIDI Song…
 ExportMidiTrack | Export MIDI Track…
 ExportPatch | Export Patch…
 ExportSelectionAudio | Export Selection as Audio File…
+ExportSheetPdf | Export Chord Sheet as PDF…
+ExportSheetText | Export Chord Sheet as Text…
 ExportSongAudio | Export Song as Audio File…
 ExportStems | Export Stems as Audio Files…
+ExportTabMusicXml | Export Tab as MusicXML…
+ExportTabPdf | Export Tab as PDF…
+ExportTabText | Export Tab as Text…
 FindParameter | Find Parameter…
 FindRepetition | Find Repetition…
 FocusWindow(Console) | Mixer Window
@@ -180,6 +186,8 @@ FreezeStrip | Freeze with Strip
 FreezeTail | Freeze with Tail
 FreezeTrack | Freeze Track
 FreezeTrackToDevice | Freeze Track up to Selected Device
+FretboardLeftHanded | Left-handed
+FretboardVoicing | Chord Voicing
 GentlePump | Gentle Pump
 GroupTracks | Group Tracks
 GuidedTour | Guided Tour
@@ -189,6 +197,9 @@ ImportAudio | Import Audio…
 ImportMidi | Import MIDI…
 ImportMidiPreset | Import MIDI Mapping Preset…
 ImportMidiSong | Import MIDI as Song…
+ImportSheet | Import Chord Sheet…
+ImportTab | Import Tab or Score File…
+ImportTabSong | Import Tab or Score as Song…
 ImportVideo | Import Video…
 ImportVideoAudio | Import Video Audio
 ImportVideoWithAudio | Import Audio with Video
@@ -298,6 +309,20 @@ PatternLaneToNotes | Pattern Lane to Notes
 PeakSurgeon | Peak Surgeon…
 PluginManager | Plugin Manager…
 PluginSettings | Plugins…
+Practice(CountIn(0)) | Count-in: Off
+Practice(CountIn(1)) | Count-in: 1 Bar
+Practice(CountIn(2)) | Count-in: 2 Bars
+Practice(ListenCalibrate) | Calibrate Listening Latency
+Practice(ListenClear) | Clear Results
+Practice(ListenInput) | Next Listening Input
+Practice(LoopSelection) | Loop Selection
+Practice(Speed(100)) | Full Speed (100%)
+Practice(Speed(50)) | Speed 50%
+Practice(Speed(75)) | Speed 75%
+Practice(SpeedDown) | Slower
+Practice(SpeedUp) | Faster
+Practice(ToggleListen) | Listen and Grade
+Practice(ToggleTrainer) | Speed Trainer
 PrepareVideo | Prepare Video…
 PreviousMarker | Previous Marker
 PreviousSong | Previous Song
@@ -378,6 +403,9 @@ SeparateStems | Separate Stems…
 SequencerOnly | Sequencer Only
 SetDefaultSong | Use Song as Default Song
 SetEndMarker | Set End Marker at Playhead
+SetFretLabels(Frets) | Fret Numbers
+SetFretLabels(Intervals) | Intervals
+SetFretLabels(Notes) | Note Names
 SetLeftLocator | Set Left Locator at Playhead
 SetMidiResolution(Native) | 15360 per quarter (native)
 SetMidiResolution(Ppq480) | 480 per quarter
@@ -408,6 +436,8 @@ ToggleCamera | Camera
 ToggleCameraPreview | Camera Preview
 ToggleChase | Chase Notes
 ToggleChordLane | Chord Lane
+ToggleChordSheet | Chord Sheet
+ToggleChordTrainer | Chord Trainer
 ToggleClockIn | Follow MIDI Clock
 ToggleClockOut | MIDI Clock Out
 ToggleClockWhileStopped | Send Clock While Stopped
@@ -421,6 +451,7 @@ ToggleEnergyLane | Energy Lane
 ToggleFileBrowser | File Browser
 ToggleFlip | Back of Rack
 ToggleFolder | Collapse Folder
+ToggleFretboard | Fretboard
 ToggleHistory | Undo History
 ToggleInspector | Inspector
 ToggleKeyLane | Key Lane
@@ -445,6 +476,8 @@ ToggleSliceEditor | Slice Editor
 ToggleSong | Arrangement
 ToggleSpectrumEq | Spectrum EQ
 ToggleStepEditor | Step Editor
+ToggleTabEditor | Tab Editor
+ToggleTabOrPianoRoll | Switch Piano Roll and Tab
 ToggleTempoLane | Tempo Lane
 ToggleTrackPanel | Track Panel
 ToggleVideo | Video

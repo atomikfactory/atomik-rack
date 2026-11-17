@@ -549,7 +549,17 @@ fn every_shipped_example_song_can_be_checked() {
     {
         let folder = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        projects.push((folder.join(format!("{name}.atomik")), folder));
+        let file = folder.join(format!("{name}.atomik"));
+        if file.is_file() {
+            projects.push((file, folder));
+            continue;
+        }
+        // A collection (the exercises): one project per sub-folder.
+        for sub in std::fs::read_dir(&folder).unwrap().flatten() {
+            let sub_folder = sub.path();
+            let sub_name = sub.file_name().to_string_lossy().into_owned();
+            projects.push((sub_folder.join(format!("{sub_name}.atomik")), sub_folder));
+        }
     }
     projects.push((
         root.join("examples/projects/audio-demo.atomik"),

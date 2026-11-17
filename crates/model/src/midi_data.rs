@@ -17,6 +17,7 @@
 
 use crate::note_expression::{self, NoteExpression};
 use crate::song::MAX_TICK;
+use crate::tab_data::TabData;
 
 /// The most program changes one clip keeps.
 pub const MAX_PROGRAM_CHANGES: usize = 4096;
@@ -74,12 +75,25 @@ pub struct MidiData {
     /// The curves of the notes that have some, sorted by `(tick, key)`: the start tick and key of
     /// the note an entry belongs to.
     pub expression: Vec<NoteExpression>,
+    /// The tablature sidecar: the instrument, the tuning and where each note is played (see
+    /// [`crate::tab_data`]). `None` for a clip that is not a tab clip.
+    pub tab: Option<TabData>,
 }
 
 impl MidiData {
-    /// True when the clip carries no program change, no SysEx message and no note expression.
+    /// True when the clip carries no program change, no SysEx message, no note expression and no
+    /// tab data.
     pub fn is_empty(&self) -> bool {
-        self.programs.is_empty() && self.sysex.is_empty() && self.expression.is_empty()
+        self.programs.is_empty()
+            && self.sysex.is_empty()
+            && self.expression.is_empty()
+            && self.tab.is_none()
+    }
+
+    /// True when the clip carries a program change or a SysEx message (what the Messages chips of
+    /// the piano roll edit and a MIDI file export writes as messages).
+    pub fn has_messages(&self) -> bool {
+        !self.programs.is_empty() || !self.sysex.is_empty()
     }
 
     /// `programs` and `sysex` in canonical form: sorted by tick, the last program change of a
@@ -97,6 +111,7 @@ impl MidiData {
         self.sysex.retain(|s| !s.data.is_empty());
         self.sysex.sort_by_key(|s| s.tick);
         self.expression = note_expression::canonical_list(self.expression);
+        self.tab = self.tab.map(TabData::canonical);
         self
     }
 
@@ -171,6 +186,9 @@ impl MidiData {
                 }
             }
         }
+        if let Some(tab) = &self.tab {
+            tab.check(max_tick)?;
+        }
         Ok(())
     }
 
@@ -240,8 +258,10 @@ impl MidiData {
             programs,
             sysex,
             expression,
+            tab: None,
         };
         out.shift_by(shift - from);
+        out.tab = self.tab.as_ref().map(|t| t.window(from, to, shift));
         out
     }
 
@@ -273,6 +293,7 @@ impl MidiData {
                     ..e.clone()
                 })
                 .collect(),
+            tab: self.tab.as_ref().map(|t| t.map_ticks(&f)),
         }
         .canonical()
     }
@@ -285,6 +306,11 @@ impl MidiData {
         self.programs.extend(other.programs);
         self.sysex.extend(other.sysex);
         self.expression.extend(other.expression);
+        match (&mut self.tab, other.tab) {
+            (Some(mine), Some(theirs)) => mine.append(theirs),
+            (None, theirs) => self.tab = theirs,
+            (Some(_), None) => {}
+        }
         *self = std::mem::take(self).canonical();
         self.programs.truncate(MAX_PROGRAM_CHANGES);
         self.sysex.truncate(MAX_SYSEX_EVENTS);

@@ -454,6 +454,12 @@
 //! expression, `tick` and `key` naming the note, each curve a list of `[ticks after the note start, value]`
 //! (pitch in semitones, pressure and timbre `0..=1`). It is written only while the clip has some, for notes
 //! the clip still has, and it is ignorable: a reader that drops it plays the notes without the expression.
+//! A note clip may also carry `"tab"` after its `"expression"` (see [`crate::tab_data`]): the instrument, its
+//! tuning and capo, one entry per note that has a position or techniques, chord diagrams and lyrics. It is
+//! written only while the clip has tab data, entries of notes the clip no longer has are left out, and it is
+//! ignorable: a reader that drops it plays the notes (the techniques are already rendered into the notes and
+//! their expression). A song may carry `"sheets"` (see [`crate::chord_sheets`]), its chord sheets, written
+//! only when it has some and ignorable too; both are in `tab_json.rs` and are rows of format 45, not a bump.
 //! A song may also carry the clip launcher, `"launcher"` (see [`crate::launcher`]), after its `"groups"`:
 //! scenes, slots and the launch quantize, written only when it holds something and ignorable (a reader
 //! that drops it opens the song with its arrangement and no launcher). A slot is a note clip of a note
@@ -465,7 +471,7 @@
 //! `[src_start, src_end, cents, drift, vibrato_keep]` per edited note, in asset frames, sorted and
 //! disjoint. It is written only while the clip has some and it is ignorable: a reader that drops it
 //! plays the clip as it was recorded.
-//! Saving always writes version 45, with `"compat": 44` and the `"ignorable"` list (see [`schema`]): a reader of 44 opens the file and drops the launcher, the per-note expression and the pitch edits, one warning each.
+//! Saving always writes version 45, with `"compat": 44` and the `"ignorable"` list (see [`schema`]): a reader of 44 opens the file and drops the launcher, the per-note expression, the tab data, the sheets, the song harmony and the pitch edits, one warning each.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -532,6 +538,7 @@ mod read_song;
 mod read_track;
 pub(crate) mod schema;
 mod snippet;
+mod tab_json;
 mod write;
 mod write_clip;
 mod write_console;

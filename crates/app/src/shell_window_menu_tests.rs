@@ -280,6 +280,7 @@ fn the_tool_windows_and_the_browser_keep_no_menu_bar() {
         WindowKind::SpectrumEq,
         WindowKind::PianoKeys,
         WindowKind::Video,
+        WindowKind::Fretboard,
         WindowKind::Browser,
     ] {
         assert_eq!(s.bar_height_in(window), 0.0, "{window:?}");
@@ -310,6 +311,7 @@ fn pane_of_window(window: WindowKind) -> Pane {
         WindowKind::PianoKeys => Pane::PianoKeys,
         WindowKind::Browser => Pane::FileBrowser,
         WindowKind::Video => Pane::Video,
+        WindowKind::Fretboard => Pane::Fretboard,
         WindowKind::Console => Pane::Console,
         WindowKind::Main | WindowKind::Rack => Pane::Rack,
     }

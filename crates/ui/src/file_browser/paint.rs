@@ -839,14 +839,19 @@ impl FileBrowserView {
             );
             return;
         }
-        let midi = r.kind == FileKind::Midi;
+        let midi = matches!(r.kind, FileKind::Midi | FileKind::Tab);
         let secs = r.info.as_ref().and_then(|i| i.duration_secs());
         let known = secs.is_some();
         c.text(
             &TextRun::new(
                 // A MIDI file has no audio header: its own label stands where the length is.
                 if midi {
-                    "MIDI".to_string()
+                    (if r.kind == FileKind::Tab {
+                        "TAB"
+                    } else {
+                        "MIDI"
+                    })
+                    .to_string()
                 } else {
                     lay::format_duration(secs)
                 },

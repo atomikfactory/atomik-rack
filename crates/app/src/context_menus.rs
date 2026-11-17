@@ -1244,6 +1244,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
         ContextTarget::PianoScaleRoot => root_items(&e.notes),
         ContextTarget::PianoScaleKind => scale_items(&e.notes),
         ContextTarget::PianoChord => chord_items(&e.notes),
+        ContextTarget::TabStaff => tab_staff_menu(e),
         ContextTarget::Notes => {
             let t = &e.notes;
             let has_scale = t.scale.is_some();
@@ -1316,6 +1317,102 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             v
         }
     }
+}
+
+/// The techniques of the tab staff menu that are one item each: the command argument and label.
+const TAB_TECHNIQUES: [(&str, &str); 8] = [
+    ("hammer_on", "Hammer-on"),
+    ("pull_off", "Pull-off"),
+    ("palm_mute", "Palm Mute"),
+    ("let_ring", "Let Ring"),
+    ("dead", "Dead Note"),
+    ("ghost", "Ghost Note"),
+    ("accent", "Accent"),
+    ("tap", "Tapped Note"),
+];
+
+/// The slides of the tab staff menu.
+const TAB_SLIDES: [(&str, &str); 6] = [
+    ("slide_legato", "Legato Slide"),
+    ("slide_shift", "Shift Slide"),
+    ("slide_in_below", "Slide In from Below"),
+    ("slide_in_above", "Slide In from Above"),
+    ("slide_out_down", "Slide Out Down"),
+    ("slide_out_up", "Slide Out Up"),
+];
+
+/// The bends of the tab staff menu: the amounts, then the shapes (at the amount of the toolbar).
+const TAB_BENDS: [(&str, &str); 9] = [
+    ("bend_quarter", "Bend 1/4 Tone"),
+    ("bend_half", "Bend 1/2 Tone"),
+    ("bend_full", "Bend a Whole Tone"),
+    ("bend_one_half", "Bend 1 1/2 Tones"),
+    ("bend_two", "Bend 2 Tones"),
+    ("bend", "Bend (Toolbar Amount)"),
+    ("bend_release", "Bend and Release"),
+    ("pre_bend", "Pre-bend"),
+    ("pre_bend_release", "Pre-bend and Release"),
+];
+
+/// The menu of a right click on the tab editor's staff: edit, techniques, string, transpose,
+/// re-fret and the tuning dialog. The note items work on the selection or the note under the
+/// cursor (`e.selection`).
+fn tab_staff_menu(e: &MenuEnable) -> Vec<Spec> {
+    let on = e.selection;
+    let tech = |arg: &'static str, label: &'static str| {
+        meter_item("editor.tab_technique", arg, label).enabled(on)
+    };
+    let group = |name: &'static str, items: &[(&'static str, &'static str)]| {
+        Spec::submenu(name, items.iter().map(|(a, l)| tech(a, l)).collect()).enabled(on)
+    };
+    let mut v = vec![
+        item("edit.cut", on),
+        item("edit.copy", on),
+        item("edit.paste", e.paste),
+        item("edit.delete", on),
+        item("edit.select_all", true),
+        Spec::Separator,
+    ];
+    v.extend(TAB_TECHNIQUES[..2].iter().map(|(a, l)| tech(a, l)));
+    v.push(group("Slide", &TAB_SLIDES));
+    v.push(group("Bend", &TAB_BENDS));
+    v.push(group(
+        "Vibrato",
+        &[("vibrato", "Vibrato"), ("vibrato_wide", "Wide Vibrato")],
+    ));
+    v.push(group(
+        "Harmonic",
+        &[
+            ("harmonic", "Natural Harmonic"),
+            ("harmonic_artificial", "Artificial Harmonic"),
+        ],
+    ));
+    v.extend(TAB_TECHNIQUES[2..].iter().map(|(a, l)| tech(a, l)));
+    v.push(tech("clear", "Clear Techniques"));
+    v.extend([
+        Spec::Separator,
+        item("editor.tab_string_up", on),
+        item("editor.tab_string_down", on),
+        Spec::submenu(
+            "Transpose",
+            vec![
+                meter_item("editor.tab_transpose", "up", "Up a Semitone"),
+                meter_item("editor.tab_transpose", "down", "Down a Semitone"),
+                meter_item("editor.tab_transpose", "octave_up", "Up an Octave"),
+                meter_item("editor.tab_transpose", "octave_down", "Down an Octave"),
+            ]
+            .into_iter()
+            .map(|s| s.enabled(on))
+            .collect(),
+        )
+        .enabled(on),
+        meter_item("editor.tab_refret", "choose", "Re-fret at Position...").enabled(on),
+        meter_item("editor.tab_refret", "lowest", "Re-fret to the Lowest Frets").enabled(on),
+        meter_item("editor.tab_refret", "automatic", "Re-fret Automatically").enabled(on),
+        Spec::Separator,
+        item("editor.tab_tuning", true),
+    ]);
+    v
 }
 
 /// The registry command every entry of the jack menu runs, with the entry as its argument.

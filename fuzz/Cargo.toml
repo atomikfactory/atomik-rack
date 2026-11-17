@@ -1,6 +1,6 @@
 [package]
 name = "atomik-fuzz"
-description = "Fuzz targets for the readers of untrusted files: projects, patches, MIDI, audio and the plugin sandbox wire."
+description = "Fuzz targets for the readers of untrusted files: projects, patches, MIDI, audio, tablature, chord sheets and the plugin sandbox wire."
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.99"
@@ -24,6 +24,7 @@ atomik-library = { path = "../crates/library" }
 atomik-midi-io = { path = "../crates/midi-io" }
 atomik-model = { path = "../crates/model" }
 atomik-plugin-ipc = { path = "../crates/plugin-ipc" }
+atomik-tab = { path = "../crates/tab" }
 
 [[bin]]
 name = "load_project"
@@ -63,6 +64,34 @@ bench = false
 [[bin]]
 name = "instrument_read"
 path = "fuzz_targets/instrument_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tab_gp"
+path = "fuzz_targets/tab_gp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tab_ascii"
+path = "fuzz_targets/tab_ascii.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chord_sheet"
+path = "fuzz_targets/chord_sheet.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tab_musicxml"
+path = "fuzz_targets/tab_musicxml.rs"
 test = false
 doc = false
 bench = false

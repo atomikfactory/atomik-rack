@@ -25,9 +25,10 @@ use atomik_model::{
 use atomik_render::project::song_input_live;
 use atomik_ui::kurbo::Point;
 use atomik_ui::{
-    ArrangementView, AudioEditorView, Canvas, ChannelMeters, ConsoleView, ContainerEditorView,
-    Help, PianoRollView, PluginParamsView, RackView, SampleEditorView, SeqEditorView,
-    SliceEditorView, StepEditorView, Theme, TransportAction, TransportBar, UiAction, UiEvent,
+    ArrangementView, AudioEditorView, Canvas, ChannelMeters, ChordSheetView, ChordTrainerView,
+    ConsoleView, ContainerEditorView, Help, PianoRollView, PluginParamsView, RackView,
+    SampleEditorView, SeqEditorView, SliceEditorView, StepEditorView, TabEditorView, Theme,
+    TransportAction, TransportBar, UiAction, UiEvent,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -75,6 +76,12 @@ pub enum Pane {
     Arrangement,
     /// The piano roll (in place of the arrangement).
     PianoRoll,
+    /// The tab editor (in place of the arrangement, like the piano roll).
+    TabEditor,
+    /// The chord sheet pane: the song's chords-over-lyrics sheets (in place of the arrangement).
+    ChordSheet,
+    /// The chord trainer pane: drills for changing between chords (in place of the arrangement).
+    ChordTrainer,
     /// The console (in place of the arrangement, or maximised).
     Console,
     /// The sample editor (in place of the arrangement).
@@ -105,6 +112,8 @@ pub enum Pane {
     SpectrumEq,
     /// The Video window: it fills a window of its own.
     Video,
+    /// The Fretboard window: it fills a window of its own.
+    Fretboard,
 }
 /// The values an effect can publish at most (the EQ's 18 is the largest) with headroom.
 pub const FX_METER_CAPACITY: usize = 64;
@@ -283,6 +292,19 @@ pub struct AppCore<S: EngineSink> {
     rejection: Option<String>,
     arrangement: ArrangementView,
     piano_roll: PianoRollView,
+    tab_editor: TabEditorView,
+    /// The clock that stamps key events for the tab editor (see [`TabClock`]).
+    tab_clock: TabClock,
+    /// The note clip open in the tab editor.
+    tab_clip: Option<ClipId>,
+    chord_sheet: ChordSheetView,
+    /// Whether the chord sheet pane is open.
+    sheet_open: bool,
+    chord_trainer: ChordTrainerView,
+    /// Whether the chord trainer pane is open.
+    trainer_open: bool,
+    /// The click and the listener of the chord trainer.
+    trainer_audio: trainer_ops::TrainerAudio,
     sample_editor: SampleEditorView,
     step_editor: StepEditorView,
     slice_editor: SliceEditorView,
@@ -370,6 +392,14 @@ pub struct AppCore<S: EngineSink> {
     default_tune: f32,
     /// Bars of click counted in before a recording starts (0 = off).
     pre_count_bars: u8,
+    /// The practice session: the runtime speed, the count-in and the speed trainer.
+    practice: crate::practice::Practice,
+    /// Decides which passes of the loop count for the speed trainer.
+    pass_judge: Box<dyn crate::practice::PassJudge>,
+    /// The engine's loop count at the last frame the trainer looked.
+    last_pass_loops: Option<u64>,
+    /// Listen and grade: the input tap, the tracker, the results of the session.
+    listen: listen_ops::Listen,
     /// The length the pre-count toggle returns to (1 to 4).
     pre_count_resume: u8,
     quantize: InputQuantize,
@@ -475,6 +505,10 @@ pub struct AppCore<S: EngineSink> {
     file_browser: atomik_ui::FileBrowserView,
     /// The Piano Keys strip and the router that keeps its note offs with their note ons.
     piano_keys: atomik_ui::PianoKeysView,
+    /// The fretboard window's view (the strip under the tab staff is the tab editor's own).
+    fretboard: atomik_ui::FretboardView,
+    /// The fretboard window is open (it is fed only then).
+    fretboard_window: bool,
     /// The Track Panel, whether it shows, and the revision and track it was built for.
     track_panel: atomik_ui::TrackPanelView,
     track_panel_on: bool,
@@ -627,6 +661,14 @@ impl<S: EngineSink> AppCore<S> {
             rejection: None,
             arrangement: ArrangementView::new(theme.clone()),
             piano_roll: PianoRollView::new(theme.clone()),
+            tab_editor: TabEditorView::new(theme.clone()),
+            tab_clock: TabClock::new(),
+            tab_clip: None,
+            chord_sheet: ChordSheetView::new(theme.clone()),
+            sheet_open: false,
+            chord_trainer: ChordTrainerView::new(theme.clone()),
+            trainer_open: false,
+            trainer_audio: trainer_ops::TrainerAudio::default(),
             sample_editor: SampleEditorView::new(theme.clone()),
             step_editor: StepEditorView::new(theme.clone()),
             slice_editor: SliceEditorView::new(theme.clone()),
@@ -689,6 +731,8 @@ impl<S: EngineSink> AppCore<S> {
             plugin_params: PluginParamsView::new(theme),
             file_browser: atomik_ui::FileBrowserView::new(Theme::dark()),
             piano_keys: atomik_ui::PianoKeysView::new(Theme::dark()),
+            fretboard: atomik_ui::FretboardView::new(Theme::dark()),
+            fretboard_window: false,
             track_panel: atomik_ui::TrackPanelView::new(Theme::dark()),
             track_panel_on: false,
             track_panel_stamp: None,
@@ -722,6 +766,10 @@ impl<S: EngineSink> AppCore<S> {
             metronome_gain: DEFAULT_METRONOME_GAIN,
             default_tune: 0.0,
             pre_count_bars: 0,
+            practice: crate::practice::Practice::default(),
+            listen: listen_ops::Listen::default(),
+            pass_judge: Box::new(crate::practice::EveryPass),
+            last_pass_loops: None,
             pre_count_resume: 1,
             quantize: InputQuantize::OFF,
             now_seconds: 0.0,
@@ -1361,6 +1409,9 @@ impl<S: EngineSink> AppCore<S> {
             Pane::Transport => self.transport_bar.help_at(pos),
             Pane::Arrangement => self.arrangement.help_at(pos),
             Pane::PianoRoll => self.piano_roll.help_at(pos),
+            Pane::TabEditor => self.tab_editor.help_at(pos),
+            Pane::ChordSheet => self.chord_sheet.help_at(pos),
+            Pane::ChordTrainer => self.chord_trainer.help_at(pos),
             Pane::Console => self.console.help_at(pos),
             Pane::SampleEditor => self.sample_editor.help_at(pos),
             Pane::StepEditor => self.step_editor.help_at(pos),
@@ -1376,6 +1427,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::Launcher => self.launcher_view.help_at(pos),
             Pane::SpectrumEq => self.spectrum_eq.help_at(pos),
             Pane::Video => self.video_win.help_at(pos),
+            Pane::Fretboard => self.fretboard.help_at(pos),
         }
     }
 
@@ -1399,6 +1451,20 @@ impl<S: EngineSink> AppCore<S> {
                 self.piano_roll.set_doc_revision(None);
                 actions
             }
+            Pane::TabEditor => {
+                self.tab_editor.stamp(self.tab_clock.now());
+                self.tab_editor.set_doc_revision(Some(revision));
+                let actions = self.tab_editor.handle(event, doc, &self.registry);
+                self.tab_editor.set_doc_revision(None);
+                actions
+            }
+            Pane::ChordSheet => {
+                self.chord_sheet.set_doc_revision(Some(revision));
+                let actions = self.chord_sheet.handle(event, doc, &self.registry);
+                self.chord_sheet.set_doc_revision(None);
+                actions
+            }
+            Pane::ChordTrainer => self.chord_trainer.handle(event, doc, &self.registry),
             Pane::Console => self.console.handle(event, doc, &self.registry),
             Pane::SampleEditor => self.sample_editor.handle(event, doc, &self.registry),
             Pane::StepEditor => self.step_editor.handle(event, doc, &self.registry),
@@ -1414,6 +1480,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::Launcher => self.launcher_view.handle(event),
             Pane::SpectrumEq => self.spectrum_eq.handle(event),
             Pane::Video => self.video_win.handle(event),
+            Pane::Fretboard => self.fretboard.handle(event),
         };
         for action in &actions {
             self.handle_action(action.clone());
@@ -1443,6 +1510,9 @@ impl<S: EngineSink> AppCore<S> {
                     | UiEvent::PointerLeave
                     | UiEvent::ModifiersChanged { .. }
             );
+        if pane == Pane::TabEditor {
+            self.sync_fretboard();
+        }
         self.after_pane_event(idle);
         actions
     }
@@ -1540,8 +1610,12 @@ impl<S: EngineSink> AppCore<S> {
         self.arrangement.sync_at(doc, &self.registry, revision);
         self.piano_roll.set_undo_depth(self.document.undo_depth());
         self.piano_roll.sync_at(doc, &self.registry, revision);
+        self.tab_editor.sync_at(doc, &self.registry, revision);
+        self.chord_sheet.sync_at(doc, &self.registry, revision);
+        self.chord_trainer.sync_at(doc, &self.registry, revision);
         self.sync_roll_labels();
         self.sync_song_key_filter();
+        self.sync_fretboard();
         let doc = self.document.doc();
         self.view
             .set_clip_scale(self.piano_clip.and_then(|_| self.piano_roll.scale()));
@@ -1750,6 +1824,9 @@ impl<S: EngineSink> AppCore<S> {
         self.arrangement.set_selected_track(None);
         self.arrangement.set_selected_points(ClipId(0), &[]);
         self.position = 0;
+        // The practice speed is not part of a project: a new one plays at its own tempo.
+        self.practice.reset_for_project();
+        self.last_pass_loops = None;
         self.audio_reset();
         self.rebuild_engine();
         self.audio_opened();
@@ -1793,6 +1870,7 @@ impl<S: EngineSink> AppCore<S> {
         self.cancel_automation_take();
         self.cancel_audio_recording();
         self.cancel_sampling();
+        self.listen_engine_lost();
         // The new engine has no preview clock on any device.
         self.forget_player_preview();
         self.forget_clip_preview();
@@ -1860,6 +1938,10 @@ impl<S: EngineSink> AppCore<S> {
         self.push_tuner_live();
         self.submit_song(true);
         self.send_metronome();
+        // A rebuild in place (a rate edit) keeps the practice speed; a new project reset it.
+        if self.practice.speed() != 100 {
+            self.send_practice_speed();
+        }
         clock.lap(&mut stages, "submit");
         self.show_transport();
         self.sync_io_host();
@@ -1900,6 +1982,7 @@ impl<S: EngineSink> AppCore<S> {
             self.playing = state.playing;
         }
         self.feed_take(&state);
+        self.feed_listen(&state);
         self.feed_player_preview();
         self.show_transport();
         self.feed_song_harmony();
@@ -2247,6 +2330,11 @@ impl<S: EngineSink> AppCore<S> {
             && self.doc().song.clip_or_take(id).is_none()
         {
             self.close_piano_roll();
+        }
+        if let Some(id) = self.tab_clip
+            && self.doc().song.clip_or_take(id).is_none()
+        {
+            self.close_tab_editor();
         }
         if let Some(device) = self.piano_roll.track()
             && !self
@@ -3303,6 +3391,17 @@ impl<S: EngineSink> AppCore<S> {
                 self.piano_roll.paint(canvas, doc, &self.registry);
                 self.piano_roll.set_doc_revision(None);
             }
+            Pane::TabEditor => {
+                self.tab_editor.set_doc_revision(Some(revision));
+                self.tab_editor.paint(canvas, doc, &self.registry);
+                self.tab_editor.set_doc_revision(None);
+            }
+            Pane::ChordSheet => {
+                self.chord_sheet.set_doc_revision(Some(revision));
+                self.chord_sheet.paint(canvas, doc, &self.registry);
+                self.chord_sheet.set_doc_revision(None);
+            }
+            Pane::ChordTrainer => self.chord_trainer.paint(canvas, doc, &self.registry),
             Pane::Console => self.console.paint(canvas, doc, &self.registry),
             Pane::SampleEditor => self.sample_editor.paint(canvas, doc, &self.registry),
             Pane::StepEditor => self.step_editor.paint(canvas, doc, &self.registry),
@@ -3318,6 +3417,10 @@ impl<S: EngineSink> AppCore<S> {
             Pane::Launcher => self.launcher_view.paint(canvas),
             Pane::SpectrumEq => self.spectrum_eq.paint(canvas),
             Pane::Video => self.video_win.paint(canvas),
+            Pane::Fretboard => {
+                self.sync_fretboard();
+                self.fretboard.paint(canvas)
+            }
         }
     }
 
@@ -3366,6 +3469,9 @@ impl<S: EngineSink> AppCore<S> {
             .clip_or_take(id)
             .is_some_and(|(_, c)| c.content.is_notes());
         if is_notes {
+            self.close_tab_editor();
+            self.close_chord_sheet();
+            self.close_chord_trainer();
             self.close_sample_editor();
             self.close_step_editor();
             self.close_slice_editor();
@@ -3397,6 +3503,9 @@ impl<S: EngineSink> AppCore<S> {
         self.close_slice_editor();
         self.close_audio_editor();
         self.close_seq_editor();
+        self.close_tab_editor();
+        self.close_chord_sheet();
+        self.close_chord_trainer();
         self.close_container_editor();
         self.release_piano_roll_audition();
         self.piano_roll.open_track(device);
@@ -3520,6 +3629,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Closes the piano roll (the arrangement shows again).
     pub fn close_piano_roll(&mut self) {
+        self.close_tab_editor();
         self.release_piano_roll_audition();
         self.piano_roll.close();
         self.piano_clip = None;
@@ -3668,10 +3778,10 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         match action {
-            TransportAction::Play => self.play(),
+            TransportAction::Play => self.play_counted(),
             TransportAction::Stop => self.stop(),
             TransportAction::TogglePlay if self.playing => self.stop(),
-            TransportAction::TogglePlay => self.play(),
+            TransportAction::TogglePlay => self.play_counted(),
             TransportAction::ReturnToZero => self.locate(0),
             TransportAction::Locate(tick) => self.locate(tick.max(0)),
             TransportAction::Bars(bars) => self.locate_bars(bars),
@@ -3812,6 +3922,12 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn start_recording(&mut self) {
+        if self.practice.speed() != 100 {
+            self.reject(
+                "recording needs the practice speed at 100%: set it back first".to_string(),
+            );
+            return;
+        }
         if !self.doc().song.tracks.iter().any(|t| t.armed) && !self.has_armed_lanes() {
             self.reject(
                 "recording needs an armed track, automation lane or the tempo lane: arm one with its R button in the arrangement, or turn on Auto-create lanes"
@@ -4005,6 +4121,8 @@ impl<S: EngineSink> AppCore<S> {
         // The views follow the playhead only while the transport runs.
         self.arrangement.set_playing(self.playing);
         self.piano_roll.set_playing(self.playing);
+        self.tab_editor.set_playing(self.playing);
+        self.chord_sheet.set_playing(self.playing);
         self.arrangement.set_playhead(self.position);
         self.arrangement.set_recording(recording);
         self.arrangement
@@ -4021,6 +4139,13 @@ impl<S: EngineSink> AppCore<S> {
                 .map(|s| (s.id, s.name.as_str())),
         );
         self.piano_roll.set_playhead(self.position);
+        self.tab_editor.set_playhead(self.position);
+        self.chord_sheet.set_playhead(self.position);
+        let practice = self.practice_state();
+        self.tab_editor.set_practice(practice);
+        self.sync_fretboard();
+        self.chord_sheet.set_practice(practice);
+        self.push_listen_grades();
         self.transport_bar.set_state(atomik_ui::TransportState {
             playing: self.playing,
             recording,
@@ -4326,6 +4451,30 @@ pub use quantize_ops::QuantizeTarget;
 #[path = "app_core_midi.rs"]
 mod midi_ops;
 pub use midi_ops::{IMPORT_INSTRUMENT, MidiExport};
+
+#[path = "app_core_tab.rs"]
+mod tab_ops;
+pub use atomik_tab::pdf::{PageSize, SheetPdfOptions, TabPdfOptions};
+pub use tab_ops::{TabExportFormat, default_page, default_tab_pdf};
+
+#[path = "app_core_tab_editor.rs"]
+mod tab_editor_ops;
+use tab_editor_ops::TabClock;
+
+#[path = "app_core_fretboard.rs"]
+mod fretboard_ops;
+
+#[path = "app_core_practice.rs"]
+mod practice_ops;
+
+#[path = "app_core_listen.rs"]
+mod listen_ops;
+
+#[path = "app_core_chord_sheet.rs"]
+mod chord_sheet_ops;
+
+#[path = "app_core_chord_trainer.rs"]
+mod trainer_ops;
 
 #[path = "app_core_create.rs"]
 mod create_ops;
@@ -4644,6 +4793,26 @@ mod autoview_tests;
 #[cfg(test)]
 #[path = "app_core_song_tests.rs"]
 mod song_tests;
+
+#[cfg(test)]
+#[path = "app_core_tab_editor_tests.rs"]
+mod tab_editor_tests;
+
+#[cfg(test)]
+#[path = "app_core_practice_tests.rs"]
+mod practice_tests;
+
+#[cfg(test)]
+#[path = "app_core_listen_tests.rs"]
+mod listen_tests;
+
+#[cfg(test)]
+#[path = "app_core_chord_sheet_tests.rs"]
+mod chord_sheet_tests;
+
+#[cfg(test)]
+#[path = "app_core_chord_trainer_tests.rs"]
+mod chord_trainer_tests;
 
 #[cfg(test)]
 #[path = "app_core_console_tests.rs"]

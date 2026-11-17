@@ -58,6 +58,11 @@ File
     Import Audio…
     Import MIDI…
     Import MIDI as Song…
+    ---
+    Import Tab or Score File…
+    Import Tab or Score as Song…
+    Import Chord Sheet…
+    ---
     Detect Chords from Notes
   Export >
     Export Song as Audio File…
@@ -69,6 +74,13 @@ File
     Export MIDI Clip…
     Export MIDI Track…
     Export MIDI Song…
+    ---
+    Export Tab as MusicXML…
+    Export Tab as Text…
+    Export Tab as PDF…
+    Export Chord Sheet as Text…
+    Export Chord Sheet as PDF…
+    ---
     MIDI Export Resolution >
       15360 per quarter (native)
       960 per quarter
@@ -229,6 +241,19 @@ View
     Sample Editor
     Step Editor
     Slice Editor
+    Tab Editor
+    Chord Sheet
+    Chord Trainer
+    Fretboard
+    Detach Fretboard
+    Fretboard Options >
+      Left-handed
+      Chord Voicing
+      ---
+      Note Names
+      Fret Numbers
+      Intervals
+    Switch Piano Roll and Tab
   Launcher >
     Launcher
     Back to Arrangement
@@ -272,6 +297,26 @@ Transport
   Loop
   Metronome
   Auto-create Lanes
+  ---
+  Practice >
+    Loop Selection
+    ---
+    Speed 50%
+    Speed 75%
+    Full Speed (100%)
+    Faster
+    Slower
+    ---
+    Count-in: Off
+    Count-in: 1 Bar
+    Count-in: 2 Bars
+    ---
+    Speed Trainer
+    ---
+    Listen and Grade
+    Next Listening Input
+    Calibrate Listening Latency
+    Clear Results
   ---
   Add Marker
   Add Range Marker from Loop
