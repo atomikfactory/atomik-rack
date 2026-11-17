@@ -24,7 +24,7 @@ use crate::history::{Edit, Swap};
 use crate::song::{Clip, Marker, MeterEvent, RangeMarker, SongCommand, TempoEvent};
 use crate::song_cmd::{check_markers, check_meter_map, check_ranges, check_tempo_map, new_track};
 use crate::workflow_create::{CreateOptions, CreateSource, create_instrument};
-use crate::{Command, Document, ModelError, RackDoc, rules};
+use crate::{Command, DeviceSnapshot, Document, ModelError, RackDoc, rules};
 use atomik_device_sdk::Registry;
 
 /// One track to create from a MIDI file.
@@ -40,11 +40,26 @@ pub struct ImportedTrack {
     pub controllers: Vec<ControllerLane>,
 }
 
+/// The sound of one imported track when it differs from the import's own instrument: another
+/// instrument type, and/or a device patch loaded into the new device in the same undo step.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TrackSound {
+    /// The instrument type of this track; empty means [`MidiImport::instrument`].
+    pub instrument: String,
+    /// A device patch (a snapshot of exactly one device of the track's instrument type) the new
+    /// device takes, params and all; `None` leaves the device as a new one.
+    pub patch: Option<DeviceSnapshot>,
+}
+
 /// What `WorkflowCommand::ImportMidi` adds to the song.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct MidiImport {
-    /// The instrument type of every new track (an instrument with a Notes input).
+    /// The instrument type of every new track that has no [`TrackSound`] of its own (an
+    /// instrument with a Notes input).
     pub instrument: String,
+    /// Per-track sounds: entry `i` is for track `i`. Shorter than `tracks` (or empty, as a plain
+    /// MIDI import has it) means the remaining tracks play `instrument`.
+    pub sounds: Vec<TrackSound>,
     /// The tracks, in display order.
     pub tracks: Vec<ImportedTrack>,
     /// A tempo map to replace the song's (first event at tick 0).
@@ -81,14 +96,26 @@ pub(crate) fn plan(
         ));
     }
     let mut p = Planner::new(doc, registry);
-    let source = CreateSource::Type(import.instrument.clone());
     let options = CreateOptions {
         route: true,
         skip_track: true,
         disarm: Vec::new(),
     };
+    if import.sounds.len() > import.tracks.len() {
+        return Err(ModelError::BadSong(
+            "the MIDI import has more track sounds than tracks".into(),
+        ));
+    }
+    let mut sounds = import.sounds.into_iter();
     for t in import.tracks {
-        let key: DeviceKey = rules::generate_key(p.doc(), &import.instrument);
+        let sound = sounds.next().unwrap_or_default();
+        let instrument = if sound.instrument.is_empty() {
+            import.instrument.clone()
+        } else {
+            sound.instrument
+        };
+        let source = CreateSource::Type(instrument.clone());
+        let key: DeviceKey = rules::generate_key(p.doc(), &instrument);
         let index = p.doc().devices.len();
         let add = create_instrument(
             p.doc(),
@@ -99,6 +126,10 @@ pub(crate) fn plan(
             &options,
         )?;
         p.push(add);
+        if let Some(patch) = &sound.patch {
+            let apply = crate::device_patch::plan_apply(p.doc(), registry, &key, patch)?;
+            p.push(apply);
+        }
         let name = t.name.trim();
         if !name.is_empty() {
             let old = rules::resolve(p.doc(), &key)?.name.clone();

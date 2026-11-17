@@ -182,7 +182,7 @@ pub use macros::{
 };
 pub use master_tune::{MASTER_TUNE_MAX_CENTS, tune_ratio};
 pub use meter_view::{CurveFrom, MAX_VIEW_ENTRIES, SpectrumCurve};
-pub use midi_import::{ImportedTrack, MidiImport};
+pub use midi_import::{ImportedTrack, MidiImport, TrackSound};
 pub use midi_map::{
     DEFAULT_SENSITIVITY, Effect, Learner, MAX_MIDI_MAPS, MAX_PORT_NAME_CHARS, MapMode, MapOptions,
     MapState, MidiMapCommand, MidiMapping, MidiPreset, MidiSource, MidiTarget, PAIR_WINDOW_SECONDS,
