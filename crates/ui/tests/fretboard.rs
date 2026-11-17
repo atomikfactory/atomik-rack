@@ -156,6 +156,7 @@ fn a_feed_repaints_only_when_what_is_drawn_changes() {
         data: Some(d.clone()),
         tick: Some(tick),
         playing: true,
+        ..FretboardFeed::default()
     };
     assert!(v.set_feed(&feed(0)), "first feed");
     let mut dl = DisplayList::new();
@@ -188,6 +189,7 @@ fn the_header_controls_run_the_fretboard_commands() {
         data: Some(Arc::new(data("guitar6", Capo::NONE, Vec::new()))),
         tick: Some(0),
         playing: false,
+        ..FretboardFeed::default()
     });
     let items = v.items(area);
     assert_eq!(items.len(), 3);
@@ -378,6 +380,7 @@ fn a_banjo_drone_dot_sits_at_its_peg_and_a_capo_shifts_the_dots() {
             data: Some(Arc::new(d)),
             tick: Some(0),
             playing: false,
+            ..FretboardFeed::default()
         });
         let mut dl = DisplayList::new();
         v.paint(&mut dl);
@@ -394,6 +397,7 @@ fn a_banjo_drone_dot_sits_at_its_peg_and_a_capo_shifts_the_dots() {
         data: Some(Arc::new(one)),
         tick: Some(0),
         playing: false,
+        ..FretboardFeed::default()
     });
     let mut dl = DisplayList::new();
     v.paint(&mut dl);

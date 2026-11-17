@@ -449,6 +449,7 @@ fn the_practice_bar_with_the_trainer_matches_golden() {
                 clean: 1,
                 ..TrainerState::default()
             },
+            ..PracticeState::default()
         });
     });
     let json = dl.to_json();
@@ -544,4 +545,85 @@ fn write_editing_previews() {
         std::fs::write(&path, png).unwrap();
         println!("wrote {}", path.display());
     }
+}
+
+/// The verdicts of a graded pass over the guitar clip: its notes take them in turn.
+fn graded_marks(doc: &RackDoc) -> std::sync::Arc<Vec<atomik_ui::GradeMark>> {
+    use atomik_model::ClipContent;
+    use atomik_tab::grade::Verdict;
+    let clip = doc.song.clip(ClipId(1)).expect("the clip").2;
+    let ClipContent::Notes(list) = &clip.content else {
+        panic!("a note clip");
+    };
+    let order = [
+        Verdict::Hit,
+        Verdict::Hit,
+        Verdict::Early,
+        Verdict::Late,
+        Verdict::Wrong,
+        Verdict::Missed,
+    ];
+    let mut marks: Vec<atomik_ui::GradeMark> = list
+        .iter()
+        .enumerate()
+        .map(|(i, n)| atomik_ui::GradeMark {
+            tick: n.tick,
+            key: n.key,
+            verdict: order[i % order.len()],
+        })
+        .collect();
+    marks.sort_by_key(|m| (m.tick, m.key));
+    std::sync::Arc::new(marks)
+}
+
+#[test]
+fn a_graded_pass_colours_the_notes_and_matches_golden() {
+    let doc = guitar_doc();
+    let marks = graded_marks(&doc);
+    let dl = paint_with(&doc, |v, _| {
+        assert!(v.set_grades(Some(marks.clone())), "a change");
+        assert!(!v.set_grades(Some(marks.clone())), "the same marks again");
+    });
+    let json = dl.to_json();
+    // The badges of early, late, wrong and missed notes are drawn.
+    for badge in ["\"<\"", "\">\"", "\"x\"", "\"-\""] {
+        assert!(json.contains(badge), "badge {badge}");
+    }
+    check("tab_editor_graded_1x.json", &json);
+    // Clearing the verdicts draws the staff as it was.
+    let plain = paint_with(&doc, |v, _| {
+        v.set_grades(Some(marks.clone()));
+        assert!(v.set_grades(None));
+    });
+    let never = paint_with(&doc, |_, _| {});
+    assert_eq!(plain.to_json(), never.to_json());
+}
+
+#[test]
+fn the_practice_bar_while_listening_matches_golden() {
+    use atomik_ui::{ListenState, PracticeState, TrainerState};
+    let dl = paint_with(&guitar_doc(), |v, _| {
+        v.set_practice(PracticeState {
+            speed: 75,
+            metronome: true,
+            looping: true,
+            trainer: TrainerState::default(),
+            listen: ListenState {
+                on: true,
+                input: Some((0, true)),
+                last_percent: Some(92),
+                streak: 14,
+                best: 21,
+                threshold: 90,
+                offset_ms: 35,
+                history_len: 5,
+                history: [60, 71, 84, 78, 92, 0, 0, 0],
+                ..ListenState::default()
+            },
+            ..PracticeState::default()
+        });
+    });
+    let json = dl.to_json();
+    assert!(json.contains("92%") && json.contains("x14") && json.contains("In 1"));
+    check("tab_editor_practice_listen_1x.json", &json);
 }

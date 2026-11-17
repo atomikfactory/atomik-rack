@@ -175,6 +175,7 @@ fn the_practice_bar_under_the_toolbar_matches_golden() {
                 clean: 1,
                 ..TrainerState::default()
             },
+            ..PracticeState::default()
         });
     });
     let json = dl.to_json();

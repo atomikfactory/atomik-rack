@@ -309,6 +309,11 @@ Transport
     Décompte : 2 mesures
     ---
     Entraîneur de vitesse
+    ---
+    Écouter et noter
+    Entrée d'écoute suivante
+    Calibrer la latence d'écoute
+    Effacer les résultats
   ---
   Ajouter un marqueur [Maj+M]
   Ajouter un marqueur de plage depuis la boucle

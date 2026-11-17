@@ -310,12 +310,16 @@ PluginSettings | Plugins…
 Practice(CountIn(0)) | Count-in: Off
 Practice(CountIn(1)) | Count-in: 1 Bar
 Practice(CountIn(2)) | Count-in: 2 Bars
+Practice(ListenCalibrate) | Calibrate Listening Latency
+Practice(ListenClear) | Clear Results
+Practice(ListenInput) | Next Listening Input
 Practice(LoopSelection) | Loop Selection
 Practice(Speed(100)) | Full Speed (100%)
 Practice(Speed(50)) | Speed 50%
 Practice(Speed(75)) | Speed 75%
 Practice(SpeedDown) | Slower
 Practice(SpeedUp) | Faster
+Practice(ToggleListen) | Listen and Grade
 Practice(ToggleTrainer) | Speed Trainer
 PrepareVideo | Prepare Video…
 PreviousMarker | Previous Marker

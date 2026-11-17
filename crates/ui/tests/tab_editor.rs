@@ -1197,3 +1197,173 @@ mod practice {
         assert!(help.text.contains("audio clips are muted"));
     }
 }
+
+// ------------------------------------------------------------------ listen and grade
+
+mod listening {
+    use super::*;
+    use atomik_tab::grade::Verdict;
+    use atomik_ui::{GradeMark, ListenState, PracticeItem, PracticeState};
+    use std::sync::Arc;
+
+    fn run(id: &str, arg: Option<&str>) -> UiAction {
+        UiAction::RunCommand {
+            id: id.to_owned(),
+            arg: arg.map(str::to_owned),
+        }
+    }
+
+    fn doc() -> RackDoc {
+        tab_doc(
+            "Guitar",
+            vec![Note::new(0, PPQ, 64, 0.8), Note::new(PPQ, PPQ, 62, 0.8)],
+            None,
+        )
+    }
+
+    fn bar_click(v: &mut TabEditorView, doc: &RackDoc, item: PracticeItem) -> Vec<UiAction> {
+        let p = v.practice_item_center(item).expect("the bar has it");
+        click(v, doc, p.x, p.y)
+    }
+
+    fn listening(on: bool, percent: Option<u8>) -> PracticeState {
+        PracticeState {
+            listen: ListenState {
+                on,
+                input: Some((1, true)),
+                last_percent: percent,
+                history_len: 2,
+                history: [80, 95, 0, 0, 0, 0, 0, 0],
+                streak: 7,
+                ..ListenState::default()
+            },
+            ..PracticeState::default()
+        }
+    }
+
+    #[test]
+    fn only_the_switch_shows_until_there_is_something_to_look_at() {
+        let doc = doc();
+        let mut v = tab_editor(&doc, &registry());
+        assert!(v.practice_item_center(PracticeItem::Listen).is_some());
+        for item in [
+            PracticeItem::Input,
+            PracticeItem::Latency,
+            PracticeItem::Accuracy,
+            PracticeItem::History,
+            PracticeItem::ClearResults,
+        ] {
+            assert!(v.practice_item_center(item).is_none(), "{item:?}");
+        }
+        v.set_practice(listening(true, None));
+        for item in [
+            PracticeItem::Input,
+            PracticeItem::Latency,
+            PracticeItem::Accuracy,
+            PracticeItem::History,
+            PracticeItem::ClearResults,
+        ] {
+            assert!(v.practice_item_center(item).is_some(), "{item:?}");
+        }
+        // Results stay after listening is switched off, so they can be read.
+        v.set_practice(listening(false, Some(88)));
+        assert!(v.practice_item_center(PracticeItem::Accuracy).is_some());
+    }
+
+    #[test]
+    fn the_controls_ask_for_the_listen_commands() {
+        let doc = doc();
+        let mut v = tab_editor(&doc, &registry());
+        v.set_practice(listening(true, Some(90)));
+        assert_eq!(
+            bar_click(&mut v, &doc, PracticeItem::Listen),
+            [run("practice.listen", None)]
+        );
+        assert_eq!(
+            bar_click(&mut v, &doc, PracticeItem::Input),
+            [run("practice.listen_input", None)]
+        );
+        assert_eq!(
+            bar_click(&mut v, &doc, PracticeItem::Latency),
+            [run("practice.listen_calibrate", None)]
+        );
+        assert_eq!(
+            bar_click(&mut v, &doc, PracticeItem::ClearResults),
+            [run("practice.listen_clear", None)]
+        );
+        // The readouts take the press and do nothing.
+        assert!(bar_click(&mut v, &doc, PracticeItem::Accuracy).is_empty());
+        assert!(bar_click(&mut v, &doc, PracticeItem::History).is_empty());
+    }
+
+    #[test]
+    fn the_bar_draws_the_accuracy_the_streak_and_the_input() {
+        let doc = doc();
+        let mut v = tab_editor(&doc, &registry());
+        v.set_practice(listening(true, Some(96)));
+        let mut dl = atomik_ui::DisplayList::new();
+        v.paint(&mut dl, &doc, &registry());
+        let json = dl.to_json();
+        assert!(json.contains("96%"), "the accuracy");
+        assert!(json.contains("x7"), "the streak");
+        assert!(json.contains("In 2"), "the input chip names its channel");
+    }
+
+    #[test]
+    fn the_tooltips_name_the_commands_and_the_offset() {
+        let doc = doc();
+        let mut v = tab_editor(&doc, &registry());
+        let mut state = listening(true, Some(90));
+        state.listen.offset_ms = 35;
+        v.set_practice(state);
+        let p = v.practice_item_center(PracticeItem::Listen).unwrap();
+        assert_eq!(v.help_at(p).unwrap().command, Some("practice.listen"));
+        let p = v.practice_item_center(PracticeItem::Latency).unwrap();
+        let help = v.help_at(p).unwrap();
+        assert_eq!(help.command, Some("practice.listen_calibrate"));
+        assert!(help.text.contains("35 ms"), "{}", help.text);
+        let p = v.practice_item_center(PracticeItem::Input).unwrap();
+        assert!(v.help_at(p).unwrap().text.contains("Input 2"));
+        let p = v.practice_item_center(PracticeItem::Accuracy).unwrap();
+        assert!(v.help_at(p).unwrap().text.contains("90%"));
+    }
+
+    #[test]
+    fn a_narrow_pane_drops_the_trainer_before_the_listening_controls() {
+        let doc = doc();
+        let mut v = tab_editor(&doc, &registry());
+        let mut state = listening(true, Some(90));
+        state.trainer.enabled = true;
+        v.set_practice(state);
+        assert!(v.practice_item_center(PracticeItem::Listen).is_some());
+        v.set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 760.0, 400.0));
+        assert!(v.practice_item_center(PracticeItem::Listen).is_some());
+        assert!(v.practice_item_center(PracticeItem::Accuracy).is_some());
+        assert!(
+            v.practice_item_center(PracticeItem::Value(atomik_ui::TrainerValue::Target))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn verdicts_follow_the_clip_and_clear() {
+        let doc = doc();
+        let mut v = tab_editor(&doc, &registry());
+        let mark = |tick, key, verdict| GradeMark { tick, key, verdict };
+        let marks = Arc::new(vec![
+            mark(0, 64, Verdict::Hit),
+            mark(PPQ, 62, Verdict::Wrong),
+        ]);
+        assert!(v.grades().is_none());
+        assert!(v.set_grades(Some(marks.clone())));
+        assert!(v.grades().is_some());
+        assert!(
+            v.fretboard_feed().grades.is_some(),
+            "the neck gets them too"
+        );
+        assert!(!v.set_grades(Some(marks)));
+        v.close();
+        assert!(v.grades().is_none(), "closing forgets them");
+        assert!(v.fretboard_feed().grades.is_none());
+    }
+}

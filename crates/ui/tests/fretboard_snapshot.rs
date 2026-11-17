@@ -93,6 +93,7 @@ fn draw(d: FretboardData, tick: i64, playing: bool, opts: FretboardOptions) -> S
         data: Some(Arc::new(d)),
         tick: Some(tick),
         playing,
+        ..FretboardFeed::default()
     });
     let mut dl = DisplayList::new();
     v.paint(&mut dl);
@@ -349,6 +350,7 @@ fn write_previews() {
             data: Some(Arc::new(d)),
             tick: Some(tick),
             playing: true,
+            ..FretboardFeed::default()
         });
         let mut text = TextEngine::new();
         let mut canvas = CpuCanvas::new(900, FRETBOARD_HEIGHT as u16, &mut text);
@@ -393,4 +395,51 @@ fn write_strip_preview() {
         .join("../../target/preview")
         .join("fb_strip.png");
     std::fs::write(&path, png).unwrap();
+}
+
+#[test]
+fn sounding_notes_take_the_colour_of_their_verdict_and_match_golden() {
+    use atomik_tab::grade::Verdict;
+    use atomik_ui::FretGrade;
+    // A C chord sounding: the low C right on time, the G late, the high E wrong.
+    let notes = vec![
+        note(0, 200, 4, 3),
+        note(0, 200, 3, 2),
+        note(0, 200, 0, 0),
+        note(0, 200, 1, 1),
+    ];
+    let grade = |string, fret, verdict| FretGrade {
+        tick: 0,
+        string,
+        fret,
+        verdict,
+    };
+    let mut v = FretboardView::new(Theme::dark());
+    v.set_bounds(Rect::new(0.0, 0.0, 900.0, FRETBOARD_HEIGHT));
+    let feed = FretboardFeed {
+        data: Some(Arc::new(data("guitar6", Capo::NONE, notes))),
+        tick: Some(100),
+        playing: false,
+        grades: Some(Arc::new(vec![
+            grade(4, 3, Verdict::Hit),
+            grade(3, 2, Verdict::Late),
+            grade(0, 0, Verdict::Wrong),
+        ])),
+    };
+    assert!(v.set_feed(&feed));
+    assert!(!v.set_feed(&feed), "nothing changed");
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl);
+    let json = dl.to_json();
+    check("fretboard_graded_1x.json", &json);
+    // The same notes without verdicts are drawn differently.
+    let mut plain = FretboardView::new(Theme::dark());
+    plain.set_bounds(Rect::new(0.0, 0.0, 900.0, FRETBOARD_HEIGHT));
+    plain.set_feed(&FretboardFeed {
+        grades: None,
+        ..feed
+    });
+    let mut dl2 = DisplayList::new();
+    plain.paint(&mut dl2);
+    assert_ne!(json, dl2.to_json());
 }

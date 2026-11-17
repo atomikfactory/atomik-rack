@@ -309,6 +309,11 @@ Transport
     Count-in: 2 Bars
     ---
     Speed Trainer
+    ---
+    Listen and Grade
+    Next Listening Input
+    Calibrate Listening Latency
+    Clear Results
   ---
   Add Marker
   Add Range Marker from Loop
