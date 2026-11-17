@@ -384,6 +384,18 @@ A looped clip, a named clip or a coloured one is listed by `project_inspect` und
 
 The rules are checked in `crates/model/tests/loop_clips.rs`, `crates/model/tests/audio_flatten.rs` and `crates/render/tests/audio_project.rs`; the pointer gestures are `crates/ui/tests/loop_clips.rs`.
 
+### Recipe: guitar tab
+
+For a change to a tab reader or writer, the Tab Editor, the practice tools or the Plucked Strings sound (the guide for users is [TAB.md](TAB.md)):
+
+1. Write a small tab by hand (a two-bar MusicXML file with `staff-tuning`, `string` and `fret` elements is enough; a Guitar Pro file from the test encoder of `crates/tab/tests/gp_fixtures` works too) and `session_tab` `action` `import` with `file` and `as_song` true. The result's `message` counts the tracks and notes and lists what the file held that was left out; `session_status` shows one new track whose device has `type_id` `atomik.plucked`. A headless session has no factory folder, so the instrument's preset is not loaded there; the device keeps its default patch.
+2. `session_command` `view.toggle_tab_editor` opens the Tab Editor on the clip. `session_texts` lists the string names, the fret numbers of the notes in drawing order, the instrument label (`Guitar (6 strings)`), the practice bar (`Loop`, `Click`, `Count-in off`, `50%`, `Listen`, `Trainer`) and the fretboard strip. `session_screenshot` shows the staff, the techniques and the strip. Techniques are keys of the `tab` context, so `session_command` `editor.tab_technique` with `arg` `palm_mute` (or `session_key`) works on the selection.
+3. `session_tab` `action` `export` with `format` `musicxml`, `text` and `pdf` (`page` `a4` or `letter`, `diagrams`, `bars_per_line`) writes the files; a PDF has no date, so the same song gives the same bytes. Read the MusicXML back (a second `session_open`, then `import`): the same tracks, notes, tuning and capo come back. `action` `import_sheet` and `export_sheet` do the same for a chord sheet, which the Chord Sheet pane (`view.toggle_chord_sheet`) shows.
+4. `session_bounce` of the imported song has `audio.silent` false; bounce again after `session_command` `practice.speed_down` (the practice bar then reads `95%` in `session_texts`) to see that the practice speed does not touch a bounce (it is `bit_identical`: the speed is a runtime setting of the live engine, never part of the document).
+5. Listen and grade, the fretboard and the Chord Trainer need real audio input or a window: use `view.detach_fretboard` and `window` `fretboard` for the neck, `view.toggle_chord_trainer` and `editor.trainer_*` for the trainer pane (`session_texts` shows the diagrams, the scores and the tempo), and `practice.listen` to see the Listen controls; grading itself is covered by `crates/tab/src/grade.rs`, `crates/dsp/src/listen.rs` and `crates/app/src/app_core_listen_tests.rs`.
+
+The whole path of step 1 to 4 is the automated test `crates/mcp/tests/session_tab.rs`; the readers' limits are `crates/tab/tests/` (`gp_robust.rs`, `musicxml_robust.rs`), and the technique-to-sound contract is `crates/app/src/app_core_tab_sound_tests.rs`. Reading real files from other programs is a hand check: the tests only read files this program wrote.
+
 ## Limits and notes
 
 - **No live audio.** The session opens no stream, so Play moves nothing audible and the engine telemetry of a live run (xruns, meters under load) is not available. The bounce is the sound check; the live twins are covered by the `app_core_*_tests`.

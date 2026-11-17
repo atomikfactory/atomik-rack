@@ -9,6 +9,12 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A guitar tab user guide.** [docs/TAB.md](docs/TAB.md) walks through the instruments and tunings, what the Guitar
+  Pro, MusicXML, ASCII tab and chord sheet readers keep and drop, the three exports and the Latin-1 limit of PDFs, the
+  Tab Editor, the Chord Sheet pane, practice (with the limits of listen and grade), the fretboard, the Chord Trainer,
+  Plucked Strings and the exercises, with a troubleshooting list and a table of the commands. A test checks that table
+  against the command registry and the keyboard reference. The QA server has a guitar tab recipe and a session test
+  that imports a MusicXML tab, opens the Tab Editor, exports PDF and MusicXML, reads the MusicXML back and bounces it.
 - **Tab files play Plucked Strings.** Importing a Guitar Pro or MusicXML file now gives every fretted track a
   Plucked Strings device with the factory patch of its instrument already loaded (Steel Acoustic for a guitar,
   Electric Bass Finger for a bass, Banjo, Ukulele, Mandolin, 12-String, Bouzouki, Dobro, Nylon Classical for a lute),
@@ -45,7 +51,7 @@ may break APIs and the patch and project formats.
   and Down between strings, `Ctrl+Left` and `Ctrl+Right` by bar), `W H Q E S T X` set the note value from a whole
   note to a sixty-fourth, `.` makes it dotted and `Y` a triplet, Delete removes the note, and a typed note is
   heard. A clip with no tab yet is shown fretted automatically (a track named Bass on a bass, Banjo on a banjo)
-  and keeps its tab from the first edit. Edit > Switch Piano Roll and Tab (`edit.toggle_tab_or_piano_roll`)
+  and keeps its tab from the first edit. View > Editors > Switch Piano Roll and Tab (`edit.toggle_tab_or_piano_roll`)
   hands the open clip from one editor to the other. The chord diagram is a reusable widget for any string count.
 - **Editing tools in the Tab Editor.** A technique toolbar in the pane's top bar toggles hammer-on and pull-off
   (on the destination note), slides (legato, shift, in, out), bends (a quarter tone to two tones, with release and

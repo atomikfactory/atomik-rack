@@ -236,6 +236,7 @@ A crate depends only on crates below it; `engine` and `devices` meet only throug
 - [docs/EXTENDING.md](docs/EXTENDING.md): how to write a new device.
 - [docs/TESTING.md](docs/TESTING.md): gates, the allocation guard, determinism tests, goldens and manual tests.
 - [docs/KEYBOARD.md](docs/KEYBOARD.md): the keyboard reference (generated).
+- [docs/TAB.md](docs/TAB.md): the guitar tab user guide (import, edit, print, practice).
 - [ROADMAP.md](ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Checking your changes
