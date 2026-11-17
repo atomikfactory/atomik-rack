@@ -258,7 +258,7 @@ pub enum AppCommand {
     ToggleChordSheet,
     /// View > Editors > Chord Trainer.
     ToggleChordTrainer,
-    /// Edit > Switch Piano Roll and Tab.
+    /// View > Editors > Switch Piano Roll and Tab.
     ToggleTabOrPianoRoll,
     /// View > Editors > Fretboard: the neck under the Tab Editor staff (closes the window when
     /// the fretboard is detached).
