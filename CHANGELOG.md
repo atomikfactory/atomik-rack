@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Tab and chord sheets as PDF.** File > Export > Export Tab as PDF... prints the selected note clip, or the song, as
+  a tab: a header with the title and credits, each track's tuning and capo, a legend of the chords it uses, then
+  systems of bars fitted to the page with fret numbers on one line per string (a banjo's drone, a bass's four, the
+  seven and eight of the extended guitars), the techniques the editor draws (bends with their amount, slides,
+  hammer-ons and pull-offs, harmonics, palm mute and let ring spans, dead and ghost notes, vibrato, tapping),
+  rhythm stems and beams, bar numbers, time signatures, tempo, section markers, chord names with small diagrams
+  above, lyrics below and a page number on every page. Export Chord Sheet as PDF... prints the chords over the lyrics
+  (each chord over the word it belongs to, long lines wrapped), with the sections and comments and a strip of
+  diagrams for guitar; while the Chord Sheet pane is open it prints the sheet as shown there, with its
+  transposition, capo and instrument. The paper is Letter in the United States and Canada and A4 elsewhere. The
+  files use the standard PDF fonts (characters outside Latin-1 print as `?`, and the export says how many) and the
+  same song always gives the same file. The QA server's `session_tab` exports both with `format: pdf`.
 - **A Tab Editor.** View > Editors > Tab Editor shows a note clip as tablature, one line per string for any
   instrument of the catalogue (guitars of 6 to 8 strings, bass, ukulele, banjo with its short drone string,
   mandolin and the rest), with fret numbers on the lines, the rhythm (stems, beams, flags) under the staff, bar

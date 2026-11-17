@@ -45,7 +45,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-vision` | [crates/vision](../crates/vision) | download (tract-tflite, nokhwa on Windows and macOS, linuxvideo on Linux, zune-jpeg, serde, serde_json, thiserror, log, clap, ctrlc) | none | Hand tracking for the webcam controller, pure library with no dependency on the application: the `Camera` and `FrameSource` traits (`SystemCamera`, `FakeCamera`), the capture thread with a one-frame handoff (`Capture`), the palm detector and hand landmark models run in pure Rust (`HandModels`, `HandPipeline`, the detector only while no hand is followed), the list of the two hand model files (their addresses, sizes and SHA-256 are pinned in `download.rs`; the store and the download are in `atomik-download`), the gesture recogniser (`Recogniser`: pinch with hysteresis, ratcheted twist, One Euro smoothing, a dead zone, loss tolerance, two hands) and the `Tracker` worker with its bounded `TrackerEvent` queue. The `vision-demo` tool lists cameras and models and prints or records the hand |
 | `atomik-download` | [crates/download](../crates/download) | none (sha2, ureq, thiserror) | none | The one-time download of model files, shared by the hand models and the stem models: `ModelFile` (name, one fixed HTTPS address, exact size and SHA-256, all constants in the crate that owns the files), `ModelStore` (`status`, `verified_paths` which checks again before a file is loaded, and `download`, which writes under temporary names, checks each file and only then renames them all into place, so a failure, a mismatch or a cancel leaves nothing behind), the `Fetcher` trait with `UreqFetcher` (rustls, HTTPS only, no redirect, a generic User-Agent, nothing about the user or the machine) and `FakeFetcher` for tests |
 | `atomik-stems` | [crates/stems](../crates/stems) | none (thiserror) | none | Stem separation by signal processing, pure and deterministic, with no model and no download: an STFT (`Stft`, 2048 points, hop 512) and `separate`: chunks of 20 s with 1 s of context and a linear crossfade, a harmonic/percussive split by median filters across time and across frequency (soft masks) for the drums, the harmonic part below a 150 Hz crossover for the bass, the centred harmonic part above it for the vocals (a mono input gets the 200 Hz to 5 kHz band at a lower weight) and the residual for the other stem, so the four add up to the mix; a progress callback, a cancel flag and a `StemSink` that receives the finished samples in order |
-| `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror, quick-xml, flate2) | none | Fretted-instrument tablature, pure and headless: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the grader of a played pass (`grade.rs`: verdicts, accuracy, session, latency calibration), the chord trainer's chord sets, timed and listen drills and best scores per chord pair (`trainer.rs`, see 6zb), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`), ASCII tab read and write (`ascii.rs`), the Guitar Pro readers for `.gp3`, `.gp4`, `.gp5`, `.gpx` and `.gp` (`gp/`, see 6t) and MusicXML read and write (`musicxml/`, see 6v) |
+| `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror, quick-xml, flate2, pdf-writer) | none | Fretted-instrument tablature, pure and headless: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the grader of a played pass (`grade.rs`: verdicts, accuracy, session, latency calibration), the chord trainer's chord sets, timed and listen drills and best scores per chord pair (`trainer.rs`, see 6zb), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`), ASCII tab read and write (`ascii.rs`), the Guitar Pro readers for `.gp3`, `.gp4`, `.gp5`, `.gpx` and `.gp` (`gp/`, see 6t) and MusicXML read and write (`musicxml/`, see 6v), and the PDF printouts of a tab and of a chord sheet (`pdf/`, see 6zc) |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk, tab | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`), the tab sidecar of note clips (`tab_data.rs`), its edit operations (`tab_edit.rs`) and the technique renderer (`tab_render.rs`), the song chord sheets (`chord_sheets.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
@@ -5197,7 +5197,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (653) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (655) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -7147,9 +7147,10 @@ and `Shell`, the menu and the dialogs reach it the way they reach MIDI files.
   (chords over lyrics or the bracket form, detected by `parse_sheet`) and adds it to `Song::sheets` with
   `SetSheets`; the title falls back to the file name. File > Export > Export Chord Sheet as Text... writes the first
   sheet as chords over lyrics.
-- **Export** (File > Export > Export Tab as MusicXML..., Export Tab as Text...; `file.export_tab_musicxml`,
-  `file.export_tab_text`). The scope is the selected note clip when there is one (from its own start), else every
-  note track; `AppCore::export_tab_of` takes an explicit `MidiExport` scope (clip, track, song) for the QA server.
+- **Export** (File > Export > Export Tab as MusicXML..., Export Tab as Text..., Export Tab as PDF... (6zc);
+  `file.export_tab_musicxml`, `file.export_tab_text`). The scope is the selected note clip when there is one (from its
+  own start), else every note track; `AppCore::export_tab_of` takes an explicit `MidiExport` scope (clip, track, song)
+  for the QA server.
   `tab_file::score_from_song` reads the played note lanes the way the engine flattens them (loops and overlaps
   resolved, `audible_pieces`), takes the string and fret of each note from the clip's sidecar, and places the notes
   that have no entry with the fretter, on the sidecar's instrument or, for a track without tab, on the one its name
@@ -7517,6 +7518,55 @@ works with sit. Three layers:
   `listen`), `trainer_order` (`sequential`, `random`, `pair`), `trainer_beats` and `trainer_bpm` (`up`, `down`),
   `trainer_pair` (`a`, `b`), `trainer_voicing` (`next`, `prev`) and `trainer_reset_scores`; `AppCore::pane_command`
   routes them to the pane while it is open, whichever pane has the focus.
+
+## 6zc. Tab and chord sheet as PDF
+
+File > Export > Export Tab as PDF... (`file.export_tab_pdf`) and Export Chord Sheet as PDF...
+(`file.export_sheet_pdf`) print what the editors show. The scope of the tab is the one of the other tab exports (the
+selected note clip, else every note track; `AppCore::export_tab_with` takes an explicit one and the options). The sheet
+is the song's first chord sheet, or, while the Chord Sheet pane is open, the sheet the pane shows (its transposition,
+its capo, its instrument for the diagram strip): `AppCore::sheet_pdf_job`. The paper is Letter for a United States,
+Canada, Mexico or similar locale (`PageSize::for_locale` on the system locale the program already reads for the
+language) and A4 elsewhere; there is no paper setting, the QA tool takes `page`.
+
+The printing is `atomik_tab::pdf` ([crates/tab/src/pdf](../crates/tab/src/pdf)), pure and without any UI type, in two
+steps. **Layout** (`layout_tab(&TabScore, &TabPdfOptions)`, `layout_sheet(&ChordSheet, &SheetPdfOptions)`) fills
+`draw::Page`s with drawing operations in points (`Op`: line, rectangle, circle, curve, polygon, text; y counted down);
+tests read that list, and `Layout::texts()` lists every text. **Writing** (`draw::render`, `Layout::to_pdf`) turns the
+pages into a PDF with the `pdf-writer` crate: one content stream per page, deflated, the catalog, the page tree and
+the document information (title, author, creator), nothing else.
+
+- **Tab layout** (`pdf/tab.rs`). A header (title, subtitle, artist, credits, copyright), then for every fretted
+  track (percussion tracks are left out with a warning) a heading with the instrument, tuning (bottom line first),
+  capo and the banjo drone's start fret, the legend of the chords the track uses (the pinned diagrams, else the best
+  voicing the generator finds for the chord names) and the systems. A bar is as wide as its closest pair of notes
+  needs (with a floor), bars are packed greedily and each system is stretched to the width (the last one only when it
+  is more than half full); `bars_per_line` fixes the count instead. A system has, from the top: section markers, the
+  tempo, the pinned diagrams (or the chord name alone when two are too close), the chord names (pushed apart when they
+  touch), the `let ring` and `P.M.` spans, a strip for bend arrows (with their amount), tapping, harmonics, vibrato and
+  tremolo marks, the staff (one line per string: 4 for a bass, 5 for a banjo, 7 and 8 for the extended guitars), the
+  rhythm stems, flags, beams, dots and triplet digits under it, and the lyrics. Fret numbers cut the line; dead notes
+  print `x`, ghost and tied notes `(5)`, harmonics `<12>`; hammer-ons, pull-offs and ties are arcs, slides are slanted
+  lines. A bar number starts every system and a time signature every meter change. Systems never split across a page;
+  every page has a footer with the title and `n / total`.
+- **Chord sheet layout** (`pdf/sheet.rs`). A lyric line is cut into atoms (a word with its trailing space, or the end
+  of a word after a chord); a chord belongs to the atom that starts at its anchor and is drawn over its first
+  character. A chord that would touch the one before pushes its atom, and the lyric after it, to the right; a full row
+  wraps at the next atom with the chord kept over the same word. Sections, comments and tab blocks (set in Courier so
+  the columns line up) are kept; a heading stays with the lines after it. The options transpose, change the capo
+  (rewriting the chords as the shapes, as the pane does) and choose the spelling; the diagram strip lists the chords
+  the sheet uses for one instrument of the catalogue.
+- **Fonts.** Helvetica, Helvetica-Bold and Courier, the standard fonts of the format: nothing is embedded, so a
+  character outside Latin-1 and the usual typographic punctuation prints as `?` and the export says how many (the
+  sharp and flat signs print as `#` and `b`). Widths come from the published metrics (`pdf/font.rs`; accented letters
+  are estimated).
+- **Determinism.** No date, no random id, numbers rounded to a hundredth of a point, a fixed deflate level on the
+  pure-Rust backend: the same input gives the same bytes. The golden files `crates/tab/tests/golden/*.pdf` keep the
+  plain (uncompressed) form of a guitar tab with techniques, a banjo tab and a chord sheet with a diagram strip
+  (`.gitattributes` marks `*.pdf` binary); regenerate with `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-tab --test
+  pdf`.
+- The QA server's `session_tab` has `format: pdf` for `export` and `export_sheet` with `page`, `diagrams` and
+  `bars_per_line`. The registry ids `file.export_tab_pdf` and `file.export_sheet_pdf` have no key.
 
 ## 7. The UI crate
 
