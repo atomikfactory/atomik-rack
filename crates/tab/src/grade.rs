@@ -25,8 +25,9 @@
 //! milliseconds ([`DEFAULT_WINDOW_MS`]) and turned to ticks with the tick rate of the pass
 //! ([`Params::from_ms`]): at half speed the same window spans half as many song ticks.
 //!
-//! **Calibration** ([`calibration_offset_ms`]): the median of how far the played clicks lie from
-//! the beats, the manual offset that centres the instrument's latency.
+//! **Calibration** ([`calibration_offset_ms`]): the median of how far the notes played along a click
+//! lie after the beats; added to the manual offset it centres the setup's latency (a positive
+//! offset places played notes earlier).
 
 /// The default half-width of the window, milliseconds of wall-clock time.
 pub const DEFAULT_WINDOW_MS: f64 = 80.0;
@@ -419,10 +420,10 @@ pub fn beat_offsets(ticks: &[f64], beat_ticks: f64) -> Vec<f64> {
         .collect()
 }
 
-/// The manual offset, milliseconds, that centres a player who plays along a click: minus the
-/// median of how far the played notes lie after the beats (`offsets_ms`, positive = late). Values
-/// further than 250 ms from the beat are not taken as playing along. `None` with fewer than
-/// three usable values.
+/// The correction, milliseconds, to add to the manual offset after a player played along a click:
+/// the median of how far the played notes lie after the beats (`offsets_ms`, positive = late, the
+/// notes already placed with the current offset). Values further than 250 ms from the beat are not
+/// taken as playing along. `None` with fewer than three usable values.
 pub fn calibration_offset_ms(offsets_ms: &[f64]) -> Option<f64> {
     let mut v: Vec<f64> = offsets_ms
         .iter()
@@ -439,7 +440,7 @@ pub fn calibration_offset_ms(offsets_ms: &[f64]) -> Option<f64> {
     } else {
         (v[mid - 1] + v[mid]) / 2.0
     };
-    Some(-median)
+    Some(median)
 }
 
 #[cfg(test)]

@@ -216,18 +216,17 @@ fn the_session_keeps_history_streak_and_best() {
 }
 
 #[test]
-fn calibration_is_minus_the_median_lateness() {
+fn calibration_is_the_median_lateness() {
     // A player 40 ms late with two stray hits.
     let offsets = [38.0, 41.0, 44.0, 40.0, 39.0, 210.0, 500.0];
     let off = calibration_offset_ms(&offsets).unwrap();
-    assert!((off + 40.5).abs() < 1e-9, "{off}");
+    assert!((off - 40.5).abs() < 1e-9, "{off}");
     assert_eq!(calibration_offset_ms(&[10.0, 12.0]), None);
     assert_eq!(calibration_offset_ms(&[f64::NAN, 1.0, 2.0]), None);
     // Even count: the mean of the two middle values.
     let even = calibration_offset_ms(&[-10.0, -20.0, -30.0, -40.0]).unwrap();
-    assert!((even - 25.0).abs() < 1e-9);
+    assert!((even + 25.0).abs() < 1e-9);
 }
-
 #[test]
 fn offsets_to_the_nearest_beat() {
     let o = beat_offsets(&[10.0, 470.0, 1000.0, 1450.0], 480.0);
