@@ -1132,6 +1132,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core.console_mut().set_meter_mode(self.ui.meter_mode);
         self.core.set_morph_seconds(self.ui.morph_seconds);
         self.core.set_listen_offset_ms(self.ui.listen_offset_ms);
+        self.core.set_trainer_scores(self.ui.trainer_scores());
         {
             let arrangement = self.core.arrangement_mut();
             arrangement.set_tempo_lane(self.ui.show_tempo_lane);
@@ -4518,6 +4519,10 @@ impl<B: AudioBackend> Shell<B> {
             Pane::ChordSheet if self.core.chord_sheet().is_text_owner() => {
                 ContextStack::new(&[Context::Text])
             }
+            Pane::ChordTrainer if self.core.chord_trainer().is_text_owner() => {
+                ContextStack::new(&[Context::Text])
+            }
+            Pane::ChordTrainer => ContextStack::global(),
             Pane::ChordSheet => ContextStack::global(),
             Pane::AudioEditor if self.core.audio_editor().is_text_owner() => {
                 ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])
@@ -4607,6 +4612,7 @@ impl<B: AudioBackend> Shell<B> {
             piano_roll: self.core.piano_roll_open(),
             tab_editor: self.core.tab_editor_open(),
             chord_sheet: self.core.chord_sheet_open(),
+            chord_trainer: self.core.chord_trainer_open(),
             sample_editor: self.core.sample_editor_device().is_some(),
             step_editor: self.core.step_editor_device().is_some(),
             slice_editor: self.core.slice_editor_device().is_some(),
@@ -4891,6 +4897,7 @@ impl<B: AudioBackend> Shell<B> {
             self.core.piano_roll_mut().set_bounds(song);
             self.core.tab_editor_mut().set_bounds(song);
             self.core.chord_sheet_mut().set_bounds(song);
+            self.core.chord_trainer_mut().set_bounds(song);
             self.core.sample_editor_mut().set_bounds(song);
             self.core.step_editor_mut().set_bounds(song);
             self.core.slice_editor_mut().set_bounds(song);
@@ -5162,6 +5169,8 @@ impl<B: AudioBackend> Shell<B> {
             Pane::ContainerEditor
         } else if self.core.plugin_params_device().is_some() {
             Pane::PluginParams
+        } else if self.core.chord_trainer_open() {
+            Pane::ChordTrainer
         } else if self.core.chord_sheet_open() {
             Pane::ChordSheet
         } else if self.core.tab_editor_open() {
@@ -5199,6 +5208,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::PianoRoll
             | Pane::TabEditor
             | Pane::ChordSheet
+            | Pane::ChordTrainer
             | Pane::Console
             | Pane::SampleEditor
             | Pane::StepEditor
@@ -5215,6 +5225,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::PianoRoll
             | Pane::TabEditor
             | Pane::ChordSheet
+            | Pane::ChordTrainer
             | Pane::Console
             | Pane::SampleEditor
             | Pane::StepEditor
@@ -5254,6 +5265,9 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .chord_sheet_mut()
             .set_focused(pane == Pane::ChordSheet);
+        self.core
+            .chord_trainer_mut()
+            .set_focused(pane == Pane::ChordTrainer);
         self.core
             .sample_editor_mut()
             .set_focused(pane == Pane::SampleEditor);
@@ -9388,6 +9402,21 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 Vec::new()
             }
+            AppCommand::ToggleChordTrainer => {
+                if self.core.chord_trainer_open() {
+                    self.core.close_chord_trainer();
+                } else {
+                    self.core.open_chord_trainer();
+                    if !self.ui.show_song || self.lower_is_console() {
+                        self.ui.show_song = true;
+                        self.ui.show_console = false;
+                        self.console_changed();
+                    }
+                    self.reveal_lower_pane();
+                    self.set_focus(Pane::ChordTrainer);
+                }
+                Vec::new()
+            }
             AppCommand::ToggleTabOrPianoRoll => {
                 if self.core.toggle_tab_or_piano_roll() {
                     if !self.ui.show_song || self.lower_is_console() {
@@ -10713,6 +10742,10 @@ impl<B: AudioBackend> Shell<B> {
             self.ui.listen_offset_ms = ms;
             self.ui_changed();
         }
+        if let Some(scores) = self.core.take_trainer_scores_change() {
+            self.ui.set_trainer_scores(&scores);
+            self.ui_changed();
+        }
         self.run_camera_commands();
         self.sync_camera_ui();
         self.sync_stems_ui();
@@ -11756,6 +11789,7 @@ impl<B: AudioBackend> Shell<B> {
                     Pane::PianoRoll => self.core.piano_roll().needs_repaint(),
                     Pane::TabEditor => self.core.tab_editor().needs_repaint(),
                     Pane::ChordSheet => self.core.chord_sheet().needs_repaint(),
+                    Pane::ChordTrainer => self.core.chord_trainer().needs_repaint(),
                     Pane::SampleEditor => self.core.sample_editor().needs_repaint(),
                     Pane::StepEditor => self.core.step_editor().needs_repaint(),
                     Pane::SliceEditor => self.core.slice_editor().needs_repaint(),

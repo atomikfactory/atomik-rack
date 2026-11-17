@@ -252,6 +252,8 @@ pub enum AppCommand {
     ToggleTabEditor,
     /// View > Editors > Chord Sheet.
     ToggleChordSheet,
+    /// View > Editors > Chord Trainer.
+    ToggleChordTrainer,
     /// Edit > Switch Piano Roll and Tab.
     ToggleTabOrPianoRoll,
     /// View > Editors > Fretboard: the neck under the Tab Editor staff (closes the window when
@@ -1044,6 +1046,7 @@ impl AppCommand {
             AppCommand::ToggleStepEditor => ("view.toggle_step_editor", None),
             AppCommand::ToggleTabEditor => ("view.toggle_tab_editor", None),
             AppCommand::ToggleChordSheet => ("view.toggle_chord_sheet", None),
+            AppCommand::ToggleChordTrainer => ("view.toggle_chord_trainer", None),
             AppCommand::ToggleTabOrPianoRoll => ("edit.toggle_tab_or_piano_roll", None),
             AppCommand::ToggleFretboard => ("view.toggle_fretboard", None),
             AppCommand::DetachFretboard => ("view.detach_fretboard", None),
@@ -1514,6 +1517,7 @@ impl AppCommand {
             ("view.toggle_step_editor", None) => AppCommand::ToggleStepEditor,
             ("view.toggle_tab_editor", None) => AppCommand::ToggleTabEditor,
             ("view.toggle_chord_sheet", None) => AppCommand::ToggleChordSheet,
+            ("view.toggle_chord_trainer", None) => AppCommand::ToggleChordTrainer,
             ("edit.toggle_tab_or_piano_roll", None) => AppCommand::ToggleTabOrPianoRoll,
             ("view.toggle_fretboard", None) => AppCommand::ToggleFretboard,
             ("view.detach_fretboard", None) => AppCommand::DetachFretboard,
@@ -2394,6 +2398,8 @@ pub struct MenuState {
     pub tab_editor: bool,
     /// Whether the chord sheet pane is open.
     pub chord_sheet: bool,
+    /// Whether the chord trainer pane is open.
+    pub chord_trainer: bool,
     /// The slice editor is open.
     pub slice_editor: bool,
     /// Playing.
@@ -3612,6 +3618,11 @@ fn menus_in_english(
                             "Chord Sheet",
                             AppCommand::ToggleChordSheet,
                             state.chord_sheet,
+                        ),
+                        check(
+                            "Chord Trainer",
+                            AppCommand::ToggleChordTrainer,
+                            state.chord_trainer,
                         ),
                         check("Fretboard", AppCommand::ToggleFretboard, state.fretboard),
                         check(
@@ -5040,6 +5051,7 @@ mod tests {
             step_editor: false,
             tab_editor: false,
             chord_sheet: false,
+            chord_trainer: false,
             slice_editor: false,
             playing: false,
             recording: false,
@@ -5225,6 +5237,7 @@ mod tests {
             AppCommand::ToggleStepEditor,
             AppCommand::ToggleTabEditor,
             AppCommand::ToggleChordSheet,
+            AppCommand::ToggleChordTrainer,
             AppCommand::ToggleTabOrPianoRoll,
             AppCommand::ToggleFretboard,
             AppCommand::DetachFretboard,
@@ -6277,6 +6290,7 @@ mod tests {
                 step_editor: false,
                 tab_editor: false,
                 chord_sheet: false,
+                chord_trainer: false,
                 slice_editor: false,
                 playing: true,
                 recording: false,

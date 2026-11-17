@@ -3484,6 +3484,14 @@ Chord names separated by spaces or commas. Enter applies, Esc cancels => Noms d'
 Not chords: {words} => Pas des accords : {words}
 Skip works while a listen drill runs => Passer ne marche que pendant un exercice d'écoute
 No fingering found for this chord => Aucun doigté trouvé pour cet accord
+key => tonalité
+list => liste
+listen => écoute
+pair => paire
+prev => précédent
+sequential => dans l'ordre
+timed => chronométré
+verified => vérifié
 
 # Tooltips: chord trainer
 Capo one fret lower => Capodastre une case plus bas

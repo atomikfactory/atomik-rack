@@ -248,6 +248,7 @@ pub struct ChordTrainerView {
     // Running.
     drill: Option<Drill>,
     pending_start: bool,
+    session: u64,
     now: f64,
     seed: u64,
     events: Vec<DrillEvent>,
@@ -289,6 +290,7 @@ impl ChordTrainerView {
             picker: false,
             drill: None,
             pending_start: false,
+            session: 0,
             now: 0.0,
             seed: 0x9E37_79B9_7F4A_7C15,
             events: Vec::new(),
@@ -341,6 +343,11 @@ impl ChordTrainerView {
     /// Whether the keyboard goes to a text field (the list editor) or the instrument list.
     pub fn is_text_owner(&self) -> bool {
         self.picker || self.list_edit.is_some()
+    }
+
+    /// Whether the clock must keep ticking: a drill runs, or a start waits for the next frame.
+    pub fn wants_frames(&self) -> bool {
+        self.running() || self.pending_start
     }
 
     /// Whether the view wants another frame: while a drill runs (its timer and beats move), or
@@ -494,6 +501,12 @@ impl ChordTrainerView {
     /// Whether a drill is running.
     pub fn running(&self) -> bool {
         self.drill.as_ref().is_some_and(Drill::running)
+    }
+
+    /// Counts the drills started (a restart is a new one): the host tells a click it started for
+    /// an old session from the one that runs now.
+    pub fn session(&self) -> u64 {
+        self.session
     }
 
     /// Whether the running drill sounds a click (the timed modes).
@@ -780,6 +793,7 @@ impl ChordTrainerView {
         let ev = d.advance(now);
         self.events.extend(ev);
         self.drill = Some(d);
+        self.session += 1;
         self.status = None;
         self.repaint = true;
     }

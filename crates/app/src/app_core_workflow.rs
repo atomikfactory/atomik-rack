@@ -22,6 +22,7 @@ impl<S: EngineSink> AppCore<S> {
         self.tab_editor.set_theme(theme.clone());
         self.fretboard.set_theme(theme.clone());
         self.chord_sheet.set_theme(theme.clone());
+        self.chord_trainer.set_theme(theme.clone());
         self.sample_editor.set_theme(theme.clone());
         self.step_editor.set_theme(theme.clone());
         self.slice_editor.set_theme(theme.clone());
@@ -60,7 +61,9 @@ impl<S: EngineSink> AppCore<S> {
     ) -> Option<Vec<UiAction>> {
         // The chord sheet's own commands reach it whichever pane has the focus (the command
         // palette and the menus do not move the focus).
-        let pane = if id.starts_with("editor.sheet_") && self.sheet_open {
+        let pane = if id.starts_with("editor.trainer_") && self.trainer_open {
+            Pane::ChordTrainer
+        } else if id.starts_with("editor.sheet_") && self.sheet_open {
             Pane::ChordSheet
         } else {
             pane
@@ -81,6 +84,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PianoRoll => self.piano_roll.command(id, arg, doc, &self.registry),
             Pane::TabEditor => self.tab_editor.command(id, arg, doc, &self.registry),
             Pane::ChordSheet => self.chord_sheet.command(id, arg, doc, &self.registry),
+            Pane::ChordTrainer => self.chord_trainer.command(id, arg, doc, &self.registry),
             Pane::StepEditor => self.step_editor.command(id, arg, doc, &self.registry),
             Pane::SampleEditor => self.sample_editor.command(id, arg, doc, &self.registry),
             Pane::SliceEditor => self.slice_editor.command(id, arg, doc, &self.registry),
@@ -254,6 +258,7 @@ impl<S: EngineSink> AppCore<S> {
         self.snapshot_morph_tick(now_seconds);
         self.macro_glide_tick(now_seconds);
         self.practice_tick();
+        self.chord_trainer_frame(now_seconds);
         for action in self.transport_bar.tick(now_seconds) {
             self.handle_action(action);
         }
@@ -356,7 +361,9 @@ impl<S: EngineSink> AppCore<S> {
     /// Closes the editor that shows in place of the arrangement (piano roll, sample, step,
     /// slice, sequencer, container or plugin parameter pane); false when none is open.
     pub fn close_open_editor(&mut self) -> bool {
-        if self.chord_sheet_open() {
+        if self.chord_trainer_open() {
+            self.close_chord_trainer();
+        } else if self.chord_sheet_open() {
             self.close_chord_sheet();
         } else if self.tab_editor_open() {
             self.close_tab_editor();

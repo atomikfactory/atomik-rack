@@ -107,6 +107,7 @@ pub mod text_clipboard;
 pub mod themes;
 pub mod themes_tab;
 pub mod tonal_targets;
+pub mod trainer_click;
 pub mod transition_choice;
 pub mod translate;
 pub mod ui_state;

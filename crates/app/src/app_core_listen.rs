@@ -343,7 +343,8 @@ impl<S: EngineSink> AppCore<S> {
     /// Once a frame while listening: notes the transport, drains the tap into the tracker and
     /// grades the passes that are over (module docs). `state` is the engine's transport state.
     pub(super) fn feed_listen(&mut self, state: &TransportState) {
-        if !self.listen.on || !self.ensure_listen_tap() {
+        let trainer = self.trainer_wants_input();
+        if !(self.listen.on || trainer) || !self.ensure_listen_tap() {
             return;
         }
         let view = TransportView {
@@ -372,7 +373,12 @@ impl<S: EngineSink> AppCore<S> {
             }
         }
         self.listen.planes = planes;
-        self.listen_consume(&view, chunks);
+        if trainer {
+            self.trainer_consume(&chunks);
+        }
+        if self.listen.on {
+            self.listen_consume(&view, chunks);
+        }
     }
 
     /// The part of [`Self::feed_listen`] after the tap: the transport view and the mono input

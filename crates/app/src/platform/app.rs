@@ -2203,6 +2203,7 @@ impl ApplicationHandler for App {
                     || s.context_menu_pending()
                     || s.tooltip_pending()
                     || s.core().view().is_auto_scrolling()
+                    || s.core().chord_trainer_active()
                     || s.core().view().unfold_pending()
                     || s.core().view().pad_lights_active()
                     || s.core().snapshot_morphing()

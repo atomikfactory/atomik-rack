@@ -78,6 +78,18 @@ fn sanitized_geoms(
         .collect()
 }
 
+/// The best a chord pair has done in the chord trainer (see [`UiState::chord_trainer_scores`]).
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TrainerScore {
+    /// The most chord changes per minute reached with a clean hit rate.
+    pub cpm: f32,
+    /// The best hit rate, 0 to 1.
+    pub hit_rate: f32,
+    /// The drills that counted.
+    pub sessions: u32,
+}
+
 /// Window state (see the module docs).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -165,6 +177,10 @@ pub struct UiState {
     /// The manual latency offset of listen and grade, milliseconds (positive places the played
     /// notes earlier). An absent key means 0. Set by the calibration or the offset command.
     pub listen_offset_ms: i32,
+    /// The chord trainer's best scores per chord pair (the pair is `Am|C`, the names sorted). They
+    /// are the user's, never part of a project. An absent key means no scores.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub chord_trainer_scores: BTreeMap<String, TrainerScore>,
     /// The mode the audio clip editor opens in (`"overview"` or `"slice"`). An absent key means
     /// overview.
     pub audio_editor_mode: AudioMode,
@@ -242,6 +258,7 @@ impl Default for UiState {
             fretboard_labels: atomik_ui::FretLabels::Notes,
             fretboard_voicing: false,
             listen_offset_ms: 0,
+            chord_trainer_scores: BTreeMap::new(),
             audio_editor_mode: AudioMode::Overview,
             fade_unit: FadeUnit::Ms,
             link_faders: false,
@@ -260,6 +277,37 @@ impl Default for UiState {
 }
 
 impl UiState {
+    /// The chord trainer's saved best scores (values out of range are brought into it).
+    pub fn trainer_scores(&self) -> atomik_tab::trainer::Scores {
+        atomik_tab::trainer::Scores::from_rows(self.chord_trainer_scores.iter().map(|(k, s)| {
+            (
+                k.clone(),
+                atomik_tab::trainer::Best {
+                    cpm: s.cpm,
+                    hit_rate: s.hit_rate,
+                    sessions: s.sessions,
+                },
+            )
+        }))
+    }
+
+    /// Keeps the chord trainer's best scores.
+    pub fn set_trainer_scores(&mut self, scores: &atomik_tab::trainer::Scores) {
+        self.chord_trainer_scores = scores
+            .rows()
+            .map(|(k, b)| {
+                (
+                    k.to_owned(),
+                    TrainerScore {
+                        cpm: b.cpm,
+                        hit_rate: b.hit_rate,
+                        sessions: b.sessions,
+                    },
+                )
+            })
+            .collect();
+    }
+
     /// Reads `path`; the defaults when it is missing or invalid (see [`Self::load_checked`]).
     pub fn load(path: &Path) -> Self {
         Self::load_checked(path).0

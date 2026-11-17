@@ -27,6 +27,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Opens the chord sheet pane. The other editors close.
     pub fn open_chord_sheet(&mut self) {
+        self.close_chord_trainer();
         self.close_piano_roll();
         self.close_sample_editor();
         self.close_step_editor();

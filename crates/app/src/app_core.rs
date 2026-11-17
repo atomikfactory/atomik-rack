@@ -25,10 +25,10 @@ use atomik_model::{
 use atomik_render::project::song_input_live;
 use atomik_ui::kurbo::Point;
 use atomik_ui::{
-    ArrangementView, AudioEditorView, Canvas, ChannelMeters, ChordSheetView, ConsoleView,
-    ContainerEditorView, Help, PianoRollView, PluginParamsView, RackView, SampleEditorView,
-    SeqEditorView, SliceEditorView, StepEditorView, TabEditorView, Theme, TransportAction,
-    TransportBar, UiAction, UiEvent,
+    ArrangementView, AudioEditorView, Canvas, ChannelMeters, ChordSheetView, ChordTrainerView,
+    ConsoleView, ContainerEditorView, Help, PianoRollView, PluginParamsView, RackView,
+    SampleEditorView, SeqEditorView, SliceEditorView, StepEditorView, TabEditorView, Theme,
+    TransportAction, TransportBar, UiAction, UiEvent,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -80,6 +80,8 @@ pub enum Pane {
     TabEditor,
     /// The chord sheet pane: the song's chords-over-lyrics sheets (in place of the arrangement).
     ChordSheet,
+    /// The chord trainer pane: drills for changing between chords (in place of the arrangement).
+    ChordTrainer,
     /// The console (in place of the arrangement, or maximised).
     Console,
     /// The sample editor (in place of the arrangement).
@@ -298,6 +300,11 @@ pub struct AppCore<S: EngineSink> {
     chord_sheet: ChordSheetView,
     /// Whether the chord sheet pane is open.
     sheet_open: bool,
+    chord_trainer: ChordTrainerView,
+    /// Whether the chord trainer pane is open.
+    trainer_open: bool,
+    /// The click and the listener of the chord trainer.
+    trainer_audio: trainer_ops::TrainerAudio,
     sample_editor: SampleEditorView,
     step_editor: StepEditorView,
     slice_editor: SliceEditorView,
@@ -659,6 +666,9 @@ impl<S: EngineSink> AppCore<S> {
             tab_clip: None,
             chord_sheet: ChordSheetView::new(theme.clone()),
             sheet_open: false,
+            chord_trainer: ChordTrainerView::new(theme.clone()),
+            trainer_open: false,
+            trainer_audio: trainer_ops::TrainerAudio::default(),
             sample_editor: SampleEditorView::new(theme.clone()),
             step_editor: StepEditorView::new(theme.clone()),
             slice_editor: SliceEditorView::new(theme.clone()),
@@ -1378,6 +1388,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PianoRoll => self.piano_roll.help_at(pos),
             Pane::TabEditor => self.tab_editor.help_at(pos),
             Pane::ChordSheet => self.chord_sheet.help_at(pos),
+            Pane::ChordTrainer => self.chord_trainer.help_at(pos),
             Pane::Console => self.console.help_at(pos),
             Pane::SampleEditor => self.sample_editor.help_at(pos),
             Pane::StepEditor => self.step_editor.help_at(pos),
@@ -1430,6 +1441,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.chord_sheet.set_doc_revision(None);
                 actions
             }
+            Pane::ChordTrainer => self.chord_trainer.handle(event, doc, &self.registry),
             Pane::Console => self.console.handle(event, doc, &self.registry),
             Pane::SampleEditor => self.sample_editor.handle(event, doc, &self.registry),
             Pane::StepEditor => self.step_editor.handle(event, doc, &self.registry),
@@ -1577,6 +1589,7 @@ impl<S: EngineSink> AppCore<S> {
         self.piano_roll.sync_at(doc, &self.registry, revision);
         self.tab_editor.sync_at(doc, &self.registry, revision);
         self.chord_sheet.sync_at(doc, &self.registry, revision);
+        self.chord_trainer.sync_at(doc, &self.registry, revision);
         self.sync_roll_labels();
         self.sync_song_key_filter();
         self.sync_fretboard();
@@ -3365,6 +3378,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.chord_sheet.paint(canvas, doc, &self.registry);
                 self.chord_sheet.set_doc_revision(None);
             }
+            Pane::ChordTrainer => self.chord_trainer.paint(canvas, doc, &self.registry),
             Pane::Console => self.console.paint(canvas, doc, &self.registry),
             Pane::SampleEditor => self.sample_editor.paint(canvas, doc, &self.registry),
             Pane::StepEditor => self.step_editor.paint(canvas, doc, &self.registry),
@@ -3434,6 +3448,7 @@ impl<S: EngineSink> AppCore<S> {
         if is_notes {
             self.close_tab_editor();
             self.close_chord_sheet();
+            self.close_chord_trainer();
             self.close_sample_editor();
             self.close_step_editor();
             self.close_slice_editor();
@@ -3467,6 +3482,7 @@ impl<S: EngineSink> AppCore<S> {
         self.close_seq_editor();
         self.close_tab_editor();
         self.close_chord_sheet();
+        self.close_chord_trainer();
         self.close_container_editor();
         self.release_piano_roll_audition();
         self.piano_roll.open_track(device);
@@ -4433,6 +4449,9 @@ mod listen_ops;
 #[path = "app_core_chord_sheet.rs"]
 mod chord_sheet_ops;
 
+#[path = "app_core_chord_trainer.rs"]
+mod trainer_ops;
+
 #[path = "app_core_create.rs"]
 mod create_ops;
 
@@ -4764,6 +4783,10 @@ mod listen_tests;
 #[cfg(test)]
 #[path = "app_core_chord_sheet_tests.rs"]
 mod chord_sheet_tests;
+
+#[cfg(test)]
+#[path = "app_core_chord_trainer_tests.rs"]
+mod chord_trainer_tests;
 
 #[cfg(test)]
 #[path = "app_core_console_tests.rs"]
