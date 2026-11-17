@@ -439,6 +439,7 @@ dependencies = [
  "atomik-core",
  "atomik-device-sdk",
  "atomik-devices",
+ "atomik-tab",
  "atomik-testkit",
  "criterion",
  "proptest",

@@ -127,7 +127,29 @@ fn note_name(text: &str) -> Option<(u8, &str)> {
     Some(((base + shift).rem_euclid(12) as u8, rest))
 }
 
+/// The stamp quality the richer grammar of [`atomik_tab::ChordSymbol`] gives `head` (a root and a
+/// quality, no bass), when one of the 21 stamps has exactly its tones. The grammar there needs an
+/// upper-case root, so the first letter is raised first and spaces are dropped.
+fn rich_quality(head: &str, root: u8) -> Option<ChordKind> {
+    let mut chars = head.chars().filter(|c| !c.is_whitespace());
+    let first = chars.next()?.to_ascii_uppercase();
+    let text: String = std::iter::once(first).chain(chars).collect();
+    let parsed = atomik_tab::ChordSymbol::parse(&text).ok()?;
+    if parsed.root_pc() != root || parsed.bass.is_some() {
+        return None;
+    }
+    let tones = parsed.stamp_intervals();
+    ChordKind::ALL
+        .into_iter()
+        .find(|k| k.intervals() == tones.as_slice())
+}
+
 /// Reads a chord symbol such as `Am7`, `F#m7b5`, `Bb`, `C/G` or `Dsus4/A`.
+///
+/// The spelling is read by the chord grammar of [`atomik_tab::chord`] (one grammar for the whole
+/// app) and mapped to the stamp quality that has the same tones; a spelling that grammar does not
+/// know but this module's table does (`CMAJ7`, `Cadd2`, `Coct`) is still read, and a chord no stamp
+/// can express (`C7#9`) is an unknown quality.
 pub fn parse_chord(text: &str) -> Result<ChordSymbol, ChordSymbolError> {
     let text = text.trim();
     if text.is_empty() {
@@ -139,7 +161,8 @@ pub fn parse_chord(text: &str) -> Result<ChordSymbol, ChordSymbolError> {
     };
     let (root, quality_text) =
         note_name(head).ok_or_else(|| ChordSymbolError::BadRoot(head.to_owned()))?;
-    let quality = parse_quality(quality_text)
+    let quality = rich_quality(head, root)
+        .or_else(|| parse_quality(quality_text))
         .ok_or_else(|| ChordSymbolError::UnknownQuality(quality_text.trim().to_owned()))?;
     let bass = match bass_text {
         None => None,
@@ -155,14 +178,24 @@ pub fn parse_chord(text: &str) -> Result<ChordSymbol, ChordSymbolError> {
     })
 }
 
-/// The canonical symbol of a chord: `C`, `Am7`, `F#m7b5`, `C/G`.
+/// The canonical symbol of a chord: `C`, `Am7`, `F#m7b5`, `C/G` (sharps, written by
+/// [`atomik_tab::ChordSymbol::name`]).
 pub fn format_chord(root: u8, quality: ChordKind, bass: Option<u8>) -> String {
-    let mut s = format!("{}{}", pitch_name(root), quality_suffix(quality));
-    if let Some(b) = bass.filter(|b| b % 12 != root % 12) {
-        s.push('/');
-        s.push_str(pitch_name(b));
+    let root = root % 12;
+    let suffix = quality_suffix(quality);
+    let bass = bass.map(|b| b % 12).filter(|b| *b != root);
+    let sharp = |pc: u8| atomik_tab::Note::from_pitch_class(pc, false);
+    match atomik_tab::ChordSymbol::parse(&format!("{}{suffix}", pitch_name(root))) {
+        Ok(mut chord) => {
+            chord.bass = bass.map(sharp);
+            chord.name()
+        }
+        // The stamp suffixes all read in the richer grammar; this is the plain spelling anyway.
+        Err(_) => match bass {
+            Some(b) => format!("{}{suffix}/{}", pitch_name(root), pitch_name(b)),
+            None => format!("{}{suffix}", pitch_name(root)),
+        },
     }
-    s
 }
 
 #[cfg(test)]
@@ -325,5 +358,41 @@ mod tests {
         assert_eq!(format_chord(0, ChordKind::Major, Some(7)), "C/G");
         assert_eq!(format_chord(0, ChordKind::Major, Some(0)), "C");
         assert_eq!(format_chord(10, ChordKind::MajorSeventh, None), "A#maj7");
+    }
+}
+
+#[cfg(test)]
+mod unified_grammar_tests {
+    use super::*;
+
+    #[test]
+    fn the_reader_and_the_writer_use_the_tab_grammar() {
+        // Spellings the richer grammar knows land on the stamp with the same tones.
+        assert_eq!(
+            parse_chord("Cm7(b5)").map(|c| c.quality),
+            Ok(ChordKind::HalfDim)
+        );
+        assert_eq!(
+            parse_chord("Cmaj7").map(|c| c.quality),
+            Ok(ChordKind::MajorSeventh)
+        );
+        assert_eq!(parse_chord("c7").map(|c| c.quality), Ok(ChordKind::Seventh));
+        // A chord no stamp can express is an unknown quality, as before.
+        assert!(matches!(
+            parse_chord("C7b9"),
+            Err(ChordSymbolError::UnknownQuality(_))
+        ));
+        // The writer is the tab grammar's name: it reads back there, spelled the same.
+        // (the bare octave has no symbol there and falls back to its own spelling)
+        for kind in ChordKind::ALL
+            .into_iter()
+            .filter(|k| *k != ChordKind::Octave)
+        {
+            for root in 0..12 {
+                let text = format_chord(root, kind, Some((root + 5) % 12));
+                let tab = atomik_tab::ChordSymbol::parse(&text).expect("the tab grammar reads it");
+                assert_eq!(tab.name(), text);
+            }
+        }
     }
 }
