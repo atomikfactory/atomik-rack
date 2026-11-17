@@ -5197,7 +5197,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (615) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (625) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -7343,6 +7343,50 @@ change of the stored sheets is one `SongCommand::SetSheets` (one undo step). Vie
 - **Not done.** No per-line bar-anchor editor (links come from an import of a score with lyrics, or a later action), no
   "send chords to the chord lane", the instrument and display choices are not saved with the project, and the tab block
   of a sheet is shown, not edited as tab.
+
+## 6y. The practice bar and the practice speed
+
+One row of controls under the toolbar of the Tab Editor and the Chord Sheet panes
+([`PracticeBar`](../crates/ui/src/practice_bar.rs), shared; `PRACTICE_BAR_HEIGHT` 26 px). The bar holds no state: the
+app owns the practice session (`practice.rs`, `app_core_practice.rs`) and pushes a `PracticeState` into both views at
+every transport refresh (`show_transport`); the bar answers with `UiAction::RunCommand` of the `practice.*` commands
+(the metronome button is `UiAction::Transport(ToggleMetronome)`), so every control is also a command with a menu
+entry (Transport > Practice) and a palette entry. Controls left to right: Loop (the selection), Click, Count-in
+(a click cycles off, 1, 2 bars), the speed chips 50/75/100 %, slower and faster, a slider (25 to 150 % in steps of 5,
+dragging emits each new value once) with its readout, and the speed trainer (switch, pass counter and, while it is on,
+four values with arrows). A control that does not fit the pane width is left out from the right. The tab editor
+shifts its ruler, staff and chord row down by the bar; the chord sheet adds it to `Frame` (`practice`, none while the
+sheet is edited as text) and the strip and body start under it.
+
+- **Speed is a runtime tempo factor of the engine transport**, `TransportCommand::Speed(f32)` (0.25..=1.5, clamped,
+  NaN is 1.0), sent through the same queue as Play and Locate and applied at a batch boundary. `Player::rate(sr)` is
+  `sr / speed`, and every tick <-> frame conversion of the player (notes, loop, chase, click, count-in, harmony,
+  clock out, the transport state) runs at that rate, so a change of speed keeps the musical position (the tick; the
+  frame is recomputed, the cursors stay) and nothing else in the player knows about it. Devices see `TimeInfo::tempo`
+  times the factor (clamped to 20..=999 BPM) and the exact `ticks_per_frame`. A count-in's length is divided by the
+  factor when the command arrives. **Audio clips are silent while the speed is not 1.0** (a warped clip is a finished
+  buffer at the song's tempo and the interim warp reads by the song's own timeline; neither can take a rate), and the
+  streamer is idle then; the bar's tooltips say so. Following an external clock resets the speed to 1.0 and ignores
+  the command. Only live playback is slowed: a bounce, an export or any offline render runs its own engine and never
+  sends the command (`tests/practice_speed.rs`).
+- **Not saved, reset on load.** The speed is app state (`Practice`), not in the project. `replace` (open, new) resets
+  it to 100 % and switches the trainer off before the engine is rebuilt; a rebuild in place (a rate edit) sends it
+  again. Recording is refused while it is not 100 %, because the recorder places notes by the unslowed timeline.
+- **Count-in** (0 to 2 bars) belongs to a plain Play / Play-Stop: `play_counted` plans it with the existing
+  `SongSnapshot::pre_roll` and sends `PlayWithPreRoll`; a recording keeps its own pre-count setting. It is an app
+  session value (not saved in the project or the settings). The metronome toggle is `transport.metronome`.
+- **Speed trainer.** `Practice::pass` is called once per loop cycle the engine completed: the app compares the
+  published `loop_count` once a frame (`practice_tick`, from `transport_frame`). After `after` clean passes at the
+  current speed the speed rises by `step`, up to `target`; switching it on sets the speed to `start`. Whether a pass is
+  *clean* is decided by a `PassJudge` (`AppCore::set_pass_judge`); the default `EveryPass` counts every pass, and the
+  listen-and-grade phase replaces it with an accuracy threshold. The trainer needs the loop on.
+- **Loop selection** (`practice.loop_selection`): the tab editor loops the whole bars of the selected cells (the bar
+  under the cursor without a selection) with one `SetLoop`; the chord sheet loops from the first bar a line is linked
+  to up to the end of the last linked line (as long as the gap before it, a bar when only one line is linked). The
+  app sends the command to whichever of the two panes is open.
+- **Commands.** `practice.speed` (25 to 150 by 5), `speed_up`, `speed_down`, `count_in` (`off`, `1`, `2`), `trainer`,
+  `trainer_start`, `trainer_step`, `trainer_after`, `trainer_target` (`up`, `down`), `loop_selection`; group
+  Transport, context Global, no default keys. `AppCommand::Practice(PracticeAction)` maps them for the menus.
 
 ## 7. The UI crate
 

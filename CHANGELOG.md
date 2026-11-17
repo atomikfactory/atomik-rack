@@ -48,6 +48,16 @@ may break APIs and the patch and project formats.
   (Ctrl+Enter applies, Esc leaves); New Sheet, Import..., Rename and Delete work from the pane, each one undo step.
   The pane's commands (transpose, capo, sharps or flats, text size, autoscroll, new, rename, delete, edit as text,
   apply transpose) are in the command palette.
+- **A practice bar and a practice speed.** The Tab Editor and the Chord Sheet panes get a row of practice controls
+  under their toolbar: loop the selected bars (the bars of the linked lines in the sheet), the metronome click, a
+  count-in of none, one or two bars before a plain playback, the speed chips 50, 75 and 100 % with a slider from 25 to
+  150 %, and a speed trainer that starts at a speed and raises it by a step after a number of passes of the loop, up
+  to a target, showing the pass count. The speed slows the engine's tempo while it plays: notes, the click and
+  the plugins' tempo follow it and the playhead keeps its place when it changes; audio clips are muted while it is
+  not 100 %. It is not saved with the project, is not applied to a bounce or an export, and is back to 100 % when a
+  project is opened or created. Transport > Practice and the command palette have every control (`practice.speed`,
+  `practice.speed_up`, `practice.speed_down`, `practice.count_in`, `practice.trainer`, `practice.loop_selection`
+  and the trainer's values).
 - **Guitar tab import and export.** File > Import > Import Tab or Score File... reads a Guitar Pro file (`.gp3`, `.gp4`,
   `.gp5`, `.gpx`, `.gp`) or a MusicXML file (`.musicxml`, `.xml`, `.mxl`) and makes one track per part, each with a
   note clip that keeps the tab: the string and fret of every note, hammer-ons, pull-offs, slides, bends, vibrato,
