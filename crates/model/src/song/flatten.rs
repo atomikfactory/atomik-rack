@@ -122,7 +122,7 @@ fn pieces(c: &Clip, a: i64, b: i64) -> Vec<(i64, i64, i64)> {
 }
 
 /// Each audible piece of a lane: `(clip, song start, song end, content start)` in song order.
-fn audible_pieces(lane: &Lane) -> Vec<(&Clip, i64, i64, i64)> {
+pub fn audible_pieces(lane: &Lane) -> Vec<(&Clip, i64, i64, i64)> {
     let by_id: BTreeMap<ClipId, &Clip> = lane.clips.iter().map(|c| (c.id, c)).collect();
     audible_spans(lane)
         .into_iter()

@@ -1903,8 +1903,8 @@ mod flatten;
 
 pub use crate::automation_view::automation_value_at;
 pub use flatten::{
-    AudioRegion, Crossfade, FlatExpression, FlatMidiData, FlatParam, audible_spans, crossfades,
-    effective_tracks, flatten_audio, flatten_automation, flatten_clip_controllers,
+    AudioRegion, Crossfade, FlatExpression, FlatMidiData, FlatParam, audible_pieces, audible_spans,
+    crossfades, effective_tracks, flatten_audio, flatten_automation, flatten_clip_controllers,
     flatten_controllers, flatten_expression, flatten_midi_data, flatten_notes, flatten_notes_with,
     flatten_param_lanes, flatten_track_notes,
 };
