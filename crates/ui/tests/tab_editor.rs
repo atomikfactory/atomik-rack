@@ -993,7 +993,7 @@ fn a_duration_key_resizes_the_whole_selection() {
 #[test]
 fn dragging_on_the_ruler_loops_the_bars_dragged_over_and_a_click_only_locates() {
     let mut s = Session::new(song_doc());
-    let ruler_y = 28.0 + 11.0;
+    let ruler_y = 28.0 + 26.0 + 11.0;
     let x = |tick: i64| s.v.tick_to_x(tick);
     // Press in bar 1, drag into bar 2: the loop is both bars (4/4, a bar is four beats).
     let (a, b) = (
@@ -1031,7 +1031,7 @@ fn dragging_on_the_ruler_loops_the_bars_dragged_over_and_a_click_only_locates() 
 #[test]
 fn dragging_backwards_over_the_ruler_loops_the_same_bars() {
     let mut s = Session::new(song_doc());
-    let y = 28.0 + 11.0;
+    let y = 28.0 + 26.0 + 11.0;
     let (a, b) = (
         Point::new(s.v.tick_to_x(5 * PPQ), y),
         Point::new(s.v.tick_to_x(PPQ), y),
@@ -1040,4 +1040,160 @@ fn dragging_backwards_over_the_ruler_loops_the_same_bars() {
     s.mv(b);
     assert_eq!(s.v.loop_preview(), Some((0, 8 * PPQ)));
     s.up(b);
+}
+
+// ------------------------------------------------------------------ practice bar
+
+mod practice {
+    use super::*;
+    use atomik_model::SongCommand;
+    use atomik_ui::{PracticeItem, PracticeState, TrainerState};
+
+    fn bar_click(v: &mut TabEditorView, doc: &RackDoc, item: PracticeItem) -> Vec<UiAction> {
+        let p = v.practice_item_center(item).expect("the bar has it");
+        click(v, doc, p.x, p.y)
+    }
+
+    fn run(id: &str, arg: Option<&str>) -> UiAction {
+        UiAction::RunCommand {
+            id: id.to_owned(),
+            arg: arg.map(str::to_owned),
+        }
+    }
+
+    fn notes_doc() -> RackDoc {
+        tab_doc(
+            "Guitar",
+            vec![
+                Note::new(0, PPQ, 64, 0.8),
+                Note::new(PPQ, PPQ, 62, 0.8),
+                Note::new(5 * PPQ, PPQ, 60, 0.8),
+            ],
+            None,
+        )
+    }
+
+    #[test]
+    fn the_controls_of_the_bar_ask_for_the_practice_commands() {
+        let doc = notes_doc();
+        let mut v = tab_editor(&doc, &registry());
+        assert_eq!(
+            bar_click(&mut v, &doc, PracticeItem::Chip(50)),
+            [run("practice.speed", Some("50"))]
+        );
+        assert_eq!(
+            bar_click(&mut v, &doc, PracticeItem::Faster),
+            [run("practice.speed_up", None)]
+        );
+        assert_eq!(
+            bar_click(&mut v, &doc, PracticeItem::Loop),
+            [run("practice.loop_selection", None)]
+        );
+        assert_eq!(
+            bar_click(&mut v, &doc, PracticeItem::Trainer),
+            [run("practice.trainer", None)]
+        );
+        assert_eq!(
+            bar_click(&mut v, &doc, PracticeItem::Click),
+            [UiAction::Transport(
+                atomik_ui::TransportAction::ToggleMetronome
+            )]
+        );
+    }
+
+    #[test]
+    fn a_press_on_the_bar_does_not_move_the_cursor_or_touch_the_staff() {
+        let doc = notes_doc();
+        let mut v = tab_editor(&doc, &registry());
+        v.set_cursor(PPQ, 2);
+        bar_click(&mut v, &doc, PracticeItem::Chip(75));
+        assert_eq!(v.cursor_cell(), (PPQ, 2));
+        assert!(v.selected().is_empty());
+    }
+
+    #[test]
+    fn the_bar_shows_what_the_app_tells_it() {
+        let doc = notes_doc();
+        let mut v = tab_editor(&doc, &registry());
+        v.set_practice(PracticeState {
+            speed: 75,
+            trainer: TrainerState {
+                enabled: true,
+                ..TrainerState::default()
+            },
+            ..PracticeState::default()
+        });
+        assert!(v.needs_repaint());
+        let mut dl = atomik_ui::DisplayList::new();
+        v.paint(&mut dl, &doc, &registry());
+        let json = dl.to_json();
+        assert!(json.contains("75%"), "the readout");
+        assert!(json.contains("Pass 0 (0/2)"), "the pass counter");
+        assert!(
+            v.practice_item_center(PracticeItem::Value(atomik_ui::TrainerValue::Target))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn loop_selection_loops_the_whole_bars_of_the_selected_cells() {
+        let doc = notes_doc();
+        let mut v = tab_editor(&doc, &registry());
+        // A range inside bars 1 and 2: the loop is both bars (a bar is four quarters).
+        v.select_between((PPQ, 1), (5 * PPQ, 3));
+        let actions = command(&mut v, &doc, "practice.loop_selection", None);
+        let [
+            UiAction::Command(atomik_model::Command::Song(SongCommand::SetLoop { range, enabled })),
+        ] = actions.as_slice()
+        else {
+            panic!("{actions:?}");
+        };
+        assert_eq!((*range, *enabled), ((0, 8 * PPQ), true));
+    }
+
+    #[test]
+    fn loop_selection_without_a_selection_loops_the_bar_under_the_cursor() {
+        let doc = notes_doc();
+        let mut v = tab_editor(&doc, &registry());
+        v.set_cursor(5 * PPQ, 0);
+        let actions = command(&mut v, &doc, "practice.loop_selection", None);
+        let [UiAction::Command(atomik_model::Command::Song(SongCommand::SetLoop { range, .. }))] =
+            actions.as_slice()
+        else {
+            panic!("{actions:?}");
+        };
+        assert_eq!(*range, (4 * PPQ, 8 * PPQ));
+    }
+
+    #[test]
+    fn the_slider_drag_is_a_pointer_gesture_of_the_view() {
+        let doc = notes_doc();
+        let mut v = tab_editor(&doc, &registry());
+        let p = v.practice_item_center(PracticeItem::Slider).unwrap();
+        let actions = click(&mut v, &doc, p.x, p.y);
+        assert!(v.is_dragging());
+        assert!(actions.len() <= 1);
+        v.handle(
+            &UiEvent::PointerUp {
+                pos: p,
+                button: PointerButton::Primary,
+                modifiers: Modifiers::NONE,
+            },
+            &doc,
+            &registry(),
+        );
+        assert!(!v.is_dragging());
+    }
+
+    #[test]
+    fn the_tooltips_of_the_bar_name_their_commands() {
+        let doc = notes_doc();
+        let v = tab_editor(&doc, &registry());
+        let p = v.practice_item_center(PracticeItem::Trainer).unwrap();
+        let help = v.help_at(p).expect("a tooltip");
+        assert_eq!(help.command, Some("practice.trainer"));
+        let p = v.practice_item_center(PracticeItem::Chip(50)).unwrap();
+        let help = v.help_at(p).expect("a tooltip");
+        assert!(help.text.contains("audio clips are muted"));
+    }
 }

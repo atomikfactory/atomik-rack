@@ -286,6 +286,21 @@ Transport
   Métronome [C]
   Créer les voies automatiquement
   ---
+  Pratique >
+    Boucler la sélection
+    ---
+    Vitesse 50 %
+    Vitesse 75 %
+    Pleine vitesse (100 %)
+    Plus rapide
+    Plus lent
+    ---
+    Décompte : aucun
+    Décompte : 1 mesure
+    Décompte : 2 mesures
+    ---
+    Entraîneur de vitesse
+  ---
   Ajouter un marqueur [Maj+M]
   Ajouter un marqueur de plage depuis la boucle
   Placer le marqueur de fin à la tête de lecture

@@ -286,6 +286,21 @@ Transport
   Metronome
   Auto-create Lanes
   ---
+  Practice >
+    Loop Selection
+    ---
+    Speed 50%
+    Speed 75%
+    Full Speed (100%)
+    Faster
+    Slower
+    ---
+    Count-in: Off
+    Count-in: 1 Bar
+    Count-in: 2 Bars
+    ---
+    Speed Trainer
+  ---
   Add Marker
   Add Range Marker from Loop
   Set End Marker at Playhead

@@ -159,6 +159,36 @@ fn the_rename_box_matches_golden() {
     check("chord_sheet_rename_1x.json", &dl.to_json());
 }
 
+#[test]
+fn the_practice_bar_under_the_toolbar_matches_golden() {
+    use atomik_ui::{PracticeState, TrainerState};
+    let doc = sheet_doc(vec![sheet(LANTERN)]);
+    let (_, dl) = scene(&doc, SHEET_BOUNDS, |v, _| {
+        v.set_practice(PracticeState {
+            speed: 75,
+            count_in: 2,
+            metronome: true,
+            looping: true,
+            trainer: TrainerState {
+                enabled: true,
+                passes: 3,
+                clean: 1,
+                ..TrainerState::default()
+            },
+        });
+    });
+    let json = dl.to_json();
+    assert!(json.contains("75%") && json.contains("Count-in 2"));
+    check("chord_sheet_practice_1x.json", &json);
+}
+
+#[test]
+fn a_narrow_pane_drops_the_controls_that_do_not_fit() {
+    let doc = sheet_doc(vec![sheet(LANTERN)]);
+    let (_, dl) = scene(&doc, Rect::new(0.0, 0.0, 420.0, 400.0), |_, _| {});
+    check("chord_sheet_practice_narrow_1x.json", &dl.to_json());
+}
+
 /// Writes PNG previews of the scenarios to `target/preview` (run with `--ignored`).
 #[test]
 #[ignore = "writes preview images; run explicitly"]

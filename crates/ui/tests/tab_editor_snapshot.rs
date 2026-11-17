@@ -435,10 +435,32 @@ fn the_refret_chooser_matches_golden() {
 }
 
 #[test]
+fn the_practice_bar_with_the_trainer_matches_golden() {
+    use atomik_ui::{PracticeState, TrainerState};
+    let dl = paint_with(&guitar_doc(), |v, _| {
+        v.set_practice(PracticeState {
+            speed: 75,
+            count_in: 1,
+            metronome: true,
+            looping: true,
+            trainer: TrainerState {
+                enabled: true,
+                passes: 3,
+                clean: 1,
+                ..TrainerState::default()
+            },
+        });
+    });
+    let json = dl.to_json();
+    assert!(json.contains("75%") && json.contains("Pass 3 (1/2)"));
+    check("tab_editor_practice_1x.json", &json);
+}
+
+#[test]
 fn a_loop_drag_over_the_ruler_matches_golden() {
     let reg = registry();
     let dl = paint_with(&guitar_doc(), |v, d| {
-        let y = 28.0 + 11.0;
+        let y = 28.0 + 26.0 + 11.0;
         for event in [
             atomik_ui::UiEvent::PointerDown {
                 pos: atomik_ui::kurbo::Point::new(v.tick_to_x(PPQ), y),

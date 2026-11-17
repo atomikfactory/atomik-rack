@@ -702,3 +702,106 @@ fn chords_do_not_collide_in_a_narrow_pane() {
         assert!(v.chord_position(name).is_some(), "{name}");
     }
 }
+
+// ------------------------------------------------------------------ practice bar
+
+mod practice {
+    use super::*;
+    use atomik_model::Command;
+    use atomik_ui::{PracticeItem, PracticeState, TrainerState};
+
+    #[test]
+    fn the_bar_sits_under_the_toolbar_and_its_controls_ask_for_commands() {
+        let doc = sheet_doc(vec![sheet(LANTERN)]);
+        let mut v = sheet_view(&doc, &registry());
+        let p = v.practice_item_center(PracticeItem::Chip(75)).expect("bar");
+        let toolbar = v.button_center(SheetButton::Next).unwrap();
+        assert!(p.y > toolbar.y, "the bar is below the toolbar");
+        let actions = click(&mut v, &doc, p);
+        assert_eq!(
+            actions,
+            [UiAction::RunCommand {
+                id: "practice.speed".to_owned(),
+                arg: Some("75".to_owned())
+            }]
+        );
+    }
+
+    #[test]
+    fn a_press_on_the_bar_closes_a_popup_without_opening_another() {
+        let doc = sheet_doc(vec![sheet(LANTERN)]);
+        let mut v = sheet_view(&doc, &registry());
+        let at = v.chord_position("G").expect("a chord");
+        click(&mut v, &doc, at);
+        assert!(v.popup_chord().is_some());
+        let p = v.practice_item_center(PracticeItem::Click).unwrap();
+        click(&mut v, &doc, p);
+        assert!(v.popup_chord().is_none());
+    }
+
+    #[test]
+    fn the_bar_is_not_shown_while_the_sheet_is_edited_as_text() {
+        let doc = sheet_doc(vec![sheet(LANTERN)]);
+        let mut v = sheet_view(&doc, &registry());
+        assert!(v.practice_item_center(PracticeItem::Loop).is_some());
+        press(&mut v, &doc, SheetButton::Edit);
+        assert!(v.practice_item_center(PracticeItem::Loop).is_none());
+    }
+
+    #[test]
+    fn loop_selection_loops_the_bars_of_the_linked_lines() {
+        let doc = sheet_doc(vec![long_sheet(6, true)]);
+        let mut v = sheet_view(&doc, &registry());
+        let out = v.command("practice.loop_selection", None, &doc, &registry());
+        let CommandOutcome::Handled(actions) = out else {
+            panic!("{out:?}");
+        };
+        let [UiAction::Command(Command::Song(SongCommand::SetLoop { range, enabled }))] =
+            actions.as_slice()
+        else {
+            panic!("{actions:?}");
+        };
+        // Bars 1 to 6 are linked: the loop runs from bar 1 to the end of bar 6 + the last gap.
+        let bar = 4 * 15_360;
+        assert_eq!((*range, *enabled), ((0, 6 * bar), true));
+    }
+
+    #[test]
+    fn a_sheet_with_no_linked_line_has_nothing_to_loop() {
+        let doc = sheet_doc(vec![sheet(LANTERN)]);
+        let mut v = sheet_view(&doc, &registry());
+        let out = v.command("practice.loop_selection", None, &doc, &registry());
+        assert!(matches!(out, CommandOutcome::NotApplicable(m) if m.contains("linked")));
+    }
+
+    #[test]
+    fn the_bar_shows_the_state_and_the_trainer() {
+        let doc = sheet_doc(vec![sheet(LANTERN)]);
+        let mut v = sheet_view(&doc, &registry());
+        v.set_practice(PracticeState {
+            speed: 60,
+            count_in: 1,
+            trainer: TrainerState {
+                enabled: true,
+                passes: 3,
+                clean: 1,
+                ..TrainerState::default()
+            },
+            ..PracticeState::default()
+        });
+        let mut dl = atomik_ui::DisplayList::new();
+        v.paint(&mut dl, &doc, &registry());
+        let json = dl.to_json();
+        assert!(json.contains("60%") && json.contains("Pass 3 (1/2)"));
+        assert!(json.contains("Count-in 1"));
+    }
+
+    #[test]
+    fn the_body_starts_under_the_bar() {
+        let doc = sheet_doc(vec![sheet(LANTERN)]);
+        let mut v = sheet_view(&doc, &registry());
+        let bar = v.practice_item_center(PracticeItem::Loop).unwrap();
+        let first_chord = v.chord_position("G").unwrap();
+        assert!(first_chord.y > bar.y, "the text is not under the bar");
+    }
+}
