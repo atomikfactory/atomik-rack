@@ -973,6 +973,8 @@ mod tests {
             midi_clip: false,
             midi_track: false,
             midi_song: false,
+            tab_export: false,
+            sheet_export: false,
             export_song: false,
             export_loop: false,
             export_selection: false,

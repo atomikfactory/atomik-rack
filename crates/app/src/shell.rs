@@ -145,7 +145,9 @@
 //! [`ShellRequest`]s.
 
 use crate::about_box::{AboutBox, AboutOutcome};
-use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed};
+use crate::app_core::{
+    AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed, TabExportFormat,
+};
 use crate::commands::{AppCommand, Menu, MenuState, ScaleStep, SongList, menus_with_songs};
 use crate::context_menus::{self, MenuEnable};
 use crate::cpu_hint::CpuHintCard;
@@ -255,6 +257,22 @@ pub enum ShellRequest {
         /// Import as a song: new tracks from the start, with the tempo, meter and markers.
         as_song: bool,
     },
+    /// Show an open dialog for a tab or score file (File > Import Tab or Score File), then call
+    /// [`Shell::import_tab`] with the picked path.
+    PickImportTab {
+        /// Import as a song: new tracks from the start, with the tempo, meter, markers, chords
+        /// and key.
+        as_song: bool,
+    },
+    /// Show an open dialog for a chord sheet text file (File > Import Chord Sheet), then call
+    /// [`Shell::import_sheet`] with the picked path.
+    PickImportSheet,
+    /// Show a save dialog for tab (File > Export Tab as MusicXML / as Text), named by
+    /// [`Shell::tab_export_name`], then call [`Shell::export_tab_to`] with the format and the path.
+    PickExportTab(TabExportFormat),
+    /// Show a save dialog for the chord sheet text (File > Export Chord Sheet as Text), then call
+    /// [`Shell::export_sheet_to`] with the path.
+    PickExportSheet,
     /// Show a save dialog for an audio file (File > Export Song / Loop as Audio File): a WAV file
     /// named by [`Shell::export_audio_name`], starting in [`Shell::export_audio_dir`], then call
     /// [`Shell::export_audio_to`] with the scope and the path.
@@ -4638,6 +4656,8 @@ impl<B: AudioBackend> Shell<B> {
             midi_clip: self.core.can_export_midi(MidiExport::Clip),
             midi_track: self.core.can_export_midi(MidiExport::Track),
             midi_song: self.core.can_export_midi(MidiExport::Song),
+            tab_export: self.core.can_export_tab(),
+            sheet_export: self.core.can_export_sheet(),
             export_song: self.core.can_export_audio(ExportScope::Song),
             export_loop: self.core.can_export_audio(ExportScope::Loop),
             export_selection: self.core.can_export_audio(ExportScope::Selection),
@@ -5406,6 +5426,12 @@ impl<B: AudioBackend> Shell<B> {
                     rest.into_iter().partition(|p| is_share_item(p));
                 if let Some(share) = shares.into_iter().next() {
                     self.open_share_file(&share);
+                }
+                let (tabs, rest): (Vec<PathBuf>, Vec<PathBuf>) = rest
+                    .into_iter()
+                    .partition(|p| crate::tab_file::is_tab_path(p));
+                for path in &tabs {
+                    self.import_tab(path, false);
                 }
                 let (midi, rest): (Vec<PathBuf>, Vec<PathBuf>) = rest
                     .into_iter()
@@ -8832,7 +8858,20 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::ExportMidiClip => self.export_midi_request(MidiExport::Clip),
             AppCommand::ExportMidiTrack => self.export_midi_request(MidiExport::Track),
+            AppCommand::ImportTab => vec![ShellRequest::PickImportTab { as_song: false }],
+            AppCommand::ImportTabSong => vec![ShellRequest::PickImportTab { as_song: true }],
+            AppCommand::ImportSheet => vec![ShellRequest::PickImportSheet],
             AppCommand::ExportMidiSong => self.export_midi_request(MidiExport::Song),
+            AppCommand::ExportTabMusicXml => self.export_tab_request(TabExportFormat::MusicXml),
+            AppCommand::ExportTabText => self.export_tab_request(TabExportFormat::Text),
+            AppCommand::ExportSheetText => {
+                if self.core.can_export_sheet() {
+                    vec![ShellRequest::PickExportSheet]
+                } else {
+                    self.notify("the song has no chord sheet to export");
+                    Vec::new()
+                }
+            }
             AppCommand::ExportSongAudio => self.export_audio_request(ExportScope::Song),
             AppCommand::ExportLoopAudio => self.export_audio_request(ExportScope::Loop),
             AppCommand::ExportSelectionAudio => self.export_audio_request(ExportScope::Selection),
@@ -10488,6 +10527,48 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// Imports the tab or score file picked in the Import Tab dialog, dropped on the window or
+    /// opened in the file browser (see [`AppCore::import_tab`]).
+    pub fn import_tab(&mut self, path: &Path, as_song: bool) {
+        self.core.import_tab(path, as_song);
+        self.repaint = true;
+    }
+
+    /// Imports the chord sheet picked in the Import Chord Sheet dialog (see
+    /// [`AppCore::import_sheet`]).
+    pub fn import_sheet(&mut self, path: &Path) {
+        self.core.import_sheet(path);
+        self.repaint = true;
+    }
+
+    /// Writes the tab of the selected clip or the song to `path` (the answer is shown in the
+    /// view).
+    pub fn export_tab_to(&mut self, format: TabExportFormat, path: &Path) {
+        self.core.export_tab(format, path);
+        self.repaint = true;
+    }
+
+    /// Writes the song's first chord sheet to `path` as text.
+    pub fn export_sheet_to(&mut self, path: &Path) {
+        self.core.export_sheet(path);
+        self.repaint = true;
+    }
+
+    /// The file name (without extension) the Export Tab dialog offers.
+    pub fn tab_export_name(&self) -> String {
+        self.core.tab_export_name()
+    }
+
+    /// File > Export Tab: the save dialog, or what to do first when there is nothing to write.
+    fn export_tab_request(&mut self, format: TabExportFormat) -> Vec<ShellRequest> {
+        if self.core.can_export_tab() {
+            vec![ShellRequest::PickExportTab(format)]
+        } else {
+            self.notify("the song has no note tracks to export");
+            Vec::new()
+        }
+    }
+
     /// Shows a message in the view until the next click.
     pub fn notify(&mut self, message: impl Into<String>) {
         self.core.report(message);
@@ -11996,6 +12077,10 @@ mod quantize_tests;
 #[cfg(test)]
 #[path = "shell_midi_tests.rs"]
 mod midi_tests;
+
+#[cfg(test)]
+#[path = "shell_tab_tests.rs"]
+mod tab_tests;
 
 #[cfg(test)]
 #[path = "shell_console_tests.rs"]

@@ -121,6 +121,14 @@ pub enum AppCommand {
     /// File ▸ Import MIDI as Song…: a MIDI file as new tracks from the start, with its tempo map,
     /// meter and markers.
     ImportMidiSong,
+    /// File ▸ Import Tab or Score File…: a Guitar Pro or MusicXML file as new tracks with their
+    /// tab, at the playhead.
+    ImportTab,
+    /// File ▸ Import Tab or Score as Song…: the same from the start, with the file's tempo map,
+    /// meter, markers, chords and key.
+    ImportTabSong,
+    /// File ▸ Import Chord Sheet…: a chord sheet text file into the song's chord sheets.
+    ImportSheet,
     /// File ▸ Sound Analyst…: the panel that measures an audio file and proposes a starting patch
     /// to recreate it.
     SoundAnalyst,
@@ -149,6 +157,12 @@ pub enum AppCommand {
     ExportMidiTrack,
     /// File ▸ Export MIDI Song…: every note track as a type 1 MIDI file.
     ExportMidiSong,
+    /// File ▸ Export Tab as MusicXML…: the selected note clip, or the song, as MusicXML.
+    ExportTabMusicXml,
+    /// File ▸ Export Tab as Text…: the selected note clip, or the song, as ASCII tab.
+    ExportTabText,
+    /// File ▸ Export Chord Sheet as Text…: the song's first chord sheet, chords over lyrics.
+    ExportSheetText,
     /// File ▸ Export Song as Audio File…: the song from the start to the End marker, plus its tail.
     ExportSongAudio,
     /// File ▸ Export Loop as Audio File…: exactly the range between the locators.
@@ -944,6 +958,9 @@ impl AppCommand {
             AppCommand::ImportAudio => ("file.import_audio", None),
             AppCommand::ImportMidi => ("file.import_midi", None),
             AppCommand::ImportMidiSong => ("file.import_midi_song", None),
+            AppCommand::ImportTab => ("file.import_tab", None),
+            AppCommand::ImportTabSong => ("file.import_tab_song", None),
+            AppCommand::ImportSheet => ("file.import_sheet", None),
             AppCommand::SoundAnalyst => ("file.sound_analyst", None),
             AppCommand::DeliveryTargets => ("file.delivery_targets", None),
             AppCommand::PeakSurgeon => ("sequencer.peak_surgeon", None),
@@ -956,6 +973,9 @@ impl AppCommand {
             AppCommand::ExportMidiClip => ("file.export_midi_clip", None),
             AppCommand::ExportMidiTrack => ("file.export_midi_track", None),
             AppCommand::ExportMidiSong => ("file.export_midi_song", None),
+            AppCommand::ExportTabMusicXml => ("file.export_tab_musicxml", None),
+            AppCommand::ExportTabText => ("file.export_tab_text", None),
+            AppCommand::ExportSheetText => ("file.export_sheet_text", None),
             AppCommand::ExportSongAudio => ("file.export_song_audio", None),
             AppCommand::ExportLoopAudio => ("file.export_loop_audio", None),
             AppCommand::ExportSelectionAudio => ("file.export_selection_audio", None),
@@ -1363,6 +1383,9 @@ impl AppCommand {
             ("file.import_audio", None) => AppCommand::ImportAudio,
             ("file.import_midi", None) => AppCommand::ImportMidi,
             ("file.import_midi_song", None) => AppCommand::ImportMidiSong,
+            ("file.import_tab", None) => AppCommand::ImportTab,
+            ("file.import_tab_song", None) => AppCommand::ImportTabSong,
+            ("file.import_sheet", None) => AppCommand::ImportSheet,
             ("file.sound_analyst", None) => AppCommand::SoundAnalyst,
             ("file.delivery_targets", None) => AppCommand::DeliveryTargets,
             ("sequencer.peak_surgeon", None) => AppCommand::PeakSurgeon,
@@ -1375,6 +1398,9 @@ impl AppCommand {
             ("file.export_midi_clip", None) => AppCommand::ExportMidiClip,
             ("file.export_midi_track", None) => AppCommand::ExportMidiTrack,
             ("file.export_midi_song", None) => AppCommand::ExportMidiSong,
+            ("file.export_tab_musicxml", None) => AppCommand::ExportTabMusicXml,
+            ("file.export_tab_text", None) => AppCommand::ExportTabText,
+            ("file.export_sheet_text", None) => AppCommand::ExportSheetText,
             ("file.export_song_audio", None) => AppCommand::ExportSongAudio,
             ("file.export_loop_audio", None) => AppCommand::ExportLoopAudio,
             ("file.export_selection_audio", None) => AppCommand::ExportSelectionAudio,
@@ -2368,6 +2394,10 @@ pub struct MenuState {
     pub midi_track: bool,
     /// The song has a note track (File > Export MIDI Song is available).
     pub midi_song: bool,
+    /// The song has notes to write as tab (File > Export Tab as MusicXML and as Text are available).
+    pub tab_export: bool,
+    /// The song has a chord sheet (File > Export Chord Sheet as Text is available).
+    pub sheet_export: bool,
     /// The song can be exported as audio: it has a length and no export runs (File > Export Song
     /// as Audio File is available).
     pub export_song: bool,
@@ -2972,6 +3002,14 @@ fn menus_in_english(
                         item("Import Audio\u{2026}", AppCommand::ImportAudio),
                         item("Import MIDI\u{2026}", AppCommand::ImportMidi),
                         item("Import MIDI as Song\u{2026}", AppCommand::ImportMidiSong),
+                        MenuEntry::Separator,
+                        item("Import Tab or Score File\u{2026}", AppCommand::ImportTab),
+                        item(
+                            "Import Tab or Score as Song\u{2026}",
+                            AppCommand::ImportTabSong,
+                        ),
+                        item("Import Chord Sheet\u{2026}", AppCommand::ImportSheet),
+                        MenuEntry::Separator,
                         check(
                             "Detect Chords from Notes",
                             AppCommand::ToggleMidiChords,
@@ -3023,6 +3061,23 @@ fn menus_in_english(
                             AppCommand::ExportMidiSong,
                             state.midi_song,
                         ),
+                        MenuEntry::Separator,
+                        enabled(
+                            "Export Tab as MusicXML\u{2026}",
+                            AppCommand::ExportTabMusicXml,
+                            state.tab_export,
+                        ),
+                        enabled(
+                            "Export Tab as Text\u{2026}",
+                            AppCommand::ExportTabText,
+                            state.tab_export,
+                        ),
+                        enabled(
+                            "Export Chord Sheet as Text\u{2026}",
+                            AppCommand::ExportSheetText,
+                            state.sheet_export,
+                        ),
+                        MenuEntry::Separator,
                         MenuEntry::Submenu(Submenu {
                             label: "MIDI Export Resolution",
                             entries: vec![
@@ -4790,6 +4845,8 @@ mod tests {
             midi_clip: false,
             midi_track: false,
             midi_song: false,
+            tab_export: false,
+            sheet_export: false,
             export_song: false,
             export_loop: false,
             export_selection: false,
@@ -4850,6 +4907,9 @@ mod tests {
             AppCommand::ImportAudio,
             AppCommand::ImportMidi,
             AppCommand::ImportMidiSong,
+            AppCommand::ImportTab,
+            AppCommand::ImportTabSong,
+            AppCommand::ImportSheet,
             AppCommand::SoundAnalyst,
             AppCommand::RelinkAudio,
             AppCommand::CollectFiles,
@@ -4860,6 +4920,9 @@ mod tests {
             AppCommand::ExportMidiClip,
             AppCommand::ExportMidiTrack,
             AppCommand::ExportMidiSong,
+            AppCommand::ExportTabMusicXml,
+            AppCommand::ExportTabText,
+            AppCommand::ExportSheetText,
             AppCommand::ExportSongAudio,
             AppCommand::ExportLoopAudio,
             AppCommand::ExportSelectionAudio,
@@ -5960,6 +6023,8 @@ mod tests {
                 midi_clip: true,
                 midi_track: false,
                 midi_song: true,
+                tab_export: true,
+                sheet_export: true,
                 export_song: true,
                 export_loop: true,
                 export_selection: true,

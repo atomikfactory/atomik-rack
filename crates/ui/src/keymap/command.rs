@@ -1013,6 +1013,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "file.export_sheet_text",
+        "Export Chord Sheet as Text",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "file.export_song_audio",
         "Export Song as Audio File",
         G::Global,
@@ -1022,6 +1029,20 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "file.export_stems",
         "Export Stems as Audio Files",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.export_tab_musicxml",
+        "Export Tab as MusicXML",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.export_tab_text",
+        "Export Tab as Text",
         G::Global,
         C::Global,
     )
@@ -1038,6 +1059,27 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "file.import_midi_song",
         "Import MIDI as Song",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.import_sheet",
+        "Import Chord Sheet",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.import_tab",
+        "Import Tab or Score File",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.import_tab_song",
+        "Import Tab or Score as Song",
         G::Global,
         C::Global,
     )

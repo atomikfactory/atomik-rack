@@ -1260,6 +1260,78 @@ impl App {
                         self.shell.import_midi(&path, as_song);
                     }
                 }
+                ShellRequest::PickImportTab { as_song } => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title(if as_song {
+                            "Import tab or score as song"
+                        } else {
+                            "Import tab or score"
+                        })
+                        .add_filter(
+                            "Guitar Pro and MusicXML files",
+                            &["gp3", "gp4", "gp5", "gpx", "gp", "musicxml", "xml", "mxl"],
+                        );
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(path) = dialog.pick_file() {
+                        self.shell.import_tab(&path, as_song);
+                    }
+                }
+                ShellRequest::PickImportSheet => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Import chord sheet")
+                        .add_filter(
+                            "Chord sheets",
+                            &["txt", "crd", "chopro", "chordpro", "cho", "pro"],
+                        );
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(path) = dialog.pick_file() {
+                        self.shell.import_sheet(&path);
+                    }
+                }
+                ShellRequest::PickExportTab(format) => {
+                    let (title, filter, exts): (&str, &str, &[&str]) = match format {
+                        crate::app_core::TabExportFormat::MusicXml => (
+                            "Export tab as MusicXML",
+                            "MusicXML file",
+                            &["musicxml", "mxl"],
+                        ),
+                        crate::app_core::TabExportFormat::Text => {
+                            ("Export tab as text", "Text file", &["txt"])
+                        }
+                    };
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title(title)
+                        .add_filter(filter, exts)
+                        .set_file_name(format!("{}.{}", self.shell.tab_export_name(), exts[0]));
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension(exts[0]);
+                        }
+                        self.shell.export_tab_to(format, &path);
+                    }
+                }
+                ShellRequest::PickExportSheet => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Export chord sheet as text")
+                        .add_filter("Text file", &["txt"])
+                        .set_file_name("chord sheet.txt");
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension("txt");
+                        }
+                        self.shell.export_sheet_to(&path);
+                    }
+                }
                 ShellRequest::PickExportMidi(what) => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title(format!("Export MIDI {}", what.word()))
