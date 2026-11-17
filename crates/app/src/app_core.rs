@@ -4431,7 +4431,8 @@ pub use midi_ops::{IMPORT_INSTRUMENT, MidiExport};
 
 #[path = "app_core_tab.rs"]
 mod tab_ops;
-pub use tab_ops::TabExportFormat;
+pub use atomik_tab::pdf::{PageSize, SheetPdfOptions, TabPdfOptions};
+pub use tab_ops::{TabExportFormat, default_page, default_tab_pdf};
 
 #[path = "app_core_tab_editor.rs"]
 mod tab_editor_ops;

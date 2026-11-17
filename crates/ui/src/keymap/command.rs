@@ -1361,6 +1361,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "file.export_sheet_pdf",
+        "Export Chord Sheet as PDF",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "file.export_sheet_text",
         "Export Chord Sheet as Text",
         G::Global,
@@ -1384,6 +1391,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "file.export_tab_musicxml",
         "Export Tab as MusicXML",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.export_tab_pdf",
+        "Export Tab as PDF",
         G::Global,
         C::Global,
     )

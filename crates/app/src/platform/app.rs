@@ -1303,6 +1303,9 @@ impl App {
                         crate::app_core::TabExportFormat::Text => {
                             ("Export tab as text", "Text file", &["txt"])
                         }
+                        crate::app_core::TabExportFormat::Pdf => {
+                            ("Export tab as PDF", "PDF file", &["pdf"])
+                        }
                     };
                     let mut dialog = rfd::FileDialog::new()
                         .set_title(title)
@@ -1331,6 +1334,21 @@ impl App {
                             path.set_extension("txt");
                         }
                         self.shell.export_sheet_to(&path);
+                    }
+                }
+                ShellRequest::PickExportSheetPdf => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Export chord sheet as PDF")
+                        .add_filter("PDF file", &["pdf"])
+                        .set_file_name("chord sheet.pdf");
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension("pdf");
+                        }
+                        self.shell.export_sheet_pdf_to(&path);
                     }
                 }
                 ShellRequest::PickExportMidi(what) => {

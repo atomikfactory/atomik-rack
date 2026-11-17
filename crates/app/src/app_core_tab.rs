@@ -19,14 +19,18 @@
 //!
 //! **Export** writes the selected note clip, or the whole song when no clip is selected (the
 //! scope can also be named: [`AppCore::export_tab_of`]): *Tab as MusicXML* (a `.mxl` file name
-//! writes the compressed form), *Tab as Text* (ASCII tab), and *Chord Sheet as Text*, which
-//! writes the first chord sheet of the song.
+//! writes the compressed form), *Tab as Text* (ASCII tab), *Tab as PDF* (a printable tab, see
+//! [`atomik_tab::pdf`]), and *Chord Sheet as Text* or *as PDF*, which write the first chord sheet of
+//! the song (the one the Chord Sheet pane shows, with its transposition, capo and instrument, when
+//! the pane is open). The paper is Letter for a United States, Canada or similar locale and A4
+//! elsewhere; the PDF options of the MCP tool name it.
 
 use super::midi_ops::{ImportMode, Place, plural};
 use super::*;
 use crate::tab_file::{self, TabSource, read_tab, score_from_song, tab_song};
 use atomik_tab::ascii::{AsciiWriteOptions, write_ascii};
-use atomik_tab::sheet::parse_sheet;
+use atomik_tab::pdf::{PageSize, SheetDiagrams, SheetPdfOptions, TabPdfOptions};
+use atomik_tab::sheet::{ChordSheet, parse_sheet};
 
 /// The biggest chord sheet text read.
 const MAX_SHEET_FILE_BYTES: u64 = 4 * 1024 * 1024;
@@ -38,6 +42,8 @@ pub enum TabExportFormat {
     MusicXml,
     /// Plain-text (ASCII) tab.
     Text,
+    /// A printable tab as PDF.
+    Pdf,
 }
 
 impl TabExportFormat {
@@ -46,7 +52,21 @@ impl TabExportFormat {
         match self {
             TabExportFormat::MusicXml => "MusicXML",
             TabExportFormat::Text => "text tab",
+            TabExportFormat::Pdf => "PDF",
         }
+    }
+}
+
+/// The paper of the system's region (A4 when it is not known).
+pub fn default_page() -> PageSize {
+    atomik_ui::i18n::system_locale().map_or(PageSize::A4, |l| PageSize::for_locale(&l))
+}
+
+/// The options of a tab PDF when nothing says otherwise: the region's paper, diagrams on.
+pub fn default_tab_pdf() -> TabPdfOptions {
+    TabPdfOptions {
+        page: default_page(),
+        ..TabPdfOptions::default()
     }
 }
 
@@ -221,8 +241,19 @@ impl<S: EngineSink> AppCore<S> {
 
     /// [`Self::export_tab`] for an explicit scope.
     pub fn export_tab_of(&mut self, what: MidiExport, format: TabExportFormat, path: &Path) {
+        self.export_tab_with(what, format, path, &default_tab_pdf());
+    }
+
+    /// [`Self::export_tab_of`] with the options of a PDF (they are not read for the other formats).
+    pub fn export_tab_with(
+        &mut self,
+        what: MidiExport,
+        format: TabExportFormat,
+        path: &Path,
+        pdf: &TabPdfOptions,
+    ) {
         let result = self
-            .tab_bytes(what, format, path)
+            .tab_bytes(what, format, path, pdf)
             .and_then(|(bytes, warnings)| {
                 std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
                 Ok(with_warnings(
@@ -243,6 +274,7 @@ impl<S: EngineSink> AppCore<S> {
         what: MidiExport,
         format: TabExportFormat,
         path: &Path,
+        pdf: &TabPdfOptions,
     ) -> Result<(Vec<u8>, Vec<String>), String> {
         let source = self.tab_source(what)?;
         let (score, mut warnings) =
@@ -255,6 +287,12 @@ impl<S: EngineSink> AppCore<S> {
         let bytes = match format {
             TabExportFormat::Text => {
                 write_ascii(&score, &AsciiWriteOptions::default()).into_bytes()
+            }
+            TabExportFormat::Pdf => {
+                let (bytes, w) =
+                    atomik_tab::pdf::write_tab_pdf(&score, pdf).map_err(|e| e.to_string())?;
+                warnings.extend(w);
+                bytes
             }
             TabExportFormat::MusicXml => {
                 let compressed = path
@@ -287,6 +325,56 @@ impl<S: EngineSink> AppCore<S> {
                     Err(e) => format!("{}: {e}", path.display()),
                 }
             }
+        };
+        self.report(message);
+    }
+
+    /// The sheet a PDF prints and how: while the Chord Sheet pane is open, the sheet it shows
+    /// (transposed, with the capo and instrument chosen there), else the song's first sheet as
+    /// stored with a guitar diagram strip when `diagrams` is set. `None` when the song has none.
+    pub fn sheet_pdf_job(
+        &self,
+        page: Option<PageSize>,
+        diagrams: bool,
+    ) -> Option<(ChordSheet, SheetPdfOptions)> {
+        let page = page.unwrap_or_else(default_page);
+        let (sheet, instrument) = match self.sheet_open.then(|| self.chord_sheet.shown_sheet()) {
+            Some(Some(shown)) => (shown, self.chord_sheet.instrument_id()),
+            _ => (self.doc().song.sheets.first()?.clone(), "guitar6"),
+        };
+        Some((
+            sheet,
+            SheetPdfOptions {
+                page,
+                diagrams: diagrams.then(|| SheetDiagrams {
+                    instrument_id: instrument.to_owned(),
+                }),
+                ..SheetPdfOptions::default()
+            },
+        ))
+    }
+
+    /// Writes the song's chord sheet (see [`Self::sheet_pdf_job`]) to `path` as a PDF with the
+    /// region's paper and the diagram strip.
+    pub fn export_sheet_pdf(&mut self, path: &Path) {
+        self.export_sheet_pdf_with(path, None, true);
+    }
+
+    /// [`Self::export_sheet_pdf`] with the paper (`None` follows the region) and the diagram strip
+    /// chosen.
+    pub fn export_sheet_pdf_with(&mut self, path: &Path, page: Option<PageSize>, diagrams: bool) {
+        let message = match self.sheet_pdf_job(page, diagrams) {
+            None => "the song has no chord sheet to export".to_owned(),
+            Some((sheet, opts)) => match atomik_tab::pdf::write_sheet_pdf(&sheet, &opts) {
+                Err(e) => e.to_string(),
+                Ok((bytes, warnings)) => match std::fs::write(path, bytes) {
+                    Ok(()) => with_warnings(
+                        format!("Exported the chord sheet as PDF to {}", short_name(path)),
+                        &warnings,
+                    ),
+                    Err(e) => format!("{}: {e}", path.display()),
+                },
+            },
         };
         self.report(message);
     }

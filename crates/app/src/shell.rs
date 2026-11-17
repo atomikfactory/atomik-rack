@@ -273,6 +273,9 @@ pub enum ShellRequest {
     /// Show a save dialog for the chord sheet text (File > Export Chord Sheet as Text), then call
     /// [`Shell::export_sheet_to`] with the path.
     PickExportSheet,
+    /// Show a save dialog for the chord sheet PDF (File > Export Chord Sheet as PDF), then call
+    /// [`Shell::export_sheet_pdf_to`] with the path.
+    PickExportSheetPdf,
     /// Show a save dialog for an audio file (File > Export Song / Loop as Audio File): a WAV file
     /// named by [`Shell::export_audio_name`], starting in [`Shell::export_audio_dir`], then call
     /// [`Shell::export_audio_to`] with the scope and the path.
@@ -8920,6 +8923,15 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::ExportMidiSong => self.export_midi_request(MidiExport::Song),
             AppCommand::ExportTabMusicXml => self.export_tab_request(TabExportFormat::MusicXml),
             AppCommand::ExportTabText => self.export_tab_request(TabExportFormat::Text),
+            AppCommand::ExportTabPdf => self.export_tab_request(TabExportFormat::Pdf),
+            AppCommand::ExportSheetPdf => {
+                if self.core.can_export_sheet() {
+                    vec![ShellRequest::PickExportSheetPdf]
+                } else {
+                    self.notify("the song has no chord sheet to export");
+                    Vec::new()
+                }
+            }
             AppCommand::ExportSheetText => {
                 if self.core.can_export_sheet() {
                     vec![ShellRequest::PickExportSheet]
@@ -10710,6 +10722,12 @@ impl<B: AudioBackend> Shell<B> {
     /// Writes the song's first chord sheet to `path` as text.
     pub fn export_sheet_to(&mut self, path: &Path) {
         self.core.export_sheet(path);
+        self.repaint = true;
+    }
+
+    /// Writes the song's chord sheet to `path` as a PDF.
+    pub fn export_sheet_pdf_to(&mut self, path: &Path) {
+        self.core.export_sheet_pdf(path);
         self.repaint = true;
     }
 

@@ -165,6 +165,10 @@ pub enum AppCommand {
     ExportTabText,
     /// File ▸ Export Chord Sheet as Text…: the song's first chord sheet, chords over lyrics.
     ExportSheetText,
+    /// File ▸ Export Tab as PDF…: the selected note clip, or the song, as a printable tab.
+    ExportTabPdf,
+    /// File ▸ Export Chord Sheet as PDF…: the song's chord sheet, printable.
+    ExportSheetPdf,
     /// File ▸ Export Song as Audio File…: the song from the start to the End marker, plus its tail.
     ExportSongAudio,
     /// File ▸ Export Loop as Audio File…: exactly the range between the locators.
@@ -1002,6 +1006,8 @@ impl AppCommand {
             AppCommand::ExportTabMusicXml => ("file.export_tab_musicxml", None),
             AppCommand::ExportTabText => ("file.export_tab_text", None),
             AppCommand::ExportSheetText => ("file.export_sheet_text", None),
+            AppCommand::ExportTabPdf => ("file.export_tab_pdf", None),
+            AppCommand::ExportSheetPdf => ("file.export_sheet_pdf", None),
             AppCommand::ExportSongAudio => ("file.export_song_audio", None),
             AppCommand::ExportLoopAudio => ("file.export_loop_audio", None),
             AppCommand::ExportSelectionAudio => ("file.export_selection_audio", None),
@@ -1469,6 +1475,8 @@ impl AppCommand {
             ("file.export_tab_musicxml", None) => AppCommand::ExportTabMusicXml,
             ("file.export_tab_text", None) => AppCommand::ExportTabText,
             ("file.export_sheet_text", None) => AppCommand::ExportSheetText,
+            ("file.export_tab_pdf", None) => AppCommand::ExportTabPdf,
+            ("file.export_sheet_pdf", None) => AppCommand::ExportSheetPdf,
             ("file.export_song_audio", None) => AppCommand::ExportSongAudio,
             ("file.export_loop_audio", None) => AppCommand::ExportLoopAudio,
             ("file.export_selection_audio", None) => AppCommand::ExportSelectionAudio,
@@ -3215,8 +3223,18 @@ fn menus_in_english(
                             state.tab_export,
                         ),
                         enabled(
+                            "Export Tab as PDF\u{2026}",
+                            AppCommand::ExportTabPdf,
+                            state.tab_export,
+                        ),
+                        enabled(
                             "Export Chord Sheet as Text\u{2026}",
                             AppCommand::ExportSheetText,
+                            state.sheet_export,
+                        ),
+                        enabled(
+                            "Export Chord Sheet as PDF\u{2026}",
+                            AppCommand::ExportSheetPdf,
                             state.sheet_export,
                         ),
                         MenuEntry::Separator,
@@ -5197,6 +5215,8 @@ mod tests {
             AppCommand::ExportTabMusicXml,
             AppCommand::ExportTabText,
             AppCommand::ExportSheetText,
+            AppCommand::ExportTabPdf,
+            AppCommand::ExportSheetPdf,
             AppCommand::ExportSongAudio,
             AppCommand::ExportLoopAudio,
             AppCommand::ExportSelectionAudio,
