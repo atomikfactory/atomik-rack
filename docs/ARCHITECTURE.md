@@ -5197,7 +5197,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (595) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (603) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -7230,11 +7230,11 @@ Editors, no default key) hands the open clip from one editor to the other. The e
 - **Cursor and typing.** The cursor is a content tick and a string (0 = top line). Left and Right step on the grid of
   the entry's note value (`NoteValue`: whole to 64th, dotted or triplet), Up and Down change string, the bar commands
   jump a bar. A digit types the fret (`FretBuffer` in `tab_editor/entry.rs`): a second digit within 0.6 s on the same
-  cell, when the result is still on the neck, extends the first. The window starts at the first frame tick after the
-  digit (`TabEditorView::tick`, called every frame by `Shell::frame_at`), because key events carry no time; the
-  merged step ends with `UiAction::EndMerge` when it runs out. A fret the string cannot play (below a short string's
-  first fret, past the neck) is refused with a status line. A typed note is auditioned (`UiAction::Audition`, released
-  by the clock or when the editor closes).
+  cell, when the result is still on the neck, extends the first. Every digit is stamped with the view's clock when it
+  arrives (see *Clock* below), and the merged step ends from `TabEditorView::tick` (called every frame by
+  `Shell::frame_at`) with `UiAction::EndMerge` when the window runs out. A fret the string cannot play (below a
+  short string's first fret, past the neck) is refused with a status line. A typed note is auditioned
+  (`UiAction::Audition`, released by the clock or when the editor closes).
 - **Keys.** The pane is the `tab` keymap context (`Context::Tab`, default keys in both profiles): arrows, `Ctrl+Left`
   and `Ctrl+Right` by bar, `W H Q E S T X` for whole to sixty-fourth (`editor.tab_duration` with an argument), `.`
   dotted, `Y` triplet, `=` and `-` zoom; digits are not commands but raw keys the view reads. Delete and Backspace are
@@ -7250,8 +7250,41 @@ Editors, no default key) hands the open clip from one editor to the other. The e
   notes (a column's value is the longest note cut at the next onset), dots and triplet marks. Rests are not drawn
   (a gap shows as space). Notes no string can play are listed under the staff as `?` and their pitch.
 - **Following.** `set_playhead` pages the view while the transport plays and follow is on.
-- **Seams for the next phases.** `TabEditorView::selected` (range selection), the free part of the top bar (technique
-  toolbar), `Work` and the `emit` helper (any new edit), the staff rectangle (context menu), `TopButton`.
+- **Seams for the next phases.** `Work` and the `emit` helper (any new edit), `TopButton`, the staff rectangle.
+- **Editing tools** (phase B2; `tab_editor/tech.rs`, `tab_editor/dialog.rs`, `tab_edit.rs`).
+  - *Range selection.* A `Range` is a rectangle of cells (ticks times strings), `selected()` the notes inside it.
+    Shift+Left/Right (`editor.tab_extend`) select whole columns, Shift+Up/Down narrow it to the rectangle between the
+    anchor and the cursor, a drag on the staff draws a rectangle, Shift+click grows one, `edit.select_all` takes the
+    clip (also the notes no string plays), Esc or a plain cursor move clears it. Edits work on the selection, else on
+    the note under the cursor (`targets()`); a duration key resizes the whole selection.
+  - *Techniques.* `editor.tab_technique` with an argument (`hammer_on` ... `clear`, `TAB_TECHNIQUE_ARGS`) toggles
+    on the targets through `tab_edit::update_techniques`: set when any note lacks it, cleared when all have it. The
+    hammer-on and pull-off flag is on the destination note (they exclude each other, so do dead and ghost). `bend`,
+    `bend_release`, `pre_bend`, `pre_bend_release` use the toolbar's amount (`editor.tab_bend_amount`, a quarter tone
+    to two tones; a `bend_half` style argument sets it too). The toolbar sits in the top bar, buttons that do not
+    fit are left out (the keys and the menu still work) and are lit while every target has the technique.
+  - *Strings and pitch.* `tab_edit::step_string` (Alt+Up/Down) moves to the next string that plays the same pitch
+    (`Tuning::fret_for_pitch`, so a banjo drone's start fret and the neck length are respected), all or nothing.
+    `editor.tab_transpose` (Ctrl+Up/Down, with Shift an octave) is `tab_edit::transpose`. `tab_edit::refret_at`
+    places notes at a hand position (frets n to n+3, open strings allowed), at the lowest frets or with the fretter.
+  - *Clipboard.* `copy_snippet` and `paste_snippet` keep strings, frets, techniques and plain velocity and length;
+    the snippet lives in the view (the app clipboard carries notes only, and not the tab sidecar). Paste puts the
+    first note at the cursor, replaces notes on the same string at the same tick, drops notes past the clip end and
+    selects what it pasted. `AppCore::has_selection` and `can_paste` answer for the pane (menus).
+  - *Panels.* The instrument, tuning and capo dialog (`editor.tab_tuning`, also a click on the top bar's instrument
+    label) and the re-fret chooser (`editor.tab_refret` with `choose`) are modal panels the view draws over its pane
+    and owns, not windows of the shell: pure state with `layout`, `hit` and `paint`. While one is open
+    `is_text_owner` is true, so the shell's context is `Text` and Enter and Esc reach the panel. The dialog applies
+    `set_tuning` (keep pitches, the notes are fretted again) or `set_tuning_keep_frets` (the frets stay, the pitches
+    change with the neck), one undo step.
+  - *Loop by ruler drag.* A press on the ruler locates (as before), a drag also sets the song loop to the bars
+    dragged over (snapped with the song's own bar lines, enabled) as one `SetLoop` on release.
+  - *Context menu.* A right click selects the note under it (or keeps a selection it is in) and emits
+    `ContextTarget::TabStaff`; `context_menus::tab_staff_menu` builds it.
+  - *Clock.* Key events carry no time and no frame runs while the app idles, so `AppCore` keeps a `TabClock` (real
+    time since start, re-aligned to the frame clock by every `tab_editor_tick`) and calls `TabEditorView::stamp` with
+    it before each event. The view stamps every digit with that time (`FretBuffer::push(.., now)`): a digit typed
+    after an idle stretch cannot join an older one. The ui crate itself reads no clock (the project lint forbids it).
 - **The widget** ([chord_diagram.rs](../crates/ui/src/chord_diagram.rs)): `paint_diagram(canvas, theme, area, &Diagram)`
   draws a `Voicing` for any string count (1 to 12): five fret rows from `base_fret`, a thick nut at the first fret and
   an `Nfr` label elsewhere, open and muted markers, dots with finger numbers, a barre bar, and a short string (the

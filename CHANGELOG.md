@@ -22,6 +22,20 @@ may break APIs and the patch and project formats.
   heard. A clip with no tab yet is shown fretted automatically (a track named Bass on a bass, Banjo on a banjo)
   and keeps its tab from the first edit. Edit > Switch Piano Roll and Tab (`edit.toggle_tab_or_piano_roll`)
   hands the open clip from one editor to the other. The chord diagram is a reusable widget for any string count.
+- **Editing tools in the Tab Editor.** A technique toolbar in the pane's top bar toggles hammer-on and pull-off
+  (on the destination note), slides (legato, shift, in, out), bends (a quarter tone to two tones, with release and
+  pre-bend), vibrato, harmonics, palm mute, let ring, dead, ghost, accent and tap on the note under the cursor or the
+  selection; every technique has a key (`Shift+H` hammer-on, `B` bend, `M` palm mute and so on, see the keyboard
+  reference) and a right-click menu on the staff. Shift with the arrows selects a range (whole columns, or a
+  rectangle with Up and Down), a drag on the staff selects too, `Ctrl+A` takes the clip; copy, cut and paste keep
+  strings, frets and techniques and paste at the cursor. `Alt+Up` and `Alt+Down` move notes to the next string that
+  plays the same pitch (a banjo's drone and the length of the neck are respected), `Ctrl+Up` and `Ctrl+Down`
+  transpose by a semitone (with Shift an octave) and keep the notes playable, and Re-fret at Position... places the
+  selection at a hand position, at the lowest frets or automatically. Clicking the instrument name in the top bar
+  (or Tab: Instrument, Tuning and Capo) opens a panel with the 24 instruments by family, their tuning presets,
+  per-string pitches, a capo from 0 to 12 and the choice between keeping the pitches (the notes are fretted again)
+  and keeping the frets (the pitches change). Dragging over the bar ruler sets the song loop to the bars dragged
+  over; a click still moves the playhead. A fret digit typed after a long pause no longer joins the digit before it.
 - **Guitar tab import and export.** File > Import > Import Tab or Score File... reads a Guitar Pro file (`.gp3`, `.gp4`,
   `.gp5`, `.gpx`, `.gp`) or a MusicXML file (`.musicxml`, `.xml`, `.mxl`) and makes one track per part, each with a
   note clip that keeps the tab: the string and fret of every note, hammer-ons, pull-offs, slides, bends, vibrato,
