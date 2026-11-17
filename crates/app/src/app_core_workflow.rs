@@ -19,6 +19,7 @@ impl<S: EngineSink> AppCore<S> {
         self.view.set_theme(theme.clone());
         self.arrangement.set_theme(theme.clone());
         self.piano_roll.set_theme(theme.clone());
+        self.tab_editor.set_theme(theme.clone());
         self.sample_editor.set_theme(theme.clone());
         self.step_editor.set_theme(theme.clone());
         self.slice_editor.set_theme(theme.clone());
@@ -69,6 +70,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::Rack => self.view.command(id, arg, doc, &self.registry),
             Pane::Arrangement => self.arrangement.command(id, arg, doc, &self.registry),
             Pane::PianoRoll => self.piano_roll.command(id, arg, doc, &self.registry),
+            Pane::TabEditor => self.tab_editor.command(id, arg, doc, &self.registry),
             Pane::StepEditor => self.step_editor.command(id, arg, doc, &self.registry),
             Pane::SampleEditor => self.sample_editor.command(id, arg, doc, &self.registry),
             Pane::SliceEditor => self.slice_editor.command(id, arg, doc, &self.registry),
@@ -313,6 +315,7 @@ impl<S: EngineSink> AppCore<S> {
     pub fn set_follow(&mut self, follow: bool) {
         self.arrangement.set_follow(follow);
         self.piano_roll.set_follow(follow);
+        self.tab_editor.set_follow(follow);
     }
 
     /// Adds an audio track (Create Audio Track): one undo step.
@@ -339,7 +342,9 @@ impl<S: EngineSink> AppCore<S> {
     /// Closes the editor that shows in place of the arrangement (piano roll, sample, step,
     /// slice, sequencer, container or plugin parameter pane); false when none is open.
     pub fn close_open_editor(&mut self) -> bool {
-        if self.piano_roll_open() {
+        if self.tab_editor_open() {
+            self.close_tab_editor();
+        } else if self.piano_roll_open() {
             self.close_piano_roll();
         } else if self.sample_editor_device().is_some() {
             self.close_sample_editor();

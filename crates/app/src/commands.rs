@@ -246,6 +246,10 @@ pub enum AppCommand {
     /// View ▸ Step Editor (open it on the selected or first drum machine, or
     /// close it).
     ToggleStepEditor,
+    /// View > Editors > Tab Editor.
+    ToggleTabEditor,
+    /// Edit > Switch Piano Roll and Tab.
+    ToggleTabOrPianoRoll,
     /// View ▸ Slice Editor (open it on the selected or first loop slicer, or
     /// close it).
     ToggleSliceEditor,
@@ -1018,6 +1022,8 @@ impl AppCommand {
             AppCommand::TogglePianoRoll => ("view.toggle_piano_roll", None),
             AppCommand::ToggleSampleEditor => ("view.toggle_sample_editor", None),
             AppCommand::ToggleStepEditor => ("view.toggle_step_editor", None),
+            AppCommand::ToggleTabEditor => ("view.toggle_tab_editor", None),
+            AppCommand::ToggleTabOrPianoRoll => ("edit.toggle_tab_or_piano_roll", None),
             AppCommand::ToggleSliceEditor => ("view.toggle_slice_editor", None),
             AppCommand::Transport(TransportAction::Play) => ("transport.play", None),
             AppCommand::Transport(TransportAction::Stop) => ("transport.stop", None),
@@ -1447,6 +1453,8 @@ impl AppCommand {
             ("view.toggle_piano_roll", None) => AppCommand::TogglePianoRoll,
             ("view.toggle_sample_editor", None) => AppCommand::ToggleSampleEditor,
             ("view.toggle_step_editor", None) => AppCommand::ToggleStepEditor,
+            ("view.toggle_tab_editor", None) => AppCommand::ToggleTabEditor,
+            ("edit.toggle_tab_or_piano_roll", None) => AppCommand::ToggleTabOrPianoRoll,
             ("view.toggle_slice_editor", None) => AppCommand::ToggleSliceEditor,
             ("transport.tap_tempo", None) => AppCommand::Transport(TransportAction::TapTempo),
             ("transport.dub", None) => AppCommand::Transport(TransportAction::Dub),
@@ -2276,6 +2284,8 @@ pub struct MenuState {
     pub sample_editor: bool,
     /// The step editor is open.
     pub step_editor: bool,
+    /// Whether the tab editor is open.
+    pub tab_editor: bool,
     /// The slice editor is open.
     pub slice_editor: bool,
     /// Playing.
@@ -3470,6 +3480,11 @@ fn menus_in_english(
                             "Slice Editor",
                             AppCommand::ToggleSliceEditor,
                             state.slice_editor,
+                        ),
+                        check("Tab Editor", AppCommand::ToggleTabEditor, state.tab_editor),
+                        item(
+                            "Switch Piano Roll and Tab",
+                            AppCommand::ToggleTabOrPianoRoll,
                         ),
                     ],
                 }),
@@ -4787,6 +4802,7 @@ mod tests {
             piano_roll: false,
             sample_editor: false,
             step_editor: false,
+            tab_editor: false,
             slice_editor: false,
             playing: false,
             recording: false,
@@ -4961,6 +4977,8 @@ mod tests {
             AppCommand::TogglePianoRoll,
             AppCommand::ToggleSampleEditor,
             AppCommand::ToggleStepEditor,
+            AppCommand::ToggleTabEditor,
+            AppCommand::ToggleTabOrPianoRoll,
             AppCommand::ToggleSliceEditor,
             AppCommand::ToggleConsoleLinks,
             AppCommand::ToggleCpuMeters,
@@ -5965,6 +5983,7 @@ mod tests {
                 piano_roll: true,
                 sample_editor: false,
                 step_editor: false,
+                tab_editor: false,
                 slice_editor: false,
                 playing: true,
                 recording: false,

@@ -44,26 +44,7 @@ pub fn instrument_for(_instrument_id: &str) -> &'static str {
     crate::app_core::IMPORT_INSTRUMENT
 }
 
-/// The catalogue instrument a track's name suggests (`guitar6` when it suggests none).
-pub fn instrument_for_name(name: &str) -> &'static str {
-    let n = name.to_ascii_lowercase();
-    let has = |words: &[&str]| words.iter().any(|w| n.contains(w));
-    if has(&["bass"]) {
-        "bass4"
-    } else if has(&["banjo"]) {
-        "banjo5"
-    } else if has(&["ukulele", "uke"]) {
-        "ukulele_soprano"
-    } else if has(&["mandolin"]) {
-        "mandolin"
-    } else if has(&["bouzouki"]) {
-        "bouzouki_irish"
-    } else if has(&["12-string", "12 string", "twelve"]) {
-        "guitar12"
-    } else {
-        "guitar6"
-    }
-}
+pub use atomik_tab::instrument::instrument_for_name;
 
 /// Whether a track name looks like a drum track (it is exported as a percussion part).
 fn is_drum_name(name: &str) -> bool {

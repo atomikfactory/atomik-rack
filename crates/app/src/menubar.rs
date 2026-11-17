@@ -915,6 +915,7 @@ mod tests {
             piano_roll: false,
             sample_editor: false,
             step_editor: false,
+            tab_editor: false,
             slice_editor: false,
             playing: false,
             recording: false,

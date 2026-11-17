@@ -4510,6 +4510,7 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])
             }
             Pane::PianoRoll => ContextStack::new(&[Context::Editor, Context::Sequencer]),
+            Pane::TabEditor => ContextStack::new(&[Context::Tab]),
             Pane::AudioEditor if self.core.audio_editor().is_text_owner() => {
                 ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])
             }
@@ -4595,6 +4596,7 @@ impl<B: AudioBackend> Shell<B> {
             lens: self.core.lens(),
             song_visible: self.ui.show_song,
             piano_roll: self.core.piano_roll_open(),
+            tab_editor: self.core.tab_editor_open(),
             sample_editor: self.core.sample_editor_device().is_some(),
             step_editor: self.core.step_editor_device().is_some(),
             slice_editor: self.core.slice_editor_device().is_some(),
@@ -4868,6 +4870,7 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(song) = l.song {
             self.core.arrangement_mut().set_bounds(song);
             self.core.piano_roll_mut().set_bounds(song);
+            self.core.tab_editor_mut().set_bounds(song);
             self.core.sample_editor_mut().set_bounds(song);
             self.core.step_editor_mut().set_bounds(song);
             self.core.slice_editor_mut().set_bounds(song);
@@ -5136,6 +5139,8 @@ impl<B: AudioBackend> Shell<B> {
             Pane::ContainerEditor
         } else if self.core.plugin_params_device().is_some() {
             Pane::PluginParams
+        } else if self.core.tab_editor_open() {
+            Pane::TabEditor
         } else if self.core.piano_roll_open() {
             Pane::PianoRoll
         } else if self.core.audio_editor_clip().is_some() {
@@ -5167,6 +5172,7 @@ impl<B: AudioBackend> Shell<B> {
             Pane::FileBrowser if self.browser_detached() => Pane::FileBrowser,
             Pane::Arrangement
             | Pane::PianoRoll
+            | Pane::TabEditor
             | Pane::Console
             | Pane::SampleEditor
             | Pane::StepEditor
@@ -5181,6 +5187,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             Pane::Arrangement
             | Pane::PianoRoll
+            | Pane::TabEditor
             | Pane::Console
             | Pane::SampleEditor
             | Pane::StepEditor
@@ -5213,6 +5220,9 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .piano_roll_mut()
             .set_focused(pane == Pane::PianoRoll);
+        self.core
+            .tab_editor_mut()
+            .set_focused(pane == Pane::TabEditor);
         self.core
             .sample_editor_mut()
             .set_focused(pane == Pane::SampleEditor);
@@ -9315,6 +9325,41 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 Vec::new()
             }
+            AppCommand::ToggleTabEditor => {
+                if self.core.tab_editor_open() {
+                    self.core.close_tab_editor();
+                } else if self.core.open_tab_editor_default() {
+                    if !self.ui.show_song || self.lower_is_console() {
+                        self.ui.show_song = true;
+                        self.ui.show_console = false;
+                        self.console_changed();
+                    }
+                    self.reveal_lower_pane();
+                    self.set_focus(Pane::TabEditor);
+                } else {
+                    self.notify("no note clip to open: draw or record one in the arrangement");
+                }
+                Vec::new()
+            }
+            AppCommand::ToggleTabOrPianoRoll => {
+                if self.core.toggle_tab_or_piano_roll() {
+                    if !self.ui.show_song || self.lower_is_console() {
+                        self.ui.show_song = true;
+                        self.ui.show_console = false;
+                        self.console_changed();
+                    }
+                    self.reveal_lower_pane();
+                    let pane = if self.core.tab_editor_open() {
+                        Pane::TabEditor
+                    } else {
+                        Pane::PianoRoll
+                    };
+                    self.set_focus(pane);
+                } else {
+                    self.notify("no note clip to open: draw or record one in the arrangement");
+                }
+                Vec::new()
+            }
             AppCommand::CreateInstrument => {
                 self.open_create(CreateKind::Instrument);
                 Vec::new()
@@ -10655,6 +10700,7 @@ impl<B: AudioBackend> Shell<B> {
             self.ui_changed();
         }
         self.core.piano_roll_tick(now_seconds);
+        self.core.tab_editor_tick(now_seconds);
         self.tick_tooltip(now_seconds);
         // A pointer resting on a scroll strip of a menu bar list scrolls it.
         if self.any_bar_open() {
@@ -11493,6 +11539,7 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::Main if self.ui.show_song => {
                 let song = match self.song_pane() {
                     Pane::PianoRoll => self.core.piano_roll().cursor(),
+                    Pane::TabEditor => self.core.tab_editor().cursor(),
                     Pane::Arrangement => self.core.arrangement().cursor(),
                     _ => CursorHint::Default,
                 };
@@ -11546,6 +11593,7 @@ impl<B: AudioBackend> Shell<B> {
                     Pane::Rack => self.core.view().cursor(),
                     Pane::Arrangement => self.core.arrangement().cursor(),
                     Pane::PianoRoll => self.core.piano_roll().cursor(),
+                    Pane::TabEditor => self.core.tab_editor().cursor(),
                     _ => return None,
                 };
                 Some(if self.capture_over == Some(pane) {
@@ -11613,6 +11661,7 @@ impl<B: AudioBackend> Shell<B> {
             || (self.ui.show_song
                 && match self.song_pane() {
                     Pane::PianoRoll => self.core.piano_roll().needs_repaint(),
+                    Pane::TabEditor => self.core.tab_editor().needs_repaint(),
                     Pane::SampleEditor => self.core.sample_editor().needs_repaint(),
                     Pane::StepEditor => self.core.step_editor().needs_repaint(),
                     Pane::SliceEditor => self.core.slice_editor().needs_repaint(),

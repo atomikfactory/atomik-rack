@@ -27,7 +27,8 @@ use atomik_ui::kurbo::Point;
 use atomik_ui::{
     ArrangementView, AudioEditorView, Canvas, ChannelMeters, ConsoleView, ContainerEditorView,
     Help, PianoRollView, PluginParamsView, RackView, SampleEditorView, SeqEditorView,
-    SliceEditorView, StepEditorView, Theme, TransportAction, TransportBar, UiAction, UiEvent,
+    SliceEditorView, StepEditorView, TabEditorView, Theme, TransportAction, TransportBar, UiAction,
+    UiEvent,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -75,6 +76,8 @@ pub enum Pane {
     Arrangement,
     /// The piano roll (in place of the arrangement).
     PianoRoll,
+    /// The tab editor (in place of the arrangement, like the piano roll).
+    TabEditor,
     /// The console (in place of the arrangement, or maximised).
     Console,
     /// The sample editor (in place of the arrangement).
@@ -283,6 +286,9 @@ pub struct AppCore<S: EngineSink> {
     rejection: Option<String>,
     arrangement: ArrangementView,
     piano_roll: PianoRollView,
+    tab_editor: TabEditorView,
+    /// The note clip open in the tab editor.
+    tab_clip: Option<ClipId>,
     sample_editor: SampleEditorView,
     step_editor: StepEditorView,
     slice_editor: SliceEditorView,
@@ -627,6 +633,8 @@ impl<S: EngineSink> AppCore<S> {
             rejection: None,
             arrangement: ArrangementView::new(theme.clone()),
             piano_roll: PianoRollView::new(theme.clone()),
+            tab_editor: TabEditorView::new(theme.clone()),
+            tab_clip: None,
             sample_editor: SampleEditorView::new(theme.clone()),
             step_editor: StepEditorView::new(theme.clone()),
             slice_editor: SliceEditorView::new(theme.clone()),
@@ -1338,6 +1346,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::Transport => self.transport_bar.help_at(pos),
             Pane::Arrangement => self.arrangement.help_at(pos),
             Pane::PianoRoll => self.piano_roll.help_at(pos),
+            Pane::TabEditor => self.tab_editor.help_at(pos),
             Pane::Console => self.console.help_at(pos),
             Pane::SampleEditor => self.sample_editor.help_at(pos),
             Pane::StepEditor => self.step_editor.help_at(pos),
@@ -1374,6 +1383,12 @@ impl<S: EngineSink> AppCore<S> {
                 self.piano_roll.set_doc_revision(Some(revision));
                 let actions = self.piano_roll.handle(event, doc, &self.registry);
                 self.piano_roll.set_doc_revision(None);
+                actions
+            }
+            Pane::TabEditor => {
+                self.tab_editor.set_doc_revision(Some(revision));
+                let actions = self.tab_editor.handle(event, doc, &self.registry);
+                self.tab_editor.set_doc_revision(None);
                 actions
             }
             Pane::Console => self.console.handle(event, doc, &self.registry),
@@ -1517,6 +1532,7 @@ impl<S: EngineSink> AppCore<S> {
         self.arrangement.sync_at(doc, &self.registry, revision);
         self.piano_roll.set_undo_depth(self.document.undo_depth());
         self.piano_roll.sync_at(doc, &self.registry, revision);
+        self.tab_editor.sync_at(doc, &self.registry, revision);
         self.sync_roll_labels();
         self.sync_song_key_filter();
         let doc = self.document.doc();
@@ -2224,6 +2240,11 @@ impl<S: EngineSink> AppCore<S> {
             && self.doc().song.clip_or_take(id).is_none()
         {
             self.close_piano_roll();
+        }
+        if let Some(id) = self.tab_clip
+            && self.doc().song.clip_or_take(id).is_none()
+        {
+            self.close_tab_editor();
         }
         if let Some(device) = self.piano_roll.track()
             && !self
@@ -3280,6 +3301,11 @@ impl<S: EngineSink> AppCore<S> {
                 self.piano_roll.paint(canvas, doc, &self.registry);
                 self.piano_roll.set_doc_revision(None);
             }
+            Pane::TabEditor => {
+                self.tab_editor.set_doc_revision(Some(revision));
+                self.tab_editor.paint(canvas, doc, &self.registry);
+                self.tab_editor.set_doc_revision(None);
+            }
             Pane::Console => self.console.paint(canvas, doc, &self.registry),
             Pane::SampleEditor => self.sample_editor.paint(canvas, doc, &self.registry),
             Pane::StepEditor => self.step_editor.paint(canvas, doc, &self.registry),
@@ -3343,6 +3369,7 @@ impl<S: EngineSink> AppCore<S> {
             .clip_or_take(id)
             .is_some_and(|(_, c)| c.content.is_notes());
         if is_notes {
+            self.close_tab_editor();
             self.close_sample_editor();
             self.close_step_editor();
             self.close_slice_editor();
@@ -3374,6 +3401,7 @@ impl<S: EngineSink> AppCore<S> {
         self.close_slice_editor();
         self.close_audio_editor();
         self.close_seq_editor();
+        self.close_tab_editor();
         self.close_container_editor();
         self.release_piano_roll_audition();
         self.piano_roll.open_track(device);
@@ -3497,6 +3525,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Closes the piano roll (the arrangement shows again).
     pub fn close_piano_roll(&mut self) {
+        self.close_tab_editor();
         self.release_piano_roll_audition();
         self.piano_roll.close();
         self.piano_clip = None;
@@ -3982,6 +4011,7 @@ impl<S: EngineSink> AppCore<S> {
         // The views follow the playhead only while the transport runs.
         self.arrangement.set_playing(self.playing);
         self.piano_roll.set_playing(self.playing);
+        self.tab_editor.set_playing(self.playing);
         self.arrangement.set_playhead(self.position);
         self.arrangement.set_recording(recording);
         self.arrangement
@@ -3998,6 +4028,7 @@ impl<S: EngineSink> AppCore<S> {
                 .map(|s| (s.id, s.name.as_str())),
         );
         self.piano_roll.set_playhead(self.position);
+        self.tab_editor.set_playhead(self.position);
         self.transport_bar.set_state(atomik_ui::TransportState {
             playing: self.playing,
             recording,
@@ -4307,6 +4338,9 @@ pub use midi_ops::{IMPORT_INSTRUMENT, MidiExport};
 #[path = "app_core_tab.rs"]
 mod tab_ops;
 pub use tab_ops::TabExportFormat;
+
+#[path = "app_core_tab_editor.rs"]
+mod tab_editor_ops;
 
 #[path = "app_core_create.rs"]
 mod create_ops;
@@ -4623,6 +4657,10 @@ mod autoview_tests;
 #[cfg(test)]
 #[path = "app_core_song_tests.rs"]
 mod song_tests;
+
+#[cfg(test)]
+#[path = "app_core_tab_editor_tests.rs"]
+mod tab_editor_tests;
 
 #[cfg(test)]
 #[path = "app_core_console_tests.rs"]

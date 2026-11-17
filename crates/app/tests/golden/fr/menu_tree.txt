@@ -239,6 +239,8 @@ Affichage
     Éditeur d'échantillon
     Éditeur de pas
     Éditeur de découpe
+    Éditeur de tablature
+    Basculer entre piano roll et tablature
   Lanceur >
     Lanceur [F10]
     Retour à l'arrangement

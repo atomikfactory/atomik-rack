@@ -239,6 +239,8 @@ View
     Sample Editor
     Step Editor
     Slice Editor
+    Tab Editor
+    Switch Piano Roll and Tab
   Launcher >
     Launcher
     Back to Arrangement

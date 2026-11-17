@@ -451,6 +451,8 @@ ToggleSliceEditor | Slice Editor
 ToggleSong | Arrangement
 ToggleSpectrumEq | Spectrum EQ
 ToggleStepEditor | Step Editor
+ToggleTabEditor | Tab Editor
+ToggleTabOrPianoRoll | Switch Piano Roll and Tab
 ToggleTempoLane | Tempo Lane
 ToggleTrackPanel | Track Panel
 ToggleVideo | Video
