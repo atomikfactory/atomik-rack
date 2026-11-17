@@ -17,6 +17,7 @@ mod automation_view;
 mod camera_override;
 mod camera_source;
 mod chord_fit;
+pub mod chord_sheets;
 pub mod chord_symbol;
 mod clip_io;
 mod clip_lanes;
@@ -112,6 +113,9 @@ mod step_tools;
 mod steps;
 mod steps_cmd;
 pub mod stress;
+pub mod tab_data;
+pub mod tab_edit;
+pub mod tab_render;
 pub mod takes;
 mod takes_cmd;
 pub mod theory;
@@ -322,6 +326,7 @@ pub use song::{
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
+pub use tab_data::{PlainNote, TabData, TabDiagram, TabLyric, TabNoteRef};
 pub use takes::{CompSegment, TakeGroup};
 pub use takes_cmd::{MAX_LINKED_GROUPS, MAX_TAKES};
 pub use validate::Violation;
@@ -962,6 +967,7 @@ pub enum Command {
 /// | meter (`SetMeter`, `SetMeterMap`, `DragMeterMap`) | `SongChanged` |
 /// | key and chords (`SetHarmony`, `DragHarmony`; also undo/redo) | `ViewChanged`, `SongChanged` |
 /// | markers and ranges (`SetMarkers`, `DragMarkers`, `SetRanges`, `DragRanges`; also undo/redo) | `ViewChanged` |
+/// | chord sheets (`SetSheets`; also undo/redo) | `ViewChanged` |
 /// | quantize (`ApplyQuantize`, `QuantizeNotes`) | `SongChanged` |
 /// | note tools (`ApplyNoteTool`) | `SongChanged` |
 /// | the groove library (`SetGroove`, `RenameGroove`, `DeleteGroove`, `ExtractGroove`; also undo/redo) | `ViewChanged`, plus `SongChanged` when a track or clip has a live groove |
@@ -2174,6 +2180,8 @@ impl Document {
                                     | SongCommand::SetClipGrid { .. }
                                     | SongCommand::SetClipMeta { .. }
                                     | SongCommand::SetClipControllers { .. }
+                                    | SongCommand::SetClipContent { .. }
+                                    | SongCommand::SetClipMidi { .. }
                                     | SongCommand::SetTrackFlags { .. }
                                     | SongCommand::SetClipGeometry { .. }
                                     | SongCommand::SetAudioClip { .. }
@@ -2193,7 +2201,7 @@ impl Document {
                             )
                     ) {
                         return Err(ModelError::BadBatch(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetDelivery, SetWarpMarkers, SetPitchEdits, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipContent, SetClipMidi, SetClipGeometry, SetAudioClip, SetDelivery, SetWarpMarkers, SetPitchEdits, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;

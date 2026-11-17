@@ -126,6 +126,7 @@ fn song_label(c: &SongCommand) -> &'static str {
         } => "Colour Clips",
         SongCommand::SetClipMeta { .. } => "Rename Clip",
         SongCommand::SetTempoMap(_) | SongCommand::DragTempoMap { .. } => "Edit Tempo Map",
+        SongCommand::SetSheets(_) => "Edit Chord Sheets",
         SongCommand::SetMarkers(_) | SongCommand::DragMarkers { .. } => "Edit Markers",
         SongCommand::SetHarmony(_) | SongCommand::DragHarmony { .. } => "Edit Key and Chords",
         SongCommand::SetLoop { .. } => "Set Loop",

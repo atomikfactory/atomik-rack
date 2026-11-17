@@ -154,6 +154,11 @@ pub(crate) enum Edit {
         old: Box<crate::harmony::Harmony>,
         new: Box<crate::harmony::Harmony>,
     },
+    /// The song's chord sheets.
+    Sheets {
+        old: Vec<atomik_tab::sheet::ChordSheet>,
+        new: Vec<atomik_tab::sheet::ChordSheet>,
+    },
     /// The whole marker list.
     Markers {
         old: Vec<Marker>,
@@ -713,6 +718,7 @@ impl Edit {
             Edit::NextClipId { old, new } => Edit::NextClipId { old: new, new: old },
             Edit::TempoMap { old, new } => Edit::TempoMap { old: new, new: old },
             Edit::MeterMap { old, new } => Edit::MeterMap { old: new, new: old },
+            Edit::Sheets { old, new } => Edit::Sheets { old: new, new: old },
             Edit::Markers { old, new } => Edit::Markers { old: new, new: old },
             Edit::Ranges { old, new } => Edit::Ranges { old: new, new: old },
             Edit::Grooves { old, new } => Edit::Grooves { old: new, new: old },
@@ -1150,6 +1156,10 @@ impl Edit {
             Edit::MeterMap { new, .. } => {
                 doc.song_mut().meter.clone_from(new);
                 vec![SyncOp::SongChanged]
+            }
+            Edit::Sheets { new, .. } => {
+                doc.song_mut().sheets.clone_from(new);
+                vec![SyncOp::ViewChanged]
             }
             Edit::Markers { new, .. } => {
                 doc.song_mut().markers.clone_from(new);

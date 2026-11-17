@@ -271,6 +271,9 @@ impl RackDoc {
                 }
             }
         }
+        if let Err(message) = crate::chord_sheets::check_sheets(&song.sheets) {
+            found.add("song.sheets", message);
+        }
         if let Err(message) = song.harmony.check() {
             found.add("song.harmony", message);
         }

@@ -337,6 +337,9 @@ fn load_midi_data(
             data.expression.push(entry);
         }
     }
+    if let Some(v) = obj.get("tab") {
+        data.tab = Some(super::tab_json::load_tab(v, &path.field("tab"))?);
+    }
     data.check(crate::song::MAX_TICK)
         .map_err(|m| path.error(m))?;
     Ok(data)

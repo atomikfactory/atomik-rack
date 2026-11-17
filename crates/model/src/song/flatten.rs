@@ -551,7 +551,7 @@ pub fn flatten_midi_data(track: &Track) -> FlatMidiData {
     let mut all = crate::midi_data::MidiData::default();
     for lane in track.played_note_lanes() {
         for (clip, s, e, cs) in audible_pieces(lane) {
-            if !clip.midi.is_empty() {
+            if clip.midi.has_messages() {
                 all.append(clip.midi.window(cs, cs + (e - s), s));
             }
         }
