@@ -290,3 +290,110 @@ fn musicxml_exported_from_the_song_imports_again_through_a_file() {
         assert_eq!(tab(&other, 1), tab(&c, 1), "{name}");
     }
 }
+
+/// The page texts of a PDF written with plain streams would be easier to read, so the tests only
+/// look at what a viewer needs first: the header, the page tree and the end marker.
+fn is_pdf(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"%PDF-") && bytes.windows(5).any(|w| w == b"%%EOF")
+}
+
+#[test]
+fn tab_pdf_exports_the_selected_clip_or_the_song_deterministically() {
+    let tmp = Tmp::new("pdf");
+    let mut c = core();
+    c.apply_tab(&fixture_score(), Vec::new(), false, "x.gp5")
+        .unwrap();
+    c.arrangement_mut().set_selected_clips(&[]);
+    c.export_tab(TabExportFormat::Pdf, &tmp.path("song.pdf"));
+    let song = std::fs::read(tmp.path("song.pdf")).unwrap();
+    assert!(is_pdf(&song));
+    let msg = c.last_rejection().unwrap();
+    assert!(msg.starts_with("Exported the song as PDF"), "{msg}");
+    // The same song gives the same bytes.
+    c.export_tab(TabExportFormat::Pdf, &tmp.path("again.pdf"));
+    assert_eq!(song, std::fs::read(tmp.path("again.pdf")).unwrap());
+    // With a clip selected only that clip is printed, so the file is smaller.
+    let id = c.doc().song.tracks[1].lanes[0].clips[0].id;
+    c.arrangement_mut().set_selected_clips(&[id]);
+    c.export_tab(TabExportFormat::Pdf, &tmp.path("clip.pdf"));
+    let clip = std::fs::read(tmp.path("clip.pdf")).unwrap();
+    assert!(is_pdf(&clip) && clip.len() < song.len());
+    assert!(c.last_rejection().unwrap().starts_with("Exported the clip"));
+}
+
+#[test]
+fn tab_pdf_takes_the_paper_and_the_diagram_choice() {
+    let tmp = Tmp::new("pdfopts");
+    let mut c = core();
+    c.apply_tab(&fixture_score(), Vec::new(), false, "x.gp5")
+        .unwrap();
+    c.arrangement_mut().set_selected_clips(&[]);
+    let mut o = default_tab_pdf();
+    o.page = PageSize::Letter;
+    c.export_tab_with(
+        MidiExport::Song,
+        TabExportFormat::Pdf,
+        &tmp.path("l.pdf"),
+        &o,
+    );
+    o.page = PageSize::A4;
+    c.export_tab_with(
+        MidiExport::Song,
+        TabExportFormat::Pdf,
+        &tmp.path("a.pdf"),
+        &o,
+    );
+    let text = |n: &str| String::from_utf8_lossy(&std::fs::read(tmp.path(n)).unwrap()).into_owned();
+    assert!(text("l.pdf").contains("612") && text("l.pdf").contains("792"));
+    assert!(text("a.pdf").contains("595"));
+}
+
+#[test]
+fn a_song_without_notes_has_no_tab_pdf() {
+    let tmp = Tmp::new("pdfnone");
+    let mut c = core();
+    c.export_tab_of(
+        MidiExport::Song,
+        TabExportFormat::Pdf,
+        &tmp.path("none.pdf"),
+    );
+    assert!(!tmp.path("none.pdf").exists());
+    assert!(c.last_rejection().is_some());
+}
+
+#[test]
+fn a_chord_sheet_exports_as_pdf_from_the_stored_sheet_or_the_pane() {
+    let tmp = Tmp::new("sheetpdf");
+    let mut c = core();
+    c.export_sheet_pdf(&tmp.path("none.pdf"));
+    assert!(c.last_rejection().unwrap().contains("no chord sheet"));
+    assert!(!tmp.path("none.pdf").exists());
+    std::fs::write(
+        tmp.path("tune.txt"),
+        "{key: G}\n{capo: 2}\n[G]Made up [D]words to [Em]sing\n",
+    )
+    .unwrap();
+    c.import_sheet(&tmp.path("tune.txt"));
+    c.export_sheet_pdf(&tmp.path("tune.pdf"));
+    let stored = std::fs::read(tmp.path("tune.pdf")).unwrap();
+    assert!(is_pdf(&stored));
+    assert!(
+        c.last_rejection()
+            .unwrap()
+            .starts_with("Exported the chord sheet as PDF")
+    );
+    // No diagram strip: a shorter file.
+    c.export_sheet_pdf_with(&tmp.path("plain.pdf"), Some(PageSize::Letter), false);
+    let plain = std::fs::read(tmp.path("plain.pdf")).unwrap();
+    assert!(plain.len() < stored.len());
+    // With the pane open the sheet is printed as the pane shows it (transposed here).
+    c.open_chord_sheet();
+    let (before, _) = c.sheet_pdf_job(None, true).unwrap();
+    assert_eq!(before.chords_used()[0].name(), "G");
+    for _ in 0..2 {
+        c.pane_command(Pane::Rack, "editor.sheet_transpose", Some("up"))
+            .unwrap();
+    }
+    let (shown, _) = c.sheet_pdf_job(None, true).unwrap();
+    assert_eq!(shown.chords_used()[0].name(), "A");
+}

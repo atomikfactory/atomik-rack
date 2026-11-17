@@ -55,6 +55,8 @@ fn the_file_menu_has_the_tab_entries_and_asks_for_dialogs() {
         "Export Tab as MusicXML\u{2026}",
         "Export Tab as Text\u{2026}",
         "Export Chord Sheet as Text\u{2026}",
+        "Export Tab as PDF\u{2026}",
+        "Export Chord Sheet as PDF\u{2026}",
     ] {
         assert!(
             s.menu_model()[0].items().any(|i| i.label == label),
@@ -66,6 +68,8 @@ fn the_file_menu_has_the_tab_entries_and_asks_for_dialogs() {
     assert!(!item(&s, "Export Tab as MusicXML\u{2026}").enabled);
     assert!(!item(&s, "Export Tab as Text\u{2026}").enabled);
     assert!(!item(&s, "Export Chord Sheet as Text\u{2026}").enabled);
+    assert!(!item(&s, "Export Tab as PDF\u{2026}").enabled);
+    assert!(!item(&s, "Export Chord Sheet as PDF\u{2026}").enabled);
     assert_eq!(
         s.execute(AppCommand::ImportTab),
         vec![ShellRequest::PickImportTab { as_song: false }]
@@ -92,6 +96,8 @@ fn an_export_with_nothing_to_write_says_so_and_asks_for_no_dialog() {
     );
     assert!(s.execute(AppCommand::ExportTabText).is_empty());
     assert!(s.execute(AppCommand::ExportSheetText).is_empty());
+    assert!(s.execute(AppCommand::ExportTabPdf).is_empty());
+    assert!(s.execute(AppCommand::ExportSheetPdf).is_empty());
     assert!(
         s.core()
             .last_rejection()
@@ -109,6 +115,8 @@ fn commands_have_stable_ids_that_round_trip() {
         ("file.export_tab_musicxml", AppCommand::ExportTabMusicXml),
         ("file.export_tab_text", AppCommand::ExportTabText),
         ("file.export_sheet_text", AppCommand::ExportSheetText),
+        ("file.export_tab_pdf", AppCommand::ExportTabPdf),
+        ("file.export_sheet_pdf", AppCommand::ExportSheetPdf),
     ] {
         assert_eq!(command.command_id(), Some((id, None)));
         assert_eq!(AppCommand::from_command(id, None), Some(command));
@@ -256,4 +264,26 @@ fn the_chord_trainer_pane_opens_from_the_view_menu_and_its_scores_go_to_the_wind
     s.execute(AppCommand::ToggleChordTrainer);
     assert!(!s.core().chord_trainer_open());
     assert_eq!(s.lower_pane(), Pane::Arrangement);
+}
+
+#[test]
+fn the_pdf_exports_ask_for_their_dialogs_once_there_is_something_to_print() {
+    let mut s = shell();
+    let dir = std::env::temp_dir().join(format!("atomik-shell-pdf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let sheet = dir.join("tune.txt");
+    std::fs::write(&sheet, "[C]Made up [G]words\n").unwrap();
+    s.import_sheet(&sheet);
+    assert!(item(&s, "Export Chord Sheet as PDF\u{2026}").enabled);
+    assert!(!item(&s, "Export Tab as PDF\u{2026}").enabled);
+    assert_eq!(
+        s.execute(AppCommand::ExportSheetPdf),
+        vec![ShellRequest::PickExportSheetPdf]
+    );
+    let out = dir.join("tune.pdf");
+    s.export_sheet_pdf_to(&out);
+    assert!(std::fs::read(&out).unwrap().starts_with(b"%PDF-"));
+    let msg = s.core().last_rejection().unwrap();
+    assert!(msg.starts_with("Exported the chord sheet as PDF"), "{msg}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
