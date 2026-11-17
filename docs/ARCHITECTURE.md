@@ -45,7 +45,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-vision` | [crates/vision](../crates/vision) | download (tract-tflite, nokhwa on Windows and macOS, linuxvideo on Linux, zune-jpeg, serde, serde_json, thiserror, log, clap, ctrlc) | none | Hand tracking for the webcam controller, pure library with no dependency on the application: the `Camera` and `FrameSource` traits (`SystemCamera`, `FakeCamera`), the capture thread with a one-frame handoff (`Capture`), the palm detector and hand landmark models run in pure Rust (`HandModels`, `HandPipeline`, the detector only while no hand is followed), the list of the two hand model files (their addresses, sizes and SHA-256 are pinned in `download.rs`; the store and the download are in `atomik-download`), the gesture recogniser (`Recogniser`: pinch with hysteresis, ratcheted twist, One Euro smoothing, a dead zone, loss tolerance, two hands) and the `Tracker` worker with its bounded `TrackerEvent` queue. The `vision-demo` tool lists cameras and models and prints or records the hand |
 | `atomik-download` | [crates/download](../crates/download) | none (sha2, ureq, thiserror) | none | The one-time download of model files, shared by the hand models and the stem models: `ModelFile` (name, one fixed HTTPS address, exact size and SHA-256, all constants in the crate that owns the files), `ModelStore` (`status`, `verified_paths` which checks again before a file is loaded, and `download`, which writes under temporary names, checks each file and only then renames them all into place, so a failure, a mismatch or a cancel leaves nothing behind), the `Fetcher` trait with `UreqFetcher` (rustls, HTTPS only, no redirect, a generic User-Agent, nothing about the user or the machine) and `FakeFetcher` for tests |
 | `atomik-stems` | [crates/stems](../crates/stems) | none (thiserror) | none | Stem separation by signal processing, pure and deterministic, with no model and no download: an STFT (`Stft`, 2048 points, hop 512) and `separate`: chunks of 20 s with 1 s of context and a linear crossfade, a harmonic/percussive split by median filters across time and across frequency (soft masks) for the drums, the harmonic part below a 150 Hz crossover for the bass, the centred harmonic part above it for the vocals (a mono input gets the 200 Hz to 5 kHz band at a lower weight) and the residual for the other stem, so the four add up to the mix; a progress callback, a cancel flag and a `StemSink` that receives the finished samples in order |
-| `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror, quick-xml, flate2) | none | Fretted-instrument tablature, pure and headless: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the grader of a played pass (`grade.rs`: verdicts, accuracy, session, latency calibration), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`), ASCII tab read and write (`ascii.rs`), the Guitar Pro readers for `.gp3`, `.gp4`, `.gp5`, `.gpx` and `.gp` (`gp/`, see 6t) and MusicXML read and write (`musicxml/`, see 6v) |
+| `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror, quick-xml, flate2) | none | Fretted-instrument tablature, pure and headless: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the grader of a played pass (`grade.rs`: verdicts, accuracy, session, latency calibration), the chord trainer's chord sets, timed and listen drills and best scores per chord pair (`trainer.rs`, see 6zb), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`), ASCII tab read and write (`ascii.rs`), the Guitar Pro readers for `.gp3`, `.gp4`, `.gp5`, `.gpx` and `.gp` (`gp/`, see 6t) and MusicXML read and write (`musicxml/`, see 6v) |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk, tab | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`), the tab sidecar of note clips (`tab_data.rs`), its edit operations (`tab_edit.rs`) and the technique renderer (`tab_render.rs`), the song chord sheets (`chord_sheets.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
@@ -5197,7 +5197,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (636) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (653) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -7470,6 +7470,53 @@ loop against the notes of the open Tab Editor clip. Three layers, the first two 
   distance of the next eight played notes to the beats and adds their median to the offset.
 - **Commands.** `practice.listen`, `listen_input`, `listen_calibrate`, `listen_clear` (Transport > Practice) and
   `listen_offset`, `listen_threshold` (`up`, `down`); group Transport, context Global, no default keys.
+
+## 6zb. The Chord Trainer
+
+View > Editors > Chord Trainer (`view.toggle_chord_trainer`) opens drills for changing between chords. It is
+`Pane::ChordTrainer`, in place of the arrangement like the Tab Editor and the Chord Sheet (opening one closes the
+others), and not a detachable window: it needs no clip and no platform window, and it sits where the two panes it
+works with sit. Three layers:
+
+- **Logic** ([`atomik_tab::trainer`](../crates/tab/src/trainer.rs), pure and clock-free). `diatonic(key, sevenths)` stacks
+  thirds on the seven degrees of the key (natural minor for a minor key; `Bm7b5` for the half-diminished degree);
+  `parse_chord_list` reads typed names with the chord grammar and reports the words that are not chords. `Drill` is a
+  state machine driven by the clock the caller gives (`start`, `advance(now)`, `stop`) and by what the input heard
+  (`hear(Heard { time, chroma })`): it emits `Click { accent }`, `Changed { from, to }` and `Judged { .. }`, orders the
+  chords (`Order::Sequential`, `Random` with an xorshift seeded by the caller, `Pair` for one pair back and forth, never
+  the same chord twice in a row) and has three modes. *Timed* clicks and changes only. *Verified* does the same and
+  marks a window a hit when its chord is heard (`chord_score` of the chroma against the pitch classes of the chosen
+  voicing, threshold 0.6) from a half beat (at most 250 ms) before its beat to the end of the window; a window is
+  judged 0.5 s after it ends so the tracker's delay still counts, and what was heard in the last second is kept for a
+  window that opens just after a note. *Listen* has no clock: the chord stays until it is heard after it was shown
+  (`seconds` is the time to hear it), and a skip is a miss. The first chord of a session is no change and is not judged.
+  `Scores` keeps per unordered chord pair (`Am|C`) the best changes per minute reached with a hit rate of at least 75 %
+  (timed modes: the tempo's rate; listen: 60 over the mean seconds to hear a chord), the best hit rate and the sessions
+  that counted (at least 3 judged changes); `from_rows` brings stored values into range.
+- **Pane** ([`ChordTrainerView`](../crates/ui/src/chord_trainer.rs)). The editors' contract; it owns the setup and the
+  `Drill`. A start is a request the next `tick(now)` carries out (so it starts at a frame's time, never a stale one);
+  changing a setting while a drill runs ends the session, counts its scores and starts a new one. Voicings come from
+  the generator for the chosen instrument, tuning and capo (frets relative to the capo, so the chord named is the chord
+  that sounds), the chosen fingering of a chord is also what the input must hear, and the instrument list is the Chord
+  Sheet's. Buttons run `editor.trainer_*` commands locally; the pane pulls the song's chords from the chord lane and the
+  sheets on every sync and never writes the document. `help_at` gives every button a tooltip.
+- **App** (`app_core_chord_trainer.rs`, [`trainer_click.rs`](../crates/app/src/trainer_click.rs)). `chord_trainer_frame`
+  runs once a frame from `transport_frame` with the frame clock; the song transport is never started or stopped. The
+  click is the engine's preview voice (the one the browser and the audio setup tones use): `ClickGen` makes a
+  deterministic mono click track (an accent every N beats) and a thread keeps the preview ring filled, so the beats
+  keep the audio clock whatever the frame rate; it starts with a session and stops with it. A listening drill shares the
+  one record tap with listen and grade (`feed_listen` drains it once and hands the chunks to both): the trainer's own
+  `Listener` turns them to notes with their chroma, placed on the frame clock (the note's input frame behind the last
+  frame, less the sink's latency compensation and the manual offset) and given to `hear`. The input is the practice
+  bar's (`practice.listen_input`). **Scores are the user's**: `UiState::chord_trainer_scores` (`ui-state.json`, an
+  absent key means none), handed to the pane at startup and saved when `take_trainer_scores_change` reports a change;
+  nothing of the trainer is in the project (format 45 is unchanged).
+- **Commands** (group Editor, context Global, no default keys): `editor.trainer_start`, `trainer_skip`,
+  `trainer_source` (`key`, `list`, `song`), `trainer_key` (`up`, `down`, `major`, `minor`), `trainer_sevenths`,
+  `trainer_edit_list`, `trainer_instrument`, `trainer_tuning`, `trainer_capo`, `trainer_mode` (`timed`, `verified`,
+  `listen`), `trainer_order` (`sequential`, `random`, `pair`), `trainer_beats` and `trainer_bpm` (`up`, `down`),
+  `trainer_pair` (`a`, `b`), `trainer_voicing` (`next`, `prev`) and `trainer_reset_scores`; `AppCore::pane_command`
+  routes them to the pane while it is open, whichever pane has the focus.
 
 ## 7. The UI crate
 

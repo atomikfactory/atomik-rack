@@ -69,6 +69,20 @@ may break APIs and the patch and project formats.
   Transport > Practice and the command palette have `practice.listen`, `listen_input`, `listen_calibrate`,
   `listen_clear`, `listen_offset` and `listen_threshold`. The tracker is `atomik_dsp::listen`, the grader is
   `atomik_tab::grade`.
+- **A Chord Trainer.** View > Editors > Chord Trainer opens a pane of drills for changing between chords. Pick the
+  instrument, tuning and capo (any instrument of the catalogue, banjo, ukulele, mandolin and bass included), then
+  the chords: the diatonic triads or sevenths of a key, a list typed by name (words that are not chords are flagged)
+  or the chords of the song (chord lane and chord sheets). Each chord shows its diagram in a strip; click a diagram
+  to select it and again, or use the arrows, to cycle through its fingerings. The timed drill shows the chord to play
+  and the next one large, clicks a beat through the engine's preview voice (so it works with the song stopped, never
+  starts the transport and leaves the transport's click alone) and moves on every N beats at a BPM, in order, at
+  random or on one pair back and forth, counting the changes, the changes per minute and the session time. With
+  Timed + Listen the audio input checks that each chord is heard from its beat to the end of its window; with
+  Listen the drill waits and moves on when the chord is heard (Skip gives one up). The input is the practice bar's
+  and uses the same chroma tracker and chord match as listen and grade. The best changes per minute (at a hit rate
+  of 75 % or more) and the best hit rate per chord pair are kept in the window state, `ui-state.json`, never in the
+  project, and shown in a table with a Reset button. Every control is a command (`editor.trainer_*`, no default
+  keys); the pane is not tied to a clip and changes nothing in the song.
 - **A fretboard under the Tab Editor staff.** A neck for the clip's tuning, any string count from 1 to 12 with the high
   string on top as in tab, frets spaced logarithmically and fitted to the width, inlays with the pair at the octave,
   the string names, the capo as a bar (a partial capo covers only its strings) and a short string such as the banjo's
