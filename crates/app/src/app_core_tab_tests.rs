@@ -271,7 +271,7 @@ fn musicxml_exported_from_the_song_imports_again_through_a_file() {
     c.apply_tab(&fixture_score(), Vec::new(), true, "x.gp5")
         .unwrap();
     for name in ["round.musicxml", "round.mxl"] {
-        c.export_tab(TabExportFormat::MusicXml, &tmp.path(name));
+        c.export_tab_of(MidiExport::Song, TabExportFormat::MusicXml, &tmp.path(name));
         let msg = c.last_rejection().unwrap();
         assert!(msg.starts_with("Exported the song as MusicXML"), "{msg}");
         let mut other = core();
