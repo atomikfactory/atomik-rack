@@ -5582,6 +5582,14 @@ mod tests {
             PracticeAction::CountIn(2),
             PracticeAction::ToggleTrainer,
             PracticeAction::LoopSelection,
+            PracticeAction::ToggleListen,
+            PracticeAction::ListenInput,
+            PracticeAction::ListenCalibrate,
+            PracticeAction::ListenClear,
+            PracticeAction::ListenOffset(false),
+            PracticeAction::ListenOffset(true),
+            PracticeAction::ListenThreshold(false),
+            PracticeAction::ListenThreshold(true),
         ] {
             v.push(AppCommand::Practice(a));
         }
