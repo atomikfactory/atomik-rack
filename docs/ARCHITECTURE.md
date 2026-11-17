@@ -35,7 +35,7 @@ The picture shows the main arrows only; the table below is exact.
 |---|---|---|---|---|
 | `atomik-core` | [crates/core](../crates/core) | none | none | Batch constants, time (`SampleRate`, `Tempo`, ticks, `PPQ` = 15 360, `TimeInfo` with the transport position `tick`, `ticks_per_frame`, `loop_wrap`, `time_signature`), the tempo map (steps and linear ramps) and the meter map (`tempo_map.rs`, `meter_map.rs`), params, note events, the scales and chords of `theory.rs` (allocation-free, shared by the note editors and the note players) |
 | `atomik-device-sdk` | [crates/device-sdk](../crates/device-sdk) | core | none | `DeviceDescriptor`, the `Device` trait (with stages and `swap_samples`), `ProcessContext`, `Registry` (with `register_with_samples`), `SampleMap` and `Zone` with `reverse` (`samples.rs`), `PlayerData` (step sequencer patterns, `player.rs`), `Device::swap_player_data`, `Registry::register_with_player_data`, `ScopeTap` and `Device::scope_tap` (the ring of recent frames a metering device hands to the UI, `scope.rs`) |
-| `atomik-dsp` | [crates/dsp](../crates/dsp) | core | none | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables and a 32-wave additive bank, mip levels by FFT truncation), filters, the 24 dB ladder with an anti-aliased drive (`ladder.rs`), envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) |
+| `atomik-dsp` | [crates/dsp](../crates/dsp) | core | none | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables and a 32-wave additive bank, mip levels by FFT truncation), filters, the 24 dB ladder with an anti-aliased drive (`ladder.rs`), envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the streaming note tracker of the practice grader (`listen.rs`: onsets, pitch, chroma), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) |
 | `atomik-devices` | [crates/devices](../crates/devices) | core, device-sdk, dsp | none | `poly-synth` (and the `mono-bass` and `dual-layer` built on its voice), the `organ`, `wavetable-synth`, `fm-synth`, `sampler`, `granular`, `drum-machine`, `loop-slicer`, `line-mixer`, `stereo-delay`, the `echo`, the six effects, the `guitar-amp`, `step-sequencer`, `arpeggiator`, `channel`, `master`, `audio-track`, the `spectrum` and `phase-meter` analysers (see [DEVICES.md](DEVICES.md)) |
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk, dsp | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`), the reference voice (`reference.rs`, after the master chain) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
@@ -45,7 +45,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-vision` | [crates/vision](../crates/vision) | download (tract-tflite, nokhwa on Windows and macOS, linuxvideo on Linux, zune-jpeg, serde, serde_json, thiserror, log, clap, ctrlc) | none | Hand tracking for the webcam controller, pure library with no dependency on the application: the `Camera` and `FrameSource` traits (`SystemCamera`, `FakeCamera`), the capture thread with a one-frame handoff (`Capture`), the palm detector and hand landmark models run in pure Rust (`HandModels`, `HandPipeline`, the detector only while no hand is followed), the list of the two hand model files (their addresses, sizes and SHA-256 are pinned in `download.rs`; the store and the download are in `atomik-download`), the gesture recogniser (`Recogniser`: pinch with hysteresis, ratcheted twist, One Euro smoothing, a dead zone, loss tolerance, two hands) and the `Tracker` worker with its bounded `TrackerEvent` queue. The `vision-demo` tool lists cameras and models and prints or records the hand |
 | `atomik-download` | [crates/download](../crates/download) | none (sha2, ureq, thiserror) | none | The one-time download of model files, shared by the hand models and the stem models: `ModelFile` (name, one fixed HTTPS address, exact size and SHA-256, all constants in the crate that owns the files), `ModelStore` (`status`, `verified_paths` which checks again before a file is loaded, and `download`, which writes under temporary names, checks each file and only then renames them all into place, so a failure, a mismatch or a cancel leaves nothing behind), the `Fetcher` trait with `UreqFetcher` (rustls, HTTPS only, no redirect, a generic User-Agent, nothing about the user or the machine) and `FakeFetcher` for tests |
 | `atomik-stems` | [crates/stems](../crates/stems) | none (thiserror) | none | Stem separation by signal processing, pure and deterministic, with no model and no download: an STFT (`Stft`, 2048 points, hop 512) and `separate`: chunks of 20 s with 1 s of context and a linear crossfade, a harmonic/percussive split by median filters across time and across frequency (soft masks) for the drums, the harmonic part below a 150 Hz crossover for the bass, the centred harmonic part above it for the vocals (a mono input gets the 200 Hz to 5 kHz band at a lower weight) and the residual for the other stem, so the four add up to the mix; a progress callback, a cancel flag and a `StemSink` that receives the finished samples in order |
-| `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror, quick-xml, flate2) | none | Fretted-instrument tablature, pure and headless: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`), ASCII tab read and write (`ascii.rs`), the Guitar Pro readers for `.gp3`, `.gp4`, `.gp5`, `.gpx` and `.gp` (`gp/`, see 6t) and MusicXML read and write (`musicxml/`, see 6v) |
+| `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror, quick-xml, flate2) | none | Fretted-instrument tablature, pure and headless: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the grader of a played pass (`grade.rs`: verdicts, accuracy, session, latency calibration), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`), ASCII tab read and write (`ascii.rs`), the Guitar Pro readers for `.gp3`, `.gp4`, `.gp5`, `.gpx` and `.gp` (`gp/`, see 6t) and MusicXML read and write (`musicxml/`, see 6v) |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk, tab | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`), the tab sidecar of note clips (`tab_data.rs`), its edit operations (`tab_edit.rs`) and the technique renderer (`tab_render.rs`), the song chord sheets (`chord_sheets.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
@@ -5197,7 +5197,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (630) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (636) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -7424,6 +7424,52 @@ the tab fret, an open string at the capo (or left of the nut, or at the peg of a
   detached it closes the window and hides the neck), `view.detach_fretboard`, `view.fretboard_left_handed`,
   `view.fretboard_voicing`, `view.fretboard_labels` (`notes`, `frets`, `intervals`). MCP: `window` `fretboard` on the
   session tools, opened with `session_command view.detach_fretboard`.
+
+## 6za. Listen and grade
+
+The practice bar's Listen switch (`practice.listen`) hears the instrument on an audio input and grades each pass of the
+loop against the notes of the open Tab Editor clip. Three layers, the first two pure:
+
+- **Tracker** ([`atomik_dsp::listen`](../crates/dsp/src/listen.rs)). `Listener::feed(first_frame, mono)` takes the mono
+  input in any block size and returns `PlayedNote`s a few hundred milliseconds after the input they describe: the
+  input frame of the onset, the MIDI key when the sound is monophonic enough to have a pitch (the tuner's YIN and
+  McLeod detector on a window that starts 12 ms after the onset and is cut by the next onset), and a 12-bin chroma
+  (Hann FFT of up to 8192 frames, bins of 70 Hz to 2 kHz folded to pitch classes). Onsets come from the larger of the
+  causal energy flux of `onset.rs` and a log spectral flux (a new pitch over a ringing one), a local-peak rule against
+  an adaptive threshold, a level that rose above the last six hops, and a 60 ms minimum gap; the position is pulled
+  back to the foot of the attack. Same samples, same result whatever the blocks.
+- **Grader** ([`atomik_tab::grade`](../crates/tab/src/grade.rs)). Expected note groups (the notes that start together,
+  a chord from two) against `Played` events within a window of 80 ms of wall-clock time (turned to ticks with the
+  pass's tick rate, so it spans fewer ticks at half speed). Pitch-right events pair first, nearest in time, then
+  leftovers inside the window are *wrong*; unanswered groups are *missed*, unclaimed events *extras*. Right notes are
+  *hit* within half the window, else *early* or *late*. A chord matches when `chord_score` of the event's chroma
+  (energy share on the chord's classes times `0.25 + 0.75 * coverage`) reaches 0.6. Accuracy is
+  `(hits + 0.5 * (early + late)) / (groups + extras)`. `Session` keeps the history (12 passes), the streak and the best
+  streak; `calibration_offset_ms` is the median lateness of notes played along a click.
+- **App** ([`listen.rs`](../crates/app/src/listen.rs), `app_core_listen.rs`). The tap is the engine's record tap
+  (`start_audio_record`, 4 s lock-free ring the audio thread only writes; the engine has one tap, so listening pauses
+  while a take or the SAMPLE button records and starts again after), on one interface channel or a pair
+  (`practice.listen_input` cycles: channels first, then pairs). Once a UI frame the transport state is an `Anchor`
+  (engine frame, song tick, run and lap); the `Clock` converts an input frame to a tick by interpolation, or by
+  extrapolation with the measured rate across a loop wrap, so it holds at any practice speed and over tempo changes.
+  A note played at input frame `h` belongs to the engine frame `h - record_offset_frames - manual offset`.
+  A pass is one lap within one run of the transport; it closes when the transport left it and the tracker has caught
+  up. The graded range is the loop (the first lap of a run starts where the transport started; a stopped run ends where
+  it stopped); the expected notes are those of the clip's track inside the clip.
+- **Results.** The verdicts of the last graded pass colour the notes of the Tab Editor (a patch of green, amber or red
+  under the fret number, with a badge `<` early, `>` late, `x` wrong, `-` missed) and the sounding dots of the
+  fretboard (`FretboardFeed::grades`); the bar shows the last accuracy, the streak and the newest eight passes as bars.
+  Nothing is saved: the session lives in `AppCore`, no command touches the project, a new clip shows no verdicts, and
+  `practice.listen_clear` forgets them.
+- **Speed trainer.** `AccuracyJudge` (default 90 %, `practice.listen_threshold` up or down by 5, range 50 to 100) is the
+  `PassJudge` while listening is on; `PassReport::accuracy` carries the grade. While passes are graded it counts
+  them from the grade (a loop wrap is not counted twice); a pass that could not be graded counts as before. Without an
+  open tab clip, or with listening off, `EveryPass` and the wrap counter apply.
+- **Latency.** The manual offset in milliseconds (`practice.listen_offset`, `ui-state.json` `listen_offset_ms`, not in
+  the project) adds to the sink's latency compensation. `practice.listen_calibrate` turns the click on, plays, takes the
+  distance of the next eight played notes to the beats and adds their median to the offset.
+- **Commands.** `practice.listen`, `listen_input`, `listen_calibrate`, `listen_clear` (Transport > Practice) and
+  `listen_offset`, `listen_threshold` (`up`, `down`); group Transport, context Global, no default keys.
 
 ## 7. The UI crate
 

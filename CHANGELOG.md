@@ -58,6 +58,17 @@ may break APIs and the patch and project formats.
   project is opened or created. Transport > Practice and the command palette have every control (`practice.speed`,
   `practice.speed_up`, `practice.speed_down`, `practice.count_in`, `practice.trainer`, `practice.loop_selection`
   and the trainer's values).
+- **Listen and grade.** The practice bar's Listen switch hears the instrument on an audio input (a single channel or a
+  stereo pair of the interface, chosen with the input chip) and grades every pass of the loop against the notes of the
+  open Tab Editor clip: each note is a hit, early, late, wrong or missed within 80 ms (of wall-clock time, so the window
+  follows the practice speed), a strum is matched as a chord from its chroma, and extra notes are counted. The notes of
+  the tab take the colour of their verdict with a small badge, the sounding dots of the fretboard do too, and the bar
+  shows the accuracy of the last pass, the notes right in a row and the latest passes as bars; nothing is saved with the
+  project and Clear forgets it. The speed trainer asks for a clean pass (90 % by default, settable) while listening is
+  on. Latency comes from the audio settings plus a manual offset that Latency calibrates by playing along the click.
+  Transport > Practice and the command palette have `practice.listen`, `listen_input`, `listen_calibrate`,
+  `listen_clear`, `listen_offset` and `listen_threshold`. The tracker is `atomik_dsp::listen`, the grader is
+  `atomik_tab::grade`.
 - **A fretboard under the Tab Editor staff.** A neck for the clip's tuning, any string count from 1 to 12 with the high
   string on top as in tab, frets spaced logarithmically and fitted to the width, inlays with the pair at the octave,
   the string names, the capo as a bar (a partial capo covers only its strings) and a short string such as the banjo's
