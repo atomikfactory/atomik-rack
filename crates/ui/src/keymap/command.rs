@@ -327,6 +327,16 @@ pub const STRUM_AMOUNT_ARGS: &[&str] = &["128", "64", "32", "16"];
 pub const STRUM_DIRECTION_ARGS: &[&str] = &["up", "down"];
 /// The values of `editor.step_shift`: which way the hits of the step editor's grid move.
 pub const STEP_SHIFT_ARGS: &[&str] = &["right", "left"];
+/// The values of `editor.tab_duration`: the note values of the tab editor, longest first.
+pub const TAB_DURATION_ARGS: &[&str] = &[
+    "whole",
+    "half",
+    "quarter",
+    "eighth",
+    "sixteenth",
+    "thirty_second",
+    "sixty_fourth",
+];
 /// The values of `sequencer.marker_color`: the palette names and `none`.
 pub const MARKER_COLOR_ARGS: &[&str] =
     &["none", "red", "orange", "yellow", "green", "blue", "purple"];
@@ -542,6 +552,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd("edit.select_all", "Select All", G::Edit, C::Global)
         .decline()
         .menu(),
+    cmd(
+        "edit.toggle_tab_or_piano_roll",
+        "Switch Piano Roll and Tab",
+        G::Edit,
+        C::Global,
+    )
+    .menu(),
     cmd("edit.undo", "Undo", G::Edit, C::Global).rep().menu(),
     cmd(
         "editor.apply_expression_curve",
@@ -824,6 +841,41 @@ const COMMANDS: &[CommandDef] = &[
         .arg(STEP_SHIFT_ARGS)
         .decline(),
     cmd("editor.strum", "Strum Selection", G::Editor, C::Editor),
+    cmd("editor.tab_bar_next", "Tab: Next Bar", G::Editor, C::Tab).rep(),
+    cmd(
+        "editor.tab_bar_prev",
+        "Tab: Previous Bar",
+        G::Editor,
+        C::Tab,
+    )
+    .rep(),
+    cmd(
+        "editor.tab_cursor_down",
+        "Tab: Cursor Down",
+        G::Editor,
+        C::Tab,
+    )
+    .rep(),
+    cmd(
+        "editor.tab_cursor_left",
+        "Tab: Cursor Left",
+        G::Editor,
+        C::Tab,
+    )
+    .rep(),
+    cmd(
+        "editor.tab_cursor_right",
+        "Tab: Cursor Right",
+        G::Editor,
+        C::Tab,
+    )
+    .rep(),
+    cmd("editor.tab_cursor_up", "Tab: Cursor Up", G::Editor, C::Tab).rep(),
+    cmd("editor.tab_dotted", "Tab: Dotted Note", G::Editor, C::Tab),
+    cmd("editor.tab_duration", "Tab: Note Value", G::Editor, C::Tab).arg(TAB_DURATION_ARGS),
+    cmd("editor.tab_triplet", "Tab: Triplet Note", G::Editor, C::Tab),
+    cmd("editor.tab_zoom_in", "Tab: Zoom In", G::Editor, C::Tab).rep(),
+    cmd("editor.tab_zoom_out", "Tab: Zoom Out", G::Editor, C::Tab).rep(),
     cmd(
         "editor.thin_controllers",
         "Thin Controller Points",
@@ -3320,6 +3372,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.toggle_song", "Arrangement", G::View, C::Global).menu(),
     cmd("view.toggle_spectrum_eq", "Spectrum EQ", G::View, C::Global).menu(),
     cmd("view.toggle_step_editor", "Step Editor", G::View, C::Global).menu(),
+    cmd("view.toggle_tab_editor", "Tab Editor", G::View, C::Global).menu(),
     cmd("view.toggle_tempo_lane", "Tempo Lane", G::View, C::Global).menu(),
     cmd("view.toggle_track_panel", "Track Panel", G::View, C::Global).menu(),
     cmd("view.toggle_video", "Video", G::View, C::Global).menu(),

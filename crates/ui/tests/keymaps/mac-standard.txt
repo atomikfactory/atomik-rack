@@ -39,6 +39,23 @@ editor.quantize | editor | Cmd+K
 editor.scale_snap_toggle | editor | Shift+S
 editor.select_next_note | editor | Right
 editor.select_prev_note | editor | Left
+editor.tab_bar_next | tab | Cmd+Right
+editor.tab_bar_prev | tab | Cmd+Left
+editor.tab_cursor_down | tab | Down
+editor.tab_cursor_left | tab | Left
+editor.tab_cursor_right | tab | Right
+editor.tab_cursor_up | tab | Up
+editor.tab_dotted | tab | .
+editor.tab_duration eighth | tab | E
+editor.tab_duration half | tab | H
+editor.tab_duration quarter | tab | Q
+editor.tab_duration sixteenth | tab | S
+editor.tab_duration sixty_fourth | tab | X
+editor.tab_duration thirty_second | tab | T
+editor.tab_duration whole | tab | W
+editor.tab_triplet | tab | Y
+editor.tab_zoom_in | tab | =
+editor.tab_zoom_out | tab | -
 editor.toggle_controllers | editor | Shift+L
 editor.toggle_note_mute | editor | M
 editor.transpose_down | editor | Cmd+Down

@@ -302,7 +302,14 @@ pub fn markdown(profiles: &[Profile], oses: &[Os], user: Option<&UserKeymap>) ->
          `A`, `W`, `S`, `E`... to the F above the next C) and `Z` and `X` change the octave, `1` \
          to `0` set the velocity, and Shift is the sustain pedal (it does not change which key a \
          letter is); a chord the context does not bind, `Space` or any chord with the primary \
-         modifier included, still runs as usual. An open \
+         modifier included, still runs as usual. The Tab Editor (View, Editors, Tab Editor) is \
+         the `tab` context: the digits `0` to `9` type the fret on the cursor (two digits typed \
+         within a moment are one fret, `12`), the arrows move the cursor (Left and Right by the \
+         note value, Up and Down between strings, `Ctrl+Left` and `Ctrl+Right` by bar), the \
+         letters `W`, `H`, `Q`, `E`, `S`, `T` and `X` set the note value from a whole note to a \
+         sixty-fourth, `.` makes it dotted and `Y` a triplet, `=` and `-` zoom, and Delete or \
+         Backspace removes the note under the cursor. Inside the pane these win over a global \
+         binding of the same chord (only `.`, the next marker key, overlaps one). An open \
          menu (a context menu, or a menu of the in-window menu bar) takes every key: Up and Down \
          move the highlight (it wraps, and skips separators and disabled items), Home and End \
          jump to the first and last item, Right or Enter opens a submenu on its first item, Left \

@@ -14,6 +14,7 @@ pub mod seq;
 pub mod slicer;
 pub mod song;
 pub mod starter;
+pub mod tab;
 
 use atomik_device_sdk::Registry;
 use atomik_model::{Cable, DeviceKey, RackDevice, RackDoc, SocketRef};

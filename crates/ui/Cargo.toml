@@ -17,6 +17,7 @@ atomik-device-sdk.workspace = true
 atomik-devices.workspace = true
 atomik-dsp.workspace = true
 atomik-model.workspace = true
+atomik-tab.workspace = true
 vello.workspace = true
 parley.workspace = true
 # Optional CPU rasteriser (feature `cpu-canvas`): PNG previews, snapshots and MCP screenshots.

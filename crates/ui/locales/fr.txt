@@ -14,6 +14,19 @@
 # Device names are proper names and stay in English.
 
 # Commands (the labels of the command registry and of the menus)
+Tab Editor => Éditeur de tablature
+Switch Piano Roll and Tab => Basculer entre piano roll et tablature
+Tab: Next Bar => Tablature : mesure suivante
+Tab: Previous Bar => Tablature : mesure précédente
+Tab: Cursor Down => Tablature : curseur vers le bas
+Tab: Cursor Left => Tablature : curseur à gauche
+Tab: Cursor Right => Tablature : curseur à droite
+Tab: Cursor Up => Tablature : curseur vers le haut
+Tab: Dotted Note => Tablature : note pointée
+Tab: Note Value => Tablature : valeur de note
+Tab: Triplet Note => Tablature : note en triolet
+Tab: Zoom In => Tablature : zoom avant
+Tab: Zoom Out => Tablature : zoom arrière
 About Atomik Rack => À propos d'Atomik Rack
 Actual Size => Taille réelle
 Add Channel => Ajouter un canal
@@ -1491,6 +1504,10 @@ Listening for the key: {n} % => Écoute de la tonalité : {n} %
 Polyphonic (chords) => Polyphonique (accords)
 Voices at once => Voix simultanées
 # Dialogs, panels, settings and labels (part 3)
+Capo {fret} => Capodastre {fret}
+Automatic fingering => Doigté automatique
+let ring => laisser vibrer
+fret {fret} is not on this string => la case {fret} n'existe pas sur cette corde
 {n} mappings. Click a mode, a range, a port or a channel to change it (right click goes back, the wheel too), LEARN picks another control. => {n} assignations. Cliquez sur un mode, une plage, un port ou un canal pour le changer (le clic droit revient en arrière, la molette aussi) ; APPRENDRE choisit une autre commande.
 1 mapping. Click a mode, a range, a port or a channel to change it (right click goes back, the wheel too), LEARN picks another control. => 1 assignation. Cliquez sur un mode, une plage, un port ou un canal pour le changer (le clic droit revient en arrière, la molette aussi) ; APPRENDRE choisit une autre commande.
 A mapped control is consumed: it plays no notes. PICKUP waits for the control to reach the value; INVERT swaps the ends. => Une commande assignée est consommée : elle ne joue aucune note. REPRISE attend que la commande atteigne la valeur ; INVERSER échange les extrémités.
@@ -2029,6 +2046,9 @@ STOP ALL => TOUT ARRÊTER
 
 
 # Arguments of commands (the word in brackets of a command with a choice)
+whole => ronde
+thirty_second => triple croche
+sixty_fourth => quadruple croche
 a => la
 a_sharp => la dièse
 absolute => absolu
@@ -2114,6 +2134,7 @@ hungarian_minor => mineur hongrois
 impact => impact
 in => entrée
 keys => touches
+tab => tablature
 lane => voie
 large => grand
 launcher => lanceur
@@ -2397,6 +2418,9 @@ Song key set to {key} from the audio ({fit}); Undo puts the old key back => Tona
 
 
 # Tooltips (one short line each, 90 characters at most)
+Note value of the next typed note => Valeur de la prochaine note saisie
+Dotted note value => Valeur de note pointée
+Triplet note value => Valeur de note en triolet
 Touch a control in the plugin to show its automation lane => Touchez une commande du plugin pour afficher sa voie d'automation
 Touch a control in the plugin, then move a hardware control to map it => Touchez une commande du plugin, puis bougez une commande matérielle pour l'assigner
 Stop learning (Esc) => Arrêter l'apprentissage (Échap)

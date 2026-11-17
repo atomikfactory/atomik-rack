@@ -754,6 +754,7 @@ dependencies = [
  "atomik-library",
  "atomik-model",
  "atomik-plugin-host",
+ "atomik-tab",
  "atomik-ui",
  "parley",
  "png",

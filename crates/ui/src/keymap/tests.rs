@@ -98,6 +98,7 @@ fn reference_shadows_are_the_expected_notes() {
             "keys F keys.note over sequencer.follow",
             "keys K keys.note over view.cables_cycle",
             "keys L keys.note over transport.loop",
+            "tab . editor.tab_dotted over transport.next_marker",
         ]
     );
     assert!(find_shadows(&km(Profile::Legacy, Os::Windows)).is_empty());

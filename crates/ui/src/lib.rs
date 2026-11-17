@@ -364,6 +364,7 @@ pub mod camera_panel;
 pub mod canvas;
 pub mod character_panel;
 pub mod character_screen;
+pub mod chord_diagram;
 pub mod chord_edit;
 pub mod chords_panel;
 pub mod clipboard;
@@ -469,6 +470,7 @@ pub mod stems_dialog;
 pub mod step_drag;
 pub mod step_editor;
 pub mod stereo_panel;
+pub mod tab_editor;
 pub mod tempo_lane;
 pub mod text;
 pub mod text_field;
@@ -612,6 +614,7 @@ pub use stems_dialog::{
     STEM_COUNT, STEM_LABELS, StemsDialogChoice, StemsDialogState, StemsDialogView, StemsPhase,
 };
 pub use step_editor::{StepEditorView, ToolButton, ToolKind, VelocityLevel};
+pub use tab_editor::{NoteValue, TabEditorView};
 pub use text::{ShapedGlyph, ShapedRun, SharedText, TextEngine};
 pub use text_field::{
     FieldColors, FieldKey, FieldMenuState, HISTORY_LIMIT, TEXT_COMMANDS, TextField,
