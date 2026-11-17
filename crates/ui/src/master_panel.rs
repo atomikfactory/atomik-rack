@@ -69,14 +69,17 @@ const SINGLE_X: f64 = 448.0;
 const BACK_ROW_H: f64 = TITLE_H + SOCKET_CELL.1 + 16.0;
 
 /// Whether a click on `p` opens a pick list: a long choice such as the control-room source, or
-/// a `sound`, `algorithm` or wavetable `table` choice of [`NAMED_PICK_LIST_MIN`] entries or
+/// a `sound`, `algorithm`, `body` or wavetable `table` choice of [`NAMED_PICK_LIST_MIN`] entries or
 /// more, or the grain sampler's `voice.mode` and `zone.mode` ([`GRAIN_PICK_KEYS`]). A right-click still steps back through the choices.
 pub fn is_pick_list(p: &ParamDescriptor) -> bool {
     match p.unit {
         atomik_core::Unit::Choice(names) => {
             names.len() >= PICK_LIST_MIN
                 || (names.len() >= NAMED_PICK_LIST_MIN
-                    && matches!(p.key, "sound" | "algorithm" | "osc1.table" | "osc2.table"))
+                    && matches!(
+                        p.key,
+                        "sound" | "algorithm" | "osc1.table" | "osc2.table" | "body"
+                    ))
                 // The grain sampler's play mode and zone mode name what they do, so they open
                 // a list too, whatever their length.
                 || GRAIN_PICK_KEYS.contains(&p.key)

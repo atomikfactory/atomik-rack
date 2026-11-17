@@ -345,6 +345,16 @@ pub(crate) fn auto_layout_with_strip(
     )
 }
 
+/// Like [`auto_layout`] with `prefix_of` choosing the section of each param key and the sections
+/// in the order of `order` (sections not named follow in descriptor order); nothing is reserved.
+pub(crate) fn auto_layout_with_sections(
+    desc: &DeviceDescriptor,
+    prefix_of: for<'a> fn(&'a str) -> &'a str,
+    order: &[&str],
+) -> PanelSpec {
+    layout_with(desc, 0.0, false, prefix_of, order, 0.0, usize::MAX)
+}
+
 /// Like [`auto_layout_with_strip`] with the sections in the order of `order` (the prefixes
 /// `prefix_of` returns; sections not named follow in descriptor order), so a panel can put
 /// sections that pack well side by side.
