@@ -136,6 +136,7 @@ DeleteVca(Some(2)) | Bass
 DeliveryTargets | Delivery Targets…
 DetachBrowser | Detach Browser
 DetachConsole | Detach Mixer
+DetachFretboard | Detach Fretboard
 DetachRack | Detach Rack
 DetectChordsFromAudio | Detect Chords from Audio…
 DetectKey | Detect Song Key
@@ -183,6 +184,8 @@ FreezeStrip | Freeze with Strip
 FreezeTail | Freeze with Tail
 FreezeTrack | Freeze Track
 FreezeTrackToDevice | Freeze Track up to Selected Device
+FretboardLeftHanded | Left-handed
+FretboardVoicing | Chord Voicing
 GentlePump | Gentle Pump
 GroupTracks | Group Tracks
 GuidedTour | Guided Tour
@@ -394,6 +397,9 @@ SeparateStems | Separate Stems…
 SequencerOnly | Sequencer Only
 SetDefaultSong | Use Song as Default Song
 SetEndMarker | Set End Marker at Playhead
+SetFretLabels(Frets) | Fret Numbers
+SetFretLabels(Intervals) | Intervals
+SetFretLabels(Notes) | Note Names
 SetLeftLocator | Set Left Locator at Playhead
 SetMidiResolution(Native) | 15360 per quarter (native)
 SetMidiResolution(Ppq480) | 480 per quarter
@@ -438,6 +444,7 @@ ToggleEnergyLane | Energy Lane
 ToggleFileBrowser | File Browser
 ToggleFlip | Back of Rack
 ToggleFolder | Collapse Folder
+ToggleFretboard | Fretboard
 ToggleHistory | Undo History
 ToggleInspector | Inspector
 ToggleKeyLane | Key Lane

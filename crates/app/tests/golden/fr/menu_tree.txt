@@ -241,6 +241,15 @@ Affichage
     Éditeur de découpe
     Éditeur de tablature
     Grille d'accords
+    Manche
+    Détacher le manche
+    Options du manche >
+      Gaucher
+      Disposition d'accord
+      ---
+      Noms de notes
+      Numéros de cases
+      Intervalles
     Basculer entre piano roll et tablature
   Lanceur >
     Lanceur [F10]

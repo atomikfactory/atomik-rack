@@ -241,6 +241,15 @@ View
     Slice Editor
     Tab Editor
     Chord Sheet
+    Fretboard
+    Detach Fretboard
+    Fretboard Options >
+      Left-handed
+      Chord Voicing
+      ---
+      Note Names
+      Fret Numbers
+      Intervals
     Switch Piano Roll and Tab
   Launcher >
     Launcher
