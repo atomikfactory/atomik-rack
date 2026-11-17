@@ -1,8 +1,9 @@
 name: Fuzz
 
 # Scheduled fuzzing of everything that reads a file or a message from outside: projects and
-# patches, Standard MIDI Files, audio files and the plugin sandbox wire. It never runs on a pull
-# request and never gates one: cargo-fuzz needs a nightly toolchain, and the crate it builds
+# patches, Standard MIDI Files, audio files, Guitar Pro files, tab and chord sheets, and the
+# plugin sandbox wire. It never runs on a pull request and never gates one: cargo-fuzz needs a
+# nightly toolchain, and the crate it builds
 # (fuzz/) is outside the workspace. The protection itself is also tested on stable, in the
 # normal CI (the robustness and bounded-input tests of audio-file, midi-io and model).
 #
@@ -42,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [load_project, load_patch, smf_read, audio_decode, ipc_frame, instrument_read]
+        target: [load_project, load_patch, smf_read, audio_decode, ipc_frame, instrument_read, tab_gp, tab_ascii, chord_sheet]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
