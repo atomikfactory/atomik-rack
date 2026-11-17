@@ -2213,3 +2213,16 @@ Hand checks with a real camera, by `vision-demo` (`cargo run --release -p atomik
   moment of the pinch; a clockwise turn as you see yourself in a mirror is positive.
 - `record out.json --seconds 10` saves the landmark stream (numbers only, no pictures) for new fixtures.
 - The camera light is on only while `track` or `record` runs.
+
+## Tablature (`atomik-tab`)
+
+The tab crate is pure, so every test is a plain `cargo test -p atomik-tab` (about 3 seconds): unit tests beside
+each module and one integration file per module in `crates/tab/tests`. The open-position shapes of guitar, ukulele,
+banjo, mandolin and bass are asserted by name (C, G, D, A, E, Am, Em, Dm, Fmaj7 on a guitar; C, G, Am, F on a
+re-entrant ukulele; the all-open G on a five-string banjo whose drone string never sounds below its fifth fret).
+Property tests (proptest) cover: every catalogue fret finds its pitch again; fretting places each note on a string
+that sounds it, one note per string, fixed placements never move and unplayable notes are reported; a formatted
+chord name reads back as the same chord; transposing keeps the quality and never writes `E#`, `B#`, `Cb` or `Fb`
+without a key; any text is read as a sheet or as ASCII tab without a panic and within the caps; sheets and
+ASCII tab written by the crate read back to the same chords, notes and techniques. Lyrics and tab in the tests are
+made up.
