@@ -40,7 +40,7 @@ pub(super) fn popup_buttons(r: Rect) -> (Rect, Rect, Rect) {
 }
 
 /// The instrument list: the panel and one rectangle per instrument.
-pub(super) fn picker_layout(bounds: Rect) -> (Rect, Vec<(Rect, &'static Instrument)>) {
+pub(crate) fn picker_layout(bounds: Rect) -> (Rect, Vec<(Rect, &'static Instrument)>) {
     let all = catalogue();
     let per = all.len().div_ceil(PICK_COLUMNS);
     let cols = all.len().div_ceil(per.max(1)).max(1);

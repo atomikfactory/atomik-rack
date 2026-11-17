@@ -367,6 +367,7 @@ pub mod character_screen;
 pub mod chord_diagram;
 pub mod chord_edit;
 pub mod chord_sheet;
+pub mod chord_trainer;
 pub mod chords_panel;
 pub mod clipboard;
 pub mod color_picker;
@@ -520,6 +521,7 @@ pub use camera_panel::{
 };
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
 pub use chord_sheet::{ChordSheetView, SheetButton, SpellPref};
+pub use chord_trainer::{ChordTrainerView, Source as TrainerSource, TrainerButton};
 pub use chords_panel::{
     ChordChanges, ChordsAction, ChordsPreview, ChordsRow, ChordsValues, ChordsView, PreviewChord,
 };

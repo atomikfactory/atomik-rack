@@ -32,7 +32,7 @@
 
 mod content;
 mod layout;
-mod paint;
+pub(crate) mod paint;
 
 pub use layout::{CHORD_ADVANCE, CHORD_SCALE, LYRIC_ADVANCE, chord_width, layout_line, text_width};
 

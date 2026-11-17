@@ -327,6 +327,20 @@ pub const STRUM_AMOUNT_ARGS: &[&str] = &["128", "64", "32", "16"];
 pub const STRUM_DIRECTION_ARGS: &[&str] = &["up", "down"];
 /// The values of `editor.step_shift`: which way the hits of the step editor's grid move.
 pub const STEP_SHIFT_ARGS: &[&str] = &["right", "left"];
+/// The values of the `editor.trainer_*` commands that step a number: up or down.
+pub const TRAINER_UP_DOWN_ARGS: &[&str] = &["up", "down"];
+/// The values of `editor.trainer_key`: the tonic a semitone either way, or the mode.
+pub const TRAINER_KEY_ARGS: &[&str] = &["up", "down", "major", "minor"];
+/// The values of `editor.trainer_mode`: timed, timed and verified by the input, or listen.
+pub const TRAINER_MODE_ARGS: &[&str] = &["timed", "verified", "listen"];
+/// The values of `editor.trainer_order`: how the chords follow one another.
+pub const TRAINER_ORDER_ARGS: &[&str] = &["sequential", "random", "pair"];
+/// The values of `editor.trainer_pair`: which chord of the pair moves on.
+pub const TRAINER_PAIR_ARGS: &[&str] = &["a", "b"];
+/// The values of `editor.trainer_source`: where the chords of the drill come from.
+pub const TRAINER_SOURCE_ARGS: &[&str] = &["key", "list", "song"];
+/// The values of `editor.trainer_voicing`: the next or previous fingering of the selected chord.
+pub const TRAINER_VOICING_ARGS: &[&str] = &["next", "prev"];
 /// The values of `editor.sheet_select`: the neighbour sheet.
 pub const SHEET_SELECT_ARGS: &[&str] = &["next", "previous"];
 /// The values of `editor.sheet_transpose`: a semitone either way, or back to the written key.
@@ -1073,6 +1087,111 @@ const COMMANDS: &[CommandDef] = &[
         G::Editor,
         C::Editor,
     ),
+    cmd(
+        "editor.trainer_beats",
+        "Chord Trainer: Beats per Chord",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_UP_DOWN_ARGS),
+    cmd(
+        "editor.trainer_bpm",
+        "Chord Trainer: Tempo",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_UP_DOWN_ARGS),
+    cmd(
+        "editor.trainer_capo",
+        "Chord Trainer: Capo",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_UP_DOWN_ARGS),
+    cmd(
+        "editor.trainer_edit_list",
+        "Chord Trainer: Type a List of Chords",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_instrument",
+        "Chord Trainer: Instrument",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_key",
+        "Chord Trainer: Key",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_KEY_ARGS),
+    cmd(
+        "editor.trainer_mode",
+        "Chord Trainer: Drill Mode",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_MODE_ARGS),
+    cmd(
+        "editor.trainer_order",
+        "Chord Trainer: Chord Order",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_ORDER_ARGS),
+    cmd(
+        "editor.trainer_pair",
+        "Chord Trainer: Pair Chord",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_PAIR_ARGS),
+    cmd(
+        "editor.trainer_reset_scores",
+        "Chord Trainer: Reset Best Scores",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_sevenths",
+        "Chord Trainer: Sevenths",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_skip",
+        "Chord Trainer: Skip Chord",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_source",
+        "Chord Trainer: Chord Source",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_SOURCE_ARGS),
+    cmd(
+        "editor.trainer_start",
+        "Chord Trainer: Start or Stop",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_tuning",
+        "Chord Trainer: Next Tuning",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_voicing",
+        "Chord Trainer: Fingering",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_VOICING_ARGS),
     cmd(
         "editor.transpose_down",
         "Transpose Down",
@@ -3620,6 +3739,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.toggle_browser", "Device Browser", G::View, C::Global).menu(),
     cmd("view.toggle_chord_lane", "Chord Lane", G::View, C::Global).menu(),
     cmd("view.toggle_chord_sheet", "Chord Sheet", G::View, C::Global).menu(),
+    cmd(
+        "view.toggle_chord_trainer",
+        "Chord Trainer",
+        G::View,
+        C::Global,
+    )
+    .menu(),
     cmd("view.toggle_console", "Console", G::View, C::Global).menu(),
     cmd(
         "view.toggle_console_links",
