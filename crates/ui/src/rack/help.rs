@@ -5,6 +5,7 @@ use super::{Drag, Hit, PlayerBtn, RackView};
 use crate::arp_panel::{ARP_MODES, ARP_RATES};
 use crate::autolayout;
 use crate::breadcrumb::{self, CrumbHit};
+use crate::chord_wheel_panel::WheelButton;
 use crate::container_panel::ContainerButton;
 use crate::drum_gen_panel::DrumButton;
 use crate::mix_panel::MixButton;
@@ -135,10 +136,38 @@ fn id_of(hit: Hit) -> Option<&'static str> {
         }
         Hit::Player(_, PlayerBtn::OctaveDec | PlayerBtn::OctaveInc) => "rack.arpeggio",
         Hit::Player(_, PlayerBtn::FromClip) => "rack.scale_from_clip",
+        Hit::Player(_, PlayerBtn::Wheel(WheelButton::Generate)) => "rack.wheel_generate",
+        Hit::Player(_, PlayerBtn::Wheel(WheelButton::ToLane)) => "rack.wheel_to_chord_lane",
+        Hit::Player(_, PlayerBtn::Wheel(WheelButton::ToClip)) => "rack.wheel_to_clip",
         Hit::Mix(_, MixButton::BypassInserts) => "rack.bypass_inserts",
         Hit::Mix(_, MixButton::ShowInserts) => "rack.show_inserts",
         _ => return None,
     })
+}
+
+/// The tooltip of a Chord Wheel panel's button or card.
+fn wheel_button(b: WheelButton) -> Option<Cow<'static, str>> {
+    let s = |t: &'static str| Some(Cow::Borrowed(t));
+    match b {
+        WheelButton::Wheel => s(
+            "Click a chord to set the selected slot (right-click: quality and bass, Shift-click: key)",
+        ),
+        WheelButton::Card(_) => s("Select this slot of the progression"),
+        WheelButton::Lock(_) => s("Lock this slot: Generate keeps its chord"),
+        WheelButton::Beats(_) => s("Length of the chord in beats: drag or scroll to change it"),
+        WheelButton::SlotsDec => s("Fewer slots in the progression"),
+        WheelButton::SlotsInc => s("More slots in the progression"),
+        WheelButton::Generate => {
+            s("Write a new progression from the mood and spice (locked slots stay)")
+        }
+        WheelButton::Suggest => s(
+            "Tint the wheel by what follows the chord before the selected slot and number the best three",
+        ),
+        WheelButton::ToLane => {
+            s("Send the progression to the song's chord lane at the left locator")
+        }
+        WheelButton::ToClip => s("Send the progression to a note clip of the track"),
+    }
 }
 
 /// The text of a rack button, or `None` for a hit that is no button (or has its own tooltip).
@@ -196,6 +225,7 @@ fn text(hit: Hit) -> Option<Cow<'static, str>> {
         Hit::Plugin(_, b) => s(plugin_button(b)),
         Hit::Player(_, PlayerBtn::Seq(b)) => Some(seq_button(b)),
         Hit::Player(_, PlayerBtn::Drum(b)) => drum_button(b),
+        Hit::Player(_, PlayerBtn::Wheel(b)) => wheel_button(b),
         Hit::Player(_, PlayerBtn::Mode(m)) => ARP_MODES
             .get(usize::from(m))
             .map(|n| Cow::Owned(format!("Arpeggio order: {}", n.to_lowercase()))),

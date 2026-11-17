@@ -6,6 +6,7 @@
 //! keymap ([`menus`]); the key router lives in `atomik_ui::keymap` and the shell.
 
 use crate::midi_file::MidiResolution;
+use crate::practice::PracticeAction;
 use crate::record::InputQuantize;
 pub use crate::transition_choice::TransitionChoice;
 use crate::windows::WindowKind;
@@ -15,10 +16,11 @@ use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
 use atomik_ui::big_meter::MeterMode;
 use atomik_ui::keymap::{
     APP_ZOOM_ARGS, EXPORT_FOR_ARGS, INPUT_CHANNEL_ARGS, Keymap, MAP_COMMAND_ARGS, MORPH_TIME_ARGS,
-    OUTPUT_CHANNEL_ARGS, RATE_ARGS, RECENT_ARGS, REFERENCE_BAND_ARGS, REFERENCE_CUE_ARGS,
-    REFERENCE_SELECT_ARGS, REFERENCE_SOLO_ARGS, SONG_ARGS, TEMPLATE_ARGS,
+    OUTPUT_CHANNEL_ARGS, PRACTICE_COUNT_IN_ARGS, PRACTICE_SPEED_ARGS, RATE_ARGS, RECENT_ARGS,
+    REFERENCE_BAND_ARGS, REFERENCE_CUE_ARGS, REFERENCE_SELECT_ARGS, REFERENCE_SOLO_ARGS, SONG_ARGS,
+    TEMPLATE_ARGS,
 };
-use atomik_ui::{CableVisibility, Flip, ThemeChoice, TransportAction};
+use atomik_ui::{CableVisibility, Flip, ThemeChoice, TrainerValue, TransportAction};
 use std::borrow::Cow;
 
 /// Something the user asked the app to do (menu item or shortcut).
@@ -121,6 +123,14 @@ pub enum AppCommand {
     /// File ▸ Import MIDI as Song…: a MIDI file as new tracks from the start, with its tempo map,
     /// meter and markers.
     ImportMidiSong,
+    /// File ▸ Import Tab or Score File…: a Guitar Pro or MusicXML file as new tracks with their
+    /// tab, at the playhead.
+    ImportTab,
+    /// File ▸ Import Tab or Score as Song…: the same from the start, with the file's tempo map,
+    /// meter, markers, chords and key.
+    ImportTabSong,
+    /// File ▸ Import Chord Sheet…: a chord sheet text file into the song's chord sheets.
+    ImportSheet,
     /// File ▸ Sound Analyst…: the panel that measures an audio file and proposes a starting patch
     /// to recreate it.
     SoundAnalyst,
@@ -149,6 +159,16 @@ pub enum AppCommand {
     ExportMidiTrack,
     /// File ▸ Export MIDI Song…: every note track as a type 1 MIDI file.
     ExportMidiSong,
+    /// File ▸ Export Tab as MusicXML…: the selected note clip, or the song, as MusicXML.
+    ExportTabMusicXml,
+    /// File ▸ Export Tab as Text…: the selected note clip, or the song, as ASCII tab.
+    ExportTabText,
+    /// File ▸ Export Chord Sheet as Text…: the song's first chord sheet, chords over lyrics.
+    ExportSheetText,
+    /// File ▸ Export Tab as PDF…: the selected note clip, or the song, as a printable tab.
+    ExportTabPdf,
+    /// File ▸ Export Chord Sheet as PDF…: the song's chord sheet, printable.
+    ExportSheetPdf,
     /// File ▸ Export Song as Audio File…: the song from the start to the End marker, plus its tail.
     ExportSongAudio,
     /// File ▸ Export Loop as Audio File…: exactly the range between the locators.
@@ -232,11 +252,34 @@ pub enum AppCommand {
     /// View ▸ Step Editor (open it on the selected or first drum machine, or
     /// close it).
     ToggleStepEditor,
+    /// View > Editors > Tab Editor.
+    ToggleTabEditor,
+    /// View > Editors > Chord Sheet.
+    ToggleChordSheet,
+    /// View > Editors > Chord Trainer.
+    ToggleChordTrainer,
+    /// View > Editors > Switch Piano Roll and Tab.
+    ToggleTabOrPianoRoll,
+    /// View > Editors > Fretboard: the neck under the Tab Editor staff (closes the window when
+    /// the fretboard is detached).
+    ToggleFretboard,
+    /// View > Editors > Detach Fretboard: the fretboard in a window of its own, or back under the
+    /// staff.
+    DetachFretboard,
+    /// View > Editors > Fretboard Options > Left-handed: mirror the neck.
+    FretboardLeftHanded,
+    /// View > Editors > Fretboard Options > Chord Voicing: show the fingering of the chord at
+    /// the playhead.
+    FretboardVoicing,
+    /// View > Editors > Fretboard Options: what the dots say.
+    SetFretLabels(atomik_ui::FretLabels),
     /// View ▸ Slice Editor (open it on the selected or first loop slicer, or
     /// close it).
     ToggleSliceEditor,
     /// Transport ▸ … (play, stop, record, loop, metronome, return to zero).
     Transport(TransportAction),
+    /// Transport ▸ Practice ▸ … (speed, count-in, speed trainer, loop the selection).
+    Practice(PracticeAction),
     /// Transport ▸ Input Quantize.
     Quantize(InputQuantize),
     /// Options ▸ Pre-count (Ctrl+P): the count-in of a recording on or off. It is a setting
@@ -630,6 +673,12 @@ pub enum AppCommand {
     FoldPlayers,
     /// Track > Bypass All Players.
     BypassPlayers,
+    /// Track > Players and the rack menu: Generate Progression on the selected Chord Wheel.
+    WheelGenerate,
+    /// Track > Players and the rack menu: Send Progression to Chord Lane.
+    WheelToChordLane,
+    /// Track > Players and the rack menu: Send Progression to Clip.
+    WheelToClip,
     /// Track > Add Pattern Lane: the lane of the selected device's `pattern` param.
     AddPatternLane,
     /// Track > Add Reverb Send...: opens the wizard that gives the selected track a send to a new
@@ -852,6 +901,7 @@ fn window_arg(kind: WindowKind) -> &'static str {
         WindowKind::Browser => "browser",
         WindowKind::PianoKeys => "piano-keys",
         WindowKind::Video => "video",
+        WindowKind::Fretboard => "fretboard",
     }
 }
 
@@ -944,6 +994,9 @@ impl AppCommand {
             AppCommand::ImportAudio => ("file.import_audio", None),
             AppCommand::ImportMidi => ("file.import_midi", None),
             AppCommand::ImportMidiSong => ("file.import_midi_song", None),
+            AppCommand::ImportTab => ("file.import_tab", None),
+            AppCommand::ImportTabSong => ("file.import_tab_song", None),
+            AppCommand::ImportSheet => ("file.import_sheet", None),
             AppCommand::SoundAnalyst => ("file.sound_analyst", None),
             AppCommand::DeliveryTargets => ("file.delivery_targets", None),
             AppCommand::PeakSurgeon => ("sequencer.peak_surgeon", None),
@@ -956,6 +1009,11 @@ impl AppCommand {
             AppCommand::ExportMidiClip => ("file.export_midi_clip", None),
             AppCommand::ExportMidiTrack => ("file.export_midi_track", None),
             AppCommand::ExportMidiSong => ("file.export_midi_song", None),
+            AppCommand::ExportTabMusicXml => ("file.export_tab_musicxml", None),
+            AppCommand::ExportTabText => ("file.export_tab_text", None),
+            AppCommand::ExportSheetText => ("file.export_sheet_text", None),
+            AppCommand::ExportTabPdf => ("file.export_tab_pdf", None),
+            AppCommand::ExportSheetPdf => ("file.export_sheet_pdf", None),
             AppCommand::ExportSongAudio => ("file.export_song_audio", None),
             AppCommand::ExportLoopAudio => ("file.export_loop_audio", None),
             AppCommand::ExportSelectionAudio => ("file.export_selection_audio", None),
@@ -998,6 +1056,15 @@ impl AppCommand {
             AppCommand::TogglePianoRoll => ("view.toggle_piano_roll", None),
             AppCommand::ToggleSampleEditor => ("view.toggle_sample_editor", None),
             AppCommand::ToggleStepEditor => ("view.toggle_step_editor", None),
+            AppCommand::ToggleTabEditor => ("view.toggle_tab_editor", None),
+            AppCommand::ToggleChordSheet => ("view.toggle_chord_sheet", None),
+            AppCommand::ToggleChordTrainer => ("view.toggle_chord_trainer", None),
+            AppCommand::ToggleTabOrPianoRoll => ("edit.toggle_tab_or_piano_roll", None),
+            AppCommand::ToggleFretboard => ("view.toggle_fretboard", None),
+            AppCommand::DetachFretboard => ("view.detach_fretboard", None),
+            AppCommand::FretboardLeftHanded => ("view.fretboard_left_handed", None),
+            AppCommand::FretboardVoicing => ("view.fretboard_voicing", None),
+            AppCommand::SetFretLabels(l) => ("view.fretboard_labels", Some(l.arg())),
             AppCommand::ToggleSliceEditor => ("view.toggle_slice_editor", None),
             AppCommand::Transport(TransportAction::Play) => ("transport.play", None),
             AppCommand::Transport(TransportAction::Stop) => ("transport.stop", None),
@@ -1022,6 +1089,39 @@ impl AppCommand {
             AppCommand::Transport(TransportAction::TapTempo) => ("transport.tap_tempo", None),
             AppCommand::Transport(TransportAction::Dub) => ("transport.dub", None),
             AppCommand::Transport(TransportAction::Alt) => ("transport.alt", None),
+            AppCommand::Practice(a) => match a {
+                PracticeAction::Speed(p) => {
+                    ("practice.speed", Some(arg_of(PRACTICE_SPEED_ARGS, *p)?))
+                }
+                PracticeAction::SpeedUp => ("practice.speed_up", None),
+                PracticeAction::SpeedDown => ("practice.speed_down", None),
+                PracticeAction::CountIn(0) => ("practice.count_in", Some("off")),
+                PracticeAction::CountIn(1) => ("practice.count_in", Some("1")),
+                PracticeAction::CountIn(_) => ("practice.count_in", Some("2")),
+                PracticeAction::ToggleTrainer => ("practice.trainer", None),
+                PracticeAction::Trainer(v, up) => (
+                    match v {
+                        TrainerValue::Start => "practice.trainer_start",
+                        TrainerValue::Step => "practice.trainer_step",
+                        TrainerValue::After => "practice.trainer_after",
+                        TrainerValue::Target => "practice.trainer_target",
+                    },
+                    Some(if *up { "up" } else { "down" }),
+                ),
+                PracticeAction::ToggleListen => ("practice.listen", None),
+                PracticeAction::ListenInput => ("practice.listen_input", None),
+                PracticeAction::ListenCalibrate => ("practice.listen_calibrate", None),
+                PracticeAction::ListenClear => ("practice.listen_clear", None),
+                PracticeAction::ListenOffset(up) => (
+                    "practice.listen_offset",
+                    Some(if *up { "up" } else { "down" }),
+                ),
+                PracticeAction::ListenThreshold(up) => (
+                    "practice.listen_threshold",
+                    Some(if *up { "up" } else { "down" }),
+                ),
+                PracticeAction::LoopSelection => ("practice.loop_selection", None),
+            },
             AppCommand::TogglePreCount => ("transport.pre_count", None),
             AppCommand::ToggleClockOut => ("sync.clock_out", None),
             AppCommand::ToggleClockWhileStopped => ("sync.clock_while_stopped", None),
@@ -1220,6 +1320,9 @@ impl AppCommand {
             AppCommand::SendPlayersToTrack => ("sequencer.send_players_to_track", None),
             AppCommand::FoldPlayers => ("sequencer.fold_players", None),
             AppCommand::BypassPlayers => ("sequencer.bypass_players", None),
+            AppCommand::WheelGenerate => ("rack.wheel_generate", None),
+            AppCommand::WheelToChordLane => ("rack.wheel_to_chord_lane", None),
+            AppCommand::WheelToClip => ("rack.wheel_to_clip", None),
             AppCommand::AddPatternLane => ("sequencer.add_pattern_lane", None),
             AppCommand::AddReverbSend => ("sequencer.add_reverb_send", None),
             AppCommand::DuckFrom => ("sequencer.duck_from", None),
@@ -1363,6 +1466,9 @@ impl AppCommand {
             ("file.import_audio", None) => AppCommand::ImportAudio,
             ("file.import_midi", None) => AppCommand::ImportMidi,
             ("file.import_midi_song", None) => AppCommand::ImportMidiSong,
+            ("file.import_tab", None) => AppCommand::ImportTab,
+            ("file.import_tab_song", None) => AppCommand::ImportTabSong,
+            ("file.import_sheet", None) => AppCommand::ImportSheet,
             ("file.sound_analyst", None) => AppCommand::SoundAnalyst,
             ("file.delivery_targets", None) => AppCommand::DeliveryTargets,
             ("sequencer.peak_surgeon", None) => AppCommand::PeakSurgeon,
@@ -1375,6 +1481,11 @@ impl AppCommand {
             ("file.export_midi_clip", None) => AppCommand::ExportMidiClip,
             ("file.export_midi_track", None) => AppCommand::ExportMidiTrack,
             ("file.export_midi_song", None) => AppCommand::ExportMidiSong,
+            ("file.export_tab_musicxml", None) => AppCommand::ExportTabMusicXml,
+            ("file.export_tab_text", None) => AppCommand::ExportTabText,
+            ("file.export_sheet_text", None) => AppCommand::ExportSheetText,
+            ("file.export_tab_pdf", None) => AppCommand::ExportTabPdf,
+            ("file.export_sheet_pdf", None) => AppCommand::ExportSheetPdf,
             ("file.export_song_audio", None) => AppCommand::ExportSongAudio,
             ("file.export_loop_audio", None) => AppCommand::ExportLoopAudio,
             ("file.export_selection_audio", None) => AppCommand::ExportSelectionAudio,
@@ -1421,6 +1532,17 @@ impl AppCommand {
             ("view.toggle_piano_roll", None) => AppCommand::TogglePianoRoll,
             ("view.toggle_sample_editor", None) => AppCommand::ToggleSampleEditor,
             ("view.toggle_step_editor", None) => AppCommand::ToggleStepEditor,
+            ("view.toggle_tab_editor", None) => AppCommand::ToggleTabEditor,
+            ("view.toggle_chord_sheet", None) => AppCommand::ToggleChordSheet,
+            ("view.toggle_chord_trainer", None) => AppCommand::ToggleChordTrainer,
+            ("edit.toggle_tab_or_piano_roll", None) => AppCommand::ToggleTabOrPianoRoll,
+            ("view.toggle_fretboard", None) => AppCommand::ToggleFretboard,
+            ("view.detach_fretboard", None) => AppCommand::DetachFretboard,
+            ("view.fretboard_left_handed", None) => AppCommand::FretboardLeftHanded,
+            ("view.fretboard_voicing", None) => AppCommand::FretboardVoicing,
+            ("view.fretboard_labels", Some(a)) => {
+                AppCommand::SetFretLabels(atomik_ui::FretLabels::from_arg(a)?)
+            }
             ("view.toggle_slice_editor", None) => AppCommand::ToggleSliceEditor,
             ("transport.tap_tempo", None) => AppCommand::Transport(TransportAction::TapTempo),
             ("transport.dub", None) => AppCommand::Transport(TransportAction::Dub),
@@ -1439,6 +1561,45 @@ impl AppCommand {
             }
             ("transport.clear_override", None) => {
                 AppCommand::Transport(TransportAction::ClearOverride)
+            }
+            ("practice.speed", Some(a)) => {
+                AppCommand::Practice(PracticeAction::Speed(num_arg(PRACTICE_SPEED_ARGS, a)?))
+            }
+            ("practice.speed_up", None) => AppCommand::Practice(PracticeAction::SpeedUp),
+            ("practice.speed_down", None) => AppCommand::Practice(PracticeAction::SpeedDown),
+            ("practice.count_in", Some(a)) if PRACTICE_COUNT_IN_ARGS.contains(&a) => {
+                AppCommand::Practice(PracticeAction::CountIn(a.parse().unwrap_or(0)))
+            }
+            ("practice.trainer", None) => AppCommand::Practice(PracticeAction::ToggleTrainer),
+            (
+                "practice.trainer_start"
+                | "practice.trainer_step"
+                | "practice.trainer_after"
+                | "practice.trainer_target",
+                Some(a @ ("up" | "down")),
+            ) => AppCommand::Practice(PracticeAction::Trainer(
+                match id {
+                    "practice.trainer_start" => TrainerValue::Start,
+                    "practice.trainer_step" => TrainerValue::Step,
+                    "practice.trainer_after" => TrainerValue::After,
+                    _ => TrainerValue::Target,
+                },
+                a == "up",
+            )),
+            ("practice.listen", None) => AppCommand::Practice(PracticeAction::ToggleListen),
+            ("practice.listen_input", None) => AppCommand::Practice(PracticeAction::ListenInput),
+            ("practice.listen_calibrate", None) => {
+                AppCommand::Practice(PracticeAction::ListenCalibrate)
+            }
+            ("practice.listen_clear", None) => AppCommand::Practice(PracticeAction::ListenClear),
+            ("practice.listen_offset", Some(a @ ("up" | "down"))) => {
+                AppCommand::Practice(PracticeAction::ListenOffset(a == "up"))
+            }
+            ("practice.listen_threshold", Some(a @ ("up" | "down"))) => {
+                AppCommand::Practice(PracticeAction::ListenThreshold(a == "up"))
+            }
+            ("practice.loop_selection", None) => {
+                AppCommand::Practice(PracticeAction::LoopSelection)
             }
             ("transport.pre_count", None) => AppCommand::TogglePreCount,
             ("sync.clock_out", None) => AppCommand::ToggleClockOut,
@@ -1670,6 +1831,9 @@ impl AppCommand {
             ("sequencer.send_players_to_track", None) => AppCommand::SendPlayersToTrack,
             ("sequencer.fold_players", None) => AppCommand::FoldPlayers,
             ("sequencer.bypass_players", None) => AppCommand::BypassPlayers,
+            ("rack.wheel_generate", None) => AppCommand::WheelGenerate,
+            ("rack.wheel_to_chord_lane", None) => AppCommand::WheelToChordLane,
+            ("rack.wheel_to_clip", None) => AppCommand::WheelToClip,
             ("sequencer.add_pattern_lane", None) => AppCommand::AddPatternLane,
             ("sequencer.add_reverb_send", None) => AppCommand::AddReverbSend,
             ("sequencer.duck_from", None) => AppCommand::DuckFrom,
@@ -2250,6 +2414,12 @@ pub struct MenuState {
     pub sample_editor: bool,
     /// The step editor is open.
     pub step_editor: bool,
+    /// Whether the tab editor is open.
+    pub tab_editor: bool,
+    /// Whether the chord sheet pane is open.
+    pub chord_sheet: bool,
+    /// Whether the chord trainer pane is open.
+    pub chord_trainer: bool,
     /// The slice editor is open.
     pub slice_editor: bool,
     /// Playing.
@@ -2264,6 +2434,14 @@ pub struct MenuState {
     pub auto_lanes: bool,
     /// The pre-count (the count-in of a recording) is on.
     pub pre_count: bool,
+    /// The practice speed in percent.
+    pub practice_speed: u16,
+    /// The practice count-in in bars.
+    pub practice_count_in: u8,
+    /// The speed trainer is on.
+    pub practice_trainer: bool,
+    /// Listen and grade is on.
+    pub practice_listen: bool,
     /// MIDI clock is being sent.
     pub clock_out: bool,
     /// The clock is sent while the transport is stopped too.
@@ -2336,6 +2514,16 @@ pub struct MenuState {
     pub video_window: bool,
     /// The Video window shows its overlay (timecode, frame number).
     pub video_overlay: bool,
+    /// The fretboard strip shows under the Tab Editor staff or in its window.
+    pub fretboard: bool,
+    /// The fretboard is in a window of its own.
+    pub fretboard_detached: bool,
+    /// The fretboard is mirrored for a left-handed player.
+    pub fretboard_left_handed: bool,
+    /// What the fretboard dots say.
+    pub fretboard_labels: atomik_ui::FretLabels,
+    /// The fretboard shows the voicing of the chord at the playhead.
+    pub fretboard_voicing: bool,
     /// The sequencer-only layout (F7) is active.
     pub sequencer_only: bool,
     /// An editor (piano roll, sample, step, slice, ...) is open.
@@ -2368,6 +2556,10 @@ pub struct MenuState {
     pub midi_track: bool,
     /// The song has a note track (File > Export MIDI Song is available).
     pub midi_song: bool,
+    /// The song has notes to write as tab (File > Export Tab as MusicXML and as Text are available).
+    pub tab_export: bool,
+    /// The song has a chord sheet (File > Export Chord Sheet as Text is available).
+    pub sheet_export: bool,
     /// The song can be exported as audio: it has a length and no export runs (File > Export Song
     /// as Audio File is available).
     pub export_song: bool,
@@ -2626,6 +2818,8 @@ pub struct FreezeMenu {
     pub players_folded: bool,
     /// Every player of the selected stacks is bypassed.
     pub players_bypassed: bool,
+    /// A Chord Wheel is selected, or sits in the stack of a selected track (its commands work).
+    pub wheel: bool,
 }
 
 /// One menu item.
@@ -2972,6 +3166,14 @@ fn menus_in_english(
                         item("Import Audio\u{2026}", AppCommand::ImportAudio),
                         item("Import MIDI\u{2026}", AppCommand::ImportMidi),
                         item("Import MIDI as Song\u{2026}", AppCommand::ImportMidiSong),
+                        MenuEntry::Separator,
+                        item("Import Tab or Score File\u{2026}", AppCommand::ImportTab),
+                        item(
+                            "Import Tab or Score as Song\u{2026}",
+                            AppCommand::ImportTabSong,
+                        ),
+                        item("Import Chord Sheet\u{2026}", AppCommand::ImportSheet),
+                        MenuEntry::Separator,
                         check(
                             "Detect Chords from Notes",
                             AppCommand::ToggleMidiChords,
@@ -3023,6 +3225,33 @@ fn menus_in_english(
                             AppCommand::ExportMidiSong,
                             state.midi_song,
                         ),
+                        MenuEntry::Separator,
+                        enabled(
+                            "Export Tab as MusicXML\u{2026}",
+                            AppCommand::ExportTabMusicXml,
+                            state.tab_export,
+                        ),
+                        enabled(
+                            "Export Tab as Text\u{2026}",
+                            AppCommand::ExportTabText,
+                            state.tab_export,
+                        ),
+                        enabled(
+                            "Export Tab as PDF\u{2026}",
+                            AppCommand::ExportTabPdf,
+                            state.tab_export,
+                        ),
+                        enabled(
+                            "Export Chord Sheet as Text\u{2026}",
+                            AppCommand::ExportSheetText,
+                            state.sheet_export,
+                        ),
+                        enabled(
+                            "Export Chord Sheet as PDF\u{2026}",
+                            AppCommand::ExportSheetPdf,
+                            state.sheet_export,
+                        ),
+                        MenuEntry::Separator,
                         MenuEntry::Submenu(Submenu {
                             label: "MIDI Export Resolution",
                             entries: vec![
@@ -3416,6 +3645,58 @@ fn menus_in_english(
                             AppCommand::ToggleSliceEditor,
                             state.slice_editor,
                         ),
+                        check("Tab Editor", AppCommand::ToggleTabEditor, state.tab_editor),
+                        check(
+                            "Chord Sheet",
+                            AppCommand::ToggleChordSheet,
+                            state.chord_sheet,
+                        ),
+                        check(
+                            "Chord Trainer",
+                            AppCommand::ToggleChordTrainer,
+                            state.chord_trainer,
+                        ),
+                        check("Fretboard", AppCommand::ToggleFretboard, state.fretboard),
+                        check(
+                            "Detach Fretboard",
+                            AppCommand::DetachFretboard,
+                            state.fretboard_detached,
+                        ),
+                        MenuEntry::Submenu(Submenu {
+                            label: "Fretboard Options",
+                            entries: vec![
+                                check(
+                                    "Left-handed",
+                                    AppCommand::FretboardLeftHanded,
+                                    state.fretboard_left_handed,
+                                ),
+                                check(
+                                    "Chord Voicing",
+                                    AppCommand::FretboardVoicing,
+                                    state.fretboard_voicing,
+                                ),
+                                MenuEntry::Separator,
+                                check(
+                                    "Note Names",
+                                    AppCommand::SetFretLabels(atomik_ui::FretLabels::Notes),
+                                    state.fretboard_labels == atomik_ui::FretLabels::Notes,
+                                ),
+                                check(
+                                    "Fret Numbers",
+                                    AppCommand::SetFretLabels(atomik_ui::FretLabels::Frets),
+                                    state.fretboard_labels == atomik_ui::FretLabels::Frets,
+                                ),
+                                check(
+                                    "Intervals",
+                                    AppCommand::SetFretLabels(atomik_ui::FretLabels::Intervals),
+                                    state.fretboard_labels == atomik_ui::FretLabels::Intervals,
+                                ),
+                            ],
+                        }),
+                        item(
+                            "Switch Piano Roll and Tab",
+                            AppCommand::ToggleTabOrPianoRoll,
+                        ),
                     ],
                 }),
                 MenuEntry::Submenu(Submenu {
@@ -3541,6 +3822,74 @@ fn menus_in_english(
                     transport(TransportAction::ToggleAutoLanes),
                     state.auto_lanes,
                 ),
+                MenuEntry::Separator,
+                MenuEntry::Submenu(Submenu {
+                    label: "Practice",
+                    entries: vec![
+                        item(
+                            "Loop Selection",
+                            AppCommand::Practice(PracticeAction::LoopSelection),
+                        ),
+                        MenuEntry::Separator,
+                        check(
+                            "Speed 50%",
+                            AppCommand::Practice(PracticeAction::Speed(50)),
+                            state.practice_speed == 50,
+                        ),
+                        check(
+                            "Speed 75%",
+                            AppCommand::Practice(PracticeAction::Speed(75)),
+                            state.practice_speed == 75,
+                        ),
+                        check(
+                            "Full Speed (100%)",
+                            AppCommand::Practice(PracticeAction::Speed(100)),
+                            state.practice_speed == 100,
+                        ),
+                        item("Faster", AppCommand::Practice(PracticeAction::SpeedUp)),
+                        item("Slower", AppCommand::Practice(PracticeAction::SpeedDown)),
+                        MenuEntry::Separator,
+                        check(
+                            "Count-in: Off",
+                            AppCommand::Practice(PracticeAction::CountIn(0)),
+                            state.practice_count_in == 0,
+                        ),
+                        check(
+                            "Count-in: 1 Bar",
+                            AppCommand::Practice(PracticeAction::CountIn(1)),
+                            state.practice_count_in == 1,
+                        ),
+                        check(
+                            "Count-in: 2 Bars",
+                            AppCommand::Practice(PracticeAction::CountIn(2)),
+                            state.practice_count_in == 2,
+                        ),
+                        MenuEntry::Separator,
+                        check(
+                            "Speed Trainer",
+                            AppCommand::Practice(PracticeAction::ToggleTrainer),
+                            state.practice_trainer,
+                        ),
+                        MenuEntry::Separator,
+                        check(
+                            "Listen and Grade",
+                            AppCommand::Practice(PracticeAction::ToggleListen),
+                            state.practice_listen,
+                        ),
+                        item(
+                            "Next Listening Input",
+                            AppCommand::Practice(PracticeAction::ListenInput),
+                        ),
+                        item(
+                            "Calibrate Listening Latency",
+                            AppCommand::Practice(PracticeAction::ListenCalibrate),
+                        ),
+                        item(
+                            "Clear Results",
+                            AppCommand::Practice(PracticeAction::ListenClear),
+                        ),
+                    ],
+                }),
                 MenuEntry::Separator,
                 item("Add Marker", AppCommand::AddMarker),
                 item("Add Range Marker from Loop", AppCommand::AddRangeFromLoop),
@@ -4138,6 +4487,22 @@ fn menus_in_english(
                             AppCommand::BypassPlayers,
                             state.freeze.players,
                         ),
+                        MenuEntry::Separator,
+                        enabled(
+                            "Generate Progression",
+                            AppCommand::WheelGenerate,
+                            state.freeze.wheel,
+                        ),
+                        enabled(
+                            "Send Progression to Chord Lane",
+                            AppCommand::WheelToChordLane,
+                            state.freeze.wheel,
+                        ),
+                        enabled(
+                            "Send Progression to Clip",
+                            AppCommand::WheelToClip,
+                            state.freeze.wheel,
+                        ),
                     ],
                 }),
                 MenuEntry::Separator,
@@ -4732,6 +5097,9 @@ mod tests {
             piano_roll: false,
             sample_editor: false,
             step_editor: false,
+            tab_editor: false,
+            chord_sheet: false,
+            chord_trainer: false,
             slice_editor: false,
             playing: false,
             recording: false,
@@ -4739,6 +5107,10 @@ mod tests {
             metronome: false,
             auto_lanes: false,
             pre_count: false,
+            practice_speed: 100,
+            practice_count_in: 0,
+            practice_trainer: false,
+            practice_listen: false,
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,
@@ -4775,6 +5147,11 @@ mod tests {
             spectrum_eq: false,
             video_window: false,
             video_overlay: true,
+            fretboard: false,
+            fretboard_detached: false,
+            fretboard_left_handed: false,
+            fretboard_labels: atomik_ui::FretLabels::Notes,
+            fretboard_voicing: false,
             sequencer_only: false,
             editor: false,
             archive_busy: false,
@@ -4790,6 +5167,8 @@ mod tests {
             midi_clip: false,
             midi_track: false,
             midi_song: false,
+            tab_export: false,
+            sheet_export: false,
             export_song: false,
             export_loop: false,
             export_selection: false,
@@ -4850,6 +5229,9 @@ mod tests {
             AppCommand::ImportAudio,
             AppCommand::ImportMidi,
             AppCommand::ImportMidiSong,
+            AppCommand::ImportTab,
+            AppCommand::ImportTabSong,
+            AppCommand::ImportSheet,
             AppCommand::SoundAnalyst,
             AppCommand::RelinkAudio,
             AppCommand::CollectFiles,
@@ -4860,6 +5242,11 @@ mod tests {
             AppCommand::ExportMidiClip,
             AppCommand::ExportMidiTrack,
             AppCommand::ExportMidiSong,
+            AppCommand::ExportTabMusicXml,
+            AppCommand::ExportTabText,
+            AppCommand::ExportSheetText,
+            AppCommand::ExportTabPdf,
+            AppCommand::ExportSheetPdf,
             AppCommand::ExportSongAudio,
             AppCommand::ExportLoopAudio,
             AppCommand::ExportSelectionAudio,
@@ -4898,6 +5285,17 @@ mod tests {
             AppCommand::TogglePianoRoll,
             AppCommand::ToggleSampleEditor,
             AppCommand::ToggleStepEditor,
+            AppCommand::ToggleTabEditor,
+            AppCommand::ToggleChordSheet,
+            AppCommand::ToggleChordTrainer,
+            AppCommand::ToggleTabOrPianoRoll,
+            AppCommand::ToggleFretboard,
+            AppCommand::DetachFretboard,
+            AppCommand::FretboardLeftHanded,
+            AppCommand::FretboardVoicing,
+            AppCommand::SetFretLabels(atomik_ui::FretLabels::Notes),
+            AppCommand::SetFretLabels(atomik_ui::FretLabels::Frets),
+            AppCommand::SetFretLabels(atomik_ui::FretLabels::Intervals),
             AppCommand::ToggleSliceEditor,
             AppCommand::ToggleConsoleLinks,
             AppCommand::ToggleCpuMeters,
@@ -5037,6 +5435,9 @@ mod tests {
             AppCommand::SendPlayersToTrack,
             AppCommand::FoldPlayers,
             AppCommand::BypassPlayers,
+            AppCommand::WheelGenerate,
+            AppCommand::WheelToChordLane,
+            AppCommand::WheelToClip,
             AppCommand::BounceClipDry,
             AppCommand::AddPatternLane,
             AppCommand::PatternLaneToNotes,
@@ -5233,6 +5634,40 @@ mod tests {
             TransportAction::ClearOverride,
         ] {
             v.push(AppCommand::Transport(t));
+        }
+        for a in [
+            PracticeAction::Speed(25),
+            PracticeAction::Speed(50),
+            PracticeAction::Speed(75),
+            PracticeAction::Speed(100),
+            PracticeAction::Speed(150),
+            PracticeAction::SpeedUp,
+            PracticeAction::SpeedDown,
+            PracticeAction::CountIn(0),
+            PracticeAction::CountIn(1),
+            PracticeAction::CountIn(2),
+            PracticeAction::ToggleTrainer,
+            PracticeAction::LoopSelection,
+            PracticeAction::ToggleListen,
+            PracticeAction::ListenInput,
+            PracticeAction::ListenCalibrate,
+            PracticeAction::ListenClear,
+            PracticeAction::ListenOffset(false),
+            PracticeAction::ListenOffset(true),
+            PracticeAction::ListenThreshold(false),
+            PracticeAction::ListenThreshold(true),
+        ] {
+            v.push(AppCommand::Practice(a));
+        }
+        for value in [
+            TrainerValue::Start,
+            TrainerValue::Step,
+            TrainerValue::After,
+            TrainerValue::Target,
+        ] {
+            for up in [false, true] {
+                v.push(AppCommand::Practice(PracticeAction::Trainer(value, up)));
+            }
         }
         v.push(AppCommand::TogglePreCount);
         v.push(AppCommand::ToggleClockOut);
@@ -5852,6 +6287,10 @@ mod tests {
         assert_eq!(pre.shortcut.as_deref(), Some("Ctrl+P"));
         let on = MenuState {
             pre_count: true,
+            practice_speed: 100,
+            practice_count_in: 0,
+            practice_trainer: false,
+            practice_listen: false,
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,
@@ -5902,6 +6341,9 @@ mod tests {
                 piano_roll: true,
                 sample_editor: false,
                 step_editor: false,
+                tab_editor: false,
+                chord_sheet: false,
+                chord_trainer: false,
                 slice_editor: false,
                 playing: true,
                 recording: false,
@@ -5909,6 +6351,10 @@ mod tests {
                 metronome: false,
                 auto_lanes: false,
                 pre_count: false,
+                practice_speed: 100,
+                practice_count_in: 0,
+                practice_trainer: false,
+                practice_listen: false,
                 clock_out: false,
                 clock_while_stopped: false,
                 follow_clock: false,
@@ -5945,6 +6391,11 @@ mod tests {
                 spectrum_eq: false,
                 video_window: false,
                 video_overlay: true,
+                fretboard: false,
+                fretboard_detached: false,
+                fretboard_left_handed: false,
+                fretboard_labels: atomik_ui::FretLabels::Notes,
+                fretboard_voicing: false,
                 sequencer_only: false,
                 editor: false,
                 archive_busy: false,
@@ -5960,6 +6411,8 @@ mod tests {
                 midi_clip: true,
                 midi_track: false,
                 midi_song: true,
+                tab_export: true,
+                sheet_export: true,
                 export_song: true,
                 export_loop: true,
                 export_selection: true,

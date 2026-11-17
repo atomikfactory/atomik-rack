@@ -54,6 +54,17 @@ impl Edit {
                     };
                     size(old) + size(new)
                 }
+                Edit::Sheets { old, new } => {
+                    let size = |s: &[atomik_tab::sheet::ChordSheet]| {
+                        s.iter()
+                            .map(|s| {
+                                s.blocks.len() * ENTRY_BYTES * 4
+                                    + size_of::<atomik_tab::sheet::ChordSheet>()
+                            })
+                            .sum::<usize>()
+                    };
+                    size(old) + size(new)
+                }
                 Edit::Markers { old, new } => (old.len() + new.len()) * size_of::<crate::Marker>(),
                 Edit::Ranges { old, new } => {
                     (old.len() + new.len()) * size_of::<crate::RangeMarker>()

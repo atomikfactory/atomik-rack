@@ -6,6 +6,7 @@ use crate::breadcrumb::{self, CrumbHit};
 use crate::browser::{BROWSER_WIDTH, Browser, CreateKind};
 use crate::cables::{self, SocketEnd};
 use crate::canvas::{Canvas, CanvasExt};
+use crate::chord_wheel_panel::WheelButton;
 use crate::container_panel::{self, ContainerButton, ContainerInfo};
 use crate::display_list::DisplayList;
 use crate::drum_gen_panel::DrumButton;
@@ -66,6 +67,7 @@ mod navigator;
 mod pad_lights;
 mod sat_input;
 mod tonal_input;
+mod wheel_input;
 pub use jacks::{JackChoice, JackGroup, JackMenu, JackOp, JackPeer};
 pub use navigator::NAVIGATOR_WIDTH;
 mod master_input;
@@ -264,6 +266,8 @@ enum PlayerBtn {
     FromClip,
     /// A button, a lane mute or the cells of a drum generator panel.
     Drum(DrumButton),
+    /// A part of a Chord Wheel panel: the wheel, a card, a padlock, a length or a button.
+    Wheel(WheelButton),
 }
 
 impl Hit {
@@ -579,6 +583,8 @@ enum Drag {
     Duck(duck_input::DuckDrag),
     /// A cell of a drum generator grid is pressed (see [`drum_input::DrumDrag`]).
     Drum(drum_input::DrumDrag),
+    /// The length of a Chord Wheel slot is dragged (see [`wheel_input::BeatsDrag`]).
+    Beats(wheel_input::BeatsDrag),
 }
 
 /// The axis an EQ handle drag is locked to (the model merges consecutive `SetParam`s of one
@@ -879,7 +885,10 @@ impl RackView {
         if self.song_harmony != now {
             self.song_harmony = now;
             for d in &mut self.devices {
-                if d.spec.key_chord.is_some() || d.spec.arp.is_some() {
+                if d.spec.key_chord.is_some()
+                    || d.spec.arp.is_some()
+                    || d.spec.chord_wheel.is_some()
+                {
                     d.revision += 1;
                     d.lists = [None, None];
                 }
@@ -1538,8 +1547,14 @@ impl RackView {
             (Some(d), _) if type_id == crate::granular_panel::GRANULAR_TYPE => {
                 crate::granular_panel::granular_layout(d)
             }
+            (Some(d), _) if type_id == crate::plucked_panel::PLUCKED_TYPE => {
+                crate::plucked_panel::plucked_layout(d)
+            }
             (Some(d), _) if type_id == crate::arp_panel::ARP_TYPE => {
                 crate::arp_panel::arp_layout(d)
+            }
+            (Some(d), _) if type_id == crate::chord_wheel_panel::CHORD_WHEEL_TYPE => {
+                crate::chord_wheel_panel::chord_wheel_layout(d)
             }
             (Some(d), _) if type_id == crate::key_chord_panel::KEY_CHORD_TYPE => {
                 crate::key_chord_panel::key_chord_layout(d)
@@ -1563,6 +1578,7 @@ impl RackView {
                 drum_gen: None,
                 arp: None,
                 key_chord: None,
+                chord_wheel: None,
                 modsrc: None,
                 wavetable: None,
                 fm: None,
@@ -1736,6 +1752,12 @@ impl RackView {
                     .copied()
                     .unwrap_or(0)
                     .min(pattern_count(d) - 1)
+            } else if spec.chord_wheel.is_some() {
+                self.edits
+                    .get(&d.key)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(crate::chord_wheel_panel::SLOTS - 1)
             } else {
                 0
             };
@@ -2155,6 +2177,13 @@ impl RackView {
                         if let Some(kc) = d.spec.key_chord {
                             let hit = Hit::Player(i, PlayerBtn::FromClip);
                             tree.add(dn, kc.from_clip + off, hit, false);
+                        }
+                        if let Some(cw) = d.spec.chord_wheel {
+                            let wheel = Hit::Player(i, PlayerBtn::Wheel(WheelButton::Wheel));
+                            tree.add(dn, cw.wheel + off, wheel, false);
+                            for (b, r) in cw.buttons() {
+                                tree.add(dn, r + off, Hit::Player(i, PlayerBtn::Wheel(b)), false);
+                            }
                         }
                         if let Some(w) = d.spec.wavetable {
                             for r in w.displays {
@@ -3775,6 +3804,7 @@ impl RackView {
             Drag::Wave(w) => self.wave_move(w, rp, out),
             Drag::Duck(d) => self.duck_move(d, rp, out),
             Drag::Drum(d) => self.drum_move(d, pos, out),
+            Drag::Beats(d) => self.beats_move(d, pos, out),
             Drag::Value {
                 dev,
                 slot,
@@ -4153,6 +4183,9 @@ impl RackView {
                 self.select(i, out);
                 out.push(UiAction::OpenSampleEditor(self.devices[i].key.clone()));
             }
+            (Hit::Player(i, PlayerBtn::Wheel(WheelButton::Wheel)), PointerButton::Secondary) => {
+                self.wheel_menu(i, rp, pos, out);
+            }
             (Hit::Player(i, b), PointerButton::Primary) => {
                 self.player_down(i, b, modifiers, clicks, out);
             }
@@ -4492,6 +4525,7 @@ impl RackView {
                 out.push(UiAction::EndMerge);
             }
             Drag::Drum(d) => self.drum_up(&d, out),
+            Drag::Beats(d) => self.beats_up(&d, out),
             Drag::Value { .. } => {
                 self.tree.release_capture();
                 out.push(UiAction::EndMerge);
@@ -4627,6 +4661,12 @@ impl RackView {
             && let Some(Hit::Preset(i, _) | Hit::PresetGrid(i)) = self.hit(pos)
         {
             out.extend(self.preset_step(i, delta.y.signum()));
+            return;
+        }
+        if matches!(self.drag, Drag::None)
+            && let Some(Hit::Player(i, PlayerBtn::Wheel(WheelButton::Beats(n)))) = self.hit(pos)
+        {
+            self.beats_step(i, usize::from(n), delta.y.signum(), out);
             return;
         }
         if matches!(self.drag, Drag::None)
@@ -5090,6 +5130,7 @@ impl RackView {
             Drag::Wave(w) => self.wave_cancel(&w, out),
             Drag::Duck(d) => self.duck_cancel(&d, out),
             Drag::Drum(d) => self.drum_cancel(&d, out),
+            Drag::Beats(d) => self.beats_cancel(&d, out),
             _ => {}
         }
     }

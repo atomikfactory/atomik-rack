@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
-# `crates/[!t]*` is every crate whose directory does not start with `t`; the two that do are
+# `crates/[!t]*` is every crate whose directory does not start with `t`; the three that do are
 # listed on their own (`crates/testplugins` holds crates one level down, with no manifest of its own).
-members = ["crates/[!t]*", "crates/testkit", "crates/testplugins/*"]
+members = ["crates/[!t]*", "crates/tab", "crates/testkit", "crates/testplugins/*"]
 
 [workspace.package]
 version = "0.4.0-rc.2"
@@ -19,6 +19,7 @@ atomik-dsp = { path = "crates/dsp" }
 atomik-devices = { path = "crates/devices" }
 atomik-engine = { path = "crates/engine" }
 atomik-app = { path = "crates/app" }
+atomik-tab = { path = "crates/tab" }
 atomik-testkit = { path = "crates/testkit" }
 atomik-audio-io = { path = "crates/audio-io" }
 atomik-midi-io = { path = "crates/midi-io" }
@@ -81,6 +82,10 @@ zune-jpeg = { version = "0.5", default-features = false, features = ["std"] }
 # The update check only (crates/update): a small blocking HTTPS client on rustls. No gzip, no cookies, no JSON
 # layer: the request carries a User-Agent and nothing else.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
+# Guitar Pro readers (crates/tab): the XML of .gpx/.gp scores, and raw deflate for the zip of a .gp file.
+quick-xml = "0.41"
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
+pdf-writer = "0.15"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

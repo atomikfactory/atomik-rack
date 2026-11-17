@@ -35,8 +35,8 @@ The picture shows the main arrows only; the table below is exact.
 |---|---|---|---|---|
 | `atomik-core` | [crates/core](../crates/core) | none | none | Batch constants, time (`SampleRate`, `Tempo`, ticks, `PPQ` = 15 360, `TimeInfo` with the transport position `tick`, `ticks_per_frame`, `loop_wrap`, `time_signature`), the tempo map (steps and linear ramps) and the meter map (`tempo_map.rs`, `meter_map.rs`), params, note events, the scales and chords of `theory.rs` (allocation-free, shared by the note editors and the note players) |
 | `atomik-device-sdk` | [crates/device-sdk](../crates/device-sdk) | core | none | `DeviceDescriptor`, the `Device` trait (with stages and `swap_samples`), `ProcessContext`, `Registry` (with `register_with_samples`), `SampleMap` and `Zone` with `reverse` (`samples.rs`), `PlayerData` (step sequencer patterns, `player.rs`), `Device::swap_player_data`, `Registry::register_with_player_data`, `ScopeTap` and `Device::scope_tap` (the ring of recent frames a metering device hands to the UI, `scope.rs`) |
-| `atomik-dsp` | [crates/dsp](../crates/dsp) | core | none | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables and a 32-wave additive bank, mip levels by FFT truncation), filters, the 24 dB ladder with an anti-aliased drive (`ladder.rs`), envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) |
-| `atomik-devices` | [crates/devices](../crates/devices) | core, device-sdk, dsp | none | `poly-synth` (and the `mono-bass` and `dual-layer` built on its voice), the `organ`, `wavetable-synth`, `fm-synth`, `sampler`, `granular`, `drum-machine`, `loop-slicer`, `line-mixer`, `stereo-delay`, the `echo`, the six effects, the `guitar-amp`, `step-sequencer`, `arpeggiator`, `channel`, `master`, `audio-track`, the `spectrum` and `phase-meter` analysers (see [DEVICES.md](DEVICES.md)) |
+| `atomik-dsp` | [crates/dsp](../crates/dsp) | core | none | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables and a 32-wave additive bank, mip levels by FFT truncation), filters, the 24 dB ladder with an anti-aliased drive (`ladder.rs`), envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the streaming note tracker of the practice grader (`listen.rs`: onsets, pitch, chroma), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) and the plucked string (`pluck`: a waveguide with a Lagrange-tuned loop, the pick and the instrument bodies) |
+| `atomik-devices` | [crates/devices](../crates/devices) | core, device-sdk, dsp | none | `poly-synth` (and the `mono-bass` and `dual-layer` built on its voice), the `organ`, `plucked` (plucked strings), `wavetable-synth`, `fm-synth`, `sampler`, `granular`, `drum-machine`, `loop-slicer`, `line-mixer`, `stereo-delay`, the `echo`, the six effects, the `guitar-amp`, `step-sequencer`, `arpeggiator`, `channel`, `master`, `audio-track`, the `spectrum` and `phase-meter` analysers (see [DEVICES.md](DEVICES.md)) |
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk, dsp | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`), the reference voice (`reference.rs`, after the master chain) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
@@ -45,7 +45,8 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-vision` | [crates/vision](../crates/vision) | download (tract-tflite, nokhwa on Windows and macOS, linuxvideo on Linux, zune-jpeg, serde, serde_json, thiserror, log, clap, ctrlc) | none | Hand tracking for the webcam controller, pure library with no dependency on the application: the `Camera` and `FrameSource` traits (`SystemCamera`, `FakeCamera`), the capture thread with a one-frame handoff (`Capture`), the palm detector and hand landmark models run in pure Rust (`HandModels`, `HandPipeline`, the detector only while no hand is followed), the list of the two hand model files (their addresses, sizes and SHA-256 are pinned in `download.rs`; the store and the download are in `atomik-download`), the gesture recogniser (`Recogniser`: pinch with hysteresis, ratcheted twist, One Euro smoothing, a dead zone, loss tolerance, two hands) and the `Tracker` worker with its bounded `TrackerEvent` queue. The `vision-demo` tool lists cameras and models and prints or records the hand |
 | `atomik-download` | [crates/download](../crates/download) | none (sha2, ureq, thiserror) | none | The one-time download of model files, shared by the hand models and the stem models: `ModelFile` (name, one fixed HTTPS address, exact size and SHA-256, all constants in the crate that owns the files), `ModelStore` (`status`, `verified_paths` which checks again before a file is loaded, and `download`, which writes under temporary names, checks each file and only then renames them all into place, so a failure, a mismatch or a cancel leaves nothing behind), the `Fetcher` trait with `UreqFetcher` (rustls, HTTPS only, no redirect, a generic User-Agent, nothing about the user or the machine) and `FakeFetcher` for tests |
 | `atomik-stems` | [crates/stems](../crates/stems) | none (thiserror) | none | Stem separation by signal processing, pure and deterministic, with no model and no download: an STFT (`Stft`, 2048 points, hop 512) and `separate`: chunks of 20 s with 1 s of context and a linear crossfade, a harmonic/percussive split by median filters across time and across frequency (soft masks) for the drums, the harmonic part below a 150 Hz crossover for the bass, the centred harmonic part above it for the vocals (a mono input gets the 200 Hz to 5 kHz band at a lower weight) and the residual for the other stem, so the four add up to the mix; a progress callback, a cancel flag and a `StemSink` that receives the finished samples in order |
-| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
+| `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror, quick-xml, flate2, pdf-writer) | none | Fretted-instrument tablature, pure and headless: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the grader of a played pass (`grade.rs`: verdicts, accuracy, session, latency calibration), the chord trainer's chord sets, timed and listen drills and best scores per chord pair (`trainer.rs`, see 6zb), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`), ASCII tab read and write (`ascii.rs`), the Guitar Pro readers for `.gp3`, `.gp4`, `.gp5`, `.gpx` and `.gp` (`gp/`, see 6t) and MusicXML read and write (`musicxml/`, see 6v), and the PDF printouts of a tab and of a chord sheet (`pdf/`, see 6zc) |
+| `atomik-model` | [crates/model](../crates/model) | core, device-sdk, tab | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`), the tab sidecar of note clips (`tab_data.rs`), its edit operations (`tab_edit.rs`) and the technique renderer (`tab_render.rs`), the song chord sheets (`chord_sheets.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
 | `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
@@ -57,8 +58,8 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-plugin-hostd` | [crates/plugin-hostd](../crates/plugin-hostd) | core, device-sdk, plugin-host, plugin-ipc, plugin-clap, plugin-vst3 (winit) | `tests/support/owner_window.rs` (a test helper) | The sandbox child (bin `atomik-plugin-host`): hosts one plugin instance, or a group of them (`--group`) |
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
-| `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), devices (the headphone panel draws the device's own curve snapshot), model | none | Platform-independent views, widgets, display lists, theme |
-| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
+| `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), devices (the headphone panel draws the device's own curve snapshot), model, tab (the chord diagram and the tab editor draw its voicings and techniques) | none | Platform-independent views, widgets, display lists, theme |
+| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, tab, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
 
@@ -264,7 +265,8 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   for it are unchanged.
 - **Project files** are `.atomik` JSON, format version 45 (older versions still load; version 45 files say
   `"compat": 44` and list the root `"headphone"` map (the data imported into Headphone Correction devices, keyed by the device's
-  path key, written only when a device has any; see `crates/model/src/headphone.rs`), the launcher, the per-note expression and the song's `"key"`, `"key_changes"` and
+  path key, written only when a device has any; see `crates/model/src/headphone.rs`), the launcher, the per-note
+  expression, a note clip's `"tab"`, the song's `"sheets"` (see 6s) and the song's `"key"`, `"key_changes"` and
   `"chords"` (the song key and the chord lane, written only when set; see `Song::harmony`) as ignorable, so a reader of
   44 opens them; version 44
   adds a note track's own `"controllers"` (pitch bend, aftertouch and CC lanes outside the note clips, written
@@ -5195,7 +5197,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (576) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (659) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -6489,6 +6491,15 @@ items are ordinary project texts, plus one small new file type.
   `open_template`, so it opens as an untitled song and Save asks for a place. The tests build each example from the
   tables and the shipped kits (so the text is the same on every platform), check its length, devices and samples,
   and bounce it.
+  Beside them, `Projects/Exercises/<name>/<name>.atomik` holds eleven practice songs for the Tab Editor
+  (`app_core_factory_exercises.rs`, category Exercise): scales, arpeggios, chord-change drills, a technique sampler,
+  banjo rolls, ukulele strums, bass root-and-fifth lines and a mandolin tremolo study, all made up for the library.
+  An `ExerciseDef` names a `Part` (notes as string and fret, chords with diagrams, section markers) and a bracket-form
+  chord sheet; `build_exercise` makes a `TabScore`, imports it as a song through the same `apply_tab` a tab file uses
+  (so the track plays Plucked Strings on the patch of its instrument and the clip holds the tab), adds the sheet and
+  the song info, and saves the project. The text depends only on the table and the shipped Plucked patches, and a test
+  compares it with the committed file. The start screen's example cards skip the `Exercises` folder (it holds no
+  `Exercises.atomik`).
 - **What the library does not write.** Everything outside the library folder and the session bundle
   is read only. Items do not carry project-level state: macro assignments, song tracks (a patch has
   none) and console settings are not saved with a patch, and a pasted instrument gets its console
@@ -7009,6 +7020,568 @@ learned model can be plugged in later through `set_stems`. There is no model fil
   step, the files are registered with `RegisterAsset` (not an undo step) and go at the next save unless something
   still uses them. A clip that changed or went while the worker ran gets nothing, and the message says so.
 
+## 6s. Tab data and chord sheets
+
+Fretted-instrument tablature rides on ordinary note clips (the pure side lives in `atomik-tab`; the model depends
+on it, never the other way round). The notes stay in the clip's note list, the only source of what is heard; the
+tab is a sidecar that says where each note is played and how.
+
+- **Data** ([tab_data.rs](../crates/model/src/tab_data.rs)). `MidiData::tab: Option<TabData>` holds the instrument
+  id, the whole `Tuning` (custom tunings allowed, 1 to 12 strings), the capo (partial capos included), one
+  `TabNoteRef { tick, key, string, fret, tech, plain }` per annotated note, chord diagrams and lyric syllables.
+  Entries are found by the note's start tick and key, exactly like the per-note expression: `canonical` sorts and
+  bounds, `check` validates every limit (counts, ticks, strings and frets against the tuning, technique bounds),
+  `window` and `map_ticks` carry it through split, join, loop conversion and time stretch, and the project file
+  leaves out the entries of notes a clip no longer has. A note moved in the piano roll loses its entry and is
+  fretted automatically again (the same documented weakness as the expression). `SetClipMidi` is the command:
+  the sidecar and the expression are one value, so an edit changes them together.
+  The `.atomikclip` format and the clipboard snippets do not carry the tab (nor the expression).
+- **Technique to sound** ([tab_render.rs](../crates/model/src/tab_render.rs)). `render_note` is a pure function
+  from a note's plain velocity and length, its techniques and the next note on its string to the note as it sounds.
+  Encoding (the plucked-string device reads it): the pitch lane (semitones) carries bends, releases, pre-bends,
+  slides (the glide reaches the next note's pitch exactly when it starts), vibrato, whammy and harmonic offsets;
+  the Slide (timbre) lane carries the palm-mute amount; the pressure lane carries a technique code read at the
+  note start (`PRESSURE_HARMONIC` 0.5, `PRESSURE_DEAD` 1.0, thresholds 0.25 and 0.75); velocity is ghost x 0.6 and
+  accent x 1.2 (heavy x 1.4) capped at 1; length is staccato (half), dead (a 64th) and let ring (to the next note
+  on the string, at most two bars). `render_notes` applies it after an edit; the entry keeps the plain velocity
+  and length (`PlainNote`) so rendering again or clearing the techniques never compounds, and a velocity the user
+  dragged since becomes the new plain value. A note with curve-producing techniques owns its expression entry; a
+  note without keeps what was drawn. Hammer-on, pull-off, tap, slap, pop, thumb, fade in, tremolo picking, grace
+  notes and strum directions are tab symbols only.
+- **Edits** ([tab_edit.rs](../crates/model/src/tab_edit.rs)). Pure operations (`set_fret`, `clear_fret`,
+  `delete_notes`, `change_string`, `refret`, `auto_fret_clip`, `update_techniques`, `set_techniques`,
+  `clear_techniques`, `transpose`, `set_tuning`, `set_capo`, `start_tab`, diagrams, lyrics) from the clip's notes
+  and `MidiData` to a `TabEdit`; `TabEdit::into_command` is one `Batch` of `SetClipContent` and `SetClipMidi`
+  (both batchable), so every edit is one undo step. No separate `SetClipTab` command: the sidecar is part of
+  `MidiData`, and a tab edit always changes notes, expression and sidecar together. Notes that cannot be placed
+  on the neck are listed in `TabEdit::unplayable` and stay in the clip.
+- **File.** A note clip's optional `"tab"` and the song's optional `"sheets"` are rows of format 45
+  (`schema.rs`), both ignorable: no format bump, `compat` stays 44, and the file's `"ignorable"` list names both
+  paths. The JSON is in [tab_json.rs](../crates/model/src/project/tab_json.rs).
+- **Chord sheets** ([chord_sheets.rs](../crates/model/src/chord_sheets.rs)). `Song::sheets` is a list of at most 64
+  `atomik_tab::sheet::ChordSheet`; `SongCommand::SetSheets` replaces the whole list (one undo step, `ViewChanged`
+  only: sheets never reach the engine) after `check_sheets`.
+- **Chord symbols.** `chord_symbol::parse_chord` and `format_chord` delegate to `atomik_tab::ChordSymbol` (one
+  grammar), mapping the result to the stamp `ChordKind` with the same tones.
+
+## 6t. Guitar Pro import
+
+`atomik_tab::gp::read_gp(bytes)` reads a Guitar Pro file into a `TabScore` and a list of `ImportWarning`s (what could
+not be carried over, counted when it repeats). It tells the format from the first bytes, never from the file name:
+`FICHIER GUITAR PRO v3.xx / 4.xx / 5.xx` (binary), `BCFZ` or `BCFS` (`.gpx`), `PK` (`.gp`, a zip) or a bare GPIF XML
+score. Import only; there is no Guitar Pro writer.
+
+- **Shape.** Every format is first read into a small neutral document (`gp/dom.rs`: master bars, tracks, bars, voices,
+  beats, notes; durations in 1/180 180 tick so that tuplets of 3 to 13 add up exactly; strings in tab order; beat
+  effects already folded into the notes' techniques) and one converter (`gp/convert.rs`) makes the score: repeats and
+  alternative endings unrolled into a linear timeline, ties that take the fret of the note before, the hammer-on and
+  pull-off mark moved to the destination note (hammer when the fret rises, pull-off when it falls), the tempo, meter,
+  key and marker maps, chord diagrams and chord symbols, lyric syllables laid on the beats with notes, the
+  catalogue instrument whose open pitches match the tuning (the banjo keeps its drone start fret; a tuning the
+  catalogue lacks stays custom with the family its string count and range suggest). `TabScore::bars` has one entry per
+  bar of the file with the tick of its first play; `meter` bar numbers and every tick are in the unrolled timeline.
+- **Readers.** `gp/binary` (versions 3.00 to 5.10, one reader parameterised by version), `gp/container.rs` (`BCFZ`
+  bit-level decompression, then the `BCFS` sector file system, entry `score.gpif`), `gp/zip.rs` (a small zip reader
+  over `flate2`'s raw deflate, `Content/score.gpif`), `gp/xml.rs` (a capped tree over `quick-xml`) and `gp/gpif.rs`.
+- **Caps.** File 64 MiB; a container decompresses to at most 128 MiB (the deflate stream is read through a limit, so a
+  zip that lies about its size is cut at the cap); the XML tree at 3 million elements and 64 levels; 128 tracks,
+  20 000 bars, 4096 beats in a bar, 2 million beats and 1 million notes in all; the unrolled song at 20 000 bars and
+  72 000 quarter notes. Ids in GPIF only name lists (no recursion), and the number of beat visits is counted.
+- **Assumptions** (no public description of the format and no file of the original program were used; the tests
+  encode the same layout, so they check consistency, not agreement). Binary: the position of every field per
+  version, the stored repeat count (before version 5 the number of repeats, from 5 the number of plays), the
+  alternative-ending byte (before 5 "the n-th ending", from 5 a bit mask), the stroke bytes (down speed, then up speed),
+  slide values of version 4 (1 shift, 2 legato, 3 out down, 4 out up, 5 or -1 in from below, 6 or -2 in from above),
+  dynamics 1 to 8 as velocities 15 to 127 (95 is the default and a dynamic holds until the next), bend values
+  (50 per semitone, positions 0 to 60), the version 3 tremolo bar (a dive of the stored value held to the middle),
+  chord diagram frets taken as absolute. GPIF: string 0 is the lowest string and `Tuning` lists pitches lowest first
+  (tab order is the reverse), bend and whammy values are 1/50 semitone with offsets in percent of the note, a tempo
+  value is `bpm unit` (1 eighth, 2 quarter, 3 dotted quarter, 4 half, 5 dotted half), tremolo picking `1/4`, `1/2`,
+  `3/4` are 8th, 16th and 32nd strokes, a beat with `GraceNotes` takes no time and decorates the next beat.
+
+| Guitar Pro feature | Result |
+| --- | --- |
+| Title, artist, album, words, music, copyright, transcriber, notices | read |
+| Tempo, tempo changes (mix table in the binary formats, automations in GPIF) | read; tempo name and "hide tempo" ignored |
+| Meter changes, key signatures, section markers | read (key and markers per played bar) |
+| Repeats, alternative endings | read, unrolled; `BarInfo` keeps the original structure |
+| D.C., D.S., coda, segno, fine and the other jump directions | ignored (a warning in GPIF) |
+| Tracks: name, tuning, string count 1 to 7 (binary) or 12 (GPIF), capo, fret count, MIDI program | read |
+| Drum tracks | read, the MIDI key is stored in `fret`; GPIF kits map element and variation to the key |
+| Partial capo, transposition, track volume, pan, effects and sound banks, equaliser | ignored |
+| Durations, dots, tuplets 3 to 13, rests | read (double dots in GPIF; an odd tuplet in the binary formats is read plain, with a warning) |
+| Two voices (5.x) and up to four (GPIF) | read, each voice keeps its own ties and hammer links |
+| Chord diagrams | read into `diagrams` and, when the name parses, `chords` |
+| Beat text | ignored (a warning) |
+| Lyrics (4.x and later) | read, syllables split at spaces and hyphens, laid on the beats with notes of the track |
+| Ties, dead, ghost, accent, heavy accent, staccato, let ring, palm mute, vibrato (normal, wide) | read |
+| Hammer-on, pull-off | read, mark moved to the destination |
+| Slides: shift, legato, out down, out up, in from below, in from above | read (the first kind when several are set) |
+| Bends with points, pre-bends, releases | read as a curve in cents |
+| Tremolo bar (whammy) | read as a curve in cents |
+| Harmonics: natural, artificial, tapped, pinch, semi | read (the touched fret of tapped and GPIF artificial kept); the pitch bytes of binary artificial harmonics ignored |
+| Tremolo picking, grace notes (before or on the beat) | read; a dead grace note ignored |
+| Strokes, picking strokes, arpeggio, brush | read as a strum direction (the speed is ignored) |
+| Slap, pop, tapping, fade in | read |
+| Trills, ornaments, fingering, rasgueado, tenuto, dynamics marks on the staff | ignored (trills with a warning) |
+| Note length as a percentage, beaming, line breaks, page layout, fonts, colours | ignored |
+| Anacrusis, free time, fermatas, triplet feel, automations other than tempo, mixer changes other than tempo | ignored |
+
+## 6u. Tab files in the app
+
+[tab_file.rs](../crates/app/src/tab_file.rs) converts between a `TabScore` and the song; the app core in
+[app_core_tab.rs](../crates/app/src/app_core_tab.rs) reads and writes the files and applies an import as one undo step,
+and `Shell`, the menu and the dialogs reach it the way they reach MIDI files.
+
+- **Import** (File > Import > Import Tab or Score File..., `file.import_tab`; Import Tab or Score as Song...,
+  `file.import_tab_song`). The format comes from the first bytes (`tab_file::sniff_tab`: MusicXML by its root
+  element, else Guitar Pro), the file is read and converted before anything is applied, so a bad file is reported by
+  name and changes nothing; files above 64 MiB are refused. `tab_file::tab_song` makes one `MidiTrack` per tab track
+  and a `MidiSong`, so the existing `WorkflowCommand::ImportMidi` plans the tracks, tempo map, meter map, markers,
+  chords and key in one step (`AppCore::apply_midi_with` takes the instrument). A clip holds the notes (sounding
+  pitch of each string and fret, ties joined into one long note), the tab sidecar (instrument, tuning, capo, string,
+  fret and techniques of every note, chord diagrams, lyrics) and the expression `tab_render::render_all` makes of the
+  techniques; a percussion track holds its drum keys as plain notes. Without "as Song" the tracks start at the snapped
+  playhead and the song's tempo and meter stay; with it they start at tick 0 and the file's maps replace the song's.
+  What the file holds that the song cannot (reader warnings, notes beyond the neck) follows the message, up to three
+  lines, as the instrument import does. `tab_file::instrument_for(instrument_id)` is the one place that chooses the
+  instrument of the new tracks: Plucked Strings (`atomik.plucked`) for every fretted track, whatever its id, and
+  `tab_file::patch_for` the factory patch of its instrument (`atomik_devices::plucked::factory_patch_for`; a custom
+  tuning gets Steel Acoustic). `MidiImport.sounds` (`TrackSound { instrument, patch }`, entry `i` for track `i`, empty
+  for a plain MIDI import) lets `ImportMidi` give each new track its own instrument and a device patch applied in the
+  same undo step; the app reads the patch from `<factory>/Patches/<name>.atomikpatch` (`track_sounds`), and without a
+  factory folder the track is a new Plucked Strings device. A percussion track keeps the import instrument (the poly
+  synth), with no patch. The Tab Editor's instrument and tuning dialog changes the tab, not the device.
+- **Where files come from.** The file browser lists `.gp3 .gp4 .gp5 .gpx .gp .musicxml .mxl` (`FileKind::Tab`,
+  `atomik_library::TAB_EXTENSIONS`; a plain `.xml` is not listed because only its bytes say whether it is MusicXML);
+  a double click or Enter is File > Import > Import Tab or Score File. A tab file (or an `.xml` whose bytes are
+  MusicXML, `tab_file::is_tab_path`) dropped anywhere on the window imports as tracks at the playhead; it is taken
+  out of the drop before the audio import sees it. A dropped file does not land on the lane under the pointer.
+- **Chord sheets.** File > Import > Import Chord Sheet... (`file.import_sheet`) reads a text file of at most 4 MiB
+  (chords over lyrics or the bracket form, detected by `parse_sheet`) and adds it to `Song::sheets` with
+  `SetSheets`; the title falls back to the file name. File > Export > Export Chord Sheet as Text... writes the first
+  sheet as chords over lyrics.
+- **Export** (File > Export > Export Tab as MusicXML..., Export Tab as Text..., Export Tab as PDF... (6zc);
+  `file.export_tab_musicxml`, `file.export_tab_text`). The scope is the selected note clip when there is one (from its
+  own start), else every note track; `AppCore::export_tab_of` takes an explicit `MidiExport` scope (clip, track, song)
+  for the QA server.
+  `tab_file::score_from_song` reads the played note lanes the way the engine flattens them (loops and overlaps
+  resolved, `audible_pieces`), takes the string and fret of each note from the clip's sidecar, and places the notes
+  that have no entry with the fretter, on the sidecar's instrument or, for a track without tab, on the one its name
+  suggests (`instrument_for_name`: bass, banjo, ukulele, mandolin, bouzouki, 12-string, else guitar; a track named
+  like a drum kit is written as percussion). Notes no string can play are left out and listed. Song tempo, meter, key,
+  markers and the chord lane travel too. A `.mxl` file name writes the compressed MusicXML. Ties are not stored in a
+  clip, so a tied note exports as one long note.
+- **The QA server** has `session_tab` (MCP.md): `session_midi` takes `.mid` only and its dialogs are answered per
+  format, so tab files, chord sheets and the format and scope choices of the exports have a tool of their own.
+- The registry ids `file.import_tab`, `file.import_tab_song`, `file.import_sheet`, `file.export_tab_musicxml`,
+  `file.export_tab_text` and `file.export_sheet_text` have no key.
+
+## 6v. MusicXML import and export
+
+`atomik_tab::musicxml` ([crates/tab/src/musicxml](../crates/tab/src/musicxml)) reads and writes partwise MusicXML:
+`read_musicxml(bytes)` (also the compressed `.mxl`; `sniff` tells the flavour from the bytes: an XML file whose first
+4 KiB name a `score-partwise` or `score-timewise` root, or a zip with `META-INF/container.xml`, so a `.xml` of any other
+kind and a Guitar Pro `.gp` are not claimed), `write_musicxml(&score)` and `write_mxl(&score)`. Errors are the typed,
+user-facing `MusicXmlError`; what could not be carried over is the same `ImportWarning` list as the Guitar Pro readers.
+The XML goes through the capped element tree and the zip reader of `gp/` (`gp::xml`, `gp::zip`), so the limits (file
+64 MiB, decompressed 128 MiB, 3 million elements, 64 levels, 128 parts, 20 000 bars, 1 million notes) are shared.
+
+**Reading.** A part is a track. Each measure is read into raw notes whose positions are ticks from the measure start
+(`divisions` may change mid-score; `backup`, `forward`, chords and several voices follow the cursor); the parts agree
+on the length of every measure (an `implicit` measure or an overfull one keeps its own length and gets a meter that
+fits it), repeats and endings are unrolled with the same function as the Guitar Pro readers (`times` of a backward
+repeat, `ending number="1, 2"`; D.C./D.S./coda jumps are ignored with a warning) and `TabScore::bars` keeps the
+file's bars. Tempo comes from `sound tempo`, else the metronome mark (any beat unit, dots). String 1 is the highest
+string, which is tab line 0. The tuning comes from `staff-tuning` (line 1 is the bottom line) and `capo`, then the
+private field below, then the catalogue entry with the same open pitches (so the banjo drone keeps its start fret),
+else a custom tuning with the family guessed from the string count. A written fret is taken relative to the capo when
+it matches the written pitch, else counted from the nut when that matches. A pitch-only part (no `string`/`fret`) is
+fretted by the fretter for the tuning of the part (a guitar when none, a bass from the name or program, banjo,
+ukulele, mandolin by name); a tied note takes the position of the note it continues; a part with a notation staff and
+a `TAB` staff reads the tab staff. Unpitched notes make a percussion track (the key from `midi-unpitched`, the lane
+from the order of the part's instruments). A hammer-on or pull-off marked only on the origin lands on the next note on
+the string; ties keep the Guitar Pro convention (`tie` is set on the continuation, which keeps its fret).
+
+**Writing.** One part per track with a `TAB` clef and `staff-details` (lines, tuning, capo), measures from the meter
+map, `divisions` = the least common multiple that makes every position and length exact (capped at 3840; beyond that
+positions are rounded and a warning says so), plain, dotted and tuplet notation (3:2 to 15:8; a length with none is
+split into tied pieces), notes across a bar line as tied pieces, overlapping notes in up to four voices with
+`backup`/`forward`, chords, `fret` as shown in the tab (above the capo) and `pitch` as sounding. Repeats are not
+written: the score is the unrolled timeline. Techniques, chord symbols (`harmony`), diagrams (`frame`, with fingers
+and the barre), lyrics (a hyphen at the end of a syllable is `begin`/`middle`), tempo, meter, key and markers
+(`rehearsal`) are mapped as the table in the module documentation says. Choices that are ours: legato slide is
+`slide`, shift slide is `glissando`; the in and out slides are `scoop`, `plop`, `doit`, `falloff`; a bend with a release
+is two `bend` elements (the second with `release`), a whammy dive is a `bend` with `with-bar`; the harmonic kinds that
+MusicXML does not have (pinch, tapped, semi) and the touched fret are an `other-technical` text
+`harmonic:<kind>[:<fret>]`;
+let ring, slap, pop, fade-in and vibrato are `other-technical` texts. A private `miscellaneous-field`
+`atomik-tuning-<part id>` keeps what `staff-tuning` cannot: the instrument id, the fret count and, per string, the start
+fret, course, octave flag and label. Other programs ignore it, and without it the reader falls back to the catalogue.
+
+**Verified how.** The writer and the reader were written together, so `tests/musicxml.rs` proves the round trip (every
+technique, for a guitar with and without a capo, a bass, a banjo with its drone, a re-entrant ukulele, a seven-string
+guitar, a custom tuning, percussion and several parts) and the hand-written documents prove the reading rules above;
+no file from another program was available. The mappings the format leaves open (bend with release, slides, harmonic
+kinds, palm mute, let ring, vibrato) are the open item for a hand check with files from other programs.
+
+## 6w. The Tab Editor and the chord diagram
+
+`Pane::TabEditor` shows [`TabEditorView`](../crates/ui/src/tab_editor.rs) in the lower pane in place of the
+arrangement, as the piano roll does (`AppCore::tab_editor`, `tab_clip`, `app_core_tab_editor.rs`). View > Editors > Tab
+Editor (`view.toggle_tab_editor`) opens it on the clip the piano roll shows, else the first selected note clip, else
+the first note clip of the selected track, else the song's first; `edit.toggle_tab_or_piano_roll` (Edit and View >
+Editors, no default key) hands the open clip from one editor to the other. The editors exclude each other:
+`close_piano_roll` also closes the tab editor, so every other editor that closes the roll closes it too.
+
+- **The clip.** The view reads the clip and builds a `Work`: the notes and the `MidiData` with the tab sidecar present.
+  A clip without a sidecar, or with notes that lack an entry, is fretted by `tab_edit::start_tab` or `auto_fret_clip`
+  on the instrument `atomik_tab::instrument::instrument_for_name` suggests from the track's name (one place, shared
+  with the tab export); showing never writes, the first edit commits those positions together with the edit.
+- **Edits.** Every edit is a `tab_edit` operation turned into one `Command::Batch` of `SetClipContent` and
+  `SetClipMidi` by `TabEdit::into_command`. A batch of those two commands that carries one merge id merges in the
+  history (`MergeKey::Clip`, `clip_batch_key` in the model), so two digits typed together are one undo step.
+  `tab_edit::set_length` (new) resizes notes for the note value keys.
+- **Cursor and typing.** The cursor is a content tick and a string (0 = top line). Left and Right step on the grid of
+  the entry's note value (`NoteValue`: whole to 64th, dotted or triplet), Up and Down change string, the bar commands
+  jump a bar. A digit types the fret (`FretBuffer` in `tab_editor/entry.rs`): a second digit within 0.6 s on the same
+  cell, when the result is still on the neck, extends the first. Every digit is stamped with the view's clock when it
+  arrives (see *Clock* below), and the merged step ends from `TabEditorView::tick` (called every frame by
+  `Shell::frame_at`) with `UiAction::EndMerge` when the window runs out. A fret the string cannot play (below a
+  short string's first fret, past the neck) is refused with a status line. A typed note is auditioned
+  (`UiAction::Audition`, released by the clock or when the editor closes).
+- **Keys.** The pane is the `tab` keymap context (`Context::Tab`, default keys in both profiles): arrows, `Ctrl+Left`
+  and `Ctrl+Right` by bar, `W H Q E S T X` for whole to sixty-fourth (`editor.tab_duration` with an argument), `.`
+  dotted, `Y` triplet, `=` and `-` zoom; digits are not commands but raw keys the view reads. Delete and Backspace are
+  `edit.delete`, `sequencer.follow` toggles follow, `editor.tab_zoom_in` and `editor.tab_zoom_out` zoom.
+  Only `.` overlaps a global binding (next marker); the pane wins inside itself.
+- **Drawing** (`tab_editor/paint.rs`). One line per string, string names, the TAB clef and the time signature in the
+  gutter, bar lines, bar numbers, tempo and section markers in the ruler, chord diagrams and names above the staff,
+  lyrics below, the playhead, the cursor. Fret numbers sit on the lines: dead `x`, ghost `(5)`, harmonic `<5>`. The
+  symbols: hammer-on and pull-off arcs (`H`, `P`) from the previous note on the string, slides (legato and shift
+  between notes, in and out lines), bend arrows with the amount and releases, vibrato, `P.M.` and `let ring` spans
+  with dashed lines, tap, slap, pop, thumb, accent and staccato marks, tremolo slashes, `A.H.`, `P.H.`, `T.H.` and
+  `S.H.` over artificial harmonics. Under the staff the rhythm: a stem per onset, flags and beams from the length of the
+  notes (a column's value is the longest note cut at the next onset), dots and triplet marks. Rests are not drawn
+  (a gap shows as space). Notes no string can play are listed under the staff as `?` and their pitch.
+- **Following.** `set_playhead` pages the view while the transport plays and follow is on.
+- **Seams for the next phases.** `Work` and the `emit` helper (any new edit), `TopButton`, the staff rectangle.
+- **Editing tools** (phase B2; `tab_editor/tech.rs`, `tab_editor/dialog.rs`, `tab_edit.rs`).
+  - *Range selection.* A `Range` is a rectangle of cells (ticks times strings), `selected()` the notes inside it.
+    Shift+Left/Right (`editor.tab_extend`) select whole columns, Shift+Up/Down narrow it to the rectangle between the
+    anchor and the cursor, a drag on the staff draws a rectangle, Shift+click grows one, `edit.select_all` takes the
+    clip (also the notes no string plays), Esc or a plain cursor move clears it. Edits work on the selection, else on
+    the note under the cursor (`targets()`); a duration key resizes the whole selection.
+  - *Techniques.* `editor.tab_technique` with an argument (`hammer_on` ... `clear`, `TAB_TECHNIQUE_ARGS`) toggles
+    on the targets through `tab_edit::update_techniques`: set when any note lacks it, cleared when all have it. The
+    hammer-on and pull-off flag is on the destination note (they exclude each other, so do dead and ghost). `bend`,
+    `bend_release`, `pre_bend`, `pre_bend_release` use the toolbar's amount (`editor.tab_bend_amount`, a quarter tone
+    to two tones; a `bend_half` style argument sets it too). The toolbar sits in the top bar, buttons that do not
+    fit are left out (the keys and the menu still work) and are lit while every target has the technique.
+  - *Strings and pitch.* `tab_edit::step_string` (Alt+Up/Down) moves to the next string that plays the same pitch
+    (`Tuning::fret_for_pitch`, so a banjo drone's start fret and the neck length are respected), all or nothing.
+    `editor.tab_transpose` (Ctrl+Up/Down, with Shift an octave) is `tab_edit::transpose`. `tab_edit::refret_at`
+    places notes at a hand position (frets n to n+3, open strings allowed), at the lowest frets or with the fretter.
+  - *Clipboard.* `copy_snippet` and `paste_snippet` keep strings, frets, techniques and plain velocity and length;
+    the snippet lives in the view (the app clipboard carries notes only, and not the tab sidecar). Paste puts the
+    first note at the cursor, replaces notes on the same string at the same tick, drops notes past the clip end and
+    selects what it pasted. `AppCore::has_selection` and `can_paste` answer for the pane (menus).
+  - *Panels.* The instrument, tuning and capo dialog (`editor.tab_tuning`, also a click on the top bar's instrument
+    label) and the re-fret chooser (`editor.tab_refret` with `choose`) are modal panels the view draws over its pane
+    and owns, not windows of the shell: pure state with `layout`, `hit` and `paint`. While one is open
+    `is_text_owner` is true, so the shell's context is `Text` and Enter and Esc reach the panel. The dialog applies
+    `set_tuning` (keep pitches, the notes are fretted again) or `set_tuning_keep_frets` (the frets stay, the pitches
+    change with the neck), one undo step.
+  - *Loop by ruler drag.* A press on the ruler locates (as before), a drag also sets the song loop to the bars
+    dragged over (snapped with the song's own bar lines, enabled) as one `SetLoop` on release.
+  - *Context menu.* A right click selects the note under it (or keeps a selection it is in) and emits
+    `ContextTarget::TabStaff`; `context_menus::tab_staff_menu` builds it.
+  - *Clock.* Key events carry no time and no frame runs while the app idles, so `AppCore` keeps a `TabClock` (real
+    time since start, re-aligned to the frame clock by every `tab_editor_tick`) and calls `TabEditorView::stamp` with
+    it before each event. The view stamps every digit with that time (`FretBuffer::push(.., now)`): a digit typed
+    after an idle stretch cannot join an older one. The ui crate itself reads no clock (the project lint forbids it).
+- **The widget** ([chord_diagram.rs](../crates/ui/src/chord_diagram.rs)): `paint_diagram(canvas, theme, area, &Diagram)`
+  draws a `Voicing` for any string count (1 to 12): five fret rows from `base_fret`, a thick nut at the first fret and
+  an `Nfr` label elsewhere, open and muted markers, dots with finger numbers, a barre bar, and a short string (the
+  banjo drone) that starts at its own fret (`Diagram::start_frets_of(tuning, capo)`). `diagram_height(width, titled)`
+  says how tall a diagram of that width is. The Chord Sheet pane and the practice phases reuse it.
+
+## 6x. The Chord Sheet pane
+
+`Pane::ChordSheet` shows [`ChordSheetView`](../crates/ui/src/chord_sheet.rs) in the lower pane in place of the
+arrangement (`AppCore::chord_sheet`, `sheet_open`, `app_core_chord_sheet.rs`). It is not tied to a clip: it shows
+the song's `Song::sheets` (6s), one sheet at a time with a selector, and holds no state the document does not: every
+change of the stored sheets is one `SongCommand::SetSheets` (one undo step). View > Editors > Chord Sheet
+(`view.toggle_chord_sheet`) opens it; opening the piano roll, the tab editor or a device editor closes it.
+
+- **Layout** (`chord_sheet/layout.rs`, `content.rs`; pure, unit tested). Text cannot be measured here, so every
+  character advances by a fixed share of the font size (`LYRIC_ADVANCE`) and a lyric line is drawn as
+  *segments*, one per stretch between two chord anchors, each placed by the layout: a chord always sits over the
+  first character of its segment, whatever the font does inside it. A chord name that would touch the one before it
+  is pushed right and the rest of the line moves with it (the lyric gets a gap), so names never overlap and stay
+  over their syllable. A line wider than the pane breaks after a space (inside a word only when the word is wider
+  than the pane) and every chord stays with its segment. Chord-only lines (chords at columns, no text) lay out the
+  same way and draw no lyric; tab blocks are drawn on a fixed grid (digits at their column, dashes as a line).
+  `content::build` turns the *shown* sheet into entries with positions plus the chord hit rectangles; the view
+  caches it by (sheet revision, selection, transpose, capo, spelling, font size, width) and paints only the entries
+  in view.
+- **Display controls are view state**, never the song: transpose by semitones (-11 to 11), a capo (0 to 12; the sheet
+  starts at its own capo, and the shown chords are the shapes `net = transpose + sheet.capo - capo` semitones from the
+  written ones, spelled by `ChordSheet::transpose`: the key decides, else the sharps/flats preference), the font size,
+  and the instrument and tuning of the diagrams (the catalogue list, the tuning chip cycles the presets). *Apply
+  Transpose to Sheet* (`editor.sheet_apply_transpose`) writes the shown sheet with `SetSheets`; the view resets to
+  "as written" at once.
+- **Diagrams.** A strip under the toolbar holds every distinct chord of the shown sheet with its diagram (it scrolls
+  sideways), and a click on a chord of the text or of the strip opens a popup with a larger diagram and the generator's
+  alternative voicings (`<` `>` or Left/Right, wrapping); the voicing picked is kept per chord name for the strip.
+  Voicings come from `atomik_tab::voicing` for the shapes shown (frets relative to a capo of 0; the diagram of a sheet
+  shown with a capo is the shape, not the sounding chord), through a `VoicingCache`; a bass uses `VoicingOptions::bass`.
+- **Autoscroll.** `ChordSheet` lines may be linked to a bar (`SheetBlock::Line::bar`, kept by the model, not in the text
+  forms). When some line is linked and the transport plays, `set_playhead` scrolls the pane so the line the playhead is
+  in sits a third down, interpolating between linked lines by tick (`Bars::bar_start`); the toolbar chip "Synced" turns
+  that off. Without links, a play/pause button and a speed (lines per minute, 4 to 120) scroll the text:
+  `ChordSheetView::tick(now)` advances it by the time between two calls (a gap over half a second, a stalled host, is
+  ignored) and stops at the end. The app ticks it with the frame clock (`chord_sheet_tick`); needs_repaint is true while
+  it runs.
+- **Edit as text.** The sheet becomes a multi-line `TextField` (the shared text field: caret, selection, clipboard,
+  input methods) holding `to_over_lyrics()`. Apply (Ctrl+Enter or the button) parses it back with `parse_sheet` and
+  emits one
+  `SetSheets`; the bar links of the old lines are kept by line position when the number of lyric lines is unchanged.
+  Esc or Cancel leaves it. Rename is a one-line field in a small box; New Sheet adds a sheet with a starter text and
+  opens the editor on it; Delete removes the shown sheet (undoable); Import... runs `file.import_sheet` and the pane
+  shows the sheet that arrives. While the text, the rename box or the instrument list is open `is_text_owner` is true
+  and the shell's context is `Text` (as for the tab editor's panels).
+- **Commands.** `view.toggle_chord_sheet` and the pane's `editor.sheet_*` commands (select, new, rename, delete,
+  edit_text, apply_transpose, transpose, capo, spelling, font, autoscroll; group Editor, context Global, no default
+  keys). `AppCore::pane_command` hands them to the pane whichever pane has the focus while the pane is open. The pane
+  reads Up, Down, Page Up, Page Down, Home and End itself, Left and Right cycle the voicings of an open popup.
+- **Not done.** No per-line bar-anchor editor (links come from an import of a score with lyrics, or a later action), no
+  "send chords to the chord lane", the instrument and display choices are not saved with the project, and the tab block
+  of a sheet is shown, not edited as tab.
+
+## 6y. The practice bar and the practice speed
+
+One row of controls under the toolbar of the Tab Editor and the Chord Sheet panes
+([`PracticeBar`](../crates/ui/src/practice_bar.rs), shared; `PRACTICE_BAR_HEIGHT` 26 px). The bar holds no state: the
+app owns the practice session (`practice.rs`, `app_core_practice.rs`) and pushes a `PracticeState` into both views at
+every transport refresh (`show_transport`); the bar answers with `UiAction::RunCommand` of the `practice.*` commands
+(the metronome button is `UiAction::Transport(ToggleMetronome)`), so every control is also a command with a menu
+entry (Transport > Practice) and a palette entry. Controls left to right: Loop (the selection), Click, Count-in
+(a click cycles off, 1, 2 bars), the speed chips 50/75/100 %, slower and faster, a slider (25 to 150 % in steps of 5,
+dragging emits each new value once) with its readout, and the speed trainer (switch, pass counter and, while it is on,
+four values with arrows). A control that does not fit the pane width is left out from the right. The tab editor
+shifts its ruler, staff and chord row down by the bar; the chord sheet adds it to `Frame` (`practice`, none while the
+sheet is edited as text) and the strip and body start under it.
+
+- **Speed is a runtime tempo factor of the engine transport**, `TransportCommand::Speed(f32)` (0.25..=1.5, clamped,
+  NaN is 1.0), sent through the same queue as Play and Locate and applied at a batch boundary. `Player::rate(sr)` is
+  `sr / speed`, and every tick <-> frame conversion of the player (notes, loop, chase, click, count-in, harmony,
+  clock out, the transport state) runs at that rate, so a change of speed keeps the musical position (the tick; the
+  frame is recomputed, the cursors stay) and nothing else in the player knows about it. Devices see `TimeInfo::tempo`
+  times the factor (clamped to 20..=999 BPM) and the exact `ticks_per_frame`. A count-in's length is divided by the
+  factor when the command arrives. **Audio clips are silent while the speed is not 1.0** (a warped clip is a finished
+  buffer at the song's tempo and the interim warp reads by the song's own timeline; neither can take a rate), and the
+  streamer is idle then; the bar's tooltips say so. Following an external clock resets the speed to 1.0 and ignores
+  the command. Only live playback is slowed: a bounce, an export or any offline render runs its own engine and never
+  sends the command (`tests/practice_speed.rs`).
+- **Not saved, reset on load.** The speed is app state (`Practice`), not in the project. `replace` (open, new) resets
+  it to 100 % and switches the trainer off before the engine is rebuilt; a rebuild in place (a rate edit) sends it
+  again. Recording is refused while it is not 100 %, because the recorder places notes by the unslowed timeline.
+- **Count-in** (0 to 2 bars) belongs to a plain Play / Play-Stop: `play_counted` plans it with the existing
+  `SongSnapshot::pre_roll` and sends `PlayWithPreRoll`; a recording keeps its own pre-count setting. It is an app
+  session value (not saved in the project or the settings). The metronome toggle is `transport.metronome`.
+- **Speed trainer.** `Practice::pass` is called once per loop cycle the engine completed: the app compares the
+  published `loop_count` once a frame (`practice_tick`, from `transport_frame`). After `after` clean passes at the
+  current speed the speed rises by `step`, up to `target`; switching it on sets the speed to `start`. Whether a pass is
+  *clean* is decided by a `PassJudge` (`AppCore::set_pass_judge`); the default `EveryPass` counts every pass, and the
+  listen-and-grade phase replaces it with an accuracy threshold. The trainer needs the loop on.
+- **Loop selection** (`practice.loop_selection`): the tab editor loops the whole bars of the selected cells (the bar
+  under the cursor without a selection) with one `SetLoop`; the chord sheet loops from the first bar a line is linked
+  to up to the end of the last linked line (as long as the gap before it, a bar when only one line is linked). The
+  app sends the command to whichever of the two panes is open.
+- **Commands.** `practice.speed` (25 to 150 by 5), `speed_up`, `speed_down`, `count_in` (`off`, `1`, `2`), `trainer`,
+  `trainer_start`, `trainer_step`, `trainer_after`, `trainer_target` (`up`, `down`), `loop_selection`; group
+  Transport, context Global, no default keys. `AppCommand::Practice(PracticeAction)` maps them for the menus.
+
+## 6z. The fretboard
+
+A horizontal neck for the clip the Tab Editor shows ([`FretboardView`](../crates/ui/src/fretboard.rs)), drawn for any
+string count (1 to 12) with the high string on top as in tab and the nut on the left (mirrored for a left-handed
+player). Frets are spaced logarithmically and compressed so the instrument's whole neck fits the width; it draws
+inlays (a pair at the octave), the string names of the tuning, the capo as a bar over the strings it covers (a
+partial capo spans only those) with the covered side dimmed, and a short string such as the banjo's drone starting at
+its own fret with a peg there. Fret numbers of the tab are relative to the capo: a dot sits at the capo's fret plus
+the tab fret, an open string at the capo (or left of the nut, or at the peg of a short string).
+
+- **Data and feed.** `FretboardData` is the tab of one clip as the neck needs it (tuning, capo, notes with string and
+  fret, the chord lane); `TabEditorView` builds it as an `Arc` when it reads the clip (`sync_from`) and hands a
+  `FretboardFeed { data, tick, playing }` (`fretboard_feed`): the playhead's content tick while playing, else the tab
+  cursor. `live_notes(data, tick)` is pure: the notes sounding at the tick (start <= tick < start + length) and the
+  first group that starts after it. `FretboardView::set_feed` compares what would be drawn and reports a change only
+  then, so a playhead that moves without changing the notes does not repaint.
+- **Drawing.** Sounding notes are filled dots, the next group ghosted (outlined). A dot says the note name, the fret
+  number or the interval to the chord's root (`FretLabels`; without a chord, to the lowest note shown). With
+  `chord_voicing` the voicing of the chord at the tick (the last diagram at or before it) is drawn under the notes as
+  rings, muted strings as crosses; a note gets a finger badge when that voicing fingers its string and fret (the tab
+  sidecar keeps no per-note finger, so the chord diagram is where fingers come from).
+- **Two hosts, one view.** Under the staff the strip is part of the tab editor pane (`FRETBOARD_HEIGHT` 136 px at the
+  bottom; `staff`'s line spacing is computed from the height left, and the strip is left out when the pane is too tall
+  for the staff at its smallest, see `fretboard_rect`). Detached, `AppCore` owns a second `FretboardView` as
+  `Pane::Fretboard` in `WindowKind::Fretboard` (title "Fretboard", a floating window like Piano Keys: the main layout
+  gives it no room, `DetachState::detached` means open, default 1000 x 136); `AppCore::sync_fretboard` feeds it from
+  the tab editor on every transport refresh, tab event and document change while the window is open. While the window
+  is open the strip under the staff is off; closing the window (or `view.detach_fretboard` again) puts it back.
+- **Options** (`FretboardOptions`: left-handed, labels, chord voicing) and whether the strip shows are `ui-state.json`
+  fields (`show_fretboard` default true, `fretboard_left_handed`, `fretboard_labels`, `fretboard_voicing`); the shell
+  pushes them to both views (`apply_fretboard_ui`). The three chips in the header of the strip are
+  `UiAction::RunCommand`s.
+- **Commands** (group View, context Global, no default keys, all in View > Editors): `view.toggle_fretboard` (while
+  detached it closes the window and hides the neck), `view.detach_fretboard`, `view.fretboard_left_handed`,
+  `view.fretboard_voicing`, `view.fretboard_labels` (`notes`, `frets`, `intervals`). MCP: `window` `fretboard` on the
+  session tools, opened with `session_command view.detach_fretboard`.
+
+## 6za. Listen and grade
+
+The practice bar's Listen switch (`practice.listen`) hears the instrument on an audio input and grades each pass of the
+loop against the notes of the open Tab Editor clip. Three layers, the first two pure:
+
+- **Tracker** ([`atomik_dsp::listen`](../crates/dsp/src/listen.rs)). `Listener::feed(first_frame, mono)` takes the mono
+  input in any block size and returns `PlayedNote`s a few hundred milliseconds after the input they describe: the
+  input frame of the onset, the MIDI key when the sound is monophonic enough to have a pitch (the tuner's YIN and
+  McLeod detector on a window that starts 12 ms after the onset and is cut by the next onset), and a 12-bin chroma
+  (Hann FFT of up to 8192 frames, bins of 70 Hz to 2 kHz folded to pitch classes). Onsets come from the larger of the
+  causal energy flux of `onset.rs` and a log spectral flux (a new pitch over a ringing one), a local-peak rule against
+  an adaptive threshold, a level that rose above the last six hops, and a 60 ms minimum gap; the position is pulled
+  back to the foot of the attack. Same samples, same result whatever the blocks.
+- **Grader** ([`atomik_tab::grade`](../crates/tab/src/grade.rs)). Expected note groups (the notes that start together,
+  a chord from two) against `Played` events within a window of 80 ms of wall-clock time (turned to ticks with the
+  pass's tick rate, so it spans fewer ticks at half speed). Pitch-right events pair first, nearest in time, then
+  leftovers inside the window are *wrong*; unanswered groups are *missed*, unclaimed events *extras*. Right notes are
+  *hit* within half the window, else *early* or *late*. A chord matches when `chord_score` of the event's chroma
+  (energy share on the chord's classes times `0.25 + 0.75 * coverage`) reaches 0.6. Accuracy is
+  `(hits + 0.5 * (early + late)) / (groups + extras)`. `Session` keeps the history (12 passes), the streak and the best
+  streak; `calibration_offset_ms` is the median lateness of notes played along a click.
+- **App** ([`listen.rs`](../crates/app/src/listen.rs), `app_core_listen.rs`). The tap is the engine's record tap
+  (`start_audio_record`, 4 s lock-free ring the audio thread only writes; the engine has one tap, so listening pauses
+  while a take or the SAMPLE button records and starts again after), on one interface channel or a pair
+  (`practice.listen_input` cycles: channels first, then pairs). Once a UI frame the transport state is an `Anchor`
+  (engine frame, song tick, run and lap); the `Clock` converts an input frame to a tick by interpolation, or by
+  extrapolation with the measured rate across a loop wrap, so it holds at any practice speed and over tempo changes.
+  A note played at input frame `h` belongs to the engine frame `h - record_offset_frames - manual offset`.
+  A pass is one lap within one run of the transport; it closes when the transport left it and the tracker has caught
+  up. The graded range is the loop (the first lap of a run starts where the transport started; a stopped run ends where
+  it stopped); the expected notes are those of the clip's track inside the clip.
+- **Results.** The verdicts of the last graded pass colour the notes of the Tab Editor (a patch of green, amber or red
+  under the fret number, with a badge `<` early, `>` late, `x` wrong, `-` missed) and the sounding dots of the
+  fretboard (`FretboardFeed::grades`); the bar shows the last accuracy, the streak and the newest eight passes as bars.
+  Nothing is saved: the session lives in `AppCore`, no command touches the project, a new clip shows no verdicts, and
+  `practice.listen_clear` forgets them.
+- **Speed trainer.** `AccuracyJudge` (default 90 %, `practice.listen_threshold` up or down by 5, range 50 to 100) is the
+  `PassJudge` while listening is on; `PassReport::accuracy` carries the grade. While passes are graded it counts
+  them from the grade (a loop wrap is not counted twice); a pass that could not be graded counts as before. Without an
+  open tab clip, or with listening off, `EveryPass` and the wrap counter apply.
+- **Latency.** The manual offset in milliseconds (`practice.listen_offset`, `ui-state.json` `listen_offset_ms`, not in
+  the project) adds to the sink's latency compensation. `practice.listen_calibrate` turns the click on, plays, takes the
+  distance of the next eight played notes to the beats and adds their median to the offset.
+- **Commands.** `practice.listen`, `listen_input`, `listen_calibrate`, `listen_clear` (Transport > Practice) and
+  `listen_offset`, `listen_threshold` (`up`, `down`); group Transport, context Global, no default keys.
+
+## 6zb. The Chord Trainer
+
+View > Editors > Chord Trainer (`view.toggle_chord_trainer`) opens drills for changing between chords. It is
+`Pane::ChordTrainer`, in place of the arrangement like the Tab Editor and the Chord Sheet (opening one closes the
+others), and not a detachable window: it needs no clip and no platform window, and it sits where the two panes it
+works with sit. Three layers:
+
+- **Logic** ([`atomik_tab::trainer`](../crates/tab/src/trainer.rs), pure and clock-free). `diatonic(key, sevenths)` stacks
+  thirds on the seven degrees of the key (natural minor for a minor key; `Bm7b5` for the half-diminished degree);
+  `parse_chord_list` reads typed names with the chord grammar and reports the words that are not chords. `Drill` is a
+  state machine driven by the clock the caller gives (`start`, `advance(now)`, `stop`) and by what the input heard
+  (`hear(Heard { time, chroma })`): it emits `Click { accent }`, `Changed { from, to }` and `Judged { .. }`, orders the
+  chords (`Order::Sequential`, `Random` with an xorshift seeded by the caller, `Pair` for one pair back and forth, never
+  the same chord twice in a row) and has three modes. *Timed* clicks and changes only. *Verified* does the same and
+  marks a window a hit when its chord is heard (`chord_score` of the chroma against the pitch classes of the chosen
+  voicing, threshold 0.6) from a half beat (at most 250 ms) before its beat to the end of the window; a window is
+  judged 0.5 s after it ends so the tracker's delay still counts, and what was heard in the last second is kept for a
+  window that opens just after a note. *Listen* has no clock: the chord stays until it is heard after it was shown
+  (`seconds` is the time to hear it), and a skip is a miss. The first chord of a session is no change and is not judged.
+  `Scores` keeps per unordered chord pair (`Am|C`) the best changes per minute reached with a hit rate of at least 75 %
+  (timed modes: the tempo's rate; listen: 60 over the mean seconds to hear a chord), the best hit rate and the sessions
+  that counted (at least 3 judged changes); `from_rows` brings stored values into range.
+- **Pane** ([`ChordTrainerView`](../crates/ui/src/chord_trainer.rs)). The editors' contract; it owns the setup and the
+  `Drill`. A start is a request the next `tick(now)` carries out (so it starts at a frame's time, never a stale one);
+  changing a setting while a drill runs ends the session, counts its scores and starts a new one. Voicings come from
+  the generator for the chosen instrument, tuning and capo (frets relative to the capo, so the chord named is the chord
+  that sounds), the chosen fingering of a chord is also what the input must hear, and the instrument list is the Chord
+  Sheet's. Buttons run `editor.trainer_*` commands locally; the pane pulls the song's chords from the chord lane and the
+  sheets on every sync and never writes the document. `help_at` gives every button a tooltip.
+- **App** (`app_core_chord_trainer.rs`, [`trainer_click.rs`](../crates/app/src/trainer_click.rs)). `chord_trainer_frame`
+  runs once a frame from `transport_frame` with the frame clock; the song transport is never started or stopped. The
+  click is the engine's preview voice (the one the browser and the audio setup tones use): `ClickGen` makes a
+  deterministic mono click track (an accent every N beats) and a thread keeps the preview ring filled, so the beats
+  keep the audio clock whatever the frame rate; it starts with a session and stops with it. A listening drill shares the
+  one record tap with listen and grade (`feed_listen` drains it once and hands the chunks to both): the trainer's own
+  `Listener` turns them to notes with their chroma, placed on the frame clock (the note's input frame behind the last
+  frame, less the sink's latency compensation and the manual offset) and given to `hear`. The input is the practice
+  bar's (`practice.listen_input`). **Scores are the user's**: `UiState::chord_trainer_scores` (`ui-state.json`, an
+  absent key means none), handed to the pane at startup and saved when `take_trainer_scores_change` reports a change;
+  nothing of the trainer is in the project (format 45 is unchanged).
+- **Commands** (group Editor, context Global, no default keys): `editor.trainer_start`, `trainer_skip`,
+  `trainer_source` (`key`, `list`, `song`), `trainer_key` (`up`, `down`, `major`, `minor`), `trainer_sevenths`,
+  `trainer_edit_list`, `trainer_instrument`, `trainer_tuning`, `trainer_capo`, `trainer_mode` (`timed`, `verified`,
+  `listen`), `trainer_order` (`sequential`, `random`, `pair`), `trainer_beats` and `trainer_bpm` (`up`, `down`),
+  `trainer_pair` (`a`, `b`), `trainer_voicing` (`next`, `prev`) and `trainer_reset_scores`; `AppCore::pane_command`
+  routes them to the pane while it is open, whichever pane has the focus.
+
+## 6zc. Tab and chord sheet as PDF
+
+File > Export > Export Tab as PDF... (`file.export_tab_pdf`) and Export Chord Sheet as PDF...
+(`file.export_sheet_pdf`) print what the editors show. The scope of the tab is the one of the other tab exports (the
+selected note clip, else every note track; `AppCore::export_tab_with` takes an explicit one and the options). The sheet
+is the song's first chord sheet, or, while the Chord Sheet pane is open, the sheet the pane shows (its transposition,
+its capo, its instrument for the diagram strip): `AppCore::sheet_pdf_job`. The paper is Letter for a United States,
+Canada, Mexico or similar locale (`PageSize::for_locale` on the system locale the program already reads for the
+language) and A4 elsewhere; there is no paper setting, the QA tool takes `page`.
+
+The printing is `atomik_tab::pdf` ([crates/tab/src/pdf](../crates/tab/src/pdf)), pure and without any UI type, in two
+steps. **Layout** (`layout_tab(&TabScore, &TabPdfOptions)`, `layout_sheet(&ChordSheet, &SheetPdfOptions)`) fills
+`draw::Page`s with drawing operations in points (`Op`: line, rectangle, circle, curve, polygon, text; y counted down);
+tests read that list, and `Layout::texts()` lists every text. **Writing** (`draw::render`, `Layout::to_pdf`) turns the
+pages into a PDF with the `pdf-writer` crate: one content stream per page, deflated, the catalog, the page tree and
+the document information (title, author, creator), nothing else.
+
+- **Tab layout** (`pdf/tab.rs`). A header (title, subtitle, artist, credits, copyright), then for every fretted
+  track (percussion tracks are left out with a warning) a heading with the instrument, tuning (bottom line first),
+  capo and the banjo drone's start fret, the legend of the chords the track uses (the pinned diagrams, else the best
+  voicing the generator finds for the chord names) and the systems. A bar is as wide as its closest pair of notes
+  needs (with a floor), bars are packed greedily and each system is stretched to the width (the last one only when it
+  is more than half full); `bars_per_line` fixes the count instead. A system has, from the top: section markers, the
+  tempo, the pinned diagrams (or the chord name alone when two are too close), the chord names (pushed apart when they
+  touch), the `let ring` and `P.M.` spans, a strip for bend arrows (with their amount), tapping, harmonics, vibrato and
+  tremolo marks, the staff (one line per string: 4 for a bass, 5 for a banjo, 7 and 8 for the extended guitars), the
+  rhythm stems, flags, beams, dots and triplet digits under it, and the lyrics. Fret numbers cut the line; dead notes
+  print `x`, ghost and tied notes `(5)`, harmonics `<12>`; hammer-ons, pull-offs and ties are arcs, slides are slanted
+  lines. A bar number starts every system and a time signature every meter change. Systems never split across a page;
+  every page has a footer with the title and `n / total`.
+- **Chord sheet layout** (`pdf/sheet.rs`). A lyric line is cut into atoms (a word with its trailing space, or the end
+  of a word after a chord); a chord belongs to the atom that starts at its anchor and is drawn over its first
+  character. A chord that would touch the one before pushes its atom, and the lyric after it, to the right; a full row
+  wraps at the next atom with the chord kept over the same word. Sections, comments and tab blocks (set in Courier so
+  the columns line up) are kept; a heading stays with the lines after it. The options transpose, change the capo
+  (rewriting the chords as the shapes, as the pane does) and choose the spelling; the diagram strip lists the chords
+  the sheet uses for one instrument of the catalogue.
+- **Fonts.** Helvetica, Helvetica-Bold and Courier, the standard fonts of the format: nothing is embedded, so a
+  character outside Latin-1 and the usual typographic punctuation prints as `?` and the export says how many (the
+  sharp and flat signs print as `#` and `b`). Widths come from the published metrics (`pdf/font.rs`; accented letters
+  are estimated).
+- **Determinism.** No date, no random id, numbers rounded to a hundredth of a point, a fixed deflate level on the
+  pure-Rust backend: the same input gives the same bytes. The golden files `crates/tab/tests/golden/*.pdf` keep the
+  plain (uncompressed) form of a guitar tab with techniques, a banjo tab and a chord sheet with a diagram strip
+  (`.gitattributes` marks `*.pdf` binary); regenerate with `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-tab --test
+  pdf`.
+- The QA server's `session_tab` has `format: pdf` for `export` and `export_sheet` with `page`, `diagrams` and
+  `bars_per_line`. The registry ids `file.export_tab_pdf` and `file.export_sheet_pdf` have no key.
+
 ## 7. The UI crate
 
 `atomik-ui` has no window-system dependency and no time source. The app feeds `UiEvent`s and applies
@@ -7124,6 +7697,16 @@ A key reads nine wheels through the gains of the drawbars (three of them a pitch
 the percussion envelope, the key click, the scanner (two delay lines swung by a sine) and the drive follow, and
 the controller helper of the other instruments handles the pedal, volume and expression. Its `sound` param is
 expanded by the app into one batch like the FM synth's (`organ::sounds`); the generic panel is used.
+
+Plucked Strings `atomik.plucked` ([plucked.rs](../crates/devices/src/plucked.rs)) is a bank of 16 voices, each one
+or two waveguide strings ([dsp/src/pluck.rs](../crates/dsp/src/pluck.rs): a delay line with a four-point Lagrange
+read, a dispersion allpass chain and a loop low-pass, tuned by the exact phase delay of both) plucked by a noise
+burst through a low-pass and a comb (`Pick`), then panned, summed and run through one stereo body filter
+(`pluck/body.rs`). Control (pitch, loop settings, pan) runs every 16 samples of the device's own count, so a render
+does not depend on how the host cuts the blocks; a change of tuning ramps the delay over that step, which is what
+lets a bend curve glide without a click. The techniques of a tab (bends, slides, palm mutes, harmonics, dead notes)
+reach it as per-note expression: tuning as pitch, slide as the palm-mute amount, pressure as a technique code (see
+its section of [DEVICES.md](DEVICES.md)). The generic panel is used.
 
 The grain sampler `atomik.granular` is registered with samples like the sampler, so the app builds
 its `SampleMap` from its zone (a drop replaces the one zone) and swaps it in with

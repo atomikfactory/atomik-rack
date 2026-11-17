@@ -7,8 +7,8 @@ use atomik_core::{MeterEvent, PPQ};
 use atomik_device_sdk::Registry;
 use atomik_model::song::TempoEvent;
 use atomik_model::{
-    ClipContent, Command, ControllerKind, ControllerLane, Document, ImportedTrack, MidiImport,
-    ModelError, Note, SyncOp, WorkflowCommand,
+    ClipContent, Command, ControllerKind, ControllerLane, DeviceSnapshot, Document, ImportedTrack,
+    MidiImport, ModelError, Note, SyncOp, TrackSound, WorkflowCommand,
 };
 use common::song::*;
 use common::*;
@@ -352,4 +352,63 @@ fn track_lanes_that_do_not_fit_are_refused_and_change_nothing() {
     };
     assert!(run_import(&mut d, &reg, import(vec![t])).is_err());
     assert_eq!(d.doc(), &before);
+}
+
+#[test]
+fn a_track_can_play_another_instrument_with_a_patch_in_the_same_undo_step() {
+    let reg = registry();
+    let mut d = song_start(&reg);
+    let before = d.doc().clone();
+    let mut patch = DeviceSnapshot::defaults(&reg, "atomik.plucked").unwrap();
+    patch.devices[0].patch_name = "Made Up".to_owned();
+    patch.devices[0].params.insert("decay".to_owned(), 1200.0);
+    let mut i = import(vec![
+        track("Plucked", 0, BAR, vec![note(0, PPQ, 60, 0.5)]),
+        track("Plain", 0, BAR, vec![note(0, PPQ, 60, 0.5)]),
+    ]);
+    i.sounds = vec![TrackSound {
+        instrument: "atomik.plucked".to_owned(),
+        patch: Some(patch),
+    }];
+    run_import(&mut d, &reg, i).unwrap();
+    let tracks = &d.doc().song.tracks;
+    let n = before.song.tracks.len();
+    let first = d.doc().resolve(&tracks[n].device).unwrap();
+    assert_eq!(first.type_id, "atomik.plucked");
+    assert_eq!(first.patch_name, "Made Up");
+    assert_eq!(first.params.get("decay"), Some(&1200.0));
+    assert_eq!(first.name, "Plucked");
+    // The second track has no entry in `sounds`: the import's instrument, no patch.
+    let second = d.doc().resolve(&tracks[n + 1].device).unwrap();
+    assert_eq!(second.type_id, SYNTH);
+    assert_eq!(second.patch_name, "");
+    assert!(d.undo().is_some());
+    assert_eq!(d.doc(), &before);
+}
+
+#[test]
+fn track_sounds_that_do_not_fit_are_refused_and_change_nothing() {
+    let reg = registry();
+    let mut d = song_start(&reg);
+    let before = d.doc().clone();
+    let one = || track("A", 0, BAR, vec![note(0, 1, 60, 0.5)]);
+    // More sounds than tracks.
+    let mut too_many = import(vec![one()]);
+    too_many.sounds = vec![TrackSound::default(), TrackSound::default()];
+    // A patch for another device type.
+    let mut wrong = import(vec![one()]);
+    wrong.sounds = vec![TrackSound {
+        instrument: "atomik.plucked".to_owned(),
+        patch: Some(DeviceSnapshot::defaults(&reg, SYNTH).unwrap()),
+    }];
+    // An unknown instrument.
+    let mut unknown = import(vec![one()]);
+    unknown.sounds = vec![TrackSound {
+        instrument: "no.such.device".to_owned(),
+        patch: None,
+    }];
+    for bad in [too_many, wrong, unknown] {
+        assert!(run_import(&mut d, &reg, bad).is_err());
+        assert_eq!(d.doc(), &before);
+    }
 }

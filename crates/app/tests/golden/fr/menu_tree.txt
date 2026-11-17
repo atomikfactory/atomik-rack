@@ -58,6 +58,11 @@ Fichier
     Importer de l'audio… [Ctrl+Maj+I]
     Importer du MIDI…
     Importer le MIDI comme morceau…
+    ---
+    Importer un fichier de tablature ou de partition…
+    Importer la tablature ou la partition comme morceau…
+    Importer une grille d'accords…
+    ---
     Détecter les accords d'après les notes
   Exporter >
     Exporter le morceau en fichier audio…
@@ -69,6 +74,13 @@ Fichier
     Exporter le clip MIDI…
     Exporter la piste MIDI…
     Exporter le morceau en MIDI…
+    ---
+    Exporter la tablature en MusicXML…
+    Exporter la tablature en texte…
+    Exporter la tablature en PDF…
+    Exporter la grille d'accords en texte…
+    Exporter la grille d'accords en PDF…
+    ---
     Résolution de l'export MIDI >
       15360 par noire (natif)
       960 par noire
@@ -229,6 +241,19 @@ Affichage
     Éditeur d'échantillon
     Éditeur de pas
     Éditeur de découpe
+    Éditeur de tablature
+    Grille d'accords
+    Entraîneur d'accords
+    Manche
+    Détacher le manche
+    Options du manche >
+      Gaucher
+      Disposition d'accord
+      ---
+      Noms de notes
+      Numéros de cases
+      Intervalles
+    Basculer entre piano roll et tablature
   Lanceur >
     Lanceur [F10]
     Retour à l'arrangement
@@ -272,6 +297,26 @@ Transport
   Boucle [L]
   Métronome [C]
   Créer les voies automatiquement
+  ---
+  Pratique >
+    Boucler la sélection
+    ---
+    Vitesse 50 %
+    Vitesse 75 %
+    Pleine vitesse (100 %)
+    Plus rapide
+    Plus lent
+    ---
+    Décompte : aucun
+    Décompte : 1 mesure
+    Décompte : 2 mesures
+    ---
+    Entraîneur de vitesse
+    ---
+    Écouter et noter
+    Entrée d'écoute suivante
+    Calibrer la latence d'écoute
+    Effacer les résultats
   ---
   Ajouter un marqueur [Maj+M]
   Ajouter un marqueur de plage depuis la boucle
@@ -456,6 +501,10 @@ Piste
     Enregistrement direct
     Replier tous les players
     Contourner tous les players
+    ---
+    Générer une progression
+    Envoyer la progression vers la voie d'accords
+    Envoyer la progression vers un clip
   ---
   Ajouter une voie de motif
   Voie de motif vers notes

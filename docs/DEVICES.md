@@ -11,7 +11,7 @@ the audio track, the sampler, the drum machine and the loop slicer, the utility 
 gate, gate + compressor, sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, dynamic EQ,
 tuner, pitch shifter, rotary speaker, the CV utilities (CV math, CV quantizer, sample and hold, slew limiter, gate
 processor and envelope follower) and the two spiders), the note players (step sequencer, arpeggiator, note filter,
-key & chord, note repeater and note delay), the container and its internal note split, and the console
+key & chord, chord wheel, note repeater and note delay), the container and its internal note split, and the console
 devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the
 static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code
 differ, the code wins.
@@ -514,6 +514,147 @@ contracts, determinism and reset, every param at its extremes and the factory so
 [bounded_tests.rs](../crates/devices/src/bounded_tests.rs) drives random params and notes at 44.1, 48 and
 96 kHz, and
 [crates/render/tests/organ.rs](../crates/render/tests/organ.rs) bounces the organ into the rotary speaker at
+every host block size.
+
+---
+
+## Plucked Strings: `atomik.plucked` (Instrument)
+
+A physical-model instrument for guitars, basses, banjos, mandolins and harps: each key plucks a waveguide
+string that rings, bends and is damped like one, and the sum goes through the body of the chosen instrument.
+Source: [crates/devices/src/plucked.rs](../crates/devices/src/plucked.rs); the string, the pick and the
+bodies are in [crates/dsp/src/pluck.rs](../crates/dsp/src/pluck.rs) and
+[pluck/body.rs](../crates/dsp/src/pluck/body.rs). It is polyphonic (16 keys), deterministic and
+allocation-free. Playing techniques reach it through the per-note expression of the notes (see below), so a
+bend, a slide, a vibrato, a palm mute or a harmonic that a clip carries sounds without any other cable.
+
+### Sockets
+
+`notes_in` (notes in), `out_l`, `out_r` (audio out).
+
+### Params
+
+| Key | Name | Range | Default | Notes |
+|---|---|---|---|---|
+| `body` | Body | None, Steel, Nylon, Electric, Bass, Upright, Ukulele, Banjo, Mandolin, Resonator, Harp | Steel | The instrument body the sum goes through |
+| `brightness` | Brightness | 0 to 1 | 0.55 | The loop low-pass, 4 to 256 times the pitch |
+| `pick.position` | Pick position | 0 to 1 | 0.3 | Where the string is struck, 3 % to 50 % of its length |
+| `pick.hardness` | Pick hardness | 0 to 1 | 0.5 | The excitation's cutoff, 1.2 to 15 kHz |
+| `decay` | Decay | 100 ms to 20 s | 3 s | 60 dB fall of the fundamental at A3, shorter for higher keys |
+| `sustain` | Sustain | 0 to 1 | 0.35 | The release: 0 is a quick finger mute, 1 is let-ring |
+| `palm_mute` | Palm mute | 0 to 1 | 0 | Short, dark notes; the slide expression of a note adds to it |
+| `stiffness` | Stiffness | 0 to 1 | 0.2 | Dispersion: the higher partials run sharp (bell-like at 1) |
+| `course.mode` | Course | Single, Unison, Octave | Single | A second string per key |
+| `course.detune` | Course detune | 0 to 50 cents | 6 | Spread of a unison pair; detune of the octave string |
+| `body.mix` | Body mix | 0 to 1 | 0.6 | How much of the body's filtering is heard |
+| `out.gain` | Output gain | -24 to +12 dB | 0 | After the body |
+| `stereo.width` | Stereo width | 0 to 1 | 0.4 | Spreads the keys and the strings of a course |
+| `vel.sens` | Velocity | 0 to 1 | 0.7 | How much the velocity sets level and brightness |
+| `bend.range` | Bend range | 0 to 24 semitones | 2 | The pitch-bend range (RPN 0 changes it) |
+
+### Behaviour (as built)
+
+- **String.** A delay line closed on itself through a loop filter (an extended Karplus-Strong waveguide). Each
+  sample reads the line with a four-point Lagrange interpolator, runs through up to four first-order allpass
+  sections (dispersion) and a one-pole low-pass, and is scaled by the loop gain. The gain gives the decay: the
+  fundamental falls by 60 dB in `decay` (scaled by `(220 Hz / f)^0.35`, so higher keys die sooner). The low-pass
+  cutoff is `f * 2^(2 + 6 * brightness)`, so a note keeps its character over the keyboard. The line is shortened
+  by the exact phase delay of the low-pass and of the allpass chain at the fundamental (computed in `f64` with a
+  deterministic arctangent), so the pitch is within a fraction of a cent of the key at 44.1, 48 and 96 kHz over
+  MIDI 28 to 100 (tested with the tuner's detector and an exact spectral fit). The allpass coefficient is
+  `-0.95 * stiffness`; where the line would get too short for it (high keys) it is halved until it fits.
+- **Pick.** A burst of noise as long as the string's period, through a one-pole low-pass (the cutoff is
+  `1.2 kHz * 2^(3.6 * hardness)`, lowered for a soft strike) and a feed-forward comb at the pick position (the
+  partials with a node at the plucked point are cancelled). The noise is a function of the device seed, the key
+  and a note counter. `vel.sens` takes the level from `1 - sens + sens * velocity` and dulls a soft strike.
+- **Voices.** 16. A key takes a free voice; with none free the quietest released voice (else the oldest) is
+  stolen and fades out over 2 ms before the new note starts. A key struck again while its string still rings
+  plucks the same string again (no click, no voice used). Sustain (CC 64), volume (CC 7), expression (CC 11),
+  pitch bend and its range (`bend.range` or RPN 0) work as in the [MIDI](#midi) chart; the mod wheel and
+  pressure are ignored. The master tune shifts every string.
+- **Release.** A key-off damps the string like a finger: the fall of 60 dB takes `50 ms * (decay / 50 ms)^sustain`.
+  A released voice is freed when it is inaudible.
+- **Palm mute.** `palm_mute` (or the larger of it and the note's slide expression) divides the decay by up to 10
+  (`2^(-3.3 * amount)`) and darkens the loop by up to 75 %.
+- **Course.** Unison adds a second string, `course.detune` cents apart, half of it either side (both at 0.707);
+  Octave adds one an octave up (level 0.5) detuned by `course.detune`. The mode is read when a note starts.
+- **Body.** A cascade of up to six peaking, shelving and pass sections per body, run on both channels and mixed
+  in parallel with the dry sum by `body.mix`; None is a bit-exact bypass.
+- **Output.** The sum goes through volume and expression, a DC blocker (8 Hz), the body, the output gain and a
+  soft limit (linear up to 2). `stereo.width` places a key between left (low) and right (high), up to 60 % of
+  the width, and the two strings of a course 15 % either side.
+
+### Per-note expression
+
+How the expression lanes of a note reach the strings (see also
+[Per-note expression (MPE)](#per-note-expression-mpe)):
+
+- **Tuning** (semitones) adds to the pitch beside the bend. A change glides over 6 ms (the delay length ramps
+  linearly), so a bend curve with sparse points does not click; in the first 64 samples of a note it applies at
+  once, so a pre-bend starts on pitch.
+- **Slide** (0 to 1) is the palm-mute amount of that note.
+- **Pressure** is a technique code, read when the note starts: below 0.25 a normal note, 0.25 to 0.75 a
+  harmonic, above that a dead note. The constants `EXPR_HARMONIC` (0.5) and `EXPR_DEAD` (1.0) in
+  [plucked.rs](../crates/devices/src/plucked.rs) are the values to send. A harmonic is struck with a pick
+  limited to 2.5 times the pitch of the note and a loop at 35 % of the brightness: the pitch is the tuning of
+  the note (the octave, fifth or other partial the technique renderer adds) and it rings nearly pure. A dead
+  note is a noise burst into a string damped to a 45 ms fall: a short, unpitched click. Both ignore the pick
+  position. Channel and key pressure are not used.
+
+### Panel
+
+The panel is the generated one with its own sections, in the order a string is played: STRING (decay,
+sustain, brightness, stiffness, palm mute), PLUCK (position, hardness), COURSE (mode, detune), BODY (the body
+as a pick list of its eleven names, and the mix), OUTPUT (gain, width) and PLAY (velocity sensitivity, bend
+range). The device has nothing to draw, so it has no display of its own, the way the effects and the organ have
+none; a custom panel would only have repeated what the sections already say. See
+[plucked_panel.rs](../crates/ui/src/plucked_panel.rs).
+
+### Factory patches
+
+Fourteen patches of the category Plucked, each a table of params in the app's factory tables:
+
+| Patch | Body | Character |
+|---|---|---|
+| Steel Acoustic | Steel | Medium pick, bright, 3.5 s ring |
+| Nylon Classical | Nylon | Fingertips, dark and round |
+| Clean Electric | Electric | Hard pick, long even ring; follow it with the Guitar Amp |
+| Muted Electric | Electric | Palm mute 0.8, a short chug |
+| Electric Bass Finger | Bass | Soft attack, round |
+| Electric Bass Pick | Bass | Hard, bright attack |
+| Upright Bass | Upright | Woody thump, stops on release |
+| Ukulele | Ukulele | Light and bright, short ring |
+| Banjo | Banjo | Hardest pick, brightest, a little stiffness |
+| Mandolin | Mandolin | Unison pair, 12 cents apart |
+| 12-String | Steel | Octave course, wide |
+| Bouzouki | Mandolin | Octave course |
+| Dobro | Resonator | Stiffness 0.4, bend range 12 |
+| Harp Pluck | Harp | Soft, 6 s ring |
+
+Each peaks between -6 and -1 dBFS at full velocity on a phrase in its own range (a test checks it) and falls
+by 30 dB within eight seconds. `atomik_devices::plucked::factory_patch_for(instrument_id)` names the patch for
+an instrument of the tab catalogue (`guitar6`, `bass4`, `banjo5`, ...; an unknown id gets Steel Acoustic), and
+`INSTRUMENT_PATCHES` is the whole table.
+
+Importing a tab file (File > Import > Tab or Score File..., the file browser, a drop) puts every fretted track on a
+new Plucked Strings device that has the patch of its instrument loaded, in the same undo step as the tracks: a bass
+is Electric Bass Finger, a banjo Banjo, a ukulele Ukulele, a 12-string guitar 12-String. Percussion tracks keep
+the plain import instrument. Changing a clip's instrument in the Tab Editor changes the tab, not the device.
+
+### Tests
+
+The unit tests in [plucked/tests.rs](../crates/devices/src/plucked/tests.rs) and
+[pluck/tests.rs](../crates/dsp/src/pluck/tests.rs) measure the pitch over MIDI 28 to 100 at 44.1, 48 and
+96 kHz (an exact spectral fit under 1 cent, the tuner's detector within its own resolution), the fall of 60 dB
+against `decay`, the finger mute and let-ring release, palm mute by param and by slide expression, a bend by
+expression (no step larger than the plain note's, and the final pitch to a cent), a pre-bend, harmonics (pitch
+and purity), dead notes, velocity, hardness, brightness, stiffness (sharp partials, tuned fundamental), the pick
+comb, the bodies and their bypass, the course, the stereo spread, the voice limit with stealing and its fade, a
+repeated key, the pedal, volume, expression and bend-range contracts, a note shifted by whole batches, bit
+identical repeats and the seed, denormal-free tails, every param at its extremes and a storm of random notes and
+expression at two sample rates, all under the allocation guard. A proptest in
+[bounded_tests.rs](../crates/devices/src/bounded_tests.rs) drives random params and notes at 44.1, 48 and
+96 kHz, and [crates/render/tests/plucked.rs](../crates/render/tests/plucked.rs) bounces a strummed patch at
 every host block size.
 
 ---
@@ -3841,6 +3982,233 @@ and the panel read the same scales and chords.
 
 ---
 
+## Chord Wheel: `atomik.chord-wheel` (Utility, "Players")
+
+A chord progression player: eight slots hold a chord and a length, and the progression plays in time
+with the transport through a rhythm style, with a bass, a strum and a humanize. The progression is
+made by hand or by the mood-based generator of `atomik_core::progression` (run by the app, never by
+the audio thread). Source: [crates/devices/src/chord_wheel.rs](../crates/devices/src/chord_wheel.rs),
+theory and generator in [crates/core/src/progression.rs](../crates/core/src/progression.rs).
+Everything is stored in params (no pattern data, no project format change).
+
+### Sockets
+
+`notes_in` (id 0, input) and `notes_out` (id 1, output). No CV sockets.
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `key.root` | 0-11: C to B | 0 (C) | choice | Linear | yes |
+| `key.mode` | 0-1: major, minor | 0 | choice | Linear | yes |
+| `key.source` | 0-1: device, song | 0 | choice | Linear | yes |
+| `slots` | 1 to 8 (active slots) | 4 | none | Linear | yes |
+| `slot.N.root` (N = 1 to 8) | 0-11: C to B | C, G, A, F for slots 1-4, C after | choice | Linear | yes |
+| `slot.N.quality` | 0-20: the 21 chord kinds of the piano roll's chord menu | Major (Minor for slot 3) | choice | Linear | yes |
+| `slot.N.bass` | 0-12: root, or the slash bass C to B | 0 (root) | choice | Linear | yes |
+| `slot.N.beats` | 0-7: 1, 2, 3, 4, 6, 8, 12, 16 beats | 3 (4 beats) | choice | Linear | yes |
+| `slot.N.lock` | 0 or 1 (kept by Generate) | 0 | toggle | Linear | yes |
+| `gen.mood` | 0-11: Pop, Uplifting, Melancholy, Dark, Dreamy, Jazz, Neo Soul, Lo-fi, Cinematic, Anthem, Blues, Modal | 0 | choice | Linear | yes |
+| `gen.spice` | 0 to 1 (shown 0 to 100 %) | 0.3 | percent | Linear | no |
+| `gen.seed` | 0 to 9999 | 0 | none | Linear | yes |
+| `voice.lead` | 0 or 1 | 1 | toggle | Linear | yes |
+| `voice.register` | 0-3: low (C2), mid-low (C3), mid (C4), high (C5) | 2 | choice | Linear | yes |
+| `voice.spread` | 0-2: close, open, wide | 0 | choice | Linear | yes |
+| `voice.extend` | 0-2: as written, 7ths, 9ths | 0 | choice | Linear | yes |
+| `style` | 0-7: sustain, pulse 1/4, pulse 1/8, offbeat, push, strum, broken, 3-3-2 | 0 | choice | Linear | yes |
+| `gate` | 0.05 to 1 | 0.9 | percent | Linear | no |
+| `strum` | 0 to 1 (0 to 60 ms across the notes) | 0 | percent | Linear | no |
+| `velocity` | 0 to 1 | 0.8 | percent | Linear | no |
+| `accent` | 0 to 1 | 0.3 | percent | Linear | no |
+| `humanize` | 0 to 1 | 0 | percent | Linear | no |
+| `bass` | 0-2: off, root, pulse | 1 | choice | Linear | yes |
+| `play.mode` | 0-2: transport, held, step | 0 | choice | Linear | yes |
+| `thru` | 0 or 1 | 0 | toggle | Linear | yes |
+| `bypass` | 0 or 1 | 0 | toggle | Linear | yes |
+
+The default progression is C, G, Am, F, four beats each (slots 5 to 8 are C major, unused). The
+quality labels are the labels of `atomik_core::theory::ChordKind::label` and the mood labels those of
+`atomik_core::progression::MOOD_LABELS` (tests pin both). `bypass` is last, like on the other
+players. The generator params (`gen.*`) and the locks do nothing on the audio thread; the app reads
+them.
+
+### Behaviour
+
+- **Time.** In `transport` mode the cycle is the sum of the active slot lengths and slot 1 starts
+  every cycle from song tick 0, so bar 1 is slot 1 and it loops. Everything is a pure function of
+  the transport tick and the params: a live run, a bounce, a locate and a loop pass agree at any
+  block size. Starting in the middle of a slot plays that chord from the next hit; `sustain`, `push`
+  and `strum` start it at once, and a `root` bass starts at once.
+- **Styles.** `sustain`: one chord per slot. `pulse 1/4` and `pulse 1/8`: the chord on every beat or
+  eighth. `offbeat`: stabs on the off eighths. `push`: the changes come an eighth early. `strum`: the
+  chord rolls low to high over at least 25 ms. `broken`: low, high, middle, high in eighths. `3-3-2`:
+  hits of three, three and two eighths per bar. `gate` is the fraction of a hit's length that sounds
+  (a hit never outlasts its slot). `accent` lowers every hit but the first of a chord by up to 45 %.
+- **Voicing.** `atomik_core::progression::voice`: close, open (drop-2) or wide (open with the root
+  doubled below) around the register; with `voice.lead` each chord takes the inversion nearest to the
+  one before it (slot 1 is voiced alone). `voice.extend` makes triads sevenths or ninths in the key
+  (a dominant on V and on a secondary dominant). The voicings are built when a param changes, never
+  while playing.
+- **Bass.** `root`: the root (or the slash bass of the slot) well below the register for the length
+  of the chord; `pulse`: on every hit that plays the low note. With the bass off a slash bass sits
+  below the chord.
+- **Humanize.** Every note moves up to 10 ms either way and its velocity up to 12 %, from a hash of
+  the device seed, the nominal tick and the key: the same notes on every run and at every block size.
+- **Play modes.** `transport` plays by itself and with `thru` passes `notes_in` through. `held` is
+  the same but only sounds while a key is held on `notes_in` (the keys are not passed on). `step`
+  plays the next slot's chord at every key press for as long as the key is held, at the key's
+  velocity, without the transport.
+- **Song key.** `key.source` song moves the progression by the distance from `key.root` to the song
+  key at the start of the batch; a song key of the other mode maps to its relative key. With no song
+  key it plays as written. A change of the song key re-voices the playing chord.
+- **Note safety.** Every note it starts it closes: on stop, locate, loop wrap, bypass, a change of
+  the playing slot or of the cycle (the length of an earlier slot, the style, the mode), and
+  `AllOff`. A change of a slot that is not playing leaves the sound alone. At most 16 notes sound;
+  a key that sounds is closed before it starts again.
+- **Bypass.** As on the other players: what it sent is closed and `notes_in` passes through.
+- **Meter values.** The playing slot (1 to 8, 0 = none) and up to eight sounding keys.
+
+### Generator
+
+`atomik_core::progression` holds the pure functions: `Chord`, `roman` and `symbol`, `voice`,
+`generate`, `suggest_next`, `vocabulary` and `song_key_shift`.
+
+- **Model.** A weighted transition model per mood and mode. The weight of a move is the function pair
+  (tonic, predominant, dominant, colour) times the root motion times the mood's idioms times the
+  affinity of the chord. The first chord favours the tonic, the last one the mood's cadence and a
+  lead back into the first chord; a locked chord is fixed and its neighbours lead into and out of
+  it; a chord never repeats immediately. About half of the results are a mood's signature
+  progression (I V vi IV, ii V I vi, the twelve-bar blues, the Andalusian fall ...), and eight chords
+  are often a phrase of four played twice with a new ending. Chord lengths: most moods keep four
+  beats, Jazz, Neo Soul and Lo-fi share a bar between a predominant and a dominant (2 + 2), some end
+  on eight.
+- **Spice.** At 0 only a mood's core chords sound; the colour chords (borrowed, secondary dominants,
+  tritone substitutes, chromatic mediants, sus and add colour) come in with the spice.
+- **Determinism.** Integer arithmetic and a splitmix generator seeded by the caller: the same key,
+  mood, spice, seed, slot count and locks give the same chords and lengths on every platform, and a
+  progression in another key is the same one transposed.
+- **Suggestions.** `suggest_next` ranks what the model offers after a chord: strong (the mood's core),
+  colour or surprise.
+
+### Commands
+
+App core, [crates/app/src/app_core_chord_wheel.rs](../crates/app/src/app_core_chord_wheel.rs). They act
+on the Chord Wheel selected in the rack, or the one in the player stack of a selected track, and are in
+Track > Players and the rack's right-click menu (greyed with no Chord Wheel selected). They have no
+default key. Slots are numbered from 0 in the app core API. Every edit is a param edit (or one
+`SetHarmony`), so each press is one undo step.
+
+- **Generate Progression** (`rack.wheel_generate`). Advances `gen.seed` (past 9999 it starts again
+  at 0, so each press differs), runs `generate` with the device key, `gen.mood`, `gen.spice`, `slots`
+  and the chords of the locked slots, and writes root, quality, bass and length of the active slots
+  that are not locked. Slots past `slots` are left alone.
+- **Set a slot** (`wheel_set_chord`, for the panel). Writes root, quality and slash bass of one slot;
+  consecutive sets of one slot merge into one undo step like a value drag. `wheel_toggle_lock` and
+  `wheel_set_slots` change a lock and the slot count.
+- **Send Progression to Chord Lane** (`rack.wheel_to_chord_lane`). Writes the active slots as chord
+  lane chords (root, quality, slash bass), a slot lasting its `beats` quarter notes, from the left
+  locator (the loop start). With the loop on the progression repeats to fill the loop and the last
+  chord is cut at the loop end; with it off it is written once. The chords of the lane inside the span
+  are replaced (a chord that runs through an end keeps the part outside). With `key.source` song each
+  chord moves by the distance from `key.root` to the song key at that chord (`song_key_shift`). A
+  song with no key gets the device key. The menu command also shows the chord lane.
+- **Send Progression to Clip** (`rack.wheel_to_clip`). Send Players to Track for the track of the
+  player: the offline render of the track's stack ([crates/render/src/players.rs](../crates/render/src/players.rs))
+  becomes a clip on a new note lane named "Chord Wheel". The render is of one pass of the progression
+  from song tick 0 and is repeated over the span of Send Progression to Chord Lane, so the clip holds
+  the same chords as the lane whatever the phase of the left locator (the clip starts at the left
+  locator and ends at the loop end, or one pass later with the loop off). It needs the `transport`
+  play mode (the other modes play no notes without keys).
+- **Audition** (`wheel_audition`, for the panel). Plays one chord for a moment through what the
+  wheel's `notes_out` is cabled to, voiced at the device's register, spread and extension (root
+  position, a slash bass below), with the chord audition of the chord lane. It does nothing while the
+  song plays. The chord is not moved by the song key.
+
+### Panel
+
+The panel is five rack units, [crates/ui/src/chord_wheel_panel.rs](../crates/ui/src/chord_wheel_panel.rs)
+(input in `crates/ui/src/rack/wheel_input.rs`), with the wheel at the left and the progression and the
+controls at the right. The BYPASS switch and the play button of the name strip are the common player
+ones.
+
+- **The wheel.** Three rings of twelve wedges in fifths order with C at the top: the major chords outside,
+  their relative minors in the middle and the diminished chord on each major's leading tone inside. The seven
+  triads of the home key (`key.root`, `key.mode`) are tinted with their roman numeral, and the hub names the
+  key. The wedges are spelled like a circle of fifths whatever the key is (outside C G D A E B F# Db Ab
+  Eb Bb F, in the middle Am Em Bm F#m C#m G#m D#m Bbm Fm Cm Gm Dm, inside B° F#° C#° G#° D#° A#° F° C° G°
+  D° A° E°), while the cards, the readout and the wedge menu spell a chord for the home key (flats in a
+  flat key). A wedge stands for a triad: a chord with a seventh or an extension is marked on the wedge of
+  its root and family. The selected slot's wedge is outlined, the sounding slot's wedge (the first meter value) is lit
+  and a small numbered tag on a wedge shows which slots hold it.
+  - A click sets the selected slot to the wedge's chord, plays it (stopped transport only, the audition
+    above) and selects the next slot, wrapping past the last active one. One undo step.
+  - A right click opens a menu of qualities for the wedge's root (a major wedge: major, 7, maj7, 6, add9, 9,
+    maj9, sus2, sus4, aug; a minor wedge: minor, m7, m6, m9, sus2, sus4; a diminished wedge: dim, m7b5, dim7)
+    and a Slash Bass submenu (no slash, the chord tones, then the other notes of the key). A row sets the
+    selected slot and plays it (the `rack.wheel_pick` command, which has no key).
+  - A click with the range-select role held (Shift by default, remappable in Settings) makes the wedge's
+    chord the home key: `key.root` and `key.mode` from the major or minor ring, in one undo step. The
+    diminished ring has no key.
+  - **SUGGEST** tints the wedges by `suggest_next` after the chord of the slot before the selected one
+    (strong, colour or surprise, folded onto the triad wedges by the best strength) and puts 1, 2 and 3 on
+    the three best.
+- **The progression.** Eight cards, two rows of four: slot number, padlock, chord symbol, roman numeral and
+  length. A click selects the slot; the padlock toggles `slot.N.lock`; a vertical drag or the mouse wheel on the
+  length steps `slot.N.beats` (a drag is one merged undo step); `-` and `+` change `slots`. Slots past `slots`
+  are dimmed and cannot be selected.
+- **Controls.** GENERATE (`rack.wheel_generate` for this device), the mood, SPICE, SUGGEST, the key root and
+  mode, follow song, style, gate, strum, velocity, accent, humanize, bass, play mode, thru, voice lead,
+  register, spread and extend are the generated controls and buttons of the panel; TO LANE and TO CLIP run
+  `rack.wheel_to_chord_lane` and `rack.wheel_to_clip` for this device. `gen.seed` has no control (GENERATE
+  advances it). While the device follows the song a SONG tag names the song key.
+
+The selected slot and the SUGGEST switch are view state of the rack, kept per device and not saved with the
+project.
+
+### Factory patches
+
+Sixteen patches of the Chord Wheel are in the Factory root (category Chords, author Atomik), each a
+complete setup: key, slots, chords, lengths, mood, spice, rhythm style and voicing. They come from the
+factory generator ([crates/app/src/app_core_factory_build.rs](../crates/app/src/app_core_factory_build.rs));
+a patch lists only the params that differ from a new device.
+
+| Patch | Key | Chords | Style |
+|---|---|---|---|
+| Four Chord Pop | C | I V vi IV | pulse 1/8 |
+| Sad Ballad | C | vi IV I V | strum, open |
+| Two-Five-One | C | ii7 V7 Imaj7 (two bars) | offbeat stabs |
+| Neo Soul Loop | C | Imaj9 iii7 vi9 IVmaj7/V | 3-3-2, open |
+| Lo-fi Sevenths | E flat | Imaj7 vi7 IVmaj7 V7 | sustain, soft strum, humanized |
+| Epic Minor | C minor | i bVI bIII bVII | push, wide |
+| Andalusian Fall | A minor | i bVII bVI V | strum |
+| Twelve-Bar Blues | E | the twelve bars as seven chords | pulse 1/8 |
+| Dorian Vamp | D minor | i7 IV7 | offbeat stabs |
+| Dreamy Lydian | F | Imaj7 IIadd9 | sustain, open |
+| Cinematic Mediants | C | I bVI III Vsus4 | sustain, wide |
+| Anthem Rise | C | IV V vi I | push |
+| Canon Steps | D | I V vi iii IV I IV V (eight slots) | pulse 1/8 |
+| Gospel Plagal | A flat | I IVadd9 iv I/3 | sustain, open |
+| Minor Pulse | E minor | i iv VII III | pulse 1/8, pulse bass |
+| Broken Ballad | G | I V/3 vi IVadd9 | broken, open |
+
+Space on a patch of a player in the browser plays it without loading it: the player is cabled into a
+built-in synth in a scratch project and the transport plays one pass of the progression (at least two
+bars, at most 16 seconds at 120 BPM). A test loads every patch, checks every param against its range,
+the slots and the lengths (whole bars, no two patches with the same key and chords) and renders it.
+
+### Tests
+
+`crates/core/src/progression/tests.rs` (names, voice leading never moving more than root position,
+every mood x 200 seeds inside its vocabulary at spice 0, locks, determinism and transposition, pinned
+progressions, V resolving first in the suggestions) and `crates/devices/src/chord_wheel/tests.rs`
+(style timing, slot changes, locate, stop, loop wrap, bypass, the play modes, the song key, humanize,
+a property test that no note hangs). A bounce test in `crates/render/tests/note_tools.rs` pins the bit
+identity across block sizes and workers. `crates/ui/tests/chord_wheel_panel.rs` covers the panel (wedge geometry and
+ring boundaries, the actions of the wheel, cards, padlocks and lengths, the menu, display-list goldens and pixel
+goldens in dark and light at 1x and 2x) and `crates/app/src/shell_chord_wheel_tests.rs` the clicks through the shell.
+
+---
+
 ## Note Repeater: `atomik.note-repeater` (Utility, "Players")
 
 An echo for notes: every note passes as played and adds repeats. Source:
@@ -5471,6 +5839,7 @@ without it (`cargo test -p atomik-devices midi_chart`), so this table cannot dri
 | `atomik.dual-layer` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.semi-modular` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.organ` | no | no | no | yes | yes | yes | no |
+| `atomik.plucked` | yes | yes | no | yes | yes | yes | no |
 | `atomik.wavetable-synth` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.fm-synth` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.granular` | yes | yes | yes | yes | yes | yes | yes |
@@ -5529,9 +5898,11 @@ key; a new note on a key starts from rest, and a note without expression is bit 
 | `atomik.dual-layer` | Both layers, as the poly synth | Both layers | Both layers |
 | `atomik.wavetable-synth` | Added to the voice's pitch beside the bend | Raises the voice's gain by up to 6 dB (a gain of 1 + pressure, followed at the control rate) | Adds to the frame position of both oscillators (held to 0..=1) |
 | `atomik.fm-synth` | Added to the voice's pitch beside the bend | Raises the voice's gain by up to 6 dB (ramped over a control step) | Adds up to 1 to the modulation index before its clamp to 0..=3 |
+| `atomik.plucked` | Added to the pitch of the string beside the bend, gliding over 6 ms | A technique code: below 0.25 normal, up to 0.75 a harmonic, above that a dead note | The palm-mute amount of the note |
 
 The other melodic instruments (the grain sampler, the sampler, the semi-modular synth) take a note's pressure
 as their pressure source and ignore its tuning and slide; the organ and the drum devices ignore all three.
+Plucked Strings uses all three, but reads its pressure as a technique code and not as a level (see its section).
 A CLAP or VST3 plugin gets them as note expression events (tuning, pressure and brightness).
 
 ### What goes out

@@ -447,6 +447,7 @@ pub fn drum_gen_layout(desc: &atomik_device_sdk::DeviceDescriptor) -> PanelSpec 
         drum_gen: Some(panel),
         arp: None,
         key_chord: None,
+        chord_wheel: None,
         modsrc: None,
         wavetable: None,
         fm: None,

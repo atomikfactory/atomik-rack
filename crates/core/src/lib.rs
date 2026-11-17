@@ -11,6 +11,7 @@ pub mod mpe;
 pub mod mpe_out;
 mod note;
 mod param;
+pub mod progression;
 pub mod rt_guard;
 mod tempo_map;
 pub mod theory;

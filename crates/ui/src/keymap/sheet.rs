@@ -302,7 +302,31 @@ pub fn markdown(profiles: &[Profile], oses: &[Os], user: Option<&UserKeymap>) ->
          `A`, `W`, `S`, `E`... to the F above the next C) and `Z` and `X` change the octave, `1` \
          to `0` set the velocity, and Shift is the sustain pedal (it does not change which key a \
          letter is); a chord the context does not bind, `Space` or any chord with the primary \
-         modifier included, still runs as usual. An open \
+         modifier included, still runs as usual. The Tab Editor (View, Editors, Tab Editor) is \
+         the `tab` context: the digits `0` to `9` type the fret on the cursor (two digits typed \
+         within a moment are one fret, `12`), the arrows move the cursor (Left and Right by the \
+         note value, Up and Down between strings, `Ctrl+Left` and `Ctrl+Right` by bar), the \
+         letters `W`, `H`, `Q`, `E`, `S`, `T` and `X` set the note value from a whole note to a \
+         sixty-fourth, `.` makes it dotted and `Y` a triplet, `=` and `-` zoom, and Delete or \
+         Backspace removes the notes under the cursor or in the selection. Shift with the arrows \
+         selects (Left and Right whole columns of every string, Up and Down a rectangle), `Ctrl+A` \
+         selects every note, `Ctrl+C`, `Ctrl+X` and `Ctrl+V` copy, cut and paste with strings, \
+         frets and techniques, `Alt+Up` and `Alt+Down` move the notes to the next string that \
+         plays the same pitch, `Ctrl+Up` and `Ctrl+Down` transpose by a semitone (with Shift an \
+         octave), and the techniques are `Shift+H` hammer-on, `Shift+P` pull-off, `Shift+L` legato \
+         slide, `Shift+S` shift slide, `B` bend, `Shift+B` bend and release, `Alt+B` pre-bend, `V` \
+         vibrato, `Shift+V` wide vibrato, `N` natural harmonic, `Shift+N` artificial harmonic, \
+         `M` palm mute, `R` let ring, `D` dead note, `G` ghost note, `A` accent, `Shift+T` tap and \
+         `Shift+C` clear (each toggles on the selection, or on the note under the cursor). Inside \
+         the pane these win over a global binding of the same chord (only `.`, the next marker \
+         key, overlaps one). While the instrument, tuning and capo panel or the re-fret chooser is \
+         open it takes every key. The Chord Sheet pane (View, Editors, Chord Sheet) binds no \
+         key of its own: Up, Down, Page Up, Page Down, Home and End scroll the text, Left and \
+         Right step through the fingerings of the open chord diagram and Esc closes it. Its \
+         commands (transpose, capo, sharps or flats, text size, autoscroll, new, rename, delete, \
+         edit as text and apply transpose) have no default key and are in the command palette. \
+         While its text, its rename box or its instrument list is open it takes every key \
+         (Ctrl+Enter applies the text, Esc leaves it). An open \
          menu (a context menu, or a menu of the in-window menu bar) takes every key: Up and Down \
          move the highlight (it wraps, and skips separators and disabled items), Home and End \
          jump to the first and last item, Right or Enter opens a submenu on its first item, Left \

@@ -19,7 +19,7 @@ use support::container::{apply, check, paint_rack};
 use support::plugin::plugin_rack;
 use support::*;
 
-const PLAYERS: [&str; 8] = [
+const PLAYERS: [&str; 9] = [
     "atomik.arpeggiator",
     "atomik.cv-sequencer",
     "atomik.drum-generator",
@@ -28,6 +28,7 @@ const PLAYERS: [&str; 8] = [
     "atomik.key-chord",
     "atomik.note-repeater",
     "atomik.note-delay",
+    "atomik.chord-wheel",
 ];
 
 /// The container: its inside is left out while it is bypassed.
@@ -127,6 +128,7 @@ fn spec_of(desc: &DeviceDescriptor) -> PanelSpec {
             "atomik.cv-sequencer" => atomik_ui::seq_panel::cv_seq_layout(desc),
             "atomik.drum-generator" => atomik_ui::drum_gen_panel::drum_gen_layout(desc),
             "atomik.key-chord" => atomik_ui::key_chord_panel::key_chord_layout(desc),
+            "atomik.chord-wheel" => atomik_ui::chord_wheel_panel::chord_wheel_layout(desc),
             _ => auto_layout(desc),
         },
     }

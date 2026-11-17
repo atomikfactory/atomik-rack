@@ -1,7 +1,7 @@
 {"ops":[
-{"fill":{"rrect":[232.00,1127.00,499.20,1867.00,6.00]},"brush":"#0000005a"},
-{"fill":{"rrect":[230.00,1124.00,497.20,1864.00,6.00]},"brush":"#16181bff"},
-{"stroke":{"rrect":[230.00,1124.00,497.20,1864.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"fill":{"rrect":[232.00,1127.00,499.20,1948.00,6.00]},"brush":"#0000005a"},
+{"fill":{"rrect":[230.00,1124.00,497.20,1945.00,6.00]},"brush":"#16181bff"},
+{"stroke":{"rrect":[230.00,1124.00,497.20,1945.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
 {"text":"Cut","at":[262.00,1144.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Ctrl+X","at":[483.20,1144.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"Copy","at":[262.00,1168.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
@@ -46,5 +46,9 @@
 {"text":"Modulation Matrix","at":[262.00,1780.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
 {"text":"Match Loudness","at":[262.00,1804.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Blind A/B Test...","at":[262.00,1828.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"Preview Player","at":[262.00,1852.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"}
+{"text":"Preview Player","at":[262.00,1852.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"fill":{"rect":[240.00,1864.00,487.20,1865.00]},"brush":"#ffffff1c"},
+{"text":"Generate Progression","at":[262.00,1885.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"Send Progression to Chord Lane","at":[262.00,1909.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"Send Progression to Clip","at":[262.00,1933.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"}
 ]}

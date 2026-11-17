@@ -72,6 +72,13 @@
 //!   starts the song from the held position as a Play does (chase included), loop and all, so a
 //!   loop is counted in once. Stop, or a plain Play, cancels it. The state carries the frames
 //!   left and the beat of the bar being counted.
+//! * **Practice speed.** `TransportCommand::Speed(f)` (0.25..=1.5, runtime only: a bounce never sends it)
+//!   runs every tick <-> frame conversion at the sample rate divided by `f` (`Player::rate`), so notes,
+//!   loop, click, count-in (its length is divided by `f` too), harmony and clock out land on the slowed
+//!   timeline; a change keeps the tick (the frame is recomputed, cursors stay). Devices see
+//!   `TimeInfo::tempo` times `f` (clamped to 20..=999) and the exact ticks per frame. Audio clips cannot
+//!   follow a rate (a warped clip is a finished buffer at the song's tempo): they are silent, and the
+//!   streamer idle, while `f != 1`. Following an external clock resets it to 1 and ignores the command.
 //! * **Tempo.** With a song loaded, the song's tempo map drives positions and `TimeInfo::tempo`
 //!   (the tempo at the batch start, the instantaneous one inside a ramp) and `TimeInfo::time_signature`
 //!   (the meter at the batch start); `set_tempo` only matters for song-less racks, where it
@@ -103,8 +110,8 @@ use crate::console::DelayLine;
 use crate::graph::DeviceInstanceId;
 use crate::phase_lock::{Correction, PhaseLock, error_ticks, expected_tick};
 use crate::seq::{
-    ChaseNote, CompiledTrack, PreRoll, SongCurve, SongPoint, SongSnapshot, TrackCursor,
-    TransportCommand, TransportState,
+    ChaseNote, CompiledTrack, MAX_SPEED, MIN_SPEED, PreRoll, SongCurve, SongPoint, SongSnapshot,
+    TrackCursor, TransportCommand, TransportState,
 };
 use crate::stream::{StreamRequest, StreamStats};
 use crate::sync::{ClockOut, ExternalClock, SyncOut, clocks_in};
@@ -694,6 +701,8 @@ pub(crate) struct Player {
     loop_end: i64,
     loop_enabled: bool,
     metronome: bool,
+    /// Practice speed: the factor of the song tempo the transport plays at (1.0 = as written).
+    speed: f64,
     gain: f32,
     /// The count-in that runs before the song starts, if any.
     pre_roll: Option<Counting>,
@@ -755,6 +764,7 @@ impl Player {
             loop_end: 0,
             loop_enabled: false,
             metronome: false,
+            speed: 1.0,
             gain: 0.0,
             pre_roll: None,
             counting: false,
@@ -827,6 +837,37 @@ impl Player {
         self.song.is_none() || self.playing
     }
 
+    /// The sample rate the tempo maths run at: the real one divided by the practice speed, so
+    /// every tick <-> frame conversion lands on the slowed timeline (`speed` 0.5 doubles the
+    /// frames of a tick). The real rate where the player follows an external clock.
+    fn rate(&self, sr: f64) -> f64 {
+        if self.follow.is_some() {
+            sr
+        } else {
+            sr / self.speed
+        }
+    }
+
+    /// Sets the practice speed. The position keeps its musical place (the tick): its frame is
+    /// recomputed on the new timeline, and the cursors stay where they are (an event already
+    /// played stays played). Audio restarts at the next stretch.
+    fn set_speed(&mut self, factor: f32, engine_tempo: Tempo, sr: f64) {
+        let factor = f64::from(if factor.is_finite() { factor } else { 1.0 })
+            .clamp(f64::from(MIN_SPEED), f64::from(MAX_SPEED));
+        if self.follow.is_some() || (factor - self.speed).abs() < f64::EPSILON {
+            return;
+        }
+        let constant = [TempoSegment::constant(engine_tempo)];
+        let map = self
+            .song
+            .as_deref()
+            .map_or(TempoMap::new(&constant), SongSnapshot::map);
+        let tick = map.tick(self.pos as f64, sr / self.speed);
+        self.speed = factor;
+        self.pos = map.frame(tick, sr / factor).round().max(0.0) as u64;
+        self.audio_reseek = true;
+    }
+
     /// Swaps in a new snapshot; returns the old one (to be handed back, never dropped here).
     pub(crate) fn swap_song(
         &mut self,
@@ -835,6 +876,7 @@ impl Player {
         sr: f64,
         dropped: &AtomicU64,
     ) -> Option<Box<SongSnapshot>> {
+        let sr = self.rate(sr);
         let constant = [TempoSegment::constant(engine_tempo)];
         let mut old = self.song.take();
         // While following, the position is on the external clock's constant tempo, whatever the
@@ -953,6 +995,7 @@ impl Player {
                     | TransportCommand::PlayWithPreRoll(_)
                     | TransportCommand::Stop
                     | TransportCommand::Locate(_)
+                    | TransportCommand::Speed(_)
             )
         {
             return;
@@ -968,7 +1011,18 @@ impl Player {
         sr: f64,
         dropped: &AtomicU64,
     ) {
+        if let TransportCommand::Speed(factor) = command {
+            self.set_speed(factor, engine_tempo, sr);
+            return;
+        }
         self.audio_reseek = true;
+        // A count-in lasts as long on the slowed timeline as the beats it counts.
+        let speed = if self.follow.is_some() {
+            1.0
+        } else {
+            self.speed
+        };
+        let sr = self.rate(sr);
         let constant = [TempoSegment::constant(engine_tempo)];
         let ext = self.follow.map(|f| [TempoSegment::constant(f.tempo)]);
         let Self {
@@ -1021,6 +1075,11 @@ impl Player {
                 // Already playing: nothing to count in. The song starts when the count ends
                 // (`run`), so a Stop or a Play in between cancels it.
                 if !*playing {
+                    let mut plan = plan;
+                    if (speed - 1.0).abs() > f64::EPSILON {
+                        let batches = (plan.frames as f64 / speed / BATCH as f64).round().max(1.0);
+                        plan.frames = batches as u64 * BATCH as u64;
+                    }
                     self.pre_roll = (plan.frames > 0 && plan.beats > 0).then_some(Counting {
                         plan,
                         remaining: plan.frames.div_ceil(BATCH as u64) * BATCH as u64,
@@ -1087,6 +1146,8 @@ impl Player {
                     0.0
                 };
             }
+            // Handled above.
+            TransportCommand::Speed(_) => {}
         }
     }
 
@@ -1114,6 +1175,8 @@ impl Player {
     }
 
     fn enter_follow(&mut self, sr: f64, engine_tempo: Tempo, dropped: &AtomicU64) {
+        // The clock sets the tempo: the practice speed gives way to it.
+        self.set_speed(1.0, engine_tempo, sr);
         let state = self.external.read();
         self.apply_command(TransportCommand::Stop, engine_tempo, sr, dropped);
         let (tick, own) = self.own_tempo_at_position(sr, engine_tempo);
@@ -1245,6 +1308,7 @@ impl Player {
 
     /// The engine tempo changed: a song-less transport keeps its tick.
     pub(crate) fn engine_tempo_changed(&mut self, old: Tempo, new: Tempo, sr: f64) {
+        let sr = self.rate(sr);
         if self.song.is_none() && old != new {
             let tick = TempoMap::new(&[TempoSegment::constant(old)]).tick(self.pos as f64, sr);
             self.pos = TempoMap::new(&[TempoSegment::constant(new)])
@@ -1266,6 +1330,16 @@ impl Player {
         dropped: &AtomicU64,
     ) -> BatchTime {
         self.poll_external(sr, engine_tempo, dropped);
+        // The tempo maths run at the slowed rate (see `rate`); the audio clips, which cannot
+        // follow a practice speed, are silent while it is not 1.0.
+        let sr_real = sr;
+        let speed = if self.follow.is_some() {
+            1.0
+        } else {
+            self.speed
+        };
+        let slowed = (speed - 1.0).abs() > f64::EPSILON;
+        let sr = self.rate(sr);
         let constant = [TempoSegment::constant(engine_tempo)];
         // Following an external clock: its constant tempo replaces every map, and the audio
         // clips (placed on the song's own tempo) are left out.
@@ -1331,7 +1405,7 @@ impl Player {
             dropped,
         };
         // The streamer reads in the song's own order: it has nothing to do while following.
-        if let Some((tracks, rts)) = aud.as_mut().filter(|_| !following) {
+        if let Some((tracks, rts)) = aud.as_mut().filter(|_| !(following || slowed)) {
             for (t, rt) in tracks.iter().zip(rts.iter_mut()) {
                 if let Some(lane) = rt.stream.as_mut().filter(|_| t.streams) {
                     lane.sync(*pos, lp, requests, stats);
@@ -1384,8 +1458,11 @@ impl Player {
             }),
         });
         let tick0 = map.tick(*pos as f64, sr);
-        let tempo = Tempo::new(map.bpm(tick0)).unwrap_or(engine_tempo);
-        let ticks_per_frame = tempo.bpm() * PPQ as f64 / (60.0 * sr);
+        // Devices see the scaled tempo (inside the 20..=999 BPM a tempo may have); the ticks per
+        // frame are exact: `sr` is the slowed rate.
+        let bpm = map.bpm(tick0);
+        let tempo = Tempo::new((bpm * speed).clamp(20.0, 999.0)).unwrap_or(engine_tempo);
+        let ticks_per_frame = bpm * PPQ as f64 / (60.0 * sr);
         // With a song the player's tick; without one the free-running engine tick.
         let tick = if parts.is_some() { tick0 } else { *free_tick };
         if parts.is_none() {
@@ -1467,7 +1544,7 @@ impl Player {
         let renderer = Renderer {
             underruns: &stats.underruns,
             fallbacks: &stats.stretch_fallbacks,
-            sample_rate: sr.round() as u32,
+            sample_rate: sr_real.round() as u32,
         };
         let mut off = 0usize;
         while off < BATCH {
@@ -1521,10 +1598,10 @@ impl Player {
                             u,
                             (b - a) as usize,
                             off,
-                            (reseek, sr.round() as u32),
+                            (reseek, sr_real.round() as u32),
                         );
                     }
-                } else {
+                } else if !slowed {
                     for (t, rt) in tracks.iter().zip(rts.iter_mut()) {
                         renderer.segment(t, rt, a, b, off);
                     }

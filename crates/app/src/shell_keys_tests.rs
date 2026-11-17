@@ -388,3 +388,139 @@ fn legacy_keys_still_do_what_they_did_through_the_shell() {
     keys(&mut s).tap("Cmd+Space");
     s.execute(AppCommand::Transport(TransportAction::Stop));
 }
+
+#[test]
+fn the_tab_editor_has_its_own_context_and_its_keys_edit_the_clip() {
+    let mut s = shell();
+    s.core_mut()
+        .open_str(include_str!("../../../examples/projects/demo.atomik"), None)
+        .unwrap();
+    s.execute(AppCommand::ToggleTabEditor);
+    assert!(s.core().tab_editor_open());
+    assert!(
+        !s.core().piano_roll_open(),
+        "the editors exclude each other"
+    );
+    assert_eq!(s.lower_pane(), Pane::TabEditor);
+    assert!(s.menu_state().tab_editor);
+    s.set_focus(Pane::TabEditor);
+    assert_eq!(
+        s.context_stack().contexts(),
+        [Context::Tab, Context::Global]
+    );
+    let clip = s.core().tab_editor_clip().expect("clip");
+    let loop_before = s.core().doc().song.loop_enabled;
+    // Letters are note values here, not transport keys: L does not loop, E is an eighth note.
+    keys(&mut s).tap("L");
+    assert_eq!(s.core().doc().song.loop_enabled, loop_before);
+    keys(&mut s).tap("E");
+    assert_eq!(s.core().tab_editor().note_value().division, 8);
+    keys(&mut s).tap("Right");
+    let cell = s.core().tab_editor().cursor_cell();
+    assert_eq!(
+        cell.0,
+        atomik_core::PPQ / 2,
+        "Right steps by the note value"
+    );
+    // A fret digit types a note into the clip with its sidecar, as one undo step.
+    keys(&mut s).tap("5");
+    let c = s.core().doc().song.clip(clip).unwrap().2.clone();
+    let tab = c.midi.tab.as_ref().expect("the sidecar");
+    let entry = tab
+        .notes
+        .iter()
+        .find(|r| r.tick == cell.0 && r.string == cell.1)
+        .expect("the typed note");
+    assert_eq!(entry.fret, 5);
+    assert!(s.core_mut().undo());
+    let c = s.core().doc().song.clip(clip).unwrap().2.clone();
+    assert!(
+        !c.midi
+            .tab
+            .as_ref()
+            .is_some_and(|t| t.notes.iter().any(|r| r.tick == cell.0 && r.fret == 5)),
+        "undo takes the typed note back"
+    );
+    // The switch command hands the clip to the piano roll and back.
+    s.execute(AppCommand::ToggleTabOrPianoRoll);
+    assert!(s.core().piano_roll_open() && !s.core().tab_editor_open());
+    assert_eq!(s.core().piano_roll_clip(), Some(clip));
+    s.execute(AppCommand::ToggleTabOrPianoRoll);
+    assert!(s.core().tab_editor_open() && !s.core().piano_roll_open());
+    assert_eq!(s.core().tab_editor_clip(), Some(clip));
+}
+
+#[test]
+fn the_tab_editor_edit_keys_and_its_panels_take_their_keys() {
+    let mut s = shell_for(Os::Windows, Some(Profile::Standard));
+    s.core_mut()
+        .open_str(include_str!("../../../examples/projects/demo.atomik"), None)
+        .unwrap();
+    // The first clip of the demo song that holds notes.
+    let with_notes = s
+        .core()
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .flat_map(|t| t.lanes.iter().flat_map(|l| l.clips.iter()))
+        .find(|c| matches!(&c.content, atomik_model::ClipContent::Notes(n) if !n.is_empty()))
+        .map(|c| c.id)
+        .expect("the demo has a clip with notes");
+    s.execute(AppCommand::ToggleTabEditor);
+    s.core_mut().open_tab_editor(with_notes);
+    s.set_focus(Pane::TabEditor);
+    // Ctrl+A selects the notes of the clip (the pane takes the global command).
+    assert_eq!(
+        s.context_stack().contexts(),
+        [Context::Tab, Context::Global],
+        "the tab pane has the focus"
+    );
+    assert!(
+        !s.core().tab_editor().notes().is_empty(),
+        "the clip shows notes: {:?}",
+        s.core().tab_editor_clip()
+    );
+    keys(&mut s).tap("Cmd+A");
+    let n = s.core().tab_editor().selected().len();
+    assert!(n > 0, "the demo clip has notes");
+    let clip = s.core().tab_editor_clip().expect("clip");
+    let key_of = |s: &Shell<NullBackend>| match &s.core().doc().song.clip(clip).unwrap().2.content {
+        atomik_model::ClipContent::Notes(list) => list.iter().map(|n| n.key).collect::<Vec<_>>(),
+        _ => panic!("notes"),
+    };
+    let before = key_of(&s);
+    // Ctrl+Up transposes a semitone, and Ctrl+Z takes it back.
+    keys(&mut s).tap("Cmd+Up");
+    let after = key_of(&s);
+    assert_ne!(before, after);
+    assert!(before.iter().zip(&after).all(|(a, b)| a + 1 == *b));
+    keys(&mut s).tap("Cmd+Z");
+    assert_eq!(key_of(&s), before);
+    // A technique key sets the technique on the selection.
+    keys(&mut s).tap("M");
+    let c = s.core().doc().song.clip(clip).unwrap().2.clone();
+    assert!(
+        c.midi.tab.as_ref().is_some_and(|t| t
+            .notes
+            .iter()
+            .any(|r| r.tech.has(atomik_tab::score::TechFlags::PALM_MUTE))),
+        "M is palm mute here"
+    );
+    // The tuning panel opens from its command, takes Enter and Esc as its own keys (Enter is not
+    // "go to start" while it is open), and its context stops the plain keys reaching commands.
+    s.run_command("editor.tab_tuning", None);
+    assert!(s.core().tab_editor().modal_open());
+    assert_eq!(
+        s.context_stack().contexts(),
+        [Context::Text, Context::Global]
+    );
+    keys(&mut s).tap("Escape");
+    assert!(!s.core().tab_editor().modal_open());
+    s.run_command("editor.tab_tuning", None);
+    keys(&mut s).tap("Return");
+    assert!(
+        !s.core().tab_editor().modal_open(),
+        "Enter applies and closes it"
+    );
+}

@@ -327,6 +327,100 @@ pub const STRUM_AMOUNT_ARGS: &[&str] = &["128", "64", "32", "16"];
 pub const STRUM_DIRECTION_ARGS: &[&str] = &["up", "down"];
 /// The values of `editor.step_shift`: which way the hits of the step editor's grid move.
 pub const STEP_SHIFT_ARGS: &[&str] = &["right", "left"];
+/// The values of the `editor.trainer_*` commands that step a number: up or down.
+pub const TRAINER_UP_DOWN_ARGS: &[&str] = &["up", "down"];
+/// The values of `editor.trainer_key`: the tonic a semitone either way, or the mode.
+pub const TRAINER_KEY_ARGS: &[&str] = &["up", "down", "major", "minor"];
+/// The values of `editor.trainer_mode`: timed, timed and verified by the input, or listen.
+pub const TRAINER_MODE_ARGS: &[&str] = &["timed", "verified", "listen"];
+/// The values of `editor.trainer_order`: how the chords follow one another.
+pub const TRAINER_ORDER_ARGS: &[&str] = &["sequential", "random", "pair"];
+/// The values of `editor.trainer_pair`: which chord of the pair moves on.
+pub const TRAINER_PAIR_ARGS: &[&str] = &["a", "b"];
+/// The values of `editor.trainer_source`: where the chords of the drill come from.
+pub const TRAINER_SOURCE_ARGS: &[&str] = &["key", "list", "song"];
+/// The values of `editor.trainer_voicing`: the next or previous fingering of the selected chord.
+pub const TRAINER_VOICING_ARGS: &[&str] = &["next", "prev"];
+/// The values of `editor.sheet_select`: the neighbour sheet.
+pub const SHEET_SELECT_ARGS: &[&str] = &["next", "previous"];
+/// The values of `editor.sheet_transpose`: a semitone either way, or back to the written key.
+pub const SHEET_TRANSPOSE_ARGS: &[&str] = &["up", "down", "reset"];
+/// The values of `editor.sheet_capo`: a fret either way, or no capo.
+pub const SHEET_CAPO_ARGS: &[&str] = &["up", "down", "off"];
+/// The values of `editor.sheet_spelling`: `next` cycles automatic, sharps and flats.
+pub const SHEET_SPELLING_ARGS: &[&str] = &["next", "auto", "sharps", "flats"];
+/// The values of `editor.sheet_font`: the text size of the chord sheet.
+pub const SHEET_FONT_ARGS: &[&str] = &["larger", "smaller"];
+/// The values of `practice.speed`: the practice speed in percent, every five from 25 to 150.
+pub const PRACTICE_SPEED_ARGS: &[&str] = &[
+    "25", "30", "35", "40", "45", "50", "55", "60", "65", "70", "75", "80", "85", "90", "95",
+    "100", "105", "110", "115", "120", "125", "130", "135", "140", "145", "150",
+];
+/// The values of `practice.count_in`: bars of count-in before a plain playback.
+pub const PRACTICE_COUNT_IN_ARGS: &[&str] = &["off", "1", "2"];
+/// The values of `view.fretboard_labels`: what the dots of the fretboard say.
+pub const FRETBOARD_LABELS_ARGS: &[&str] = &["notes", "frets", "intervals"];
+/// The values of the `practice.trainer_*` commands: a value of the speed trainer up or down.
+pub const PRACTICE_TRAINER_ARGS: &[&str] = &["up", "down"];
+/// The values of `editor.sheet_autoscroll`: start or stop, the speed, or follow the transport.
+pub const SHEET_AUTOSCROLL_ARGS: &[&str] = &["toggle", "faster", "slower", "sync"];
+/// The values of `editor.tab_duration`: the note values of the tab editor, longest first.
+pub const TAB_DURATION_ARGS: &[&str] = &[
+    "whole",
+    "half",
+    "quarter",
+    "eighth",
+    "sixteenth",
+    "thirty_second",
+    "sixty_fourth",
+];
+/// The values of `editor.tab_technique`: the techniques the tab editor toggles on the note under
+/// the cursor or the selection. `bend`, `bend_release`, `pre_bend` and `pre_bend_release` use
+/// the bend amount (`editor.tab_bend_amount`); `clear` removes every technique.
+pub const TAB_TECHNIQUE_ARGS: &[&str] = &[
+    "hammer_on",
+    "pull_off",
+    "slide_legato",
+    "slide_shift",
+    "slide_in_below",
+    "slide_in_above",
+    "slide_out_down",
+    "slide_out_up",
+    "bend",
+    "bend_quarter",
+    "bend_half",
+    "bend_full",
+    "bend_one_half",
+    "bend_two",
+    "bend_release",
+    "pre_bend",
+    "pre_bend_release",
+    "vibrato",
+    "vibrato_wide",
+    "harmonic",
+    "harmonic_artificial",
+    "palm_mute",
+    "let_ring",
+    "dead",
+    "ghost",
+    "accent",
+    "tap",
+    "clear",
+];
+/// The values of `editor.tab_bend_amount`: the bend in tones.
+pub const TAB_BEND_ARGS: &[&str] = &[
+    "quarter_tone",
+    "half_tone",
+    "one_tone",
+    "tone_and_half",
+    "two_tones",
+];
+/// The values of `editor.tab_extend`: which way the selection grows.
+pub const TAB_EXTEND_ARGS: &[&str] = &["left", "right", "up", "down"];
+/// The values of `editor.tab_refret`: `choose` opens the list of positions.
+pub const TAB_REFRET_ARGS: &[&str] = &["choose", "automatic", "lowest"];
+/// The values of `editor.tab_transpose`: a semitone or an octave.
+pub const TAB_TRANSPOSE_ARGS: &[&str] = &["up", "down", "octave_up", "octave_down"];
 /// The values of `sequencer.marker_color`: the palette names and `none`.
 pub const MARKER_COLOR_ARGS: &[&str] =
     &["none", "red", "orange", "yellow", "green", "blue", "purple"];
@@ -542,6 +636,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd("edit.select_all", "Select All", G::Edit, C::Global)
         .decline()
         .menu(),
+    cmd(
+        "edit.toggle_tab_or_piano_roll",
+        "Switch Piano Roll and Tab",
+        G::Edit,
+        C::Global,
+    )
+    .menu(),
     cmd("edit.undo", "Undo", G::Edit, C::Global).rep().menu(),
     cmd(
         "editor.apply_expression_curve",
@@ -811,6 +912,67 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     )
     .arg(STRUM_DIRECTION_ARGS),
+    cmd(
+        "editor.sheet_apply_transpose",
+        "Apply Transpose to Sheet",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.sheet_autoscroll",
+        "Sheet: Autoscroll",
+        G::Editor,
+        C::Global,
+    )
+    .arg(SHEET_AUTOSCROLL_ARGS),
+    cmd("editor.sheet_capo", "Sheet: Capo", G::Editor, C::Global).arg(SHEET_CAPO_ARGS),
+    cmd(
+        "editor.sheet_delete",
+        "Delete Chord Sheet",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.sheet_edit_text",
+        "Edit Chord Sheet as Text",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.sheet_font",
+        "Sheet: Text Size",
+        G::Editor,
+        C::Global,
+    )
+    .arg(SHEET_FONT_ARGS),
+    cmd("editor.sheet_new", "New Chord Sheet", G::Editor, C::Global),
+    cmd(
+        "editor.sheet_rename",
+        "Rename Chord Sheet",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.sheet_select",
+        "Select Chord Sheet",
+        G::Editor,
+        C::Global,
+    )
+    .arg(SHEET_SELECT_ARGS),
+    cmd(
+        "editor.sheet_spelling",
+        "Sheet: Sharps or Flats",
+        G::Editor,
+        C::Global,
+    )
+    .arg(SHEET_SPELLING_ARGS),
+    cmd(
+        "editor.sheet_transpose",
+        "Sheet: Transpose View",
+        G::Editor,
+        C::Global,
+    )
+    .arg(SHEET_TRANSPOSE_ARGS),
     cmd("editor.step_alter", "Alter Steps", G::Editor, C::Editor).decline(),
     cmd("editor.step_invert", "Invert Steps", G::Editor, C::Editor).decline(),
     cmd(
@@ -824,6 +986,87 @@ const COMMANDS: &[CommandDef] = &[
         .arg(STEP_SHIFT_ARGS)
         .decline(),
     cmd("editor.strum", "Strum Selection", G::Editor, C::Editor),
+    cmd("editor.tab_bar_next", "Tab: Next Bar", G::Editor, C::Tab).rep(),
+    cmd(
+        "editor.tab_bar_prev",
+        "Tab: Previous Bar",
+        G::Editor,
+        C::Tab,
+    )
+    .rep(),
+    cmd(
+        "editor.tab_bend_amount",
+        "Tab: Bend Amount",
+        G::Editor,
+        C::Tab,
+    )
+    .arg(TAB_BEND_ARGS),
+    cmd(
+        "editor.tab_cursor_down",
+        "Tab: Cursor Down",
+        G::Editor,
+        C::Tab,
+    )
+    .rep(),
+    cmd(
+        "editor.tab_cursor_left",
+        "Tab: Cursor Left",
+        G::Editor,
+        C::Tab,
+    )
+    .rep(),
+    cmd(
+        "editor.tab_cursor_right",
+        "Tab: Cursor Right",
+        G::Editor,
+        C::Tab,
+    )
+    .rep(),
+    cmd("editor.tab_cursor_up", "Tab: Cursor Up", G::Editor, C::Tab).rep(),
+    cmd("editor.tab_dotted", "Tab: Dotted Note", G::Editor, C::Tab),
+    cmd("editor.tab_duration", "Tab: Note Value", G::Editor, C::Tab).arg(TAB_DURATION_ARGS),
+    cmd(
+        "editor.tab_extend",
+        "Tab: Extend Selection",
+        G::Editor,
+        C::Tab,
+    )
+    .arg(TAB_EXTEND_ARGS)
+    .rep(),
+    cmd(
+        "editor.tab_refret",
+        "Tab: Re-fret Selection",
+        G::Editor,
+        C::Tab,
+    )
+    .arg(TAB_REFRET_ARGS),
+    cmd(
+        "editor.tab_string_down",
+        "Tab: Move to Lower String",
+        G::Editor,
+        C::Tab,
+    )
+    .rep(),
+    cmd(
+        "editor.tab_string_up",
+        "Tab: Move to Higher String",
+        G::Editor,
+        C::Tab,
+    )
+    .rep(),
+    cmd("editor.tab_technique", "Tab: Technique", G::Editor, C::Tab).arg(TAB_TECHNIQUE_ARGS),
+    cmd("editor.tab_transpose", "Tab: Transpose", G::Editor, C::Tab)
+        .arg(TAB_TRANSPOSE_ARGS)
+        .rep(),
+    cmd("editor.tab_triplet", "Tab: Triplet Note", G::Editor, C::Tab),
+    cmd(
+        "editor.tab_tuning",
+        "Tab: Instrument, Tuning and Capo",
+        G::Editor,
+        C::Tab,
+    ),
+    cmd("editor.tab_zoom_in", "Tab: Zoom In", G::Editor, C::Tab).rep(),
+    cmd("editor.tab_zoom_out", "Tab: Zoom Out", G::Editor, C::Tab).rep(),
     cmd(
         "editor.thin_controllers",
         "Thin Controller Points",
@@ -844,6 +1087,111 @@ const COMMANDS: &[CommandDef] = &[
         G::Editor,
         C::Editor,
     ),
+    cmd(
+        "editor.trainer_beats",
+        "Chord Trainer: Beats per Chord",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_UP_DOWN_ARGS),
+    cmd(
+        "editor.trainer_bpm",
+        "Chord Trainer: Tempo",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_UP_DOWN_ARGS),
+    cmd(
+        "editor.trainer_capo",
+        "Chord Trainer: Capo",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_UP_DOWN_ARGS),
+    cmd(
+        "editor.trainer_edit_list",
+        "Chord Trainer: Type a List of Chords",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_instrument",
+        "Chord Trainer: Instrument",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_key",
+        "Chord Trainer: Key",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_KEY_ARGS),
+    cmd(
+        "editor.trainer_mode",
+        "Chord Trainer: Drill Mode",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_MODE_ARGS),
+    cmd(
+        "editor.trainer_order",
+        "Chord Trainer: Chord Order",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_ORDER_ARGS),
+    cmd(
+        "editor.trainer_pair",
+        "Chord Trainer: Pair Chord",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_PAIR_ARGS),
+    cmd(
+        "editor.trainer_reset_scores",
+        "Chord Trainer: Reset Best Scores",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_sevenths",
+        "Chord Trainer: Sevenths",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_skip",
+        "Chord Trainer: Skip Chord",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_source",
+        "Chord Trainer: Chord Source",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_SOURCE_ARGS),
+    cmd(
+        "editor.trainer_start",
+        "Chord Trainer: Start or Stop",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_tuning",
+        "Chord Trainer: Next Tuning",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.trainer_voicing",
+        "Chord Trainer: Fingering",
+        G::Editor,
+        C::Global,
+    )
+    .arg(TRAINER_VOICING_ARGS),
     cmd(
         "editor.transpose_down",
         "Transpose Down",
@@ -1013,6 +1361,20 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "file.export_sheet_pdf",
+        "Export Chord Sheet as PDF",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.export_sheet_text",
+        "Export Chord Sheet as Text",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "file.export_song_audio",
         "Export Song as Audio File",
         G::Global,
@@ -1022,6 +1384,27 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "file.export_stems",
         "Export Stems as Audio Files",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.export_tab_musicxml",
+        "Export Tab as MusicXML",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.export_tab_pdf",
+        "Export Tab as PDF",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.export_tab_text",
+        "Export Tab as Text",
         G::Global,
         C::Global,
     )
@@ -1038,6 +1421,27 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "file.import_midi_song",
         "Import MIDI as Song",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.import_sheet",
+        "Import Chord Sheet",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.import_tab",
+        "Import Tab or Score File",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.import_tab_song",
+        "Import Tab or Score as Song",
         G::Global,
         C::Global,
     )
@@ -1740,6 +2144,117 @@ const COMMANDS: &[CommandDef] = &[
         G::Rack,
         C::Global,
     ),
+    cmd(
+        "practice.count_in",
+        "Practice: Count-in",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_COUNT_IN_ARGS)
+    .menu(),
+    cmd(
+        "practice.listen",
+        "Practice: Listen and Grade",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "practice.listen_calibrate",
+        "Practice: Calibrate Listening Latency",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "practice.listen_clear",
+        "Practice: Clear Results",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "practice.listen_input",
+        "Practice: Next Listening Input",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "practice.listen_offset",
+        "Practice: Listening Offset",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_TRAINER_ARGS),
+    cmd(
+        "practice.listen_threshold",
+        "Practice: Clean Pass Accuracy",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_TRAINER_ARGS),
+    cmd(
+        "practice.loop_selection",
+        "Practice: Loop Selection",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd("practice.speed", "Practice: Speed", G::Transport, C::Global)
+        .arg(PRACTICE_SPEED_ARGS)
+        .menu(),
+    cmd(
+        "practice.speed_down",
+        "Practice: Slower",
+        G::Transport,
+        C::Global,
+    )
+    .rep()
+    .menu(),
+    cmd(
+        "practice.speed_up",
+        "Practice: Faster",
+        G::Transport,
+        C::Global,
+    )
+    .rep()
+    .menu(),
+    cmd(
+        "practice.trainer",
+        "Practice: Speed Trainer",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "practice.trainer_after",
+        "Practice: Trainer Passes per Step",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_TRAINER_ARGS),
+    cmd(
+        "practice.trainer_start",
+        "Practice: Trainer Start Speed",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_TRAINER_ARGS),
+    cmd(
+        "practice.trainer_step",
+        "Practice: Trainer Step",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_TRAINER_ARGS),
+    cmd(
+        "practice.trainer_target",
+        "Practice: Trainer Target Speed",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_TRAINER_ARGS),
     cmd("rack.add_column", "Add Column", G::Rack, C::Rack),
     cmd("rack.assign_send", "Use as Send Effect", G::Rack, C::Rack),
     cmd("rack.auto_route", "Auto-route", G::Rack, C::Rack),
@@ -1811,6 +2326,31 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.split_sub", "Split Sub", G::Rack, C::Rack).menu(),
     cmd("rack.toggle_match", "Match Loudness", G::Rack, C::Rack),
     cmd("rack.uncombine", "Uncombine", G::Rack, C::Rack).menu(),
+    cmd(
+        "rack.wheel_generate",
+        "Generate Progression",
+        G::Rack,
+        C::Rack,
+    )
+    .menu()
+    .decline(),
+    cmd("rack.wheel_pick", "Pick Wheel Chord", G::Rack, C::Rack),
+    cmd(
+        "rack.wheel_to_chord_lane",
+        "Send Progression to Chord Lane",
+        G::Rack,
+        C::Rack,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "rack.wheel_to_clip",
+        "Send Progression to Clip",
+        G::Rack,
+        C::Rack,
+    )
+    .menu()
+    .decline(),
     cmd(
         "sequencer.add_note_lane",
         "Add Note Lane",
@@ -3151,6 +3691,13 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("view.detach_browser", "Detach Browser", G::View, C::Global).menu(),
     cmd("view.detach_console", "Detach Mixer", G::View, C::Global).menu(),
+    cmd(
+        "view.detach_fretboard",
+        "Detach Fretboard",
+        G::View,
+        C::Global,
+    )
+    .menu(),
     cmd("view.detach_rack", "Detach Rack", G::View, C::Global).menu(),
     cmd(
         "view.find_parameter",
@@ -3171,6 +3718,28 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "view.follow_selection",
         "Automation Follows Selection",
+        G::View,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "view.fretboard_labels",
+        "Fretboard: Labels",
+        G::View,
+        C::Global,
+    )
+    .arg(FRETBOARD_LABELS_ARGS)
+    .menu(),
+    cmd(
+        "view.fretboard_left_handed",
+        "Fretboard: Left-handed",
+        G::View,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "view.fretboard_voicing",
+        "Fretboard: Chord Voicing",
         G::View,
         C::Global,
     )
@@ -3208,6 +3777,14 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.toggle_big_meter", "Big Meter", G::View, C::Global).menu(),
     cmd("view.toggle_browser", "Device Browser", G::View, C::Global).menu(),
     cmd("view.toggle_chord_lane", "Chord Lane", G::View, C::Global).menu(),
+    cmd("view.toggle_chord_sheet", "Chord Sheet", G::View, C::Global).menu(),
+    cmd(
+        "view.toggle_chord_trainer",
+        "Chord Trainer",
+        G::View,
+        C::Global,
+    )
+    .menu(),
     cmd("view.toggle_console", "Console", G::View, C::Global).menu(),
     cmd(
         "view.toggle_console_links",
@@ -3233,6 +3810,7 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("view.toggle_flip", "Back of Rack", G::View, C::Global).menu(),
+    cmd("view.toggle_fretboard", "Fretboard", G::View, C::Global).menu(),
     cmd("view.toggle_inspector", "Inspector", G::View, C::Global).menu(),
     cmd("view.toggle_key_lane", "Key Lane", G::View, C::Global).menu(),
     cmd("view.toggle_launcher", "Launcher", G::View, C::Global).menu(),
@@ -3278,6 +3856,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.toggle_song", "Arrangement", G::View, C::Global).menu(),
     cmd("view.toggle_spectrum_eq", "Spectrum EQ", G::View, C::Global).menu(),
     cmd("view.toggle_step_editor", "Step Editor", G::View, C::Global).menu(),
+    cmd("view.toggle_tab_editor", "Tab Editor", G::View, C::Global).menu(),
     cmd("view.toggle_tempo_lane", "Tempo Lane", G::View, C::Global).menu(),
     cmd("view.toggle_track_panel", "Track Panel", G::View, C::Global).menu(),
     cmd("view.toggle_video", "Video", G::View, C::Global).menu(),
@@ -3373,7 +3952,7 @@ mod tests {
             let prefix = d.id.split('.').next().unwrap();
             let expected: &[&str] = match d.group {
                 Group::Global => &["file", "audio", "help", "options", "video"],
-                Group::Transport => &["transport", "sync", "launcher"],
+                Group::Transport => &["transport", "sync", "launcher", "practice"],
                 Group::View => &["view", "window", "camera"],
                 Group::Edit => &["edit"],
                 Group::Rack => &["rack", "plugin"],

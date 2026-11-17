@@ -414,6 +414,7 @@ pub(super) fn load_song(
         },
         launcher: Default::default(),
         harmony: read_harmony::load_harmony(obj, path, version)?,
+        sheets: super::tab_json::load_sheets(obj.get("sheets"), &path.field("sheets"))?,
         tails: match obj.get("tails") {
             None => false,
             Some(Value::Bool(true)) => true,

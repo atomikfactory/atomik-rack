@@ -158,6 +158,8 @@ pub struct PanelSpec {
     pub arp: Option<crate::arp_panel::ArpPanel>,
     /// The Key & Chord panel of an `atomik.key-chord` (see [`crate::key_chord_panel`]).
     pub key_chord: Option<crate::key_chord_panel::KeyChordPanel>,
+    /// The Chord Wheel panel of an `atomik.chord-wheel` (see [`crate::chord_wheel_panel`]).
+    pub chord_wheel: Option<crate::chord_wheel_panel::ChordWheelPanel>,
     /// The Mod Source panel of an `atomik.mod-source` (see [`crate::modsrc_panel`]).
     pub modsrc: Option<crate::modsrc_panel::ModSourcePanel>,
     /// The wavetable synth panel of an `atomik.wavetable-synth` (see
@@ -345,6 +347,16 @@ pub(crate) fn auto_layout_with_strip(
     )
 }
 
+/// Like [`auto_layout`] with `prefix_of` choosing the section of each param key and the sections
+/// in the order of `order` (sections not named follow in descriptor order); nothing is reserved.
+pub(crate) fn auto_layout_with_sections(
+    desc: &DeviceDescriptor,
+    prefix_of: for<'a> fn(&'a str) -> &'a str,
+    order: &[&str],
+) -> PanelSpec {
+    layout_with(desc, 0.0, false, prefix_of, order, 0.0, usize::MAX)
+}
+
 /// Like [`auto_layout_with_strip`] with the sections in the order of `order` (the prefixes
 /// `prefix_of` returns; sections not named follow in descriptor order), so a panel can put
 /// sections that pack well side by side.
@@ -408,6 +420,7 @@ fn layout_with(
         drum_gen: None,
         arp: None,
         key_chord: None,
+        chord_wheel: None,
         modsrc: None,
         wavetable: None,
         fm: None,
@@ -927,6 +940,7 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
         drum_gen: None,
         arp: None,
         key_chord: None,
+        chord_wheel: None,
         modsrc: None,
         wavetable: None,
         fm: None,
@@ -1066,6 +1080,7 @@ pub fn slicer_layout(desc: &DeviceDescriptor) -> PanelSpec {
         drum_gen: None,
         arp: None,
         key_chord: None,
+        chord_wheel: None,
         modsrc: None,
         wavetable: None,
         fm: None,
@@ -1124,6 +1139,7 @@ pub fn from_panel_layout(layout: &PanelLayout, desc: &DeviceDescriptor) -> Panel
         drum_gen: None,
         arp: None,
         key_chord: None,
+        chord_wheel: None,
         modsrc: None,
         wavetable: None,
         fm: None,
@@ -1143,15 +1159,16 @@ mod tests {
     use atomik_devices::{
         auto_filter, cv_math, cv_quantizer, de_esser, dual_layer, duck, dynamics, env_filter,
         envelope_follower, gain_tool, gate, gate_processor, line_mixer, mono_bass, organ,
-        pitch_shifter, poly_synth, rotary_speaker, sample_hold, slew_limiter, spider, stereo_delay,
-        stereo_tool, transient_shaper,
+        pitch_shifter, plucked, poly_synth, rotary_speaker, sample_hold, slew_limiter, spider,
+        stereo_delay, stereo_tool, transient_shaper,
     };
 
-    fn all() -> [&'static DeviceDescriptor; 25] {
+    fn all() -> [&'static DeviceDescriptor; 26] {
         [
             &poly_synth::DESCRIPTOR,
             &mono_bass::DESCRIPTOR,
             &organ::DESCRIPTOR,
+            &plucked::DESCRIPTOR,
             dual_layer::descriptor(),
             &line_mixer::DESCRIPTOR,
             &stereo_delay::DESCRIPTOR,

@@ -55,6 +55,10 @@ fn every_session_tool_needs_an_open_session() {
             "session_midi",
             json!({"action": "export", "file": "target/tmp/never.mid"}),
         ),
+        (
+            "session_tab",
+            json!({"action": "export", "file": "target/tmp/never.txt"}),
+        ),
         ("session_audio_notes", json!({})),
         (
             "session_set_param",
@@ -2703,4 +2707,116 @@ fn the_audio_clip_editor_opens_slices_and_adds_a_marker_with_the_pointer() {
     ok(&mut s, "session_key", json!({"key": "t"}));
     ok(&mut s, "session_key", json!({"key": "t"}));
     ok(&mut s, "session_key", json!({"key": "Escape"}));
+}
+
+#[test]
+fn tab_files_chord_sheets_and_their_dialogs_are_driven_by_session_tab() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    // The menu commands raise dialogs a headless session cannot show, and say what to use instead.
+    for id in [
+        "file.import_tab",
+        "file.import_sheet",
+        "file.export_tab_text",
+    ] {
+        let r = ok(&mut s, "session_command", json!({"id": id}));
+        assert!(r.to_string().contains("pick_tab_file"), "{id}: {r}");
+    }
+    // ASCII tab of the song: the demo's notes are placed on the neck.
+    let text = tmp("demo-tab.txt");
+    let exported = ok(
+        &mut s,
+        "session_tab",
+        json!({"action": "export", "file": text, "format": "text"}),
+    );
+    assert!(exported["bytes"].as_u64().unwrap() > 40, "{exported}");
+    assert!(
+        exported["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Exported the song"),
+        "{exported}"
+    );
+    // A chord sheet in, the same sheet out, one undo step in.
+    let sheet = tmp("sheet.txt");
+    std::fs::write(&sheet, "Am    G\nla la la la\n").unwrap();
+    let imported = ok(
+        &mut s,
+        "session_tab",
+        json!({"action": "import_sheet", "file": sheet}),
+    );
+    assert_eq!(imported["document_changed"], true);
+    assert_eq!(imported["can_undo"], true);
+    let back = tmp("sheet-out.txt");
+    ok(
+        &mut s,
+        "session_tab",
+        json!({"action": "export_sheet", "file": back}),
+    );
+    assert!(std::fs::read_to_string(&back).unwrap().contains("la la la"));
+    // The PDF forms: a printable tab of the song, the sheet as PDF, the paper and the diagram choice.
+    for id in ["file.export_tab_pdf", "file.export_sheet_pdf"] {
+        let r = ok(&mut s, "session_command", json!({"id": id}));
+        assert!(r.to_string().contains("pick_tab_file"), "{id}: {r}");
+    }
+    let pdf = tmp("demo-tab.pdf");
+    let printed = ok(
+        &mut s,
+        "session_tab",
+        json!({"action": "export", "file": pdf, "format": "pdf", "page": "letter"}),
+    );
+    assert!(printed["bytes"].as_u64().unwrap() > 500, "{printed}");
+    let bytes = std::fs::read(&pdf).unwrap();
+    assert!(bytes.starts_with(b"%PDF-"));
+    assert!(
+        String::from_utf8_lossy(&bytes).contains("792"),
+        "Letter paper"
+    );
+    // The same song, the same bytes; the options change them.
+    let again = tmp("demo-tab-2.pdf");
+    ok(
+        &mut s,
+        "session_tab",
+        json!({"action": "export", "file": again, "format": "pdf", "page": "letter"}),
+    );
+    assert_eq!(bytes, std::fs::read(&again).unwrap());
+    let a4 = tmp("demo-tab-a4.pdf");
+    ok(
+        &mut s,
+        "session_tab",
+        json!({"action": "export", "file": a4, "format": "pdf", "page": "a4", "bars_per_line": 2}),
+    );
+    assert_ne!(bytes, std::fs::read(&a4).unwrap());
+    let sheet_pdf = tmp("sheet.pdf");
+    let printed = ok(
+        &mut s,
+        "session_tab",
+        json!({"action": "export_sheet", "file": sheet_pdf, "format": "pdf", "diagrams": false}),
+    );
+    assert!(
+        printed["message"].as_str().unwrap().contains("as PDF"),
+        "{printed}"
+    );
+    assert!(std::fs::read(&sheet_pdf).unwrap().starts_with(b"%PDF-"));
+    // Errors: a missing file, a junk tab file, bad action, scope and format.
+    for args in [
+        json!({"action": "import", "file": "examples/none.gp5"}),
+        json!({"action": "sing", "file": text}),
+        json!({"action": "export", "file": text, "scope": "bar"}),
+        json!({"action": "export", "file": text, "format": "midi"}),
+        json!({"action": "export", "file": text, "format": "pdf", "page": "folio"}),
+        json!({"action": "export_sheet", "file": text, "format": "musicxml"}),
+    ] {
+        assert!(call(&mut s, "session_tab", args).is_error);
+    }
+    let junk = call(
+        &mut s,
+        "session_tab",
+        json!({"action": "import", "file": "README.md"}),
+    );
+    assert!(junk.is_error || junk.parsed()["document_changed"] == false);
 }

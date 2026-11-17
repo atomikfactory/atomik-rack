@@ -74,7 +74,11 @@ impl LibrarySection {
             FileKind::Container => Some(Self::Containers),
             FileKind::Clip => Some(Self::Clips),
             FileKind::Project => Some(Self::Projects),
-            FileKind::Folder | FileKind::Audio(_) | FileKind::Midi | FileKind::Preset => None,
+            FileKind::Folder
+            | FileKind::Audio(_)
+            | FileKind::Midi
+            | FileKind::Tab
+            | FileKind::Preset => None,
         }
     }
 

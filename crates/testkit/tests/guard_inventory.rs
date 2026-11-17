@@ -47,6 +47,7 @@ const WITHOUT_GUARD: &[(&str, &str)] = &[
     ("mcp/midi.rs", why::SERVER),
     ("mcp/protocol.rs", why::SERVER),
     ("mcp/session.rs", why::SERVER),
+    ("mcp/session_tab.rs", why::SERVER),
     ("mcp/stateless.rs", why::SERVER),
     ("render/audio_demo.rs", why::DEMO),
     ("render/audio_editing.rs", why::ENTRY),

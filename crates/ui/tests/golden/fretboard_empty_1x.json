@@ -1,0 +1,9 @@
+{"ops":[
+{"transform":[1.00,0.00,0.00,1.00,0.00,0.00]},
+{"clip":{"rect":[0.00,0.00,900.00,136.00]}},
+{"fill":{"rect":[0.00,0.00,900.00,136.00]},"brush":"#0e1013ff"},
+{"stroke":{"line":[0.00,0.50,900.00,0.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"Open a note clip in the Tab Editor","at":[450.00,72.00],"size":11.00,"weight":400,"align":"center","color":"#8f96a0ff"},
+{"pop_clip":true},
+{"pop_transform":true}
+]}

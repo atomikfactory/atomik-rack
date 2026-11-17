@@ -364,7 +364,11 @@ pub mod camera_panel;
 pub mod canvas;
 pub mod character_panel;
 pub mod character_screen;
+pub mod chord_diagram;
 pub mod chord_edit;
+pub mod chord_sheet;
+pub mod chord_trainer;
+pub mod chord_wheel_panel;
 pub mod chords_panel;
 pub mod clipboard;
 pub mod color_picker;
@@ -393,10 +397,12 @@ pub mod export_panel;
 pub mod file_browser;
 pub mod film_panel;
 pub mod fm_panel;
+pub mod fretboard;
 pub mod fx;
 pub mod fx_layout;
 pub mod fx_paint;
 pub mod gain_panel;
+pub mod grading;
 pub mod granular_panel;
 pub mod harmony_picker;
 pub mod headphone_panel;
@@ -435,6 +441,7 @@ pub mod param_search_panel;
 pub mod piano_keys;
 pub mod piano_roll;
 pub mod pick_list;
+pub mod plucked_panel;
 pub mod plugin_banner;
 pub mod plugin_data;
 pub mod plugin_learn;
@@ -442,6 +449,7 @@ pub mod plugin_manager;
 pub mod plugin_panel;
 pub mod plugin_params;
 pub mod plugin_settings;
+pub mod practice_bar;
 pub mod quantize_panel;
 pub mod rack;
 pub mod relink_panel;
@@ -469,6 +477,7 @@ pub mod stems_dialog;
 pub mod step_drag;
 pub mod step_editor;
 pub mod stereo_panel;
+pub mod tab_editor;
 pub mod tempo_lane;
 pub mod text;
 pub mod text_field;
@@ -513,6 +522,8 @@ pub use camera_panel::{
     PREVIEW_HEIGHT as CAMERA_PREVIEW_HEIGHT, PREVIEW_WIDTH as CAMERA_PREVIEW_WIDTH,
 };
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
+pub use chord_sheet::{ChordSheetView, SheetButton, SpellPref};
+pub use chord_trainer::{ChordTrainerView, Source as TrainerSource, TrainerButton};
 pub use chords_panel::{
     ChordChanges, ChordsAction, ChordsPreview, ChordsRow, ChordsValues, ChordsView, PreviewChord,
 };
@@ -541,6 +552,8 @@ pub use film_panel::{
     FilmAction, FilmCover, FilmPictureChoice, FilmQualityChoice, FilmSoundChoice, FilmValues,
     FilmView,
 };
+pub use fretboard::{FRETBOARD_HEIGHT, FretLabels, FretboardFeed, FretboardOptions, FretboardView};
+pub use grading::{FretGrade, GradeMark};
 pub use harmony_picker::{HarmonyPickerAction, HarmonyPickerView, HarmonyTarget, PickerValue};
 pub use help_panel::{HELP_PANEL_HEIGHT, HelpCard};
 pub use history_panel::{HISTORY_PANEL_WIDTH, HistoryRow, HistoryView};
@@ -584,6 +597,10 @@ pub use plugin_manager::{
 };
 pub use plugin_params::{PluginGestureMerger, PluginParamsView};
 pub use plugin_settings::PluginSettingsView;
+pub use practice_bar::{
+    HISTORY_SHOWN, ListenState, MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, PracticeBar, PracticeItem,
+    PracticeState, SPEED_STEP_PERCENT, TrainerState, TrainerValue, input_label,
+};
 pub use quantize_panel::{GrooveEntry, QuantizeAction, QuantizeRow, QuantizeValues, QuantizeView};
 pub use rack::{
     COLUMN_GAP, CableVisibility, Flip, InsertAreaInfo, JackChoice, JackGroup, JackMenu, JackOp,
@@ -612,6 +629,7 @@ pub use stems_dialog::{
     STEM_COUNT, STEM_LABELS, StemsDialogChoice, StemsDialogState, StemsDialogView, StemsPhase,
 };
 pub use step_editor::{StepEditorView, ToolButton, ToolKind, VelocityLevel};
+pub use tab_editor::{NoteValue, TabEditorView};
 pub use text::{ShapedGlyph, ShapedRun, SharedText, TextEngine};
 pub use text_field::{
     FieldColors, FieldKey, FieldMenuState, HISTORY_LIMIT, TEXT_COMMANDS, TextField,

@@ -1,0 +1,487 @@
+//! Tab, score and chord sheet files in the app core: the import as tracks and as a song, one undo
+//! step each, the exports, and the round trip of a score through the song and through files.
+
+use super::*;
+use crate::sink::RecordingSink;
+use crate::tab_file::tests::fixture_score;
+use atomik_core::PPQ;
+use atomik_model::{Clip, ClipContent, ClipId, DeviceKey, Note, empty_doc};
+use atomik_tab::score::{SlideKind, TechFlags};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+struct Tmp(PathBuf);
+
+impl Tmp {
+    fn new(tag: &str) -> Self {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("atomik-app-tab-{tag}-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+
+    fn path(&self, name: &str) -> PathBuf {
+        self.0.join(name)
+    }
+}
+
+impl Drop for Tmp {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn core() -> AppCore<RecordingSink> {
+    AppCore::with_registry(RecordingSink::new(), default_registry(), empty_doc(), None)
+}
+
+#[test]
+fn a_score_imports_as_tracks_in_one_undo_step() {
+    let mut c = core();
+    let before = c.doc().clone();
+    c.apply_tab(
+        &fixture_score(),
+        vec!["a thing was ignored".into()],
+        false,
+        "x.gp5",
+    )
+    .unwrap();
+    let song = &c.doc().song;
+    assert_eq!(song.tracks.len(), 3);
+    // Tempo and meter stay as they were when the file is not imported as a song.
+    assert_eq!(song.tempo, before.song.tempo);
+    let msg = c.last_rejection().unwrap();
+    assert!(msg.starts_with("Imported 3 tracks"), "{msg}");
+    assert!(msg.contains("a thing was ignored"), "{msg}");
+    let clip = &song.tracks[0].lanes[0].clips[0];
+    assert_eq!(clip.midi.tab.as_ref().unwrap().tuning.len(), 6);
+    assert!(c.undo());
+    assert_eq!(c.doc(), &before, "one undo takes the whole import back");
+}
+
+#[test]
+fn a_score_imports_as_a_song_with_tempo_meter_markers_and_chords() {
+    let mut c = core();
+    c.apply_tab(&fixture_score(), Vec::new(), true, "x.gp5")
+        .unwrap();
+    let song = &c.doc().song;
+    assert_eq!(song.tempo.len(), 2);
+    assert_eq!(song.tempo[1].tick, 8 * PPQ);
+    assert_eq!(song.meter.len(), 2);
+    assert_eq!(song.markers.len(), 2);
+    assert_eq!(song.harmony.chords.len(), 2);
+    assert!(song.harmony.key.is_some());
+    assert!(c.undo());
+    assert!(c.doc().song.markers.is_empty());
+    assert!(c.doc().song.harmony.chords.is_empty());
+}
+
+#[test]
+fn an_empty_or_unreadable_file_is_reported_by_name_and_changes_nothing() {
+    let tmp = Tmp::new("bad");
+    let mut c = core();
+    let before = c.doc().clone();
+    std::fs::write(tmp.path("junk.gp5"), b"definitely not a score").unwrap();
+    c.import_tab(&tmp.path("junk.gp5"), false);
+    assert!(c.last_rejection().unwrap().contains("junk.gp5"));
+    c.import_tab(&tmp.path("missing.gpx"), true);
+    assert!(c.last_rejection().unwrap().contains("missing.gpx"));
+    let empty = atomik_tab::score::TabScore::new();
+    assert!(c.apply_tab(&empty, Vec::new(), false, "e").is_err());
+    assert_eq!(c.doc(), &before);
+}
+
+#[test]
+fn loading_a_tab_file_from_the_browser_is_the_file_menu_import() {
+    let tmp = Tmp::new("browser");
+    let mut c = core();
+    std::fs::write(tmp.path("song.gp4"), b"junk").unwrap();
+    c.browse(atomik_ui::BrowseAction::Load(tmp.path("song.gp4")));
+    // The file goes to the tab import (which reports it), not refused as "not a library item".
+    let msg = c.last_rejection().unwrap();
+    assert!(
+        msg.contains("song.gp4") && !msg.contains("library item"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn text_tab_exports_the_selected_clip_or_the_song() {
+    let tmp = Tmp::new("text");
+    let mut c = core();
+    assert!(!c.can_export_tab());
+    c.apply_tab(&fixture_score(), Vec::new(), false, "x.gp5")
+        .unwrap();
+    assert!(c.can_export_tab());
+    // The new clips are selected after an import: the scope is the clip until it is deselected.
+    assert_eq!(c.tab_export_scope(), Some(MidiExport::Clip));
+    c.arrangement_mut().set_selected_clips(&[]);
+    assert_eq!(c.tab_export_scope(), Some(MidiExport::Song));
+    c.export_tab(TabExportFormat::Text, &tmp.path("song.txt"));
+    let text = std::fs::read_to_string(tmp.path("song.txt")).unwrap();
+    assert!(text.contains('|'), "{text}");
+    assert!(c.last_rejection().unwrap().starts_with("Exported the song"));
+    // With a clip selected only that clip is written.
+    let id = c.doc().song.tracks[1].lanes[0].clips[0].id;
+    c.arrangement_mut().set_selected_clips(&[id]);
+    assert_eq!(c.tab_export_scope(), Some(MidiExport::Clip));
+    c.export_tab(TabExportFormat::Text, &tmp.path("bass.txt"));
+    let bass = std::fs::read_to_string(tmp.path("bass.txt")).unwrap();
+    assert!(bass.len() < text.len(), "one track is shorter than three");
+    assert!(c.last_rejection().unwrap().starts_with("Exported the clip"));
+}
+
+#[test]
+fn a_chord_sheet_imports_and_exports() {
+    let tmp = Tmp::new("sheet");
+    let mut c = core();
+    assert!(!c.can_export_sheet());
+    c.export_sheet(&tmp.path("none.txt"));
+    assert!(c.last_rejection().unwrap().contains("no chord sheet"));
+    let text = "Am       G\nla la la la\n\nF       C\nde de de de\n";
+    std::fs::write(tmp.path("tune.txt"), text).unwrap();
+    c.import_sheet(&tmp.path("tune.txt"));
+    assert_eq!(c.doc().song.sheets.len(), 1);
+    assert_eq!(c.doc().song.sheets[0].title, "tune");
+    assert!(
+        c.last_rejection()
+            .unwrap()
+            .starts_with("Imported the chord sheet")
+    );
+    assert!(c.can_export_sheet());
+    c.export_sheet(&tmp.path("out.txt"));
+    let out = std::fs::read_to_string(tmp.path("out.txt")).unwrap();
+    assert!(out.contains("Am") && out.contains("la la la la"), "{out}");
+    // The bracket form is detected.
+    std::fs::write(
+        tmp.path("inline.cho"),
+        "{title: Made Up}\n[C]Hello [G]there\n",
+    )
+    .unwrap();
+    c.import_sheet(&tmp.path("inline.cho"));
+    assert_eq!(c.doc().song.sheets.len(), 2);
+    assert_eq!(c.doc().song.sheets[1].title, "Made Up");
+    assert!(c.undo());
+    assert_eq!(c.doc().song.sheets.len(), 1);
+    c.import_sheet(&tmp.path("gone.txt"));
+    assert!(c.last_rejection().unwrap().contains("gone.txt"));
+}
+
+#[test]
+fn a_clip_without_tab_is_fretted_for_the_instrument_its_track_name_suggests() {
+    let mut c = core();
+    let key = DeviceKey("b".into());
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.poly-synth".to_owned(),
+        key: Some(key.clone()),
+    })
+    .unwrap();
+    c.apply_command(Command::Rename {
+        key: key.clone(),
+        name: "Slap Bass".to_owned(),
+    })
+    .unwrap();
+    c.apply_command(Command::Song(SongCommand::AddTrack {
+        device: key.clone(),
+    }))
+    .unwrap();
+    let clip = Clip {
+        id: ClipId(0),
+        start: 0,
+        length: 4 * PPQ,
+        offset: 0,
+        loop_length: None,
+        muted: false,
+        name: None,
+        color: None,
+        grid: None,
+        scale: None,
+        param_lanes: Vec::new(),
+        midi: Default::default(),
+        groove: None,
+        follow_song_key: true,
+        controllers: Vec::new(),
+        content: ClipContent::Notes(
+            vec![Note::new(0, PPQ, 40, 0.8), Note::new(PPQ, PPQ, 43, 0.8)].into(),
+        ),
+    };
+    c.apply_command(Command::Song(SongCommand::AddClip {
+        device: key,
+        lane: 0,
+        clip,
+    }))
+    .unwrap();
+    let (score, warnings) = crate::tab_file::score_from_song(
+        &c.doc().song,
+        &crate::tab_file::TabSource::Song,
+        "T",
+        &|k| c.device_name(k),
+    )
+    .unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let t = &score.tracks[0];
+    assert_eq!(t.instrument_id, "bass4");
+    assert_eq!(t.notes.len(), 2);
+    assert_eq!(t.key_of(&t.notes[0]), Some(40));
+    assert_eq!(t.key_of(&t.notes[1]), Some(43));
+}
+
+#[test]
+fn a_score_survives_the_trip_through_the_song_and_back() {
+    let mut c = core();
+    let original = fixture_score();
+    c.apply_tab(&original, Vec::new(), true, "x.gp5").unwrap();
+    let (back, warnings) = crate::tab_file::score_from_song(
+        &c.doc().song,
+        &crate::tab_file::TabSource::Song,
+        "T",
+        &|k| c.device_name(k),
+    )
+    .unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(back.tracks.len(), 3);
+    let g = &back.tracks[0];
+    assert_eq!(g.instrument_id, "guitar6");
+    assert_eq!(g.capo.fret, 2);
+    assert_eq!(g.tuning, original.tracks[0].tuning);
+    // Ties are one long note now; everything else keeps its tick, string, fret and techniques.
+    let at = |t: i64| g.notes.iter().find(|n| n.tick == t).unwrap();
+    assert_eq!((at(0).string, at(0).fret), (1, 3));
+    assert_eq!(at(0).tech.bend, original.tracks[0].notes[0].tech.bend);
+    assert!(at(PPQ).tech.has(TechFlags::HAMMER_ON));
+    assert_eq!(at(2 * PPQ).tech.slide, Some(SlideKind::Legato));
+    assert_eq!(at(3 * PPQ).len, 2 * PPQ);
+    assert_eq!(g.lyrics.len(), 2);
+    assert_eq!(back.tempo.len(), 2);
+    assert_eq!(back.meter.len(), 2);
+    assert_eq!(back.markers.len(), 2);
+    assert_eq!(g.chords.len(), 2);
+    // The drum track comes back as percussion with its keys.
+    let d = back.tracks.iter().find(|t| t.is_percussion).unwrap();
+    assert_eq!(d.notes.iter().map(|n| n.fret).collect::<Vec<_>>(), [36, 38]);
+}
+
+#[test]
+fn musicxml_exported_from_the_song_imports_again_through_a_file() {
+    let tmp = Tmp::new("xml");
+    let mut c = core();
+    c.apply_tab(&fixture_score(), Vec::new(), true, "x.gp5")
+        .unwrap();
+    for name in ["round.musicxml", "round.mxl"] {
+        c.export_tab_of(MidiExport::Song, TabExportFormat::MusicXml, &tmp.path(name));
+        let msg = c.last_rejection().unwrap();
+        assert!(msg.starts_with("Exported the song as MusicXML"), "{msg}");
+        let mut other = core();
+        other.import_tab(&tmp.path(name), true);
+        let msg = other.last_rejection().unwrap();
+        assert!(msg.starts_with("Imported 3 tracks"), "{msg}");
+        assert_eq!(other.doc().song.tracks.len(), 3);
+        let tab = |core: &AppCore<RecordingSink>, i: usize| {
+            core.doc().song.tracks[i].lanes[0].clips[0]
+                .midi
+                .tab
+                .clone()
+                .map(|t| (t.instrument_id, t.tuning, t.capo.fret, t.notes.len()))
+        };
+        assert_eq!(tab(&other, 0), tab(&c, 0), "{name}");
+        assert_eq!(tab(&other, 1), tab(&c, 1), "{name}");
+    }
+}
+
+/// The page texts of a PDF written with plain streams would be easier to read, so the tests only
+/// look at what a viewer needs first: the header, the page tree and the end marker.
+fn is_pdf(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"%PDF-") && bytes.windows(5).any(|w| w == b"%%EOF")
+}
+
+#[test]
+fn tab_pdf_exports_the_selected_clip_or_the_song_deterministically() {
+    let tmp = Tmp::new("pdf");
+    let mut c = core();
+    c.apply_tab(&fixture_score(), Vec::new(), false, "x.gp5")
+        .unwrap();
+    c.arrangement_mut().set_selected_clips(&[]);
+    c.export_tab(TabExportFormat::Pdf, &tmp.path("song.pdf"));
+    let song = std::fs::read(tmp.path("song.pdf")).unwrap();
+    assert!(is_pdf(&song));
+    let msg = c.last_rejection().unwrap();
+    assert!(msg.starts_with("Exported the song as PDF"), "{msg}");
+    // The same song gives the same bytes.
+    c.export_tab(TabExportFormat::Pdf, &tmp.path("again.pdf"));
+    assert_eq!(song, std::fs::read(tmp.path("again.pdf")).unwrap());
+    // With a clip selected only that clip is printed, so the file is smaller.
+    let id = c.doc().song.tracks[1].lanes[0].clips[0].id;
+    c.arrangement_mut().set_selected_clips(&[id]);
+    c.export_tab(TabExportFormat::Pdf, &tmp.path("clip.pdf"));
+    let clip = std::fs::read(tmp.path("clip.pdf")).unwrap();
+    assert!(is_pdf(&clip) && clip.len() < song.len());
+    assert!(c.last_rejection().unwrap().starts_with("Exported the clip"));
+}
+
+#[test]
+fn tab_pdf_takes_the_paper_and_the_diagram_choice() {
+    let tmp = Tmp::new("pdfopts");
+    let mut c = core();
+    c.apply_tab(&fixture_score(), Vec::new(), false, "x.gp5")
+        .unwrap();
+    c.arrangement_mut().set_selected_clips(&[]);
+    let mut o = default_tab_pdf();
+    o.page = PageSize::Letter;
+    c.export_tab_with(
+        MidiExport::Song,
+        TabExportFormat::Pdf,
+        &tmp.path("l.pdf"),
+        &o,
+    );
+    o.page = PageSize::A4;
+    c.export_tab_with(
+        MidiExport::Song,
+        TabExportFormat::Pdf,
+        &tmp.path("a.pdf"),
+        &o,
+    );
+    let text = |n: &str| String::from_utf8_lossy(&std::fs::read(tmp.path(n)).unwrap()).into_owned();
+    assert!(text("l.pdf").contains("612") && text("l.pdf").contains("792"));
+    assert!(text("a.pdf").contains("595"));
+}
+
+#[test]
+fn a_song_without_notes_has_no_tab_pdf() {
+    let tmp = Tmp::new("pdfnone");
+    let mut c = core();
+    c.export_tab_of(
+        MidiExport::Song,
+        TabExportFormat::Pdf,
+        &tmp.path("none.pdf"),
+    );
+    assert!(!tmp.path("none.pdf").exists());
+    assert!(c.last_rejection().is_some());
+}
+
+#[test]
+fn a_chord_sheet_exports_as_pdf_from_the_stored_sheet_or_the_pane() {
+    let tmp = Tmp::new("sheetpdf");
+    let mut c = core();
+    c.export_sheet_pdf(&tmp.path("none.pdf"));
+    assert!(c.last_rejection().unwrap().contains("no chord sheet"));
+    assert!(!tmp.path("none.pdf").exists());
+    std::fs::write(
+        tmp.path("tune.txt"),
+        "{key: G}\n{capo: 2}\n[G]Made up [D]words to [Em]sing\n",
+    )
+    .unwrap();
+    c.import_sheet(&tmp.path("tune.txt"));
+    c.export_sheet_pdf(&tmp.path("tune.pdf"));
+    let stored = std::fs::read(tmp.path("tune.pdf")).unwrap();
+    assert!(is_pdf(&stored));
+    assert!(
+        c.last_rejection()
+            .unwrap()
+            .starts_with("Exported the chord sheet as PDF")
+    );
+    // No diagram strip: a shorter file.
+    c.export_sheet_pdf_with(&tmp.path("plain.pdf"), Some(PageSize::Letter), false);
+    let plain = std::fs::read(tmp.path("plain.pdf")).unwrap();
+    assert!(plain.len() < stored.len());
+    // With the pane open the sheet is printed as the pane shows it (transposed here).
+    c.open_chord_sheet();
+    let (before, _) = c.sheet_pdf_job(None, true).unwrap();
+    assert_eq!(before.chords_used()[0].name(), "G");
+    for _ in 0..2 {
+        c.pane_command(Pane::Rack, "editor.sheet_transpose", Some("up"))
+            .unwrap();
+    }
+    let (shown, _) = c.sheet_pdf_job(None, true).unwrap();
+    assert_eq!(shown.chords_used()[0].name(), "A");
+}
+
+// ------------------------------------------------------------------ Plucked Strings on import
+
+/// A core that has the factory folder of this checkout.
+fn core_with_factory() -> AppCore<RecordingSink> {
+    let mut c = core();
+    c.set_factory_root(Some(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../factory"),
+    ));
+    c
+}
+
+/// One track per instrument of the catalogue, a note each, and a drum track.
+fn every_instrument_score() -> atomik_tab::score::TabScore {
+    let mut score = atomik_tab::score::TabScore::new();
+    for i in atomik_tab::instrument::catalogue() {
+        let mut t =
+            atomik_tab::score::TabTrack::new(i.name, i.id, i.default_tuning().tuning.clone());
+        t.notes = vec![atomik_tab::score::TabNote::new(0, PPQ, 0, 3)];
+        score.tracks.push(t);
+    }
+    let mut d =
+        atomik_tab::score::TabTrack::new("Drums", "", atomik_tab::Tuning::from_opens(&[0], 0));
+    d.is_percussion = true;
+    d.notes = vec![atomik_tab::score::TabNote::new(0, PPQ / 4, 0, 36)];
+    score.tracks.push(d);
+    score
+}
+
+fn device_of_track(c: &AppCore<RecordingSink>, index: usize) -> (String, String) {
+    let key = &c.doc().song.tracks[index].device;
+    let d = c.doc().resolve(key).unwrap();
+    (d.type_id.clone(), d.patch_name.clone())
+}
+
+#[test]
+fn every_instrument_id_imports_on_plucked_strings_with_its_factory_patch() {
+    let mut c = core_with_factory();
+    let score = every_instrument_score();
+    let n = score.tracks.len() - 1;
+    c.apply_tab(&score, Vec::new(), false, "all.gp5").unwrap();
+    assert_eq!(c.doc().song.tracks.len(), n + 1);
+    let mut seen = 0;
+    for (i, inst) in atomik_tab::instrument::catalogue().iter().enumerate() {
+        let (ty, patch) = device_of_track(&c, i);
+        assert_eq!(ty, "atomik.plucked", "{}", inst.id);
+        assert_eq!(
+            patch,
+            atomik_devices::plucked::factory_patch_for(inst.id),
+            "{}",
+            inst.id
+        );
+        seen += 1;
+    }
+    assert_eq!(seen, n);
+    // A patch loaded changes the sound: the banjo is not a new device's params.
+    let banjo = atomik_tab::instrument::catalogue()
+        .iter()
+        .position(|i| i.id == "banjo5")
+        .unwrap();
+    let key = c.doc().song.tracks[banjo].device.clone();
+    let steel = c.doc().song.tracks[0].device.clone();
+    let body = |c: &AppCore<RecordingSink>, k: &DeviceKey| {
+        c.doc().resolve(k).unwrap().params.get("body").copied()
+    };
+    assert_ne!(body(&c, &key), body(&c, &steel));
+    // The percussion track keeps the import instrument, with no patch.
+    let (ty, patch) = device_of_track(&c, n);
+    assert_eq!(ty, IMPORT_INSTRUMENT);
+    assert_eq!(patch, "");
+    // One undo takes every track and every patch back.
+    assert!(c.undo());
+    assert!(c.doc().song.tracks.is_empty());
+    assert!(c.doc().devices.is_empty());
+}
+
+#[test]
+fn without_a_factory_folder_the_tracks_are_still_plucked_strings() {
+    let mut c = core();
+    c.apply_tab(&fixture_score(), Vec::new(), false, "x.gp5")
+        .unwrap();
+    assert_eq!(
+        device_of_track(&c, 0),
+        ("atomik.plucked".to_owned(), String::new())
+    );
+    assert_eq!(device_of_track(&c, 1).0, "atomik.plucked");
+    assert_eq!(device_of_track(&c, 2).0, IMPORT_INSTRUMENT);
+}

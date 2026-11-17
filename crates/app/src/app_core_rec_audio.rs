@@ -189,6 +189,8 @@ impl<S: EngineSink> AppCore<S> {
     /// Starts the audio part of a take for the armed audio `tracks` (module docs). False when
     /// nothing records (the reason is reported).
     pub(super) fn start_audio_recording(&mut self, tracks: &[DeviceKey]) -> bool {
+        // The engine has one tap: listening lets go of it for the take.
+        self.listen_yield_tap();
         if self.sampling_device().is_some() {
             self.reject("Stop sampling before recording".to_owned());
             return false;

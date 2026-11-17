@@ -17,6 +17,7 @@ mod automation_view;
 mod camera_override;
 mod camera_source;
 mod chord_fit;
+pub mod chord_sheets;
 pub mod chord_symbol;
 mod clip_io;
 mod clip_lanes;
@@ -112,6 +113,9 @@ mod step_tools;
 mod steps;
 mod steps_cmd;
 pub mod stress;
+pub mod tab_data;
+pub mod tab_edit;
+pub mod tab_render;
 pub mod takes;
 mod takes_cmd;
 pub mod theory;
@@ -178,7 +182,7 @@ pub use macros::{
 };
 pub use master_tune::{MASTER_TUNE_MAX_CENTS, tune_ratio};
 pub use meter_view::{CurveFrom, MAX_VIEW_ENTRIES, SpectrumCurve};
-pub use midi_import::{ImportedTrack, MidiImport};
+pub use midi_import::{ImportedTrack, MidiImport, TrackSound};
 pub use midi_map::{
     DEFAULT_SENSITIVITY, Effect, Learner, MAX_MIDI_MAPS, MAX_PORT_NAME_CHARS, MapMode, MapOptions,
     MapState, MidiMapCommand, MidiMapping, MidiPreset, MidiSource, MidiTarget, PAIR_WINDOW_SECONDS,
@@ -322,6 +326,7 @@ pub use song::{
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
+pub use tab_data::{PlainNote, TabData, TabDiagram, TabLyric, TabNoteRef};
 pub use takes::{CompSegment, TakeGroup};
 pub use takes_cmd::{MAX_LINKED_GROUPS, MAX_TAKES};
 pub use validate::Violation;
@@ -962,6 +967,7 @@ pub enum Command {
 /// | meter (`SetMeter`, `SetMeterMap`, `DragMeterMap`) | `SongChanged` |
 /// | key and chords (`SetHarmony`, `DragHarmony`; also undo/redo) | `ViewChanged`, `SongChanged` |
 /// | markers and ranges (`SetMarkers`, `DragMarkers`, `SetRanges`, `DragRanges`; also undo/redo) | `ViewChanged` |
+/// | chord sheets (`SetSheets`; also undo/redo) | `ViewChanged` |
 /// | quantize (`ApplyQuantize`, `QuantizeNotes`) | `SongChanged` |
 /// | note tools (`ApplyNoteTool`) | `SongChanged` |
 /// | the groove library (`SetGroove`, `RenameGroove`, `DeleteGroove`, `ExtractGroove`; also undo/redo) | `ViewChanged`, plus `SongChanged` when a track or clip has a live groove |
@@ -1264,6 +1270,25 @@ pub const MAX_UNDO_STEPS: usize = 1000;
 /// is always kept. 512 MiB.
 pub const MAX_UNDO_BYTES: usize = 512 << 20;
 
+/// The merge key of a batch of clip content and data edits that share one merge id (a tab edit:
+/// the notes and the sidecar of one gesture): the same gesture again merges into one step.
+fn clip_batch_key(commands: &[Command]) -> Option<MergeKey> {
+    let mut id = None;
+    for command in commands {
+        let Command::Song(
+            SongCommand::SetClipContent { merge: Some(m), .. }
+            | SongCommand::SetClipMidi { merge: Some(m), .. },
+        ) = command
+        else {
+            return None;
+        };
+        if *id.get_or_insert(*m) != *m {
+            return None;
+        }
+    }
+    Some(MergeKey::Clip(id?))
+}
+
 /// The merge key of a batch of `SetParam`s that share one merge id (several params moved by one
 /// gesture); `None` for any other batch.
 fn gang_key(commands: &[Command]) -> Option<MergeKey> {
@@ -1498,7 +1523,7 @@ impl Document {
                 merge: Some(id),
                 ..
             } => Some(MergeKey::Param(*id, key.clone(), param.clone())),
-            Command::Batch(commands) => gang_key(commands),
+            Command::Batch(commands) => gang_key(commands).or_else(|| clip_batch_key(commands)),
             Command::Song(
                 SongCommand::SetClipGeometry { merge: Some(m), .. }
                 | SongCommand::SetClipContent { merge: Some(m), .. }
@@ -2174,6 +2199,8 @@ impl Document {
                                     | SongCommand::SetClipGrid { .. }
                                     | SongCommand::SetClipMeta { .. }
                                     | SongCommand::SetClipControllers { .. }
+                                    | SongCommand::SetClipContent { .. }
+                                    | SongCommand::SetClipMidi { .. }
                                     | SongCommand::SetTrackFlags { .. }
                                     | SongCommand::SetClipGeometry { .. }
                                     | SongCommand::SetAudioClip { .. }
@@ -2193,7 +2220,7 @@ impl Document {
                             )
                     ) {
                         return Err(ModelError::BadBatch(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetDelivery, SetWarpMarkers, SetPitchEdits, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipContent, SetClipMidi, SetClipGeometry, SetAudioClip, SetDelivery, SetWarpMarkers, SetPitchEdits, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;

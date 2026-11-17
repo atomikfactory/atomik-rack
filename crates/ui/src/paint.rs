@@ -1214,6 +1214,10 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     let label = crate::granular_panel::granular_label(p.key)
                         .map_or_else(|| autolayout::control_label(p), str::to_string);
                     control_labelled(c, theme, pc, p, value, info.accent, &label);
+                } else if info.spec.chord_wheel.is_some() {
+                    let label = crate::chord_wheel_panel::wheel_label(p.key)
+                        .map_or_else(|| autolayout::control_label(p), str::to_string);
+                    control_labelled(c, theme, pc, p, value, info.accent, &label);
                 } else if info.spec.seq.is_some()
                     || info.spec.arp.is_some()
                     || info.spec.drum_gen.is_some()
@@ -1380,6 +1384,26 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     song,
                     info.accent,
                 );
+            }
+            if let (Some(panel), Some(device)) = (info.spec.chord_wheel, info.device) {
+                crate::chord_wheel_panel::paint_panel(
+                    c,
+                    theme,
+                    &panel,
+                    device,
+                    desc,
+                    &info.player,
+                    info.accent,
+                );
+                if crate::chord_wheel_panel::follows_song(device, desc) {
+                    crate::key_chord_panel::paint_song_tag(
+                        c,
+                        theme,
+                        panel.song_tag,
+                        info.song_key,
+                        info.accent,
+                    );
+                }
             }
             if let (Some(arp), Some(device)) = (info.spec.arp, info.device) {
                 crate::arp_panel::paint_panel(

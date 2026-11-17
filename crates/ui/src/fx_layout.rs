@@ -442,6 +442,7 @@ fn layout(kind: FxKind, desc: &DeviceDescriptor, tuner_on: bool) -> PanelSpec {
         drum_gen: None,
         arp: None,
         key_chord: None,
+        chord_wheel: None,
         modsrc: None,
         wavetable: None,
         fm: None,

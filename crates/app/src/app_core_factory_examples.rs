@@ -1087,4 +1087,5 @@ pub(in crate::app_core) fn write_examples(root: &Path, kits: &[(&str, KitBuilt)]
             }
         }
     }
+    super::exercises::write_exercises(root);
 }

@@ -23,6 +23,11 @@ pub enum AudioFormat {
 /// the app's MIDI import share.
 pub const MIDI_EXTENSIONS: [&str; 2] = ["mid", "midi"];
 
+/// File extensions of a tab or score file (any case) that the browser lists and the app's tab
+/// import reads: Guitar Pro files and MusicXML. (A plain `.xml` is not listed: it is only
+/// MusicXML when its first bytes say so, and the import sniffs it.)
+pub const TAB_EXTENSIONS: [&str; 7] = ["gp3", "gp4", "gp5", "gpx", "gp", "musicxml", "mxl"];
+
 /// What a browser row is. Files that are neither folders, audio, MIDI nor library items are
 /// not rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -33,6 +38,9 @@ pub enum FileKind {
     Audio(AudioFormat),
     /// A standard MIDI file (`.mid`, `.midi`): imported, not a library item.
     Midi,
+    /// A tab or score file (Guitar Pro or MusicXML, see [`TAB_EXTENSIONS`]): imported, not a
+    /// library item.
+    Tab,
     /// A patch item (`.atomikpatch`).
     Patch,
     /// A container item (`.atomikcontainer`).
@@ -50,7 +58,7 @@ pub enum FileKind {
 impl FileKind {
     /// Whether the row is a library item (anything but a folder, an audio file or a MIDI file).
     pub fn is_item(self) -> bool {
-        !matches!(self, Self::Folder | Self::Audio(_) | Self::Midi)
+        !matches!(self, Self::Folder | Self::Audio(_) | Self::Midi | Self::Tab)
     }
 }
 
@@ -75,6 +83,9 @@ pub fn classify(path: &Path, is_dir: bool) -> Option<FileKind> {
     }
     if is(&MIDI_EXTENSIONS) {
         return Some(FileKind::Midi);
+    }
+    if is(&TAB_EXTENSIONS) {
+        return Some(FileKind::Tab);
     }
     let format = if is(&["wav", "wave"]) {
         AudioFormat::Wav
@@ -188,6 +199,31 @@ mod tests {
         assert!(!FileKind::Midi.is_item());
         assert_eq!(audio("a.mid.bak"), None);
         assert_eq!(audio("mid"), None);
+    }
+
+    #[test]
+    fn tab_files_are_rows_of_their_own_kind_and_not_items() {
+        for name in [
+            "a.gp3",
+            "a.GP4",
+            "a.gp5",
+            "a.gpx",
+            "a.gp",
+            "a.musicxml",
+            "A.MXL",
+        ] {
+            assert_eq!(audio(name), Some(FileKind::Tab), "{name}");
+        }
+        for ext in TAB_EXTENSIONS {
+            assert_eq!(
+                classify(Path::new(&format!("f.{ext}")), false),
+                Some(FileKind::Tab)
+            );
+        }
+        assert!(!FileKind::Tab.is_item());
+        // A plain .xml is not listed: only its bytes say whether it is MusicXML.
+        assert_eq!(audio("a.xml"), None);
+        assert_eq!(audio("a.gp6"), None);
     }
 
     #[test]

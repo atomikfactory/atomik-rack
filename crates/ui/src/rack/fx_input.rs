@@ -36,6 +36,7 @@ impl RackView {
         if self.devices[i].spec.seq.is_some()
             || self.devices[i].spec.arp.is_some()
             || self.devices[i].spec.drum_gen.is_some()
+            || self.devices[i].spec.chord_wheel.is_some()
         {
             self.player_meter_feed(i, values);
             return;

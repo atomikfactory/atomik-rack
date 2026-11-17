@@ -123,7 +123,11 @@ toolchain, so the crate is its own workspace and no normal build or test touches
 presets and the library database), [smf_read](../fuzz/fuzz_targets/smf_read.rs),
 [audio_decode](../fuzz/fuzz_targets/audio_decode.rs) (the symphonia decoder, the WAV readers and the
 preview decoder), [instrument_read](../fuzz/fuzz_targets/instrument_read.rs) (the SFZ and SoundFont
-readers) and [ipc_frame](../fuzz/fuzz_targets/ipc_frame.rs) (the sandbox control channel).
+readers), [ipc_frame](../fuzz/fuzz_targets/ipc_frame.rs) (the sandbox control channel),
+[tab_gp](../fuzz/fuzz_targets/tab_gp.rs) (Guitar Pro files of every format),
+[tab_musicxml](../fuzz/fuzz_targets/tab_musicxml.rs) (MusicXML and compressed MusicXML),
+[tab_ascii](../fuzz/fuzz_targets/tab_ascii.rs) (plain-text tab) and
+[chord_sheet](../fuzz/fuzz_targets/chord_sheet.rs) (chords over lyrics and the bracket form).
 To run one:
 
 ```sh
@@ -2213,3 +2217,64 @@ Hand checks with a real camera, by `vision-demo` (`cargo run --release -p atomik
   moment of the pinch; a clockwise turn as you see yourself in a mirror is positive.
 - `record out.json --seconds 10` saves the landmark stream (numbers only, no pictures) for new fixtures.
 - The camera light is on only while `track` or `record` runs.
+
+## Tablature (`atomik-tab`)
+
+The tab crate is pure, so every test is a plain `cargo test -p atomik-tab` (about 3 seconds): unit tests beside
+each module and one integration file per module in `crates/tab/tests`. The open-position shapes of guitar, ukulele,
+banjo, mandolin and bass are asserted by name (C, G, D, A, E, Am, Em, Dm, Fmaj7 on a guitar; C, G, Am, F on a
+re-entrant ukulele; the all-open G on a five-string banjo whose drone string never sounds below its fifth fret).
+Property tests (proptest) cover: every catalogue fret finds its pitch again; fretting places each note on a string
+that sounds it, one note per string, fixed placements never move and unplayable notes are reported; a formatted
+chord name reads back as the same chord; transposing keeps the quality and never writes `E#`, `B#`, `Cb` or `Fb`
+without a key; any text is read as a sheet or as ASCII tab without a panic and within the caps; sheets and
+ASCII tab written by the crate read back to the same chords, notes and techniques. Lyrics and tab in the tests are
+made up.
+
+### Guitar Pro readers
+
+No real Guitar Pro song is in the repository (none may be: they are other people's music). The readers are tested
+with files that the tests make themselves, in `crates/tab/tests/gp_fixtures`:
+
+- `binary.rs` is a small encoder for the binary layout (versions 3.00, 4.00, 5.00 and 5.10) with bars, tracks, beats,
+  chord diagrams, every note and beat effect, repeats and alternative endings, a mix table with a tempo, lyrics
+  and a second voice (5.x). `gpif.rs` builds the XML score with ids handed out as parts are added. `containers.rs`
+  writes a zip (stored or deflated, with a real CRC) and a `.gpx` file system, plain or bit-compressed with a small
+  compressor that finds repeats, so the `BCFZ` decoder runs on literals and on copies.
+- `gp_binary.rs`, `gp_gpif.rs` and the unit tests beside the modules round-trip each technique (hammer-on and
+  pull-off moved to the destination note, the six slide kinds, bends with points in cents, harmonics, ghost, dead,
+  accent, palm mute, let ring, tremolo picking, grace notes, ties, strokes, slap and pop, the tremolo bar), the
+  tunings of a guitar, a four-string bass, a five-string banjo (drone start fret kept) and a seven-string guitar, dotted
+  and tuplet values (a bar of septuplets adds up exactly), meter, key and marker maps, tempo changes (also restated
+  after a repeat jump) and repeat expansion, including alternative endings and a cap on endless repeats.
+- Because the encoder and the reader were written from the same understanding of the format, these tests check
+  the reader's logic and its self-consistency, not agreement with files of the original program. Which layouts
+  and units are assumptions is listed in the Guitar Pro section of ARCHITECTURE.md; a hand check with a file
+  from the real program is the open item.
+- `gp_robust.rs`: every strict prefix of a binary file is an error; every prefix of the XML, zip and `.gpx` forms is
+  read without a panic; thousands of seeded byte flips, random garbage, random bytes behind a valid header (proptest),
+  a `BCFZ` that claims 4 GiB, one whose copies blow up past the cap, a zip bomb (130 MiB of zeros in a deflate stream
+  that says it is 10 bytes), a zip directory that lies, XML nested 20 000 deep or with more than 3 million elements,
+  a bar naming one beat thousands of times, a bar count that lies, and a file over the size cap.
+- `musicxml.rs`: write then read gives back the same score for one fixture that has every technique (palm mute, let
+  ring, bend, pre-bend, bend and release, whammy, vibrato both widths, hammer-on, pull-off, the six slide kinds, the
+  five harmonic kinds, tap, thumb, slap, pop, fade-in, dead, ghost, accent, marcato, staccato, tremolo picking, grace
+  note, strum direction), ties, a triplet, a chord, lyrics with hyphens, chord symbols and diagrams (with fingers and
+  a barre), tempo, meter and key changes and markers, for a guitar (also with a capo and in drop D), a bass, a banjo
+  with its drone, a re-entrant ukulele, a seven-string guitar, a custom tuning with labels, percussion and two parts;
+  without the private field the catalogue tuning is found by its notes; `.mxl` reads like plain XML. Hand-written
+  documents show the reading rules: string 1 is the highest string, `staff-tuning` and `capo` (a fret relative to the
+  capo or counted from the nut), pitch-only parts are fretted (guitar, bass), repeats and endings are expanded, tempo
+  from `sound` and from the metronome, a notation staff beside a tab staff, harmony and lyrics, a hammer-on marked only
+  on its origin. The writer's choices are checked too: a note across a bar line becomes two tied notes, quintuplets
+  and triplets keep their ticks, overlapping notes use a second voice, `divisions` is the smallest exact grid and a
+  rounded one comes with a warning.
+- `musicxml_robust.rs`: every prefix of a written file, thousands of seeded byte flips, deletions and digit insertions,
+  random garbage (with and without a valid start), absurd numbers (divisions 0 and 10^6, huge durations, backups and
+  forwards, string and fret beyond anything, NaN and infinite bends and tempi, time signatures of 0 and 999), more
+  parts and bars than the caps, XML nested 20 000 deep, more than 3 million elements, an entity document, a file over
+  the size cap, a compressed score that inflates past the cap, damaged `.mxl` archives and an archive without a
+  rootfile. After every successful read the invariants of the app hold (`problems()` is empty, `sanitize` is a no-op)
+  and what read is written and read again. The run was repeated with overflow checks on.
+- The fuzz targets tab_gp, tab_musicxml, tab_ascii and chord_sheet are seeded by `scripts/fuzz-seed.sh`; the file
+  seeds are written by the ignored tests `write_fuzz_seeds` (nothing is downloaded).

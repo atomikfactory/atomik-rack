@@ -84,6 +84,38 @@ The hand tracking crate (`atomik-vision`) added three groups of dependencies; th
   configured as the update check is: HTTPS only, no redirect, timeouts), `zune-jpeg`, `clap` and `ctrlc` (the demo
   tool only).
 
+The Guitar Pro readers of `atomik-tab` added two dependencies, both declared once in the workspace and used by that
+crate only. **`quick-xml` 0.41** (`MIT`, no dependencies besides `memchr`, which the workspace already builds) reads the
+XML score (`score.gpif`) of `.gpx` and `.gp` files; the file is read once into a capped tree of at most 3 million
+elements and 64 levels, entities other than the five predefined ones are never expanded, and the crate was already in
+`Cargo.lock` (through `wayland-scanner` on Linux). The alternatives were `roxmltree` (a whole-document tree with no
+element cap) and a hand-written parser (an XML reader is where hostile input hurts most). **`flate2` 1.1** with
+`default-features = false` and the `rust_backend` feature (`MIT OR Apache-2.0`, over `miniz_oxide`, pure Rust) inflates
+the entries of the zip that a `.gp` file is; `png` already pulls the same version of `flate2`. The zip container
+itself is read by about 100 lines in `crates/tab/src/gp/zip.rs` (the central directory, stored and deflated entries,
+refusing everything else): the `zip` crate would add a writer, encryption, several compression methods and a handful
+of crates for one entry of one file, and every extra method is more code that reads hostile input. The deflate stream
+is read through a size limit, so a small entry that inflates to gigabytes is cut at the cap. The `.gpx` container
+(`BCFZ` bit-level decompression and the `BCFS` sector file system) needs no dependency. `cargo deny check` passes with
+the licences the policy already allows.
+
+The MusicXML reader and writer reuse both: the same capped XML tree reads the document, the zip reader opens an `.mxl`
+(through `META-INF/container.xml`), and `flate2` also deflates the two entries of the `.mxl` the writer makes (a 100-line
+zip writer in `crates/tab/src/musicxml/zipw.rs`, the CRC from `flate2::Crc`). No new crate.
+
+The tab and chord sheet printouts (`crates/tab/src/pdf/`) added **`pdf-writer` 0.15** (`MIT OR Apache-2.0`, safe Rust,
+used by that crate only. It pulls `bitflags`, `itoa` and `memchr` (all already built) and `ryu` (`Apache-2.0 OR
+BSL-1.0`, a float formatter, new in `Cargo.lock`). It writes the PDF objects, the cross-reference table and the content
+stream operators, so the program does not hand-roll the file structure; it does no layout and no fonts. The
+alternatives were a hand-written writer (the format is small, but the escaping and the xref offsets are the kind of
+thing that breaks a viewer on one machine) and `krilla` or `printpdf` (high-level crates that bring a font stack, image
+codecs and subsetting, far more than lines and text need). **No font is embedded**: the printouts use the standard
+Helvetica, Helvetica-Bold and Courier fonts of the PDF format, which every viewer and printer has. The repository ships
+no font file (the interface draws with the fonts of the system), and this keeps a ten-page tab at a few tens of
+kilobytes. The cost is that text outside Latin-1 prints as `?`, which the export reports. Content streams are deflated
+with `flate2` (already a dependency of the crate). `cargo deny check licenses bans sources` passes with the licences
+the policy already allows.
+
 ## Model files
 
 The hand tracking models are not part of the installer, the repository or `Cargo.lock`. The user downloads them once

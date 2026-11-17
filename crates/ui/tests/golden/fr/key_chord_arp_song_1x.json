@@ -179,7 +179,7 @@
 {"fill":{"rrect":[45.00,191.00,94.00,204.00,3.00]},"brush":{"gradient":{"linear":[0.00,191.00,0.00,204.00],"stops":[[0.00,"#4b4f56ff"],[1.00,"#3b4047ff"]]}}},
 {"text":"CONTOURNER","at":[69.50,201.00],"size":7.20,"weight":700,"align":"center","color":"#ece8e1ff","spacing":0.30},
 {"fill":{"circle":[50.50,196.50,2.20]},"brush":"#26292dff"},
-{"text":"Key &","at":[26.00,25.00],"size":13.00,"weight":700,"align":"start","color":"#ece8e1ff"},
+{"text":"Tonalité &","at":[26.00,25.00],"size":13.00,"weight":700,"align":"start","color":"#ece8e1ff"},
 {"text":"Accord","at":[26.00,39.00],"size":13.00,"weight":700,"align":"start","color":"#ece8e1ff"},
 {"text":"KEY & CHORD","at":[26.00,50.00],"size":6.50,"weight":600,"align":"start","color":"#8f96a0ff","spacing":0.90},
 {"stroke":{"path":"M45.00 211.50 L42.00 215.00 L45.00 218.50 "},"width":1.40,"cap":"round","join":"round","brush":"#8f96a0ff"},

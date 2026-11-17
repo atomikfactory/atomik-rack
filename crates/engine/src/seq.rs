@@ -813,7 +813,18 @@ pub enum TransportCommand {
         /// Gain.
         gain: f32,
     },
+    /// Practice speed: the song plays at this factor of its tempo (`MIN_SPEED..=MAX_SPEED`, 1.0 =
+    /// as written; out-of-range values are clamped, a non-finite one is 1.0). A runtime setting of
+    /// the live transport, never part of a bounce: the position keeps its musical place, notes and
+    /// the click follow the slower tempo, devices see the scaled tempo, and audio clips are
+    /// silent while the factor is not 1.0. Ignored while following an external clock.
+    Speed(f32),
 }
+
+/// Slowest practice speed ([`TransportCommand::Speed`]).
+pub const MIN_SPEED: f32 = 0.25;
+/// Fastest practice speed ([`TransportCommand::Speed`]).
+pub const MAX_SPEED: f32 = 1.5;
 
 /// A count-in, computed off the audio thread (see [`SongSnapshot::pre_roll`]) and sent as plain
 /// integers: the audio thread only counts frames down.

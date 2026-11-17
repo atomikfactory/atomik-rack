@@ -9,6 +9,165 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A guitar tab user guide.** [docs/TAB.md](docs/TAB.md) walks through the instruments and tunings, what the Guitar
+  Pro, MusicXML, ASCII tab and chord sheet readers keep and drop, the three exports and the Latin-1 limit of PDFs, the
+  Tab Editor, the Chord Sheet pane, practice (with the limits of listen and grade), the fretboard, the Chord Trainer,
+  Plucked Strings and the exercises, with a troubleshooting list and a table of the commands. A test checks that table
+  against the command registry and the keyboard reference. The QA server has a guitar tab recipe and a session test
+  that imports a MusicXML tab, opens the Tab Editor, exports PDF and MusicXML, reads the MusicXML back and bounces it.
+- **Tab files play Plucked Strings.** Importing a Guitar Pro or MusicXML file now gives every fretted track a
+  Plucked Strings device with the factory patch of its instrument already loaded (Steel Acoustic for a guitar,
+  Electric Bass Finger for a bass, Banjo, Ukulele, Mandolin, 12-String, Bouzouki, Dobro, Nylon Classical for a lute),
+  in the same undo step as the tracks; before, they played the poly synth. A drum track keeps the plain instrument.
+  The import takes a sound per track (`MidiImport.sounds`), and a MIDI import is unchanged. Tests bounce a clip with a
+  palm mute, a harmonic, a dead note and a bend through the device and check that each is heard, and that the
+  technique codes the model writes are the ones the device reads.
+- **Tab exercises in the factory library.** The Projects section has an Exercises folder of eleven practice songs
+  for the Tab Editor, made up for the library: C major and A minor pentatonic scales, fingerpicking arpeggios and G C
+  D Em chord changes for guitar, a technique sampler (palm mutes, dead notes, hammer-ons, slides, a bend, harmonics,
+  let ring, accents), bass root-and-fifth lines, banjo forward, backward and alternating-thumb rolls, ukulele strum
+  patterns and C Am F G changes, and a mandolin tremolo study and scale. Each opens as a new song with the clip on the
+  right instrument and patch, chord diagrams and a chord lane where it has chords, and a chord sheet to follow.
+- **Tab and chord sheets as PDF.** File > Export > Export Tab as PDF... prints the selected note clip, or the song, as
+  a tab: a header with the title and credits, each track's tuning and capo, a legend of the chords it uses, then
+  systems of bars fitted to the page with fret numbers on one line per string (a banjo's drone, a bass's four, the
+  seven and eight of the extended guitars), the techniques the editor draws (bends with their amount, slides,
+  hammer-ons and pull-offs, harmonics, palm mute and let ring spans, dead and ghost notes, vibrato, tapping),
+  rhythm stems and beams, bar numbers, time signatures, tempo, section markers, chord names with small diagrams
+  above, lyrics below and a page number on every page. Export Chord Sheet as PDF... prints the chords over the lyrics
+  (each chord over the word it belongs to, long lines wrapped), with the sections and comments and a strip of
+  diagrams for guitar; while the Chord Sheet pane is open it prints the sheet as shown there, with its
+  transposition, capo and instrument. The paper is Letter in the United States and Canada and A4 elsewhere. The
+  files use the standard PDF fonts (characters outside Latin-1 print as `?`, and the export says how many) and the
+  same song always gives the same file. The QA server's `session_tab` exports both with `format: pdf`.
+- **A Tab Editor.** View > Editors > Tab Editor shows a note clip as tablature, one line per string for any
+  instrument of the catalogue (guitars of 6 to 8 strings, bass, ukulele, banjo with its short drone string,
+  mandolin and the rest), with fret numbers on the lines, the rhythm (stems, beams, flags) under the staff, bar
+  lines and numbers, the time signature, the tempo, section markers, chord names with small diagrams above and
+  lyrics below, and it follows the playhead while the song plays. Techniques are drawn: bends with their amount,
+  slides, hammer-ons and pull-offs, harmonics, palm mute and let ring spans, dead and ghost notes, vibrato, tap,
+  slap and accents. Click a string to put the cursor there and type the fret: two digits typed together make one
+  fret (`1` then `2` is 12) and one undo step; the arrows move the cursor (Left and Right by the note value, Up
+  and Down between strings, `Ctrl+Left` and `Ctrl+Right` by bar), `W H Q E S T X` set the note value from a whole
+  note to a sixty-fourth, `.` makes it dotted and `Y` a triplet, Delete removes the note, and a typed note is
+  heard. A clip with no tab yet is shown fretted automatically (a track named Bass on a bass, Banjo on a banjo)
+  and keeps its tab from the first edit. View > Editors > Switch Piano Roll and Tab (`edit.toggle_tab_or_piano_roll`)
+  hands the open clip from one editor to the other. The chord diagram is a reusable widget for any string count.
+- **Editing tools in the Tab Editor.** A technique toolbar in the pane's top bar toggles hammer-on and pull-off
+  (on the destination note), slides (legato, shift, in, out), bends (a quarter tone to two tones, with release and
+  pre-bend), vibrato, harmonics, palm mute, let ring, dead, ghost, accent and tap on the note under the cursor or the
+  selection; every technique has a key (`Shift+H` hammer-on, `B` bend, `M` palm mute and so on, see the keyboard
+  reference) and a right-click menu on the staff. Shift with the arrows selects a range (whole columns, or a
+  rectangle with Up and Down), a drag on the staff selects too, `Ctrl+A` takes the clip; copy, cut and paste keep
+  strings, frets and techniques and paste at the cursor. `Alt+Up` and `Alt+Down` move notes to the next string that
+  plays the same pitch (a banjo's drone and the length of the neck are respected), `Ctrl+Up` and `Ctrl+Down`
+  transpose by a semitone (with Shift an octave) and keep the notes playable, and Re-fret at Position... places the
+  selection at a hand position, at the lowest frets or automatically. Clicking the instrument name in the top bar
+  (or Tab: Instrument, Tuning and Capo) opens a panel with the 24 instruments by family, their tuning presets,
+  per-string pitches, a capo from 0 to 12 and the choice between keeping the pitches (the notes are fretted again)
+  and keeping the frets (the pitches change). Dragging over the bar ruler sets the song loop to the bars dragged
+  over; a click still moves the playhead. A fret digit typed after a long pause no longer joins the digit before it.
+- **A Chord Sheet pane.** View > Editors > Chord Sheet shows the song's chord sheets (chords over lyrics): the title,
+  key and capo, section headers, comments, chord names over the syllables they belong to (names that would touch are
+  pushed apart and the lyric gaps with them), chord-only lines, and lines wrapped at the pane width with every chord
+  kept with its words; the text size is a control. A strip of diagrams at the top holds every chord of the sheet for
+  the instrument you pick (any of the catalogue: guitar, ukulele, banjo, mandolin and the rest, with their tunings),
+  and a click on a chord opens a larger diagram whose alternative fingerings you cycle with `<` `>`. Transpose by
+  semitones, show the shapes for a capo and choose sharps or flats without touching the song; Apply to Sheet writes
+  what is shown into the sheet (one undo step). A sheet linked to bars scrolls with the playing song, any other
+  scrolls at a speed in lines per minute with a play and pause button. Edit Text turns the sheet into a text field
+  (Ctrl+Enter applies, Esc leaves); New Sheet, Import..., Rename and Delete work from the pane, each one undo step.
+  The pane's commands (transpose, capo, sharps or flats, text size, autoscroll, new, rename, delete, edit as text,
+  apply transpose) are in the command palette.
+- **A practice bar and a practice speed.** The Tab Editor and the Chord Sheet panes get a row of practice controls
+  under their toolbar: loop the selected bars (the bars of the linked lines in the sheet), the metronome click, a
+  count-in of none, one or two bars before a plain playback, the speed chips 50, 75 and 100 % with a slider from 25 to
+  150 %, and a speed trainer that starts at a speed and raises it by a step after a number of passes of the loop, up
+  to a target, showing the pass count. The speed slows the engine's tempo while it plays: notes, the click and
+  the plugins' tempo follow it and the playhead keeps its place when it changes; audio clips are muted while it is
+  not 100 %. It is not saved with the project, is not applied to a bounce or an export, and is back to 100 % when a
+  project is opened or created. Transport > Practice and the command palette have every control (`practice.speed`,
+  `practice.speed_up`, `practice.speed_down`, `practice.count_in`, `practice.trainer`, `practice.loop_selection`
+  and the trainer's values).
+- **Listen and grade.** The practice bar's Listen switch hears the instrument on an audio input (a single channel or a
+  stereo pair of the interface, chosen with the input chip) and grades every pass of the loop against the notes of the
+  open Tab Editor clip: each note is a hit, early, late, wrong or missed within 80 ms (of wall-clock time, so the window
+  follows the practice speed), a strum is matched as a chord from its chroma, and extra notes are counted. The notes of
+  the tab take the colour of their verdict with a small badge, the sounding dots of the fretboard do too, and the bar
+  shows the accuracy of the last pass, the notes right in a row and the latest passes as bars; nothing is saved with the
+  project and Clear forgets it. The speed trainer asks for a clean pass (90 % by default, settable) while listening is
+  on. Latency comes from the audio settings plus a manual offset that Latency calibrates by playing along the click.
+  Transport > Practice and the command palette have `practice.listen`, `listen_input`, `listen_calibrate`,
+  `listen_clear`, `listen_offset` and `listen_threshold`. The tracker is `atomik_dsp::listen`, the grader is
+  `atomik_tab::grade`.
+- **A Chord Trainer.** View > Editors > Chord Trainer opens a pane of drills for changing between chords. Pick the
+  instrument, tuning and capo (any instrument of the catalogue, banjo, ukulele, mandolin and bass included), then
+  the chords: the diatonic triads or sevenths of a key, a list typed by name (words that are not chords are flagged)
+  or the chords of the song (chord lane and chord sheets). Each chord shows its diagram in a strip; click a diagram
+  to select it and again, or use the arrows, to cycle through its fingerings. The timed drill shows the chord to play
+  and the next one large, clicks a beat through the engine's preview voice (so it works with the song stopped, never
+  starts the transport and leaves the transport's click alone) and moves on every N beats at a BPM, in order, at
+  random or on one pair back and forth, counting the changes, the changes per minute and the session time. With
+  Timed + Listen the audio input checks that each chord is heard from its beat to the end of its window; with
+  Listen the drill waits and moves on when the chord is heard (Skip gives one up). The input is the practice bar's
+  and uses the same chroma tracker and chord match as listen and grade. The best changes per minute (at a hit rate
+  of 75 % or more) and the best hit rate per chord pair are kept in the window state, `ui-state.json`, never in the
+  project, and shown in a table with a Reset button. Every control is a command (`editor.trainer_*`, no default
+  keys); the pane is not tied to a clip and changes nothing in the song.
+- **A fretboard under the Tab Editor staff.** A neck for the clip's tuning, any string count from 1 to 12 with the high
+  string on top as in tab, frets spaced logarithmically and fitted to the width, inlays with the pair at the octave,
+  the string names, the capo as a bar (a partial capo covers only its strings) and a short string such as the banjo's
+  drone starting at its own fret with a peg. While the song plays it shows the notes sounding at the playhead on their
+  string and fret and ghosts the next notes or chord; stopped, it shows the notes under the tab cursor. The dots say
+  the note names, the fret numbers or the intervals to the chord's root, the voicing of the chord at the playhead can
+  be drawn under them (with its finger numbers on the notes it fingers), and the neck can be mirrored for a
+  left-handed player. View > Editors > Fretboard shows or hides it, Detach Fretboard moves it to a window of its own
+  (closing the window puts it back), and Fretboard Options holds the three choices, which are remembered
+  (`view.toggle_fretboard`, `view.detach_fretboard`, `view.fretboard_left_handed`, `view.fretboard_voicing`,
+  `view.fretboard_labels`). The MCP session tools take `fretboard` as a window.
+- **Guitar tab import and export.** File > Import > Import Tab or Score File... reads a Guitar Pro file (`.gp3`, `.gp4`,
+  `.gp5`, `.gpx`, `.gp`) or a MusicXML file (`.musicxml`, `.xml`, `.mxl`) and makes one track per part, each with a
+  note clip that keeps the tab: the string and fret of every note, hammer-ons, pull-offs, slides, bends, vibrato,
+  palm mutes, harmonics and the other techniques, the tuning and capo of the instrument (guitars, basses, ukuleles,
+  banjos and the rest of the catalogue) and its chord diagrams and lyrics. The bends, slides and vibrato are
+  also played as note expression. Import Tab or Score as Song... starts at the beginning and takes the file's tempo
+  map, time signatures, section markers, chords and key as well. The file browser lists the tab files, a double click
+  imports one, and a tab file dropped on the window imports as new tracks at the playhead. Import Chord Sheet...
+  reads a chords-over-lyrics or bracket-form text file into the song's chord sheets. File > Export > Export Tab as
+  MusicXML... (a `.mxl` name writes the compressed form), Export Tab as Text... (ASCII tab) and Export Chord Sheet
+  as Text... write the selected clip, or the song when no clip is selected. A clip without tab is placed on the
+  neck automatically (a track named Bass on a bass, and so on). What the file holds that Atomik Rack cannot keep is
+  listed after the message. The imported tracks play the poly synth for now. The QA server has `session_tab`.
+- **Plucked Strings.** A new instrument, `atomik.plucked`, a physical model of a plucked string for guitars,
+  basses, banjos, mandolins and harps. Each key plucks a waveguide string (an extended Karplus-Strong loop with a
+  tuned fractional delay, loop damping that follows the pitch and a dispersion for stiffness) with a pick you set
+  by position and hardness, through one of ten instrument bodies (steel, nylon, electric, bass, upright, ukulele,
+  banjo, mandolin, resonator, harp). Notes are within a cent of their key over MIDI 28 to 100 at 44.1, 48 and
+  96 kHz. It has a decay, a finger-mute or let-ring release, a palm mute, a unison or octave course (mandolin,
+  12-string), a stereo spread and velocity sensitivity, and it reads the per-note expression of its notes:
+  tuning glides the pitch (bends, slides and vibrato do not click), slide is the palm-mute amount, and pressure
+  selects a harmonic or a dead note. Sixteen voices, the same key struck again plucks its own string. It has a
+  panel of six sections (string, pluck, course, body, output, play) and fourteen factory patches (steel and
+  nylon guitars, clean and muted electric, two basses, an upright, ukulele, banjo, mandolin, 12-string, bouzouki,
+  dobro and a harp), with a lookup from an instrument id of the guitar-tab catalogue to its patch.
+- **Chord Wheel, a ninth note player (`atomik.chord-wheel`, "Players").** The fastest way to get a chord
+  progression idea and hear it. Eight chord slots play in time with the transport through eight rhythm styles
+  (sustain, pulses, offbeat, push, strum, broken, 3-3-2) with a bass, strum, accent and humanize, voice-led around
+  a register, in transport, held or step mode, and following the song key; it has the common player BYPASS and play
+  button and stacks with the other players. The progressions come from a mood-based generator
+  (`atomik_core::progression`: twelve moods, spice, locks, ranked next-chord suggestions). Track > Players and the
+  rack menu get Generate Progression (a new seed each press, locked slots kept, one undo step), Send Progression to
+  Chord Lane (from the left locator, repeated to fill the loop when it is on, transposed to the song key, replacing
+  the chords of that span, setting the song key when there is none) and Send Progression to Clip. The panel has the
+  wheel, spelled like a circle of fifths (C G D A E B F# Db Ab Eb Bb F, the minors and diminished chords to match;
+  the cards, the readout and the wedge menu spell the chords for the home key): click a wedge to set the slot and
+  hear it, right-click for qualities and slash basses, Shift-click for the key, SUGGEST to tint and rank the next
+  chord; eight progression cards with padlocks and lengths; and every control. Sixteen factory patches (Four Chord
+  Pop, Sad Ballad, Two-Five-One, Neo Soul Loop, Lo-fi Sevenths, Epic Minor, Andalusian Fall, Twelve-Bar Blues,
+  Dorian Vamp, Dreamy Lydian, Cinematic Mediants, Anthem Rise, Canon Steps, Gospel Plagal, Minor Pulse and Broken
+  Ballad) are in the Factory root under the category Chords, and the browser's Space preview plays a patch of a
+  player through a built-in synth for one pass of its progression (up to 16 seconds). The Factory root now holds
+  99 patches. Format unchanged (45).
 - **A MONO button on the master strip of the mixer.** One click folds what you hear to mono, `(L + R) / 2` on both
   sides, and a second click brings the stereo back; the button is lit while it is on, so it is not forgotten. It is
   the mono switch of the translation lens (the same command, `mixer.lens_mono`, so the menu, the command palette and
