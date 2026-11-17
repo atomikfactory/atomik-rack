@@ -1270,6 +1270,25 @@ pub const MAX_UNDO_STEPS: usize = 1000;
 /// is always kept. 512 MiB.
 pub const MAX_UNDO_BYTES: usize = 512 << 20;
 
+/// The merge key of a batch of clip content and data edits that share one merge id (a tab edit:
+/// the notes and the sidecar of one gesture): the same gesture again merges into one step.
+fn clip_batch_key(commands: &[Command]) -> Option<MergeKey> {
+    let mut id = None;
+    for command in commands {
+        let Command::Song(
+            SongCommand::SetClipContent { merge: Some(m), .. }
+            | SongCommand::SetClipMidi { merge: Some(m), .. },
+        ) = command
+        else {
+            return None;
+        };
+        if *id.get_or_insert(*m) != *m {
+            return None;
+        }
+    }
+    Some(MergeKey::Clip(id?))
+}
+
 /// The merge key of a batch of `SetParam`s that share one merge id (several params moved by one
 /// gesture); `None` for any other batch.
 fn gang_key(commands: &[Command]) -> Option<MergeKey> {
@@ -1504,7 +1523,7 @@ impl Document {
                 merge: Some(id),
                 ..
             } => Some(MergeKey::Param(*id, key.clone(), param.clone())),
-            Command::Batch(commands) => gang_key(commands),
+            Command::Batch(commands) => gang_key(commands).or_else(|| clip_batch_key(commands)),
             Command::Song(
                 SongCommand::SetClipGeometry { merge: Some(m), .. }
                 | SongCommand::SetClipContent { merge: Some(m), .. }

@@ -429,6 +429,26 @@ pub fn set_fret(
     w.finish(&touched, Vec::new())
 }
 
+/// Sets the length of the notes in `selection` to `length` ticks (their techniques are rendered
+/// again, so a staccato or let-ring note keeps its look).
+pub fn set_length(
+    notes: &[Note],
+    midi: &MidiData,
+    selection: &[(i64, u8)],
+    length: i64,
+) -> Result<TabEdit, TabEditError> {
+    let mut w = Work::open(notes, midi)?;
+    check_new_note(0, length, 1.0)?;
+    let sel = w.selection(selection)?;
+    w.unrender(&sel);
+    for &(tick, key) in &sel {
+        if let Some(i) = w.note_index(tick, key) {
+            w.notes[i].length = length;
+        }
+    }
+    w.finish(&sel, Vec::new())
+}
+
 /// Removes the note at `tick` on `string` and its entry.
 pub fn clear_fret(
     notes: &[Note],

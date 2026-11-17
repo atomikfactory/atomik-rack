@@ -653,3 +653,68 @@ fn a_command_batch_of_a_whole_tab_session_survives_undo_redo_and_save() {
     assert_eq!(save_project(d.doc()), saved);
     let _: Option<Command> = None;
 }
+
+#[test]
+fn set_length_resizes_notes_keeps_techniques_and_is_one_undo_step() {
+    let reg = registry();
+    let (notes, mut midi) = notes_and_data();
+    if let Some(tab) = midi.tab.as_mut() {
+        tab.notes[0].tech.flags.insert(TechFlags::STACCATO);
+    }
+    let mut d = doc_with(&reg, notes.clone(), midi.clone());
+    let edit = tab_edit::set_length(&notes, &midi, &[(0, 64), (PPQ, 67)], PPQ / 2).unwrap();
+    run(&mut d, &reg, edit);
+    let (after, data) = clip_of(&d);
+    assert_eq!(after[1].length, PPQ / 2, "a plain note takes the length");
+    assert!(
+        after[0].length <= PPQ / 2,
+        "a staccato note is rendered from the new length: {}",
+        after[0].length
+    );
+    assert_eq!(after[2].length, PPQ, "notes outside the selection stay");
+    assert!(
+        data.tab
+            .as_ref()
+            .unwrap()
+            .note_of(0, 64)
+            .unwrap()
+            .tech
+            .flags
+            .contains(TechFlags::STACCATO)
+    );
+    d.undo();
+    assert_eq!(clip_of(&d).0, notes);
+    // A note the clip lacks and a zero length are refused.
+    assert!(tab_edit::set_length(&notes, &midi, &[(5, 64)], PPQ).is_err());
+    assert!(tab_edit::set_length(&notes, &midi, &[(0, 64)], 0).is_err());
+}
+
+#[test]
+fn tab_edits_of_one_gesture_merge_into_one_undo_step() {
+    let reg = registry();
+    let (notes, midi) = notes_and_data();
+    let mut d = doc_with(&reg, notes.clone(), midi.clone());
+    let first = tab_edit::set_fret(&notes, &midi, (4 * PPQ, 2, 1), (PPQ, 0.8)).unwrap();
+    let (n1, m1) = (first.notes.clone(), first.midi.clone());
+    d.apply(first.into_command(ClipId(1), Some(9)), &reg)
+        .unwrap();
+    let second = tab_edit::set_fret(&n1, &m1, (4 * PPQ, 2, 12), (PPQ, 0.8)).unwrap();
+    d.apply(second.into_command(ClipId(1), Some(9)), &reg)
+        .unwrap();
+    d.end_merge();
+    let (after, data) = clip_of(&d);
+    assert_eq!(after.len(), 4);
+    assert_eq!(
+        data.tab
+            .as_ref()
+            .unwrap()
+            .note_on_string(4 * PPQ, 2)
+            .unwrap()
+            .fret,
+        12
+    );
+    assert!(d.undo().is_some());
+    assert_eq!(clip_of(&d).0, notes, "both edits undo together");
+    assert!(d.redo().is_some());
+    assert_eq!(clip_of(&d).0.len(), 4);
+}
