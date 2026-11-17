@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A Tab Editor.** View > Editors > Tab Editor shows a note clip as tablature, one line per string for any
+  instrument of the catalogue (guitars of 6 to 8 strings, bass, ukulele, banjo with its short drone string,
+  mandolin and the rest), with fret numbers on the lines, the rhythm (stems, beams, flags) under the staff, bar
+  lines and numbers, the time signature, the tempo, section markers, chord names with small diagrams above and
+  lyrics below, and it follows the playhead while the song plays. Techniques are drawn: bends with their amount,
+  slides, hammer-ons and pull-offs, harmonics, palm mute and let ring spans, dead and ghost notes, vibrato, tap,
+  slap and accents. Click a string to put the cursor there and type the fret: two digits typed together make one
+  fret (`1` then `2` is 12) and one undo step; the arrows move the cursor (Left and Right by the note value, Up
+  and Down between strings, `Ctrl+Left` and `Ctrl+Right` by bar), `W H Q E S T X` set the note value from a whole
+  note to a sixty-fourth, `.` makes it dotted and `Y` a triplet, Delete removes the note, and a typed note is
+  heard. A clip with no tab yet is shown fretted automatically (a track named Bass on a bass, Banjo on a banjo)
+  and keeps its tab from the first edit. Edit > Switch Piano Roll and Tab (`edit.toggle_tab_or_piano_roll`)
+  hands the open clip from one editor to the other. The chord diagram is a reusable widget for any string count.
 - **Guitar tab import and export.** File > Import > Import Tab or Score File... reads a Guitar Pro file (`.gp3`, `.gp4`,
   `.gp5`, `.gpx`, `.gp`) or a MusicXML file (`.musicxml`, `.xml`, `.mxl`) and makes one track per part, each with a
   note clip that keeps the tab: the string and fret of every note, hammer-ons, pull-offs, slides, bends, vibrato,

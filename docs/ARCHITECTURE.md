@@ -58,7 +58,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-plugin-hostd` | [crates/plugin-hostd](../crates/plugin-hostd) | core, device-sdk, plugin-host, plugin-ipc, plugin-clap, plugin-vst3 (winit) | `tests/support/owner_window.rs` (a test helper) | The sandbox child (bin `atomik-plugin-host`): hosts one plugin instance, or a group of them (`--group`) |
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
-| `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), devices (the headphone panel draws the device's own curve snapshot), model | none | Platform-independent views, widgets, display lists, theme |
+| `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), devices (the headphone panel draws the device's own curve snapshot), model, tab (the chord diagram and the tab editor draw its voicings and techniques) | none | Platform-independent views, widgets, display lists, theme |
 | `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, tab, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
@@ -5197,7 +5197,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (582) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (595) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -7209,6 +7209,54 @@ technique, for a guitar with and without a capo, a bass, a banjo with its drone,
 guitar, a custom tuning, percussion and several parts) and the hand-written documents prove the reading rules above;
 no file from another program was available. The mappings the format leaves open (bend with release, slides, harmonic
 kinds, palm mute, let ring, vibrato) are the open item for a hand check with files from other programs.
+
+## 6w. The Tab Editor and the chord diagram
+
+`Pane::TabEditor` shows [`TabEditorView`](../crates/ui/src/tab_editor.rs) in the lower pane in place of the
+arrangement, as the piano roll does (`AppCore::tab_editor`, `tab_clip`, `app_core_tab_editor.rs`). View > Editors > Tab
+Editor (`view.toggle_tab_editor`) opens it on the clip the piano roll shows, else the first selected note clip, else
+the first note clip of the selected track, else the song's first; `edit.toggle_tab_or_piano_roll` (Edit and View >
+Editors, no default key) hands the open clip from one editor to the other. The editors exclude each other:
+`close_piano_roll` also closes the tab editor, so every other editor that closes the roll closes it too.
+
+- **The clip.** The view reads the clip and builds a `Work`: the notes and the `MidiData` with the tab sidecar present.
+  A clip without a sidecar, or with notes that lack an entry, is fretted by `tab_edit::start_tab` or `auto_fret_clip`
+  on the instrument `atomik_tab::instrument::instrument_for_name` suggests from the track's name (one place, shared
+  with the tab export); showing never writes, the first edit commits those positions together with the edit.
+- **Edits.** Every edit is a `tab_edit` operation turned into one `Command::Batch` of `SetClipContent` and
+  `SetClipMidi` by `TabEdit::into_command`. A batch of those two commands that carries one merge id merges in the
+  history (`MergeKey::Clip`, `clip_batch_key` in the model), so two digits typed together are one undo step.
+  `tab_edit::set_length` (new) resizes notes for the note value keys.
+- **Cursor and typing.** The cursor is a content tick and a string (0 = top line). Left and Right step on the grid of
+  the entry's note value (`NoteValue`: whole to 64th, dotted or triplet), Up and Down change string, the bar commands
+  jump a bar. A digit types the fret (`FretBuffer` in `tab_editor/entry.rs`): a second digit within 0.6 s on the same
+  cell, when the result is still on the neck, extends the first. The window starts at the first frame tick after the
+  digit (`TabEditorView::tick`, called every frame by `Shell::frame_at`), because key events carry no time; the
+  merged step ends with `UiAction::EndMerge` when it runs out. A fret the string cannot play (below a short string's
+  first fret, past the neck) is refused with a status line. A typed note is auditioned (`UiAction::Audition`, released
+  by the clock or when the editor closes).
+- **Keys.** The pane is the `tab` keymap context (`Context::Tab`, default keys in both profiles): arrows, `Ctrl+Left`
+  and `Ctrl+Right` by bar, `W H Q E S T X` for whole to sixty-fourth (`editor.tab_duration` with an argument), `.`
+  dotted, `Y` triplet, `=` and `-` zoom; digits are not commands but raw keys the view reads. Delete and Backspace are
+  `edit.delete`, `sequencer.follow` toggles follow, `editor.tab_zoom_in` and `editor.tab_zoom_out` zoom.
+  Only `.` overlaps a global binding (next marker); the pane wins inside itself.
+- **Drawing** (`tab_editor/paint.rs`). One line per string, string names, the TAB clef and the time signature in the
+  gutter, bar lines, bar numbers, tempo and section markers in the ruler, chord diagrams and names above the staff,
+  lyrics below, the playhead, the cursor. Fret numbers sit on the lines: dead `x`, ghost `(5)`, harmonic `<5>`. The
+  symbols: hammer-on and pull-off arcs (`H`, `P`) from the previous note on the string, slides (legato and shift
+  between notes, in and out lines), bend arrows with the amount and releases, vibrato, `P.M.` and `let ring` spans
+  with dashed lines, tap, slap, pop, thumb, accent and staccato marks, tremolo slashes, `A.H.`, `P.H.`, `T.H.` and
+  `S.H.` over artificial harmonics. Under the staff the rhythm: a stem per onset, flags and beams from the length of the
+  notes (a column's value is the longest note cut at the next onset), dots and triplet marks. Rests are not drawn
+  (a gap shows as space). Notes no string can play are listed under the staff as `?` and their pitch.
+- **Following.** `set_playhead` pages the view while the transport plays and follow is on.
+- **Seams for the next phases.** `TabEditorView::selected` (range selection), the free part of the top bar (technique
+  toolbar), `Work` and the `emit` helper (any new edit), the staff rectangle (context menu), `TopButton`.
+- **The widget** ([chord_diagram.rs](../crates/ui/src/chord_diagram.rs)): `paint_diagram(canvas, theme, area, &Diagram)`
+  draws a `Voicing` for any string count (1 to 12): five fret rows from `base_fret`, a thick nut at the first fret and
+  an `Nfr` label elsewhere, open and muted markers, dots with finger numbers, a barre bar, and a short string (the
+  banjo drone) that starts at its own fret (`Diagram::start_frets_of(tuning, capo)`). `diagram_height(width, titled)`
+  says how tall a diagram of that width is. The Chord Sheet pane and the practice phases reuse it.
 
 ## 7. The UI crate
 
