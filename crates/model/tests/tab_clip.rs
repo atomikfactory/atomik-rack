@@ -718,3 +718,175 @@ fn tab_edits_of_one_gesture_merge_into_one_undo_step() {
     assert!(d.redo().is_some());
     assert_eq!(clip_of(&d).0.len(), 4);
 }
+
+fn banjo_clip(string: u8, fret: u8) -> (Vec<Note>, MidiData) {
+    let mut tab = TabData::for_instrument("banjo5").expect("catalogue");
+    let key = tab
+        .tuning
+        .pitch(usize::from(string), fret, tab.capo)
+        .expect("pitch");
+    tab.notes = vec![TabNoteRef::new(0, key, string, fret)];
+    (
+        vec![Note::new(0, PPQ, key, 0.8)],
+        MidiData {
+            tab: Some(tab),
+            ..MidiData::default()
+        },
+    )
+}
+
+#[test]
+fn step_string_skips_strings_that_cannot_play_the_pitch_and_refuses_at_the_ends() {
+    let (notes, midi) = notes_and_data();
+    // G4 is fret 8 on the second string; the next string down that plays it is the third.
+    let e = tab_edit::step_string(&notes, &midi, &[(PPQ, 67)], true).unwrap();
+    let r = e.midi.tab.as_ref().unwrap().note_of(PPQ, 67).unwrap();
+    assert_eq!((r.string, r.fret), (2, 12));
+    assert_eq!(e.notes, notes, "the pitch does not change");
+    // Up from the top string refuses.
+    assert!(tab_edit::step_string(&notes, &midi, &[(0, 64)], false).is_err());
+    // Back where it was.
+    let back = tab_edit::step_string(&e.notes, &e.midi, &[(PPQ, 67)], false).unwrap();
+    let r = back.midi.tab.as_ref().unwrap().note_of(PPQ, 67).unwrap();
+    assert_eq!((r.string, r.fret), (1, 8));
+}
+
+#[test]
+fn step_string_respects_the_banjo_drone_start_fret() {
+    // The drone (the last string) starts at fret 5: it plays its open pitch and nothing below
+    // the fifth fret. D3 + 17 frets is the drone's open pitch, + 19 two semitones above it.
+    let (notes, midi) = banjo_clip(3, 17);
+    let e = tab_edit::step_string(&notes, &midi, &[(0, notes[0].key)], true).unwrap();
+    let r = e
+        .midi
+        .tab
+        .as_ref()
+        .unwrap()
+        .note_of(0, notes[0].key)
+        .unwrap();
+    assert_eq!((r.string, r.fret), (4, 0));
+    let (notes, midi) = banjo_clip(3, 19);
+    assert!(tab_edit::step_string(&notes, &midi, &[(0, notes[0].key)], true).is_err());
+    let (notes, midi) = banjo_clip(3, 22);
+    let e = tab_edit::step_string(&notes, &midi, &[(0, notes[0].key)], true).unwrap();
+    let r = e
+        .midi
+        .tab
+        .as_ref()
+        .unwrap()
+        .note_of(0, notes[0].key)
+        .unwrap();
+    assert_eq!((r.string, r.fret), (4, 5));
+}
+
+#[test]
+fn refret_at_a_position_or_the_lowest_frets_keeps_techniques() {
+    let (notes, midi) = notes_and_data();
+    let e = tab_edit::set_techniques(
+        &notes,
+        &midi,
+        &[(PPQ, 67)],
+        &Techniques::default().with(TechFlags::PALM_MUTE),
+    )
+    .unwrap();
+    let (notes, midi) = (e.notes, e.midi);
+    let opts = atomik_tab::fretting::FretOptions::default();
+    // G4 around the 8th fret is the second string; the lowest fret is the top string's third.
+    let at = |target| {
+        let e = tab_edit::refret_at(&notes, &midi, &[(PPQ, 67)], target, &opts).unwrap();
+        assert_eq!(e.notes.len(), notes.len());
+        assert_eq!(e.notes[1].key, 67, "the pitch never changes");
+        let r = e
+            .midi
+            .tab
+            .as_ref()
+            .unwrap()
+            .note_of(PPQ, 67)
+            .unwrap()
+            .clone();
+        assert!(r.tech.has(TechFlags::PALM_MUTE));
+        (r.string, r.fret)
+    };
+    assert_eq!(at(tab_edit::RefretTarget::Position(8)), (1, 8));
+    assert_eq!(at(tab_edit::RefretTarget::Lowest), (0, 3));
+    assert_eq!(at(tab_edit::RefretTarget::Position(12)), (2, 12));
+    let auto = at(tab_edit::RefretTarget::Automatic);
+    assert!(auto.1 <= 12);
+}
+
+#[test]
+fn keeping_the_frets_changes_the_pitches_with_the_tuning() {
+    let (notes, midi) = notes_and_data();
+    let drop_d = atomik_tab::instrument::find_tuning("guitar6", "drop_d")
+        .expect("drop d")
+        .tuning
+        .clone();
+    // A capo at the second fret raises every note by a tone, whatever the strings.
+    let e =
+        tab_edit::set_tuning_keep_frets(&notes, &midi, "guitar6", drop_d, atomik_tab::Capo::at(2))
+            .unwrap();
+    let keys: Vec<u8> = e.notes.iter().map(|n| n.key).collect();
+    assert_eq!(keys, vec![66, 69, 57]);
+    let tab = e.midi.tab.as_ref().unwrap();
+    assert_eq!(tab.capo.fret, 2);
+    let r = tab.note_of(PPQ, 69).unwrap();
+    assert_eq!((r.string, r.fret), (1, 8));
+    // And back: keeping the frets again restores the pitches.
+    let back = tab_edit::set_tuning_keep_frets(
+        &e.notes,
+        &e.midi,
+        "guitar6",
+        atomik_tab::instrument::find_tuning("guitar6", "standard")
+            .expect("standard")
+            .tuning
+            .clone(),
+        atomik_tab::Capo::NONE,
+    )
+    .unwrap();
+    assert_eq!(back.notes, notes);
+}
+
+#[test]
+fn copy_and_paste_keep_strings_techniques_and_replace_what_is_in_the_way() {
+    let (notes, midi) = notes_and_data();
+    let e = tab_edit::set_techniques(
+        &notes,
+        &midi,
+        &[(PPQ, 67)],
+        &Techniques {
+            bend: Some(Bend::up(200)),
+            ..Techniques::default()
+        }
+        .with(TechFlags::ACCENT),
+    )
+    .unwrap();
+    let (notes, midi) = (e.notes, e.midi);
+    let snip = tab_edit::copy_snippet(&notes, &midi, &[(0, 64), (PPQ, 67)]).unwrap();
+    assert_eq!(snip.notes.len(), 2);
+    assert_eq!(snip.notes[1].dt, PPQ);
+    assert!(
+        (snip.notes[1].velocity - 0.8).abs() < 1e-5,
+        "plain, not rendered"
+    );
+    // Paste after the last note.
+    let e = tab_edit::paste_snippet(&notes, &midi, &snip, 4 * PPQ).unwrap();
+    assert_eq!(e.notes.len(), 5);
+    let tab = e.midi.tab.as_ref().unwrap();
+    let r = tab.note_of(5 * PPQ, 67).unwrap();
+    assert_eq!((r.string, r.fret), (1, 8));
+    assert!(r.tech.bend.is_some() && r.tech.has(TechFlags::ACCENT));
+    assert!(e.midi.expression.iter().any(|x| x.tick == 5 * PPQ));
+    // Over the existing notes: same count, nothing doubled.
+    let over = tab_edit::paste_snippet(&notes, &midi, &snip, 0).unwrap();
+    assert_eq!(over.notes.len(), 3);
+    // One undo step, and an empty selection is refused.
+    let reg = registry();
+    let mut d = doc_with(&reg, notes.clone(), midi.clone());
+    let before = clip_of(&d);
+    run(&mut d, &reg, e);
+    assert_eq!(clip_of(&d).0.len(), 5);
+    assert!(d.undo().is_some());
+    assert_eq!(clip_of(&d), before);
+    assert!(d.redo().is_some());
+    assert!(tab_edit::copy_snippet(&notes, &midi, &[]).is_err());
+}

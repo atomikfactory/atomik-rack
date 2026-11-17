@@ -496,6 +496,50 @@ pub fn change_string(
     selection: &[(i64, u8)],
     delta: i32,
 ) -> Result<TabEdit, TabEditError> {
+    move_strings(notes, midi, selection, |tab, r| {
+        let target = u8::try_from(i32::from(r.string) + delta)
+            .ok()
+            .filter(|s| usize::from(*s) < tab.tuning.len())?;
+        let fret = tab
+            .tuning
+            .fret_for_pitch(usize::from(target), r.key, tab.capo)?;
+        Some((target, fret))
+    })
+}
+
+/// Moves the notes in `selection` to the next string below (`down`) or above (`!down`) that can
+/// play their pitch, skipping strings that cannot (a banjo's drone below its fifth fret, a
+/// neck too short). The pitch never changes. All or nothing, like [`change_string`].
+pub fn step_string(
+    notes: &[Note],
+    midi: &MidiData,
+    selection: &[(i64, u8)],
+    down: bool,
+) -> Result<TabEdit, TabEditError> {
+    move_strings(notes, midi, selection, |tab, r| {
+        let mut s = i32::from(r.string);
+        loop {
+            s += if down { 1 } else { -1 };
+            let target = u8::try_from(s)
+                .ok()
+                .filter(|s| usize::from(*s) < tab.tuning.len())?;
+            if let Some(fret) = tab
+                .tuning
+                .fret_for_pitch(usize::from(target), r.key, tab.capo)
+            {
+                return Some((target, fret));
+            }
+        }
+    })
+}
+
+/// Moves each selected note to the string and fret `target` names (`None` refuses the edit).
+fn move_strings(
+    notes: &[Note],
+    midi: &MidiData,
+    selection: &[(i64, u8)],
+    target: impl Fn(&TabData, &TabNoteRef) -> Option<(u8, u8)>,
+) -> Result<TabEdit, TabEditError> {
     let mut w = Work::open(notes, midi)?;
     let sel = w.selection(selection)?;
     let unplayable = w.place_missing(&sel);
@@ -508,17 +552,9 @@ pub fn change_string(
         let Some(r) = tab.note_of(tick, key) else {
             continue;
         };
-        let target = i32::from(r.string) + delta;
-        let target = u8::try_from(target)
-            .ok()
-            .filter(|s| usize::from(*s) < tab.tuning.len())
-            .ok_or(TabEditError::NotPlayable { tick, key })?;
-        let fret = tab
-            .tuning
-            .fret_for_pitch(usize::from(target), key, tab.capo)
-            .ok_or(TabEditError::NotPlayable { tick, key })?;
+        let (string, fret) = target(&tab, r).ok_or(TabEditError::NotPlayable { tick, key })?;
         let mut m = r.clone();
-        m.string = target;
+        m.string = string;
         m.fret = fret;
         moved.push(m);
     }
@@ -556,6 +592,99 @@ pub fn refret(
     let mut w = Work::open(notes, midi)?;
     let sel = w.selection(selection)?;
     let unplayable = w.fret_notes(&sel, opts, true);
+    w.finish(&sel, unplayable)
+}
+
+/// Where [`refret_at`] places notes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefretTarget {
+    /// The automatic fretter's choice ([`refret`]).
+    Automatic,
+    /// The lowest fret each note can be played at.
+    Lowest,
+    /// A hand position: the four frets from this one (open strings are allowed too).
+    Position(u8),
+}
+
+/// How far a fret is from the hand position `target` (lower is better), then the fret and the
+/// string as tie-breakers.
+fn position_score(target: RefretTarget, p: &Placement) -> (i32, u8, usize) {
+    let fret = i32::from(p.fret);
+    let cost = match target {
+        RefretTarget::Position(_) if p.fret == 0 => 1,
+        RefretTarget::Position(n) => {
+            let (lo, hi) = (i32::from(n), i32::from(n) + 3);
+            if (lo..=hi).contains(&fret) {
+                0
+            } else {
+                2 + (lo - fret).max(fret - hi)
+            }
+        }
+        _ => fret,
+    };
+    (cost, p.fret, p.string)
+}
+
+/// Places the notes in `selection` on the neck again at a hand position, or at the lowest frets
+/// (the techniques stay). Notes at the same tick that are not selected keep their strings and are
+/// avoided. A note that cannot be placed keeps its old entry and is listed.
+pub fn refret_at(
+    notes: &[Note],
+    midi: &MidiData,
+    selection: &[(i64, u8)],
+    target: RefretTarget,
+    opts: &FretOptions,
+) -> Result<TabEdit, TabEditError> {
+    if target == RefretTarget::Automatic {
+        return refret(notes, midi, selection, opts);
+    }
+    let mut w = Work::open(notes, midi)?;
+    let sel = w.selection(selection)?;
+    let tab = w.tab().clone();
+    let mut by_tick: BTreeMap<i64, Vec<u8>> = BTreeMap::new();
+    for &(tick, key) in &sel {
+        by_tick.entry(tick).or_default().push(key);
+    }
+    let mut unplayable = Vec::new();
+    let mut placed: Vec<TabNoteRef> = Vec::new();
+    for (tick, mut keys) in by_tick {
+        let mut used: u16 = 0;
+        for r in tab.notes.iter().filter(|r| r.tick == tick) {
+            if !sel.contains(&(r.tick, r.key)) && r.string < 16 {
+                used |= 1 << r.string;
+            }
+        }
+        // The notes with the fewest choices pick first.
+        keys.sort_by_key(|k| {
+            (
+                atomik_tab::fretting::candidates(&tab.tuning, tab.capo, *k).len(),
+                *k,
+            )
+        });
+        for key in keys {
+            let best = atomik_tab::fretting::candidates(&tab.tuning, tab.capo, key)
+                .into_iter()
+                .filter(|p| p.string >= 16 || used & (1 << p.string) == 0)
+                .min_by_key(|p| position_score(target, p));
+            let Some(p) = best else {
+                unplayable.push((tick, key));
+                continue;
+            };
+            if p.string < 16 {
+                used |= 1 << p.string;
+            }
+            let mut entry = tab
+                .note_of(tick, key)
+                .cloned()
+                .unwrap_or_else(|| TabNoteRef::new(tick, key, 0, 0));
+            entry.string = p.string as u8;
+            entry.fret = p.fret;
+            placed.push(entry);
+        }
+    }
+    for e in placed {
+        w.set_entry(e);
+    }
     w.finish(&sel, unplayable)
 }
 
@@ -760,23 +889,304 @@ pub fn set_tuning(
             }
         }
     }
-    let diagrams: Vec<TabDiagram> = w
-        .tab()
-        .diagrams
-        .iter()
-        .filter_map(|d| {
-            let chord = ChordSymbol::parse(&d.name).ok()?;
-            let voicing = generate(&tuning, capo, &chord, &VoicingOptions::default())
-                .into_iter()
-                .next()?;
-            Some(TabDiagram {
-                tick: d.tick,
-                name: d.name.clone(),
-                voicing,
+    w.regenerate_diagrams();
+    w.finish(&touched, unplayable)
+}
+
+impl Work {
+    /// Draws the chord diagrams again for the clip's tuning and capo (dropping those no shape
+    /// exists for).
+    fn regenerate_diagrams(&mut self) {
+        let (tuning, capo) = (self.tab().tuning.clone(), self.tab().capo);
+        let diagrams: Vec<TabDiagram> = self
+            .tab()
+            .diagrams
+            .iter()
+            .filter_map(|d| {
+                let chord = ChordSymbol::parse(&d.name).ok()?;
+                let voicing = generate(&tuning, capo, &chord, &VoicingOptions::default())
+                    .into_iter()
+                    .next()?;
+                Some(TabDiagram {
+                    tick: d.tick,
+                    name: d.name.clone(),
+                    voicing,
+                })
             })
+            .collect();
+        self.tab_mut().diagrams = diagrams;
+    }
+}
+
+/// Changes the instrument, tuning and capo of the clip and keeps every note's string and fret:
+/// the pitches change with the neck (a drop-D tuning lowers the notes on the low string, a capo
+/// raises them all). A note whose string or fret the new neck does not have is placed again at
+/// its old pitch; one that cannot be placed loses its position and is listed. Refused when two
+/// notes would land on one pitch at one tick.
+pub fn set_tuning_keep_frets(
+    notes: &[Note],
+    midi: &MidiData,
+    instrument_id: &str,
+    tuning: Tuning,
+    capo: Capo,
+) -> Result<TabEdit, TabEditError> {
+    let mut w = Work::open(notes, midi)?;
+    tuning
+        .validate()
+        .map_err(|e| TabEditError::BadTuning(e.to_string()))?;
+    if capo.fret > MAX_CAPO {
+        return Err(TabEditError::BadTuning(format!(
+            "the capo is at most fret {MAX_CAPO}"
+        )));
+    }
+    let entries: Vec<TabNoteRef> = w.tab().notes.clone();
+    let old: Vec<(i64, u8)> = entries.iter().map(|r| (r.tick, r.key)).collect();
+    // The pitch every entry has on the new neck, when it has one.
+    let new_key = |r: &TabNoteRef| -> Option<u8> {
+        let s = usize::from(r.string);
+        let playable = s < tuning.len()
+            && (r.fret == 0
+                || (r.fret >= tuning.min_fret(s, capo) && r.fret <= tuning.max_fret(s, capo)));
+        playable.then(|| tuning.pitch(s, r.fret, capo)).flatten()
+    };
+    let mut landed: Vec<(i64, u8)> = Vec::new();
+    for r in &entries {
+        if let Some(k) = new_key(r) {
+            let clash = landed.contains(&(r.tick, k))
+                || (w.note_index(r.tick, k).is_some() && !old.contains(&(r.tick, k)));
+            if clash {
+                return Err(TabEditError::Occupied {
+                    tick: r.tick,
+                    key: k,
+                });
+            }
+            landed.push((r.tick, k));
+        }
+    }
+    w.unrender(&old);
+    // Take every entry's note and expression out, then put them back at the new pitch.
+    let mut taken: Vec<(TabNoteRef, Option<Note>, Option<NoteExpression>)> = Vec::new();
+    for r in &entries {
+        let n = w.note_index(r.tick, r.key).map(|i| w.notes.remove(i));
+        w.remove_entry(r.tick, r.key);
+        let x = w
+            .midi
+            .expression
+            .binary_search_by_key(&(r.tick, r.key), |e| (e.tick, e.key))
+            .ok()
+            .map(|i| w.midi.expression.remove(i));
+        taken.push((r.clone(), n, x));
+    }
+    {
+        let tab = w.tab_mut();
+        tab.instrument_id = instrument_id.to_owned();
+        tab.tuning = tuning.clone();
+        tab.capo = capo;
+    }
+    let mut touched: Vec<(i64, u8)> = Vec::new();
+    let mut replace: Vec<(TabNoteRef, Note, Option<NoteExpression>)> = Vec::new();
+    let mut unplayable = Vec::new();
+    for (r, n, x) in taken {
+        let Some(n) = n else { continue };
+        match new_key(&r) {
+            Some(k) => {
+                let mut r2 = r.clone();
+                r2.key = k;
+                let mut n2 = n;
+                n2.key = k;
+                let x2 = x.map(|mut x| {
+                    x.key = k;
+                    x
+                });
+                touched.push((r.tick, k));
+                w.notes.push(n2);
+                if let Some(x2) = x2 {
+                    w.midi.expression.push(x2);
+                }
+                w.set_entry(r2);
+            }
+            None => replace.push((r, n, x)),
+        }
+    }
+    // The pitch stays for notes the new neck cannot play at their old place.
+    let events: Vec<FretEvent> = replace
+        .iter()
+        .map(|(r, ..)| FretEvent {
+            notes: vec![NoteSlot::new(r.key)],
         })
         .collect();
-    w.tab_mut().diagrams = diagrams;
+    let result = fret_sequence(&tuning, capo, &events, None, &FretOptions::default());
+    for (i, (r, n, x)) in replace.into_iter().enumerate() {
+        w.notes.push(n);
+        if let Some(x) = x {
+            w.midi.expression.push(x);
+        }
+        match result.placements[i].first().copied().flatten() {
+            Some(p) => {
+                let mut r2 = r.clone();
+                r2.string = p.string as u8;
+                r2.fret = p.fret;
+                w.set_entry(r2);
+            }
+            None => unplayable.push((r.tick, r.key)),
+        }
+        touched.push((r.tick, r.key));
+    }
+    w.notes.sort_by_key(|n| (n.tick, n.key));
+    w.midi.expression.sort_by_key(|e| (e.tick, e.key));
+    w.regenerate_diagrams();
+    w.finish(&touched, unplayable)
+}
+
+/// One note of a [`TabSnippet`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SnippetNote {
+    /// Ticks after the snippet's start.
+    pub dt: i64,
+    /// Length in ticks (plain: what the note would have without its techniques).
+    pub length: i64,
+    /// Plain velocity.
+    pub velocity: f32,
+    /// The string (tab order).
+    pub string: u8,
+    /// The fret (relative to the capo).
+    pub fret: u8,
+    /// The techniques.
+    pub tech: Techniques,
+}
+
+/// Notes copied out of a tab clip: strings, frets and techniques, positions relative to the first
+/// note. [`paste_snippet`] puts them down at a tick.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TabSnippet {
+    /// The notes, in time order.
+    pub notes: Vec<SnippetNote>,
+}
+
+impl TabSnippet {
+    /// Whether it holds no note.
+    pub fn is_empty(&self) -> bool {
+        self.notes.is_empty()
+    }
+
+    /// The ticks from the first note's start to the end of the last note to end.
+    pub fn span(&self) -> i64 {
+        self.notes
+            .iter()
+            .map(|n| n.dt + n.length)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The same snippet without the notes that start at or after `max_dt`.
+    pub fn clipped(&self, max_dt: i64) -> TabSnippet {
+        TabSnippet {
+            notes: self
+                .notes
+                .iter()
+                .filter(|n| n.dt < max_dt)
+                .cloned()
+                .collect(),
+        }
+    }
+}
+
+/// Copies the notes in `selection` (a note without a position is placed first, one that cannot be
+/// placed is left out).
+pub fn copy_snippet(
+    notes: &[Note],
+    midi: &MidiData,
+    selection: &[(i64, u8)],
+) -> Result<TabSnippet, TabEditError> {
+    let mut w = Work::open(notes, midi)?;
+    let sel = w.selection(selection)?;
+    w.place_missing(&sel);
+    w.unrender(&sel);
+    let first = sel.first().map_or(0, |s| s.0);
+    let mut out = TabSnippet::default();
+    for &(tick, key) in &sel {
+        let (Some(i), Some(r)) = (w.note_index(tick, key), w.tab().note_of(tick, key)) else {
+            continue;
+        };
+        out.notes.push(SnippetNote {
+            dt: tick - first,
+            length: w.notes[i].length,
+            velocity: w.notes[i].velocity,
+            string: r.string,
+            fret: r.fret,
+            tech: r.tech.clone(),
+        });
+    }
+    if out.is_empty() {
+        return Err(TabEditError::BadNote("nothing to copy".into()));
+    }
+    Ok(out)
+}
+
+/// Puts the notes of `snippet` down with the first at `at`. A note already on the same string at
+/// the same tick, or of the same pitch, is replaced. Notes the neck cannot play are listed (the
+/// edit is refused when none can be).
+pub fn paste_snippet(
+    notes: &[Note],
+    midi: &MidiData,
+    snippet: &TabSnippet,
+    at: i64,
+) -> Result<TabEdit, TabEditError> {
+    let mut w = Work::open(notes, midi)?;
+    let tab = w.tab().clone();
+    let mut fresh: Vec<(Note, TabNoteRef)> = Vec::new();
+    let mut unplayable = Vec::new();
+    for s in &snippet.notes {
+        let tick = at + s.dt;
+        check_new_note(tick, s.length, s.velocity)?;
+        match key_at(&tab, s.string, s.fret) {
+            Ok(key) => {
+                let mut r = TabNoteRef::new(tick, key, s.string, s.fret);
+                r.tech = s.tech.clone();
+                fresh.push((Note::new(tick, s.length, key, s.velocity), r));
+            }
+            Err(_) => unplayable.push((tick, 0)),
+        }
+    }
+    if fresh.is_empty() {
+        return Err(TabEditError::BadNote("nothing can be played here".into()));
+    }
+    // What the new notes replace.
+    let mut victims: Vec<(i64, u8)> = Vec::new();
+    for (n, r) in &fresh {
+        for e in tab.notes.iter().filter(|e| e.tick == n.tick) {
+            if (e.string == r.string || e.key == n.key) && !victims.contains(&(e.tick, e.key)) {
+                victims.push((e.tick, e.key));
+            }
+        }
+        if w.note_index(n.tick, n.key).is_some() && !victims.contains(&(n.tick, n.key)) {
+            victims.push((n.tick, n.key));
+        }
+    }
+    victims.sort_unstable();
+    w.unrender(&victims);
+    for &(tick, key) in &victims {
+        if let Some(i) = w.note_index(tick, key) {
+            w.notes.remove(i);
+        }
+        w.remove_entry(tick, key);
+        if let Ok(i) = w
+            .midi
+            .expression
+            .binary_search_by_key(&(tick, key), |e| (e.tick, e.key))
+        {
+            w.midi.expression.remove(i);
+        }
+    }
+    let mut touched = Vec::new();
+    for (n, r) in fresh {
+        touched.push((n.tick, n.key));
+        w.notes.push(n);
+        w.set_entry(r);
+    }
+    w.notes.sort_by_key(|n| (n.tick, n.key));
+    // Notes of the snippet that landed on the same tick and key replace each other.
+    w.notes.dedup_by_key(|n| (n.tick, n.key));
     w.finish(&touched, unplayable)
 }
 
