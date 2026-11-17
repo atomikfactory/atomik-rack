@@ -46,7 +46,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-download` | [crates/download](../crates/download) | none (sha2, ureq, thiserror) | none | The one-time download of model files, shared by the hand models and the stem models: `ModelFile` (name, one fixed HTTPS address, exact size and SHA-256, all constants in the crate that owns the files), `ModelStore` (`status`, `verified_paths` which checks again before a file is loaded, and `download`, which writes under temporary names, checks each file and only then renames them all into place, so a failure, a mismatch or a cancel leaves nothing behind), the `Fetcher` trait with `UreqFetcher` (rustls, HTTPS only, no redirect, a generic User-Agent, nothing about the user or the machine) and `FakeFetcher` for tests |
 | `atomik-stems` | [crates/stems](../crates/stems) | none (thiserror) | none | Stem separation by signal processing, pure and deterministic, with no model and no download: an STFT (`Stft`, 2048 points, hop 512) and `separate`: chunks of 20 s with 1 s of context and a linear crossfade, a harmonic/percussive split by median filters across time and across frequency (soft masks) for the drums, the harmonic part below a 150 Hz crossover for the bass, the centred harmonic part above it for the vocals (a mono input gets the 200 Hz to 5 kHz band at a lower weight) and the residual for the other stem, so the four add up to the mix; a progress callback, a cancel flag and a `StemSink` that receives the finished samples in order |
 | `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror) | none | Fretted-instrument tablature, pure and headless, no file-format dependency yet: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`) and ASCII tab read and write (`ascii.rs`) |
-| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
+| `atomik-model` | [crates/model](../crates/model) | core, device-sdk, tab | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`), the tab sidecar of note clips (`tab_data.rs`), its edit operations (`tab_edit.rs`) and the technique renderer (`tab_render.rs`), the song chord sheets (`chord_sheets.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
 | `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
@@ -265,7 +265,8 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   for it are unchanged.
 - **Project files** are `.atomik` JSON, format version 45 (older versions still load; version 45 files say
   `"compat": 44` and list the root `"headphone"` map (the data imported into Headphone Correction devices, keyed by the device's
-  path key, written only when a device has any; see `crates/model/src/headphone.rs`), the launcher, the per-note expression and the song's `"key"`, `"key_changes"` and
+  path key, written only when a device has any; see `crates/model/src/headphone.rs`), the launcher, the per-note
+  expression, a note clip's `"tab"`, the song's `"sheets"` (see 6s) and the song's `"key"`, `"key_changes"` and
   `"chords"` (the song key and the chord lane, written only when set; see `Song::harmony`) as ignorable, so a reader of
   44 opens them; version 44
   adds a note track's own `"controllers"` (pitch bend, aftertouch and CC lanes outside the note clips, written
@@ -7009,6 +7010,50 @@ learned model can be plugged in later through `set_stems`. There is no model fil
   with its colour) holding a copy of the clip that plays the stem's file, and mutes the original when asked: one undo
   step, the files are registered with `RegisterAsset` (not an undo step) and go at the next save unless something
   still uses them. A clip that changed or went while the worker ran gets nothing, and the message says so.
+
+## 6s. Tab data and chord sheets
+
+Fretted-instrument tablature rides on ordinary note clips (the pure side lives in `atomik-tab`; the model depends
+on it, never the other way round). The notes stay in the clip's note list, the only source of what is heard; the
+tab is a sidecar that says where each note is played and how.
+
+- **Data** ([tab_data.rs](../crates/model/src/tab_data.rs)). `MidiData::tab: Option<TabData>` holds the instrument
+  id, the whole `Tuning` (custom tunings allowed, 1 to 12 strings), the capo (partial capos included), one
+  `TabNoteRef { tick, key, string, fret, tech, plain }` per annotated note, chord diagrams and lyric syllables.
+  Entries are found by the note's start tick and key, exactly like the per-note expression: `canonical` sorts and
+  bounds, `check` validates every limit (counts, ticks, strings and frets against the tuning, technique bounds),
+  `window` and `map_ticks` carry it through split, join, loop conversion and time stretch, and the project file
+  leaves out the entries of notes a clip no longer has. A note moved in the piano roll loses its entry and is
+  fretted automatically again (the same documented weakness as the expression). `SetClipMidi` is the command:
+  the sidecar and the expression are one value, so an edit changes them together.
+  The `.atomikclip` format and the clipboard snippets do not carry the tab (nor the expression).
+- **Technique to sound** ([tab_render.rs](../crates/model/src/tab_render.rs)). `render_note` is a pure function
+  from a note's plain velocity and length, its techniques and the next note on its string to the note as it sounds.
+  Encoding (the plucked-string device reads it): the pitch lane (semitones) carries bends, releases, pre-bends,
+  slides (the glide reaches the next note's pitch exactly when it starts), vibrato, whammy and harmonic offsets;
+  the Slide (timbre) lane carries the palm-mute amount; the pressure lane carries a technique code read at the
+  note start (`PRESSURE_HARMONIC` 0.5, `PRESSURE_DEAD` 1.0, thresholds 0.25 and 0.75); velocity is ghost x 0.6 and
+  accent x 1.2 (heavy x 1.4) capped at 1; length is staccato (half), dead (a 64th) and let ring (to the next note
+  on the string, at most two bars). `render_notes` applies it after an edit; the entry keeps the plain velocity
+  and length (`PlainNote`) so rendering again or clearing the techniques never compounds, and a velocity the user
+  dragged since becomes the new plain value. A note with curve-producing techniques owns its expression entry; a
+  note without keeps what was drawn. Hammer-on, pull-off, tap, slap, pop, thumb, fade in, tremolo picking, grace
+  notes and strum directions are tab symbols only.
+- **Edits** ([tab_edit.rs](../crates/model/src/tab_edit.rs)). Pure operations (`set_fret`, `clear_fret`,
+  `delete_notes`, `change_string`, `refret`, `auto_fret_clip`, `update_techniques`, `set_techniques`,
+  `clear_techniques`, `transpose`, `set_tuning`, `set_capo`, `start_tab`, diagrams, lyrics) from the clip's notes
+  and `MidiData` to a `TabEdit`; `TabEdit::into_command` is one `Batch` of `SetClipContent` and `SetClipMidi`
+  (both batchable), so every edit is one undo step. No separate `SetClipTab` command: the sidecar is part of
+  `MidiData`, and a tab edit always changes notes, expression and sidecar together. Notes that cannot be placed
+  on the neck are listed in `TabEdit::unplayable` and stay in the clip.
+- **File.** A note clip's optional `"tab"` and the song's optional `"sheets"` are rows of format 45
+  (`schema.rs`), both ignorable: no format bump, `compat` stays 44, and the file's `"ignorable"` list names both
+  paths. The JSON is in [tab_json.rs](../crates/model/src/project/tab_json.rs).
+- **Chord sheets** ([chord_sheets.rs](../crates/model/src/chord_sheets.rs)). `Song::sheets` is a list of at most 64
+  `atomik_tab::sheet::ChordSheet`; `SongCommand::SetSheets` replaces the whole list (one undo step, `ViewChanged`
+  only: sheets never reach the engine) after `check_sheets`.
+- **Chord symbols.** `chord_symbol::parse_chord` and `format_chord` delegate to `atomik_tab::ChordSymbol` (one
+  grammar), mapping the result to the stamp `ChordKind` with the same tones.
 
 ## 7. The UI crate
 
