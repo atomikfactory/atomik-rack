@@ -1981,6 +1981,144 @@
         "automation"
       ]
     },
+    "Projects/Exercises/Banjo Rolls/Banjo Rolls.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "banjo",
+        "roll",
+        "forward roll",
+        "backward roll",
+        "open G"
+      ]
+    },
+    "Projects/Exercises/Bass Root and Fifth Lines/Bass Root and Fifth Lines.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "bass",
+        "root",
+        "fifth",
+        "octave",
+        "line"
+      ]
+    },
+    "Projects/Exercises/Guitar C Major Scale/Guitar C Major Scale.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "guitar",
+        "scale",
+        "open position",
+        "C major"
+      ]
+    },
+    "Projects/Exercises/Guitar Chord Changes G C D Em/Guitar Chord Changes G C D Em.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "guitar",
+        "chords",
+        "chord change",
+        "strumming",
+        "drill"
+      ]
+    },
+    "Projects/Exercises/Guitar Fingerpicking Arpeggios/Guitar Fingerpicking Arpeggios.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "guitar",
+        "arpeggio",
+        "fingerpicking",
+        "chords"
+      ]
+    },
+    "Projects/Exercises/Guitar Minor Pentatonic Box/Guitar Minor Pentatonic Box.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "guitar",
+        "scale",
+        "pentatonic",
+        "A minor",
+        "box"
+      ]
+    },
+    "Projects/Exercises/Guitar Technique Sampler/Guitar Technique Sampler.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "guitar",
+        "technique",
+        "palm mute",
+        "bend",
+        "slide",
+        "harmonic"
+      ]
+    },
+    "Projects/Exercises/Mandolin G Major Scale/Mandolin G Major Scale.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "mandolin",
+        "scale",
+        "G major",
+        "first position"
+      ]
+    },
+    "Projects/Exercises/Mandolin Tremolo Study/Mandolin Tremolo Study.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "mandolin",
+        "tremolo",
+        "picking",
+        "study"
+      ]
+    },
+    "Projects/Exercises/Ukulele Chord Changes C Am F G/Ukulele Chord Changes C Am F G.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "ukulele",
+        "chords",
+        "chord change",
+        "drill"
+      ]
+    },
+    "Projects/Exercises/Ukulele Strum Patterns/Ukulele Strum Patterns.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Exercise"
+      ],
+      "tags": [
+        "ukulele",
+        "strum",
+        "pattern",
+        "chords"
+      ]
+    },
     "Projects/Moonrise Modular/Moonrise Modular.atomik": {
       "author": "Atomik",
       "categories": [

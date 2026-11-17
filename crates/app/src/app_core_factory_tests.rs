@@ -246,9 +246,9 @@ use super::factory_build::loops::{LoopDef, clip_of, loop_frames, render_loop};
 use super::factory_build::tables::{TableDef, table_audio, table_keys};
 use super::factory_build::write_examples;
 use super::factory_build::{
-    AUTHOR, CLIPS, CONTAINERS, ClipDef, ContainerDef, DEFS, DUCK, Def, KITS, KitDef, LOOPS, TABLES,
-    clip_notes, clip_path, clip_text, container_path, container_text, item_text, loop_path,
-    manifest_text, marks, patch_path, write_all,
+    AUTHOR, CLIPS, CONTAINERS, ClipDef, ContainerDef, DEFS, DUCK, Def, EXERCISES, KITS, KitDef,
+    LOOPS, TABLES, clip_notes, clip_path, clip_text, container_path, container_text, item_text,
+    loop_path, manifest_text, marks, patch_path, write_all,
 };
 use super::patch_preview_ops::preview_doc;
 use atomik_audio_file::{AudioData, content_hash, read_wav_f32, write_wav_f32};
@@ -438,6 +438,7 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
             + CLIPS.len()
             + LOOPS.len()
             + EXAMPLES.len()
+            + EXERCISES.len()
     );
     for mark in marks {
         let (mut tags, mut categories, mut author) = (Vec::new(), Vec::new(), String::new());
@@ -1410,6 +1411,11 @@ fn the_factory_items_list_from_the_shipped_folder_with_their_categories() {
             EXAMPLES
                 .iter()
                 .map(|d| (format!("{}.atomik", d.name), "Example"))
+                .chain(
+                    EXERCISES
+                        .iter()
+                        .map(|d| (format!("{}.atomik", d.name), "Exercise")),
+                )
                 .collect(),
             FileKind::Project,
         ),
@@ -1774,8 +1780,9 @@ fn the_example_files_are_what_the_tables_build() {
             );
         }
     }
-    // The Projects folder holds the examples and nothing else.
+    // The Projects folder holds the examples and the folder of the exercises, nothing else.
     let mut folders: Vec<String> = EXAMPLES.iter().map(|d| d.name.to_owned()).collect();
+    folders.push("Exercises".to_owned());
     folders.sort();
     assert_eq!(names_in(&shipped().join("Projects")), folders);
 }
@@ -1946,7 +1953,7 @@ fn the_factory_projects_list_and_a_pick_asks_the_shell_to_open_them() {
     c.browse(BrowseAction::Show(Place::Factory(LibrarySection::Projects)));
     wait(&mut c);
     let listed = rows(&c);
-    assert_eq!(listed.len(), EXAMPLES.len(), "{listed:?}");
+    assert_eq!(listed.len(), EXAMPLES.len() + EXERCISES.len(), "{listed:?}");
     for def in EXAMPLES {
         let row = row_named(&listed, &format!("{}.atomik", def.name));
         assert_eq!(row.kind, FileKind::Project);
@@ -2475,4 +2482,188 @@ fn every_tab_instrument_maps_to_a_factory_plucked_patch() {
     {
         assert_eq!(def.category, "Plucked", "{}", def.name);
     }
+}
+
+// ------------------------------------------------------------------------------ the exercises
+
+use super::factory_build::exercises::{ExerciseDef, build_exercise, exercise_score};
+use super::factory_build::{exercise_path, write_exercises};
+
+fn exercise_file(def: &ExerciseDef) -> PathBuf {
+    shipped().join(exercise_path(def.name))
+}
+
+fn load_exercise(def: &ExerciseDef) -> atomik_model::RackDoc {
+    let text = std::fs::read_to_string(exercise_file(def)).unwrap();
+    atomik_model::load_project(&text, &default_registry())
+        .unwrap_or_else(|e| panic!("{}: {e}", def.name))
+}
+
+/// Rewrites only the exercise projects of the shipped folder from the table and the shipped
+/// patches.
+#[test]
+#[ignore = "writes the factory folder: ATOMIK_WRITE_FACTORY=1"]
+fn write_the_exercise_projects() {
+    assert!(
+        std::env::var_os("ATOMIK_WRITE_FACTORY").is_some(),
+        "set ATOMIK_WRITE_FACTORY=1 to rewrite the factory folder"
+    );
+    write_exercises(&shipped());
+    std::fs::write(shipped().join(MANIFEST), manifest_text()).unwrap();
+}
+
+#[test]
+fn the_exercise_files_are_what_the_table_builds() {
+    assert_eq!(EXERCISES.len(), 11);
+    for def in EXERCISES {
+        let built = build_exercise(def, &shipped());
+        let on_disk = std::fs::read_to_string(exercise_file(def)).unwrap();
+        assert_eq!(
+            on_disk, built,
+            "{}: run write_the_exercise_projects",
+            def.name
+        );
+        assert_eq!(
+            names_in(exercise_file(def).parent().unwrap()),
+            [format!("{}.atomik", def.name)]
+        );
+    }
+    let mut folders: Vec<String> = EXERCISES.iter().map(|d| d.name.to_owned()).collect();
+    folders.sort();
+    assert_eq!(
+        names_in(&shipped().join("Projects").join("Exercises")),
+        folders
+    );
+}
+
+#[test]
+fn every_exercise_is_a_tab_clip_on_plucked_strings_with_the_patch_of_its_instrument() {
+    let mut names = std::collections::BTreeSet::new();
+    for def in EXERCISES {
+        assert!(names.insert(def.name), "{}: a name twice", def.name);
+        let doc = load_exercise(def);
+        assert_eq!(doc.info.title, def.name);
+        assert_eq!(doc.info.author, AUTHOR);
+        assert!((doc.tempo_bpm - def.bpm).abs() < 1e-9, "{}", def.name);
+        assert!(doc.info.notes.contains("Tab Editor"), "{}", def.name);
+        assert_eq!(doc.song.tracks.len(), 1, "{}", def.name);
+        let track = &doc.song.tracks[0];
+        let device = doc.resolve(&track.device).unwrap();
+        assert_eq!(device.type_id, "atomik.plucked", "{}", def.name);
+        assert_eq!(
+            device.patch_name,
+            atomik_devices::plucked::factory_patch_for(def.instrument),
+            "{}",
+            def.name
+        );
+        let clips = &track.lanes[0].clips;
+        assert_eq!(clips.len(), 1, "{}", def.name);
+        let midi = &clips[0].midi;
+        let tab = midi.tab.as_ref().expect("a tab sidecar");
+        assert_eq!(tab.instrument_id, def.instrument, "{}", def.name);
+        assert!(tab.check(doc.song.end).is_ok(), "{}", def.name);
+        assert!(!tab.notes.is_empty());
+        // Every string and fret exists on the neck of the instrument.
+        for n in &tab.notes {
+            assert!(usize::from(n.string) < tab.tuning.len(), "{}", def.name);
+            assert!(n.fret <= tab.tuning.frets, "{}", def.name);
+            assert!(
+                tab.tuning
+                    .pitch(usize::from(n.string), n.fret, tab.capo)
+                    .is_some(),
+                "{}: string {} fret {}",
+                def.name,
+                n.string,
+                n.fret
+            );
+        }
+        // Chord exercises carry chord diagrams, a chord lane and a sheet; the others do not
+        // need a sheet.
+        assert_eq!(
+            def.sheet.is_empty(),
+            doc.song.sheets.is_empty(),
+            "{}",
+            def.name
+        );
+        if !def.sheet.is_empty() {
+            assert!(!doc.song.harmony.chords.is_empty(), "{}", def.name);
+        }
+        assert!(doc.song.end % (4 * PPQ) == 0 && doc.song.end >= 4 * PPQ);
+        assert!(doc.song.end <= 16 * 4 * PPQ, "{}: short", def.name);
+    }
+}
+
+#[test]
+fn the_scales_play_the_notes_of_the_scale() {
+    let keys = |name: &str| -> Vec<u8> {
+        let def = EXERCISES.iter().find(|d| d.name == name).unwrap();
+        let score = exercise_score(def);
+        let track = &score.tracks[0];
+        track
+            .notes
+            .iter()
+            .map(|n| track.key_of(n).unwrap())
+            .collect()
+    };
+    // C major, C3 to G4 and back down to C3 (the top note once).
+    let up = [48, 50, 52, 53, 55, 57, 59, 60, 62, 64, 65, 67];
+    let expected: Vec<u8> = up.iter().chain(up.iter().rev().skip(1)).copied().collect();
+    assert_eq!(keys("Guitar C Major Scale"), expected);
+    // A minor pentatonic box 1: A, C, D, E, G up two octaves from E2.
+    let pent = keys("Guitar Minor Pentatonic Box");
+    assert_eq!(
+        &pent[..12],
+        [45, 48, 50, 52, 55, 57, 60, 62, 64, 67, 69, 72]
+    );
+    // G major on the mandolin from G3 to D5.
+    let man = keys("Mandolin G Major Scale");
+    assert_eq!(&man[..12], [55, 57, 59, 60, 62, 64, 66, 67, 69, 71, 72, 74]);
+    // The banjo rolls pick strings 1, 2, 3 and the short fifth (drone) string.
+    let def = EXERCISES.iter().find(|d| d.name == "Banjo Rolls").unwrap();
+    let strings: std::collections::BTreeSet<u8> = exercise_score(def).tracks[0]
+        .notes
+        .iter()
+        .map(|n| n.string)
+        .collect();
+    assert_eq!(strings.into_iter().collect::<Vec<_>>(), [0, 1, 2, 4]);
+}
+
+#[test]
+fn every_exercise_renders_audible_and_finite_through_plucked_strings() {
+    for def in EXERCISES {
+        let doc = load_exercise(def);
+        let out = render_doc_in(&doc, &default_registry(), &ProjectOptions::default(), None)
+            .unwrap_or_else(|e| panic!("{}: {e}", def.name));
+        let (mut peak, mut ok) = (0.0_f32, true);
+        for s in out.channels.iter().flatten() {
+            ok &= s.is_finite();
+            peak = peak.max(s.abs());
+        }
+        assert!(ok, "{}: a sample is not a number", def.name);
+        assert!((0.03..=1.0).contains(&peak), "{}: peak {peak}", def.name);
+    }
+}
+
+#[test]
+fn the_exercises_list_in_the_projects_section_and_open_as_projects() {
+    let tmp = Tmp::new("exercise-list");
+    let mut c = core(&tmp);
+    c.set_factory_root(Some(shipped()));
+    c.browse(BrowseAction::Show(Place::Factory(LibrarySection::Projects)));
+    wait(&mut c);
+    let listed = rows(&c);
+    for def in EXERCISES {
+        let row = row_named(&listed, &format!("{}.atomik", def.name));
+        assert_eq!(row.kind, FileKind::Project);
+        assert_eq!(row.categories, ["Exercise"]);
+        assert_eq!(row.author, AUTHOR);
+        c.load_library_item(&row.path, LoadTarget::Default);
+        assert_eq!(c.take_open_request(), Some(row.path.clone()));
+    }
+    // The start screen's example cards are the example songs, not the exercises.
+    let cards: Vec<String> = c.examples().into_iter().map(|e| e.name).collect();
+    assert!(
+        EXERCISES.iter().all(|d| !cards.iter().any(|n| n == d.name)),
+        "{cards:?}"
+    );
 }

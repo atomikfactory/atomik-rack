@@ -29,6 +29,8 @@ use std::path::Path;
 pub(in crate::app_core) mod clips;
 #[path = "app_core_factory_examples.rs"]
 pub(in crate::app_core) mod examples;
+#[path = "app_core_factory_exercises.rs"]
+pub(in crate::app_core) mod exercises;
 #[path = "app_core_factory_kits.rs"]
 pub(in crate::app_core) mod kits;
 #[path = "app_core_factory_loops.rs"]
@@ -40,6 +42,7 @@ pub(in crate::app_core) mod templates;
 
 pub(in crate::app_core) use clips::{CLIPS, ClipDef, clip_notes, clip_text};
 pub(in crate::app_core) use examples::{EXAMPLES, write_examples};
+pub(in crate::app_core) use exercises::{EXERCISES, exercise_path, write_exercises};
 pub(in crate::app_core) use kits::{
     KITS, KitDef, build_kit, kit_item, write_audio, write_audio_for,
 };
@@ -3851,6 +3854,13 @@ pub(super) fn marks() -> Vec<Mark> {
         out.push(Mark {
             path: examples::project_path(e.name),
             category: examples::CATEGORY,
+            tags: e.tags,
+        });
+    }
+    for e in EXERCISES {
+        out.push(Mark {
+            path: exercise_path(e.name),
+            category: exercises::CATEGORY,
             tags: e.tags,
         });
     }
