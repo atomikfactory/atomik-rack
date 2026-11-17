@@ -20,15 +20,31 @@
 //! within [`entry::FRET_TIMEOUT`] are one fret and one undo step); the note gets the entry
 //! length ([`NoteValue`], also the step of Left and Right). The commands of the `tab` keymap
 //! context move the cursor and set the value; Delete removes the note under the cursor. A
-//! typed note is auditioned. Seams for the next phases: [`TabEditorView::selected`] (a range
-//! selection), the top bar's free space (a technique toolbar) and the staff's context menu.
+//! typed note is auditioned. Every digit carries the time it arrived at (the view's clock is
+//! aligned by [`TabEditorView::tick`] and [`TabEditorView::stamp`]), so a digit typed after an
+//! idle stretch never joins an old one.
+//!
+//! # Selecting and editing
+//!
+//! A **range** is a rectangle of cells (ticks times strings): Shift+arrows grow it from where
+//! the cursor was, a drag on the staff draws it, Select All takes the clip. The notes inside are
+//! [`TabEditorView::selected`]. Techniques, Alt+Up/Down (change string, same pitch), transpose,
+//! re-fret, copy, cut and delete work on the selection, or on the note under the cursor when
+//! nothing is selected. Copy keeps strings, frets and techniques in the view's own tab clipboard
+//! (a note-only clipboard cannot carry them); paste puts them down at the cursor. The technique
+//! toolbar sits in the top bar's free space, the right-click menu is the app's
+//! [`ContextTarget::TabStaff`], and two small modal panels (instrument, tuning and capo;
+//! re-fret at position) are drawn over the pane (see `dialog`). Dragging on the ruler sets the
+//! song loop to the bars dragged over; a click still locates the playhead.
 
+mod dialog;
 mod entry;
 mod paint;
+mod tech;
 
 pub use entry::{DIVISIONS, FRET_TIMEOUT, FretBuffer, NoteValue, Typed};
 
-use crate::action::{TransportAction, UiAction};
+use crate::action::{ContextTarget, TransportAction, UiAction};
 use crate::cursor::CursorHint;
 use crate::event::{Key, NumpadKey, PointerButton, UiEvent};
 use crate::keymap::CommandOutcome;
@@ -38,10 +54,14 @@ use crate::theme::Theme;
 use crate::timeline::{Bars, Meter, PPQ, TimeAxis};
 use crate::tooltip::Help;
 use atomik_device_sdk::Registry;
-use atomik_model::tab_edit::{self, TabEdit, TabEditError};
-use atomik_model::{Clip, ClipContent, ClipId, DeviceKey, MidiData, Note, RackDoc};
+use atomik_model::tab_edit::{self, RefretTarget, TabEdit, TabEditError, TabSnippet};
+use atomik_model::{
+    Clip, ClipContent, ClipId, Command, DeviceKey, MidiData, Note, RackDoc, SongCommand,
+};
 use atomik_tab::fretting::FretOptions;
 use atomik_tab::score::Techniques;
+use dialog::{Modal, Outcome, PickHit, PositionPick, TuningDialog};
+use tech::Tech;
 use vello::kurbo::{Point, Rect};
 
 /// Height of the top bar (title, instrument, note values).
@@ -211,6 +231,71 @@ pub struct TabEditorView {
     focused: bool,
     hover: Option<Point>,
     repaint: bool,
+    /// The song's bar lines (the loop snaps to these).
+    song_bars: Bars,
+    /// The selected cells, when a range is selected.
+    range: Option<Range>,
+    /// The fixed corner of the range while it grows.
+    anchor: (i64, u8),
+    /// Whether the keyboard range is a rectangle (Shift+Up/Down was used) or whole columns.
+    rect_mode: bool,
+    /// The notes inside the range (tick and key).
+    sel: Vec<(i64, u8)>,
+    drag: Drag,
+    /// The tab clipboard: strings, frets and techniques of the last copy.
+    clipboard: Option<TabSnippet>,
+    /// The amount of the bend button, in cents.
+    bend_cents: i32,
+    modal: Option<Modal>,
+    /// The time of the last tick or stamp, in seconds.
+    clock: f64,
+}
+
+/// A rectangle of cells: ticks `t0..=t1` and strings `s0..=s1`. `all` also takes the notes no
+/// string plays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Range {
+    pub t0: i64,
+    pub t1: i64,
+    pub s0: u8,
+    pub s1: u8,
+    pub all: bool,
+}
+
+impl Range {
+    /// The rectangle between two cells.
+    fn between(a: (i64, u8), b: (i64, u8)) -> Self {
+        Self {
+            t0: a.0.min(b.0),
+            t1: a.0.max(b.0),
+            s0: a.1.min(b.1),
+            s1: a.1.max(b.1),
+            all: false,
+        }
+    }
+
+    fn holds(&self, p: &Placed) -> bool {
+        self.all
+            || ((self.t0..=self.t1).contains(&p.tick) && (self.s0..=self.s1).contains(&p.string))
+    }
+}
+
+/// A pointer gesture in progress.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Drag {
+    None,
+    /// Drawing a range on the staff from `anchor`.
+    Select {
+        anchor: (i64, u8),
+    },
+    /// Dragging over the ruler: content ticks of the press and of the pointer, and the x of the
+    /// press (a click that never leaves it only locates).
+    Loop {
+        from: i64,
+        to: i64,
+        press_x: f64,
+        moved: bool,
+    },
 }
 
 impl TabEditorView {
@@ -246,6 +331,16 @@ impl TabEditorView {
             focused: false,
             hover: None,
             repaint: true,
+            song_bars: Bars::default(),
+            range: None,
+            anchor: (0, 0),
+            rect_mode: false,
+            sel: Vec::new(),
+            drag: Drag::None,
+            clipboard: None,
+            bend_cents: tech::DEFAULT_BEND,
+            modal: None,
+            clock: 0.0,
         }
     }
 
@@ -263,6 +358,9 @@ impl TabEditorView {
             self.cursor = (0, 0);
             self.digits.clear();
             self.axis.scroll = 0.0;
+            self.clear_range();
+            self.modal = None;
+            self.drag = Drag::None;
         }
         self.clip_id = Some(id);
         self.clip = None;
@@ -280,6 +378,9 @@ impl TabEditorView {
         self.device = None;
         self.digits.clear();
         self.merge_open = None;
+        self.clear_range();
+        self.modal = None;
+        self.drag = Drag::None;
         self.repaint = true;
     }
 
@@ -353,14 +454,68 @@ impl TabEditorView {
         }
     }
 
-    /// True while a pointer gesture is in progress (the tab editor has none: clicks only).
+    /// True while a pointer gesture is in progress (a range or a loop being dragged).
     pub fn is_dragging(&self) -> bool {
-        false
+        self.drag != Drag::None
     }
 
-    /// The editor never owns a text field.
+    /// True while a modal panel is open: it takes every key (Enter applies, Esc closes), so the
+    /// shell resolves no command for them.
     pub fn is_text_owner(&self) -> bool {
-        false
+        self.modal.is_some()
+    }
+
+    /// Whether a panel (instrument, tuning and capo; re-fret at position) is open.
+    pub fn modal_open(&self) -> bool {
+        self.modal.is_some()
+    }
+
+    /// Whether the edits (copy, cut, delete, techniques, transpose ...) have notes to work on:
+    /// a selection, or a note under the cursor.
+    pub fn has_targets(&self) -> bool {
+        !self.targets().is_empty()
+    }
+
+    /// Whether the tab clipboard holds notes to paste.
+    pub fn can_paste(&self) -> bool {
+        self.clipboard.is_some()
+    }
+
+    /// The song loop range the pointer is dragging over the ruler, in song ticks.
+    pub fn loop_preview(&self) -> Option<(i64, i64)> {
+        let Drag::Loop {
+            from,
+            to,
+            moved: true,
+            ..
+        } = self.drag
+        else {
+            return None;
+        };
+        self.loop_range(from, to)
+    }
+
+    /// The bars between two content ticks as a song range (both bars included).
+    fn loop_range(&self, a: i64, b: i64) -> Option<(i64, i64)> {
+        let c = self.clip.as_ref()?;
+        let to_song = |t: i64| (c.start + t - c.offset).max(0);
+        let (lo, hi) = (to_song(a.min(b)), to_song(a.max(b)));
+        let map = self.song_bars.map();
+        let start = map.bar_start(map.bar_at(lo));
+        let end = map.bar_start(map.bar_at(hi) + 1);
+        (end > start).then_some((start, end))
+    }
+
+    /// The view's clock in seconds: the time of the last [`Self::tick`] or [`Self::stamp`].
+    fn now(&self) -> f64 {
+        self.clock
+    }
+
+    /// Sets the view's clock to `now` (seconds on a monotonic clock, the one [`Self::tick`] gets).
+    /// A host stamps each event with the time it arrived at before handing it over, so a digit
+    /// typed after an idle stretch (no frame ran) is not mistaken for a quick second digit.
+    pub fn stamp(&mut self, now: f64) {
+        self.clock = now;
     }
 
     /// True when something changed since the last paint.
@@ -375,6 +530,9 @@ impl TabEditorView {
 
     /// A tooltip for the top bar's buttons.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
+        if self.modal.is_some() {
+            return None;
+        }
         let (rect, b) = self
             .top_buttons()
             .into_iter()
@@ -383,6 +541,17 @@ impl TabEditorView {
             TopButton::Value(_) => "Note value of the next typed note",
             TopButton::Dotted => "Dotted note value",
             TopButton::Triplet => "Triplet note value",
+            TopButton::Tool(i) => {
+                let item = tech::TOOLBAR[i];
+                return Some(Help::new(rect, item.tip).with_arg("editor.tab_technique", item.arg));
+            }
+            TopButton::BendAmount => "Bend amount in tones (click to change)",
+            TopButton::Instrument => {
+                return Some(
+                    Help::new(rect, "Instrument, tuning and capo")
+                        .with_command("editor.tab_tuning"),
+                );
+            }
         };
         Some(Help::new(rect, text))
     }
@@ -397,6 +566,7 @@ impl TabEditorView {
         let end = self.end_tick();
         let last = u8::try_from(self.strings().saturating_sub(1)).unwrap_or(u8::MAX);
         self.cursor = (tick.clamp(0, (end - 1).max(0)), string.min(last));
+        self.clear_range();
         self.repaint = true;
     }
 
@@ -411,10 +581,82 @@ impl TabEditorView {
         self.repaint = true;
     }
 
-    /// The selected notes (tick and key). The phase that adds range selection fills this; the
-    /// editor itself selects nothing yet.
+    /// The selected notes (tick and key): the notes inside the selected range, in time order.
     pub fn selected(&self) -> &[(i64, u8)] {
-        &[]
+        &self.sel
+    }
+
+    /// The selected range as `(first tick, last tick, first string, last string)`, when there
+    /// is one (it may hold no note).
+    pub fn selected_range(&self) -> Option<(i64, i64, u8, u8)> {
+        self.range.map(|r| (r.t0, r.t1, r.s0, r.s1))
+    }
+
+    /// Selects the cells between two cells (tick and string), as a drag does.
+    pub fn select_between(&mut self, a: (i64, u8), b: (i64, u8)) {
+        self.anchor = a;
+        self.range = Some(Range::between(a, b));
+        self.cursor = b;
+        self.refresh_sel();
+        self.repaint = true;
+    }
+
+    /// Selects every note of the clip.
+    pub fn select_all(&mut self) {
+        let last = u8::try_from(self.strings().saturating_sub(1)).unwrap_or(0);
+        self.range = Some(Range {
+            t0: 0,
+            t1: self.end_tick(),
+            s0: 0,
+            s1: last,
+            all: true,
+        });
+        self.refresh_sel();
+        self.repaint = true;
+    }
+
+    /// Selects nothing.
+    pub fn clear_selection(&mut self) {
+        self.clear_range();
+        self.repaint = true;
+    }
+
+    fn clear_range(&mut self) {
+        self.range = None;
+        self.sel.clear();
+    }
+
+    /// Recomputes the notes inside the range from the clip.
+    fn refresh_sel(&mut self) {
+        self.sel = match (&self.range, &self.work) {
+            (Some(r), Some(w)) => {
+                let mut v: Vec<(i64, u8)> = w
+                    .placed
+                    .iter()
+                    .filter(|p| r.holds(p))
+                    .map(|p| (p.tick, p.key))
+                    .collect();
+                if r.all {
+                    v.extend(w.unplaced.iter().copied());
+                    v.sort_unstable();
+                }
+                v
+            }
+            _ => Vec::new(),
+        };
+    }
+
+    /// What an edit works on: the selection, else the note under the cursor.
+    fn targets(&self) -> Vec<(i64, u8)> {
+        if !self.sel.is_empty() {
+            return self.sel.clone();
+        }
+        let (tick, string) = self.cursor;
+        self.work
+            .as_ref()
+            .and_then(|w| w.tab().note_on_string(tick, string))
+            .map(|r| vec![(r.tick, r.key)])
+            .unwrap_or_default()
     }
 
     /// The text of the last refused edit (cleared by the next accepted one).
@@ -499,6 +741,7 @@ impl TabEditorView {
     /// Per-frame clock (`now` in seconds, any monotonic clock): releases the audition note and
     /// ends the fret being typed once its digits ran out.
     pub fn tick(&mut self, now: f64) -> Vec<UiAction> {
+        self.stamp(now);
         let mut out = Vec::new();
         if self.digits.tick(now) {
             self.end_typing(&mut out);
@@ -554,7 +797,8 @@ impl TabEditorView {
             None => self.clip.is_none(),
         };
         let meter = Meter::at(&doc.song, found.map_or(0, |(_, c)| c.start));
-        if same && meter == self.meter {
+        let song_bars = Bars::of(&doc.song);
+        if same && meter == self.meter && song_bars == self.song_bars {
             return;
         }
         match found {
@@ -565,6 +809,7 @@ impl TabEditorView {
                 self.clip = Some(c.clone());
                 self.meter = meter;
                 self.bars = Bars::single(meter);
+                self.song_bars = song_bars;
                 self.read_song_marks(doc, c);
                 self.work = Work::build(c, self.instrument);
             }
@@ -580,6 +825,7 @@ impl TabEditorView {
         let last = u8::try_from(self.strings().saturating_sub(1)).unwrap_or(u8::MAX);
         self.cursor.1 = self.cursor.1.min(last);
         self.cursor.0 = self.cursor.0.clamp(0, (self.end_tick() - 1).max(0));
+        self.refresh_sel();
         self.repaint = true;
     }
 
@@ -665,23 +911,69 @@ impl TabEditorView {
         )
     }
 
-    /// The buttons of the top bar: the seven note values, the dot and the triplet.
+    /// The label of the top bar's left end: the track, the instrument and the capo.
+    pub(super) fn instrument_label(&self) -> Option<String> {
+        let w = self.work.as_ref()?;
+        let tab = w.tab();
+        let name = atomik_tab::instrument::find_instrument(&tab.instrument_id)
+            .map_or("Custom", |i| i.name);
+        Some(format!("{}  -  {}", self.title, name))
+    }
+
+    /// The clickable rectangle of the instrument label (it opens the tuning dialog), including
+    /// the capo text that follows it.
+    fn instrument_rect(&self) -> Option<Rect> {
+        let label = self.instrument_label()?;
+        let capo = self.work.as_ref()?.tab().capo.fret > 0;
+        let w = label.chars().count() as f64 * 6.6 + 8.0 + if capo { 62.0 } else { 0.0 };
+        Some(Rect::new(
+            self.bounds.x0 + 6.0,
+            self.bounds.y0 + 3.0,
+            self.bounds.x0 + 10.0 + w,
+            self.bounds.y0 + TOP_BAR_HEIGHT - 3.0,
+        ))
+    }
+
+    /// The buttons of the top bar: the instrument label, the technique toolbar (as many buttons
+    /// as fit before the note values), then the seven note values, the dot and the triplet.
     fn top_buttons(&self) -> Vec<(Rect, TopButton)> {
         let y0 = self.bounds.y0 + 4.0;
         let (w, h, gap) = (30.0, TOP_BAR_HEIGHT - 8.0, 3.0);
-        let mut items: Vec<TopButton> = DIVISIONS.iter().map(|d| TopButton::Value(*d)).collect();
-        items.push(TopButton::Dotted);
-        items.push(TopButton::Triplet);
-        let total = items.len() as f64 * (w + gap) - gap;
+        let mut values: Vec<TopButton> = DIVISIONS.iter().map(|d| TopButton::Value(*d)).collect();
+        values.push(TopButton::Dotted);
+        values.push(TopButton::Triplet);
+        let total = values.len() as f64 * (w + gap) - gap;
         let x0 = (self.bounds.x1 - total - 8.0).max(self.bounds.x0);
-        items
+        let mut out: Vec<(Rect, TopButton)> = values
             .into_iter()
             .enumerate()
             .map(|(i, b)| {
                 let x = x0 + i as f64 * (w + gap);
                 (Rect::new(x, y0, x + w, y0 + h), b)
             })
-            .collect()
+            .collect();
+        let mut x = self.bounds.x0 + 8.0;
+        if let Some(r) = self.instrument_rect() {
+            x = r.x1 + 8.0;
+            out.push((r, TopButton::Instrument));
+        }
+        if self.work.is_some() {
+            let mut items: Vec<(TopButton, f64)> = Vec::new();
+            for (i, item) in tech::TOOLBAR.iter().enumerate() {
+                items.push((TopButton::Tool(i), 24.0));
+                if item.arg == "bend" {
+                    items.push((TopButton::BendAmount, 34.0));
+                }
+            }
+            for (b, bw) in items {
+                if x + bw > x0 - 8.0 {
+                    break;
+                }
+                out.push((Rect::new(x, y0, x + bw, y0 + h), b));
+                x += bw + 2.0;
+            }
+        }
+        out
     }
 
     // ------------------------------------------------------------------ events
@@ -697,10 +989,12 @@ impl TabEditorView {
         if self.work.is_none() {
             return out;
         }
+        if self.modal.is_some() {
+            self.modal_event(event, &mut out);
+            return out;
+        }
         match event {
-            UiEvent::PointerMove { pos, .. } => {
-                self.hover = Some(*pos);
-            }
+            UiEvent::PointerMove { pos, .. } => self.pointer_move(*pos),
             UiEvent::PointerLeave => {
                 self.hover = None;
                 self.repaint = true;
@@ -708,8 +1002,18 @@ impl TabEditorView {
             UiEvent::PointerDown {
                 pos,
                 button: PointerButton::Primary,
+                modifiers,
                 ..
-            } => self.pointer_down(*pos, &mut out),
+            } => self.pointer_down(*pos, modifiers.shift, &mut out),
+            UiEvent::PointerDown {
+                pos,
+                button: PointerButton::Secondary,
+                ..
+            } => self.context_click(*pos, &mut out),
+            UiEvent::PointerUp {
+                button: PointerButton::Primary,
+                ..
+            } => self.pointer_up(&mut out),
             UiEvent::Wheel {
                 delta,
                 pos,
@@ -741,6 +1045,10 @@ impl TabEditorView {
                 Key::Escape => {
                     self.digits.clear();
                     self.end_typing(&mut out);
+                    if self.range.is_some() {
+                        self.clear_range();
+                        self.repaint = true;
+                    }
                 }
                 _ => {}
             },
@@ -752,7 +1060,56 @@ impl TabEditorView {
     /// A manual scroll stops following until the next jump (like the piano roll).
     fn follow_pause(&mut self) {}
 
-    fn pointer_down(&mut self, pos: Point, out: &mut Vec<UiAction>) {
+    /// The cell (tick and string) a point on the staff means; a point beside the staff is
+    /// clamped to its nearest string and to the clip.
+    fn cell_at(&self, pos: Point) -> (i64, u8) {
+        let lh = self.line_h();
+        let n = self.strings();
+        let string = (((pos.y - self.staff_top()) / lh).round().max(0.0) as usize).min(n - 1);
+        let string = u8::try_from(string).unwrap_or(0);
+        let tick = self
+            .pick_tick(pos.x, string)
+            .clamp(0, (self.end_tick() - 1).max(0));
+        (tick, string)
+    }
+
+    fn pointer_move(&mut self, pos: Point) {
+        let over = |v: &Self, p: Option<Point>| {
+            p.and_then(|p| v.top_buttons().into_iter().find(|(r, _)| r.contains(p)))
+                .map(|(r, _)| r)
+        };
+        if over(self, self.hover) != over(self, Some(pos)) {
+            self.repaint = true;
+        }
+        self.hover = Some(pos);
+        match self.drag {
+            Drag::Select { anchor } => {
+                let cell = self.cell_at(pos);
+                self.cursor = cell;
+                self.anchor = anchor;
+                self.range = (cell != anchor).then(|| Range::between(anchor, cell));
+                self.refresh_sel();
+                self.repaint = true;
+            }
+            Drag::Loop {
+                from,
+                press_x,
+                moved,
+                ..
+            } => {
+                self.drag = Drag::Loop {
+                    from,
+                    to: self.axis.x_to_tick(pos.x).max(0),
+                    press_x,
+                    moved: moved || (pos.x - press_x).abs() >= 3.0,
+                };
+                self.repaint = true;
+            }
+            Drag::None => {}
+        }
+    }
+
+    fn pointer_down(&mut self, pos: Point, shift: bool, out: &mut Vec<UiAction>) {
         self.repaint = true;
         self.end_typing(out);
         self.release_audition_into(out);
@@ -761,7 +1118,7 @@ impl TabEditorView {
             .into_iter()
             .find(|(r, _)| r.contains(pos))
         {
-            self.set_value_from(b, out);
+            self.top_button(b, out);
             return;
         }
         if self.ruler_rect().contains(pos) {
@@ -770,18 +1127,102 @@ impl TabEditorView {
                 out.push(UiAction::Transport(TransportAction::Locate(
                     (c.start + tick - c.offset).max(0),
                 )));
+                self.drag = Drag::Loop {
+                    from: tick,
+                    to: tick,
+                    press_x: pos.x,
+                    moved: false,
+                };
             }
             return;
         }
         if !self.staff_rect().contains(pos) {
             return;
         }
-        let lh = self.line_h();
-        let n = self.strings();
-        let string = (((pos.y - self.staff_top()) / lh).round().max(0.0) as usize).min(n - 1);
-        let string = u8::try_from(string).unwrap_or(0);
-        let tick = self.pick_tick(pos.x, string);
-        self.set_cursor(tick, string);
+        let cell = self.cell_at(pos);
+        if shift {
+            if self.range.is_none_or(|r| r.all) {
+                self.anchor = self.cursor;
+            }
+            self.cursor = cell;
+            self.range = Some(Range::between(self.anchor, cell));
+            self.refresh_sel();
+            return;
+        }
+        self.clear_range();
+        self.cursor = cell;
+        self.anchor = cell;
+        self.drag = Drag::Select { anchor: cell };
+    }
+
+    fn pointer_up(&mut self, out: &mut Vec<UiAction>) {
+        let drag = std::mem::replace(&mut self.drag, Drag::None);
+        if let Drag::Loop {
+            from,
+            to,
+            moved: true,
+            ..
+        } = drag
+            && let Some(range) = self.loop_range(from, to)
+        {
+            out.push(UiAction::Command(Command::Song(SongCommand::SetLoop {
+                range,
+                enabled: true,
+            })));
+        }
+        self.repaint = true;
+    }
+
+    /// A right click on the staff: the note under it joins the selection (else becomes it) and
+    /// the app opens the staff menu.
+    fn context_click(&mut self, pos: Point, out: &mut Vec<UiAction>) {
+        self.end_typing(out);
+        if !self.staff_rect().contains(pos) {
+            return;
+        }
+        let cell = self.cell_at(pos);
+        let inside = self.range.is_some_and(|r| {
+            r.all || ((r.t0..=r.t1).contains(&cell.0) && (r.s0..=r.s1).contains(&cell.1))
+        });
+        if !inside {
+            self.cursor = cell;
+            self.anchor = cell;
+            let on_note = self.work.as_ref().is_some_and(|w| {
+                w.placed
+                    .iter()
+                    .any(|p| p.tick == cell.0 && p.string == cell.1)
+            });
+            if on_note {
+                self.range = Some(Range::between(cell, cell));
+                self.refresh_sel();
+            } else {
+                self.clear_range();
+            }
+        }
+        self.repaint = true;
+        out.push(UiAction::ContextMenu {
+            target: ContextTarget::TabStaff,
+            at: pos,
+        });
+    }
+
+    fn top_button(&mut self, b: TopButton, out: &mut Vec<UiAction>) {
+        match b {
+            TopButton::Value(_) | TopButton::Dotted | TopButton::Triplet => {
+                self.set_value_from(b, out);
+            }
+            TopButton::Tool(i) => {
+                self.technique(tech::TOOLBAR[i].arg, out);
+            }
+            TopButton::BendAmount => {
+                let at = tech::BEND_CENTS
+                    .iter()
+                    .position(|c| *c == self.bend_cents)
+                    .unwrap_or(0);
+                self.bend_cents = tech::BEND_CENTS[(at + 1) % tech::BEND_CENTS.len()];
+            }
+            TopButton::Instrument => self.open_tuning(),
+        }
     }
 
     /// The tick a click at `x` on `string` means: a note close enough, else the value grid.
@@ -809,22 +1250,24 @@ impl TabEditorView {
             },
             TopButton::Dotted => self.value.toggle_dotted(),
             TopButton::Triplet => self.value.toggle_triplet(),
+            _ => return,
         };
         self.apply_value(v, out);
     }
 
-    /// Sets the entry value and resizes the note under the cursor to it.
+    /// Sets the entry value and resizes the notes under the cursor (the selection, or the note
+    /// the cursor is on) to it.
     fn apply_value(&mut self, v: NoteValue, out: &mut Vec<UiAction>) {
         self.value = v;
         self.repaint = true;
-        let (tick, string) = self.cursor;
-        let prepared = self.work.as_ref().and_then(|w| {
-            let r = w
-                .tab()
-                .note_on_string(tick, string)
-                .map(|r| (r.tick, r.key))?;
-            Some(tab_edit::set_length(&w.notes, &w.midi, &[r], v.ticks()))
-        });
+        let targets = self.targets();
+        if targets.is_empty() {
+            return;
+        }
+        let prepared = self
+            .work
+            .as_ref()
+            .map(|w| tab_edit::set_length(&w.notes, &w.midi, &targets, v.ticks()));
         if let (Some(r), Some(clip)) = (prepared, self.clip_id) {
             self.emit(r, clip, None, out);
         }
@@ -877,7 +1320,7 @@ impl TabEditorView {
         let s = usize::from(string);
         let max = tab.tuning.max_fret(s, tab.capo);
         let min = tab.tuning.min_fret(s, tab.capo);
-        let typed = self.digits.push(digit, self.cursor, max);
+        let typed = self.digits.push(digit, self.cursor, max, self.now());
         let fret = typed.fret;
         let valid = fret == 0 || (min..=max).contains(&fret);
         let prepared = if valid {
@@ -948,17 +1391,13 @@ impl TabEditorView {
     }
 
     fn run_command(&mut self, id: &str, arg: Option<&str>, out: &mut Vec<UiAction>) -> bool {
-        let moving = matches!(
+        if self.modal.is_some() {
+            return false;
+        }
+        if !matches!(
             id,
-            "editor.tab_cursor_left"
-                | "editor.tab_cursor_right"
-                | "editor.tab_cursor_up"
-                | "editor.tab_cursor_down"
-                | "editor.tab_bar_next"
-                | "editor.tab_bar_prev"
-                | "edit.delete"
-        );
-        if moving {
+            "editor.tab_zoom_in" | "editor.tab_zoom_out" | "sequencer.follow"
+        ) {
             self.end_typing(out);
         }
         let end = self.end_tick();
@@ -968,16 +1407,22 @@ impl TabEditorView {
                 let dir = if id.ends_with("left") { -1 } else { 1 };
                 let t = entry::step_on_grid(tick, self.value.ticks(), dir, end);
                 self.cursor.0 = t;
+                self.clear_range();
                 self.reveal();
             }
-            "editor.tab_cursor_up" => self.cursor.1 = string.saturating_sub(1),
+            "editor.tab_cursor_up" => {
+                self.cursor.1 = string.saturating_sub(1);
+                self.clear_range();
+            }
             "editor.tab_cursor_down" => {
                 let last = u8::try_from(self.strings().saturating_sub(1)).unwrap_or(0);
                 self.cursor.1 = (string + 1).min(last);
+                self.clear_range();
             }
             "editor.tab_bar_next" | "editor.tab_bar_prev" => {
                 let dir = if id.ends_with("next") { 1 } else { -1 };
                 self.cursor.0 = entry::step_bar(tick, dir, &self.bars, end);
+                self.clear_range();
                 self.reveal();
             }
             "editor.tab_duration" => {
@@ -995,18 +1440,53 @@ impl TabEditorView {
             }
             "editor.tab_dotted" => self.apply_value(self.value.toggle_dotted(), out),
             "editor.tab_triplet" => self.apply_value(self.value.toggle_triplet(), out),
-            "edit.delete" => {
-                let Some(clip) = self.clip_id else {
+            "editor.tab_extend" => {
+                let Some(dir) = arg else { return false };
+                return self.extend(dir);
+            }
+            "editor.tab_technique" => {
+                let Some(name) = arg else { return false };
+                if Tech::parse(name, self.bend_cents).is_none() {
+                    return false;
+                }
+                self.technique(name, out);
+            }
+            "editor.tab_bend_amount" => {
+                let Some(c) = arg.and_then(tech::bend_from_name) else {
                     return false;
                 };
-                let r = self.work.as_ref().and_then(|w| {
-                    w.tab().note_on_string(tick, string)?;
-                    Some(tab_edit::clear_fret(&w.notes, &w.midi, tick, string))
-                });
-                if let Some(r) = r {
-                    self.emit(r, clip, None, out);
+                self.bend_cents = c;
+            }
+            "editor.tab_string_up" => self.step_string(false, out),
+            "editor.tab_string_down" => self.step_string(true, out),
+            "editor.tab_transpose" => {
+                let semis = match arg {
+                    Some("up") => 1,
+                    Some("down") => -1,
+                    Some("octave_up") => 12,
+                    Some("octave_down") => -12,
+                    _ => return false,
+                };
+                self.transpose(semis, out);
+            }
+            "editor.tab_refret" => match arg {
+                Some("choose") => self.open_position_pick(),
+                Some("automatic") => self.refret(RefretTarget::Automatic, out),
+                Some("lowest") => self.refret(RefretTarget::Lowest, out),
+                _ => return false,
+            },
+            "editor.tab_tuning" => self.open_tuning(),
+            "edit.select_all" => self.select_all(),
+            "edit.copy" => {
+                self.copy();
+            }
+            "edit.cut" => {
+                if self.copy() {
+                    self.delete_targets(out);
                 }
             }
+            "edit.paste" => self.paste(out),
+            "edit.delete" => self.delete_targets(out),
             "editor.tab_zoom_in" | "editor.tab_zoom_out" => {
                 let f = if id == "editor.tab_zoom_in" {
                     ZOOM_KEY
@@ -1019,6 +1499,332 @@ impl TabEditorView {
             _ => return false,
         }
         true
+    }
+
+    // ------------------------------------------------------------------ edits
+
+    /// Reports that an edit had nothing to work on.
+    fn nothing_selected(&mut self) {
+        self.status = Some("Select notes, or put the cursor on a note, first".into());
+        self.repaint = true;
+    }
+
+    /// Grows (or starts) the range one step toward `dir`.
+    fn extend(&mut self, dir: &str) -> bool {
+        let last = u8::try_from(self.strings().saturating_sub(1)).unwrap_or(0);
+        let end = self.end_tick();
+        if self.range.is_none_or(|r| r.all) {
+            self.anchor = self.cursor;
+            self.rect_mode = false;
+        }
+        let (tick, string) = self.cursor;
+        match dir {
+            "left" => self.cursor.0 = entry::step_on_grid(tick, self.value.ticks(), -1, end),
+            "right" => self.cursor.0 = entry::step_on_grid(tick, self.value.ticks(), 1, end),
+            "up" => {
+                self.cursor.1 = string.saturating_sub(1);
+                self.rect_mode = true;
+            }
+            "down" => {
+                self.cursor.1 = (string + 1).min(last);
+                self.rect_mode = true;
+            }
+            _ => return false,
+        }
+        // Left and Right select whole columns (every string); Up and Down narrow it to the
+        // rectangle between the anchor and the cursor.
+        self.range = Some(if self.rect_mode {
+            Range::between(self.anchor, self.cursor)
+        } else {
+            Range::between((self.anchor.0, 0), (self.cursor.0, last))
+        });
+        self.refresh_sel();
+        self.reveal();
+        true
+    }
+
+    /// Toggles the technique `name` on the targets: set when any lacks it, cleared when all
+    /// have it.
+    fn technique(&mut self, name: &str, out: &mut Vec<UiAction>) {
+        if let Some(c) = tech::explicit_bend(name) {
+            self.bend_cents = c;
+        }
+        let Some(tech) = Tech::parse(name, self.bend_cents) else {
+            return;
+        };
+        let targets = self.targets();
+        let (Some(w), Some(clip)) = (&self.work, self.clip_id) else {
+            return;
+        };
+        if targets.is_empty() {
+            self.nothing_selected();
+            return;
+        }
+        let plain = Techniques::default();
+        let on = tech.toggle_on(
+            targets
+                .iter()
+                .map(|(t, k)| w.tab().note_of(*t, *k).map_or(&plain, |r| &r.tech)),
+        );
+        let r = tab_edit::update_techniques(&w.notes, &w.midi, &targets, move |t| {
+            tech.apply(t, on);
+        });
+        self.finish_edit(r, clip, out);
+    }
+
+    /// Emits an edit and reports the notes the neck could not place.
+    fn finish_edit(
+        &mut self,
+        r: Result<TabEdit, TabEditError>,
+        clip: ClipId,
+        out: &mut Vec<UiAction>,
+    ) -> Option<TabEdit> {
+        let e = self.emit(r, clip, None, out)?;
+        if !e.unplayable.is_empty() {
+            self.status = Some(format!(
+                "{} notes cannot be played on this neck",
+                e.unplayable.len()
+            ));
+        }
+        Some(e)
+    }
+
+    /// Moves the targets to the next string (down: toward the bass) that plays their pitch. The
+    /// cursor and the range follow the notes to their new strings.
+    fn step_string(&mut self, down: bool, out: &mut Vec<UiAction>) {
+        let targets = self.targets();
+        let (Some(w), Some(clip)) = (&self.work, self.clip_id) else {
+            return;
+        };
+        if targets.is_empty() {
+            self.nothing_selected();
+            return;
+        }
+        let r = tab_edit::step_string(&w.notes, &w.midi, &targets, down);
+        if matches!(r, Err(TabEditError::NotPlayable { .. })) {
+            self.status = Some("No other string plays that pitch there".into());
+            self.repaint = true;
+            return;
+        }
+        let Some(e) = self.finish_edit(r, clip, out) else {
+            return;
+        };
+        let Some(tab) = e.midi.tab.as_ref() else {
+            return;
+        };
+        let strings: Vec<u8> = targets
+            .iter()
+            .filter_map(|(t, k)| tab.note_of(*t, *k).map(|r| r.string))
+            .collect();
+        let (Some(&lo), Some(&hi)) = (strings.iter().min(), strings.iter().max()) else {
+            return;
+        };
+        match &mut self.range {
+            Some(r) if !r.all => {
+                r.s0 = lo;
+                r.s1 = hi;
+                self.cursor.1 = self.cursor.1.clamp(lo, hi);
+            }
+            Some(_) => {}
+            None => self.cursor.1 = lo,
+        }
+    }
+
+    fn transpose(&mut self, semitones: i32, out: &mut Vec<UiAction>) {
+        let targets = self.targets();
+        let (Some(w), Some(clip)) = (&self.work, self.clip_id) else {
+            return;
+        };
+        if targets.is_empty() {
+            self.nothing_selected();
+            return;
+        }
+        let r = tab_edit::transpose(&w.notes, &w.midi, &targets, semitones);
+        self.finish_edit(r, clip, out);
+    }
+
+    fn refret(&mut self, target: RefretTarget, out: &mut Vec<UiAction>) {
+        let targets = self.targets();
+        let (Some(w), Some(clip)) = (&self.work, self.clip_id) else {
+            return;
+        };
+        if targets.is_empty() {
+            self.nothing_selected();
+            return;
+        }
+        let r = tab_edit::refret_at(&w.notes, &w.midi, &targets, target, &FretOptions::default());
+        self.finish_edit(r, clip, out);
+    }
+
+    fn open_position_pick(&mut self) {
+        if self.targets().is_empty() {
+            self.nothing_selected();
+            return;
+        }
+        let frets = self.work.as_ref().map_or(12, |w| w.tab().tuning.frets);
+        self.modal = Some(Modal::Position(PositionPick {
+            max_position: frets.saturating_sub(3).clamp(1, 15),
+        }));
+        self.repaint = true;
+    }
+
+    fn open_tuning(&mut self) {
+        if let Some(w) = &self.work {
+            self.modal = Some(Modal::Tuning(Box::new(TuningDialog::new(w.tab()))));
+            self.repaint = true;
+        }
+    }
+
+    /// Deletes the selection, else the note under the cursor.
+    fn delete_targets(&mut self, out: &mut Vec<UiAction>) {
+        let targets = self.targets();
+        let (Some(w), Some(clip)) = (&self.work, self.clip_id) else {
+            return;
+        };
+        if targets.is_empty() {
+            return;
+        }
+        let r = tab_edit::delete_notes(&w.notes, &w.midi, &targets);
+        self.emit(r, clip, None, out);
+        self.clear_range();
+    }
+
+    /// Copies the targets into the tab clipboard. False when there was nothing to copy.
+    fn copy(&mut self) -> bool {
+        let targets = self.targets();
+        let Some(w) = &self.work else { return false };
+        if targets.is_empty() {
+            self.nothing_selected();
+            return false;
+        }
+        match tab_edit::copy_snippet(&w.notes, &w.midi, &targets) {
+            Ok(s) => {
+                self.clipboard = Some(s);
+                self.status = None;
+                true
+            }
+            Err(e) => {
+                self.status = Some(e.to_string());
+                self.repaint = true;
+                false
+            }
+        }
+    }
+
+    /// Puts the clipboard down with its first note at the cursor and selects what was pasted.
+    fn paste(&mut self, out: &mut Vec<UiAction>) {
+        let (Some(w), Some(clip), Some(snip)) = (&self.work, self.clip_id, &self.clipboard) else {
+            self.status = Some("The tab clipboard is empty: copy notes first".into());
+            self.repaint = true;
+            return;
+        };
+        let at = self.cursor.0;
+        let fits = snip.clipped(self.end_tick() - at);
+        if fits.is_empty() {
+            self.status = Some("The cursor is too near the end of the clip to paste there".into());
+            self.repaint = true;
+            return;
+        }
+        let strings = fits.notes.iter().map(|n| n.string);
+        let (s0, s1) = (
+            strings.clone().min().unwrap_or(0),
+            strings.max().unwrap_or(0),
+        );
+        let t1 = at + fits.notes.iter().map(|n| n.dt).max().unwrap_or(0);
+        let r = tab_edit::paste_snippet(&w.notes, &w.midi, &fits, at);
+        if self.emit(r, clip, None, out).is_some() {
+            self.anchor = (at, s0);
+            self.range = Some(Range {
+                t0: at,
+                t1,
+                s0,
+                s1,
+                all: false,
+            });
+        }
+    }
+
+    // ------------------------------------------------------------------ modal panels
+
+    fn modal_event(&mut self, event: &UiEvent, out: &mut Vec<UiAction>) {
+        let bounds = self.bounds;
+        self.repaint = true;
+        let outcome = match event {
+            UiEvent::PointerMove { pos, .. } => {
+                self.hover = Some(*pos);
+                None
+            }
+            UiEvent::PointerLeave => {
+                self.hover = None;
+                None
+            }
+            UiEvent::PointerDown {
+                pos,
+                button: PointerButton::Primary,
+                modifiers,
+                ..
+            } => match &mut self.modal {
+                Some(Modal::Tuning(d)) => match d.hit(bounds, *pos) {
+                    Some(h) => d.click(h, modifiers.shift),
+                    None if !d.contains(bounds, *pos) => Some(Outcome::Cancel),
+                    None => None,
+                },
+                Some(Modal::Position(p)) => match p.hit(bounds, *pos) {
+                    Some(PickHit::Automatic) => Some(Outcome::Refret(RefretTarget::Automatic)),
+                    Some(PickHit::Lowest) => Some(Outcome::Refret(RefretTarget::Lowest)),
+                    Some(PickHit::Position(n)) => Some(Outcome::Refret(RefretTarget::Position(n))),
+                    None if !p.contains(bounds, *pos) => Some(Outcome::Cancel),
+                    None => None,
+                },
+                None => None,
+            },
+            UiEvent::Wheel { delta, pos, .. } => {
+                if let Some(Modal::Tuning(d)) = &mut self.modal {
+                    let rows = if delta.y > 0.0 { -1 } else { 1 };
+                    d.wheel(bounds, *pos, rows);
+                }
+                None
+            }
+            UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } => Some(Outcome::Cancel),
+            UiEvent::Key {
+                key: Key::Enter,
+                pressed: true,
+                ..
+            } if matches!(self.modal, Some(Modal::Tuning(_))) => Some(Outcome::Apply),
+            _ => None,
+        };
+        match outcome {
+            Some(Outcome::Cancel) => self.modal = None,
+            Some(Outcome::Apply) => {
+                if let Some(Modal::Tuning(d)) = self.modal.take() {
+                    self.apply_tuning(&d, out);
+                }
+            }
+            Some(Outcome::Refret(t)) => {
+                self.modal = None;
+                self.refret(t, out);
+            }
+            None => {}
+        }
+    }
+
+    /// Applies the tuning dialog: the instrument, tuning and capo of the clip change, as one
+    /// undo step.
+    fn apply_tuning(&mut self, d: &TuningDialog, out: &mut Vec<UiAction>) {
+        let (id, tuning, capo, keep) = d.result();
+        let (Some(w), Some(clip)) = (&self.work, self.clip_id) else {
+            return;
+        };
+        let r = if keep {
+            tab_edit::set_tuning(&w.notes, &w.midi, &id, tuning, capo)
+        } else {
+            tab_edit::set_tuning_keep_frets(&w.notes, &w.midi, &id, tuning, capo)
+        };
+        self.finish_edit(r, clip, out);
     }
 
     /// Scrolls so the cursor is inside the view.
@@ -1045,4 +1851,10 @@ pub(crate) enum TopButton {
     Value(u8),
     Dotted,
     Triplet,
+    /// A technique button: an index into [`tech::TOOLBAR`].
+    Tool(usize),
+    /// The bend amount chip.
+    BendAmount,
+    /// The instrument label (opens the tuning dialog).
+    Instrument,
 }

@@ -337,6 +337,53 @@ pub const TAB_DURATION_ARGS: &[&str] = &[
     "thirty_second",
     "sixty_fourth",
 ];
+/// The values of `editor.tab_technique`: the techniques the tab editor toggles on the note under
+/// the cursor or the selection. `bend`, `bend_release`, `pre_bend` and `pre_bend_release` use
+/// the bend amount (`editor.tab_bend_amount`); `clear` removes every technique.
+pub const TAB_TECHNIQUE_ARGS: &[&str] = &[
+    "hammer_on",
+    "pull_off",
+    "slide_legato",
+    "slide_shift",
+    "slide_in_below",
+    "slide_in_above",
+    "slide_out_down",
+    "slide_out_up",
+    "bend",
+    "bend_quarter",
+    "bend_half",
+    "bend_full",
+    "bend_one_half",
+    "bend_two",
+    "bend_release",
+    "pre_bend",
+    "pre_bend_release",
+    "vibrato",
+    "vibrato_wide",
+    "harmonic",
+    "harmonic_artificial",
+    "palm_mute",
+    "let_ring",
+    "dead",
+    "ghost",
+    "accent",
+    "tap",
+    "clear",
+];
+/// The values of `editor.tab_bend_amount`: the bend in tones.
+pub const TAB_BEND_ARGS: &[&str] = &[
+    "quarter_tone",
+    "half_tone",
+    "one_tone",
+    "tone_and_half",
+    "two_tones",
+];
+/// The values of `editor.tab_extend`: which way the selection grows.
+pub const TAB_EXTEND_ARGS: &[&str] = &["left", "right", "up", "down"];
+/// The values of `editor.tab_refret`: `choose` opens the list of positions.
+pub const TAB_REFRET_ARGS: &[&str] = &["choose", "automatic", "lowest"];
+/// The values of `editor.tab_transpose`: a semitone or an octave.
+pub const TAB_TRANSPOSE_ARGS: &[&str] = &["up", "down", "octave_up", "octave_down"];
 /// The values of `sequencer.marker_color`: the palette names and `none`.
 pub const MARKER_COLOR_ARGS: &[&str] =
     &["none", "red", "orange", "yellow", "green", "blue", "purple"];
@@ -850,6 +897,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd(
+        "editor.tab_bend_amount",
+        "Tab: Bend Amount",
+        G::Editor,
+        C::Tab,
+    )
+    .arg(TAB_BEND_ARGS),
+    cmd(
         "editor.tab_cursor_down",
         "Tab: Cursor Down",
         G::Editor,
@@ -873,7 +927,46 @@ const COMMANDS: &[CommandDef] = &[
     cmd("editor.tab_cursor_up", "Tab: Cursor Up", G::Editor, C::Tab).rep(),
     cmd("editor.tab_dotted", "Tab: Dotted Note", G::Editor, C::Tab),
     cmd("editor.tab_duration", "Tab: Note Value", G::Editor, C::Tab).arg(TAB_DURATION_ARGS),
+    cmd(
+        "editor.tab_extend",
+        "Tab: Extend Selection",
+        G::Editor,
+        C::Tab,
+    )
+    .arg(TAB_EXTEND_ARGS)
+    .rep(),
+    cmd(
+        "editor.tab_refret",
+        "Tab: Re-fret Selection",
+        G::Editor,
+        C::Tab,
+    )
+    .arg(TAB_REFRET_ARGS),
+    cmd(
+        "editor.tab_string_down",
+        "Tab: Move to Lower String",
+        G::Editor,
+        C::Tab,
+    )
+    .rep(),
+    cmd(
+        "editor.tab_string_up",
+        "Tab: Move to Higher String",
+        G::Editor,
+        C::Tab,
+    )
+    .rep(),
+    cmd("editor.tab_technique", "Tab: Technique", G::Editor, C::Tab).arg(TAB_TECHNIQUE_ARGS),
+    cmd("editor.tab_transpose", "Tab: Transpose", G::Editor, C::Tab)
+        .arg(TAB_TRANSPOSE_ARGS)
+        .rep(),
     cmd("editor.tab_triplet", "Tab: Triplet Note", G::Editor, C::Tab),
+    cmd(
+        "editor.tab_tuning",
+        "Tab: Instrument, Tuning and Capo",
+        G::Editor,
+        C::Tab,
+    ),
     cmd("editor.tab_zoom_in", "Tab: Zoom In", G::Editor, C::Tab).rep(),
     cmd("editor.tab_zoom_out", "Tab: Zoom Out", G::Editor, C::Tab).rep(),
     cmd(

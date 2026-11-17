@@ -1,8 +1,8 @@
 //! The pure rules of typing into a tab: note values, the cursor's steps on the value grid, and
 //! the buffer that turns two quick digits into one fret.
 //!
-//! Nothing here knows a view, a clip or a clock: the view feeds the buffer the time it was last
-//! ticked with, so the rules are tested with plain numbers.
+//! Nothing here knows a view, a clip or a clock: the view stamps every digit with the time it
+//! arrived at, so the rules are tested with plain numbers.
 
 use crate::timeline::{Bars, PPQ};
 
@@ -177,15 +177,15 @@ pub fn step_bar(tick: i64, dir: i32, bars: &Bars, end: i64) -> i64 {
 /// How long two digits may be apart and still be one fret, in seconds.
 pub const FRET_TIMEOUT: f64 = 0.6;
 
-/// The fret being typed: digits of one fret on one cell, joined while they come quickly.
+/// The fret being typed: digits of one fret on one cell, joined while they come quickly. Every
+/// digit carries the time it arrived at, so a long idle stretch (no frames ran) cannot join a
+/// digit to one typed long before.
 #[derive(Debug, Clone, Default)]
 pub struct FretBuffer {
     value: u16,
     cell: Option<(i64, u8)>,
-    /// When the buffer expires; set by the first [`FretBuffer::tick`] after a digit, so the
-    /// window starts when the frame clock next moves, not at a time the key did not carry.
+    /// When the buffer expires: the last digit's time plus [`FRET_TIMEOUT`].
     deadline: Option<f64>,
-    clock: f64,
 }
 
 /// What a digit did.
@@ -198,11 +198,11 @@ pub struct Typed {
 }
 
 impl FretBuffer {
-    /// Adds `digit` for the fret on `cell` (a tick and a string); `max_fret` is the highest fret
-    /// of the string. A digit that would make the fret too high, or that comes after the window,
-    /// or on another cell, starts a new fret.
-    pub fn push(&mut self, digit: u8, cell: (i64, u8), max_fret: u8) -> Typed {
-        let alive = self.cell == Some(cell) && self.deadline.is_none_or(|d| self.clock <= d);
+    /// Adds `digit`, typed at `now` (seconds), for the fret on `cell` (a tick and a string);
+    /// `max_fret` is the highest fret of the string. A digit that would make the fret too high,
+    /// or that comes after the window, or on another cell, starts a new fret.
+    pub fn push(&mut self, digit: u8, cell: (i64, u8), max_fret: u8, now: f64) -> Typed {
+        let alive = self.cell == Some(cell) && self.deadline.is_some_and(|d| now <= d);
         let joined_value = u16::from(digit) + self.value * 10;
         // A leading zero never extends (0 is the open string).
         let joined = alive && self.value > 0 && joined_value <= u16::from(max_fret);
@@ -212,22 +212,17 @@ impl FretBuffer {
             u16::from(digit)
         };
         self.cell = Some(cell);
-        self.deadline = None;
+        self.deadline = Some(now + FRET_TIMEOUT);
         Typed {
             fret: u8::try_from(self.value).unwrap_or(u8::MAX),
             joined,
         }
     }
 
-    /// The frame clock: starts the window of a fresh digit and ends the one that ran out.
-    /// Returns true when the buffer just expired (the host ends the merged undo step).
+    /// The frame clock: ends the fret whose window ran out. Returns true when the buffer just
+    /// expired (the host ends the merged undo step).
     pub fn tick(&mut self, now: f64) -> bool {
-        self.clock = now;
-        if self.cell.is_none() {
-            return false;
-        }
-        let deadline = *self.deadline.get_or_insert(now + FRET_TIMEOUT);
-        if now > deadline {
+        if self.cell.is_some() && self.deadline.is_some_and(|d| now > d) {
             self.clear();
             return true;
         }
@@ -367,15 +362,15 @@ mod tests {
         let mut b = FretBuffer::default();
         let cell = (0, 2);
         assert_eq!(
-            b.push(1, cell, 24),
+            b.push(1, cell, 24, 5.0),
             Typed {
                 fret: 1,
                 joined: false
             }
         );
-        b.tick(1.0);
+        assert!(!b.tick(5.3));
         assert_eq!(
-            b.push(2, cell, 24),
+            b.push(2, cell, 24, 5.4),
             Typed {
                 fret: 12,
                 joined: true
@@ -387,15 +382,15 @@ mod tests {
     fn a_digit_after_the_window_starts_a_new_fret() {
         let mut b = FretBuffer::default();
         let cell = (0, 2);
-        b.push(1, cell, 24);
-        assert!(!b.tick(1.0), "the window opens at the first tick");
+        b.push(1, cell, 24, 5.0);
+        assert!(!b.tick(5.0 + FRET_TIMEOUT), "still inside the window");
         assert!(
-            b.tick(1.0 + FRET_TIMEOUT + 0.01),
-            "and closes after the timeout"
+            b.tick(5.0 + FRET_TIMEOUT + 0.01),
+            "closes after the timeout"
         );
         assert!(!b.is_open());
         assert_eq!(
-            b.push(2, cell, 24),
+            b.push(2, cell, 24, 5.8),
             Typed {
                 fret: 2,
                 joined: false
@@ -404,12 +399,21 @@ mod tests {
     }
 
     #[test]
-    fn a_digit_inside_the_window_joins_even_if_the_clock_is_stale() {
-        // No frame ran between the digits: the window has not started, so the digit joins.
+    fn a_digit_typed_long_after_the_last_one_never_joins_even_if_no_frame_ran() {
+        // No tick between the digits (the app was idle): the time the digit carries decides.
         let mut b = FretBuffer::default();
-        b.push(1, (0, 0), 24);
+        b.push(1, (0, 0), 24, 5.0);
         assert_eq!(
-            b.push(0, (0, 0), 24),
+            b.push(0, (0, 0), 24, 5.0 + 30.0),
+            Typed {
+                fret: 0,
+                joined: false
+            }
+        );
+        let mut b = FretBuffer::default();
+        b.push(1, (0, 0), 24, 5.0);
+        assert_eq!(
+            b.push(0, (0, 0), 24, 5.2),
             Typed {
                 fret: 10,
                 joined: true
@@ -420,12 +424,12 @@ mod tests {
     #[test]
     fn another_cell_or_a_too_high_fret_starts_a_new_fret() {
         let mut b = FretBuffer::default();
-        b.push(1, (0, 0), 24);
-        assert!(!b.push(2, (0, 1), 24).joined, "another string");
+        b.push(1, (0, 0), 24, 1.0);
+        assert!(!b.push(2, (0, 1), 24, 1.1).joined, "another string");
         let mut b = FretBuffer::default();
-        b.push(2, (0, 0), 24);
+        b.push(2, (0, 0), 24, 1.0);
         assert_eq!(
-            b.push(5, (0, 0), 24),
+            b.push(5, (0, 0), 24, 1.1),
             Typed {
                 fret: 5,
                 joined: false
@@ -433,9 +437,9 @@ mod tests {
             "25 is beyond fret 24"
         );
         let mut b = FretBuffer::default();
-        b.push(2, (0, 0), 24);
+        b.push(2, (0, 0), 24, 1.0);
         assert_eq!(
-            b.push(4, (0, 0), 24),
+            b.push(4, (0, 0), 24, 1.1),
             Typed {
                 fret: 24,
                 joined: true
@@ -446,9 +450,9 @@ mod tests {
     #[test]
     fn zero_never_extends_and_is_never_extended() {
         let mut b = FretBuffer::default();
-        b.push(0, (0, 0), 24);
+        b.push(0, (0, 0), 24, 1.0);
         assert_eq!(
-            b.push(5, (0, 0), 24),
+            b.push(5, (0, 0), 24, 1.1),
             Typed {
                 fret: 5,
                 joined: false
@@ -459,10 +463,10 @@ mod tests {
     #[test]
     fn clearing_forgets_the_digits() {
         let mut b = FretBuffer::default();
-        b.push(1, (0, 0), 24);
+        b.push(1, (0, 0), 24, 1.0);
         b.clear();
         assert_eq!(
-            b.push(2, (0, 0), 24),
+            b.push(2, (0, 0), 24, 1.1),
             Typed {
                 fret: 2,
                 joined: false

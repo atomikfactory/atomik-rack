@@ -1,7 +1,9 @@
 //! Painting the tab editor: ruler, chord row, staff with the notes and their technique symbols,
 //! the rhythm under the staff, lyrics, cursor and playhead.
 
+use super::dialog::Modal;
 use super::entry::NoteValue;
+use super::tech::{self, Tech};
 use super::{DIAGRAM_WIDTH, Placed, RULER_HEIGHT, TOP_BAR_HEIGHT, TabEditorView, TopButton};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::chord_diagram::{self, Diagram};
@@ -31,6 +33,12 @@ impl TabEditorView {
             );
         }
         self.paint_top_bar(c);
+        self.paint_status(c);
+        match &self.modal {
+            Some(Modal::Tuning(d)) => d.paint(c, &self.st, self.bounds, self.hover),
+            Some(Modal::Position(p)) => p.paint(c, &self.st, self.bounds, self.hover),
+            None => {}
+        }
         if self.focused {
             sp::line(
                 c,
@@ -55,53 +63,129 @@ impl TabEditorView {
             return;
         };
         let tab = w.tab();
-        let name = atomik_tab::instrument::find_instrument(&tab.instrument_id)
-            .map_or("Custom", |i| i.name);
-        c.text(
-            &TextRun::verbatim(
-                format!("{}  -  {}", self.title, name),
-                pt(b.x0 + 10.0, b.y0 + 18.0),
-                11.0,
-                t.text,
-            )
-            .weight(600),
-        );
-        let mut x =
-            b.x0 + 10.0 + (self.title.chars().count() + name.chars().count()) as f64 * 6.6 + 40.0;
-        if tab.capo.fret > 0 {
-            c.text(&TextRun::new(
-                format!("Capo {}", tab.capo.fret),
-                pt(x, b.y0 + 18.0),
-                10.0,
-                t.text_muted,
-            ));
-            x += 60.0;
+        if let (Some(label), Some(rect)) = (self.instrument_label(), self.instrument_rect()) {
+            if self.hover.is_some_and(|p| rect.contains(p)) {
+                c.stroke_with(RoundedRect::from_rect(rect, 3.0), 1.0, t.text_muted);
+            }
+            let text_w = label.chars().count() as f64 * 6.6;
+            c.text(
+                &TextRun::verbatim(label, pt(b.x0 + 10.0, b.y0 + 18.0), 11.0, t.text).weight(600),
+            );
+            if tab.capo.fret > 0 {
+                c.text(&TextRun::new(
+                    format!("Capo {}", tab.capo.fret),
+                    pt(b.x0 + 10.0 + text_w + 8.0, b.y0 + 18.0),
+                    10.0,
+                    t.text_muted,
+                ));
+            }
         }
-        if w.automatic {
-            c.text(&TextRun::new(
-                "Automatic fingering",
-                pt(x, b.y0 + 18.0),
-                10.0,
-                t.text_muted,
-            ));
-        }
-        if let Some(s) = &self.status {
-            c.text(&TextRun::new(
-                s.clone(),
-                pt(x + 130.0, b.y0 + 18.0),
-                10.0,
-                t.warning,
-            ));
-        }
+        let targets = self.targets();
         for (r, button) in self.top_buttons() {
+            let hover = self.hover.is_some_and(|p| r.contains(p));
             let (text, lit) = match button {
                 TopButton::Value(d) => (NoteValue::plain(d).label(), d == self.value.division),
                 TopButton::Dotted => (".".to_string(), self.value.dotted),
                 TopButton::Triplet => ("3".to_string(), self.value.triplet),
+                TopButton::Tool(i) => {
+                    let item = tech::TOOLBAR[i];
+                    let lit = !targets.is_empty()
+                        && Tech::parse(item.arg, self.bend_cents).is_some_and(|tech| {
+                            targets.iter().all(|(tick, key)| {
+                                tab.note_of(*tick, *key)
+                                    .is_some_and(|r| tech.is_on(&r.tech))
+                            })
+                        });
+                    (item.label.to_string(), lit)
+                }
+                TopButton::BendAmount => (tech::bend_chip(self.bend_cents).to_string(), false),
+                TopButton::Instrument => continue,
             };
-            let hover = self.hover.is_some_and(|p| r.contains(p));
             sp::button(c, &self.st, r, &text, lit.then_some(t.highlight), hover);
         }
+    }
+
+    /// The line at the bottom of the pane: the last refused edit, else what the fingering is.
+    fn paint_status(&self, c: &mut dyn Canvas) {
+        let Some(w) = &self.work else { return };
+        let t = &self.st.base;
+        let (text, color) = match (&self.status, w.automatic) {
+            (Some(s), _) => (s.clone(), t.warning),
+            (None, true) => ("Automatic fingering".to_string(), t.text_muted),
+            (None, false) => return,
+        };
+        c.text(&TextRun::new(
+            text,
+            pt(self.axis.x0 + 4.0, self.bounds.y1 - 6.0),
+            10.0,
+            color,
+        ));
+    }
+
+    /// The selected range over the staff.
+    fn paint_selection(&self, c: &mut dyn Canvas, lh: f64) {
+        let Some(r) = self.range else { return };
+        let t = &self.st.base;
+        let (xa, xz) = if r.all {
+            (
+                self.axis.x0,
+                self.axis.tick_to_x(self.end_tick()).min(self.bounds.x1),
+            )
+        } else {
+            (
+                self.axis.tick_to_x(r.t0) - 9.0,
+                self.axis.tick_to_x(r.t1) + 9.0,
+            )
+        };
+        let (xa, xz) = (xa.max(self.axis.x0), xz.min(self.bounds.x1));
+        if xz <= xa {
+            return;
+        }
+        let rect = Rect::new(
+            xa,
+            self.string_y(r.s0) - lh * 0.5,
+            xz,
+            self.string_y(r.s1) + lh * 0.5,
+        );
+        c.fill_with(rect, t.highlight.with_alpha(0.16));
+        c.stroke_with(
+            RoundedRect::from_rect(rect, 2.0),
+            1.0,
+            t.highlight.with_alpha(0.7),
+        );
+        for p in self
+            .work
+            .iter()
+            .flat_map(|w| w.placed.iter())
+            .filter(|p| r.holds(p))
+        {
+            let x = self.axis.tick_to_x(p.tick);
+            if x < self.axis.x0 - 10.0 || x > self.bounds.x1 + 10.0 {
+                continue;
+            }
+            let y = self.string_y(p.string);
+            c.stroke_with(
+                RoundedRect::new(x - 8.0, y - lh * 0.45, x + 8.0, y + lh * 0.45, 2.0),
+                1.0,
+                t.highlight,
+            );
+        }
+    }
+
+    /// The bars a drag over the ruler is about to loop.
+    fn paint_loop_preview(&self, c: &mut dyn Canvas, ruler: Rect) {
+        let (Some((s, e)), Some(clip)) = (self.loop_preview(), &self.clip) else {
+            return;
+        };
+        let to_x = |song: i64| self.axis.tick_to_x(song - clip.start + clip.offset);
+        let (xa, xz) = (to_x(s).max(self.axis.x0), to_x(e).min(self.bounds.x1));
+        if xz <= xa {
+            return;
+        }
+        let band = Rect::new(xa, ruler.y0, xz, ruler.y1);
+        c.fill_with(band, self.st.loop_on.with_alpha(0.35));
+        sp::line(c, xa + 0.5, ruler.y0, xa + 0.5, ruler.y1, self.st.loop_on);
+        sp::line(c, xz - 0.5, ruler.y0, xz - 0.5, ruler.y1, self.st.loop_on);
     }
 
     fn paint_staff_area(&self, c: &mut dyn Canvas) {
@@ -123,6 +207,7 @@ impl TabEditorView {
         sp::rect(c, Rect::new(b.x0, ruler.y0, b.x1, ruler.y1), self.st.ruler);
         sp::ruler_labels(c, &self.st, &self.axis, ruler, &self.bars);
         self.paint_marks(c, ruler);
+        self.paint_loop_preview(c, ruler);
 
         // Staff lines and bar lines.
         for i in 0..n {
@@ -149,6 +234,7 @@ impl TabEditorView {
         self.paint_symbols_and_notes(c, w);
         self.paint_rhythm(c, w, bottom);
         self.paint_lyrics(c, w, bottom);
+        self.paint_selection(c, lh);
         self.paint_cursor(c, lh);
 
         if let Some(p) = self.playhead_content() {

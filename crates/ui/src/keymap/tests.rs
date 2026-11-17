@@ -1259,3 +1259,39 @@ fn the_standard_profile_binds_the_daily_keys_of_the_classic_layout() {
         Resolution::Unbound
     );
 }
+
+#[test]
+fn the_tab_context_binds_its_edit_keys_and_leaves_the_global_edit_chords_alone() {
+    let m = km(Profile::Standard, Os::Windows);
+    let tab = stack(&[Context::Tab]);
+    let first = |text: &str| match m.resolve(&chord(text, Os::Windows), &tab) {
+        Resolution::Bound(list) => list
+            .first()
+            .map(|r| (r.command.clone(), r.arg.clone()))
+            .expect("a command"),
+        other => panic!("{text}: {other:?}"),
+    };
+    assert_eq!(first("Cmd+A"), ("edit.select_all".into(), None));
+    assert_eq!(first("Cmd+C"), ("edit.copy".into(), None));
+    assert_eq!(
+        first("Cmd+Up"),
+        ("editor.tab_transpose".into(), Some("up".into()))
+    );
+    assert_eq!(
+        first("Cmd+Shift+Up"),
+        ("editor.tab_transpose".into(), Some("octave_up".into()))
+    );
+    assert_eq!(
+        first("A"),
+        ("editor.tab_technique".into(), Some("accent".into()))
+    );
+    assert_eq!(first("Alt+Up"), ("editor.tab_string_up".into(), None));
+    assert_eq!(
+        first("Shift+Right"),
+        ("editor.tab_extend".into(), Some("right".into()))
+    );
+    assert_eq!(
+        first("Shift+H"),
+        ("editor.tab_technique".into(), Some("hammer_on".into()))
+    );
+}

@@ -381,6 +381,82 @@ fn a_diagram_draws_a_barre_a_base_fret_label_and_the_markers() {
 }
 
 /// Writes PNG previews of the scenarios to `target/preview` (run with `--ignored`).
+/// A view on `doc` with `setup` run on it, painted.
+fn paint_with(doc: &RackDoc, setup: impl FnOnce(&mut TabEditorView, &RackDoc)) -> DisplayList {
+    let reg = registry();
+    let mut v = TabEditorView::new(Theme::dark());
+    v.set_bounds(TAB_BOUNDS);
+    v.open(ClipId(1));
+    v.sync(doc, &reg);
+    setup(&mut v, doc);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, doc, &reg);
+    dl
+}
+
+#[test]
+fn a_selection_and_the_lit_technique_buttons_match_golden() {
+    // The range covers the hammer-on, the pull-off and the slide; the cursor is on the bend, so
+    // the bend button is lit and the toolbar shows the amount.
+    let dl = paint_with(&guitar_doc(), |v, _| {
+        v.select_between((PPQ / 2, 2), (PPQ + PPQ / 2, 1));
+    });
+    let json = dl.to_json();
+    assert!(
+        json.contains("Bd") && json.contains("PM"),
+        "the toolbar is drawn"
+    );
+    check("tab_editor_selection_1x.json", &json);
+    let dl = paint_with(&guitar_doc(), |v, _| v.set_cursor(2 * PPQ, 1));
+    check("tab_editor_toolbar_lit_1x.json", &dl.to_json());
+}
+
+#[test]
+fn the_tuning_dialog_matches_golden() {
+    let reg = registry();
+    let dl = paint_with(&guitar_doc(), |v, d| {
+        v.command("editor.tab_tuning", None, d, &reg);
+    });
+    check("tab_editor_tuning_dialog_1x.json", &dl.to_json());
+    let dl = paint_with(&banjo_doc(), |v, d| {
+        v.command("editor.tab_tuning", None, d, &reg);
+    });
+    check("tab_editor_tuning_dialog_banjo_1x.json", &dl.to_json());
+}
+
+#[test]
+fn the_refret_chooser_matches_golden() {
+    let reg = registry();
+    let dl = paint_with(&guitar_doc(), |v, d| {
+        v.select_all();
+        v.command("editor.tab_refret", Some("choose"), d, &reg);
+    });
+    check("tab_editor_refret_chooser_1x.json", &dl.to_json());
+}
+
+#[test]
+fn a_loop_drag_over_the_ruler_matches_golden() {
+    let reg = registry();
+    let dl = paint_with(&guitar_doc(), |v, d| {
+        let y = 28.0 + 11.0;
+        for event in [
+            atomik_ui::UiEvent::PointerDown {
+                pos: atomik_ui::kurbo::Point::new(v.tick_to_x(PPQ), y),
+                button: atomik_ui::PointerButton::Primary,
+                modifiers: atomik_ui::Modifiers::NONE,
+                clicks: 1,
+            },
+            atomik_ui::UiEvent::PointerMove {
+                pos: atomik_ui::kurbo::Point::new(v.tick_to_x(5 * PPQ), y),
+                modifiers: atomik_ui::Modifiers::NONE,
+            },
+        ] {
+            v.handle(&event, d, &reg);
+        }
+    });
+    check("tab_editor_loop_drag_1x.json", &dl.to_json());
+}
+
 #[test]
 #[ignore = "writes preview images; run explicitly"]
 fn write_previews() {
@@ -397,6 +473,44 @@ fn write_previews() {
         v.open(ClipId(1));
         v.sync(&doc, &reg);
         v.set_cursor(PPQ, 2);
+        let mut text = TextEngine::new();
+        let mut canvas = CpuCanvas::new(1000, 420, &mut text);
+        v.paint(&mut canvas, &doc, &reg);
+        let png = canvas.finish().into_png().expect("png");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/preview")
+            .join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, png).unwrap();
+        println!("wrote {}", path.display());
+    }
+}
+
+#[test]
+#[ignore = "writes preview images; run explicitly"]
+fn write_editing_previews() {
+    use atomik_ui::TextEngine;
+    use atomik_ui::cpu_canvas::CpuCanvas;
+    let reg = registry();
+    type Setup = fn(&mut TabEditorView, &RackDoc, &atomik_device_sdk::Registry);
+    let scenes: [(&str, RackDoc, Setup); 3] = [
+        ("tab_selection.png", guitar_doc(), |v, _, _| {
+            v.select_between((PPQ / 2, 2), (PPQ + PPQ / 2, 1));
+        }),
+        ("tab_tuning_dialog.png", guitar_doc(), |v, d, r| {
+            v.command("editor.tab_tuning", None, d, r);
+        }),
+        ("tab_refret_chooser.png", guitar_doc(), |v, d, r| {
+            v.select_all();
+            v.command("editor.tab_refret", Some("choose"), d, r);
+        }),
+    ];
+    for (name, doc, setup) in scenes {
+        let mut v = TabEditorView::new(Theme::dark());
+        v.set_bounds(TAB_BOUNDS);
+        v.open(ClipId(1));
+        v.sync(&doc, &reg);
+        setup(&mut v, &doc, &reg);
         let mut text = TextEngine::new();
         let mut canvas = CpuCanvas::new(1000, 420, &mut text);
         v.paint(&mut canvas, &doc, &reg);

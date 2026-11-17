@@ -35,6 +35,34 @@ editor.tab_duration sixteenth | tab | S
 editor.tab_duration sixty_fourth | tab | X
 editor.tab_duration thirty_second | tab | T
 editor.tab_duration whole | tab | W
+editor.tab_extend down | tab | Shift+Down
+editor.tab_extend left | tab | Shift+Left
+editor.tab_extend right | tab | Shift+Right
+editor.tab_extend up | tab | Shift+Up
+editor.tab_string_down | tab | Opt+Down
+editor.tab_string_up | tab | Opt+Up
+editor.tab_technique accent | tab | A
+editor.tab_technique bend | tab | B
+editor.tab_technique bend_release | tab | Shift+B
+editor.tab_technique clear | tab | Shift+C
+editor.tab_technique dead | tab | D
+editor.tab_technique ghost | tab | G
+editor.tab_technique hammer_on | tab | Shift+H
+editor.tab_technique harmonic | tab | N
+editor.tab_technique harmonic_artificial | tab | Shift+N
+editor.tab_technique let_ring | tab | R
+editor.tab_technique palm_mute | tab | M
+editor.tab_technique pre_bend | tab | Opt+B
+editor.tab_technique pull_off | tab | Shift+P
+editor.tab_technique slide_legato | tab | Shift+L
+editor.tab_technique slide_shift | tab | Shift+S
+editor.tab_technique tap | tab | Shift+T
+editor.tab_technique vibrato | tab | V
+editor.tab_technique vibrato_wide | tab | Shift+V
+editor.tab_transpose down | tab | Cmd+Down
+editor.tab_transpose octave_down | tab | Cmd+Shift+Down
+editor.tab_transpose octave_up | tab | Cmd+Shift+Up
+editor.tab_transpose up | tab | Cmd+Up
 editor.tab_triplet | tab | Y
 editor.tab_zoom_in | tab | =
 editor.tab_zoom_out | tab | -
