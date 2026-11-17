@@ -122,8 +122,42 @@ impl<S: EngineSink> AppCore<S> {
     /// Per-frame clock of the tab editor (`now` in seconds): ends the note a typed fret
     /// sounds and the fret whose digits ran out.
     pub fn tab_editor_tick(&mut self, now: f64) {
+        self.tab_clock.align(now);
         for action in self.tab_editor.tick(now) {
             self.handle_action(action);
         }
+    }
+}
+
+/// The time a key event reached the tab editor, on the clock of the frame ticks.
+///
+/// Key events carry no time and the app draws no frames while idle, so the last frame time would
+/// make a digit typed after a long pause look like a quick second digit. This clock is real time
+/// since the app started, plus the offset that makes it read the frame clock's time at every
+/// frame ([`AppCore::tab_editor_tick`]); the editor is stamped with it before each event.
+pub(super) struct TabClock {
+    started: std::time::Instant,
+    offset: f64,
+}
+
+impl TabClock {
+    #[allow(clippy::disallowed_methods)]
+    // Justification: the time only decides whether two typed digits are one fret; no audio, saved
+    // state or render depends on it.
+    pub(super) fn new() -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            offset: 0.0,
+        }
+    }
+
+    /// Reads the frame clock: from now on `now()` agrees with it.
+    fn align(&mut self, frame_time: f64) {
+        self.offset = frame_time - self.started.elapsed().as_secs_f64();
+    }
+
+    /// The time on the frame clock's scale.
+    pub(super) fn now(&self) -> f64 {
+        self.started.elapsed().as_secs_f64() + self.offset
     }
 }

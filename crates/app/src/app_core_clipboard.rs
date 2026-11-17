@@ -138,6 +138,7 @@ impl<S: EngineSink> AppCore<S> {
                     || self.piano_roll.controller_focus()
                     || self.piano_roll.message_focus()
             }
+            Pane::TabEditor => self.tab_editor.has_targets(),
             _ => false,
         }
     }
@@ -169,6 +170,8 @@ impl<S: EngineSink> AppCore<S> {
             (Pane::PianoRoll, Some(ClipboardKind::Notes)) => {
                 filled && self.piano_roll.clip().is_some()
             }
+            // The tab editor keeps its own clipboard (strings, frets and techniques).
+            (Pane::TabEditor, _) => self.tab_editor.can_paste(),
             (Pane::PianoRoll, Some(ClipboardKind::Controllers)) => {
                 filled
                     && (self.piano_roll.clip().is_some() || self.piano_roll.track().is_some())

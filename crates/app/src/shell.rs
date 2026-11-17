@@ -4510,6 +4510,9 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])
             }
             Pane::PianoRoll => ContextStack::new(&[Context::Editor, Context::Sequencer]),
+            Pane::TabEditor if self.core.tab_editor().is_text_owner() => {
+                ContextStack::new(&[Context::Text])
+            }
             Pane::TabEditor => ContextStack::new(&[Context::Tab]),
             Pane::AudioEditor if self.core.audio_editor().is_text_owner() => {
                 ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])

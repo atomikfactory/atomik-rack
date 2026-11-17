@@ -287,6 +287,8 @@ pub struct AppCore<S: EngineSink> {
     arrangement: ArrangementView,
     piano_roll: PianoRollView,
     tab_editor: TabEditorView,
+    /// The clock that stamps key events for the tab editor (see [`TabClock`]).
+    tab_clock: TabClock,
     /// The note clip open in the tab editor.
     tab_clip: Option<ClipId>,
     sample_editor: SampleEditorView,
@@ -634,6 +636,7 @@ impl<S: EngineSink> AppCore<S> {
             arrangement: ArrangementView::new(theme.clone()),
             piano_roll: PianoRollView::new(theme.clone()),
             tab_editor: TabEditorView::new(theme.clone()),
+            tab_clock: TabClock::new(),
             tab_clip: None,
             sample_editor: SampleEditorView::new(theme.clone()),
             step_editor: StepEditorView::new(theme.clone()),
@@ -1386,6 +1389,7 @@ impl<S: EngineSink> AppCore<S> {
                 actions
             }
             Pane::TabEditor => {
+                self.tab_editor.stamp(self.tab_clock.now());
                 self.tab_editor.set_doc_revision(Some(revision));
                 let actions = self.tab_editor.handle(event, doc, &self.registry);
                 self.tab_editor.set_doc_revision(None);
@@ -4341,6 +4345,7 @@ pub use tab_ops::TabExportFormat;
 
 #[path = "app_core_tab_editor.rs"]
 mod tab_editor_ops;
+use tab_editor_ops::TabClock;
 
 #[path = "app_core_create.rs"]
 mod create_ops;
