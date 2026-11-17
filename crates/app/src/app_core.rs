@@ -383,6 +383,12 @@ pub struct AppCore<S: EngineSink> {
     default_tune: f32,
     /// Bars of click counted in before a recording starts (0 = off).
     pre_count_bars: u8,
+    /// The practice session: the runtime speed, the count-in and the speed trainer.
+    practice: crate::practice::Practice,
+    /// Decides which passes of the loop count for the speed trainer.
+    pass_judge: Box<dyn crate::practice::PassJudge>,
+    /// The engine's loop count at the last frame the trainer looked.
+    last_pass_loops: Option<u64>,
     /// The length the pre-count toggle returns to (1 to 4).
     pre_count_resume: u8,
     quantize: InputQuantize,
@@ -740,6 +746,9 @@ impl<S: EngineSink> AppCore<S> {
             metronome_gain: DEFAULT_METRONOME_GAIN,
             default_tune: 0.0,
             pre_count_bars: 0,
+            practice: crate::practice::Practice::default(),
+            pass_judge: Box::new(crate::practice::EveryPass),
+            last_pass_loops: None,
             pre_count_resume: 1,
             quantize: InputQuantize::OFF,
             now_seconds: 0.0,
@@ -1762,6 +1771,9 @@ impl<S: EngineSink> AppCore<S> {
         self.arrangement.set_selected_track(None);
         self.arrangement.set_selected_points(ClipId(0), &[]);
         self.position = 0;
+        // The practice speed is not part of a project: a new one plays at its own tempo.
+        self.practice.reset_for_project();
+        self.last_pass_loops = None;
         self.audio_reset();
         self.rebuild_engine();
         self.audio_opened();
@@ -1872,6 +1884,10 @@ impl<S: EngineSink> AppCore<S> {
         self.push_tuner_live();
         self.submit_song(true);
         self.send_metronome();
+        // A rebuild in place (a rate edit) keeps the practice speed; a new project reset it.
+        if self.practice.speed() != 100 {
+            self.send_practice_speed();
+        }
         clock.lap(&mut stages, "submit");
         self.show_transport();
         self.sync_io_host();
@@ -3700,10 +3716,10 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         match action {
-            TransportAction::Play => self.play(),
+            TransportAction::Play => self.play_counted(),
             TransportAction::Stop => self.stop(),
             TransportAction::TogglePlay if self.playing => self.stop(),
-            TransportAction::TogglePlay => self.play(),
+            TransportAction::TogglePlay => self.play_counted(),
             TransportAction::ReturnToZero => self.locate(0),
             TransportAction::Locate(tick) => self.locate(tick.max(0)),
             TransportAction::Bars(bars) => self.locate_bars(bars),
@@ -3844,6 +3860,12 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn start_recording(&mut self) {
+        if self.practice.speed() != 100 {
+            self.reject(
+                "recording needs the practice speed at 100%: set it back first".to_string(),
+            );
+            return;
+        }
         if !self.doc().song.tracks.iter().any(|t| t.armed) && !self.has_armed_lanes() {
             self.reject(
                 "recording needs an armed track, automation lane or the tempo lane: arm one with its R button in the arrangement, or turn on Auto-create lanes"
@@ -4057,6 +4079,9 @@ impl<S: EngineSink> AppCore<S> {
         self.piano_roll.set_playhead(self.position);
         self.tab_editor.set_playhead(self.position);
         self.chord_sheet.set_playhead(self.position);
+        let practice = self.practice_state();
+        self.tab_editor.set_practice(practice);
+        self.chord_sheet.set_practice(practice);
         self.transport_bar.set_state(atomik_ui::TransportState {
             playing: self.playing,
             recording,
@@ -4370,6 +4395,9 @@ pub use tab_ops::TabExportFormat;
 #[path = "app_core_tab_editor.rs"]
 mod tab_editor_ops;
 use tab_editor_ops::TabClock;
+
+#[path = "app_core_practice.rs"]
+mod practice_ops;
 
 #[path = "app_core_chord_sheet.rs"]
 mod chord_sheet_ops;
@@ -4693,6 +4721,10 @@ mod song_tests;
 #[cfg(test)]
 #[path = "app_core_tab_editor_tests.rs"]
 mod tab_editor_tests;
+
+#[cfg(test)]
+#[path = "app_core_practice_tests.rs"]
+mod practice_tests;
 
 #[cfg(test)]
 #[path = "app_core_chord_sheet_tests.rs"]

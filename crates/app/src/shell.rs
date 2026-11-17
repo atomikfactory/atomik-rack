@@ -4614,6 +4614,9 @@ impl<B: AudioBackend> Shell<B> {
             metronome: self.core.metronome(),
             auto_lanes: self.core.auto_create_lanes(),
             pre_count: self.core.pre_count_bars() > 0,
+            practice_speed: self.core.practice().speed(),
+            practice_count_in: self.core.practice().count_in(),
+            practice_trainer: self.core.practice().trainer().enabled,
             clock_out: self.core.sink().settings().sync.clock_out,
             clock_while_stopped: self.core.sink().settings().sync.send_while_stopped,
             follow_clock: self.core.sink().settings().sync.follow_clock,
@@ -9491,6 +9494,10 @@ impl<B: AudioBackend> Shell<B> {
                 } else {
                     self.notify("no loop slicer to open: add one from the device browser");
                 }
+                Vec::new()
+            }
+            AppCommand::Practice(action) => {
+                self.core.practice_action(action);
                 Vec::new()
             }
             AppCommand::Transport(action) => {

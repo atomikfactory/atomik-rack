@@ -6,6 +6,7 @@
 //! keymap ([`menus`]); the key router lives in `atomik_ui::keymap` and the shell.
 
 use crate::midi_file::MidiResolution;
+use crate::practice::PracticeAction;
 use crate::record::InputQuantize;
 pub use crate::transition_choice::TransitionChoice;
 use crate::windows::WindowKind;
@@ -15,10 +16,11 @@ use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
 use atomik_ui::big_meter::MeterMode;
 use atomik_ui::keymap::{
     APP_ZOOM_ARGS, EXPORT_FOR_ARGS, INPUT_CHANNEL_ARGS, Keymap, MAP_COMMAND_ARGS, MORPH_TIME_ARGS,
-    OUTPUT_CHANNEL_ARGS, RATE_ARGS, RECENT_ARGS, REFERENCE_BAND_ARGS, REFERENCE_CUE_ARGS,
-    REFERENCE_SELECT_ARGS, REFERENCE_SOLO_ARGS, SONG_ARGS, TEMPLATE_ARGS,
+    OUTPUT_CHANNEL_ARGS, PRACTICE_COUNT_IN_ARGS, PRACTICE_SPEED_ARGS, RATE_ARGS, RECENT_ARGS,
+    REFERENCE_BAND_ARGS, REFERENCE_CUE_ARGS, REFERENCE_SELECT_ARGS, REFERENCE_SOLO_ARGS, SONG_ARGS,
+    TEMPLATE_ARGS,
 };
-use atomik_ui::{CableVisibility, Flip, ThemeChoice, TransportAction};
+use atomik_ui::{CableVisibility, Flip, ThemeChoice, TrainerValue, TransportAction};
 use std::borrow::Cow;
 
 /// Something the user asked the app to do (menu item or shortcut).
@@ -257,6 +259,8 @@ pub enum AppCommand {
     ToggleSliceEditor,
     /// Transport ▸ … (play, stop, record, loop, metronome, return to zero).
     Transport(TransportAction),
+    /// Transport ▸ Practice ▸ … (speed, count-in, speed trainer, loop the selection).
+    Practice(PracticeAction),
     /// Transport ▸ Input Quantize.
     Quantize(InputQuantize),
     /// Options ▸ Pre-count (Ctrl+P): the count-in of a recording on or off. It is a setting
@@ -1051,6 +1055,27 @@ impl AppCommand {
             AppCommand::Transport(TransportAction::TapTempo) => ("transport.tap_tempo", None),
             AppCommand::Transport(TransportAction::Dub) => ("transport.dub", None),
             AppCommand::Transport(TransportAction::Alt) => ("transport.alt", None),
+            AppCommand::Practice(a) => match a {
+                PracticeAction::Speed(p) => {
+                    ("practice.speed", Some(arg_of(PRACTICE_SPEED_ARGS, *p)?))
+                }
+                PracticeAction::SpeedUp => ("practice.speed_up", None),
+                PracticeAction::SpeedDown => ("practice.speed_down", None),
+                PracticeAction::CountIn(0) => ("practice.count_in", Some("off")),
+                PracticeAction::CountIn(1) => ("practice.count_in", Some("1")),
+                PracticeAction::CountIn(_) => ("practice.count_in", Some("2")),
+                PracticeAction::ToggleTrainer => ("practice.trainer", None),
+                PracticeAction::Trainer(v, up) => (
+                    match v {
+                        TrainerValue::Start => "practice.trainer_start",
+                        TrainerValue::Step => "practice.trainer_step",
+                        TrainerValue::After => "practice.trainer_after",
+                        TrainerValue::Target => "practice.trainer_target",
+                    },
+                    Some(if *up { "up" } else { "down" }),
+                ),
+                PracticeAction::LoopSelection => ("practice.loop_selection", None),
+            },
             AppCommand::TogglePreCount => ("transport.pre_count", None),
             AppCommand::ToggleClockOut => ("sync.clock_out", None),
             AppCommand::ToggleClockWhileStopped => ("sync.clock_while_stopped", None),
@@ -1477,6 +1502,33 @@ impl AppCommand {
             }
             ("transport.clear_override", None) => {
                 AppCommand::Transport(TransportAction::ClearOverride)
+            }
+            ("practice.speed", Some(a)) => {
+                AppCommand::Practice(PracticeAction::Speed(num_arg(PRACTICE_SPEED_ARGS, a)?))
+            }
+            ("practice.speed_up", None) => AppCommand::Practice(PracticeAction::SpeedUp),
+            ("practice.speed_down", None) => AppCommand::Practice(PracticeAction::SpeedDown),
+            ("practice.count_in", Some(a)) if PRACTICE_COUNT_IN_ARGS.contains(&a) => {
+                AppCommand::Practice(PracticeAction::CountIn(a.parse().unwrap_or(0)))
+            }
+            ("practice.trainer", None) => AppCommand::Practice(PracticeAction::ToggleTrainer),
+            (
+                "practice.trainer_start"
+                | "practice.trainer_step"
+                | "practice.trainer_after"
+                | "practice.trainer_target",
+                Some(a @ ("up" | "down")),
+            ) => AppCommand::Practice(PracticeAction::Trainer(
+                match id {
+                    "practice.trainer_start" => TrainerValue::Start,
+                    "practice.trainer_step" => TrainerValue::Step,
+                    "practice.trainer_after" => TrainerValue::After,
+                    _ => TrainerValue::Target,
+                },
+                a == "up",
+            )),
+            ("practice.loop_selection", None) => {
+                AppCommand::Practice(PracticeAction::LoopSelection)
             }
             ("transport.pre_count", None) => AppCommand::TogglePreCount,
             ("sync.clock_out", None) => AppCommand::ToggleClockOut,
@@ -2306,6 +2358,12 @@ pub struct MenuState {
     pub auto_lanes: bool,
     /// The pre-count (the count-in of a recording) is on.
     pub pre_count: bool,
+    /// The practice speed in percent.
+    pub practice_speed: u16,
+    /// The practice count-in in bars.
+    pub practice_count_in: u8,
+    /// The speed trainer is on.
+    pub practice_trainer: bool,
     /// MIDI clock is being sent.
     pub clock_out: bool,
     /// The clock is sent while the transport is stopped too.
@@ -3623,6 +3681,56 @@ fn menus_in_english(
                     state.auto_lanes,
                 ),
                 MenuEntry::Separator,
+                MenuEntry::Submenu(Submenu {
+                    label: "Practice",
+                    entries: vec![
+                        item(
+                            "Loop Selection",
+                            AppCommand::Practice(PracticeAction::LoopSelection),
+                        ),
+                        MenuEntry::Separator,
+                        check(
+                            "Speed 50%",
+                            AppCommand::Practice(PracticeAction::Speed(50)),
+                            state.practice_speed == 50,
+                        ),
+                        check(
+                            "Speed 75%",
+                            AppCommand::Practice(PracticeAction::Speed(75)),
+                            state.practice_speed == 75,
+                        ),
+                        check(
+                            "Full Speed (100%)",
+                            AppCommand::Practice(PracticeAction::Speed(100)),
+                            state.practice_speed == 100,
+                        ),
+                        item("Faster", AppCommand::Practice(PracticeAction::SpeedUp)),
+                        item("Slower", AppCommand::Practice(PracticeAction::SpeedDown)),
+                        MenuEntry::Separator,
+                        check(
+                            "Count-in: Off",
+                            AppCommand::Practice(PracticeAction::CountIn(0)),
+                            state.practice_count_in == 0,
+                        ),
+                        check(
+                            "Count-in: 1 Bar",
+                            AppCommand::Practice(PracticeAction::CountIn(1)),
+                            state.practice_count_in == 1,
+                        ),
+                        check(
+                            "Count-in: 2 Bars",
+                            AppCommand::Practice(PracticeAction::CountIn(2)),
+                            state.practice_count_in == 2,
+                        ),
+                        MenuEntry::Separator,
+                        check(
+                            "Speed Trainer",
+                            AppCommand::Practice(PracticeAction::ToggleTrainer),
+                            state.practice_trainer,
+                        ),
+                    ],
+                }),
+                MenuEntry::Separator,
                 item("Add Marker", AppCommand::AddMarker),
                 item("Add Range Marker from Loop", AppCommand::AddRangeFromLoop),
                 item("Set End Marker at Playhead", AppCommand::SetEndMarker),
@@ -4822,6 +4930,9 @@ mod tests {
             metronome: false,
             auto_lanes: false,
             pre_count: false,
+            practice_speed: 100,
+            practice_count_in: 0,
+            practice_trainer: false,
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,
@@ -5327,6 +5438,32 @@ mod tests {
             TransportAction::ClearOverride,
         ] {
             v.push(AppCommand::Transport(t));
+        }
+        for a in [
+            PracticeAction::Speed(25),
+            PracticeAction::Speed(50),
+            PracticeAction::Speed(75),
+            PracticeAction::Speed(100),
+            PracticeAction::Speed(150),
+            PracticeAction::SpeedUp,
+            PracticeAction::SpeedDown,
+            PracticeAction::CountIn(0),
+            PracticeAction::CountIn(1),
+            PracticeAction::CountIn(2),
+            PracticeAction::ToggleTrainer,
+            PracticeAction::LoopSelection,
+        ] {
+            v.push(AppCommand::Practice(a));
+        }
+        for value in [
+            TrainerValue::Start,
+            TrainerValue::Step,
+            TrainerValue::After,
+            TrainerValue::Target,
+        ] {
+            for up in [false, true] {
+                v.push(AppCommand::Practice(PracticeAction::Trainer(value, up)));
+            }
         }
         v.push(AppCommand::TogglePreCount);
         v.push(AppCommand::ToggleClockOut);
@@ -5946,6 +6083,9 @@ mod tests {
         assert_eq!(pre.shortcut.as_deref(), Some("Ctrl+P"));
         let on = MenuState {
             pre_count: true,
+            practice_speed: 100,
+            practice_count_in: 0,
+            practice_trainer: false,
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,
@@ -6005,6 +6145,9 @@ mod tests {
                 metronome: false,
                 auto_lanes: false,
                 pre_count: false,
+                practice_speed: 100,
+                practice_count_in: 0,
+                practice_trainer: false,
                 clock_out: false,
                 clock_while_stopped: false,
                 follow_clock: false,

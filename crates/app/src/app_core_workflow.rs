@@ -249,6 +249,7 @@ impl<S: EngineSink> AppCore<S> {
         self.poll_kick_bass();
         self.snapshot_morph_tick(now_seconds);
         self.macro_glide_tick(now_seconds);
+        self.practice_tick();
         for action in self.transport_bar.tick(now_seconds) {
             self.handle_action(action);
         }
