@@ -15,6 +15,7 @@
 //!   reader and writer converts to and from.
 //! * [`ascii`]: plain-text tab, read and written.
 //! * [`gp`]: Guitar Pro files (`.gp3`, `.gp4`, `.gp5`, `.gpx`, `.gp`) read into a `TabScore`.
+//! * [`trainer`]: the chord trainer: chord sets by key or list, the timed and listen drills, best scores per chord pair.
 //! * [`grade`]: grading a played pass against the tab (hit, early, late, wrong, missed, extra),
 //!   accuracy, streak, session history and the latency calibration of the practice feature.
 //!
@@ -31,6 +32,7 @@ pub mod instrument;
 pub mod musicxml;
 pub mod score;
 pub mod sheet;
+pub mod trainer;
 pub mod transpose;
 pub mod voicing;
 
