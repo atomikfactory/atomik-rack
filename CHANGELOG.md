@@ -17,8 +17,10 @@ may break APIs and the patch and project formats.
   96 kHz. It has a decay, a finger-mute or let-ring release, a palm mute, a unison or octave course (mandolin,
   12-string), a stereo spread and velocity sensitivity, and it reads the per-note expression of its notes:
   tuning glides the pitch (bends, slides and vibrato do not click), slide is the palm-mute amount, and pressure
-  selects a harmonic or a dead note. Sixteen voices, the same key struck again plucks its own string. It uses the
-  generic panel for now; factory patches and a panel follow.
+  selects a harmonic or a dead note. Sixteen voices, the same key struck again plucks its own string. It has a
+  panel of six sections (string, pluck, course, body, output, play) and fourteen factory patches (steel and
+  nylon guitars, clean and muted electric, two basses, an upright, ukulele, banjo, mandolin, 12-string, bouzouki,
+  dobro and a harp), with a lookup from an instrument id of the guitar-tab catalogue to its patch.
 - **A MONO button on the master strip of the mixer.** One click folds what you hear to mono, `(L + R) / 2` on both
   sides, and a second click brings the stereo back; the button is lit while it is on, so it is not forgotten. It is
   the mono switch of the translation lens (the same command, `mixer.lens_mono`, so the menu, the command palette and

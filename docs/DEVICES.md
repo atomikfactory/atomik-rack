@@ -601,6 +601,41 @@ How the expression lanes of a note reach the strings (see also
   note is a noise burst into a string damped to a 45 ms fall: a short, unpitched click. Both ignore the pick
   position. Channel and key pressure are not used.
 
+### Panel
+
+The panel is the generated one with its own sections, in the order a string is played: STRING (decay,
+sustain, brightness, stiffness, palm mute), PLUCK (position, hardness), COURSE (mode, detune), BODY (the body
+as a pick list of its eleven names, and the mix), OUTPUT (gain, width) and PLAY (velocity sensitivity, bend
+range). The device has nothing to draw, so it has no display of its own, the way the effects and the organ have
+none; a custom panel would only have repeated what the sections already say. See
+[plucked_panel.rs](../crates/ui/src/plucked_panel.rs).
+
+### Factory patches
+
+Fourteen patches of the category Plucked, each a table of params in the app's factory tables:
+
+| Patch | Body | Character |
+|---|---|---|
+| Steel Acoustic | Steel | Medium pick, bright, 3.5 s ring |
+| Nylon Classical | Nylon | Fingertips, dark and round |
+| Clean Electric | Electric | Hard pick, long even ring; follow it with the Guitar Amp |
+| Muted Electric | Electric | Palm mute 0.8, a short chug |
+| Electric Bass Finger | Bass | Soft attack, round |
+| Electric Bass Pick | Bass | Hard, bright attack |
+| Upright Bass | Upright | Woody thump, stops on release |
+| Ukulele | Ukulele | Light and bright, short ring |
+| Banjo | Banjo | Hardest pick, brightest, a little stiffness |
+| Mandolin | Mandolin | Unison pair, 12 cents apart |
+| 12-String | Steel | Octave course, wide |
+| Bouzouki | Mandolin | Octave course |
+| Dobro | Resonator | Stiffness 0.4, bend range 12 |
+| Harp Pluck | Harp | Soft, 6 s ring |
+
+Each peaks between -6 and -1 dBFS at full velocity on a phrase in its own range (a test checks it) and falls
+by 30 dB within eight seconds. `atomik_devices::plucked::factory_patch_for(instrument_id)` names the patch for
+an instrument of the tab catalogue (`guitar6`, `bass4`, `banjo5`, ...; an unknown id gets Steel Acoustic), and
+`INSTRUMENT_PATCHES` is the whole table.
+
 ### Tests
 
 The unit tests in [plucked/tests.rs](../crates/devices/src/plucked/tests.rs) and
