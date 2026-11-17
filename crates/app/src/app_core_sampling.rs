@@ -117,6 +117,11 @@ impl<S: EngineSink> AppCore<S> {
             .or_else(|| options.first().copied())
     }
 
+    /// Whether a sampling holds the engine's tap.
+    pub(super) fn sampling_running(&self) -> bool {
+        self.sampling.running.is_some()
+    }
+
     /// Seconds recorded so far by a running sampling.
     pub fn sampling_seconds(&self) -> f64 {
         self.sampling.running.as_ref().map_or(0.0, |r| {
@@ -158,6 +163,8 @@ impl<S: EngineSink> AppCore<S> {
             return self.reject("The audio interface has no inputs to sample from".to_owned());
         };
         let rate = self.doc().sample_rate.max(1) as usize;
+        // The engine has one tap: listening lets go of it for the sampling.
+        self.listen_yield_tap();
         let limit = SAMPLE_SECONDS * rate;
         let channels: Vec<TapChannel> = input
             .channels()

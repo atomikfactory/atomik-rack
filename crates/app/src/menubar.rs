@@ -927,6 +927,7 @@ mod tests {
             practice_speed: 100,
             practice_count_in: 0,
             practice_trainer: false,
+            practice_listen: false,
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,

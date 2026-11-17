@@ -1093,6 +1093,18 @@ impl AppCommand {
                     },
                     Some(if *up { "up" } else { "down" }),
                 ),
+                PracticeAction::ToggleListen => ("practice.listen", None),
+                PracticeAction::ListenInput => ("practice.listen_input", None),
+                PracticeAction::ListenCalibrate => ("practice.listen_calibrate", None),
+                PracticeAction::ListenClear => ("practice.listen_clear", None),
+                PracticeAction::ListenOffset(up) => (
+                    "practice.listen_offset",
+                    Some(if *up { "up" } else { "down" }),
+                ),
+                PracticeAction::ListenThreshold(up) => (
+                    "practice.listen_threshold",
+                    Some(if *up { "up" } else { "down" }),
+                ),
                 PracticeAction::LoopSelection => ("practice.loop_selection", None),
             },
             AppCommand::TogglePreCount => ("transport.pre_count", None),
@@ -1553,6 +1565,18 @@ impl AppCommand {
                 },
                 a == "up",
             )),
+            ("practice.listen", None) => AppCommand::Practice(PracticeAction::ToggleListen),
+            ("practice.listen_input", None) => AppCommand::Practice(PracticeAction::ListenInput),
+            ("practice.listen_calibrate", None) => {
+                AppCommand::Practice(PracticeAction::ListenCalibrate)
+            }
+            ("practice.listen_clear", None) => AppCommand::Practice(PracticeAction::ListenClear),
+            ("practice.listen_offset", Some(a @ ("up" | "down"))) => {
+                AppCommand::Practice(PracticeAction::ListenOffset(a == "up"))
+            }
+            ("practice.listen_threshold", Some(a @ ("up" | "down"))) => {
+                AppCommand::Practice(PracticeAction::ListenThreshold(a == "up"))
+            }
             ("practice.loop_selection", None) => {
                 AppCommand::Practice(PracticeAction::LoopSelection)
             }
@@ -2390,6 +2414,8 @@ pub struct MenuState {
     pub practice_count_in: u8,
     /// The speed trainer is on.
     pub practice_trainer: bool,
+    /// Listen and grade is on.
+    pub practice_listen: bool,
     /// MIDI clock is being sent.
     pub clock_out: bool,
     /// The clock is sent while the transport is stopped too.
@@ -3801,6 +3827,24 @@ fn menus_in_english(
                             AppCommand::Practice(PracticeAction::ToggleTrainer),
                             state.practice_trainer,
                         ),
+                        MenuEntry::Separator,
+                        check(
+                            "Listen and Grade",
+                            AppCommand::Practice(PracticeAction::ToggleListen),
+                            state.practice_listen,
+                        ),
+                        item(
+                            "Next Listening Input",
+                            AppCommand::Practice(PracticeAction::ListenInput),
+                        ),
+                        item(
+                            "Calibrate Listening Latency",
+                            AppCommand::Practice(PracticeAction::ListenCalibrate),
+                        ),
+                        item(
+                            "Clear Results",
+                            AppCommand::Practice(PracticeAction::ListenClear),
+                        ),
                     ],
                 }),
                 MenuEntry::Separator,
@@ -5006,6 +5050,7 @@ mod tests {
             practice_speed: 100,
             practice_count_in: 0,
             practice_trainer: false,
+            practice_listen: false,
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,
@@ -6171,6 +6216,7 @@ mod tests {
             practice_speed: 100,
             practice_count_in: 0,
             practice_trainer: false,
+            practice_listen: false,
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,
@@ -6233,6 +6279,7 @@ mod tests {
                 practice_speed: 100,
                 practice_count_in: 0,
                 practice_trainer: false,
+                practice_listen: false,
                 clock_out: false,
                 clock_while_stopped: false,
                 follow_clock: false,

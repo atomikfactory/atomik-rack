@@ -162,6 +162,9 @@ pub struct UiState {
     pub fretboard_labels: atomik_ui::FretLabels,
     /// The fretboard shows the voicing of the chord at the playhead. An absent key means no.
     pub fretboard_voicing: bool,
+    /// The manual latency offset of listen and grade, milliseconds (positive places the played
+    /// notes earlier). An absent key means 0. Set by the calibration or the offset command.
+    pub listen_offset_ms: i32,
     /// The mode the audio clip editor opens in (`"overview"` or `"slice"`). An absent key means
     /// overview.
     pub audio_editor_mode: AudioMode,
@@ -238,6 +241,7 @@ impl Default for UiState {
             fretboard_left_handed: false,
             fretboard_labels: atomik_ui::FretLabels::Notes,
             fretboard_voicing: false,
+            listen_offset_ms: 0,
             audio_editor_mode: AudioMode::Overview,
             fade_unit: FadeUnit::Ms,
             link_faders: false,

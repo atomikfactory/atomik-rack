@@ -66,6 +66,7 @@ pub mod masking_worker;
 pub mod master_keyboard;
 pub use atomik_ui::menu_layout;
 pub mod language_tab;
+pub mod listen;
 pub mod menubar;
 pub mod midi;
 pub mod midi_control;

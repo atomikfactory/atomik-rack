@@ -38,17 +38,32 @@ pub enum PracticeAction {
     ToggleTrainer,
     /// A value of the trainer up (`true`) or down.
     Trainer(TrainerValue, bool),
+    /// Listen and grade on or off.
+    ToggleListen,
+    /// The next audio input to listen to.
+    ListenInput,
+    /// Calibrate the listening latency against the click.
+    ListenCalibrate,
+    /// Clear the results of the session.
+    ListenClear,
+    /// The manual latency offset up (`true`) or down, by 5 ms.
+    ListenOffset(bool),
+    /// The accuracy a clean pass needs up (`true`) or down, by 5 points.
+    ListenThreshold(bool),
     /// Loop the bars of the selection of the open Tab Editor or Chord Sheet.
     LoopSelection,
 }
 
 /// A completed pass of the loop, as the judge sees it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PassReport {
     /// Which pass this is since the trainer was switched on (1 for the first).
     pub index: u32,
     /// The speed it was played at, in percent.
     pub speed: u16,
+    /// How accurately it was played, as a fraction, when the pass was graded from the audio
+    /// input (listening on); `None` otherwise.
+    pub accuracy: Option<f32>,
 }
 
 /// Decides whether a completed pass counts towards the trainer's next step.
@@ -109,13 +124,14 @@ impl Practice {
         self.trainer
     }
 
-    /// What the practice bar shows.
+    /// What the practice bar shows (without the listening part, which the app core adds).
     pub fn view(&self, metronome: bool, looping: bool) -> PracticeState {
         PracticeState {
             speed: self.speed,
             count_in: self.count_in,
             metronome,
             looping,
+            listen: atomik_ui::ListenState::default(),
             trainer: self.trainer,
         }
     }
@@ -190,6 +206,11 @@ impl Practice {
     /// A pass of the loop was completed at the current speed. Returns the new speed when it
     /// made the trainer step up. Does nothing while the trainer is off.
     pub fn pass(&mut self, judge: &mut dyn PassJudge) -> Option<u16> {
+        self.pass_graded(judge, None)
+    }
+
+    /// [`Self::pass`] for a pass graded from the audio input (`accuracy` as a fraction).
+    pub fn pass_graded(&mut self, judge: &mut dyn PassJudge, accuracy: Option<f32>) -> Option<u16> {
         if !self.trainer.enabled {
             return None;
         }
@@ -197,6 +218,7 @@ impl Practice {
         let report = PassReport {
             index: self.trainer.passes,
             speed: self.speed,
+            accuracy,
         };
         if !judge.is_clean(&report) {
             return None;

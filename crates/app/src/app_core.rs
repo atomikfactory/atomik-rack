@@ -391,6 +391,8 @@ pub struct AppCore<S: EngineSink> {
     pass_judge: Box<dyn crate::practice::PassJudge>,
     /// The engine's loop count at the last frame the trainer looked.
     last_pass_loops: Option<u64>,
+    /// Listen and grade: the input tap, the tracker, the results of the session.
+    listen: listen_ops::Listen,
     /// The length the pre-count toggle returns to (1 to 4).
     pre_count_resume: u8,
     quantize: InputQuantize,
@@ -755,6 +757,7 @@ impl<S: EngineSink> AppCore<S> {
             default_tune: 0.0,
             pre_count_bars: 0,
             practice: crate::practice::Practice::default(),
+            listen: listen_ops::Listen::default(),
             pass_judge: Box::new(crate::practice::EveryPass),
             last_pass_loops: None,
             pre_count_resume: 1,
@@ -1831,6 +1834,7 @@ impl<S: EngineSink> AppCore<S> {
         self.cancel_automation_take();
         self.cancel_audio_recording();
         self.cancel_sampling();
+        self.listen_engine_lost();
         // The new engine has no preview clock on any device.
         self.forget_player_preview();
         self.forget_clip_preview();
@@ -1942,6 +1946,7 @@ impl<S: EngineSink> AppCore<S> {
             self.playing = state.playing;
         }
         self.feed_take(&state);
+        self.feed_listen(&state);
         self.feed_player_preview();
         self.show_transport();
         self.feed_song_harmony();
@@ -4101,6 +4106,7 @@ impl<S: EngineSink> AppCore<S> {
         self.tab_editor.set_practice(practice);
         self.sync_fretboard();
         self.chord_sheet.set_practice(practice);
+        self.push_listen_grades();
         self.transport_bar.set_state(atomik_ui::TransportState {
             playing: self.playing,
             recording,
@@ -4420,6 +4426,9 @@ mod fretboard_ops;
 
 #[path = "app_core_practice.rs"]
 mod practice_ops;
+
+#[path = "app_core_listen.rs"]
+mod listen_ops;
 
 #[path = "app_core_chord_sheet.rs"]
 mod chord_sheet_ops;
@@ -4747,6 +4756,10 @@ mod tab_editor_tests;
 #[cfg(test)]
 #[path = "app_core_practice_tests.rs"]
 mod practice_tests;
+
+#[cfg(test)]
+#[path = "app_core_listen_tests.rs"]
+mod listen_tests;
 
 #[cfg(test)]
 #[path = "app_core_chord_sheet_tests.rs"]

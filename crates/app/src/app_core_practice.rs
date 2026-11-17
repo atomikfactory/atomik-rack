@@ -25,8 +25,12 @@ impl<S: EngineSink> AppCore<S> {
 
     /// What the practice bars show.
     pub(super) fn practice_state(&self) -> PracticeState {
-        self.practice
-            .view(self.metronome, self.doc().song.loop_enabled)
+        PracticeState {
+            listen: self.listen_view(),
+            ..self
+                .practice
+                .view(self.metronome, self.doc().song.loop_enabled)
+        }
     }
 
     /// Runs a practice command.
@@ -42,6 +46,12 @@ impl<S: EngineSink> AppCore<S> {
                 self.set_practice_speed(self.practice.speed().saturating_sub(step));
             }
             PracticeAction::CountIn(bars) => self.practice.set_count_in(bars),
+            PracticeAction::ToggleListen
+            | PracticeAction::ListenInput
+            | PracticeAction::ListenCalibrate
+            | PracticeAction::ListenClear
+            | PracticeAction::ListenOffset(_)
+            | PracticeAction::ListenThreshold(_) => self.listen_action(action),
             PracticeAction::ToggleTrainer => {
                 if self.practice_blocked() {
                     return;
@@ -128,7 +138,8 @@ impl<S: EngineSink> AppCore<S> {
     /// Once a frame: counts the loop cycles the engine completed since the last frame for the
     /// speed trainer and sends the speed it steps to.
     pub(super) fn practice_tick(&mut self) {
-        if !self.practice.trainer().enabled || !self.playing {
+        // Graded passes (listening on with a tab clip open) are counted when they are graded.
+        if !self.practice.trainer().enabled || !self.playing || self.listen_grades_passes() {
             self.last_pass_loops = None;
             return;
         }

@@ -1131,6 +1131,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core.console_mut().set_link_faders(self.ui.link_faders);
         self.core.console_mut().set_meter_mode(self.ui.meter_mode);
         self.core.set_morph_seconds(self.ui.morph_seconds);
+        self.core.set_listen_offset_ms(self.ui.listen_offset_ms);
         {
             let arrangement = self.core.arrangement_mut();
             arrangement.set_tempo_lane(self.ui.show_tempo_lane);
@@ -4618,6 +4619,7 @@ impl<B: AudioBackend> Shell<B> {
             practice_speed: self.core.practice().speed(),
             practice_count_in: self.core.practice().count_in(),
             practice_trainer: self.core.practice().trainer().enabled,
+            practice_listen: self.core.listen_on(),
             clock_out: self.core.sink().settings().sync.clock_out,
             clock_while_stopped: self.core.sink().settings().sync.send_while_stopped,
             follow_clock: self.core.sink().settings().sync.follow_clock,
@@ -10707,6 +10709,10 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_language();
         let busy = self.core.is_busy();
         self.core.frame();
+        if let Some(ms) = self.core.take_listen_offset_change() {
+            self.ui.listen_offset_ms = ms;
+            self.ui_changed();
+        }
         self.run_camera_commands();
         self.sync_camera_ui();
         self.sync_stems_ui();
