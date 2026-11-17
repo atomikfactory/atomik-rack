@@ -462,6 +462,12 @@ pub(super) fn pane_facts(row: &FileRow, tempo: Option<f64>) -> String {
                 parts.push(format_size(row.size));
             }
         }
+        FileKind::Tab => {
+            parts.push("TAB".to_string());
+            if row.size > 0 {
+                parts.push(format_size(row.size));
+            }
+        }
         FileKind::Folder | FileKind::Device | FileKind::Preset => {}
     }
     if let Some(item) = &row.item

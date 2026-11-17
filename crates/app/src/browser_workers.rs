@@ -454,6 +454,7 @@ pub(crate) fn item_kind_of(kind: FileKind) -> Option<ItemKind> {
         FileKind::Folder
         | FileKind::Audio(_)
         | FileKind::Midi
+        | FileKind::Tab
         | FileKind::Device
         | FileKind::Preset => None,
     }
