@@ -4514,6 +4514,10 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Text])
             }
             Pane::TabEditor => ContextStack::new(&[Context::Tab]),
+            Pane::ChordSheet if self.core.chord_sheet().is_text_owner() => {
+                ContextStack::new(&[Context::Text])
+            }
+            Pane::ChordSheet => ContextStack::global(),
             Pane::AudioEditor if self.core.audio_editor().is_text_owner() => {
                 ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])
             }
@@ -4600,6 +4604,7 @@ impl<B: AudioBackend> Shell<B> {
             song_visible: self.ui.show_song,
             piano_roll: self.core.piano_roll_open(),
             tab_editor: self.core.tab_editor_open(),
+            chord_sheet: self.core.chord_sheet_open(),
             sample_editor: self.core.sample_editor_device().is_some(),
             step_editor: self.core.step_editor_device().is_some(),
             slice_editor: self.core.slice_editor_device().is_some(),
@@ -4874,6 +4879,7 @@ impl<B: AudioBackend> Shell<B> {
             self.core.arrangement_mut().set_bounds(song);
             self.core.piano_roll_mut().set_bounds(song);
             self.core.tab_editor_mut().set_bounds(song);
+            self.core.chord_sheet_mut().set_bounds(song);
             self.core.sample_editor_mut().set_bounds(song);
             self.core.step_editor_mut().set_bounds(song);
             self.core.slice_editor_mut().set_bounds(song);
@@ -5142,6 +5148,8 @@ impl<B: AudioBackend> Shell<B> {
             Pane::ContainerEditor
         } else if self.core.plugin_params_device().is_some() {
             Pane::PluginParams
+        } else if self.core.chord_sheet_open() {
+            Pane::ChordSheet
         } else if self.core.tab_editor_open() {
             Pane::TabEditor
         } else if self.core.piano_roll_open() {
@@ -5176,6 +5184,7 @@ impl<B: AudioBackend> Shell<B> {
             Pane::Arrangement
             | Pane::PianoRoll
             | Pane::TabEditor
+            | Pane::ChordSheet
             | Pane::Console
             | Pane::SampleEditor
             | Pane::StepEditor
@@ -5191,6 +5200,7 @@ impl<B: AudioBackend> Shell<B> {
             Pane::Arrangement
             | Pane::PianoRoll
             | Pane::TabEditor
+            | Pane::ChordSheet
             | Pane::Console
             | Pane::SampleEditor
             | Pane::StepEditor
@@ -5226,6 +5236,9 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .tab_editor_mut()
             .set_focused(pane == Pane::TabEditor);
+        self.core
+            .chord_sheet_mut()
+            .set_focused(pane == Pane::ChordSheet);
         self.core
             .sample_editor_mut()
             .set_focused(pane == Pane::SampleEditor);
@@ -9344,6 +9357,21 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 Vec::new()
             }
+            AppCommand::ToggleChordSheet => {
+                if self.core.chord_sheet_open() {
+                    self.core.close_chord_sheet();
+                } else {
+                    self.core.open_chord_sheet();
+                    if !self.ui.show_song || self.lower_is_console() {
+                        self.ui.show_song = true;
+                        self.ui.show_console = false;
+                        self.console_changed();
+                    }
+                    self.reveal_lower_pane();
+                    self.set_focus(Pane::ChordSheet);
+                }
+                Vec::new()
+            }
             AppCommand::ToggleTabOrPianoRoll => {
                 if self.core.toggle_tab_or_piano_roll() {
                     if !self.ui.show_song || self.lower_is_console() {
@@ -10704,6 +10732,7 @@ impl<B: AudioBackend> Shell<B> {
         }
         self.core.piano_roll_tick(now_seconds);
         self.core.tab_editor_tick(now_seconds);
+        self.core.chord_sheet_tick(now_seconds);
         self.tick_tooltip(now_seconds);
         // A pointer resting on a scroll strip of a menu bar list scrolls it.
         if self.any_bar_open() {
@@ -11665,6 +11694,7 @@ impl<B: AudioBackend> Shell<B> {
                 && match self.song_pane() {
                     Pane::PianoRoll => self.core.piano_roll().needs_repaint(),
                     Pane::TabEditor => self.core.tab_editor().needs_repaint(),
+                    Pane::ChordSheet => self.core.chord_sheet().needs_repaint(),
                     Pane::SampleEditor => self.core.sample_editor().needs_repaint(),
                     Pane::StepEditor => self.core.step_editor().needs_repaint(),
                     Pane::SliceEditor => self.core.slice_editor().needs_repaint(),

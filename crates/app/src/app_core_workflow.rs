@@ -20,6 +20,7 @@ impl<S: EngineSink> AppCore<S> {
         self.arrangement.set_theme(theme.clone());
         self.piano_roll.set_theme(theme.clone());
         self.tab_editor.set_theme(theme.clone());
+        self.chord_sheet.set_theme(theme.clone());
         self.sample_editor.set_theme(theme.clone());
         self.step_editor.set_theme(theme.clone());
         self.slice_editor.set_theme(theme.clone());
@@ -56,6 +57,13 @@ impl<S: EngineSink> AppCore<S> {
         id: &str,
         arg: Option<&str>,
     ) -> Option<Vec<UiAction>> {
+        // The chord sheet's own commands reach it whichever pane has the focus (the command
+        // palette and the menus do not move the focus).
+        let pane = if id.starts_with("editor.sheet_") && self.sheet_open {
+            Pane::ChordSheet
+        } else {
+            pane
+        };
         // Delete while recording throws away the take so far instead of deleting a selection.
         if id == "edit.delete" && self.discard_take_notes() {
             return Some(Vec::new());
@@ -71,6 +79,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::Arrangement => self.arrangement.command(id, arg, doc, &self.registry),
             Pane::PianoRoll => self.piano_roll.command(id, arg, doc, &self.registry),
             Pane::TabEditor => self.tab_editor.command(id, arg, doc, &self.registry),
+            Pane::ChordSheet => self.chord_sheet.command(id, arg, doc, &self.registry),
             Pane::StepEditor => self.step_editor.command(id, arg, doc, &self.registry),
             Pane::SampleEditor => self.sample_editor.command(id, arg, doc, &self.registry),
             Pane::SliceEditor => self.slice_editor.command(id, arg, doc, &self.registry),
@@ -342,7 +351,9 @@ impl<S: EngineSink> AppCore<S> {
     /// Closes the editor that shows in place of the arrangement (piano roll, sample, step,
     /// slice, sequencer, container or plugin parameter pane); false when none is open.
     pub fn close_open_editor(&mut self) -> bool {
-        if self.tab_editor_open() {
+        if self.chord_sheet_open() {
+            self.close_chord_sheet();
+        } else if self.tab_editor_open() {
             self.close_tab_editor();
         } else if self.piano_roll_open() {
             self.close_piano_roll();

@@ -916,6 +916,7 @@ mod tests {
             sample_editor: false,
             step_editor: false,
             tab_editor: false,
+            chord_sheet: false,
             slice_editor: false,
             playing: false,
             recording: false,

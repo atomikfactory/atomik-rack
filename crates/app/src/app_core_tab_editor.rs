@@ -42,6 +42,7 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         self.close_piano_roll();
+        self.close_chord_sheet();
         self.close_sample_editor();
         self.close_step_editor();
         self.close_slice_editor();

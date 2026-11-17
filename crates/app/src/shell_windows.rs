@@ -298,6 +298,7 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.arrangement_mut().set_scale(scale);
                 self.core.piano_roll_mut().set_scale(scale);
                 self.core.tab_editor_mut().set_scale(scale);
+                self.core.chord_sheet_mut().set_scale(scale);
                 self.core.sample_editor_mut().set_scale(scale);
                 self.core.step_editor_mut().set_scale(scale);
                 self.core.slice_editor_mut().set_scale(scale);
@@ -940,7 +941,9 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
         let pane = match self.hit_in(window, pos) {
             Some(Ok(pane @ Pane::Rack)) => pane,
-            Some(Ok(Pane::Arrangement | Pane::PianoRoll | Pane::TabEditor)) => Pane::Arrangement,
+            Some(Ok(Pane::Arrangement | Pane::PianoRoll | Pane::TabEditor | Pane::ChordSheet)) => {
+                Pane::Arrangement
+            }
             _ => return self.notify("Drop on the arrangement or the rack"),
         };
         // The rack takes positions of its own view.

@@ -248,6 +248,8 @@ pub enum AppCommand {
     ToggleStepEditor,
     /// View > Editors > Tab Editor.
     ToggleTabEditor,
+    /// View > Editors > Chord Sheet.
+    ToggleChordSheet,
     /// Edit > Switch Piano Roll and Tab.
     ToggleTabOrPianoRoll,
     /// View ▸ Slice Editor (open it on the selected or first loop slicer, or
@@ -1023,6 +1025,7 @@ impl AppCommand {
             AppCommand::ToggleSampleEditor => ("view.toggle_sample_editor", None),
             AppCommand::ToggleStepEditor => ("view.toggle_step_editor", None),
             AppCommand::ToggleTabEditor => ("view.toggle_tab_editor", None),
+            AppCommand::ToggleChordSheet => ("view.toggle_chord_sheet", None),
             AppCommand::ToggleTabOrPianoRoll => ("edit.toggle_tab_or_piano_roll", None),
             AppCommand::ToggleSliceEditor => ("view.toggle_slice_editor", None),
             AppCommand::Transport(TransportAction::Play) => ("transport.play", None),
@@ -1454,6 +1457,7 @@ impl AppCommand {
             ("view.toggle_sample_editor", None) => AppCommand::ToggleSampleEditor,
             ("view.toggle_step_editor", None) => AppCommand::ToggleStepEditor,
             ("view.toggle_tab_editor", None) => AppCommand::ToggleTabEditor,
+            ("view.toggle_chord_sheet", None) => AppCommand::ToggleChordSheet,
             ("edit.toggle_tab_or_piano_roll", None) => AppCommand::ToggleTabOrPianoRoll,
             ("view.toggle_slice_editor", None) => AppCommand::ToggleSliceEditor,
             ("transport.tap_tempo", None) => AppCommand::Transport(TransportAction::TapTempo),
@@ -2286,6 +2290,8 @@ pub struct MenuState {
     pub step_editor: bool,
     /// Whether the tab editor is open.
     pub tab_editor: bool,
+    /// Whether the chord sheet pane is open.
+    pub chord_sheet: bool,
     /// The slice editor is open.
     pub slice_editor: bool,
     /// Playing.
@@ -3482,6 +3488,11 @@ fn menus_in_english(
                             state.slice_editor,
                         ),
                         check("Tab Editor", AppCommand::ToggleTabEditor, state.tab_editor),
+                        check(
+                            "Chord Sheet",
+                            AppCommand::ToggleChordSheet,
+                            state.chord_sheet,
+                        ),
                         item(
                             "Switch Piano Roll and Tab",
                             AppCommand::ToggleTabOrPianoRoll,
@@ -4803,6 +4814,7 @@ mod tests {
             sample_editor: false,
             step_editor: false,
             tab_editor: false,
+            chord_sheet: false,
             slice_editor: false,
             playing: false,
             recording: false,
@@ -4978,6 +4990,7 @@ mod tests {
             AppCommand::ToggleSampleEditor,
             AppCommand::ToggleStepEditor,
             AppCommand::ToggleTabEditor,
+            AppCommand::ToggleChordSheet,
             AppCommand::ToggleTabOrPianoRoll,
             AppCommand::ToggleSliceEditor,
             AppCommand::ToggleConsoleLinks,
@@ -5984,6 +5997,7 @@ mod tests {
                 sample_editor: false,
                 step_editor: false,
                 tab_editor: false,
+                chord_sheet: false,
                 slice_editor: false,
                 playing: true,
                 recording: false,
