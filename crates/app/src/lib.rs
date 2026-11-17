@@ -98,6 +98,7 @@ pub(crate) mod stems_worker;
 pub mod stream_source;
 pub mod stress;
 pub mod surface;
+pub mod tab_file;
 pub mod tap_tempo;
 pub mod target;
 pub mod text_clipboard;

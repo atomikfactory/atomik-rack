@@ -29,6 +29,8 @@ atomik-devices.workspace = true
 atomik-dsp.workspace = true
 atomik-engine.workspace = true
 atomik-model.workspace = true
+# Tab files: Guitar Pro and MusicXML readers, the MusicXML and text writers, chord sheets.
+atomik-tab.workspace = true
 # Audio import, project bundles and waveform peaks.
 atomik-audio-file.workspace = true
 # The file browser's library database (favourites, tags, bookmarks) and file rows.

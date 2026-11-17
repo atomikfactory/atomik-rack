@@ -1138,7 +1138,7 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
 
 /// The key of a key signature: `sharps` above 0 (flats below) on the circle of fifths, the major
 /// key or its relative minor.
-fn key_of_signature(sharps: i8, minor: bool) -> Key {
+pub(crate) fn key_of_signature(sharps: i8, minor: bool) -> Key {
     let major = (i32::from(sharps) * 7).rem_euclid(12) as u8;
     if minor {
         Key::new((major + 9) % 12, ScaleKind::NaturalMinor)
@@ -1149,7 +1149,7 @@ fn key_of_signature(sharps: i8, minor: bool) -> Key {
 
 /// Chord symbols at ticks as chords of the lane: each one lasts until the next (the last one
 /// until `end`, at least a beat); of two at one tick the later wins.
-fn chords_of_marks(mut marks: Vec<(i64, ChordSymbol)>, end: i64) -> Vec<ChordEvent> {
+pub(crate) fn chords_of_marks(mut marks: Vec<(i64, ChordSymbol)>, end: i64) -> Vec<ChordEvent> {
     marks.sort_by_key(|(t, _)| *t);
     let mut kept: Vec<(i64, ChordSymbol)> = Vec::new();
     for m in marks {

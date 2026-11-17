@@ -4304,6 +4304,10 @@ pub use quantize_ops::QuantizeTarget;
 mod midi_ops;
 pub use midi_ops::{IMPORT_INSTRUMENT, MidiExport};
 
+#[path = "app_core_tab.rs"]
+mod tab_ops;
+pub use tab_ops::TabExportFormat;
+
 #[path = "app_core_create.rs"]
 mod create_ops;
 

@@ -278,6 +278,7 @@ dependencies = [
  "atomik-plugin-scan",
  "atomik-render",
  "atomik-stems",
+ "atomik-tab",
  "atomik-ui",
  "atomik-update",
  "atomik-video",

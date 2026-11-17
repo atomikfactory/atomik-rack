@@ -75,7 +75,7 @@ impl MidiExport {
 
 /// Where an import puts the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ImportMode {
+pub(super) enum ImportMode {
     /// One clip on the selected note track, else new tracks.
     Auto,
     /// New tracks at the playhead.
@@ -87,9 +87,9 @@ enum ImportMode {
 /// Where on the timeline an import goes, when the gesture said (a drop on the arrangement);
 /// the default is the snapped playhead and whatever the selection gives.
 #[derive(Debug, Clone, Default)]
-struct Place {
+pub(super) struct Place {
     /// The snapped song tick of the first clip.
-    tick: Option<i64>,
+    pub(super) tick: Option<i64>,
     /// The note lane (the track's instrument, an index into its lanes) of a drop on a lane.
     lane: Option<(DeviceKey, usize)>,
 }
@@ -167,13 +167,13 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    fn device_name(&self, key: &DeviceKey) -> String {
+    pub(super) fn device_name(&self, key: &DeviceKey) -> String {
         self.doc()
             .device(key)
             .map_or_else(|| key.0.clone(), |d| d.name.clone())
     }
 
-    fn project_name(&self) -> String {
+    pub(super) fn project_name(&self) -> String {
         self.file
             .as_deref()
             .and_then(Path::file_stem)
@@ -443,6 +443,21 @@ impl<S: EngineSink> AppCore<S> {
         place: Place,
         name: &str,
     ) -> Result<(), String> {
+        let message = self.apply_midi_with(IMPORT_INSTRUMENT, midi, mode, place, name)?;
+        self.report(message);
+        Ok(())
+    }
+
+    /// [`Self::apply_midi`] with the instrument of the new tracks chosen, returning the message
+    /// instead of reporting it (the tab import adds its warnings to it).
+    pub(super) fn apply_midi_with(
+        &mut self,
+        instrument: &str,
+        midi: MidiSong,
+        mode: ImportMode,
+        place: Place,
+        name: &str,
+    ) -> Result<String, String> {
         let as_song = mode == ImportMode::Song;
         let playhead = place.tick.unwrap_or_else(|| self.snapped_playhead());
         let mut lane_pick = None;
@@ -481,10 +496,9 @@ impl<S: EngineSink> AppCore<S> {
             self.after_view_change();
             self.arrangement
                 .set_selected_clips(&id.into_iter().collect::<Vec<_>>());
-            self.report(format!(
+            return Ok(format!(
                 "Imported {notes} notes from {name} as one clip{left_out}"
             ));
-            return Ok(());
         }
         let start = if as_song { 0 } else { playhead };
         // A meter that is going to replace the song's decides the bar a short track rounds to.
@@ -516,7 +530,7 @@ impl<S: EngineSink> AppCore<S> {
             midi.chords
         };
         let import = MidiImport {
-            instrument: IMPORT_INSTRUMENT.to_owned(),
+            instrument: instrument.to_owned(),
             tracks,
             tempo: midi.tempo.filter(|_| as_song),
             meter: midi.meter.filter(|_| as_song),
@@ -550,15 +564,14 @@ impl<S: EngineSink> AppCore<S> {
         };
         self.apply_command(Command::Workflow(WorkflowCommand::ImportMidi(import)))
             .map_err(|e| e.to_string())?;
-        self.report(format!(
+        Ok(format!(
             "Imported {count} track{} ({notes} notes) from {name}{song_data}{left_out}",
             plural(count)
-        ));
-        Ok(())
+        ))
     }
 }
 
-fn plural(n: usize) -> &'static str {
+pub(super) fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 

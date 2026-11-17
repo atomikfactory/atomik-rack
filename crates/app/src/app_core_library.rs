@@ -214,6 +214,11 @@ impl<S: EngineSink> AppCore<S> {
                 self.import_midi(path, false);
                 Ok(())
             }
+            // A tab or score file imports as File > Import Tab or Score File does.
+            Some(FileKind::Tab) => {
+                self.import_tab(path, false);
+                Ok(())
+            }
             _ => Err(format!("'{}' is not a library item", file_name(path))),
         }
     }
