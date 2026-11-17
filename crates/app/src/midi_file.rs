@@ -875,6 +875,7 @@ impl Channel {
             programs: self.programs,
             sysex: Vec::new(),
             expression,
+            tab: None,
         };
         Some((notes, lanes, programs))
     }

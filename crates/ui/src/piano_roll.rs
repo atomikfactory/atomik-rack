@@ -3041,11 +3041,17 @@ impl PianoRollView {
         }
     }
 
-    /// The CLEAR chip: no program change and no SysEx message left in the clip.
+    /// The CLEAR chip: no program change, SysEx message or note expression left in the clip (the
+    /// tab data of a tab clip stays: it is not a message).
     fn msg_clear(&mut self, out: &mut Vec<UiAction>) {
         self.msg_sel = None;
-        if !self.clip_midi().is_empty() {
-            out.extend(self.midi_command(atomik_model::MidiData::default(), None));
+        let current = self.clip_midi();
+        let cleared = atomik_model::MidiData {
+            tab: current.tab.clone(),
+            ..Default::default()
+        };
+        if current != cleared {
+            out.extend(self.midi_command(cleared, None));
         }
     }
 
@@ -4812,11 +4818,17 @@ impl PianoRollView {
                 Chip::Poly => lanes
                     .iter()
                     .any(|l| matches!(l.kind, ControllerKind::PolyPressure(_))),
-                Chip::Messages => self.clip.as_ref().is_some_and(|c| !c.midi.is_empty()),
+                Chip::Messages => self
+                    .clip
+                    .as_ref()
+                    .is_some_and(|c| c.midi.has_messages() || !c.midi.expression.is_empty()),
                 Chip::Program | Chip::BankMsb | Chip::BankLsb => {
                     matches!(self.msg_sel, Some(ml::MsgRef::Program(_)))
                 }
-                Chip::ClearMessages => self.clip.as_ref().is_some_and(|c| !c.midi.is_empty()),
+                Chip::ClearMessages => self
+                    .clip
+                    .as_ref()
+                    .is_some_and(|c| c.midi.has_messages() || !c.midi.expression.is_empty()),
                 Chip::Curve | Chip::Thin | Chip::Back | Chip::AddSysex => false,
             };
             sp::lcd(
