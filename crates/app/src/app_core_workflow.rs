@@ -20,6 +20,7 @@ impl<S: EngineSink> AppCore<S> {
         self.arrangement.set_theme(theme.clone());
         self.piano_roll.set_theme(theme.clone());
         self.tab_editor.set_theme(theme.clone());
+        self.fretboard.set_theme(theme.clone());
         self.chord_sheet.set_theme(theme.clone());
         self.sample_editor.set_theme(theme.clone());
         self.step_editor.set_theme(theme.clone());
@@ -95,6 +96,9 @@ impl<S: EngineSink> AppCore<S> {
                 Some(Vec::new())
             }
             CommandOutcome::Handled(actions) => {
+                if pane == Pane::TabEditor {
+                    self.sync_fretboard();
+                }
                 for action in &actions {
                     self.handle_action(action.clone());
                 }

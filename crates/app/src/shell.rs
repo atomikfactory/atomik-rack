@@ -4556,6 +4556,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::PluginParams
             | Pane::SpectrumEq
             | Pane::Video
+            | Pane::Fretboard
             | Pane::TrackPanel
             | Pane::History => ContextStack::global(),
         }
@@ -4652,6 +4653,11 @@ impl<B: AudioBackend> Shell<B> {
             spectrum_eq: self.detached(WindowKind::SpectrumEq),
             video_window: self.detached(WindowKind::Video),
             video_overlay: self.core.video_window().prefs().overlay.any(),
+            fretboard: self.ui.show_fretboard || self.detached(WindowKind::Fretboard),
+            fretboard_detached: self.detached(WindowKind::Fretboard),
+            fretboard_left_handed: self.ui.fretboard_left_handed,
+            fretboard_labels: self.ui.fretboard_labels,
+            fretboard_voicing: self.ui.fretboard_voicing,
             browser_detached: self.browser_detached(),
             sequencer_only: self.in_sequencer_only(),
             editor: !self.lower_is_console()
@@ -4899,6 +4905,9 @@ impl<B: AudioBackend> Shell<B> {
         }
         if let Some((_, rect)) = self.pane_rect(Pane::SpectrumEq) {
             self.core.spectrum_eq_mut().set_bounds(rect);
+        }
+        if let Some((_, rect)) = self.pane_rect(Pane::Fretboard) {
+            self.core.fretboard_mut().set_bounds(rect);
         }
         if let Some((_, rect)) = self.pane_rect(Pane::Video) {
             self.core.video_window_mut().set_bounds(rect);
@@ -5219,6 +5228,7 @@ impl<B: AudioBackend> Shell<B> {
             Pane::Rack if self.launcher_on_top() => Pane::Launcher,
             Pane::FileBrowser if !self.ui.file_browser_visible => self.live_pane(Pane::Rack),
             Pane::PianoKeys if !self.detached(WindowKind::PianoKeys) => self.live_pane(Pane::Rack),
+            Pane::Fretboard if !self.detached(WindowKind::Fretboard) => self.live_pane(Pane::Rack),
             Pane::TrackPanel if !self.core.track_panel_visible() => self.live_pane(Pane::Rack),
             Pane::History if !self.core.history_visible() => self.live_pane(Pane::Rack),
             Pane::Rack if self.maximised() => Pane::Console,
@@ -5295,6 +5305,7 @@ impl<B: AudioBackend> Shell<B> {
                 WindowKind::Browser => Pane::FileBrowser,
                 WindowKind::PianoKeys => Pane::PianoKeys,
                 WindowKind::Video => Pane::Video,
+                WindowKind::Fretboard => Pane::Fretboard,
                 _ => Pane::Rack,
             };
             let (_, rect) = self.pane_rect(pane)?;
@@ -9449,6 +9460,40 @@ impl<B: AudioBackend> Shell<B> {
                 self.set_detached(WindowKind::Video, !self.detached(WindowKind::Video));
                 Vec::new()
             }
+            AppCommand::ToggleFretboard => {
+                if self.detached(WindowKind::Fretboard) {
+                    // Closing the window leaves the strip off too: the toggle hides the neck.
+                    self.ui.show_fretboard = false;
+                    self.set_detached(WindowKind::Fretboard, false);
+                } else {
+                    self.ui.show_fretboard = !self.ui.show_fretboard;
+                }
+                self.apply_fretboard_ui();
+                self.write_ui_state();
+                Vec::new()
+            }
+            AppCommand::DetachFretboard => {
+                self.set_detached(WindowKind::Fretboard, !self.detached(WindowKind::Fretboard));
+                Vec::new()
+            }
+            AppCommand::FretboardLeftHanded => {
+                self.ui.fretboard_left_handed = !self.ui.fretboard_left_handed;
+                self.apply_fretboard_ui();
+                self.write_ui_state();
+                Vec::new()
+            }
+            AppCommand::FretboardVoicing => {
+                self.ui.fretboard_voicing = !self.ui.fretboard_voicing;
+                self.apply_fretboard_ui();
+                self.write_ui_state();
+                Vec::new()
+            }
+            AppCommand::SetFretLabels(labels) => {
+                self.ui.fretboard_labels = labels;
+                self.apply_fretboard_ui();
+                self.write_ui_state();
+                Vec::new()
+            }
             AppCommand::ToggleVideoOverlay => {
                 self.core.toggle_video_overlay();
                 self.save_video_prefs();
@@ -11682,6 +11727,9 @@ impl<B: AudioBackend> Shell<B> {
                 return self.repaint || win.dirty || self.core.file_browser().needs_repaint();
             }
             WindowKind::PianoKeys => return self.repaint || win.dirty,
+            WindowKind::Fretboard => {
+                return self.repaint || win.dirty || self.core.fretboard().needs_repaint();
+            }
             WindowKind::Video => {
                 return self.repaint || win.dirty || self.core.video_window().needs_repaint();
             }
@@ -11733,6 +11781,7 @@ impl<B: AudioBackend> Shell<B> {
             | WindowKind::Console
             | WindowKind::SpectrumEq
             | WindowKind::Video
+            | WindowKind::Fretboard
             | WindowKind::PianoKeys
             | WindowKind::Browser => {
                 self.paint_detached(window, canvas);
@@ -12457,3 +12506,7 @@ mod launcher_tests;
 #[cfg(test)]
 #[path = "shell_duck_from_tests.rs"]
 mod duck_from_tests;
+
+#[cfg(test)]
+#[path = "shell_fretboard_tests.rs"]
+mod fretboard_tests;

@@ -201,6 +201,7 @@ pub(super) fn screenshot_path(base: &Path, kind: WindowKind) -> PathBuf {
         WindowKind::Browser => "browser",
         WindowKind::PianoKeys => "piano-keys",
         WindowKind::Video => "video",
+        WindowKind::Fretboard => "fretboard",
     };
     let stem = base
         .file_stem()

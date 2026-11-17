@@ -152,6 +152,16 @@ pub struct UiState {
     pub video_timecode: bool,
     /// The Video window shows the frame number over the picture. An absent key means no.
     pub video_frame_number: bool,
+    /// The fretboard strip shows under the Tab Editor staff (or in its window). An absent key
+    /// means shown. Whether the window is open is `windows.fretboard`.
+    pub show_fretboard: bool,
+    /// The fretboard is mirrored for a left-handed player. An absent key means no.
+    pub fretboard_left_handed: bool,
+    /// What the fretboard dots say (`"notes"`, `"frets"` or `"intervals"`). An absent key means
+    /// note names.
+    pub fretboard_labels: atomik_ui::FretLabels,
+    /// The fretboard shows the voicing of the chord at the playhead. An absent key means no.
+    pub fretboard_voicing: bool,
     /// The mode the audio clip editor opens in (`"overview"` or `"slice"`). An absent key means
     /// overview.
     pub audio_editor_mode: AudioMode,
@@ -224,6 +234,10 @@ impl Default for UiState {
             video_size: atomik_ui::VideoSize::Fit,
             video_timecode: true,
             video_frame_number: false,
+            show_fretboard: true,
+            fretboard_left_handed: false,
+            fretboard_labels: atomik_ui::FretLabels::Notes,
+            fretboard_voicing: false,
             audio_editor_mode: AudioMode::Overview,
             fade_unit: FadeUnit::Ms,
             link_faders: false,

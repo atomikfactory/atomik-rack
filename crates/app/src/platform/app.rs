@@ -304,6 +304,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
             WindowKind::Browser => AppCommand::DetachBrowser,
             WindowKind::PianoKeys => AppCommand::TogglePianoKeys,
             WindowKind::Video => AppCommand::ToggleVideo,
+            WindowKind::Fretboard => AppCommand::DetachFretboard,
             WindowKind::Main | WindowKind::Rack => AppCommand::DetachRack,
         };
         if *kind != WindowKind::Main && !shell.detached(*kind) {

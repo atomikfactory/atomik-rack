@@ -110,6 +110,8 @@ pub enum Pane {
     SpectrumEq,
     /// The Video window: it fills a window of its own.
     Video,
+    /// The Fretboard window: it fills a window of its own.
+    Fretboard,
 }
 /// The values an effect can publish at most (the EQ's 18 is the largest) with headroom.
 pub const FX_METER_CAPACITY: usize = 64;
@@ -494,6 +496,10 @@ pub struct AppCore<S: EngineSink> {
     file_browser: atomik_ui::FileBrowserView,
     /// The Piano Keys strip and the router that keeps its note offs with their note ons.
     piano_keys: atomik_ui::PianoKeysView,
+    /// The fretboard window's view (the strip under the tab staff is the tab editor's own).
+    fretboard: atomik_ui::FretboardView,
+    /// The fretboard window is open (it is fed only then).
+    fretboard_window: bool,
     /// The Track Panel, whether it shows, and the revision and track it was built for.
     track_panel: atomik_ui::TrackPanelView,
     track_panel_on: bool,
@@ -713,6 +719,8 @@ impl<S: EngineSink> AppCore<S> {
             plugin_params: PluginParamsView::new(theme),
             file_browser: atomik_ui::FileBrowserView::new(Theme::dark()),
             piano_keys: atomik_ui::PianoKeysView::new(Theme::dark()),
+            fretboard: atomik_ui::FretboardView::new(Theme::dark()),
+            fretboard_window: false,
             track_panel: atomik_ui::TrackPanelView::new(Theme::dark()),
             track_panel_on: false,
             track_panel_stamp: None,
@@ -1382,6 +1390,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::Launcher => self.launcher_view.help_at(pos),
             Pane::SpectrumEq => self.spectrum_eq.help_at(pos),
             Pane::Video => self.video_win.help_at(pos),
+            Pane::Fretboard => self.fretboard.help_at(pos),
         }
     }
 
@@ -1433,6 +1442,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::Launcher => self.launcher_view.handle(event),
             Pane::SpectrumEq => self.spectrum_eq.handle(event),
             Pane::Video => self.video_win.handle(event),
+            Pane::Fretboard => self.fretboard.handle(event),
         };
         for action in &actions {
             self.handle_action(action.clone());
@@ -1462,6 +1472,9 @@ impl<S: EngineSink> AppCore<S> {
                     | UiEvent::PointerLeave
                     | UiEvent::ModifiersChanged { .. }
             );
+        if pane == Pane::TabEditor {
+            self.sync_fretboard();
+        }
         self.after_pane_event(idle);
         actions
     }
@@ -1563,6 +1576,7 @@ impl<S: EngineSink> AppCore<S> {
         self.chord_sheet.sync_at(doc, &self.registry, revision);
         self.sync_roll_labels();
         self.sync_song_key_filter();
+        self.sync_fretboard();
         let doc = self.document.doc();
         self.view
             .set_clip_scale(self.piano_clip.and_then(|_| self.piano_roll.scale()));
@@ -3361,6 +3375,10 @@ impl<S: EngineSink> AppCore<S> {
             Pane::Launcher => self.launcher_view.paint(canvas),
             Pane::SpectrumEq => self.spectrum_eq.paint(canvas),
             Pane::Video => self.video_win.paint(canvas),
+            Pane::Fretboard => {
+                self.sync_fretboard();
+                self.fretboard.paint(canvas)
+            }
         }
     }
 
@@ -4081,6 +4099,7 @@ impl<S: EngineSink> AppCore<S> {
         self.chord_sheet.set_playhead(self.position);
         let practice = self.practice_state();
         self.tab_editor.set_practice(practice);
+        self.sync_fretboard();
         self.chord_sheet.set_practice(practice);
         self.transport_bar.set_state(atomik_ui::TransportState {
             playing: self.playing,
@@ -4395,6 +4414,9 @@ pub use tab_ops::TabExportFormat;
 #[path = "app_core_tab_editor.rs"]
 mod tab_editor_ops;
 use tab_editor_ops::TabClock;
+
+#[path = "app_core_fretboard.rs"]
+mod fretboard_ops;
 
 #[path = "app_core_practice.rs"]
 mod practice_ops;

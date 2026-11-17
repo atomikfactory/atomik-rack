@@ -254,6 +254,19 @@ pub enum AppCommand {
     ToggleChordSheet,
     /// Edit > Switch Piano Roll and Tab.
     ToggleTabOrPianoRoll,
+    /// View > Editors > Fretboard: the neck under the Tab Editor staff (closes the window when
+    /// the fretboard is detached).
+    ToggleFretboard,
+    /// View > Editors > Detach Fretboard: the fretboard in a window of its own, or back under the
+    /// staff.
+    DetachFretboard,
+    /// View > Editors > Fretboard Options > Left-handed: mirror the neck.
+    FretboardLeftHanded,
+    /// View > Editors > Fretboard Options > Chord Voicing: show the fingering of the chord at
+    /// the playhead.
+    FretboardVoicing,
+    /// View > Editors > Fretboard Options: what the dots say.
+    SetFretLabels(atomik_ui::FretLabels),
     /// View ▸ Slice Editor (open it on the selected or first loop slicer, or
     /// close it).
     ToggleSliceEditor,
@@ -876,6 +889,7 @@ fn window_arg(kind: WindowKind) -> &'static str {
         WindowKind::Browser => "browser",
         WindowKind::PianoKeys => "piano-keys",
         WindowKind::Video => "video",
+        WindowKind::Fretboard => "fretboard",
     }
 }
 
@@ -1031,6 +1045,11 @@ impl AppCommand {
             AppCommand::ToggleTabEditor => ("view.toggle_tab_editor", None),
             AppCommand::ToggleChordSheet => ("view.toggle_chord_sheet", None),
             AppCommand::ToggleTabOrPianoRoll => ("edit.toggle_tab_or_piano_roll", None),
+            AppCommand::ToggleFretboard => ("view.toggle_fretboard", None),
+            AppCommand::DetachFretboard => ("view.detach_fretboard", None),
+            AppCommand::FretboardLeftHanded => ("view.fretboard_left_handed", None),
+            AppCommand::FretboardVoicing => ("view.fretboard_voicing", None),
+            AppCommand::SetFretLabels(l) => ("view.fretboard_labels", Some(l.arg())),
             AppCommand::ToggleSliceEditor => ("view.toggle_slice_editor", None),
             AppCommand::Transport(TransportAction::Play) => ("transport.play", None),
             AppCommand::Transport(TransportAction::Stop) => ("transport.stop", None),
@@ -1484,6 +1503,13 @@ impl AppCommand {
             ("view.toggle_tab_editor", None) => AppCommand::ToggleTabEditor,
             ("view.toggle_chord_sheet", None) => AppCommand::ToggleChordSheet,
             ("edit.toggle_tab_or_piano_roll", None) => AppCommand::ToggleTabOrPianoRoll,
+            ("view.toggle_fretboard", None) => AppCommand::ToggleFretboard,
+            ("view.detach_fretboard", None) => AppCommand::DetachFretboard,
+            ("view.fretboard_left_handed", None) => AppCommand::FretboardLeftHanded,
+            ("view.fretboard_voicing", None) => AppCommand::FretboardVoicing,
+            ("view.fretboard_labels", Some(a)) => {
+                AppCommand::SetFretLabels(atomik_ui::FretLabels::from_arg(a)?)
+            }
             ("view.toggle_slice_editor", None) => AppCommand::ToggleSliceEditor,
             ("transport.tap_tempo", None) => AppCommand::Transport(TransportAction::TapTempo),
             ("transport.dub", None) => AppCommand::Transport(TransportAction::Dub),
@@ -2436,6 +2462,16 @@ pub struct MenuState {
     pub video_window: bool,
     /// The Video window shows its overlay (timecode, frame number).
     pub video_overlay: bool,
+    /// The fretboard strip shows under the Tab Editor staff or in its window.
+    pub fretboard: bool,
+    /// The fretboard is in a window of its own.
+    pub fretboard_detached: bool,
+    /// The fretboard is mirrored for a left-handed player.
+    pub fretboard_left_handed: bool,
+    /// What the fretboard dots say.
+    pub fretboard_labels: atomik_ui::FretLabels,
+    /// The fretboard shows the voicing of the chord at the playhead.
+    pub fretboard_voicing: bool,
     /// The sequencer-only layout (F7) is active.
     pub sequencer_only: bool,
     /// An editor (piano roll, sample, step, slice, ...) is open.
@@ -3551,6 +3587,43 @@ fn menus_in_english(
                             AppCommand::ToggleChordSheet,
                             state.chord_sheet,
                         ),
+                        check("Fretboard", AppCommand::ToggleFretboard, state.fretboard),
+                        check(
+                            "Detach Fretboard",
+                            AppCommand::DetachFretboard,
+                            state.fretboard_detached,
+                        ),
+                        MenuEntry::Submenu(Submenu {
+                            label: "Fretboard Options",
+                            entries: vec![
+                                check(
+                                    "Left-handed",
+                                    AppCommand::FretboardLeftHanded,
+                                    state.fretboard_left_handed,
+                                ),
+                                check(
+                                    "Chord Voicing",
+                                    AppCommand::FretboardVoicing,
+                                    state.fretboard_voicing,
+                                ),
+                                MenuEntry::Separator,
+                                check(
+                                    "Note Names",
+                                    AppCommand::SetFretLabels(atomik_ui::FretLabels::Notes),
+                                    state.fretboard_labels == atomik_ui::FretLabels::Notes,
+                                ),
+                                check(
+                                    "Fret Numbers",
+                                    AppCommand::SetFretLabels(atomik_ui::FretLabels::Frets),
+                                    state.fretboard_labels == atomik_ui::FretLabels::Frets,
+                                ),
+                                check(
+                                    "Intervals",
+                                    AppCommand::SetFretLabels(atomik_ui::FretLabels::Intervals),
+                                    state.fretboard_labels == atomik_ui::FretLabels::Intervals,
+                                ),
+                            ],
+                        }),
                         item(
                             "Switch Piano Roll and Tab",
                             AppCommand::ToggleTabOrPianoRoll,
@@ -4969,6 +5042,11 @@ mod tests {
             spectrum_eq: false,
             video_window: false,
             video_overlay: true,
+            fretboard: false,
+            fretboard_detached: false,
+            fretboard_left_handed: false,
+            fretboard_labels: atomik_ui::FretLabels::Notes,
+            fretboard_voicing: false,
             sequencer_only: false,
             editor: false,
             archive_busy: false,
@@ -5103,6 +5181,13 @@ mod tests {
             AppCommand::ToggleTabEditor,
             AppCommand::ToggleChordSheet,
             AppCommand::ToggleTabOrPianoRoll,
+            AppCommand::ToggleFretboard,
+            AppCommand::DetachFretboard,
+            AppCommand::FretboardLeftHanded,
+            AppCommand::FretboardVoicing,
+            AppCommand::SetFretLabels(atomik_ui::FretLabels::Notes),
+            AppCommand::SetFretLabels(atomik_ui::FretLabels::Frets),
+            AppCommand::SetFretLabels(atomik_ui::FretLabels::Intervals),
             AppCommand::ToggleSliceEditor,
             AppCommand::ToggleConsoleLinks,
             AppCommand::ToggleCpuMeters,
@@ -6184,6 +6269,11 @@ mod tests {
                 spectrum_eq: false,
                 video_window: false,
                 video_overlay: true,
+                fretboard: false,
+                fretboard_detached: false,
+                fretboard_left_handed: false,
+                fretboard_labels: atomik_ui::FretLabels::Notes,
+                fretboard_voicing: false,
                 sequencer_only: false,
                 editor: false,
                 archive_busy: false,

@@ -28,6 +28,8 @@ const BROWSER_SIZE: Size = Size::new(420.0, 720.0);
 const SPECTRUM_EQ_SIZE: (f64, f64) = atomik_ui::spectrum_eq::DEFAULT_SIZE;
 /// The size the Video window opens with when no geometry was saved.
 const VIDEO_SIZE: (f64, f64) = atomik_ui::video_view::DEFAULT_SIZE;
+/// The size the Fretboard window opens with when no geometry was saved.
+const FRETBOARD_SIZE: (f64, f64) = atomik_ui::fretboard::DEFAULT_SIZE;
 
 /// The size the Piano Keys window opens with when no geometry was saved.
 const PIANO_KEYS_SIZE: Size = Size::new(900.0, atomik_ui::PIANO_KEYS_HEIGHT);
@@ -70,6 +72,7 @@ fn pane_of(kind: WindowKind) -> Pane {
         WindowKind::Browser => Pane::FileBrowser,
         WindowKind::PianoKeys => Pane::PianoKeys,
         WindowKind::Video => Pane::Video,
+        WindowKind::Fretboard => Pane::Fretboard,
         WindowKind::Main | WindowKind::Rack => Pane::Rack,
     }
 }
@@ -173,6 +176,7 @@ impl<B: AudioBackend> Shell<B> {
             Pane::SpectrumEq => WindowKind::SpectrumEq,
             Pane::PianoKeys => WindowKind::PianoKeys,
             Pane::Video => WindowKind::Video,
+            Pane::Fretboard => WindowKind::Fretboard,
             Pane::FileBrowser if self.browser_detached() => WindowKind::Browser,
             _ => WindowKind::Main,
         }
@@ -236,15 +240,34 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::Browser,
             WindowKind::PianoKeys,
             WindowKind::Video,
+            WindowKind::Fretboard,
         ] {
             if self.detached(kind) {
                 self.open_window(kind);
                 if kind == WindowKind::Video {
                     self.core.set_video_shown(true);
                 }
+                if kind == WindowKind::Fretboard {
+                    self.core.set_fretboard_window(true);
+                }
             }
         }
+        self.apply_fretboard_ui();
         self.settle_detached_layout();
+    }
+
+    /// Hands the fretboard choices of `ui-state.json` to the views: the options of the neck and
+    /// whether the strip shows under the tab staff (not while the window has it).
+    pub(super) fn apply_fretboard_ui(&mut self) {
+        self.core
+            .set_fretboard_options(atomik_ui::FretboardOptions {
+                left_handed: self.ui.fretboard_left_handed,
+                labels: self.ui.fretboard_labels,
+                chord_voicing: self.ui.fretboard_voicing,
+            });
+        let strip = self.ui.show_fretboard && !self.detached(WindowKind::Fretboard);
+        self.core.set_fretboard_strip(strip);
+        self.repaint = true;
     }
 
     /// The layout flags a detached pane needs: the song area shows while the rack is away (the
@@ -272,6 +295,7 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::Browser => BROWSER_SIZE,
             WindowKind::PianoKeys => PIANO_KEYS_SIZE,
             WindowKind::Video => Size::new(VIDEO_SIZE.0, VIDEO_SIZE.1),
+            WindowKind::Fretboard => Size::new(FRETBOARD_SIZE.0, FRETBOARD_SIZE.1),
             WindowKind::Main | WindowKind::Rack => RACK_SIZE,
         });
         let scale = self.scale();
@@ -294,6 +318,7 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::Browser => self.core.file_browser_mut().set_scale(scale),
             WindowKind::PianoKeys => self.core.piano_keys_mut().set_scale(scale),
             WindowKind::Video => self.core.video_window_mut().set_scale(scale),
+            WindowKind::Fretboard => self.core.fretboard_mut().set_scale(scale),
             WindowKind::Main => {
                 self.core.arrangement_mut().set_scale(scale);
                 self.core.piano_roll_mut().set_scale(scale);
@@ -479,6 +504,31 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
             return;
         }
+        if kind == WindowKind::Fretboard {
+            // The neck leaves the strip under the tab staff for a window of its own; closing the
+            // window (or attaching) puts the strip back. A window with no place in the main
+            // layout, so the layout does not change.
+            if detached {
+                self.ui.show_fretboard = true;
+                self.open_window(kind);
+            } else {
+                self.wins.remove(&kind);
+                if self.focus == pane {
+                    let back = self.live_pane(Pane::Arrangement);
+                    self.set_focus(back);
+                }
+            }
+            self.core.set_fretboard_window(detached);
+            self.apply_fretboard_ui();
+            self.layout_view();
+            if detached {
+                self.set_focus(pane);
+            }
+            self.focused = self.window_of(self.focus);
+            self.write_ui_state();
+            self.repaint = true;
+            return;
+        }
         if kind == WindowKind::Video {
             // A floating window with no place in the main layout: it opens and closes on its own.
             // Open, it decodes the picture of the film; closed, nothing is held.
@@ -537,6 +587,7 @@ impl<B: AudioBackend> Shell<B> {
                 WindowKind::Main
                 | WindowKind::SpectrumEq
                 | WindowKind::Video
+                | WindowKind::Fretboard
                 | WindowKind::PianoKeys
                 | WindowKind::Browser => {}
             }
@@ -604,6 +655,7 @@ impl<B: AudioBackend> Shell<B> {
                 WindowKind::Browser => Pane::FileBrowser,
                 WindowKind::PianoKeys => Pane::PianoKeys,
                 WindowKind::Video => Pane::Video,
+                WindowKind::Fretboard => Pane::Fretboard,
             }
         };
         self.set_focus(pane);
