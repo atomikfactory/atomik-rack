@@ -215,6 +215,12 @@ proptest! {
         check_bounded("atomik.organ", &s)?;
     }
 
+    /// Plucked Strings: any params and notes.
+    #[test]
+    fn qa_plucked_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_bounded("atomik.plucked", &s)?;
+    }
+
     /// The dual layer: any params (both layers) and notes.
     #[test]
     fn qa_dual_layer_any_params_bounded_at_every_sample_rate(s in scene()) {
