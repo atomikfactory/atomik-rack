@@ -783,6 +783,19 @@
         "pulsing"
       ]
     },
+    "Patches/12-String.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "guitar",
+        "12-string",
+        "acoustic",
+        "chime",
+        "wide"
+      ]
+    },
     "Patches/Acid Squelch.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -829,6 +842,19 @@
         "bright",
         "evolving",
         "bell"
+      ]
+    },
+    "Patches/Banjo.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "banjo",
+        "bright",
+        "twangy",
+        "folk",
+        "bluegrass"
       ]
     },
     "Patches/Basalt Kit.atomikpatch": {
@@ -879,6 +905,18 @@
         "shakers"
       ]
     },
+    "Patches/Bouzouki.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "bouzouki",
+        "double course",
+        "folk",
+        "metallic"
+      ]
+    },
     "Patches/Brass Rail.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -925,6 +963,18 @@
         "electronic",
         "synthetic",
         "punchy"
+      ]
+    },
+    "Patches/Clean Electric.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "guitar",
+        "electric",
+        "clean",
+        "bright"
       ]
     },
     "Patches/Clean Kick Sub.atomikpatch": {
@@ -1011,6 +1061,19 @@
         "room"
       ]
     },
+    "Patches/Dobro.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "dobro",
+        "resonator",
+        "slide",
+        "metallic",
+        "blues"
+      ]
+    },
     "Patches/Dotted Slap.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1093,6 +1156,32 @@
         "chop",
         "rhythm",
         "curve"
+      ]
+    },
+    "Patches/Electric Bass Finger.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "bass",
+        "electric",
+        "finger",
+        "round",
+        "low"
+      ]
+    },
+    "Patches/Electric Bass Pick.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "bass",
+        "electric",
+        "pick",
+        "bright",
+        "punchy"
       ]
     },
     "Patches/Fine Dust Shimmer.atomikpatch": {
@@ -1239,6 +1328,19 @@
         "bright"
       ]
     },
+    "Patches/Harp Pluck.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "harp",
+        "soft",
+        "long",
+        "airy",
+        "glissando"
+      ]
+    },
     "Patches/Hollow Flute.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1323,6 +1425,19 @@
         "bright"
       ]
     },
+    "Patches/Mandolin.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "mandolin",
+        "double course",
+        "bright",
+        "tremolo",
+        "folk"
+      ]
+    },
     "Patches/Master Peak Trim.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1371,6 +1486,19 @@
         "clean"
       ]
     },
+    "Patches/Muted Electric.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "guitar",
+        "electric",
+        "palm mute",
+        "tight",
+        "rhythm"
+      ]
+    },
     "Patches/Neon Stab.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1381,6 +1509,18 @@
         "bright",
         "stab",
         "echo"
+      ]
+    },
+    "Patches/Nylon Classical.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "guitar",
+        "nylon",
+        "classical",
+        "soft"
       ]
     },
     "Patches/Pebble Mallet.atomikpatch": {
@@ -1611,6 +1751,18 @@
         "electronic"
       ]
     },
+    "Patches/Steel Acoustic.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "guitar",
+        "acoustic",
+        "steel",
+        "bright"
+      ]
+    },
     "Patches/Sub Only Duck.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -1717,6 +1869,32 @@
         "electric",
         "mellow",
         "tine"
+      ]
+    },
+    "Patches/Ukulele.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "ukulele",
+        "small",
+        "bright",
+        "strummed",
+        "folk"
+      ]
+    },
+    "Patches/Upright Bass.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Plucked"
+      ],
+      "tags": [
+        "bass",
+        "upright",
+        "acoustic",
+        "woody",
+        "jazz"
       ]
     },
     "Patches/Velvet Tines.atomikpatch": {

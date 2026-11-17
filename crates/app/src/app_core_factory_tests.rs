@@ -365,7 +365,7 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
     );
     unique(CONTAINERS.iter().map(|c| c.name).collect());
     unique(CLIPS.iter().map(|c| c.name).collect());
-    assert!((20..=80).contains(&DEFS.len()), "{}", DEFS.len());
+    assert!((20..=100).contains(&DEFS.len()), "{}", DEFS.len());
     assert_eq!(KITS.len(), 8);
     assert_eq!(CLIPS.len(), 36);
     assert_eq!(LOOPS.len(), 12);
@@ -514,6 +514,158 @@ fn every_factory_patch_plays_a_phrase_with_audible_bounded_sound() {
         assert!(s.rms_db > -45.0, "{}: {} dB RMS", def.name, s.rms_db);
         assert!(s.seconds > 3.0, "{}: {} s", def.name, s.seconds);
     }
+}
+
+/// A phrase in the range of the instrument a Plucked Strings patch is: `(beat, beats, key)` of
+/// single notes and chords, then one long final note whose fall is measured.
+fn plucked_phrase(name: &str) -> (&'static [(f64, f64, u8)], u8) {
+    match name {
+        "Electric Bass Finger" | "Electric Bass Pick" | "Upright Bass" => (
+            &[
+                (0.0, 0.9, 28),
+                (1.0, 0.9, 33),
+                (2.0, 0.9, 38),
+                (3.0, 0.9, 43),
+                (4.0, 1.0, 40),
+                (4.0, 1.0, 47),
+            ],
+            31,
+        ),
+        "Ukulele" => (
+            &[
+                (0.0, 0.9, 60),
+                (1.0, 0.9, 64),
+                (2.0, 0.9, 67),
+                (3.0, 0.9, 72),
+                (4.0, 1.0, 60),
+                (4.0, 1.0, 64),
+                (4.0, 1.0, 67),
+                (4.0, 1.0, 72),
+            ],
+            69,
+        ),
+        "Banjo" | "Bouzouki" => (
+            &[
+                (0.0, 0.9, 50),
+                (1.0, 0.9, 55),
+                (2.0, 0.9, 59),
+                (3.0, 0.9, 62),
+                (4.0, 1.0, 50),
+                (4.0, 1.0, 55),
+                (4.0, 1.0, 59),
+                (4.0, 1.0, 62),
+            ],
+            57,
+        ),
+        "Mandolin" => (
+            &[
+                (0.0, 0.9, 55),
+                (1.0, 0.9, 62),
+                (2.0, 0.9, 69),
+                (3.0, 0.9, 76),
+                (4.0, 1.0, 55),
+                (4.0, 1.0, 62),
+                (4.0, 1.0, 69),
+                (4.0, 1.0, 76),
+            ],
+            64,
+        ),
+        "Harp Pluck" => (
+            &[
+                (0.0, 0.9, 48),
+                (0.5, 0.9, 55),
+                (1.0, 0.9, 60),
+                (1.5, 0.9, 67),
+                (2.0, 0.9, 72),
+                (2.5, 0.9, 79),
+                (4.0, 1.0, 48),
+                (4.0, 1.0, 60),
+                (4.0, 1.0, 67),
+            ],
+            72,
+        ),
+        _ => (
+            &[
+                (0.0, 0.9, 40),
+                (1.0, 0.9, 47),
+                (2.0, 0.9, 52),
+                (3.0, 0.9, 59),
+                (4.0, 1.0, 40),
+                (4.0, 1.0, 47),
+                (4.0, 1.0, 52),
+                (4.0, 1.0, 59),
+                (4.0, 1.0, 64),
+                (4.0, 1.0, 67),
+            ],
+            52,
+        ),
+    }
+}
+
+/// The patch `def` playing `notes` (`(beat, beats, key)`) at velocity `vel`, rendered for `beats`
+/// beats at 120 bpm: the left plane and the sample rate.
+fn render_plucked(def: &Def, notes: &[(f64, f64, u8)], vel: f32, beats: f64) -> (Vec<f32>, f32) {
+    let registry = default_registry();
+    let text = item_text(def);
+    let snapshot = load_device_item(&text, &registry).unwrap();
+    let mut doc = preview_doc(&snapshot, &registry).unwrap();
+    let ticks = |beats: f64| (beats * PPQ as f64).round() as i64;
+    let list: Vec<atomik_model::Note> = notes
+        .iter()
+        .map(|&(at, len, key)| atomik_model::Note::new(ticks(at), ticks(len), key, vel))
+        .collect();
+    let song = doc.song_mut();
+    song.end = ticks(beats);
+    song.tracks[0].lanes[0].clips[0].length = ticks(beats);
+    song.tracks[0].lanes[0].clips[0].content = ClipContent::Notes(list.into());
+    let rendered = render_doc_in(&doc, &registry, &ProjectOptions::default(), None).unwrap();
+    (rendered.channels[0].clone(), rendered.sample_rate as f32)
+}
+
+/// The peak of the patch's phrase at velocity `vel` in dBFS, and the seconds its last note,
+/// played alone, takes to fall 30 dB below its loudest 50 ms.
+fn plucked_levels(def: &Def, vel: f32) -> (f32, f32) {
+    let (notes, last) = plucked_phrase(def.name);
+    let (plane, _) = render_plucked(def, notes, vel, 8.0);
+    let peak = plane.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+    let (plane, rate) = render_plucked(def, &[(0.0, 14.0, last)], vel, 16.0);
+    let block = (0.05 * rate) as usize;
+    let env: Vec<f32> = plane
+        .chunks(block)
+        .map(|c| c.iter().fold(0.0f32, |p, s| p.max(s.abs())))
+        .collect();
+    let top = env.iter().copied().fold(0.0f32, f32::max);
+    let top_at = env.iter().position(|e| *e >= top).unwrap_or(0);
+    let fall = env[top_at..]
+        .iter()
+        .position(|e| *e < top * 0.0316)
+        .map_or(f32::INFINITY, |n| n as f32 * 0.05);
+    (20.0 * peak.max(1e-9).log10(), fall)
+}
+#[test]
+fn every_plucked_patch_peaks_between_minus_six_and_minus_one_dbfs_and_falls_away() {
+    let mut bad = Vec::new();
+    for def in DEFS
+        .iter()
+        .filter(|d| d.device == super::factory_build::PLUCKED)
+    {
+        let (peak_db, fall) = plucked_levels(def, 1.0);
+        let (soft_db, _) = plucked_levels(def, 0.4);
+        eprintln!(
+            "{:22} peak {peak_db:6.2} dBFS  soft {soft_db:6.2}  fall30 {fall:5.2} s",
+            def.name
+        );
+        if !(-6.0..=-1.0).contains(&peak_db) {
+            bad.push(format!("{}: peak {peak_db} dBFS", def.name));
+        }
+        if soft_db >= peak_db - 3.0 {
+            bad.push(format!("{}: velocity does not shape the level", def.name));
+        }
+        if !(0.1..=8.0).contains(&fall) {
+            bad.push(format!("{}: falls in {fall} s", def.name));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
 /// The phrase of an item text, rendered like [`render_item`] (an item with no audio of its own).
@@ -975,6 +1127,7 @@ fn the_factory_patches_are_spread_over_the_instruments_and_the_effects() {
         "atomik.wavetable-synth",
         "atomik.organ",
         "atomik.semi-modular",
+        "atomik.plucked",
     ] {
         let n = per_device.get(instrument).copied().unwrap_or(0);
         assert!(n >= 5, "{instrument} has {n} factory patches");
@@ -2301,5 +2454,25 @@ fn the_genre_templates_lead_the_template_list_and_open_as_new_songs() {
         assert_eq!(c.doc().info.title, def.name);
         assert!(matches!(c.save(), Err(AppError::NoPath)));
         assert_eq!(std::fs::read(&entry.path).unwrap(), before);
+    }
+}
+
+#[test]
+fn every_tab_instrument_maps_to_a_factory_plucked_patch() {
+    let plucked: Vec<&str> = DEFS
+        .iter()
+        .filter(|d| d.device == super::factory_build::PLUCKED)
+        .map(|d| d.name)
+        .collect();
+    assert_eq!(plucked.len(), 14, "{plucked:?}");
+    for (id, patch) in atomik_devices::plucked::INSTRUMENT_PATCHES {
+        assert!(plucked.contains(&patch), "{id}: no factory patch {patch}");
+    }
+    assert!(plucked.contains(&atomik_devices::plucked::DEFAULT_PATCH));
+    for def in DEFS
+        .iter()
+        .filter(|d| d.device == super::factory_build::PLUCKED)
+    {
+        assert_eq!(def.category, "Plucked", "{}", def.name);
     }
 }

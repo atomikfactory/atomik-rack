@@ -518,6 +518,142 @@ every host block size.
 
 ---
 
+## Plucked Strings: `atomik.plucked` (Instrument)
+
+A physical-model instrument for guitars, basses, banjos, mandolins and harps: each key plucks a waveguide
+string that rings, bends and is damped like one, and the sum goes through the body of the chosen instrument.
+Source: [crates/devices/src/plucked.rs](../crates/devices/src/plucked.rs); the string, the pick and the
+bodies are in [crates/dsp/src/pluck.rs](../crates/dsp/src/pluck.rs) and
+[pluck/body.rs](../crates/dsp/src/pluck/body.rs). It is polyphonic (16 keys), deterministic and
+allocation-free. Playing techniques reach it through the per-note expression of the notes (see below), so a
+bend, a slide, a vibrato, a palm mute or a harmonic that a clip carries sounds without any other cable.
+
+### Sockets
+
+`notes_in` (notes in), `out_l`, `out_r` (audio out).
+
+### Params
+
+| Key | Name | Range | Default | Notes |
+|---|---|---|---|---|
+| `body` | Body | None, Steel, Nylon, Electric, Bass, Upright, Ukulele, Banjo, Mandolin, Resonator, Harp | Steel | The instrument body the sum goes through |
+| `brightness` | Brightness | 0 to 1 | 0.55 | The loop low-pass, 4 to 256 times the pitch |
+| `pick.position` | Pick position | 0 to 1 | 0.3 | Where the string is struck, 3 % to 50 % of its length |
+| `pick.hardness` | Pick hardness | 0 to 1 | 0.5 | The excitation's cutoff, 1.2 to 15 kHz |
+| `decay` | Decay | 100 ms to 20 s | 3 s | 60 dB fall of the fundamental at A3, shorter for higher keys |
+| `sustain` | Sustain | 0 to 1 | 0.35 | The release: 0 is a quick finger mute, 1 is let-ring |
+| `palm_mute` | Palm mute | 0 to 1 | 0 | Short, dark notes; the slide expression of a note adds to it |
+| `stiffness` | Stiffness | 0 to 1 | 0.2 | Dispersion: the higher partials run sharp (bell-like at 1) |
+| `course.mode` | Course | Single, Unison, Octave | Single | A second string per key |
+| `course.detune` | Course detune | 0 to 50 cents | 6 | Spread of a unison pair; detune of the octave string |
+| `body.mix` | Body mix | 0 to 1 | 0.6 | How much of the body's filtering is heard |
+| `out.gain` | Output gain | -24 to +12 dB | 0 | After the body |
+| `stereo.width` | Stereo width | 0 to 1 | 0.4 | Spreads the keys and the strings of a course |
+| `vel.sens` | Velocity | 0 to 1 | 0.7 | How much the velocity sets level and brightness |
+| `bend.range` | Bend range | 0 to 24 semitones | 2 | The pitch-bend range (RPN 0 changes it) |
+
+### Behaviour (as built)
+
+- **String.** A delay line closed on itself through a loop filter (an extended Karplus-Strong waveguide). Each
+  sample reads the line with a four-point Lagrange interpolator, runs through up to four first-order allpass
+  sections (dispersion) and a one-pole low-pass, and is scaled by the loop gain. The gain gives the decay: the
+  fundamental falls by 60 dB in `decay` (scaled by `(220 Hz / f)^0.35`, so higher keys die sooner). The low-pass
+  cutoff is `f * 2^(2 + 6 * brightness)`, so a note keeps its character over the keyboard. The line is shortened
+  by the exact phase delay of the low-pass and of the allpass chain at the fundamental (computed in `f64` with a
+  deterministic arctangent), so the pitch is within a fraction of a cent of the key at 44.1, 48 and 96 kHz over
+  MIDI 28 to 100 (tested with the tuner's detector and an exact spectral fit). The allpass coefficient is
+  `-0.95 * stiffness`; where the line would get too short for it (high keys) it is halved until it fits.
+- **Pick.** A burst of noise as long as the string's period, through a one-pole low-pass (the cutoff is
+  `1.2 kHz * 2^(3.6 * hardness)`, lowered for a soft strike) and a feed-forward comb at the pick position (the
+  partials with a node at the plucked point are cancelled). The noise is a function of the device seed, the key
+  and a note counter. `vel.sens` takes the level from `1 - sens + sens * velocity` and dulls a soft strike.
+- **Voices.** 16. A key takes a free voice; with none free the quietest released voice (else the oldest) is
+  stolen and fades out over 2 ms before the new note starts. A key struck again while its string still rings
+  plucks the same string again (no click, no voice used). Sustain (CC 64), volume (CC 7), expression (CC 11),
+  pitch bend and its range (`bend.range` or RPN 0) work as in the [MIDI](#midi) chart; the mod wheel and
+  pressure are ignored. The master tune shifts every string.
+- **Release.** A key-off damps the string like a finger: the fall of 60 dB takes `50 ms * (decay / 50 ms)^sustain`.
+  A released voice is freed when it is inaudible.
+- **Palm mute.** `palm_mute` (or the larger of it and the note's slide expression) divides the decay by up to 10
+  (`2^(-3.3 * amount)`) and darkens the loop by up to 75 %.
+- **Course.** Unison adds a second string, `course.detune` cents apart, half of it either side (both at 0.707);
+  Octave adds one an octave up (level 0.5) detuned by `course.detune`. The mode is read when a note starts.
+- **Body.** A cascade of up to six peaking, shelving and pass sections per body, run on both channels and mixed
+  in parallel with the dry sum by `body.mix`; None is a bit-exact bypass.
+- **Output.** The sum goes through volume and expression, a DC blocker (8 Hz), the body, the output gain and a
+  soft limit (linear up to 2). `stereo.width` places a key between left (low) and right (high), up to 60 % of
+  the width, and the two strings of a course 15 % either side.
+
+### Per-note expression
+
+How the expression lanes of a note reach the strings (see also
+[Per-note expression (MPE)](#per-note-expression-mpe)):
+
+- **Tuning** (semitones) adds to the pitch beside the bend. A change glides over 6 ms (the delay length ramps
+  linearly), so a bend curve with sparse points does not click; in the first 64 samples of a note it applies at
+  once, so a pre-bend starts on pitch.
+- **Slide** (0 to 1) is the palm-mute amount of that note.
+- **Pressure** is a technique code, read when the note starts: below 0.25 a normal note, 0.25 to 0.75 a
+  harmonic, above that a dead note. The constants `EXPR_HARMONIC` (0.5) and `EXPR_DEAD` (1.0) in
+  [plucked.rs](../crates/devices/src/plucked.rs) are the values to send. A harmonic is struck with a pick
+  limited to 2.5 times the pitch of the note and a loop at 35 % of the brightness: the pitch is the tuning of
+  the note (the octave, fifth or other partial the technique renderer adds) and it rings nearly pure. A dead
+  note is a noise burst into a string damped to a 45 ms fall: a short, unpitched click. Both ignore the pick
+  position. Channel and key pressure are not used.
+
+### Panel
+
+The panel is the generated one with its own sections, in the order a string is played: STRING (decay,
+sustain, brightness, stiffness, palm mute), PLUCK (position, hardness), COURSE (mode, detune), BODY (the body
+as a pick list of its eleven names, and the mix), OUTPUT (gain, width) and PLAY (velocity sensitivity, bend
+range). The device has nothing to draw, so it has no display of its own, the way the effects and the organ have
+none; a custom panel would only have repeated what the sections already say. See
+[plucked_panel.rs](../crates/ui/src/plucked_panel.rs).
+
+### Factory patches
+
+Fourteen patches of the category Plucked, each a table of params in the app's factory tables:
+
+| Patch | Body | Character |
+|---|---|---|
+| Steel Acoustic | Steel | Medium pick, bright, 3.5 s ring |
+| Nylon Classical | Nylon | Fingertips, dark and round |
+| Clean Electric | Electric | Hard pick, long even ring; follow it with the Guitar Amp |
+| Muted Electric | Electric | Palm mute 0.8, a short chug |
+| Electric Bass Finger | Bass | Soft attack, round |
+| Electric Bass Pick | Bass | Hard, bright attack |
+| Upright Bass | Upright | Woody thump, stops on release |
+| Ukulele | Ukulele | Light and bright, short ring |
+| Banjo | Banjo | Hardest pick, brightest, a little stiffness |
+| Mandolin | Mandolin | Unison pair, 12 cents apart |
+| 12-String | Steel | Octave course, wide |
+| Bouzouki | Mandolin | Octave course |
+| Dobro | Resonator | Stiffness 0.4, bend range 12 |
+| Harp Pluck | Harp | Soft, 6 s ring |
+
+Each peaks between -6 and -1 dBFS at full velocity on a phrase in its own range (a test checks it) and falls
+by 30 dB within eight seconds. `atomik_devices::plucked::factory_patch_for(instrument_id)` names the patch for
+an instrument of the tab catalogue (`guitar6`, `bass4`, `banjo5`, ...; an unknown id gets Steel Acoustic), and
+`INSTRUMENT_PATCHES` is the whole table.
+
+### Tests
+
+The unit tests in [plucked/tests.rs](../crates/devices/src/plucked/tests.rs) and
+[pluck/tests.rs](../crates/dsp/src/pluck/tests.rs) measure the pitch over MIDI 28 to 100 at 44.1, 48 and
+96 kHz (an exact spectral fit under 1 cent, the tuner's detector within its own resolution), the fall of 60 dB
+against `decay`, the finger mute and let-ring release, palm mute by param and by slide expression, a bend by
+expression (no step larger than the plain note's, and the final pitch to a cent), a pre-bend, harmonics (pitch
+and purity), dead notes, velocity, hardness, brightness, stiffness (sharp partials, tuned fundamental), the pick
+comb, the bodies and their bypass, the course, the stereo spread, the voice limit with stealing and its fade, a
+repeated key, the pedal, volume, expression and bend-range contracts, a note shifted by whole batches, bit
+identical repeats and the seed, denormal-free tails, every param at its extremes and a storm of random notes and
+expression at two sample rates, all under the allocation guard. A proptest in
+[bounded_tests.rs](../crates/devices/src/bounded_tests.rs) drives random params and notes at 44.1, 48 and
+96 kHz, and [crates/render/tests/plucked.rs](../crates/render/tests/plucked.rs) bounces a strummed patch at
+every host block size.
+
+---
+
 ## Wavetable Synth: `atomik.wavetable-synth` (Instrument)
 
 A wavetable synthesizer with up to 16 voices. Each voice has two wavetable oscillators (each reads
@@ -5471,6 +5607,7 @@ without it (`cargo test -p atomik-devices midi_chart`), so this table cannot dri
 | `atomik.dual-layer` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.semi-modular` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.organ` | no | no | no | yes | yes | yes | no |
+| `atomik.plucked` | yes | yes | no | yes | yes | yes | no |
 | `atomik.wavetable-synth` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.fm-synth` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.granular` | yes | yes | yes | yes | yes | yes | yes |
@@ -5529,9 +5666,11 @@ key; a new note on a key starts from rest, and a note without expression is bit 
 | `atomik.dual-layer` | Both layers, as the poly synth | Both layers | Both layers |
 | `atomik.wavetable-synth` | Added to the voice's pitch beside the bend | Raises the voice's gain by up to 6 dB (a gain of 1 + pressure, followed at the control rate) | Adds to the frame position of both oscillators (held to 0..=1) |
 | `atomik.fm-synth` | Added to the voice's pitch beside the bend | Raises the voice's gain by up to 6 dB (ramped over a control step) | Adds up to 1 to the modulation index before its clamp to 0..=3 |
+| `atomik.plucked` | Added to the pitch of the string beside the bend, gliding over 6 ms | A technique code: below 0.25 normal, up to 0.75 a harmonic, above that a dead note | The palm-mute amount of the note |
 
 The other melodic instruments (the grain sampler, the sampler, the semi-modular synth) take a note's pressure
 as their pressure source and ignore its tuning and slide; the organ and the drum devices ignore all three.
+Plucked Strings uses all three, but reads its pressure as a technique code and not as a level (see its section).
 A CLAP or VST3 plugin gets them as note expression events (tuning, pressure and brightness).
 
 ### What goes out

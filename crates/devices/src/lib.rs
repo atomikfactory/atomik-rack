@@ -1,6 +1,6 @@
 //! Atomik Rack built-in devices: [`poly_synth`], [`mono_bass`], [`dual_layer`], [`semi_modular`], [`organ`], [`wavetable_synth`], [`fm_synth`], [`sampler`], [`granular`], [`drum_machine`], [`loop_slicer`], [`line_mixer`], [`stereo_delay`], [`echo`], [`reverb`], the effects
 //! [`compressor`], [`eq`], [`distortion`], [`guitar_amp`], [`modulation`] and [`mastering`], the analysers
-//! [`spectrum`], [`phase_meter`] and [`loudness_meter`] (effects that pass the audio through and publish what they see), and the
+//! [`plucked`] (a plucked-string physical model), [`spectrum`], [`phase_meter`] and [`loudness_meter`] (effects that pass the audio through and publish what they see), and the
 //! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
 //!
 //! The utility devices [`gain_tool`], [`stereo_tool`], [`feedback`] (the delay stage that makes a loop legal), [`gate`], [`dynamics`] (gate then
@@ -74,6 +74,7 @@ pub mod note_split;
 pub mod organ;
 pub mod phase_meter;
 pub mod pitch_shifter;
+pub mod plucked;
 pub mod poly_synth;
 mod recent_peak;
 pub mod reverb;
@@ -211,6 +212,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(phase_meter::factory())?;
     registry.register(loudness_meter::factory())?;
     registry.register(pitch_shifter::factory())?;
+    registry.register(plucked::factory())?;
     registry.register(bus::factory())?;
     registry.register(channel::factory())?;
     registry.register(character::factory())?;
@@ -237,7 +239,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 71] = [
+    const TYPE_IDS: [&str; 72] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.auto-filter",
@@ -289,6 +291,7 @@ mod tests {
         "atomik.organ",
         "atomik.phase-meter",
         "atomik.pitch-shifter",
+        "atomik.plucked",
         "atomik.poly-synth",
         "atomik.reverb",
         "atomik.rotary-speaker",
@@ -312,7 +315,7 @@ mod tests {
     ];
 
     #[test]
-    // Name kept; it now covers all sixty-nine devices.
+    // Name kept; it now covers all seventy-two devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
@@ -370,6 +373,7 @@ mod tests {
             "atomik.loudness-meter",
             "atomik.headphone-correction",
             "atomik.pitch-shifter",
+            "atomik.plucked",
             "atomik.rotary-speaker",
             "atomik.sample-hold",
             "atomik.saturation",
