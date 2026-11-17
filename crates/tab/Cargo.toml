@@ -14,6 +14,7 @@ atomik-core.workspace = true
 thiserror.workspace = true
 quick-xml.workspace = true
 flate2.workspace = true
+pdf-writer.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

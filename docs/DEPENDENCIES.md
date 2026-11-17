@@ -103,6 +103,19 @@ The MusicXML reader and writer reuse both: the same capped XML tree reads the do
 (through `META-INF/container.xml`), and `flate2` also deflates the two entries of the `.mxl` the writer makes (a 100-line
 zip writer in `crates/tab/src/musicxml/zipw.rs`, the CRC from `flate2::Crc`). No new crate.
 
+The tab and chord sheet printouts (`crates/tab/src/pdf/`) added **`pdf-writer` 0.15** (`MIT OR Apache-2.0`, safe Rust,
+used by that crate only. It pulls `bitflags`, `itoa` and `memchr` (all already built) and `ryu` (`Apache-2.0 OR
+BSL-1.0`, a float formatter, new in `Cargo.lock`). It writes the PDF objects, the cross-reference table and the content
+stream operators, so the program does not hand-roll the file structure; it does no layout and no fonts. The
+alternatives were a hand-written writer (the format is small, but the escaping and the xref offsets are the kind of
+thing that breaks a viewer on one machine) and `krilla` or `printpdf` (high-level crates that bring a font stack, image
+codecs and subsetting, far more than lines and text need). **No font is embedded**: the printouts use the standard
+Helvetica, Helvetica-Bold and Courier fonts of the PDF format, which every viewer and printer has. The repository ships
+no font file (the interface draws with the fonts of the system), and this keeps a ten-page tab at a few tens of
+kilobytes. The cost is that text outside Latin-1 prints as `?`, which the export reports. Content streams are deflated
+with `flate2` (already a dependency of the crate). `cargo deny check licenses bans sources` passes with the licences
+the policy already allows.
+
 ## Model files
 
 The hand tracking models are not part of the installer, the repository or `Cargo.lock`. The user downloads them once
