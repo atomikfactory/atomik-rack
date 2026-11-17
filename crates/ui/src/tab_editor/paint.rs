@@ -7,6 +7,7 @@ use super::tech::{self, Tech};
 use super::{DIAGRAM_WIDTH, Placed, RULER_HEIGHT, TOP_BAR_HEIGHT, TabEditorView, TopButton};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::chord_diagram::{self, Diagram};
+use crate::practice_bar::PRACTICE_BAR_HEIGHT;
 use crate::seq_paint as sp;
 use crate::theme::mix;
 use crate::timeline::{GRID_MIN_PX, GridLevel, grid_lines};
@@ -33,6 +34,10 @@ impl TabEditorView {
             );
         }
         self.paint_top_bar(c);
+        if self.work.is_some() {
+            self.practice
+                .paint(c, &self.st, self.practice_rect(), self.hover);
+        }
         self.paint_status(c);
         match &self.modal {
             Some(Modal::Tuning(d)) => d.paint(c, &self.st, self.bounds, self.hover),
@@ -199,7 +204,12 @@ impl TabEditorView {
         let bottom = self.staff_bottom();
         let end_x = self.axis.tick_to_x(self.end_tick());
         let right = end_x.min(b.x1).max(x0);
-        let area = Rect::new(b.x0, b.y0 + TOP_BAR_HEIGHT, b.x1, b.y1);
+        let area = Rect::new(
+            b.x0,
+            b.y0 + TOP_BAR_HEIGHT + PRACTICE_BAR_HEIGHT,
+            b.x1,
+            b.y1,
+        );
         c.push_clip(&area.into());
 
         // Ruler: bar numbers, tempo, section markers, time signature.
@@ -358,7 +368,7 @@ impl TabEditorView {
             return;
         }
         let starts = Diagram::start_frets_of(&tab.tuning, tab.capo);
-        let y = self.bounds.y0 + TOP_BAR_HEIGHT + RULER_HEIGHT + 3.0;
+        let y = self.bounds.y0 + TOP_BAR_HEIGHT + PRACTICE_BAR_HEIGHT + RULER_HEIGHT + 3.0;
         let h = chord_diagram::diagram_height(DIAGRAM_WIDTH, true);
         let xs: Vec<f64> = tab
             .diagrams

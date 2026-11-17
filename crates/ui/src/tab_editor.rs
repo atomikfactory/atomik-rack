@@ -48,6 +48,7 @@ use crate::action::{ContextTarget, TransportAction, UiAction};
 use crate::cursor::CursorHint;
 use crate::event::{Key, NumpadKey, PointerButton, UiEvent};
 use crate::keymap::CommandOutcome;
+use crate::practice_bar::{PRACTICE_BAR_HEIGHT, PracticeBar, PracticeItem, PracticeState};
 use crate::seq_edit;
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
@@ -202,6 +203,7 @@ pub struct TabEditorView {
     st: SeqTheme,
     bounds: Rect,
     scale: f64,
+    practice: PracticeBar,
     axis: TimeAxis,
     clip_id: Option<ClipId>,
     clip: Option<Clip>,
@@ -305,6 +307,7 @@ impl TabEditorView {
             st: SeqTheme::from_theme(&theme),
             bounds: Rect::new(0.0, 0.0, 800.0, 400.0),
             scale: 1.0,
+            practice: PracticeBar::new(),
             axis: TimeAxis::new(GUTTER_WIDTH, 260.0),
             clip_id: None,
             clip: None,
@@ -456,7 +459,7 @@ impl TabEditorView {
 
     /// True while a pointer gesture is in progress (a range or a loop being dragged).
     pub fn is_dragging(&self) -> bool {
-        self.drag != Drag::None
+        self.drag != Drag::None || self.practice.is_dragging()
     }
 
     /// True while a modal panel is open: it takes every key (Enter applies, Esc closes), so the
@@ -506,6 +509,37 @@ impl TabEditorView {
         (end > start).then_some((start, end))
     }
 
+    /// Shows the practice state (speed, count-in, trainer ...) in the practice bar.
+    pub fn set_practice(&mut self, state: PracticeState) {
+        if self.practice.set_state(state) {
+            self.repaint = true;
+        }
+    }
+
+    /// The centre of a practice bar control (for tests and hosts).
+    pub fn practice_item_center(&self, item: PracticeItem) -> Option<Point> {
+        self.practice
+            .items(self.practice_rect())
+            .into_iter()
+            .find(|(_, i)| *i == item)
+            .map(|(r, _)| r.center())
+    }
+
+    /// The practice bar's rectangle (under the top bar).
+    pub(crate) fn practice_rect(&self) -> Rect {
+        let y = self.bounds.y0 + TOP_BAR_HEIGHT;
+        Rect::new(self.bounds.x0, y, self.bounds.x1, y + PRACTICE_BAR_HEIGHT)
+    }
+
+    /// The song range the practice loop covers: the whole bars of the selected cells, else the
+    /// bar under the cursor.
+    fn selection_loop(&self) -> Option<(i64, i64)> {
+        match self.range {
+            Some(r) => self.loop_range(r.t0, r.t1),
+            None => self.loop_range(self.cursor.0, self.cursor.0),
+        }
+    }
+
     /// The view's clock in seconds: the time of the last [`Self::tick`] or [`Self::stamp`].
     fn now(&self) -> f64 {
         self.clock
@@ -532,6 +566,11 @@ impl TabEditorView {
     pub fn help_at(&self, pos: Point) -> Option<Help> {
         if self.modal.is_some() {
             return None;
+        }
+        if self.work.is_some()
+            && let Some(help) = self.practice.help_at(self.practice_rect(), pos)
+        {
+            return Some(help);
         }
         let (rect, b) = self
             .top_buttons()
@@ -878,12 +917,18 @@ impl TabEditorView {
     }
 
     fn staff_top(&self) -> f64 {
-        self.bounds.y0 + TOP_BAR_HEIGHT + RULER_HEIGHT + self.chord_height() + STAFF_PAD_TOP
+        self.bounds.y0
+            + TOP_BAR_HEIGHT
+            + PRACTICE_BAR_HEIGHT
+            + RULER_HEIGHT
+            + self.chord_height()
+            + STAFF_PAD_TOP
     }
 
     fn line_h(&self) -> f64 {
         let n = self.strings() as f64;
         let fixed = TOP_BAR_HEIGHT
+            + PRACTICE_BAR_HEIGHT
             + RULER_HEIGHT
             + self.chord_height()
             + STAFF_PAD_TOP
@@ -897,7 +942,7 @@ impl TabEditorView {
     }
 
     fn ruler_rect(&self) -> Rect {
-        let y = self.bounds.y0 + TOP_BAR_HEIGHT;
+        let y = self.bounds.y0 + TOP_BAR_HEIGHT + PRACTICE_BAR_HEIGHT;
         Rect::new(self.axis.x0, y, self.bounds.x1, y + RULER_HEIGHT)
     }
 
@@ -994,7 +1039,15 @@ impl TabEditorView {
             return out;
         }
         match event {
-            UiEvent::PointerMove { pos, .. } => self.pointer_move(*pos),
+            UiEvent::PointerMove { pos, .. } => {
+                let bar = self.practice_rect();
+                if self.practice.pointer_move(bar, *pos, &mut out) {
+                    self.hover = Some(*pos);
+                    self.repaint = true;
+                } else {
+                    self.pointer_move(*pos);
+                }
+            }
             UiEvent::PointerLeave => {
                 self.hover = None;
                 self.repaint = true;
@@ -1004,7 +1057,16 @@ impl TabEditorView {
                 button: PointerButton::Primary,
                 modifiers,
                 ..
-            } => self.pointer_down(*pos, modifiers.shift, &mut out),
+            } => {
+                let bar = self.practice_rect();
+                if bar.contains(*pos) {
+                    self.end_typing(&mut out);
+                    self.practice.pointer_down(bar, *pos, &mut out);
+                    self.repaint = true;
+                } else {
+                    self.pointer_down(*pos, modifiers.shift, &mut out);
+                }
+            }
             UiEvent::PointerDown {
                 pos,
                 button: PointerButton::Secondary,
@@ -1013,7 +1075,13 @@ impl TabEditorView {
             UiEvent::PointerUp {
                 button: PointerButton::Primary,
                 ..
-            } => self.pointer_up(&mut out),
+            } => {
+                if self.practice.pointer_up() {
+                    self.repaint = true;
+                } else {
+                    self.pointer_up(&mut out);
+                }
+            }
             UiEvent::Wheel {
                 delta,
                 pos,
@@ -1403,6 +1471,14 @@ impl TabEditorView {
         let end = self.end_tick();
         let (tick, string) = self.cursor;
         match id {
+            "practice.loop_selection" => {
+                if let Some(range) = self.selection_loop() {
+                    out.push(UiAction::Command(Command::Song(SongCommand::SetLoop {
+                        range,
+                        enabled: true,
+                    })));
+                }
+            }
             "editor.tab_cursor_left" | "editor.tab_cursor_right" => {
                 let dir = if id.ends_with("left") { -1 } else { 1 };
                 let t = entry::step_on_grid(tick, self.value.ticks(), dir, end);

@@ -40,6 +40,7 @@ use crate::action::UiAction;
 use crate::cursor::CursorHint;
 use crate::event::{ImeEvent, Key, PointerButton, UiEvent};
 use crate::keymap::CommandOutcome;
+use crate::practice_bar::{PRACTICE_BAR_HEIGHT, PracticeBar, PracticeItem, PracticeState};
 use crate::seq_paint::SeqTheme;
 use crate::text_field::TextField;
 use crate::theme::Theme;
@@ -231,6 +232,7 @@ pub struct ChordSheetView {
     st: SeqTheme,
     bounds: Rect,
     scale: f64,
+    practice: PracticeBar,
     focused: bool,
     hover: Option<Point>,
     repaint: bool,
@@ -275,6 +277,7 @@ impl ChordSheetView {
             st: SeqTheme::from_theme(&theme),
             bounds: Rect::new(0.0, 0.0, 800.0, 400.0),
             scale: 1.0,
+            practice: PracticeBar::new(),
             focused: false,
             hover: None,
             repaint: true,
@@ -978,16 +981,27 @@ impl ChordSheetView {
         }
         let bar_h = (row + 1) as f64 * BAR_ROW_HEIGHT + 4.0;
         let bar = Rect::new(b.x0, b.y0, b.x1, b.y0 + bar_h);
+        // The practice bar sits under the toolbar while the sheet is shown (not while it is edited).
+        let practice = matches!(self.mode, Mode::View).then(|| {
+            Rect::new(
+                b.x0,
+                bar.y1,
+                b.x1,
+                (bar.y1 + PRACTICE_BAR_HEIGHT).min(b.y1.max(bar.y1)),
+            )
+        });
+        let top = practice.map_or(bar.y1, |p| p.y1);
         let strip = (self.has_sheet() && !self.editing() && self.chord_count() > 0).then(|| {
             let h =
                 crate::chord_diagram::diagram_height(STRIP_DIAGRAM_WIDTH, true) + 2.0 * STRIP_PAD;
-            Rect::new(b.x0, bar.y1, b.x1, (bar.y1 + h).min(b.y1))
+            Rect::new(b.x0, top, b.x1, (top + h).min(b.y1.max(top)))
         });
-        let body_top = strip.map_or(bar.y1, |s| s.y1);
+        let body_top = strip.map_or(top, |s| s.y1);
         let body = Rect::new(b.x0, body_top, b.x1, b.y1.max(body_top));
         Frame {
             bar,
             items,
+            practice,
             strip,
             body,
         }
@@ -1028,9 +1042,56 @@ impl ChordSheetView {
 
     // ------------------------------------------------------------------ help
 
+    /// The centre of a practice bar control (for tests and hosts).
+    pub fn practice_item_center(&self, item: PracticeItem) -> Option<Point> {
+        let bar = self.frame().practice?;
+        self.practice
+            .items(bar)
+            .into_iter()
+            .find(|(_, i)| *i == item)
+            .map(|(r, _)| r.center())
+    }
+
+    /// Shows the practice state (speed, count-in, trainer ...) in the practice bar.
+    pub fn set_practice(&mut self, state: PracticeState) {
+        if self.practice.set_state(state) {
+            self.repaint = true;
+        }
+    }
+
+    /// The song range of the bars the sheet's linked lines cover: from the first linked bar to
+    /// the end of the last linked line, which is as long as the gap before it (a bar when only
+    /// one line is linked). `None` when no line is linked.
+    fn linked_loop(&self) -> Option<(i64, i64)> {
+        let sheet = self.sheets.get(self.selected)?;
+        let mut bars: Vec<u32> = sheet
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                SheetBlock::Line { bar: Some(bar), .. } => Some(*bar),
+                _ => None,
+            })
+            .collect();
+        bars.sort_unstable();
+        bars.dedup();
+        let (first, last) = (*bars.first()?, *bars.last()?);
+        let span = match bars.len() {
+            0 | 1 => 1,
+            n => (last - bars[n - 2]).max(1),
+        };
+        let start = self.bars.bar_start(i64::from(first));
+        let end = self.bars.bar_start(i64::from(last + span));
+        (end > start).then_some((start, end))
+    }
+
     /// The tooltip of the button under `pos`.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
         let f = self.frame();
+        if let Some(bar) = f.practice
+            && let Some(help) = self.practice.help_at(bar, pos)
+        {
+            return Some(help);
+        }
         let item = f
             .items
             .iter()
@@ -1154,6 +1215,9 @@ impl ChordSheetView {
         }
         match event {
             UiEvent::PointerMove { pos, .. } => {
+                if let Some(bar) = self.frame().practice {
+                    self.practice.pointer_move(bar, *pos, &mut out);
+                }
                 self.hover = Some(*pos);
                 self.repaint = true;
             }
@@ -1165,7 +1229,19 @@ impl ChordSheetView {
                 pos,
                 button: PointerButton::Primary,
                 ..
-            } => self.pointer_down(*pos, &mut out),
+            } => {
+                if let Some(bar) = self.frame().practice.filter(|b| b.contains(*pos)) {
+                    self.popup = None;
+                    self.practice.pointer_down(bar, *pos, &mut out);
+                    self.repaint = true;
+                } else {
+                    self.pointer_down(*pos, &mut out);
+                }
+            }
+            UiEvent::PointerUp {
+                button: PointerButton::Primary,
+                ..
+            } if self.practice.pointer_up() => self.repaint = true,
             UiEvent::Wheel {
                 delta,
                 pos,
@@ -1374,6 +1450,20 @@ impl ChordSheetView {
         doc: &RackDoc,
         registry: &Registry,
     ) -> CommandOutcome {
+        if id == "practice.loop_selection" {
+            self.sync_current(doc, registry);
+            return match self.linked_loop() {
+                Some(range) => CommandOutcome::Handled(vec![UiAction::Command(Command::Song(
+                    SongCommand::SetLoop {
+                        range,
+                        enabled: true,
+                    },
+                ))]),
+                None => CommandOutcome::NotApplicable(
+                    "No line of this sheet is linked to a bar of the song".to_owned(),
+                ),
+            };
+        }
         if !id.starts_with("editor.sheet_") {
             return CommandOutcome::Declined;
         }
@@ -1762,6 +1852,7 @@ impl ChordSheetView {
 pub(crate) struct Frame {
     pub bar: Rect,
     pub items: Vec<Item>,
+    pub practice: Option<Rect>,
     pub strip: Option<Rect>,
     pub body: Rect,
 }

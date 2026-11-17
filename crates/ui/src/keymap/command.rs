@@ -337,6 +337,15 @@ pub const SHEET_CAPO_ARGS: &[&str] = &["up", "down", "off"];
 pub const SHEET_SPELLING_ARGS: &[&str] = &["next", "auto", "sharps", "flats"];
 /// The values of `editor.sheet_font`: the text size of the chord sheet.
 pub const SHEET_FONT_ARGS: &[&str] = &["larger", "smaller"];
+/// The values of `practice.speed`: the practice speed in percent, every five from 25 to 150.
+pub const PRACTICE_SPEED_ARGS: &[&str] = &[
+    "25", "30", "35", "40", "45", "50", "55", "60", "65", "70", "75", "80", "85", "90", "95",
+    "100", "105", "110", "115", "120", "125", "130", "135", "140", "145", "150",
+];
+/// The values of `practice.count_in`: bars of count-in before a plain playback.
+pub const PRACTICE_COUNT_IN_ARGS: &[&str] = &["off", "1", "2"];
+/// The values of the `practice.trainer_*` commands: a value of the speed trainer up or down.
+pub const PRACTICE_TRAINER_ARGS: &[&str] = &["up", "down"];
 /// The values of `editor.sheet_autoscroll`: start or stop, the speed, or follow the transport.
 pub const SHEET_AUTOSCROLL_ARGS: &[&str] = &["toggle", "faster", "slower", "sync"];
 /// The values of `editor.tab_duration`: the note values of the tab editor, longest first.
@@ -2000,6 +2009,75 @@ const COMMANDS: &[CommandDef] = &[
         G::Rack,
         C::Global,
     ),
+    cmd(
+        "practice.count_in",
+        "Practice: Count-in",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_COUNT_IN_ARGS)
+    .menu(),
+    cmd(
+        "practice.loop_selection",
+        "Practice: Loop Selection",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd("practice.speed", "Practice: Speed", G::Transport, C::Global)
+        .arg(PRACTICE_SPEED_ARGS)
+        .menu(),
+    cmd(
+        "practice.speed_down",
+        "Practice: Slower",
+        G::Transport,
+        C::Global,
+    )
+    .rep()
+    .menu(),
+    cmd(
+        "practice.speed_up",
+        "Practice: Faster",
+        G::Transport,
+        C::Global,
+    )
+    .rep()
+    .menu(),
+    cmd(
+        "practice.trainer",
+        "Practice: Speed Trainer",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "practice.trainer_after",
+        "Practice: Trainer Passes per Step",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_TRAINER_ARGS),
+    cmd(
+        "practice.trainer_start",
+        "Practice: Trainer Start Speed",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_TRAINER_ARGS),
+    cmd(
+        "practice.trainer_step",
+        "Practice: Trainer Step",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_TRAINER_ARGS),
+    cmd(
+        "practice.trainer_target",
+        "Practice: Trainer Target Speed",
+        G::Transport,
+        C::Global,
+    )
+    .arg(PRACTICE_TRAINER_ARGS),
     cmd("rack.add_column", "Add Column", G::Rack, C::Rack),
     cmd("rack.assign_send", "Use as Send Effect", G::Rack, C::Rack),
     cmd("rack.auto_route", "Auto-route", G::Rack, C::Rack),
@@ -3635,7 +3713,7 @@ mod tests {
             let prefix = d.id.split('.').next().unwrap();
             let expected: &[&str] = match d.group {
                 Group::Global => &["file", "audio", "help", "options", "video"],
-                Group::Transport => &["transport", "sync", "launcher"],
+                Group::Transport => &["transport", "sync", "launcher", "practice"],
                 Group::View => &["view", "window", "camera"],
                 Group::Edit => &["edit"],
                 Group::Rack => &["rack", "plugin"],

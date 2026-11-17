@@ -444,6 +444,7 @@ pub mod plugin_manager;
 pub mod plugin_panel;
 pub mod plugin_params;
 pub mod plugin_settings;
+pub mod practice_bar;
 pub mod quantize_panel;
 pub mod rack;
 pub mod relink_panel;
@@ -588,6 +589,10 @@ pub use plugin_manager::{
 };
 pub use plugin_params::{PluginGestureMerger, PluginParamsView};
 pub use plugin_settings::PluginSettingsView;
+pub use practice_bar::{
+    MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, PracticeBar, PracticeItem, PracticeState,
+    SPEED_STEP_PERCENT, TrainerState, TrainerValue,
+};
 pub use quantize_panel::{GrooveEntry, QuantizeAction, QuantizeRow, QuantizeValues, QuantizeView};
 pub use rack::{
     COLUMN_GAP, CableVisibility, Flip, InsertAreaInfo, JackChoice, JackGroup, JackMenu, JackOp,

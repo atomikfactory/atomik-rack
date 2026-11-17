@@ -80,6 +80,9 @@ impl ChordSheetView {
             }
         }
         self.paint_toolbar(c, &f);
+        if let Some(bar) = f.practice {
+            self.practice.paint(c, &self.st, bar, self.hover);
+        }
         self.paint_status(c, &f);
         if let Some(p) = self.popup.clone()
             && matches!(self.mode, Mode::View)
