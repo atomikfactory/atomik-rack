@@ -14,6 +14,7 @@
 //! * [`score`]: the neutral tab document (`TabScore`, tracks, notes, techniques) that every file
 //!   reader and writer converts to and from.
 //! * [`ascii`]: plain-text tab, read and written.
+//! * [`gp`]: Guitar Pro files (`.gp3`, `.gp4`, `.gp5`, `.gpx`, `.gp`) read into a `TabScore`.
 //!
 //! Every parser caps its input (bytes, lines, notes) and never panics on hostile text. The crate has
 //! no `unsafe` code (the workspace denies it, and a policy test keeps the word out of the pure
@@ -22,6 +23,7 @@
 pub mod ascii;
 pub mod chord;
 pub mod fretting;
+pub mod gp;
 pub mod instrument;
 pub mod score;
 pub mod sheet;
@@ -29,4 +31,5 @@ pub mod transpose;
 pub mod voicing;
 
 pub use chord::{ChordError, ChordSymbol, Note};
+pub use gp::{GpError, ImportWarning, read_gp};
 pub use instrument::{Capo, Instrument, NamedTuning, StringDef, Tuning, catalogue};

@@ -12,6 +12,8 @@ publish = false
 [dependencies]
 atomik-core.workspace = true
 thiserror.workspace = true
+quick-xml.workspace = true
+flate2.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

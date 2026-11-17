@@ -610,7 +610,9 @@ name = "atomik-tab"
 version = "0.4.0-rc.2"
 dependencies = [
  "atomik-core",
+ "flate2",
  "proptest",
+ "quick-xml",
  "thiserror 2.0.21",
 ]
 
