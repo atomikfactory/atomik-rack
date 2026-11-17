@@ -241,6 +241,7 @@ View
     Slice Editor
     Tab Editor
     Chord Sheet
+    Chord Trainer
     Fretboard
     Detach Fretboard
     Fretboard Options >

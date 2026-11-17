@@ -435,6 +435,7 @@ ToggleCameraPreview | Camera Preview
 ToggleChase | Chase Notes
 ToggleChordLane | Chord Lane
 ToggleChordSheet | Chord Sheet
+ToggleChordTrainer | Chord Trainer
 ToggleClockIn | Follow MIDI Clock
 ToggleClockOut | MIDI Clock Out
 ToggleClockWhileStopped | Send Clock While Stopped

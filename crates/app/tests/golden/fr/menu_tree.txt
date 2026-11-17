@@ -241,6 +241,7 @@ Affichage
     Éditeur de découpe
     Éditeur de tablature
     Grille d'accords
+    Entraîneur d'accords
     Manche
     Détacher le manche
     Options du manche >

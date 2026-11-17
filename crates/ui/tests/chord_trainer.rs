@@ -309,7 +309,9 @@ fn a_timed_drill_clicks_the_beats_and_changes_chords_on_the_clock() {
 #[test]
 fn a_late_first_frame_does_not_burst_clicks() {
     let mut v = view();
+    assert!(!v.wants_frames());
     ok(&mut v, "editor.trainer_start", None);
+    assert!(v.wants_frames(), "a start waits for the next frame");
     // The command came long before the frame: the drill starts at the frame's time.
     v.tick(1000.0);
     assert_eq!(clicks(&v.take_events()), [true]);

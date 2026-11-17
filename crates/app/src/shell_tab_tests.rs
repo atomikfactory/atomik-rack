@@ -189,3 +189,71 @@ fn the_chord_sheet_pane_opens_from_the_view_menu_takes_the_text_context_and_clos
     assert!(!s.core().chord_sheet_open());
     assert_eq!(s.lower_pane(), Pane::Arrangement);
 }
+
+#[test]
+fn the_chord_trainer_pane_opens_from_the_view_menu_and_its_scores_go_to_the_window_state() {
+    let mut s = shell();
+    assert!(item(&s, "Chord Trainer").enabled);
+    assert!(!s.menu_state().chord_trainer);
+    s.execute(AppCommand::ToggleChordTrainer);
+    assert!(s.core().chord_trainer_open());
+    assert_eq!(s.lower_pane(), Pane::ChordTrainer);
+    assert!(s.menu_state().chord_trainer);
+    assert_eq!(s.context_stack().contexts(), [Context::Global]);
+    // A list being typed owns the keys: the context is Text, and Esc leaves it.
+    s.run_command("editor.trainer_edit_list", None);
+    assert!(s.core().chord_trainer().is_text_owner());
+    assert_eq!(
+        s.context_stack().contexts(),
+        [Context::Text, Context::Global]
+    );
+    s.handle(&UiEvent::Key {
+        key: atomik_ui::Key::Escape,
+        modifiers: atomik_ui::Modifiers::NONE,
+        pressed: true,
+    });
+    assert!(!s.core().chord_trainer().is_text_owner());
+    // A verified drill on one pair, played right, leaves a score in the window state.
+    s.core_mut().set_input_channels(2);
+    s.core_mut()
+        .chord_trainer_mut()
+        .set_input(Some("In 1".to_owned()));
+    for (id, arg) in [
+        ("editor.trainer_mode", Some("verified")),
+        ("editor.trainer_order", Some("pair")),
+    ] {
+        s.run_command(id, arg);
+    }
+    for _ in 0..12 {
+        s.run_command("editor.trainer_bpm", Some("up"));
+    }
+    for _ in 0..2 {
+        s.run_command("editor.trainer_beats", Some("down"));
+    }
+    s.run_command("editor.trainer_start", None);
+    for k in 0..8 {
+        let t = f64::from(k);
+        let view = s.core_mut().chord_trainer_mut();
+        view.tick(t + 0.05);
+        let chord = view.drill().expect("running").current();
+        let mask = atomik_tab::grade::pc_mask(&view.chords()[chord].pitch_classes());
+        let mut chroma = [0.03f32; 12];
+        for (pc, v) in chroma.iter_mut().enumerate() {
+            if mask >> pc & 1 == 1 {
+                *v = 1.0;
+            }
+        }
+        view.hear(t + 0.1, chroma);
+    }
+    s.core_mut().chord_trainer_mut().tick(8.2);
+    s.run_command("editor.trainer_start", None);
+    assert!(s.ui.chord_trainer_scores.is_empty(), "saved by the frame");
+    s.frame();
+    assert_eq!(s.ui.chord_trainer_scores.len(), 1);
+    let score = s.ui.chord_trainer_scores.values().next().unwrap();
+    assert!(score.hit_rate > 0.9 && score.cpm > 50.0, "{score:?}");
+    // The same command closes it and the arrangement shows again.
+    s.execute(AppCommand::ToggleChordTrainer);
+    assert!(!s.core().chord_trainer_open());
+    assert_eq!(s.lower_pane(), Pane::Arrangement);
+}
