@@ -373,6 +373,28 @@ pub fn catalogue() -> &'static [Instrument] {
     CAT.get_or_init(build_catalogue)
 }
 
+/// The catalogue instrument a track's name suggests (`guitar6` when it suggests none): the one the
+/// editors fret a clip without tab data for.
+pub fn instrument_for_name(name: &str) -> &'static str {
+    let n = name.to_ascii_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| n.contains(w));
+    if has(&["bass"]) {
+        "bass4"
+    } else if has(&["banjo"]) {
+        "banjo5"
+    } else if has(&["ukulele", "uke"]) {
+        "ukulele_soprano"
+    } else if has(&["mandolin"]) {
+        "mandolin"
+    } else if has(&["bouzouki"]) {
+        "bouzouki_irish"
+    } else if has(&["12-string", "12 string", "twelve"]) {
+        "guitar12"
+    } else {
+        "guitar6"
+    }
+}
+
 /// The instrument called `id`.
 pub fn find_instrument(id: &str) -> Option<&'static Instrument> {
     catalogue().iter().find(|i| i.id == id)
