@@ -395,6 +395,7 @@ pub mod export_panel;
 pub mod file_browser;
 pub mod film_panel;
 pub mod fm_panel;
+pub mod fretboard;
 pub mod fx;
 pub mod fx_layout;
 pub mod fx_paint;
@@ -546,6 +547,7 @@ pub use film_panel::{
     FilmAction, FilmCover, FilmPictureChoice, FilmQualityChoice, FilmSoundChoice, FilmValues,
     FilmView,
 };
+pub use fretboard::{FRETBOARD_HEIGHT, FretLabels, FretboardFeed, FretboardOptions, FretboardView};
 pub use harmony_picker::{HarmonyPickerAction, HarmonyPickerView, HarmonyTarget, PickerValue};
 pub use help_panel::{HELP_PANEL_HEIGHT, HelpCard};
 pub use history_panel::{HISTORY_PANEL_WIDTH, HistoryRow, HistoryView};

@@ -344,6 +344,8 @@ pub const PRACTICE_SPEED_ARGS: &[&str] = &[
 ];
 /// The values of `practice.count_in`: bars of count-in before a plain playback.
 pub const PRACTICE_COUNT_IN_ARGS: &[&str] = &["off", "1", "2"];
+/// The values of `view.fretboard_labels`: what the dots of the fretboard say.
+pub const FRETBOARD_LABELS_ARGS: &[&str] = &["notes", "frets", "intervals"];
 /// The values of the `practice.trainer_*` commands: a value of the speed trainer up or down.
 pub const PRACTICE_TRAINER_ARGS: &[&str] = &["up", "down"];
 /// The values of `editor.sheet_autoscroll`: start or stop, the speed, or follow the transport.
@@ -3489,6 +3491,13 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("view.detach_browser", "Detach Browser", G::View, C::Global).menu(),
     cmd("view.detach_console", "Detach Mixer", G::View, C::Global).menu(),
+    cmd(
+        "view.detach_fretboard",
+        "Detach Fretboard",
+        G::View,
+        C::Global,
+    )
+    .menu(),
     cmd("view.detach_rack", "Detach Rack", G::View, C::Global).menu(),
     cmd(
         "view.find_parameter",
@@ -3509,6 +3518,28 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "view.follow_selection",
         "Automation Follows Selection",
+        G::View,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "view.fretboard_labels",
+        "Fretboard: Labels",
+        G::View,
+        C::Global,
+    )
+    .arg(FRETBOARD_LABELS_ARGS)
+    .menu(),
+    cmd(
+        "view.fretboard_left_handed",
+        "Fretboard: Left-handed",
+        G::View,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "view.fretboard_voicing",
+        "Fretboard: Chord Voicing",
         G::View,
         C::Global,
     )
@@ -3572,6 +3603,7 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("view.toggle_flip", "Back of Rack", G::View, C::Global).menu(),
+    cmd("view.toggle_fretboard", "Fretboard", G::View, C::Global).menu(),
     cmd("view.toggle_inspector", "Inspector", G::View, C::Global).menu(),
     cmd("view.toggle_key_lane", "Key Lane", G::View, C::Global).menu(),
     cmd("view.toggle_launcher", "Launcher", G::View, C::Global).menu(),

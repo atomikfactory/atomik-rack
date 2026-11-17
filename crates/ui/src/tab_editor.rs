@@ -47,6 +47,10 @@ pub use entry::{DIVISIONS, FRET_TIMEOUT, FretBuffer, NoteValue, Typed};
 use crate::action::{ContextTarget, TransportAction, UiAction};
 use crate::cursor::CursorHint;
 use crate::event::{Key, NumpadKey, PointerButton, UiEvent};
+use crate::fretboard::{
+    FRETBOARD_HEIGHT, FretChord, FretNote, FretboardData, FretboardFeed, FretboardOptions,
+    FretboardView,
+};
 use crate::keymap::CommandOutcome;
 use crate::practice_bar::{PRACTICE_BAR_HEIGHT, PracticeBar, PracticeItem, PracticeState};
 use crate::seq_edit;
@@ -62,6 +66,7 @@ use atomik_model::{
 use atomik_tab::fretting::FretOptions;
 use atomik_tab::score::Techniques;
 use dialog::{Modal, Outcome, PickHit, PositionPick, TuningDialog};
+use std::sync::Arc;
 use tech::Tech;
 use vello::kurbo::{Point, Rect};
 
@@ -204,6 +209,11 @@ pub struct TabEditorView {
     bounds: Rect,
     scale: f64,
     practice: PracticeBar,
+    /// The neck under the staff, and what it is fed.
+    fretboard: FretboardView,
+    /// The strip is wanted (it still needs the room, see [`Self::fretboard_rect`]).
+    fretboard_on: bool,
+    fb_data: Option<Arc<FretboardData>>,
     axis: TimeAxis,
     clip_id: Option<ClipId>,
     clip: Option<Clip>,
@@ -308,6 +318,9 @@ impl TabEditorView {
             bounds: Rect::new(0.0, 0.0, 800.0, 400.0),
             scale: 1.0,
             practice: PracticeBar::new(),
+            fretboard: FretboardView::new(theme.clone()),
+            fretboard_on: false,
+            fb_data: None,
             axis: TimeAxis::new(GUTTER_WIDTH, 260.0),
             clip_id: None,
             clip: None,
@@ -349,8 +362,90 @@ impl TabEditorView {
 
     // ------------------------------------------------------------------ host API
 
+    /// Wants the fretboard strip under the staff (it is drawn only where the pane is tall enough
+    /// and while there is a clip).
+    pub fn set_fretboard_shown(&mut self, on: bool) {
+        if self.fretboard_on != on {
+            self.fretboard_on = on;
+            self.repaint = true;
+        }
+    }
+
+    /// Whether the strip is wanted.
+    pub fn fretboard_shown(&self) -> bool {
+        self.fretboard_on
+    }
+
+    /// How the strip is drawn (the app owns the options and pushes them).
+    pub fn set_fretboard_options(&mut self, options: FretboardOptions) {
+        if self.fretboard.set_options(options) {
+            self.repaint = true;
+        }
+    }
+
+    /// The strip's rectangle, when it is drawn: wanted, a clip is open and the pane has the room
+    /// for it besides the staff at its smallest.
+    pub fn fretboard_rect(&self) -> Option<Rect> {
+        self.fretboard_fits().then(|| {
+            Rect::new(
+                self.bounds.x0,
+                self.bounds.y1 - FRETBOARD_HEIGHT,
+                self.bounds.x1,
+                self.bounds.y1,
+            )
+        })
+    }
+
+    /// What a fretboard shows for this editor: the clip's tab and the tick to show (the playhead
+    /// while playing, else the cursor).
+    pub fn fretboard_feed(&self) -> FretboardFeed {
+        FretboardFeed {
+            data: self.fb_data.clone(),
+            tick: if self.playing {
+                self.playhead_content()
+            } else {
+                Some(self.cursor.0)
+            },
+            playing: self.playing,
+        }
+    }
+
+    /// Feeds the strip; true when what it draws changed.
+    fn refresh_fretboard(&mut self) -> bool {
+        let feed = self.fretboard_feed();
+        let changed = self.fretboard.set_feed(&feed);
+        if changed && self.fretboard_rect().is_some() {
+            self.repaint = true;
+        }
+        changed
+    }
+
+    fn fretboard_fits(&self) -> bool {
+        if !self.fretboard_on || self.work.is_none() {
+            return false;
+        }
+        let fixed = TOP_BAR_HEIGHT
+            + PRACTICE_BAR_HEIGHT
+            + RULER_HEIGHT
+            + self.chord_height()
+            + STAFF_PAD_TOP
+            + RHYTHM_HEIGHT
+            + LYRICS_HEIGHT;
+        self.bounds.height() - fixed - self.strings() as f64 * MIN_LINE_HEIGHT >= FRETBOARD_HEIGHT
+    }
+
+    /// The height the strip takes from the bottom of the pane (0 when it is not drawn).
+    fn fretboard_height(&self) -> f64 {
+        if self.fretboard_fits() {
+            FRETBOARD_HEIGHT
+        } else {
+            0.0
+        }
+    }
+
     /// Switches the colours; the view repaints.
     pub fn set_theme(&mut self, theme: Theme) {
+        self.fretboard.set_theme(theme.clone());
         self.st = SeqTheme::from_theme(&theme);
         self.repaint = true;
     }
@@ -378,6 +473,7 @@ impl TabEditorView {
         self.clip = None;
         self.clip_rev = None;
         self.work = None;
+        self.fb_data = None;
         self.device = None;
         self.digits.clear();
         self.merge_open = None;
@@ -433,6 +529,7 @@ impl TabEditorView {
     /// Tells the view whether the transport plays.
     pub fn set_playing(&mut self, playing: bool) {
         self.playing = playing;
+        self.refresh_fretboard();
     }
 
     /// Sets the transport position (song ticks). While playing and following, the view pages to
@@ -444,6 +541,9 @@ impl TabEditorView {
         let before = self.playhead_content();
         self.playhead = tick;
         let after = self.playhead_content();
+        if self.playing {
+            self.refresh_fretboard();
+        }
         let px = |t: Option<i64>| t.map(|t| self.axis.tick_to_x(t).round() as i64);
         if px(before) != px(after) {
             self.repaint = true;
@@ -569,6 +669,11 @@ impl TabEditorView {
         }
         if self.work.is_some()
             && let Some(help) = self.practice.help_at(self.practice_rect(), pos)
+        {
+            return Some(help);
+        }
+        if let Some(area) = self.fretboard_rect()
+            && let Some(help) = self.fretboard.help_in(area, pos)
         {
             return Some(help);
         }
@@ -861,10 +966,12 @@ impl TabEditorView {
         if self.work.is_none() {
             self.clip = None;
         }
+        self.fb_data = self.work.as_ref().map(fretboard_data);
         let last = u8::try_from(self.strings().saturating_sub(1)).unwrap_or(u8::MAX);
         self.cursor.1 = self.cursor.1.min(last);
         self.cursor.0 = self.cursor.0.clamp(0, (self.end_tick() - 1).max(0));
         self.refresh_sel();
+        self.refresh_fretboard();
         self.repaint = true;
     }
 
@@ -933,7 +1040,8 @@ impl TabEditorView {
             + self.chord_height()
             + STAFF_PAD_TOP
             + RHYTHM_HEIGHT
-            + LYRICS_HEIGHT;
+            + LYRICS_HEIGHT
+            + self.fretboard_height();
         ((self.bounds.height() - fixed) / n).clamp(MIN_LINE_HEIGHT, LINE_HEIGHT)
     }
 
@@ -1037,6 +1145,24 @@ impl TabEditorView {
         if self.modal.is_some() {
             self.modal_event(event, &mut out);
             return out;
+        }
+        if let Some(area) = self.fretboard_rect() {
+            let over = match event {
+                UiEvent::PointerMove { pos, .. } | UiEvent::PointerDown { pos, .. } => {
+                    area.contains(*pos)
+                }
+                _ => false,
+            };
+            if over {
+                self.end_typing(&mut out);
+                out.extend(self.fretboard.handle_in(event, area));
+                self.repaint |= self.fretboard.needs_repaint();
+                return out;
+            }
+            if matches!(event, UiEvent::PointerMove { .. } | UiEvent::PointerLeave) {
+                self.fretboard.handle_in(&UiEvent::PointerLeave, area);
+                self.repaint |= self.fretboard.needs_repaint();
+            }
         }
         match event {
             UiEvent::PointerMove { pos, .. } => {
@@ -1916,7 +2042,9 @@ impl TabEditorView {
         registry: &Registry,
     ) {
         self.sync_current(doc, registry);
+        self.refresh_fretboard();
         self.paint_all(canvas);
+        self.fretboard.clear_repaint();
         self.repaint = false;
     }
 }
@@ -1933,4 +2061,32 @@ pub(crate) enum TopButton {
     BendAmount,
     /// The instrument label (opens the tuning dialog).
     Instrument,
+}
+
+/// The clip's tab as the fretboard draws it.
+fn fretboard_data(w: &Work) -> Arc<FretboardData> {
+    let tab = w.tab();
+    Arc::new(FretboardData {
+        tuning: tab.tuning.clone(),
+        capo: tab.capo,
+        notes: w
+            .placed
+            .iter()
+            .map(|p| FretNote {
+                tick: p.tick,
+                length: p.length,
+                string: p.string,
+                fret: p.fret,
+            })
+            .collect(),
+        chords: tab
+            .diagrams
+            .iter()
+            .map(|d| FretChord {
+                tick: d.tick,
+                name: d.name.clone(),
+                voicing: d.voicing.clone(),
+            })
+            .collect(),
+    })
 }

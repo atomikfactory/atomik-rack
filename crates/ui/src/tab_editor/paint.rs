@@ -39,6 +39,9 @@ impl TabEditorView {
                 .paint(c, &self.st, self.practice_rect(), self.hover);
         }
         self.paint_status(c);
+        if let Some(area) = self.fretboard_rect() {
+            self.fretboard.paint_into(c, area);
+        }
         match &self.modal {
             Some(Modal::Tuning(d)) => d.paint(c, &self.st, self.bounds, self.hover),
             Some(Modal::Position(p)) => p.paint(c, &self.st, self.bounds, self.hover),
@@ -121,7 +124,10 @@ impl TabEditorView {
         };
         c.text(&TextRun::new(
             text,
-            pt(self.axis.x0 + 4.0, self.bounds.y1 - 6.0),
+            pt(
+                self.axis.x0 + 4.0,
+                self.bounds.y1 - self.fretboard_height() - 6.0,
+            ),
             10.0,
             color,
         ));
@@ -208,7 +214,7 @@ impl TabEditorView {
             b.x0,
             b.y0 + TOP_BAR_HEIGHT + PRACTICE_BAR_HEIGHT,
             b.x1,
-            b.y1,
+            b.y1 - self.fretboard_height(),
         );
         c.push_clip(&area.into());
 

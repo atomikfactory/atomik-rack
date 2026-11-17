@@ -3375,3 +3375,24 @@ Speed trainer: the speed it starts at => Entraîneur : la vitesse de départ
 Speed trainer: how much the speed rises each time => Entraîneur : de combien la vitesse monte à chaque palier
 Speed trainer: clean passes before each rise => Entraîneur : passages propres avant chaque montée
 Speed trainer: the speed it stops at => Entraîneur : la vitesse où il s'arrête
+
+# Fretboard
+Fretboard => Manche
+Detach Fretboard => Détacher le manche
+Fretboard Options => Options du manche
+Fretboard: Labels => Manche : étiquettes
+Fretboard: Left-handed => Manche : gaucher
+Fretboard: Chord Voicing => Manche : disposition d'accord
+Left-handed => Gaucher
+Chord Voicing => Disposition d'accord
+Note Names => Noms de notes
+Fret Numbers => Numéros de cases
+Intervals => Intervalles
+Frets => Cases
+notes => notes
+frets => cases
+intervals => intervalles
+Open a note clip in the Tab Editor => Ouvrez un clip de notes dans l'éditeur de tablature
+What the dots say: note names, fret numbers or intervals (click to change) => Ce que disent les points : noms de notes, cases ou intervalles (clic pour changer)
+Mirror the neck for a left-handed player => Inverser le manche pour un gaucher
+Show the fingering of the chord at the playhead => Afficher le doigté de l'accord à la tête de lecture
