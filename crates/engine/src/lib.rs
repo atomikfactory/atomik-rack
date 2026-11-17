@@ -72,9 +72,9 @@ pub use reference::{
     REFERENCE_FLOOR_LUFS, ReferenceBand, ReferenceSettings, ReferenceShared, ReferenceSolo,
 };
 pub use seq::{
-    PreRoll, SongAutomation, SongCurve, SongError, SongExprPoint, SongExpression, SongInput,
-    SongNote, SongPoint, SongPosition, SongSnapshot, SongTempo, SongTrack, TransportCommand,
-    TransportState, compile_song,
+    MAX_SPEED, MIN_SPEED, PreRoll, SongAutomation, SongCurve, SongError, SongExprPoint,
+    SongExpression, SongInput, SongNote, SongPoint, SongPosition, SongSnapshot, SongTempo,
+    SongTrack, TransportCommand, TransportState, compile_song,
 };
 pub use sync::{
     CLOCK, CONTINUE, ExternalClock, ExternalState, SONG_POSITION, START, STOP, SyncConfig, SyncOut,
