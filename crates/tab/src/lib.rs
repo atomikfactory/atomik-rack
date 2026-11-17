@@ -18,9 +18,12 @@
 //! Every parser caps its input (bytes, lines, notes) and never panics on hostile text.
 #![forbid(unsafe_code)]
 
+pub mod ascii;
 pub mod chord;
 pub mod fretting;
 pub mod instrument;
+pub mod score;
+pub mod sheet;
 pub mod transpose;
 pub mod voicing;
 

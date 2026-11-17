@@ -425,12 +425,6 @@ impl ChordSymbol {
         {
             self.quality = Quality::Minor;
             s = r;
-            // `mMaj7`, `m(maj7)`.
-            let inner = s.strip_prefix('(').unwrap_or(s);
-            if let Some(r) = take_major_marker(inner) {
-                major_marker = true;
-                s = r;
-            }
         } else if let Some(r) = ["dim", "\u{b0}", "o"]
             .iter()
             .find_map(|p| s.strip_prefix(p))
@@ -444,6 +438,14 @@ impl ChordSymbol {
             self.quality = Quality::Aug;
             s = r;
         }
+        // `mMaj7`, `m(maj7)`, `augmaj7`, `dim(maj7)`.
+        if matches!(self.quality, Quality::Minor | Quality::Dim | Quality::Aug) && !major_marker {
+            let inner = s.strip_prefix('(').unwrap_or(s);
+            if let Some(r) = take_major_marker(inner) {
+                major_marker = true;
+                s = r;
+            }
+        }
         // 2. The number.
         let mut number = None;
         if let Some((n, r)) = take_number(s) {
@@ -451,7 +453,7 @@ impl ChordSymbol {
             s = r;
         }
         self.extension = match (number, self.quality, major_marker) {
-            (None, Quality::Minor, true) => Extension::MajSeventh,
+            (None, Quality::Minor | Quality::Dim | Quality::Aug, true) => Extension::MajSeventh,
             (None, Quality::HalfDim, _) => Extension::Seventh,
             (None, _, _) => Extension::None,
             (Some(5), Quality::Major, false) => {
@@ -621,9 +623,17 @@ impl ChordSymbol {
                 s.push_str("b5");
             }
         }
+        // Alterations right after the root would read as part of it (`Cb9`): bracket them.
+        let wrap = s.is_empty() && !self.alterations.is_empty();
+        if wrap {
+            s.push('(');
+        }
         for d in &self.alterations {
             s.push(if d.accidental < 0 { 'b' } else { '#' });
             s.push_str(&d.degree.to_string());
+        }
+        if wrap {
+            s.push(')');
         }
         for d in &self.adds {
             s.push_str("add");
