@@ -7,8 +7,8 @@ use crate::rpc::{Server, Tool};
 use crate::tier1::{self, bounce_json};
 use crate::tool::{Args, ToolOutput, definition};
 use atomik_app::AppCore;
-use atomik_app::app_core::MidiExport;
 use atomik_app::app_core::Pane;
+use atomik_app::app_core::{MidiExport, TabExportFormat};
 use atomik_app::commands::AppCommand;
 use atomik_app::session::{LiveSession, SystemBackend};
 use atomik_app::settings::AudioSettings;
@@ -85,6 +85,11 @@ pub const TOOLS: &[Tool] = &[
         name: "session_midi",
         definition: midi_def,
         run: midi,
+    },
+    Tool {
+        name: "session_tab",
+        definition: tab_def,
+        run: tab,
     },
     Tool {
         name: "session_audio_notes",
@@ -436,6 +441,13 @@ fn request_json(r: ShellRequest) -> Value {
         | ShellRequest::PickGrooveMidi => (
             "pick_midi_file",
             "a file dialog: a headless session cannot show it (the MIDI file import and export are covered by the app tests)",
+        ),
+        ShellRequest::PickImportTab { .. }
+        | ShellRequest::PickImportSheet
+        | ShellRequest::PickExportTab(_)
+        | ShellRequest::PickExportSheet => (
+            "pick_tab_file",
+            "a file dialog: use session_tab with action import, import_sheet, export or export_sheet and a file",
         ),
         ShellRequest::NewSong
         | ShellRequest::PickOpenSong
@@ -1562,6 +1574,92 @@ fn midi(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         "action": action,
         "path": path.to_string_lossy(),
         "bytes": (action == "export").then(|| std::fs::metadata(&path).map(|m| m.len()).ok()).flatten(),
+        "message": core.last_rejection(),
+        "document_changed": core.doc() != &before,
+        "tracks": core.doc().song.tracks.len(),
+        "status_text": session.shell().status_text(),
+        "dirty": core.is_dirty(),
+        "can_undo": core.document().can_undo(),
+    })))
+}
+
+// ---------------------------------------------------------------- session_tab
+
+fn tab_def() -> Value {
+    definition(
+        "session_tab",
+        "Imports or exports tab, score and chord sheet files, answering the dialogs of File > Import > Import Tab or Score File..., Import Tab or Score as Song..., Import Chord Sheet... and File > Export > Export Tab as MusicXML..., Export Tab as Text..., Export Chord Sheet as Text... (session_command file.import_tab, file.import_tab_song, file.import_sheet, file.export_tab_musicxml, file.export_tab_text and file.export_sheet_text raise native dialogs). `action: import` reads the Guitar Pro (.gp3 .gp4 .gp5 .gpx .gp) or MusicXML (.musicxml .xml .mxl) file `file`: one new track per tab track with its tab (string, fret, techniques, tuning, capo) at the playhead; with `as_song` from the start, plus the file's tempo map, meter, markers, chords and key. `action: import_sheet` reads a chord sheet text file into the song's chord sheets. `action: export` writes `file` as `format` (musicxml, a .mxl file name writes the compressed form; or text, an ASCII tab) for `scope` (clip: the selected note clip, track: the selected note track, song: every note track, the default). `action: export_sheet` writes the song's first chord sheet as text. One undo step per import. Returns `message` (the toast, with what the file held that could not be imported), `document_changed`, `tracks`, `dirty`, `can_undo` and, for an export, `bytes`.",
+        &[
+            (
+                "action",
+                "string",
+                "import, import_sheet, export or export_sheet.",
+            ),
+            ("file", "string", "The file to read, or to write."),
+            (
+                "scope",
+                "string",
+                "Export: clip, track or song (default song).",
+            ),
+            ("format", "string", "Export: musicxml (default) or text."),
+            (
+                "as_song",
+                "boolean",
+                "Import: new tracks from the start with the tempo, meter, markers, chords and key.",
+            ),
+        ],
+        &["action", "file"],
+    )
+}
+
+fn tab(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let action = args.str("action")?;
+    let file = args.str("file")?;
+    let as_song = args.opt_bool("as_song")?.unwrap_or(false);
+    let scope = match args.opt_str("scope")?.unwrap_or("song") {
+        "clip" => MidiExport::Clip,
+        "track" => MidiExport::Track,
+        "song" => MidiExport::Song,
+        other => return Err(format!("scope {other:?} is not clip, track or song")),
+    };
+    let format = match args.opt_str("format")?.unwrap_or("musicxml") {
+        "musicxml" => TabExportFormat::MusicXml,
+        "text" => TabExportFormat::Text,
+        other => return Err(format!("format {other:?} is not musicxml or text")),
+    };
+    let path = match action {
+        "import" | "import_sheet" => {
+            let path = server.paths().read(file)?;
+            if !path.is_file() {
+                return Err(format!("{file}: not a file"));
+            }
+            path
+        }
+        "export" | "export_sheet" => server.paths().write(file)?,
+        other => {
+            return Err(format!(
+                "action {other:?} is not import, import_sheet, export or export_sheet"
+            ));
+        }
+    };
+    let session = server.require_session()?;
+    let before = session.shell().core().doc().clone();
+    match action {
+        "import" => session.shell_mut().import_tab(&path, as_song),
+        "import_sheet" => session.shell_mut().import_sheet(&path),
+        "export" => session
+            .shell_mut()
+            .core_mut()
+            .export_tab_of(scope, format, &path),
+        _ => session.shell_mut().export_sheet_to(&path),
+    }
+    session.shell_mut().frame();
+    let core = session.shell().core();
+    let exports = action.starts_with("export");
+    Ok(ToolOutput::json(&json!({
+        "action": action,
+        "path": path.to_string_lossy(),
+        "bytes": exports.then(|| std::fs::metadata(&path).map(|m| m.len()).ok()).flatten(),
         "message": core.last_rejection(),
         "document_changed": core.doc() != &before,
         "tracks": core.doc().song.tracks.len(),
