@@ -5197,7 +5197,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (603) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (615) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -7290,6 +7290,59 @@ Editors, no default key) hands the open clip from one editor to the other. The e
   an `Nfr` label elsewhere, open and muted markers, dots with finger numbers, a barre bar, and a short string (the
   banjo drone) that starts at its own fret (`Diagram::start_frets_of(tuning, capo)`). `diagram_height(width, titled)`
   says how tall a diagram of that width is. The Chord Sheet pane and the practice phases reuse it.
+
+## 6x. The Chord Sheet pane
+
+`Pane::ChordSheet` shows [`ChordSheetView`](../crates/ui/src/chord_sheet.rs) in the lower pane in place of the
+arrangement (`AppCore::chord_sheet`, `sheet_open`, `app_core_chord_sheet.rs`). It is not tied to a clip: it shows
+the song's `Song::sheets` (6s), one sheet at a time with a selector, and holds no state the document does not: every
+change of the stored sheets is one `SongCommand::SetSheets` (one undo step). View > Editors > Chord Sheet
+(`view.toggle_chord_sheet`) opens it; opening the piano roll, the tab editor or a device editor closes it.
+
+- **Layout** (`chord_sheet/layout.rs`, `content.rs`; pure, unit tested). Text cannot be measured here, so every
+  character advances by a fixed share of the font size (`LYRIC_ADVANCE`) and a lyric line is drawn as
+  *segments*, one per stretch between two chord anchors, each placed by the layout: a chord always sits over the
+  first character of its segment, whatever the font does inside it. A chord name that would touch the one before it
+  is pushed right and the rest of the line moves with it (the lyric gets a gap), so names never overlap and stay
+  over their syllable. A line wider than the pane breaks after a space (inside a word only when the word is wider
+  than the pane) and every chord stays with its segment. Chord-only lines (chords at columns, no text) lay out the
+  same way and draw no lyric; tab blocks are drawn on a fixed grid (digits at their column, dashes as a line).
+  `content::build` turns the *shown* sheet into entries with positions plus the chord hit rectangles; the view
+  caches it by (sheet revision, selection, transpose, capo, spelling, font size, width) and paints only the entries
+  in view.
+- **Display controls are view state**, never the song: transpose by semitones (-11 to 11), a capo (0 to 12; the sheet
+  starts at its own capo, and the shown chords are the shapes `net = transpose + sheet.capo - capo` semitones from the
+  written ones, spelled by `ChordSheet::transpose`: the key decides, else the sharps/flats preference), the font size,
+  and the instrument and tuning of the diagrams (the catalogue list, the tuning chip cycles the presets). *Apply
+  Transpose to Sheet* (`editor.sheet_apply_transpose`) writes the shown sheet with `SetSheets`; the view resets to
+  "as written" at once.
+- **Diagrams.** A strip under the toolbar holds every distinct chord of the shown sheet with its diagram (it scrolls
+  sideways), and a click on a chord of the text or of the strip opens a popup with a larger diagram and the generator's
+  alternative voicings (`<` `>` or Left/Right, wrapping); the voicing picked is kept per chord name for the strip.
+  Voicings come from `atomik_tab::voicing` for the shapes shown (frets relative to a capo of 0; the diagram of a sheet
+  shown with a capo is the shape, not the sounding chord), through a `VoicingCache`; a bass uses `VoicingOptions::bass`.
+- **Autoscroll.** `ChordSheet` lines may be linked to a bar (`SheetBlock::Line::bar`, kept by the model, not in the text
+  forms). When some line is linked and the transport plays, `set_playhead` scrolls the pane so the line the playhead is
+  in sits a third down, interpolating between linked lines by tick (`Bars::bar_start`); the toolbar chip "Synced" turns
+  that off. Without links, a play/pause button and a speed (lines per minute, 4 to 120) scroll the text:
+  `ChordSheetView::tick(now)` advances it by the time between two calls (a gap over half a second, a stalled host, is
+  ignored) and stops at the end. The app ticks it with the frame clock (`chord_sheet_tick`); needs_repaint is true while
+  it runs.
+- **Edit as text.** The sheet becomes a multi-line `TextField` (the shared text field: caret, selection, clipboard,
+  input methods) holding `to_over_lyrics()`. Apply (Ctrl+Enter or the button) parses it back with `parse_sheet` and
+  emits one
+  `SetSheets`; the bar links of the old lines are kept by line position when the number of lyric lines is unchanged.
+  Esc or Cancel leaves it. Rename is a one-line field in a small box; New Sheet adds a sheet with a starter text and
+  opens the editor on it; Delete removes the shown sheet (undoable); Import... runs `file.import_sheet` and the pane
+  shows the sheet that arrives. While the text, the rename box or the instrument list is open `is_text_owner` is true
+  and the shell's context is `Text` (as for the tab editor's panels).
+- **Commands.** `view.toggle_chord_sheet` and the pane's `editor.sheet_*` commands (select, new, rename, delete,
+  edit_text, apply_transpose, transpose, capo, spelling, font, autoscroll; group Editor, context Global, no default
+  keys). `AppCore::pane_command` hands them to the pane whichever pane has the focus while the pane is open. The pane
+  reads Up, Down, Page Up, Page Down, Home and End itself, Left and Right cycle the voicings of an open popup.
+- **Not done.** No per-line bar-anchor editor (links come from an import of a score with lyrics, or a later action), no
+  "send chords to the chord lane", the instrument and display choices are not saved with the project, and the tab block
+  of a sheet is shown, not edited as tab.
 
 ## 7. The UI crate
 

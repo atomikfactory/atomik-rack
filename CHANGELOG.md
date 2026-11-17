@@ -36,6 +36,18 @@ may break APIs and the patch and project formats.
   per-string pitches, a capo from 0 to 12 and the choice between keeping the pitches (the notes are fretted again)
   and keeping the frets (the pitches change). Dragging over the bar ruler sets the song loop to the bars dragged
   over; a click still moves the playhead. A fret digit typed after a long pause no longer joins the digit before it.
+- **A Chord Sheet pane.** View > Editors > Chord Sheet shows the song's chord sheets (chords over lyrics): the title,
+  key and capo, section headers, comments, chord names over the syllables they belong to (names that would touch are
+  pushed apart and the lyric gaps with them), chord-only lines, and lines wrapped at the pane width with every chord
+  kept with its words; the text size is a control. A strip of diagrams at the top holds every chord of the sheet for
+  the instrument you pick (any of the catalogue: guitar, ukulele, banjo, mandolin and the rest, with their tunings),
+  and a click on a chord opens a larger diagram whose alternative fingerings you cycle with `<` `>`. Transpose by
+  semitones, show the shapes for a capo and choose sharps or flats without touching the song; Apply to Sheet writes
+  what is shown into the sheet (one undo step). A sheet linked to bars scrolls with the playing song, any other
+  scrolls at a speed in lines per minute with a play and pause button. Edit Text turns the sheet into a text field
+  (Ctrl+Enter applies, Esc leaves); New Sheet, Import..., Rename and Delete work from the pane, each one undo step.
+  The pane's commands (transpose, capo, sharps or flats, text size, autoscroll, new, rename, delete, edit as text,
+  apply transpose) are in the command palette.
 - **Guitar tab import and export.** File > Import > Import Tab or Score File... reads a Guitar Pro file (`.gp3`, `.gp4`,
   `.gp5`, `.gpx`, `.gp`) or a MusicXML file (`.musicxml`, `.xml`, `.mxl`) and makes one track per part, each with a
   note clip that keeps the tab: the string and fret of every note, hammer-ons, pull-offs, slides, bends, vibrato,
