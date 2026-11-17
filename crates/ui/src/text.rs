@@ -147,8 +147,8 @@ impl TextEngine {
             b.push_default(StyleProperty::LetterSpacing(run.letter_spacing));
         }
         let mut layout: Layout<()> = b.build(&run.text);
+        layout.set_alignment(Alignment::Start, AlignmentOptions::default());
         layout.break_all_lines(None);
-        layout.align(Alignment::Start, AlignmentOptions::default());
         layout
     }
 
