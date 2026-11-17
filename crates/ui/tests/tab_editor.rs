@@ -1115,6 +1115,8 @@ mod practice {
     fn the_bar_shows_what_the_app_tells_it() {
         let doc = notes_doc();
         let mut v = tab_editor(&doc, &registry());
+        // Wide enough for every control: a narrower bar leaves the trainer values out.
+        v.set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 1600.0, 400.0));
         v.set_practice(PracticeState {
             speed: 75,
             trainer: TrainerState {
