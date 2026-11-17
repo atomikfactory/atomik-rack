@@ -125,6 +125,7 @@ presets and the library database), [smf_read](../fuzz/fuzz_targets/smf_read.rs),
 preview decoder), [instrument_read](../fuzz/fuzz_targets/instrument_read.rs) (the SFZ and SoundFont
 readers), [ipc_frame](../fuzz/fuzz_targets/ipc_frame.rs) (the sandbox control channel),
 [tab_gp](../fuzz/fuzz_targets/tab_gp.rs) (Guitar Pro files of every format),
+[tab_musicxml](../fuzz/fuzz_targets/tab_musicxml.rs) (MusicXML and compressed MusicXML),
 [tab_ascii](../fuzz/fuzz_targets/tab_ascii.rs) (plain-text tab) and
 [chord_sheet](../fuzz/fuzz_targets/chord_sheet.rs) (chords over lyrics and the bracket form).
 To run one:
@@ -2255,5 +2256,25 @@ with files that the tests make themselves, in `crates/tab/tests/gp_fixtures`:
   a `BCFZ` that claims 4 GiB, one whose copies blow up past the cap, a zip bomb (130 MiB of zeros in a deflate stream
   that says it is 10 bytes), a zip directory that lies, XML nested 20 000 deep or with more than 3 million elements,
   a bar naming one beat thousands of times, a bar count that lies, and a file over the size cap.
-- The fuzz targets tab_gp, tab_ascii and chord_sheet are seeded by `scripts/fuzz-seed.sh`; the Guitar Pro
-  seeds are written by the ignored test `write_fuzz_seeds` (nothing is downloaded).
+- `musicxml.rs`: write then read gives back the same score for one fixture that has every technique (palm mute, let
+  ring, bend, pre-bend, bend and release, whammy, vibrato both widths, hammer-on, pull-off, the six slide kinds, the
+  five harmonic kinds, tap, thumb, slap, pop, fade-in, dead, ghost, accent, marcato, staccato, tremolo picking, grace
+  note, strum direction), ties, a triplet, a chord, lyrics with hyphens, chord symbols and diagrams (with fingers and
+  a barre), tempo, meter and key changes and markers, for a guitar (also with a capo and in drop D), a bass, a banjo
+  with its drone, a re-entrant ukulele, a seven-string guitar, a custom tuning with labels, percussion and two parts;
+  without the private field the catalogue tuning is found by its notes; `.mxl` reads like plain XML. Hand-written
+  documents show the reading rules: string 1 is the highest string, `staff-tuning` and `capo` (a fret relative to the
+  capo or counted from the nut), pitch-only parts are fretted (guitar, bass), repeats and endings are expanded, tempo
+  from `sound` and from the metronome, a notation staff beside a tab staff, harmony and lyrics, a hammer-on marked only
+  on its origin. The writer's choices are checked too: a note across a bar line becomes two tied notes, quintuplets
+  and triplets keep their ticks, overlapping notes use a second voice, `divisions` is the smallest exact grid and a
+  rounded one comes with a warning.
+- `musicxml_robust.rs`: every prefix of a written file, thousands of seeded byte flips, deletions and digit insertions,
+  random garbage (with and without a valid start), absurd numbers (divisions 0 and 10^6, huge durations, backups and
+  forwards, string and fret beyond anything, NaN and infinite bends and tempi, time signatures of 0 and 999), more
+  parts and bars than the caps, XML nested 20 000 deep, more than 3 million elements, an entity document, a file over
+  the size cap, a compressed score that inflates past the cap, damaged `.mxl` archives and an archive without a
+  rootfile. After every successful read the invariants of the app hold (`problems()` is empty, `sanitize` is a no-op)
+  and what read is written and read again. The run was repeated with overflow checks on.
+- The fuzz targets tab_gp, tab_musicxml, tab_ascii and chord_sheet are seeded by `scripts/fuzz-seed.sh`; the file
+  seeds are written by the ignored tests `write_fuzz_seeds` (nothing is downloaded).

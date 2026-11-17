@@ -45,7 +45,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-vision` | [crates/vision](../crates/vision) | download (tract-tflite, nokhwa on Windows and macOS, linuxvideo on Linux, zune-jpeg, serde, serde_json, thiserror, log, clap, ctrlc) | none | Hand tracking for the webcam controller, pure library with no dependency on the application: the `Camera` and `FrameSource` traits (`SystemCamera`, `FakeCamera`), the capture thread with a one-frame handoff (`Capture`), the palm detector and hand landmark models run in pure Rust (`HandModels`, `HandPipeline`, the detector only while no hand is followed), the list of the two hand model files (their addresses, sizes and SHA-256 are pinned in `download.rs`; the store and the download are in `atomik-download`), the gesture recogniser (`Recogniser`: pinch with hysteresis, ratcheted twist, One Euro smoothing, a dead zone, loss tolerance, two hands) and the `Tracker` worker with its bounded `TrackerEvent` queue. The `vision-demo` tool lists cameras and models and prints or records the hand |
 | `atomik-download` | [crates/download](../crates/download) | none (sha2, ureq, thiserror) | none | The one-time download of model files, shared by the hand models and the stem models: `ModelFile` (name, one fixed HTTPS address, exact size and SHA-256, all constants in the crate that owns the files), `ModelStore` (`status`, `verified_paths` which checks again before a file is loaded, and `download`, which writes under temporary names, checks each file and only then renames them all into place, so a failure, a mismatch or a cancel leaves nothing behind), the `Fetcher` trait with `UreqFetcher` (rustls, HTTPS only, no redirect, a generic User-Agent, nothing about the user or the machine) and `FakeFetcher` for tests |
 | `atomik-stems` | [crates/stems](../crates/stems) | none (thiserror) | none | Stem separation by signal processing, pure and deterministic, with no model and no download: an STFT (`Stft`, 2048 points, hop 512) and `separate`: chunks of 20 s with 1 s of context and a linear crossfade, a harmonic/percussive split by median filters across time and across frequency (soft masks) for the drums, the harmonic part below a 150 Hz crossover for the bass, the centred harmonic part above it for the vocals (a mono input gets the 200 Hz to 5 kHz band at a lower weight) and the residual for the other stem, so the four add up to the mix; a progress callback, a cancel flag and a `StemSink` that receives the finished samples in order |
-| `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror, quick-xml, flate2) | none | Fretted-instrument tablature, pure and headless: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`), ASCII tab read and write (`ascii.rs`) and the Guitar Pro readers for `.gp3`, `.gp4`, `.gp5`, `.gpx` and `.gp` (`gp/`, see 6t) |
+| `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror, quick-xml, flate2) | none | Fretted-instrument tablature, pure and headless: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`), ASCII tab read and write (`ascii.rs`), the Guitar Pro readers for `.gp3`, `.gp4`, `.gp5`, `.gpx` and `.gp` (`gp/`, see 6t) and MusicXML read and write (`musicxml/`, see 6v) |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk, tab | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`), the tab sidecar of note clips (`tab_data.rs`), its edit operations (`tab_edit.rs`) and the technique renderer (`tab_render.rs`), the song chord sheets (`chord_sheets.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
@@ -7161,6 +7161,54 @@ and `Shell`, the menu and the dialogs reach it the way they reach MIDI files.
   format, so tab files, chord sheets and the format and scope choices of the exports have a tool of their own.
 - The registry ids `file.import_tab`, `file.import_tab_song`, `file.import_sheet`, `file.export_tab_musicxml`,
   `file.export_tab_text` and `file.export_sheet_text` have no key.
+
+## 6v. MusicXML import and export
+
+`atomik_tab::musicxml` ([crates/tab/src/musicxml](../crates/tab/src/musicxml)) reads and writes partwise MusicXML:
+`read_musicxml(bytes)` (also the compressed `.mxl`; `sniff` tells the flavour from the bytes: an XML file whose first
+4 KiB name a `score-partwise` or `score-timewise` root, or a zip with `META-INF/container.xml`, so a `.xml` of any other
+kind and a Guitar Pro `.gp` are not claimed), `write_musicxml(&score)` and `write_mxl(&score)`. Errors are the typed,
+user-facing `MusicXmlError`; what could not be carried over is the same `ImportWarning` list as the Guitar Pro readers.
+The XML goes through the capped element tree and the zip reader of `gp/` (`gp::xml`, `gp::zip`), so the limits (file
+64 MiB, decompressed 128 MiB, 3 million elements, 64 levels, 128 parts, 20 000 bars, 1 million notes) are shared.
+
+**Reading.** A part is a track. Each measure is read into raw notes whose positions are ticks from the measure start
+(`divisions` may change mid-score; `backup`, `forward`, chords and several voices follow the cursor); the parts agree
+on the length of every measure (an `implicit` measure or an overfull one keeps its own length and gets a meter that
+fits it), repeats and endings are unrolled with the same function as the Guitar Pro readers (`times` of a backward
+repeat, `ending number="1, 2"`; D.C./D.S./coda jumps are ignored with a warning) and `TabScore::bars` keeps the
+file's bars. Tempo comes from `sound tempo`, else the metronome mark (any beat unit, dots). String 1 is the highest
+string, which is tab line 0. The tuning comes from `staff-tuning` (line 1 is the bottom line) and `capo`, then the
+private field below, then the catalogue entry with the same open pitches (so the banjo drone keeps its start fret),
+else a custom tuning with the family guessed from the string count. A written fret is taken relative to the capo when
+it matches the written pitch, else counted from the nut when that matches. A pitch-only part (no `string`/`fret`) is
+fretted by the fretter for the tuning of the part (a guitar when none, a bass from the name or program, banjo,
+ukulele, mandolin by name); a tied note takes the position of the note it continues; a part with a notation staff and
+a `TAB` staff reads the tab staff. Unpitched notes make a percussion track (the key from `midi-unpitched`, the lane
+from the order of the part's instruments). A hammer-on or pull-off marked only on the origin lands on the next note on
+the string; ties keep the Guitar Pro convention (`tie` is set on the continuation, which keeps its fret).
+
+**Writing.** One part per track with a `TAB` clef and `staff-details` (lines, tuning, capo), measures from the meter
+map, `divisions` = the least common multiple that makes every position and length exact (capped at 3840; beyond that
+positions are rounded and a warning says so), plain, dotted and tuplet notation (3:2 to 15:8; a length with none is
+split into tied pieces), notes across a bar line as tied pieces, overlapping notes in up to four voices with
+`backup`/`forward`, chords, `fret` as shown in the tab (above the capo) and `pitch` as sounding. Repeats are not
+written: the score is the unrolled timeline. Techniques, chord symbols (`harmony`), diagrams (`frame`, with fingers
+and the barre), lyrics (a hyphen at the end of a syllable is `begin`/`middle`), tempo, meter, key and markers
+(`rehearsal`) are mapped as the table in the module documentation says. Choices that are ours: legato slide is
+`slide`, shift slide is `glissando`; the in and out slides are `scoop`, `plop`, `doit`, `falloff`; a bend with a release
+is two `bend` elements (the second with `release`), a whammy dive is a `bend` with `with-bar`; the harmonic kinds that
+MusicXML does not have (pinch, tapped, semi) and the touched fret are an `other-technical` text
+`harmonic:<kind>[:<fret>]`;
+let ring, slap, pop, fade-in and vibrato are `other-technical` texts. A private `miscellaneous-field`
+`atomik-tuning-<part id>` keeps what `staff-tuning` cannot: the instrument id, the fret count and, per string, the start
+fret, course, octave flag and label. Other programs ignore it, and without it the reader falls back to the catalogue.
+
+**Verified how.** The writer and the reader were written together, so `tests/musicxml.rs` proves the round trip (every
+technique, for a guitar with and without a capo, a bass, a banjo with its drone, a re-entrant ukulele, a seven-string
+guitar, a custom tuning, percussion and several parts) and the hand-written documents prove the reading rules above;
+no file from another program was available. The mappings the format leaves open (bend with release, slides, harmonic
+kinds, palm mute, let ring, vibrato) are the open item for a hand check with files from other programs.
 
 ## 7. The UI crate
 

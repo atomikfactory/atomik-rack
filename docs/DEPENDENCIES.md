@@ -99,6 +99,10 @@ is read through a size limit, so a small entry that inflates to gigabytes is cut
 (`BCFZ` bit-level decompression and the `BCFS` sector file system) needs no dependency. `cargo deny check` passes with
 the licences the policy already allows.
 
+The MusicXML reader and writer reuse both: the same capped XML tree reads the document, the zip reader opens an `.mxl`
+(through `META-INF/container.xml`), and `flate2` also deflates the two entries of the `.mxl` the writer makes (a 100-line
+zip writer in `crates/tab/src/musicxml/zipw.rs`, the CRC from `flate2::Crc`). No new crate.
+
 ## Model files
 
 The hand tracking models are not part of the installer, the repository or `Cargo.lock`. The user downloads them once
