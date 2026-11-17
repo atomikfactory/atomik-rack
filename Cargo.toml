@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
-# `crates/[!t]*` is every crate whose directory does not start with `t`; the two that do are
+# `crates/[!t]*` is every crate whose directory does not start with `t`; the three that do are
 # listed on their own (`crates/testplugins` holds crates one level down, with no manifest of its own).
-members = ["crates/[!t]*", "crates/testkit", "crates/testplugins/*"]
+members = ["crates/[!t]*", "crates/tab", "crates/testkit", "crates/testplugins/*"]
 
 [workspace.package]
 version = "0.4.0-rc.2"
@@ -19,6 +19,7 @@ atomik-dsp = { path = "crates/dsp" }
 atomik-devices = { path = "crates/devices" }
 atomik-engine = { path = "crates/engine" }
 atomik-app = { path = "crates/app" }
+atomik-tab = { path = "crates/tab" }
 atomik-testkit = { path = "crates/testkit" }
 atomik-audio-io = { path = "crates/audio-io" }
 atomik-midi-io = { path = "crates/midi-io" }
