@@ -327,6 +327,18 @@ pub const STRUM_AMOUNT_ARGS: &[&str] = &["128", "64", "32", "16"];
 pub const STRUM_DIRECTION_ARGS: &[&str] = &["up", "down"];
 /// The values of `editor.step_shift`: which way the hits of the step editor's grid move.
 pub const STEP_SHIFT_ARGS: &[&str] = &["right", "left"];
+/// The values of `editor.sheet_select`: the neighbour sheet.
+pub const SHEET_SELECT_ARGS: &[&str] = &["next", "previous"];
+/// The values of `editor.sheet_transpose`: a semitone either way, or back to the written key.
+pub const SHEET_TRANSPOSE_ARGS: &[&str] = &["up", "down", "reset"];
+/// The values of `editor.sheet_capo`: a fret either way, or no capo.
+pub const SHEET_CAPO_ARGS: &[&str] = &["up", "down", "off"];
+/// The values of `editor.sheet_spelling`: `next` cycles automatic, sharps and flats.
+pub const SHEET_SPELLING_ARGS: &[&str] = &["next", "auto", "sharps", "flats"];
+/// The values of `editor.sheet_font`: the text size of the chord sheet.
+pub const SHEET_FONT_ARGS: &[&str] = &["larger", "smaller"];
+/// The values of `editor.sheet_autoscroll`: start or stop, the speed, or follow the transport.
+pub const SHEET_AUTOSCROLL_ARGS: &[&str] = &["toggle", "faster", "slower", "sync"];
 /// The values of `editor.tab_duration`: the note values of the tab editor, longest first.
 pub const TAB_DURATION_ARGS: &[&str] = &[
     "whole",
@@ -875,6 +887,67 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     )
     .arg(STRUM_DIRECTION_ARGS),
+    cmd(
+        "editor.sheet_apply_transpose",
+        "Apply Transpose to Sheet",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.sheet_autoscroll",
+        "Sheet: Autoscroll",
+        G::Editor,
+        C::Global,
+    )
+    .arg(SHEET_AUTOSCROLL_ARGS),
+    cmd("editor.sheet_capo", "Sheet: Capo", G::Editor, C::Global).arg(SHEET_CAPO_ARGS),
+    cmd(
+        "editor.sheet_delete",
+        "Delete Chord Sheet",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.sheet_edit_text",
+        "Edit Chord Sheet as Text",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.sheet_font",
+        "Sheet: Text Size",
+        G::Editor,
+        C::Global,
+    )
+    .arg(SHEET_FONT_ARGS),
+    cmd("editor.sheet_new", "New Chord Sheet", G::Editor, C::Global),
+    cmd(
+        "editor.sheet_rename",
+        "Rename Chord Sheet",
+        G::Editor,
+        C::Global,
+    ),
+    cmd(
+        "editor.sheet_select",
+        "Select Chord Sheet",
+        G::Editor,
+        C::Global,
+    )
+    .arg(SHEET_SELECT_ARGS),
+    cmd(
+        "editor.sheet_spelling",
+        "Sheet: Sharps or Flats",
+        G::Editor,
+        C::Global,
+    )
+    .arg(SHEET_SPELLING_ARGS),
+    cmd(
+        "editor.sheet_transpose",
+        "Sheet: Transpose View",
+        G::Editor,
+        C::Global,
+    )
+    .arg(SHEET_TRANSPOSE_ARGS),
     cmd("editor.step_alter", "Alter Steps", G::Editor, C::Editor).decline(),
     cmd("editor.step_invert", "Invert Steps", G::Editor, C::Editor).decline(),
     cmd(
@@ -3395,6 +3468,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.toggle_big_meter", "Big Meter", G::View, C::Global).menu(),
     cmd("view.toggle_browser", "Device Browser", G::View, C::Global).menu(),
     cmd("view.toggle_chord_lane", "Chord Lane", G::View, C::Global).menu(),
+    cmd("view.toggle_chord_sheet", "Chord Sheet", G::View, C::Global).menu(),
     cmd("view.toggle_console", "Console", G::View, C::Global).menu(),
     cmd(
         "view.toggle_console_links",

@@ -320,7 +320,13 @@ pub fn markdown(profiles: &[Profile], oses: &[Os], user: Option<&UserKeymap>) ->
          `Shift+C` clear (each toggles on the selection, or on the note under the cursor). Inside \
          the pane these win over a global binding of the same chord (only `.`, the next marker \
          key, overlaps one). While the instrument, tuning and capo panel or the re-fret chooser is \
-         open it takes every key. An open \
+         open it takes every key. The Chord Sheet pane (View, Editors, Chord Sheet) binds no \
+         key of its own: Up, Down, Page Up, Page Down, Home and End scroll the text, Left and \
+         Right step through the fingerings of the open chord diagram and Esc closes it. Its \
+         commands (transpose, capo, sharps or flats, text size, autoscroll, new, rename, delete, \
+         edit as text and apply transpose) have no default key and are in the command palette. \
+         While its text, its rename box or its instrument list is open it takes every key \
+         (Ctrl+Enter applies the text, Esc leaves it). An open \
          menu (a context menu, or a menu of the in-window menu bar) takes every key: Up and Down \
          move the highlight (it wraps, and skips separators and disabled items), Home and End \
          jump to the first and last item, Right or Enter opens a submenu on its first item, Left \
