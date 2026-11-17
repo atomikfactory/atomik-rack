@@ -917,5 +917,8 @@ impl PluckedStrings {
     }
 }
 
+mod patches;
+pub use patches::{DEFAULT_PATCH, INSTRUMENT_PATCHES, factory_patch_for};
+
 #[cfg(test)]
 mod tests;
