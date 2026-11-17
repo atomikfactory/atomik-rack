@@ -8,7 +8,9 @@
 //! vibrato, palm mute, dead and harmonic notes). Percussion tracks hold their drum keys as plain
 //! notes without a sidecar. The tempo map, the meter map, the section markers, the key and the
 //! chord symbols travel as they do for a MIDI import (`MidiSong`), so the same code puts them in
-//! the song. Every track plays the instrument [`instrument_for`] names.
+//! the song. Every fretted track plays Plucked Strings ([`instrument_for`]) on the factory patch
+//! that suits its instrument ([`patch_for`]); a percussion track keeps the import's plain
+//! instrument.
 //!
 //! **Export** ([`score_from_song`]) goes the other way for a clip, a track or the whole song: the
 //! notes of the played note lanes (loops and overlaps resolved, as the engine plays them), each
@@ -37,11 +39,45 @@ pub const MAX_TAB_BYTES: usize = gp::limits::MAX_FILE_BYTES;
 /// The instrument a track made by a tab import plays, for the tab instrument `instrument_id`
 /// (`guitar6`, `bass4`, `banjo5`, ...; empty for a custom tuning).
 ///
-/// One place decides it. Today every tab track plays what a MIDI import plays.
-// phase D: Plucked Strings. Map the instrument id to the `atomik.plucked` device here (and make
-// `MidiImport` take an instrument per track so a bass and a guitar get different patches).
+/// One place decides it: every fretted instrument plays the Plucked Strings device, whatever
+/// its id (a custom tuning included); the patch is [`patch_for`]'s business.
 pub fn instrument_for(_instrument_id: &str) -> &'static str {
-    crate::app_core::IMPORT_INSTRUMENT
+    PLUCKED_INSTRUMENT
+}
+
+/// The device type of Plucked Strings.
+pub const PLUCKED_INSTRUMENT: &str = "atomik.plucked";
+
+/// The name of the factory patch (category Plucked) a track of the tab instrument
+/// `instrument_id` loads; an id the catalogue does not know gets the default (Steel Acoustic).
+pub fn patch_for(instrument_id: &str) -> &'static str {
+    atomik_devices::plucked::factory_patch_for(instrument_id)
+}
+
+/// What one imported track plays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TabSound {
+    /// The device type of the track.
+    pub instrument: &'static str,
+    /// The factory patch it loads, or `None` for a percussion track (a new device as a MIDI
+    /// import makes it).
+    pub patch: Option<&'static str>,
+}
+
+/// The sound of a track: Plucked Strings with the patch of its instrument, or the plain import
+/// instrument for percussion.
+pub fn sound_of(track: &TabTrack) -> TabSound {
+    if track.is_percussion {
+        TabSound {
+            instrument: crate::app_core::IMPORT_INSTRUMENT,
+            patch: None,
+        }
+    } else {
+        TabSound {
+            instrument: instrument_for(&track.instrument_id),
+            patch: Some(patch_for(&track.instrument_id)),
+        }
+    }
 }
 
 pub use atomik_tab::instrument::instrument_for_name;
@@ -124,8 +160,10 @@ pub fn read_tab(bytes: &[u8]) -> Result<(TabScore, Vec<String>), String> {
 pub struct TabSong {
     /// The tracks, tempo map, meter map, markers, chords and key, as a MIDI import has them.
     pub song: MidiSong,
-    /// The instrument of the first track (what [`instrument_for`] decides for the import).
+    /// The instrument of the first fretted track (what [`instrument_for`] decides for the import).
     pub instrument: &'static str,
+    /// What each track plays, in track order ([`sound_of`]).
+    pub sounds: Vec<TabSound>,
     /// What the conversion changed or left out.
     pub warnings: Vec<String>,
 }
@@ -193,6 +231,7 @@ pub fn tab_song(score: &TabScore) -> TabSong {
             key,
         },
         instrument,
+        sounds: score.tracks.iter().map(sound_of).collect(),
         warnings,
     }
 }

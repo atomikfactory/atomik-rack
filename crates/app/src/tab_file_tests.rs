@@ -69,11 +69,15 @@ pub(crate) fn fixture_score() -> TabScore {
 
 #[test]
 fn the_instrument_is_one_decision_and_names_pick_catalogue_instruments() {
-    assert_eq!(
-        instrument_for("guitar6"),
-        crate::app_core::IMPORT_INSTRUMENT
-    );
+    assert_eq!(instrument_for("guitar6"), "atomik.plucked");
     assert_eq!(instrument_for(""), instrument_for("banjo5"));
+    assert_eq!(patch_for("banjo5"), "Banjo");
+    assert_eq!(patch_for("bass4"), "Electric Bass Finger");
+    assert_eq!(
+        patch_for(""),
+        "Steel Acoustic",
+        "a custom tuning gets the default"
+    );
     for (name, id) in [
         ("Lead Guitar", "guitar6"),
         ("Fingered BASS", "bass4"),
@@ -121,7 +125,25 @@ fn an_import_makes_a_track_per_tab_track_with_the_sidecar() {
     assert_eq!(song.song.markers.len(), 2);
     assert_eq!(song.song.chords.len(), 2);
     assert!(song.song.key.is_some());
-    assert_eq!(song.instrument, crate::app_core::IMPORT_INSTRUMENT);
+    assert_eq!(song.instrument, "atomik.plucked");
+    // The sounds follow the tracks: Plucked Strings with the instrument's patch, the drums plain.
+    assert_eq!(
+        song.sounds,
+        [
+            TabSound {
+                instrument: "atomik.plucked",
+                patch: Some("Steel Acoustic")
+            },
+            TabSound {
+                instrument: "atomik.plucked",
+                patch: Some("Electric Bass Finger")
+            },
+            TabSound {
+                instrument: crate::app_core::IMPORT_INSTRUMENT,
+                patch: None
+            },
+        ]
+    );
 }
 
 #[test]

@@ -28,9 +28,11 @@
 use super::midi_ops::{ImportMode, Place, plural};
 use super::*;
 use crate::tab_file::{self, TabSource, read_tab, score_from_song, tab_song};
+use atomik_model::{DeviceSnapshot, TrackSound};
 use atomik_tab::ascii::{AsciiWriteOptions, write_ascii};
 use atomik_tab::pdf::{PageSize, SheetDiagrams, SheetPdfOptions, TabPdfOptions};
 use atomik_tab::sheet::{ChordSheet, parse_sheet};
+use std::collections::BTreeMap;
 
 /// The biggest chord sheet text read.
 const MAX_SHEET_FILE_BYTES: u64 = 4 * 1024 * 1024;
@@ -123,7 +125,7 @@ impl<S: EngineSink> AppCore<S> {
         self.import_tab(path, false);
     }
 
-    fn apply_tab(
+    pub(in crate::app_core) fn apply_tab(
         &mut self,
         score: &atomik_tab::score::TabScore,
         mut warnings: Vec<String>,
@@ -140,10 +142,68 @@ impl<S: EngineSink> AppCore<S> {
         } else {
             ImportMode::Tracks
         };
-        let message =
-            self.apply_midi_with(tab.instrument, tab.song, mode, Place::default(), name)?;
+        let sounds = self.track_sounds(&tab.sounds);
+        let message = self.apply_midi_with(
+            tab.instrument,
+            sounds,
+            tab.song,
+            mode,
+            Place::default(),
+            name,
+        )?;
         self.report(with_warnings(message, &warnings));
         Ok(())
+    }
+
+    /// The model's per-track sounds for what the import plays: the device type and, when the
+    /// track names a factory patch, the patch read from the factory folder. A factory folder
+    /// that is not there (or a patch that does not load) leaves the device as a new one of its
+    /// type, still Plucked Strings; the cause goes to the log.
+    fn track_sounds(&self, sounds: &[tab_file::TabSound]) -> Vec<TrackSound> {
+        let mut loaded: BTreeMap<&'static str, Option<DeviceSnapshot>> = BTreeMap::new();
+        sounds
+            .iter()
+            .map(|s| {
+                let patch = s.patch.and_then(|name| {
+                    loaded
+                        .entry(name)
+                        .or_insert_with(|| self.factory_patch(name, s.instrument))
+                        .clone()
+                });
+                TrackSound {
+                    instrument: s.instrument.to_owned(),
+                    patch,
+                }
+            })
+            .collect()
+    }
+
+    /// The factory patch `name` as a one-device snapshot of type `instrument`, or `None` (logged).
+    fn factory_patch(&self, name: &str, instrument: &str) -> Option<DeviceSnapshot> {
+        let root = self.factory_root()?;
+        let path = root.join("Patches").join(format!("{name}.atomikpatch"));
+        let load = || -> Result<DeviceSnapshot, String> {
+            let text = atomik_model::read_document_text(&path).map_err(|e| e.to_string())?;
+            let mut snapshot =
+                atomik_model::load_device_item(&text, &self.registry).map_err(|e| e.to_string())?;
+            let single = snapshot.single_device().map(|d| d.type_id.clone());
+            if single.as_deref() != Some(instrument) {
+                return Err(format!("it is not a patch for {instrument}"));
+            }
+            if let Some(device) = snapshot.devices.first_mut()
+                && device.patch_name.is_empty()
+            {
+                device.patch_name = name.to_owned();
+            }
+            Ok(snapshot)
+        };
+        match load() {
+            Ok(snapshot) => Some(snapshot),
+            Err(e) => {
+                log::warn!("factory patch {}: {e}", path.display());
+                None
+            }
+        }
     }
 
     /// Reads the chord sheet at `path` (chords over lyrics or bracket form, detected) and adds it
@@ -395,3 +455,7 @@ fn read_tab_file(path: &Path) -> Result<(atomik_tab::score::TabScore, Vec<String
 #[cfg(test)]
 #[path = "app_core_tab_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "app_core_tab_sound_tests.rs"]
+mod sound_tests;

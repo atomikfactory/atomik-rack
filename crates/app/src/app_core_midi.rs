@@ -34,7 +34,9 @@
 use super::*;
 use crate::midi_file::{self, MidiResolution, MidiSong, MidiTrack};
 use atomik_model::groove::{MAX_GROOVE_NAME, builtin_groove, extract_groove};
-use atomik_model::{ClipContent, ImportedTrack, MidiImport, StepResolution, WorkflowCommand};
+use atomik_model::{
+    ClipContent, ImportedTrack, MidiImport, StepResolution, TrackSound, WorkflowCommand,
+};
 
 /// The instrument a track made by a MIDI import plays.
 pub const IMPORT_INSTRUMENT: &str = "atomik.poly-synth";
@@ -443,7 +445,8 @@ impl<S: EngineSink> AppCore<S> {
         place: Place,
         name: &str,
     ) -> Result<(), String> {
-        let message = self.apply_midi_with(IMPORT_INSTRUMENT, midi, mode, place, name)?;
+        let message =
+            self.apply_midi_with(IMPORT_INSTRUMENT, Vec::new(), midi, mode, place, name)?;
         self.report(message);
         Ok(())
     }
@@ -453,6 +456,7 @@ impl<S: EngineSink> AppCore<S> {
     pub(super) fn apply_midi_with(
         &mut self,
         instrument: &str,
+        sounds: Vec<TrackSound>,
         midi: MidiSong,
         mode: ImportMode,
         place: Place,
@@ -531,6 +535,7 @@ impl<S: EngineSink> AppCore<S> {
         };
         let import = MidiImport {
             instrument: instrument.to_owned(),
+            sounds,
             tracks,
             tempo: midi.tempo.filter(|_| as_song),
             meter: midi.meter.filter(|_| as_song),

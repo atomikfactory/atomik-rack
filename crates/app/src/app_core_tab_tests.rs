@@ -397,3 +397,91 @@ fn a_chord_sheet_exports_as_pdf_from_the_stored_sheet_or_the_pane() {
     let (shown, _) = c.sheet_pdf_job(None, true).unwrap();
     assert_eq!(shown.chords_used()[0].name(), "A");
 }
+
+// ------------------------------------------------------------------ Plucked Strings on import
+
+/// A core that has the factory folder of this checkout.
+fn core_with_factory() -> AppCore<RecordingSink> {
+    let mut c = core();
+    c.set_factory_root(Some(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../factory"),
+    ));
+    c
+}
+
+/// One track per instrument of the catalogue, a note each, and a drum track.
+fn every_instrument_score() -> atomik_tab::score::TabScore {
+    let mut score = atomik_tab::score::TabScore::new();
+    for i in atomik_tab::instrument::catalogue() {
+        let mut t =
+            atomik_tab::score::TabTrack::new(i.name, i.id, i.default_tuning().tuning.clone());
+        t.notes = vec![atomik_tab::score::TabNote::new(0, PPQ, 0, 3)];
+        score.tracks.push(t);
+    }
+    let mut d =
+        atomik_tab::score::TabTrack::new("Drums", "", atomik_tab::Tuning::from_opens(&[0], 0));
+    d.is_percussion = true;
+    d.notes = vec![atomik_tab::score::TabNote::new(0, PPQ / 4, 0, 36)];
+    score.tracks.push(d);
+    score
+}
+
+fn device_of_track(c: &AppCore<RecordingSink>, index: usize) -> (String, String) {
+    let key = &c.doc().song.tracks[index].device;
+    let d = c.doc().resolve(key).unwrap();
+    (d.type_id.clone(), d.patch_name.clone())
+}
+
+#[test]
+fn every_instrument_id_imports_on_plucked_strings_with_its_factory_patch() {
+    let mut c = core_with_factory();
+    let score = every_instrument_score();
+    let n = score.tracks.len() - 1;
+    c.apply_tab(&score, Vec::new(), false, "all.gp5").unwrap();
+    assert_eq!(c.doc().song.tracks.len(), n + 1);
+    let mut seen = 0;
+    for (i, inst) in atomik_tab::instrument::catalogue().iter().enumerate() {
+        let (ty, patch) = device_of_track(&c, i);
+        assert_eq!(ty, "atomik.plucked", "{}", inst.id);
+        assert_eq!(
+            patch,
+            atomik_devices::plucked::factory_patch_for(inst.id),
+            "{}",
+            inst.id
+        );
+        seen += 1;
+    }
+    assert_eq!(seen, n);
+    // A patch loaded changes the sound: the banjo is not a new device's params.
+    let banjo = atomik_tab::instrument::catalogue()
+        .iter()
+        .position(|i| i.id == "banjo5")
+        .unwrap();
+    let key = c.doc().song.tracks[banjo].device.clone();
+    let steel = c.doc().song.tracks[0].device.clone();
+    let body = |c: &AppCore<RecordingSink>, k: &DeviceKey| {
+        c.doc().resolve(k).unwrap().params.get("body").copied()
+    };
+    assert_ne!(body(&c, &key), body(&c, &steel));
+    // The percussion track keeps the import instrument, with no patch.
+    let (ty, patch) = device_of_track(&c, n);
+    assert_eq!(ty, IMPORT_INSTRUMENT);
+    assert_eq!(patch, "");
+    // One undo takes every track and every patch back.
+    assert!(c.undo());
+    assert!(c.doc().song.tracks.is_empty());
+    assert!(c.doc().devices.is_empty());
+}
+
+#[test]
+fn without_a_factory_folder_the_tracks_are_still_plucked_strings() {
+    let mut c = core();
+    c.apply_tab(&fixture_score(), Vec::new(), false, "x.gp5")
+        .unwrap();
+    assert_eq!(
+        device_of_track(&c, 0),
+        ("atomik.plucked".to_owned(), String::new())
+    );
+    assert_eq!(device_of_track(&c, 1).0, "atomik.plucked");
+    assert_eq!(device_of_track(&c, 2).0, IMPORT_INSTRUMENT);
+}
