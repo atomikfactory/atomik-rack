@@ -55,6 +55,10 @@ may break APIs and the patch and project formats.
   loop or repeat drag, a fade or gain grip, an automation point or bend, a razor cut, a tempo or meter point) now
   cancels the drag when it takes away what the drag holds. The drag used to go on addressing a clip that was gone,
   and the model refused the edit. A rubber band only forgets the clips that are gone.
+- The Chord Wheel never starts a key that is still sounding. A key that thru passed on twice, or one that the chord
+  also plays (the bass note, say), is closed first and then started again; before, the second start landed on the
+  sounding key. Switching the bypass on also closes the keys that thru had passed on, which used to hang until the
+  key was pressed again.
 
 ## [0.5.0-rc.1] - 2026-11-18
 
