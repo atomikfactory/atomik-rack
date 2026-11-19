@@ -8,6 +8,8 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+## [0.5.0-rc.1] - 2026-11-18
+
 ### Added
 - **A guitar tab user guide.** [docs/TAB.md](docs/TAB.md) walks through the instruments and tunings, what the Guitar
   Pro, MusicXML, ASCII tab and chord sheet readers keep and drop, the three exports and the Latin-1 limit of PDFs, the
