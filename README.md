@@ -4,28 +4,69 @@
   <img src="assets/icon/atomik-rack.png" alt="Atomik Rack logo" width="160">
 </p>
 
-[![CI](https://github.com/atomikfactory/atomik-rack/actions/workflows/ci.yml/badge.svg)](https://github.com/atomikfactory/atomik-rack/actions/workflows/ci.yml)
-[![Licence: GPL-3.0-or-later](https://img.shields.io/badge/licence-GPL--3.0--or--later-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://www.youtube.com/playlist?list=PLBRQGwLelowM">
+    <img src="https://img.youtube.com/vi/OTHeiKov4v0/hqdefault.jpg" alt="Watch the Atomik Rack video series on YouTube" width="480">
+  </a>
+  <br>
+  <a href="https://www.youtube.com/playlist?list=PLBRQGwLelowM"><b>▶ Watch the video series</b></a>
+</p>
 
-Atomik Rack is a free, open-source, rack-based digital audio workstation written in Rust. You build sounds by putting virtual devices in a rack and patching them together with **audio**, **CV** and **note** cables, then sequencing, recording and mixing the result with a console, a master section and an arrangement.
+<p align="center">
+  <a href="https://github.com/atomikfactory/atomik-rack/actions/workflows/ci.yml"><img src="https://github.com/atomikfactory/atomik-rack/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/atomikfactory/atomik-rack/releases"><img src="https://img.shields.io/github/v/release/atomikfactory/atomik-rack?include_prereleases&label=release" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-GPL--3.0--or--later-blue.svg" alt="Licence: GPL-3.0-or-later"></a>
+</p>
 
-The project is original work, released under the GPL-3.0-or-later. It is pre-1.0: file formats, APIs and behaviour will change (see [CHANGELOG.md](CHANGELOG.md)).
+**A free, open-source, rack-based digital audio workstation written in Rust.** Put virtual
+devices in a rack, patch them together with **audio**, **CV** and **note** cables, then sequence,
+record, mix and master the result with an arrangement, a console and a master section, on
+Windows, Linux and macOS.
 
-☕ Buy me a coffe: https://buymeacoffee.com/atomik.factory
+<p align="center">
+  <b><a href="https://atomikcircus.com/atomik-rack/download/">Download</a></b> ·
+  <a href="https://atomikcircus.com/atomik-rack/">Website</a> ·
+  <a href="https://atomikcircus.com/atomik-rack/tutorials/">Step-by-step tutorials</a> ·
+  <a href="https://www.youtube.com/playlist?list=PLBRQGwLelowM">Videos</a> ·
+  <a href="https://buymeacoffee.com/atomik.factory">☕ Buy me a coffee</a>
+</p>
 
-🌐 **Website, downloads and tutorials:** [atomikcircus.com/atomik-rack](https://atomikcircus.com/atomik-rack/) ·
-[Download](https://atomikcircus.com/atomik-rack/download/) ·
-[Step-by-step video tutorials](https://atomikcircus.com/atomik-rack/tutorials/)
+The project is original work, released under the GPL-3.0-or-later. It is pre-1.0: file formats,
+APIs and behaviour will change (see [CHANGELOG.md](CHANGELOG.md)).
 
-## Status
+## See it
 
-- **Windows (x86-64) and Ubuntu (x86-64, 26.04) are the main platforms.** The application is developed and hand-tested on both, including ASIO audio on Windows. On Linux, distributions other than Ubuntu and other audio setups have not been checked yet, so expect rough edges and please report them.
-- **macOS is tested only on GitHub Actions.** It is built, linted and runs the test suite in CI, but there is no Mac hardware to run the application on by hand. Reports from Mac users are especially welcome.
-- Nothing is stable yet. See [ROADMAP.md](ROADMAP.md) for what is planned and what is missing.
+![The arrangement under the rack, with the factory song Basalt Beat](assets/screenshots/overview.png)
 
-There are no screenshots in the repository yet. The user interface is drawn procedurally (vector graphics, system fonts); build the application and run one of the example projects below to see it.
+| The rack | The back of the rack |
+|---|---|
+| ![A drum machine, a channel strip, a container and Mono Bass in the rack](assets/screenshots/rack.png) | ![Audio and send cables on the back of the rack](assets/screenshots/cables.png) |
 
-## Features
+![The console: channel strips, buses, VCA groups, FX returns and the master bus](assets/screenshots/mixer.png)
+
+The screenshots show the factory songs that ship with the program. The interface is drawn
+procedurally (vector graphics, system fonts).
+
+## Highlights
+
+- **Make sounds.** Poly, FM, wavetable, grain and plucked-string synths, a drawbar organ, a
+  semi-modular synth, a multi-zone sampler, a 16-pad drum machine and a loop slicer.
+- **Patch anything.** Front and back views with audio, CV and note cables, containers with macros
+  and note splits, and players (step sequencer, arpeggiator, Chord Wheel, Key & Chord, drum
+  generator) that stack on any instrument. Edit freely while the audio plays.
+- **Arrange and record.** Note, audio and automation clips, a piano roll, audio recording, comping,
+  time-stretch, a clip launcher, chord and key lanes, video sync, and MIDI and webcam control.
+- **Mix and master.** A console with full channel strips, sends, buses, VCAs and snapshots, a
+  master chain with EQ, dynamics, saturation, loudness and tonal-balance meters, and exports with
+  loudness targets for streaming, podcasts, video and stems.
+- **Learn and practise.** Guitar tab import, editing and printing, a fretboard, listen-and-grade
+  and a chord trainer, a guided tour and a Help Mode that explains every control.
+- **Plugins, safely.** CLAP and VST3 instruments and effects, each in its own process, so a plugin
+  crash cannot take the program down.
+- **Private by design.** Nothing about you or your computer is ever sent (see [Privacy](#privacy)).
+
+<details>
+<summary><b>The full feature list</b></summary>
 
 - **The rack.** A device rack with front and back views, audio, CV and note cables, hot editing while audio plays (adding, removing and cabling devices never resets the others), undo and redo, a cable graph that is checked when you connect (types must match, no cycles).
 - **Console.** A channel strip per instrument (gain, filters, dynamics, EQ, insert chain, 8 sends, pan, fader), solo and mute, meters and automatic delay compensation across the whole graph.
@@ -49,19 +90,11 @@ There are no screenshots in the repository yet. The user interface is drawn proc
 - **Offline bounce.** `atomik-render` renders patches and projects to WAV, bit-identical for any block size and worker count.
 - **Export.** The song, the loop or the selected range goes to WAV, AIFF or FLAC with dither and a loudness report, or to MP3, AAC (`.m4a`) and Opus through the FFmpeg you install (on your `PATH`, or the folder set in Settings > Video; without it those three are greyed and nothing else changes). Compressed files carry the song's title and author as tags; leave about 1 dB of true-peak headroom, since lossy encoding can raise the peaks. Stems are WAV, AIFF or FLAC. The file dialog proposes the extension of the format you used last, and an export whose format gives the name of a file that exists asks before replacing it. **Export presets** do it for a purpose: the Preset row of the export panel and File > Export for offer Streaming (a 24-bit WAV and an MP3 at 320 kbps, both at -14 LUFS with the true peaks under -1 dBTP), Podcast (a mono MP3 at 128 kbps, -16 LUFS), Video (AAC at 256 kbps and 48 kHz, -14 LUFS; with a film in the song, the film with that mix), Stems for mixing (a 24-bit WAV per strip, no loudness change, no dither) and Club (a 24-bit WAV with -9 LUFS as a guide only: nothing is changed, and the report warns when the peaks clip). Choosing one fills the panel's fields, which you can still change (the name then shows "(changed)"); Save Preset keeps the panel's fields under a name of your own, in `export_presets.json` next to `settings.json`. A loudness target turns the whole mix up or down to the target, and when that would push the peaks past the ceiling a true-peak limiter holds them there; the toast says what the level was before, what was done and any limiting. The presets that write MP3, AAC or Opus say "Needs FFmpeg" and are greyed without it.
 - **Projects.** A project with audio is a bundle folder (`name/name.atomik` plus `Audio/`, files named by content hash); a project without audio is a single `.atomik` file. Saves are atomic.
+- **More instruments.** Plucked Strings (a physical-model string with guitar, bass, ukulele, banjo, mandolin and more, honouring palm mutes, harmonics, dead notes and bends), a drawbar organ that plays straight into a rotary speaker, Mono Bass, Dual Layer and a Semi-Modular synth built from the CV devices.
+- **Mixing and mastering tools.** A 7-band EQ with mid/side and an analyser, a Dynamic EQ, Saturation, a Clipper, a Stereo Tool, a Gain tool, a Loudness Meter with platform targets, a Tonal Balance meter that learns targets from reference tracks, Headphone Correction from your own measurement files, a spectrum with an L/R overlay, a space reverb, a convolution reverb and a vocoder; mixer snapshots, VCA groups and a masking map.
+- **Guitar tab.** Import Guitar Pro (`.gp3` to `.gp5`, `.gpx`, `.gp`), MusicXML, ASCII tab and chord sheets; edit in a Tab Editor for 24 fretted instruments and tunings; print to PDF; practise with loop, slow-down, count-in, a fretboard view, listen-and-grade and a Chord Trainer (see [docs/TAB.md](docs/TAB.md)).
 
-## Privacy
-
-Atomik Rack sends nothing about you or your computer anywhere. The only network requests the program can make are an
-optional check for a newer version and, if you use the webcam control, the one-time download of its two hand models,
-which starts only when you press Download in a dialog that says what, from where and how big (one fixed HTTPS address
-per file, nothing about you or your computer is sent, each file is checked against a checksum). The camera picture is
-only used while the camera is on, only in memory, and never saved, logged or sent. The check for a newer version: the first time it starts it asks "Check for new versions once a day?", and until you
-answer Yes nothing is sent. A Yes makes one request a day at the start (and Help > Check for Updates makes one when you
-choose it): it asks `api.github.com` for the list of releases of this project and sends the address and the name
-`atomik-rack` with its version as the User-Agent, with no identifier, no cookie and nothing else. A newer version is only
-announced, with a link to its release page; nothing is downloaded or installed. Settings > Video & updates changes the
-answer at any time.
+</details>
 
 ## Install
 
@@ -81,176 +114,75 @@ Builds are code-signed (Windows) and notarised (macOS) only when the project's s
 
 ## First steps
 
-The very first time Atomik Rack starts, a short setup opens before anything else and gets sound working: pick the
-audio device and the buffer size, press Test to hear a soft chord and watch the output meter move (the latency is
-shown in milliseconds), choose an audio input if you record, and tick your MIDI keyboard (a lamp lights when you play
-a key, and each key plays a soft tone). **Next**, **Back**, **Skip** and **Done** move through it, and it does not
-open by itself again. Options > Audio and MIDI Setup... opens it at any time; the choices are the ones of Audio
-Settings and are saved in the same file.
+The first time Atomik Rack starts, a short setup gets sound working: pick the audio device and the
+buffer size, press **Test** to hear a soft chord, choose an input if you record and tick your MIDI
+keyboard. Options > Audio and MIDI Setup... opens it again at any time.
 
-The start screen opens when Atomik Rack starts without a song, and File > Start Screen shows it at any time. It
-offers a new song, the templates, your recent songs (pin one to keep it at the top) and a strip of cards: the
-example songs that ship with the program (each opens as a new unsaved song, so the shipped copy is never changed)
-and **Make your first song**. That card, or Help > Guided Tour, opens a new song and shows a small panel with seven
-steps: add an instrument, play or draw some notes, loop them, add a drum pattern, mix (move a level and add an
-effect), save, and export. Each step says what to do and moves on by itself when the song shows it is done; the
-control it talks about is outlined where there is one. Back, Skip, Move (to the other side of the window) and Close
-are always there, the panel never takes the keyboard and you can use the song as usual while it is open. A check box
-at the foot of the start screen turns the card off. To find any command by name, press Ctrl+Shift+K (Cmd+Shift+K on
-macOS) or choose Help > Command Palette, type a few letters, and press Enter. Edit > Undo History lists every edit
-made to the song: click a row to go back (or forward) to the song as it was after that edit, or press Up and Down in
-the list. To learn what a control does, press Shift+F1 (F1 opens the list of keyboard shortcuts) or choose Help >
-Help Mode: a Help panel opens above the status line and explains the control under the pointer, in more words
-than its tooltip, with its shortcut and a link into this documentation. The controls keep working while it is on.
+The **start screen** offers a new song, templates, your recent songs and the example songs that ship
+with the program. **Make your first song** (or Help > Guided Tour) walks you through seven steps:
+add an instrument, play or draw notes, loop them, add drums, mix, save and export.
 
-## Building
+Three keys to remember:
 
-You need a Rust toolchain. [rust-toolchain.toml](rust-toolchain.toml) pins the version and `rustup` installs it automatically.
+- **Ctrl+Shift+K** (Cmd+Shift+K on macOS) opens the Command Palette: type a few letters of any
+  command and press Enter.
+- **Shift+F1** turns on Help Mode: point at any control to read what it does. **F1** lists the
+  keyboard shortcuts ([docs/KEYBOARD.md](docs/KEYBOARD.md)).
+- **Edit > Undo History** lists every edit: click a row to go back to the song as it was then.
 
-### Windows
+The [step-by-step tutorials](https://atomikcircus.com/atomik-rack/tutorials/) and the [video series](https://www.youtube.com/playlist?list=PLBRQGwLelowM) show the rest.
 
-Install [rustup](https://rustup.rs/) with the MSVC toolchain (Visual Studio Build Tools with the C++ workload), then:
+## Status
 
-```sh
-cargo build --release --workspace
-```
+- **Windows (x86-64) and Ubuntu (x86-64, 26.04) are the main platforms.** The application is
+  developed and hand-tested on both, including ASIO audio on Windows. Other Linux distributions and
+  audio setups have not been checked yet: please report rough edges.
+- **macOS is tested only on GitHub Actions.** It is built, linted and tested in CI, but has not been
+  run on a Mac by hand yet. Reports from Mac users are especially welcome.
+- Nothing is stable yet. See [ROADMAP.md](ROADMAP.md) for what is planned and what is missing.
 
-### macOS
+## Privacy
 
-Install [rustup](https://rustup.rs/) and the Xcode command-line tools (`xcode-select --install`), then:
+Atomik Rack sends nothing about you or your computer anywhere. The program makes only two kinds of
+network request, and both are optional:
 
-```sh
-cargo build --release --workspace
-```
+- **The update check**, off until you answer Yes to "Check for new versions once a day?". It asks
+  `api.github.com` for this project's releases, with no identifier and no cookie, and only
+  announces a newer version with a link: nothing is downloaded or installed.
+- **The webcam hand models**, a one-time download that starts only when you press Download in a
+  dialog that says what, from where and how big; each file is checked against a checksum.
 
-### Linux
+<details>
+<summary>The details</summary>
 
-Install the build dependencies (Debian/Ubuntu names shown), then build:
+The update check sends the address and the name `atomik-rack` with its version as the User-Agent,
+and nothing else. A Yes makes one request a day at the start, and Help > Check for Updates makes
+one when you choose it; Settings > Video & updates changes the answer at any time. The webcam
+downloads use one fixed HTTPS address per file and send nothing about you or your computer. The
+camera picture is only used while the camera is on, only in memory, and never saved, logged or
+sent.
 
-```sh
-sudo apt-get install libasound2-dev libfontconfig1-dev pkg-config
-cargo build --release --workspace
-```
+</details>
 
-The window uses the GPU through wgpu, so a working Vulkan (or OpenGL) driver is needed to run the application.
+## Building from source and developing
 
-### Optional: ASIO on Windows
-
-ASIO support is an opt-in feature (`asio`). **The Steinberg ASIO SDK is not included in this repository and is never committed.** If you want ASIO, obtain the SDK from Steinberg under its licence, unpack it somewhere outside the repository, install LLVM/Clang (needed by `bindgen`), and build with the SDK location in the environment:
-
-```sh
-# PowerShell
-$env:CPAL_ASIO_DIR = "<path to the ASIO SDK>"
-$env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"   # if it is not found automatically
-cargo build --release -p atomik-app --features asio
-```
-
-Without the feature, WASAPI is used on Windows. A binary built with the `asio` feature contains code derived from the SDK, so check the licence terms before you redistribute it; builds of this repository do not enable it by default.
-
-## Running
-
-```sh
-# a new project (Audio I/O on top, the locked Master Section under it)
-cargo run --release -p atomik-app
-
-# open a project
-cargo run --release -p atomik-app -- examples/projects/demo.atomik
-```
-
-Example projects (all in [examples/projects](examples/projects), described in [examples/README.md](examples/README.md)):
-
-```sh
-cargo run --release -p atomik-app -- examples/projects/audio-demo.atomik
-cargo run --release -p atomik-app -- examples/projects/sampler-demo/sampler-demo.atomik
-cargo run --release -p atomik-app -- examples/projects/drum-demo/drum-demo.atomik
-cargo run --release -p atomik-app -- examples/projects/slicer-demo/slicer-demo.atomik
-cargo run --release -p atomik-app -- examples/projects/fx-demo/fx-demo.atomik
-cargo run --release -p atomik-app -- examples/projects/player-demo/player-demo.atomik
-cargo run --release -p atomik-app -- examples/projects/container-demo/container-demo.atomik
-cargo run --release -p atomik-app -- examples/projects/character-demo/character-demo.atomik
-cargo run --release -p atomik-app -- examples/projects/master-demo/master-demo.atomik
-```
-
-In the app, Space plays and Ctrl+Enter records. `Ctrl+I` creates an instrument, `Ctrl+E` an effect and `Ctrl+T` an audio track (Cmd instead of Ctrl on macOS). F5 shows the console, F6 the rack and F3 the device browser. [docs/KEYBOARD.md](docs/KEYBOARD.md) lists every key, and Settings > Keyboard remaps them.
-
-Useful options: `--host`, `--audio-device` and `--buffer` choose the audio device, `--workers N` sets the number of render threads, and `--stress-*` options open generated stress projects for checking real-time load. Run `atomik --help` for the full list.
-
-### Plugins
-
-Plugin hosting is off until you enable it in Settings and add your plugin folders. Atomik Rack hosts CLAP and VST3 plugins; the in-repo test plugins under `crates/testplugins` and the `plugin-demo` projects let you try the feature without installing anything (see [examples/README.md](examples/README.md)). Each plugin instance runs in its own `atomik-plugin-host` process (Settings > Plugins, on by default), so a plugin that crashes or hangs cannot take the application down: its device shows CRASHED and RELOAD starts it again from its last saved state. Its editor opens in a window of that process. The PROCESSES button in the same place lets several plugins share a process (one per plugin file, or one for all of them, up to 16 in each) for fewer processes at the price of isolation: a crash then stops every plugin in that process, and each says so; the plugin manager's PROCESS column does it for single plugins. A plugin that crashed or failed to load three times in a row is quarantined (the manager says why); a project that uses it opens without it, its devices say QUARANTINED, and LOAD ANYWAY loads one. Scanning is out of process too. With the option off, plugins run inside the application and a plugin crash takes it down; recovery snapshots limit the damage. `atomik-render` uses the sandbox as well (`--plugin-sandbox on|off`).
-
-## Rendering a patch or a project
-
-```sh
-cargo run --release -p atomik-render -- examples/patches/slice-demo.json -o out.wav --stats
-cargo run --release -p atomik-render -- examples/projects/audio-demo.atomik -o audio-demo.wav
-```
-
-```text
-atomik-render <PATCH|PROJECT> -o <OUT.wav> [--format f32|pcm24] [--block N] [--workers N] [--loop-count N] [--stats] [--verbose]
-```
-
-- `--format pcm24` writes 24-bit PCM instead of 32-bit float.
-- `--block N` sets the host block size (default 512) and `--workers N` the worker threads. Neither changes the output.
-- A project bounces its song (end plus 2 beats, loop off unless `--loop-count N`).
-- A project that uses plugins needs `--allow-plugins`; see `atomik-render --help`.
-- On any error the renderer prints `error: <JSON path or file>: <message>` and exits with code 2.
-
-A patch is a versioned JSON file listing devices, parameters, cables, tempo, notes and length; see [examples/patches/README.md](examples/patches/README.md). The devices and their parameter keys are in [docs/DEVICES.md](docs/DEVICES.md). `atomik-play` is a small live player for patches.
-
-## Hard invariants
-
-Four rules are never traded away. Each one is enforced by tests or process, not only by convention.
-
-1. **HI-1: real-time safety.** The audio render path never allocates or frees memory, takes a lock or blocks. This includes audio playback, disk streaming and the record tap. Engine and device tests run render calls under an allocation guard that fails the test on any heap operation.
-2. **HI-2: determinism.** The same project and the same input always render to bit-identical output, whatever host block size or worker count is used.
-3. **HI-3: graph validity.** The engine only ever runs a graph that is type-correct (audio to audio, CV to CV, notes to notes) and has no cycles. Invalid connections are rejected when you make them.
-4. **HI-4: originality.** Contributions are original work or compatibly licensed; no code, data or assets are copied from proprietary products. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Crate map
-
-```
-                          atomik-app  (bin `atomik`)
-                  ┌──────┬────┴─────┬───────────┬─────────────┐
-            atomik-ui  atomik-render  atomik-audio-io  atomik-midi-io      atomik-play (bin)
-                  │          │               │               │
-          atomik-model       │         atomik-devices ── atomik-engine
-                  │          │               │                │
-          atomik-audio-file ◄┘      atomik-dsp ── atomik-device-sdk ── atomik-core
-      file browser data: atomik-library (used by audio-file, ui and app)
-      video: atomik-video (FFmpeg discovery, probe and proxy; used by app)
-      update check: atomik-update (the one optional request for the newest release; used by app)
-      plugin hosting: atomik-plugin-host, -clap, -vst3, -scan (scanner binary)
-      plugin sandbox: atomik-plugin-ipc, -sandbox, -hostd (child binary atomik-plugin-host)
-      atomik-testkit (dev-dependency only: fakes, signal analysis, no-alloc harness)
-      atomik-mcp (bin, development tool: MCP server for QA over render, model, app and ui)
-```
-
-A crate depends only on crates below it; `engine` and `devices` meet only through `device-sdk`; the engine knows neither the model nor the audio files; production crates never depend on `testkit`. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the full crate table, data flow and threading model.
+[docs/BUILDING.md](docs/BUILDING.md) covers building on Windows, macOS and Linux (and the optional
+ASIO build), running the example projects, rendering patches and projects with `atomik-render`,
+the four [hard invariants](docs/BUILDING.md#hard-invariants), the crate map and the checks CI runs.
 
 ## Documentation
 
-- [docs/README.md](docs/README.md): index of the documentation.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): crates, data flow, threads and how each hard invariant is enforced.
+- [docs/README.md](docs/README.md): the user guide and the index of the documentation.
+- [docs/BUILDING.md](docs/BUILDING.md): building, running, rendering and checking a change.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): crates, data flow, threads and how each hard
+  invariant is enforced.
 - [docs/DEVICES.md](docs/DEVICES.md): sockets and parameters of every device.
 - [docs/EXTENDING.md](docs/EXTENDING.md): how to write a new device.
-- [docs/TESTING.md](docs/TESTING.md): gates, the allocation guard, determinism tests, goldens and manual tests.
+- [docs/TESTING.md](docs/TESTING.md): gates, the allocation guard, determinism tests, goldens and
+  manual tests.
 - [docs/KEYBOARD.md](docs/KEYBOARD.md): the keyboard reference (generated).
 - [docs/TAB.md](docs/TAB.md): the guitar tab user guide (import, edit, print, practice).
 - [ROADMAP.md](ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
-
-## Checking your changes
-
-These are the gates CI runs (details in [docs/TESTING.md](docs/TESTING.md)):
-
-```sh
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo deny check                     # needs: cargo install cargo-deny
-```
-
-For a change to the sound or to what the app shows, [docs/MCP.md](docs/MCP.md) describes the QA steps (bounce and compare, drive the app headlessly, read and screenshot the UI) and the `atomik-mcp` server that does them for an MCP client.
 
 ## Contributing
 

@@ -59,7 +59,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), devices (the headphone panel draws the device's own curve snapshot), model, tab (the chord diagram and the tab editor draw its voicings and techniques) | none | Platform-independent views, widgets, display lists, theme |
-| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, tab, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
+| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, tab, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | `src/platform/cursor.rs` | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
 
@@ -2058,8 +2058,8 @@ bounce, except the mute and solo of a folder, which decide which tracks play.
   the UI) per level of folder, at most three (`track_indent`; the buttons at the right end keep
   their place and the input selector gets narrower, a one-line header moves M, S and R by at most 24
   px); the hit tests use the same `track_button_rect` and `lane_label_rect`, and the clips do not
-  move. A header outlines the selected tracks (shift-click or ctrl-click adds one; a selected folder
-  stands for its tracks), draws the folder guides of its ancestors at its left edge, takes its
+  move. A header outlines the selected tracks (shift-click selects the range from the anchor, ctrl-click toggles
+  one; a selected folder stands for its tracks), draws the folder guides of its ancestors at its left edge, takes its
   accent from the track colour (clips follow; clips have no colour of their own) and shows a note
   mark when it has a comment, with the first line as a tooltip. A folder name is typed in place (one
   line, Enter commits, Escape or a press elsewhere cancels or commits as for the marker names). A

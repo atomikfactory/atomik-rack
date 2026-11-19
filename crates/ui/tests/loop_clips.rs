@@ -590,3 +590,161 @@ fn a_looped_audio_clip_paints_its_waveform_in_every_repetition() {
     let unlooped = wave_ops_between(&mut v, &d, &reg, (mid + 1.0, r.x1));
     assert!(second > unlooped, "{second} ops looped, {unlooped} not");
 }
+
+// ------------------------------------------------------------------ repeating a selection
+
+/// A document whose audio track holds the clips `(id, start)` of one bar each, and a view of it
+/// with `select` selected.
+fn repeat_setup(
+    clips: &[(u64, i64)],
+    select: &[u64],
+    snap: Snap,
+) -> (Document, Registry, ArrangementView) {
+    let reg = registry();
+    let mut doc = audio_doc();
+    doc.song_mut().tracks[1].lanes[0].clips = clips
+        .iter()
+        .map(|(id, start)| audio_clip(*id, *start, BAR, HASH_A, 0, 0.0, (0, 0)))
+        .collect();
+    doc.song_mut().next_clip_id = 20;
+    let d = Document::new(doc);
+    let mut v = audio_arrangement(d.doc(), &reg);
+    v.set_snap(snap);
+    v.set_selected_clips(&select.iter().map(|i| ClipId(*i)).collect::<Vec<_>>());
+    (d, reg, v)
+}
+
+/// One pointer event, its commands applied to the document and the view synced.
+fn step(d: &mut Document, reg: &Registry, v: &mut ArrangementView, e: UiEvent) {
+    for a in v.handle(&e, d.doc(), reg) {
+        match a {
+            UiAction::Command(c) => {
+                d.apply(c, reg).expect("the command applies");
+            }
+            UiAction::EndMerge => d.end_merge(),
+            _ => {}
+        }
+        v.sync(d.doc(), reg);
+    }
+}
+
+/// The starts of the clips on the audio lane, in order.
+fn starts(d: &Document) -> Vec<i64> {
+    let mut s: Vec<i64> = d.doc().song.tracks[1].lanes[0]
+        .clips
+        .iter()
+        .map(|c| c.start)
+        .collect();
+    s.sort_unstable();
+    s
+}
+
+/// The handle of clip `id` and the point the handle is dragged to so that the clip's end
+/// follows to song tick `target`.
+fn handle_to(v: &ArrangementView, id: u64, target: i64) -> (Point, Point) {
+    let p = handle(v, id);
+    let end = v.clip_rect(ClipId(id)).unwrap().x1 - 0.0;
+    let dx = v.tick_to_x(target) - end;
+    (p, p + Vec2::new(dx, 0.0))
+}
+
+const HALF: i64 = BAR / 2;
+
+#[test]
+fn the_handle_repeats_two_selected_clips_keeping_the_gap() {
+    // A at bar 1 and B at bar 2.5 (a bar long each): the period is three bars.
+    let (mut d, reg, mut v) =
+        repeat_setup(&[(10, BAR), (11, 2 * BAR + HALF)], &[10, 11], Snap::Bar);
+    // B's end is at 3.5 bars; the pointer goes to just past 5.5 bars, B's second start.
+    let (p, to) = handle_to(&v, 11, 5 * BAR + HALF + 10);
+    step(&mut d, &reg, &mut v, down(p));
+    step(&mut d, &reg, &mut v, mv(to));
+    assert_eq!(
+        starts(&d),
+        [BAR, 2 * BAR + HALF, 4 * BAR, 5 * BAR + HALF],
+        "A, B, A, B"
+    );
+    step(&mut d, &reg, &mut v, up(to));
+    // The copies are whole clips with the content of their originals.
+    let clips = &d.doc().song.tracks[1].lanes[0].clips;
+    assert!(clips.iter().all(|c| c.length == BAR));
+    assert_eq!(clips.len(), 4);
+    // The last repetition is selected, so the next drag goes on with the same pattern.
+    let mut sel: Vec<i64> = clips
+        .iter()
+        .filter(|c| v.selected_clips().contains(&c.id))
+        .map(|c| c.start)
+        .collect();
+    sel.sort_unstable();
+    assert_eq!(sel, [4 * BAR, 5 * BAR + HALF]);
+    // One undo step takes every copy away.
+    assert!(d.undo().is_some());
+    assert_eq!(starts(&d), [BAR, 2 * BAR + HALF]);
+}
+
+#[test]
+fn dragging_back_takes_copies_away() {
+    let (mut d, reg, mut v) =
+        repeat_setup(&[(10, BAR), (11, 2 * BAR + HALF)], &[10, 11], Snap::Bar);
+    let (p, far) = handle_to(&v, 11, 12 * BAR);
+    step(&mut d, &reg, &mut v, down(p));
+    step(&mut d, &reg, &mut v, mv(far));
+    assert!(starts(&d).len() > 4);
+    let (_, near) = handle_to(&v, 11, 5 * BAR + HALF + 10);
+    step(&mut d, &reg, &mut v, mv(near));
+    assert_eq!(starts(&d), [BAR, 2 * BAR + HALF, 4 * BAR, 5 * BAR + HALF]);
+    let (_, none) = handle_to(&v, 11, 3 * BAR);
+    step(&mut d, &reg, &mut v, mv(none));
+    assert_eq!(
+        starts(&d),
+        [BAR, 2 * BAR + HALF],
+        "back at the start: no copies"
+    );
+    step(&mut d, &reg, &mut v, up(none));
+}
+
+#[test]
+fn a_single_selected_clip_still_loops() {
+    let (mut d, reg, mut v) = repeat_setup(&[(10, BAR), (11, 2 * BAR + HALF)], &[11], Snap::Bar);
+    let (p, to) = handle_to(&v, 11, 6 * BAR);
+    step(&mut d, &reg, &mut v, down(p));
+    step(&mut d, &reg, &mut v, mv(to));
+    step(&mut d, &reg, &mut v, up(to));
+    let clips = &d.doc().song.tracks[1].lanes[0].clips;
+    assert_eq!(clips.len(), 2, "no copies");
+    let b = clips.iter().find(|c| c.id == ClipId(11)).unwrap();
+    assert_eq!(b.loop_length, Some(BAR), "the one clip loops");
+    assert!(b.length > BAR);
+}
+
+#[test]
+fn three_evenly_spaced_clips_repeat_every_three_steps() {
+    // Starts 0, 1 and 2 bars: the period is 2 * 3 / 2 = 3 bars.
+    let (mut d, reg, mut v) = repeat_setup(
+        &[(10, 0), (11, BAR), (12, 2 * BAR)],
+        &[10, 11, 12],
+        Snap::Bar,
+    );
+    let (p, to) = handle_to(&v, 12, 5 * BAR + 10);
+    step(&mut d, &reg, &mut v, down(p));
+    step(&mut d, &reg, &mut v, mv(to));
+    step(&mut d, &reg, &mut v, up(to));
+    assert_eq!(starts(&d), [0, BAR, 2 * BAR, 3 * BAR, 4 * BAR, 5 * BAR]);
+}
+
+#[test]
+fn uneven_clips_use_the_spread_period() {
+    // Starts 0, 1 and 3 bars: 3 * 3 / 2 = 4.5 bars, snapped off the grid.
+    let (mut d, reg, mut v) = repeat_setup(
+        &[(10, 0), (11, BAR), (12, 3 * BAR)],
+        &[10, 11, 12],
+        Snap::Off,
+    );
+    let period = 4 * BAR + HALF;
+    // The pointer passes the copy of B (at 5.5 bars) but not the copy of C (7.5 bars).
+    let (p, to) = handle_to(&v, 12, period + BAR + 10);
+    step(&mut d, &reg, &mut v, down(p));
+    step(&mut d, &reg, &mut v, mv(to));
+    step(&mut d, &reg, &mut v, up(to));
+    assert_eq!(starts(&d), [0, BAR, 3 * BAR, period, period + BAR]);
+}

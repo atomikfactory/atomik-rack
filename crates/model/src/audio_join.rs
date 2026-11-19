@@ -6,8 +6,8 @@
 //!   pieces did. Warp markers are kept: the joined clip carries the markers of every piece (with
 //!   one at the join), and the join is refused when the result would not play what a piece
 //!   did. Anything else is refused with a message that names the clips and the file.
-//! * [`render_join`] puts a render of a run of clips (of any files, the app renders it) in
-//!   their place as one clip.
+//! * [`render_join`] puts a render of a run of clips (of any files, with or without gaps between
+//!   them, the app renders it) in their place as one clip; the gaps are silence.
 //! * [`move_crossfade`] drags the overlap of two audio clips along the timeline: the later clip
 //!   starts later (or earlier) and the earlier one ends later (or earlier) by the same number of
 //!   ticks, so the overlap keeps its length and the sound outside it does not change.
@@ -185,7 +185,7 @@ pub(crate) fn join_audio(
         }
         if next.start > end {
             return Err(bad(format!(
-                "clip {} does not touch the clip before it: move it against the previous one first",
+                "clip {} does not touch the clip before it: pieces join as they are only when they touch;                  clips with a gap between them join by rendering them, with silence in the gap",
                 next.id.0
             )));
         }
@@ -263,24 +263,26 @@ pub(crate) fn join_audio(
     Ok((Edit::Compound(edits), Some(first.id)))
 }
 
-/// What a join of audio clips of different files renders: the track, the span of the clips in
-/// ticks and the clips in song order.
+/// What a join of audio clips that cannot stay as they are renders: the track, the span of the
+/// clips in ticks and the clips in song order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinRender {
     /// The track's device.
     pub device: DeviceKey,
     /// The lane the clips are on.
     pub lane: usize,
-    /// `[start, end)` in ticks: from the first clip's start to the latest end.
+    /// `[start, end)` in ticks: from the first clip's start to the latest end. The gaps between
+    /// the clips are silence in the render.
     pub span: (i64, i64),
     /// The clips, by start.
     pub ids: Vec<ClipId>,
 }
 
 /// Whether joining the clips `ids` is a render: audio clips of one lane that play more than one
-/// file. `None` when it is not (one file, other kinds of clips, different lanes, unknown clips:
-/// [`WorkflowCommand::JoinClips`](crate::WorkflowCommand::JoinClips) says what is wrong).
-/// Otherwise what to render, or why the clips cannot be joined that way: a muted clip, a gap.
+/// file, or that leave a gap between them (a gap is silence, which no clip of the file can play).
+/// `None` when it is not (pieces of one file that touch, other kinds of clips, different lanes,
+/// unknown clips: [`WorkflowCommand::JoinClips`](crate::WorkflowCommand::JoinClips) says what is
+/// wrong). Otherwise what to render, or why the clips cannot be joined that way: a muted clip.
 pub fn join_render(doc: &RackDoc, ids: &[ClipId]) -> Option<Result<JoinRender, ModelError>> {
     let mut clips: Vec<Found<'_>> = Vec::new();
     for id in ids {
@@ -300,27 +302,23 @@ pub fn join_render(doc: &RackDoc, ids: &[ClipId]) -> Option<Result<JoinRender, M
     for (_, _, c) in &clips {
         files.insert(&audio_of(c).ok()?.asset);
     }
-    if files.len() < 2 {
-        return None;
-    }
     clips.sort_by_key(|(_, _, c)| (c.start, c.id));
     let (device, lane) = (clips[0].0.clone(), clips[0].1);
     let start = clips[0].2.start;
     let mut end = clips[0].2.end();
+    let mut gap = false;
     for (_, _, c) in &clips {
-        if c.muted {
-            return Some(Err(bad(format!(
-                "clip {} is muted: unmute the clips before joining them",
-                c.id.0
-            ))));
-        }
-        if c.start > end {
-            return Some(Err(bad(format!(
-                "clip {} does not touch the clip before it: move it against the previous one first",
-                c.id.0
-            ))));
-        }
+        gap |= c.start > end;
         end = end.max(c.end());
+    }
+    if files.len() < 2 && !gap {
+        return None;
+    }
+    if let Some((_, _, c)) = clips.iter().find(|(_, _, c)| c.muted) {
+        return Some(Err(bad(format!(
+            "clip {} is muted: unmute the clips before joining them",
+            c.id.0
+        ))));
     }
     Some(Ok(JoinRender {
         device,
@@ -339,7 +337,7 @@ pub(crate) fn render_join(
 ) -> Result<(Edit, Option<ClipId>), ModelError> {
     let plan = join_render(doc, ids).unwrap_or_else(|| {
         Err(bad(
-            "only audio clips of one lane that play different files join by rendering",
+            "only audio clips of one lane that play different files or leave a gap join by rendering",
         ))
     })?;
     if audio.reverse || audio.warp.active() {

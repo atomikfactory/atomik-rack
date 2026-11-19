@@ -815,3 +815,122 @@ fn a_context_submenu_opens_at_once_and_a_switch_wakes_the_loop_at_its_deadline()
     assert_eq!(s.context_menu_wake(), None);
     s.close_context_menu();
 }
+
+#[test]
+fn colouring_from_the_header_menu_reaches_every_selected_track() {
+    let mut s = shell();
+    // Select a, b and c with real presses, then colour from the menu of b.
+    let at = header(&s, "a");
+    press(&mut s, at, PointerButton::Primary, Modifiers::NONE);
+    let ctrl = Modifiers {
+        ctrl: true,
+        ..Modifiers::NONE
+    };
+    for k in ["b", "c"] {
+        let at = header(&s, k);
+        press(&mut s, at, PointerButton::Primary, ctrl);
+    }
+    let at = header(&s, "b");
+    press(&mut s, at, PointerButton::Secondary, Modifiers::NONE);
+    let sub = s.context_menu().unwrap().submenu_center("Colour").unwrap();
+    s.handle(&UiEvent::PointerMove {
+        pos: sub,
+        modifiers: Modifiers::NONE,
+    });
+    let item = s
+        .context_menu()
+        .unwrap()
+        .item_center_with("sequencer.track_color", "green")
+        .unwrap();
+    press(&mut s, item, PointerButton::Primary, Modifiers::NONE);
+    let song = &s.core().doc().song;
+    let green = Some([0x5a, 0xb8, 0x6a]);
+    for k in ["a", "b", "c"] {
+        assert_eq!(song.track_color(&key(k)), green, "{k}");
+    }
+    assert_eq!(song.track_color(&key("d")), None);
+}
+
+/// Right-clicks the header of `k` and chooses `command` with `arg` in the submenu `title`.
+fn choose_in_header_menu(
+    s: &mut Shell<NullBackend>,
+    k: &str,
+    title: &str,
+    command: &str,
+    arg: &str,
+) {
+    let at = header(s, k);
+    press(s, at, PointerButton::Secondary, Modifiers::NONE);
+    let sub = s.context_menu().unwrap().submenu_center(title).unwrap();
+    s.handle(&UiEvent::PointerMove {
+        pos: sub,
+        modifiers: Modifiers::NONE,
+    });
+    let item = s
+        .context_menu()
+        .unwrap()
+        .item_center_with(command, arg)
+        .unwrap_or_else(|| panic!("{title} has {command}:{arg}"));
+    press(s, item, PointerButton::Primary, Modifiers::NONE);
+}
+
+fn select_abc(s: &mut Shell<NullBackend>) {
+    let at = header(s, "a");
+    press(s, at, PointerButton::Primary, Modifiers::NONE);
+    let ctrl = Modifiers {
+        ctrl: true,
+        ..Modifiers::NONE
+    };
+    for k in ["b", "c"] {
+        let at = header(s, k);
+        press(s, at, PointerButton::Primary, ctrl);
+    }
+}
+
+#[test]
+fn the_header_menu_track_colour_colours_every_selected_track_in_one_undo_step() {
+    let mut s = shell();
+    select_abc(&mut s);
+    choose_in_header_menu(
+        &mut s,
+        "b",
+        "Track Colour",
+        "sequencer.track_color",
+        "green",
+    );
+    let green = Some([0x5a, 0xb8, 0x6a]);
+    for k in ["a", "b", "c"] {
+        assert_eq!(s.core().doc().song.track_color(&key(k)), green, "{k}");
+    }
+    assert_eq!(s.core().doc().song.track_color(&key("d")), None);
+    assert!(s.core_mut().undo());
+    for k in ["a", "b", "c", "d"] {
+        assert_eq!(s.core().doc().song.track_color(&key(k)), None, "{k}");
+    }
+}
+
+#[test]
+fn the_header_menu_lane_colour_colours_every_lane_of_every_selected_track() {
+    let mut s = shell();
+    select_abc(&mut s);
+    choose_in_header_menu(&mut s, "b", "Lane Colour", "sequencer.lane_color", "red");
+    let lane_colors = |s: &Shell<NullBackend>, k: &str| -> Vec<Option<[u8; 3]>> {
+        let t = s.core().doc().song.track(&key(k)).unwrap();
+        (0..t.lanes.len())
+            .filter(|l| t.is_note_lane(*l))
+            .map(|l| t.lanes[l].color)
+            .collect()
+    };
+    for k in ["a", "b", "c"] {
+        let colors = lane_colors(&s, k);
+        assert!(
+            !colors.is_empty() && colors.iter().all(Option::is_some),
+            "{k}"
+        );
+    }
+    assert!(lane_colors(&s, "d").iter().all(Option::is_none));
+    assert!(s.core_mut().undo());
+    for k in ["a", "b", "c", "d"] {
+        assert!(lane_colors(&s, k).iter().all(Option::is_none), "{k}");
+    }
+}

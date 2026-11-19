@@ -1,6 +1,7 @@
 //! The winit 0.30 application: the main window and the detached rack and mixer windows, event
 //! translation and routing, frame pacing, dialogs.
 
+use super::cursor;
 use super::gpu::{FrameResult, GpuContext, WindowSurface, render_offscreen, write_png};
 use super::learn_strips::{Dock, LearnStrips};
 use super::plugin_windows::PluginWindows;
@@ -47,6 +48,9 @@ type Key = (DocId, WindowKind);
 const FRAME: Duration = Duration::from_micros(16_667);
 /// Status bar refresh period.
 const STATUS_PERIOD: Duration = Duration::from_millis(250);
+/// How often the cursor is read while files from the system hover over a window and the system
+/// sends no cursor events for the drag.
+const FILE_DRAG_POLL: Duration = Duration::from_millis(30);
 
 mod clock {
     use std::time::Instant;
@@ -1913,12 +1917,42 @@ impl App {
     /// Hands the file drag events collected for `kind`'s window to the shell (as one event, see
     /// [`FileDrag`]), at that window's pointer.
     fn flush_files(&mut self, event_loop: &ActiveEventLoop, key: Key) {
+        let scale_zoom = self.shell.app_zoom();
         let Some(w) = self.windows.get_mut(&key) else {
             return;
         };
+        // An operating-system drag sends no cursor events on Windows: the position of a hover
+        // and of the drop is the cursor as the system has it, not the last one the window saw.
+        if w.file_drag.is_pending()
+            && let Some(at) = cursor::os_cursor(&w.window, w.window.scale_factor() * scale_zoom)
+        {
+            w.pointer = at;
+        }
         if let Some(event) = w.file_drag.flush(w.pointer) {
             self.ui(event_loop, key, event);
         }
+    }
+
+    /// While files hover over a window and the system sends no cursor events for the drag, reads
+    /// the cursor and asks for the hover again when it moved, so the drop indicator follows it.
+    /// True while such a drag is on (the loop keeps waking to poll).
+    fn follow_file_drags(&mut self) -> bool {
+        let zoom = self.shell.app_zoom();
+        let mut following = false;
+        for w in self.windows.values_mut() {
+            if !w.file_drag.is_hovering() {
+                continue;
+            }
+            let Some(at) = cursor::os_cursor(&w.window, w.window.scale_factor() * zoom) else {
+                continue;
+            };
+            following = true;
+            if at != w.pointer {
+                w.pointer = at;
+                w.file_drag.rehover();
+            }
+        }
+        following
     }
 
     fn flush_all_files(&mut self, event_loop: &ActiveEventLoop) {
@@ -2151,6 +2185,7 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.shell.apply_language_globally();
+        let dragging = self.follow_file_drags();
         self.flush_all_files(event_loop);
         let now = clock::now();
         if self.quit_at.is_some_and(|t| now >= t) {
@@ -2238,7 +2273,9 @@ impl ApplicationHandler for App {
             .filter_map(|s| s.context_menu_wake())
             .reduce(f64::min)
             .map(|t| self.epoch + Duration::from_secs_f64(t.max(0.0)));
-        for t in [self.quit_at, self.screenshot_at, menu_wake]
+        // A file drag the system sends no cursor events for is followed by polling the cursor.
+        let drag_poll = dragging.then(|| now + FILE_DRAG_POLL);
+        for t in [self.quit_at, self.screenshot_at, menu_wake, drag_poll]
             .into_iter()
             .flatten()
         {

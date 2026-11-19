@@ -907,12 +907,21 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     checked: Some(e.lane.recording),
                 },
                 Spec::submenu(
+                    "Track Colour",
+                    TRACK_COLORS
+                        .iter()
+                        .map(|(arg, label)| {
+                            meter_item("sequencer.track_color", arg, label)
+                                .enabled(e.org.track_selected)
+                        })
+                        .collect(),
+                ),
+                Spec::submenu(
                     "Lane Colour",
                     CLIP_COLORS
                         .iter()
                         .map(|(arg, label)| {
-                            meter_item("sequencer.lane_color", arg, label)
-                                .enabled(e.lane.can_rename)
+                            meter_item("sequencer.lane_color", arg, label).enabled(e.lane.can_color)
                         })
                         .collect(),
                 ),
@@ -2233,6 +2242,7 @@ mod tests {
             lane: LaneMenu {
                 can_add: true,
                 can_rename: true,
+                can_color: true,
                 can_delete: true,
                 muted: true,
                 ..LaneMenu::default()
@@ -2246,6 +2256,7 @@ mod tests {
             lane: LaneMenu {
                 can_add: true,
                 can_rename: true,
+                can_color: true,
                 ..LaneMenu::default()
             },
             ..MenuEnable::default()
@@ -2674,10 +2685,19 @@ mod tests {
                 .filter_map(|(_, a)| *a)
                 .collect()
         };
+        // Track Colour and the Colour submenu at the end of the menu.
+        let palette = [
+            "red", "orange", "yellow", "green", "blue", "purple", "custom", "none",
+        ];
         assert_eq!(
             args("sequencer.track_color"),
+            [palette, palette].concat(),
+            "Track Colour sends sequencer.track_color to every selected track"
+        );
+        assert_eq!(
+            args("sequencer.lane_color"),
             [
-                "red", "orange", "yellow", "green", "blue", "purple", "custom", "none"
+                "track", "red", "orange", "yellow", "green", "blue", "purple"
             ]
         );
         assert_eq!(

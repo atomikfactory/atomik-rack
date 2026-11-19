@@ -58,8 +58,9 @@
 //! finished file in [`AppCore::poll_background`] (called every frame): `RegisterAsset`, then
 //! for `NewTracks` `AddAudioTrack` and `AddAudioClip`, for `ExistingTrack` `AddAudioClip` at
 //! the running tick. **Undo steps:** `RegisterAsset` is not a step; an existing-track import
-//! is one step per file, a new-track import two (the track, then its clip), because the
-//! model has no command that does both. A failing file is reported by name and the others
+//! is one step per drop (each further file folds into the step of the one before while
+//! nothing else was edited meanwhile), a new-track import two per file (the track, then its
+//! clip), because the model has no command that does both. A failing file is reported by name and the others
 //! still import.
 //!
 //! # Engine assets
@@ -135,6 +136,9 @@ struct Batch {
     take: Option<u32>,
     /// Set when the file becomes the clip of a launcher slot instead of a clip on a lane.
     slot: Option<(DeviceKey, usize)>,
+    /// The undo depth right after the last clip an existing-track import placed: the next file
+    /// folds into that step while nothing else was done meanwhile, so a drop is one undo step.
+    placed_at: Option<usize>,
 }
 
 /// Everything audio of an open project.
@@ -1253,6 +1257,7 @@ impl<S: EngineSink> AppCore<S> {
                 names: BTreeMap::new(),
                 take: None,
                 slot: None,
+                placed_at: None,
             },
         );
         let rate = self.doc().sample_rate;
@@ -1397,6 +1402,7 @@ impl<S: EngineSink> AppCore<S> {
         )?;
         // A recovered recording is one undo step: its track and its clip.
         let one_step = matches!(target, ImportTarget::NewTracks) && renamed.is_some();
+        let existing = matches!(target, ImportTarget::ExistingTrack(_));
         let (device, start) = match target {
             ImportTarget::ExistingTrack(key) => {
                 if !self.doc().is_audio_track(&key, &self.registry) {
@@ -1441,7 +1447,13 @@ impl<S: EngineSink> AppCore<S> {
             Some(w) => w.length,
             None => ticks_for_frames(&self.doc().song, start, info.frames, rate),
         };
-        self.join_next = one_step;
+        let follows = existing
+            && self
+                .audio
+                .batches
+                .get(&batch)
+                .is_some_and(|b| b.placed_at == Some(self.document.undo_depth()));
+        self.join_next = one_step || follows;
         let added = run(
             self,
             Command::Song(SongCommand::AddAudioClip {
@@ -1461,8 +1473,10 @@ impl<S: EngineSink> AppCore<S> {
         if let Some(w) = warp {
             self.warp_new_clip(w.source_bpm, length);
         }
+        let depth = self.document.undo_depth();
         if let Some(b) = self.audio.batches.get_mut(&batch) {
             b.cursor = start + length;
+            b.placed_at = existing.then_some(depth);
         }
         Ok(())
     }

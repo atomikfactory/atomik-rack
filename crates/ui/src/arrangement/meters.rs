@@ -313,7 +313,8 @@ impl ArrangementView {
             .then_some(Hit::TrackMeter(track))
     }
 
-    /// A primary press on the meter of track `track`: clears the lamp and the hold.
+    /// A primary press on the meter of track `track`: clears the lamp and the hold (the track is
+    /// picked by the header press that goes with it).
     pub(super) fn meter_click(&mut self, track: usize) {
         let Some(device) = self.song.tracks.get(track).map(|t| t.device.clone()) else {
             return;

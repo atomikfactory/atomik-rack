@@ -339,6 +339,23 @@ pub enum WorkflowCommand {
         /// Drag-merge group.
         merge: Option<u64>,
     },
+    /// Makes copies of clips at later ticks, each on the lane of its original, and replaces the
+    /// copies an earlier run of the same drag made: the clips with an id from `first_id` up to the
+    /// song's next free id are removed first (they are the previous preview), then each entry of
+    /// `copies` becomes a clip with the next id from `first_id`, in order, cloned from its
+    /// original and starting `offset` ticks after it. The next free id ends after the last copy,
+    /// so an empty list takes the previous copies back. `first_id` must not be after the next
+    /// free id. `merge` joins the runs of one drag into one undo step. Unknown originals, a
+    /// negative offset, a start out of range and more than [`MAX_REPEAT_COPIES`] copies reject
+    /// the command.
+    RepeatClips {
+        /// The copies, in id order.
+        copies: Vec<ClipRepeat>,
+        /// The id of the first copy (the song's next free id when the drag began).
+        first_id: u64,
+        /// Drag-merge group.
+        merge: Option<u64>,
+    },
     /// Removes the clips (one undo step; `SongCommand::RemoveClip` cannot be batched, so a
     /// selection of several clips goes through this command). Unknown clips reject it.
     RemoveClips {
@@ -866,6 +883,18 @@ pub enum TakeTarget {
     },
 }
 
+/// The most copies one [`WorkflowCommand::RepeatClips`] makes.
+pub const MAX_REPEAT_COPIES: usize = 1024;
+
+/// One copy of [`WorkflowCommand::RepeatClips`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipRepeat {
+    /// The original.
+    pub id: ClipId,
+    /// How many ticks after the original the copy starts.
+    pub offset: i64,
+}
+
 /// Where [`WorkflowCommand::MoveClips`] puts one clip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClipMove {
@@ -1133,6 +1162,9 @@ pub(crate) fn plan(
             )
         }
         WorkflowCommand::MoveClips { moves, copy, .. } => move_clips(doc, registry, &moves, copy),
+        WorkflowCommand::RepeatClips {
+            copies, first_id, ..
+        } => repeat_clips(doc, registry, &copies, first_id),
         WorkflowCommand::JoinClips { ids } => join_clips(doc, &ids),
         WorkflowCommand::AutomationIntoClip { automation, into } => {
             crate::clip_lanes::automation_into_clip(doc, registry, automation, into)
@@ -2116,6 +2148,63 @@ fn move_clips(
         new: next,
     });
     Ok((p.finish(), Some(ClipId(next - 1))))
+}
+
+/// Plans `RepeatClips`: see the command docs.
+fn repeat_clips(
+    doc: &RackDoc,
+    registry: &Registry,
+    copies: &[ClipRepeat],
+    first_id: u64,
+) -> Result<(Edit, Option<ClipId>), ModelError> {
+    let old_next = doc.song.next_clip_id;
+    if first_id > old_next {
+        return Err(bad_song("the first copy is after the next free clip id"));
+    }
+    if copies.len() > MAX_REPEAT_COPIES {
+        return Err(bad_song("too many copies"));
+    }
+    let mut p = Planner::new(doc, registry);
+    // The previous preview of the drag goes first.
+    for n in first_id..old_next {
+        if let Ok((device, lane, c)) = clip_of(doc, ClipId(n)) {
+            p.push(Edit::Clip {
+                device,
+                lane,
+                old: Some(c.clone()),
+                new: None,
+            });
+        }
+    }
+    let mut next = first_id;
+    for r in copies {
+        if r.offset < 0 {
+            return Err(bad_song("a copy cannot start before its original"));
+        }
+        let (device, lane, c) = clip_of(doc, r.id)?;
+        let start = c.start.saturating_add(r.offset);
+        check_geometry(start, c.length, c.offset, c.loop_length).map_err(ModelError::OutOfRange)?;
+        p.push(Edit::Clip {
+            device,
+            lane,
+            old: None,
+            new: Some(Clip {
+                id: ClipId(next),
+                start,
+                ..c.clone()
+            }),
+        });
+        next = next
+            .checked_add(1)
+            .ok_or_else(|| bad_song("clip ids are exhausted"))?;
+    }
+    if next != old_next {
+        p.push(Edit::NextClipId {
+            old: old_next,
+            new: next,
+        });
+    }
+    Ok((p.finish(), next.checked_sub(1).map(ClipId)))
 }
 
 /// Removes the clips in one step (`SongCommand::RemoveClip` cannot be batched, so a selection

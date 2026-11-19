@@ -18,8 +18,12 @@
 //!   commits, Escape cancels) and commits the mixer's `Command::Rename`, so a bus or a channel is
 //!   renamed in the console too; a blank or unchanged name does nothing. A note lane's label has its
 //!   own double-click (`RenameLane`).
-//! * A **selected track** is outlined; shift-click or ctrl-click on a header adds a track to the
-//!   selection and a click on a folder row selects the folder (its tracks count as selected).
+//! * A **selected track** is outlined; shift-click on a header selects the range of tracks from the
+//!   anchor (the track last picked with a plain click or ctrl-click) to it, in the order shown (the
+//!   tracks of a collapsed folder have no header and are skipped); ctrl-click adds a track to the
+//!   selection or takes it out; a right click on one of several selected tracks keeps them all
+//!   selected for the header menu; a click on a folder row selects the folder (its tracks count as
+//!   selected).
 //!   Group Tracks takes the selected tracks, or the tracks of the selected clips.
 //! * A track's **colour** replaces its device's colour in the header's accent bar and in its
 //!   clips. Its **comment** is typed in the header (`sequencer.track_comment`, Enter commits,
@@ -186,6 +190,8 @@ pub(super) struct OrgUi {
     pub group: Option<u32>,
     /// The tracks selected besides `selected_track`.
     pub extra: BTreeSet<DeviceKey>,
+    /// Where a Shift range starts: the track a plain click or a Ctrl+click picked last.
+    pub anchor: Option<DeviceKey>,
     /// The text being typed.
     pub edit: Option<TextEdit>,
     /// Per track (index into `Song::tracks`): nesting depth, and whether it is hidden in a
@@ -231,11 +237,13 @@ impl ArrangementView {
 
     /// Adds a track to the selected tracks, or takes it out again (the first selected track,
     /// the one a plain click selected, stays). Selects the track alone when none is selected.
+    /// The track becomes the anchor of a Shift range.
     pub fn toggle_selected_track(&mut self, device: &DeviceKey) {
         if self.selected_track.is_none() || self.song.track(device).is_none() {
             self.set_selected_track(Some(device.clone()));
             return;
         }
+        self.og.anchor = Some(device.clone());
         if self.selected_track.as_ref() == Some(device) {
             return;
         }
@@ -243,6 +251,72 @@ impl ArrangementView {
             self.og.extra.insert(device.clone());
         }
         self.og.group = None;
+        self.repaint = true;
+    }
+
+    /// The tracks in the order their headers are shown: the ones in a collapsed folder have no
+    /// header and are left out.
+    fn visible_tracks(&self) -> Vec<DeviceKey> {
+        self.rows
+            .iter()
+            .filter_map(|r| match r.kind {
+                RowKind::Lane { track, lane: 0 }
+                    if !self.og.shape.get(track).is_some_and(|s| s.1) =>
+                {
+                    self.song.tracks.get(track).map(|t| t.device.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Selects every track from the anchor to `device` in the order shown, as a Shift+click
+    /// does; `add` (Shift+Ctrl) keeps the tracks selected now. The anchor stays. With no anchor
+    /// in view the track is selected alone.
+    pub fn select_track_range(&mut self, device: &DeviceKey, add: bool) {
+        let order = self.visible_tracks();
+        let anchor = self
+            .og
+            .anchor
+            .clone()
+            .or_else(|| self.selected_track.clone())
+            .filter(|a| order.contains(a));
+        let at = |d: &DeviceKey| order.iter().position(|o| o == d);
+        let (Some(anchor), Some(to)) = (anchor, at(device)) else {
+            self.set_selected_track(Some(device.clone()));
+            return;
+        };
+        let Some(from) = at(&anchor) else {
+            return;
+        };
+        let mut picked: BTreeSet<DeviceKey> =
+            order[from.min(to)..=from.max(to)].iter().cloned().collect();
+        let primary = match &self.selected_track {
+            Some(first) if add && self.og.group.is_none() => {
+                picked.extend(self.selected_tracks());
+                first.clone()
+            }
+            _ => anchor.clone(),
+        };
+        picked.remove(&primary);
+        self.selection.clear();
+        self.point_sel = None;
+        self.og.group = None;
+        self.selected_track = Some(primary);
+        self.og.extra = picked;
+        self.og.anchor = Some(anchor);
+        self.repaint = true;
+    }
+
+    /// Makes `device`, one of several selected tracks, the one the header menu acts on for the
+    /// items that take a single track; the selection stays as it is.
+    pub(super) fn make_primary_track(&mut self, device: &DeviceKey) {
+        let all = self.selected_tracks();
+        if self.og.group.is_some() || !all.contains(device) {
+            return;
+        }
+        self.og.extra = all.into_iter().filter(|d| d != device).collect();
+        self.selected_track = Some(device.clone());
         self.repaint = true;
     }
 
@@ -787,7 +861,7 @@ impl ArrangementView {
     }
 
     /// A press on the name of a track header: it picks the track like any press on the header
-    /// (Shift or Ctrl adds it to the selection, a right click opens the header menu), and a
+    /// (Shift selects a range, Ctrl toggles the track, a right click opens the header menu), and a
     /// double-click with the primary button types the name.
     fn track_name_down(
         &mut self,

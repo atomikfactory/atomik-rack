@@ -647,6 +647,9 @@ enum Drag {
         loop_mode: bool,
         /// The loop handle: the clip grows by repeating what it shows.
         looping: bool,
+        /// The loop handle of a selection of several clips: the selection is repeated as
+        /// copies (see `loops.rs`) instead of one clip looping.
+        repeat: Option<loops::RepeatDrag>,
         last: (i64, Option<i64>),
     },
     /// The left edge of note and automation clips: the start moves, the end stays.
@@ -1602,6 +1605,7 @@ impl ArrangementView {
             self.point_sel = None;
             self.og.group = None;
             self.og.extra.clear();
+            self.og.anchor = device.clone();
         }
         self.selected_track = device;
         self.repaint = true;
@@ -3400,12 +3404,18 @@ impl ArrangementView {
                 self.folder_clip_down(&hit, pos, button, modifiers, clicks, out);
             }
             Hit::Button(track, b) if primary => self.track_button(track, b, doc, registry, out),
-            Hit::TrackMeter(track) if primary => self.meter_click(track),
-            Hit::TrackMeter(track) => self.header_down(track, button, modifiers, pos, out),
+            Hit::TrackMeter(track) => {
+                // The meter is part of the header: a press picks the track like any press on it
+                // (select, extend, drag, menu), and a primary one also clears the clip lamp.
+                if primary {
+                    self.meter_click(track);
+                }
+                self.header_down(track, button, modifiers, pos, out);
+            }
             Hit::LaneButton(track, lane, b) if primary => self.lane_button(track, lane, b, out),
             Hit::NoteLaneHeader(track, lane) => {
                 let secondary = button == PointerButton::Secondary;
-                self.note_lane_header_down(track, lane, secondary, clicks, pos, out);
+                self.note_lane_header_down(track, lane, secondary, modifiers, clicks, pos, out);
             }
             Hit::AddTrack(device) if primary => {
                 out.push(song_cmd(SongCommand::AddTrack { device }));
@@ -3478,6 +3488,13 @@ impl ArrangementView {
                 self.pick_note_lane(track, lane);
                 // Audio lanes hold recordings and imported files: nothing is drawn on them.
                 if self.song.tracks[track].is_audio() {
+                    // A drag from empty space is the rubber band over clips, as on a note lane;
+                    // a click without a drag gives up the clip selection when it ends.
+                    if tool == Tool::Select {
+                        self.start_marquee(pos, false);
+                    } else {
+                        self.selection.clear();
+                    }
                     return;
                 }
                 let t = self.axis.x_to_tick(pos.x);
@@ -3516,8 +3533,11 @@ impl ArrangementView {
         }
     }
 
-    /// A press on a track header: selects the track (the clip selection gives way), Shift or Ctrl
-    /// adds it to the selection, and a right click opens the header menu.
+    /// A press on a track header: selects the track (the clip selection gives way), Shift selects
+    /// the range of tracks from the anchor (the track last picked with a plain click or Ctrl) to
+    /// it in the order shown, Ctrl adds the track to the selection or takes it out, and a right
+    /// click opens the header menu. A right click on one of several selected tracks keeps them
+    /// all selected, so the menu can act on every one.
     fn header_down(
         &mut self,
         track: usize,
@@ -3536,8 +3556,13 @@ impl ArrangementView {
             return;
         }
         if button == PointerButton::Primary && (modifiers.shift || modifiers.command()) {
-            // Shift or Ctrl adds the track to the selection.
-            self.toggle_selected_track(&device);
+            if modifiers.shift {
+                // Shift selects the range from the anchor (Shift+Ctrl adds it to the selection).
+                self.select_track_range(&device, modifiers.command());
+            } else {
+                // Ctrl adds the track to the selection or takes it out.
+                self.toggle_selected_track(&device);
+            }
             return;
         }
         // The automation lane whose header was pressed is the one the lane items of the menu act
@@ -3553,12 +3578,12 @@ impl ArrangementView {
         // A press on one of several selected tracks keeps the selection, so the drag can take
         // them all; a release without a drag then picks the one.
         let selected = self.selected_tracks();
-        let keep = button == PointerButton::Primary
-            && self.og.group.is_none()
-            && selected.len() > 1
-            && selected.contains(&device);
+        let keep = self.og.group.is_none() && selected.len() > 1 && selected.contains(&device);
         if !keep {
             self.set_selected_track(Some(device.clone()));
+        } else if button == PointerButton::Secondary {
+            // The items of the menu that take one track act on the one clicked.
+            self.make_primary_track(&device);
         }
         if button == PointerButton::Secondary {
             out.push(UiAction::ContextMenu {
@@ -4243,6 +4268,7 @@ impl ArrangementView {
                     emitted: false,
                     loop_mode,
                     looping: false,
+                    repeat: None,
                 };
             }
             ClipPart::LoopHandle if primary => {
@@ -4785,6 +4811,7 @@ impl ArrangementView {
                 emitted,
                 loop_mode,
                 looping,
+                repeat,
                 last,
             } => {
                 *moved |= pos.distance(*start) > DRAG_THRESHOLD;
@@ -4792,6 +4819,14 @@ impl ArrangementView {
                     return;
                 }
                 let delta = axis.dx_to_ticks(pos.x - start.x);
+                if let Some(r) = repeat {
+                    if let Some(cmd) = r.update(clip.end() + delta, &step, *merge) {
+                        out.push(cmd);
+                        *emitted = true;
+                    }
+                    self.repaint = true;
+                    return;
+                }
                 if *looping {
                     let wanted = loops::loop_drag_wanted(clip, delta, step, min);
                     if wanted != *last {
@@ -5429,6 +5464,21 @@ impl ArrangementView {
             Drag::Stretch { open: true, .. } => out.push(UiAction::StretchEnd { commit: true }),
             Drag::Crossfade { open: true, .. } => {
                 out.push(UiAction::CrossfadeEnd { commit: true });
+            }
+            Drag::Resize {
+                emitted,
+                repeat: Some(r),
+                ..
+            } => {
+                if emitted {
+                    out.push(UiAction::EndMerge);
+                    // The last repetition takes the selection, like a duplicate: dragging its
+                    // handle goes on with the same pattern.
+                    let picked = r.last_pass();
+                    if !picked.is_empty() {
+                        self.selection.set(picked);
+                    }
+                }
             }
             Drag::Resize { emitted, .. }
             | Drag::Trim { emitted, .. }
@@ -6263,6 +6313,15 @@ impl ArrangementView {
                 let song = &self.song;
                 self.selection
                     .set(base.into_iter().filter(|id| find_clip(song, *id).is_some()));
+            }
+            Drag::Resize {
+                merge,
+                emitted: true,
+                repeat: Some(r),
+                ..
+            } => {
+                out.push(r.undo(merge));
+                out.push(UiAction::EndMerge);
             }
             Drag::Resize {
                 clip,
