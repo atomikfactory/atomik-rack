@@ -8,6 +8,14 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Fixed
+- **Join Clips on audio clips with a gap.** Ctrl+J on audio clips of one lane with empty space between them no longer
+  refuses: they join into one clip from the first clip's start to the last clip's end, the gaps being silence. As a
+  clip of one file cannot play silence, they are rendered dry like clips of different files (each clip's gain, fades,
+  envelope and warp, with the crossfades between them) on the freeze worker, in one undo step, and the first clip keeps
+  its id, name and colour. Clips of one file that touch still join without a render; a muted clip and a frozen track
+  still refuse. Note clips with gaps already joined and are unchanged.
+
 ## [0.5.0-rc.1] - 2026-11-18
 
 ### Added
