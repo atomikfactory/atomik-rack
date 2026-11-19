@@ -8,38 +8,13 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Changed
+- **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last
+  picked with a plain click or Ctrl+click) to the one clicked, in the order shown; tracks in a collapsed folder
+  are skipped. Ctrl+click (Cmd on macOS) toggles one track in or out, and Shift+Ctrl+click adds the range to the
+  selection.
+
 ### Fixed
-- **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio
-  track now picks the track like a click on the rest of the header (select, Shift or Ctrl to extend, drag, right click
-  for the menu) and still clears the clip lamp; it only cleared the lamp before, so a selection could not be started or
-  extended from there, and a click on an empty audio lane gives up the clip selection as a click on an empty note lane does.
-- **Rubber band on audio lanes.** A press on empty space in an audio lane and a drag now draws the selection rectangle
-  over clips (across tracks), as on a note lane; a click without a drag still gives up the selection.
-- **Several tracks selected, track colour.** A right click on one of several selected tracks keeps them all selected
-  (a right click on an unselected track still selects it alone; this includes the lane label of a track with several note lanes, where Shift and Ctrl+click also extend the selection), so the header menu's Colour reaches every selected
-  track in one undo step; the menu items that take one track act on the track clicked.
-- **Join Clips on audio clips with a gap.** Ctrl+J on audio clips of one lane with empty space between them no longer
-  refuses: they join into one clip from the first clip's start to the last clip's end, the gaps being silence. As a
-  clip of one file cannot play silence, they are rendered dry like clips of different files (each clip's gain, fades,
-  envelope and warp, with the crossfades between them) on the freeze worker, in one undo step, and the first clip keeps
-  its id, name and colour. Clips of one file that touch still join without a render; a muted clip and a frozen track
-  still refuse. Note clips with gaps already joined and are unchanged.
-
-- Looping a selection of clips keeps the gaps between them: dragging the loop handle of one of two or more selected
-  clips now repeats the whole selection as separate copies (for clips at bars 1 and 2.5 the copies land at 4, 5.5,
-  7, 8.5 and so on), each on its own lane, instead of looping only the dragged clip. The repeat period is the spread
-  of the clips' starts, snapped to the grid and never shorter than the selection; dragging back takes copies away,
-  the whole drag is one undo step, and the last repetition becomes the selection so the next drag goes on with the
-  same pattern. A single clip loops as before.
-
-- Dragging audio files from the operating system's file manager onto an audio track's lane or header now imports
-  them on that track at the snapped drop position, with the drop hint on that lane. On Windows the window got no
-  cursor events during such a drag, so the hint and the drop used the position where the pointer last was inside the
-  window (often a new-track target); the cursor is now read from the system while files hover and drop. Several
-  files go one after the other on the track, and a drop is one undo step. Drops on a note lane, an empty area or
-  below the tracks still make new tracks.
-
-- Selecting a track in the arrangement or a channel strip in the console now scrolls the rack (the main window's and a detached one) to the track's device, as well as selecting it. Nothing moves when the device is already fully visible, and undo, redo and opening a project do not scroll the rack.
 - **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio track now
   picks the track like a click on the rest of the header (select, Shift or Ctrl to extend, drag, right click for
   the menu) and still clears the clip lamp; it only cleared the lamp before, so a selection could not be started
@@ -55,15 +30,27 @@ may break APIs and the patch and project formats.
   selected (a right click on an unselected track still selects it alone; this includes the lane label of a track
   with several note lanes, where Shift and Ctrl+click also extend the selection), so the menu's Colour reaches
   every selected track in one undo step; the menu items that take one track act on the track clicked.
+- **Join Clips on audio clips with a gap.** Ctrl+J on audio clips of one lane with empty space between them no longer
+  refuses: they join into one clip from the first clip's start to the last clip's end, the gaps being silence. As a
+  clip of one file cannot play silence, they are rendered dry like clips of different files (each clip's gain, fades,
+  envelope and warp, with the crossfades between them) on the freeze worker, in one undo step, and the first clip keeps
+  its id, name and colour. Clips of one file that touch still join without a render; a muted clip and a frozen track
+  still refuse. Note clips with gaps already joined and are unchanged.
+- Looping a selection of clips keeps the gaps between them: dragging the loop handle of one of two or more selected
+  clips now repeats the whole selection as separate copies (for clips at bars 1 and 2.5 the copies land at 4, 5.5,
+  7, 8.5 and so on), each on its own lane, instead of looping only the dragged clip. The repeat period is the spread
+  of the clips' starts, snapped to the grid and never shorter than the selection; dragging back takes copies away,
+  the whole drag is one undo step, and the last repetition becomes the selection so the next drag goes on with the
+  same pattern. A single clip loops as before.
+- Dragging audio files from the operating system's file manager onto an audio track's lane or header now imports
+  them on that track at the snapped drop position, with the drop hint on that lane. On Windows the window got no
+  cursor events during such a drag, so the hint and the drop used the position where the pointer last was inside the
+  window (often a new-track target); the cursor is now read from the system while files hover and drop. Several
+  files go one after the other on the track, and a drop is one undo step. Drops on a note lane, an empty area or
+  below the tracks still make new tracks.
 - Selecting a track in the arrangement or a channel strip in the console now scrolls the rack (the main window's and
   a detached one) to the track's device, as well as selecting it. Nothing moves when the device is already fully
   visible, and undo, redo and opening a project do not scroll the rack.
-
-### Changed
-- **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last
-  picked with a plain click or Ctrl+click) to the one clicked, in the order shown; tracks in a collapsed folder
-  are skipped. Ctrl+click (Cmd on macOS) toggles one track in or out, and Shift+Ctrl+click adds the range to the
-  selection.
 
 ## [0.5.0-rc.1] - 2026-11-18
 
