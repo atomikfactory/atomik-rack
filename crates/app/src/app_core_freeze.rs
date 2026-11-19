@@ -56,14 +56,16 @@
 //! that render in one `RenderLoop` step. The clip keeps its id, place, name and colour. Looped
 //! note and automation clips among the selected ones convert at once, as before.
 //!
-//! # Join Clips of different files (audio)
+//! # Join Clips of different files or with gaps (audio)
 //!
-//! Join on audio clips of one lane that play more than one file renders them (the same dry render
+//! Join on audio clips of one lane that play more than one file, or that leave a gap between
+//! them (the gap is silence, which no clip of the file can play), renders them (the same dry render
 //! as the loop conversion: each clip's gain, fades, envelope and warp, the crossfades between
 //! them, before the insert effects and the strip) on the freeze worker and queue, and the first
-//! clip becomes one plain clip of that render, spanning all of them, in one `RenderJoin` step. The
-//! other clips go. Clips of one file still join as they are, without a render. A muted clip, a gap
-//! and a frozen track refuse with a message.
+//! clip becomes one plain clip of that render, spanning from the first clip's start to the last
+//! clip's end with silence in the gaps, in one `RenderJoin` step. The other clips go. Clips of one
+//! file that touch still join as they are, without a render. A muted clip and a frozen track
+//! refuse with a message.
 //!
 //! The commands are in the Track menu, the track header menu and (bounce) the clip menu, and in
 //! the registry as `sequencer.freeze_track`, `sequencer.freeze_track_to_device`,
@@ -686,7 +688,7 @@ impl<S: EngineSink> AppCore<S> {
         }))
     }
 
-    /// Turns `JoinClips` of audio clips of different files into a render (see the module docs):
+    /// Turns `JoinClips` of audio clips of different files, or with a gap, into a render (see the module docs):
     /// returns the command when the model is to judge it (anything that is not such a join), and
     /// `None` when a render was queued or the clips cannot be joined that way (the message says
     /// why).

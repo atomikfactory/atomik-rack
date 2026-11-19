@@ -91,11 +91,9 @@ fn the_render_runs_off_the_ui_thread() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-#[test]
-fn a_gap_refuses_without_a_render() {
-    let (mut c, ids, dir) = two_files();
+fn gap_after_first(c: &mut AppCore<RecordingSink>, id: ClipId) {
     c.apply_command(Command::Song(SongCommand::SetClipGeometry {
-        id: ids[1],
+        id,
         start: BAR + PPQ,
         length: BAR / 2,
         offset: 0,
@@ -104,16 +102,90 @@ fn a_gap_refuses_without_a_render() {
         merge: None,
     }))
     .unwrap();
+}
+
+#[test]
+fn clips_of_different_files_with_a_gap_join_into_one_clip_with_silence_between() {
+    let (mut c, ids, dir) = two_files();
+    gap_after_first(&mut c, ids[1]);
     let before = c.doc().song.tracks.clone();
     join(&mut c, ids.clone());
-    assert!(!c.freeze_busy(), "nothing was queued");
+    let clips = &c.doc().song.tracks[0].lanes[0].clips;
+    assert_eq!(clips.len(), 1);
+    assert_eq!(clips[0].id, ids[0]);
+    assert_eq!((clips[0].start, clips[0].length), (0, BAR + PPQ + BAR / 2));
+    let ClipContent::Audio(a) = &clips[0].content else {
+        panic!("an audio clip");
+    };
+    let SongAsset::Memory { data, .. } = &c.audio.assets[&a.asset] else {
+        panic!("the render is in memory");
+    };
+    // One bar is 96000 frames at the default tempo; one beat is 24000.
+    assert_eq!(data[0].len(), 96_000 + 24_000 + 48_000);
+    assert!(data[0][90_000].abs() > 0.01, "the first file plays");
     assert!(
-        c.last_rejection()
-            .is_some_and(|m| m.contains("does not touch")),
-        "{:?}",
-        c.last_rejection()
+        data[0][96_000..120_000].iter().all(|v| v.abs() < 1.0e-6),
+        "silence in the gap"
     );
+    assert!(data[0][150_000].abs() > 0.001, "the second file plays");
+    c.undo();
     assert_eq!(c.doc().song.tracks, before);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Two clips of one file with a gap between them.
+fn same_file_gap() -> (AppCore<RecordingSink>, Vec<ClipId>, PathBuf) {
+    let (mut c, ids, dir) = two_files();
+    c.apply_command(Command::Song(SongCommand::RemoveClip { id: ids[1] }))
+        .unwrap();
+    c.apply_command(Command::Song(SongCommand::SplitClip {
+        id: ids[0],
+        at: BAR / 2,
+    }))
+    .unwrap();
+    let ids: Vec<ClipId> = c.doc().song.tracks[0].lanes[0]
+        .clips
+        .iter()
+        .map(|k| k.id)
+        .collect();
+    c.apply_command(Command::Song(SongCommand::SetClipGeometry {
+        id: ids[1],
+        start: BAR,
+        length: BAR / 2,
+        offset: 0,
+        loop_length: None,
+        muted: false,
+        merge: None,
+    }))
+    .unwrap();
+    (c, ids, dir)
+}
+
+#[test]
+fn clips_of_one_file_with_a_gap_join_by_rendering_with_silence_in_the_gap() {
+    let (mut c, ids, dir) = same_file_gap();
+    let before = c.doc().song.tracks.clone();
+    let depth = c.document().undo_depth();
+    join(&mut c, ids.clone());
+    let clips = &c.doc().song.tracks[0].lanes[0].clips;
+    assert_eq!(clips.len(), 1);
+    assert_eq!((clips[0].start, clips[0].length), (0, BAR + BAR / 2));
+    let ClipContent::Audio(a) = &clips[0].content else {
+        panic!("an audio clip");
+    };
+    let SongAsset::Memory { data, .. } = &c.audio.assets[&a.asset] else {
+        panic!("the render is in memory");
+    };
+    assert_eq!(data[0].len(), 96_000 + 48_000);
+    assert!(data[0][40_000].abs() > 0.01, "audio at the start");
+    assert!(
+        data[0][48_000..96_000].iter().all(|v| v.abs() < 1.0e-6),
+        "silence in the gap"
+    );
+    assert!(data[0][96_000 + 20_000].abs() > 0.001, "audio at the end");
+    assert!(c.document().undo_depth() <= depth + 2);
+    c.undo();
+    assert_eq!(c.doc().song.tracks, before, "both clips are back");
     let _ = std::fs::remove_dir_all(dir);
 }
 

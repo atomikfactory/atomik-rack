@@ -585,7 +585,13 @@ fn clips_of_different_files_are_a_render_join_and_one_file_is_not() {
     let plan = join_render(d.doc(), &[c, a, b]).unwrap().unwrap();
     assert_eq!(plan.ids, vec![a, b, c]);
     assert_eq!(plan.span, (0, 4 * PPQ));
-    assert!(join_render(d.doc(), &[a, c]).is_none(), "one file");
+    let touching = put(&mut d, &reg, 4 * PPQ, PPQ, audio(1));
+    assert!(
+        join_render(d.doc(), &[c, touching]).is_none(),
+        "one file, touching"
+    );
+    let gapped = join_render(d.doc(), &[a, c]).unwrap().unwrap();
+    assert_eq!(gapped.span, (0, 4 * PPQ), "one file with a gap renders");
     assert!(join_render(d.doc(), &[a]).is_none(), "one clip");
     assert!(join_render(d.doc(), &[a, ClipId(99)]).is_none(), "unknown");
 }
@@ -609,16 +615,23 @@ fn a_render_join_is_one_undo_step_and_the_first_clip_keeps_its_id() {
 }
 
 #[test]
-fn a_render_join_refuses_gaps_muted_clips_and_a_render_with_warp() {
+fn a_render_join_spans_gaps_and_refuses_muted_clips_and_a_render_with_warp() {
     let (reg, mut d) = setup();
     let a = put(&mut d, &reg, 0, PPQ, audio(1));
     let gap = put(&mut d, &reg, 2 * PPQ, PPQ, audio(2));
     let rendered = render_of(&mut d, &reg, 3 * BEAT_F);
-    let err = d
-        .apply(render_join_cmd(&[a, gap], rendered.clone()), &reg)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("does not touch"), "{err}");
+    let before = d.doc().song.clone();
+    d.apply(render_join_cmd(&[a, gap], rendered.clone()), &reg)
+        .unwrap();
+    assert_eq!(clips_on_lane(&d), 1);
+    let joined = doc_clip(d.doc(), a);
+    assert_eq!(
+        (joined.start, joined.length),
+        (0, 3 * PPQ),
+        "the gap is inside"
+    );
+    d.undo().unwrap();
+    assert_eq!(d.doc().song.tracks, before.tracks);
     d.apply(sc(SongCommand::RemoveClip { id: gap }), &reg)
         .unwrap();
     let b = put(&mut d, &reg, PPQ, PPQ, audio(2));
@@ -648,8 +661,9 @@ fn a_render_join_refuses_gaps_muted_clips_and_a_render_with_warp() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("plain audio"), "{err}");
-    // One file only: the plain join is the command for it.
+    // One file, touching: the plain join is the command for it.
     let c = put(&mut d, &reg, 2 * PPQ, PPQ, audio(1));
-    assert!(d.apply(render_join_cmd(&[a, c], rendered), &reg).is_err());
-    assert_eq!(clips_on_lane(&d), 3);
+    let c2 = put(&mut d, &reg, 3 * PPQ, PPQ, audio(1));
+    assert!(d.apply(render_join_cmd(&[c, c2], rendered), &reg).is_err());
+    assert_eq!(clips_on_lane(&d), 4);
 }
