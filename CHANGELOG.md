@@ -24,6 +24,8 @@ may break APIs and the patch and project formats.
 
 - Looping a selection of clips keeps the gaps between them: dragging the loop handle of one of two or more selected clips now repeats the whole selection as separate copies (for clips at bars 1 and 2.5 the copies land at 4, 5.5, 7, 8.5 and so on), each on its own lane, instead of looping only the dragged clip. The repeat period is the spread of the clips' starts, snapped to the grid and never shorter than the selection; dragging back takes copies away, the whole drag is one undo step, and the last repetition becomes the selection so the next drag goes on with the same pattern. A single clip loops as before.
 
+- Dragging audio files from the operating system's file manager onto an audio track's lane or header now imports them on that track at the snapped drop position, with the drop hint on that lane. On Windows the window got no cursor events during such a drag, so the hint and the drop used the position where the pointer last was inside the window (often a new-track target); the cursor is now read from the system while files hover and drop. Several files go one after the other on the track, and a drop is one undo step. Drops on a note lane, an empty area or below the tracks still make new tracks.
+
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last picked with
   a plain click or Ctrl+click) to the one clicked, in the order shown; tracks in a collapsed folder are skipped.

@@ -297,6 +297,7 @@ dependencies = [
  "sys-locale",
  "thiserror 2.0.21",
  "vello",
+ "windows-sys 0.61.2",
  "winit",
 ]
 

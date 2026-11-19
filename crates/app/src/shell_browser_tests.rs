@@ -832,6 +832,92 @@ fn dropping_a_browser_drag_on_a_lane_is_the_same_as_an_os_drop_there() {
     assert_eq!(dragged.core().doc().song.tracks.len(), 1, "no new track");
 }
 
+/// The track and clip starts of every audio clip, in track order.
+fn clip_starts(s: &Shell<NullBackend>) -> Vec<(String, i64)> {
+    s.core()
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .flat_map(|t| {
+            t.lanes
+                .iter()
+                .flat_map(|l| l.clips.iter())
+                .map(|c| (t.device.0.clone(), c.start))
+        })
+        .collect()
+}
+
+#[test]
+fn a_browser_drag_on_an_audio_track_header_lands_on_that_track_at_the_left_edge() {
+    let mut s = drag_shell("header");
+    let lane = lane_point(&s);
+    let song = s.layout().song.unwrap();
+    let header = Point::new(song.x0 + 20.0, lane.y);
+    let (target, tick) = s.core().arrangement().drop_target_at(header).unwrap();
+    assert!(matches!(target, atomik_ui::ImportTarget::ExistingTrack(_)));
+    start_drag(&mut s, vec![wav("on-header.wav", 6_000)]);
+    s.handle(&moved(header));
+    assert_eq!(s.core().arrangement().drop_hover(), Some((target, tick)));
+    s.handle(&up(header));
+    s.core_mut().wait_background();
+    assert_eq!(s.core().doc().song.tracks.len(), 1, "no new track");
+    assert_eq!(clip_count(&s), 2);
+    assert!(clip_starts(&s).iter().any(|(_, start)| *start == tick));
+}
+
+#[test]
+fn an_os_drop_on_an_audio_lane_imports_there_at_the_snapped_tick() {
+    let mut s = drag_shell("os-tick");
+    let at = lane_point(&s);
+    let (_, tick) = s.core().arrangement().drop_target_at(at).unwrap();
+    assert!(tick > 0, "the point is inside the timeline");
+    s.handle(&UiEvent::FileHover {
+        pos: at,
+        paths: vec![wav("os-tick.wav", 6_000)],
+    });
+    assert!(s.core().arrangement().drop_hover().is_some());
+    s.handle(&UiEvent::FileDrop {
+        pos: at,
+        paths: vec![wav("os-tick.wav", 6_000)],
+    });
+    s.core_mut().wait_background();
+    assert_eq!(s.core().doc().song.tracks.len(), 1, "no new track");
+    assert_eq!(clip_count(&s), 2);
+    assert!(clip_starts(&s).iter().any(|(_, start)| *start == tick));
+}
+
+#[test]
+fn drops_below_the_tracks_or_out_of_the_timeline_still_make_new_tracks() {
+    let mut s = drag_shell("elsewhere");
+    let song = s.layout().song.unwrap();
+    let mut below = None;
+    let mut y = song.y1 - 1.0;
+    while y > song.y0 {
+        let p = Point::new(song.x0 + 500.0, y);
+        if matches!(
+            s.core().arrangement().drop_target_at(p),
+            Some((atomik_ui::ImportTarget::NewTracks, _))
+        ) {
+            below = Some(p);
+            break;
+        }
+        y -= 2.0;
+    }
+    let below = below.expect("a point under the tracks");
+    start_drag(&mut s, vec![wav("below.wav", 6_000)]);
+    s.handle(&moved(below));
+    s.handle(&up(below));
+    s.core_mut().wait_background();
+    assert_eq!(s.core().doc().song.tracks.len(), 2, "a new track");
+    s.handle(&UiEvent::FileDrop {
+        pos: below,
+        paths: vec![wav("below-os.wav", 6_000)],
+    });
+    s.core_mut().wait_background();
+    assert_eq!(s.core().doc().song.tracks.len(), 3, "a new track again");
+}
+
 #[test]
 fn several_files_drop_like_an_os_drop_of_the_same_files() {
     let paths = vec![wav("a.wav", 4_800), wav("b.wav", 4_800)];

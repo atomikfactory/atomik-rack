@@ -2,6 +2,7 @@
 //! on macOS, native menus (muda). Not unit-tested (window and GPU); everything it calls is.
 
 mod app;
+mod cursor;
 pub mod gpu;
 mod learn_strips;
 #[cfg(target_os = "macos")]

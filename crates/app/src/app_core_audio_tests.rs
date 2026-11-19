@@ -138,6 +138,23 @@ fn existing_track_imports_follow_one_another_in_path_order() {
 }
 
 #[test]
+fn a_drop_of_several_files_on_one_track_is_one_undo_step() {
+    let t = Tmp::new("one-step");
+    let a = wav(&t, "a.wav", 48_000, 48_000, 1.0);
+    let b = wav(&t, "b.wav", 24_000, 48_000, 0.5);
+    let d = wav(&t, "d.wav", 12_000, 48_000, 0.25);
+    let mut c = core();
+    import(&mut c, std::slice::from_ref(&a), ImportTarget::NewTracks, 0);
+    let track = c.doc().song.tracks[0].device.clone();
+    import(&mut c, &[b, d, a], ImportTarget::ExistingTrack(track), PPQ);
+    assert_eq!(audio_clips(&c).len(), 4);
+    assert!(c.undo());
+    assert_eq!(audio_clips(&c).len(), 1, "the whole drop went in one step");
+    assert!(c.redo());
+    assert_eq!(audio_clips(&c).len(), 4);
+}
+
+#[test]
 fn clip_lengths_are_rounded_up_to_whole_ticks() {
     let t = Tmp::new("round");
     // 100 001 frames at 120 BPM and 48 kHz need 64 001 ticks.
