@@ -3402,19 +3402,17 @@ impl ArrangementView {
             }
             Hit::Button(track, b) if primary => self.track_button(track, b, doc, registry, out),
             Hit::TrackMeter(track) => {
-                // A plain click clears the lamp and leaves the selection alone; with Shift or
-                // Ctrl, or the right button, the meter is part of the header (so an audio track
-                // is selected, extended and given its menu from it like a note track).
-                if primary && !(modifiers.shift || modifiers.command() || modifiers.alt) {
+                // The meter is part of the header: a press picks the track like any press on it
+                // (select, extend, drag, menu), and a primary one also clears the clip lamp.
+                if primary {
                     self.meter_click(track);
-                } else {
-                    self.header_down(track, button, modifiers, pos, out);
                 }
+                self.header_down(track, button, modifiers, pos, out);
             }
             Hit::LaneButton(track, lane, b) if primary => self.lane_button(track, lane, b, out),
             Hit::NoteLaneHeader(track, lane) => {
                 let secondary = button == PointerButton::Secondary;
-                self.note_lane_header_down(track, lane, secondary, clicks, pos, out);
+                self.note_lane_header_down(track, lane, secondary, modifiers, clicks, pos, out);
             }
             Hit::AddTrack(device) if primary => {
                 out.push(song_cmd(SongCommand::AddTrack { device }));
@@ -3487,8 +3485,13 @@ impl ArrangementView {
                 self.pick_note_lane(track, lane);
                 // Audio lanes hold recordings and imported files: nothing is drawn on them.
                 if self.song.tracks[track].is_audio() {
-                    // A click on one gives up the clip selection, as on any other empty lane.
-                    self.selection.clear();
+                    // A drag from empty space is the rubber band over clips, as on a note lane;
+                    // a click without a drag gives up the clip selection when it ends.
+                    if tool == Tool::Select {
+                        self.start_marquee(pos, false);
+                    } else {
+                        self.selection.clear();
+                    }
                     return;
                 }
                 let t = self.axis.x_to_tick(pos.x);
