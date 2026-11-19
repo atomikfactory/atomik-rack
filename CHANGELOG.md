@@ -10,7 +10,12 @@ may break APIs and the patch and project formats.
 
 ### Fixed
 
-- Looping a selection of clips keeps the gaps between them: dragging the loop handle of one of two or more selected clips now repeats the whole selection as separate copies (for clips at bars 1 and 2.5 the copies land at 4, 5.5, 7, 8.5 and so on), each on its own lane, instead of looping only the dragged clip. The repeat period is the spread of the clips' starts, snapped to the grid and never shorter than the selection; dragging back takes copies away, the whole drag is one undo step, and the last repetition becomes the selection so the next drag goes on with the same pattern. A single clip loops as before.
+- Looping a selection of clips keeps the gaps between them: dragging the loop handle of one of two or more selected
+  clips now repeats the whole selection as separate copies (for clips at bars 1 and 2.5 the copies land at 4, 5.5,
+  7, 8.5 and so on), each on its own lane, instead of looping only the dragged clip. The repeat period is the spread
+  of the clips' starts, snapped to the grid and never shorter than the selection; dragging back takes copies away,
+  the whole drag is one undo step, and the last repetition becomes the selection so the next drag goes on with the
+  same pattern. A single clip loops as before.
 
 ## [0.5.0-rc.1] - 2026-11-18
 
