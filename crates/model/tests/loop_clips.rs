@@ -8,8 +8,8 @@ use atomik_model::song::{
     flatten_audio, flatten_automation, flatten_controllers, flatten_notes_with,
 };
 use atomik_model::{
-    Clip, ClipContent, ClipId, ClipSnapshot, Command, ControllerKind, ControllerLane, Curve,
-    Document, LoopConvert, MetaChange, ModelError, SongCommand, StepGrid, StepResolution,
+    Clip, ClipContent, ClipId, ClipRepeat, ClipSnapshot, Command, ControllerKind, ControllerLane,
+    Curve, Document, LoopConvert, MetaChange, ModelError, SongCommand, StepGrid, StepResolution,
     WorkflowCommand, empty_doc, load_clip_file, load_project, save_project,
 };
 use common::audio::*;
@@ -738,4 +738,67 @@ fn a_looped_audio_clip_with_a_name_round_trips_through_the_project_file() {
     );
     let e = load_project(&bad, &reg).unwrap_err().to_string();
     assert!(e.contains("cannot loop"), "{e}");
+}
+
+// ------------------------------------------------------------------------ repeat clips
+
+fn repeat(first_id: u64, offsets: &[(ClipId, i64)]) -> Command {
+    wf(WorkflowCommand::RepeatClips {
+        copies: offsets
+            .iter()
+            .map(|(id, offset)| ClipRepeat {
+                id: *id,
+                offset: *offset,
+            })
+            .collect(),
+        first_id,
+        merge: Some(1),
+    })
+}
+
+#[test]
+fn repeat_clips_copies_replaces_its_own_previous_run_and_undoes_in_one_step() {
+    let r = registry();
+    let (mut d, a, b) = two_clips(&r);
+    let first = d.doc().song.next_clip_id;
+    let starts = |d: &Document| -> Vec<i64> {
+        let mut s: Vec<i64> = clips_of(d, 0).iter().map(|c| c.start).collect();
+        s.sort_unstable();
+        s
+    };
+    let original = starts(&d);
+    let depth = d.undo_depth();
+    run(
+        &mut d,
+        &r,
+        [repeat(first, &[(a, 3 * BAR), (b, 3 * BAR), (a, 6 * BAR)])],
+    );
+    assert_eq!(starts(&d).len(), 5);
+    assert_eq!(d.doc().song.next_clip_id, first + 3);
+    // A second run of the drag replaces the copies, with the same ids again.
+    run(&mut d, &r, [repeat(first, &[(a, 3 * BAR)])]);
+    assert_eq!(starts(&d).len(), 3);
+    assert_eq!(d.doc().song.next_clip_id, first + 1);
+    let copy = clips_of(&d, 0)
+        .into_iter()
+        .find(|c| c.id == ClipId(first))
+        .unwrap();
+    let from = clips_of(&d, 0).into_iter().find(|c| c.id == a).unwrap();
+    assert_eq!(copy.start, from.start + 3 * BAR);
+    assert_eq!(copy.content, from.content);
+    // An empty run takes them all back, and the whole drag is one undo step.
+    run(&mut d, &r, [repeat(first, &[])]);
+    assert_eq!(starts(&d), original);
+    d.end_merge();
+    assert_eq!(d.undo_depth(), depth + 1);
+    // The step of the drag undoes to a document without any copy.
+    let mut e = Document::new(d.doc().clone());
+    run(&mut e, &r, [repeat(first, &[(a, BAR)])]);
+    assert!(e.undo().is_some());
+    assert_eq!(starts(&e), original);
+    assert_eq!(e.doc().song.next_clip_id, first);
+    // Unknown originals and a copy before its original reject.
+    rejected(&mut e, &r, repeat(first, &[(ClipId(999), BAR)]));
+    rejected(&mut e, &r, repeat(first, &[(a, -1)]));
+    rejected(&mut e, &r, repeat(first + 5, &[(a, BAR)]));
 }

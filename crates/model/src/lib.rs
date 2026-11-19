@@ -247,7 +247,7 @@ pub use workflow::{
     ClipEntry, ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, TakeSnapshot,
     neighbour_clip, neighbour_device, neighbour_track,
 };
-pub use workflow_cmd::{ClipMove, TakeTarget, WorkflowCommand};
+pub use workflow_cmd::{ClipMove, ClipRepeat, MAX_REPEAT_COPIES, TakeTarget, WorkflowCommand};
 pub use workflow_create::{
     CreateOptions, CreateSource, CreateTarget, RouteNote, SEND_SLOTS_FULL, effect_route_note,
     first_free_send_slot, is_note_player, player_stack, preview_chain,
@@ -1537,6 +1537,7 @@ impl Document {
             ) => Some(MergeKey::Clip(*m)),
             Command::Workflow(
                 WorkflowCommand::MoveClips { merge: Some(m), .. }
+                | WorkflowCommand::RepeatClips { merge: Some(m), .. }
                 | WorkflowCommand::TrimClips { merge: Some(m), .. },
             ) => Some(MergeKey::Clip(*m)),
             Command::Song(SongCommand::SetLaneStatic {
