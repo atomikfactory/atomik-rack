@@ -168,16 +168,20 @@ fn shift_clicking_headers_selects_several_tracks_and_group_tracks_makes_a_folder
         shift: true,
         ..Modifiers::NONE
     };
+    let ctrl = Modifiers {
+        ctrl: true,
+        ..Modifiers::NONE
+    };
+    // Shift selects the range in the order shown, Ctrl toggles one track.
     click_with(&d, &reg, &mut v, keys, shift);
-    assert_eq!(v.selected_tracks(), [key("bass"), key("keys")]);
-    // Shift-click again takes it out, a plain click goes back to one track.
-    click_with(&d, &reg, &mut v, keys, shift);
-    assert_eq!(v.selected_tracks(), [key("bass")]);
-    click_with(&d, &reg, &mut v, keys, shift);
+    assert_eq!(v.selected_tracks(), [key("bass"), key("lead"), key("keys")]);
+    click_with(&d, &reg, &mut v, keys, ctrl);
+    assert_eq!(v.selected_tracks(), [key("bass"), key("lead")]);
+    click_with(&d, &reg, &mut v, keys, ctrl);
     click(&d, &reg, &mut v, keys);
     assert_eq!(v.selected_tracks(), [key("keys")]);
     click(&d, &reg, &mut v, bass);
-    click_with(&d, &reg, &mut v, keys, shift);
+    click_with(&d, &reg, &mut v, keys, ctrl);
     let actions = do_command(&mut d, &reg, &mut v, "sequencer.group_tracks", None);
     assert_eq!(
         song_cmds(&actions),

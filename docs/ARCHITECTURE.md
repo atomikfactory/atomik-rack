@@ -2058,8 +2058,8 @@ bounce, except the mute and solo of a folder, which decide which tracks play.
   the UI) per level of folder, at most three (`track_indent`; the buttons at the right end keep
   their place and the input selector gets narrower, a one-line header moves M, S and R by at most 24
   px); the hit tests use the same `track_button_rect` and `lane_label_rect`, and the clips do not
-  move. A header outlines the selected tracks (shift-click or ctrl-click adds one; a selected folder
-  stands for its tracks), draws the folder guides of its ancestors at its left edge, takes its
+  move. A header outlines the selected tracks (shift-click selects the range from the anchor, ctrl-click toggles
+  one; a selected folder stands for its tracks), draws the folder guides of its ancestors at its left edge, takes its
   accent from the track colour (clips follow; clips have no colour of their own) and shows a note
   mark when it has a comment, with the first line as a tooltip. A folder name is typed in place (one
   line, Enter commits, Escape or a press elsewhere cancels or commits as for the marker names). A

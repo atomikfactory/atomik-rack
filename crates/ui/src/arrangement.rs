@@ -1602,6 +1602,7 @@ impl ArrangementView {
             self.point_sel = None;
             self.og.group = None;
             self.og.extra.clear();
+            self.og.anchor = device.clone();
         }
         self.selected_track = device;
         self.repaint = true;
@@ -3400,8 +3401,16 @@ impl ArrangementView {
                 self.folder_clip_down(&hit, pos, button, modifiers, clicks, out);
             }
             Hit::Button(track, b) if primary => self.track_button(track, b, doc, registry, out),
-            Hit::TrackMeter(track) if primary => self.meter_click(track),
-            Hit::TrackMeter(track) => self.header_down(track, button, modifiers, pos, out),
+            Hit::TrackMeter(track) => {
+                // A plain click clears the lamp and leaves the selection alone; with Shift or
+                // Ctrl, or the right button, the meter is part of the header (so an audio track
+                // is selected, extended and given its menu from it like a note track).
+                if primary && !(modifiers.shift || modifiers.command() || modifiers.alt) {
+                    self.meter_click(track);
+                } else {
+                    self.header_down(track, button, modifiers, pos, out);
+                }
+            }
             Hit::LaneButton(track, lane, b) if primary => self.lane_button(track, lane, b, out),
             Hit::NoteLaneHeader(track, lane) => {
                 let secondary = button == PointerButton::Secondary;
@@ -3478,6 +3487,8 @@ impl ArrangementView {
                 self.pick_note_lane(track, lane);
                 // Audio lanes hold recordings and imported files: nothing is drawn on them.
                 if self.song.tracks[track].is_audio() {
+                    // A click on one gives up the clip selection, as on any other empty lane.
+                    self.selection.clear();
                     return;
                 }
                 let t = self.axis.x_to_tick(pos.x);
@@ -3516,8 +3527,11 @@ impl ArrangementView {
         }
     }
 
-    /// A press on a track header: selects the track (the clip selection gives way), Shift or Ctrl
-    /// adds it to the selection, and a right click opens the header menu.
+    /// A press on a track header: selects the track (the clip selection gives way), Shift selects
+    /// the range of tracks from the anchor (the track last picked with a plain click or Ctrl) to
+    /// it in the order shown, Ctrl adds the track to the selection or takes it out, and a right
+    /// click opens the header menu. A right click on one of several selected tracks keeps them
+    /// all selected, so the menu can act on every one.
     fn header_down(
         &mut self,
         track: usize,
@@ -3536,8 +3550,13 @@ impl ArrangementView {
             return;
         }
         if button == PointerButton::Primary && (modifiers.shift || modifiers.command()) {
-            // Shift or Ctrl adds the track to the selection.
-            self.toggle_selected_track(&device);
+            if modifiers.shift {
+                // Shift selects the range from the anchor (Shift+Ctrl adds it to the selection).
+                self.select_track_range(&device, modifiers.command());
+            } else {
+                // Ctrl adds the track to the selection or takes it out.
+                self.toggle_selected_track(&device);
+            }
             return;
         }
         // The automation lane whose header was pressed is the one the lane items of the menu act
@@ -3553,12 +3572,12 @@ impl ArrangementView {
         // A press on one of several selected tracks keeps the selection, so the drag can take
         // them all; a release without a drag then picks the one.
         let selected = self.selected_tracks();
-        let keep = button == PointerButton::Primary
-            && self.og.group.is_none()
-            && selected.len() > 1
-            && selected.contains(&device);
+        let keep = self.og.group.is_none() && selected.len() > 1 && selected.contains(&device);
         if !keep {
             self.set_selected_track(Some(device.clone()));
+        } else if button == PointerButton::Secondary {
+            // The items of the menu that take one track act on the one clicked.
+            self.make_primary_track(&device);
         }
         if button == PointerButton::Secondary {
             out.push(UiAction::ContextMenu {

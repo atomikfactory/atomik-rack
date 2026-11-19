@@ -98,6 +98,7 @@ impl ArrangementView {
         let mut picked = picked.into_iter();
         self.selected_track = picked.next();
         self.og.extra = picked.collect();
+        self.og.anchor = self.selected_track.clone();
         self.repaint = true;
     }
 

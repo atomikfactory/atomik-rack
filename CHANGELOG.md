@@ -8,6 +8,19 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Fixed
+- **Selecting audio tracks in the sequencer.** Shift+click, Ctrl+click and right click on the level meter in the header of
+  an audio track now act on the track like on its name (they did nothing before, so a selection could not be extended
+  or opened with the menu from there; a plain click still only clears the clip lamp), and a click on an empty audio lane gives up the clip selection as a click on an empty note lane does.
+- **Several tracks selected, track colour.** A right click on one of several selected tracks keeps them all selected
+  (a right click on an unselected track still selects it alone), so the header menu's Colour reaches every selected
+  track in one undo step; the menu items that take one track act on the track clicked.
+
+### Changed
+- **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last picked with
+  a plain click or Ctrl+click) to the one clicked, in the order shown; tracks in a collapsed folder are skipped.
+  Ctrl+click (Cmd on macOS) toggles one track in or out, and Shift+Ctrl+click adds the range to the selection.
+
 ## [0.5.0-rc.1] - 2026-11-18
 
 ### Added
