@@ -10,7 +10,9 @@ may break APIs and the patch and project formats.
 
 ### Fixed
 
-- Selecting a track in the arrangement or a channel strip in the console now scrolls the rack (the main window's and a detached one) to the track's device, as well as selecting it. Nothing moves when the device is already fully visible, and undo, redo and opening a project do not scroll the rack.
+- Selecting a track in the arrangement or a channel strip in the console now scrolls the rack (the main window's and
+  a detached one) to the track's device, as well as selecting it. Nothing moves when the device is already fully
+  visible, and undo, redo and opening a project do not scroll the rack.
 
 ## [0.5.0-rc.1] - 2026-11-18
 
