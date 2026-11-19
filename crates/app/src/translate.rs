@@ -301,7 +301,8 @@ pub fn logical_size(size: PhysicalSize<u32>, scale: f64) -> atomik_ui::kurbo::Si
 /// all files of one hover as one [`UiEvent::FileHover`]. Per flush at most one event comes
 /// out, by priority: a drop (which also ends the hover), else a cancel, else a hover. The
 /// position is the last known cursor position (winit sends none with file events, and on
-/// Windows no cursor movement during an OS drag).
+/// Windows no cursor movement during an OS drag: the platform layer reads the cursor from the
+/// system while files hover and drop, see [`Self::rehover`]).
 #[derive(Debug, Default)]
 pub struct FileDrag {
     hovered: Vec<PathBuf>,
@@ -333,6 +334,21 @@ impl FileDrag {
     /// `WindowEvent::DroppedFile`.
     pub fn dropped(&mut self, path: PathBuf) {
         self.dropped.push(path);
+    }
+
+    /// True while files hover over the window: a hover was collected and neither a drop nor a
+    /// cancel has ended it.
+    pub fn is_hovering(&self) -> bool {
+        !self.hovered.is_empty()
+    }
+
+    /// Asks for a hover event at the next flush although no file event came: the cursor moved
+    /// during a drag that sends no cursor events (an operating-system drag on Windows), so the
+    /// window polls the cursor and re-sends the hover at its new position.
+    pub fn rehover(&mut self) {
+        if self.is_hovering() {
+            self.hover_changed = true;
+        }
     }
 
     /// True if [`Self::flush`] would produce an event.
@@ -757,6 +773,32 @@ mod tests {
                 paths: vec!["z.wav".into()]
             })
         );
+    }
+
+    #[test]
+    fn rehover_resends_the_hover_at_the_new_position_until_the_drag_ends() {
+        let mut d = FileDrag::new();
+        let (a, b) = (Point::new(1.0, 2.0), Point::new(30.0, 40.0));
+        d.rehover();
+        assert!(!d.is_pending(), "nothing hovers yet");
+        d.hovered("a.wav".into());
+        assert!(d.is_hovering());
+        d.flush(a);
+        assert!(d.is_hovering() && !d.is_pending());
+        d.rehover();
+        assert_eq!(
+            d.flush(b),
+            Some(UiEvent::FileHover {
+                pos: b,
+                paths: vec!["a.wav".into()]
+            })
+        );
+        d.dropped("a.wav".into());
+        d.flush(b);
+        assert!(!d.is_hovering(), "a drop ends the hover");
+        d.hovered("c.wav".into());
+        d.hover_cancelled();
+        assert!(!d.is_hovering(), "a cancel ends it too");
     }
 
     #[test]
