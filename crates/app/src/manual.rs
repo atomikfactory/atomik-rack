@@ -49,13 +49,14 @@ macro_rules! repo {
 }
 
 /// The files the documents link to, with where each opens in the browser.
-const ONLINE: [(&str, &str); 18] = [
+const ONLINE: [(&str, &str); 19] = [
     ("ARCHITECTURE.md", repo!("docs/ARCHITECTURE.md")),
     ("DEVICES.md", repo!("docs/DEVICES.md")),
     ("EXTENDING.md", repo!("docs/EXTENDING.md")),
     ("TESTING.md", repo!("docs/TESTING.md")),
     ("MCP.md", repo!("docs/MCP.md")),
     ("TAB.md", repo!("docs/TAB.md")),
+    ("BUILDING.md", repo!("docs/BUILDING.md")),
     ("DEPENDENCIES.md", repo!("docs/DEPENDENCIES.md")),
     ("DECISIONS.md", repo!("docs/DECISIONS.md")),
     ("RELEASING.md", repo!("docs/RELEASING.md")),
