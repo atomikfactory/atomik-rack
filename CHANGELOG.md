@@ -32,7 +32,12 @@ may break APIs and the patch and project formats.
   the whole drag is one undo step, and the last repetition becomes the selection so the next drag goes on with the
   same pattern. A single clip loops as before.
 
-- Dragging audio files from the operating system's file manager onto an audio track's lane or header now imports them on that track at the snapped drop position, with the drop hint on that lane. On Windows the window got no cursor events during such a drag, so the hint and the drop used the position where the pointer last was inside the window (often a new-track target); the cursor is now read from the system while files hover and drop. Several files go one after the other on the track, and a drop is one undo step. Drops on a note lane, an empty area or below the tracks still make new tracks.
+- Dragging audio files from the operating system's file manager onto an audio track's lane or header now imports
+  them on that track at the snapped drop position, with the drop hint on that lane. On Windows the window got no
+  cursor events during such a drag, so the hint and the drop used the position where the pointer last was inside the
+  window (often a new-track target); the cursor is now read from the system while files hover and drop. Several
+  files go one after the other on the track, and a drop is one undo step. Drops on a note lane, an empty area or
+  below the tracks still make new tracks.
 
 - Selecting a track in the arrangement or a channel strip in the console now scrolls the rack (the main window's and a detached one) to the track's device, as well as selecting it. Nothing moves when the device is already fully visible, and undo, redo and opening a project do not scroll the rack.
 - **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio track now
