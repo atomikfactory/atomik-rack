@@ -9,11 +9,14 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Fixed
-- **Selecting audio tracks in the sequencer.** Shift+click, Ctrl+click and right click on the level meter in the header of
-  an audio track now act on the track like on its name (they did nothing before, so a selection could not be extended
-  or opened with the menu from there; a plain click still only clears the clip lamp), and a click on an empty audio lane gives up the clip selection as a click on an empty note lane does.
+- **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio
+  track now picks the track like a click on the rest of the header (select, Shift or Ctrl to extend, drag, right click
+  for the menu) and still clears the clip lamp; it only cleared the lamp before, so a selection could not be started or
+  extended from there, and a click on an empty audio lane gives up the clip selection as a click on an empty note lane does.
+- **Rubber band on audio lanes.** A press on empty space in an audio lane and a drag now draws the selection rectangle
+  over clips (across tracks), as on a note lane; a click without a drag still gives up the selection.
 - **Several tracks selected, track colour.** A right click on one of several selected tracks keeps them all selected
-  (a right click on an unselected track still selects it alone), so the header menu's Colour reaches every selected
+  (a right click on an unselected track still selects it alone; this includes the lane label of a track with several note lanes, where Shift and Ctrl+click also extend the selection), so the header menu's Colour reaches every selected
   track in one undo step; the menu items that take one track act on the track clicked.
 - **Join Clips on audio clips with a gap.** Ctrl+J on audio clips of one lane with empty space between them no longer
   refuses: they join into one clip from the first clip's start to the last clip's end, the gaps being silence. As a

@@ -188,9 +188,10 @@ fn the_lamp_latches_at_full_scale_and_a_click_on_the_meter_clears_it() {
         dl.to_json()
     };
     assert_ne!(lit, cleared, "the lamp is drawn lit");
-    assert!(
-        v.selected_track().is_none(),
-        "the click is not a track selection"
+    assert_eq!(
+        v.selected_track(),
+        Some(&key(GUITAR)),
+        "the click picks the track like a click on the rest of the header"
     );
 }
 

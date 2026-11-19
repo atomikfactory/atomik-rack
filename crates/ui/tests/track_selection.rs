@@ -125,7 +125,8 @@ fn an_audio_track_starts_a_multi_selection_like_a_note_track() {
 #[test]
 fn shift_and_ctrl_on_the_meter_of_an_audio_track_pick_the_track() {
     let (doc, mut v) = audio_setup();
-    click_on(&mut v, &doc, "audio-track", false, Modifiers::NONE);
+    click_on(&mut v, &doc, "audio-track", true, Modifiers::NONE);
+    assert_eq!(names(&v), ["audio-track"], "a plain click picks it too");
     click_on(&mut v, &doc, "audio-track-2", true, CTRL);
     assert_eq!(names(&v), ["audio-track", "audio-track-2"]);
     click_on(&mut v, &doc, "bass", false, SHIFT);
@@ -269,4 +270,72 @@ fn the_track_colour_reaches_every_selected_track_in_one_undo_step() {
         })
         .collect();
     assert_eq!(coloured, ["bass", "keys"]);
+}
+
+#[test]
+fn a_right_click_on_the_lane_label_of_a_selected_track_keeps_the_selection() {
+    let (mut d, reg, mut v) = song_setup();
+    d.apply(
+        Command::Song(SongCommand::AddNoteLane {
+            device: key("keys"),
+            name: None,
+        }),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    let doc = d.doc();
+    click_on(&mut v, doc, "bass", false, Modifiers::NONE);
+    click_on(&mut v, doc, "keys", false, CTRL);
+    let at = v
+        .note_lane_header_center(&key("keys"), 0)
+        .expect("a lane label");
+    // Ctrl+click there toggles the track like on the rest of the header.
+    click(&mut v, doc, at, CTRL);
+    assert_eq!(names(&v), ["bass"]);
+    click(&mut v, doc, at, CTRL);
+    let a = press(&mut v, doc, at, PointerButton::Secondary, Modifiers::NONE);
+    assert!(
+        a.iter().any(|a| matches!(a, UiAction::ContextMenu { .. })),
+        "{a:?}"
+    );
+    assert_eq!(names(&v), ["bass", "keys"]);
+}
+
+#[test]
+fn dragging_from_empty_space_on_an_audio_lane_selects_clips_across_tracks() {
+    let (doc, mut v) = audio_setup();
+    let reg = registry();
+    let clip = v.clip_rect(ClipId(10)).unwrap().center();
+    let empty = Point::new(clip.x, header(&v, "audio-track-2", false).y);
+    let events = [
+        down(empty),
+        UiEvent::PointerMove {
+            pos: Point::new(clip.x, (clip.y + empty.y) / 2.0),
+            modifiers: Modifiers::NONE,
+        },
+        UiEvent::PointerMove {
+            pos: Point::new(clip.x + 4.0, clip.y),
+            modifiers: Modifiers::NONE,
+        },
+        up(Point::new(clip.x + 4.0, clip.y)),
+    ];
+    run(|e| v.handle(e, &doc, &reg), &events);
+    assert_eq!(v.selected_clips(), vec![ClipId(10)]);
+    // Over a note clip as well: the band crosses tracks.
+    let bass = v.clip_rect(ClipId(1)).unwrap().center();
+    let far = Point::new(bass.x + 2.0, bass.y);
+    let events = [
+        down(empty),
+        UiEvent::PointerMove {
+            pos: far,
+            modifiers: Modifiers::NONE,
+        },
+        up(far),
+    ];
+    run(|e| v.handle(e, &doc, &reg), &events);
+    assert!(v.selected_clips().contains(&ClipId(1)));
+    // A click without a drag gives up the selection.
+    run(|e| v.handle(e, &doc, &reg), &[down(empty), up(empty)]);
+    assert!(v.selected_clips().is_empty());
 }

@@ -32,6 +32,7 @@
 use super::{ArrangementView, COMPACT_BELOW, Hit, LaneButton, TRACK_LIST_WIDTH, song_cmd};
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas, CanvasExt};
+use crate::event::{Modifiers, PointerButton};
 use crate::keymap::CommandOutcome;
 use crate::paint::fit_label;
 use crate::seq_paint as sp;
@@ -297,18 +298,35 @@ impl ArrangementView {
     }
 
     /// A press on the label of a note lane header: picks the lane and the track; a double-click
-    /// types the lane's name, a right click opens the track header menu.
+    /// types the lane's name, a right click opens the track header menu (and keeps several selected
+    /// tracks selected), Shift or Ctrl extends the track selection.
+    #[allow(clippy::too_many_arguments, reason = "event fields are passed through")]
     pub(super) fn note_lane_header_down(
         &mut self,
         track: usize,
         lane: usize,
         secondary: bool,
+        modifiers: Modifiers,
         clicks: u8,
         pos: Point,
         out: &mut Vec<UiAction>,
     ) {
         let device = self.song.tracks[track].device.clone();
-        self.set_selected_track(Some(device.clone()));
+        if !secondary && (modifiers.shift || modifiers.command()) {
+            // Shift or Ctrl extends the track selection, as on the rest of the header.
+            self.header_down(track, PointerButton::Primary, modifiers, pos, out);
+            return;
+        }
+        // A right click on one of several selected tracks keeps them all for the menu.
+        if secondary
+            && self.og.group.is_none()
+            && self.selected_tracks().len() > 1
+            && self.selected_tracks().contains(&device)
+        {
+            self.make_primary_track(&device);
+        } else {
+            self.set_selected_track(Some(device.clone()));
+        }
         self.set_selected_lane(&device, lane);
         // Delete acts on an extra lane alone; lane 0 is the track's own row.
         self.picked_note_lane = (lane > 0).then(|| (device.clone(), lane));

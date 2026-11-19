@@ -815,3 +815,38 @@ fn a_context_submenu_opens_at_once_and_a_switch_wakes_the_loop_at_its_deadline()
     assert_eq!(s.context_menu_wake(), None);
     s.close_context_menu();
 }
+
+#[test]
+fn colouring_from_the_header_menu_reaches_every_selected_track() {
+    let mut s = shell();
+    // Select a, b and c with real presses, then colour from the menu of b.
+    let at = header(&s, "a");
+    press(&mut s, at, PointerButton::Primary, Modifiers::NONE);
+    let ctrl = Modifiers {
+        ctrl: true,
+        ..Modifiers::NONE
+    };
+    for k in ["b", "c"] {
+        let at = header(&s, k);
+        press(&mut s, at, PointerButton::Primary, ctrl);
+    }
+    let at = header(&s, "b");
+    press(&mut s, at, PointerButton::Secondary, Modifiers::NONE);
+    let sub = s.context_menu().unwrap().submenu_center("Colour").unwrap();
+    s.handle(&UiEvent::PointerMove {
+        pos: sub,
+        modifiers: Modifiers::NONE,
+    });
+    let item = s
+        .context_menu()
+        .unwrap()
+        .item_center_with("sequencer.track_color", "green")
+        .unwrap();
+    press(&mut s, item, PointerButton::Primary, Modifiers::NONE);
+    let song = &s.core().doc().song;
+    let green = Some([0x5a, 0xb8, 0x6a]);
+    for k in ["a", "b", "c"] {
+        assert_eq!(song.track_color(&key(k)), green, "{k}");
+    }
+    assert_eq!(song.track_color(&key("d")), None);
+}
