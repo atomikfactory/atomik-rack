@@ -5,6 +5,15 @@
 //!   clip shows: the clip grows to the pointer and, when it did not loop, starts to loop over
 //!   what it showed. Dragging it back shortens the clip. A looped audio clip that plays
 //!   backwards has none (a reversed clip cannot loop), nor has a frozen track's render.
+//!   With **two or more clips selected** (at least two different starts) the handle of one of
+//!   them repeats the whole selection as separate copies instead, keeping the gaps between the
+//!   clips: the period is the span of the starts spread over the clips,
+//!   `(last start - first start) * n / (n - 1)` (so clips at bars 1 and 2.5 repeat every 3
+//!   bars), snapped to the grid and never shorter than the selection's own extent. Every clip
+//!   is copied to `start + k * period` on its own lane for each copy that starts before the
+//!   pointer; dragging back takes copies away. The live preview and the release are one undo
+//!   step (`WorkflowCommand::RepeatClips`), and the last repetition becomes the selection, as
+//!   after a duplicate, so the next drag goes on with the same pattern.
 //! * The **loop separators** are drawn where each repetition begins, with a bevel.
 //! * `sequencer.convert_loop` turns the loops of the selected clips into one clip each
 //!   (`single`) or one clip per repetition (`separate`); `sequencer.loop_instance` makes the
@@ -20,10 +29,11 @@ use crate::action::UiAction;
 use crate::keymap::CommandOutcome;
 use crate::marker_edit::palette_color;
 use crate::seq_edit;
-use crate::timeline::Quant;
+use crate::timeline::{Quant, snap_ceil, snap_round};
 use atomik_model::song::MAX_LOOP_REPEATS;
 use atomik_model::{
-    Clip, ClipContent, ClipId, LoopConvert, MetaChange, SongCommand, WorkflowCommand,
+    Clip, ClipContent, ClipId, ClipRepeat, LoopConvert, MAX_REPEAT_COPIES, MetaChange, SongCommand,
+    WorkflowCommand,
 };
 use vello::kurbo::Rect;
 
@@ -93,6 +103,135 @@ pub(super) fn loop_drag_wanted(
         Some(n) => (length, Some(n)),
         None if length > clip.length => (length, Some(n)),
         None => (length, None),
+    }
+}
+
+/// The period of the repetition of `group` (clips sorted by start): the span of the distinct
+/// starts spread over the clips, snapped to the grid, and at least the extent of the group.
+/// `None` for fewer than two distinct starts.
+pub(super) fn repeat_period(group: &[Clip], step: impl Quant) -> Option<i64> {
+    let mut starts: Vec<i64> = group.iter().map(|c| c.start).collect();
+    starts.sort_unstable();
+    starts.dedup();
+    let n = i64::try_from(starts.len()).ok().filter(|n| *n >= 2)?;
+    let first = starts[0];
+    let last = starts[starts.len() - 1];
+    let raw = (last - first).saturating_mul(n) / (n - 1);
+    let extent = group.iter().map(Clip::end).max().unwrap_or(first) - first;
+    let snapped = snap_round(first + raw, &step) - first;
+    Some(snapped.max(snap_ceil(first + extent, &step) - first).max(1))
+}
+
+/// The copies a drag to `pointer` makes: every clip of `group` at `start + k * period` for each
+/// `k >= 1` while that start is before the pointer, pass by pass.
+pub(super) fn repeat_copies(group: &[Clip], period: i64, pointer: i64) -> Vec<ClipRepeat> {
+    let mut copies = Vec::new();
+    for k in 1..=MAX_LOOP_REPEATS {
+        let offset = period.saturating_mul(k);
+        let before = copies.len();
+        for c in group {
+            if c.start.saturating_add(offset) < pointer && copies.len() < MAX_REPEAT_COPIES {
+                copies.push(ClipRepeat { id: c.id, offset });
+            }
+        }
+        if copies.len() == before {
+            break;
+        }
+    }
+    copies
+}
+
+/// The loop handle drag of a selection of several clips (see the module docs).
+#[derive(Debug, Clone)]
+pub(super) struct RepeatDrag {
+    /// The selected clips, by start.
+    group: Vec<Clip>,
+    /// The id of the first copy: the song's next free clip id when the drag began.
+    first_id: u64,
+    /// The period, worked out at the first move (the grid is known then).
+    period: Option<i64>,
+    /// What the document holds now.
+    last: Vec<ClipRepeat>,
+}
+
+impl RepeatDrag {
+    /// A repetition of `group` (the selected clips), `None` unless it has two clips with
+    /// different starts and no frozen render.
+    pub(super) fn new(mut group: Vec<Clip>, first_id: u64) -> Option<Self> {
+        group.sort_by_key(|c| (c.start, c.id));
+        let distinct = group.windows(2).any(|w| w[0].start != w[1].start);
+        (distinct && group.iter().all(|c| c.id != ClipId(0))).then_some(Self {
+            group,
+            first_id,
+            period: None,
+            last: Vec::new(),
+        })
+    }
+
+    fn command(&self, copies: Vec<ClipRepeat>, merge: u64) -> UiAction {
+        workflow_cmd(WorkflowCommand::RepeatClips {
+            copies,
+            first_id: self.first_id,
+            merge: Some(merge),
+        })
+    }
+
+    /// The command for a pointer at tick `pointer`, `None` when the copies stay as they are.
+    pub(super) fn update(
+        &mut self,
+        pointer: i64,
+        step: impl Quant,
+        merge: u64,
+    ) -> Option<UiAction> {
+        let period = match self.period {
+            Some(p) => p,
+            None => {
+                let p = repeat_period(&self.group, step)?;
+                self.period = Some(p);
+                p
+            }
+        };
+        let copies = repeat_copies(&self.group, period, pointer);
+        if copies == self.last {
+            return None;
+        }
+        self.last.clone_from(&copies);
+        Some(self.command(copies, merge))
+    }
+
+    /// The command that takes every copy back (a cancelled drag).
+    pub(super) fn undo(&self, merge: u64) -> UiAction {
+        self.command(Vec::new(), merge)
+    }
+
+    /// The clips of the last complete repetition (the last one when none is complete): what
+    /// the selection becomes. Empty without copies.
+    pub(super) fn last_pass(&self) -> Vec<ClipId> {
+        let Some(period) = self.period.filter(|p| *p > 0) else {
+            return Vec::new();
+        };
+        let pass = |i: usize| self.last[i].offset / period;
+        let size = self.group.len();
+        let mut best: Option<(bool, i64)> = None;
+        for i in 0..self.last.len() {
+            let k = pass(i);
+            let full = (0..self.last.len()).filter(|j| pass(*j) == k).count() == size;
+            if best.is_none_or(|b| (full, k) > b) {
+                best = Some((full, k));
+            }
+        }
+        let Some((_, k)) = best else {
+            return Vec::new();
+        };
+        (0..self.last.len())
+            .filter(|i| pass(*i) == k)
+            .filter_map(|i| {
+                u64::try_from(i)
+                    .ok()?
+                    .checked_add(self.first_id)
+                    .map(ClipId)
+            })
+            .collect()
     }
 }
 
@@ -186,6 +325,13 @@ impl ArrangementView {
     /// The loop handle drag begins on `clip` at `pos`.
     pub(super) fn begin_loop_drag(&mut self, clip: Clip, pos: vello::kurbo::Point) {
         let merge = self.merge_id();
+        // Two or more selected clips: the handle repeats the selection as copies.
+        let group: Vec<Clip> = self.selected_in_order().into_iter().cloned().collect();
+        let repeat = if group.len() >= 2 && self.selection.contains(&clip.id) {
+            RepeatDrag::new(group, self.song.next_clip_id)
+        } else {
+            None
+        };
         self.drag = Drag::Resize {
             start: pos,
             others: Vec::new(),
@@ -196,6 +342,7 @@ impl ArrangementView {
             emitted: false,
             loop_mode: false,
             looping: true,
+            repeat,
         };
     }
 
