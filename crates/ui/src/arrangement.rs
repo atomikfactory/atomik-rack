@@ -647,6 +647,9 @@ enum Drag {
         loop_mode: bool,
         /// The loop handle: the clip grows by repeating what it shows.
         looping: bool,
+        /// The loop handle of a selection of several clips: the selection is repeated as
+        /// copies (see `loops.rs`) instead of one clip looping.
+        repeat: Option<loops::RepeatDrag>,
         last: (i64, Option<i64>),
     },
     /// The left edge of note and automation clips: the start moves, the end stays.
@@ -4262,6 +4265,7 @@ impl ArrangementView {
                     emitted: false,
                     loop_mode,
                     looping: false,
+                    repeat: None,
                 };
             }
             ClipPart::LoopHandle if primary => {
@@ -4804,6 +4808,7 @@ impl ArrangementView {
                 emitted,
                 loop_mode,
                 looping,
+                repeat,
                 last,
             } => {
                 *moved |= pos.distance(*start) > DRAG_THRESHOLD;
@@ -4811,6 +4816,14 @@ impl ArrangementView {
                     return;
                 }
                 let delta = axis.dx_to_ticks(pos.x - start.x);
+                if let Some(r) = repeat {
+                    if let Some(cmd) = r.update(clip.end() + delta, &step, *merge) {
+                        out.push(cmd);
+                        *emitted = true;
+                    }
+                    self.repaint = true;
+                    return;
+                }
                 if *looping {
                     let wanted = loops::loop_drag_wanted(clip, delta, step, min);
                     if wanted != *last {
@@ -5448,6 +5461,21 @@ impl ArrangementView {
             Drag::Stretch { open: true, .. } => out.push(UiAction::StretchEnd { commit: true }),
             Drag::Crossfade { open: true, .. } => {
                 out.push(UiAction::CrossfadeEnd { commit: true });
+            }
+            Drag::Resize {
+                emitted,
+                repeat: Some(r),
+                ..
+            } => {
+                if emitted {
+                    out.push(UiAction::EndMerge);
+                    // The last repetition takes the selection, like a duplicate: dragging its
+                    // handle goes on with the same pattern.
+                    let picked = r.last_pass();
+                    if !picked.is_empty() {
+                        self.selection.set(picked);
+                    }
+                }
             }
             Drag::Resize { emitted, .. }
             | Drag::Trim { emitted, .. }
@@ -6282,6 +6310,15 @@ impl ArrangementView {
                 let song = &self.song;
                 self.selection
                     .set(base.into_iter().filter(|id| find_clip(song, *id).is_some()));
+            }
+            Drag::Resize {
+                merge,
+                emitted: true,
+                repeat: Some(r),
+                ..
+            } => {
+                out.push(r.undo(merge));
+                out.push(UiAction::EndMerge);
             }
             Drag::Resize {
                 clip,

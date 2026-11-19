@@ -607,6 +607,9 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 WorkflowCommand::MoveClips { moves, .. } => moves
                     .iter()
                     .find_map(|m| clip_frozen(&m.id).or_else(|| track_frozen(&m.track))),
+                WorkflowCommand::RepeatClips { copies, .. } => {
+                    copies.iter().find_map(|c| clip_frozen(&c.id))
+                }
                 WorkflowCommand::PasteClips { track, .. } => track.as_ref().and_then(track_frozen),
                 WorkflowCommand::PasteTakes { target, .. } => match target {
                     crate::TakeTarget::Group(group) => doc

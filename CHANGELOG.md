@@ -22,6 +22,8 @@ may break APIs and the patch and project formats.
   its id, name and colour. Clips of one file that touch still join without a render; a muted clip and a frozen track
   still refuse. Note clips with gaps already joined and are unchanged.
 
+- Looping a selection of clips keeps the gaps between them: dragging the loop handle of one of two or more selected clips now repeats the whole selection as separate copies (for clips at bars 1 and 2.5 the copies land at 4, 5.5, 7, 8.5 and so on), each on its own lane, instead of looping only the dragged clip. The repeat period is the spread of the clips' starts, snapped to the grid and never shorter than the selection; dragging back takes copies away, the whole drag is one undo step, and the last repetition becomes the selection so the next drag goes on with the same pattern. A single clip loops as before.
+
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last picked with
   a plain click or Ctrl+click) to the one clicked, in the order shown; tracks in a collapsed folder are skipped.

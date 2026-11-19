@@ -256,6 +256,7 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
         WorkflowCommand::DuplicateClips { .. } => "Duplicate Clips",
         WorkflowCommand::MoveClips { copy: true, .. } => "Copy Clips",
         WorkflowCommand::MoveClips { .. } => "Move Clips",
+        WorkflowCommand::RepeatClips { .. } => "Repeat Clips",
         WorkflowCommand::RemoveClips { .. } => "Delete Clips",
         WorkflowCommand::SplitClips { .. } => "Split Clips",
         WorkflowCommand::JoinClips { .. } | WorkflowCommand::RenderJoin { .. } => "Join Clips",
