@@ -217,7 +217,7 @@ impl<S: EngineSink> AppCore<S> {
     /// A new console selection arms the song track of its primary strip (the last one clicked)
     /// and disarms the tracks an earlier auto-arm armed, as creating an instrument does; the
     /// tracks the user armed stay. The track's device is selected in the rack, which is what
-    /// the live keyboard plays while tracks are armed. A strip without a track (a bus, an FX
+    /// the live keyboard plays while tracks are armed; the rack scrolls to show it. A strip without a track (a bus, an FX
     /// return, a channel with no song track) changes nothing. Unlike creation there is no
     /// enclosing step, so arming and disarming are one batched undo step of their own.
     pub(super) fn follow_console_selection(&mut self) {
@@ -238,6 +238,13 @@ impl<S: EngineSink> AppCore<S> {
             return;
         };
         self.arm_track_device(&device);
+        self.reveal_in_rack(&device);
+    }
+
+    /// Scrolls the rack (the main window's and a detached one share the view) the least that
+    /// shows `device`; nothing moves when it is already fully visible.
+    fn reveal_in_rack(&mut self, device: &DeviceKey) {
+        self.view.reveal_key(device);
     }
 
     /// A device newly selected in the rack that has a song track (an instrument, built-in or
@@ -282,6 +289,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.console_selection = self.console.selected_strips();
             }
             self.arm_track_device(&device);
+            self.reveal_in_rack(&device);
         }
         if let UiEvent::PointerUp { modifiers, .. } = event {
             self.rack_focus_request |= std::mem::take(&mut self.arrangement_track_changed)

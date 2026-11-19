@@ -201,3 +201,84 @@ fn clicking_a_track_header_acts_like_clicking_its_channel_strip() {
     assert_eq!(c.notes_target_device().map(|d| d.key.clone()), Some(first));
     assert!(c.take_rack_focus_request(), "the keys go to the rack");
 }
+
+/// A rack window of 900 x 420 with instruments piled up so that the first is scrolled out of it
+/// after the rack is scrolled to the end.
+fn tall_rack() -> (AppCore<RecordingSink>, Vec<DeviceKey>) {
+    let mut c = core();
+    let _ = c.handle_event(&UiEvent::Resize(atomik_ui::kurbo::Size::new(900.0, 420.0)));
+    let keys: Vec<DeviceKey> = (0..5).map(|_| instrument(&mut c)).collect();
+    (c, keys)
+}
+
+/// Whether the top of `k` shows in the rack window.
+fn top_visible(c: &AppCore<RecordingSink>, k: &DeviceKey) -> bool {
+    let r = c.view().device_rect(k).expect("device in the rack");
+    let y = c.view().rack_to_view(r.origin()).y;
+    (0.0..420.0).contains(&y)
+}
+
+fn scroll_to_end(c: &mut AppCore<RecordingSink>) {
+    c.view_mut().set_scroll(1.0e9);
+}
+
+#[test]
+fn clicking_a_track_header_scrolls_the_rack_to_its_device() {
+    let (mut c, keys) = tall_rack();
+    scroll_to_end(&mut c);
+    assert!(
+        !top_visible(&c, &keys[0]),
+        "the first device is scrolled out"
+    );
+    click_header(&mut c, &keys[0]);
+    assert_eq!(c.view().selected(), Some(&keys[0]));
+    assert!(top_visible(&c, &keys[0]), "the rack follows the track");
+}
+
+#[test]
+fn clicking_a_channel_strip_scrolls_the_rack_to_its_device() {
+    let (mut c, keys) = tall_rack();
+    scroll_to_end(&mut c);
+    assert!(!top_visible(&c, &keys[0]));
+    let ch = channel_of(&c, &keys[0]);
+    click_strip(&mut c, &ch, Modifiers::NONE);
+    assert_eq!(c.view().selected(), Some(&keys[0]));
+    assert!(top_visible(&c, &keys[0]), "the rack follows the channel");
+}
+
+#[test]
+fn a_device_already_in_view_does_not_scroll_the_rack() {
+    let (mut c, keys) = tall_rack();
+    // A window tall enough that the devices at the end of the rack show whole.
+    let _ = c.handle_event(&UiEvent::Resize(atomik_ui::kurbo::Size::new(900.0, 1400.0)));
+    scroll_to_end(&mut c);
+    let whole = |c: &AppCore<RecordingSink>, k: &DeviceKey| {
+        let r = c.view().device_rect(k).unwrap();
+        let (tl, br) = (
+            c.view().rack_to_view(r.origin()),
+            c.view().rack_to_view(Point::new(r.x1, r.y1)),
+        );
+        tl.y >= 0.0 && br.y <= 1400.0
+    };
+    let shown = keys
+        .iter()
+        .rev()
+        .find(|k| whole(&c, k))
+        .expect("a device is whole in view")
+        .clone();
+    let before = c.view().scroll();
+    click_header(&mut c, &shown);
+    assert_eq!(c.view().selected(), Some(&shown));
+    assert_eq!(c.view().scroll(), before);
+}
+
+#[test]
+fn the_rack_scrolls_only_when_the_selection_changes() {
+    let (mut c, keys) = tall_rack();
+    click_header(&mut c, &keys[0]);
+    scroll_to_end(&mut c);
+    let before = c.view().scroll();
+    // The same track clicked again is no new selection: the rack stays where the user left it.
+    click_header(&mut c, &keys[0]);
+    assert_eq!(c.view().scroll(), before);
+}
