@@ -51,6 +51,10 @@ may break APIs and the patch and project formats.
 - Selecting a track in the arrangement or a channel strip in the console now scrolls the rack (the main window's and
   a detached one) to the track's device, as well as selecting it. Nothing moves when the device is already fully
   visible, and undo, redo and opening a project do not scroll the rack.
+- An Undo or Redo in the middle of a drag in the arrangement (a clip move or copy, a resize, a trim or stretch, a
+  loop or repeat drag, a fade or gain grip, an automation point or bend, a razor cut, a tempo or meter point) now
+  cancels the drag when it takes away what the drag holds. The drag used to go on addressing a clip that was gone,
+  and the model refused the edit. A rubber band only forgets the clips that are gone.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

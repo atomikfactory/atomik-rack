@@ -199,6 +199,11 @@ impl RepeatDrag {
         Some(self.command(copies, merge))
     }
 
+    /// The clips that are repeated.
+    pub(super) fn ids(&self) -> impl Iterator<Item = ClipId> + '_ {
+        self.group.iter().map(|c| c.id)
+    }
+
     /// The command that takes every copy back (a cancelled drag).
     pub(super) fn undo(&self, merge: u64) -> UiAction {
         self.command(Vec::new(), merge)

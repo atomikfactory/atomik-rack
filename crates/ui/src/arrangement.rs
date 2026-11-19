@@ -10,6 +10,10 @@
 //! merge id per gesture (ids start at 2⁴⁰ so they never collide with the rack view's knob
 //! drags) and finish with [`UiAction::EndMerge`].
 //!
+//! An undo or redo that takes away what a drag holds (the clip it drags, the point it moves) cancels
+//! the drag without sending anything for it; the `EndMerge` and the close of a preview follow with
+//! the answer to the next event.
+//!
 //! Audio: audio lanes draw their clips with a waveform from the peaks the host
 //! hands in ([`ArrangementView::set_peaks`]; stereo is drawn as two stacked halves, channel 0
 //! on top, mono at full height), fade-in / fade-out / gain handles
@@ -938,6 +942,9 @@ pub struct ArrangementView {
     point_sel: Option<(ClipId, BTreeSet<usize>)>,
     menu: Option<Menu>,
     drag: Drag,
+    /// What the host is still owed for a drag that an undo or redo cut short (see
+    /// [`Self::drop_orphaned_drag`]): sent with the answer to the next event.
+    lost_drag: Vec<UiAction>,
     /// The time range selected on one lane (`lane_range.rs`).
     range_sel: Option<lane_range::LaneRange>,
     hover: Option<Hit>,
@@ -1095,6 +1102,7 @@ impl ArrangementView {
             point_sel: None,
             menu: None,
             drag: Drag::None,
+            lost_drag: Vec::new(),
             range_sel: None,
             hover: None,
             next_merge: MERGE_BASE,
@@ -2137,7 +2145,84 @@ impl ArrangementView {
         self.folder_faders = faders;
         self.track_channels = channels;
         self.synced = true;
+        self.drop_orphaned_drag();
         self.rebuild(doc, registry);
+        self.repaint = true;
+    }
+
+    /// An undo or redo that lands in the middle of a gesture can take away what the gesture holds
+    /// (the clip it drags, the point it moves, the track it draws on). The gesture is cancelled then,
+    /// as in other editors, and nothing is sent for it: its changes went with the undo, so
+    /// restoring the clips as Escape does would address clips that are gone. What the host is owed
+    /// (the end of a merged edit, the close of a stretch or crossfade preview) goes out with the
+    /// answer to the next event. A rubber band only forgets the clips that are gone.
+    fn drop_orphaned_drag(&mut self) {
+        let song = &self.song;
+        let has = |id: ClipId| find_clip(song, id).is_some();
+        let lane = |track: usize, lane: usize| {
+            song.tracks.get(track).is_some_and(|t| lane < t.lanes.len())
+        };
+        let lost = match &self.drag {
+            Drag::Move { originals, .. } | Drag::Trim { originals, .. } => {
+                !originals.iter().all(|c| has(c.id))
+            }
+            Drag::Stretch {
+                clip, originals, ..
+            } => !has(clip.id) || !originals.iter().all(|c| has(c.id)),
+            Drag::Resize {
+                clip,
+                others,
+                repeat,
+                ..
+            } => {
+                !has(clip.id)
+                    || !others.iter().all(|c| has(c.id))
+                    || repeat.as_ref().is_some_and(|r| !r.ids().all(has))
+            }
+            Drag::Crossfade { clip, .. } => !has(clip.id),
+            Drag::Audio { clip, others, .. } => {
+                !has(clip.id) || !others.iter().all(|o| has(o.clip.id))
+            }
+            Drag::Point { id, .. } | Drag::Bend { id, .. } => !has(*id),
+            Drag::Series(s) => !has(s.id),
+            Drag::Razor {
+                track,
+                lane: l,
+                clip,
+                ..
+            } => !lane(*track, *l) || clip.is_some_and(|c| !has(c)),
+            Drag::Draw {
+                device, lane: l, ..
+            } => !song
+                .tracks
+                .iter()
+                .any(|t| &t.device == device && *l < t.lanes.len()),
+            Drag::Static(d) => !song.tracks.iter().any(|t| &t.device == d.device()),
+            Drag::FolderFader(d) => !self.folder_faders.contains_key(&d.group()),
+            Drag::TempoPoint { index, .. } => *index >= song.tempo.len(),
+            Drag::Meter { index, .. } => *index >= song.meter.len(),
+            Drag::Marquee { .. } => {
+                if let Drag::Marquee { base, .. } = &mut self.drag {
+                    base.retain(|id| find_clip(song, *id).is_some());
+                }
+                false
+            }
+            _ => false,
+        };
+        if !lost {
+            return;
+        }
+        match std::mem::replace(&mut self.drag, Drag::None) {
+            Drag::Stretch { open: true, .. } => {
+                self.lost_drag.push(UiAction::StretchEnd { commit: false });
+            }
+            Drag::Crossfade { open: true, .. } => {
+                self.lost_drag
+                    .push(UiAction::CrossfadeEnd { commit: false });
+            }
+            _ => {}
+        }
+        self.lost_drag.push(UiAction::EndMerge);
         self.repaint = true;
     }
 
@@ -2931,7 +3016,7 @@ impl ArrangementView {
     /// `Resize` is ignored (use [`Self::set_bounds`]).
     pub fn handle(&mut self, event: &UiEvent, doc: &RackDoc, registry: &Registry) -> Vec<UiAction> {
         self.sync_current(doc, registry);
-        let mut out = Vec::new();
+        let mut out = std::mem::take(&mut self.lost_drag);
         if self.insp.visible && self.insp_event(event, &mut out) {
             return out;
         }

@@ -268,3 +268,10 @@ impl ArrangementView {
         }
     }
 }
+
+impl FaderDrag {
+    /// The folder group whose bar is dragged.
+    pub(super) fn group(&self) -> u32 {
+        self.group
+    }
+}
