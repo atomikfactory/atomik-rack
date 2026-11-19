@@ -2215,12 +2215,13 @@ impl Document {
                                     | SongCommand::AddAutomationLane { .. }
                                     | SongCommand::RemoveAutomationLane { .. }
                                     | SongCommand::SetLaneMuted { .. }
+                                    | SongCommand::SetLaneColor { .. }
                                     | SongCommand::SetLaneStatic { .. }
                                     | SongCommand::SetLaneWriteMode { .. }
                             )
                     ) {
                         return Err(ModelError::BadBatch(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipContent, SetClipMidi, SetClipGeometry, SetAudioClip, SetDelivery, SetWarpMarkers, SetPitchEdits, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipContent, SetClipMidi, SetClipGeometry, SetAudioClip, SetDelivery, SetWarpMarkers, SetPitchEdits, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneColor, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;

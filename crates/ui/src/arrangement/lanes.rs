@@ -37,8 +37,8 @@ use crate::keymap::CommandOutcome;
 use crate::paint::fit_label;
 use crate::seq_paint as sp;
 use atomik_model::{
-    ClipContent, ClipId, DeviceKey, LaneKind, MAX_LANE_NAME_CHARS, MAX_NOTE_LANES, SongCommand,
-    WorkflowCommand,
+    ClipContent, ClipId, Command, DeviceKey, LaneKind, MAX_LANE_NAME_CHARS, MAX_NOTE_LANES,
+    SongCommand, WorkflowCommand,
 };
 use std::collections::BTreeSet;
 use vello::kurbo::{Point, Rect, RoundedRect};
@@ -50,6 +50,9 @@ pub struct LaneMenu {
     pub can_add: bool,
     /// The selected lane can be renamed.
     pub can_rename: bool,
+    /// Lane Colour works: the selected lane can be renamed, or several tracks are selected
+    /// (every note lane of each takes the colour).
+    pub can_color: bool,
     /// The selected lane can be deleted (the track has more than one note lane).
     pub can_delete: bool,
     /// The selected lane is muted (the Mute item is checked).
@@ -186,7 +189,14 @@ impl ArrangementView {
 
     /// The colour command of the selected note lane: `sequencer.lane_color` with a palette name
     /// (`track` goes back to the track's colour).
+    ///
+    /// With several tracks selected it colours all of them in one step: every note lane of each
+    /// takes the colour, and a track without note lanes (audio, automation only) takes it as its
+    /// track colour, like `sequencer.track_color`.
     pub(super) fn lane_color_command(&self, arg: Option<&str>) -> CommandOutcome {
+        if self.multi_track_selection() {
+            return self.lane_color_selection(arg);
+        }
         let Some((device, lane)) = self.selected_lane().map(|(d, l)| (d.clone(), l)) else {
             return CommandOutcome::Declined;
         };
@@ -210,6 +220,60 @@ impl ArrangementView {
             lane,
             color,
         })])
+    }
+
+    /// Whether two or more tracks are selected (a selected folder is not a track selection).
+    pub(super) fn multi_track_selection(&self) -> bool {
+        self.og.group.is_none() && self.selected_tracks().len() > 1
+    }
+
+    /// The colour of a `sequencer.lane_color` argument: `Some(None)` is the track's colour.
+    fn lane_color_arg(arg: Option<&str>) -> Option<Option<[u8; 3]>> {
+        match arg? {
+            "track" => Some(None),
+            name => match crate::marker_edit::palette_color(name) {
+                Some(Some(rgb)) => Some(Some(rgb)),
+                _ => None,
+            },
+        }
+    }
+
+    /// Lane Colour on several selected tracks: one batch, one undo step.
+    fn lane_color_selection(&self, arg: Option<&str>) -> CommandOutcome {
+        let Some(color) = Self::lane_color_arg(arg) else {
+            return CommandOutcome::Declined;
+        };
+        let mut commands = Vec::new();
+        for device in self.selected_tracks() {
+            let Some(t) = self.song.track(&device) else {
+                continue;
+            };
+            if t.note_lane_count() == 0 {
+                commands.push(Command::Song(SongCommand::SetTrackColor {
+                    device: device.clone(),
+                    color,
+                }));
+                commands.push(Command::SetColor { key: device, color });
+                continue;
+            }
+            if t.frozen.is_some() {
+                continue;
+            }
+            // A lane that has the colour already is left out: the command would be refused.
+            for lane in
+                (0..t.lanes.len()).filter(|l| t.is_note_lane(*l) && t.lanes[*l].color != color)
+            {
+                commands.push(Command::Song(SongCommand::SetLaneColor {
+                    device: device.clone(),
+                    lane,
+                    color,
+                }));
+            }
+        }
+        if commands.is_empty() {
+            return CommandOutcome::Declined;
+        }
+        CommandOutcome::Handled(vec![UiAction::Command(Command::Batch(commands))])
     }
 
     /// Whether row `lane` of track `track` is a note lane after the first (it has a header of
@@ -465,6 +529,7 @@ impl ArrangementView {
     /// items of the track header menu need: the state of the selected track and lane.
     pub fn lane_menu(&self) -> LaneMenu {
         let workflows = LaneMenu {
+            can_color: self.multi_track_selection(),
             can_merge: !self.merge_targets().is_empty(),
             can_explode: self.explode_target().is_some(),
             ..self.automation_menu()
@@ -481,6 +546,7 @@ impl ArrangementView {
         LaneMenu {
             can_add: t.note_lane_count() < MAX_NOTE_LANES,
             can_rename: true,
+            can_color: true,
             can_delete: t.note_lane_count() > 1,
             muted: t.lanes.get(lane).is_some_and(|l| l.muted),
             soloed: t.lanes.get(lane).is_some_and(|l| l.solo),

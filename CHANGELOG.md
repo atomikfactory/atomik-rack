@@ -9,20 +9,27 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Fixed
-- **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio
-  track now picks the track like a click on the rest of the header (select, Shift or Ctrl to extend, drag, right click
-  for the menu) and still clears the clip lamp; it only cleared the lamp before, so a selection could not be started or
-  extended from there, and a click on an empty audio lane gives up the clip selection as a click on an empty note lane does.
-- **Rubber band on audio lanes.** A press on empty space in an audio lane and a drag now draws the selection rectangle
-  over clips (across tracks), as on a note lane; a click without a drag still gives up the selection.
-- **Several tracks selected, track colour.** A right click on one of several selected tracks keeps them all selected
-  (a right click on an unselected track still selects it alone; this includes the lane label of a track with several note lanes, where Shift and Ctrl+click also extend the selection), so the header menu's Colour reaches every selected
-  track in one undo step; the menu items that take one track act on the track clicked.
+- **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio track now
+  picks the track like a click on the rest of the header (select, Shift or Ctrl to extend, drag, right click for
+  the menu) and still clears the clip lamp; it only cleared the lamp before, so a selection could not be started
+  or extended from there. A click on an empty audio lane gives up the clip selection as a click on an empty note
+  lane does.
+- **Colours of several selected tracks.** The track header menu has a Track Colour submenu (the same palette as
+  the Track menu) that colours every selected track in one undo step, and Lane Colour with several tracks
+  selected colours every note lane of each (a track without note lanes takes it as its track colour), also in
+  one undo step.
+- **Rubber band on audio lanes.** A press on empty space in an audio lane and a drag now draws the selection
+  rectangle over clips (across tracks), as on a note lane; a click without a drag still gives up the selection.
+- **Several tracks selected, header menu.** A right click on one of several selected tracks keeps them all
+  selected (a right click on an unselected track still selects it alone; this includes the lane label of a track
+  with several note lanes, where Shift and Ctrl+click also extend the selection), so the menu's Colour reaches
+  every selected track in one undo step; the menu items that take one track act on the track clicked.
 
 ### Changed
-- **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last picked with
-  a plain click or Ctrl+click) to the one clicked, in the order shown; tracks in a collapsed folder are skipped.
-  Ctrl+click (Cmd on macOS) toggles one track in or out, and Shift+Ctrl+click adds the range to the selection.
+- **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last
+  picked with a plain click or Ctrl+click) to the one clicked, in the order shown; tracks in a collapsed folder
+  are skipped. Ctrl+click (Cmd on macOS) toggles one track in or out, and Shift+Ctrl+click adds the range to the
+  selection.
 
 ## [0.5.0-rc.1] - 2026-11-18
 
