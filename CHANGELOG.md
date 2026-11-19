@@ -45,6 +45,9 @@ may break APIs and the patch and project formats.
   selected (a right click on an unselected track still selects it alone; this includes the lane label of a track
   with several note lanes, where Shift and Ctrl+click also extend the selection), so the menu's Colour reaches
   every selected track in one undo step; the menu items that take one track act on the track clicked.
+- Selecting a track in the arrangement or a channel strip in the console now scrolls the rack (the main window's and
+  a detached one) to the track's device, as well as selecting it. Nothing moves when the device is already fully
+  visible, and undo, redo and opening a project do not scroll the rack.
 
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last

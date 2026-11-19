@@ -1,6 +1,6 @@
 # Contributing to Atomik Rack
 
-Thank you for helping. This document lists the rules every contribution must follow. They exist to protect the four hard invariants described in the [README](README.md#hard-invariants).
+Thank you for helping. This document lists the rules every contribution must follow. They exist to protect the four hard invariants described in the [README](docs/BUILDING.md#hard-invariants).
 
 Before you start:
 
