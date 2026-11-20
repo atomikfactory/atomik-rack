@@ -30,8 +30,9 @@
 //!   Without a song key the progression plays as written.
 //! * **Note safety.** Every note it starts it closes: on stop, locate, loop wrap, bypass, a change
 //!   of the playing slot or of what the cycle looks like, a mode switch and `AllOff`. At most 16
-//!   notes sound at once (further starts are dropped), and a key that is already sounding is
-//!   closed before it starts again.
+//!   notes sound at once (further starts are dropped), and a key that is already sounding (a chord
+//!   note, or a key `thru` passed on) is closed before it starts again; the keys passed on are
+//!   closed too when `thru` goes off, the mode changes or the bypass switches.
 //! * **Bypass** (`bypass`, last): see `crate::note_fx::PlayerBypass`.
 //! * **Meters.** The panel reads the playing slot (1..=8, 0 = none) and the sounding keys.
 //! * **Generator params** (`gen.mood`, `gen.spice`, `gen.seed`) and `slot.N.lock` do nothing on
@@ -999,6 +1000,43 @@ impl ChordWheel {
         self.step_id = [0; 128];
     }
 
+    /// Closes the input keys passed through (`thru`) at the start of the batch.
+    fn close_passed(&mut self, out: &mut NoteBuffer) {
+        for k in 0..128usize {
+            if std::mem::take(&mut self.passed[k]) {
+                push_sorted(
+                    out,
+                    NoteEvent {
+                        offset: 0,
+                        kind: NoteKind::Off { key: k as u8 },
+                    },
+                );
+            }
+        }
+    }
+
+    /// Closes `key` at `frame` when this device has it sounding, as a chord note or as a key
+    /// passed through, so that a start never lands on a sounding key.
+    fn close_key(&mut self, out: &mut NoteBuffer, key: u8, frame: usize) {
+        let k = usize::from(key & 0x7F);
+        if !self.sounding[k] && !self.passed[k] {
+            return;
+        }
+        push_sorted(
+            out,
+            NoteEvent {
+                offset: frame.min(BATCH - 1) as u16,
+                kind: NoteKind::Off { key },
+            },
+        );
+        if self.sounding[k] {
+            self.sounding[k] = false;
+            self.owner[k] = 0;
+            self.n_sounding -= 1;
+        }
+        self.passed[k] = false;
+    }
+
     /// Emits what is due in frames `a..b` of a segment that starts at `t_a`.
     fn emit_due(&mut self, out: &mut NoteBuffer, a: usize, b: usize, t_a: f64, tpf: f64) {
         while let Some(i) = self.pending.earliest() {
@@ -1013,17 +1051,9 @@ impl ChordWheel {
                 if self.n_sounding >= MAX_SOUNDING && !self.sounding[key] {
                     continue;
                 }
-                if self.sounding[key] {
-                    push_sorted(
-                        out,
-                        NoteEvent {
-                            offset: f as u16,
-                            kind: NoteKind::Off { key: ev.key },
-                        },
-                    );
-                    self.sounding[key] = false;
-                    self.n_sounding -= 1;
-                }
+                // A key passed through from the input is closed too: a start never lands on a
+                // sounding key.
+                self.close_key(out, ev.key, f);
                 let sent = push_sorted(
                     out,
                     NoteEvent {
@@ -1347,6 +1377,9 @@ impl ChordWheel {
                 }
                 match e.kind {
                     NoteKind::On { key, .. } => {
+                        // A key that still sounds (passed twice, or played by the chord) is
+                        // closed first: the key is never started twice.
+                        self.close_key(out, key, frame);
                         if push_sorted(
                             out,
                             NoteEvent {
@@ -1672,7 +1705,7 @@ impl Device for ChordWheel {
         if self.bypass.begin_batch(ctx.notes_out(NOTES_OUT)) {
             // The switch closes what the device sent and starts it from nothing.
             self.close_all(ctx.notes_out(NOTES_OUT), 0);
-            self.passed = [false; 128];
+            self.close_passed(ctx.notes_out(NOTES_OUT));
             self.held = [false; 128];
             self.held_n = 0;
             self.clock.invalidate();
@@ -1700,18 +1733,8 @@ impl Device for ChordWheel {
         };
         self.refresh(ctx.notes_out(NOTES_OUT), shift);
         // Thru ends when the mode or the switch says so.
-        if (!self.thru || self.mode != PlayMode::Transport) && self.passed.iter().any(|p| *p) {
-            for k in 0..128usize {
-                if std::mem::take(&mut self.passed[k]) {
-                    push_sorted(
-                        ctx.notes_out(NOTES_OUT),
-                        NoteEvent {
-                            offset: 0,
-                            kind: NoteKind::Off { key: k as u8 },
-                        },
-                    );
-                }
-            }
+        if !self.thru || self.mode != PlayMode::Transport {
+            self.close_passed(ctx.notes_out(NOTES_OUT));
         }
         let tpf_ok = time.ticks_per_frame > 0.0 && time.ticks_per_frame.is_finite();
         let sr_ms = self.sample_rate / 1000.0;

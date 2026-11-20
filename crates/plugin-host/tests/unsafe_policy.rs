@@ -1,6 +1,6 @@
 //! `unsafe` is confined. The workspace denies `unsafe_code`; only the plugin
 //! format backends and the test plugin libraries (which talk to C ABIs), the test allocator and
-//! the host's float-environment and OLE modules, the app's cursor query and one test window helper may use it, and every `unsafe` block there has a
+//! the host's float-environment and OLE modules, the app's cursor query and child windows, the child's embedding call and one test window helper may use it, and every `unsafe` block there has a
 //! `SAFETY:` comment. This test reads the sources and fails if `unsafe` shows up anywhere else.
 
 use std::fs;
@@ -41,6 +41,11 @@ const ALLOWED_FILES: &[&str] = &[
     "crates/plugin-hostd/tests/support/owner_window.rs",
     // The system cursor during an operating-system file drag (Windows), which winit does not report.
     "crates/app/src/platform/cursor.rs",
+    // Making a window a child of the main window, and the keyboard focus back (Windows), for the
+    // plugin editors that sit inside the app window.
+    "crates/app/src/platform/native_child.rs",
+    // The editor window of the plugin's process as a child of the app's window.
+    "crates/plugin-hostd/src/embed.rs",
 ];
 
 fn workspace_root() -> PathBuf {

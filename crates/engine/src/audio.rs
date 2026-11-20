@@ -285,6 +285,13 @@ pub struct SongAudioRegion {
     /// The transposition of an interim warp in cents (0 without one; at most two octaves either
     /// way).
     pub warp_cents: i32,
+    /// The region plays the finished buffer of a clip warped to the song's tempo, in this
+    /// stretch mode (`None` for any other region). While the player follows an external clock
+    /// the buffer is stretched on to the clock's tempo (see `audio_follow.rs`: Beats and Tonal
+    /// keep the pitch through the real-time stretcher, Repitch resamples); in every other case
+    /// the field is not read, so a bounce is the same with or without it. Not for an interim
+    /// warp or a streamed asset.
+    pub tempo_warp: Option<SongWarpMode>,
 }
 
 /// The stretch mode of an interim warp (the model's `WarpMode`).
@@ -326,7 +333,17 @@ impl SongAudioRegion {
             warp: None,
             warp_mode: SongWarpMode::Repitch,
             warp_cents: 0,
+            tempo_warp: None,
         }
+    }
+
+    /// True for a tempo-warped buffer that the real-time stretcher follows a clock with (it
+    /// keeps the pitch).
+    pub(crate) fn follow_keeps_pitch(&self) -> bool {
+        matches!(
+            self.tempo_warp,
+            Some(SongWarpMode::Beats | SongWarpMode::Tonal)
+        )
     }
 
     /// True for an interim warp the real-time stretcher plays (it keeps the pitch).
@@ -652,7 +669,11 @@ pub(crate) fn compile_audio(
             let pitch_ok = (r.warp.is_some()
                 || (r.warp_mode == SongWarpMode::Repitch && r.warp_cents == 0))
                 && r.warp_cents.abs() <= MAX_WARP_CENTS;
+            // A tempo-warped buffer is a memory asset played as it is; it has no interim read.
+            let tempo_ok =
+                r.tempo_warp.is_none() || (r.warp.is_none() && !r.reverse && !asset.is_stream());
             let valid = warp_ok
+                && tempo_ok
                 && pitch_ok
                 && r.frames >= 1
                 && r.gain.is_finite()
@@ -698,7 +719,7 @@ pub(crate) fn compile_audio(
         let stretch_slot: Vec<Option<u16>> = regions
             .iter()
             .map(|r| {
-                r.keeps_pitch().then(|| {
+                (r.keeps_pitch() || r.follow_keeps_pitch()).then(|| {
                     rank += 1;
                     ((rank - 1) % MAX_STRETCHERS) as u16
                 })
@@ -947,7 +968,7 @@ fn map_source(map: &[Knot], c: f64, seg: &mut usize) -> f64 {
 
 /// `plane` at the fractional frame `s` by four-point Hermite interpolation; frames outside the
 /// plane read 0.
-fn hermite_at(plane: &[f32], s: f64) -> f32 {
+pub(crate) fn hermite_at(plane: &[f32], s: f64) -> f32 {
     let i = s.floor();
     let frames = plane.len() as f64;
     if i < -2.0 || i >= frames + 1.0 {

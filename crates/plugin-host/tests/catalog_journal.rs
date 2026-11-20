@@ -2,8 +2,8 @@
 //! registration in the `Registry`, and the crash journal with the recovery snapshot helpers.
 
 use atomik_device_sdk::{
-    Channels, DeviceKind, PluginFormat, PluginKindHint, PluginLayout, PluginParamInfo, PluginRef,
-    Registry,
+    Channels, DeviceKind, EffectKind, PluginCategory, PluginClass, PluginFormat, PluginKindHint,
+    PluginLayout, PluginParamInfo, PluginRef, Registry,
 };
 use atomik_plugin_host::{
     CachedFile, CrashJournal, FileStamp, InUsePlugin, PluginCache, PluginCatalog, PluginSettings,
@@ -52,6 +52,7 @@ fn plugin(id: &str, name: &str, kind: PluginKindHint) -> ScannedPlugin {
             id: id.to_string(),
         },
         layout: layout(name, kind),
+        category: PluginCategory::from_kind(kind),
         unsupported: None,
         params_truncated: false,
     }
@@ -156,6 +157,38 @@ fn entries_are_sorted_with_status_kind_and_features() {
     assert!(verb.features.contains(&"sidechain".to_string()));
     assert_eq!(cat.failed().len(), 1);
     assert_eq!(cat.failed()[0].reason, "crashed");
+}
+
+#[test]
+fn the_category_is_the_declared_one_or_what_the_ports_say() {
+    let mut cache = PluginCache::default();
+    let meter = ScannedPlugin {
+        category: PluginCategory::from_vst3_sub_categories(PluginKindHint::Effect, "Fx|Analyzer"),
+        ..plugin("m.meter", "Meter", PluginKindHint::Effect)
+    };
+    let verb = ScannedPlugin {
+        category: PluginCategory::from_clap_features(
+            PluginKindHint::Effect,
+            &["audio-effect".to_string(), "reverb".to_string()],
+        ),
+        ..plugin("m.verb", "Verb", PluginKindHint::Effect)
+    };
+    // An entry from a cache written before categories were read.
+    let old = ScannedPlugin {
+        category: PluginCategory::UNKNOWN,
+        ..plugin("m.old", "Old", PluginKindHint::Instrument)
+    };
+    add_file(&mut cache, "/nowhere/m.clap", vec![meter, verb, old]);
+    let cat = PluginCatalog::from_cache(&cache, &enabled());
+    let by = |name: &str| cat.entries().iter().find(|e| e.name == name).unwrap();
+    assert_eq!(by("Meter").category.class, PluginClass::Analyser);
+    assert_eq!(
+        by("Meter").kind,
+        PluginKindHint::Effect,
+        "hosted like an effect"
+    );
+    assert_eq!(by("Verb").category.effect, Some(EffectKind::Reverb));
+    assert_eq!(by("Old").category.class, PluginClass::Instrument);
 }
 
 #[test]

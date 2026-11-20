@@ -3,8 +3,10 @@
 
 mod app;
 mod cursor;
+mod dock_frames;
 pub mod gpu;
 mod learn_strips;
+mod native_child;
 #[cfg(target_os = "macos")]
 mod native_menu;
 mod plugin_windows;

@@ -196,6 +196,7 @@ pub fn entry(p: PluginRef, layout: PluginLayout, status: PluginEntryStatus) -> P
         vendor: layout.vendor.clone(),
         version: layout.version.clone(),
         kind: layout.kind_hint,
+        category: atomik_device_sdk::PluginCategory::from_kind(layout.kind_hint),
         status,
         path: Some("C:/Plugins/test.clap".into()),
         layout,

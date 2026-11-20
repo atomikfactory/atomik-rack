@@ -16,19 +16,9 @@
 
 use super::*;
 use crate::plugins_user::QUARANTINE_AFTER;
-use atomik_device_sdk::PluginKindHint;
 use atomik_plugin_host::ProcessChoice;
 use atomik_ui::plugin_data::PluginProcessChoice;
 use atomik_ui::{PluginManagerAction, PluginManagerData, PluginManagerRow};
-
-/// What the plugin says it is, as the manager's category column writes it.
-fn category_of(kind: PluginKindHint) -> &'static str {
-    match kind {
-        PluginKindHint::Instrument => "Instrument",
-        PluginKindHint::Effect => "Effect",
-        PluginKindHint::NoteEffect => "Note effect",
-    }
-}
 
 fn process_pick(choice: ProcessChoice) -> PluginProcessChoice {
     match choice {
@@ -142,7 +132,7 @@ impl<S: EngineSink> AppCore<S> {
                     name: e.name.clone(),
                     vendor: e.vendor.clone(),
                     format: e.plugin.format,
-                    category: category_of(e.kind).to_owned(),
+                    category: e.category.label(),
                     status,
                     process: process_pick(user.process_of(&id)),
                     path: e.path.to_string_lossy().into_owned(),

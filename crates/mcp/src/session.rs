@@ -438,6 +438,10 @@ fn request_json(r: ShellRequest) -> Value {
             "pick_headphone_data",
             "a file dialog: run session_command with id rack.headphone_import and the file as arg (it imports the same file the dialog would)",
         ),
+        ShellRequest::PickSaveMasterChain { .. } | ShellRequest::PickLoadMasterChain { .. } => (
+            "pick_master_chain",
+            "a file dialog: run session_command with id rack.save_master_chain or rack.load_master_chain and the file as arg (it saves or loads the same file the dialog would)",
+        ),
         ShellRequest::PickImportMidi { .. }
         | ShellRequest::PickExportMidi(_)
         | ShellRequest::PickGrooveMidi => (

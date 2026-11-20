@@ -55,7 +55,7 @@ fn run(work: Work, control: RenderControl<'_>) -> Result<Option<CheckAnalysis>, 
         plugins,
     } = work;
     let mut registry = atomik_render::default_registry();
-    let mut host = plugin_host(&doc, plugins, &mut registry, "the mix check")?;
+    let mut host = plugin_host(&doc, plugins, &mut registry)?;
     atomik_model::register_stand_ins(&doc, &mut registry).map_err(|e| e.to_string())?;
     let options = ProjectOptions {
         host_block: std::num::NonZeroUsize::new(512).unwrap_or(std::num::NonZeroUsize::MIN),

@@ -176,6 +176,7 @@ impl Rig {
             id,
             owner: None,
             scale: 1.0,
+            embed: false,
         });
         self.sink.frames();
         self.log.borrow_mut().clear();
@@ -231,6 +232,7 @@ fn opening_the_editor_answers_its_size_and_a_second_open_raises_the_same_window(
         id: 2,
         owner: Some(WireParent::Win32(5)),
         scale: 1.0,
+        embed: false,
     });
     assert_eq!(
         r.sink.frames(),
@@ -250,6 +252,7 @@ fn opening_the_editor_answers_its_size_and_a_second_open_raises_the_same_window(
         id: 3,
         owner: None,
         scale: 1.0,
+        embed: false,
     });
     assert_eq!(
         r.sink.frames(),
@@ -275,6 +278,7 @@ fn the_editor_is_shown_only_after_the_answer_to_open_gui_is_written() {
             id,
             owner: Some(WireParent::Win32(5)),
             scale: 1.0,
+            embed: false,
         });
         let lines = r.lines();
         assert_eq!(
@@ -288,12 +292,93 @@ fn the_editor_is_shown_only_after_the_answer_to_open_gui_is_written() {
 }
 
 #[test]
+fn an_embedded_editor_is_made_a_child_and_tells_the_app_its_size_after_the_answer() {
+    let mut r = rig().instantiated();
+    r.send(ToChild::OpenGui {
+        id: 2,
+        owner: Some(WireParent::X11(0x00A1_1CE0)),
+        scale: 1.0,
+        embed: true,
+    });
+    assert!(
+        r.lines()[0].ends_with(" embedded"),
+        "the window is made as a child: {:?}",
+        r.lines()
+    );
+    let frames = r.sink.frames();
+    assert_eq!(
+        frames[..2],
+        [
+            FromChild::GuiOpened {
+                id: 2,
+                w: 400,
+                h: 300
+            },
+            FromChild::GuiResize { w: 400, h: 300 }
+        ],
+        "the answer first, then the size the app's frame takes: {frames:?}"
+    );
+}
+
+#[test]
+fn the_apps_frame_resizing_an_embedded_editor_is_answered_with_the_size_it_took() {
+    let mut r = rig().instantiated();
+    r.send(ToChild::OpenGui {
+        id: 2,
+        owner: Some(WireParent::Win32(5)),
+        scale: 1.0,
+        embed: true,
+    });
+    r.sink.frames();
+    r.log.borrow_mut().clear();
+    r.send(ToChild::ResizeGui {
+        id: 3,
+        w: 900,
+        h: 700,
+    });
+    assert_eq!(
+        r.sink.frames(),
+        vec![FromChild::GuiSized {
+            id: 3,
+            w: 900,
+            h: 700
+        }]
+    );
+    assert_eq!(r.lines(), ["resize_gui 900x700", "resize 900x700"]);
+}
+
+#[test]
+fn a_frame_resize_of_an_editor_in_its_own_window_or_none_is_an_error() {
+    let mut r = rig().instantiated();
+    r.send(ToChild::ResizeGui { id: 2, w: 1, h: 1 });
+    assert!(matches!(
+        r.sink.frames().as_slice(),
+        [FromChild::Err { id: 2, .. }]
+    ));
+    r.send(ToChild::OpenGui {
+        id: 3,
+        owner: None,
+        scale: 1.0,
+        embed: false,
+    });
+    r.sink.frames();
+    r.log.borrow_mut().clear();
+    r.send(ToChild::ResizeGui { id: 4, w: 1, h: 1 });
+    assert!(matches!(
+        r.sink.frames().as_slice(),
+        [FromChild::Err { id: 4, .. }]
+    ));
+    assert!(r.lines().is_empty(), "the window is not touched");
+}
+
+#[test]
 fn a_failed_open_shows_nothing() {
     let mut r = rig_with(Vec::new(), true, None).instantiated();
     r.send(ToChild::OpenGui {
         id: 2,
         owner: None,
         scale: 1.0,
+        embed: false,
     });
     assert!(!r.lines().contains(&"show".to_string()));
 }
@@ -305,6 +390,7 @@ fn an_editor_that_cannot_open_is_an_error_and_the_child_goes_on() {
         id: 2,
         owner: None,
         scale: 1.0,
+        embed: false,
     });
     assert_eq!(end, None);
     assert!(matches!(
@@ -325,6 +411,7 @@ fn an_open_before_instantiate_is_an_error() {
         id: 2,
         owner: None,
         scale: 1.0,
+        embed: false,
     });
     assert!(matches!(
         r.sink.frames().as_slice(),

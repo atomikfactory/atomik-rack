@@ -686,6 +686,10 @@ pub struct RackView {
     column_target: u16,
     /// The slot under the last right click on the empty rack, for a paste from its menu.
     context_slot: Option<RackSlot>,
+    /// Where the effect the open create browser makes goes, when "Add Send Effect" or "Add
+    /// Insert Effect" opened it: the choice is created on that target whatever the selection
+    /// is. Forgotten whenever the browser opens again or closes.
+    bound_effect: Option<CreateTarget>,
     /// Whether that right click was past the last column (a device created from the menu
     /// then gets a new column).
     context_new_column: bool,
@@ -1066,6 +1070,7 @@ impl RackView {
             columns: 1,
             column_target: 0,
             context_slot: None,
+            bound_effect: None,
             context_new_column: false,
             tick_clock: None,
             lights_clock: None,
@@ -1544,6 +1549,9 @@ impl RackView {
                 crate::wavetable_panel::wavetable_layout(d)
             }
             (Some(d), _) if type_id == crate::fm_panel::FM_TYPE => crate::fm_panel::fm_layout(d),
+            (Some(d), _) if type_id == crate::organ_panel::ORGAN_TYPE => {
+                crate::organ_panel::organ_layout(d)
+            }
             (Some(d), _) if type_id == crate::granular_panel::GRANULAR_TYPE => {
                 crate::granular_panel::granular_layout(d)
             }
@@ -2956,6 +2964,7 @@ impl RackView {
         self.browser.visible = visible;
         self.browser.focused = visible;
         self.browser.create = None;
+        self.bound_effect = None;
         self.set_insert(None);
         self.clamp_scroll();
         self.repaint = true;
@@ -2968,6 +2977,7 @@ impl RackView {
         self.browser.visible = true;
         self.browser.focused = true;
         self.browser.create = Some(kind);
+        self.bound_effect = None;
         self.set_insert(None);
         self.browser.clear_query();
         self.browser.scroll = 0.0;
@@ -3026,7 +3036,14 @@ impl RackView {
             return None;
         }
         let master = doc.console.master.as_ref()?;
-        (self.selected.as_ref() == Some(master)).then(|| {
+        // The master selected makes a send, unless the next effect is bound to its inserts
+        // (after a click on the insert area or "Add Insert Effect").
+        let sends = match self.effect_create_target() {
+            CreateTarget::Master => true,
+            CreateTarget::Selected(k) => k == *master,
+            _ => false,
+        };
+        sends.then(|| {
             atomik_model::first_free_send_slot(doc).map_or(SendEntry::Full, SendEntry::Slot)
         })
     }
@@ -3056,6 +3073,37 @@ impl RackView {
         self.browser
             .visible
             .then(|| self.browser.row_rect(i).center())
+    }
+
+    /// The chips of the browser's tag cloud (see [`Browser::chips`]).
+    pub fn browser_chips(&self) -> Vec<crate::browser::Chip> {
+        self.browser.chips()
+    }
+
+    /// The centre of the tag-cloud chip labelled `label` (`None` while the browser is hidden or
+    /// no chip has that label); a test hook, like [`Self::browser_row_center`].
+    pub fn browser_chip_center(&self, registry: &Registry, label: &str) -> Option<Point> {
+        if !self.browser.visible {
+            return None;
+        }
+        let chips = self.browser.chips();
+        let at = chips.iter().position(|c| c.label == label)?;
+        let line = crate::browser::chip_lines(&chips)
+            .iter()
+            .position(|l| l.iter().any(|(i, _, _)| *i == at))?;
+        let row = self
+            .browser
+            .list(registry)
+            .iter()
+            .position(|r| *r == crate::browser::BrowserRow::Chips(line))?;
+        let (_, x0, x1) = crate::browser::chip_lines(&chips)[line]
+            .iter()
+            .copied()
+            .find(|(i, _, _)| *i == at)?;
+        Some(Point::new(
+            (x0 + x1) / 2.0,
+            self.browser.row_rect(row).center().y,
+        ))
     }
 
     /// Shows an error (e.g. a rejected command) until the next click.
@@ -3963,6 +4011,18 @@ impl RackView {
             }
             let rows = self.browser.list(registry);
             if let Some(i) = self.browser.row_at(pos, rows.len())
+                && let crate::browser::BrowserRow::Chips(line) = &rows[i]
+            {
+                // A chip of the tag cloud switches its filter on or off.
+                if button == PointerButton::Primary
+                    && let Some(key) = self.browser.chip_at(i, *line, pos)
+                {
+                    self.browser.toggle_chip(&key, registry);
+                    self.repaint = true;
+                }
+                return;
+            }
+            if let Some(i) = self.browser.row_at(pos, rows.len())
                 && rows[i].selectable()
             {
                 self.browser.highlighted = i;
@@ -4409,6 +4469,8 @@ impl RackView {
                     } else if horizontal {
                         let (x0, x1, _) = self.mix_travel(i, p.key);
                         (x1 - x0) * self.zoom
+                    } else if let Some(len) = self.drawbar_pixels(i, p.key, slot) {
+                        len
                     } else if kind == ControlKind::Fader {
                         widget::FADER_PIXELS_PER_RANGE
                     } else {
@@ -4788,8 +4850,11 @@ impl RackView {
         index: usize,
         modifiers: Modifiers,
     ) -> UiAction {
+        // An effect bound to a target (Add Send Effect, Add Insert Effect) is always routed
+        // there: neither the Workflow setting nor Shift makes it a plain add.
+        let bound = kind == CreateKind::Effect && self.bound_target().is_some();
         let options = CreateOptions {
-            route: self.auto_route != modifiers.shift,
+            route: bound || self.auto_route != modifiers.shift,
             skip_track: modifiers.alt,
             disarm: Vec::new(),
         };
@@ -4820,9 +4885,19 @@ impl RackView {
         }))
     }
 
-    /// What an effect created now is routed from: the selected device, or the master's insert
-    /// area right after a click on it.
+    /// The target "Add Send Effect" or "Add Insert Effect" bound the open effect browser to.
+    fn bound_target(&self) -> Option<CreateTarget> {
+        self.bound_effect
+            .clone()
+            .filter(|_| self.browser.visible && self.browser.create == Some(CreateKind::Effect))
+    }
+
+    /// What an effect created now is routed from: the target the browser was bound to, else
+    /// the selected device, or the master's insert area right after a click on it.
     pub fn effect_create_target(&self) -> CreateTarget {
+        if let Some(target) = self.bound_target() {
+            return target;
+        }
         self.selected
             .clone()
             .map_or(CreateTarget::Nothing, |k| self.effect_target(k))

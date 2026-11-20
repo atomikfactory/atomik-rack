@@ -780,6 +780,14 @@ pub enum WorkflowCommand {
         /// The effect (top level).
         effect: DeviceKey,
     },
+    /// Replaces the master's insert effects and FX send effects by a master chain (see
+    /// [`crate::master_chain`]): the current ones go with their cables, the chain's arrive with
+    /// fresh keys right under the master, wired as it says, and the eight returns take its slots
+    /// and params. One undo step; a document without a master rejects it and changes nothing.
+    ApplyMasterChain {
+        /// The chain, as a library item holds it.
+        chain: Box<crate::MasterChain>,
+    },
     /// Removes every cable of every device, in one step. Devices in one scope;
     /// devices without cables are fine when some other has any.
     DisconnectDevices {
@@ -1071,6 +1079,9 @@ pub(crate) fn plan(
         )),
         WorkflowCommand::AssignSend { effect } => {
             plain(workflow_create::assign_send(doc, registry, &effect))
+        }
+        WorkflowCommand::ApplyMasterChain { chain } => {
+            plain(crate::master_chain::plan_apply(doc, registry, &chain))
         }
         WorkflowCommand::DisconnectDevices { keys } => plain(
             workflow_create::disconnect_devices(doc, &keys)
@@ -1591,7 +1602,7 @@ fn try_channel(p: &mut Planner<'_>, source: &DeviceKey) {
 /// keys in snapshot order. At the top level the copies all go to `column` (a column equal to
 /// the rack's column count is appended first), by default the column of the device before the
 /// first copy; inside a container they are in column 0.
-fn paste_devices(
+pub(crate) fn paste_devices(
     p: &mut Planner<'_>,
     snapshot: &DeviceSnapshot,
     container: Option<&DeviceKey>,

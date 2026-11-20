@@ -147,6 +147,8 @@ fn preview_settings_and_banner() {
         sandbox: true,
         running_sandboxed: true,
         process: Default::default(),
+        editor_home: Default::default(),
+        docking_available: true,
     };
     let bounds = Rect::new(0.0, 0.0, 760.0, 520.0);
     let (pw, ph) = (

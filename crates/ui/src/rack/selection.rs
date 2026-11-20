@@ -411,6 +411,15 @@ impl RackView {
                     },
                 )));
             }
+            "rack.add_send_effect" | "rack.add_insert_effect" => {
+                let target = match self.add_effect_target(view, id == "rack.add_send_effect") {
+                    Ok(target) => target,
+                    Err(reason) => return Some(CommandOutcome::NotApplicable(reason)),
+                };
+                // The create browser, filtered to effects, whose choice goes to that target.
+                self.open_browser_create(crate::browser::CreateKind::Effect, registry);
+                self.bound_effect = Some(target);
+            }
             "rack.auto_route" => {
                 let keys = self.local_selection();
                 if keys.is_empty() {
@@ -503,6 +512,37 @@ impl RackView {
             .apply(command, registry)
             .err()
             .map(|e| e.to_string())
+    }
+
+    /// Where "Add Send Effect" (`send`) or "Add Insert Effect" creates its effect, for the
+    /// selected strip of the top level: the master's next free FX send or the end of its insert
+    /// chain, or the end of the insert chain of a mix channel or an output bus. The reason when
+    /// the selection is not such a strip (a send is the master's only).
+    pub fn add_effect_target(&self, doc: &RackDoc, send: bool) -> Result<CreateTarget, String> {
+        if !self.scope.is_empty() {
+            return Err("Add Effect works on the top level of the rack".to_string());
+        }
+        let strip = match self.local_selection().as_slice() {
+            [one] => one.clone(),
+            [] => return Err("Select the master section, a channel or a bus first".to_string()),
+            _ => return Err("Select one strip to add an effect to".to_string()),
+        };
+        let console = &doc.console;
+        if console.master.as_ref() == Some(&strip) {
+            return Ok(if send {
+                CreateTarget::Master
+            } else {
+                CreateTarget::MasterInserts
+            });
+        }
+        if send {
+            return Err("Add Send Effect works on the master section".to_string());
+        }
+        if console.channel_index(&strip).is_some() || console.bus_index(&strip).is_some() {
+            Ok(CreateTarget::Selected(strip))
+        } else {
+            Err("Add Insert Effect works on the master section, a channel or a bus".to_string())
+        }
     }
 
     /// A click on the empty rack clears the selection.

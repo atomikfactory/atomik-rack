@@ -293,6 +293,11 @@ fn default_script(ctl: &Control, req: &ToChild, blob: Option<&[u8]>) -> Action {
             w: 640,
             h: 480,
         }),
+        ToChild::ResizeGui { id, w, h } => reply(FromChild::GuiSized {
+            id: *id,
+            w: *w,
+            h: *h,
+        }),
         ToChild::Shutdown => {
             Action::Exit("the plugin process exited with code 0 (0x0)".to_string())
         }

@@ -187,6 +187,21 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn load_item(&mut self, path: &Path, target: LoadTarget) -> Result<(), String> {
+        // A master chain patch replaces the master's effects, wherever it was dropped: only a
+        // drop on another device is refused (it has no master to put the chain on).
+        if let Some(text) = self.master_chain_text_of(path) {
+            return match &target {
+                LoadTarget::Device(d) | LoadTarget::Replace(d)
+                    if self.doc().console.master.as_ref() != Some(d) =>
+                {
+                    Err(format!(
+                        "'{}' is a master chain: drop it on the master section",
+                        file_name(path)
+                    ))
+                }
+                _ => self.apply_master_chain_text(path, &text),
+            };
+        }
         if let LoadTarget::Device(device) = &target {
             return match classify(path, false) {
                 Some(FileKind::Patch) => self.apply_patch_file(path, device),

@@ -68,9 +68,24 @@ fn plugin_size(w: u32, h: u32) -> Size {
     }
 }
 
+/// An editor window of this process: top-level, or a frameless child of a window the app made
+/// (an editor shown inside the app window), which takes no focus when it is shown.
+struct EditorWindow {
+    window: Window,
+    embedded: bool,
+}
+
+impl std::ops::Deref for EditorWindow {
+    type Target = Window;
+
+    fn deref(&self) -> &Window {
+        &self.window
+    }
+}
+
 /// The window system backed by one winit window, valid inside one callback of the loop.
 struct Windows<'a> {
-    window: &'a mut Option<Window>,
+    window: &'a mut Option<EditorWindow>,
     event_loop: &'a ActiveEventLoop,
 }
 
@@ -92,13 +107,51 @@ impl Windows<'_> {
     }
 }
 
+impl Windows<'_> {
+    /// Makes the editor window as a child of the app's window `owner`.
+    fn create_child(
+        &mut self,
+        title: &str,
+        owner: Option<NativeParent>,
+        size: (u32, u32),
+    ) -> Result<NewWindow, String> {
+        let owner =
+            owner.ok_or_else(|| "there is no app window to put the editor in".to_string())?;
+        let attributes = crate::embed::as_child(
+            Window::default_attributes()
+                .with_title(title)
+                .with_inner_size(plugin_size(size.0, size.1))
+                .with_visible(false),
+            owner,
+        )?;
+        let window = self
+            .event_loop
+            .create_window(attributes)
+            .map_err(|e| e.to_string())?;
+        let handle = window
+            .window_handle()
+            .map_err(|e| format!("no native window handle: {e}"))?;
+        let parent = parent_from_raw(handle.as_raw())?;
+        let scale = window.scale_factor();
+        *self.window = Some(EditorWindow {
+            window,
+            embedded: true,
+        });
+        Ok(NewWindow { parent, scale })
+    }
+}
+
 impl WindowSystem for Windows<'_> {
     fn create(
         &mut self,
         title: &str,
         owner: Option<NativeParent>,
         size: (u32, u32),
+        embed: bool,
     ) -> Result<NewWindow, String> {
+        if embed {
+            return self.create_child(title, owner, size);
+        }
         let attributes = Self::attributes(title, size);
         // Owned by the parent's window on Windows, so the editor stays above it; elsewhere the
         // window is a normal top-level window.
@@ -122,7 +175,10 @@ impl WindowSystem for Windows<'_> {
             .map_err(|e| format!("no native window handle: {e}"))?;
         let parent = parent_from_raw(handle.as_raw())?;
         let scale = window.scale_factor();
-        *self.window = Some(window);
+        *self.window = Some(EditorWindow {
+            window,
+            embedded: false,
+        });
         Ok(NewWindow { parent, scale })
     }
 
@@ -135,7 +191,11 @@ impl WindowSystem for Windows<'_> {
     fn show(&mut self) {
         if let Some(window) = self.window.as_ref() {
             window.set_visible(true);
-            window.focus_window();
+            // An editor inside the app window takes the focus when it is clicked, like any
+            // child window; raising it would only disturb the app's own window.
+            if !window.embedded {
+                window.focus_window();
+            }
         }
     }
 
@@ -172,7 +232,7 @@ fn frame_of(window: &Window) -> Option<WindowInput> {
 
 struct App {
     control: Control,
-    window: Option<Window>,
+    window: Option<EditorWindow>,
     tick_pending: Arc<AtomicBool>,
     exit: Option<u8>,
 }
@@ -312,7 +372,7 @@ impl PostGroup for EventLoopProxy<GroupEvent> {
 
 /// The window systems of a group: one winit window per slot, valid inside one callback.
 struct SlotWindows<'a> {
-    map: &'a mut BTreeMap<u32, Option<Window>>,
+    map: &'a mut BTreeMap<u32, Option<EditorWindow>>,
     event_loop: &'a ActiveEventLoop,
     current: u32,
 }
@@ -333,8 +393,9 @@ impl WindowSystem for SlotWindows<'_> {
         title: &str,
         owner: Option<NativeParent>,
         size: (u32, u32),
+        embed: bool,
     ) -> Result<NewWindow, String> {
-        self.with(|w| w.create(title, owner, size))
+        self.with(|w| w.create(title, owner, size, embed))
     }
 
     fn resize(&mut self, w: u32, h: u32) {
@@ -374,7 +435,7 @@ impl SlotSystems for SlotWindows<'_> {
 
 struct GroupApp {
     host: GroupHost,
-    windows: BTreeMap<u32, Option<Window>>,
+    windows: BTreeMap<u32, Option<EditorWindow>>,
     tick_pending: Arc<AtomicBool>,
     exit: Option<u8>,
 }

@@ -8,7 +8,7 @@ use crate::hub::Hub;
 use crate::instance::ClapInstance;
 use crate::layout::DescInfo;
 use atomik_core::BATCH;
-use atomik_device_sdk::{PluginFormat, PluginRef, RunMode};
+use atomik_device_sdk::{PluginCategory, PluginFormat, PluginRef, RunMode};
 use atomik_plugin_host::{
     ActivateConfig, BackendError, HostHandle, PluginBackend, PluginInstance as HostInstance,
     ScannedPlugin, assert_main_thread, plugin_channel,
@@ -129,6 +129,7 @@ impl PluginBackend for ClapBackend {
         for descriptor in factory.plugin_descriptors() {
             let Some(id) = descriptor.id() else { continue };
             let info = describe(descriptor);
+            let features = info.features.clone();
             let plugin = PluginRef {
                 format: PluginFormat::Clap,
                 id: id.to_string_lossy().into_owned(),
@@ -172,9 +173,11 @@ impl PluginBackend for ClapBackend {
                     Err(e) => (Some(e.to_string()), false),
                 };
             self.register_plugin_file(&plugin.id, path);
+            let category = PluginCategory::from_clap_features(layout_info.kind_hint, &features);
             found.push(ScannedPlugin {
                 plugin,
                 layout: layout_info,
+                category,
                 unsupported,
                 params_truncated: truncated,
             });

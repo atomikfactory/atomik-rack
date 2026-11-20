@@ -1037,3 +1037,336 @@ fn an_external_editors_frame_is_kept_while_it_is_open() {
     core.frame();
     assert!(core.external_editor_frames().is_empty());
 }
+
+// ------------------------------------------------------------------ editors inside the app window
+
+use atomik_ui::plugin_data::PluginEditorHome;
+use atomik_ui::{PluginDockRequest, PluginDockUi};
+
+/// A core whose gain plugin has an external editor, on a system that can dock.
+fn dock_core(home: PluginEditorHome) -> (AppCore<OfflineSink>, Arc<NullStats>, DeviceKey) {
+    let (mut core, stats, dev) = lost_core();
+    stats.set_external_editor(true);
+    core.set_plugin_docking_available(true);
+    core.handle_action(UiAction::PluginSettings(
+        PluginSettingsAction::SetEditorHome(home),
+    ));
+    core.frame();
+    (core, stats, dev)
+}
+
+fn open(core: &mut AppCore<OfflineSink>, dev: &DeviceKey) {
+    core.handle_action(UiAction::OpenPluginGui {
+        device: dev.clone(),
+    });
+}
+
+#[test]
+fn where_the_system_cannot_dock_every_editor_opens_in_its_own_window_whatever_the_setting() {
+    let (mut core, stats, dev) = lost_core();
+    stats.set_external_editor(true);
+    core.handle_action(UiAction::PluginSettings(
+        PluginSettingsAction::SetEditorHome(PluginEditorHome::InApp),
+    ));
+    assert!(!core.plugin_docking_available());
+    assert_eq!(core.editor_placement(&dev), EditorPlacement::OwnWindow);
+    open(&mut core, &dev);
+    assert_eq!(stats.external_opens(), 1);
+    assert_eq!(stats.embedded_opens(), 0);
+    assert_eq!(core.take_plugin_dock_requests(), vec![]);
+    assert_eq!(core.plugin_dock_ui(&dev), PluginDockUi::Hidden);
+    // The settings row says it is not available.
+    assert!(!core.plugin_settings_data().docking_available);
+    // DOCK IN APP says why it does nothing.
+    core.move_plugin_editor(&dev, EditorPlacement::Docked);
+    assert!(
+        core.last_rejection()
+            .is_some_and(|m| m.contains("macOS and Wayland")),
+        "{:?}",
+        core.last_rejection()
+    );
+}
+
+#[test]
+fn the_setting_is_saved_and_an_editor_follows_it_when_it_opens() {
+    let (mut core, _stats, dev) = dock_core(PluginEditorHome::OwnWindow);
+    assert_eq!(core.editor_placement(&dev), EditorPlacement::OwnWindow);
+    assert_eq!(
+        core.plugin_settings_data().editor_home,
+        PluginEditorHome::OwnWindow
+    );
+    core.take_plugin_settings_change();
+    core.handle_action(UiAction::PluginSettings(
+        PluginSettingsAction::SetEditorHome(PluginEditorHome::InApp),
+    ));
+    assert_eq!(core.editor_placement(&dev), EditorPlacement::Docked);
+    let saved = core.take_plugin_settings_change().expect("saved");
+    assert_eq!(saved.editors, atomik_plugin_host::EditorHome::InApp);
+}
+
+#[test]
+fn opening_a_docked_editor_asks_for_a_frame_then_opens_the_editor_inside_it() {
+    let (mut core, stats, dev) = dock_core(PluginEditorHome::InApp);
+    open(&mut core, &dev);
+    assert_eq!(
+        core.take_plugin_dock_requests(),
+        vec![DockRequest::Create {
+            device: dev.clone(),
+            size: (640, 480),
+            at: None
+        }]
+    );
+    assert_eq!(stats.external_opens(), 0, "nothing opens before the frame");
+    assert!(core.plugin_gui_open(&dev));
+    assert_eq!(core.docked_editor(&dev), None, "no frame yet");
+    core.plugin_dock_created(&dev, owner());
+    assert_eq!(stats.embedded_opens(), 1);
+    assert_eq!(stats.embedded_parent(), Some(owner()));
+    assert!(core.plugin_editor_docked(&dev));
+    assert_eq!(core.plugin_dock_ui(&dev), PluginDockUi::Docked);
+    assert_eq!(core.docked_editor(&dev).map(|d| d.size), Some((640, 480)));
+    // No companion window for the Learn strip: the frame carries it.
+    assert!(core.external_editor_frames().is_empty());
+    // Asking again opens nothing new.
+    open(&mut core, &dev);
+    assert_eq!(stats.embedded_opens(), 1);
+}
+
+#[test]
+fn a_slow_docked_editor_is_waited_for_inside_its_frame() {
+    let (mut core, stats, dev) = dock_core(PluginEditorHome::InApp);
+    stats.set_external_editor_delay(3);
+    open(&mut core, &dev);
+    core.take_plugin_dock_requests();
+    core.plugin_dock_created(&dev, owner());
+    assert!(core.plugin_gui_opening(&dev));
+    assert_eq!(stats.embedded_opens(), 0, "not open yet");
+    for _ in 0..4 {
+        core.frame();
+    }
+    assert!(!core.plugin_gui_opening(&dev));
+    assert_eq!(stats.embedded_opens(), 1);
+    assert_eq!(stats.embedded_parent(), Some(owner()));
+    assert!(core.plugin_editor_docked(&dev), "the frame stays");
+}
+
+#[test]
+fn the_plugin_asking_for_a_size_resizes_the_frame() {
+    let (mut core, _stats, dev) = dock_core(PluginEditorHome::InApp);
+    open(&mut core, &dev);
+    core.take_plugin_dock_requests();
+    core.plugin_dock_created(&dev, owner());
+    post(&mut core, &dev, PluginMessage::GuiResize { w: 900, h: 500 });
+    core.frame();
+    assert_eq!(
+        core.take_plugin_dock_requests(),
+        vec![DockRequest::Resize {
+            device: dev.clone(),
+            w: 900,
+            h: 500
+        }]
+    );
+    assert_eq!(core.docked_editor(&dev).map(|d| d.size), Some((900, 500)));
+    assert_eq!(
+        core.take_plugin_window_requests(),
+        vec![],
+        "no window of the app's own is involved"
+    );
+}
+
+#[test]
+fn dragging_the_frame_asks_the_plugin_and_a_fixed_size_editor_springs_back() {
+    let (mut core, stats, dev) = dock_core(PluginEditorHome::InApp);
+    open(&mut core, &dev);
+    core.take_plugin_dock_requests();
+    core.plugin_dock_created(&dev, owner());
+    core.plugin_dock_user_resized(&dev, 700, 520);
+    assert_eq!(stats.gui_sizes(), vec![(700, 520)]);
+    assert_eq!(core.docked_editor(&dev).map(|d| d.size), Some((700, 520)));
+    core.take_plugin_dock_requests();
+    stats.set_fixed_gui_size(Some((640, 480)));
+    core.plugin_dock_user_resized(&dev, 800, 600);
+    assert_eq!(
+        core.take_plugin_dock_requests(),
+        vec![DockRequest::Resize {
+            device: dev.clone(),
+            w: 640,
+            h: 480
+        }]
+    );
+    assert_eq!(core.docked_editor(&dev).map(|d| d.size), Some((640, 480)));
+}
+
+#[test]
+fn closing_a_docked_editor_removes_its_frame_and_the_frame_comes_back_where_it_was() {
+    let (mut core, stats, dev) = dock_core(PluginEditorHome::InApp);
+    open(&mut core, &dev);
+    core.take_plugin_dock_requests();
+    core.plugin_dock_created(&dev, owner());
+    core.plugin_dock_moved(&dev, 120, 90);
+    post(&mut core, &dev, PluginMessage::GuiResize { w: 900, h: 500 });
+    core.frame();
+    core.take_plugin_dock_requests();
+    core.handle_action(UiAction::PluginDock {
+        device: dev.clone(),
+        request: PluginDockRequest::Close,
+    });
+    assert!(!core.plugin_gui_open(&dev));
+    assert!(!core.plugin_editor_docked(&dev));
+    assert_eq!(stats.external_closes(), 1);
+    assert_eq!(
+        core.take_plugin_dock_requests(),
+        vec![DockRequest::Close {
+            device: dev.clone()
+        }]
+    );
+    open(&mut core, &dev);
+    assert_eq!(
+        core.take_plugin_dock_requests(),
+        vec![DockRequest::Create {
+            device: dev.clone(),
+            size: (900, 500),
+            at: Some((120, 90))
+        }]
+    );
+}
+
+#[test]
+fn the_child_closing_a_docked_editor_removes_the_frame() {
+    let (mut core, _stats, dev) = dock_core(PluginEditorHome::InApp);
+    open(&mut core, &dev);
+    core.take_plugin_dock_requests();
+    core.plugin_dock_created(&dev, owner());
+    post(&mut core, &dev, PluginMessage::GuiClosed);
+    core.frame();
+    assert!(!core.plugin_editor_docked(&dev));
+    assert_eq!(
+        core.take_plugin_dock_requests(),
+        vec![DockRequest::Close {
+            device: dev.clone()
+        }]
+    );
+}
+
+#[test]
+fn a_plugin_that_stopped_leaves_a_frame_that_says_so_until_it_is_closed() {
+    let (mut core, stats, dev) = dock_core(PluginEditorHome::InApp);
+    open(&mut core, &dev);
+    core.take_plugin_dock_requests();
+    core.plugin_dock_created(&dev, owner());
+    lose(&mut core, &stats, &dev, "exited with code 3");
+    assert_eq!(
+        core.take_plugin_dock_requests(),
+        vec![DockRequest::Stopped {
+            device: dev.clone()
+        }]
+    );
+    assert_eq!(core.plugin_dock_ui(&dev), PluginDockUi::Stopped);
+    assert_eq!(core.docked_editor(&dev).map(|d| d.stopped), Some(true));
+    // A frame that stopped is not asked to resize.
+    core.plugin_dock_user_resized(&dev, 700, 500);
+    assert!(stats.gui_sizes().is_empty());
+    core.handle_action(UiAction::PluginDock {
+        device: dev.clone(),
+        request: PluginDockRequest::Close,
+    });
+    assert_eq!(
+        core.take_plugin_dock_requests(),
+        vec![DockRequest::Close {
+            device: dev.clone()
+        }]
+    );
+}
+
+#[test]
+fn an_editor_moves_between_its_own_window_and_the_app_window_and_the_choice_is_remembered() {
+    let (mut core, stats, dev) = dock_core(PluginEditorHome::OwnWindow);
+    open(&mut core, &dev);
+    assert_eq!(stats.external_opens(), 1);
+    assert_eq!(core.plugin_dock_ui(&dev), PluginDockUi::CanDock);
+    // DOCK IN APP closes the window of its own and asks for a frame.
+    core.handle_action(UiAction::PluginDock {
+        device: dev.clone(),
+        request: PluginDockRequest::Dock,
+    });
+    assert_eq!(stats.external_closes(), 1);
+    assert!(matches!(
+        core.take_plugin_dock_requests().as_slice(),
+        [DockRequest::Create { .. }]
+    ));
+    core.plugin_dock_created(&dev, owner());
+    assert_eq!(stats.embedded_opens(), 1);
+    // POP OUT removes the frame and opens the editor in a window of its own again.
+    core.handle_action(UiAction::PluginDock {
+        device: dev.clone(),
+        request: PluginDockRequest::PopOut,
+    });
+    assert_eq!(
+        core.take_plugin_dock_requests(),
+        vec![DockRequest::Close {
+            device: dev.clone()
+        }]
+    );
+    assert_eq!(stats.external_opens(), 3, "own, docked, own again");
+    assert_eq!(stats.embedded_opens(), 1);
+    assert_eq!(core.editor_placement(&dev), EditorPlacement::OwnWindow);
+    // The choice survives the editor closing, whatever the setting says.
+    core.handle_action(UiAction::PluginSettings(
+        PluginSettingsAction::SetEditorHome(PluginEditorHome::InApp),
+    ));
+    core.close_plugin_gui(&dev);
+    assert_eq!(core.editor_placement(&dev), EditorPlacement::OwnWindow);
+    open(&mut core, &dev);
+    assert_eq!(core.take_plugin_dock_requests(), vec![]);
+}
+
+#[test]
+fn moving_a_closed_editor_only_remembers_where_it_opens_next() {
+    let (mut core, stats, dev) = dock_core(PluginEditorHome::OwnWindow);
+    core.move_plugin_editor(&dev, EditorPlacement::Docked);
+    assert_eq!(stats.external_opens(), 0);
+    open(&mut core, &dev);
+    assert!(matches!(
+        core.take_plugin_dock_requests().as_slice(),
+        [DockRequest::Create { .. }]
+    ));
+}
+
+#[test]
+fn a_frame_the_platform_could_not_make_leaves_nothing_open() {
+    let (mut core, stats, dev) = dock_core(PluginEditorHome::InApp);
+    open(&mut core, &dev);
+    core.take_plugin_dock_requests();
+    core.plugin_dock_failed(&dev, "no handle");
+    assert!(!core.plugin_gui_open(&dev));
+    assert!(!core.plugin_editor_docked(&dev));
+    assert_eq!(stats.embedded_opens(), 0);
+    assert!(
+        core.last_rejection()
+            .is_some_and(|m| m.contains("no handle")),
+        "{:?}",
+        core.last_rejection()
+    );
+    // It can be opened again.
+    open(&mut core, &dev);
+    assert!(matches!(
+        core.take_plugin_dock_requests().as_slice(),
+        [DockRequest::Close { .. }, DockRequest::Create { .. }]
+    ));
+}
+
+#[test]
+fn removing_the_device_removes_the_frame() {
+    let (mut core, _stats, dev) = dock_core(PluginEditorHome::InApp);
+    open(&mut core, &dev);
+    core.take_plugin_dock_requests();
+    core.plugin_dock_created(&dev, owner());
+    apply(&mut core, Command::RemoveDevice { key: dev.clone() });
+    assert!(!core.plugin_editor_docked(&dev));
+    assert_eq!(
+        core.take_plugin_dock_requests(),
+        vec![DockRequest::Close {
+            device: dev.clone()
+        }]
+    );
+}

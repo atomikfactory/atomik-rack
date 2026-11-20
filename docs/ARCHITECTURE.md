@@ -55,11 +55,11 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-plugin-scan` | [crates/plugin-scan](../crates/plugin-scan) | device-sdk, plugin-host, plugin-clap, plugin-vst3 | none | The out-of-process scanner (bin `atomik-plugin-scan`) |
 | `atomik-plugin-ipc` | [crates/plugin-ipc](../crates/plugin-ipc) | core, device-sdk, plugin-host (memmap2, windows-sys, libc) | `crate` | The sandbox wire: the shared audio block, the doorbell, the control-channel frames and messages; the only sandbox crate with `unsafe` |
 | `atomik-plugin-sandbox` | [crates/plugin-sandbox](../crates/plugin-sandbox) | core, device-sdk, plugin-host, plugin-ipc | none | The sandbox, app side: `SandboxBackend`, one child process per plugin instance, or one for a group of up to 16 |
-| `atomik-plugin-hostd` | [crates/plugin-hostd](../crates/plugin-hostd) | core, device-sdk, plugin-host, plugin-ipc, plugin-clap, plugin-vst3 (winit) | `tests/support/owner_window.rs` (a test helper) | The sandbox child (bin `atomik-plugin-host`): hosts one plugin instance, or a group of them (`--group`) |
+| `atomik-plugin-hostd` | [crates/plugin-hostd](../crates/plugin-hostd) | core, device-sdk, plugin-host, plugin-ipc, plugin-clap, plugin-vst3 (winit) | `src/embed.rs` (makes an editor window a child of the app's window), `tests/support/owner_window.rs` (a test helper) | The sandbox child (bin `atomik-plugin-host`): hosts one plugin instance, or a group of them (`--group`) |
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), devices (the headphone panel draws the device's own curve snapshot), model, tab (the chord diagram and the tab editor draw its voicings and techniques) | none | Platform-independent views, widgets, display lists, theme |
-| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, tab, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | `src/platform/cursor.rs` | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
+| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, tab, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | `src/platform/cursor.rs`, `src/platform/native_child.rs` | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
 
@@ -1146,8 +1146,9 @@ AIFF or FLAC only).
   song can play and be edited meanwhile (the file has the document as it was at the start). The
   panel is modal and turns into a progress bar with CANCEL (Esc does the same); the result is the
   toast ("Exported mix.wav: 24-bit, 48 kHz, 1:05.3, with 2.4 s of tail"). Opening or creating a
-  project cancels a running export. With plugins the worker needs the plugin sandbox, as a freeze
-  does. The last choices (depth, dither, rate, tail, container, dry stems, folder) are in
+  project cancels a running export. With plugins the worker uses the plugin sandbox when it is on,
+  else it loads instances of its own in the app process, as a freeze does. The last choices (depth,
+  dither, rate, tail, container, dry stems, folder) are in
   `export.json` next to `settings.json`. The stems dialog picks the folder the `Bounced <song>`
   folder is made in. The QA server has `session_export` (MCP.md): the same render, synchronous,
   with a report of the file, or with `stems` of every file.
@@ -2405,15 +2406,17 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   of a baked strip), the console channel it plays through (removal), the frozen part of
   an insert chain or the tempo and meter maps are refused with a message that says to unfreeze
   (`freeze::guard`, called by `Document::plan`, so every path is covered; undo and redo restore
-  consistent states and never come through it). The tempo is locked because the render is tied to
-  the tempo map. Removing the frozen instrument removes the track with its freeze, and undo brings
-  both back.
+  consistent states and never come through it). The tempo and the meter are not locked: a render
+  made at another tempo (`Frozen::is_stale`: the ticks its frames cover now differ from its `length`
+  by more than two) plays nothing, and the app renders the track again by itself (below). Removing
+  the frozen instrument removes the track with its freeze, and undo brings both back.
 - **Applying it to the engine** (`RackDoc::expand` calls `freeze::apply`). The devices of a frozen
   track keep their place in the flat list, so every other device keeps its engine id and its prepare
   seed (freezing a track does not change the sound of another one), but they are flagged
   `ExpandedDevice::frozen`, every cable that touches them is dropped, and the cables that left the
   last frozen device's tap are re-sourced to a synthetic `atomik.audio-track` device keyed
-  `<track>/~freeze` (monitor off), appended at the end of the list. The song feeds that player the
+  `<track>/~freeze` (monitor off, and `internal.latency` set to the delay the render carries),
+  appended at the end of the list. The song feeds that player the
   render as the playback of an audio track (`Track::frozen_playback`, flattened like any audio
   track, so mute and solo apply). Frozen devices are not built (`BuildOptions::omit`: added to the
   graph and removed again before the compile, which keeps their ids taken), not inserted into the
@@ -2433,12 +2436,24 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   render is cut by the latency of the chain (`path_latency`: the longest path of the latencies the
   engine published for the devices of the chain, read at the end of the render after the plugins'
   pre-roll, over the flat cables between them, with the channel split into its input stage and the
-  rest), which keeps the track aligned with the others. For bounce in place
+  rest), which puts the audio at the input of the chain (what a track with no latency plays: bounce
+  in place, loops, joins). `render_freeze_latent`, the render of a frozen track, keeps that delay in
+  front instead: the file is the tap from the start of the span, `FreezeRender::latency` frames of
+  delay first, the frozen clip stores them as `audio.source_offset` (no new field: the file format
+  is unchanged), `Frozen::clip` plays the file from its first frame and the player reports the
+  delay (`internal.latency`), so the engine's delay compensation aligns the other tracks to the
+  frozen track as it did to the live chain and the mix is the unfrozen one (the null tests in
+  [render/tests/freeze.rs](../crates/render/tests/freeze.rs)); Unfreeze and Keep Audio uses
+  `Frozen::aligned`. A render made before this has offset 0 and keeps its timing. For bounce in place
   the other clips of the track are removed from the rendered copy of the document. `RenderControl`
   (a cancel flag read once per 64-frame batch, a progress callback) can stop a render, which then
   returns `None`; neither changes a sample.
 - **App** ([app_core_freeze.rs](../crates/app/src/app_core_freeze.rs),
-  [freeze_worker.rs](../crates/app/src/freeze_worker.rs)). The commands in the Track menu
+  [freeze_worker.rs](../crates/app/src/freeze_worker.rs)). After every applied command, undo or
+  redo and at project load, `auto_rerender` queues a `Refreeze` job for each frozen track that
+  `is_stale` (a tempo drag waits for its `EndMerge`); the running job of a tempo that is gone is
+  cancelled; the swap of an automatic job is applied with `join_next` set while the document
+  revision is still the one the tempo edit left, so it joins that step. The commands in the Track menu
   (`sequencer.freeze_track`, `freeze_track_to_device`, `freeze_tail`, `freeze_strip`, `freeze_cancel`,
   `unfreeze_track`, `unfreeze_track_keep`, `refreeze_track`, `bounce_in_place`,
   `bounce_in_place_mute`, `bounce_range`; no default keys), in the track header menu and (bounce)
@@ -2460,8 +2475,9 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   `SyncOp::FrozenChanged` makes the app restart its engine: `rebuild_engine` skips the frozen
   devices but spends their ids, so freezing or unfreezing stops playback. With plugins, the worker
   makes its own `PluginHost` from the app's scan cache and settings with the sandbox of the app in
-  bounce mode (an instance may only live on the thread that made the host); without the sandbox the
-  app's plugins live in its process and the freeze is refused with a message that says so.
+  bounce mode (an instance may only live on the thread that made the host); without the sandbox
+  the worker loads a second instance of each plugin in the app process, on its own thread, from
+  the state saved in the document, so a freeze is never refused for the plugins' sake.
 - **View** ([arrangement.rs](../crates/ui/src/arrangement.rs), `seq_paint::snowflake`). A frozen
   track has a snowflake after its name and draws its render in ice blue in place of its clips,
   labelled `(frozen)` and without handles (the clips behind it cannot be grabbed); the render is a
@@ -3181,11 +3197,14 @@ Audio clips play while following (`audio_follow.rs`). They are placed on the son
 followed tempo replaces, so a clip is played like a note: it starts at the player's frame where the song
 reaches its first frame (through the followed tempo and back through the song's own map) and runs at its
 own rate to its end. A locate, the transport starting, a loop wrap and a new song re-seek: the clips
-underway start from the frame the position is inside. A warped clip is its finished, stretched buffer, so
-it keeps the stretch of the song's own tempo; it is not stretched to the followed one. Up to four clips of
-a track play at once; streamed assets are silent while following. The state is a small array in the
-track's RT scratch: nothing allocates. Not done: stretching clips to the followed tempo, and a re-sync
-inside a clip that runs for many bars (it drifts by the share the two tempos differ).
+underway start from the frame the position is inside. A clip warped to the song tempo (a region with
+`tempo_warp`, the finished buffer rendered at the song's own tempo map) is read at the pace of the song's own
+timeline, so it keeps the clock's tempo while it plays: Beats and Tonal through the track's real-time
+stretcher, Repitch by interpolation, with a small catch-up term and a jump when the clip is more than 50 ms
+off the song. Other clips play at their own rate and are re-synchronised at each start, locate and loop wrap.
+Streamed assets play from the track's ring: the lane's cursor sits at the song's place between clips and a
+clip the clock reaches plays at its own rate from the ring (a loop wrap or a locate opens a new epoch). Up to
+four clips of a track play at once. The state is a small array in the track's RT scratch: nothing allocates.
 
 **Master keyboard.** Workflow, **Master keyboard**
  (`MasterKeyboard`, in `workflow.json`): in
@@ -3460,6 +3479,24 @@ planned on a scratch copy.
   `CreateTarget::MasterInserts` (what `RackView::effect_create_target` answers after a click on the master's drop
   row, cleared by any selection change), `CreateEffect` after an insert of the master and `CreateEffectAt` right
   under the master panel make a master insert. The fold state is view state, as for the channels.
+  A browser row that is an effect dropped on the master panel itself (`RackView::master_panel_browser_drop`) is
+  `CreateEffect` with `CreateTarget::Master` (the next free send); on the insert area (`area_browser_drop`) it is
+  `CreateEffectAt` at the slot under the insert above the pointer. `rack.add_send_effect` and
+  `rack.add_insert_effect` (`RackView::add_effect_target`) open the create browser bound to a target
+  (`RackView::bound_effect`, forgotten when the browser opens again or closes, always routed) for the master
+  (`Master` or `MasterInserts`) or a channel or bus (`Selected`).
+- **Master chain** ([model/src/master_chain.rs](../crates/model/src/master_chain.rs),
+  [app/src/app_core_master_chain.rs](../crates/app/src/app_core_master_chain.rs)). `MasterChain` holds the master's
+  insert effects and the effects of each used send as a `DeviceSnapshot`, the cables to the master, the first
+  effect of each slot and the master's `return{k}.level|mute|pan` params; the item file is the library's device
+  item (an `atomik-project` text with the master, the effects and `console.master` and `console.returns`), so the
+  project format is untouched, `is_master_chain_item` tells it from a plain patch, and `summarize_item` shows it as
+  "Master chain: N effects, M sends". `WorkflowCommand::ApplyMasterChain` removes the current insert and send
+  effects, pastes the item's right under the master (fresh keys, inserts first, then the sends in slot order),
+  rewires them as the item says and sets the eight returns and their params, as one undo step.
+  `AppCore::save_master_chain` writes the file and files it in the category "Master Chains";
+  `AppCore::load_master_chain` and `load_item` (a patch item that is a master chain) apply it, registering
+  stand-ins for missing plugins and adopting the item's audio.
 - **Meters.** The topology meters the `out_l`, `out_r` and `gr_cv_out` of every bus like a channel's
   (`CHANNEL_METER_SOCKETS`), so the console draws bus meters, gain reduction and latency readouts.
 - **Colours.** A bus strip takes the colour of its device when it has one (a click on the colour band
@@ -4310,7 +4347,8 @@ already had (format 37 reads it, older readers refuse it).
 - **The device** `atomik.audio-track` ([audio_track.rs](../crates/devices/src/audio_track.rs)):
   `out = playback + input × monitor_gain`. `monitor` is off, auto or on; with auto the app's
   `internal.monitor_live` (the arm flag) decides. A change is a 5 ms crossfade. It has one stage and
-  no latency.
+  no latency of its own; the player of a frozen track reports the delay of its render in
+  `internal.latency` (frames, set when the device is created) and the engine compensates for it.
 
 ### The Spectrum EQ window
 
@@ -5057,6 +5095,17 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     are unchanged and nothing on the audio path knows about groups. The crash domain is the process: when it
     ends or is stopped every member is lost and each reason names the group. An instance that is dropped leaves
     its slot and the process goes on. With the default setting the wire is the ungrouped one.
+  - *Editors inside the app window.* An editor is normally a top-level window of the child, owned by the app
+    window. With `OpenGui { embed: true, owner }` the child instead makes it a frameless **child** of `owner`,
+    a window the app made (`src/embed.rs` is the one `unsafe` call, `with_parent_window`), and tells the app its
+    size (`GuiResize`) after the answer. The app (`app_core_plugin_dock.rs`, `platform/dock_frames.rs`) keeps a
+    frame of two child windows of the song's main window: an area for the editor and a title bar with a surface
+    of its own, drawn by the Learn strip view. `ResizeGui` / `GuiSized` is the host-to-plugin half of the resize
+    protocol (the plugin-to-host half is `GuiResize`); a window system resize event of an embedded editor is
+    ignored, the app is the only authority on its size. Windows and X11 only (`NativeParent::Win32` and `X11`);
+    macOS and Wayland keep the editor in its own window and the setting is disabled there. `Editor`
+    (`plugin-hostd/src/editor.rs`) and the dock state machine are tested without a window; the real child window
+    is checked by `the_clap_editor_opens_inside_a_window_of_the_app_and_follows_its_size` (`--ignored`).
   - *Control channel.* The child's stdin and stdout carry frames (a little-endian `u32` length, a
     JSON message, an optional binary payload such as a state blob). Every request has an id and
     exactly one reply; plugin callbacks come back as notifications and reach the instance's
@@ -5197,7 +5246,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (659) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (663) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

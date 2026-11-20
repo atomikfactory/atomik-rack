@@ -594,7 +594,7 @@ fn song_input_inner(
     let sources: Vec<(std::borrow::Cow<'_, atomik_model::song::Track>, DeviceKey)> =
         effective_tracks(song)
             .into_iter()
-            .filter_map(|track| match track.frozen_playback() {
+            .filter_map(|track| match track.frozen_playback(doc) {
                 Some(playback) => Some((
                     std::borrow::Cow::Owned(playback),
                     atomik_model::freeze_key(&track.device),
@@ -623,8 +623,18 @@ fn song_input_inner(
                         .and_then(|job| warps.get(&job.key()).map(|b| (job.key(), b)));
                     let mut warp = None;
                     let (mut warp_mode, mut warp_cents) = (SongWarpMode::Repitch, 0);
+                    // A buffer of a clip warped to the song's tempo is stretched on to a
+                    // followed clock's tempo by the engine (never in a bounce).
+                    let mut tempo_warp = None;
                     let (key, asset, source_offset, reverse) = match rendered {
-                        Some((k, buffer)) => (crate::warp::pool_key(k), buffer, r.clip_pos, false),
+                        Some((k, buffer)) => {
+                            tempo_warp = r
+                                .warp
+                                .as_ref()
+                                .filter(|job| job.follows_tempo)
+                                .map(|job| song_warp_mode(job.mode));
+                            (crate::warp::pool_key(k), buffer, r.clip_pos, false)
+                        }
                         None => {
                             let (key, asset) = assets.get_key_value(r.asset.as_str())?;
                             // Streamed assets keep playing unwarped until the buffer is ready.
@@ -683,6 +693,7 @@ fn song_input_inner(
                         warp,
                         warp_mode,
                         warp_cents,
+                        tempo_warp,
                     })
                 })
                 .collect();
@@ -1981,6 +1992,7 @@ fn audio_launch_plan(
                         warp: None,
                         warp_mode: SongWarpMode::Repitch,
                         warp_cents: 0,
+                        tempo_warp: None,
                     })
                 })
                 .collect();

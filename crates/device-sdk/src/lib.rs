@@ -11,6 +11,7 @@ mod modulation;
 mod panel;
 mod player;
 mod plugin;
+mod plugin_category;
 mod registry;
 mod samples;
 mod scope;
@@ -39,6 +40,7 @@ pub use plugin::{
     PluginKindHint, PluginLayout, PluginParamInfo, PluginRef, PluginStandIn, PluginStateBlob,
     RunMode, VST3_PREFIX, descriptor_for, is_plugin_type_id,
 };
+pub use plugin_category::{EffectKind, PluginCategory, PluginClass};
 pub use registry::{DeviceEntry, DeviceFactory, Registry, RegistryError};
 pub use samples::{
     LoopMode, MAX_RR_LEN, MAX_VEL_XFADE, MAX_ZONE_GROUPS, SampleBuffer, SampleMap, SampleMapError,

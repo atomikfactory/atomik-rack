@@ -61,8 +61,8 @@ pub use scan::{
     ScanJob, ScanProgress, ScanReport, ScanRequest, ScanResult, ScanRunner, parallel_scans, rescan,
 };
 pub use settings::{
-    DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, PluginSettings, ProcessChoice,
-    ProcessMode,
+    DEFAULT_TIMEOUT_SECS, EditorHome, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, PluginSettings,
+    ProcessChoice, ProcessMode,
 };
 pub use slot::{
     DeviceEnd, DeviceState, HostMessenger, InstanceId, LogLevel, MESSAGE_CAPACITY, ManagerEnd,

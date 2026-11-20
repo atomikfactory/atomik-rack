@@ -5,7 +5,9 @@ use crate::plugin_data::{FailedFileInfo, PluginEntryInfo, PluginEntryStatus, for
 use crate::search_field::SearchField;
 use crate::text_field::FieldColors;
 use crate::theme::Theme;
-use atomik_device_sdk::{DeviceDescriptor, DeviceKind, PluginKindHint, Registry};
+use atomik_device_sdk::{
+    DeviceDescriptor, DeviceKind, EffectKind, PluginClass, PluginKindHint, Registry,
+};
 use atomik_library::{FileKind, FileRow, ItemInfo};
 use vello::kurbo::{Circle, Line, Point, Rect, RoundedRect};
 
@@ -155,7 +157,45 @@ pub struct Browser {
     pub plugins: Vec<PluginEntryInfo>,
     /// The plugin files that failed to scan, listed greyed at the end of the group.
     pub plugin_failed: Vec<FailedFileInfo>,
+    /// The chips of the plugin tag cloud that are switched on (view state, never saved): a
+    /// plugin is listed only when it matches every one of them.
+    pub chips_on: Vec<ChipKey>,
 }
+
+/// What a chip of the plugin tag cloud filters on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChipKey {
+    /// The plugins of one category class (instrument, effect, note effect, analyser).
+    Class(PluginClass),
+    /// The effects of one kind (reverb, delay, ...).
+    Effect(EffectKind),
+    /// The plugins the user gave this tag (lower case: tags match whatever the case).
+    Tag(String),
+    /// Not a filter: switches every chip off.
+    Clear,
+}
+
+/// One chip of the tag cloud.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chip {
+    /// What it filters on.
+    pub key: ChipKey,
+    /// The text on it.
+    pub label: String,
+    /// How many usable plugins match it (0 for the clear chip).
+    pub count: usize,
+    /// It is switched on.
+    pub active: bool,
+}
+
+/// The most tag chips shown (the commonest first; a tag that is switched on is always shown).
+pub const MAX_TAG_CHIPS: usize = 24;
+
+const CHIP_H: f64 = 20.0;
+const CHIP_GAP: f64 = 4.0;
+const CHIP_PAD: f64 = 7.0;
+const CHIP_TEXT: f32 = 8.5;
+const CHIP_COUNT: f32 = 7.5;
 
 /// One row of the browser list: the device types, then the plugin group.
 #[derive(Debug, Clone, PartialEq)]
@@ -166,6 +206,9 @@ pub enum BrowserRow {
     Heading(String),
     /// An installed, usable plugin: an index into [`Browser::plugins`] (selectable).
     Plugin(usize),
+    /// One line of the tag cloud's chips (see [`Browser::chips`], [`chip_lines`]; not
+    /// selectable: a click toggles the chip under it).
+    Chips(usize),
     /// A hint line (not selectable).
     Hint(String),
     /// A plugin or file that failed, greyed with its reason (not selectable).
@@ -337,6 +380,47 @@ pub fn device_rows(registry: &Registry) -> Vec<FileRow> {
         .collect()
 }
 
+/// Whether a plugin has what a chip filters on.
+fn chip_matches(key: &ChipKey, e: &PluginEntryInfo) -> bool {
+    match key {
+        ChipKey::Class(c) => e.category.class == *c,
+        ChipKey::Effect(k) => e.category.effect == Some(*k),
+        ChipKey::Tag(t) => e.marks.tags.iter().any(|x| x.trim().to_lowercase() == *t),
+        ChipKey::Clear => true,
+    }
+}
+
+/// The width of a chip.
+fn chip_width(chip: &Chip) -> f64 {
+    let count = if chip.count > 0 {
+        crate::paint::estimate_width(&chip.count.to_string(), CHIP_COUNT) + 4.0
+    } else {
+        0.0
+    };
+    (crate::paint::estimate_width(&chip.label, CHIP_TEXT) + count + 2.0 * CHIP_PAD)
+        .min(BROWSER_WIDTH - 28.0)
+}
+
+/// The chips of the tag cloud wrapped into lines: per line the chip index and its left and
+/// right edge in view coordinates (each line is one list row, see [`BrowserRow::Chips`]).
+pub fn chip_lines(chips: &[Chip]) -> Vec<Vec<(usize, f64, f64)>> {
+    let (left, right) = (14.0, BROWSER_WIDTH - 14.0);
+    let mut lines: Vec<Vec<(usize, f64, f64)>> = Vec::new();
+    let mut x = left;
+    for (i, chip) in chips.iter().enumerate() {
+        let w = chip_width(chip);
+        if lines.is_empty() || x + w > right {
+            lines.push(Vec::new());
+            x = left;
+        }
+        if let Some(line) = lines.last_mut() {
+            line.push((i, x, x + w));
+        }
+        x += w + CHIP_GAP;
+    }
+    lines
+}
+
 impl Browser {
     /// Matching descriptors in registry (type id) order, the players next as their
     /// own group, the containers last. Inside a container (see
@@ -348,6 +432,7 @@ impl Browser {
             .filter(|d| is_offered(d, self.show_console, self.scope_depth))
             .filter(|d| self.create.is_none_or(|k| k.accepts(d)))
             .filter(|d| matches(d, self.query()))
+            .filter(|_| self.chips_on.is_empty() || self.active_chips().is_empty())
             .collect();
         rows.sort_by_key(|d| group_of(d.type_id));
         rows
@@ -365,11 +450,14 @@ impl Browser {
             .map(BrowserRow::Device)
             .collect();
         let q = self.query().trim().to_lowercase();
+        let chips = self.chips();
+        let active = self.active_chips();
         let shown: Vec<(usize, &PluginEntryInfo)> = self
             .plugins
             .iter()
             .enumerate()
             .filter(|(_, e)| e.matches(&q))
+            .filter(|(_, e)| active.iter().all(|k| chip_matches(k, e)))
             .collect();
         let failed_entries: Vec<&PluginEntryInfo> = shown
             .iter()
@@ -391,23 +479,28 @@ impl Browser {
         let failed_entries: Vec<&PluginEntryInfo> =
             if create { Vec::new() } else { failed_entries };
         let failed_files: Vec<&FailedFileInfo> = if create { Vec::new() } else { failed_files };
-        let usable = |kind: PluginKindHint| {
+        let usable = |kind: PluginKindHint, analysers: bool| {
             shown
                 .iter()
-                .filter(|(_, e)| e.status == PluginEntryStatus::Ok && e.kind == kind)
+                .filter(|(_, e)| {
+                    e.status == PluginEntryStatus::Ok
+                        && e.kind == kind
+                        && (e.category.class == PluginClass::Analyser) == analysers
+                })
                 .map(|(i, _)| *i)
                 .collect::<Vec<usize>>()
         };
         let offered = |hint: PluginKindHint| self.create.is_none_or(|k| k.accepts_plugin(hint));
         let mut groups = [
-            ("Instruments", usable(PluginKindHint::Instrument)),
-            ("Effects", usable(PluginKindHint::Effect)),
-            ("Note effects", usable(PluginKindHint::NoteEffect)),
+            ("Instruments", usable(PluginKindHint::Instrument, false)),
+            ("Effects", usable(PluginKindHint::Effect, false)),
+            ("Analysers", usable(PluginKindHint::Effect, true)),
+            ("Note effects", usable(PluginKindHint::NoteEffect, false)),
         ]
         .map(|(name, idx)| {
             let hint = match name {
                 "Instruments" => PluginKindHint::Instrument,
-                "Effects" => PluginKindHint::Effect,
+                "Effects" | "Analysers" => PluginKindHint::Effect,
                 _ => PluginKindHint::NoteEffect,
             };
             (name, if offered(hint) { idx } else { Vec::new() })
@@ -423,6 +516,7 @@ impl Browser {
             idx.sort_by_key(|i| !starred(i));
         }
         let any = groups.iter().any(|(_, v)| !v.is_empty())
+            || !active.is_empty()
             || unsupported > 0
             || !failed_entries.is_empty()
             || !failed_files.is_empty();
@@ -430,6 +524,12 @@ impl Browser {
             return out;
         }
         out.push(BrowserRow::Heading(PLUGINS_HEADING.into()));
+        if !chips.is_empty() {
+            out.extend((0..chip_lines(&chips).len()).map(BrowserRow::Chips));
+        }
+        if !active.is_empty() && groups.iter().all(|(_, v)| v.is_empty()) {
+            out.push(BrowserRow::Hint("No plugin has all of these".into()));
+        }
         if !favourites.is_empty() {
             out.push(BrowserRow::Heading(FAVOURITES_HEADING.into()));
             out.extend(favourites.into_iter().map(BrowserRow::Plugin));
@@ -468,6 +568,137 @@ impl Browser {
             }
         }
         out
+    }
+
+    /// The plugins the tag cloud counts: the usable ones that the create mode offers.
+    fn cloud_pool(&self) -> impl Iterator<Item = &PluginEntryInfo> {
+        self.plugins.iter().filter(|e| {
+            e.status == PluginEntryStatus::Ok
+                && self.create.is_none_or(|k| k.accepts_plugin(e.kind))
+        })
+    }
+
+    /// The chips of the tag cloud: the category classes and the effect kinds that tell the
+    /// usable plugins apart (a group of one value is left out), then the user's tags, the
+    /// commonest first, and a clear chip while one is on. Empty when there is nothing to
+    /// filter on.
+    pub fn chips(&self) -> Vec<Chip> {
+        let mut classes: std::collections::BTreeMap<PluginClass, usize> = Default::default();
+        let mut kinds: std::collections::BTreeMap<EffectKind, usize> = Default::default();
+        let mut tags: std::collections::BTreeMap<String, (String, usize)> = Default::default();
+        for e in self.cloud_pool() {
+            if e.category.class != PluginClass::Unknown {
+                *classes.entry(e.category.class).or_default() += 1;
+            }
+            if let Some(k) = e.category.effect {
+                *kinds.entry(k).or_default() += 1;
+            }
+            let mut seen: Vec<String> = Vec::new();
+            for t in &e.marks.tags {
+                let key = t.trim().to_lowercase();
+                if key.is_empty() || seen.contains(&key) {
+                    continue;
+                }
+                seen.push(key.clone());
+                tags.entry(key)
+                    .or_insert_with(|| (t.trim().to_owned(), 0))
+                    .1 += 1;
+            }
+        }
+        let on = |k: &ChipKey| self.chips_on.contains(k);
+        let mut out: Vec<Chip> = Vec::new();
+        if classes.len() >= 2 {
+            out.extend(classes.into_iter().map(|(c, count)| {
+                let key = ChipKey::Class(c);
+                Chip {
+                    active: on(&key),
+                    key,
+                    label: c.label().to_owned(),
+                    count,
+                }
+            }));
+        }
+        if kinds.len() >= 2 {
+            out.extend(kinds.into_iter().map(|(k, count)| {
+                let key = ChipKey::Effect(k);
+                Chip {
+                    active: on(&key),
+                    key,
+                    label: k.label().to_owned(),
+                    count,
+                }
+            }));
+        }
+        let mut tags: Vec<(String, String, usize)> =
+            tags.into_iter().map(|(k, (l, n))| (k, l, n)).collect();
+        tags.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+        let mut shown = 0;
+        out.extend(tags.into_iter().filter_map(|(key, label, count)| {
+            let key = ChipKey::Tag(key);
+            let active = on(&key);
+            if !active && shown >= MAX_TAG_CHIPS {
+                return None;
+            }
+            shown += 1;
+            Some(Chip {
+                key,
+                label,
+                count,
+                active,
+            })
+        }));
+        if out.iter().any(|c| c.active) {
+            out.push(Chip {
+                key: ChipKey::Clear,
+                label: "CLEAR".to_owned(),
+                count: 0,
+                active: false,
+            });
+        }
+        out
+    }
+
+    /// The switched-on chips that exist in the current tag cloud (a chip whose tag was removed
+    /// in the meantime filters nothing).
+    fn active_chips(&self) -> Vec<ChipKey> {
+        if self.chips_on.is_empty() {
+            return Vec::new();
+        }
+        self.chips()
+            .into_iter()
+            .filter(|c| c.active)
+            .map(|c| c.key)
+            .collect()
+    }
+
+    /// Switches a chip on or off; the clear chip switches every one off. The list starts over
+    /// (see [`Self::query_changed`]).
+    pub fn toggle_chip(&mut self, key: &ChipKey, registry: &Registry) {
+        if *key == ChipKey::Clear {
+            self.chips_on.clear();
+        } else if let Some(i) = self.chips_on.iter().position(|k| k == key) {
+            self.chips_on.remove(i);
+        } else {
+            self.chips_on.push(key.clone());
+        }
+        self.query_changed(registry);
+    }
+
+    /// The chip under `p` in list row `row`, which shows chip line `line`.
+    pub fn chip_at(&self, row: usize, line: usize, p: Point) -> Option<ChipKey> {
+        let chips = self.chips();
+        let r = self.row_rect(row);
+        let lines = chip_lines(&chips);
+        lines.get(line)?.iter().find_map(|&(i, x0, x1)| {
+            Rect::new(
+                x0,
+                r.center().y - CHIP_H / 2.0,
+                x1,
+                r.center().y + CHIP_H / 2.0,
+            )
+            .contains(p)
+            .then(|| chips[i].key.clone())
+        })
     }
 
     /// After an edit of the search text: the list starts over, so the highlight goes to the
@@ -623,6 +854,7 @@ impl Browser {
             ));
         }
         c.push_clip(&Rect::new(0.0, ROWS_Y - 2.0, BROWSER_WIDTH, height).into());
+        let mut chips: Option<Vec<Chip>> = None;
         for (i, row) in self.list(registry).iter().enumerate() {
             let r = self.row_rect(i);
             if row.selectable() && (self.hover == Some(i) || self.highlighted == i) {
@@ -688,6 +920,22 @@ impl Browser {
                         .spacing(0.8),
                     );
                 }
+                BrowserRow::Chips(line) => {
+                    let chips = chips.get_or_insert_with(|| self.chips());
+                    for &(i, x0, x1) in chip_lines(chips).get(*line).into_iter().flatten() {
+                        paint_chip(
+                            c,
+                            theme,
+                            &chips[i],
+                            Rect::new(
+                                x0,
+                                r.center().y - CHIP_H / 2.0,
+                                x1,
+                                r.center().y + CHIP_H / 2.0,
+                            ),
+                        );
+                    }
+                }
                 BrowserRow::Heading(h) => {
                     c.text(
                         &TextRun::new(
@@ -726,6 +974,48 @@ impl Browser {
             }
         }
         c.pop_clip();
+    }
+}
+
+/// Paints one chip of the tag cloud: a plate with the label and the count, lit while on.
+fn paint_chip(c: &mut dyn Canvas, theme: &Theme, chip: &Chip, r: Rect) {
+    let plate = RoundedRect::from_rect(r, r.height() / 2.0);
+    if chip.active {
+        c.fill_with(plate, theme.focus.with_alpha(0.35));
+        c.stroke_with(plate, 1.0, theme.focus);
+    } else {
+        c.fill_with(plate, theme.lcd);
+        c.stroke_with(plate, 1.0, theme.section_line);
+    }
+    let text = if chip.active || chip.key == ChipKey::Clear {
+        theme.text
+    } else {
+        theme.text_muted
+    };
+    let count = if chip.count > 0 {
+        crate::paint::estimate_width(&chip.count.to_string(), CHIP_COUNT) + 4.0
+    } else {
+        0.0
+    };
+    c.text(
+        &TextRun::new(
+            crate::paint::fit_label(&chip.label, r.width() - 2.0 * CHIP_PAD - count, CHIP_TEXT),
+            pt(r.x0 + CHIP_PAD, r.center().y + f64::from(CHIP_TEXT) * 0.36),
+            CHIP_TEXT,
+            text,
+        )
+        .weight(600),
+    );
+    if chip.count > 0 {
+        c.text(
+            &TextRun::new(
+                chip.count.to_string(),
+                pt(r.x1 - CHIP_PAD, r.center().y + f64::from(CHIP_COUNT) * 0.36),
+                CHIP_COUNT,
+                theme.text_muted,
+            )
+            .align(Align::End),
+        );
     }
 }
 
@@ -956,6 +1246,7 @@ mod tests {
             vendor: vendor.into(),
             version: "1".into(),
             kind,
+            category: atomik_device_sdk::PluginCategory::from_kind(kind),
             status: PluginEntryStatus::Ok,
             path: None,
             layout: PluginLayout {

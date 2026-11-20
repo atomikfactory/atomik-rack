@@ -487,3 +487,95 @@ fn a_selection_dragged_and_undone_mid_gesture_names_only_clips_that_exist() {
     ];
     run(a, b, doc, &reg, &steps).expect("the selection stays valid");
 }
+
+/// Feeds `e` to `v` over the document `d` and applies what it answers; the commands the model
+/// refuses are returned as errors.
+fn feed(
+    v: &mut ArrangementView,
+    d: &mut Document,
+    reg: &Registry,
+    e: UiEvent,
+) -> Result<(), TestCaseError> {
+    let current = d.doc().clone();
+    let acts = v.handle(&e, &current, reg);
+    apply(d, reg, &acts)
+}
+
+fn down(pos: Point, clicks: u8) -> UiEvent {
+    UiEvent::PointerDown {
+        pos,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks,
+    }
+}
+
+fn moved(pos: Point) -> UiEvent {
+    UiEvent::PointerMove {
+        pos,
+        modifiers: Modifiers::NONE,
+    }
+}
+
+fn up(pos: Point) -> UiEvent {
+    UiEvent::PointerUp {
+        pos,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+    }
+}
+
+/// A clip drawn by a double-click and grabbed at its middle.
+fn grab_a_new_clip(
+    v: &mut ArrangementView,
+    d: &mut Document,
+    reg: &Registry,
+) -> Result<(ClipId, Point), TestCaseError> {
+    let lane = v.lane_rect(&key("keys"), 0).expect("lane");
+    let empty = Point::new(lane.x1 - 20.0, lane.center().y);
+    feed(v, d, reg, down(empty, 2))?;
+    feed(v, d, reg, up(empty))?;
+    v.sync(d.doc(), reg);
+    let id = ClipId(6);
+    let rect = v.clip_rect(id).expect("the new clip is drawn");
+    Ok((id, rect.center()))
+}
+
+/// A clip is drawn, grabbed at `grab(rect)`, dragged, and undone away while the button is held:
+/// the moves and the release after that must send nothing for it.
+fn undo_mid_drag(grab: impl Fn(Rect) -> Point) {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = arrangement(&doc, &reg);
+    let mut d = Document::new(doc);
+    let (id, _) = grab_a_new_clip(&mut v, &mut d, &reg).expect("the clip is drawn");
+    let at = grab(v.clip_rect(id).expect("rect"));
+    feed(&mut v, &mut d, &reg, down(at, 1)).expect("press");
+    feed(&mut v, &mut d, &reg, moved(at + Vec2::new(-30.0, 0.0))).expect("first move");
+    assert!(v.is_dragging(), "the press started a drag");
+    while d.doc().song.clip(id).is_some() && d.undo().is_some() {}
+    v.sync(d.doc(), &reg);
+    assert!(
+        d.doc().song.clip(id).is_none(),
+        "the undo took the clip away"
+    );
+    let end = at + Vec2::new(60.0, 0.0);
+    feed(&mut v, &mut d, &reg, moved(end)).expect("move after undo");
+    assert!(!v.is_dragging(), "the undo cancelled the drag");
+    feed(&mut v, &mut d, &reg, up(end)).expect("release after undo");
+    assert!(d.doc().song.clip(id).is_none());
+}
+
+#[test]
+fn an_undo_in_the_middle_of_a_clip_move_cancels_the_drag() {
+    undo_mid_drag(|r| r.center());
+}
+
+#[test]
+fn an_undo_in_the_middle_of_a_resize_cancels_the_drag() {
+    undo_mid_drag(|r| Point::new(r.x1 - 2.0, r.center().y));
+}
+
+#[test]
+fn an_undo_in_the_middle_of_a_start_trim_of_a_new_clip_cancels_the_drag() {
+    undo_mid_drag(|r| Point::new(r.x0 + 2.0, r.center().y));
+}

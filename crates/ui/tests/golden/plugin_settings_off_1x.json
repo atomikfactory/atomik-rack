@@ -1,7 +1,7 @@
 {"ops":[
 {"transform":[1.00,0.00,0.00,1.00,0.00,0.00]},
-{"clip":{"rect":[0.00,0.00,760.00,560.00]}},
-{"fill":{"rect":[0.00,0.00,760.00,560.00]},"brush":"#0e1013ff"},
+{"clip":{"rect":[0.00,0.00,760.00,600.00]}},
+{"fill":{"rect":[0.00,0.00,760.00,600.00]},"brush":"#0e1013ff"},
 {"text":"PLUGINS","at":[14.00,29.00],"size":11.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"fill":{"rrect":[650.00,12.00,746.00,36.00,3.00]},"brush":"#3b4047ff"},
 {"stroke":{"line":[652.00,12.50,744.00,12.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
@@ -15,7 +15,13 @@
 {"text":"PROCESSES: ONE PER PLUGIN","at":[645.00,64.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
 {"text":"Run plugins in a separate process (recommended)","at":[40.00,56.00],"size":10.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Running now: separate process. Applies after restarting Atomik","at":[40.00,71.00],"size":9.00,"weight":400,"align":"start","color":"#8f96a0ff"},
-{"text":"Third-party plugins are off. Press ENABLE (top right) to scan folders and use plugins.","at":[14.00,101.00],"size":10.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"fill":{"rrect":[494.00,89.00,740.00,113.00,3.00]},"brush":"#3b4047ff"},
+{"stroke":{"line":[496.00,89.50,738.00,89.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[494.50,89.50,739.50,112.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"EDITORS: IN THEIR OWN WINDOW","at":[617.00,104.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
+{"text":"Where editors open: in their own window or inside the app window","at":[40.00,96.00],"size":10.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Each editor also has a button to move it between the two","at":[40.00,111.00],"size":9.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"Third-party plugins are off. Press ENABLE (top right) to scan folders and use plugins.","at":[14.00,141.00],"size":10.00,"weight":400,"align":"start","color":"#8f96a0ff"},
 {"pop_clip":true},
 {"pop_transform":true}
 ]}

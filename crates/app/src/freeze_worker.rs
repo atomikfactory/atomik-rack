@@ -7,11 +7,12 @@
 //! the command line uses, one engine on this thread (no workers: the live engine has the cores).
 //!
 //! **Plugins.** A document with plugin devices needs a plugin host on the worker's thread. The
-//! host is made here, from the app's scan cache and settings, with the sandbox of the app (each
-//! instance in a child process, waited for every batch like a bounce): plugin instances may only
-//! live on the thread that made the host, and the worker is that thread. Without the sandbox the
-//! app's plugins live in the app process and cannot be built here, so the freeze is refused with
-//! a message that says so.
+//! host is made here, from the app's scan cache and settings: with the sandbox of the app each
+//! instance is in a child process, waited for every batch like a bounce; without it the worker
+//! loads its own instances in the app process, on its own thread (a second instance of each
+//! plugin, from the state saved in the document, the way the sandbox does), so a freeze is never
+//! refused for the plugins' sake. Plugin instances may only live on the thread that made the
+//! host, and the worker is that thread.
 
 use crate::audio_import::{Loaded, Msg, load_asset};
 use atomik_audio_file::{AudioData, Bundle};
@@ -19,7 +20,7 @@ use atomik_device_sdk::RunMode;
 use atomik_dsp::rumble::{RumbleParams, reverse_swell, rumble_layer};
 use atomik_model::RackDoc;
 use atomik_plugin_host::{PluginCache, PluginSettings};
-use atomik_render::freeze::{FreezeRequest, render_freeze};
+use atomik_render::freeze::{FreezeRequest, render_freeze, render_freeze_latent};
 use atomik_render::plugin_pass::RenderControl;
 use atomik_render::plugins::{MissingPlugins, PluginHost, PluginIsolation};
 use atomik_render::project::{PluginBounce, ProjectOptions};
@@ -34,7 +35,8 @@ pub(crate) struct PluginEnv {
     pub cache: PluginCache,
     /// The app's plugin settings.
     pub settings: PluginSettings,
-    /// The sandbox of the app, for a bounce (`None`: the app's plugins are in its own process).
+    /// The sandbox of the app, for a bounce (`None`: the app's plugins are in its own process,
+    /// and the render's own instances are too).
     pub isolation: Option<PluginIsolation>,
 }
 
@@ -74,6 +76,9 @@ pub(crate) struct Work {
     pub plugins: PluginEnv,
     /// What to make of the render before it is stored.
     pub post: Option<Post>,
+    /// Keep the delay of the chain in front of the audio (the render of a frozen track, see
+    /// [`render_freeze_latent`]), instead of cutting it.
+    pub keep_latency: bool,
 }
 
 /// A finished render, stored and loaded.
@@ -86,28 +91,26 @@ pub(crate) struct Done {
     pub length: i64,
     /// Frames past the end of the span that the tail kept.
     pub tail_frames: u64,
+    /// The delay in frames of the chain at the tap: how many frames of the audio's start are the
+    /// chain's delay when the render kept it (`Work::keep_latency`).
+    pub latency: u64,
     /// What the render reported.
     pub warnings: Vec<String>,
 }
 
 /// The plugin host a render of `doc` needs, with the device types it provides registered in
-/// `registry` (`None`: the document has no plugin). `what` names the render in the message
-/// that says the sandbox is needed.
+/// `registry` (`None`: the document has no plugin).
 pub(crate) fn plugin_host(
     doc: &RackDoc,
     plugins: PluginEnv,
     registry: &mut atomik_device_sdk::Registry,
-    what: &str,
 ) -> Result<Option<PluginHost>, String> {
     if doc.plugin_devices().is_empty() {
         return Ok(None);
     }
-    let isolation = plugins.isolation.ok_or_else(|| {
-        format!(
-            "this project uses plugins, which {what} can only render with the plugin sandbox: \
-             turn it on in Audio > Plugins (it applies at the next start)"
-        )
-    })?;
+    // With no sandbox the app's plugins live in its process; the render loads its own instances
+    // in this process too, on this thread, from the saved state of the document.
+    let isolation = plugins.isolation.unwrap_or(PluginIsolation::InProcess);
     let mut host = PluginHost::with_isolation(isolation);
     host.set_catalog(&plugins.cache, &plugins.settings, registry);
     Ok(Some(host))
@@ -210,9 +213,10 @@ fn render(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String
         name,
         plugins,
         post,
+        keep_latency,
     } = work;
     let mut registry = atomik_render::default_registry();
-    let mut host = plugin_host(&doc, plugins, &mut registry, "a freeze")?;
+    let mut host = plugin_host(&doc, plugins, &mut registry)?;
     atomik_model::register_stand_ins(&doc, &mut registry).map_err(|e| e.to_string())?;
     let options = ProjectOptions {
         host_block: std::num::NonZeroUsize::new(512).unwrap_or(std::num::NonZeroUsize::MIN),
@@ -224,7 +228,12 @@ fn render(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String
         mode: RunMode::Offline,
         missing: MissingPlugins::Error,
     };
-    let rendered = render_freeze(
+    let render_it = if keep_latency {
+        render_freeze_latent
+    } else {
+        render_freeze
+    };
+    let rendered = render_it(
         &doc,
         &registry,
         (&options, Some(bundle.root())),
@@ -273,6 +282,7 @@ fn render(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String
         start: render.start,
         length: render.length,
         tail_frames: render.tail_frames,
+        latency: if keep_latency { render.latency } else { 0 },
         warnings: render.warnings.iter().map(ToString::to_string).collect(),
     }))
 }

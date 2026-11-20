@@ -1260,6 +1260,7 @@ mod tests {
                 .into(),
                 sandbox: false,
                 process: atomik_plugin_host::ProcessMode::PerFile,
+                editors: atomik_plugin_host::EditorHome::InApp,
             },
             surfaces: vec![SurfaceSettings {
                 name: "Desk".into(),

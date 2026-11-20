@@ -710,6 +710,74 @@ fn thru_passes_the_input_in_transport_mode_only() {
 }
 
 #[test]
+fn thru_never_starts_a_key_that_is_still_sounding() {
+    // A second On of a key the input has not released is a retrigger: the key is closed first.
+    let mut h = rig();
+    set(&mut h, "thru", 1.0);
+    h.push_note("notes_in", on(0, 100, 0.7));
+    h.push_note("notes_in", on(0, 100, 0.7));
+    let mut t = Tracker::default();
+    let evs = batch(&mut h);
+    t.feed(&evs);
+    assert_eq!(ons(&evs).iter().filter(|(_, k)| *k == 100).count(), 2);
+    assert!(offs(&evs).contains(&(0, 100)), "the first start is closed");
+    // The release closes it once.
+    h.push_note("notes_in", off(0, 100));
+    t.feed(&batch(&mut h));
+    assert!(!t.sounding.contains(&100));
+}
+
+#[test]
+fn a_passed_key_the_chord_also_plays_is_closed_before_either_starts_it_again() {
+    // Pass the bass key (36) through while the wheel plays its bass, and the other way round: the key held
+    // on the input when the chord reaches it. Neither order starts a sounding key.
+    for pressed_first in [false, true] {
+        let mut h = rig();
+        set(&mut h, "thru", 1.0);
+        let mut t = Tracker::default();
+        if pressed_first {
+            h.push_note("notes_in", on(0, 36, 0.7));
+            t.feed(&batch(&mut h));
+        }
+        t.feed(&collect(&mut h, 20));
+        if !pressed_first {
+            assert!(t.sounding.contains(&36), "the chord sounds the key");
+            h.push_note("notes_in", on(5, 36, 0.7));
+            t.feed(&batch(&mut h));
+        }
+        t.feed(&collect(&mut h, batches_for(16 * BEAT_FRAMES)));
+        h.push_note("notes_in", off(0, 36));
+        h.time_mut().playing = false;
+        for _ in 0..4 {
+            t.feed(&batch(&mut h));
+        }
+        assert!(t.sounding.is_empty(), "{:?}", t.sounding);
+    }
+}
+
+#[test]
+fn a_bypass_switch_closes_a_key_passed_through_by_thru() {
+    // The switch starts the device from nothing: a key that thru passed on is closed with the
+    // chord notes, or it would hang until its input Off, which the bypass swallows.
+    let mut h = rig();
+    set(&mut h, "thru", 1.0);
+    h.push_note("notes_in", on(0, 100, 0.7));
+    let mut t = Tracker::default();
+    t.feed(&batch(&mut h));
+    assert!(t.sounding.contains(&100));
+    set(&mut h, "bypass", 1.0);
+    t.feed(&batch(&mut h));
+    assert!(!t.sounding.contains(&100), "closed at the switch");
+    h.push_note("notes_in", off(3, 100));
+    set(&mut h, "bypass", 0.0);
+    t.feed(&collect(&mut h, 3));
+    h.time_mut().playing = false;
+    for _ in 0..4 {
+        t.feed(&batch(&mut h));
+    }
+    assert!(t.sounding.is_empty(), "{:?}", t.sounding);
+}
+#[test]
 fn held_mode_sounds_only_while_a_key_is_down_and_swallows_the_keys() {
     let mut h = rig();
     set(&mut h, "play.mode", 1.0);

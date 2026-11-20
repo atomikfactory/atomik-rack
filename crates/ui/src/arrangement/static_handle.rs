@@ -197,3 +197,10 @@ fn static_cmd(device: &DeviceKey, param: &str, value: f32, merge: u64) -> UiActi
         merge: Some(merge),
     }))
 }
+
+impl StaticDrag {
+    /// The device whose lane the handle sits on.
+    pub(super) fn device(&self) -> &DeviceKey {
+        &self.device
+    }
+}

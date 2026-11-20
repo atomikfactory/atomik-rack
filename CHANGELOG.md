@@ -8,11 +8,95 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **Drop an effect on the master section.** A browser row that is an effect, dropped on the master section's
+  panel in the rack, becomes the next free FX send (send and return wired, a "Send N" group under the master), in
+  one undo step, with the status note when all eight sends are used. Dropped on the master's insert area it
+  becomes a master insert effect, after the insert above the pointer (first in an empty area), as on every mix
+  channel and output bus.
+- **Add Send Effect and Add Insert Effect in the rack menu.** The right-click menu of the master section in the rack
+  lists Add Send Effect... (the next free FX send) and Add Insert Effect... (the end of the master's insert chain),
+  and the menu of every mix channel and output bus lists Add Insert Effect.... Each opens the device browser
+  filtered to effects and bound to that strip, so the effect you choose lands there whatever else is selected and
+  whatever the auto-route setting says, in one undo step; a send with all eight slots used says so in the browser
+  and in the status line.
+- **Master chain patches.** The master section's rack menu has Save Master Chain as Patch... and Load Master Chain
+  Patch.... The patch holds the master's insert effects in order and the effects of each used FX send, with their
+  settings, bypass, names and plugin states, and the return level, mute and pan of each send (not the send levels
+  of the channels). It is a library patch (the project format is untouched) filed under the category Master
+  Chains, which the browser lists with "Master chain: 5 effects, 2 sends"; a double click on it, or a drop on the
+  master or on the rack, loads it too. Loading replaces the master's insert and send effects, with their cables, in
+  one undo step without asking, and Undo puts the old chain back; a plugin that is not installed arrives as a
+  stand-in.
+- **Plugin editors inside the app window.** On Windows and on Linux with X11 (the Atomik window itself must be an
+  X11 window, not a Wayland one) the editor of a sandboxed plugin can sit inside the Atomik window instead of a
+  window of its own: the plugin's process makes its editor a child window of an area the app made, under a title
+  bar the app draws (the plugin's name, the Learn buttons, POP OUT and CLOSE). The title bar moves the frame inside
+  the main window, a grip at its left end resizes it (an editor that cannot be resized springs back to its size, one
+  that can follows the frame), a plugin that asks for another size resizes the frame, and a plugin whose process
+  ends leaves the frame saying "The plugin stopped" until it is closed. Settings > Plugins has an EDITORS button
+  (in their own window, the default, or inside the app window); each editor has DOCK IN APP and POP OUT on its Learn
+  strip to move it between the two, remembered per plugin for as long as the song is open. On macOS and Wayland the
+  button is disabled with a tooltip that says why and editors stay in their own window.
+- **Plugin categories from the plugin's own feature list.** The scan reads what each plugin declares (a CLAP plugin's
+  features, a VST3 class's sub-categories) and maps it to Atomik's categories: instrument, effect, note effect and
+  analyser, plus the kind of an effect (reverb, delay, EQ, dynamics, distortion, filter, modulation, pitch, spatial).
+  A plugin that only analyses is listed as an analyser, in a group of its own in the browser, instead of as an
+  effect; it is still hosted as an effect. The Plugin Manager's Category column and filter show the new categories
+  (for example `Effect: Reverb`). The scan cache gains an optional field (an older entry reads as unknown, showing
+  what the plugin's ports say, until the next scan, which every cached file gets once).
+- **Tag cloud in the browser's plugin section.** A row of chips for the categories and the user's plugin tags, each
+  with the number of usable plugins it matches; clicking chips switches them on or off, several chips combine
+  (a plugin must match all of them), and CLEAR switches them all off. While a chip is on the device types are hidden,
+  as for a `#tag` search, which keeps working.
+- **The organ's drawbars are real drawbars.** The organ panel draws its nine drawbars as vertical sliders with the
+  conventional colours (brown for the 16' and 5 1/3', white for the 8', 4', 2' and 1', black for the 2 2/3',
+  1 3/5' and 1 1/3'), nine positions from 0 (pushed in, at the top) to 8, the position shown above each and the
+  footage below. A drawbar is pulled down to raise it and the handle follows the pointer; double-click resets,
+  Shift drags finely, and the right-click menu has MIDI learn, automation and macro as on every control.
+- **Tonewheel leakage and foldback in the organ.** LEAK (`tone.leak`, default 0) adds the faint crosstalk of the
+  tonewheels a semitone either side of each partial, up to -30 dB. FOLD (`tone.fold`, default off) keeps the
+  partials inside a 91-wheel generator: the top drawbars of a high key fold back down by octaves and the 16' of a
+  low key folds up. Both off renders as before. A new factory sound, Vintage, uses them.
+- **The organ's mod wheel.** `wheel.target` (default Off) sends the mod wheel to the scanner depth (none at the
+  bottom, the chosen type's full swing at the top) or to the rotary speed: the new `wheel_cv_out` socket carries
+  the wheel and, patched to the Speed CV of a rotary speaker, a wheel above half switches it to fast. The rotary
+  speaker itself is unchanged.
+
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last
   picked with a plain click or Ctrl+click) to the one clicked, in the order shown; tracks in a collapsed folder
   are skipped. Ctrl+click (Cmd on macOS) toggles one track in or out, and Shift+Ctrl+click adds the range to the
   selection.
+- **Frozen tracks sound where the live track did.** A freeze keeps the delay of the frozen part of the chain
+  (look-ahead effects, plugins that report latency) in front of the render, and the frozen track reports that
+  delay to the engine, so the delay compensation aligns every other track to it exactly as it did to the live
+  chain: freezing or unfreezing a track with latent effects, for the whole track or up to a device with latent
+  effects left live after it, changes nothing in the timing of the mix (a null test of the two mixes covers
+  both). Before, a frozen track was aligned to the others but the whole mix came out that much earlier. Frozen
+  tracks of earlier projects keep their render as it was, and Unfreeze Track and Keep Audio still leaves a clip
+  aligned to the track.
+- **The tempo and the meter can be edited while a track is frozen.** They were locked. A frozen track whose
+  render no longer fits the tempo is silent (it never plays out of step: playing it live would need an unfreeze
+  and a restart of the engine, so the render is muted instead) and is rendered again by itself on the freeze
+  worker, queued with progress in the status line like Re-render Frozen Track; the new render swaps in. A tempo
+  drag renders once, when it ends; a tempo edit after the end of a render leaves it alone; a second edit while a
+  render runs replaces it. The swap joins the undo step of the tempo edit while that edit is the last step, so
+  Undo brings back the tempo and the old render (kept in the pool while the history uses it); after other edits
+  the swap is a step of its own. Insert Bars and Scale Tempo of the arrangement still refuse a frozen track,
+  and a meter edit alone leaves renders as they are.
+- **Freezing with in-process plugins.** Freeze, Re-render, Bounce in Place, exports and the other offline
+  renders no longer need the plugin sandbox: with it off the worker loads a second instance of each plugin in
+  the app process, on its own thread, from the state saved in the project, as the sandbox path does, so a
+  project with plugins is never refused for that reason.
+- **Audio follows the MIDI clock's tempo (Options > Sync > Follow MIDI Clock).** An audio clip warped to the song
+  tempo now keeps the measured clock tempo for as long as it plays, through the real-time stretch (Beats and Tonal
+  keep the pitch, Repitch moves it with the speed), instead of being re-synchronised only at its start, a locate
+  and a loop wrap: a clip of 32 bars ends in sync with a sender that runs 5% off the song tempo, within a few
+  milliseconds (a test with a simulated clock). Unwarped clips keep their own rate, and bounces and exports never
+  follow a clock, so they are unchanged. Streamed (long, disk-read) audio, which was silent while following, now
+  plays from where the clock reaches each clip, at the clip's own rate; a clip warped to the song tempo plays its
+  rendered buffer and follows the clock as above.
 
 ### Fixed
 - **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio track now
@@ -51,6 +135,14 @@ may break APIs and the patch and project formats.
 - Selecting a track in the arrangement or a channel strip in the console now scrolls the rack (the main window's and
   a detached one) to the track's device, as well as selecting it. Nothing moves when the device is already fully
   visible, and undo, redo and opening a project do not scroll the rack.
+- An Undo or Redo in the middle of a drag in the arrangement (a clip move or copy, a resize, a trim or stretch, a
+  loop or repeat drag, a fade or gain grip, an automation point or bend, a razor cut, a tempo or meter point) now
+  cancels the drag when it takes away what the drag holds. The drag used to go on addressing a clip that was gone,
+  and the model refused the edit. A rubber band only forgets the clips that are gone.
+- The Chord Wheel never starts a key that is still sounding. A key that thru passed on twice, or one that the chord
+  also plays (the bass note, say), is closed first and then started again; before, the second start landed on the
+  sounding key. Switching the bypass on also closes the keys that thru had passed on, which used to hang until the
+  key was pressed again.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

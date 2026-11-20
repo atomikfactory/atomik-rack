@@ -102,15 +102,18 @@ use atomik_plugin_host::{
 };
 use atomik_render::plugins::{PluginHost, PluginIsolation};
 use atomik_ui::plugin_data::{
-    FailedFileInfo, PluginBannerAction, PluginDeviceStatus, PluginEntryInfo, PluginEntryStatus,
-    PluginMarks, PluginProcessMode, PluginRescan, PluginSettingsAction, PluginSettingsData,
-    PresetItem, ScanProgressInfo, SettingsPluginRow,
+    FailedFileInfo, PluginBannerAction, PluginDeviceStatus, PluginEditorHome, PluginEntryInfo,
+    PluginEntryStatus, PluginMarks, PluginProcessMode, PluginRescan, PluginSettingsAction,
+    PluginSettingsData, PresetItem, ScanProgressInfo, SettingsPluginRow,
 };
 use atomik_ui::{BannerKind, PluginGestureMerger, PluginParamsView, UiAction};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[path = "app_core_plugin_dock.rs"]
+mod dock;
+pub use dock::{DockRequest, DockedEditor, EditorPlacement};
 #[path = "app_core_plugin_learn.rs"]
 mod learn;
 pub(super) use learn::TOUCH_GAP_SECS;
@@ -439,6 +442,8 @@ pub(super) struct PluginState {
     editor_owner: Option<NativeParent>,
     /// The Learn modes of the editor windows (see `app_core_plugin_learn.rs`).
     learn: learn::PluginLearn,
+    /// The editors shown inside the app window (see `app_core_plugin_dock.rs`).
+    dock: dock::PluginDock,
     /// The editor window the user brought forward last.
     focused_window: Option<DeviceKey>,
     /// The outer frame of each external editor's window (physical pixels), as its process said.
@@ -513,6 +518,7 @@ impl PluginState {
             window_requests: Vec::new(),
             editor_owner: None,
             learn: learn::PluginLearn::default(),
+            dock: dock::PluginDock::default(),
             focused_window: None,
             frames: BTreeMap::new(),
             settings_changed: false,
@@ -600,6 +606,7 @@ fn entry_infos(catalog: &PluginCatalog, user: &PluginsUser) -> Vec<PluginEntryIn
                 vendor: e.vendor.clone(),
                 version: e.version.clone(),
                 kind: e.kind,
+                category: e.category,
                 status,
                 path: Some(e.path.to_string_lossy().into_owned()),
                 layout: e.layout.clone(),
@@ -1298,6 +1305,7 @@ impl<S: EngineSink> AppCore<S> {
                     if self.plugins.windows.get(&key) == Some(&EditorWindow::ExternalOpening) {
                         self.plugins.windows.remove(&key);
                     }
+                    self.plugin_dock_stopped(&key);
                     self.plugins.failed.remove(&key);
                     if let Some(type_id) = self
                         .doc()
@@ -1329,6 +1337,10 @@ impl<S: EngineSink> AppCore<S> {
             }
             ManagerEvent::GuiResize { instance, w, h } => {
                 if let Some(key) = self.plugins.keys.get(&instance).cloned()
+                    && self.plugin_editor_docked(&key)
+                {
+                    self.plugin_dock_plugin_resized(&key, w, h);
+                } else if let Some(key) = self.plugins.keys.get(&instance).cloned()
                     && self.plugins.windows.contains_key(&key)
                 {
                     self.plugins
@@ -1356,6 +1368,7 @@ impl<S: EngineSink> AppCore<S> {
                             self.plugins
                                 .windows
                                 .insert(key.clone(), EditorWindow::External);
+                            self.plugin_dock_opened(&key);
                             self.plugins.log(format!("[{key}] editor opened"));
                             log::info!("{}", editor_opened_line(&key.0, instance));
                         }
@@ -1377,6 +1390,7 @@ impl<S: EngineSink> AppCore<S> {
                     && self.plugins.windows.get(&key) == Some(&EditorWindow::ExternalOpening)
                 {
                     self.plugins.windows.remove(&key);
+                    self.plugin_dock_closed(&key);
                     self.plugins
                         .log(format!("[{key}] editor did not open: {reason}"));
                     log::info!("{}", editor_failed_line(&key.0, instance, &reason));
@@ -2306,6 +2320,9 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::PluginLearn { device, request } => {
                 self.plugin_learn_request(device, *request);
             }
+            UiAction::PluginDock { device, request } => {
+                self.plugin_dock_request(device, *request);
+            }
             _ => return false,
         }
         true
@@ -2732,6 +2749,11 @@ impl<S: EngineSink> AppCore<S> {
                 atomik_plugin_host::ProcessMode::Shared => PluginProcessMode::Shared,
             },
             running_sandboxed: self.plugin_sandboxed(),
+            editor_home: match self.plugins.settings.editors {
+                atomik_plugin_host::EditorHome::OwnWindow => PluginEditorHome::OwnWindow,
+                atomik_plugin_host::EditorHome::InApp => PluginEditorHome::InApp,
+            },
+            docking_available: self.plugin_docking_available(),
         }
     }
 
@@ -2778,6 +2800,10 @@ impl<S: EngineSink> AppCore<S> {
                 // Plugins loaded from now on follow it; running ones keep their process.
                 self.apply_process_grouping();
             }
+            PluginSettingsAction::SetEditorHome(home) => self.set_editor_home(match home {
+                PluginEditorHome::OwnWindow => atomik_plugin_host::EditorHome::OwnWindow,
+                PluginEditorHome::InApp => atomik_plugin_host::EditorHome::InApp,
+            }),
             PluginSettingsAction::SetPluginDisabled { type_id, disabled } => {
                 if *disabled {
                     self.plugins.settings.disabled.insert(type_id.clone());
@@ -3100,7 +3126,14 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         if self.plugins.host.manager_ref().editor_kind(id) == Some(EditorKind::External) {
-            self.open_external_editor(device, id);
+            if self.plugin_editor_docked(device)
+                || (self.editor_placement(device) == EditorPlacement::Docked
+                    && !self.plugins.windows.contains_key(device))
+            {
+                self.open_docked_editor(device);
+            } else {
+                self.open_external_editor(device, id);
+            }
             return;
         }
         if self.plugins.windows.contains_key(device) {
@@ -3355,6 +3388,7 @@ impl<S: EngineSink> AppCore<S> {
             return;
         };
         self.plugin_learn_window_closed(device);
+        self.plugin_dock_closed(device);
         self.plugins.frames.remove(device);
         self.commit_window_geometry(device);
         self.plugins.window_pos.remove(device);
@@ -3411,7 +3445,10 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins
             .frames
             .iter()
-            .filter(|(d, _)| self.plugins.windows.get(*d) == Some(&EditorWindow::External))
+            .filter(|(d, _)| {
+                self.plugins.windows.get(*d) == Some(&EditorWindow::External)
+                    && !self.plugin_editor_docked(d)
+            })
             .map(|(d, f)| (d.clone(), *f))
             .collect()
     }

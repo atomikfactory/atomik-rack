@@ -1,6 +1,9 @@
 //! The editor window of the plugin (D3): a top-level window the child owns, owned in turn by the
 //! app window of the parent where the platform allows, with the plugin's own editor embedded in
-//! it.
+//! it. When the app asks for an **embedded** editor the window is instead a frameless child of a
+//! window the app made (the editor then sits inside the app window, on Windows and X11): the app
+//! sizes the frame around it ([`Editor::host_resized`]) and learns what the plugin asks for from
+//! the resize notification, so the frame and the editor always have one size.
 //!
 //! The logic here (which window the plugin goes into, how big it is, what follows a resize, what
 //! a second open does) is separate from the window system, which is the [`WindowSystem`] trait:
@@ -23,7 +26,9 @@ pub struct NewWindow {
 
 /// The window system, as far as the editor needs it. There is at most one window.
 pub trait WindowSystem {
-    /// Makes the window, hidden, titled `title`, owned by `owner` where the platform allows.
+    /// Makes the window, hidden, titled `title`, owned by `owner` where the platform allows. With
+    /// `embed` the window is a frameless **child** of `owner` instead (an error when there is no
+    /// `owner` to be a child of).
     ///
     /// # Errors
     /// A sentence saying why there is no window (no display, no handle, Wayland).
@@ -32,6 +37,7 @@ pub trait WindowSystem {
         title: &str,
         owner: Option<NativeParent>,
         size: (u32, u32),
+        embed: bool,
     ) -> Result<NewWindow, String>;
     /// Sets the inner size in the plugin's units (pixels; logical points on macOS).
     fn resize(&mut self, w: u32, h: u32);
@@ -88,6 +94,8 @@ pub fn reported_size(physical: (u32, u32), scale: f64, mac: bool) -> (u32, u32) 
 #[derive(Debug, Default)]
 pub struct Editor {
     open: bool,
+    /// The window is a child of the app's window (see the module documentation).
+    embedded: bool,
     size: (u32, u32),
     /// The size the window was last asked to take, until the window reported it (or the user
     /// chose another): a window that cannot take it (clamped by the system) would otherwise
@@ -99,6 +107,16 @@ impl Editor {
     /// True while the window and the plugin's editor exist.
     pub fn is_open(&self) -> bool {
         self.open
+    }
+
+    /// True while the editor is a child window inside the app's window.
+    pub fn is_embedded(&self) -> bool {
+        self.open && self.embedded
+    }
+
+    /// The size the editor has now (pixels; logical points on macOS).
+    pub fn size(&self) -> (u32, u32) {
+        self.size
     }
 
     /// Opens the editor, or finds it open already; returns its size. The window stays hidden:
@@ -113,18 +131,20 @@ impl Editor {
         title: &str,
         owner: Option<NativeParent>,
         requested_scale: f64,
+        embed: bool,
     ) -> Result<(u32, u32), BackendError> {
         if self.open {
             return Ok(self.size);
         }
         let created = windows
-            .create(title, owner, DEFAULT_SIZE)
+            .create(title, owner, DEFAULT_SIZE, embed)
             .map_err(BackendError::Failed)?;
         let scale = effective_scale(created.scale, requested_scale, cfg!(target_os = "macos"));
         match instance.open_gui(created.parent, scale) {
             Ok((w, h)) => {
                 windows.resize(w, h);
                 self.open = true;
+                self.embedded = embed;
                 self.size = (w, h);
                 self.asked = None;
                 Ok((w, h))
@@ -157,9 +177,33 @@ impl Editor {
             return false;
         }
         self.open = false;
+        self.embedded = false;
         instance.close_gui();
         windows.destroy();
         true
+    }
+
+    /// The app resized the frame around an embedded editor to `w` x `h`: the plugin answers with
+    /// the size it takes (a fixed-size editor keeps its own), the window takes it and the answer
+    /// is returned, for the app to size the frame to.
+    pub fn host_resized(
+        &mut self,
+        instance: &mut dyn PluginInstance,
+        windows: &mut dyn WindowSystem,
+        w: u32,
+        h: u32,
+    ) -> (u32, u32) {
+        if !self.open {
+            return self.size;
+        }
+        // An editor that cannot be resized keeps the size it has, and the frame is told so.
+        let Ok((aw, ah)) = instance.resize_gui(w, h) else {
+            return self.size;
+        };
+        self.size = (aw, ah);
+        self.asked = Some((aw, ah));
+        windows.resize(aw, ah);
+        (aw, ah)
     }
 
     /// The user resized the window to `w` x `h`: the plugin answers with the size it takes and
@@ -249,13 +293,15 @@ pub(crate) mod fakes {
             title: &str,
             owner: Option<NativeParent>,
             size: (u32, u32),
+            embed: bool,
         ) -> Result<NewWindow, String> {
             if let Some(why) = &self.fail_create {
                 return Err(why.clone());
             }
+            let how = if embed { " embedded" } else { "" };
             self.log
                 .borrow_mut()
-                .push(format!("create {title} {owner:?} {size:?}"));
+                .push(format!("create {title} {owner:?} {size:?}{how}"));
             Ok(NewWindow {
                 parent: self.native,
                 scale: self.scale,
@@ -285,6 +331,8 @@ pub(crate) mod fakes {
         pub fail_open: bool,
         /// What `resize_gui` answers (`None`: the size asked for).
         pub resize_answer: Option<(u32, u32)>,
+        /// `resize_gui` fails (an editor of a fixed size).
+        pub resize_fails: bool,
         /// The host handle the plugin posts through, and what it posts at its next `poll`.
         pub host: Option<HostHandle>,
         pub on_poll: Vec<PluginMessage>,
@@ -310,6 +358,7 @@ pub(crate) mod fakes {
                 gui_size: (400, 300),
                 fail_open: false,
                 resize_answer: None,
+                resize_fails: false,
                 host: None,
                 on_poll: Vec::new(),
             }
@@ -365,6 +414,9 @@ pub(crate) mod fakes {
         }
         fn resize_gui(&mut self, w: u32, h: u32) -> Result<(u32, u32), BackendError> {
             self.log.borrow_mut().push(format!("resize_gui {w}x{h}"));
+            if self.resize_fails {
+                return Err(BackendError::Unsupported("fixed".to_string()));
+            }
             Ok(self.resize_answer.unwrap_or((w, h)))
         }
     }
@@ -398,6 +450,7 @@ mod tests {
                 "Fake",
                 Some(NativeParent::Win32(77)),
                 2.0,
+                false,
             )
             .unwrap();
         assert_eq!(size, (400, 300));
@@ -421,9 +474,12 @@ mod tests {
             FakeWindows::new(&l),
             Editor::default(),
         );
-        ed.open(&mut inst, &mut ws, "Fake", None, 1.0).unwrap();
+        ed.open(&mut inst, &mut ws, "Fake", None, 1.0, false)
+            .unwrap();
         l.borrow_mut().clear();
-        let size = ed.open(&mut inst, &mut ws, "Fake", None, 1.0).unwrap();
+        let size = ed
+            .open(&mut inst, &mut ws, "Fake", None, 1.0, false)
+            .unwrap();
         assert_eq!(size, (400, 300));
         assert!(lines(&l).is_empty(), "the window is not touched");
         ed.present(&mut ws);
@@ -440,7 +496,8 @@ mod tests {
         );
         ed.present(&mut ws);
         assert!(lines(&l).is_empty(), "no editor, no window to show");
-        ed.open(&mut inst, &mut ws, "Fake", None, 1.0).unwrap();
+        ed.open(&mut inst, &mut ws, "Fake", None, 1.0, false)
+            .unwrap();
         assert!(
             !lines(&l).contains(&"show".to_string()),
             "open does not show"
@@ -458,7 +515,9 @@ mod tests {
             Editor::default(),
         );
         inst.fail_open = true;
-        let e = ed.open(&mut inst, &mut ws, "Fake", None, 1.0).unwrap_err();
+        let e = ed
+            .open(&mut inst, &mut ws, "Fake", None, 1.0, false)
+            .unwrap_err();
         assert_eq!(e, BackendError::Failed("no editor today".to_string()));
         assert!(!ed.is_open());
         assert_eq!(lines(&l).last().map(String::as_str), Some("destroy"));
@@ -473,7 +532,9 @@ mod tests {
             Editor::default(),
         );
         ws.fail_create = Some("no display".to_string());
-        let e = ed.open(&mut inst, &mut ws, "Fake", None, 1.0).unwrap_err();
+        let e = ed
+            .open(&mut inst, &mut ws, "Fake", None, 1.0, false)
+            .unwrap_err();
         assert_eq!(e, BackendError::Failed("no display".to_string()));
         assert!(!ed.is_open());
         assert!(lines(&l).is_empty());
@@ -489,7 +550,8 @@ mod tests {
         );
         assert!(!ed.close(&mut inst, &mut ws), "nothing to close yet");
         assert!(lines(&l).is_empty());
-        ed.open(&mut inst, &mut ws, "Fake", None, 1.0).unwrap();
+        ed.open(&mut inst, &mut ws, "Fake", None, 1.0, false)
+            .unwrap();
         l.borrow_mut().clear();
         assert!(ed.close(&mut inst, &mut ws));
         assert!(!ed.is_open());
@@ -507,7 +569,8 @@ mod tests {
             FakeWindows::new(&l),
             Editor::default(),
         );
-        ed.open(&mut inst, &mut ws, "Fake", None, 1.0).unwrap();
+        ed.open(&mut inst, &mut ws, "Fake", None, 1.0, false)
+            .unwrap();
         l.borrow_mut().clear();
         ed.user_resized(&mut inst, &mut ws, 500, 400);
         assert_eq!(lines(&l), vec!["resize_gui 500x400".to_string()]);
@@ -531,7 +594,8 @@ mod tests {
             FakeWindows::new(&l),
             Editor::default(),
         );
-        ed.open(&mut inst, &mut ws, "Fake", None, 1.0).unwrap();
+        ed.open(&mut inst, &mut ws, "Fake", None, 1.0, false)
+            .unwrap();
         l.borrow_mut().clear();
         // The plugin wants 480x360; the system keeps the window at 500x400 and says so after
         // every request.
@@ -575,7 +639,8 @@ mod tests {
             FakeWindows::new(&l),
             Editor::default(),
         );
-        ed.open(&mut inst, &mut ws, "Fake", None, 1.0).unwrap();
+        ed.open(&mut inst, &mut ws, "Fake", None, 1.0, false)
+            .unwrap();
         l.borrow_mut().clear();
         ed.plugin_resized(&mut ws, 800, 600);
         assert_eq!(lines(&l), vec!["resize 800x600".to_string()]);
@@ -589,11 +654,84 @@ mod tests {
             FakeWindows::new(&l),
             Editor::default(),
         );
-        ed.open(&mut inst, &mut ws, "Fake", None, 1.0).unwrap();
+        ed.open(&mut inst, &mut ws, "Fake", None, 1.0, false)
+            .unwrap();
         l.borrow_mut().clear();
         ed.plugin_visible(&mut ws, false);
         ed.plugin_visible(&mut ws, true);
         assert_eq!(lines(&l), vec!["hide".to_string(), "show".to_string()]);
+    }
+
+    #[test]
+    fn an_embedded_editor_is_a_child_of_the_apps_window_and_says_so() {
+        let l = log();
+        let (mut inst, mut ws, mut ed) = (
+            FakeInstance::new(&l),
+            FakeWindows::new(&l),
+            Editor::default(),
+        );
+        assert!(!ed.is_embedded());
+        ed.open(
+            &mut inst,
+            &mut ws,
+            "Fake",
+            Some(NativeParent::Win32(77)),
+            1.0,
+            true,
+        )
+        .unwrap();
+        assert!(ed.is_embedded());
+        assert_eq!(ed.size(), (400, 300));
+        assert_eq!(
+            lines(&l)[0],
+            format!("create Fake Some(Win32(77)) {DEFAULT_SIZE:?} embedded")
+        );
+        ed.close(&mut inst, &mut ws);
+        assert!(!ed.is_embedded(), "closing ends the embedding");
+    }
+
+    #[test]
+    fn a_frame_resize_asks_the_plugin_and_the_window_takes_its_answer() {
+        let l = log();
+        let (mut inst, mut ws, mut ed) = (
+            FakeInstance::new(&l),
+            FakeWindows::new(&l),
+            Editor::default(),
+        );
+        assert_eq!(
+            ed.host_resized(&mut inst, &mut ws, 500, 400),
+            (0, 0),
+            "nothing is open: the size stays"
+        );
+        assert!(lines(&l).is_empty());
+        ed.open(&mut inst, &mut ws, "Fake", None, 1.0, true)
+            .unwrap();
+        l.borrow_mut().clear();
+        assert_eq!(ed.host_resized(&mut inst, &mut ws, 500, 400), (500, 400));
+        assert_eq!(
+            lines(&l),
+            vec![
+                "resize_gui 500x400".to_string(),
+                "resize 500x400".to_string()
+            ]
+        );
+        // A fixed-size editor keeps its own size and the frame is told so.
+        inst.resize_answer = Some((400, 300));
+        l.borrow_mut().clear();
+        assert_eq!(ed.host_resized(&mut inst, &mut ws, 700, 700), (400, 300));
+        assert_eq!(
+            lines(&l),
+            vec![
+                "resize_gui 700x700".to_string(),
+                "resize 400x300".to_string()
+            ]
+        );
+        assert_eq!(ed.size(), (400, 300));
+        // An editor that cannot be resized at all keeps its size and the window is not touched.
+        inst.resize_fails = true;
+        l.borrow_mut().clear();
+        assert_eq!(ed.host_resized(&mut inst, &mut ws, 900, 900), (400, 300));
+        assert_eq!(lines(&l), vec!["resize_gui 900x900".to_string()]);
     }
 
     #[test]
