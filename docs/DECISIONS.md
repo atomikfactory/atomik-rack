@@ -1091,10 +1091,11 @@ stored state. The step in the undo history appears when the state arrives, and c
 it as bursts already did.
 
 A wait stays only where the stored state is about to be used: save, archive, share, templates, versions, an audio
-restart and a preset load need the state now, and undo, redo and any command that could remove or replace a plugin
-device capture first so the removal's undo brings the latest state back. Those take the request that is out instead
-of sending another. A recovery snapshot never asks: it is written from the stored states, and a periodic one asks
-every plugin first and goes without those that have not answered after two seconds.
+restart and a preset load need the state now, and undo, redo and any command that could remove, replace or copy a
+plugin device capture first, so the removal's undo and the copy carry the latest state. Those take
+the request that is out instead of sending another. A recovery snapshot never asks: it is written from
+the stored states, and a periodic one asks every plugin first and goes without those that have not
+answered after two seconds.
 
 **Rejected.** A shorter timeout (a working plugin is still stopped, and the freeze is only shorter); a thread that
 waits for the plugin (a second place that can stall, and the answer still has to reach the document on the UI

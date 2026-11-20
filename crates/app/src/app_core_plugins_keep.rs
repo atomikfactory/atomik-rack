@@ -2,15 +2,17 @@
 //!
 //! A plugin's state reaches the document by a background capture (see `app_core_plugins.rs`), so
 //! it can be a little behind the plugin. That only matters when the stored state is about to be
-//! used: a command that removes or replaces a device that holds a plugin, or takes it out of the
-//! rack (a frozen track's plugin is not built), would put the stale state in its undo step. Those
-//! commands capture first. Every command and sub-command enum is matched here without a wildcard,
-//! so a new variant does not compile until it is classified.
+//! used: a command that removes or replaces a device that holds a plugin, takes it out of the
+//! rack (a frozen track's plugin is not built) or copies it out of the document (a duplicate
+//! carries the stored state) would use the stale state. Those commands capture first. Every command
+//! and sub-command enum is matched here without a wildcard, so a new variant does not compile
+//! until it is classified.
 
 use atomik_model::{Command, ConsoleCommand, SongCommand, WorkflowCommand};
 
-/// True when `command` leaves every device that holds a plugin in place, so the live app need not
-/// wait for the plugin's state before it. A `Batch` keeps plugins when every child does.
+/// True when `command` neither removes or replaces a device that holds a plugin nor copies one's
+/// stored state out of the document, so the live app need not wait for the plugin's state before
+/// it. A `Batch` keeps plugins when every child does.
 pub(super) fn keeps_plugins(command: &Command) -> bool {
     match command {
         Command::Batch(children) => children.iter().all(keeps_plugins),
@@ -236,12 +238,12 @@ fn console_keeps_plugins(command: &ConsoleCommand) -> bool {
     }
 }
 
-/// Workflows that delete, replace or reset devices need the stored state; the others only add
-/// devices or edit the song, cables and view.
+/// Workflows that delete, replace, reset or copy devices (a duplicate carries the stored plugin
+/// state) need the stored state; a paste takes the snapshot made at copy time, and the others
+/// only add new devices or edit the song, cables and view.
 fn workflow_keeps_plugins(command: &WorkflowCommand) -> bool {
     match command {
-        WorkflowCommand::DuplicateDevices { .. }
-        | WorkflowCommand::PasteDevices { .. }
+        WorkflowCommand::PasteDevices { .. }
         | WorkflowCommand::MoveDevices { .. }
         | WorkflowCommand::MoveDevicesToSlot { .. }
         | WorkflowCommand::PasteDevicesAt { .. }
@@ -252,8 +254,6 @@ fn workflow_keeps_plugins(command: &WorkflowCommand) -> bool {
         | WorkflowCommand::GentlePump { .. }
         | WorkflowCommand::AddRumble { .. }
         | WorkflowCommand::AddTransition { .. }
-        | WorkflowCommand::DuplicateTrack { .. }
-        | WorkflowCommand::DuplicateTracks { .. }
         | WorkflowCommand::SetFoldedMany { .. }
         | WorkflowCommand::DisconnectDevice { .. }
         | WorkflowCommand::PasteClips { .. }
@@ -309,6 +309,9 @@ fn workflow_keeps_plugins(command: &WorkflowCommand) -> bool {
         | WorkflowCommand::ApplyMasterChain { .. }
         | WorkflowCommand::DeleteDevices { .. }
         | WorkflowCommand::ApplyPatch { .. }
-        | WorkflowCommand::ResetDevice { .. } => false,
+        | WorkflowCommand::ResetDevice { .. }
+        | WorkflowCommand::DuplicateDevices { .. }
+        | WorkflowCommand::DuplicateTrack { .. }
+        | WorkflowCommand::DuplicateTracks { .. } => false,
     }
 }

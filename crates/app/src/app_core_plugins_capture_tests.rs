@@ -409,3 +409,55 @@ fn the_predicate_follows_what_a_command_can_remove() {
         }
     )));
 }
+
+#[test]
+fn duplicating_a_dirty_plugin_captures_once_and_the_copy_carries_the_latest_state() {
+    let (mut core, stats, dev) = bg_core(None);
+    let syncs = stats.sync_captures();
+    patch(&mut core, &stats, &dev, b"patched");
+    assert_eq!(
+        stored(&core, &dev).as_deref(),
+        Some(&b""[..]),
+        "not stored yet"
+    );
+    apply(
+        &mut core,
+        Command::Workflow(WorkflowCommand::DuplicateDevices {
+            keys: vec![dev.clone()],
+            route: false,
+        }),
+    );
+    core.wait_plugins();
+    assert_eq!(stats.sync_captures(), syncs + 1);
+    let copy = core
+        .doc()
+        .plugin_devices()
+        .into_iter()
+        .map(|(k, _)| k)
+        .find(|k| *k != dev)
+        .expect("the copy");
+    assert_eq!(stored(&core, &copy).as_deref(), Some(&b"patched"[..]));
+}
+
+#[test]
+fn the_predicate_sends_commands_that_copy_a_device_to_the_synchronous_side() {
+    type Core = AppCore<OfflineSink>;
+    for w in [
+        WorkflowCommand::DuplicateDevices {
+            keys: vec![key("echo")],
+            route: false,
+        },
+        WorkflowCommand::DuplicateTrack {
+            device: key("echo"),
+        },
+        WorkflowCommand::DuplicateTracks {
+            devices: vec![key("echo")],
+            place: None,
+        },
+    ] {
+        assert!(!Core::command_keeps_plugins(&Command::Workflow(w.clone())));
+        assert!(!Core::command_keeps_plugins(&Command::Batch(vec![
+            Command::Workflow(w)
+        ])));
+    }
+}
