@@ -10,7 +10,9 @@
 
 use crate::slot::HostMessenger;
 use atomik_core::{BATCH, Batch, ExprKind};
-use atomik_device_sdk::{PluginFormat, PluginLayout, PluginRef, PluginStateBlob, RunMode};
+use atomik_device_sdk::{
+    PluginCategory, PluginFormat, PluginLayout, PluginRef, PluginStateBlob, RunMode,
+};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -527,6 +529,9 @@ pub struct ScannedPlugin {
     pub plugin: PluginRef,
     /// Its layout.
     pub layout: PluginLayout,
+    /// The category the plugin declares (its CLAP features or VST3 sub-categories);
+    /// [`PluginCategory::UNKNOWN`] for an entry scanned before categories were read.
+    pub category: PluginCategory,
     /// Why the plugin cannot be hosted (no stereo or mono main bus, ...); it is listed but
     /// cannot be added.
     pub unsupported: Option<String>,
@@ -746,6 +751,7 @@ impl PluginBackend for NullBackend {
             .map(|p| ScannedPlugin {
                 plugin: p.plugin.clone(),
                 layout: p.layout.clone(),
+                category: PluginCategory::from_kind(p.layout.kind_hint),
                 unsupported: None,
                 params_truncated: false,
             })

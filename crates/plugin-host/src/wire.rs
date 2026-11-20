@@ -3,7 +3,8 @@
 
 use crate::backend::ScannedPlugin;
 use atomik_device_sdk::{
-    Channels, PluginFormat, PluginKindHint, PluginLayout, PluginParamInfo, PluginRef,
+    Channels, PluginCategory, PluginFormat, PluginKindHint, PluginLayout, PluginParamInfo,
+    PluginRef,
 };
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +42,9 @@ pub(crate) struct PluginDto {
     unsupported: Option<String>,
     #[serde(default)]
     params_truncated: bool,
+    /// The declared category (`effect:reverb`); absent in entries scanned before it was read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    category: Option<String>,
 }
 
 fn finite(v: f64, fallback: f64) -> f64 {
@@ -114,6 +118,7 @@ impl PluginDto {
                 .collect(),
             unsupported: p.unsupported.clone(),
             params_truncated: p.params_truncated,
+            category: Some(p.category.to_text()),
         }
     }
 
@@ -158,6 +163,10 @@ impl PluginDto {
                     })
                     .collect(),
             },
+            category: self
+                .category
+                .as_deref()
+                .map_or(PluginCategory::UNKNOWN, PluginCategory::from_text),
             unsupported: self.unsupported,
             params_truncated: self.params_truncated,
         })
