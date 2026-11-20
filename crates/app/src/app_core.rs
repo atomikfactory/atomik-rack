@@ -1338,7 +1338,8 @@ impl<S: EngineSink> AppCore<S> {
             | UiAction::PluginParamTexts { .. }
             | UiAction::PluginSettings(_)
             | UiAction::PluginBanner(_)
-            | UiAction::PluginLearn { .. }) => {
+            | UiAction::PluginLearn { .. }
+            | UiAction::PluginDock { .. }) => {
                 self.plugin_action(&a);
             }
             UiAction::ImportAudio {
@@ -4609,8 +4610,8 @@ mod headphone;
 mod mod_matrix;
 
 pub use plugins::{
-    LOG_CAPACITY, PluginConfig, PluginPaths, PluginWindowInfo, PluginWindowRequest, RECOVERY_KEEP,
-    RECOVERY_PERIOD_SECS, STATE_QUIET_SECS,
+    DockRequest, DockedEditor, EditorPlacement, LOG_CAPACITY, PluginConfig, PluginPaths,
+    PluginWindowInfo, PluginWindowRequest, RECOVERY_KEEP, RECOVERY_PERIOD_SECS, STATE_QUIET_SECS,
 };
 
 #[cfg(test)]

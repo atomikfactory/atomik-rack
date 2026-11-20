@@ -55,11 +55,11 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-plugin-scan` | [crates/plugin-scan](../crates/plugin-scan) | device-sdk, plugin-host, plugin-clap, plugin-vst3 | none | The out-of-process scanner (bin `atomik-plugin-scan`) |
 | `atomik-plugin-ipc` | [crates/plugin-ipc](../crates/plugin-ipc) | core, device-sdk, plugin-host (memmap2, windows-sys, libc) | `crate` | The sandbox wire: the shared audio block, the doorbell, the control-channel frames and messages; the only sandbox crate with `unsafe` |
 | `atomik-plugin-sandbox` | [crates/plugin-sandbox](../crates/plugin-sandbox) | core, device-sdk, plugin-host, plugin-ipc | none | The sandbox, app side: `SandboxBackend`, one child process per plugin instance, or one for a group of up to 16 |
-| `atomik-plugin-hostd` | [crates/plugin-hostd](../crates/plugin-hostd) | core, device-sdk, plugin-host, plugin-ipc, plugin-clap, plugin-vst3 (winit) | `tests/support/owner_window.rs` (a test helper) | The sandbox child (bin `atomik-plugin-host`): hosts one plugin instance, or a group of them (`--group`) |
+| `atomik-plugin-hostd` | [crates/plugin-hostd](../crates/plugin-hostd) | core, device-sdk, plugin-host, plugin-ipc, plugin-clap, plugin-vst3 (winit) | `src/embed.rs` (makes an editor window a child of the app's window), `tests/support/owner_window.rs` (a test helper) | The sandbox child (bin `atomik-plugin-host`): hosts one plugin instance, or a group of them (`--group`) |
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), devices (the headphone panel draws the device's own curve snapshot), model, tab (the chord diagram and the tab editor draw its voicings and techniques) | none | Platform-independent views, widgets, display lists, theme |
-| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, tab, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | `src/platform/cursor.rs` | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
+| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, tab, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | `src/platform/cursor.rs`, `src/platform/native_child.rs` | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
 
@@ -5057,6 +5057,17 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     are unchanged and nothing on the audio path knows about groups. The crash domain is the process: when it
     ends or is stopped every member is lost and each reason names the group. An instance that is dropped leaves
     its slot and the process goes on. With the default setting the wire is the ungrouped one.
+  - *Editors inside the app window.* An editor is normally a top-level window of the child, owned by the app
+    window. With `OpenGui { embed: true, owner }` the child instead makes it a frameless **child** of `owner`,
+    a window the app made (`src/embed.rs` is the one `unsafe` call, `with_parent_window`), and tells the app its
+    size (`GuiResize`) after the answer. The app (`app_core_plugin_dock.rs`, `platform/dock_frames.rs`) keeps a
+    frame of two child windows of the song's main window: an area for the editor and a title bar with a surface
+    of its own, drawn by the Learn strip view. `ResizeGui` / `GuiSized` is the host-to-plugin half of the resize
+    protocol (the plugin-to-host half is `GuiResize`); a window system resize event of an embedded editor is
+    ignored, the app is the only authority on its size. Windows and X11 only (`NativeParent::Win32` and `X11`);
+    macOS and Wayland keep the editor in its own window and the setting is disabled there. `Editor`
+    (`plugin-hostd/src/editor.rs`) and the dock state machine are tested without a window; the real child window
+    is checked by `the_clap_editor_opens_inside_a_window_of_the_app_and_follows_its_size` (`--ignored`).
   - *Control channel.* The child's stdin and stdout carry frames (a little-endian `u32` length, a
     JSON message, an optional binary payload such as a state blob). Every request has an id and
     exactly one reply; plugin callbacks come back as notifications and reach the instance's

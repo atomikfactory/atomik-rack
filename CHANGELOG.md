@@ -8,6 +8,18 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **Plugin editors inside the app window.** On Windows and on Linux with X11 (the Atomik window itself must be an
+  X11 window, not a Wayland one) the editor of a sandboxed plugin can sit inside the Atomik window instead of a
+  window of its own: the plugin's process makes its editor a child window of an area the app made, under a title
+  bar the app draws (the plugin's name, the Learn buttons, POP OUT and CLOSE). The title bar moves the frame inside
+  the main window, a grip at its left end resizes it (an editor that cannot be resized springs back to its size, one
+  that can follows the frame), a plugin that asks for another size resizes the frame, and a plugin whose process
+  ends leaves the frame saying "The plugin stopped" until it is closed. Settings > Plugins has an EDITORS button
+  (in their own window, the default, or inside the app window); each editor has DOCK IN APP and POP OUT on its Learn
+  strip to move it between the two, remembered per plugin for as long as the song is open. On macOS and Wayland the
+  button is disabled with a tooltip that says why and editors stay in their own window.
+
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last
   picked with a plain click or Ctrl+click) to the one clicked, in the order shown; tracks in a collapsed folder
