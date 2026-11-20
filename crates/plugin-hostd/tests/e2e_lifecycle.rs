@@ -485,3 +485,58 @@ fn a_lost_instance_fails_every_call_with_the_process_stopped_text() {
     sb.manager.poll();
     sb.finish();
 }
+
+// ----- state capture in the background ---------------------------------------------------------------
+
+#[test]
+fn the_state_of_a_busy_plugin_is_asked_for_in_the_background_without_a_stall_or_a_stop() {
+    let mut sb = Sandbox::null(config_with_env("ATOMIK_NULL_CAPTURE_DELAY_MS", "600"));
+    let handle = instantiate_null(&mut sb, "null.gain", RunMode::Realtime);
+    let id = handle.id;
+    let device = effect(handle, 0.25);
+    let _ = sb.manager.poll();
+    #[allow(clippy::disallowed_methods)]
+    // Justification: this measures how long a busy plugin takes, and that the main thread kept polling.
+    let began = std::time::Instant::now();
+    sb.manager.request_capture(id).unwrap();
+    let mut events = Vec::new();
+    let mut polls = 0;
+    let landed = loop {
+        events.extend(sb.manager.poll());
+        polls += 1;
+        if let Some(landed) = sb.manager.poll_capture(id) {
+            break landed;
+        }
+        assert!(
+            began.elapsed() < Duration::from_secs(10),
+            "the plugin answers"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    assert!(began.elapsed() >= Duration::from_millis(500), "it was busy");
+    assert!(
+        polls > 50,
+        "the main thread went on polling meanwhile: {polls}"
+    );
+    assert!(landed.result.is_ok() && !landed.stale && !landed.again);
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            ManagerEvent::Stall { .. } | ManagerEvent::Crashed { .. } | ManagerEvent::Failed { .. }
+        )),
+        "{events:?}"
+    );
+    // A call that waits for the same plugin is a stall, and the record says which call.
+    sb.manager.capture_state(id).unwrap();
+    let events = sb.manager.poll();
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            ManagerEvent::Stall { call, .. } if call == "CaptureState"
+        )),
+        "{events:?}"
+    );
+    drop(device);
+    let _ = sb.manager.poll();
+    sb.finish();
+}

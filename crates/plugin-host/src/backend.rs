@@ -671,6 +671,9 @@ pub struct NullStats {
     capture_requests: AtomicUsize,
     /// Synchronous `capture_state` calls received.
     sync_captures: AtomicUsize,
+    /// A state the plugin gives itself (a patch picked in its own window), taken by the null
+    /// instances at their next call.
+    own_edit: Mutex<Option<Vec<u8>>>,
     /// The layout the instances take at their next restart (see [`NullStats::change_layout`]).
     pending_layout: Mutex<Option<PluginLayout>>,
     /// The layout the plugin has since: new instances start with it.
@@ -705,6 +708,11 @@ impl NullStats {
     /// state it then gives is the one the plugin holds when the hold ends.
     pub fn hold_captures(&self, hold: bool) {
         self.captures_held.store(hold, Ordering::Relaxed);
+    }
+    /// Makes the null plugin change its own state to `state` (not a restore from the app): the
+    /// instances hold it from their next poll, capture or request.
+    pub fn edit_state(&self, state: &[u8]) {
+        *self.own_edit.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.to_vec());
     }
     /// Background capture requests the null instances received.
     pub fn capture_requests(&self) -> usize {
@@ -912,6 +920,19 @@ impl Drop for NullInstance {
 }
 
 impl NullInstance {
+    /// Takes the state the plugin gave itself since the last call.
+    fn take_own_edit(&mut self) {
+        let edit = self
+            .stats
+            .own_edit
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(state) = edit {
+            self.state = PluginStateBlob(state);
+        }
+    }
+
     /// Counts an editor opened inside `parent`.
     fn note_embedded(&self, parent: NativeParent) {
         self.stats.embedded_opens.fetch_add(1, Ordering::Relaxed);
@@ -1008,6 +1029,7 @@ impl PluginInstance for NullInstance {
     }
 
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError> {
+        self.take_own_edit();
         self.stats.sync_captures.fetch_add(1, Ordering::Relaxed);
         self.capture_out = false;
         Ok(self.state.clone())
@@ -1018,12 +1040,14 @@ impl PluginInstance for NullInstance {
     }
 
     fn request_capture(&mut self) -> Result<(), BackendError> {
+        self.take_own_edit();
         self.stats.capture_requests.fetch_add(1, Ordering::Relaxed);
         self.capture_out = true;
         Ok(())
     }
 
     fn poll_capture(&mut self) -> Option<Result<PluginStateBlob, BackendError>> {
+        self.take_own_edit();
         if !self.capture_out || self.stats.captures_held.load(Ordering::Relaxed) {
             return None;
         }
@@ -1093,7 +1117,9 @@ impl PluginInstance for NullInstance {
         }
     }
 
-    fn poll(&mut self) {}
+    fn poll(&mut self) {
+        self.take_own_edit();
+    }
 
     fn editor_kind(&self) -> EditorKind {
         if self.stats.external_editor.load(Ordering::Relaxed) {

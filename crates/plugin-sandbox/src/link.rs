@@ -254,17 +254,16 @@ impl Shared {
         }
     }
 
-    /// Hands `reply` to the background request when it is the answer to it (else gives it
-    /// back).
-    fn deliver_background(&self, reply: Reply, id: u64) -> Result<(), Reply> {
+    /// Hands `reply` to the background request when `id` is the one that is out (true; the reply
+    /// is taken), else leaves it where it is.
+    fn deliver_background(&self, reply: &mut Option<Reply>, id: u64) -> bool {
         let mut mb = lock(&self.mailbox);
-        if mb.bg_id == Some(id) {
-            mb.bg_reply = Some(reply);
-            self.cv.notify_all();
-            Ok(())
-        } else {
-            Err(reply)
+        if mb.bg_id != Some(id) {
+            return false;
         }
+        mb.bg_reply = reply.take();
+        self.cv.notify_all();
+        true
     }
 
     fn expect_background(&self, id: u64) {
@@ -370,9 +369,7 @@ impl Shared {
 
     /// [`Shared::wait_noted`] for the answer to the background request that is out.
     fn wait_background_noted(&self, what: &str, timeout: Duration) -> Waited {
-        self.noted(what, |shared| {
-            shared.wait_for(timeout, take_background)
-        })
+        self.noted(what, |shared| shared.wait_for(timeout, take_background))
     }
 
     fn noted(&self, what: &str, wait: impl FnOnce(&Self) -> Waited) -> Waited {
@@ -566,8 +563,11 @@ impl Shared {
             } => Some(layout.clone()),
             _ => None,
         };
-        let reply = Reply { msg, blob };
-        let Err(reply) = self.deliver_background(reply, id) else {
+        let mut reply = Some(Reply { msg, blob });
+        if self.deliver_background(&mut reply, id) {
+            return;
+        }
+        let Some(reply) = reply else {
             return;
         };
         if !self.deliver(reply, Expect::Id(id))

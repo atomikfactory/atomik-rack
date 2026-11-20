@@ -110,9 +110,15 @@ fn a_call_that_needs_the_state_now_waits_for_the_request_that_is_out() {
     let blob = r.instance.capture_state().unwrap();
     assert_eq!(blob, PluginStateBlob(b"late state".to_vec()));
     assert_eq!(capture_requests(&r), 1, "no second request");
-    assert!(r.instance.poll_capture().is_none(), "nothing left to collect");
+    assert!(
+        r.instance.poll_capture().is_none(),
+        "nothing left to collect"
+    );
     let got = stall_calls(&r.manager);
-    assert_eq!(got, vec![("CaptureState".to_string(), StallOutcome::Answered)]);
+    assert_eq!(
+        got,
+        vec![("CaptureState".to_string(), StallOutcome::Answered)]
+    );
     // A pipelined begin does not send a second request while one is out either.
     r.instance.request_capture().unwrap();
     r.instance.begin_capture_state();

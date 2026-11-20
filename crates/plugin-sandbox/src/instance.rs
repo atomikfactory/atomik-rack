@@ -424,7 +424,8 @@ impl PluginInstance for RemoteInstance {
     }
 
     fn request_capture(&mut self) -> Result<(), BackendError> {
-        self.link.begin_background(|id| ToChild::CaptureState { id })
+        self.link
+            .begin_background(|id| ToChild::CaptureState { id })
     }
 
     fn poll_capture(&mut self) -> Option<Result<PluginStateBlob, BackendError>> {
