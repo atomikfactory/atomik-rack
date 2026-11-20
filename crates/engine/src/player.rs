@@ -92,7 +92,8 @@
 //!   tempo map with one constant segment at the clock's tempo (the position keeps its musical
 //!   place when the tempo moves: the tick is kept, the frame recomputed), starts, stops and
 //!   locates as the clock does, plays the audio clips from their own starts at their own rate
-//!   (`audio_follow`: they are placed on the song's own tempo), ignores the transport commands
+//!   (`audio_follow`: they are placed on the song's own tempo; a clip warped to it follows the
+//!   clock's tempo through the real-time stretch, a streamed one plays from its ring), ignores the transport commands
 //!   and the count-in, and stops the transport, releasing every held note, when the clock count
 //!   stops moving for half a second. The
 //!   measured tempo lags a sender whose tempo wanders, so the player also tracks the sender's
@@ -1412,6 +1413,19 @@ impl Player {
                 }
             }
         }
+        // Following: a streamed lane reads ahead from the song's place on its own timeline, so
+        // a clock that starts finds the audio there (see `audio_follow`).
+        if following
+            && !*playing
+            && let Some((tracks, rts)) = aud.as_mut()
+        {
+            let origin = own.frame(map.tick(*pos as f64, sr), sr).max(0.0).floor() as u64;
+            for (t, rt) in tracks.iter().zip(rts.iter_mut()) {
+                if let Some(lane) = rt.stream.as_mut().filter(|_| t.streams) {
+                    lane.follow_seek(origin, requests, stats);
+                }
+            }
+        }
         // The count-in ends on a batch boundary: the song starts here, from the held position.
         if pre_roll.is_some_and(|c| c.remaining == 0) {
             *pre_roll = None;
@@ -1591,6 +1605,10 @@ impl Player {
                         own.frame(map.tick(b as f64, sr), sr),
                     );
                     let reseek = std::mem::take(audio_reseek);
+                    let mut io = audio_follow::StreamIo {
+                        requests: &mut *requests,
+                        stats,
+                    };
                     for (t, rt) in tracks.iter().zip(rts.iter_mut()) {
                         audio_follow::render_segment(
                             t,
@@ -1599,6 +1617,7 @@ impl Player {
                             (b - a) as usize,
                             off,
                             (reseek, sr_real.round() as u32),
+                            &mut io,
                         );
                     }
                 } else if !slowed {

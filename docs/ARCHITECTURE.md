@@ -3197,11 +3197,14 @@ Audio clips play while following (`audio_follow.rs`). They are placed on the son
 followed tempo replaces, so a clip is played like a note: it starts at the player's frame where the song
 reaches its first frame (through the followed tempo and back through the song's own map) and runs at its
 own rate to its end. A locate, the transport starting, a loop wrap and a new song re-seek: the clips
-underway start from the frame the position is inside. A warped clip is its finished, stretched buffer, so
-it keeps the stretch of the song's own tempo; it is not stretched to the followed one. Up to four clips of
-a track play at once; streamed assets are silent while following. The state is a small array in the
-track's RT scratch: nothing allocates. Not done: stretching clips to the followed tempo, and a re-sync
-inside a clip that runs for many bars (it drifts by the share the two tempos differ).
+underway start from the frame the position is inside. A clip warped to the song tempo (a region with
+`tempo_warp`, the finished buffer rendered at the song's own tempo map) is read at the pace of the song's own
+timeline, so it keeps the clock's tempo while it plays: Beats and Tonal through the track's real-time
+stretcher, Repitch by interpolation, with a small catch-up term and a jump when the clip is more than 50 ms
+off the song. Other clips play at their own rate and are re-synchronised at each start, locate and loop wrap.
+Streamed assets play from the track's ring: the lane's cursor sits at the song's place between clips and a
+clip the clock reaches plays at its own rate from the ring (a loop wrap or a locate opens a new epoch). Up to
+four clips of a track play at once. The state is a small array in the track's RT scratch: nothing allocates.
 
 **Master keyboard.** Workflow, **Master keyboard**
  (`MasterKeyboard`, in `workflow.json`): in

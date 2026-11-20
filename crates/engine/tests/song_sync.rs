@@ -666,39 +666,50 @@ fn switching_clock_out_off_while_playing_stops_the_receiver_once() {
 /// `start`, `len` frames long, at the song's own 120 BPM) while following a clock that is
 /// running at `bpm` from the beginning. Returns the left output.
 fn followed_audio(bpm: f64, start: u64, len: u64, frames: usize) -> Vec<f32> {
-    use atomik_engine::{OfflineJob, compile_song, render_offline_song};
+    followed_song(
+        bpm,
+        vec![common::audio::region(start, 0, len)],
+        vec![common::audio::asset(2, 8_000)],
+        frames,
+    )
+}
+
+/// [`followed_audio`] for any regions and assets of the one audio track. The sender's clocks
+/// keep arriving (one every 960 frames), so the clock is never lost.
+fn followed_song(
+    bpm: f64,
+    regions: Vec<atomik_engine::SongAudioRegion>,
+    assets: Vec<atomik_engine::SongAsset>,
+    frames: usize,
+) -> Vec<f32> {
     let c = common::cfg(0, 2);
     let mut rig = common::hot::Rig::new(&c);
     let id = rig.insert(0, 1, atomik_devices::audio_track::factory(), &[]);
     rig.wire_outputs(id, "out_1", "out_2");
     rig.route(0);
     let (mut engine, mut handle) = common::engine_with(c, 0, None);
+    for e in rig.edits {
+        handle.schedule(0, e.edit).unwrap();
+    }
+    let input = common::audio::audio_input(vec![common::audio::audio_track_of(1, regions)], assets);
+    handle
+        .submit_song(atomik_engine::compile_song(&input).unwrap())
+        .unwrap();
     let cell = handle.external_clock();
     cell.set_following(true);
-    cell.publish(&ExternalState {
+    let mut state = ExternalState {
         tempo: Some(bpm),
         running: true,
         ..ExternalState::default()
-    });
-    let input = common::audio::audio_input(
-        vec![common::audio::audio_track_of(
-            1,
-            vec![common::audio::region(start, 0, len)],
-        )],
-        vec![common::audio::asset(2, 8_000)],
-    );
-    let job = OfflineJob {
-        frames,
-        host_block: 64,
-        notes: &[],
-        params: &[],
-        inputs: &[],
     };
-    let song = compile_song(&input).unwrap();
-    let out = render_offline_song(&mut engine, &mut handle, &job, song, rig.edits, |f| {
-        atomik_testkit::no_alloc::assert_no_alloc(f)
-    });
-    out.into_iter().next().unwrap()
+    let mut out = Vec::with_capacity(frames);
+    while out.len() < frames {
+        let n = 960.min(frames - out.len());
+        state.clocks += 1;
+        cell.publish(&state);
+        out.extend_from_slice(&common::render_block(&mut engine, &[], 2, n)[0]);
+    }
+    out
 }
 
 #[test]
@@ -733,4 +744,171 @@ fn the_clip_is_heard_at_the_same_place_in_the_song_at_any_followed_tempo() {
     assert!(sb.abs_diff(4_800 + 64) <= 64, "{sb}");
     let len = |o: &[f32]| o.iter().filter(|v| v.abs() > 1.0e-9).count();
     assert_eq!(len(&a), len(&b));
+}
+
+/// A buffer of `frames` frames, silent but for a 500 Hz burst of 0.1 s every 32nd of the way:
+/// at the start and at `at`.
+fn marked_buffer(frames: usize, at: usize) -> atomik_engine::SongAsset {
+    let mut ch = vec![0.0f32; frames];
+    for start in [0, at] {
+        for i in 0..4_800 {
+            ch[start + i] = (std::f32::consts::TAU * 500.0 * i as f32 / 48_000.0).sin() * 0.8;
+        }
+    }
+    atomik_engine::SongAsset::memory(vec![ch.clone(), ch].into())
+}
+
+/// The first output frame at or after `from` whose level passes 0.3.
+fn onset(out: &[f32], from: usize) -> usize {
+    from + out[from..].iter().position(|v| v.abs() > 0.3).unwrap()
+}
+
+#[test]
+fn a_warped_clip_of_thirty_two_bars_ends_in_sync_with_a_clock_five_percent_off() {
+    use atomik_engine::{AssetId, SongAudioRegion, SongWarpMode};
+    // 32 bars of 4/4 at the song's own 120 BPM: 96_000 frames a bar, 3_072_000 in all. A burst
+    // marks the start of the last bar.
+    let (frames, last_bar) = (3_072_000usize, 31 * 96_000usize);
+    let burst = |warped: Option<SongWarpMode>| {
+        followed_song(
+            126.0,
+            vec![SongAudioRegion {
+                tempo_warp: warped,
+                ..SongAudioRegion::plain(AssetId(0), 0, 0, frames as u64)
+            }],
+            vec![marked_buffer(frames, last_bar)],
+            2_950_000,
+        )
+    };
+    // The clock's tempo is 5% faster: the last bar starts 5% sooner. The song starts where the
+    // clip does.
+    let first = |o: &[f32]| o.iter().position(|v| *v != 0.0).unwrap();
+    for mode in [
+        SongWarpMode::Beats,
+        SongWarpMode::Tonal,
+        SongWarpMode::Repitch,
+    ] {
+        let out = burst(Some(mode));
+        let want = first(&out) + (last_bar as f64 / 1.05).round() as usize;
+        let at = onset(&out, 2_000_000);
+        // Within a few milliseconds (240 frames is 5 ms).
+        assert!(at.abs_diff(want) <= 240, "{mode:?}: {at} vs {want}");
+    }
+    // Unwarped, the clip runs at its own rate and has not reached the last bar yet.
+    let dry = burst(None);
+    assert!(dry[2_000_000..].iter().all(|v| v.abs() < 0.3));
+}
+
+#[test]
+fn a_warped_clip_at_the_songs_own_tempo_plays_unchanged() {
+    use atomik_engine::{AssetId, SongAudioRegion, SongWarpMode};
+    let region = SongAudioRegion {
+        tempo_warp: Some(SongWarpMode::Beats),
+        ..SongAudioRegion::plain(AssetId(0), 0, 0, 8_000)
+    };
+    let out = followed_song(
+        120.0,
+        vec![region],
+        vec![common::audio::asset(2, 8_000)],
+        9_000,
+    );
+    let at = out.iter().position(|v| *v != 0.0).unwrap();
+    assert!(at.abs_diff(64) <= 128, "starts at {at}");
+    for i in 0..8_000 {
+        let (got, want) = (out[at + i], common::audio::value(0, i));
+        assert!((got - want).abs() < 1.0e-4, "frame {i}: {got} vs {want}");
+    }
+}
+
+/// A file served from memory to the streamer.
+struct Memory(Vec<Vec<f32>>);
+
+impl atomik_engine::StreamSource for Memory {
+    fn read(&self, start: u64, out: &mut [Vec<f32>]) -> usize {
+        let n = (out[0].len() as u64).min((self.0[0].len() as u64).saturating_sub(start)) as usize;
+        for (o, d) in out.iter_mut().zip(&self.0) {
+            o[..n].copy_from_slice(&d[start as usize..start as usize + n]);
+        }
+        n
+    }
+}
+
+#[test]
+fn a_streamed_clip_plays_while_following_from_where_the_clock_reaches_it() {
+    use atomik_engine::{SongAsset, SongAudioRegion};
+    let c = common::cfg(0, 2);
+    let mut rig = common::hot::Rig::new(&c);
+    let id = rig.insert(0, 1, atomik_devices::audio_track::factory(), &[]);
+    rig.wire_outputs(id, "out_1", "out_2");
+    rig.route(0);
+    let (mut engine, mut handle) = common::engine_with(c, 0, None);
+    for e in rig.edits {
+        handle.schedule(0, e.edit).unwrap();
+    }
+    let data: Vec<Vec<f32>> = (0..2)
+        .map(|ch| (0..30_000).map(|i| common::audio::value(ch, i)).collect())
+        .collect();
+    let asset = SongAsset::stream(30_000, 2, Arc::new(Memory(data)));
+    let regions = vec![
+        common::audio::region(4_800, 0, 2_000),
+        SongAudioRegion {
+            source_offset: 300,
+            ..common::audio::region(20_000, 0, 1_500)
+        },
+    ];
+    let input =
+        common::audio::audio_input(vec![common::audio::audio_track_of(1, regions)], vec![asset]);
+    handle
+        .submit_song(atomik_engine::compile_song(&input).unwrap())
+        .unwrap();
+    let cell = handle.external_clock();
+    cell.set_following(true);
+    // Stopped, the lane reads ahead from the song's place until the streamer has it.
+    let mut primed = false;
+    for k in 0..5_000 {
+        common::render_block(&mut engine, &[], 2, 64);
+        if k > 4 && handle.stream_primed() {
+            primed = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(primed, "the streamer never primed");
+    // A clock at 60 BPM, half the song's own tempo: the clips are reached at twice the frame.
+    let mut state = ExternalState {
+        tempo: Some(60.0),
+        running: true,
+        ..ExternalState::default()
+    };
+    let mut out = Vec::new();
+    while out.len() < 60_000 {
+        state.clocks += 1;
+        cell.publish(&state);
+        out.extend_from_slice(&common::render_block(&mut engine, &[], 2, 960)[0]);
+        // The streamer keeps its pace, as the clock would.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_eq!(handle.stream_underruns(), 0);
+    let first = out.iter().position(|v| *v != 0.0).expect("heard");
+    assert!(first.abs_diff(9_600) <= 256, "starts at {first}");
+    for i in 0..2_000 {
+        let (got, want) = (out[first + i], common::audio::value(0, i));
+        assert!((got - want).abs() < 1.0e-5, "frame {i}: {got} vs {want}");
+    }
+    let rest = &out[first + 2_000..];
+    let second = rest.iter().position(|v| *v != 0.0).expect("second clip");
+    // The first clip began at 9_600; the second is 15_200 own frames later: 30_400 frames.
+    assert!(
+        (first + 2_000 + second).abs_diff(first + 30_400) <= 256,
+        "second at {}",
+        first + 2_000 + second
+    );
+    let at = first + 2_000 + second;
+    for i in 0..1_500 {
+        let (got, want) = (out[at + i], common::audio::value(0, 300 + i));
+        assert!(
+            (got - want).abs() < 1.0e-5,
+            "second frame {i}: {got} vs {want}"
+        );
+    }
 }

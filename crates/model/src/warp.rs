@@ -398,6 +398,11 @@ pub struct WarpJob {
     /// The clip's pitch edits that change something and overlap the span the map reads (asset
     /// frames, see [`crate::pitch_edit`]): applied to the asset before the time map.
     pub pitch: Vec<crate::PitchEdit>,
+    /// The buffer is the clip warped to the song's tempo (warp on): while the song follows an
+    /// external clock the engine stretches it on to the clock's tempo. False for a buffer that
+    /// only carries a transposition or pitch edits through the 1:1 map. Not part of
+    /// [`WarpJob::key`] (it does not change the buffer).
+    pub follows_tempo: bool,
 }
 
 impl WarpJob {
@@ -551,6 +556,7 @@ pub fn warp_job(
         },
         link_stereo: a.warp.links_stereo(),
         pitch,
+        follows_tempo: a.warp.enabled,
     })
 }
 

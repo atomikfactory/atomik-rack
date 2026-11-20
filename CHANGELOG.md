@@ -76,6 +76,14 @@ may break APIs and the patch and project formats.
   renders no longer need the plugin sandbox: with it off the worker loads a second instance of each plugin in
   the app process, on its own thread, from the state saved in the project, as the sandbox path does, so a
   project with plugins is never refused for that reason.
+- **Audio follows the MIDI clock's tempo (Options > Sync > Follow MIDI Clock).** An audio clip warped to the song
+  tempo now keeps the measured clock tempo for as long as it plays, through the real-time stretch (Beats and Tonal
+  keep the pitch, Repitch moves it with the speed), instead of being re-synchronised only at its start, a locate
+  and a loop wrap: a clip of 32 bars ends in sync with a sender that runs 5% off the song tempo, within a few
+  milliseconds (a test with a simulated clock). Unwarped clips keep their own rate, and bounces and exports never
+  follow a clock, so they are unchanged. Streamed (long, disk-read) audio, which was silent while following, now
+  plays from where the clock reaches each clip, at the clip's own rate; a clip warped to the song tempo plays its
+  rendered buffer and follows the clock as above.
 
 ### Fixed
 - **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio track now
