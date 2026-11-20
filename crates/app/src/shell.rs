@@ -3760,6 +3760,7 @@ impl<B: AudioBackend> Shell<B> {
             plugin_journal,
             status_line: self.status.clone(),
             audio: self.audio_status.clone(),
+            stalls: crate::ui_stall::snapshot(),
             home_dirs: crate::diagnostics::home_dirs(&|k| std::env::var_os(k)),
         }
     }

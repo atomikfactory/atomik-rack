@@ -110,6 +110,7 @@ pub mod tonal_targets;
 pub mod trainer_click;
 pub mod transition_choice;
 pub mod translate;
+pub mod ui_stall;
 pub mod ui_state;
 pub mod update_check;
 pub mod update_notice;

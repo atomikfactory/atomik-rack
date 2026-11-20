@@ -62,6 +62,17 @@ may break APIs and the patch and project formats.
   bottom, the chosen type's full swing at the top) or to the rotary speed: the new `wheel_cv_out` socket carries
   the wheel and, patched to the Speed CV of a rotary speaker, a wheel above half switches it to fast. The rotary
   speaker itself is unchanged.
+- **Where the UI waits on a plugin is in the log.** A call the UI thread makes on a plugin's process that takes
+  50 ms or more writes `ui stall 10012 ms: CaptureState [m1] (timed out)` (the call, the device, the time and how
+  it ended), a UI tick or redraw of 100 ms or more writes `ui stall 180 ms: frame` (at most one a second), and a
+  plugin that finished loading writes `plugin [m1] created in 2.31 s (spawn 0.04, instantiate 1.90, restore 0.00,
+  activate 0.31, attach 0.06)` to the log file as well as the plugin log. Help > Export Diagnostics counts the
+  stalls and slow frames with the longest of each.
+- **Lost input and the render workers in the diagnostics.** Help > Export Diagnostics now gives the number of times
+  the render callback trimmed the captured input, the most frames the ring held before a trim, the smallest and
+  largest callback seen and the requested buffer size (a DEBUG line `input trimmed: 3 trims, backlog max 1440
+  frames, callback 96..480 frames, buffer 480` says it when the count rose), and the render workers: how many, the
+  linger, the idle spins and the parks. The trim rule itself is unchanged.
 
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last

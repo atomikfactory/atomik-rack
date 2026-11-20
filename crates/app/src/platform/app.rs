@@ -400,6 +400,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         clicks: ClickCounter::new(),
         epoch: now,
         next_status: now,
+        frame_watch: crate::ui_stall::FrameWatch::default(),
         screenshot: cli.screenshot.clone(),
         screenshot_at,
         quit_at: cli
@@ -476,6 +477,8 @@ struct App {
     clicks: ClickCounter,
     epoch: Instant,
     next_status: Instant,
+    /// Decides which slow frames are written to the log.
+    frame_watch: crate::ui_stall::FrameWatch,
     screenshot: Option<PathBuf>,
     /// When set, the screenshot waits until then (else it is taken at the first frame).
     screenshot_at: Option<Instant>,
@@ -1048,6 +1051,19 @@ impl App {
         let mut canvas = SceneCanvas::new(&mut w.scene, &mut self.text).with_cache(&mut w.cache);
         self.shell.paint_in(kind, &mut canvas);
         w.cache.trim();
+    }
+
+    /// A whole tick or redraw that began at `began` is over: a slow one is logged (see
+    /// [`crate::ui_stall`]). Only this live, windowed loop calls it, so bounces, the QA server
+    /// and the tests never log frame stalls.
+    fn note_frame_time(&mut self, began: Instant) {
+        let now = clock::now();
+        if let Some(line) = self
+            .frame_watch
+            .note(now.saturating_duration_since(began), now)
+        {
+            log::warn!("{line}");
+        }
     }
 
     fn redraw(&mut self, key: Key) {
@@ -2237,7 +2253,11 @@ impl ApplicationHandler for App {
                 let event = translate::ime(&ime);
                 self.ui(event_loop, key, event);
             }
-            WindowEvent::RedrawRequested => self.redraw(key),
+            WindowEvent::RedrawRequested => {
+                let began = clock::now();
+                self.redraw(key);
+                self.note_frame_time(began);
+            }
             WindowEvent::Focused(false) => {
                 // The releases of the keys held now will never arrive.
                 self.modifiers = Modifiers::NONE;
@@ -2267,6 +2287,7 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let began = clock::now();
         self.shell.apply_language_globally();
         let dragging = self.follow_file_drags();
         self.flush_all_files(event_loop);
@@ -2370,5 +2391,6 @@ impl ApplicationHandler for App {
             Some(d) => ControlFlow::WaitUntil(d),
             None => ControlFlow::Wait,
         });
+        self.note_frame_time(began);
     }
 }

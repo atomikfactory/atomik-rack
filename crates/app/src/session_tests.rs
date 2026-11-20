@@ -717,6 +717,39 @@ fn polling_reads_telemetry_and_sets_the_midi_latency() {
 }
 
 #[test]
+fn polling_publishes_the_input_trims_and_the_requested_buffer() {
+    let fake = Fake {
+        accepted_buffer: Some(480),
+        ..Fake::default()
+    };
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    assert_eq!(s.status().buffer_requested, Some(480));
+    assert_eq!(s.status().input_trim, crate::status::InputTrim::default());
+    fake.telemetry.set(Telemetry {
+        input_trims: 3,
+        input_backlog_max_frames: 1440,
+        callback_frames_min: 96,
+        callback_frames_max: 480,
+        ..Telemetry::default()
+    });
+    let st = s.poll().clone();
+    assert_eq!(
+        st.input_trim,
+        crate::status::InputTrim {
+            trims: 3,
+            backlog_max_frames: 1440,
+            callback_min: 96,
+            callback_max: 480,
+        }
+    );
+    assert_eq!(
+        crate::status::input_trim_line(&st),
+        "input trimmed: 3 trims, backlog max 1440 frames, callback 96..480 frames, buffer 480"
+    );
+}
+
+#[test]
 fn an_accepted_buffer_size_is_the_initial_latency() {
     let fake = Fake {
         accepted_buffer: Some(128),

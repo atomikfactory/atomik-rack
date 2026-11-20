@@ -1791,6 +1791,38 @@ Hand checks (a person at the machine):
   there is no config folder, and plugin scanning, the journal and recovery still work for the run,
   in the temp folder.
 
+### Finding what blocks the UI
+
+When the app freezes or lags with a plugin loaded, read `atomik.log` in `<config folder>/logs` (Help > Export
+Diagnostics carries its tail). Three kinds of line say where the UI thread waited:
+
+- `ui stall 10012 ms: CaptureState [m1] (timed out)` is a call the UI thread made on a plugin's process that took
+  at least 50 ms (`STALL_THRESHOLD`): the call, the device, the milliseconds and how it ended (`answered`,
+  `timed out`, `child gone`). The same line is in the plugin log of the app. It comes from the control link in
+  `crates/plugin-sandbox/src/link.rs`, so a fast call writes nothing; the tests in
+  `crates/plugin-sandbox/src/tests/rpc.rs` pin that one late answer leaves exactly one record.
+- `ui stall 180 ms: frame` is a whole UI tick or window redraw that took at least 100 ms. At most one such line is
+  written per second, and the next says how many it hid. Only the windowed app writes it (a bounce, the QA server
+  and the tests do not).
+- `plugin [m1] created in 2.31 s (spawn 0.04, instantiate 1.90, restore 0.00, activate 0.31, attach 0.06)` is the
+  load of a plugin by stage: starting its process, the process loading the plugin (this includes the time the app
+  takes to get to it, since the creations are taken one per frame in order), restoring its state, activating it and
+  attaching it to the rack.
+
+Help > Export Diagnostics also counts the plugin-call stalls and the slow frames since the app started, each with
+its longest. `crates/app/src/ui_stall.rs` has the tests of the line shapes and the rate limit.
+
+Two more groups are in the report. For lost input (the `input overruns` of the status line) it gives how many times
+the render callback trimmed the captured input, the most frames the ring held just before such a trim, the smallest
+and the largest callback seen and the buffer size the stream was opened with, so a trim count that grows with a
+backlog far above the callback size (capture running ahead) can be told from one that grows with a backlog just over
+it (a threshold that follows the current callback too closely). A DEBUG line `input trimmed: 3 trims, backlog max
+1440 frames, callback 96..480 frames, buffer 480` is written when the count rose (run with `ATOMIK_LOG=debug`). And
+it gives the render workers: their count, the linger, and the idle spins and parks so far, next to the late sandbox
+batches of the overload counters. `crates/audio-io/src/telemetry.rs` and `stream.rs` test the counters,
+`crates/engine/tests/worker_linger.rs` the worker read-out, and `diagnostics.rs` and `session_tests.rs` the report
+and the status.
+
 ## Device loss and stalled streams
 
 `crates/audio-io/src/liveness.rs` has the pure liveness tests (the `max(4 periods, 250 ms)`
