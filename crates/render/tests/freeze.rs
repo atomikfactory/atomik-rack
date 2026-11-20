@@ -11,7 +11,7 @@ use atomik_model::{
     CreateSource, DeviceKey, Document, Frozen, InsertEffect, Note, RackDoc, SongCommand,
     WorkflowCommand, clips_span, insert_chain, new_project_doc, track_chain,
 };
-use atomik_render::freeze::{FreezeRender, FreezeRequest, render_freeze};
+use atomik_render::freeze::{FreezeRender, FreezeRequest, render_freeze, render_freeze_latent};
 use atomik_render::plugin_pass::RenderControl;
 use atomik_render::project::{PluginBounce, ProjectOptions, render_doc_in};
 use atomik_render::{Rendered, default_registry};
@@ -207,10 +207,36 @@ fn render_now(doc: &RackDoc, request: &FreezeRequest) -> FreezeRender {
     freeze_render(doc, request, (512, 0), RenderControl::default()).unwrap()
 }
 
+/// The render of a frozen track: the chain's delay kept in front of the audio.
+fn latent_render(doc: &RackDoc, request: &FreezeRequest) -> FreezeRender {
+    render_freeze_latent(
+        doc,
+        &default_registry(),
+        (&options(512, 0), None),
+        &mut PluginBounce::default(),
+        request,
+        RenderControl::default(),
+    )
+    .unwrap()
+    .unwrap()
+}
+
 /// Stores `render` in a bundle under a temp dir and returns the document with it frozen.
 fn frozen_doc(
     doc: &RackDoc,
     render: &FreezeRender,
+    effects: &[DeviceKey],
+    tag: &str,
+) -> (RackDoc, Bundle, TempDir) {
+    frozen_doc_at(doc, render, 0, effects, tag)
+}
+
+/// [`frozen_doc`] for a render that kept the chain's delay in front (`render_freeze_latent`): the
+/// audio proper starts at `offset` frames.
+fn frozen_doc_at(
+    doc: &RackDoc,
+    render: &FreezeRender,
+    offset: u64,
     effects: &[DeviceKey],
     tag: &str,
 ) -> (RackDoc, Bundle, TempDir) {
@@ -238,7 +264,7 @@ fn frozen_doc(
             frozen: Frozen {
                 start: render.start,
                 length: render.length,
-                audio: AudioClipContent::new(info.hash, 0),
+                audio: AudioClipContent::new(info.hash, offset),
                 effects: effects.to_vec(),
                 strip: false,
             },
@@ -694,20 +720,62 @@ fn plugins_render_in_a_freeze_and_a_frozen_plugin_is_not_built() {
     assert_eq!(plain.plugins, 5);
     assert_eq!(frozen.plugins, 3, "Lead and Echo are not built");
     assert!(frozen.channels[0].iter().any(|x| x.abs() > 1e-3));
-    // Echo has 128 frames of latency. The unfrozen mix is delayed by it (compensation aligns
-    // every track to the slowest path); the frozen track has none, so the frozen mix is the
-    // unfrozen one that much earlier: the render was cut by the latency, tracks stay aligned.
-    let latency = 128;
+    // Echo has 128 frames of latency. A render that keeps it plays on a player that reports it,
+    // so compensation aligns every track as it did to the live chain: the frozen mix is the
+    // unfrozen mix, not that much earlier.
+    let kept = render_freeze_latent(
+        &doc,
+        &registry,
+        (&options(512, 0), None),
+        &mut PluginBounce {
+            host: Some(&mut host),
+            mode: RunMode::Offline,
+            missing: MissingPlugins::Error,
+        },
+        &req,
+        RenderControl::default(),
+    )
+    .expect("the freeze renders")
+    .expect("and finishes");
+    assert_eq!(kept.latency, 128);
+    let mut d = Document::new(doc.clone());
+    let info = bundle.add_recording(&kept.audio, "latent.wav").unwrap();
+    d.apply(
+        Command::RegisterAsset {
+            hash: info.hash.clone(),
+            meta: AssetMeta {
+                channels: info.channels,
+                sample_rate: info.sample_rate,
+                frames: info.frames,
+                original_name: info.original_name.clone(),
+            },
+        },
+        &registry,
+    )
+    .unwrap();
+    d.apply(
+        Command::Song(SongCommand::FreezeTrack {
+            device: key("lead"),
+            frozen: Frozen {
+                start: kept.start,
+                length: kept.length,
+                audio: AudioClipContent::new(info.hash, kept.latency),
+                effects: chain.effects.clone(),
+                strip: false,
+            },
+        }),
+        &registry,
+    )
+    .unwrap();
+    let on_time = bounce_with(d.doc(), Some(bundle.root()), &mut host);
+    assert_eq!(on_time.channels[0].len(), plain.channels[0].len());
     let mut worst = 0.0f32;
-    for (p, f) in plain.channels.iter().zip(&frozen.channels) {
-        for i in 0..f.len() - latency {
-            worst = worst.max((f[i] - p[i + latency]).abs());
+    for (p, f) in plain.channels.iter().zip(&on_time.channels) {
+        for (a, b) in p.iter().zip(f) {
+            worst = worst.max((a - b).abs());
         }
     }
-    assert!(
-        worst < 1e-4,
-        "frozen[n] == unfrozen[n + 128], worst {worst}"
-    );
+    assert!(worst < 1e-4, "frozen == unfrozen, worst {worst}");
 }
 
 fn render_doc_with_host(
@@ -1065,6 +1133,174 @@ fn a_container_effect_with_latency_renders_as_the_same_effect_outside_it() {
     );
     // The look-ahead is a real delay: without it the render starts 240 frames earlier.
     assert_ne!(plain.audio, latent(false, 0.0).audio);
+}
+
+/// The project with look-ahead compressors (5 ms: 240 frames at 48 kHz, 2 ms: 96) on the first
+/// insert slots of lead's channel, one per entry of `lookaheads`.
+fn latent_project(lookaheads: &[f32]) -> Document {
+    let mut d = project(0);
+    let channel = d
+        .doc()
+        .console
+        .channels
+        .iter()
+        .find(|c| c.source.as_ref() == Some(&key("lead")))
+        .unwrap()
+        .channel
+        .clone();
+    for (slot, _) in lookaheads.iter().enumerate() {
+        apply(
+            &mut d,
+            Command::Console(ConsoleCommand::SetInsert {
+                channel: channel.clone(),
+                slot,
+                effect: Some(InsertEffect::New {
+                    type_id: "atomik.compressor".into(),
+                }),
+            }),
+        );
+    }
+    for (fx, lookahead) in chain(d.doc()).into_iter().zip(lookaheads) {
+        apply(
+            &mut d,
+            Command::SetParam {
+                key: fx,
+                param: "lookahead".into(),
+                value: *lookahead,
+                merge: None,
+            },
+        );
+    }
+    d
+}
+
+/// The mix of `doc` with lead frozen through its first `through` insert effects, its render
+/// keeping the chain's delay, and the frames of delay that render carries.
+fn latent_frozen_mix(doc: &RackDoc, through: usize) -> (Rendered, u64) {
+    let fx = chain(doc);
+    let render = latent_render(doc, &request(doc, through, 0.0));
+    let (frozen, bundle, _dir) =
+        frozen_doc_at(doc, &render, render.latency, &fx[..through], "latent");
+    (bounce(&frozen, Some(&bundle)), render.latency)
+}
+
+#[test]
+fn a_frozen_track_with_latent_effects_sounds_where_the_live_track_does() {
+    // Two latent effects (240 and 96 frames): the whole chain frozen. The mix is the unfrozen mix
+    // sample for sample (to the rounding of a second pass through the same sums), not earlier
+    // by the delay of the chain as it was when a frozen track reported none.
+    let doc = latent_project(&[5.0, 2.0]).doc().clone();
+    let plain = bounce(&doc, None);
+    let (frozen, latency) = latent_frozen_mix(&doc, 2);
+    assert_eq!(
+        latency,
+        240 + 96,
+        "the chain's delay is the sum of its effects"
+    );
+    assert!(peak(&plain) > 0.01, "the project makes sound");
+    let diff = max_diff(&plain, &frozen);
+    assert!(diff < 2e-4, "frozen mix vs unfrozen mix: {diff}");
+    // The test would pass with a shifted mix if it were not sensitive to the delay: the same
+    // mix shifted by the delay differs far more.
+    let mut shifted = 0.0f32;
+    for (p, f) in plain.channels.iter().zip(&frozen.channels) {
+        for i in 0..f.len() - latency as usize {
+            shifted = shifted.max((f[i] - p[i + latency as usize]).abs());
+        }
+    }
+    assert!(
+        shifted > 10.0 * diff.max(1e-5),
+        "the check sees a shift: {shifted} vs {diff}"
+    );
+}
+
+#[test]
+fn freezing_up_to_a_device_leaves_the_later_latent_effects_live_and_on_time() {
+    // The first effect (240 frames) is frozen; the second (96 frames) stays live after the
+    // render. Their delays add as they did before the freeze.
+    let doc = latent_project(&[5.0, 2.0]).doc().clone();
+    let plain = bounce(&doc, None);
+    let (frozen, latency) = latent_frozen_mix(&doc, 1);
+    assert_eq!(
+        latency, 240,
+        "only the frozen effect's delay is in the render"
+    );
+    let diff = max_diff(&plain, &frozen);
+    assert!(
+        diff < 2e-4,
+        "frozen up to the first effect vs unfrozen: {diff}"
+    );
+}
+
+#[test]
+fn the_instrument_alone_frozen_with_latent_effects_live_after_it_is_on_time() {
+    let doc = latent_project(&[5.0, 2.0]).doc().clone();
+    let plain = bounce(&doc, None);
+    let (frozen, latency) = latent_frozen_mix(&doc, 0);
+    assert_eq!(latency, 0, "a synth has no delay");
+    assert!(max_diff(&plain, &frozen) < 2e-4);
+}
+
+#[test]
+fn a_render_that_cuts_the_delay_is_the_kept_one_without_its_front() {
+    let doc = latent_project(&[5.0]).doc().clone();
+    let cut = render_now(&doc, &request(&doc, 1, 0.0));
+    let kept = latent_render(&doc, &request(&doc, 1, 0.0));
+    let latency = kept.latency as usize;
+    assert_eq!(latency, 240);
+    assert_eq!(
+        cut.latency, kept.latency,
+        "both report the delay of the chain"
+    );
+    assert_eq!(kept.audio.frames(), cut.audio.frames() + latency);
+    for (k, c) in kept.audio.channels.iter().zip(&cut.audio.channels) {
+        assert_eq!(
+            &k[latency..],
+            &c[..],
+            "the audio proper is the same samples"
+        );
+    }
+}
+
+#[test]
+fn the_sends_of_a_frozen_track_stay_live_and_are_fed_by_its_render() {
+    // Freeze leaves the channel strip, its sends and the returns live (the render stops at the
+    // insert chain unless the strip is baked in): the reverb on the return keeps ringing from
+    // the frozen audio, so the mix is the unfrozen one.
+    let mut d = project(0);
+    apply(
+        &mut d,
+        Command::Workflow(WorkflowCommand::AddReverbSend {
+            track: key("lead"),
+            options: atomik_model::reverb_send::ReverbSendOptions {
+                send_db: -6.0,
+                ..Default::default()
+            },
+        }),
+    );
+    let doc = d.doc().clone();
+    let plain = bounce(&doc, None);
+    let dry = bounce(&project(0).doc().clone(), None);
+    assert!(
+        max_diff(&plain, &dry) > 1e-3,
+        "the send adds a reverb to the mix"
+    );
+    let render = render_now(&doc, &request(&doc, 0, 2.0));
+    let (frozen, bundle, _dir) = frozen_doc(&doc, &render, &[], "sends");
+    assert!(
+        !frozen
+            .song
+            .track(&key("lead"))
+            .unwrap()
+            .frozen
+            .as_ref()
+            .unwrap()
+            .strip,
+        "the strip is not baked in"
+    );
+    let with_freeze = bounce(&frozen, Some(&bundle));
+    let diff = max_diff(&plain, &with_freeze);
+    assert!(diff < 2e-4, "the return is fed by the render: {diff}");
 }
 
 #[test]

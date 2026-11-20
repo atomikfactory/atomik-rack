@@ -22,11 +22,15 @@
 //!   another track is.
 //! * **Latency.** A chain whose devices report latency (look-ahead limiters, some plugins) is
 //!   compensated: the tap sits in front of the delay compensation the master applies, so the
-//!   render comes late by the sum of the latencies the engine published for the chain, and that
-//!   many frames are cut from its start. That puts the audio where the track's signal is when
-//!   it reaches the mix. A frozen track has no latency of its own, so every other track is
-//!   aligned to a shorter delay: the bounce of the project with the track frozen is the
-//!   unfrozen bounce earlier by the latency of the chain, and equal to it otherwise.
+//!   render comes late by the sum of the latencies the engine published for the chain
+//!   ([`FreezeRender::latency`]). [`render_freeze`] cuts that many frames from its start, which
+//!   puts the audio where the track's signal is at the chain's input (a bounce in place, a loop
+//!   conversion, a join: audio on a track with no latency of its own). [`render_freeze_latent`]
+//!   keeps them: the audio starts with the chain's own delay, as it left the tap, and plays on a
+//!   frozen track whose player reports the same delay to the engine (see
+//!   [`atomik_model::Frozen::latency`]). The compensation then aligns every other track to that
+//!   path as it did to the live chain, so the mix of a project with the track frozen is the
+//!   unfrozen one to within the float rounding of the second pass through the same sum.
 //! * **Plugins** are built as in a bounce, by the host in [`PluginBounce`]; a plugin that is
 //!   frozen already (another track) is not built at all.
 //!
@@ -86,6 +90,10 @@ pub struct FreezeRender {
     pub length: i64,
     /// Frames of the render past the end of the span (the tail that was kept).
     pub tail_frames: u64,
+    /// The delay in frames of the chain at the tap. [`render_freeze`] cut it from the start of
+    /// `audio`; [`render_freeze_latent`] left it in front, so `audio` holds that many frames
+    /// more than the span and the tail, and `length` covers them.
+    pub latency: u64,
     /// What the render reported while it ran.
     pub warnings: Vec<crate::Warning>,
 }
@@ -99,9 +107,36 @@ pub struct FreezeRender {
 pub fn render_freeze(
     doc: &RackDoc,
     registry: &Registry,
-    (options, bundle_root): (&ProjectOptions, Option<&Path>),
+    options: (&ProjectOptions, Option<&Path>),
     plugins: &mut PluginBounce<'_>,
     request: &FreezeRequest,
+    control: RenderControl<'_>,
+) -> Result<Option<FreezeRender>, RenderError> {
+    render(doc, registry, options, plugins, (request, false), control)
+}
+
+/// Renders `request` like [`render_freeze`], but keeps the delay of the chain in front of the
+/// audio (see the module docs): the render of a frozen track.
+///
+/// # Errors
+/// As [`render_freeze`].
+pub fn render_freeze_latent(
+    doc: &RackDoc,
+    registry: &Registry,
+    options: (&ProjectOptions, Option<&Path>),
+    plugins: &mut PluginBounce<'_>,
+    request: &FreezeRequest,
+    control: RenderControl<'_>,
+) -> Result<Option<FreezeRender>, RenderError> {
+    render(doc, registry, options, plugins, (request, true), control)
+}
+
+fn render(
+    doc: &RackDoc,
+    registry: &Registry,
+    (options, bundle_root): (&ProjectOptions, Option<&Path>),
+    plugins: &mut PluginBounce<'_>,
+    (request, keep_latency): (&FreezeRequest, bool),
     control: RenderControl<'_>,
 ) -> Result<Option<FreezeRender>, RenderError> {
     let fail = |m: String| RenderError::Project(m);
@@ -235,14 +270,19 @@ pub fn render_freeze(
     let base = usize::from(doc.output_channels);
     let right = channels.remove(base + 1);
     let left = channels.remove(base);
+    // With the delay kept the render is the tap from the start of the span (the delay is the
+    // front of it), else from where the audio proper begins.
+    let lead = if keep_latency { 0 } else { latency };
     let slice = |c: Vec<f32>| -> Vec<f32> {
-        let from = usize::try_from(start_frame + latency)
+        let from = usize::try_from(start_frame + lead)
             .unwrap_or(usize::MAX)
             .min(c.len());
         c[from..].to_vec()
     };
     let (mut left, mut right) = (slice(left), slice(right));
-    let span = usize::try_from(span_frames).unwrap_or(usize::MAX);
+    // The frames of the delay the audio starts with (kept), or none (cut).
+    let front = if keep_latency { latency } else { 0 };
+    let span = usize::try_from(span_frames + front).unwrap_or(usize::MAX);
     // Whatever the chain's latency cut from the end is silence.
     let wanted = span + usize::try_from(tail).unwrap_or(usize::MAX);
     left.resize(left.len().max(span), 0.0);
@@ -267,7 +307,8 @@ pub fn render_freeze(
         audio,
         start,
         length,
-        tail_frames: frames.saturating_sub(span_frames),
+        tail_frames: frames.saturating_sub(span_frames + front),
+        latency,
         warnings,
     }))
 }
