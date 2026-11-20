@@ -166,6 +166,9 @@ may break APIs and the patch and project formats.
   also plays (the bass note, say), is closed first and then started again; before, the second start landed on the
   sounding key. Switching the bypass on also closes the keys that thru had passed on, which used to hang until the
   key was pressed again.
+- A plugin that answers every audio batch a little late is no longer declared hung. Only a plugin that completes
+  no request at all for about three seconds is stopped; a slow one just counts its late batches. A plugin the app
+  stopped for not answering no longer counts toward the quarantine (three real crashes in a row still do).
 
 ## [0.5.0-rc.1] - 2026-11-18
 

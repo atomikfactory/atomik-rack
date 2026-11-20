@@ -59,8 +59,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.catalog_dirty = true;
     }
 
-    /// A plugin crashed or failed to load (`kind` says which: "Crashed", "Hung" or "Could not
-    /// load", then the plugin's own `detail`). The third failure in a row quarantines it, keeps
+    /// A plugin crashed or failed to load (`kind` says which: "Crashed" or "Could not load", then the plugin's own `detail`). The third failure in a row quarantines it, keeps
     /// why, and says so once.
     pub(crate) fn plugin_failed_in_a_row(&mut self, type_id: &str, kind: &str, detail: &str) {
         let why = format!("{kind} {QUARANTINE_AFTER} times in a row: {detail}");

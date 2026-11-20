@@ -1354,14 +1354,13 @@ impl<S: EngineSink> AppCore<S> {
                         // Kept in the settings: CRASHED in the plugin list until RETRY.
                         self.plugins.settings.mark_crashed(&type_id, &reason);
                         self.plugins.settings_changed = true;
-                        // Three in a row quarantine it (see the plugin manager).
                         self.plugins.bad.insert(instance);
-                        let kind = if reason.starts_with(HUNG) {
-                            "Hung"
-                        } else {
-                            "Crashed"
-                        };
-                        self.plugin_failed_in_a_row(&type_id, kind, &reason);
+                        // Three real crashes in a row quarantine it (see the plugin manager).
+                        // A process the hang guard stopped does not count: it never died by
+                        // itself, and a slow machine must not cost the user the plugin.
+                        if !reason.starts_with(HUNG) {
+                            self.plugin_failed_in_a_row(&type_id, "Crashed", &reason);
+                        }
                     }
                     let hung = reason.starts_with(HUNG);
                     self.plugins.crashed.insert(key.clone(), reason);

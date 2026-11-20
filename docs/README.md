@@ -689,7 +689,8 @@ plugins on, the scan folders and the sandbox stay in Audio > Plugins.
 - **Disable.** Hides the chosen plugins from the browser and the menus. A project that uses a disabled plugin still
   loads it, and Enable shows the plugin again.
 - **Quarantine.** A plugin whose process ends, or that cannot be loaded, three times in a row is quarantined: it is
-  hidden like a disabled one and a message says so once. An instance that ends without a fault, or a load that works,
+  hidden like a disabled one and a message says so once. A process that the application stopped because it
+  answered nothing for seconds is not a crash and does not count. An instance that ends without a fault, or a load that works,
   starts the count again. Try Again takes the chosen plugins out of quarantine (and scans failed files again).
 - **Learn in the plugin window.** Each plugin editor window has a thin strip docked to its top edge (below it when the
   window is at the top of the screen): the plugin's name, LEARN AUTOMATION, LEARN MIDI, what happened last and a close
