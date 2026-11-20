@@ -3460,6 +3460,24 @@ planned on a scratch copy.
   `CreateTarget::MasterInserts` (what `RackView::effect_create_target` answers after a click on the master's drop
   row, cleared by any selection change), `CreateEffect` after an insert of the master and `CreateEffectAt` right
   under the master panel make a master insert. The fold state is view state, as for the channels.
+  A browser row that is an effect dropped on the master panel itself (`RackView::master_panel_browser_drop`) is
+  `CreateEffect` with `CreateTarget::Master` (the next free send); on the insert area (`area_browser_drop`) it is
+  `CreateEffectAt` at the slot under the insert above the pointer. `rack.add_send_effect` and
+  `rack.add_insert_effect` (`RackView::add_effect_target`) open the create browser bound to a target
+  (`RackView::bound_effect`, forgotten when the browser opens again or closes, always routed) for the master
+  (`Master` or `MasterInserts`) or a channel or bus (`Selected`).
+- **Master chain** ([model/src/master_chain.rs](../crates/model/src/master_chain.rs),
+  [app/src/app_core_master_chain.rs](../crates/app/src/app_core_master_chain.rs)). `MasterChain` holds the master's
+  insert effects and the effects of each used send as a `DeviceSnapshot`, the cables to the master, the first
+  effect of each slot and the master's `return{k}.level|mute|pan` params; the item file is the library's device
+  item (an `atomik-project` text with the master, the effects and `console.master` and `console.returns`), so the
+  project format is untouched, `is_master_chain_item` tells it from a plain patch, and `summarize_item` shows it as
+  "Master chain: N effects, M sends". `WorkflowCommand::ApplyMasterChain` removes the current insert and send
+  effects, pastes the item's right under the master (fresh keys, inserts first, then the sends in slot order),
+  rewires them as the item says and sets the eight returns and their params, as one undo step.
+  `AppCore::save_master_chain` writes the file and files it in the category "Master Chains";
+  `AppCore::load_master_chain` and `load_item` (a patch item that is a master chain) apply it, registering
+  stand-ins for missing plugins and adopting the item's audio.
 - **Meters.** The topology meters the `out_l`, `out_r` and `gr_cv_out` of every bus like a channel's
   (`CHANNEL_METER_SOCKETS`), so the console draws bus meters, gain reduction and latency readouts.
 - **Colours.** A bus strip takes the colour of its device when it has one (a click on the colour band
@@ -5197,7 +5215,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (659) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (663) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

@@ -4599,6 +4599,13 @@ mod video_thumbs_tests;
 #[path = "app_core_patches.rs"]
 mod patches;
 
+#[path = "app_core_master_chain.rs"]
+mod master_chain;
+
+#[cfg(test)]
+#[path = "app_core_master_chain_tests.rs"]
+mod master_chain_tests;
+
 #[path = "app_core_midi_out.rs"]
 mod midi_out;
 

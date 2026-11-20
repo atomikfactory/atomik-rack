@@ -14,6 +14,20 @@ may break APIs and the patch and project formats.
   one undo step, with the status note when all eight sends are used. Dropped on the master's insert area it
   becomes a master insert effect, after the insert above the pointer (first in an empty area), as on every mix
   channel and output bus.
+- **Add Send Effect and Add Insert Effect in the rack menu.** The right-click menu of the master section in the rack
+  lists Add Send Effect... (the next free FX send) and Add Insert Effect... (the end of the master's insert chain),
+  and the menu of every mix channel and output bus lists Add Insert Effect.... Each opens the device browser
+  filtered to effects and bound to that strip, so the effect you choose lands there whatever else is selected and
+  whatever the auto-route setting says, in one undo step; a send with all eight slots used says so in the browser
+  and in the status line.
+- **Master chain patches.** The master section's rack menu has Save Master Chain as Patch... and Load Master Chain
+  Patch.... The patch holds the master's insert effects in order and the effects of each used FX send, with their
+  settings, bypass, names and plugin states, and the return level, mute and pan of each send (not the send levels
+  of the channels). It is a library patch (the project format is untouched) filed under the category Master
+  Chains, which the browser lists with "Master chain: 5 effects, 2 sends"; a double click on it, or a drop on the
+  master or on the rack, loads it too. Loading replaces the master's insert and send effects, with their cables, in
+  one undo step without asking, and Undo puts the old chain back; a plugin that is not installed arrives as a
+  stand-in.
 
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last

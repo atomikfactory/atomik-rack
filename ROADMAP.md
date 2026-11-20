@@ -265,10 +265,13 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
   of the effect, its return level as a slider and an EDIT button), a back with the 8 FX sends, the 8 FX returns, the
   insert loop and the master and control room outputs, the master's insert area with the channel's gestures, and the
   effects of the shared sends grouped under it, each send labelled "Send N", moving with the master. The mixer's
-  master column reorders its inserts and has the E too. Still to come: keeping the fold state of the insert areas
-  with the project (it is view state today and every area opens shown), cutting and copying a channel together with
-  its stack, and a send group that takes a drop (a send effect is made by selecting the master, or by "Use as Send
-  Effect", which now brings the effect under the master).
+  master column reorders its inserts and has the E too. Effects can be dropped from the browser on the master panel
+  (the next free FX send) and on the insert area of the master, a channel or a bus (an insert after the one above
+  the pointer), the rack menus have Add Send Effect... and Add Insert Effect..., and Save Master Chain as Patch...
+  and Load Master Chain Patch... keep the master's insert and send effects in a library patch in the category
+  Master Chains. Still to come: keeping the fold state of the insert areas with the project (it is view state
+  today and every area opens shown), cutting and copying a channel together with its stack, a send group that takes
+  a drop of its own, and the same chain patches for a channel or a bus.
 - **Quick sidechain.** Done: Duck from, in the right-click menu of a track header, in the rack menu of a track's
   device and in the mixer's strip menu (and Track > Quick Sidechain): the other tracks are listed by name and colour
   (at most thirty, then More... opens a pop-up with all of them), and choosing one puts a Compressor named "Duck from

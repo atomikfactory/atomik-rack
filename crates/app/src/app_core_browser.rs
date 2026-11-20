@@ -385,6 +385,30 @@ impl<S: EngineSink> AppCore<S> {
         self.browser.db.mark(path)
     }
 
+    /// Puts the library item `path` in `category` (replacing its categories) when the file is
+    /// inside the library folder; elsewhere nothing happens, as the browser lists only the
+    /// library's own items.
+    pub(super) fn categorise_in_library(&mut self, path: &std::path::Path, category: &str) {
+        let inside = self
+            .browser
+            .library_root
+            .as_ref()
+            .is_some_and(|root| path.starts_with(root));
+        if !inside {
+            return;
+        }
+        let Ok(tag) = Tag::new(category) else {
+            return;
+        };
+        if self
+            .browser
+            .db
+            .set_categories(path, std::slice::from_ref(&tag))
+        {
+            self.library_changed(&[path.to_path_buf()]);
+        }
+    }
+
     /// Moves the favourite flag and tags of a renamed item to its new path and tells the panel.
     pub(super) fn library_moved(&mut self, from: &std::path::Path, to: &std::path::Path) {
         if self.browser.db.move_path(from, to) {
