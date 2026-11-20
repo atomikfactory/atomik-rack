@@ -240,6 +240,15 @@ pub struct Telemetry {
     /// captured before the output started, is not counted). Each is a click in monitored input
     /// and recorded takes. Total; 0 without input.
     pub input_overruns: u64,
+    /// How many times the render callback discarded the oldest captured input to keep the latency
+    /// bounded (the start-up discard is not counted). Total; 0 without input.
+    pub input_trims: u64,
+    /// The most input frames the ring held just before one of those trims.
+    pub input_backlog_max_frames: u32,
+    /// The smallest callback seen so far, in frames (0 before the first).
+    pub callback_frames_min: u32,
+    /// The largest callback seen so far, in frames (0 before the first).
+    pub callback_frames_max: u32,
     /// True once a stream error callback reported the device gone (unplugged, or the stream
     /// became invalid). Sticky until the stream is rebuilt. A stream whose callbacks merely stop
     /// is detected by [`Liveness`] instead.
