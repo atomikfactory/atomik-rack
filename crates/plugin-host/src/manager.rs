@@ -191,18 +191,6 @@ pub enum ManagerEvent {
         /// The text.
         text: String,
     },
-    /// A blocking call on the plugin's process held the main thread up for at least
-    /// [`crate::STALL_THRESHOLD`].
-    Stall {
-        /// The instance.
-        instance: InstanceId,
-        /// The name of the call.
-        call: String,
-        /// How long the main thread waited, in milliseconds.
-        ms: u64,
-        /// How the wait ended.
-        outcome: StallOutcome,
-    },
     /// The device failed (an error status, a panic, non-finite output).
     Failed {
         /// The instance.
@@ -272,6 +260,31 @@ struct Managed {
     deferred_restart: bool,
 }
 
+/// How many stall records the manager keeps for a caller that does not drain them.
+const MAX_STALLS: usize = 64;
+
+/// A blocking call on a plugin's process that held the main thread up for at least
+/// [`crate::STALL_THRESHOLD`]. Kept apart from [`ManagerEvent`]: it depends on wall time, and the
+/// event stream must not (an offline bounce polls it after every batch).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StallRecord {
+    /// The instance.
+    pub instance: InstanceId,
+    /// The name of the call.
+    pub call: String,
+    /// How long the main thread waited, in milliseconds.
+    pub ms: u64,
+    /// How the wait ended.
+    pub outcome: StallOutcome,
+}
+
+fn push_stall(list: &mut Vec<StallRecord>, record: StallRecord) {
+    if list.len() >= MAX_STALLS {
+        list.remove(0);
+    }
+    list.push(record);
+}
+
 /// A creation started by [`PluginManager::begin_create`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CreateTicket(u64);
@@ -296,6 +309,8 @@ pub struct PluginManager {
     instances: BTreeMap<InstanceId, Managed>,
     reaper: ReaperQueue,
     queued: Vec<ManagerEvent>,
+    /// Slow-call records waiting for [`PluginManager::take_stalls`] (the newest [`MAX_STALLS`]).
+    stalls: Vec<StallRecord>,
     next_id: u64,
     creating: BTreeMap<u64, Creating>,
     next_ticket: u64,
@@ -318,6 +333,7 @@ impl PluginManager {
             instances: BTreeMap::new(),
             reaper: ReaperQueue::default(),
             queued: Vec::new(),
+            stalls: Vec::new(),
             next_id: 1,
             creating: BTreeMap::new(),
             next_ticket: 1,
@@ -914,6 +930,14 @@ impl PluginManager {
 
     // ----- the per-frame work -----------------------------------------------------------------------
 
+    /// The stall records collected by [`PluginManager::poll`] since the last call, oldest first
+    /// (at most the newest 64). Empty, without allocating, when there are none. Only a live app
+    /// reads them; offline users never do.
+    pub fn take_stalls(&mut self) -> Vec<StallRecord> {
+        assert_main_thread("PluginManager::take_stalls");
+        std::mem::take(&mut self.stalls)
+    }
+
     /// Runs the main-thread work of every instance: reaps dropped devices, runs the plugins'
     /// callbacks and timers, translates their messages into events and advances restarts.
     /// Called every UI frame.
@@ -968,12 +992,15 @@ impl PluginManager {
         // dropped with it.
         while let Some(msg) = m.end.try_recv() {
             if let PluginMessage::Stall { call, ms, outcome } = msg {
-                events.push(ManagerEvent::Stall {
-                    instance: id,
-                    call,
-                    ms,
-                    outcome,
-                });
+                push_stall(
+                    &mut self.stalls,
+                    StallRecord {
+                        instance: id,
+                        call,
+                        ms,
+                        outcome,
+                    },
+                );
             }
         }
         doomed.extend(self.instances.remove(&id));
@@ -1032,12 +1059,15 @@ impl PluginManager {
                         "the plugin did not take {batches} audio block(s) (it answered a non-OK result, as plugins do while they load or sign in); the device plays on, silent for those blocks"
                     ),
                 }),
-                PluginMessage::Stall { call, ms, outcome } => events.push(ManagerEvent::Stall {
-                    instance: id,
-                    call,
-                    ms,
-                    outcome,
-                }),
+                PluginMessage::Stall { call, ms, outcome } => push_stall(
+                    &mut self.stalls,
+                    StallRecord {
+                        instance: id,
+                        call,
+                        ms,
+                        outcome,
+                    },
+                ),
                 PluginMessage::Failed { reason } => events.push(ManagerEvent::Failed {
                     instance: id,
                     reason: reason.to_string(),

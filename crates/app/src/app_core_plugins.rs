@@ -1293,8 +1293,27 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn plugins_poll_events(&mut self) {
-        for event in self.plugins.host.poll() {
+        let events = self.plugins.host.poll();
+        // Before the events: a destroyed instance still has its key until its Destroyed event.
+        self.plugin_stalls();
+        for event in events {
             self.plugin_event(event);
+        }
+    }
+
+    /// Writes the slow plugin calls the manager collected: a warning in the log file, a line in
+    /// the plugin log and the counters (see [`crate::ui_stall`]).
+    fn plugin_stalls(&mut self) {
+        for s in self.plugins.host.manager().take_stalls() {
+            let name = self
+                .plugins
+                .keys
+                .get(&s.instance)
+                .map_or_else(|| "plugin".to_string(), |k| k.0.clone());
+            let line = crate::ui_stall::plugin_stall_line(&s.call, s.ms, &name, s.outcome);
+            crate::ui_stall::count_plugin_stall(s.ms);
+            log::warn!("{line}");
+            self.plugins.log(line);
         }
     }
 
@@ -1472,22 +1491,6 @@ impl<S: EngineSink> AppCore<S> {
                     log::warn!("{}", plugin_said_line(&name, &text));
                 }
                 self.plugins.log(format!("[{name}] {level:?}: {text}"));
-            }
-            ManagerEvent::Stall {
-                instance,
-                call,
-                ms,
-                outcome,
-            } => {
-                let name = self
-                    .plugins
-                    .keys
-                    .get(&instance)
-                    .map_or_else(|| "plugin".to_string(), |k| k.0.clone());
-                let line = crate::ui_stall::plugin_stall_line(&call, ms, &name, outcome);
-                crate::ui_stall::count_plugin_stall(ms);
-                log::warn!("{line}");
-                self.plugins.log(line);
             }
             ManagerEvent::Destroyed(id) => {
                 let ended_well = !self.plugins.bad.remove(&id);
