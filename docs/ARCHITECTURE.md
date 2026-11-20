@@ -5143,10 +5143,14 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     child also runs a watchdog thread that ends it a second after its parent's process is gone,
     and three seconds after the control channel closes, even when its main thread is stuck inside
     a plugin call (a stuck child is how an orphan used to survive). Live, `RemoteProcessor` counts
-    late batches in a row (plain integers on the audio thread, no lock): after three seconds' worth
-    the block is marked dead and the main thread ends the process with a reason that begins `HUNG`;
-    the app reloads such a plugin from its last captured state, twice in a row, then leaves it
-    CRASHED for the user (a bounce never counts: it waits for the watchdog). When instances are
+    late batches in a row in which the child completed nothing (its completed-request counter in
+    the block header did not move; plain integers and atomic loads on the audio thread, no lock):
+    after three seconds' worth the block is marked dead and the main thread ends the process with a
+    reason that begins `HUNG`. A child that keeps answering, however late, only raises the late
+    counter and is never declared hung. The app reloads a hung plugin from its last captured state,
+    twice in a row, then leaves it CRASHED for the user; a stop by the hang guard does not count
+    toward the quarantine, a real crash does (a bounce never counts: it waits for the watchdog).
+    When instances are
     dropped (closing a project, quitting) the manager asks every child to end first and waits for
     them on one shared deadline, so slow children cost one second together, not each. Everything a
     child sends is bounded before it is allocated: replies and notifications at 1 MiB of JSON,
