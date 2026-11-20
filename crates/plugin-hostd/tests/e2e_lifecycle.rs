@@ -519,7 +519,10 @@ fn the_state_of_a_busy_plugin_is_asked_for_in_the_background_without_a_stall_or_
         "the main thread went on polling meanwhile: {polls}"
     );
     assert!(landed.result.is_ok() && !landed.stale && !landed.again);
-    assert!(sb.manager.take_stalls().is_empty(), "nothing waited, so nothing stalled");
+    assert!(
+        sb.manager.take_stalls().is_empty(),
+        "nothing waited, so nothing stalled"
+    );
     assert!(
         !events.iter().any(|e| matches!(
             e,
@@ -531,7 +534,10 @@ fn the_state_of_a_busy_plugin_is_asked_for_in_the_background_without_a_stall_or_
     sb.manager.capture_state(id).unwrap();
     let _ = sb.manager.poll();
     let stalls = sb.manager.take_stalls();
-    assert!(stalls.iter().any(|s| s.call == "CaptureState"), "{stalls:?}");
+    assert!(
+        stalls.iter().any(|s| s.call == "CaptureState"),
+        "{stalls:?}"
+    );
     drop(device);
     let _ = sb.manager.poll();
     sb.finish();

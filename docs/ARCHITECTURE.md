@@ -5085,8 +5085,10 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   stored states alone, so a plugin that flags itself dirty after every capture cannot make the app
   capture in a loop. Closing an editor requests a capture after the soft `CloseGui`. A command waits
   for a plugin only where the stored state is about to be consumed (`plugins_flush_dirty`: undo,
-  redo and every command not listed in `command_keeps_plugins`, which could remove or replace a
-  device), and save, archive, share, templates, versions and an audio restart (`plugins_capture_all`)
+  redo and the commands `command_keeps_plugins` does not clear: it is an exhaustive match over
+  the command enums in `app_core_plugins_keep.rs`, so a new variant must be classified, and only
+  removing or replacing a device, a container or plugin command, freezing a track and a few
+  workflows wait), and save, archive, share, templates, versions and an audio restart (`plugins_capture_all`)
   still capture synchronously; they take the request that is out instead of sending a second one.
 - **Orphaned recordings.** An audio take streams to `Audio/rec-<pid>-<take>-<n>.wav` (2.6). At start
   and when a project opens, `recover_orphan_recordings` scans (bounded) the opened bundle's `Audio/`

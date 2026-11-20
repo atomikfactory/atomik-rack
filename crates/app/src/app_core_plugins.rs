@@ -114,6 +114,8 @@ use std::sync::Arc;
 #[path = "app_core_plugin_dock.rs"]
 mod dock;
 pub use dock::{DockRequest, DockedEditor, EditorPlacement};
+#[path = "app_core_plugins_keep.rs"]
+mod keep;
 #[path = "app_core_plugin_learn.rs"]
 mod learn;
 pub(super) use learn::TOUCH_GAP_SECS;
@@ -2192,38 +2194,10 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    /// True for a command that leaves every plugin device in place with the state its undo would
-    /// go back to: the live app then does not wait for a plugin's state before it (see
-    /// [`Self::plugins_flush_dirty`]). Anything not listed removes or replaces a device or may
-    /// do: it takes the synchronous capture.
+    /// True for a command that leaves every plugin device in place: the live app then does not wait
+    /// for a plugin's state before it (see [`Self::plugins_flush_dirty`] and `app_core_plugins_keep.rs`).
     pub(super) fn command_keeps_plugins(command: &Command) -> bool {
-        matches!(
-            command,
-            Command::SetParam { .. }
-                | Command::SetTempo(_)
-                | Command::SetFolded { .. }
-                | Command::Rename { .. }
-                | Command::SetColor { .. }
-                | Command::Connect(_)
-                | Command::Disconnect { .. }
-                | Command::MoveDevice { .. }
-                | Command::AddDevice { .. }
-                | Command::AddDeviceAt { .. }
-                | Command::AddRackColumn
-                | Command::SetSongInfo(_)
-                | Command::SetMasterTune(_)
-                | Command::SetRackSort(_)
-                | Command::SetReferences(_)
-                | Command::SetDelivery(_)
-                | Command::SetCameraOverride(_)
-                | Command::SetInsertsFolded(_)
-                | Command::SetSpectrumCurves(_)
-                | Command::Video(_)
-                | Command::MidiMap(_)
-                | Command::Macro(_)
-                | Command::RegisterAsset { .. }
-                | Command::RenameAsset { .. }
-        )
+        keep::keeps_plugins(command)
     }
 
     /// Applies a data sync (`SyncState`, `SyncLayout`): it plans nothing and sends nothing to the

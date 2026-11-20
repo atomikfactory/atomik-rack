@@ -8,7 +8,7 @@ use super::*;
 use crate::app_core::plugins::SNAPSHOT_GRACE_SECS;
 use crate::offline_sink::OfflineSink;
 use crate::plugin_test_support::*;
-use atomik_model::empty_doc;
+use atomik_model::{ConsoleCommand, SongCommand, WorkflowCommand, empty_doc};
 use atomik_plugin_host::{NullBackend, NullBehavior, NullPlugin, NullStats, PluginMessage};
 use atomik_render::plugins::{PluginHost, PluginIsolation};
 
@@ -338,4 +338,74 @@ fn closing_the_editor_stores_the_state_when_it_arrives_as_one_undo_step() {
     assert_eq!(stored(&core, &dev).as_deref(), Some(&b"edited"[..]));
     assert_eq!(core.document().undo_label(), Some("Change Plugin Patch"));
     assert_eq!(core.document().undo_depth(), depth + 1);
+}
+
+#[test]
+fn a_song_edit_and_a_console_edit_with_a_dirty_plugin_capture_nothing() {
+    let (mut core, stats, dev) = bg_core(None);
+    let syncs = stats.sync_captures();
+    patch(&mut core, &stats, &dev, b"patched");
+    apply(
+        &mut core,
+        Command::Song(SongCommand::SetLoop {
+            range: (0, 1920),
+            enabled: true,
+        }),
+    );
+    assert_eq!(stats.sync_captures(), syncs, "a song edit leaves it dirty");
+    apply(
+        &mut core,
+        Command::Console(ConsoleCommand::SetCompensation(true)),
+    );
+    assert_eq!(
+        stats.sync_captures(),
+        syncs,
+        "a console edit leaves it dirty"
+    );
+    core.plugin_tick(10.0);
+    core.frame();
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"patched"[..]));
+}
+
+#[test]
+fn a_workflow_removal_of_a_plugin_captures_once_and_undo_restores_the_latest_state() {
+    let (mut core, stats, dev) = bg_core(None);
+    let syncs = stats.sync_captures();
+    patch(&mut core, &stats, &dev, b"patched");
+    apply(
+        &mut core,
+        Command::Workflow(WorkflowCommand::RemoveDevices {
+            keys: vec![dev.clone()],
+        }),
+    );
+    assert_eq!(stats.sync_captures(), syncs + 1);
+    assert!(core.undo());
+    core.wait_plugins();
+    assert_eq!(live(&mut core, &dev), b"patched");
+}
+
+#[test]
+fn the_predicate_follows_what_a_command_can_remove() {
+    type Core = AppCore<OfflineSink>;
+    let remove = Command::RemoveDevice { key: key("echo") };
+    assert!(!Core::command_keeps_plugins(&remove));
+    assert!(Core::command_keeps_plugins(&Command::SetTempo(100.0)));
+    assert!(Core::command_keeps_plugins(&Command::Batch(vec![
+        Command::SetParam {
+            key: key("echo"),
+            param: "p1".into(),
+            value: 0.5,
+            merge: None,
+        }
+    ])));
+    assert!(!Core::command_keeps_plugins(&Command::Batch(vec![
+        Command::SetTempo(100.0),
+        remove,
+    ])));
+    assert!(!Core::command_keeps_plugins(&Command::Song(
+        SongCommand::UnfreezeTrack {
+            device: key("echo"),
+            keep_audio: false,
+        }
+    )));
 }

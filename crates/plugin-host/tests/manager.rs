@@ -784,7 +784,8 @@ fn a_background_capture_is_requested_without_waiting_and_collected_when_it_lands
     let (mut m, stats) = manager();
     stats.set_background_capture(true);
     stats.hold_captures(true);
-    let id = m.instantiate(&request("null.fx")).unwrap().id;
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
     m.restore_state(id, &PluginStateBlob(vec![5])).unwrap();
     m.request_capture(id).unwrap();
     assert!(m.capture_out(id));
@@ -803,7 +804,8 @@ fn a_request_while_one_is_out_sends_nothing_and_says_ask_again() {
     let (mut m, stats) = manager();
     stats.set_background_capture(true);
     stats.hold_captures(true);
-    let id = m.instantiate(&request("null.fx")).unwrap().id;
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
     m.request_capture(id).unwrap();
     m.request_capture(id).unwrap();
     m.request_capture(id).unwrap();
@@ -820,7 +822,8 @@ fn a_state_restored_while_a_capture_is_out_makes_its_answer_stale() {
     let (mut m, stats) = manager();
     stats.set_background_capture(true);
     stats.hold_captures(true);
-    let id = m.instantiate(&request("null.fx")).unwrap().id;
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
     m.request_capture(id).unwrap();
     m.restore_state(id, &PluginStateBlob(vec![7])).unwrap();
     stats.hold_captures(false);
@@ -838,7 +841,8 @@ fn a_synchronous_capture_takes_the_place_of_the_one_that_is_out() {
     let (mut m, stats) = manager();
     stats.set_background_capture(true);
     stats.hold_captures(true);
-    let id = m.instantiate(&request("null.fx")).unwrap().id;
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
     m.request_capture(id).unwrap();
     assert_eq!(m.capture_state(id).unwrap(), PluginStateBlob(Vec::new()));
     assert!(!m.capture_out(id));
@@ -848,7 +852,8 @@ fn a_synchronous_capture_takes_the_place_of_the_one_that_is_out() {
 #[test]
 fn a_plugin_in_this_process_answers_a_background_request_at_once() {
     let (mut m, stats) = manager();
-    let id = m.instantiate(&request("null.fx")).unwrap().id;
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
     m.restore_state(id, &PluginStateBlob(vec![3])).unwrap();
     m.request_capture(id).unwrap();
     let landed = m.poll_capture(id).expect("at once");
