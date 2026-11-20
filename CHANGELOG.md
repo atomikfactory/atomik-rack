@@ -79,6 +79,12 @@ may break APIs and the patch and project formats.
   the renderer uses (the choice itself is unchanged). With `ATOMIK_LOG=debug` a line every 5 s counts the event-loop
   wake-ups and the paints per window with their causes (`ui activity: 60 wakes/s, main 60 paints/s (live 58,
   input 2)`). Help > Export Diagnostics carries the adapter, the last second and the totals since the start.
+- **A script that measures the running app.** `scripts/perf/sample-app.ps1` (Windows PowerShell) starts the release
+  app per scenario (empty, stress rack, workers, detached windows, audio tracks, plugins) with fresh settings and
+  library folders, never plays audio, and writes a CSV row with CPU as a percentage of one core, memory, threads,
+  handles, child processes, GPU use and how quickly the window answers; `-Affinity` pins it to fewer cores.
+  docs/TESTING.md explains the columns and two low-power recipes, and perf/BASELINE.md has the idle rows of the
+  running app.
 
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last
