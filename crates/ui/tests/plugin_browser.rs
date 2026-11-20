@@ -6,6 +6,7 @@
 
 mod support;
 
+use atomik_device_sdk::{PluginCategory, PluginKindHint};
 use atomik_model::{
     Command, CreateOptions, CreateSource, CreateTarget, Document, PluginCommand, WorkflowCommand,
 };
@@ -37,6 +38,7 @@ fn labels(v: &RackView) -> Vec<String> {
             BrowserRow::Device(d) => d.type_id.to_string(),
             BrowserRow::Heading(h) => format!("# {h}"),
             BrowserRow::Plugin(n) => format!("plugin {n}"),
+            BrowserRow::Chips(n) => format!("chips {n}"),
             BrowserRow::Hint(h) => format!("hint {h}"),
             BrowserRow::Failed { title, reason } => format!("failed {title}: {reason}"),
         })
@@ -61,6 +63,8 @@ fn the_plugins_group_follows_the_devices_with_instruments_effects_and_note_effec
         labels(&v),
         [
             "# PLUGINS",
+            "chips 0",
+            "chips 1",
             "# Instruments",
             "plugin 0",
             "# Effects",
@@ -95,6 +99,8 @@ fn the_filter_matches_name_and_vendor() {
         l,
         [
             "# PLUGINS",
+            "chips 0",
+            "chips 1",
             "# Note effects",
             "plugin 2",
             "hint 1 unsupported plugin hidden",
@@ -108,7 +114,13 @@ fn the_filter_matches_name_and_vendor() {
     type_keys(&mut v, d.doc(), "SYNTH");
     assert_eq!(
         labels(&v),
-        ["# PLUGINS", "# Instruments", "plugin 0"],
+        [
+            "# PLUGINS",
+            "chips 0",
+            "chips 1",
+            "# Instruments",
+            "plugin 0"
+        ],
         "a name filter hides the rest (the unsupported plugin is named Surround)"
     );
 }
@@ -230,9 +242,11 @@ fn the_keyboard_skips_headings_and_enter_adds_the_highlighted_plugin() {
     // "Atomik Test" is the vendor of the synth and the effect.
     let l = labels(&v);
     assert_eq!(
-        &l[..5],
+        &l[..7],
         [
             "# PLUGINS",
+            "chips 0",
+            "chips 1",
             "# Instruments",
             "plugin 0",
             "# Effects",
@@ -386,4 +400,113 @@ fn the_painted_group_shows_titles_badges_the_hint_and_the_reason() {
         !texts.contains(&"Switched Off (Other Co)"),
         "disabled plugins are hidden"
     );
+}
+
+// ----- the tag cloud and the categories -----------------------------------------------------
+
+/// The fixture catalog with tags, a reverb and an analyser (plugin 5).
+fn tagged_setup() -> (Document, RackView) {
+    let d = plugin_rack();
+    let mut v = view(d.doc(), &registry());
+    let mut cat = catalog();
+    cat[0].marks.tags = vec!["pads".into(), "Warm".into()];
+    cat[1].marks.tags = vec!["warm".into()];
+    cat[1].category = PluginCategory::from_vst3_sub_categories(PluginKindHint::Effect, "Fx|Reverb");
+    let mut meter = cat[1].clone();
+    meter.plugin.id = "org.test.meter".into();
+    meter.name = "Meter".into();
+    meter.marks.tags = vec!["metering".into()];
+    meter.category =
+        PluginCategory::from_vst3_sub_categories(PluginKindHint::Effect, "Fx|Analyzer");
+    cat.push(meter);
+    v.set_plugin_catalog(cat);
+    v.set_browser_visible(true);
+    (d, v)
+}
+
+fn listed(v: &RackView) -> Vec<String> {
+    v.browser_list(&registry())
+        .into_iter()
+        .filter_map(|r| match r {
+            BrowserRow::Plugin(n) => Some(format!("plugin {n}")),
+            BrowserRow::Device(d) => Some(d.type_id.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn click_chip(v: &mut RackView, d: &Document, label: &str) {
+    let p = v
+        .browser_chip_center(&registry(), label)
+        .unwrap_or_else(|| panic!("no chip {label}"));
+    let _ = click(v, d.doc(), p);
+}
+
+#[test]
+fn a_plugin_that_only_analyses_has_a_group_of_its_own() {
+    let (_, v) = tagged_setup();
+    let l = labels(&v);
+    let a = l.iter().position(|r| r == "# Analysers").expect("a group");
+    assert_eq!(l[a + 1], "plugin 6");
+    let e = l.iter().position(|r| r == "# Effects").unwrap();
+    assert_eq!(l[e + 1], "plugin 1", "the reverb stays an effect");
+    assert!(!l[e..a].contains(&"plugin 6".to_string()));
+}
+
+#[test]
+fn clicking_chips_filters_the_list_and_several_chips_combine_with_and() {
+    let (d, mut v) = tagged_setup();
+    // The chips count the usable plugins; a tag counts whatever its case.
+    let chips = v.browser_chips();
+    let count = |l: &str| chips.iter().find(|c| c.label == l).map(|c| c.count);
+    assert_eq!(count("Warm"), Some(2));
+    assert_eq!(count("pads"), Some(1));
+    assert_eq!(count("Instrument"), Some(1));
+    assert_eq!(count("Analyser"), Some(1));
+    assert_eq!(
+        count("Reverb"),
+        None,
+        "one kind of effect tells nothing apart"
+    );
+    assert_eq!(count("CLEAR"), None, "nothing is on yet");
+    assert!(listed(&v).iter().any(|r| r.starts_with("atomik.")));
+
+    click_chip(&mut v, &d, "Warm");
+    assert_eq!(
+        listed(&v),
+        ["plugin 0", "plugin 1"],
+        "no device type, two plugins"
+    );
+    click_chip(&mut v, &d, "Instrument");
+    assert_eq!(listed(&v), ["plugin 0"], "both chips must match");
+    click_chip(&mut v, &d, "Analyser");
+    assert!(
+        labels(&v).contains(&"hint No plugin has all of these".to_string()),
+        "{:?}",
+        labels(&v)
+    );
+    // The chips stay, so the way back is there.
+    click_chip(&mut v, &d, "Instrument");
+    click_chip(&mut v, &d, "Warm");
+    assert_eq!(listed(&v), ["plugin 6"], "Analyser alone");
+    click_chip(&mut v, &d, "CLEAR");
+    assert!(listed(&v).iter().any(|r| r.starts_with("atomik.")));
+    assert_eq!(
+        listed(&v)
+            .iter()
+            .filter(|r| r.starts_with("plugin"))
+            .count(),
+        4
+    );
+    assert!(v.browser_chips().iter().all(|c| !c.active));
+}
+
+#[test]
+fn the_hash_search_still_filters_by_tag_beside_the_chips() {
+    let (d, mut v) = tagged_setup();
+    type_keys(&mut v, d.doc(), "#warm");
+    assert_eq!(listed(&v), ["plugin 0", "plugin 1"]);
+    // A chip narrows what the search found.
+    click_chip(&mut v, &d, "Instrument");
+    assert_eq!(listed(&v), ["plugin 0"]);
 }

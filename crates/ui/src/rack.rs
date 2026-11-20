@@ -3058,6 +3058,37 @@ impl RackView {
             .then(|| self.browser.row_rect(i).center())
     }
 
+    /// The chips of the browser's tag cloud (see [`Browser::chips`]).
+    pub fn browser_chips(&self) -> Vec<crate::browser::Chip> {
+        self.browser.chips()
+    }
+
+    /// The centre of the tag-cloud chip labelled `label` (`None` while the browser is hidden or
+    /// no chip has that label); a test hook, like [`Self::browser_row_center`].
+    pub fn browser_chip_center(&self, registry: &Registry, label: &str) -> Option<Point> {
+        if !self.browser.visible {
+            return None;
+        }
+        let chips = self.browser.chips();
+        let at = chips.iter().position(|c| c.label == label)?;
+        let line = crate::browser::chip_lines(&chips)
+            .iter()
+            .position(|l| l.iter().any(|(i, _, _)| *i == at))?;
+        let row = self
+            .browser
+            .list(registry)
+            .iter()
+            .position(|r| *r == crate::browser::BrowserRow::Chips(line))?;
+        let (_, x0, x1) = crate::browser::chip_lines(&chips)[line]
+            .iter()
+            .copied()
+            .find(|(i, _, _)| *i == at)?;
+        Some(Point::new(
+            (x0 + x1) / 2.0,
+            self.browser.row_rect(row).center().y,
+        ))
+    }
+
     /// Shows an error (e.g. a rejected command) until the next click.
     pub fn notify_rejected(&mut self, message: impl Into<String>) {
         self.toast = Some(message.into());
@@ -3962,6 +3993,18 @@ impl RackView {
                 return;
             }
             let rows = self.browser.list(registry);
+            if let Some(i) = self.browser.row_at(pos, rows.len())
+                && let crate::browser::BrowserRow::Chips(line) = &rows[i]
+            {
+                // A chip of the tag cloud switches its filter on or off.
+                if button == PointerButton::Primary
+                    && let Some(key) = self.browser.chip_at(i, *line, pos)
+                {
+                    self.browser.toggle_chip(&key, registry);
+                    self.repaint = true;
+                }
+                return;
+            }
             if let Some(i) = self.browser.row_at(pos, rows.len())
                 && rows[i].selectable()
             {

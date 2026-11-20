@@ -600,6 +600,7 @@ fn entry_infos(catalog: &PluginCatalog, user: &PluginsUser) -> Vec<PluginEntryIn
                 vendor: e.vendor.clone(),
                 version: e.version.clone(),
                 kind: e.kind,
+                category: e.category,
                 status,
                 path: Some(e.path.to_string_lossy().into_owned()),
                 layout: e.layout.clone(),

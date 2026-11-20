@@ -6,7 +6,7 @@
 //! and [`crate::PluginBannerView`]. Everything here is cloneable and comparable so a view can
 //! tell whether anything changed.
 
-use atomik_device_sdk::{PluginFormat, PluginKindHint, PluginLayout, PluginRef};
+use atomik_device_sdk::{PluginCategory, PluginFormat, PluginKindHint, PluginLayout, PluginRef};
 
 /// The help line of the parameter pane: what undo covers.
 pub const PARAMS_HELP: &str = "Undo covers parameter edits, one gesture each. A patch or preset change made inside the plugin's own window is not undoable.";
@@ -106,6 +106,8 @@ pub struct PluginEntryInfo {
     pub version: String,
     /// Instrument, effect or note effect.
     pub kind: PluginKindHint,
+    /// What the plugin declares it is (an analyser, a reverb, ...).
+    pub category: PluginCategory,
     /// Usable or why not.
     pub status: PluginEntryStatus,
     /// The file that holds it (shown, never used by the UI).
