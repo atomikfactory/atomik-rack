@@ -224,6 +224,7 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
         }
         WorkflowCommand::CreatePlayer { .. } => "Create Player",
         WorkflowCommand::ReplaceDevice { .. } => "Replace Device",
+        WorkflowCommand::ApplyMasterChain { .. } => "Load Master Chain",
         WorkflowCommand::SplitSub { .. } => "Split Sub",
         WorkflowCommand::AddReverbSend { .. } => "Add Reverb Send",
         WorkflowCommand::DuckFrom { .. } => "Duck from Track",

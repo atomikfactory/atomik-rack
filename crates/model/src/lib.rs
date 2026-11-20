@@ -67,6 +67,7 @@ mod loop_convert;
 mod macro_lane;
 mod macros;
 mod macros_io;
+mod master_chain;
 mod master_tune;
 mod meter_view;
 pub mod midi_data;
@@ -179,6 +180,10 @@ pub use macros::{
     MACRO_BANK_TYPE, MAX_MACRO_ASSIGNS, MAX_MACRO_SMOOTH_MS, MacroAssign, MacroCommand, MacroCurve,
     MacroName, MacroSet, assign_position, assign_value, expand_bank_lane, macro_index_of,
     macro_key,
+};
+pub use master_chain::{
+    MasterChain, capture_master_chain, is_master_chain_item, load_master_chain_item,
+    save_master_chain_item,
 };
 pub use master_tune::{MASTER_TUNE_MAX_CENTS, tune_ratio};
 pub use meter_view::{CurveFrom, MAX_VIEW_ENTRIES, SpectrumCurve};
