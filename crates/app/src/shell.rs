@@ -3761,6 +3761,8 @@ impl<B: AudioBackend> Shell<B> {
             status_line: self.status.clone(),
             audio: self.audio_status.clone(),
             stalls: crate::ui_stall::snapshot(),
+            activity: crate::ui_activity::latest(),
+            adapter: crate::startup::adapter(),
             home_dirs: crate::diagnostics::home_dirs(&|k| std::env::var_os(k)),
         }
     }
@@ -11871,6 +11873,14 @@ impl<B: AudioBackend> Shell<B> {
             .copied()
             .filter(|&w| self.needs_repaint_in(w))
             .collect()
+    }
+
+    /// Whether something marked `window` changed (as opposed to a view that only keeps itself
+    /// painting): the paint counters tell the two apart.
+    pub fn repaint_marked_in(&self, window: WindowKind) -> bool {
+        self.wins
+            .get(&window)
+            .is_some_and(|win| self.repaint || win.dirty)
     }
 
     /// Whether anything in `window` must be repainted (`false` for a window that is not open).

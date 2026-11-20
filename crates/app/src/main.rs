@@ -26,6 +26,7 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run_app() {
+    atomik_app::startup::init();
     let cli = atomik_app::cli::Cli::parse();
     if cli.print_keymap {
         match atomik_app::cli::cheat_sheet(&cli) {

@@ -30,6 +30,10 @@ pub struct Inputs {
     pub audio: AudioStatus,
     /// The stall counters since the app started (see [`crate::ui_stall`]).
     pub stalls: crate::ui_stall::StallStats,
+    /// The wake-up and paint counters (see [`crate::ui_activity`]).
+    pub activity: crate::ui_activity::ActivitySnapshot,
+    /// The `graphics adapter: ...` line, once the renderer picked its adapter.
+    pub adapter: Option<String>,
     /// The home folders to hide (see [`home_dirs`]).
     pub home_dirs: Vec<String>,
 }
@@ -190,6 +194,19 @@ fn session_section(out: &mut String, i: &Inputs) {
         s.slow_frames,
         crate::ui_stall::FRAME_STALL.as_millis(),
         s.frame_longest_ms
+    ));
+    out.push_str(
+        i.adapter
+            .as_deref()
+            .unwrap_or("graphics adapter: not chosen yet"),
+    );
+    out.push('\n');
+    let act = &i.activity;
+    out.push_str(&format!(
+        "ui activity, last second: {}\nui activity, since start ({} s): {}\n",
+        act.last_second.summary("/s"),
+        act.seconds,
+        act.total.summary("")
     ));
 }
 
@@ -392,6 +409,38 @@ mod tests {
         let text = build(&inputs, 0);
         let want = "ui stalls: 3 plugin calls over 50 ms (longest 10012 ms), 2 frames over 100 ms (longest 180 ms)";
         assert!(text.contains(want), "{text}");
+    }
+
+    #[test]
+    fn the_report_carries_the_adapter_and_the_ui_activity() {
+        use crate::ui_activity::{Activity, PaintReason};
+        let mut a = Activity::new();
+        for _ in 0..3 {
+            a.wake();
+            a.paint(crate::windows::WindowKind::Main, PaintReason::Live);
+        }
+        a.advance(std::time::Duration::from_secs(1));
+        a.wake();
+        let inputs = Inputs {
+            activity: a.snapshot(),
+            adapter: Some(crate::startup::adapter_line(
+                "Example GPU",
+                "Vulkan",
+                "integrated",
+                "Example driver 1.0",
+            )),
+            ..Inputs::default()
+        };
+        let text = build(&inputs, 0);
+        for want in [
+            "graphics adapter: Example GPU \u{b7} Vulkan \u{b7} integrated \u{b7} Example driver 1.0",
+            "ui activity, last second: 3 wakes/s, main 3 paints/s (live 3)",
+            "ui activity, since start (1 s): 4 wakes, main 3 paints (live 3)",
+        ] {
+            assert!(text.contains(want), "{want}: {text}");
+        }
+        let none = build(&Inputs::default(), 0);
+        assert!(none.contains("graphics adapter: not chosen yet"), "{none}");
     }
 
     #[test]

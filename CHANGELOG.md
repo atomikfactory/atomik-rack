@@ -73,6 +73,12 @@ may break APIs and the patch and project formats.
   largest callback seen and the requested buffer size (a DEBUG line `input trimmed: 3 trims, backlog max 1440
   frames, callback 96..480 frames, buffer 480` says it when the count rose), and the render workers: how many, the
   linger, the idle spins and the parks. The trim rule itself is unchanged.
+- **Start-up timeline, graphics adapter and UI activity in the log.** The log file gets one line per start-up stage
+  with the milliseconds since the process began (`startup 412 ms: first frame presented`; first window, adapter,
+  renderer, first frame, audio stream) and `graphics adapter: <name> · <backend> · <type> · <driver>`, the adapter
+  the renderer uses (the choice itself is unchanged). With `ATOMIK_LOG=debug` a line every 5 s counts the event-loop
+  wake-ups and the paints per window with their causes (`ui activity: 60 wakes/s, main 60 paints/s (live 58,
+  input 2)`). Help > Export Diagnostics carries the adapter, the last second and the totals since the start.
 
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last

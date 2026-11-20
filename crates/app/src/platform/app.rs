@@ -22,6 +22,7 @@ use crate::stress::{
     stress_audio_dir, stress_drums_dir, stress_sampler_dir, stress_slicer_dir, write_stress_audio,
 };
 use crate::translate::{self, FileDrag};
+use crate::ui_activity::PaintReason;
 use crate::ui_state::ui_state_path;
 use crate::windows::{self, DocId, MonitorInfo, WindowHit, WindowKind, WindowRect, ZOrder};
 use crate::workspace::Workspace;
@@ -401,6 +402,9 @@ pub fn run(cli: Cli) -> Result<(), String> {
         epoch: now,
         next_status: now,
         frame_watch: crate::ui_stall::FrameWatch::default(),
+        activity: crate::ui_activity::Activity::new(),
+        event_cause: None,
+        retry_cause: None,
         screenshot: cli.screenshot.clone(),
         screenshot_at,
         quit_at: cli
@@ -479,6 +483,13 @@ struct App {
     next_status: Instant,
     /// Decides which slow frames are written to the log.
     frame_watch: crate::ui_stall::FrameWatch,
+    /// The wake-up and paint counters (see [`crate::ui_activity`]).
+    activity: crate::ui_activity::Activity,
+    /// What the last window event says about the paints that follow it (an input, a resize, a
+    /// focus change); cleared at the end of the tick that painted them.
+    event_cause: Option<PaintReason>,
+    /// A cause for the paint after the next one: a frame that was not shown is painted again.
+    retry_cause: Option<PaintReason>,
     screenshot: Option<PathBuf>,
     /// When set, the screenshot waits until then (else it is taken at the first frame).
     screenshot_at: Option<Instant>,
@@ -742,6 +753,7 @@ impl App {
                 .create_window(attributes)
                 .map_err(|e| e.to_string())?,
         );
+        crate::startup::mark(crate::startup::FIRST_WINDOW);
         // The windows are told the display scale times the application zoom: everything the
         // shell does in logical units follows.
         let scale = self.shell.ui_scale(window.scale_factor());
@@ -1066,7 +1078,36 @@ impl App {
         }
     }
 
-    fn redraw(&mut self, key: Key) {
+    /// The reason the window `kind` of song `doc` is painted now: the person's input, a window
+    /// event, a change something marked, or a view that keeps itself painting.
+    fn paint_reason(&self, doc: DocId, kind: WindowKind) -> PaintReason {
+        if let Some(cause) = self.event_cause {
+            return cause;
+        }
+        let marked = self
+            .shell
+            .song(doc)
+            .is_some_and(|s| s.repaint_marked_in(kind));
+        if marked {
+            PaintReason::Update
+        } else {
+            PaintReason::Live
+        }
+    }
+
+    /// Counts the seconds that ended (publishing them for the diagnostics report) and writes the
+    /// debug line of the counters now and then.
+    fn advance_activity(&mut self) {
+        let at = clock::now().saturating_duration_since(self.epoch);
+        if self.activity.advance(at) {
+            crate::ui_activity::publish(self.activity.snapshot());
+            if let Some(line) = self.activity.debug_line() {
+                log::debug!("{line}");
+            }
+        }
+    }
+
+    fn redraw(&mut self, key: Key, reason: PaintReason) {
         let kind = key.1;
         let Some(window) = self.windows.get(&key).map(|w| Arc::clone(&w.window)) else {
             return;
@@ -1075,6 +1116,8 @@ impl App {
         if size.width == 0 || size.height == 0 {
             return; // minimized
         }
+        self.advance_activity();
+        self.activity.paint(kind, reason);
         self.paint_scene(key);
         let Some(w) = self.windows.get_mut(&key) else {
             return;
@@ -1087,11 +1130,18 @@ impl App {
             None => return,
         };
         match result {
-            FrameResult::Presented => {}
+            FrameResult::Presented => crate::startup::mark(crate::startup::FIRST_FRAME),
             // Painted but not shown: the shell has marked the window clean, so ask again.
-            FrameResult::Skipped => self.shell.repaint_window(kind),
-            FrameResult::Reconfigured => window.request_redraw(),
+            FrameResult::Skipped => {
+                self.retry_cause = Some(PaintReason::Surface);
+                self.shell.repaint_window(kind);
+            }
+            FrameResult::Reconfigured => {
+                self.retry_cause = Some(PaintReason::Surface);
+                window.request_redraw();
+            }
             FrameResult::Lost => {
+                self.retry_cause = Some(PaintReason::Surface);
                 w.surface = None;
                 match self
                     .gpu
@@ -1186,10 +1236,18 @@ impl App {
     fn paint_due_windows(&mut self) {
         for id in self.shell.ids() {
             let due = self.shell.song(id).map(|s| s.windows_to_paint());
-            for kind in due.unwrap_or_default() {
-                self.redraw((id, kind));
+            // The reasons are read before the first paint clears the marks.
+            let due: Vec<_> = due
+                .unwrap_or_default()
+                .into_iter()
+                .map(|kind| (kind, self.paint_reason(id, kind)))
+                .collect();
+            for (kind, reason) in due {
+                self.redraw((id, kind), reason);
             }
         }
+        // The cause of this tick's paints is spent; a frame that was not shown keeps its own.
+        self.event_cause = self.retry_cause.take();
     }
 
     /// Asks for a redraw of every window that has something to paint.
@@ -2127,6 +2185,10 @@ impl ApplicationHandler for App {
             // Anything else ends the group: keep the order of events.
             _ => self.flush_files(event_loop, key),
         }
+        self.advance_activity();
+        if let Some(cause) = window_logic::paint_cause_of(&event) {
+            self.event_cause = Some(cause);
+        }
         self.shell.select(key.0);
         let zoom = self.shell.app_zoom();
         let Some((scale, pointer)) = self
@@ -2255,7 +2317,8 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 let began = clock::now();
-                self.redraw(key);
+                let reason = self.paint_reason(key.0, kind);
+                self.redraw(key, reason);
                 self.note_frame_time(began);
             }
             WindowEvent::Focused(false) => {
@@ -2288,6 +2351,8 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let began = clock::now();
+        self.advance_activity();
+        self.activity.wake();
         self.shell.apply_language_globally();
         let dragging = self.follow_file_drags();
         self.flush_all_files(event_loop);

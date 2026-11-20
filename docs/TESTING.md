@@ -1823,6 +1823,21 @@ batches of the overload counters. `crates/audio-io/src/telemetry.rs` and `stream
 `crates/engine/tests/worker_linger.rs` the worker read-out, and `diagnostics.rs` and `session_tests.rs` the report
 and the status.
 
+Three more groups say how the app starts and how busy the UI is, with no behaviour change (the log is at INFO, the
+last at DEBUG). `startup 412 ms: first frame presented` is one line per stage with the milliseconds since the process
+began: `first window created`, `graphics adapter chosen`, `device and renderer ready`, `first frame presented` and
+`audio stream running`, each written once. `graphics adapter: <name> · <backend> · <type> · <driver>` names the
+adapter the renderer uses (backend DX12, Vulkan or Metal; type discrete, integrated, virtual, CPU or other); it is
+also in Help > Export Diagnostics, which says "not chosen yet" before the first window. With `ATOMIK_LOG=debug` a line
+`ui activity: 60 wakes/s, main 60 paints/s (live 58, input 2)` is written every 5 s for the last full second: the
+event-loop wake-ups and, per window, the paints, split by what asked for them. `input` is the person (pointer,
+wheel, keys), `live` a view that keeps itself painting (the playhead, the meters, a scroll), `update` a change
+something marked on a tick (an engine or plugin poll, a finished load, a live value; the first paints too),
+`resize` a size or scale change, `focus` a window gained focus or was uncovered, and `surface` a frame that was not
+shown and is painted again. The report has the last second and the totals since the start. The wake-up and paint
+counts are plain integers on the UI thread (`crates/app/src/ui_activity.rs`, tested with explicit durations);
+`startup.rs` has the tests of the line shapes and `platform/gpu.rs` those of the adapter words.
+
 ## Device loss and stalled streams
 
 `crates/audio-io/src/liveness.rs` has the pure liveness tests (the `max(4 periods, 250 ms)`

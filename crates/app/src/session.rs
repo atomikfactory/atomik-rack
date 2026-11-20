@@ -1135,6 +1135,7 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
             sync_route: false,
             clock_in: None,
         });
+        crate::startup::mark(crate::startup::AUDIO_RUNNING);
         self.sync_midi();
         self.refresh_sync();
     }
