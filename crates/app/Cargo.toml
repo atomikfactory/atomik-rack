@@ -83,7 +83,7 @@ muda = { workspace = true, default-features = false }
 [target.'cfg(windows)'.dependencies]
 rfd = { workspace = true, features = ["common-controls-v6"] }
 # The cursor position during an operating-system file drag (winit sends none on Windows).
-windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
 # Windows only: embeds the application icon in atomik.exe (build.rs; a no-op elsewhere).
 [target.'cfg(windows)'.build-dependencies]

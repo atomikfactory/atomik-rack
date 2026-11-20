@@ -589,8 +589,8 @@ pub use piano_keys::{
 pub use piano_roll::{NOTE_INSPECTOR_HEIGHT, NoteField, PianoRollView};
 pub use plugin_banner::{BannerKind, PluginBannerView};
 pub use plugin_learn::{
-    PluginLearnMode, PluginLearnRequest, PluginLearnState, PluginLearnStatus, PluginLearnStrip,
-    STRIP_HEIGHT as LEARN_STRIP_HEIGHT,
+    DockStripHit, PluginDockRequest, PluginDockUi, PluginLearnMode, PluginLearnRequest,
+    PluginLearnState, PluginLearnStatus, PluginLearnStrip, STRIP_HEIGHT as LEARN_STRIP_HEIGHT,
 };
 pub use plugin_manager::{
     PluginManagerAction, PluginManagerData, PluginManagerRow, PluginManagerView, StatusFilter,

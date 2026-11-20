@@ -77,7 +77,7 @@ pub(super) fn hwnd_of(window: &Window) -> Option<isize> {
     }
 }
 
-fn native_parent(window: &Window) -> Result<NativeParent, String> {
+pub(super) fn native_parent(window: &Window) -> Result<NativeParent, String> {
     let handle = window
         .window_handle()
         .map_err(|e| format!("no native window handle: {e}"))?;

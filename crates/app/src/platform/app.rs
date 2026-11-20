@@ -2,6 +2,7 @@
 //! translation and routing, frame pacing, dialogs.
 
 use super::cursor;
+use super::dock_frames::DockFrames;
 use super::gpu::{FrameResult, GpuContext, WindowSurface, render_offscreen, write_png};
 use super::learn_strips::{Dock, LearnStrips};
 use super::plugin_windows::PluginWindows;
@@ -408,6 +409,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         stopped: false,
         plugin_windows: PluginWindows::default(),
         learn_strips: LearnStrips::default(),
+        dock_frames: DockFrames::default(),
         #[cfg(target_os = "macos")]
         native: None,
     };
@@ -483,6 +485,8 @@ struct App {
     plugin_windows: PluginWindows,
     /// The Learn strips docked to the plugin editor windows.
     learn_strips: LearnStrips,
+    /// The plugin editors that sit inside the main window.
+    dock_frames: DockFrames,
     #[cfg(target_os = "macos")]
     native: Option<super::native_menu::NativeMenus>,
 }
@@ -751,9 +755,16 @@ impl App {
             .handle_in(kind, &UiEvent::Resize(translate::logical_size(size, scale)));
         if kind == WindowKind::Main {
             // The owner of the editors that live in a plugin's own process (sandbox).
-            self.shell
-                .core_mut()
-                .set_plugin_editor_owner(super::plugin_windows::owner_of(&window));
+            let owner = super::plugin_windows::owner_of(&window);
+            // A window of another process can be a child of ours on Windows and X11 only.
+            self.shell.core_mut().set_plugin_docking_available(matches!(
+                owner,
+                Some(
+                    atomik_plugin_host::NativeParent::Win32(_)
+                        | atomik_plugin_host::NativeParent::X11(_)
+                )
+            ));
+            self.shell.core_mut().set_plugin_editor_owner(owner);
         }
         self.ids.insert(window.id(), key);
         self.zorder.entry(doc).or_default().focus(kind);
@@ -957,6 +968,7 @@ impl App {
     fn sync_learn_strips(&mut self, event_loop: &ActiveEventLoop) {
         let ids = self.shell.ids();
         self.learn_strips.keep_songs(&ids);
+        self.dock_frames.keep_songs(&ids);
         for id in ids {
             let Some(song) = self.shell.song(id) else {
                 continue;
@@ -994,6 +1006,31 @@ impl App {
                 id,
                 core,
                 &docks,
+            );
+        }
+    }
+
+    /// Keeps the frames of the plugin editors that sit inside each song's main window.
+    fn sync_dock_frames(&mut self, event_loop: &ActiveEventLoop) {
+        for id in self.shell.ids() {
+            let Some(main) = self.windows.get(&(id, WindowKind::Main)) else {
+                continue;
+            };
+            let scale = main.window.scale_factor();
+            let window = Arc::clone(&main.window);
+            let Some(song) = self.shell.song_mut(id) else {
+                continue;
+            };
+            let theme = song.theme();
+            self.dock_frames.sync(
+                event_loop,
+                &mut self.gpu,
+                &mut self.text,
+                &theme,
+                id,
+                &window,
+                scale,
+                song.core_mut(),
             );
         }
     }
@@ -2025,6 +2062,14 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         self.shell.apply_language_globally();
+        // The frame of a plugin editor inside the main window: its buttons and drags.
+        if let Some(doc) = self.dock_frames.doc_of(id) {
+            if let Some(song) = self.shell.song_mut(doc) {
+                self.dock_frames
+                    .event(&mut self.gpu, &mut self.text, id, event, song.core_mut());
+            }
+            return;
+        }
         // A Learn strip of a plugin editor: its buttons go to the core.
         if let Some(doc) = self.learn_strips.doc_of(id) {
             if let Some(song) = self.shell.song_mut(doc) {
@@ -2135,6 +2180,12 @@ impl ApplicationHandler for App {
             }
             WindowEvent::CursorLeft { .. } => self.ui(event_loop, key, UiEvent::PointerLeave),
             WindowEvent::MouseInput { state, button, .. } => {
+                if state == ElementState::Pressed
+                    && let Some(w) = self.windows.get(&key)
+                {
+                    // A docked plugin editor may hold the keyboard: a click here takes it back.
+                    self.dock_frames.main_clicked(key.0, &w.window);
+                }
                 let mapped = match state {
                     ElementState::Pressed => self.buttons.press(button, self.modifiers, self.os),
                     ElementState::Released => self.buttons.release(button, self.modifiers),
@@ -2252,6 +2303,7 @@ impl ApplicationHandler for App {
             }
         }
         self.sync_learn_strips(event_loop);
+        self.sync_dock_frames(event_loop);
         self.shell.select(self.shell.play_focus());
         // Engine garbage is dropped here, on the UI thread, every tick; the transport
         // position and recorded notes are read too.
@@ -2295,7 +2347,8 @@ impl ApplicationHandler for App {
                     || s.core().macro_gliding()
                     || !s.core().plugins_ready()
             }) || self.plugin_windows.any()
-                || self.learn_strips.any(),
+                || self.learn_strips.any()
+                || self.dock_frames.any(),
             plugins: songs.iter().any(|s| s.core().plugin_instance_count() > 0),
         };
         let mut deadline = window_logic::wake_after(wakers, FRAME).map(|d| now + d);

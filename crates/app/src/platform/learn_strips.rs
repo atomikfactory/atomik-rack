@@ -314,7 +314,7 @@ impl LearnStrips {
 }
 
 /// The strip's area in its own logical units.
-fn logical_bounds(at: Frame, scale: f64) -> Rect {
+pub(super) fn logical_bounds(at: Frame, scale: f64) -> Rect {
     let scale = scale.max(0.1);
     Rect::new(0.0, 0.0, f64::from(at.2) / scale, f64::from(at.3) / scale)
 }

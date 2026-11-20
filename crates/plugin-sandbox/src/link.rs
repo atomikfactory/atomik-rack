@@ -408,7 +408,8 @@ impl Shared {
             | FromChild::Presets { id, .. }
             | FromChild::ParamValues { id, .. }
             | FromChild::LayoutChanged { id, .. }
-            | FromChild::GuiOpened { id, .. } => *id,
+            | FromChild::GuiOpened { id, .. }
+            | FromChild::GuiSized { id, .. } => *id,
             FromChild::ParamEdit {
                 param,
                 value,

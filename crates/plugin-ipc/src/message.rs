@@ -95,10 +95,28 @@ pub enum ToChild {
     OpenGui {
         /// Request id.
         id: u64,
-        /// The window to own it, when the platform allows.
+        /// The window to own it, when the platform allows; with `embed`, the window the editor
+        /// becomes a child of.
         owner: Option<WireParent>,
         /// Display scale.
         scale: f64,
+        /// The editor goes **inside** `owner` (a window the app made, in the app's process) as a
+        /// child window, with no frame of its own, instead of being a top-level window owned
+        /// by it. Only Windows and X11 can do it; an old parent that never sends it gets the
+        /// top-level window.
+        #[serde(default)]
+        embed: bool,
+    },
+    /// Resizes the editor window of an embedded editor to (about) `w` x `h` pixels, because the
+    /// app's frame around it was resized; the answer is [`FromChild::GuiSized`] with the size
+    /// the plugin took.
+    ResizeGui {
+        /// Request id.
+        id: u64,
+        /// Width in pixels.
+        w: u32,
+        /// Height in pixels.
+        h: u32,
     },
     /// Closes the editor window.
     CloseGui {
@@ -208,6 +226,15 @@ pub enum FromChild {
     },
     /// The editor window is open.
     GuiOpened {
+        /// The request's id.
+        id: u64,
+        /// Width in pixels.
+        w: u32,
+        /// Height in pixels.
+        h: u32,
+    },
+    /// The editor window took the size the plugin answered to [`ToChild::ResizeGui`].
+    GuiSized {
         /// The request's id.
         id: u64,
         /// Width in pixels.
@@ -717,6 +744,16 @@ mod tests {
                     id: 3,
                     owner: Some(WireParent::Win32(0xdead_beef)),
                     scale: 1.5,
+                    embed: false,
+                },
+                None,
+            ),
+            (
+                ToChild::OpenGui {
+                    id: 3,
+                    owner: Some(WireParent::X11(0x00A1_1CE0)),
+                    scale: 1.0,
+                    embed: true,
                 },
                 None,
             ),
@@ -725,6 +762,15 @@ mod tests {
                     id: 3,
                     owner: None,
                     scale: 1.0,
+                    embed: false,
+                },
+                None,
+            ),
+            (
+                ToChild::ResizeGui {
+                    id: 3,
+                    w: 800,
+                    h: 600,
                 },
                 None,
             ),
@@ -821,6 +867,14 @@ mod tests {
                 None,
             ),
             (
+                FromChild::GuiSized {
+                    id: 5,
+                    w: 640,
+                    h: 480,
+                },
+                None,
+            ),
+            (
                 FromChild::ParamEdit {
                     param: 4,
                     value: 0.333_333_333_333_333_3,
@@ -888,6 +942,23 @@ mod tests {
         );
         let json = serde_json::to_value(FromChild::Ok { id: 9 }).unwrap();
         assert_eq!(json, serde_json::json!({"t": "Ok", "id": 9}));
+    }
+
+    #[test]
+    fn an_open_gui_without_embed_is_the_top_level_window_it_always_was() {
+        let old = serde_json::json!({
+            "t": "OpenGui", "id": 4, "owner": {"win32": 7}, "scale": 1.0
+        });
+        let msg: ToChild = serde_json::from_value(old).unwrap();
+        assert_eq!(
+            msg,
+            ToChild::OpenGui {
+                id: 4,
+                owner: Some(WireParent::Win32(7)),
+                scale: 1.0,
+                embed: false,
+            }
+        );
     }
 
     #[test]

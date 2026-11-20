@@ -43,8 +43,8 @@ use crate::canvas::{Align, Canvas, CanvasExt};
 use crate::event::{Modifiers, PointerButton, UiEvent};
 use crate::paint::fit_label;
 use crate::plugin_data::{
-    MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, PluginEntryStatus, PluginProcessMode, PluginRescan,
-    PluginSettingsAction, PluginSettingsData, format_badge,
+    MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, PluginEditorHome, PluginEntryStatus, PluginProcessMode,
+    PluginRescan, PluginSettingsAction, PluginSettingsData, format_badge,
 };
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
@@ -71,6 +71,7 @@ pub const LOG_LINES: usize = 12;
 enum Item {
     Header,
     Sandbox,
+    Editors,
     OffHint,
     NoScanner,
     ScanSummary,
@@ -98,7 +99,7 @@ impl Item {
     fn height(self) -> f64 {
         match self {
             Item::Header => HEADER_H,
-            Item::Sandbox => SANDBOX_H,
+            Item::Sandbox | Item::Editors => SANDBOX_H,
             Item::OffHint | Item::NoScanner | Item::ScanSummary => HINT_H,
             Item::Heading(_) => HEADING_H,
             Item::Folder(_) => FOLDER_H,
@@ -210,6 +211,7 @@ impl PluginSettingsView {
         let d = &self.data;
         let mut items = vec![Item::Header];
         items.push(Item::Sandbox);
+        items.push(Item::Editors);
         if !d.enabled {
             items.push(Item::OffHint);
         } else {
@@ -374,6 +376,12 @@ impl PluginSettingsView {
         Some(Rect::new(r.x1 - 196.0, r.y0 + 8.0, r.x1 - 6.0, r.y1 - 8.0))
     }
 
+    /// The button, at the right of the editors row, that chooses where editors open.
+    pub fn editors_button_rect(&self) -> Option<Rect> {
+        let (_, r) = self.find(Item::Editors)?;
+        Some(Rect::new(r.x1 - 252.0, r.y0 + 8.0, r.x1 - 6.0, r.y1 - 8.0))
+    }
+
     /// The RETRY button of plugin row `i`, only for a plugin marked CRASHED.
     pub fn crash_retry_rect(&self, i: usize) -> Option<Rect> {
         let (_, r) = self.find(Item::Plugin(i))?;
@@ -409,6 +417,16 @@ impl PluginSettingsView {
             "Turn third-party plugins on or off",
         ) {
             return Some(h);
+        }
+        if shown(Item::Editors) {
+            let text = if self.data.docking_available {
+                "Where plugin editors open: each in a window of its own, or inside the Atomik window"
+            } else {
+                "Not available here: a window of another program cannot be put inside this one on macOS or Wayland, so editors open in their own window"
+            };
+            if let Some(h) = at(self.editors_button_rect(), text) {
+                return Some(h);
+            }
         }
         let fixed = [
             (
@@ -545,6 +563,16 @@ impl PluginSettingsView {
                 out,
                 PluginSettingsAction::SetProcessMode(self.data.process.next()),
             );
+            return;
+        }
+        if self.editors_button_rect().is_some_and(|r| r.contains(pos)) {
+            // A disabled button does nothing: the tooltip says why.
+            if self.data.docking_available {
+                Self::emit(
+                    out,
+                    PluginSettingsAction::SetEditorHome(self.data.editor_home.next()),
+                );
+            }
             return;
         }
         if !self.data.enabled {
@@ -704,6 +732,45 @@ impl PluginSettingsView {
                         r.width() - 226.0,
                         9.0,
                     ),
+                    r.x0 + 26.0,
+                    r.y0 + 30.0,
+                    9.0,
+                    t.text_muted,
+                    Align::Start,
+                );
+            }
+            Item::Editors => {
+                if let Some(b) = self.editors_button_rect() {
+                    let text = match (d.docking_available, d.editor_home) {
+                        (false, _) => "EDITORS: OWN WINDOW (ONLY HERE)",
+                        (true, PluginEditorHome::OwnWindow) => "EDITORS: IN THEIR OWN WINDOW",
+                        (true, PluginEditorHome::InApp) => "EDITORS: INSIDE THE APP WINDOW",
+                    };
+                    let lit = (d.docking_available && d.editor_home == PluginEditorHome::InApp)
+                        .then_some(accent);
+                    sp::button(c, st, b, text, lit, d.docking_available && self.hovered(b));
+                }
+                label(
+                    c,
+                    &fit_label(
+                        "Where editors open: in their own window or inside the app window",
+                        r.width() - 282.0,
+                        10.0,
+                    ),
+                    r.x0 + 26.0,
+                    r.y0 + 15.0,
+                    10.0,
+                    t.text,
+                    Align::Start,
+                );
+                let note = if d.docking_available {
+                    "Each editor also has a button to move it between the two"
+                } else {
+                    "Not available on this system: editors open in their own window"
+                };
+                label(
+                    c,
+                    &fit_label(note, r.width() - 282.0, 9.0),
                     r.x0 + 26.0,
                     r.y0 + 30.0,
                     9.0,

@@ -7,8 +7,8 @@ mod support;
 
 use atomik_ui::kurbo::{Point, Rect};
 use atomik_ui::{
-    DisplayList, PluginLearnMode, PluginLearnRequest, PluginLearnState, PluginLearnStatus,
-    PluginLearnStrip, Theme, UiAction,
+    DisplayList, DockStripHit, PluginDockRequest, PluginDockUi, PluginLearnMode,
+    PluginLearnRequest, PluginLearnState, PluginLearnStatus, PluginLearnStrip, Theme, UiAction,
 };
 use support::*;
 
@@ -154,4 +154,97 @@ fn the_strip_in_each_state_matches_its_golden() {
         v.paint(&mut dl);
         starter::check_golden(&format!("plugin_learn_strip_{name}_1x.json"), &dl.to_json());
     }
+}
+
+fn docked(dock: PluginDockUi) -> PluginLearnStrip {
+    let mut v = strip(state(None, PluginLearnStatus::Waiting));
+    v.set_dock(dock);
+    v
+}
+
+fn dock_actions(actions: &[UiAction]) -> Vec<PluginDockRequest> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            UiAction::PluginDock { request, device } => {
+                assert_eq!(device, &key("lead"));
+                Some(*request)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn an_editor_in_its_own_window_offers_dock_in_app_where_the_system_can_and_nothing_where_not() {
+    let t = texts(&docked(PluginDockUi::CanDock));
+    assert!(t.iter().any(|s| s == "DOCK IN APP"), "{t:?}");
+    assert!(!t.iter().any(|s| s == "POP OUT" || s == "CLOSE"), "{t:?}");
+    let mut v = docked(PluginDockUi::CanDock);
+    let p = v.dock_rect().expect("the button").center();
+    assert_eq!(dock_actions(&click(&mut v, p)), [PluginDockRequest::Dock]);
+    let hidden = docked(PluginDockUi::Hidden);
+    assert!(hidden.dock_rect().is_none() && hidden.shut_rect().is_none());
+    assert!(!texts(&hidden).iter().any(|s| s == "DOCK IN APP"));
+}
+
+#[test]
+fn a_frame_in_the_app_window_has_pop_out_close_and_a_grip_and_its_buttons_act() {
+    let mut v = docked(PluginDockUi::Docked);
+    let t = texts(&v);
+    for want in ["POP OUT", "CLOSE", "Test Synth"] {
+        assert!(t.iter().any(|s| s == want), "missing {want:?} in {t:?}");
+    }
+    let (pop, shut) = (v.dock_rect().unwrap(), v.shut_rect().unwrap());
+    assert!(
+        pop.x1 <= shut.x0 && shut.x1 <= v.close_rect().x0,
+        "no overlap"
+    );
+    assert_eq!(
+        dock_actions(&click(&mut v, pop.center())),
+        [PluginDockRequest::PopOut]
+    );
+    assert_eq!(
+        dock_actions(&click(&mut v, shut.center())),
+        [PluginDockRequest::Close]
+    );
+    // The Learn toggles still work in the frame.
+    let auto = v.automation_rect().center();
+    assert!(
+        click(&mut v, auto)
+            .iter()
+            .any(|a| matches!(a, UiAction::PluginLearn { .. }))
+    );
+    assert!(
+        v.automation_rect().x0 >= v.grip_rect().unwrap().x1,
+        "the grip leads"
+    );
+}
+
+#[test]
+fn the_title_bar_tells_buttons_the_grip_and_the_bar_apart() {
+    let v = docked(PluginDockUi::Docked);
+    assert_eq!(v.hit(v.dock_rect().unwrap().center()), DockStripHit::Button);
+    assert_eq!(v.hit(v.automation_rect().center()), DockStripHit::Button);
+    assert_eq!(v.hit(v.grip_rect().unwrap().center()), DockStripHit::Grip);
+    assert_eq!(
+        v.hit(Point::new(v.midi_rect().x1 + 4.0, 14.0)),
+        DockStripHit::Bar
+    );
+    // An editor with a window of its own has no grip to drag.
+    let own = docked(PluginDockUi::CanDock);
+    assert!(own.grip_rect().is_none());
+    assert_eq!(
+        own.hit(own.grip_rect().unwrap_or_default().center()),
+        DockStripHit::Bar
+    );
+}
+
+#[test]
+fn a_plugin_that_stopped_is_said_so_in_its_frame() {
+    let v = docked(PluginDockUi::Stopped);
+    let t = texts(&v);
+    assert!(t.iter().any(|s| s == "The plugin stopped"), "{t:?}");
+    assert!(t.iter().any(|s| s == "CLOSE"), "{t:?}");
+    assert!(v.grip_rect().is_none(), "a stopped frame is not resized");
 }

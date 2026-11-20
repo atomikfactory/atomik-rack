@@ -148,6 +148,9 @@ impl Control {
                     return self.notify(&FromChild::GuiClosed, windows);
                 }
             }
+            // The window of an embedded editor only has the size the app gave it: what the system
+            // reports for it is that size (or a passing one while it is made), never a choice.
+            WindowInput::Resized(..) if self.editor.is_embedded() => {}
             WindowInput::Resized(w, h) => self.editor.user_resized(instance, windows, w, h),
             WindowInput::Frame { x, y, w, h } => {
                 if self.editor.is_open() {
@@ -257,6 +260,13 @@ impl Control {
                 // window waits for the parent's thread, which waits for this answer.
                 if code.is_none() && opens_editor && matches!(reply, FromChild::GuiOpened { .. }) {
                     self.editor.present(windows);
+                    // An editor inside the app's window: the app sizes its frame to it.
+                    if self.editor.is_embedded() {
+                        let (w, h) = self.editor.size();
+                        if let Some(code) = self.notify(&FromChild::GuiResize { w, h }, windows) {
+                            return Some(code);
+                        }
+                    }
                     // Where the window is, for the app's Learn strip.
                     if let Some((x, y, w, h)) = windows.frame() {
                         return self.notify(&FromChild::GuiFrame { x, y, w, h }, windows);
@@ -370,7 +380,12 @@ impl Control {
                     .take_layout_changed()
                     .then(|| WireLayout::from(instance.layout())),
             },
-            ToChild::OpenGui { id, owner, scale } => {
+            ToChild::OpenGui {
+                id,
+                owner,
+                scale,
+                embed,
+            } => {
                 let title = instance.layout().name.clone();
                 let (w, h) = self.editor.open(
                     instance.as_mut(),
@@ -378,8 +393,16 @@ impl Control {
                     &title,
                     owner.map(Into::into),
                     scale,
+                    embed,
                 )?;
                 FromChild::GuiOpened { id, w, h }
+            }
+            ToChild::ResizeGui { id, w, h } => {
+                if !self.editor.is_embedded() {
+                    return Err(failed("the editor is not inside the app window"));
+                }
+                let (w, h) = self.editor.host_resized(instance.as_mut(), windows, w, h);
+                FromChild::GuiSized { id, w, h }
             }
             ToChild::Flush { id } => {
                 // The same order as the manager's poll in process: the plugin's main-thread
@@ -481,6 +504,7 @@ fn request_id(msg: &ToChild) -> u64 {
         | ToChild::LoadPreset { id, .. }
         | ToChild::TakeLayoutChanged { id }
         | ToChild::OpenGui { id, .. }
+        | ToChild::ResizeGui { id, .. }
         | ToChild::CloseGui { id }
         | ToChild::Flush { id } => *id,
         ToChild::Hello { .. } | ToChild::Shutdown => 0,

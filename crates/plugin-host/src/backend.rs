@@ -504,6 +504,16 @@ pub trait PluginInstance {
     ) -> Result<bool, BackendError> {
         self.open_external_gui(owner).map(|()| true)
     }
+    /// Like [`PluginInstance::begin_open_external_gui`], but the editor goes **inside** `parent`,
+    /// a window of the app, as a frameless child window instead of a top-level window of its
+    /// own. Windows and X11 only; the answer to [`PluginInstance::poll_open_external_gui`] is
+    /// the same. After it the editor is sized with [`PluginInstance::resize_gui`], and the
+    /// plugin's own resize requests arrive as [`PluginMessage::GuiResize`].
+    fn begin_open_embedded_gui(&mut self, _parent: NativeParent) -> Result<bool, BackendError> {
+        Err(BackendError::Unsupported(
+            "this plugin's editor cannot be shown inside the app window".to_string(),
+        ))
+    }
     /// The outcome of the editor opening that [`PluginInstance::begin_open_external_gui`]
     /// started, once (`None` while it goes on or when none is going on). Main thread.
     fn poll_open_external_gui(&mut self) -> Option<Result<(), BackendError>> {
@@ -618,6 +628,13 @@ pub struct NullStats {
     external_opens: AtomicUsize,
     external_closes: AtomicUsize,
     external_delay: AtomicUsize,
+    embedded_opens: AtomicUsize,
+    /// The app window the last embedded editor went into.
+    embedded_parent: Mutex<Option<NativeParent>>,
+    /// The sizes the app asked an editor for, in order.
+    gui_sizes: Mutex<Vec<(u32, u32)>>,
+    /// A size the null editors keep whatever they are asked for (a fixed-size editor).
+    fixed_gui_size: Mutex<Option<(u32, u32)>>,
     presets: AtomicBool,
     deactivate_delay: AtomicUsize,
     /// The layout the instances take at their next restart (see [`NullStats::change_layout`]).
@@ -702,6 +719,33 @@ impl NullStats {
     pub fn external_closes(&self) -> usize {
         self.external_closes.load(Ordering::Relaxed)
     }
+    /// How many times an external editor was opened inside an app window
+    /// ([`PluginInstance::begin_open_embedded_gui`]); each also counts as an external open.
+    pub fn embedded_opens(&self) -> usize {
+        self.embedded_opens.load(Ordering::Relaxed)
+    }
+    /// The app window the last embedded editor went into.
+    pub fn embedded_parent(&self) -> Option<NativeParent> {
+        *self
+            .embedded_parent
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+    /// The sizes the editors were asked to take ([`PluginInstance::resize_gui`]), in order.
+    pub fn gui_sizes(&self) -> Vec<(u32, u32)> {
+        self.gui_sizes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+    /// Makes every null editor keep `size` whatever it is asked for (`None`: it takes the size
+    /// asked for).
+    pub fn set_fixed_gui_size(&self, size: Option<(u32, u32)>) {
+        *self
+            .fixed_gui_size
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = size;
+    }
 }
 
 /// A backend with no plugin files: its plugins are described in memory. It exercises the whole
@@ -782,6 +826,7 @@ impl PluginBackend for NullBackend {
             held: BTreeMap::new(),
             stats: Arc::clone(&self.stats),
             opening: None,
+            opening_in: None,
             deactivating: None,
         }))
     }
@@ -796,6 +841,8 @@ struct NullInstance {
     stats: Arc<NullStats>,
     /// Polls left before a slow external editor is open.
     opening: Option<usize>,
+    /// The app window a slow editor that is opening goes into, when it goes into one.
+    opening_in: Option<NativeParent>,
     /// Polls left before a slow deactivation is done.
     deactivating: Option<usize>,
 }
@@ -807,6 +854,16 @@ impl Drop for NullInstance {
 }
 
 impl NullInstance {
+    /// Counts an editor opened inside `parent`.
+    fn note_embedded(&self, parent: NativeParent) {
+        self.stats.embedded_opens.fetch_add(1, Ordering::Relaxed);
+        *self
+            .stats
+            .embedded_parent
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(parent);
+    }
+
     /// A preset moves every param: the k-th preset puts each at (k + 1) tenths of its range;
     /// no preset leaves every param at its default.
     fn hold_preset(&mut self, index: Option<usize>) {
@@ -996,6 +1053,24 @@ impl PluginInstance for NullInstance {
         Ok(false)
     }
 
+    fn begin_open_embedded_gui(&mut self, parent: NativeParent) -> Result<bool, BackendError> {
+        if self.editor_kind() != EditorKind::External {
+            return Err(BackendError::Unsupported(
+                "the null plugin has no editor".to_string(),
+            ));
+        }
+        let delay = self.stats.external_delay.load(Ordering::Relaxed);
+        if delay == 0 {
+            self.note_embedded(parent);
+            return self.open_external_gui(None).map(|()| true);
+        }
+        if self.opening.is_none() {
+            self.opening = Some(delay);
+            self.opening_in = Some(parent);
+        }
+        Ok(false)
+    }
+
     fn poll_open_external_gui(&mut self) -> Option<Result<(), BackendError>> {
         let left = self.opening?.saturating_sub(1);
         if left > 0 {
@@ -1003,7 +1078,29 @@ impl PluginInstance for NullInstance {
             return None;
         }
         self.opening = None;
+        if let Some(parent) = self.opening_in.take() {
+            self.note_embedded(parent);
+        }
         Some(self.open_external_gui(None))
+    }
+
+    fn resize_gui(&mut self, w: u32, h: u32) -> Result<(u32, u32), BackendError> {
+        if self.editor_kind() != EditorKind::External {
+            return Err(BackendError::Unsupported(
+                "the null plugin has no editor".to_string(),
+            ));
+        }
+        self.stats
+            .gui_sizes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((w, h));
+        let fixed = *self
+            .stats
+            .fixed_gui_size
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        Ok(fixed.unwrap_or((w, h)))
     }
 
     fn is_lost(&self) -> bool {
