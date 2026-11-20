@@ -277,6 +277,13 @@ impl ParentPort {
         (header.done_seq.load(Ordering::Acquire) < sent).then_some(Ticket(sent))
     }
 
+    /// How many requests the child has completed so far. It only grows while the child is
+    /// working through requests, however late: an unchanged value across batches means the
+    /// child made no progress. One atomic load, safe on the audio thread.
+    pub fn done_seq(&self) -> u64 {
+        self.block.header().done_seq.load(Ordering::Acquire)
+    }
+
     /// What the child wrote at activation.
     pub fn info(&self) -> ProcessorInfo {
         let header = self.block.header();

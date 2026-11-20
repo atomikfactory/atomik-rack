@@ -10,7 +10,7 @@
 //!   loads it.
 //! * **Quarantine**: a plugin that crashed or failed to load [`QUARANTINE_AFTER`] times in a row
 //!   is quarantined (hidden, like a disabled one) until the user presses TRY AGAIN. A success
-//!   starts the count again. The last failure's reason is kept with the quarantine, and a
+//!   starts the count again. A process the hang guard stopped is not a crash and does not count. The last failure's reason is kept with the quarantine, and a
 //!   project that uses a quarantined plugin does not load it until the user says so.
 //! * **Process**: which child process a plugin's instances go in, when it asks for something
 //!   other than the setting (see [`atomik_plugin_host::ProcessChoice`]).

@@ -255,6 +255,39 @@ fn late_batches_in_a_row_make_the_child_hung_and_the_main_thread_ends_it_within_
 }
 
 #[test]
+fn a_child_that_answers_every_batch_late_is_never_declared_hung() {
+    let mut timeouts = test_timeouts();
+    timeouts.hung = Duration::from_millis(60);
+    let mut r = started(FakeOptions::default(), timeouts);
+    let mut p = r
+        .instance
+        .activate(&cfg(48_000.0, RunMode::Realtime))
+        .expect("activation");
+    let mut b = super::processor::Bufs::new();
+    // Every answer takes several batch periods (one is 1.3 ms), yet each one comes.
+    r.fake.ctl.set_audio_delay(Duration::from_millis(8));
+    let hang_after = 45; // 60 ms of 64-frame batches at 48 kHz
+    // Each batch is late: the answer to a request lands only after its deadline.
+    let mut late = 0;
+    for _ in 0..3 * hang_after {
+        // The audio callback comes once per batch period.
+        std::thread::sleep(Duration::from_micros(1_300));
+        match p.process(&mut bufs_io(&mut b)) {
+            ProcessStatus::Late => late += 1,
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(late, 3 * hang_after, "every batch was late");
+    assert!(
+        r.fake.ctl.audio_ops().len() >= 3,
+        "the child kept completing requests"
+    );
+    assert!(!r.instance.is_lost(), "the port is not marked dead");
+    r.instance.poll();
+    assert!(!r.fake.ctl.was_killed());
+}
+
+#[test]
 fn late_batches_that_are_not_in_a_row_never_make_the_child_hung() {
     let mut timeouts = test_timeouts();
     timeouts.hung = Duration::from_millis(60);

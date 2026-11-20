@@ -450,6 +450,35 @@ fn a_plugin_that_ended_for_another_reason_is_not_reloaded_by_itself() {
     assert!(core.plugin_crash(&dev).is_some());
 }
 
+#[test]
+fn a_process_the_hang_guard_stopped_never_counts_toward_quarantine() {
+    let (mut core, stats, dev) = lost_core();
+    stats.set_lost(true);
+    for _ in 0..(2 * crate::plugins_user::QUARANTINE_AFTER) {
+        hang(&mut core, &dev);
+        core.wait_plugins();
+    }
+    assert_eq!(core.plugins_user().failures(GAIN), 0);
+    assert!(!core.plugins_user().is_quarantined(GAIN));
+}
+
+#[test]
+fn real_crashes_in_a_row_still_quarantine_the_plugin() {
+    let (mut core, stats, dev) = lost_core();
+    for n in 1..=crate::plugins_user::QUARANTINE_AFTER {
+        lose(&mut core, &stats, &dev, "exited with code 3");
+        core.wait_plugins();
+        if n < crate::plugins_user::QUARANTINE_AFTER {
+            assert_eq!(core.plugins_user().failures(GAIN), n);
+        }
+        core.handle_action(UiAction::ReloadPlugin {
+            device: dev.clone(),
+        });
+        core.wait_plugins();
+    }
+    assert!(core.plugins_user().is_quarantined(GAIN));
+}
+
 // ------------------------------------------------------------------ presets and patch steps
 
 fn stored(core: &AppCore<OfflineSink>, device: &DeviceKey) -> Option<Vec<u8>> {

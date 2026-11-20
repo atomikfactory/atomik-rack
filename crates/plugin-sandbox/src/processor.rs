@@ -35,8 +35,10 @@ pub(crate) struct RemoteProcessor {
     carry: Vec<PluginEvent>,
     /// The carry followed by the new batch's events, as submitted.
     merged: Vec<PluginEvent>,
-    /// Late batches in a row.
+    /// Late batches in a row during which the child completed nothing.
     late_streak: u32,
+    /// The child's completed-request counter as of the previous batch.
+    last_done: u64,
     /// How many make the child hung (0: never; offline batches are not counted).
     hang_after: u32,
     /// Set when the child is declared hung, for the main thread to give the reason.
@@ -72,14 +74,17 @@ impl RemoteProcessor {
             carry: Vec::with_capacity(MAX_EVENTS_IN),
             merged: Vec::with_capacity(MAX_EVENTS_IN),
             late_streak: 0,
+            last_done: 0,
             hang_after: 0,
             hung: None,
         }
     }
 
-    /// Declares the child hung after `batches` late batches in a row: the block is marked dead
-    /// (so the engine sees `Lost` from then on) and `flag` is set; the main thread ends the
-    /// process. Only atomic stores happen on the audio thread.
+    /// Declares the child hung after `batches` late batches in a row in which it completed no
+    /// request at all: the block is marked dead (so the engine sees `Lost` from then on) and
+    /// `flag` is set; the main thread ends the process. A child that keeps completing
+    /// requests, however late, is slow rather than hung and is never declared so. Only atomic
+    /// loads and stores happen on the audio thread.
     pub fn with_hang_guard(mut self, batches: u32, flag: Arc<AtomicBool>) -> Self {
         self.hang_after = batches;
         self.hung = Some(flag);
@@ -88,7 +93,13 @@ impl RemoteProcessor {
 
     /// Counts the batch's result for the hang guard.
     fn note(&mut self, status: ProcessStatus) -> ProcessStatus {
-        if status != ProcessStatus::Late {
+        let done = self
+            .port
+            .as_ref()
+            .map_or(self.last_done, ParentPort::done_seq);
+        let progressed = done != self.last_done;
+        self.last_done = done;
+        if status != ProcessStatus::Late || progressed {
             self.late_streak = 0;
         } else if self.hang_after > 0 && !self.offline {
             self.late_streak = self.late_streak.saturating_add(1);
