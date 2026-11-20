@@ -599,3 +599,86 @@ fn a_begun_instance_whose_child_speaks_another_protocol_fails_and_the_child_is_s
     assert!(err.contains("protocol 99"), "{err}");
     assert!(fake.ctl.was_killed());
 }
+
+/// The stall records the plugin has posted so far: (call, outcome).
+fn stalls(m: &ManagerEnd) -> Vec<(String, u64, atomik_plugin_host::StallOutcome)> {
+    let mut out = Vec::new();
+    while let Some(msg) = m.try_recv() {
+        if let PluginMessage::Stall { call, ms, outcome } = msg {
+            out.push((call, ms, outcome));
+        }
+    }
+    out
+}
+
+fn slow_read_params(delay: Duration) -> FakeOptions {
+    FakeOptions::default().script(move |req, _| match req {
+        ToChild::ReadParams { id } => Some(Action::Delayed(
+            delay,
+            vec![(
+                FromChild::ParamValues {
+                    id: *id,
+                    values: vec![(1, 0.5)],
+                },
+                None,
+            )],
+        )),
+        _ => None,
+    })
+}
+
+#[test]
+fn a_call_answered_after_the_threshold_leaves_exactly_one_stall_record() {
+    let mut r = rig(slow_read_params(Duration::from_millis(150)));
+    let _ = stalls(&r.manager);
+    assert_eq!(r.instance.read_params(), vec![(1, 0.5)]);
+    let got = stalls(&r.manager);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].0, "ReadParams");
+    assert!(got[0].1 >= 100, "{got:?}");
+    assert_eq!(got[0].2, atomik_plugin_host::StallOutcome::Answered);
+}
+
+#[test]
+fn a_fast_call_leaves_no_stall_record() {
+    let mut r = rig(FakeOptions::default());
+    let _ = r.instance.read_params();
+    let _ = r.instance.list_presets();
+    assert!(stalls(&r.manager).is_empty());
+}
+
+#[test]
+fn a_call_that_times_out_is_recorded_with_that_outcome() {
+    let mut timeouts = test_timeouts();
+    timeouts.create = Duration::from_millis(120);
+    let started = start_with(
+        FakeOptions::default()
+            .script(|req, _| matches!(req, ToChild::ReadParams { .. }).then_some(Action::Silent)),
+        timeouts,
+    );
+    let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let _ = stalls(&started.manager);
+    assert!(instance.read_params().is_empty());
+    let got = stalls(&started.manager);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].0, "ReadParams");
+    assert_eq!(got[0].2, atomik_plugin_host::StallOutcome::TimedOut);
+}
+
+#[test]
+fn a_slow_soft_call_is_recorded_too() {
+    let mut timeouts = test_timeouts();
+    timeouts.text = Duration::from_millis(80);
+    let started = start_with(
+        FakeOptions::default()
+            .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)),
+        timeouts,
+    );
+    let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let _ = stalls(&started.manager);
+    assert_eq!(instance.param_text(1, 0.5), None);
+    let got = stalls(&started.manager);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].0, "ParamText");
+    assert_eq!(got[0].2, atomik_plugin_host::StallOutcome::TimedOut);
+}

@@ -168,8 +168,9 @@ spins; both only matter on a live stream (see `atomik-play --stats` for the call
 
 Same machine, bench profile, medians of 21 runs (`cargo bench -p atomik-render --bench render_batch
 -- "rack/workers0|console-64/workers0"`, with `ATOMIK_BENCH_TIMING=1` for the second column). The
-per-device timing reads the clock twice around each device call; it is on only while View > CPU
-Meters is. A bounce renders the same samples either way.
+per-device timing reads the clock twice around each device call. The app always has it on (the
+engine measures every device all the time; View > Show Device CPU only shows the numbers), so the
+second column is what the running app pays. A bounce renders the same samples either way.
 
 ```text
 case                                   off           timing on
@@ -179,7 +180,7 @@ render/console-64/workers0/block256    1.486 s       1.565 s
 
 The rack case is 100 cheap devices, so it is the worst case for the overhead: about 70 ns per
 device per 64-frame batch, which is 0.5 % of the 1.33 ms callback at 48 kHz for 100 devices. With
-the readout off a device call pays two relaxed atomic loads.
+the timing off (the first column) a device call pays two relaxed atomic loads.
 
 ## I/O speed
 
@@ -267,3 +268,30 @@ at 1.3x speed, on the reference machine:
 
 The real-time stretcher costs about 2.4 ms per second of stereo audio per clip, so 32 clips at once take about 8 % of
 one core on top of the plain read.
+
+## Idle baseline of the running app (2026-11-20)
+
+The running app, not a bench: the rows were taken with an external sampler before the sampling script
+(`scripts/perf/sample-app.ps1`, see [docs/TESTING.md](../docs/TESTING.md#measuring-the-running-app)) existed, at
+commit `1940e40e`, on the reference machine above with the release build, the transport stopped and nothing
+sounding. CPU is a percentage of one core, so 829 is about eight cores busy. The linger rows are the same
+scenarios with `--linger` (the idle spins before a render worker parks). "Two cores / four threads" pins the
+process to four logical processors with an affinity mask. The GPU column is the dedicated memory of the app's
+process.
+
+| Scenario | CPU % | Private MB | Working set MB | Threads | GPU dedicated MB |
+|---|---|---|---|---|---|
+| Empty project, no audio | 0.16 | 681 | 179 | 36 | 503 |
+| Empty project, audio on | 1.6-2.3 | 686-697 | 188-191 | 47 | 503 |
+| Empty project, audio on, minimized | 2.2-3.5 | 690-693 | 190 | 47 | 503 |
+| Stress rack (100 devices), no audio | 0.23 | 727 | 219 | 36 | 503 |
+| Stress rack, audio on, automatic workers (8) | 829 | 804 | 298 | 47 | 503 |
+| Stress rack, audio on, 2 workers | 216-219 | 814-817 | 306-312 | 41 | 503 |
+| Stress rack, audio on, no workers | 19.2-20.7 | 811-818 | 307-309 | 39 | 503 |
+| Stress rack, 2 workers, worker linger 20 000 | 48-50 | 815-817 | 308 | 41 | 503 |
+| Stress rack, automatic workers, worker linger engine default | 124 | 817 | 310 | 47 | 503 |
+| Stress rack, no audio, rack and mixer detached | 0.16 | 801 | 282 | 42 | 757 |
+| Two cores / four threads (affinity): stress rack, 3 workers | 310 | 799 | 309 | 42 | 503 |
+| Two cores / four threads: stress rack, 1 worker | 116 | 784 | 295 | 39 | 503 |
+| Two cores / four threads: stress rack, no workers | 20.4 | 823 | 307 | 39 | 503 |
+| Two cores / four threads: stress rack, 3 workers, linger engine default | 73 | 811 | 307 | 42 | 503 |

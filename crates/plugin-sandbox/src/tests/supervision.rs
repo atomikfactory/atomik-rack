@@ -142,6 +142,11 @@ fn a_child_that_hangs_is_killed_when_its_call_times_out() {
     eventually("the killed child to be reaped", || {
         live.load(Ordering::SeqCst) == 0
     });
-    // The failed start dropped the instance: nothing is reported, and nothing is left.
+    // The failed start dropped the instance: nothing is reported but the stall of the wait that
+    // ran out, and nothing is left.
+    assert!(matches!(
+        manager.try_recv(),
+        Some(PluginMessage::Stall { ref call, .. }) if call == "Instantiate"
+    ));
     assert_eq!(manager.try_recv(), None);
 }

@@ -191,3 +191,23 @@ fn bench_paced_callbacks_per_linger() {
         );
     }
 }
+
+#[test]
+fn the_handle_reads_the_worker_counters_the_engine_keeps() {
+    let c = cfg(0, 2);
+    let (engine, handle) = engine_lingering(2, 1);
+    let stats = handle.worker_stats();
+    assert_eq!((stats.threads, stats.linger), (2, 1));
+    let (mut engine, mut handle) = (engine, handle);
+    handle.submit_plan(real_patch(&c, 4).plan).unwrap();
+    for _ in 0..3 {
+        render_blocks(&mut engine, &[], 2, 512, 128);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let stats = handle.worker_stats();
+    assert_eq!(stats.parks, engine.worker_parks());
+    assert!(stats.parks > 0);
+    assert_eq!(stats.idle_spins, engine.worker_idle_spins());
+    let (_, none) = engine_lingering(0, 0);
+    assert_eq!(none.worker_stats(), atomik_engine::WorkerStats::default());
+}

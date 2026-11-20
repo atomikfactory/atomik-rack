@@ -321,6 +321,42 @@ pub(crate) fn editor_closed_line(device: &str, instance: Option<InstanceId>) -> 
     format!("plugin [{device}] editor closed: instance {instance}")
 }
 
+/// The stages of a plugin creation, for the load line.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct CreatedStages {
+    /// Starting the plugin process (`begin_create`).
+    pub spawn: std::time::Duration,
+    /// The process loading the plugin until the instance was ready (polled once a frame, and a
+    /// plugin waits here for the ones queued before it).
+    pub instantiate: std::time::Duration,
+    /// Restoring the saved state.
+    pub restore: std::time::Duration,
+    /// Activating the plugin.
+    pub activate: std::time::Duration,
+    /// Attaching the instance to the rack and the engine.
+    pub attach: std::time::Duration,
+}
+
+/// `created in 2.31 s (spawn 0.04, instantiate 1.90, restore 0.00, activate 0.31, attach 0.06)`:
+/// how long a plugin took to load and where the time went.
+pub(crate) fn created_text(took: std::time::Duration, s: &CreatedStages) -> String {
+    let secs = std::time::Duration::as_secs_f64;
+    format!(
+        "created in {:.2} s (spawn {:.2}, instantiate {:.2}, restore {:.2}, activate {:.2}, attach {:.2})",
+        secs(&took),
+        secs(&s.spawn),
+        secs(&s.instantiate),
+        secs(&s.restore),
+        secs(&s.activate),
+        secs(&s.attach)
+    )
+}
+
+/// The app log line of a plugin that was created.
+pub(crate) fn created_line(device: &str, took: std::time::Duration, s: &CreatedStages) -> String {
+    format!("plugin [{device}] {}", created_text(took, s))
+}
+
 /// The app log line of something a plugin (or its host process) said at warning level or worse.
 /// A panic of the plugin in its host process reads `plugin [<key>] panicked in the plugin host
 /// during <op>: <message> at <file>:<line>:<col>`, followed by the child's last stderr lines.
@@ -353,6 +389,8 @@ struct Starting {
     ticket: CreateTicket,
     plugin: PluginRef,
     began: std::time::Instant,
+    /// How long `begin_create` took (the process starts).
+    spawn: std::time::Duration,
 }
 
 /// Plugin state of the app core.
@@ -1255,8 +1293,27 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn plugins_poll_events(&mut self) {
-        for event in self.plugins.host.poll() {
+        let events = self.plugins.host.poll();
+        // Before the events: a destroyed instance still has its key until its Destroyed event.
+        self.plugin_stalls();
+        for event in events {
             self.plugin_event(event);
+        }
+    }
+
+    /// Writes the slow plugin calls the manager collected: a warning in the log file, a line in
+    /// the plugin log and the counters (see [`crate::ui_stall`]).
+    fn plugin_stalls(&mut self) {
+        for s in self.plugins.host.manager().take_stalls() {
+            let name = self
+                .plugins
+                .keys
+                .get(&s.instance)
+                .map_or_else(|| "plugin".to_string(), |k| k.0.clone());
+            let line = crate::ui_stall::plugin_stall_line(&s.call, s.ms, &name, s.outcome);
+            crate::ui_stall::count_plugin_stall(s.ms);
+            log::warn!("{line}");
+            self.plugins.log(line);
         }
     }
 
@@ -1485,17 +1542,41 @@ impl<S: EngineSink> AppCore<S> {
         let Some(answer) = self.plugins.host.manager().poll_create(ticket) else {
             return;
         };
-        let Some(Starting { plugin, began, .. }) = self.plugins.starting.remove(&key) else {
+        let Some(Starting {
+            plugin,
+            began,
+            spawn,
+            ..
+        }) = self.plugins.starting.remove(&key)
+        else {
             return;
         };
         self.plugins.pending.pop_front();
         self.finish_batch_step();
         match answer {
             Ok(handle) => {
-                let took = began.elapsed();
+                let polled = began.elapsed();
+                let (restore, activate) = (handle.timing.restore, handle.timing.activate);
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "UI-thread load time for the log, not engine behaviour"
+                )]
+                let attaching = std::time::Instant::now();
                 self.attach_instance(&key, &plugin, handle);
+                let stages = CreatedStages {
+                    spawn,
+                    instantiate: polled
+                        .saturating_sub(spawn)
+                        .saturating_sub(restore)
+                        .saturating_sub(activate),
+                    restore,
+                    activate,
+                    attach: attaching.elapsed(),
+                };
+                let took = began.elapsed();
+                log::info!("{}", created_line(&key.0, took, &stages));
                 self.plugins
-                    .log(format!("[{key}] created in {:.1} s", took.as_secs_f64()));
+                    .log(format!("[{key}] {}", created_text(took, &stages)));
             }
             Err(e) => {
                 let message = e.to_string();
@@ -1542,12 +1623,14 @@ impl<S: EngineSink> AppCore<S> {
             let began = std::time::Instant::now();
             match self.plugins.host.manager().begin_create(&request) {
                 Ok(ticket) => {
+                    let spawn = began.elapsed();
                     self.plugins.starting.insert(
                         key,
                         Starting {
                             ticket,
                             plugin,
                             began,
+                            spawn,
                         },
                     );
                 }
@@ -1613,6 +1696,7 @@ impl<S: EngineSink> AppCore<S> {
             layout,
             descriptor,
             restore_error,
+            ..
         } = handle;
         self.plugins.instances.insert(key.clone(), id);
         self.plugins.presets.remove(key);

@@ -39,6 +39,29 @@ fn params(base: Color, width: u32, height: u32) -> RenderParams {
     }
 }
 
+/// The graphics API an adapter is used through, as the log names it.
+fn backend_name(backend: wgpu::Backend) -> &'static str {
+    match backend {
+        wgpu::Backend::Dx12 => "DX12",
+        wgpu::Backend::Vulkan => "Vulkan",
+        wgpu::Backend::Metal => "Metal",
+        wgpu::Backend::Gl => "OpenGL",
+        wgpu::Backend::BrowserWebGpu => "WebGPU",
+        _ => "other",
+    }
+}
+
+/// The kind of adapter, as the log names it.
+fn device_type_name(kind: wgpu::DeviceType) -> &'static str {
+    match kind {
+        wgpu::DeviceType::DiscreteGpu => "discrete",
+        wgpu::DeviceType::IntegratedGpu => "integrated",
+        wgpu::DeviceType::VirtualGpu => "virtual",
+        wgpu::DeviceType::Cpu => "CPU",
+        wgpu::DeviceType::Other => "other",
+    }
+}
+
 /// The GPU state every window shares: one instance and adapter, one device, and one vello
 /// renderer per device (the renderer's pipelines are built once, not once per window).
 pub struct GpuContext {
@@ -101,8 +124,29 @@ impl GpuContext {
             wgpu::PresentMode::AutoVsync,
         ))
         .map_err(|e| format!("GPU surface: {e}"))?;
+        crate::startup::mark(crate::startup::ADAPTER_CHOSEN);
+        self.note_adapter(surface.dev_id);
         self.renderer_for(surface.dev_id)?;
+        crate::startup::mark(crate::startup::RENDERER_READY);
         Ok(WindowSurface { surface })
+    }
+
+    /// Writes the adapter of device `dev_id` to the log and keeps it for the diagnostics report,
+    /// the first time a device is used. Selection is untouched: this only reads the adapter.
+    fn note_adapter(&self, dev_id: usize) {
+        if crate::startup::adapter().is_some() {
+            return;
+        }
+        if let Some(handle) = self.context.devices.get(dev_id) {
+            let info = handle.adapter().get_info();
+            let driver = format!("{} {}", info.driver, info.driver_info);
+            crate::startup::set_adapter(crate::startup::adapter_line(
+                &info.name,
+                backend_name(info.backend),
+                device_type_name(info.device_type),
+                &driver,
+            ));
+        }
     }
 
     /// Switches `surface` between presenting in step with the monitor and presenting at once.
@@ -293,4 +337,23 @@ pub fn write_png(
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
     writer.write_image_data(pixels).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_adapter_words_name_the_backend_and_the_kind() {
+        assert_eq!(backend_name(wgpu::Backend::Dx12), "DX12");
+        assert_eq!(backend_name(wgpu::Backend::Vulkan), "Vulkan");
+        assert_eq!(backend_name(wgpu::Backend::Metal), "Metal");
+        assert_eq!(
+            device_type_name(wgpu::DeviceType::IntegratedGpu),
+            "integrated"
+        );
+        assert_eq!(device_type_name(wgpu::DeviceType::DiscreteGpu), "discrete");
+        assert_eq!(device_type_name(wgpu::DeviceType::Cpu), "CPU");
+        assert_eq!(device_type_name(wgpu::DeviceType::VirtualGpu), "virtual");
+    }
 }

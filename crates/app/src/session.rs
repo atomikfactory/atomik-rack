@@ -338,6 +338,8 @@ pub struct LiveSession<B: AudioBackend> {
     control_stalled: u64,
     /// Batches the engine ran with a parked retirement (the last polled value).
     stalled_batches: u64,
+    /// The input trim count the debug line was last written for.
+    input_trims_logged: u64,
     /// A tap stop the full control queue refused; retried on the next poll.
     stop_tap_pending: bool,
     /// A message for the user that the next [`Self::take_notice`] hands out.
@@ -398,6 +400,7 @@ impl<B: AudioBackend> LiveSession<B> {
             liveness: None,
             control_stalled: 0,
             stalled_batches: 0,
+            input_trims_logged: 0,
             stop_tap_pending: false,
             notice: None,
             out_ports: BTreeMap::new(),
@@ -515,6 +518,17 @@ impl<B: AudioBackend> LiveSession<B> {
             let t = r.stream.telemetry();
             self.status.stream_errors = t.stream_errors;
             self.status.overload.input_overruns = t.input_overruns;
+            self.status.input_trim = crate::status::InputTrim {
+                trims: t.input_trims,
+                backlog_max_frames: t.input_backlog_max_frames,
+                callback_min: t.callback_frames_min,
+                callback_max: t.callback_frames_max,
+            };
+            self.status.workers = r.handle.worker_stats();
+            if t.input_trims > self.input_trims_logged {
+                self.input_trims_logged = t.input_trims;
+                log::debug!("{}", crate::status::input_trim_line(&self.status));
+            }
             if let Some(live) = &mut self.liveness {
                 let state = live.observe(at, &t, r.stream.info().sample_rate);
                 self.status.stream_state = state;
@@ -1073,6 +1087,7 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
                 .and_then(|g| g.input_device.clone());
         }
         self.settings.device_loss.last_good = Some(good);
+        self.input_trims_logged = 0;
         self.liveness = Some(Liveness::new(clock_now()));
         let info = stream.info();
         let accepted = info.requested_buffer_frames;
@@ -1085,6 +1100,7 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
             device: info.output_device.clone(),
             sample_rate: info.sample_rate,
             buffer_frames: accepted,
+            buffer_requested: accepted,
             running: true,
             input_channels_wanted: wanted,
             input_channels_open: info.input_channels,
@@ -1119,6 +1135,7 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
             sync_route: false,
             clock_in: None,
         });
+        crate::startup::mark(crate::startup::AUDIO_RUNNING);
         self.sync_midi();
         self.refresh_sync();
     }

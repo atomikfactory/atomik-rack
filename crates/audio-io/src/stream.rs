@@ -600,8 +600,9 @@ impl OutputCallback {
             .on_output_timing(timestamp.callback, timestamp.playback, self.sample_rate);
         if let Some(reader) = payload.input.as_mut() {
             let in_ch = usize::from(self.adapter.inputs());
+            let backlog = reader.available();
             let discarded = reader.trim(in_ch * frames * (1 + INPUT_SLACK_BUFFERS));
-            self.input_loss.on_trim(discarded);
+            self.input_loss.on_trim(discarded, backlog);
         }
         let mut render = Render {
             engine: &mut payload.engine,
@@ -641,6 +642,10 @@ impl OutputCallback {
             let in_ch = u64::from(self.adapter.inputs());
             self.telemetry
                 .set_input_lost(self.input_loss.frames(reader.overruns(), in_ch));
+            self.telemetry.set_input_trims(
+                self.input_loss.trims,
+                self.input_loss.backlog_max_frames(in_ch),
+            );
         }
         let elapsed = telemetry::now().saturating_duration_since(start);
         // Max over this callback's render calls (one for buffers up to the chunk size, where it
@@ -676,17 +681,30 @@ impl OutputCallback {
 struct InputLoss {
     /// Samples discarded by trimming, after the first trim.
     trimmed: u64,
+    /// Trims that discarded something, after the first (the ones counted in `trimmed`).
+    trims: u64,
+    /// The most samples the ring held just before one of those trims.
+    backlog_max: usize,
     /// The first trim only drops what the input stream captured before the output stream
     /// started: it is a start-up artefact, not drift, and is not counted.
     seen_first: bool,
 }
 
 impl InputLoss {
-    fn on_trim(&mut self, discarded: usize) {
-        if self.seen_first {
+    /// One trim discarded `discarded` samples of the `backlog` the ring held before it.
+    fn on_trim(&mut self, discarded: usize, backlog: usize) {
+        if self.seen_first && discarded > 0 {
             self.trimmed = self.trimmed.saturating_add(discarded as u64);
+            self.trims = self.trims.saturating_add(1);
+            self.backlog_max = self.backlog_max.max(backlog);
         }
         self.seen_first = true;
+    }
+
+    /// The largest backlog before a counted trim, in frames of `channels` samples.
+    fn backlog_max_frames(&self, channels: u64) -> u32 {
+        let frames = self.backlog_max as u64 / channels.max(1);
+        u32::try_from(frames).unwrap_or(u32::MAX)
     }
 
     /// Total lost frames given the ring's dropped samples and the input channel count.
@@ -830,8 +848,10 @@ mod tests {
         let block = [0.25f32; 6];
         // Start-up: whatever was captured before the first render is discarded, not counted.
         writer.write(&block);
-        loss.on_trim(reader.trim(2));
+        let backlog = reader.available();
+        loss.on_trim(reader.trim(2), backlog);
         assert_eq!(loss.frames(reader.overruns(), 2), 0);
+        assert_eq!(loss.trims, 0, "the start-up trim is not counted");
         // Two channels: the writer now outpaces the reader and the ring overflows.
         for _ in 0..3 {
             writer.write(&block);
@@ -840,8 +860,12 @@ mod tests {
         let dropped = reader.overruns();
         assert_eq!(loss.frames(reader.overruns(), 2), dropped / 2);
         // Later trims count too.
+        let backlog = reader.available();
         let discarded = reader.trim(2);
-        loss.on_trim(discarded);
+        loss.on_trim(discarded, backlog);
+        assert_eq!(loss.trims, 1);
+        assert_eq!(loss.backlog_max_frames(2), (backlog / 2) as u32);
+        assert!(backlog > 2, "it held more than the threshold");
         assert_eq!(
             loss.frames(reader.overruns(), 2),
             (dropped + discarded as u64) / 2

@@ -4,7 +4,10 @@
 //! row. The instances come from the `NullBackend`, so no process is started.
 
 use super::*;
-use crate::app_core::plugins::{EDITOR_WAITING, crash_log_line, failed_log_line, plugin_said_line};
+use crate::app_core::plugins::{
+    CreatedStages, EDITOR_WAITING, crash_log_line, created_line, created_text, failed_log_line,
+    plugin_said_line,
+};
 use crate::offline_sink::OfflineSink;
 use crate::plugin_test_support::*;
 use atomik_model::empty_doc;
@@ -1368,5 +1371,50 @@ fn removing_the_device_removes_the_frame() {
         vec![DockRequest::Close {
             device: dev.clone()
         }]
+    );
+}
+
+#[test]
+fn a_stall_record_of_a_plugin_call_becomes_a_line_of_the_plugin_log() {
+    let (mut core, _stats, dev) = lost_core();
+    let before = crate::ui_stall::snapshot().plugin_stalls;
+    post(
+        &mut core,
+        &dev,
+        PluginMessage::Stall {
+            call: "CaptureState".to_string(),
+            ms: 10_012,
+            outcome: atomik_plugin_host::StallOutcome::TimedOut,
+        },
+    );
+    core.frame();
+    let want = "ui stall 10012 ms: CaptureState [echo] (timed out)";
+    assert!(
+        core.plugin_log().iter().any(|l| l == want),
+        "{:?}",
+        core.plugin_log()
+    );
+    assert!(crate::ui_stall::snapshot().plugin_stalls > before);
+    assert!(crate::ui_stall::snapshot().plugin_longest_ms >= 10_012);
+}
+
+#[test]
+fn the_created_line_names_the_stages_of_a_load() {
+    use std::time::Duration;
+    let ms = Duration::from_millis;
+    let stages = CreatedStages {
+        spawn: ms(40),
+        instantiate: ms(1_900),
+        restore: ms(0),
+        activate: ms(310),
+        attach: ms(60),
+    };
+    assert_eq!(
+        created_text(ms(2_310), &stages),
+        "created in 2.31 s (spawn 0.04, instantiate 1.90, restore 0.00, activate 0.31, attach 0.06)"
+    );
+    assert_eq!(
+        created_line("echo", ms(2_310), &stages),
+        "plugin [echo] created in 2.31 s (spawn 0.04, instantiate 1.90, restore 0.00, activate 0.31, attach 0.06)"
     );
 }

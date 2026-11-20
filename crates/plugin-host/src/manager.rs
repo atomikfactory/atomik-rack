@@ -19,7 +19,7 @@ use crate::device::PluginDevice;
 use crate::layout::truncate_params;
 use crate::slot::{
     DeviceEnd, InstanceId, LogLevel, ManagerEnd, ParamPhase, PluginMessage, PluginSlot,
-    ReaperQueue, plugin_channel,
+    ReaperQueue, StallOutcome, plugin_channel,
 };
 use crate::threads::assert_main_thread;
 use atomik_core::BATCH;
@@ -28,6 +28,7 @@ use atomik_device_sdk::{
     RunMode, descriptor_for,
 };
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 /// The error text of a call on an instance whose process is gone.
 pub const LOST: &str = "the plugin process stopped";
@@ -66,6 +67,25 @@ pub struct PluginHandle {
     /// Why the saved state could not be restored, if it could not (the blob must be kept and
     /// the device shown as FAILED).
     pub restore_error: Option<String>,
+    /// How long the stages the manager ran itself took (zero for a reattached instance).
+    pub timing: CreateTiming,
+}
+
+/// The time the manager spent on the stages of a creation that it runs on the main thread.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CreateTiming {
+    /// Restoring the saved state into the new instance.
+    pub restore: Duration,
+    /// Activating it (the descriptor, the activation and the latency).
+    pub activate: Duration,
+}
+
+/// The current time, for the load timing of [`CreateTiming`] only: it is logged and never reaches
+/// the audio path or the saved state.
+// Justification: wall-clock time is the point of a load timing; main thread only (HI-2).
+#[allow(clippy::disallowed_methods)]
+fn clock() -> std::time::Instant {
+    std::time::Instant::now()
 }
 
 /// What the manager can fail with.
@@ -240,6 +260,31 @@ struct Managed {
     deferred_restart: bool,
 }
 
+/// How many stall records the manager keeps for a caller that does not drain them.
+const MAX_STALLS: usize = 64;
+
+/// A blocking call on a plugin's process that held the main thread up for at least
+/// [`crate::STALL_THRESHOLD`]. Kept apart from [`ManagerEvent`]: it depends on wall time, and the
+/// event stream must not (an offline bounce polls it after every batch).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StallRecord {
+    /// The instance.
+    pub instance: InstanceId,
+    /// The name of the call.
+    pub call: String,
+    /// How long the main thread waited, in milliseconds.
+    pub ms: u64,
+    /// How the wait ended.
+    pub outcome: StallOutcome,
+}
+
+fn push_stall(list: &mut Vec<StallRecord>, record: StallRecord) {
+    if list.len() >= MAX_STALLS {
+        list.remove(0);
+    }
+    list.push(record);
+}
+
 /// A creation started by [`PluginManager::begin_create`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CreateTicket(u64);
@@ -264,6 +309,8 @@ pub struct PluginManager {
     instances: BTreeMap<InstanceId, Managed>,
     reaper: ReaperQueue,
     queued: Vec<ManagerEvent>,
+    /// Slow-call records waiting for [`PluginManager::take_stalls`] (the newest [`MAX_STALLS`]).
+    stalls: Vec<StallRecord>,
     next_id: u64,
     creating: BTreeMap<u64, Creating>,
     next_ticket: u64,
@@ -286,6 +333,7 @@ impl PluginManager {
             instances: BTreeMap::new(),
             reaper: ReaperQueue::default(),
             queued: Vec::new(),
+            stalls: Vec::new(),
             next_id: 1,
             creating: BTreeMap::new(),
             next_ticket: 1,
@@ -450,6 +498,7 @@ impl PluginManager {
         end: ManagerEnd,
     ) -> Result<PluginHandle, ManagerError> {
         let id = end.slot().id();
+        let began = clock();
         // State first (so a latency that depends on it is right at activation), rack params
         // after (the device re-sends every param the rack sets).
         let restore_error = request
@@ -457,6 +506,7 @@ impl PluginManager {
             .as_ref()
             .and_then(|s| instance.restore_state(s).err())
             .map(|e| e.to_string());
+        let restored = clock();
         let (descriptor, layout) = descriptor_of(&request.plugin, instance.layout())?;
         let cfg = ActivateConfig {
             sample_rate: request.sample_rate,
@@ -465,6 +515,10 @@ impl PluginManager {
         };
         let processor = instance.activate(&cfg)?;
         let latency = instance.latency_frames();
+        let timing = CreateTiming {
+            restore: restored.saturating_duration_since(began),
+            activate: clock().saturating_duration_since(restored),
+        };
         let slot = end.slot().clone();
         slot.set_latency(latency, cfg.sample_rate);
         slot.set_pinned(request.pinned);
@@ -493,6 +547,7 @@ impl PluginManager {
             layout,
             descriptor,
             restore_error,
+            timing,
         })
     }
 
@@ -855,6 +910,7 @@ impl PluginManager {
             layout,
             descriptor,
             restore_error: None,
+            timing: CreateTiming::default(),
         })
     }
 
@@ -873,6 +929,14 @@ impl PluginManager {
     }
 
     // ----- the per-frame work -----------------------------------------------------------------------
+
+    /// The stall records collected by [`PluginManager::poll`] since the last call, oldest first
+    /// (at most the newest 64). Empty, without allocating, when there are none. Only a live app
+    /// reads them; offline users never do.
+    pub fn take_stalls(&mut self) -> Vec<StallRecord> {
+        assert_main_thread("PluginManager::take_stalls");
+        std::mem::take(&mut self.stalls)
+    }
 
     /// Runs the main-thread work of every instance: reaps dropped devices, runs the plugins'
     /// callbacks and timers, translates their messages into events and advances restarts.
@@ -923,6 +987,21 @@ impl PluginManager {
             m.parked = true;
             m.phase = Phase::Inactive;
             return;
+        }
+        // What the instance said while it deactivated (a stall of that very call) is not
+        // dropped with it.
+        while let Some(msg) = m.end.try_recv() {
+            if let PluginMessage::Stall { call, ms, outcome } = msg {
+                push_stall(
+                    &mut self.stalls,
+                    StallRecord {
+                        instance: id,
+                        call,
+                        ms,
+                        outcome,
+                    },
+                );
+            }
         }
         doomed.extend(self.instances.remove(&id));
         events.push(ManagerEvent::Destroyed(id));
@@ -980,6 +1059,15 @@ impl PluginManager {
                         "the plugin did not take {batches} audio block(s) (it answered a non-OK result, as plugins do while they load or sign in); the device plays on, silent for those blocks"
                     ),
                 }),
+                PluginMessage::Stall { call, ms, outcome } => push_stall(
+                    &mut self.stalls,
+                    StallRecord {
+                        instance: id,
+                        call,
+                        ms,
+                        outcome,
+                    },
+                ),
                 PluginMessage::Failed { reason } => events.push(ManagerEvent::Failed {
                     instance: id,
                     reason: reason.to_string(),

@@ -4,6 +4,7 @@
 //! `app.rs` converts winit's types at the edge and calls these; everything here is plain data
 //! and unit-tested. See [`crate::windows`] for the model they feed.
 
+use crate::ui_activity::PaintReason;
 use crate::windows::{
     DesktopSpace, DocId, MonitorInfo, WindowGeom, WindowHit, WindowKind, WindowRect,
 };
@@ -12,6 +13,24 @@ use atomik_ui::kurbo::Point;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use winit::dpi::{LogicalPosition, PhysicalPosition, Position};
+
+/// What a window event says about the paint that follows it, for the paint counters (see
+/// [`crate::ui_activity`]); `None` for an event that explains no paint.
+pub(super) fn paint_cause_of(event: &winit::event::WindowEvent) -> Option<PaintReason> {
+    use winit::event::WindowEvent as E;
+    match event {
+        E::Resized(_) | E::ScaleFactorChanged { .. } => Some(PaintReason::Resize),
+        E::Focused(_) | E::Occluded(_) => Some(PaintReason::Focus),
+        E::CursorMoved { .. }
+        | E::CursorLeft { .. }
+        | E::MouseInput { .. }
+        | E::MouseWheel { .. }
+        | E::KeyboardInput { .. }
+        | E::ModifiersChanged(_)
+        | E::Ime(_) => Some(PaintReason::Input),
+        _ => None,
+    }
+}
 
 /// The words of the question about unsaved changes: the same on every platform.
 pub(super) const SAVE_BUTTONS: (&str, &str, &str) = ("Save", "Don't Save", "Cancel");
@@ -258,6 +277,25 @@ pub(super) fn wake_after(w: Wakers, frame: Duration) -> Option<Duration> {
 mod tests {
     use super::*;
     use crate::windows::{ZOrder, to_desktop, window_under};
+
+    #[test]
+    fn window_events_name_the_cause_of_the_paint_after_them() {
+        use winit::dpi::PhysicalSize;
+        use winit::event::{Modifiers, WindowEvent as E};
+        let cause = |e: E| paint_cause_of(&e);
+        assert_eq!(
+            cause(E::Resized(PhysicalSize::new(800, 600))),
+            Some(PaintReason::Resize)
+        );
+        assert_eq!(cause(E::Focused(true)), Some(PaintReason::Focus));
+        assert_eq!(cause(E::Occluded(false)), Some(PaintReason::Focus));
+        assert_eq!(
+            cause(E::ModifiersChanged(Modifiers::default())),
+            Some(PaintReason::Input)
+        );
+        assert_eq!(cause(E::RedrawRequested), None);
+        assert_eq!(cause(E::Destroyed), None);
+    }
 
     #[test]
     fn the_save_box_answers_in_its_own_words_on_every_platform() {
