@@ -7,7 +7,7 @@
 //! atomics. The render is [`atomik_render::export::export_audio_file`], the project bounce, on
 //! this one thread (no engine workers: the live engine has the cores), so the session keeps
 //! playing and editing while the file is made. The plugins are built as for a freeze
-//! ([`crate::freeze_worker::plugin_host`]): a project with plugins needs the plugin sandbox.
+//! ([`crate::freeze_worker::plugin_host`]): a project with plugins renders through the sandbox when it is on, else with instances of its own in the app process.
 
 use crate::audio_import::Msg;
 use crate::freeze_worker::{PluginEnv, plugin_host};
@@ -447,7 +447,7 @@ pub(crate) fn run(work: Work, control: RenderControl<'_>) -> Result<Option<Done>
         also,
     } = work;
     let mut registry = atomik_render::default_registry();
-    let mut host = plugin_host(&doc, plugins, &mut registry, "an export")?;
+    let mut host = plugin_host(&doc, plugins, &mut registry)?;
     atomik_model::register_stand_ins(&doc, &mut registry).map_err(|e| e.to_string())?;
     let options = ProjectOptions {
         host_block: std::num::NonZeroUsize::new(512).unwrap_or(std::num::NonZeroUsize::MIN),

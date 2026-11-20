@@ -16,11 +16,15 @@ use serde_json::Value;
 
 const FRAMES: u64 = 480_000;
 
+/// The frames of the render the tests freeze: the two bars of its clip at 120 BPM and 48 kHz
+/// (a render that fits its length, so it does not count as made at another tempo).
+const RENDER_FRAMES: u64 = 192_000;
+
 /// A synth with its console channel and master, a track with a note clip, and `fx` insert
 /// effects (a reverb, then a delay), with assets 1 and 2 in the pool.
 fn rack(reg: &Registry, fx: usize) -> Document {
     let mut d = Document::new(atomik_model::empty_doc());
-    d.apply(register(1, FRAMES), reg).unwrap();
+    d.apply(register(1, RENDER_FRAMES), reg).unwrap();
     d.apply(register(2, 96_000), reg).unwrap();
     d.apply(add(0, SYNTH, Some("synth")), reg).unwrap();
     d.apply(add_track("synth"), reg).unwrap();
@@ -344,10 +348,6 @@ fn a_frozen_track_and_what_it_freezes_cannot_be_edited() {
             muted: true,
         }),
         Command::RemoveDevice { key: fx[0].clone() },
-        Command::SetTempo(100.0),
-        sc(SongCommand::SetTempoMap(vec![
-            atomik_model::TempoEvent::step(0, 100.0),
-        ])),
         Command::Console(ConsoleCommand::SetInsert {
             channel: channel_of(&d),
             slot: 0,
@@ -929,9 +929,9 @@ fn a_bad_frozen_object_is_refused_with_its_path() {
 fn the_frozen_playback_of_a_track_is_one_audio_lane_with_the_render() {
     let reg = audio_registry();
     let mut d = rack(&reg, 0);
-    assert!(d.doc().song.tracks[0].frozen_playback().is_none());
+    assert!(d.doc().song.tracks[0].frozen_playback(d.doc()).is_none());
     freeze(&mut d, &reg, vec![]);
-    let t = d.doc().song.tracks[0].frozen_playback().unwrap();
+    let t = d.doc().song.tracks[0].frozen_playback(d.doc()).unwrap();
     assert!(t.is_audio() && t.frozen.is_none());
     assert_eq!(t.device, key("synth"));
     let regions = atomik_model::song::flatten_audio(&t, &d.doc().song, d.doc().sample_rate);
@@ -949,7 +949,7 @@ fn the_frozen_playback_of_a_track_is_one_audio_lane_with_the_render() {
         &reg,
     )
     .unwrap();
-    let t = d.doc().song.tracks[0].frozen_playback().unwrap();
+    let t = d.doc().song.tracks[0].frozen_playback(d.doc()).unwrap();
     assert!(atomik_model::song::flatten_audio(&t, &d.doc().song, d.doc().sample_rate).is_empty());
 }
 
@@ -1262,4 +1262,201 @@ fn a_strip_bake_needs_the_whole_insert_chain_and_a_strip_that_can_go_silent() {
     .unwrap();
     let why = atomik_model::strip_blocker(d.doc(), &reg, &key("synth")).unwrap();
     assert!(why.contains("parallel"), "{why}");
+}
+
+// ---- the tempo while frozen ---------------------------------------------------------------
+
+fn playback_regions(d: &Document) -> usize {
+    let t = d.doc().song.tracks[0].frozen_playback(d.doc()).unwrap();
+    atomik_model::song::flatten_audio(&t, &d.doc().song, d.doc().sample_rate).len()
+}
+
+#[test]
+fn the_tempo_and_the_meter_can_change_while_a_track_is_frozen() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 1);
+    let fx = chain_keys(&d, &reg);
+    freeze(&mut d, &reg, fx);
+    assert!(
+        !frozen_of(&d).unwrap().is_stale(d.doc()),
+        "made at this tempo"
+    );
+    assert_eq!(playback_regions(&d), 1);
+    for command in [
+        Command::SetTempo(100.0),
+        sc(SongCommand::SetTempoMap(vec![
+            atomik_model::TempoEvent::step(0, 90.0),
+        ])),
+        sc(SongCommand::SetMeter {
+            beats_per_bar: 3,
+            beat_unit: 4,
+        }),
+    ] {
+        d.apply(command.clone(), &reg)
+            .unwrap_or_else(|e| panic!("{command:?}: {e}"));
+    }
+    assert!(frozen_of(&d).is_some(), "the track is still frozen");
+}
+
+#[test]
+fn a_render_made_at_another_tempo_is_silent_and_undo_brings_it_back() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 0);
+    freeze(&mut d, &reg, vec![]);
+    let render = frozen_of(&d).unwrap().clone();
+    d.apply(Command::SetTempo(100.0), &reg).unwrap();
+    assert!(frozen_of(&d).unwrap().is_stale(d.doc()));
+    assert_eq!(playback_regions(&d), 0, "nothing plays out of step");
+    // The old render is still the track's, in the pool and in the document.
+    assert_eq!(frozen_of(&d), Some(&render));
+    // The swap of a new render is one step; undoing the tempo with it on top brings both back
+    // only when the app folded them (see the app tests), here the two steps are separate.
+    d.undo();
+    assert!(!frozen_of(&d).unwrap().is_stale(d.doc()));
+    assert_eq!(
+        playback_regions(&d),
+        1,
+        "the old render plays at the old tempo"
+    );
+    // A tempo change after the end of the render does not touch it.
+    d.apply(
+        sc(SongCommand::SetTempoMap(vec![
+            atomik_model::TempoEvent::step(0, 120.0),
+            atomik_model::TempoEvent::step(8 * BAR, 90.0),
+        ])),
+        &reg,
+    )
+    .unwrap();
+    assert!(!frozen_of(&d).unwrap().is_stale(d.doc()));
+    assert_eq!(playback_regions(&d), 1);
+}
+
+#[test]
+fn a_swapped_render_made_at_the_new_tempo_plays_and_undo_returns_the_old_one() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 0);
+    freeze(&mut d, &reg, vec![]);
+    let old = frozen_of(&d).unwrap().clone();
+    d.apply(Command::SetTempo(100.0), &reg).unwrap();
+    // The render of two bars at 100 BPM is 230_400 frames.
+    d.apply(register(4, 230_400), &reg).unwrap();
+    let length = atomik_model::ticks_for_frames(&d.doc().song, 0, 230_400, 48_000);
+    d.apply_joined(
+        sc(SongCommand::RefreezeTrack {
+            device: key("synth"),
+            frozen: Frozen {
+                start: 0,
+                length,
+                audio: audio(4),
+                effects: vec![],
+                strip: false,
+            },
+        }),
+        &reg,
+    )
+    .unwrap();
+    assert!(!frozen_of(&d).unwrap().is_stale(d.doc()));
+    assert_eq!(playback_regions(&d), 1);
+    // Folded into the tempo step, one undo returns the tempo and the render that fits it.
+    d.undo();
+    assert_eq!(d.doc().song.tempo[0].bpm, 120.0);
+    assert_eq!(frozen_of(&d), Some(&old));
+    assert!(!frozen_of(&d).unwrap().is_stale(d.doc()));
+    // The old render is in the pool while the history that redoes the swap holds the new one.
+    assert!(d.doc().assets.contains_key(&hash(1)) && d.doc().assets.contains_key(&hash(4)));
+}
+
+#[test]
+fn the_player_of_a_frozen_track_reports_the_delay_of_its_render() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 0);
+    d.apply(register(5, RENDER_FRAMES + 240), &reg).unwrap();
+    let mut latent = audio(5);
+    latent.source_offset = 240;
+    d.apply(
+        sc(SongCommand::FreezeTrack {
+            device: key("synth"),
+            frozen: Frozen {
+                start: 0,
+                length: atomik_model::ticks_for_frames(
+                    &d.doc().song,
+                    0,
+                    RENDER_FRAMES + 240,
+                    48_000,
+                ),
+                audio: latent,
+                effects: vec![],
+                strip: false,
+            },
+        }),
+        &reg,
+    )
+    .unwrap();
+    let f = frozen_of(&d).unwrap();
+    assert_eq!(f.latency(), 240);
+    // The player plays the file from its first frame (the delay is part of it) ...
+    let t = d.doc().song.tracks[0].frozen_playback(d.doc()).unwrap();
+    let regions = atomik_model::song::flatten_audio(&t, &d.doc().song, d.doc().sample_rate);
+    assert_eq!(regions[0].source_offset, 0);
+    // ... and tells the engine, which compensates the other tracks for it.
+    let x = d.doc().expand(&reg);
+    let player = x.devices.last().unwrap();
+    assert_eq!(player.params.get("internal.latency"), Some(&240.0));
+    // A render with no delay reports none.
+    let mut plain = rack(&reg, 0);
+    freeze(&mut plain, &reg, vec![]);
+    let x = plain.doc().expand(&reg);
+    assert_eq!(
+        x.devices.last().unwrap().params.get("internal.latency"),
+        Some(&0.0)
+    );
+}
+
+#[test]
+fn unfreeze_and_keep_audio_keeps_the_render_aligned_to_the_track() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 0);
+    d.apply(register(5, RENDER_FRAMES + 240), &reg).unwrap();
+    let mut latent = audio(5);
+    latent.source_offset = 240;
+    d.apply(
+        sc(SongCommand::FreezeTrack {
+            device: key("synth"),
+            frozen: Frozen {
+                start: 0,
+                length: atomik_model::ticks_for_frames(
+                    &d.doc().song,
+                    0,
+                    RENDER_FRAMES + 240,
+                    48_000,
+                ),
+                audio: latent,
+                effects: vec![],
+                strip: false,
+            },
+        }),
+        &reg,
+    )
+    .unwrap();
+    unfreeze(&mut d, &reg, true).unwrap();
+    let clip = d
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .flat_map(|t| &t.lanes)
+        .flat_map(|l| &l.clips)
+        .find_map(|c| match &c.content {
+            atomik_model::ClipContent::Audio(a) if a.asset == hash(5) => {
+                Some((c.length, a.source_offset))
+            }
+            _ => None,
+        })
+        .expect("the render is a clip");
+    assert_eq!(clip.1, 240, "the clip starts at the audio proper");
+    assert_eq!(
+        clip.0,
+        2 * BAR,
+        "and is as long as it, not the delay longer"
+    );
 }

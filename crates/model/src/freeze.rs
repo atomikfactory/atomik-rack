@@ -41,7 +41,15 @@
 //! clip as the playback of an ordinary audio track.
 //!
 //! Commands that would change a frozen track or the devices it freezes are refused
-//! ([`guard`]), with a message that says to unfreeze first.
+//! ([`guard`]), with a message that says to unfreeze first. The tempo and the meter are not
+//! among them: a render made at another tempo plays nothing ([`Frozen::is_stale`]) until the app
+//! has rendered it again.
+//!
+//! # Latency
+//!
+//! The render of a chain with latency keeps the delay in front of the audio, and the player of
+//! the frozen track reports it (`internal.latency` of `atomik.audio-track`), so the engine's
+//! delay compensation treats the frozen track as it did the live chain ([`Frozen::latency`]).
 
 use crate::console::{CHANNEL_TYPE, INSERT_SLOTS};
 use crate::expand::{ExpandedDevice, ExpandedRack};
@@ -75,10 +83,13 @@ pub fn freeze_key(device: &DeviceKey) -> DeviceKey {
 pub struct Frozen {
     /// Song tick where the render starts.
     pub start: i64,
-    /// Length of the render in ticks (the clip it plays as).
+    /// Length of the render in ticks (the clip it plays as, from the first frame of the file).
     pub length: i64,
-    /// The rendered audio: an asset of the pool, from `source_offset`, with its gain and fades
-    /// (a plain clip: no reverse, no warp).
+    /// The rendered audio: an asset of the pool, with its gain and fades (a plain clip: no
+    /// reverse, no warp). Its `source_offset` is the **latency** of the frozen part of the chain
+    /// in frames (see [`Frozen::latency`]): the file starts with that many frames of the chain's
+    /// delay, and the audio proper begins at the offset. `0` for a chain with no latency, and for
+    /// a render made before the latency was kept.
     pub audio: AudioClipContent,
     /// The effects of the channel's insert chain that the render includes, in chain order (the
     /// first `effects.len()` of [`insert_chain`]). Empty: the instrument alone.
@@ -91,7 +102,19 @@ pub struct Frozen {
 }
 
 impl Frozen {
-    /// The render as the audio clip it plays as (id 0: it is not a clip of any lane).
+    /// The delay in frames of the frozen part of the chain: how late the live chain's output
+    /// came after its input, and so how late the render plays. The render file is the signal at
+    /// the chain's output from the start of the span, so it holds that delay in front of the
+    /// audio proper (`audio.source_offset` says where that begins) and the player plays the file
+    /// from its first frame: the track sounds where the live chain sounded. The player also
+    /// reports the delay to the engine, whose delay compensation then aligns the other tracks to
+    /// it as it did to the live chain, so freezing a track changes nothing in the mix's timing.
+    pub fn latency(&self) -> u64 {
+        self.audio.source_offset
+    }
+
+    /// The render as the audio clip it plays as (id 0: it is not a clip of any lane): the whole
+    /// file from its first frame, so the chain's latency is part of what plays.
     pub fn clip(&self) -> Clip {
         Clip {
             id: ClipId(0),
@@ -109,17 +132,59 @@ impl Frozen {
             controllers: Vec::new(),
             name: None,
             color: None,
-            content: ClipContent::Audio(self.audio.clone()),
+            content: ClipContent::Audio(AudioClipContent {
+                source_offset: 0,
+                ..self.audio.clone()
+            }),
         }
+    }
+
+    /// Whether the song's tempo has changed since this render was made, so that it would play
+    /// out of step with the rest of the song. A render's `length` is the whole ticks that cover
+    /// its frames at the tempo it was made at ([`ticks_for_frames`]); at another tempo the same
+    /// frames cover a different number of ticks. A difference of more than two ticks (about 0.06
+    /// ms at 120 BPM) is a change. (A tempo edit that leaves the span as long as it was, by
+    /// speeding up one half and slowing down the other by the same amount, is not seen.)
+    /// A render whose file is not in the pool is not stale: there is nothing to judge.
+    pub fn is_stale(&self, doc: &RackDoc) -> bool {
+        const TOLERANCE_TICKS: i64 = 2;
+        let Some(meta) = doc.assets.get(&self.audio.asset) else {
+            return false;
+        };
+        let now = ticks_for_frames(&doc.song, self.start, meta.frames.max(1), doc.sample_rate);
+        (now - self.length).abs() > TOLERANCE_TICKS
+    }
+
+    /// The render aligned to the track's input, as a plain clip of the audio proper `(start,
+    /// length, audio)`: the file from `source_offset`, without the chain's delay in front. What
+    /// **Unfreeze and Keep Audio** leaves as a clip, and what the render of a chain without
+    /// latency is as it stands.
+    pub fn aligned(&self, doc: &RackDoc) -> (i64, i64, AudioClipContent) {
+        let latency = self.latency();
+        let length = match doc.assets.get(&self.audio.asset) {
+            Some(meta) if latency > 0 => {
+                let frames = meta.frames.saturating_sub(latency).max(1);
+                ticks_for_frames(&doc.song, self.start, frames, doc.sample_rate).min(self.length)
+            }
+            _ => self.length,
+        };
+        (self.start, length, self.audio.clone())
     }
 }
 
 impl Track {
     /// The track as the engine plays it while frozen: a single audio lane holding the render, on
     /// the same device and with the same mute and solo state, so it flattens like any audio
-    /// track. `None` when the track is not frozen.
-    pub fn frozen_playback(&self) -> Option<Track> {
+    /// track. `None` when the track is not frozen. A render made at another tempo than the
+    /// song's now ([`Frozen::is_stale`]) plays nothing: it would be out of step, and the track
+    /// is silent until it is rendered again (the app does that by itself).
+    pub fn frozen_playback(&self, doc: &RackDoc) -> Option<Track> {
         let frozen = self.frozen.as_ref()?;
+        let clips = if frozen.is_stale(doc) {
+            Vec::new()
+        } else {
+            vec![frozen.clip()]
+        };
         Some(Track {
             device: self.device.clone(),
             muted: self.muted,
@@ -131,7 +196,7 @@ impl Track {
             controllers: Vec::new(),
             groove: None,
             frozen: None,
-            lanes: vec![Lane::audio().with_clips(vec![frozen.clip()])],
+            lanes: vec![Lane::audio().with_clips(clips)],
         })
     }
 }
@@ -352,7 +417,7 @@ pub(crate) fn apply(doc: &RackDoc, x: &mut ExpandedRack) {
         return;
     }
     // (the top-level devices the render replaces, its tap, the player)
-    type Plan = (Vec<DeviceKey>, Option<[SocketRef; 2]>, DeviceKey);
+    type Plan = (Vec<DeviceKey>, Option<[SocketRef; 2]>, DeviceKey, u64);
     let mut plans: Vec<Plan> = Vec::new();
     for (t, f) in &frozen {
         let mut keys = vec![t.device.clone()];
@@ -363,6 +428,7 @@ pub(crate) fn apply(doc: &RackDoc, x: &mut ExpandedRack) {
             keys,
             frozen_tap(x, &t.device, &f.effects, strip.as_ref()),
             freeze_key(&t.device),
+            f.latency(),
         ));
     }
     let omitted = |flat: &DeviceKey| plans.iter().any(|p| p.0.iter().any(|k| within(k, flat)));
@@ -372,7 +438,7 @@ pub(crate) fn apply(doc: &RackDoc, x: &mut ExpandedRack) {
             continue;
         }
         if omitted(&c.from.device) {
-            let found = plans.iter().find_map(|(_, tap, player)| {
+            let found = plans.iter().find_map(|(_, tap, player, _)| {
                 let [l, r] = tap.as_ref()?;
                 if c.from == *l {
                     Some((player, "out_l"))
@@ -397,12 +463,16 @@ pub(crate) fn apply(doc: &RackDoc, x: &mut ExpandedRack) {
     for d in &mut x.devices {
         d.frozen = omitted(&d.key);
     }
-    for (_, _, player) in plans {
+    for (_, _, player, latency) in plans {
         x.devices.push(ExpandedDevice {
             key: player,
             type_id: AUDIO_TRACK_TYPE.to_owned(),
-            // Monitor off: the player has no input and plays the render only.
-            params: BTreeMap::from([("monitor".to_owned(), 0.0)]),
+            // Monitor off: the player has no input and plays the render only. It reports the
+            // delay the render carries, so the engine compensates for it like for the chain.
+            params: BTreeMap::from([
+                ("monitor".to_owned(), 0.0),
+                ("internal.latency".to_owned(), latency as f32),
+            ]),
             zones: Vec::new(),
             steps: None,
             curves: None,
@@ -426,7 +496,8 @@ fn frozen_error(doc: &RackDoc, device: &DeviceKey) -> ModelError {
 
 /// Refuses a command that edits a frozen track (its clips, notes and automation), or a device a
 /// frozen track includes (its parameters, cables, removal), or the frozen part of an insert
-/// chain, or the tempo while any track is frozen (the render is tied to the tempo map).
+/// chain. The tempo and the meter are not locked: a frozen track whose render no longer fits
+/// the tempo is silent and renders again by itself (see [`Frozen::is_stale`]).
 ///
 /// Commands that only look at a frozen track (selection, colour, mute, a one-step move in the
 /// list) pass; moving tracks to a place ([`SongCommand::MoveTracks`]) refuses a frozen one.
@@ -453,11 +524,6 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             .iter()
             .any(|o| within(o, device))
             .then(|| frozen_error(doc, device))
-    };
-    let tempo = || {
-        ModelError::Frozen(
-            "a track is frozen: unfreeze it to change the tempo or the meter".to_owned(),
-        )
     };
     // The track a console channel plays, when it is frozen, with how many effects it froze.
     let frozen_channel = |channel: &DeviceKey| {
@@ -510,7 +576,6 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 doc.cable_into(to)
                     .and_then(|c| device_frozen(&c.from.device))
             }),
-            Command::SetTempo(_) => Some(tempo()),
             Command::Song(s) => match s {
                 SongCommand::AddClip { device, .. }
                 | SongCommand::AddAudioClip { device, .. }
@@ -571,11 +636,6 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | SongCommand::SetClipGroove { clips, .. }
                 | SongCommand::ApplyNoteTool { clips, .. } => clips.iter().find_map(clip_frozen),
                 SongCommand::SetClipMeta { ids, .. } => ids.iter().find_map(clip_frozen),
-                SongCommand::SetTempoMap(_)
-                | SongCommand::DragTempoMap { .. }
-                | SongCommand::SetMeter { .. }
-                | SongCommand::SetMeterMap(_)
-                | SongCommand::DragMeterMap { .. } => Some(tempo()),
                 _ => None,
             },
             Command::Workflow(w) => match w {

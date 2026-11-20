@@ -17,6 +17,39 @@
 //! A render that was asked for is thrown away if the track, its chain, the tempo or the meter
 //! changed while it ran (the audio would not match the track any more); the message says so.
 //!
+//! **Latency.** A chain whose devices report latency delays its output. The render of a frozen
+//! track keeps that delay in front of the audio (the file is the signal at the end of the frozen
+//! part of the chain, from the start of the span) and the frozen track's player reports the same
+//! delay to the engine, so the delay compensation aligns the other tracks to it as it did to the
+//! live chain: freezing or unfreezing a track changes nothing in the timing of the mix, whether
+//! the whole track is frozen or only up to a device with latent effects left live after it. The
+//! other renders (bounce in place, loops, joins) are cut to the audio proper, which is what a
+//! track with no latency of its own plays.
+//!
+//! **The tempo while frozen.** Tempo and meter edits are allowed. A render is tied to the tempo
+//! it was made at ([`atomik_model::Frozen::is_stale`]): once the tempo changes inside it, the
+//! frozen track plays nothing (the safest choice: out-of-step audio is never heard, and playing
+//! the track live would need an unfreeze and an engine restart) and the app queues a
+//! **Re-render Frozen Track** for it by itself, on the same worker and queue, with progress in
+//! the status line and a note that the track is silent until it is ready. A tempo or meter drag
+//! waits for its end; a tempo edit that leaves the span as it was (after the render's end) queues
+//! nothing; a further edit while a render runs stops it and starts another. Undo and redo of a
+//! tempo edit queue what they leave stale, and so does opening a project saved while a render
+//! was pending. The old render stays the track's, and in the pool, until the new one swaps in.
+//! The swap is the usual `RefreezeTrack` step, but while the tempo edit is still the last step
+//! of the history (no other edit since) it is folded into that step, so one Undo brings back
+//! the old tempo and the old render together and one Redo the new tempo and the new render; after
+//! other edits the swap is a step of its own. A meter edit alone does not change what a render
+//! holds as far as the engine can tell, so it queues nothing; Re-render Frozen Track does it by
+//! hand.
+//!
+//! **Plugins** render on the worker with the sandbox of the app when it is on, and otherwise with
+//! instances of their own in the app process ([`crate::freeze_worker`]), so a freeze is never
+//! refused for the plugins' sake.
+//!
+//! **Sends** are not baked: a freeze renders the instrument and the inserts (and the strip only
+//! with **Freeze with Strip**), and the sends and the returns stay live, fed by the frozen audio.
+//!
 //! **Unfreeze Track** brings the original back (one undo step per track); **Unfreeze Track and
 //! Keep Audio** also leaves the render as a clip on a new audio track. The rendered file goes at
 //! the next save unless a clip or the undo history still uses it.
@@ -169,6 +202,14 @@ pub(super) struct FreezeState {
     /// **Freeze with Strip**: the render is taken at the output of the channel.
     strip: bool,
     next_job: u64,
+    /// The jobs the app queued by itself for a tempo change (see the module docs).
+    auto: BTreeSet<u64>,
+    /// The document revision just after the edit the automatic renders follow, while no other
+    /// edit has been made since: a render that finishes then swaps in inside that edit's undo
+    /// step. `None`: the swaps are steps of their own.
+    fold: Option<u64>,
+    /// A tempo drag is going on: the renders wait for its end.
+    dragging: bool,
 }
 
 impl Default for FreezeState {
@@ -179,6 +220,9 @@ impl Default for FreezeState {
             tail: true,
             strip: false,
             next_job: 1,
+            auto: BTreeSet::new(),
+            fold: None,
+            dragging: false,
         }
     }
 }
@@ -190,6 +234,9 @@ impl FreezeState {
             r.cancel.store(true, Ordering::Relaxed);
         }
         self.queue.clear();
+        self.auto.clear();
+        self.fold = None;
+        self.dragging = false;
     }
 }
 
@@ -978,6 +1025,8 @@ impl<S: EngineSink> AppCore<S> {
                     isolation: self.plugins.freeze_isolation.clone(),
                 },
                 post,
+                // A frozen track plays the chain's delay as part of the render.
+                keep_latency: matches!(job.kind, Kind::Freeze | Kind::Refreeze),
             };
             let started = freeze_worker::spawn(
                 self.audio.tx.clone(),
@@ -1008,23 +1057,115 @@ impl<S: EngineSink> AppCore<S> {
             return;
         };
         let Running { job, print, .. } = running;
+        let auto = self.audio.freeze.auto.remove(&job.id);
         match result {
             Err(e) => self.reject(format!("{}: {e}", job.name)),
+            // A render the app stopped itself (the tempo changed again) says nothing.
+            Ok(None) if auto => {}
             Ok(None) => self.reject(format!("Freeze of {} cancelled", job.name)),
-            Ok(Some(done)) => self.finish_render(job, &print, done),
+            Ok(Some(done)) => self.finish_render(job, &print, (done, auto)),
         }
         self.start_next_job();
+        // What changed while this one ran may need another.
+        self.auto_rerender(false);
+    }
+
+    // ------------------------------------------------------------------ tempo changes
+
+    /// Queues a render for every frozen track whose render no longer fits the song's tempo
+    /// ([`atomik_model::Frozen::is_stale`]), the way **Re-render Frozen Track** does, and says
+    /// so. A stale track is silent until its new render is swapped in (see the module docs).
+    /// `fold`: the edit that made them stale was the last step, so the swaps join its undo step.
+    pub(super) fn auto_rerender(&mut self, fold: bool) {
+        let doc = self.doc();
+        if !doc.song.tracks.iter().any(|t| t.frozen.is_some()) {
+            return;
+        }
+        let stale: Vec<DeviceKey> = doc
+            .song
+            .tracks
+            .iter()
+            .filter(|t| t.frozen.as_ref().is_some_and(|f| f.is_stale(doc)))
+            .map(|t| t.device.clone())
+            .collect();
+        let mut jobs = Vec::new();
+        for device in stale {
+            let waits = self
+                .audio
+                .freeze
+                .queue
+                .iter()
+                .any(|j| j.kind == Kind::Refreeze && j.request.device == device);
+            if waits {
+                continue;
+            }
+            if let Some(r) = &self.audio.freeze.running
+                && r.job.kind == Kind::Refreeze
+                && r.job.request.device == device
+            {
+                // Running for a tempo that is gone: stop it, the next round starts a new one.
+                if print_of(self.doc(), &self.registry, &device).as_ref() != Some(&r.print) {
+                    r.cancel.store(true, Ordering::Relaxed);
+                }
+                continue;
+            }
+            if let Ok(job) = self.plan_refreeze(&device) {
+                jobs.push(job);
+            }
+        }
+        if jobs.is_empty() {
+            return;
+        }
+        let names: Vec<&str> = jobs.iter().map(|j| j.name.as_str()).collect();
+        let note = format!(
+            "{} {} rendered again for the new tempo, and silent until it is ready",
+            names.join(", "),
+            if names.len() == 1 {
+                "is being"
+            } else {
+                "are being"
+            },
+        );
+        self.audio.freeze.auto.extend(jobs.iter().map(|j| j.id));
+        self.audio.freeze.fold = fold.then(|| self.document.revision());
+        self.audio.freeze.queue.extend(jobs);
+        self.start_next_job();
+        self.reject(note);
+    }
+
+    /// Called after a command went through: a tempo or meter drag in progress (`dragging`) keeps
+    /// the renders waiting for its end; any other edit queues what it made stale.
+    pub(super) fn after_edit_for_frozen(&mut self, dragging: bool) {
+        if dragging {
+            self.audio.freeze.dragging = true;
+        } else if !self.audio.freeze.dragging {
+            self.auto_rerender(true);
+        }
+    }
+
+    /// The end of a drag-merge group: a tempo drag that was going on queues its renders.
+    pub(super) fn end_frozen_drag(&mut self) {
+        if std::mem::take(&mut self.audio.freeze.dragging) {
+            self.auto_rerender(true);
+        }
     }
 
     /// Registers the render and applies the command that uses it.
-    fn finish_render(&mut self, job: Job, print: &Print, done: Done) {
+    fn finish_render(&mut self, job: Job, print: &Print, (done, auto): (Done, bool)) {
         let device = job.request.device.clone();
         if print_of(self.doc(), &self.registry, &device).as_ref() != Some(print) {
+            // An automatic render that the tempo has outrun is quietly replaced by the next.
+            if auto {
+                return;
+            }
             return self.reject(format!(
                 "{} changed while it was rendered: nothing was changed, render it again",
                 job.name
             ));
         }
+        // The swap of an automatic render joins the tempo edit's undo step while that edit is
+        // still the last one; each swap that does keeps the next one able to.
+        let fold = auto && self.audio.freeze.fold == Some(self.document.revision());
         let Some(info) = done.loaded.info.clone() else {
             return self.reject("the render has no file".to_owned());
         };
@@ -1041,7 +1182,9 @@ impl<S: EngineSink> AppCore<S> {
         if registered.is_err() {
             return;
         }
-        let audio = AudioClipContent::new(info.hash, 0);
+        // The render of a frozen track keeps the chain's delay in front: the audio proper starts
+        // at that offset (`Frozen::latency`); every other render is the audio proper.
+        let audio = AudioClipContent::new(info.hash, done.latency);
         let tail = (done.tail_frames > 0).then(|| {
             format!(
                 " with {:.1} s of tail",
@@ -1084,6 +1227,7 @@ impl<S: EngineSink> AppCore<S> {
                     .and_then(|t| t.frozen.as_ref())
                     .map(|f| f.effects.clone())
                     .unwrap_or_default();
+                self.join_next = fold;
                 let applied = self.apply_command(Command::Song(SongCommand::RefreezeTrack {
                     device,
                     frozen: Frozen {
@@ -1094,6 +1238,11 @@ impl<S: EngineSink> AppCore<S> {
                         strip: job.request.strip,
                     },
                 }));
+                self.join_next = false;
+                if auto {
+                    self.audio.freeze.fold =
+                        (fold && applied.is_ok()).then(|| self.document.revision());
+                }
                 if applied.is_ok() {
                     let later = if self.restart_deferred {
                         ": it plays when playback stops"

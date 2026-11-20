@@ -594,7 +594,7 @@ fn song_input_inner(
     let sources: Vec<(std::borrow::Cow<'_, atomik_model::song::Track>, DeviceKey)> =
         effective_tracks(song)
             .into_iter()
-            .filter_map(|track| match track.frozen_playback() {
+            .filter_map(|track| match track.frozen_playback(doc) {
                 Some(playback) => Some((
                     std::borrow::Cow::Owned(playback),
                     atomik_model::freeze_key(&track.device),

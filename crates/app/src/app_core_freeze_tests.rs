@@ -1214,3 +1214,185 @@ fn a_frozen_track_is_never_suggested() {
     assert_eq!(hints.len(), 1);
     assert_eq!(hints[0].track, key("bass"));
 }
+
+// ------------------------------------------------------------------ in-process plugins
+
+/// A freeze renders plugins on the worker whether the app runs them in a sandbox or in its own
+/// process: the worker loads a second instance of its own from the saved state, so no setting
+/// refuses it.
+#[test]
+fn a_freeze_renders_in_process_plugins_on_the_worker() {
+    use crate::plugin_test_support::{SYNTH, add_plugin, plugin_core};
+    let mut c = plugin_core(RecordingSink::new());
+    assert!(
+        c.plugins.freeze_isolation.is_none(),
+        "the app's plugins are in its process"
+    );
+    add_plugin(&mut c, SYNTH, "lead");
+    c.apply_command(Command::Song(SongCommand::AddTrack {
+        device: key("lead"),
+    }))
+    .unwrap();
+    c.apply_command(Command::Song(SongCommand::AddClip {
+        device: key("lead"),
+        lane: 0,
+        clip: notes(0, 2 * BAR),
+    }))
+    .unwrap();
+    select_track(&mut c, "lead");
+    c.freeze_tracks(FreezeThrough::Track);
+    c.wait_background();
+    assert!(
+        c.last_rejection().is_some_and(|m| m.starts_with("Froze ")),
+        "{:?}",
+        c.last_rejection()
+    );
+    let f = frozen(&c, "lead").expect("frozen without the sandbox");
+    let meta = c.doc().assets.get(&f.audio.asset).expect("registered");
+    assert_eq!(meta.channels, 2);
+    assert!(
+        f.length >= 2 * BAR,
+        "the render covers the clip: {}",
+        f.length
+    );
+}
+
+// ------------------------------------------------------------------ the tempo while frozen
+
+fn stale(c: &AppCore<RecordingSink>, k: &str) -> bool {
+    let doc = c.doc();
+    frozen(c, k).is_some_and(|f| f.is_stale(doc))
+}
+
+fn tempo(c: &AppCore<RecordingSink>) -> f64 {
+    c.doc().song.tempo[0].bpm
+}
+
+/// A tempo edit is allowed while a track is frozen: the render made at the old tempo is silent
+/// (never played out of step), the track renders again by itself, and the new render swaps in.
+#[test]
+fn a_tempo_edit_renders_the_frozen_track_again_and_the_track_is_silent_until_then() {
+    let mut c = core_with(1);
+    freeze(&mut c, "lead", FreezeThrough::Track);
+    let old = frozen(&c, "lead").unwrap();
+    assert!(!stale(&c, "lead"));
+    c.apply_command(Command::SetTempo(100.0)).unwrap();
+    assert!(
+        stale(&c, "lead"),
+        "the old render does not fit the new tempo"
+    );
+    assert!(c.freeze_busy(), "the app queued a render by itself");
+    assert!(
+        c.freeze_progress()
+            .is_some_and(|t| t.starts_with("Re-rendering Lead")),
+        "{:?}",
+        c.freeze_progress()
+    );
+    assert!(
+        c.last_rejection()
+            .is_some_and(|m| m.contains("rendered again for the new tempo") && m.contains("silent")),
+        "{:?}",
+        c.last_rejection()
+    );
+    // Until it is done the old render stays the track's (undo needs it) but plays nothing.
+    assert_eq!(frozen(&c, "lead").as_ref(), Some(&old));
+    c.wait_background();
+    assert!(!c.freeze_busy());
+    let new = frozen(&c, "lead").unwrap();
+    assert_ne!(new.audio.asset, old.audio.asset, "a new render");
+    assert!(!stale(&c, "lead"), "made at the new tempo");
+    assert_eq!(new.effects, old.effects, "through the same effects");
+    // The 100 BPM render is longer than the 120 BPM one in ticks? No: the same ticks, more frames.
+    assert!(
+        c.doc().assets[&new.audio.asset].frames > c.doc().assets[&old.audio.asset].frames,
+        "the same bars take longer at a slower tempo"
+    );
+}
+
+/// The swap joins the tempo edit's undo step: one Undo returns the tempo and the old render
+/// (still in the pool), one Redo the tempo and the new one.
+#[test]
+fn undo_of_a_tempo_edit_brings_the_old_render_back_with_the_old_tempo() {
+    let mut c = core_with(1);
+    freeze(&mut c, "lead", FreezeThrough::Track);
+    let old = frozen(&c, "lead").unwrap();
+    let depth = c.document.undo_depth();
+    c.apply_command(Command::SetTempo(100.0)).unwrap();
+    c.wait_background();
+    let new = frozen(&c, "lead").unwrap();
+    assert_eq!(
+        c.document.undo_depth(),
+        depth + 1,
+        "the swap is part of the tempo step"
+    );
+    assert!(c.undo());
+    assert_eq!(tempo(&c), 120.0);
+    assert_eq!(frozen(&c, "lead").as_ref(), Some(&old));
+    assert!(!stale(&c, "lead"), "the old render fits the old tempo");
+    assert!(!c.freeze_busy(), "nothing to render again");
+    assert!(c.doc().assets.contains_key(&old.audio.asset));
+    assert!(c.redo());
+    assert_eq!(tempo(&c), 100.0);
+    assert_eq!(frozen(&c, "lead").as_ref(), Some(&new));
+    assert!(!stale(&c, "lead"));
+}
+
+/// An edit made while the render runs ends the fold: the swap is a step of its own, and the
+/// tempo step undoes to the old tempo with a silent old render that renders again.
+#[test]
+fn a_swap_after_other_edits_is_a_step_of_its_own() {
+    let mut c = core_with(1);
+    freeze(&mut c, "lead", FreezeThrough::Track);
+    let depth = c.document.undo_depth();
+    c.apply_command(Command::SetTempo(100.0)).unwrap();
+    c.apply_command(Command::Rename {
+        key: key("bass"),
+        name: "Sub".into(),
+    })
+    .unwrap();
+    c.wait_background();
+    assert!(!stale(&c, "lead"));
+    assert_eq!(c.document.undo_depth(), depth + 3, "tempo, rename, swap");
+}
+
+/// A drag of the tempo map waits for its end before it renders; a tempo edit that leaves the
+/// render as it is (after its end) renders nothing.
+#[test]
+fn a_tempo_drag_renders_once_at_its_end_and_an_edit_past_the_render_renders_nothing() {
+    let mut c = core_with(1);
+    freeze(&mut c, "lead", FreezeThrough::Track);
+    for bpm in [110.0, 105.0, 100.0] {
+        c.apply_command(Command::Song(SongCommand::DragTempoMap {
+            map: vec![atomik_model::TempoEvent::step(0, bpm)],
+            merge: 7,
+        }))
+        .unwrap();
+        assert!(!c.freeze_busy(), "not while the drag goes on");
+    }
+    c.handle_action(atomik_ui::UiAction::EndMerge);
+    assert!(c.freeze_busy(), "at its end");
+    c.wait_background();
+    assert!(!stale(&c, "lead"));
+    // A new tempo far after the render does not touch it.
+    c.apply_command(Command::Song(SongCommand::SetTempoMap(vec![
+        atomik_model::TempoEvent::step(0, 100.0),
+        atomik_model::TempoEvent::step(40 * BAR, 140.0),
+    ])))
+    .unwrap();
+    assert!(!c.freeze_busy() && !stale(&c, "lead"));
+}
+
+/// A tempo that changes again while the render runs: the render that ran is dropped without a
+/// word and one at the last tempo takes its place.
+#[test]
+fn a_second_tempo_edit_replaces_the_render_that_is_running() {
+    let mut c = core_with(1);
+    freeze(&mut c, "lead", FreezeThrough::Track);
+    c.apply_command(Command::SetTempo(100.0)).unwrap();
+    assert!(c.freeze_busy());
+    c.apply_command(Command::SetTempo(90.0)).unwrap();
+    c.wait_background();
+    assert!(!c.freeze_busy());
+    assert_eq!(tempo(&c), 90.0);
+    assert!(!stale(&c, "lead"), "the render fits the last tempo");
+}

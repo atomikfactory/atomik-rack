@@ -34,6 +34,27 @@ may break APIs and the patch and project formats.
   picked with a plain click or Ctrl+click) to the one clicked, in the order shown; tracks in a collapsed folder
   are skipped. Ctrl+click (Cmd on macOS) toggles one track in or out, and Shift+Ctrl+click adds the range to the
   selection.
+- **Frozen tracks sound where the live track did.** A freeze keeps the delay of the frozen part of the chain
+  (look-ahead effects, plugins that report latency) in front of the render, and the frozen track reports that
+  delay to the engine, so the delay compensation aligns every other track to it exactly as it did to the live
+  chain: freezing or unfreezing a track with latent effects, for the whole track or up to a device with latent
+  effects left live after it, changes nothing in the timing of the mix (a null test of the two mixes covers
+  both). Before, a frozen track was aligned to the others but the whole mix came out that much earlier. Frozen
+  tracks of earlier projects keep their render as it was, and Unfreeze Track and Keep Audio still leaves a clip
+  aligned to the track.
+- **The tempo and the meter can be edited while a track is frozen.** They were locked. A frozen track whose
+  render no longer fits the tempo is silent (it never plays out of step: playing it live would need an unfreeze
+  and a restart of the engine, so the render is muted instead) and is rendered again by itself on the freeze
+  worker, queued with progress in the status line like Re-render Frozen Track; the new render swaps in. A tempo
+  drag renders once, when it ends; a tempo edit after the end of a render leaves it alone; a second edit while a
+  render runs replaces it. The swap joins the undo step of the tempo edit while that edit is the last step, so
+  Undo brings back the tempo and the old render (kept in the pool while the history uses it); after other edits
+  the swap is a step of its own. Insert Bars and Scale Tempo of the arrangement still refuse a frozen track,
+  and a meter edit alone leaves renders as they are.
+- **Freezing with in-process plugins.** Freeze, Re-render, Bounce in Place, exports and the other offline
+  renders no longer need the plugin sandbox: with it off the worker loads a second instance of each plugin in
+  the app process, on its own thread, from the state saved in the project, as the sandbox path does, so a
+  project with plugins is never refused for that reason.
 
 ### Fixed
 - **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio track now

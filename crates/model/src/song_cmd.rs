@@ -1770,7 +1770,7 @@ pub(crate) fn plan(
                     registry,
                     Some(name),
                     Some(&device),
-                    (f.start, f.length, f.audio.clone()),
+                    f.aligned(doc),
                     &[],
                 )?;
                 return Ok((Edit::Compound(vec![unfreeze, add]), Some(id)));

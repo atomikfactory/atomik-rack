@@ -36,8 +36,14 @@
 //! Without playback (`None`: transport stopped, or no engine playback) only the monitored
 //! input is heard. Unconnected inputs read as zeros.
 //!
-//! The device is `DeviceKind::Instrument` (so it gets a console channel), has a single stage
-//! and no latency. `process` never allocates, locks or blocks and is a pure function
+//! **Latency.** A player has no latency of its own (`internal.latency` is 0). The player of a
+//! frozen track (`<track>/~freeze`) is given the delay of the chain it replaces in that param:
+//! its render plays that many frames late, as the chain's own output did, and the engine's
+//! delay compensation aligns the other tracks to it exactly as it did to the live chain (see
+//! `atomik_model::Frozen`). The param is set when the device is created and never automated.
+//!
+//! The device is `DeviceKind::Instrument` (so it gets a console channel) and has a single stage.
+//! `process` never allocates, locks or blocks and is a pure function
 //! of its inputs and params.
 
 use crate::channel::finite;
@@ -65,6 +71,10 @@ const P_TUNER_LIVE: u32 = 4;
 const P_TUNER_MUTE: u32 = 5;
 const P_TUNER_REF: u32 = 6;
 const P_REC_SOURCE: u32 = 7;
+const P_LATENCY: u32 = 8;
+
+/// The most latency a player can be told (frames): well past what compensation accepts.
+pub const LATENCY_MAX: f32 = 2_000_000.0;
 
 const IN_L: SocketId = SocketId(0);
 const IN_R: SocketId = SocketId(1);
@@ -86,7 +96,7 @@ const fn socket(
     }
 }
 
-static PARAMS: [ParamDescriptor; 8] = [
+static PARAMS: [ParamDescriptor; 9] = [
     ParamDescriptor {
         id: ParamId(P_MONITOR),
         key: "monitor",
@@ -176,6 +186,18 @@ static PARAMS: [ParamDescriptor; 8] = [
         unit: Unit::None,
         discrete: true,
     },
+    // Set by the model for the player of a frozen track: the frames the render plays late.
+    ParamDescriptor {
+        id: ParamId(P_LATENCY),
+        key: "internal.latency",
+        name: "Latency",
+        min: 0.0,
+        max: LATENCY_MAX,
+        default: 0.0,
+        taper: Taper::Linear,
+        unit: Unit::None,
+        discrete: true,
+    },
 ];
 
 static SOCKETS: [SocketDescriptor; 4] = [
@@ -220,6 +242,8 @@ pub struct AudioTrack {
     /// The input after the gain, for the tuner (allocated here: it outlives re-prepares).
     tap: Arc<ScopeTap>,
     fresh: bool,
+    /// The delay in frames the engine compensates for (`internal.latency`).
+    latency: u32,
 }
 
 impl Default for AudioTrack {
@@ -241,6 +265,7 @@ impl AudioTrack {
             mute: Smoother::new(1.0, SMOOTH_MS, 48_000.0),
             tap: Arc::new(ScopeTap::new()),
             fresh: true,
+            latency: 0,
         }
     }
 
@@ -284,9 +309,21 @@ impl Device for AudioTrack {
             P_REC_GAIN => self.input_gain = PARAMS[P_REC_GAIN as usize].db_param_gain(plain),
             P_TUNER_LIVE => self.tuner_live = plain >= 0.5,
             P_TUNER_MUTE => self.tuner_mute = plain >= 0.5,
+            P_LATENCY => {
+                self.latency = plain.round().clamp(0.0, LATENCY_MAX) as u32;
+                return;
+            }
             _ => return,
         }
         self.update_target();
+    }
+
+    fn latency_frames(&self) -> u32 {
+        self.latency
+    }
+
+    fn variable_latency(&self) -> bool {
+        false
     }
 
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
@@ -360,6 +397,7 @@ mod tests {
                 "tuner_mute",
                 "tuner_ref",
                 "rec_source",
+                "internal.latency",
             ],
             &["in_l", "in_r", "out_l", "out_r"],
         );
