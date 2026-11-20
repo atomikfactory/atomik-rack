@@ -675,6 +675,14 @@ pub enum UiAction {
         /// What to arm or disarm.
         request: crate::plugin_learn::PluginLearnRequest,
     },
+    /// A button on the frame of a plugin editor that moves it between its own window and the app
+    /// window, or closes it.
+    PluginDock {
+        /// The plugin device (path key).
+        device: DeviceKey,
+        /// What to do.
+        request: crate::plugin_learn::PluginDockRequest,
+    },
     /// A button of the camera dialog (the consent to download the hand models, the progress, a
     /// failure).
     CameraDialog(crate::camera_panel::CameraDialogChoice),

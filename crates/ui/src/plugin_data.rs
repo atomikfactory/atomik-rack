@@ -245,6 +245,10 @@ pub struct PluginSettingsData {
     pub running_sandboxed: bool,
     /// How sandboxed plugins share child processes (applies to plugins loaded after a change).
     pub process: PluginProcessMode,
+    /// Where sandboxed plugin editors open.
+    pub editor_home: PluginEditorHome,
+    /// Editors can be shown inside the app window here (Windows and X11, not macOS or Wayland).
+    pub docking_available: bool,
 }
 
 impl Default for PluginSettingsData {
@@ -262,6 +266,8 @@ impl Default for PluginSettingsData {
             sandbox: true,
             running_sandboxed: true,
             process: PluginProcessMode::default(),
+            editor_home: PluginEditorHome::default(),
+            docking_available: true,
         }
     }
 }
@@ -293,6 +299,9 @@ pub enum PluginSettingsAction {
     SetSandbox(bool),
     /// Choose how sandboxed plugins share child processes (applies to plugins loaded after).
     SetProcessMode(PluginProcessMode),
+    /// Choose where sandboxed plugin editors open (the choice is kept where the editors cannot
+    /// be docked, and has no effect there).
+    SetEditorHome(PluginEditorHome),
     /// Disable or enable one plugin (type id).
     SetPluginDisabled {
         /// The type id (`clap.<id>`).
@@ -325,6 +334,26 @@ impl PluginProcessMode {
             Self::PerPlugin => Self::PerFile,
             Self::PerFile => Self::Shared,
             Self::Shared => Self::PerPlugin,
+        }
+    }
+}
+
+/// Where sandboxed plugin editors open (mirror of the host's `EditorHome`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PluginEditorHome {
+    /// Every editor has a window of its own.
+    #[default]
+    OwnWindow,
+    /// Editors sit inside the app window.
+    InApp,
+}
+
+impl PluginEditorHome {
+    /// The other choice.
+    pub fn next(self) -> Self {
+        match self {
+            Self::OwnWindow => Self::InApp,
+            Self::InApp => Self::OwnWindow,
         }
     }
 }

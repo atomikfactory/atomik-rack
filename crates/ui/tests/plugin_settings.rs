@@ -12,8 +12,8 @@ use atomik_device_sdk::{PluginFormat, PluginRef};
 use atomik_ui::kurbo::{Point, Rect, Vec2};
 use atomik_ui::plugin_banner::BannerKind;
 use atomik_ui::plugin_data::{
-    FailedFileInfo, PluginBannerAction, PluginEntryStatus, PluginProcessMode, PluginRescan,
-    PluginSettingsAction, PluginSettingsData, ScanProgressInfo, SettingsPluginRow,
+    FailedFileInfo, PluginBannerAction, PluginEditorHome, PluginEntryStatus, PluginProcessMode,
+    PluginRescan, PluginSettingsAction, PluginSettingsData, ScanProgressInfo, SettingsPluginRow,
 };
 use atomik_ui::{
     DisplayList, Modifiers, PluginBannerView, PluginSettingsView, PointerButton, Theme, UiAction,
@@ -22,7 +22,7 @@ use atomik_ui::{
 use support::container::check;
 use support::*;
 
-const BOUNDS: Rect = Rect::new(0.0, 0.0, 760.0, 560.0);
+const BOUNDS: Rect = Rect::new(0.0, 0.0, 760.0, 600.0);
 
 fn plugin_row(id: &str, name: &str, status: PluginEntryStatus) -> SettingsPluginRow {
     SettingsPluginRow {
@@ -74,6 +74,8 @@ fn on_data() -> PluginSettingsData {
         sandbox: true,
         running_sandboxed: true,
         process: PluginProcessMode::PerPlugin,
+        editor_home: PluginEditorHome::OwnWindow,
+        docking_available: true,
     }
 }
 
@@ -784,4 +786,53 @@ fn the_sandbox_row_shows_where_plugins_really_run() {
     data.running_sandboxed = false;
     let t = texts_of(&view(data));
     assert!(has(&t, "Running now: in-process"), "{t:?}");
+}
+
+#[test]
+fn the_editors_row_chooses_where_editors_open() {
+    let mut v = view(on_data());
+    let t = texts_of(&v);
+    assert!(
+        has(&t, "EDITORS: IN THEIR OWN WINDOW"),
+        "the default: {t:?}"
+    );
+    let p = v.editors_button_rect().unwrap().center();
+    assert_eq!(
+        settings(&click_at(&mut v, p)),
+        [PluginSettingsAction::SetEditorHome(PluginEditorHome::InApp)]
+    );
+    let mut data = on_data();
+    data.editor_home = PluginEditorHome::InApp;
+    let mut v = view(data);
+    assert!(has(&texts_of(&v), "EDITORS: INSIDE THE APP WINDOW"));
+    let p = v.editors_button_rect().unwrap().center();
+    assert_eq!(
+        settings(&click_at(&mut v, p)),
+        [PluginSettingsAction::SetEditorHome(
+            PluginEditorHome::OwnWindow
+        )]
+    );
+    // The row is there with plugins off, like the sandbox row.
+    assert!(
+        view(PluginSettingsData::default())
+            .editors_button_rect()
+            .is_some()
+    );
+}
+
+#[test]
+fn where_editors_cannot_dock_the_button_is_disabled_and_says_why() {
+    let mut data = on_data();
+    data.docking_available = false;
+    data.editor_home = PluginEditorHome::InApp;
+    let mut v = view(data);
+    assert!(has(&texts_of(&v), "EDITORS: OWN WINDOW (ONLY HERE)"));
+    let p = v.editors_button_rect().unwrap().center();
+    assert_eq!(settings(&click_at(&mut v, p)), []);
+    let help = v.help_at(p).expect("a tooltip");
+    assert!(
+        help.text.contains("macOS or Wayland") && help.text.contains("own window"),
+        "{}",
+        help.text
+    );
 }
