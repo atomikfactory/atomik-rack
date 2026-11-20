@@ -362,6 +362,13 @@ impl RackView {
             }
             return;
         }
+        // Over the master section's panel an effect becomes the next free FX send.
+        if self.master_panel_browser_drop(row, doc, registry, out) {
+            if self.browser.create.is_some() && !self.browser.keep_open && !out.is_empty() {
+                self.set_browser_visible(false);
+            }
+            return;
+        }
         let none = vec![false; self.devices.len()];
         let dp = self.drop_point(self.view_to_rack(self.pointer), &none);
         let index = self.slot_index(doc, &dp, &[]);

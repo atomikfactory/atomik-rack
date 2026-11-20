@@ -6418,6 +6418,12 @@ an insert loop, the fader, the main output and the control-room (`monitor_*`) ou
   right-click entry "Use as Send Effect" does the same for an existing, unrouted stereo effect and
   is disabled for one that is already routed. With all eight slots used the effect is added unrouted
   and the status line says "All 8 send and return slots are in use".
+- **Dropping an effect from the browser.** On the master section's panel in the rack, a browser row that is an
+  effect becomes the next free FX send, like creating it with the master selected (one undo step; with all
+  eight slots used the status line says so). On the master's insert area ("drop or create an effect here") it
+  becomes a master insert effect instead: at the end of the chain when dropped on the drop row or under the last
+  insert, after the insert above the pointer when dropped between two, and first in an empty area. The insert area
+  of every mix channel and output bus takes a dropped effect the same way.
 - **Automation.** Every param of the master, of a channel strip and of a bus (not the internal ones)
   can have an automation lane: right-click the control in the console or the rack and choose **Edit
   Automation**. The lane lives on an automation track of the strip's device (see ARCHITECTURE.md,

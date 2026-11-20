@@ -8,6 +8,13 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **Drop an effect on the master section.** A browser row that is an effect, dropped on the master section's
+  panel in the rack, becomes the next free FX send (send and return wired, a "Send N" group under the master), in
+  one undo step, with the status note when all eight sends are used. Dropped on the master's insert area it
+  becomes a master insert effect, after the insert above the pointer (first in an empty area), as on every mix
+  channel and output bus.
+
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last
   picked with a plain click or Ctrl+click) to the one clicked, in the order shown; tracks in a collapsed folder
