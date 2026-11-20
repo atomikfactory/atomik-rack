@@ -192,6 +192,46 @@ impl Pool {
     pub(crate) fn linger(&self) -> u64 {
         self.shared.linger
     }
+
+    pub(crate) fn counters(&self) -> WorkerCounters {
+        WorkerCounters {
+            shared: Arc::clone(&self.shared),
+            threads: self.links.len(),
+        }
+    }
+}
+
+/// The counters of a worker pool, readable from another thread (the control side).
+#[derive(Clone)]
+pub(crate) struct WorkerCounters {
+    shared: Arc<Shared>,
+    threads: usize,
+}
+
+impl WorkerCounters {
+    pub(crate) fn stats(&self) -> WorkerStats {
+        WorkerStats {
+            threads: self.threads,
+            linger: self.shared.linger,
+            idle_spins: self.shared.idle_spins.load(Ordering::Relaxed),
+            parks: self.shared.parks.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// What the render workers have done: how many there are, the idle spins each performs before
+/// parking, and (summed over them, counted when a worker parks) the idle spins and the parks so
+/// far.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorkerStats {
+    /// Worker threads running.
+    pub threads: usize,
+    /// Idle spins a worker performs before it parks.
+    pub linger: u64,
+    /// Busy-wait iterations the workers performed while idle.
+    pub idle_spins: u64,
+    /// Times a worker parked.
+    pub parks: u64,
 }
 
 impl Drop for Pool {

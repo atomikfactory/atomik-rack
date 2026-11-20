@@ -509,6 +509,8 @@ pub struct EngineHandle {
     launch_cell: Arc<crate::launch::LaunchCell>,
     /// What the launcher did: launches and stops with their song ticks.
     launch_rx: Consumer<crate::launch::LaunchEvent>,
+    /// The render worker pool's counters, when the engine has workers.
+    workers: Option<crate::workers::WorkerCounters>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -559,7 +561,7 @@ pub fn new_engine_with_arena(
         arena: arena_capacity,
         ..Capacities::default()
     };
-    let (mut engine, handle) = new_engine_with(cfg, caps);
+    let (mut engine, mut handle) = new_engine_with(cfg, caps);
     let workers = options.workers;
     if workers.threads > 0 {
         let linger = match options.worker_linger_spins {
@@ -569,6 +571,7 @@ pub fn new_engine_with_arena(
         // If the OS refuses every worker thread the engine renders single-threaded: the
         // output does not depend on the worker count.
         engine.pool = Pool::new(workers.threads, workers.on_thread_start, linger).ok();
+        handle.workers = engine.pool.as_ref().map(Pool::counters);
     }
     (engine, handle)
 }
@@ -672,6 +675,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         reference,
         launch_cell,
         launch_rx,
+        workers: None,
     };
     (engine, handle)
 }
@@ -1290,6 +1294,15 @@ impl EngineHandle {
             tx,
             dropped: Arc::clone(&self.dropped),
         })
+    }
+
+    /// What the render workers have done so far (all zero for an engine without workers): for
+    /// diagnostics, read from the control side without touching the audio thread.
+    pub fn worker_stats(&self) -> crate::WorkerStats {
+        self.workers
+            .as_ref()
+            .map(crate::workers::WorkerCounters::stats)
+            .unwrap_or_default()
     }
 
     /// The first device that panicked while rendering, if any (sticky; see [`Engine::fault`]).
