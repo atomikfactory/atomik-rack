@@ -868,7 +868,9 @@ fn an_instance_that_is_gone_answers_a_capture_poll_as_stale() {
 #[test]
 fn a_stall_record_is_kept_out_of_the_event_stream_and_comes_from_take_stalls() {
     let (mut m, _) = manager();
-    let id = m.instantiate(&request("null.fx")).unwrap().id;
+    // The handle is kept: dropping it would destroy the instance and post its own event.
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
     assert!(m.take_stalls().is_empty());
     let messenger = m.slot(id).unwrap().messenger();
     assert!(messenger.post(PluginMessage::Stall {
