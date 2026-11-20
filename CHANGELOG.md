@@ -169,6 +169,13 @@ may break APIs and the patch and project formats.
 - A plugin that answers every audio batch a little late is no longer declared hung. Only a plugin that completes
   no request at all for about three seconds is stopped; a slow one just counts its late batches. A plugin the app
   stopped for not answering no longer counts toward the quarantine (three real crashes in a row still do).
+- Editing in a plugin's window no longer freezes the app. The app used to wait for the plugin's state on the
+  interface thread a second after each change, when the plugin was busiest (a patch loading in its window), and
+  stopped a working plugin that took ten seconds to answer. The state is now asked for in the background and
+  stored when it arrives (one undo step, as before). A recovery snapshot is written from the states stored so far
+  instead of asking every plugin again, a command that cannot remove a plugin no longer waits for one, and
+  closing an editor does not wait either. Saving, archiving, sharing and an audio restart still wait for the
+  state, since they need it at once.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

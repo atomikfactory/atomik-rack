@@ -126,6 +126,9 @@ pub const DEFAULT_AUTOSAVE_MINUTES: f64 = 5.0;
 pub const RECOVERY_KEEP: usize = 3;
 /// The quiet time after `state.mark_dirty` before the state is captured.
 pub const STATE_QUIET_SECS: f64 = 1.0;
+/// How long a recovery snapshot waits for the plugin states it asked for before it is written
+/// with the states stored so far.
+pub const SNAPSHOT_GRACE_SECS: f64 = 2.0;
 /// Lines of the bounded plugin log shown in Settings.
 pub const LOG_CAPACITY: usize = 200;
 
@@ -381,6 +384,14 @@ struct Recovery {
     marker: Option<SessionMarker>,
 }
 
+/// What a background state capture is for when it arrives.
+#[derive(Debug, Default, Clone, Copy)]
+pub(super) struct Capturing {
+    /// A state that differs from the stored one becomes an undo step (the user changed the patch in
+    /// the plugin's window, or closed it) instead of being stored silently.
+    undoable: bool,
+}
+
 /// How many plugin processes load at the same time when a project opens.
 const MAX_STARTING: usize = 8;
 
@@ -460,6 +471,11 @@ pub(super) struct PluginState {
     discard: bool,
     /// Instances whose state the plugin flagged dirty, with the time of the last flag.
     dirty: BTreeMap<InstanceId, f64>,
+    /// The instances whose state was asked for in the background and has not come back, with
+    /// what its arrival is for.
+    pub(super) capturing: BTreeMap<InstanceId, Capturing>,
+    /// When a periodic recovery snapshot began to wait for the states it asked for.
+    snapshot_wait: Option<f64>,
     clock: f64,
     journal: Option<CrashJournal>,
     recovery: Option<Recovery>,
@@ -541,6 +557,8 @@ impl PluginState {
             state_merge: (STATE_MERGE_BASE, f64::NEG_INFINITY),
             discard: false,
             dirty: BTreeMap::new(),
+            capturing: BTreeMap::new(),
+            snapshot_wait: None,
             clock: 0.0,
             journal: None,
             recovery: None,
@@ -1050,6 +1068,7 @@ impl<S: EngineSink> AppCore<S> {
         if let Some(id) = self.plugins.instances.remove(key) {
             self.plugins.keys.remove(&id);
             self.plugins.dirty.remove(&id);
+            self.plugins.capturing.remove(&id);
         }
         self.plugins.live_desc.remove(key);
         self.plugins.crashed.remove(key);
@@ -1073,6 +1092,8 @@ impl<S: EngineSink> AppCore<S> {
             self.plugins.instances.clear();
             self.plugins.keys.clear();
             self.plugins.dirty.clear();
+            self.plugins.capturing.clear();
+            self.plugins.snapshot_wait = None;
             self.plugins.failed.clear();
             self.plugins.crashed.clear();
             self.plugins.load_anyway.clear();
@@ -1162,6 +1183,7 @@ impl<S: EngineSink> AppCore<S> {
     /// one pending instance, the scan job, the parameter texts and the view feeds.
     pub(super) fn plugins_frame(&mut self) {
         self.plugins_poll_events();
+        self.plugins_poll_captures();
         self.instantiate_one();
         self.adopt_offline();
         self.poll_scan();
@@ -1178,9 +1200,11 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Runs the clock-driven plugin work: the quiet-period state capture and the
     /// recovery snapshot. `now` is a monotonic time in seconds (the shell passes the
-    /// frame clock).
+    /// frame clock). Nothing here waits for a plugin: states are asked for in the background and
+    /// stored as they arrive.
     pub fn plugin_tick(&mut self, now: f64) {
         self.plugins.clock = now;
+        self.plugins_poll_captures();
         let due: Vec<InstanceId> = self
             .plugins
             .dirty
@@ -1191,9 +1215,11 @@ impl<S: EngineSink> AppCore<S> {
         for id in due {
             self.plugins.dirty.remove(&id);
             if let Some(key) = self.plugins.keys.get(&id).cloned() {
-                self.capture_instance_as(&key, true);
+                self.request_capture_for(&key, true);
             }
         }
+        // A plugin in this process has answered already.
+        self.plugins_poll_captures();
         let loaded = !self.plugins.instances.is_empty();
         let revision = self.document.revision();
         // A loaded plugin snapshots on its period whatever happened (its own state moves
@@ -1207,7 +1233,7 @@ impl<S: EngineSink> AppCore<S> {
                 .is_some_and(|r| r.revision != Some(revision))
                 && self.is_dirty());
         let autosave = self.plugins.autosave_secs;
-        let write = match &mut self.plugins.recovery {
+        let (wanted, periodic) = match &mut self.plugins.recovery {
             Some(r) => {
                 let first = r.last.is_none();
                 if first || (!changed && !loaded) {
@@ -1223,12 +1249,18 @@ impl<S: EngineSink> AppCore<S> {
                     autosave
                 };
                 let due = (first && loaded) || now - last >= period;
-                r.wanted || (autosave > 0.0 && changed && due)
+                (r.wanted, autosave > 0.0 && changed && due)
             }
-            None => false,
+            None => (false, false),
         };
-        if write {
+        if self.plugins.snapshot_wait.is_some() {
+            self.finish_snapshot_wait(now);
+        } else if wanted {
+            // A capture just changed a stored state (or the app asked for a snapshot): write
+            // what is stored, without asking the plugins again.
             self.write_recovery_snapshot(now);
+        } else if periodic {
+            self.begin_periodic_snapshot(now);
         }
     }
 
@@ -1416,7 +1448,7 @@ impl<S: EngineSink> AppCore<S> {
                                 "plugin [{key}] editor opened after it was closed: instance {}, closing it",
                                 instance.0
                             );
-                            let _ = self.plugins.host.manager().close_gui(instance);
+                            let _ = self.plugins.host.manager().close_editor(instance);
                         }
                         Some(_) => {}
                     }
@@ -1835,6 +1867,8 @@ impl<S: EngineSink> AppCore<S> {
         let Some(id) = self.plugins.instances.get(key).copied() else {
             return false;
         };
+        // This capture waits for the request that is out and takes its place.
+        self.plugins.capturing.remove(&id);
         if self.plugins.no_capture.contains(key) {
             return false;
         }
@@ -1847,6 +1881,67 @@ impl<S: EngineSink> AppCore<S> {
             }
         };
         self.store_captured(key, blob, undoable)
+    }
+
+    /// Asks the plugin behind `key` for its state without waiting: [`Self::plugins_poll_captures`]
+    /// stores it when it arrives (see [`Self::capture_instance_as`] for `undoable`). A plugin
+    /// whose main thread is busy answers when it is free, and nothing here stands still; a
+    /// request while one is out only asks again when it lands. False when nothing was asked (no
+    /// instance, a state that must not be captured over, a request that failed).
+    fn request_capture_for(&mut self, key: &DeviceKey, undoable: bool) -> bool {
+        let Some(id) = self.plugins.instances.get(key).copied() else {
+            return false;
+        };
+        if self.plugins.no_capture.contains(key) {
+            return false;
+        }
+        if let Err(e) = self.plugins.host.manager().request_capture(id) {
+            self.plugins
+                .log(format!("[{key}] cannot capture state: {e}"));
+            return false;
+        }
+        self.plugins.capturing.entry(id).or_default().undoable |= undoable;
+        true
+    }
+
+    /// Stores the states that arrived since the last call. An answer that is out of date (the
+    /// plugin's state was replaced after it was asked for), a failed one and one for a state
+    /// that must not be captured over leave the stored state as it is.
+    pub(super) fn plugins_poll_captures(&mut self) {
+        if self.plugins.capturing.is_empty() {
+            return;
+        }
+        let ids: Vec<InstanceId> = self.plugins.capturing.keys().copied().collect();
+        for id in ids {
+            let Some(landed) = self.plugins.host.manager().poll_capture(id) else {
+                continue;
+            };
+            let Some(wanted) = self.plugins.capturing.remove(&id) else {
+                continue;
+            };
+            let Some(key) = self.plugins.keys.get(&id).cloned() else {
+                continue;
+            };
+            if landed.stale {
+                continue;
+            }
+            match landed.result {
+                Ok(blob) => {
+                    if !self.plugins.no_capture.contains(&key) {
+                        self.store_captured(&key, blob, wanted.undoable);
+                    }
+                }
+                Err(e) => self
+                    .plugins
+                    .log(format!("[{key}] cannot capture state: {e}")),
+            }
+            if landed.again {
+                // It changed again while the request was out: the next capture follows its
+                // quiet period.
+                let now = self.plugins.clock;
+                self.plugins.dirty.entry(id).or_insert(now);
+            }
+        }
     }
 
     /// Puts a state the live plugin gave into the document (see [`Self::capture_instance_as`]).
@@ -2063,20 +2158,69 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.dirty.clear();
     }
 
-    /// Captures the instances whose plugin flagged its state dirty (before a command or an undo
-    /// that could remove a device, so the removal's undo brings the latest state back). With
-    /// `undoable` (an undo) a patch change made in the plugin window becomes its own step first.
+    /// Captures, now and waiting for the plugin, the instances whose plugin flagged its state
+    /// dirty or whose background capture has not come back: before a command that could remove or
+    /// replace a device (so the removal's undo brings the latest state back) and before an undo
+    /// or redo. With `undoable` (an undo) a patch change made in the plugin window becomes its
+    /// own step first. Any other command leaves the plugin dirty for the background capture, and
+    /// so does a change that comes from a plugin's own window (it runs inside a capture).
     pub(super) fn plugins_flush_dirty(&mut self, undoable: bool) {
-        if self.plugins.dirty.is_empty() {
+        if self.plugins.from_plugin {
             return;
         }
-        let ids: Vec<InstanceId> = self.plugins.dirty.keys().copied().collect();
+        let mut ids: BTreeMap<InstanceId, bool> = self
+            .plugins
+            .dirty
+            .keys()
+            .map(|id| (*id, undoable))
+            .collect();
+        for (id, wanted) in &self.plugins.capturing {
+            // A step the arrival would have made (a closed editor's) is made here instead.
+            *ids.entry(*id).or_insert(false) |= undoable || wanted.undoable;
+        }
+        if ids.is_empty() {
+            return;
+        }
         self.plugins.dirty.clear();
-        for id in ids {
+        for (id, undoable) in ids {
             if let Some(key) = self.plugins.keys.get(&id).cloned() {
                 self.capture_instance_as(&key, undoable);
             }
         }
+    }
+
+    /// True for a command that leaves every plugin device in place with the state its undo would
+    /// go back to: the live app then does not wait for a plugin's state before it (see
+    /// [`Self::plugins_flush_dirty`]). Anything not listed removes or replaces a device or may
+    /// do: it takes the synchronous capture.
+    pub(super) fn command_keeps_plugins(command: &Command) -> bool {
+        matches!(
+            command,
+            Command::SetParam { .. }
+                | Command::SetTempo(_)
+                | Command::SetFolded { .. }
+                | Command::Rename { .. }
+                | Command::SetColor { .. }
+                | Command::Connect(_)
+                | Command::Disconnect { .. }
+                | Command::MoveDevice { .. }
+                | Command::AddDevice { .. }
+                | Command::AddDeviceAt { .. }
+                | Command::AddRackColumn
+                | Command::SetSongInfo(_)
+                | Command::SetMasterTune(_)
+                | Command::SetRackSort(_)
+                | Command::SetReferences(_)
+                | Command::SetDelivery(_)
+                | Command::SetCameraOverride(_)
+                | Command::SetInsertsFolded(_)
+                | Command::SetSpectrumCurves(_)
+                | Command::Video(_)
+                | Command::MidiMap(_)
+                | Command::Macro(_)
+                | Command::RegisterAsset { .. }
+                | Command::RenameAsset { .. }
+        )
     }
 
     /// Applies a data sync (`SyncState`, `SyncLayout`): it plans nothing and sends nothing to the
@@ -3110,8 +3254,47 @@ impl<S: EngineSink> AppCore<S> {
 
     // ------------------------------------------------------------------ recovery snapshots
 
+    /// Starts a periodic snapshot: every loaded plugin is asked for its state in the background
+    /// and the snapshot is written when they have all arrived or after [`SNAPSHOT_GRACE_SECS`],
+    /// with the states stored by then (see [`Self::finish_snapshot_wait`]). A project with no
+    /// plugin to ask is written at once.
+    fn begin_periodic_snapshot(&mut self, now: f64) {
+        let keys: Vec<DeviceKey> = self.plugins.instances.keys().cloned().collect();
+        let mut asked = false;
+        for key in keys {
+            // A plugin flagged dirty is captured as the change it is, as the quiet period would.
+            let undoable = self
+                .plugins
+                .instances
+                .get(&key)
+                .is_some_and(|id| self.plugins.dirty.remove(id).is_some());
+            asked |= self.request_capture_for(&key, undoable);
+        }
+        if !asked {
+            self.write_recovery_snapshot(now);
+            return;
+        }
+        self.plugins.snapshot_wait = Some(now);
+        self.plugins_poll_captures();
+        self.finish_snapshot_wait(now);
+    }
+
+    /// Writes the snapshot a periodic one waits for once no capture is out any more, or the
+    /// grace has passed.
+    fn finish_snapshot_wait(&mut self, now: f64) {
+        let Some(since) = self.plugins.snapshot_wait else {
+            return;
+        };
+        if self.plugins.capturing.is_empty() || now - since >= SNAPSHOT_GRACE_SECS {
+            self.plugins.snapshot_wait = None;
+            self.write_recovery_snapshot(now);
+        }
+    }
+
+    /// Writes a snapshot of the document as it is, with the plugin states stored so far: it never
+    /// asks a plugin (see [`Self::begin_periodic_snapshot`]), so a plugin that flags its state
+    /// dirty again after each capture cannot make the app capture in a loop.
     fn write_recovery_snapshot(&mut self, now: f64) {
-        self.plugins_capture_all();
         let revision = self.document.revision();
         let name = self.file.as_ref().and_then(|p| p.file_stem()).map_or_else(
             || "untitled".to_string(),
@@ -3487,16 +3670,15 @@ impl<S: EngineSink> AppCore<S> {
                 editor_closed_line(&device.0, self.plugins.instances.get(device).copied())
             );
         }
-        if let Some(id) = self.plugins.instances.get(device).copied() {
-            match self.plugins.host.manager().close_gui(id) {
-                Ok(Some(blob)) if !self.plugins.no_capture.contains(device) => {
-                    // The user closing the window ends a patch change made in it: its own
-                    // undo step. A close the app asked for (a new project, a rebuild) only
-                    // keeps the state.
-                    self.store_captured(device, blob, !destroy_window);
-                }
-                _ => {}
-            }
+        if let Some(id) = self.plugins.instances.get(device).copied()
+            && self.plugins.host.manager().close_editor(id).is_ok()
+        {
+            // The user closing the window ends a patch change made in it: its own undo step
+            // when the state arrives. A close the app asked for (a new project, a rebuild) only
+            // keeps the state.
+            self.request_capture_for(device, !destroy_window);
+            // A plugin in this process has answered already.
+            self.plugins_poll_captures();
         }
         if destroy_window {
             self.plugins

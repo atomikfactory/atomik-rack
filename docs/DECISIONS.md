@@ -1074,3 +1074,32 @@ freeze worker (the render path Join Clips of different files uses), also one ste
 second comp model for the editor; making the stereo link the default (it changes old renders).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AN. Plugin state is collected in the background in the live app; explicit saves still wait
+
+**Question.** A plugin answers a request for its state on its own main thread, which is busy exactly when the state
+has just changed (a patch loading in its window). The app asked on the UI thread, a second after each change, before
+every command and when an editor closed, so a busy plugin froze the whole interface until it answered or was stopped
+for taking too long.
+
+**Decision.** In the live app the state is asked for without waiting and stored when it arrives. The request has a
+slot of its own on the control link, so it can be out while other calls go on, and nothing times it out: a plugin
+that is busy answers when it is free, and one that is gone is noticed by the process watch as before. At most one
+request is out per instance. A request that comes while one is out only asks again when that one lands, and an
+answer that was overtaken by a restore of the state is dropped. A late, failed or dropped answer never replaces a
+stored state. The step in the undo history appears when the state arrives, and changes inside one request fold into
+it as bursts already did.
+
+A wait stays only where the stored state is about to be used: save, archive, share, templates, versions, an audio
+restart and a preset load need the state now, and undo, redo and any command that could remove or replace a plugin
+device capture first so the removal's undo brings the latest state back. Those take the request that is out instead
+of sending another. A recovery snapshot never asks: it is written from the stored states, and a periodic one asks
+every plugin first and goes without those that have not answered after two seconds.
+
+**Rejected.** A shorter timeout (a working plugin is still stopped, and the freeze is only shorter); a thread that
+waits for the plugin (a second place that can stall, and the answer still has to reach the document on the UI
+thread); capturing on every parameter change (a plugin that flags itself dirty after a capture would loop).
+
+**Open.** What a save does when the plugin does not answer in time (it still waits and stops the plugin).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

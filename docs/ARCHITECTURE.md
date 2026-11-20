@@ -5070,6 +5070,24 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   `settings.json` and `ui-state.json` are written with the same temporary-file-and-rename write
   (`recovery::atomic_write`); a file that does not parse is renamed `<name>.bad`, the defaults are
   used and the status line says so once.
+- **Plugin state is collected in the background.** The live UI never waits for a plugin's state
+  (the plugin answers on its own main thread, which is busy exactly when its patch has just
+  changed). `PluginManager::request_capture` / `poll_capture` ask for it without waiting: a sandboxed
+  instance sends `CaptureState` over a slot of the control link of its own
+  (`Link::begin_background`), nothing times it out, and a plugin in the app's own process answers at
+  the request. At most one request is out per instance; a request while one is out only makes the
+  answer say `again`, and a state restored into the plugin meanwhile makes the answer `stale` (it is
+  dropped). `AppCore::plugin_tick` asks one `STATE_QUIET_SECS` after a plugin flags its state dirty,
+  and `plugins_poll_captures` stores what has arrived (`store_captured`, one undo step as before; an
+  answer that is late, failed or stale never replaces a stored state). A periodic recovery snapshot
+  asks every loaded plugin and is written when all have answered or after `SNAPSHOT_GRACE_SECS`,
+  with the states stored by then; a snapshot after a capture changed a state is written from the
+  stored states alone, so a plugin that flags itself dirty after every capture cannot make the app
+  capture in a loop. Closing an editor requests a capture after the soft `CloseGui`. A command waits
+  for a plugin only where the stored state is about to be consumed (`plugins_flush_dirty`: undo,
+  redo and every command not listed in `command_keeps_plugins`, which could remove or replace a
+  device), and save, archive, share, templates, versions and an audio restart (`plugins_capture_all`)
+  still capture synchronously; they take the request that is out instead of sending a second one.
 - **Orphaned recordings.** An audio take streams to `Audio/rec-<pid>-<take>-<n>.wav` (2.6). At start
   and when a project opens, `recover_orphan_recordings` scans (bounded) the opened bundle's `Audio/`
   and the session scratch bundles in the temp folder for such files whose process has no live marker
