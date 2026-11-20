@@ -405,6 +405,21 @@ pub enum ShellRequest {
         /// The Headphone Correction device that takes the data.
         device: DeviceKey,
     },
+    /// Show a save dialog for the master chain (the rack menu's Save Master Chain as Patch...)
+    /// that starts in `dir` with `name` suggested (the library's Patches folder), asking before it
+    /// overwrites a file, then call [`Shell::save_master_chain_to`] with the path.
+    PickSaveMasterChain {
+        /// The folder the dialog starts in.
+        dir: PathBuf,
+        /// The suggested file name, with its extension.
+        name: String,
+    },
+    /// Show an open-file dialog for a master chain patch (the rack menu's Load Master Chain
+    /// Patch...), then call [`Shell::load_master_chain_from`] with the path.
+    PickLoadMasterChain {
+        /// The folder the dialog starts in.
+        dir: PathBuf,
+    },
     /// Show a save-file dialog for a theme (the Themes tab's Export...; the text is the file
     /// name to suggest), then call [`Shell::export_theme_to`].
     PickExportTheme(String),
@@ -5685,6 +5700,38 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// Saves the master chain as the patch item `path` (the platform's dialog confirmed an
+    /// overwrite). See [`ShellRequest::PickSaveMasterChain`].
+    pub fn save_master_chain_to(&mut self, path: &Path) {
+        self.core.save_master_chain(path);
+        self.repaint = true;
+    }
+
+    /// Loads the master chain patch `path` onto the master section, replacing its effects (the
+    /// platform's dialog returned it). See [`ShellRequest::PickLoadMasterChain`].
+    pub fn load_master_chain_from(&mut self, path: &Path) {
+        self.core.load_master_chain(path);
+        self.repaint = true;
+    }
+
+    /// Starts saving the master chain as a patch: the platform's save dialog asks for the name.
+    fn begin_save_master_chain(&mut self) {
+        match self.core.master_chain_save_suggestion() {
+            Some((dir, name)) => self
+                .pending
+                .push(ShellRequest::PickSaveMasterChain { dir, name }),
+            None => self
+                .core
+                .report("There is no library folder: choose one in Settings > Workflow"),
+        }
+    }
+
+    /// Starts loading a master chain patch: the platform's open dialog asks for the file.
+    fn begin_load_master_chain(&mut self) {
+        let dir = self.core.master_chain_folder().unwrap_or_default();
+        self.pending.push(ShellRequest::PickLoadMasterChain { dir });
+    }
+
     /// Starts saving `device` as a patch: the platform's save dialog asks for the name.
     fn begin_save_patch(&mut self, device: DeviceKey) {
         match self.core.patch_save_suggestion(&device) {
@@ -7258,6 +7305,10 @@ impl<B: AudioBackend> Shell<B> {
                 Some(device) => self.begin_save_patch(device),
                 None => self.core.report("Select a device first"),
             },
+            ("rack.save_master_chain", None) => self.begin_save_master_chain(),
+            ("rack.save_master_chain", Some(path)) => self.core.save_master_chain(Path::new(path)),
+            ("rack.load_master_chain", None) => self.begin_load_master_chain(),
+            ("rack.load_master_chain", Some(path)) => self.core.load_master_chain(Path::new(path)),
             ("rack.reset_device", None) => self.core.reset_selected_device(),
             ("rack.clean_up_bass", None) => {
                 self.patch_menu = None;
@@ -7997,6 +8048,9 @@ impl<B: AudioBackend> Shell<B> {
                     .view()
                     .assign_send_reason(doc, core.registry())
                     .is_none(),
+            add_send_effect: pane == Pane::Rack && core.view().add_effect_target(doc, true).is_ok(),
+            add_insert_effect: pane == Pane::Rack
+                && core.view().add_effect_target(doc, false).is_ok(),
             combine: pane == Pane::Rack
                 && core.view().combine_reason(doc, core.registry()).is_none(),
             uncombine: pane == Pane::Rack

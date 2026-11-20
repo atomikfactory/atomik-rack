@@ -101,10 +101,13 @@ pub fn summarize_item(kind: ItemKind, text: &str) -> Option<ItemSummary> {
         _ => {
             let v: Value = serde_json::from_str(text).ok()?;
             match kind {
-                ItemKind::Patch => {
-                    device_type = single_device_type(&v);
-                    patch_detail(&v)?
-                }
+                ItemKind::Patch => match master_chain_detail(&v) {
+                    Some(detail) => detail,
+                    None => {
+                        device_type = single_device_type(&v);
+                        patch_detail(&v)?
+                    }
+                },
                 ItemKind::Container => container_detail(&v)?,
                 _ => project_detail(&v)?,
             }
@@ -142,6 +145,29 @@ fn patch_detail(v: &Value) -> Option<String> {
         "{}: {}",
         plural(devices.len(), "device", "devices"),
         names.join(", ")
+    ))
+}
+
+/// "Master chain: 5 effects, 2 sends" for a master chain item (see [`crate::master_chain`]);
+/// `None` for any other patch.
+fn master_chain_detail(v: &Value) -> Option<String> {
+    let master = v.get("console")?.get("master")?.as_str()?;
+    let devices = v.get("devices")?.as_array()?;
+    devices
+        .iter()
+        .any(|d| d.get("id").and_then(Value::as_str) == Some(master))
+        .then_some(())?;
+    let sends = v
+        .get("console")?
+        .get("returns")?
+        .as_array()?
+        .iter()
+        .filter(|r| !r.is_null())
+        .count();
+    Some(format!(
+        "Master chain: {}, {}",
+        plural(devices.len() - 1, "effect", "effects"),
+        plural(sends, "send", "sends")
     ))
 }
 

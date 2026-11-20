@@ -6418,6 +6418,23 @@ an insert loop, the fader, the main output and the control-room (`monitor_*`) ou
   right-click entry "Use as Send Effect" does the same for an existing, unrouted stereo effect and
   is disabled for one that is already routed. With all eight slots used the effect is added unrouted
   and the status line says "All 8 send and return slots are in use".
+- **Dropping an effect from the browser.** On the master section's panel in the rack, a browser row that is an
+  effect becomes the next free FX send, like creating it with the master selected (one undo step; with all
+  eight slots used the status line says so). On the master's insert area ("drop or create an effect here") it
+  becomes a master insert effect instead: at the end of the chain when dropped on the drop row or under the last
+  insert, after the insert above the pointer when dropped between two, and first in an empty area. The insert area
+  of every mix channel and output bus takes a dropped effect the same way.
+- **Add Send Effect and Add Insert Effect.** In the rack, the right-click menu of the master section has Add Send
+  Effect... and Add Insert Effect..., and the menu of a mix channel or an output bus has Add Insert Effect.... They
+  open the effect browser bound to that strip: the choice becomes the master's next free FX send, or the last insert
+  of the strip's chain, whatever is selected, in one undo step (the mixer's menu does not have them).
+- **Master chain patch.** Save Master Chain as Patch... (master section menu) asks for a name, starting in the
+  library's Patches folder, and writes the master's insert effects in order and the effects of each used send (with
+  settings, bypass, names, plugin states and the return level, mute and pan of the send, not the channels' send
+  levels). A file inside the library is filed in the category Master Chains. Load Master Chain Patch... asks for a
+  file; a double click in the browser, or a drop on the master section, loads it as well. Loading replaces the
+  master's insert and send effects (the old ones and their cables go) in one undo step; the sends the patch does
+  not use end up free and Undo brings the old chain back. A patch can hold at most eight sends, so it always fits.
 - **Automation.** Every param of the master, of a channel strip and of a bus (not the internal ones)
   can have an automation lane: right-click the control in the console or the rack and choose **Edit
   Automation**. The lane lives on an automation track of the strip's device (see ARCHITECTURE.md,

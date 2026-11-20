@@ -895,6 +895,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::SetHeadphoneData { .. }
             | WorkflowCommand::SetModSlot { .. }
             | WorkflowCommand::AssignSend { .. }
+            | WorkflowCommand::ApplyMasterChain { .. }
             | WorkflowCommand::ReplaceDevice { .. }
             | WorkflowCommand::SplitSub { .. }
             | WorkflowCommand::AddReverbSend { .. }

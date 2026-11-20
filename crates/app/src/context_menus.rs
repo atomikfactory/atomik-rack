@@ -52,6 +52,11 @@ pub struct MenuEnable {
     pub master_only: bool,
     /// Rack: "Use as Send Effect" can work on the selection (the model would accept it).
     pub assign_send: bool,
+    /// Rack: the selection is the master section ("Add Send Effect" is listed).
+    pub add_send_effect: bool,
+    /// Rack: the selection is the master section, a mix channel or an output bus ("Add Insert
+    /// Effect" is listed).
+    pub add_insert_effect: bool,
     /// Rack: the primary device is a MIDI Out device (Choose MIDI Out Port works).
     pub midi_out: bool,
     /// Rack: the primary device is a Headphone Correction device (Import Headphone Data works).
@@ -784,15 +789,29 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
     match target {
         ContextTarget::Device => {
             let mut v = edit(None);
+            v.extend([Spec::Separator, create_submenu()]);
+            // On the mixer strips of the rack: where an effect goes is the strip's own choice.
+            if e.add_send_effect {
+                v.push(item("rack.add_send_effect", true));
+            }
+            if e.add_insert_effect {
+                v.push(item("rack.add_insert_effect", true));
+            }
             v.extend([
-                Spec::Separator,
-                create_submenu(),
                 item("rack.auto_route", e.selection),
                 item("rack.assign_send", e.assign_send),
                 item("rack.disconnect", e.selection),
                 item("rack.go_to_track", e.has_track),
                 item("rack.select_group", e.selection),
                 item("rack.save_to_library", e.selection && !e.master_only),
+            ]);
+            if e.add_send_effect {
+                v.extend([
+                    item("rack.save_master_chain", true),
+                    item("rack.load_master_chain", true),
+                ]);
+            }
+            v.extend([
                 Spec::Separator,
                 item("rack.combine", e.combine),
                 item("rack.uncombine", e.uncombine),
@@ -1933,6 +1952,49 @@ mod tests {
             ..some
         };
         assert!(!on(&master), "the Master Section cannot be saved");
+    }
+
+    #[test]
+    fn the_mixer_strips_of_the_rack_list_their_effect_and_chain_items() {
+        let has =
+            |e: &MenuEnable, id: &str| ids(ContextTarget::Device, e).iter().any(|(c, _)| *c == id);
+        let plain = MenuEnable::default();
+        for id in [
+            "rack.add_send_effect",
+            "rack.add_insert_effect",
+            "rack.save_master_chain",
+            "rack.load_master_chain",
+        ] {
+            assert!(!has(&plain, id), "{id} is for the mixer strips");
+        }
+        let master = MenuEnable {
+            selection: true,
+            master_only: true,
+            add_send_effect: true,
+            add_insert_effect: true,
+            ..MenuEnable::default()
+        };
+        for id in [
+            "rack.add_send_effect",
+            "rack.add_insert_effect",
+            "rack.save_master_chain",
+            "rack.load_master_chain",
+        ] {
+            assert!(has(&master, id), "{id} on the master section");
+        }
+        let channel = MenuEnable {
+            selection: true,
+            add_insert_effect: true,
+            ..MenuEnable::default()
+        };
+        assert!(has(&channel, "rack.add_insert_effect"));
+        for id in [
+            "rack.add_send_effect",
+            "rack.save_master_chain",
+            "rack.load_master_chain",
+        ] {
+            assert!(!has(&channel, id), "{id} is the master's");
+        }
     }
 
     #[test]

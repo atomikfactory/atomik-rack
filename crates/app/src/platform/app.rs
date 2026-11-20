@@ -1486,6 +1486,38 @@ impl App {
                         self.shell.save_patch_to(&path);
                     }
                 }
+                ShellRequest::PickSaveMasterChain { dir, name } => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Save master chain")
+                        .add_filter("Atomik patch", &[atomik_library::PATCH_EXT])
+                        .set_file_name(name);
+                    if dir.is_dir() {
+                        dialog = dialog.set_directory(dir);
+                    }
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension(atomik_library::PATCH_EXT);
+                        }
+                        self.shell.save_master_chain_to(&path);
+                    }
+                }
+                ShellRequest::PickLoadMasterChain { dir } => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Load master chain")
+                        .add_filter("Atomik patch", &[atomik_library::PATCH_EXT]);
+                    if dir.is_dir() {
+                        dialog = dialog.set_directory(dir);
+                    }
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(path) = dialog.pick_file() {
+                        self.shell.load_master_chain_from(&path);
+                    }
+                }
                 ShellRequest::PickExportKeymap => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Export keyboard shortcuts")

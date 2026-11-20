@@ -33,7 +33,9 @@
 //! each send (`Console::returns`, the chain cabled from `fx_send{k}`) is its own group under the
 //! master's area, framed and labelled "Send N" ([`SendGroup`]), in send order. The send effects
 //! are ordinary devices; the groups have no drop row (a send effect is made from the master
-//! panel's selection or by "Use as Send Effect") and move with the master.
+//! panel's selection, by a browser row dropped on the master's panel or by "Use as Send Effect")
+//! and move with the master. A browser row dropped on the master's insert area is an insert
+//! effect, after the effect above the pointer (first, in an empty area).
 
 use super::columns::column_left;
 use super::inline::is_inner;
@@ -683,15 +685,7 @@ impl RackView {
         registry: &Registry,
         out: &mut Vec<UiAction>,
     ) -> bool {
-        if self.row_family(row) != Some("effect") {
-            self.toast = Some(ONLY_EFFECTS.to_string());
-            return true;
-        }
-        if let BrowserRow::Device(d) = row
-            && let Some(desc) = registry.descriptor(d.type_id)
-            && !is_stereo_effect(desc)
-        {
-            self.toast = Some(format!("{} is not a stereo effect", d.name));
+        if !self.effect_row_ok(row, registry) {
             return true;
         }
         let Some(source) = self.row_source(row) else {
@@ -721,6 +715,57 @@ impl RackView {
                 skip_track: false,
                 disarm: Vec::new(),
             },
+        });
+        self.emit_checked(command, doc, registry, out);
+        true
+    }
+
+    /// Whether a browser row dropped on a strip may become an effect there: a toast says why
+    /// not (an instrument, a mono effect) and the drop counts as taken.
+    fn effect_row_ok(&mut self, row: &BrowserRow, registry: &Registry) -> bool {
+        if self.row_family(row) != Some("effect") {
+            self.toast = Some(ONLY_EFFECTS.to_string());
+            return false;
+        }
+        if let BrowserRow::Device(d) = row
+            && let Some(desc) = registry.descriptor(d.type_id)
+            && !is_stereo_effect(desc)
+        {
+            self.toast = Some(format!("{} is not a stereo effect", d.name));
+            return false;
+        }
+        true
+    }
+
+    /// A browser row dropped on the master section's panel (not on its insert area): an effect
+    /// becomes the next free FX send, as creating it with the master selected does (the app
+    /// says so in the status line when all eight sends are used). Returns whether the drop was
+    /// taken; a row that is not an effect is left to the ordinary drop.
+    pub(super) fn master_panel_browser_drop(
+        &mut self,
+        row: &BrowserRow,
+        doc: &RackDoc,
+        registry: &Registry,
+        out: &mut Vec<UiAction>,
+    ) -> bool {
+        let rp = self.view_to_rack(self.pointer);
+        let on_master = doc.console.master.as_ref().is_some_and(|m| {
+            self.scope.is_empty() && self.device_rect(m).is_some_and(|r| r.contains(rp))
+        });
+        if !on_master || self.row_family(row) != Some("effect") {
+            return false;
+        }
+        if !self.effect_row_ok(row, registry) {
+            return true;
+        }
+        let Some(source) = self.row_source(row) else {
+            return false;
+        };
+        let command = Command::Workflow(WorkflowCommand::CreateEffect {
+            source,
+            target: CreateTarget::Master,
+            key: None,
+            options: CreateOptions::default(),
         });
         self.emit_checked(command, doc, registry, out);
         true
