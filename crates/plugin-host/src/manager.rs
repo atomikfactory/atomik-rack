@@ -651,6 +651,24 @@ impl PluginManager {
         Ok(open)
     }
 
+    /// Starts opening an [`EditorKind::External`] editor **inside** `parent`, a window of the
+    /// app (see [`PluginInstance::begin_open_embedded_gui`]); the outcome is reported like that
+    /// of [`PluginManager::begin_open_external_editor`].
+    ///
+    /// # Errors
+    /// An unknown instance, or what the plugin said (an editor that cannot be embedded).
+    pub fn begin_open_embedded_editor(
+        &mut self,
+        id: InstanceId,
+        parent: NativeParent,
+    ) -> Result<bool, ManagerError> {
+        assert_main_thread("PluginManager::begin_open_embedded_editor");
+        let m = self.get(id)?;
+        let open = m.instance.begin_open_embedded_gui(parent)?;
+        m.editor_opening = !open;
+        Ok(open)
+    }
+
     /// True while an external editor is opening (see
     /// [`PluginManager::begin_open_external_editor`]).
     pub fn is_editor_opening(&self, id: InstanceId) -> bool {

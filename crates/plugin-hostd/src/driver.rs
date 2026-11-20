@@ -89,6 +89,7 @@ impl WindowSystem for NoWindows {
         _title: &str,
         _owner: Option<NativeParent>,
         _size: (u32, u32),
+        _embed: bool,
     ) -> Result<NewWindow, String> {
         Err("this process has no display to open an editor window on".to_string())
     }

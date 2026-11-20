@@ -13,6 +13,7 @@ mod builtin;
 mod control;
 mod driver;
 mod editor;
+mod embed;
 mod group;
 mod notify;
 mod panic_report;

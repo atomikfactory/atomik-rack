@@ -118,7 +118,8 @@ pub fn reply_id(m: &FromChild) -> Option<u64> {
         | FromChild::Presets { id, .. }
         | FromChild::ParamValues { id, .. }
         | FromChild::LayoutChanged { id, .. }
-        | FromChild::GuiOpened { id, .. } => Some(*id),
+        | FromChild::GuiOpened { id, .. }
+        | FromChild::GuiSized { id, .. } => Some(*id),
         _ => None,
     }
 }

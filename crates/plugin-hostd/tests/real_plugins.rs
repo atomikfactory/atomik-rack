@@ -459,6 +459,7 @@ fn the_clap_editor_opens_in_a_window_of_the_child_and_closes_again() {
                 id,
                 owner: None,
                 scale: 1.0,
+                embed: false,
             },
             None,
         )
@@ -500,6 +501,7 @@ fn a_vst3_editor_opens_in_a_window_of_the_child_and_closes_again() {
                 id,
                 owner: None,
                 scale: 1.0,
+                embed: false,
             },
             None,
         )
@@ -570,6 +572,7 @@ fn editor_opens_closes_and_reopens_under_an_owner(format: Format, file: &Path, p
                 id,
                 owner: Some(NativeParent::Win32(owner.hwnd()).into()),
                 scale: 1.0,
+                embed: false,
             },
         );
         assert!(
@@ -606,6 +609,103 @@ fn the_clap_editor_opens_closes_and_reopens_under_an_owner_window() {
     let file = Format::Clap.file("atomik-test-clap");
     let id = Format::Clap.id(Kind::Gain);
     editor_opens_closes_and_reopens_under_an_owner(Format::Clap, &file, &id);
+}
+
+/// An editor that goes **inside** a window of this process, the way the app docks it: the
+/// child makes its window a frameless child of the host window (the app's frame), the frame's
+/// size is followed by the editor window, and closing the editor removes the child again.
+#[cfg(windows)]
+fn editor_opens_inside_a_host_window(format: Format, file: &Path, plugin: &str) {
+    let host = support::owner_window::OwnerWindow::new();
+    let mut p = TestParent::spawn(&Spawn::real(format.name(), file, plugin));
+    p.hello();
+    let (_, has_gui, _) = p.instantiate();
+    assert!(has_gui);
+    assert!(host.first_child().is_none(), "the host window starts empty");
+    let opened = call_within(
+        &mut p,
+        EDITOR_PATIENCE,
+        || host.pump(),
+        |id| ToChild::OpenGui {
+            id,
+            owner: Some(NativeParent::Win32(host.hwnd()).into()),
+            scale: 1.0,
+            embed: true,
+        },
+    );
+    assert!(
+        matches!(opened, Some(FromChild::GuiOpened { w, h, .. }) if w > 0 && h > 0),
+        "the embedded OpenGui was not answered (or failed): {opened:?}; stderr: {}",
+        p.stderr()
+    );
+    host.pump();
+    let child = host
+        .first_child()
+        .unwrap_or_else(|| panic!("the editor is a child of the host window; {}", p.stderr()));
+    assert!(host.is_parent_of(child), "the host window is its parent");
+    // The size the app's frame is told (the last one: the plugin may ask for another size once
+    // its window is up) is the size of the window inside it.
+    let settle = |p: &mut TestParent| {
+        for _ in 0..30 {
+            host.pump();
+            if let Ok((msg, _)) = p.recv_or_end(std::time::Duration::from_millis(10)) {
+                p.notes.push(msg);
+            }
+        }
+    };
+    settle(&mut p);
+    let told = p
+        .notes
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            FromChild::GuiResize { w, h } => Some((*w, *h)),
+            _ => None,
+        })
+        .expect("the child tells the app its size after the answer");
+    assert_eq!(host.client_size(child), Some(told));
+    // The frame was resized: the editor window follows the size the plugin took (an editor of a
+    // fixed size keeps its own and says so).
+    let sized = call_within(
+        &mut p,
+        APP_PATIENCE,
+        || host.pump(),
+        |id| ToChild::ResizeGui {
+            id,
+            w: told.0 + 40,
+            h: told.1 + 30,
+        },
+    );
+    let Some(FromChild::GuiSized { w, h, .. }) = sized else {
+        panic!(
+            "ResizeGui was not answered: {sized:?}; stderr: {}",
+            p.stderr()
+        );
+    };
+    settle(&mut p);
+    assert_eq!(host.client_size(child), Some((w, h)));
+    let closed = call_within(
+        &mut p,
+        APP_PATIENCE,
+        || host.pump(),
+        |id| ToChild::CloseGui { id },
+    );
+    assert!(
+        matches!(closed, Some(FromChild::Ok { .. })),
+        "CloseGui was not answered in time: {closed:?}; stderr: {}",
+        p.stderr()
+    );
+    settle(&mut p);
+    assert!(host.first_child().is_none(), "closing removes the child");
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "opens a real window; run by hand"]
+fn the_clap_editor_opens_inside_a_window_of_the_app_and_follows_its_size() {
+    let file = Format::Clap.file("atomik-test-clap");
+    let id = Format::Clap.id(Kind::Gain);
+    editor_opens_inside_a_host_window(Format::Clap, &file, &id);
 }
 
 /// The same with an installed VST3 (`ATOMIK_VST3_EDITOR_FILE` and `ATOMIK_VST3_EDITOR_ID`).

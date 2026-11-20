@@ -45,6 +45,30 @@ impl ProcessMode {
     }
 }
 
+/// Where the editors of sandboxed plugins open.
+///
+/// Only Windows and X11 can show the window of another process inside the app window; elsewhere
+/// the setting is kept but every editor opens in its own window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditorHome {
+    /// Every editor has a window of its own (the default).
+    #[default]
+    OwnWindow,
+    /// Editors sit inside the app window, in an app-drawn frame, unless moved out one by one.
+    InApp,
+}
+
+impl EditorHome {
+    /// The other choice.
+    pub fn next(self) -> Self {
+        match self {
+            Self::OwnWindow => Self::InApp,
+            Self::InApp => Self::OwnWindow,
+        }
+    }
+}
+
 /// What one plugin asks for, over the [`ProcessMode`] setting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -89,6 +113,10 @@ pub struct PluginSettings {
     /// applies to the instances loaded after it.
     #[serde(rename = "plugin_process")]
     pub process: ProcessMode,
+    /// Where sandboxed plugin editors open (in their own window unless changed). An old settings
+    /// file has the own window.
+    #[serde(rename = "plugin_editors")]
+    pub editors: EditorHome,
     /// Plugins whose process ended on its own while in use, by type id, with the reason the
     /// last time. The settings list shows them as CRASHED until the user presses RETRY. An old
     /// settings file has none.
@@ -104,6 +132,7 @@ impl Default for PluginSettings {
             disabled: BTreeSet::new(),
             sandbox: true,
             process: ProcessMode::PerPlugin,
+            editors: EditorHome::OwnWindow,
             crashed: BTreeMap::new(),
         }
     }
@@ -207,6 +236,27 @@ mod tests {
         })
         .unwrap();
         assert!(text.contains(r#""plugin_process":"per_file""#), "{text}");
+    }
+
+    #[test]
+    fn editors_open_in_their_own_window_unless_the_setting_says_otherwise() {
+        assert_eq!(PluginSettings::default().editors, EditorHome::OwnWindow);
+        let old: PluginSettings = serde_json::from_str(r#"{"enabled": true}"#).unwrap();
+        assert_eq!(
+            old.editors,
+            EditorHome::OwnWindow,
+            "an old file keeps today's behaviour"
+        );
+        let s = PluginSettings {
+            editors: EditorHome::InApp,
+            ..PluginSettings::default()
+        };
+        let text = serde_json::to_string(&s).unwrap();
+        assert!(text.contains(r#""plugin_editors":"in_app""#), "{text}");
+        let back: PluginSettings = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.editors, EditorHome::InApp);
+        assert_eq!(EditorHome::InApp.next().next(), EditorHome::InApp);
+        assert_eq!(EditorHome::OwnWindow.next(), EditorHome::InApp);
     }
 
     #[test]

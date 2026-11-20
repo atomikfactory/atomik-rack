@@ -232,6 +232,27 @@ impl RemoteInstance {
         (hung.as_secs_f64() / period.as_secs_f64()).ceil().max(1.0) as u32
     }
 
+    /// Sends `OpenGui` without waiting for the answer (see
+    /// [`PluginInstance::begin_open_external_gui`]); with `embed` the editor becomes a child of
+    /// `owner` instead of being owned by it.
+    fn begin_open(&mut self, owner: Option<WireParent>, embed: bool) -> Result<bool, BackendError> {
+        if self.link.held() == Some(OPEN_GUI) {
+            // Still opening: asking again changes nothing.
+            return Ok(false);
+        }
+        self.link.begin_held_call(OPEN_GUI, |id| ToChild::OpenGui {
+            id,
+            owner,
+            scale: 1.0,
+            embed,
+        })?;
+        self.opening_since = Some(crate::clock::now());
+        // The user just asked for the editor: its window, and any dialog the plugin shows
+        // first, may come to the front.
+        atomik_plugin_ipc::lifetime::allow_foreground(self.link.shared().pid());
+        Ok(false)
+    }
+
     /// An `Ok`-or-`GuiOpened` reply (the child may say either to an `OpenGui`).
     fn is_ok(reply: &Reply) -> bool {
         matches!(
@@ -563,21 +584,24 @@ impl PluginInstance for RemoteInstance {
         &mut self,
         owner: Option<NativeParent>,
     ) -> Result<bool, BackendError> {
-        if self.link.held() == Some(OPEN_GUI) {
-            // Still opening: asking again changes nothing.
-            return Ok(false);
+        self.begin_open(owner.map(WireParent::from), false)
+    }
+
+    fn begin_open_embedded_gui(&mut self, parent: NativeParent) -> Result<bool, BackendError> {
+        self.begin_open(Some(WireParent::from(parent)), true)
+    }
+
+    fn resize_gui(&mut self, w: u32, h: u32) -> Result<(u32, u32), BackendError> {
+        // A plugin too busy to answer is not a failed one: the frame keeps the size it asked
+        // for, and the editor takes the next one it is given.
+        let call = self.timeouts().text;
+        let reply = self
+            .link
+            .soft_call("ResizeGui", call, |id| ToChild::ResizeGui { id, w, h })?;
+        match reply.msg {
+            FromChild::GuiSized { w, h, .. } => Ok((w, h)),
+            other => Err(self.link.unexpected("ResizeGui", &other)),
         }
-        let owner = owner.map(WireParent::from);
-        self.link.begin_held_call(OPEN_GUI, |id| ToChild::OpenGui {
-            id,
-            owner,
-            scale: 1.0,
-        })?;
-        self.opening_since = Some(crate::clock::now());
-        // The user just asked for the editor: its window, and any dialog the plugin shows
-        // first, may come to the front.
-        atomik_plugin_ipc::lifetime::allow_foreground(self.link.shared().pid());
-        Ok(false)
     }
 
     fn poll_open_external_gui(&mut self) -> Option<Result<(), BackendError>> {
@@ -604,6 +628,7 @@ impl PluginInstance for RemoteInstance {
                 id,
                 owner,
                 scale: 1.0,
+                embed: false,
             },
             None,
         )?;
