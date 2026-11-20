@@ -13,6 +13,14 @@ may break APIs and the patch and project formats.
   picked with a plain click or Ctrl+click) to the one clicked, in the order shown; tracks in a collapsed folder
   are skipped. Ctrl+click (Cmd on macOS) toggles one track in or out, and Shift+Ctrl+click adds the range to the
   selection.
+- **Audio follows the MIDI clock's tempo (Options > Sync > Follow MIDI Clock).** An audio clip warped to the song
+  tempo now keeps the measured clock tempo for as long as it plays, through the real-time stretch (Beats and Tonal
+  keep the pitch, Repitch moves it with the speed), instead of being re-synchronised only at its start, a locate
+  and a loop wrap: a clip of 32 bars ends in sync with a sender that runs 5% off the song tempo, within a few
+  milliseconds (a test with a simulated clock). Unwarped clips keep their own rate, and bounces and exports never
+  follow a clock, so they are unchanged. Streamed (long, disk-read) audio, which was silent while following, now
+  plays from where the clock reaches each clip, at the clip's own rate; a clip warped to the song tempo plays its
+  rendered buffer and follows the clock as above.
 
 ### Fixed
 - **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio track now

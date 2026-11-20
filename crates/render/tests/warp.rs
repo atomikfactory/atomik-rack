@@ -578,6 +578,40 @@ fn the_live_interim_region_carries_the_clip_mode_and_transposition() {
     assert!(atomik_engine::compile_song(&live).is_ok());
 }
 
+#[test]
+fn a_finished_tempo_warp_buffer_follows_a_clock_but_a_transposition_only_one_does_not() {
+    let registry = default_registry();
+    let tempo_warped = |warp: WarpSettings, name: &str| {
+        let s = song(name, &sine(440.0, 200_000), |d, a| {
+            put(d, a, 0, 4 * PPQ, warp)
+        });
+        let assets = atomik_render::bundle::load_song_assets(&s.doc, Some(&s.bundle)).unwrap();
+        let warps = render_warps(&s.doc, &assets);
+        let ids = std::collections::BTreeMap::from([(
+            DeviceKey("audio-track".into()),
+            atomik_engine::DeviceInstanceId(1),
+        )]);
+        let id_of = |k: &DeviceKey| ids.get(k).copied();
+        let live = song_input_live(&s.doc, &registry, id_of, &assets, &warps);
+        assert!(atomik_engine::compile_song(&live).is_ok());
+        live.audio[0].regions[0].tempo_warp
+    };
+    assert_eq!(
+        tempo_warped(on(100.0, WarpMode::Beats), "follow-beats"),
+        Some(atomik_engine::SongWarpMode::Beats)
+    );
+    assert_eq!(
+        tempo_warped(on(100.0, WarpMode::Repitch), "follow-repitch"),
+        Some(atomik_engine::SongWarpMode::Repitch)
+    );
+    // Warp off with a transposition only: the buffer is not tied to the tempo.
+    let transposed = WarpSettings {
+        transpose_cents: 300,
+        ..WarpSettings::default()
+    };
+    assert_eq!(tempo_warped(transposed, "follow-transpose"), None);
+}
+
 /// `put` with the clip played backwards.
 fn put_reversed(d: &mut Document, asset: &str, start: i64, length: i64, warp: WarpSettings) {
     put(d, asset, start, length, warp);

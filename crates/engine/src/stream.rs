@@ -34,6 +34,14 @@
 //! * **Determinism.** Offline bounces use `Memory` assets only. With a streamer that keeps up,
 //!   the audio equals the `Memory` output bit for bit (same samples, same gain code, the same
 //!   assign-then-add order where two regions overlap).
+//! * **Following a clock.** While the player follows an external clock the lane is read by
+//!   `audio_follow` instead: its epoch starts at the own-timeline frame the song is at
+//!   ([`StreamLaneRt::follow_seek`], no loop: a wrap is a new epoch), a streamed region plays
+//!   from the ring at the clip's own rate once the clock reaches its start, and between regions
+//!   the cursor skips ahead to the song's place ([`StreamLaneRt::skip_to`]). The read-ahead is
+//!   what the ring holds: a region is consumed at one ring frame per frame whatever the clock's
+//!   tempo, and the gaps, which the streamer fills with zeros at many times real time, are
+//!   skipped at the clock's pace, so the same two seconds of ring cover any followed tempo.
 //! * **Streamer.** One thread, spawned lazily by the first `submit_song` with a streamed
 //!   asset, joined when the handle is dropped. It polls (1 ms) requests and lane commands and
 //!   fills each active lane round-robin, a few chunks at a time, so a slow source delays other
@@ -134,6 +142,10 @@ pub(crate) struct StreamLaneRt {
     lp: Option<(u64, u64)>,
     /// Playback index of the next frame to consume.
     played: u64,
+    /// The epoch was opened by [`Self::follow_seek`]: its index 0 is song frame `origin` of the
+    /// song's own timeline, without a loop.
+    followed: bool,
+    origin: u64,
 }
 
 impl StreamLaneRt {
@@ -147,6 +159,8 @@ impl StreamLaneRt {
             next: 0,
             lp: None,
             played: 0,
+            followed: false,
+            origin: 0,
         }
     }
 
@@ -160,9 +174,10 @@ impl StreamLaneRt {
         requests: &mut Producer<StreamRequest>,
         stats: &StreamStats,
     ) {
-        if !(self.valid && self.next == pos && self.lp == lp) {
+        if !(self.valid && !self.followed && self.next == pos && self.lp == lp) {
             self.epoch = self.epoch.wrapping_add(1);
             self.valid = true;
+            self.followed = false;
             self.next = pos;
             self.lp = lp;
             self.played = 0;
@@ -176,6 +191,17 @@ impl StreamLaneRt {
                 chunk.commit_all();
             }
         }
+        self.push_pending(pos, lp, requests, stats);
+    }
+
+    /// Sends the refill request of the open epoch if the queue could not take it before.
+    fn push_pending(
+        &mut self,
+        pos: u64,
+        lp: Option<(u64, u64)>,
+        requests: &mut Producer<StreamRequest>,
+        stats: &StreamStats,
+    ) {
         if self.pending {
             let request = StreamRequest {
                 lane: self.id,
@@ -190,9 +216,67 @@ impl StreamLaneRt {
         }
     }
 
+    /// While the player follows an external clock (see the module docs): makes sure the lane
+    /// reads from `origin`, a frame of the song's own timeline, with no loop. An epoch that
+    /// already starts there and has not been consumed is kept (the read-ahead of a stopped
+    /// transport survives the start); any other opens a new one and requests a refill. Also
+    /// retries a request the queue could not take.
+    pub(crate) fn follow_seek(
+        &mut self,
+        origin: u64,
+        requests: &mut Producer<StreamRequest>,
+        stats: &StreamStats,
+    ) {
+        if !(self.valid && self.followed && self.origin == origin && self.played == 0) {
+            self.epoch = self.epoch.wrapping_add(1);
+            self.valid = true;
+            self.followed = true;
+            self.origin = origin;
+            self.lp = None;
+            self.played = 0;
+            self.pending = true;
+            let stale = self.rx.slots();
+            if stale > 0
+                && let Ok(chunk) = self.rx.read_chunk(stale)
+            {
+                chunk.commit_all();
+            }
+        }
+        self.push_pending(origin, None, requests, stats);
+    }
+
+    /// Retries the request of a followed epoch that the queue could not take.
+    pub(crate) fn follow_retry(
+        &mut self,
+        requests: &mut Producer<StreamRequest>,
+        stats: &StreamStats,
+    ) {
+        self.push_pending(self.origin, None, requests, stats);
+    }
+
+    /// The song frame the followed epoch started at, or `None` when the lane is not in one.
+    pub(crate) fn follow_origin(&self) -> Option<u64> {
+        (self.valid && self.followed).then_some(self.origin)
+    }
+
+    /// Playback index of the next frame to consume.
+    pub(crate) fn played(&self) -> u64 {
+        self.played
+    }
+
+    /// Moves the cursor forward to playback index `idx` without using the frames (never back;
+    /// frames the streamer has not delivered yet are not counted as missing).
+    pub(crate) fn skip_to(&mut self, idx: u64) {
+        if idx > self.played {
+            self.pull((idx - self.played) as usize, None);
+        }
+    }
+
     /// Records where the transport ended the batch (the continuation point).
     pub(crate) fn end_batch(&mut self, pos: u64) {
-        self.next = pos;
+        if !self.followed {
+            self.next = pos;
+        }
     }
 
     /// Consumes `n` frames without using them.
