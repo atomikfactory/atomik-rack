@@ -88,8 +88,11 @@ fn the_descriptor_is_ordered_and_valid() {
             "scanner.rate",
             "out.drive",
             "out.level",
+            "tone.leak",
+            "tone.fold",
+            "wheel.target",
         ],
-        &["notes_in", "out_l", "out_r"],
+        &["notes_in", "out_l", "out_r", "wheel_cv_out"],
     );
     let d = |k: &str| DESCRIPTOR.param_by_key(k).unwrap();
     assert_eq!(
@@ -584,7 +587,7 @@ fn volume_and_expression_follow_a_square_law() {
 }
 
 #[test]
-fn the_bend_wheel_and_pressure_are_ignored() {
+fn the_bend_wheel_and_pressure_are_ignored_while_the_wheel_target_is_off() {
     let base = play(&mut eight(8), &[57], 100);
     let mut h = eight(8);
     for kind in [
@@ -598,6 +601,233 @@ fn the_bend_wheel_and_pressure_are_ignored() {
         h.push_note("notes_in", NoteEvent { offset: 0, kind });
     }
     assert_eq!(play(&mut h, &[57], 100), base);
+}
+
+// ---------------------------------------------------------------------- leakage and foldback
+
+fn wheel_event(offset: u16, value: f32) -> NoteEvent {
+    NoteEvent {
+        offset,
+        kind: NoteKind::Cc {
+            controller: 1,
+            value,
+        },
+    }
+}
+
+/// What `leak` adds to the 8' drawbar alone on key 57 (220 Hz): the amplitudes of the difference to
+/// the same render without leakage a semitone below and above the key.
+fn leakage(leak: f32) -> (f64, f64) {
+    let plain = play(&mut eight(8), &[57], seconds(1.4));
+    let mut h = eight(8);
+    h.set_param("tone.leak", leak);
+    let leaky = play(&mut h, &[57], seconds(1.4));
+    let diff: Vec<f32> = leaky.iter().zip(&plain).map(|(a, b)| a - b).collect();
+    (amp_at(&diff, hz(56.0), 0), amp_at(&diff, hz(58.0), 0))
+}
+
+#[test]
+fn leakage_adds_the_neighbouring_wheels_and_zero_is_off() {
+    assert_eq!(leakage(0.0), (0.0, 0.0));
+    let (below, above) = leakage(1.0);
+    // Each neighbour at -30 dB of the 0.15 partial.
+    let want = BAR_AMP * f64::from(LEAK_MAX);
+    for got in [below, above] {
+        assert!((got / want - 1.0).abs() < 0.1, "{got} want {want}");
+    }
+    let (half_below, half_above) = leakage(0.5);
+    assert!((half_below / below - 0.5).abs() < 0.05, "{half_below}");
+    assert!((half_above / above - 0.5).abs() < 0.05, "{half_above}");
+    // The partial itself stays where it was.
+    let mut h = eight(8);
+    h.set_param("tone.leak", 1.0);
+    let out = play(&mut h, &[57], seconds(1.4));
+    assert!((amp_at(&out, 220.0, 0) / BAR_AMP - 1.0).abs() < 0.05);
+}
+
+#[test]
+fn leak_zero_renders_the_same_bits_as_before_the_param_existed() {
+    let base = play(&mut eight(8), &[57, 64, 71], 120);
+    let mut h = eight(8);
+    h.set_param("tone.leak", 0.7);
+    h.set_param("tone.leak", 0.0);
+    assert_eq!(play(&mut h, &[57, 64, 71], 120), base);
+}
+
+#[test]
+fn a_wheel_that_is_not_generated_leaks_nothing() {
+    // The 1' of key 127 is far above the wheel limit.
+    let mut h = with_bars([0, 0, 0, 0, 0, 0, 0, 0, 8]);
+    h.set_param("tone.leak", 1.0);
+    let out = play(&mut h, &[127], 120);
+    assert!(out.iter().all(|s| *s == 0.0), "a dead wheel leaks");
+}
+
+/// The dominant frequency of the last second of drawbar `bar` alone on `key`.
+fn pitch_of(bar: usize, key: u8, fold: bool) -> f64 {
+    let mut positions = [0u8; BARS];
+    positions[bar] = 8;
+    let mut h = with_bars(positions);
+    h.set_param("tone.fold", if fold { 1.0 } else { 0.0 });
+    let out = play(&mut h, &[key], seconds(1.3));
+    dominant_frequency(&out[out.len() - 48_000..], SR)
+}
+
+#[test]
+fn foldback_keeps_every_partial_at_or_below_the_top_wheel() {
+    let top = hz(f64::from(FOLD_TOP));
+    for key in [24u8, 60, 84, 100, 127] {
+        for (bar, name) in BAR_NAMES.iter().enumerate() {
+            let got = pitch_of(bar, key, true);
+            assert!(
+                got <= top * 1.003,
+                "{} on key {key}: {got} Hz above {top}",
+                name
+            );
+        }
+    }
+    // Without foldback the 1' of key 90 sounds where it always did, above the top wheel.
+    let unfolded = pitch_of(8, 90, false);
+    assert!(unfolded > top * 1.5, "{unfolded}");
+    assert!((unfolded / hz(126.0) - 1.0).abs() < 0.003);
+    // With it, 126 folds down to the top wheel, 114.
+    assert!((pitch_of(8, 90, true) / top - 1.0).abs() < 0.003);
+    // A partial that already fits is left alone.
+    assert!((pitch_of(3, 60, true) / hz(72.0) - 1.0).abs() < 0.003);
+}
+
+#[test]
+fn foldback_lifts_the_sixteen_foot_of_a_low_key_by_an_octave() {
+    // Key 30's 16' is pitch 18, below the bottom wheel (24): it plays pitch 30.
+    assert!((pitch_of(0, 30, false) / hz(18.0) - 1.0).abs() < 0.003);
+    assert!((pitch_of(0, 30, true) / hz(30.0) - 1.0).abs() < 0.003);
+    // A key whose 16' fits is not touched, and no other footage is lifted.
+    assert!((pitch_of(0, 40, true) / hz(28.0) - 1.0).abs() < 0.003);
+    assert!((pitch_of(2, 20, true) / hz(20.0) - 1.0).abs() < 0.003);
+}
+
+#[test]
+fn foldback_applies_to_keys_that_already_sound() {
+    let mut positions = [0u8; BARS];
+    positions[8] = 8;
+    let mut h = with_bars(positions);
+    let before = play(&mut h, &[90], seconds(0.5));
+    let tail = &before[before.len() - 24_000..];
+    assert!((dominant_frequency(tail, SR) / hz(126.0) - 1.0).abs() < 0.01);
+    h.set_param("tone.fold", 1.0);
+    let after = h.render(seconds(1.2), &OUT).remove(0);
+    let tail = &after[after.len() - 48_000..];
+    assert!((dominant_frequency(tail, SR) / hz(114.0) - 1.0).abs() < 0.003);
+}
+
+#[test]
+fn foldback_off_renders_the_same_bits_as_before_the_param_existed() {
+    let base = play(&mut eight(8), &[30, 90, 127], 120);
+    let mut h = eight(8);
+    h.set_param("tone.fold", 1.0);
+    h.set_param("tone.fold", 0.0);
+    assert_eq!(play(&mut h, &[30, 90, 127], 120), base);
+}
+
+// ------------------------------------------------------------------------------------ mod wheel
+
+/// The sideband of V3 at 8 Hz around 440 Hz with the wheel on `target` at `wheel`.
+fn wheel_sideband(target: f32, wheel: f32) -> f64 {
+    let mut h = eight(8);
+    h.set_param("scanner.type", 3.0);
+    h.set_param("scanner.rate", 8.0);
+    h.set_param("wheel.target", target);
+    h.push_note("notes_in", wheel_event(0, wheel));
+    let out = play(&mut h, &[69], seconds(1.4));
+    let from = out.len() - 48_000;
+    tone_amplitude(&out[from..], 448.0, from)
+}
+
+#[test]
+fn the_mod_wheel_sets_the_scanner_depth() {
+    let full = wheel_sideband(1.0, 1.0);
+    let half = wheel_sideband(1.0, 0.5);
+    let none = wheel_sideband(1.0, 0.0);
+    assert!(none < 1e-4, "wheel down is a pure tone: {none}");
+    assert!((full / 0.073 - 1.0).abs() < 0.15, "{full}");
+    assert!(half > 0.3 * full && half < 0.7 * full, "{half} of {full}");
+    // On the other targets the scanner keeps its own depth, whatever the wheel does.
+    for target in [0.0, 2.0] {
+        for wheel in [0.0, 1.0] {
+            assert!((wheel_sideband(target, wheel) / full - 1.0).abs() < 0.02);
+        }
+    }
+}
+
+#[test]
+fn the_mod_wheel_moves_the_scanner_depth_while_playing_without_a_step() {
+    let mut h = eight(8);
+    h.set_param("scanner.type", 3.0);
+    h.set_param("wheel.target", 1.0);
+    h.push_note("notes_in", on(0, 69, 1.0));
+    let mut out = h.render(seconds(0.3), &OUT).remove(0);
+    h.push_note("notes_in", wheel_event(0, 1.0));
+    out.extend(h.render(seconds(0.3), &OUT).remove(0));
+    assert!(max_step(&out) < 0.1, "{}", max_step(&out));
+    assert!(peak(&out) < 0.2);
+}
+
+#[test]
+fn the_mod_wheel_rests_at_zero_after_a_reset() {
+    let mut h = eight(8);
+    h.set_param("wheel.target", 2.0);
+    h.push_note("notes_in", wheel_event(0, 1.0));
+    play(&mut h, &[69], 10);
+    h.device_mut().reset();
+    let cv = h.render(2, &["wheel_cv_out"]).remove(0);
+    assert!(cv.iter().all(|v| *v == 0.0));
+}
+
+#[test]
+fn the_wheel_cv_follows_the_wheel_only_on_the_rotary_target() {
+    for (target, want) in [(0.0, 0.0), (1.0, 0.0), (2.0, 0.75)] {
+        let mut h = eight(8);
+        h.set_param("wheel.target", target);
+        h.push_note("notes_in", wheel_event(20, 0.75));
+        let cv = h.render(2, &["wheel_cv_out"]).remove(0);
+        assert!(cv[..20].iter().all(|v| *v == 0.0), "target {target}");
+        assert!(
+            cv[20..].iter().all(|v| (*v - want).abs() < 1e-6),
+            "target {target}: {}",
+            cv[100]
+        );
+    }
+}
+
+/// How often the horn of a rotary speaker crosses zero in the last 2 s of 5 s, with its speed CV
+/// from the organ's wheel CV (`wheel` of `None`: nothing patched).
+fn horn_crossings(wheel: Option<f32>) -> usize {
+    use crate::rotary_speaker::RotarySpeaker;
+    let mut organ = eight(8);
+    organ.set_param("wheel.target", 2.0);
+    organ.push_note("notes_in", wheel_event(0, wheel.unwrap_or(0.0)));
+    let mut rotary = DeviceHarness::new(Box::new(RotarySpeaker::new()), SR);
+    let mut horn = Vec::new();
+    for _ in 0..seconds(5.0) {
+        organ.process();
+        if wheel.is_some() {
+            *rotary.input_mut("speed_cv_in") = *organ.output("wheel_cv_out");
+        }
+        rotary.process();
+        horn.extend_from_slice(rotary.output("horn_cv_out"));
+    }
+    let tail = &horn[horn.len() - 96_000..];
+    tail.windows(2)
+        .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+        .count()
+}
+
+#[test]
+fn the_wheel_cv_switches_a_rotary_speaker_to_fast_and_a_lone_one_is_unchanged() {
+    let slow = horn_crossings(Some(0.0));
+    let fast = horn_crossings(Some(1.0));
+    assert!(fast > slow * 4, "slow {slow}, fast {fast}");
+    assert_eq!(horn_crossings(None), slow);
 }
 
 // ----------------------------------------------------------------------- determinism and bounds
