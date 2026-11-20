@@ -38,6 +38,17 @@ may break APIs and the patch and project formats.
   (in their own window, the default, or inside the app window); each editor has DOCK IN APP and POP OUT on its Learn
   strip to move it between the two, remembered per plugin for as long as the song is open. On macOS and Wayland the
   button is disabled with a tooltip that says why and editors stay in their own window.
+- **Plugin categories from the plugin's own feature list.** The scan reads what each plugin declares (a CLAP plugin's
+  features, a VST3 class's sub-categories) and maps it to Atomik's categories: instrument, effect, note effect and
+  analyser, plus the kind of an effect (reverb, delay, EQ, dynamics, distortion, filter, modulation, pitch, spatial).
+  A plugin that only analyses is listed as an analyser, in a group of its own in the browser, instead of as an
+  effect; it is still hosted as an effect. The Plugin Manager's Category column and filter show the new categories
+  (for example `Effect: Reverb`). The scan cache gains an optional field (an older entry reads as unknown, showing
+  what the plugin's ports say, until the next scan, which every cached file gets once).
+- **Tag cloud in the browser's plugin section.** A row of chips for the categories and the user's plugin tags, each
+  with the number of usable plugins it matches; clicking chips switches them on or off, several chips combine
+  (a plugin must match all of them), and CLEAR switches them all off. While a chip is on the device types are hidden,
+  as for a `#tag` search, which keeps working.
 
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last

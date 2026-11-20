@@ -2,7 +2,8 @@
 //! the consent gate, cancellation, ordering and the two-at-a-time limit, over a fake scanner.
 
 use atomik_device_sdk::{
-    Channels, PluginFormat, PluginKindHint, PluginLayout, PluginParamInfo, PluginRef,
+    Channels, PluginCategory, PluginClass, PluginFormat, PluginKindHint, PluginLayout,
+    PluginParamInfo, PluginRef,
 };
 use atomik_plugin_host::paths::Os;
 use atomik_plugin_host::{
@@ -67,6 +68,7 @@ fn scanned(id: &str) -> ScannedPlugin {
             id: id.to_string(),
         },
         layout: layout(id),
+        category: PluginCategory::default(),
         unsupported: None,
         params_truncated: false,
     }
@@ -203,6 +205,39 @@ fn a_scan_result_round_trips_through_json_exactly() {
     assert_eq!(back, r);
     assert!(ScanResult::from_json("not json").is_err());
     assert!(ScanResult::from_json("{}").is_err());
+}
+
+#[test]
+fn a_category_round_trips_and_an_entry_without_one_reads_as_unknown() {
+    let with = ScannedPlugin {
+        category: PluginCategory::from_vst3_sub_categories(PluginKindHint::Effect, "Fx|Analyzer"),
+        ..scanned("m")
+    };
+    let r = ScanResult {
+        path: PathBuf::from("C:/x/m.vst3"),
+        format: PluginFormat::Vst3,
+        plugins: vec![with],
+        error: None,
+    };
+    let json = r.to_json();
+    assert!(json.contains("\"category\":\"analyser\""), "{json}");
+    assert_eq!(
+        ScanResult::from_json(&json).unwrap().plugins[0]
+            .category
+            .class,
+        PluginClass::Analyser
+    );
+    // A result written before categories were read has no such field.
+    let old = json.replace(",\"category\":\"analyser\"", "");
+    assert!(!old.contains("category"), "{old}");
+    let back = ScanResult::from_json(&old).unwrap();
+    assert_eq!(back.plugins[0].category, PluginCategory::UNKNOWN);
+    // Text the program does not know (a newer version's) is unknown, not an error.
+    let odd = json.replace("analyser", "teleporter");
+    assert_eq!(
+        ScanResult::from_json(&odd).unwrap().plugins[0].category,
+        PluginCategory::UNKNOWN
+    );
 }
 
 #[test]

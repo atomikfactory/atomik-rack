@@ -10,7 +10,7 @@
 use crate::cache::PluginCache;
 use crate::settings::PluginSettings;
 use atomik_device_sdk::{
-    PluginFormat, PluginKindHint, PluginLayout, PluginRef, Registry, descriptor_for,
+    PluginCategory, PluginFormat, PluginKindHint, PluginLayout, PluginRef, Registry, descriptor_for,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -41,6 +41,9 @@ pub struct PluginEntry {
     pub version: String,
     /// Instrument, effect or note effect.
     pub kind: PluginKindHint,
+    /// The category the plugin declares for itself (an analyser, a reverb, ...); an entry
+    /// scanned before categories were read shows what its ports say until the next scan.
+    pub category: PluginCategory,
     /// Feature words derived from the layout (`instrument`, `audio-effect`, `note-effect`,
     /// `sidechain`, `notes-in`, `notes-out`), for the 4d index to filter on.
     pub features: Vec<String>,
@@ -134,6 +137,7 @@ impl PluginCatalog {
                     vendor: p.layout.vendor.clone(),
                     version: p.layout.version.clone(),
                     kind: p.layout.kind_hint,
+                    category: p.category.or_kind(p.layout.kind_hint),
                     features: features(&p.layout),
                     path: file.path.clone(),
                     status,
