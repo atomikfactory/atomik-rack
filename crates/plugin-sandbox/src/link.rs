@@ -5,11 +5,13 @@
 //! Only the main thread makes calls and only one is in flight at a time, so a single slot is
 //! enough; replies are matched by request id and anything else is ignored. A call that matters
 //! and is not answered in time kills the child; a cosmetic one (see [`Link::soft_call`]) only
-//! drops its request. Once the child is killed the link is lost, and every call fails at
-//! once without any I/O. The reader thread is the one that learns that the child ended: it
-//! reaps the exit status, reads the stderr tail, marks the audio block dead (so the engine
-//! side sees [`atomik_plugin_host::ProcessStatus::Lost`]) and posts
-//! [`PluginMessage::ProcessExited`].
+//! drops its request. One request at a time can instead be a background request (see
+//! [`Link::begin_background`]): it has a slot of its own, so the state of a plugin whose main
+//! thread is busy can be asked for while the UI goes on, and nothing times it out. Once the
+//! child is killed the link is lost, and every call fails at once without any I/O. The reader
+//! thread is the one that learns that the child ended: it reaps the exit status, reads the
+//! stderr tail, marks the audio block dead (so the engine side sees
+//! [`atomik_plugin_host::ProcessStatus::Lost`]) and posts [`PluginMessage::ProcessExited`].
 
 use crate::clock::now;
 use crate::transport::{ChildProcess, Transport};
@@ -118,6 +120,10 @@ pub(crate) struct Reply {
 struct Mailbox {
     expect: Expect,
     reply: Option<Reply>,
+    /// The id of the background request that is out, if any (see [`Link::begin_background`]).
+    bg_id: Option<u64>,
+    /// The answer to it, until [`Link::poll_background`] takes it.
+    bg_reply: Option<Reply>,
     /// The child's stdout closed: nothing more will come.
     ended: bool,
     /// Set once the child is reaped: why it ended.
@@ -128,6 +134,13 @@ enum Waited {
     Reply(Reply),
     Ended,
     TimedOut,
+}
+
+/// Takes the answer of the background request that is out, ending it.
+fn take_background(mb: &mut Mailbox) -> Option<Reply> {
+    let reply = mb.bg_reply.take()?;
+    mb.bg_id = None;
+    Some(reply)
 }
 
 /// What the main thread and the helper threads share.
@@ -165,11 +178,23 @@ impl Shared {
     }
 
     fn wait(&self, timeout: Duration) -> Waited {
+        self.wait_for(timeout, |mb| {
+            let reply = mb.reply.take()?;
+            mb.expect = Expect::Nothing;
+            Some(reply)
+        })
+    }
+
+    /// Waits until `take` finds a reply in the mailbox, the child ends or `timeout` passes.
+    fn wait_for(
+        &self,
+        timeout: Duration,
+        mut take: impl FnMut(&mut Mailbox) -> Option<Reply>,
+    ) -> Waited {
         let start = now();
         let mut mb = lock(&self.mailbox);
         loop {
-            if let Some(reply) = mb.reply.take() {
-                mb.expect = Expect::Nothing;
+            if let Some(reply) = take(&mut mb) {
                 return Waited::Reply(reply);
             }
             if mb.ended {
@@ -227,6 +252,49 @@ impl Shared {
         } else {
             false
         }
+    }
+
+    /// Hands `reply` to the background request when it is the answer to it (else gives it
+    /// back).
+    fn deliver_background(&self, reply: Reply, id: u64) -> Result<(), Reply> {
+        let mut mb = lock(&self.mailbox);
+        if mb.bg_id == Some(id) {
+            mb.bg_reply = Some(reply);
+            self.cv.notify_all();
+            Ok(())
+        } else {
+            Err(reply)
+        }
+    }
+
+    fn expect_background(&self, id: u64) {
+        let mut mb = lock(&self.mailbox);
+        mb.bg_id = Some(id);
+        mb.bg_reply = None;
+    }
+
+    fn clear_background(&self) {
+        let mut mb = lock(&self.mailbox);
+        mb.bg_id = None;
+        mb.bg_reply = None;
+    }
+
+    fn background_out(&self) -> bool {
+        lock(&self.mailbox).bg_id.is_some()
+    }
+
+    /// What the background request has now, without waiting: its answer, or that the child
+    /// ended (which also ends the request).
+    fn try_take_background(&self) -> Option<Waited> {
+        let mut mb = lock(&self.mailbox);
+        if let Some(reply) = take_background(&mut mb) {
+            return Some(Waited::Reply(reply));
+        }
+        if mb.ended {
+            mb.bg_id = None;
+            return Some(Waited::Ended);
+        }
+        None
     }
 
     /// The flag the audio side sets when the child answers no batch.
@@ -297,8 +365,19 @@ impl Shared {
     /// the app which call held the main thread up and how it ended. Only the main thread's
     /// blocking calls go through here.
     fn wait_noted(&self, what: &str, timeout: Duration) -> Waited {
+        self.noted(what, |shared| shared.wait(timeout))
+    }
+
+    /// [`Shared::wait_noted`] for the answer to the background request that is out.
+    fn wait_background_noted(&self, what: &str, timeout: Duration) -> Waited {
+        self.noted(what, |shared| {
+            shared.wait_for(timeout, take_background)
+        })
+    }
+
+    fn noted(&self, what: &str, wait: impl FnOnce(&Self) -> Waited) -> Waited {
         let start = now();
-        let waited = self.wait(timeout);
+        let waited = wait(self);
         let elapsed = now().saturating_duration_since(start);
         if elapsed >= STALL_THRESHOLD {
             let outcome = match waited {
@@ -487,7 +566,11 @@ impl Shared {
             } => Some(layout.clone()),
             _ => None,
         };
-        if !self.deliver(Reply { msg, blob }, Expect::Id(id))
+        let reply = Reply { msg, blob };
+        let Err(reply) = self.deliver_background(reply, id) else {
+            return;
+        };
+        if !self.deliver(reply, Expect::Id(id))
             && let Some(layout) = late_layout
         {
             // The call that asked has given up, and the child will not say it again.
@@ -634,6 +717,8 @@ impl Link {
             mailbox: Mutex::new(Mailbox {
                 expect: Expect::Hello,
                 reply: None,
+                bg_id: None,
+                bg_reply: None,
                 ended: false,
                 reason: None,
             }),
@@ -893,6 +978,65 @@ impl Link {
             return None;
         }
         Some(self.await_reply(what, timeout))
+    }
+
+    /// Sends the request `make(id)` as the background request: its answer goes to a slot of its
+    /// own, so it can be out while other calls go on, and [`Link::poll_background`] takes it
+    /// without waiting. Nothing times it out: a child whose main thread is busy answers when
+    /// it is free. Only one is out at a time; asking while one is out changes nothing.
+    pub fn begin_background(
+        &mut self,
+        make: impl FnOnce(u64) -> ToChild,
+    ) -> Result<(), BackendError> {
+        if self.shared.is_lost() {
+            return Err(lost());
+        }
+        if self.shared.background_out() {
+            return Ok(());
+        }
+        self.next_id += 1;
+        let id = self.next_id;
+        self.shared.expect_background(id);
+        let sent = self.send(&make(id), None);
+        if sent.is_err() {
+            self.shared.clear_background();
+        }
+        sent
+    }
+
+    /// True while the background request has not been answered or collected.
+    pub fn background_out(&self) -> bool {
+        self.shared.background_out()
+    }
+
+    /// The answer to the background request, without waiting; `None` while it has not come. A
+    /// child that ended answers with a lost link.
+    pub fn poll_background(&mut self) -> Option<Result<Reply, BackendError>> {
+        Some(match self.shared.try_take_background()? {
+            Waited::Reply(reply) => match reply.msg {
+                FromChild::Err { kind, text, .. } => Err(into_backend_error(kind, text)),
+                _ => Ok(reply),
+            },
+            Waited::Ended | Waited::TimedOut => Err(lost()),
+        })
+    }
+
+    /// Waits up to `timeout` for the background request that is out, like [`Link::call`]: a
+    /// call that needs the state now (a save) takes the request that is out instead of
+    /// sending a second one. `None` when none is out.
+    pub fn finish_background(
+        &mut self,
+        what: &str,
+        timeout: Duration,
+    ) -> Option<Result<Reply, BackendError>> {
+        if !self.shared.background_out() {
+            return None;
+        }
+        let waited = self.shared.wait_background_noted(what, timeout);
+        if !matches!(waited, Waited::Reply(_)) {
+            self.shared.clear_background();
+        }
+        Some(self.settle(waited, what, timeout))
     }
 
     /// Sends the request `make(id)` (with `blob`) and waits `timeout` for its answer. A lost

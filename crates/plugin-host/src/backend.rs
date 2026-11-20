@@ -431,6 +431,26 @@ pub trait PluginInstance {
     fn begin_capture_state(&mut self) {}
     /// Saves the plugin state.
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError>;
+    /// True when [`PluginInstance::request_capture`] really goes out without waiting (a plugin
+    /// in another process, whose main thread may be busy). The default is false: the manager
+    /// then captures at the request, which is cheap for a plugin in this process.
+    fn background_capture(&self) -> bool {
+        false
+    }
+    /// Asks for the plugin state without waiting; [`PluginInstance::poll_capture`] collects it
+    /// when it has arrived. At most one is outstanding (the manager keeps to that). While one is
+    /// out, [`PluginInstance::capture_state`] waits for it instead of sending a second request.
+    ///
+    /// # Errors
+    /// The request could not be sent (the plugin is gone).
+    fn request_capture(&mut self) -> Result<(), BackendError> {
+        Ok(())
+    }
+    /// The state asked for by [`PluginInstance::request_capture`], or `None` while it has not
+    /// come. Never waits and never stops the plugin for being slow.
+    fn poll_capture(&mut self) -> Option<Result<PluginStateBlob, BackendError>> {
+        None
+    }
     /// Restores a saved state.
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError>;
     /// The presets the plugin offers, in its own order (empty when it has none or the format
@@ -642,6 +662,15 @@ pub struct NullStats {
     fixed_gui_size: Mutex<Option<(u32, u32)>>,
     presets: AtomicBool,
     deactivate_delay: AtomicUsize,
+    /// The null instances capture in the background, as a plugin in another process does.
+    background_capture: AtomicBool,
+    /// A background capture is not answered while this is set (a plugin whose main thread is
+    /// busy).
+    captures_held: AtomicBool,
+    /// Background capture requests received.
+    capture_requests: AtomicUsize,
+    /// Synchronous `capture_state` calls received.
+    sync_captures: AtomicUsize,
     /// The layout the instances take at their next restart (see [`NullStats::change_layout`]).
     pending_layout: Mutex<Option<PluginLayout>>,
     /// The layout the plugin has since: new instances start with it.
@@ -664,6 +693,26 @@ impl NullStats {
             .pending_layout
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(layout);
+    }
+
+    /// Makes the null instances capture in the background like a plugin in another process:
+    /// [`PluginInstance::request_capture`] sends nothing to wait for and
+    /// [`PluginInstance::poll_capture`] answers when [`NullStats::hold_captures`] lets it.
+    pub fn set_background_capture(&self, on: bool) {
+        self.background_capture.store(on, Ordering::Relaxed);
+    }
+    /// While held, a background capture is not answered (the plugin's main thread is busy); the
+    /// state it then gives is the one the plugin holds when the hold ends.
+    pub fn hold_captures(&self, hold: bool) {
+        self.captures_held.store(hold, Ordering::Relaxed);
+    }
+    /// Background capture requests the null instances received.
+    pub fn capture_requests(&self) -> usize {
+        self.capture_requests.load(Ordering::Relaxed)
+    }
+    /// Synchronous state captures the null instances served.
+    pub fn sync_captures(&self) -> usize {
+        self.sync_captures.load(Ordering::Relaxed)
     }
 
     /// Instances created.
@@ -831,6 +880,7 @@ impl PluginBackend for NullBackend {
             state: PluginStateBlob::default(),
             held: BTreeMap::new(),
             stats: Arc::clone(&self.stats),
+            capture_out: false,
             opening: None,
             opening_in: None,
             deactivating: None,
@@ -845,6 +895,8 @@ struct NullInstance {
     state: PluginStateBlob,
     held: BTreeMap<u32, f64>,
     stats: Arc<NullStats>,
+    /// A background capture was requested and not collected.
+    capture_out: bool,
     /// Polls left before a slow external editor is open.
     opening: Option<usize>,
     /// The app window a slow editor that is opening goes into, when it goes into one.
@@ -956,7 +1008,27 @@ impl PluginInstance for NullInstance {
     }
 
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError> {
+        self.stats.sync_captures.fetch_add(1, Ordering::Relaxed);
+        self.capture_out = false;
         Ok(self.state.clone())
+    }
+
+    fn background_capture(&self) -> bool {
+        self.stats.background_capture.load(Ordering::Relaxed)
+    }
+
+    fn request_capture(&mut self) -> Result<(), BackendError> {
+        self.stats.capture_requests.fetch_add(1, Ordering::Relaxed);
+        self.capture_out = true;
+        Ok(())
+    }
+
+    fn poll_capture(&mut self) -> Option<Result<PluginStateBlob, BackendError>> {
+        if !self.capture_out || self.stats.captures_held.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.capture_out = false;
+        Some(Ok(self.state.clone()))
     }
 
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError> {
