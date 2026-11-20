@@ -15,11 +15,14 @@
 //! | Rock | 888 800 000 | a bright, driven sound with a medium vibrato and a firm key click |
 //! | Mellow | 008 603 000 | a soft flute-like tone with a light chorus |
 //! | Church | 608 604 002 | a pipe-like stack of octaves and fifths, no scanner, hardly any click |
+//! | Vintage | 868 400 006 | a worn tonewheel sound: leakage, foldback, a medium chorus and a little drive |
 
 use super::DESCRIPTOR;
 
 /// The names of the sounds, in selector order.
-pub const SOUND_NAMES: [&str; 6] = ["Init", "Jazz", "Full", "Rock", "Mellow", "Church"];
+pub const SOUND_NAMES: [&str; 7] = [
+    "Init", "Jazz", "Full", "Rock", "Mellow", "Church", "Vintage",
+];
 
 /// A factory sound.
 #[derive(Debug, Clone, Copy)]
@@ -31,7 +34,7 @@ pub struct Sound {
 }
 
 /// The sounds, in selector order.
-pub const SOUNDS: [Sound; 6] = [
+pub const SOUNDS: [Sound; 7] = [
     Sound {
         name: "Init",
         changes: &[],
@@ -92,6 +95,19 @@ pub const SOUNDS: [Sound; 6] = [
             ("drawbar.2", 4.0),
             ("drawbar.1", 2.0),
             ("key.click", 0.05),
+        ],
+    },
+    Sound {
+        name: "Vintage",
+        changes: &[
+            ("drawbar.5_1_3", 6.0),
+            ("drawbar.4", 4.0),
+            ("drawbar.1", 6.0),
+            ("key.click", 0.25),
+            ("scanner.type", 5.0),
+            ("out.drive", 0.15),
+            ("tone.leak", 0.4),
+            ("tone.fold", 1.0),
         ],
     },
 ];

@@ -1140,6 +1140,13 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                 }
                 let p = &desc.params[info.spec.param_index(desc, pc, info.pad)];
                 let value = info.device.map_or(p.default, |d| current_value(d, p));
+                if desc.type_id == crate::organ_panel::ORGAN_TYPE
+                    && crate::organ_panel::is_drawbar_key(p.key)
+                {
+                    let n = crate::organ_panel::drawbar_index(p.key);
+                    crate::organ_panel::paint_drawbar(c, theme, pc.rect, n, p, value, p.name);
+                    continue;
+                }
                 if mix_panel && pc.kind == ControlKind::Fader {
                     // The mix channel's fader is its own horizontal track (drawn with the panel).
                     continue;
@@ -1208,6 +1215,10 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     control_labelled(c, theme, pc, p, value, info.accent, &label);
                 } else if info.spec.fm.is_some() {
                     let label = crate::fm_panel::fm_label(p.key)
+                        .map_or_else(|| autolayout::control_label(p), str::to_string);
+                    control_labelled(c, theme, pc, p, value, info.accent, &label);
+                } else if desc.type_id == crate::organ_panel::ORGAN_TYPE {
+                    let label = crate::organ_panel::organ_label(p.key)
                         .map_or_else(|| autolayout::control_label(p), str::to_string);
                     control_labelled(c, theme, pc, p, value, info.accent, &label);
                 } else if info.spec.granular.is_some() {

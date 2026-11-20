@@ -325,7 +325,16 @@ fn layout(desc: &DeviceDescriptor, samples: bool) -> PanelSpec {
     } else {
         0.0
     };
-    layout_with(desc, reserve, samples, group_prefix, &[], 0.0, usize::MAX)
+    layout_with(
+        desc,
+        reserve,
+        samples,
+        group_prefix,
+        &[],
+        0.0,
+        usize::MAX,
+        |_| false,
+    )
 }
 
 /// Like [`auto_layout`] with a `strip` wide column kept free at the left of the content area
@@ -344,6 +353,7 @@ pub(crate) fn auto_layout_with_strip(
         &[],
         0.0,
         usize::MAX,
+        |_| false,
     )
 }
 
@@ -354,7 +364,9 @@ pub(crate) fn auto_layout_with_sections(
     prefix_of: for<'a> fn(&'a str) -> &'a str,
     order: &[&str],
 ) -> PanelSpec {
-    layout_with(desc, 0.0, false, prefix_of, order, 0.0, usize::MAX)
+    layout_with(desc, 0.0, false, prefix_of, order, 0.0, usize::MAX, |_| {
+        false
+    })
 }
 
 /// Like [`auto_layout_with_strip`] with the sections in the order of `order` (the prefixes
@@ -374,6 +386,7 @@ pub(crate) fn auto_layout_with_order(
         order,
         0.0,
         usize::MAX,
+        |_| false,
     )
 }
 
@@ -387,9 +400,34 @@ pub(crate) fn auto_layout_with_top(
     order: &[&str],
     max_rows: usize,
 ) -> PanelSpec {
-    layout_with(desc, 0.0, false, prefix_of, order, top, max_rows)
+    layout_with(desc, 0.0, false, prefix_of, order, top, max_rows, |_| false)
 }
 
+/// Like [`auto_layout_with_order`] without the params `skip` names (the caller places them
+/// itself), keeping a `strip` wide column free at the left of the content area for them.
+pub(crate) fn auto_layout_skipping(
+    desc: &DeviceDescriptor,
+    strip: f64,
+    prefix_of: for<'a> fn(&'a str) -> &'a str,
+    order: &[&str],
+    skip: fn(&str) -> bool,
+) -> PanelSpec {
+    layout_with(
+        desc,
+        strip + SECTION_GAP,
+        false,
+        prefix_of,
+        order,
+        0.0,
+        usize::MAX,
+        skip,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "every layout variant is one call with its own reserve, order, top and skip"
+)]
 fn layout_with(
     desc: &DeviceDescriptor,
     reserve: f64,
@@ -398,8 +436,9 @@ fn layout_with(
     order: &[&str],
     top: f64,
     max_rows: usize,
+    skip: fn(&str) -> bool,
 ) -> PanelSpec {
-    let front = front_groups(desc, prefix_of, order);
+    let front = front_groups(desc, prefix_of, order, skip);
     let back = back_groups(desc);
     let units = (1..=MAX_UNITS)
         .find(|&u| {
@@ -466,11 +505,12 @@ fn front_groups(
     desc: &DeviceDescriptor,
     prefix_of: for<'a> fn(&'a str) -> &'a str,
     order: &[&str],
+    skip: fn(&str) -> bool,
 ) -> Vec<Group> {
     let mut groups: Vec<(&str, Group)> = Vec::new();
     let strip_bypass = has_strip_bypass(desc);
     for (i, p) in desc.params.iter().enumerate() {
-        if strip_bypass && p.key == BYPASS_KEY {
+        if (strip_bypass && p.key == BYPASS_KEY) || skip(p.key) {
             continue;
         }
         // `internal.*` params are set by the app (solo silence, the VCA feed), never by hand,

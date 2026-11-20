@@ -1549,6 +1549,9 @@ impl RackView {
                 crate::wavetable_panel::wavetable_layout(d)
             }
             (Some(d), _) if type_id == crate::fm_panel::FM_TYPE => crate::fm_panel::fm_layout(d),
+            (Some(d), _) if type_id == crate::organ_panel::ORGAN_TYPE => {
+                crate::organ_panel::organ_layout(d)
+            }
             (Some(d), _) if type_id == crate::granular_panel::GRANULAR_TYPE => {
                 crate::granular_panel::granular_layout(d)
             }
@@ -4466,6 +4469,8 @@ impl RackView {
                     } else if horizontal {
                         let (x0, x1, _) = self.mix_travel(i, p.key);
                         (x1 - x0) * self.zoom
+                    } else if let Some(len) = self.drawbar_pixels(i, p.key, slot) {
+                        len
                     } else if kind == ControlKind::Fader {
                         widget::FADER_PIXELS_PER_RANGE
                     } else {

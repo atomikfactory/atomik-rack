@@ -43,6 +43,22 @@
 //! * **Overdrive.** `out.drive` runs a rational soft clipper with up to 18 dB of gain in front,
 //!   a square-root makeup behind; 0 is bit-exact off. `out.level` is a gain in dB after it, and a
 //!   soft limit keeps the output below 2 for any setting.
+//! * **Leakage.** `tone.leak` adds the faint crosstalk of the neighbouring tonewheels: every partial a
+//!   drawbar plays also carries the wheels a semitone below and above it, each at up to 3 % (-30 dB)
+//!   of the partial at `tone.leak` 1, under the same drawbar level and key envelope. 0 is bit-exact
+//!   off.
+//! * **Foldback.** `tone.fold` limits the partials to the range of a real generator, wheel pitches
+//!   24 to 114 (32.7 Hz to 5.9 kHz, 91 wheels): a partial above the top wheel folds down by octaves
+//!   until it fits (the 1' drawbar of a high key sounds an octave or two lower) and the 16' footage of
+//!   a low key that falls below the bottom wheel folds up by octaves. Off leaves every partial at its
+//!   own pitch. A change takes hold at once, also for keys that sound.
+//! * **Mod wheel.** `wheel.target` sends the mod wheel (CC 1) to nothing (Off, as before), to the
+//!   scanner depth or to the rotary speed. Scanner depth scales the swing of the chosen scanner type
+//!   from none (wheel down) to full (wheel up) over the usual 30 ms glide; with the scanner Off it
+//!   has nothing to act on. Rotary speed puts the wheel on the `wheel_cv_out` socket (0 to 1, per
+//!   sample, otherwise 0): patched to the `speed_cv_in` of a rotary speaker, a wheel above half
+//!   forces the fast speed and back below 0.3 returns to the speaker's own knob, so the speaker
+//!   itself is unchanged and works alone as before. The wheel rests at 0 after a reset.
 //! * **Sounds.** `sound` selects a factory sound ([`sounds`]). The device ignores it; the app turns
 //!   a change of `sound` into a batch of param changes (one undo step).
 //!
@@ -51,7 +67,7 @@
 //! directly.
 
 use crate::controller_state::{ControllerState, Effect};
-use crate::tool_support::{choice, count, finite, linear};
+use crate::tool_support::{choice, count, cv_out, finite, linear, toggle};
 use atomik_core::{BATCH, NoteEvent, NoteKind, ParamDescriptor, ParamId, Unit};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
@@ -74,6 +90,12 @@ const PITCH_BIAS: i32 = 12;
 const DEAD: u8 = WHEELS as u8;
 /// Semitones above the key of each drawbar footage.
 pub const BAR_OFFSETS: [i32; BARS] = [-12, 7, 0, 12, 19, 24, 28, 31, 36];
+/// With foldback, the lowest and highest wheel pitch a partial may have (a 91-wheel generator,
+/// 32.7 Hz to 5.9 kHz).
+const FOLD_BOTTOM: i32 = 24;
+const FOLD_TOP: i32 = 114;
+/// The share of a partial each neighbouring wheel adds at `tone.leak` 1 (-30 dB).
+const LEAK_MAX: f32 = 0.031_622_78;
 /// Wheels above this share of the sample rate are not generated.
 const WHEEL_LIMIT: f64 = 0.45;
 
@@ -87,6 +109,9 @@ const P_SCANNER: u32 = 14;
 const P_SCANNER_RATE: u32 = 15;
 const P_DRIVE: u32 = 16;
 const P_LEVEL: u32 = 17;
+const P_LEAK: u32 = 18;
+const P_FOLD: u32 = 19;
+const P_WHEEL: u32 = 20;
 
 /// The `perc.mode` choices.
 const PERC_MODES: &[&str] = &["Off", "2nd", "3rd"];
@@ -96,6 +121,10 @@ const PERC_DECAYS: &[&str] = &["Fast", "Slow"];
 const PERC_LEVELS: &[&str] = &["Soft", "Normal"];
 /// The `scanner.type` choices.
 const SCANNERS: &[&str] = &["Off", "V1", "V2", "V3", "C1", "C2", "C3"];
+/// The `wheel.target` choices.
+const WHEEL_TARGETS: &[&str] = &["Off", "Scanner", "Rotary"];
+const WHEEL_SCANNER: u8 = 1;
+const WHEEL_ROTARY: u8 = 2;
 const SOUNDS: Unit = Unit::Choice(&sounds::SOUND_NAMES);
 
 /// Decay times (to -60 dB) of the percussion, seconds: fast and slow.
@@ -154,7 +183,7 @@ const fn bar(i: usize, default: f32) -> ParamDescriptor {
     )
 }
 
-static PARAMS: [ParamDescriptor; 18] = [
+static PARAMS: [ParamDescriptor; 21] = [
     ParamDescriptor {
         id: ParamId(P_SOUND),
         key: "sound",
@@ -199,13 +228,17 @@ static PARAMS: [ParamDescriptor; 18] = [
     ),
     linear(P_DRIVE, "out.drive", "Drive", 0.0, 1.0, 0.0, Unit::Percent),
     linear(P_LEVEL, "out.level", "Level", -24.0, 6.0, 0.0, Unit::Db),
+    linear(P_LEAK, "tone.leak", "Leakage", 0.0, 1.0, 0.0, Unit::Percent),
+    toggle(P_FOLD, "tone.fold", "Foldback", 0.0),
+    choice(P_WHEEL, "wheel.target", "Mod wheel", WHEEL_TARGETS, 0.0),
 ];
 
 const NOTES_IN: SocketId = SocketId(0);
 const OUT_L: SocketId = SocketId(1);
 const OUT_R: SocketId = SocketId(2);
+const WHEEL_CV: SocketId = SocketId(3);
 
-static SOCKETS: [SocketDescriptor; 3] = [
+static SOCKETS: [SocketDescriptor; 4] = [
     SocketDescriptor {
         id: NOTES_IN,
         key: "notes_in",
@@ -227,6 +260,7 @@ static SOCKETS: [SocketDescriptor; 3] = [
         kind: SocketKind::Audio,
         direction: Direction::Output,
     },
+    cv_out(3, "wheel_cv_out", "Wheel CV"),
 ];
 
 /// Static description of the organ.
@@ -261,10 +295,26 @@ pub fn bar_gain(position: u8) -> f32 {
     g
 }
 
+/// The wheel pitch drawbar `bar` reads for `key`: the footage's own pitch, or with `fold` the pitch
+/// brought into the generator's range (down by octaves from above the top wheel, the 16' up by
+/// octaves from below the bottom one).
+fn bar_pitch(key: u8, bar: usize, fold: bool) -> i32 {
+    let mut pitch = i32::from(key) + BAR_OFFSETS[bar];
+    if fold {
+        while pitch > FOLD_TOP {
+            pitch -= 12;
+        }
+        while bar == 0 && pitch < FOLD_BOTTOM {
+            pitch += 12;
+        }
+    }
+    pitch
+}
+
 /// The wheel each drawbar of `key` reads (`DEAD` where the wheel is not generated).
-fn wheels_for(key: u8, live: usize) -> [u8; BARS] {
+fn wheels_for(key: u8, live: usize, fold: bool) -> [u8; BARS] {
     std::array::from_fn(|k| {
-        let w = (i32::from(key) + BAR_OFFSETS[k] + PITCH_BIAS) as usize;
+        let w = (bar_pitch(key, k, fold) + PITCH_BIAS) as usize;
         if w < live { w as u8 } else { DEAD }
     })
 }
@@ -302,6 +352,17 @@ fn scanner_target(kind: u8) -> (f32, f32, f32) {
     }
 }
 
+/// The wheel `w` with the faint crosstalk `leak` of the wheels a semitone below and above it; a
+/// wheel that is not generated (`DEAD`) leaks nothing.
+#[inline]
+fn leaky(sines: &[f32; WHEELS + 1], w: usize, leak: f32) -> f32 {
+    if w >= WHEELS {
+        return 0.0;
+    }
+    let below = if w > 0 { sines[w - 1] } else { 0.0 };
+    sines[w] + leak * (below + sines[w + 1])
+}
+
 /// `x` unchanged up to 1, then a smooth approach to 2.
 #[inline]
 fn soft_limit(x: f32) -> f32 {
@@ -329,6 +390,11 @@ pub struct Organ {
     scanner_rate: f32,
     drive: f32,
     level_db: f32,
+    leak: f32,
+    fold: bool,
+    wheel_target: u8,
+    /// The mod wheel (CC 1), `0..=1`.
+    wheel: f32,
     // Derived.
     drive_gain: f32,
     drive_makeup: f32,
@@ -388,6 +454,10 @@ impl Organ {
             scanner_rate: 6.8,
             drive: 0.0,
             level_db: 0.0,
+            leak: 0.0,
+            fold: false,
+            wheel_target: 0,
+            wheel: 0.0,
             drive_gain: 1.0,
             drive_makeup: 1.0,
             level: 1.0,
@@ -456,7 +526,7 @@ impl Organ {
             s.set_time(BAR_SMOOTH_MS, sr);
             s.set_target(t);
         }
-        let (depth, mix, spread) = scanner_target(self.scanner);
+        let (depth, mix, spread) = self.scanner_goal();
         for s in [
             &mut self.scan_depth,
             &mut self.scan_mix,
@@ -468,6 +538,17 @@ impl Organ {
         self.scan_mix.set_target(mix);
         self.scan_spread.set_target(spread);
         self.ctl.set_sample_rate(sr);
+    }
+
+    /// The scanner's swing, share and spread for the type and, when the mod wheel is on the scanner
+    /// depth, the wheel (the swing is exactly the type's own while the wheel is elsewhere).
+    fn scanner_goal(&self) -> (f32, f32, f32) {
+        let (depth, mix, spread) = scanner_target(self.scanner);
+        if self.wheel_target == WHEEL_SCANNER {
+            (depth * self.wheel, mix, spread)
+        } else {
+            (depth, mix, spread)
+        }
     }
 
     /// The gain drawbar `b` aims for: its position, with the 1' drawbar silent under percussion.
@@ -551,7 +632,7 @@ impl Organ {
         v.key = key;
         v.gate = true;
         v.age = self.clock;
-        v.wheels = wheels_for(key, self.live);
+        v.wheels = wheels_for(key, self.live, self.fold);
         if !held {
             self.perc_env = 1.0;
         }
@@ -571,8 +652,21 @@ impl Organ {
         }
     }
 
+    /// Moves the mod wheel; on the scanner depth the swing follows over its usual glide.
+    fn set_wheel(&mut self, value: f32) {
+        self.wheel = finite(value).clamp(0.0, 1.0);
+        if self.wheel_target == WHEEL_SCANNER {
+            let (depth, _, _) = self.scanner_goal();
+            self.scan_depth.set_target(depth);
+        }
+    }
+
     fn handle(&mut self, kind: NoteKind) {
         match kind {
+            NoteKind::Cc {
+                controller: 1,
+                value,
+            } => self.set_wheel(value),
             NoteKind::On { key, .. } => self.note_on(key),
             NoteKind::Off { key } => {
                 let key = key.min(127);
@@ -633,6 +727,7 @@ impl Organ {
     fn render(&mut self, left: &mut [f32; BATCH], right: &mut [f32; BATCH], range: (usize, usize)) {
         let sr = f64::from(self.sample_rate);
         let perc_bar = if self.perc_mode == 2 { 4 } else { 3 };
+        let leak = self.leak * LEAK_MAX;
         for n in range.0..range.1 {
             let mut sum = 0.0f32;
             let mut perc = 0.0f32;
@@ -654,11 +749,17 @@ impl Organ {
                         v.env = 0.0;
                     }
                     let sines = &self.sines;
-                    let s: f32 = now
-                        .iter()
-                        .zip(v.wheels)
-                        .map(|(g, w)| g * sines[usize::from(w)])
-                        .sum();
+                    let s: f32 = if leak > 0.0 {
+                        now.iter()
+                            .zip(v.wheels)
+                            .map(|(g, w)| g * leaky(sines, usize::from(w), leak))
+                            .sum()
+                    } else {
+                        now.iter()
+                            .zip(v.wheels)
+                            .map(|(g, w)| g * sines[usize::from(w)])
+                            .sum()
+                    };
                     sum += s * v.env;
                     perc += self.sines[usize::from(v.wheels[perc_bar])] * v.env;
                 }
@@ -736,6 +837,7 @@ impl Device for Organ {
         self.noise = Rng::new(hash64(self.seed, 0x6f72_6761, 1));
         self.noise_prev = 0.0;
         self.scan_phase = 0.0;
+        self.wheel = 0.0;
         self.line_l.clear();
         self.line_r.clear();
         self.ctl.reset();
@@ -784,6 +886,18 @@ impl Device for Organ {
                 self.level_db = v.clamp(-24.0, 6.0);
                 self.derive();
             }
+            P_LEAK => self.leak = v.clamp(0.0, 1.0),
+            P_FOLD => {
+                self.fold = v.round() >= 1.0;
+                let (live, fold) = (self.live, self.fold);
+                for voice in self.voices.iter_mut().filter(|v| v.sounding()) {
+                    voice.wheels = wheels_for(voice.key, live, fold);
+                }
+            }
+            P_WHEEL => {
+                self.wheel_target = v.round().clamp(0.0, 2.0) as u8;
+                self.derive();
+            }
             _ => {}
         }
     }
@@ -800,6 +914,7 @@ impl Device for Organ {
         let events = ctx.notes_in(NOTES_IN);
         let (mut left, mut right) = ([0.0f32; BATCH], [0.0f32; BATCH]);
         let mut gain = [1.0f32; BATCH];
+        let mut wheel_cv = [0.0f32; BATCH];
         let mut next = 0;
         let mut start = 0;
         // Render in segments between note events so events are sample-accurate.
@@ -814,6 +929,9 @@ impl Device for Organ {
                 .map_or(BATCH, |e| (e.offset as usize).clamp(start + 1, BATCH));
             self.render(&mut left, &mut right, (start, end));
             self.ctl.fill_gain(&mut gain[start..end]);
+            if self.wheel_target == WHEEL_ROTARY {
+                wheel_cv[start..end].fill(self.wheel);
+            }
             start = end;
         }
         self.normalise();
@@ -823,6 +941,7 @@ impl Device for Organ {
         }
         *ctx.output(OUT_L) = left;
         *ctx.output(OUT_R) = right;
+        *ctx.output(WHEEL_CV) = wheel_cv;
     }
 }
 
@@ -833,7 +952,7 @@ impl Organ {
             let t = self.bar_target(b);
             self.bars[b].set_immediate(t);
         }
-        let (depth, mix, spread) = scanner_target(self.scanner);
+        let (depth, mix, spread) = self.scanner_goal();
         self.scan_depth.set_immediate(depth);
         self.scan_mix.set_immediate(mix);
         self.scan_spread.set_immediate(spread);

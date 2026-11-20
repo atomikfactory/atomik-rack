@@ -435,6 +435,7 @@ pub mod mod_matrix_panel;
 pub mod modsrc_panel;
 pub mod note_tool_args;
 pub mod notes_panel;
+pub mod organ_panel;
 pub mod paint;
 pub mod palette_rank;
 pub mod param_search_panel;

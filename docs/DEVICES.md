@@ -436,13 +436,14 @@ the [Rotary Speaker](#rotary-speaker-atomikrotary-speaker-effect).
 
 ### Sockets
 
-`notes_in` (notes in), `out_l`, `out_r` (audio out).
+`notes_in` (notes in), `out_l`, `out_r` (audio out), `wheel_cv_out` (CV out, the mod wheel while `wheel.target` is
+Rotary, else 0).
 
 ### Params
 
 | Key | Name | Range | Default | Notes |
 |---|---|---|---|---|
-| `sound` | Sound | 0-5 | 0 | A factory sound (see Sounds); the device ignores it |
+| `sound` | Sound | 0-6 | 0 | A factory sound (see Sounds); the device ignores it |
 | `drawbar.16` | 16' | 0-8 | 8 | Footage 16', 12 semitones below the key |
 | `drawbar.5_1_3` | 5 1/3' | 0-8 | 8 | 7 semitones above the key |
 | `drawbar.8` | 8' | 0-8 | 8 | The key itself |
@@ -460,6 +461,9 @@ the [Rotary Speaker](#rotary-speaker-atomikrotary-speaker-effect).
 | `scanner.rate` | Scan rate | 4 to 9 Hz | 6.8 | |
 | `out.drive` | Drive | 0 to 1 | 0 | Overdrive; 0 is bit-exact off |
 | `out.level` | Level | -24 to +6 dB | 0 | A gain after the drive |
+| `tone.leak` | Leakage | 0 to 1 | 0 | Crosstalk of the wheels a semitone either side of each partial, up to -30 dB; 0 is bit-exact off |
+| `tone.fold` | Foldback | Off, On | Off | Partials above the top wheel fold down by octaves, the 16' of a low key folds up |
+| `wheel.target` | Mod wheel | Off, Scanner, Rotary | Off | What CC 1 does: the scanner depth, or the speed of a rotary speaker patched to `wheel_cv_out` |
 
 ### Behaviour (as built)
 
@@ -474,8 +478,8 @@ the [Rotary Speaker](#rotary-speaker-atomikrotary-speaker-effect).
 - **Keys.** An organ key is on or off (velocity is ignored); its envelope opens in about 1 ms and closes in
   about 4 ms. A key struck again while it sounds keeps its voice; with all 16 voices taken the quietest
   released voice (else the oldest key) is reused. Sustain (CC 64), volume (CC 7) and expression (CC 11)
-  work as in the [MIDI](#midi) chart; the bend, wheel and pressure are ignored. The master tune moves
-  every wheel.
+  work as in the [MIDI](#midi) chart; the bend and pressure are ignored, and so is the wheel unless
+  `wheel.target` says otherwise. The master tune moves every wheel.
 - **Percussion.** The 2nd or 3rd harmonic (the 4' or the 2 2/3' wheel) of every sounding key, under one
   envelope that restarts only when a key is struck while none is held. The 1' drawbar is silent while
   percussion is on.
@@ -484,6 +488,14 @@ the [Rotary Speaker](#rotary-speaker-atomikrotary-speaker-effect).
 - **Scanner.** A delay of 0.7 ms swung by a sine. V1 to V3 swing it by 0.12, 0.24 and 0.42 ms and use only
   the delayed signal; C1 to C3 mix the delayed and the direct signal half and half, with the right output
   a quarter turn behind for width. A change of type glides over 30 ms; Off passes the signal bit for bit.
+- **Leakage and foldback.** `tone.leak` adds the wheels a semitone below and above every partial, each up to
+  3 % (-30 dB) of it, under the partial's drawbar level and key envelope. `tone.fold` keeps the partials in the
+  range of a 91-wheel generator (pitches 24 to 114, 32.7 Hz to 5.9 kHz): a partial above it folds down by
+  octaves, the 16' of a key that would fall below it folds up by octaves. A change reaches sounding keys at once.
+- **Mod wheel.** Scanner: the wheel scales the swing of the chosen scanner type from none to full (nothing to
+  act on while the scanner is Off). Rotary: the wheel is sent on `wheel_cv_out`; patched to a rotary speaker's
+  `speed_cv_in`, a wheel above half forces fast and below 0.3 gives back the speaker's own knob. The speaker needs
+  no change and works alone as before.
 - **Output.** The drawbar sum is scaled by 0.15 (one key at full registration stays below 1), then the
   scanner, the drive (a rational soft clipper with up to 18 dB of gain in front), the level and a soft
   limit that keeps every sample below 2, then volume and expression.
@@ -503,14 +515,17 @@ for the FM synth, the device ignores the param and the app turns a `SetParam` of
 | Rock | 888 800 000 | Bright and driven, a medium vibrato, a firm key click |
 | Mellow | 008 603 000 | A soft flute-like tone with a light chorus |
 | Church | 608 604 002 | A pipe-like stack of octaves and fifths, no scanner |
+| Vintage | 868 400 006 | A worn tonewheel sound: leakage, foldback, a medium chorus and a little drive |
 
 ### Tests
 
 The unit tests measure each drawbar at its equal-tempered frequency and amplitude, the 3 dB steps, shared
 wheels, chords, the wheel limit at 44.1, 48 and 96 kHz, the voice limit and stealing (against a render
 without the stolen key), release to exact silence, percussion (harmonic, decay times, level, trigger rule),
-key click, the scanner sidebands against the Bessel values, drive, level, master tune, the pedal and volume
-contracts, determinism and reset, every param at its extremes and the factory sounds. A proptest in
+key click, the scanner sidebands against the Bessel values, drive, level, master tune, leakage at the neighbouring
+wheel frequencies, foldback at the top and bottom wheel, the mod wheel on the scanner depth and on a rotary
+speaker, the pedal and volume contracts, determinism and reset, every param at its extremes and the
+factory sounds. A proptest in
 [bounded_tests.rs](../crates/devices/src/bounded_tests.rs) drives random params and notes at 44.1, 48 and
 96 kHz, and
 [crates/render/tests/organ.rs](../crates/render/tests/organ.rs) bounces the organ into the rotary speaker at

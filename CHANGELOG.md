@@ -49,6 +49,19 @@ may break APIs and the patch and project formats.
   with the number of usable plugins it matches; clicking chips switches them on or off, several chips combine
   (a plugin must match all of them), and CLEAR switches them all off. While a chip is on the device types are hidden,
   as for a `#tag` search, which keeps working.
+- **The organ's drawbars are real drawbars.** The organ panel draws its nine drawbars as vertical sliders with the
+  conventional colours (brown for the 16' and 5 1/3', white for the 8', 4', 2' and 1', black for the 2 2/3',
+  1 3/5' and 1 1/3'), nine positions from 0 (pushed in, at the top) to 8, the position shown above each and the
+  footage below. A drawbar is pulled down to raise it and the handle follows the pointer; double-click resets,
+  Shift drags finely, and the right-click menu has MIDI learn, automation and macro as on every control.
+- **Tonewheel leakage and foldback in the organ.** LEAK (`tone.leak`, default 0) adds the faint crosstalk of the
+  tonewheels a semitone either side of each partial, up to -30 dB. FOLD (`tone.fold`, default off) keeps the
+  partials inside a 91-wheel generator: the top drawbars of a high key fold back down by octaves and the 16' of a
+  low key folds up. Both off renders as before. A new factory sound, Vintage, uses them.
+- **The organ's mod wheel.** `wheel.target` (default Off) sends the mod wheel to the scanner depth (none at the
+  bottom, the chosen type's full swing at the top) or to the rotary speed: the new `wheel_cv_out` socket carries
+  the wheel and, patched to the Speed CV of a rotary speaker, a wheel above half switches it to fast. The rotary
+  speaker itself is unchanged.
 
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last
