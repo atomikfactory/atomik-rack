@@ -323,6 +323,13 @@ impl RackView {
             }
             if self.devices[i]
                 .desc
+                .is_some_and(|d| d.type_id == crate::organ_panel::ORGAN_TYPE)
+                && let Some(text) = crate::organ_panel::organ_help(p.key)
+            {
+                return Some(with_id(Help::new(rect, text)));
+            }
+            if self.devices[i]
+                .desc
                 .is_some_and(|d| d.type_id == crate::granular_panel::GRANULAR_TYPE)
                 && let Some(text) = crate::granular_panel::granular_help(p.key)
             {

@@ -808,7 +808,10 @@ impl RackView {
         pixels_per_range: f64,
     ) -> crate::widget::ValueDrag {
         let drag = crate::widget::ValueDrag::new(p, value, pixels_per_range);
-        if self.is_gain_fader(i, p.key) {
+        if self.is_drawbar(i, p.key) {
+            // A drawbar is pulled down to raise it.
+            drag.reversed()
+        } else if self.is_gain_fader(i, p.key) {
             drag.limited(crate::gain_panel::max_norm(self.gain_is_vca(i)))
         } else {
             drag

@@ -181,6 +181,25 @@ impl RackView {
             && (key == "fader" || crate::master_panel::return_level_slot(key).is_some())
     }
 
+    /// Whether param `key` of device `dev` is one of the organ's drawbars.
+    pub(super) fn is_drawbar(&self, dev: usize, key: &str) -> bool {
+        crate::organ_panel::is_drawbar_key(key)
+            && self.devices[dev]
+                .desc
+                .is_some_and(|d| d.type_id == crate::organ_panel::ORGAN_TYPE)
+    }
+
+    /// The pixels the whole range of drawbar `key` (control `slot`) takes along its track at the
+    /// current zoom, so the handle follows the pointer; `None` for any other control.
+    pub(super) fn drawbar_pixels(&self, dev: usize, key: &str, slot: usize) -> Option<f64> {
+        if !self.is_drawbar(dev, key) {
+            return None;
+        }
+        let rect = self.devices[dev].spec.front.get(slot)?.rect;
+        let (_, top, bottom) = crate::organ_panel::drawbar_travel(rect);
+        Some((bottom - top) * self.zoom)
+    }
+
     /// The track of the horizontal fader `key` of panel `dev`: left end, right end, y.
     pub(super) fn mix_travel(&self, dev: usize, key: &str) -> (f64, f64, f64) {
         crate::master_panel::return_level_slot(key)
