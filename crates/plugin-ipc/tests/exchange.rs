@@ -607,3 +607,34 @@ fn the_file_goes_when_the_last_owner_of_the_mapping_drops() {
     drop(handle);
     assert!(!path.exists());
 }
+
+#[test]
+fn the_pulse_moves_while_the_child_loops_and_stands_still_when_it_does_not() {
+    let (parent, mut child) = pair();
+    let handle = parent.death_handle();
+    assert_eq!(parent.pulse(), 0, "nothing has run yet");
+    // Each pass of the child's wait loop bumps it, with or without a request.
+    assert!(child.wait_request(Duration::from_millis(5)).is_none());
+    let first = parent.pulse();
+    assert_ne!(first, 0);
+    assert!(child.wait_request(Duration::from_millis(5)).is_none());
+    let second = parent.pulse();
+    assert_ne!(second, first, "a pass without a request still moves it");
+    assert_eq!(handle.pulse(), second, "the handle reads the same counter");
+    // The loop stops: the value stays where it was.
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(parent.pulse(), second);
+    assert_eq!(handle.pulse(), second);
+}
+
+#[test]
+fn the_pulse_moves_while_the_child_is_parked_on_the_doorbell() {
+    let (parent, mut child) = pair();
+    let server = thread::spawn(move || {
+        assert!(child.wait_request(Duration::from_millis(300)).is_none());
+    });
+    thread::sleep(Duration::from_millis(100));
+    let early = parent.pulse();
+    assert_ne!(early, 0, "the loop has started");
+    server.join().unwrap();
+}
