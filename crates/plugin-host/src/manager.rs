@@ -19,7 +19,7 @@ use crate::device::PluginDevice;
 use crate::layout::truncate_params;
 use crate::slot::{
     DeviceEnd, InstanceId, LogLevel, ManagerEnd, ParamPhase, PluginMessage, PluginSlot,
-    ReaperQueue, plugin_channel,
+    ReaperQueue, StallOutcome, plugin_channel,
 };
 use crate::threads::assert_main_thread;
 use atomik_core::BATCH;
@@ -28,6 +28,7 @@ use atomik_device_sdk::{
     RunMode, descriptor_for,
 };
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 /// The error text of a call on an instance whose process is gone.
 pub const LOST: &str = "the plugin process stopped";
@@ -66,6 +67,25 @@ pub struct PluginHandle {
     /// Why the saved state could not be restored, if it could not (the blob must be kept and
     /// the device shown as FAILED).
     pub restore_error: Option<String>,
+    /// How long the stages the manager ran itself took (zero for a reattached instance).
+    pub timing: CreateTiming,
+}
+
+/// The time the manager spent on the stages of a creation that it runs on the main thread.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CreateTiming {
+    /// Restoring the saved state into the new instance.
+    pub restore: Duration,
+    /// Activating it (the descriptor, the activation and the latency).
+    pub activate: Duration,
+}
+
+/// The current time, for the load timing of [`CreateTiming`] only: it is logged and never reaches
+/// the audio path or the saved state.
+// Justification: wall-clock time is the point of a load timing; main thread only (HI-2).
+#[allow(clippy::disallowed_methods)]
+fn clock() -> std::time::Instant {
+    std::time::Instant::now()
 }
 
 /// What the manager can fail with.
@@ -170,6 +190,18 @@ pub enum ManagerEvent {
         level: LogLevel,
         /// The text.
         text: String,
+    },
+    /// A blocking call on the plugin's process held the main thread up for at least
+    /// [`crate::STALL_THRESHOLD`].
+    Stall {
+        /// The instance.
+        instance: InstanceId,
+        /// The name of the call.
+        call: String,
+        /// How long the main thread waited, in milliseconds.
+        ms: u64,
+        /// How the wait ended.
+        outcome: StallOutcome,
     },
     /// The device failed (an error status, a panic, non-finite output).
     Failed {
@@ -450,6 +482,7 @@ impl PluginManager {
         end: ManagerEnd,
     ) -> Result<PluginHandle, ManagerError> {
         let id = end.slot().id();
+        let began = clock();
         // State first (so a latency that depends on it is right at activation), rack params
         // after (the device re-sends every param the rack sets).
         let restore_error = request
@@ -457,6 +490,7 @@ impl PluginManager {
             .as_ref()
             .and_then(|s| instance.restore_state(s).err())
             .map(|e| e.to_string());
+        let restored = clock();
         let (descriptor, layout) = descriptor_of(&request.plugin, instance.layout())?;
         let cfg = ActivateConfig {
             sample_rate: request.sample_rate,
@@ -465,6 +499,10 @@ impl PluginManager {
         };
         let processor = instance.activate(&cfg)?;
         let latency = instance.latency_frames();
+        let timing = CreateTiming {
+            restore: restored.saturating_duration_since(began),
+            activate: clock().saturating_duration_since(restored),
+        };
         let slot = end.slot().clone();
         slot.set_latency(latency, cfg.sample_rate);
         slot.set_pinned(request.pinned);
@@ -493,6 +531,7 @@ impl PluginManager {
             layout,
             descriptor,
             restore_error,
+            timing,
         })
     }
 
@@ -855,6 +894,7 @@ impl PluginManager {
             layout,
             descriptor,
             restore_error: None,
+            timing: CreateTiming::default(),
         })
     }
 
@@ -924,6 +964,18 @@ impl PluginManager {
             m.phase = Phase::Inactive;
             return;
         }
+        // What the instance said while it deactivated (a stall of that very call) is not
+        // dropped with it.
+        while let Some(msg) = m.end.try_recv() {
+            if let PluginMessage::Stall { call, ms, outcome } = msg {
+                events.push(ManagerEvent::Stall {
+                    instance: id,
+                    call,
+                    ms,
+                    outcome,
+                });
+            }
+        }
         doomed.extend(self.instances.remove(&id));
         events.push(ManagerEvent::Destroyed(id));
     }
@@ -979,6 +1031,12 @@ impl PluginManager {
                     text: format!(
                         "the plugin did not take {batches} audio block(s) (it answered a non-OK result, as plugins do while they load or sign in); the device plays on, silent for those blocks"
                     ),
+                }),
+                PluginMessage::Stall { call, ms, outcome } => events.push(ManagerEvent::Stall {
+                    instance: id,
+                    call,
+                    ms,
+                    outcome,
                 }),
                 PluginMessage::Failed { reason } => events.push(ManagerEvent::Failed {
                     instance: id,

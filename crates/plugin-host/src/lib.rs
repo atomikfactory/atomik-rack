@@ -53,8 +53,8 @@ pub use device::{METER_VALUES, PluginDevice};
 pub use fpenv::{FLUSH_SUPPORTED, FtzGuard, denormals_flushed};
 pub use journal::{CrashJournal, InUsePlugin, RecoveryDir, blacklist_in_use};
 pub use manager::{
-    CreateTicket, HUNG, InstantiateRequest, LOST, ManagerError, ManagerEvent, PluginHandle,
-    PluginManager, PluginProvider,
+    CreateTicket, CreateTiming, HUNG, InstantiateRequest, LOST, ManagerError, ManagerEvent,
+    PluginHandle, PluginManager, PluginProvider,
 };
 pub use scan::{
     ALL_FORMATS, FailureKind, MAX_PARALLEL_SCANS, RescanMode, ScanEnv, ScanError, ScanFailure,
@@ -66,7 +66,8 @@ pub use settings::{
 };
 pub use slot::{
     DeviceEnd, DeviceState, HostMessenger, InstanceId, LogLevel, MESSAGE_CAPACITY, ManagerEnd,
-    ParamPhase, PluginMessage, PluginSlot, ReapItem, ReaperQueue, plugin_channel, warm, warmed,
+    ParamPhase, PluginMessage, PluginSlot, ReapItem, ReaperQueue, STALL_THRESHOLD, StallOutcome,
+    plugin_channel, warm, warmed,
 };
 pub use standin::{PluginStandIn, stand_in};
 pub use threads::{

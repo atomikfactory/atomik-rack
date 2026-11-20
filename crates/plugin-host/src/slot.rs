@@ -42,6 +42,33 @@ pub enum LogLevel {
     Error,
 }
 
+/// How long a blocking call on a plugin's process may take before it is recorded as a stall of
+/// the UI thread (a [`PluginMessage::Stall`]). Faster calls leave no trace.
+pub const STALL_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// How a blocking call on a plugin's process ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StallOutcome {
+    /// The plugin answered, late.
+    Answered,
+    /// The wait ran out.
+    TimedOut,
+    /// The plugin's process ended during the wait.
+    ChildGone,
+}
+
+impl StallOutcome {
+    /// The words of the log line.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Answered => "answered",
+            Self::TimedOut => "timed out",
+            Self::ChildGone => "child gone",
+        }
+    }
+}
+
 /// What a plugin or a device tells the app. Drained by the manager on the main thread.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PluginMessage {
@@ -111,6 +138,16 @@ pub enum PluginMessage {
     ProcessExited {
         /// The exit code or signal and the last lines the process wrote to stderr.
         reason: String,
+    },
+    /// A call the main thread made on the plugin's process blocked it for at least
+    /// [`STALL_THRESHOLD`] (sandbox only).
+    Stall {
+        /// The name of the call.
+        call: String,
+        /// How long the main thread waited, in milliseconds.
+        ms: u64,
+        /// How the wait ended.
+        outcome: StallOutcome,
     },
 }
 

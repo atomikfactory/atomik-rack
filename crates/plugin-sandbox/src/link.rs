@@ -14,7 +14,8 @@
 use crate::clock::now;
 use crate::transport::{ChildProcess, Transport};
 use atomik_plugin_host::{
-    BackendError, HUNG, HostMessenger, LOST, LogLevel, ParamPhase, PluginMessage,
+    BackendError, HUNG, HostMessenger, LOST, LogLevel, ParamPhase, PluginMessage, STALL_THRESHOLD,
+    StallOutcome,
 };
 use atomik_plugin_ipc::{
     DeathHandle, FromChild, MAX_FRAME_BYTES, MAX_GUI_DIMENSION, MAX_LOG_BYTES,
@@ -290,6 +291,28 @@ impl Shared {
             level: LogLevel::Warning,
             text,
         });
+    }
+
+    /// Waits like [`Shared::wait`] and, when the wait took at least [`STALL_THRESHOLD`], tells
+    /// the app which call held the main thread up and how it ended. Only the main thread's
+    /// blocking calls go through here.
+    fn wait_noted(&self, what: &str, timeout: Duration) -> Waited {
+        let start = now();
+        let waited = self.wait(timeout);
+        let elapsed = now().saturating_duration_since(start);
+        if elapsed >= STALL_THRESHOLD {
+            let outcome = match waited {
+                Waited::Reply(_) => StallOutcome::Answered,
+                Waited::Ended => StallOutcome::ChildGone,
+                Waited::TimedOut => StallOutcome::TimedOut,
+            };
+            self.messenger.post(PluginMessage::Stall {
+                call: what.to_string(),
+                ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                outcome,
+            });
+        }
+        waited
     }
 
     /// Condemns the child: remembers `reason` (the first one wins), makes every later call
@@ -807,7 +830,7 @@ impl Link {
     }
 
     fn await_reply(&mut self, what: &str, timeout: Duration) -> Result<Reply, BackendError> {
-        let waited = self.shared.wait(timeout);
+        let waited = self.shared.wait_noted(what, timeout);
         self.settle(waited, what, timeout)
     }
 
@@ -928,7 +951,7 @@ impl Link {
         let id = self.next_id;
         self.shared.expect(Expect::Id(id));
         self.send(&make(id), None)?;
-        match self.shared.wait(timeout) {
+        match self.shared.wait_noted(what, timeout) {
             Waited::Reply(reply) => {
                 self.misses = 0;
                 match reply.msg {
