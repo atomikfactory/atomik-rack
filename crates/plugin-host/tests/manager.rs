@@ -864,3 +864,36 @@ fn an_instance_that_is_gone_answers_a_capture_poll_as_stale() {
         .expect("an answer");
     assert!(landed.stale && landed.result.is_err());
 }
+
+#[test]
+fn a_stall_record_is_kept_out_of_the_event_stream_and_comes_from_take_stalls() {
+    let (mut m, _) = manager();
+    let id = m.instantiate(&request("null.fx")).unwrap().id;
+    assert!(m.take_stalls().is_empty());
+    let messenger = m.slot(id).unwrap().messenger();
+    assert!(messenger.post(PluginMessage::Stall {
+        call: "CaptureState".to_string(),
+        ms: 70,
+        outcome: atomik_plugin_host::StallOutcome::Answered,
+    }));
+    assert_eq!(m.poll(), vec![], "wall-time diagnostics are not events");
+    let stalls = m.take_stalls();
+    assert_eq!(stalls.len(), 1);
+    assert_eq!(
+        (stalls[0].instance, stalls[0].call.as_str(), stalls[0].ms),
+        (id, "CaptureState", 70)
+    );
+    assert!(m.take_stalls().is_empty(), "taken once");
+    // A caller that never drains them cannot make the list grow without bound.
+    for ms in 0..100 {
+        let _ = messenger.post(PluginMessage::Stall {
+            call: "ReadParams".to_string(),
+            ms,
+            outcome: atomik_plugin_host::StallOutcome::TimedOut,
+        });
+        let _ = m.poll();
+    }
+    let kept = m.take_stalls();
+    assert_eq!(kept.len(), 64);
+    assert_eq!(kept.last().map(|s| s.ms), Some(99));
+}

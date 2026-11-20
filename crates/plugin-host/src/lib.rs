@@ -54,7 +54,7 @@ pub use fpenv::{FLUSH_SUPPORTED, FtzGuard, denormals_flushed};
 pub use journal::{CrashJournal, InUsePlugin, RecoveryDir, blacklist_in_use};
 pub use manager::{
     CaptureLanded, CreateTicket, CreateTiming, HUNG, InstantiateRequest, LOST, ManagerError,
-    ManagerEvent, PluginHandle, PluginManager, PluginProvider,
+    ManagerEvent, PluginHandle, PluginManager, PluginProvider, StallRecord,
 };
 pub use scan::{
     ALL_FORMATS, FailureKind, MAX_PARALLEL_SCANS, RescanMode, ScanEnv, ScanError, ScanFailure,

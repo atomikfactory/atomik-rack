@@ -519,23 +519,19 @@ fn the_state_of_a_busy_plugin_is_asked_for_in_the_background_without_a_stall_or_
         "the main thread went on polling meanwhile: {polls}"
     );
     assert!(landed.result.is_ok() && !landed.stale && !landed.again);
+    assert!(sb.manager.take_stalls().is_empty(), "nothing waited, so nothing stalled");
     assert!(
         !events.iter().any(|e| matches!(
             e,
-            ManagerEvent::Stall { .. } | ManagerEvent::Crashed { .. } | ManagerEvent::Failed { .. }
+            ManagerEvent::Crashed { .. } | ManagerEvent::Failed { .. }
         )),
         "{events:?}"
     );
     // A call that waits for the same plugin is a stall, and the record says which call.
     sb.manager.capture_state(id).unwrap();
-    let events = sb.manager.poll();
-    assert!(
-        events.iter().any(|e| matches!(
-            e,
-            ManagerEvent::Stall { call, .. } if call == "CaptureState"
-        )),
-        "{events:?}"
-    );
+    let _ = sb.manager.poll();
+    let stalls = sb.manager.take_stalls();
+    assert!(stalls.iter().any(|s| s.call == "CaptureState"), "{stalls:?}");
     drop(device);
     let _ = sb.manager.poll();
     sb.finish();
