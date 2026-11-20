@@ -2256,6 +2256,18 @@ const COMMANDS: &[CommandDef] = &[
     )
     .arg(PRACTICE_TRAINER_ARGS),
     cmd("rack.add_column", "Add Column", G::Rack, C::Rack),
+    cmd(
+        "rack.add_insert_effect",
+        "Add Insert Effect...",
+        G::Rack,
+        C::Rack,
+    ),
+    cmd(
+        "rack.add_send_effect",
+        "Add Send Effect...",
+        G::Rack,
+        C::Rack,
+    ),
     cmd("rack.assign_send", "Use as Send Effect", G::Rack, C::Rack),
     cmd("rack.auto_route", "Auto-route", G::Rack, C::Rack),
     cmd("rack.blind_ab", "Blind A/B Test...", G::Rack, C::Rack),
@@ -2291,6 +2303,12 @@ const COMMANDS: &[CommandDef] = &[
         C::Rack,
     ),
     cmd("rack.jack", "Patch Jack", G::Rack, C::Rack),
+    cmd(
+        "rack.load_master_chain",
+        "Load Master Chain Patch...",
+        G::Rack,
+        C::Rack,
+    ),
     cmd("rack.midi_out_pick", "Pick MIDI Out Port", G::Rack, C::Rack),
     cmd(
         "rack.midi_out_port",
@@ -2307,6 +2325,12 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.remove_column", "Remove Column", G::Rack, C::Rack),
     cmd("rack.replace_device", "Replace Device", G::Rack, C::Rack),
     cmd("rack.reset_device", "Reset Device", G::Rack, C::Rack),
+    cmd(
+        "rack.save_master_chain",
+        "Save Master Chain as Patch...",
+        G::Rack,
+        C::Rack,
+    ),
     cmd("rack.save_patch", "Save Patch", G::Rack, C::Rack),
     cmd("rack.save_to_library", "Save to Library", G::Rack, C::Rack),
     cmd(

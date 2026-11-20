@@ -686,6 +686,10 @@ pub struct RackView {
     column_target: u16,
     /// The slot under the last right click on the empty rack, for a paste from its menu.
     context_slot: Option<RackSlot>,
+    /// Where the effect the open create browser makes goes, when "Add Send Effect" or "Add
+    /// Insert Effect" opened it: the choice is created on that target whatever the selection
+    /// is. Forgotten whenever the browser opens again or closes.
+    bound_effect: Option<CreateTarget>,
     /// Whether that right click was past the last column (a device created from the menu
     /// then gets a new column).
     context_new_column: bool,
@@ -1066,6 +1070,7 @@ impl RackView {
             columns: 1,
             column_target: 0,
             context_slot: None,
+            bound_effect: None,
             context_new_column: false,
             tick_clock: None,
             lights_clock: None,
@@ -2956,6 +2961,7 @@ impl RackView {
         self.browser.visible = visible;
         self.browser.focused = visible;
         self.browser.create = None;
+        self.bound_effect = None;
         self.set_insert(None);
         self.clamp_scroll();
         self.repaint = true;
@@ -2968,6 +2974,7 @@ impl RackView {
         self.browser.visible = true;
         self.browser.focused = true;
         self.browser.create = Some(kind);
+        self.bound_effect = None;
         self.set_insert(None);
         self.browser.clear_query();
         self.browser.scroll = 0.0;
@@ -3026,7 +3033,14 @@ impl RackView {
             return None;
         }
         let master = doc.console.master.as_ref()?;
-        (self.selected.as_ref() == Some(master)).then(|| {
+        // The master selected makes a send, unless the next effect is bound to its inserts
+        // (after a click on the insert area or "Add Insert Effect").
+        let sends = match self.effect_create_target() {
+            CreateTarget::Master => true,
+            CreateTarget::Selected(k) => k == *master,
+            _ => false,
+        };
+        sends.then(|| {
             atomik_model::first_free_send_slot(doc).map_or(SendEntry::Full, SendEntry::Slot)
         })
     }
@@ -4788,8 +4802,11 @@ impl RackView {
         index: usize,
         modifiers: Modifiers,
     ) -> UiAction {
+        // An effect bound to a target (Add Send Effect, Add Insert Effect) is always routed
+        // there: neither the Workflow setting nor Shift makes it a plain add.
+        let bound = kind == CreateKind::Effect && self.bound_target().is_some();
         let options = CreateOptions {
-            route: self.auto_route != modifiers.shift,
+            route: bound || self.auto_route != modifiers.shift,
             skip_track: modifiers.alt,
             disarm: Vec::new(),
         };
@@ -4820,9 +4837,19 @@ impl RackView {
         }))
     }
 
-    /// What an effect created now is routed from: the selected device, or the master's insert
-    /// area right after a click on it.
+    /// The target "Add Send Effect" or "Add Insert Effect" bound the open effect browser to.
+    fn bound_target(&self) -> Option<CreateTarget> {
+        self.bound_effect
+            .clone()
+            .filter(|_| self.browser.visible && self.browser.create == Some(CreateKind::Effect))
+    }
+
+    /// What an effect created now is routed from: the target the browser was bound to, else
+    /// the selected device, or the master's insert area right after a click on it.
     pub fn effect_create_target(&self) -> CreateTarget {
+        if let Some(target) = self.bound_target() {
+            return target;
+        }
         self.selected
             .clone()
             .map_or(CreateTarget::Nothing, |k| self.effect_target(k))
