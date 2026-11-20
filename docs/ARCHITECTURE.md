@@ -1146,8 +1146,9 @@ AIFF or FLAC only).
   song can play and be edited meanwhile (the file has the document as it was at the start). The
   panel is modal and turns into a progress bar with CANCEL (Esc does the same); the result is the
   toast ("Exported mix.wav: 24-bit, 48 kHz, 1:05.3, with 2.4 s of tail"). Opening or creating a
-  project cancels a running export. With plugins the worker needs the plugin sandbox, as a freeze
-  does. The last choices (depth, dither, rate, tail, container, dry stems, folder) are in
+  project cancels a running export. With plugins the worker uses the plugin sandbox when it is on,
+  else it loads instances of its own in the app process, as a freeze does. The last choices (depth,
+  dither, rate, tail, container, dry stems, folder) are in
   `export.json` next to `settings.json`. The stems dialog picks the folder the `Bounced <song>`
   folder is made in. The QA server has `session_export` (MCP.md): the same render, synchronous,
   with a report of the file, or with `stems` of every file.
@@ -2405,15 +2406,17 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   of a baked strip), the console channel it plays through (removal), the frozen part of
   an insert chain or the tempo and meter maps are refused with a message that says to unfreeze
   (`freeze::guard`, called by `Document::plan`, so every path is covered; undo and redo restore
-  consistent states and never come through it). The tempo is locked because the render is tied to
-  the tempo map. Removing the frozen instrument removes the track with its freeze, and undo brings
-  both back.
+  consistent states and never come through it). The tempo and the meter are not locked: a render
+  made at another tempo (`Frozen::is_stale`: the ticks its frames cover now differ from its `length`
+  by more than two) plays nothing, and the app renders the track again by itself (below). Removing
+  the frozen instrument removes the track with its freeze, and undo brings both back.
 - **Applying it to the engine** (`RackDoc::expand` calls `freeze::apply`). The devices of a frozen
   track keep their place in the flat list, so every other device keeps its engine id and its prepare
   seed (freezing a track does not change the sound of another one), but they are flagged
   `ExpandedDevice::frozen`, every cable that touches them is dropped, and the cables that left the
   last frozen device's tap are re-sourced to a synthetic `atomik.audio-track` device keyed
-  `<track>/~freeze` (monitor off), appended at the end of the list. The song feeds that player the
+  `<track>/~freeze` (monitor off, and `internal.latency` set to the delay the render carries),
+  appended at the end of the list. The song feeds that player the
   render as the playback of an audio track (`Track::frozen_playback`, flattened like any audio
   track, so mute and solo apply). Frozen devices are not built (`BuildOptions::omit`: added to the
   graph and removed again before the compile, which keeps their ids taken), not inserted into the
@@ -2433,12 +2436,24 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   render is cut by the latency of the chain (`path_latency`: the longest path of the latencies the
   engine published for the devices of the chain, read at the end of the render after the plugins'
   pre-roll, over the flat cables between them, with the channel split into its input stage and the
-  rest), which keeps the track aligned with the others. For bounce in place
+  rest), which puts the audio at the input of the chain (what a track with no latency plays: bounce
+  in place, loops, joins). `render_freeze_latent`, the render of a frozen track, keeps that delay in
+  front instead: the file is the tap from the start of the span, `FreezeRender::latency` frames of
+  delay first, the frozen clip stores them as `audio.source_offset` (no new field: the file format
+  is unchanged), `Frozen::clip` plays the file from its first frame and the player reports the
+  delay (`internal.latency`), so the engine's delay compensation aligns the other tracks to the
+  frozen track as it did to the live chain and the mix is the unfrozen one (the null tests in
+  [render/tests/freeze.rs](../crates/render/tests/freeze.rs)); Unfreeze and Keep Audio uses
+  `Frozen::aligned`. A render made before this has offset 0 and keeps its timing. For bounce in place
   the other clips of the track are removed from the rendered copy of the document. `RenderControl`
   (a cancel flag read once per 64-frame batch, a progress callback) can stop a render, which then
   returns `None`; neither changes a sample.
 - **App** ([app_core_freeze.rs](../crates/app/src/app_core_freeze.rs),
-  [freeze_worker.rs](../crates/app/src/freeze_worker.rs)). The commands in the Track menu
+  [freeze_worker.rs](../crates/app/src/freeze_worker.rs)). After every applied command, undo or
+  redo and at project load, `auto_rerender` queues a `Refreeze` job for each frozen track that
+  `is_stale` (a tempo drag waits for its `EndMerge`); the running job of a tempo that is gone is
+  cancelled; the swap of an automatic job is applied with `join_next` set while the document
+  revision is still the one the tempo edit left, so it joins that step. The commands in the Track menu
   (`sequencer.freeze_track`, `freeze_track_to_device`, `freeze_tail`, `freeze_strip`, `freeze_cancel`,
   `unfreeze_track`, `unfreeze_track_keep`, `refreeze_track`, `bounce_in_place`,
   `bounce_in_place_mute`, `bounce_range`; no default keys), in the track header menu and (bounce)
@@ -2460,8 +2475,9 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   `SyncOp::FrozenChanged` makes the app restart its engine: `rebuild_engine` skips the frozen
   devices but spends their ids, so freezing or unfreezing stops playback. With plugins, the worker
   makes its own `PluginHost` from the app's scan cache and settings with the sandbox of the app in
-  bounce mode (an instance may only live on the thread that made the host); without the sandbox the
-  app's plugins live in its process and the freeze is refused with a message that says so.
+  bounce mode (an instance may only live on the thread that made the host); without the sandbox
+  the worker loads a second instance of each plugin in the app process, on its own thread, from
+  the state saved in the document, so a freeze is never refused for the plugins' sake.
 - **View** ([arrangement.rs](../crates/ui/src/arrangement.rs), `seq_paint::snowflake`). A frozen
   track has a snowflake after its name and draws its render in ice blue in place of its clips,
   labelled `(frozen)` and without handles (the clips behind it cannot be grabbed); the render is a
@@ -4310,7 +4326,8 @@ already had (format 37 reads it, older readers refuse it).
 - **The device** `atomik.audio-track` ([audio_track.rs](../crates/devices/src/audio_track.rs)):
   `out = playback + input × monitor_gain`. `monitor` is off, auto or on; with auto the app's
   `internal.monitor_live` (the arm flag) decides. A change is a 5 ms crossfade. It has one stage and
-  no latency.
+  no latency of its own; the player of a frozen track reports the delay of its render in
+  `internal.latency` (frames, set when the device is created) and the engine compensates for it.
 
 ### The Spectrum EQ window
 

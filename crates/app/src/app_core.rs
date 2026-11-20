@@ -1055,6 +1055,19 @@ impl<S: EngineSink> AppCore<S> {
             self.snapshot_morph = None;
         }
         let hint = self.snapshot_hint_after(&command);
+        // A tempo edit may leave frozen renders out of step; the freeze renders them again.
+        let frozen_edit = match &command {
+            Command::Song(SongCommand::DragTempoMap { .. } | SongCommand::DragMeterMap { .. }) => {
+                Some(true)
+            }
+            Command::Song(
+                SongCommand::FreezeTrack { .. }
+                | SongCommand::RefreezeTrack { .. }
+                | SongCommand::UnfreezeTrack { .. },
+            )
+            | Command::RegisterAsset { .. } => None,
+            _ => Some(false),
+        };
         let joined = std::mem::take(&mut self.join_next);
         let tracks_before = self.tracks_before_command();
         let note_edit = if joined || self.keep_events == KeepEvents::Keep {
@@ -1115,6 +1128,9 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 self.colour_new_tracks(tracks_before);
                 self.note_history_times();
+                if let Some(dragging) = frozen_edit {
+                    self.after_edit_for_frozen(dragging);
+                }
                 if !moved_notes.is_empty() {
                     self.report(moved_notes.join(" "));
                 }
@@ -1170,6 +1186,7 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 self.document.end_merge();
                 self.release_automation();
+                self.end_frozen_drag();
             }
             // The param being touched: the arrangement follows it when it is set to.
             UiAction::ParamTouched { device, param } => self.param_touched(&device, &param),
@@ -1556,6 +1573,8 @@ impl<S: EngineSink> AppCore<S> {
             Ok(Ok(Some(ops))) => {
                 self.sync_ops(&ops);
                 self.refresh_missing();
+                // Undoing or redoing a tempo edit may leave renders out of step.
+                self.auto_rerender(false);
                 true
             }
             Ok(Ok(None)) => false,
@@ -1831,6 +1850,8 @@ impl<S: EngineSink> AppCore<S> {
         self.rebuild_engine();
         self.audio_opened();
         self.video_opened();
+        // A project saved while a frozen track waited for its render at a new tempo.
+        self.auto_rerender(false);
     }
 
     // ------------------------------------------------------------------ engine

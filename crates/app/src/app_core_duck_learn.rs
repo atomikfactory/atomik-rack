@@ -71,13 +71,8 @@ fn search(
     cancel: &AtomicBool,
 ) -> Answer {
     let mut registry = atomik_render::default_registry();
-    let mut host = crate::freeze_worker::plugin_host(
-        &work.doc,
-        plugins.clone(),
-        &mut registry,
-        "learn from kick",
-    )
-    .unwrap_or(None);
+    let mut host = crate::freeze_worker::plugin_host(&work.doc, plugins.clone(), &mut registry)
+        .unwrap_or(None);
     atomik_model::register_stand_ins(&work.doc, &mut registry).map_err(|e| e.to_string())?;
     let options = ProjectOptions {
         host_block: std::num::NonZeroUsize::new(512).unwrap_or(std::num::NonZeroUsize::MIN),
