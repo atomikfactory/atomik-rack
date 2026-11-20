@@ -129,14 +129,14 @@ fn assert_stacked(d: &Document, r: &Registry, master: &DeviceKey) {
 
 #[test]
 fn saving_then_loading_round_trips_order_params_bypass_sends_and_levels() {
-    let r = console_registry();
+    let mut r = console_registry();
     let (d, _) = chained(&r);
     let chain = capture_master_chain(d.doc(), &r).unwrap();
     assert_eq!(chain.inserts, 2);
     assert_eq!(chain.send_count(), 2);
     let text = save_master_chain_item(&chain, d.doc()).unwrap();
     assert!(is_master_chain_item(&text));
-    let back = load_master_chain_item(&text, &r).unwrap();
+    let back = load_master_chain_item(&text, &mut r).unwrap();
     assert_eq!(back.type_ids(), chain.type_ids());
     assert_eq!(back.return_params, chain.return_params);
     assert_eq!(back.inserts, chain.inserts);
@@ -267,12 +267,12 @@ fn an_item_with_eight_sends_replaces_all_eight_slots() {
 
 #[test]
 fn an_empty_master_chain_clears_the_master() {
-    let r = console_registry();
+    let mut r = console_registry();
     let (source, _) = rack(&r);
     let chain = capture_master_chain(source.doc(), &r).unwrap();
     assert!(chain.snapshot.devices.is_empty());
     let text = save_master_chain_item(&chain, source.doc()).unwrap();
-    let back = load_master_chain_item(&text, &r).unwrap();
+    let back = load_master_chain_item(&text, &mut r).unwrap();
     let (mut d, _) = chained(&r);
     one_step(
         &mut d,
@@ -303,19 +303,19 @@ fn a_document_without_a_master_rejects_the_chain_and_changes_nothing() {
 
 #[test]
 fn an_ordinary_patch_is_not_a_master_chain() {
-    let r = console_registry();
+    let mut r = console_registry();
     let (d, master) = chained(&r);
     let keys = vec![insert_chain(d.doc(), &r, &master)[0].clone()];
     let snapshot = atomik_model::DeviceSnapshot::capture(d.doc(), &keys, false).unwrap();
     let text = atomik_model::save_device_item(&snapshot, d.doc());
     assert!(!is_master_chain_item(&text));
-    assert!(load_master_chain_item(&text, &r).is_err());
+    assert!(load_master_chain_item(&text, &mut r).is_err());
     assert!(!is_master_chain_item("not json"));
 }
 
 #[test]
 fn plugin_effects_keep_their_state_through_the_item() {
-    let r = plugin_console_registry();
+    let mut r = plugin_console_registry();
     let (mut d, master) = rack(&r);
     run(
         &mut d,
@@ -340,9 +340,15 @@ fn plugin_effects_keep_their_state_through_the_item() {
     assert_eq!(chain.type_ids().len(), 2);
     let item = save_master_chain_item(&chain, d.doc()).unwrap();
     // A machine that does not have the plugin still reads the item (as a stand-in).
-    let bare = console_registry();
-    assert!(load_master_chain_item(&item, &bare).is_ok());
-    let back = load_master_chain_item(&item, &r).unwrap();
+    let mut bare = console_registry();
+    let stand_in = load_master_chain_item(&item, &mut bare).expect("a stand-in is registered");
+    assert_eq!(
+        stand_in.snapshot.devices.len(),
+        2,
+        "both plugin effects are on the chain"
+    );
+    assert_eq!(stand_in.send_count(), 1);
+    let back = load_master_chain_item(&item, &mut r).unwrap();
     let (mut other, _) = rack(&r);
     run(
         &mut other,

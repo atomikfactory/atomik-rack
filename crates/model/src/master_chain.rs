@@ -200,12 +200,16 @@ pub fn is_master_chain_item(text: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Reads a master chain item text.
+/// Reads a master chain item text. A plugin the registry does not know is registered as a
+/// stand-in first (as opening a project does), so its effect is on the chain like the others.
 ///
 /// # Errors
 /// The text is not a readable project, or holds no master section
 /// ([`ModelError::Load`]).
-pub fn load_master_chain_item(text: &str, registry: &Registry) -> Result<MasterChain, ModelError> {
+pub fn load_master_chain_item(
+    text: &str,
+    registry: &mut Registry,
+) -> Result<MasterChain, ModelError> {
     let doc = project::load(text, registry)?;
     let not_chain = || ModelError::Load {
         path: "$.console.master".into(),
@@ -215,6 +219,7 @@ pub fn load_master_chain_item(text: &str, registry: &Registry) -> Result<MasterC
     if doc.device(&master).is_none_or(|d| d.type_id != MASTER_TYPE) {
         return Err(not_chain());
     }
+    crate::register_stand_ins(&doc, registry)?;
     capture_master_chain(&doc, registry)
 }
 
