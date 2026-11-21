@@ -14,8 +14,8 @@ use atomik_device_sdk::{PluginFormat, PluginRef, PluginStateBlob, RunMode};
 use atomik_plugin_clap::ClapBackend;
 use atomik_plugin_host::testing::{clap_test_plugin, vst3_test_plugin};
 use atomik_plugin_host::{
-    BackendError, DeviceState, HostHandle, InstantiateRequest, PluginBackend, PluginHandle,
-    PluginInstance, PluginManager, ScannedPlugin, mark_main_thread,
+    BackendError, DeviceState, HostHandle, InstantiateRequest, PendingInstance, PluginBackend,
+    PluginHandle, PluginInstance, PluginManager, ScannedPlugin, mark_main_thread,
 };
 use atomik_plugin_sandbox::{HostCommand, SandboxBackend, SandboxConfig};
 use atomik_plugin_vst3::Vst3Backend;
@@ -205,6 +205,13 @@ impl PluginBackend for Shared {
         host: HostHandle,
     ) -> Result<Box<dyn PluginInstance>, BackendError> {
         self.0.instantiate(plugin, host)
+    }
+    fn begin_instantiate(
+        &self,
+        plugin: &PluginRef,
+        host: HostHandle,
+    ) -> Result<Option<Box<dyn PendingInstance>>, BackendError> {
+        self.0.begin_instantiate(plugin, host)
     }
 }
 
