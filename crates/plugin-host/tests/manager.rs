@@ -994,3 +994,39 @@ fn a_plugin_that_does_not_answer_is_reported_once_when_it_starts_and_once_when_i
     assert!(m.capture_state(id).is_ok(), "it works again");
     drop(handle);
 }
+
+#[test]
+fn pinned_params_are_in_the_table_of_an_instance_made_after_they_were_set() {
+    let (mut m, _stats) = manager();
+    let plugin = request("null.fx").plugin;
+    let row = param(777, "Pinned", 0.0, 1.0, 0.5, false);
+    let plain = m.instantiate(&request("null.fx")).unwrap();
+    assert!(plain.layout.params.iter().all(|p| p.id != 777));
+    assert!(plain.descriptor.param_by_key("p777").is_none());
+
+    m.set_pinned_params(&plugin, vec![row.clone()]);
+    let pinned = m.instantiate(&request("null.fx")).unwrap();
+    let ids: Vec<u32> = pinned.layout.params.iter().map(|p| p.id).collect();
+    assert_eq!(
+        ids,
+        [1, 2, 3, 4, 777],
+        "the plugin's own params, then the pin"
+    );
+    assert!(pinned.descriptor.param_by_key("p777").is_some());
+    assert_eq!(m.layout(pinned.id).unwrap(), &pinned.layout);
+    // The instance made before keeps the table it had; another plugin is not touched.
+    assert!(
+        m.layout(plain.id)
+            .unwrap()
+            .params
+            .iter()
+            .all(|p| p.id != 777)
+    );
+    let other = m.instantiate(&request("null.fx2")).unwrap();
+    assert!(other.layout.params.iter().all(|p| p.id != 777));
+
+    // Clearing the pins gives the plugin's own table again.
+    m.set_pinned_params(&plugin, Vec::new());
+    let cleared = m.instantiate(&request("null.fx")).unwrap();
+    assert!(cleared.layout.params.iter().all(|p| p.id != 777));
+}

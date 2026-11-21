@@ -135,6 +135,16 @@ may break APIs and the patch and project formats.
   system) instead of a guess from the thread count: one worker on a dual-core machine, even with four threads, and
   none on a single core. The log line at stream start gives the physical and logical counts. An explicit worker
   count is never changed.
+- **Plugin parameter lists no longer fill up with MIDI controller entries, and the parameters that were cut off are
+  back.** Many VST3 plugins publish one parameter for every MIDI channel and controller number ("MIDI CC 9 Chan
+  12", hundreds of them, more than half of every parameter list on a typical set of plugins) and the 2 048-entry
+  limit used to cut real parameters off after them. The scan and every instance now ask the plugin which
+  parameters only stand for a controller on one channel and leave those out of the list, the saved project, the
+  menus and the plugin list file; the controllers still reach the plugin as before. A parameter your project
+  still uses (a stored value, an automation lane in a track or a note clip, a macro target, a pin or a learned
+  MIDI control) stays in the list of that plugin, so nothing in an existing project is lost or changes sound.
+  A plugin that is slow to answer is listed in full, as before. The plugin list file is rebuilt by the next scan
+  (an older file is still read until then).
 
 ### Fixed
 - **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio track now

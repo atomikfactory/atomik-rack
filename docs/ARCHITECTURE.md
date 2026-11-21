@@ -5301,7 +5301,8 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   `ModuleEntry`) and keeps the module alive while a plugin of it lives; `layout.rs` lists the audio
   classes, negotiates the buses (stereo or mono main, an optional stereo sidechain, everything else
   deactivated, surround refused with the reason) and reads params (hidden, read-only and
-  program-change ones skipped, units as modules), `IMidiMapping` and note-expression support;
+  program-change ones skipped, and the per-channel controller stand-ins that `IMidiMapping` reveals, asked once
+  per scan and per instance with a half-second budget; units as modules), `IMidiMapping` and note-expression support;
   `instance.rs` is the main-thread half (component and controller created and connected through two
   proxies so neither holds the other, the controller brought in step with the component's state, the
   host `IComponentHandler`, the editor `IPlugView` with an `IPlugFrame` that is also an `IRunLoop`);

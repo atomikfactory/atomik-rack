@@ -427,7 +427,8 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   plugin-side helpers: factory, `IComponent`, `IAudioProcessor`, `IEditController`, `IMidiMapping`,
   `IUnitInfo`, note expressions, a headless `IPlugView`, a split component/controller variant) and
   the libraries `vst3` (the four test plugins, same names as the CLAP ones), `vst3-variants` (a
-  split gain, a mono effect, a 5.1-only effect the host refuses, plugins that fail to initialise,
+  split gain, a mono effect, a 5.1-only effect the host refuses, plugins that stand a parameter for
+  every controller and channel (one answers `IMidiMapping` slowly), plugins that fail to initialise,
   set up, start or process, one that returns NaN), `vst3-bad`, `vst3-hang`, `vst3-crash`,
   `vst3-leak`. `atomik_plugin_host::testing::vst3_test_plugin("atomik-test-vst3")` builds a library
   and installs it as a `.vst3` **bundle** with the layout of the running OS. The shell announces a
@@ -439,8 +440,11 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   `cross_format.rs` requires the CLAP and the VST3 effect to give the same bits (and a rack mixing
   both to bounce identically across blocks and workers), `vst3_host.rs` holds the VST3 specifics
   (proxies, buses, parameter queues, `IMidiMapping`, the state sections, restarts, the editor, edits
-  made in it). `render/tests/plugin_demo_vst3.rs` does the same for a whole project
-  (`examples/projects/plugin-demo-vst3` against its all-CLAP twin).
+  made in it), `midi_proxies.rs` the controller stand-ins left out of the table and the slow plugin that keeps
+  its full one. `render/tests/plugin_demo_vst3.rs` does the same for a whole project
+  (`examples/projects/plugin-demo-vst3` against its all-CLAP twin). `model/tests/plugin_pinned.rs` counts every way a
+  document can name a plugin param, and `app_core_plugins_proxies_tests.rs` follows a used stand-in through the
+  plugin going live, a save, a load and a rescan.
 - **Live equals bounce.** A bounce with plugins runs the plugin loop of `render/src/plugin_pass.rs`
   (a pre-roll, then a manager poll and a PDC recompile after every 64-frame batch); the twin tests
   in `app/src/app_core_plugins*_tests.rs` therefore settle the live side first

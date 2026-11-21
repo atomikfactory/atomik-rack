@@ -925,12 +925,51 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Tells the plugin host which params the document uses that a plugin's own table leaves out
+    /// (the controller stand-ins some plugins publish as parameters; see
+    /// [`PluginHost::set_pinned_params`]). Those params stay in the table of the plugin's
+    /// instances and in the descriptor of its type, so every lane, learned control, macro target
+    /// and stored value that names one keeps working, and the layout the document keeps for the
+    /// device does not lose its row when the live layout replaces it. Does nothing when the
+    /// answer is what the host has; otherwise the descriptors are registered again, without
+    /// touching any device (the engine is rebuilt or replaced by the caller as it was).
+    pub(super) fn plugins_pin_document_params(&mut self) {
+        let pins = self.document.doc().plugin_pinned_rows();
+        if &pins == self.plugins.host.pinned_params() {
+            return;
+        }
+        self.plugins.host.set_pinned_params(pins);
+        let types: Vec<String> = self
+            .registry
+            .plugin_type_ids()
+            .map(str::to_string)
+            .collect();
+        for type_id in types {
+            let _ = self.registry.unregister_plugin(&type_id);
+        }
+        let report = self.plugins.host.set_catalog(
+            &self.plugins.cache,
+            &self.plugins.settings,
+            &mut self.registry,
+        );
+        for (plugin, reason) in report.errors {
+            self.reject(format!("plugin {}: {reason}", plugin.id));
+        }
+        if let Err(e) = register_stand_ins(self.document.doc(), &mut self.registry) {
+            self.reject(e.to_string());
+        }
+    }
+
     /// The work of [`Self::refresh_plugin_catalog`] without the engine rebuild: true when a live
     /// device needs one (its plugin went away or its descriptor changed).
     fn register_catalog(&mut self) -> bool {
         // A project saved after a plugin grew new ports teaches the scan about them first, so
         // the catalog and the registry agree with the devices the project holds.
         self.adopt_document_ports();
+        // The params the project uses that a plugin's own table leaves out stay listed.
+        self.plugins
+            .host
+            .set_pinned_params(self.document.doc().plugin_pinned_rows());
         // The stand-ins of the last round go too: an installed plugin must not collide with its
         // own stand-in type (the ones still needed are registered again below).
         let types: Vec<String> = self
@@ -1775,6 +1814,9 @@ impl<S: EngineSink> AppCore<S> {
     /// Starts the creation of the pending devices that have not started yet, in queue order
     /// (see [`MAX_STARTING`]). A device that no longer needs an instance leaves the queue.
     fn start_pending(&mut self) {
+        // A device that came into the document since (a paste, a patch) may use params the host
+        // does not know to keep yet.
+        self.plugins_pin_document_params();
         let keys: Vec<DeviceKey> = self.plugins.pending.iter().cloned().collect();
         for key in keys {
             if self.plugins.starting.contains_key(&key) {

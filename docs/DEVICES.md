@@ -5992,6 +5992,14 @@ the searchable list with every param (also the editor for a plugin without a win
 plugin's params come the 16 params of the CV programmer, see below, and the last param `mpe.send` (0 or 1, off by
 default: send the notes as MPE to a plugin that takes MIDI, see [Per-note expression](#per-note-expression-mpe)).
 
+A VST3 plugin that publishes a parameter for every MIDI channel and controller number ("MIDI CC 9 Chan 12") has
+those left out: a parameter that `IMidiMapping` gives to exactly one channel and controller pair, where the same
+controller goes to another parameter on another channel, is a stand-in and is not listed (the controllers still reach
+the plugin). A parameter the project uses (a stored value, a lane of a track or of a note clip, a macro target, a
+pin or a learned MIDI control) is listed anyway, after the plugin's own in id order, so a project made when the
+stand-ins were listed keeps every lane and control. A plugin that is slow to answer the mapping is listed in full,
+up to the 2 048 limit. See decision AS in [DECISIONS.md](DECISIONS.md).
+
 ### CV programmer and aux outputs
 
 Every plugin device has eight CV inputs, so a cable from an LFO, an envelope or a sequencer curve
