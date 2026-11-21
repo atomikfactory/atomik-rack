@@ -983,6 +983,20 @@ mod property {
         ])
         .unwrap();
     }
+
+    /// Regression: a device dropped where it already is emits no move (the model refuses a move
+    /// that changes nothing).
+    #[test]
+    fn a_device_dropped_where_it_already_is_emits_no_refused_move() {
+        let p = |x, y| Point::new(x, y);
+        replay(vec![
+            G::Key(2),
+            G::Browser,
+            G::Drag(p(325.86890622717465, 822.117592433245), p(0.0, 0.0)),
+            G::Drag(p(296.6232005609045, 666.5412705193869), p(0.0, 0.0)),
+        ])
+        .unwrap();
+    }
 }
 
 // ------------------------------------------------------------------ duplicate
