@@ -345,11 +345,12 @@ struct Managed {
 /// time is looping, and the last activation that worked stays.
 pub const RESTART_BURST: u32 = 4;
 
-/// How many polls without a request end a burst. The count is polls, never wall time, so an
-/// offline render (one poll after every batch) and a live run apply the same rule and a bounce
-/// is the same on every run, with the plugin sandbox on or off. At the interface rate this is a
-/// few seconds, in a bounce about two seconds of audio: far longer than a restart takes, far
-/// shorter than a plugin that asks only now and then.
+/// How many polls in which the plugin was running and did not ask end a burst. The count is
+/// polls, never wall time, so an offline render (one poll after every batch) and a live run
+/// apply the same rule and a bounce is the same on every run, with the plugin sandbox on or
+/// off. Polls while a restart is under way do not count (the plugin cannot ask then), so a slow
+/// restart never ends its own burst. At the interface rate this is a few seconds, in a bounce
+/// about two seconds of audio: far shorter than a plugin that asks only now and then.
 pub const RESTART_QUIET_POLLS: u32 = 200;
 
 /// The restart-storm rule of one instance: counts the restarts the plugin asked for in a row and
@@ -358,7 +359,8 @@ pub const RESTART_QUIET_POLLS: u32 = 200;
 struct Storm {
     /// Restarts honoured in the current burst.
     in_a_row: u32,
-    /// Polls since the plugin last asked (honoured or not).
+    /// Polls in which the plugin was running and did not ask, since it last asked (honoured or
+    /// not).
     quiet: u32,
     /// The log line about the ignored requests was written for this burst.
     warned: bool,
@@ -2180,7 +2182,15 @@ impl PluginManager {
                     ),
                 }),
             }
-        } else if !restart {
+        } else if !restart
+            && m.phase == Phase::Running
+            && !m.parked
+            && !m.again
+            && !m.deferred_restart
+            && m.reattach.is_none()
+        {
+            // Only a poll in which the plugin was running and did not ask is calm: while it is
+            // being restarted it cannot ask, and a slow restart must not end its own burst.
             m.storm.quiet_poll();
         }
         if m.phase == Phase::Stopping

@@ -1134,3 +1134,41 @@ fn renamed_params_reach_the_app_without_a_restart() {
     run(&mut h, 2);
     assert_eq!(stats.activated(), 1);
 }
+
+/// The polls that go by while a restart is under way are not calm (the plugin cannot ask then): a
+/// restart that takes longer than the quiet window does not end its own burst.
+#[test]
+fn a_slow_restart_does_not_end_the_burst_it_belongs_to() {
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let messenger = m.slot(handle.id).unwrap().messenger();
+    let (mut h, id) = harness_of(handle);
+    h.process();
+    stats.set_deactivate_delay(RESTART_QUIET_POLLS as usize + 50);
+    let mut events = Vec::new();
+    for round in 0..(RESTART_BURST + 3) {
+        messenger.post(PluginMessage::RequestRestart);
+        let honoured = round < RESTART_BURST;
+        let mut done = false;
+        // A honoured restart is waited for (far longer than the quiet window); a request that is
+        // turned down is only polled a few times, which is calm for nobody.
+        for _ in 0..(RESTART_QUIET_POLLS * 4) {
+            h.process();
+            let got = m.poll();
+            done = got.contains(&ManagerEvent::Restarted(id));
+            events.extend(got);
+            if done || !honoured {
+                break;
+            }
+        }
+        assert_eq!(done, honoured, "round {round}: {events:?}");
+        if !honoured {
+            for _ in 0..3 {
+                h.process();
+                events.extend(m.poll());
+            }
+        }
+    }
+    assert_eq!(stats.activated(), 1 + RESTART_BURST as usize, "{events:?}");
+    assert_eq!(warnings(&events), 1, "said once: {events:?}");
+}

@@ -1501,8 +1501,9 @@ counts, the ports); when only titles or groups changed, nothing restarts and the
 is activating it is what that activation did and is dropped: the latency is read once after the activation. A
 plugin that still asks again and again is honoured `RESTART_BURST` = 4 times in a row; the fifth request and the
 ones after are ignored, one warning goes to the plugin's log, and the plugin keeps running in its last working
-activation. The burst ends after `RESTART_QUIET_POLLS` = 200 manager polls without a request, and the next request is
-honoured again. The comparison is made where the plugin lives: in the format backend's `poll`, which runs in the
+activation. The burst ends after `RESTART_QUIET_POLLS` = 200 manager polls in which the plugin was running and
+did not ask (polls during a restart do not count, so a slow restart cannot end its own burst), and
+the next request is honoured again. The comparison is made where the plugin lives: in the format backend's `poll`, which runs in the
 plugin's own process when the plugin is sandboxed, so a plugin in this process and a sandboxed one agree and only a
 request that matters crosses to the manager.
 

@@ -526,7 +526,20 @@ fn a_plugin_that_asks_for_a_restart_after_every_block_is_stopped_after_a_burst()
         let (mut h, id, native) = open(&mut m, &k.variant(Variant::Storm));
         *h.input_mut("in_l") = [0.25; BATCH];
         let mut events = Vec::new();
-        for _ in 0..120 {
+        // Until the warning (a condition, with a generous bound), then a while longer.
+        let warned = |events: &[ManagerEvent]| {
+            events.iter().any(
+                |e| matches!(e, ManagerEvent::Log { text, .. } if text.contains("keeps asking")),
+            )
+        };
+        for _ in 0..20_000 {
+            h.process();
+            events.extend(m.poll());
+            if warned(&events) {
+                break;
+            }
+        }
+        for _ in 0..60 {
             h.process();
             events.extend(m.poll());
         }
