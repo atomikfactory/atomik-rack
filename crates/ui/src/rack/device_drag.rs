@@ -194,15 +194,37 @@ impl RackView {
             column: dp.column,
             index,
         };
-        if move_changes(doc, &moving, slot, self.locked.as_ref()) {
-            out.push(UiAction::Command(Command::Workflow(
-                WorkflowCommand::MoveDevicesToSlot {
-                    keys: moving,
-                    slot,
-                    route: self.auto_route != modifiers.shift,
-                },
-            )));
+        self.emit_slot_move(doc, registry, moving, slot, modifiers, out);
+    }
+
+    /// Emits the move of `moving` to `slot`, unless it would change nothing (the model refuses
+    /// such a move). The view's own simulation answers first: a device dropped on its own place
+    /// stays. The model has the last word, because it moves more than what is dragged (an
+    /// instrument takes its mix channel along, a channel its inserts, a device of a sorted rack
+    /// its group): what looks like a change to the view can be the same order once they follow.
+    fn emit_slot_move(
+        &self,
+        doc: &RackDoc,
+        registry: &Registry,
+        moving: Vec<DeviceKey>,
+        slot: RackSlot,
+        modifiers: Modifiers,
+        out: &mut Vec<UiAction>,
+    ) {
+        if !move_changes(doc, &moving, slot, self.locked.as_ref()) {
+            return;
         }
+        let command = Command::Workflow(WorkflowCommand::MoveDevicesToSlot {
+            keys: moving,
+            slot,
+            route: self.auto_route != modifiers.shift,
+        });
+        // An unfolded rack is drawn from a flattened copy: the model plans on the project.
+        let project = self.host_doc.as_ref().unwrap_or(doc);
+        if atomik_model::move_changes_nothing(project, registry, &command) {
+            return;
+        }
+        out.push(UiAction::Command(command));
     }
 
     /// The release of a device move on an unfolded rack (`doc` is the flat document): the
@@ -286,15 +308,7 @@ impl RackView {
                     column: dp.column,
                     index,
                 };
-                if move_changes(doc, moving, slot, self.locked.as_ref()) {
-                    out.push(UiAction::Command(Command::Workflow(
-                        WorkflowCommand::MoveDevicesToSlot {
-                            keys: moving.to_vec(),
-                            slot,
-                            route: self.auto_route != modifiers.shift,
-                        },
-                    )));
-                }
+                self.emit_slot_move(doc, registry, moving.to_vec(), slot, modifiers, out);
             }
         }
     }
