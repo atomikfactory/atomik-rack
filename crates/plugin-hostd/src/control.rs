@@ -17,11 +17,11 @@ use atomik_plugin_host::{
     PluginInstance, PluginMessage, plugin_channel,
 };
 use atomik_plugin_ipc::{
-    FromChild, MAX_PRESETS, PROTOCOL_VERSION, ToChild, WireErrorKind, WireLayout, WireLevel,
-    write_frame,
+    FromChild, MAX_FRAME_BYTES, MAX_PRESETS, MAX_REPLY_JSON_BYTES, PROTOCOL_VERSION, ToChild,
+    WireErrorKind, WireLayout, WireLevel, write_frame_with,
 };
 use atomik_plugin_vst3::Vst3Backend;
-use std::io::Write;
+use std::io::{self, Write};
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// The exit code for a protocol or setup mismatch.
@@ -134,9 +134,14 @@ impl Control {
         self.write(&hello, None)
     }
 
-    /// Writes one frame; false when the parent's pipe is gone.
+    /// Writes one frame; false when the parent's pipe is gone. A frame that cannot be sent
+    /// because it is too large is dropped (the pipe is fine): only [`Self::reply`] has an
+    /// answer to put in its place.
     fn write(&self, msg: &FromChild, blob: Option<&[u8]>) -> bool {
-        write_locked(&self.out, msg, blob)
+        match write_locked(&self.out, msg, blob) {
+            Ok(()) => true,
+            Err(e) => unsendable(&e),
+        }
     }
 
     /// Lists the presets on a thread of its own when the plugin's format keeps them as files, so
@@ -158,8 +163,11 @@ impl Control {
                     },
                     Err(_) => err(id, &failed("listing the presets failed")),
                 };
-                // A gone parent is noticed by the main thread.
-                write_locked(&out, &reply, None);
+                // A gone parent is noticed by the main thread. An answer too large to send is
+                // replaced by an error: the parent waits for one.
+                if write_locked(&out, &reply, None).is_err_and(|e| unsendable(&e)) {
+                    write_locked(&out, &err(id, &too_large_answer()), None).ok();
+                }
             })
             .is_ok()
     }
@@ -390,6 +398,13 @@ impl Control {
             }
             ToChild::CaptureState { id } => {
                 let state = instance.capture_state()?;
+                // Over what one frame carries: said so, and the plugin goes on running.
+                if state.0.len() > MAX_FRAME_BYTES {
+                    return Err(BackendError::StateTooLarge {
+                        bytes: state.0.len() as u64,
+                        limit: MAX_FRAME_BYTES as u64,
+                    });
+                }
                 return Ok((FromChild::State { id }, Some(state.0)));
             }
             ToChild::RestoreState { id } => {
@@ -486,7 +501,17 @@ impl Control {
         if let Some(code) = self.forward(windows) {
             return Some(code);
         }
-        if self.write(msg, blob) {
+        let written = match write_locked(&self.out, msg, blob) {
+            Ok(()) => true,
+            // The answer is too large for a frame: the parent gets an error in its place, never
+            // a dead child.
+            Err(e) if unsendable(&e) => match reply_id(msg) {
+                Some(id) => write_locked(&self.out, &err(id, &too_large_answer()), None).is_ok(),
+                None => true,
+            },
+            Err(_) => false,
+        };
+        if written {
             None
         } else {
             self.shutdown(windows);
@@ -535,10 +560,50 @@ impl Control {
     }
 }
 
-/// Writes one frame to `out` under its lock; false when the pipe is gone.
-fn write_locked(out: &Mutex<Box<dyn Write + Send>>, msg: &FromChild, blob: Option<&[u8]>) -> bool {
+/// Writes one frame to `out` under its lock. The JSON is held to what the parent's reader
+/// accepts ([`MAX_REPLY_JSON_BYTES`]) and the blob to [`MAX_FRAME_BYTES`]; see [`unsendable`].
+fn write_locked(
+    out: &Mutex<Box<dyn Write + Send>>,
+    msg: &FromChild,
+    blob: Option<&[u8]>,
+) -> io::Result<()> {
     let mut out = out.lock().unwrap_or_else(PoisonError::into_inner);
-    write_frame(&mut *out, msg, blob).is_ok()
+    write_frame_with(&mut *out, msg, blob, MAX_REPLY_JSON_BYTES)
+}
+
+/// True when a write failed because the frame itself cannot be sent (over a limit, or not
+/// encodable): nothing was written and the pipe is fine. Any other error means the parent is
+/// gone.
+fn unsendable(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::InvalidData | io::ErrorKind::InvalidInput
+    )
+}
+
+/// What a request is answered with when its answer is too large for the channel.
+fn too_large_answer() -> BackendError {
+    failed("the answer is too large to send over the plugin channel")
+}
+
+/// The request an answer belongs to (none for a notification).
+fn reply_id(msg: &FromChild) -> Option<u64> {
+    match msg {
+        FromChild::Ok { id }
+        | FromChild::Err { id, .. }
+        | FromChild::Instantiated { id, .. }
+        | FromChild::Activated { id, .. }
+        | FromChild::State { id }
+        | FromChild::Text { id, .. }
+        | FromChild::Latency { id, .. }
+        | FromChild::Pins { id, .. }
+        | FromChild::ParamValues { id, .. }
+        | FromChild::Presets { id, .. }
+        | FromChild::LayoutChanged { id, .. }
+        | FromChild::GuiOpened { id, .. }
+        | FromChild::GuiSized { id, .. } => Some(*id),
+        _ => None,
+    }
 }
 
 fn failed(text: &str) -> BackendError {

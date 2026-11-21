@@ -7,8 +7,8 @@ mod common;
 use atomik_device_sdk::{PluginKindHint, PluginStateBlob};
 use atomik_model::{
     Command, ConsoleCommand, ContainerCommand, Document, InsertEffect, MAX_PINNED_PARAMS,
-    MAX_PLUGIN_STATE_BYTES, ModelError, PLUGIN_GESTURE_MERGE_BASE, PluginCommand, SongCommand,
-    SyncOp, empty_doc,
+    MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES, ModelError, PLUGIN_GESTURE_MERGE_BASE,
+    PluginCommand, SongCommand, SyncOp, empty_doc,
 };
 use common::plugin::*;
 use common::*;
@@ -582,6 +582,54 @@ fn the_project_total_of_states_is_capped() {
         &r,
     )
     .unwrap();
+}
+
+#[test]
+fn the_state_refusal_names_the_cap_a_sync_would_hit_and_how_far_over_it_is() {
+    let r = plugin_registry();
+    let mut d = Document::new(empty_doc());
+    let max = MAX_PLUGIN_STATE_BYTES;
+    for i in 0..9 {
+        d.apply(
+            add_plugin(i, &fx_ref(), &fx_layout(), Some(&format!("f{i}"))),
+            &r,
+        )
+        .unwrap();
+    }
+    // The device's own cap, exact.
+    assert_eq!(d.doc().state_refusal(&key("f0"), max), None);
+    let refusal = d.doc().state_refusal(&key("f0"), max + 1).expect("over");
+    assert_eq!(
+        (refusal.bytes, refusal.limit, refusal.project),
+        (max + 1, max, false)
+    );
+    // The project's total: eight full states and one more byte.
+    for i in 0..8 {
+        d.apply(
+            Command::Plugin(PluginCommand::SyncState {
+                device: key(&format!("f{i}")),
+                state: PluginStateBlob(vec![0; usize::try_from(max).unwrap()]),
+            }),
+            &r,
+        )
+        .unwrap();
+    }
+    let refusal = d
+        .doc()
+        .state_refusal(&key("f8"), 1)
+        .expect("128 MiB reached");
+    assert_eq!(
+        (refusal.bytes, refusal.limit, refusal.project),
+        (
+            MAX_PROJECT_PLUGIN_STATE_BYTES + 1,
+            MAX_PROJECT_PLUGIN_STATE_BYTES,
+            true
+        )
+    );
+    // Replacing a stored state counts the new size, not the sum.
+    assert_eq!(d.doc().state_refusal(&key("f0"), 10), None);
+    // The same rule the commands apply.
+    assert!(d.doc().state_refusal(&key("f8"), 1).is_some());
 }
 
 #[test]

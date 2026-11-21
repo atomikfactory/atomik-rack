@@ -1411,3 +1411,30 @@ with a recovery copy (what happened before: the work since the snapshot was lost
 panic in a long session (`ATOMIK_UI_PANIC`).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+
+## AW. A plugin state that is too large is reported and never dropped silently, and never stops the plugin
+
+**Decision.** A state the document refuses (over 16 MiB for a device, 128 MiB for the project) or that a
+plugin in its own process cannot hand over (over the 64 MiB of one frame, or a reply over the 1 MiB JSON limit)
+is not offered to the document again at every capture. The device carries a marker until a capture fits: its
+panel shows `too large: <size> > <limit>` on the second line (the vendor line gives way), the plugin keeps its
+status word, a save names the device once in its notice, and the log has one warning line per change of
+situation. The project keeps the last state that fitted. The child answers `StateTooLarge` (with the size and the
+limit) instead of ending, and the app never stops the plugin for it.
+
+**Why.** The plugin is healthy and playing: calling that FAILED or CRASHED would be false and a reload would
+restore the old state and repeat. Dropping the state silently makes a project that "saved fine" lose its
+samples; every mainstream host that has a size limit tells the user at save time instead. A marker that stays
+on the device is the part that is still true after the toast is gone.
+
+**Limits.** Short term only: the project format is unchanged, so a state over the caps is still not stored.
+Storing large states beside the audio assets and streaming them over the pipe in pieces is the real fix and is
+not done. The panel line is short (the panel is narrow); the full words are in the notice and the log.
+
+**Rejected.** A new status word (hides the real state); raising the caps (the document is one JSON text and every
+capture copies the state); stopping the plugin at the limit (what happened before).
+
+**Open.** A real sampler's state sizes against the two caps, by hand.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

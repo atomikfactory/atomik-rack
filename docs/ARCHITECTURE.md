@@ -5134,9 +5134,17 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   templates, versions and an audio restart (`plugins_capture_all`) still capture synchronously;
   they take the request that is out instead of sending a second one. A plugin that is alive but does
   not answer (the sandbox's NOT RESPONDING state, `PluginManager::not_responding`) is never waited
-  for or stopped: its captures fail at once and the document keeps the state stored for it. A save,
+  for or stopped: its captures fail at once and the document keeps the state stored for it. The same
+  holds for a state too large to store: over the document's caps (`RackDoc::state_refusal`: 16 MiB per
+  plugin, 128 MiB for the project) or, for a plugin in its own process, over the 64 MiB one frame carries
+  (the child answers `WireErrorKind::StateTooLarge`, `BackendError::StateTooLarge`, and never ends for a
+  reply it cannot write: any reply over the frame or the 1 MiB reply JSON limit becomes an `Err`). The
+  device keeps the last state that fitted, carries `AppCore`'s `too_large` marker (the panel's second
+  line, `PluginDeviceStatus::state_too_large`) until a capture fits, and logs one warning per change of
+  situation. A save,
   archive, share, template or version (`plugins_capture_for_save`) tells the user once which
-  devices did not hand over their settings, an audio restart and a removal only log it, and no
+  devices did not hand over their settings or whose state was too large (one notice for all), an
+  audio restart and a removal only log it, and no
   background request is sent to it. The state shows as `NOT RESPONDING` in the panel
   (`PluginDeviceStatus::not_responding`) and in the plugin log and the file log (`ManagerEvent::NotResponding`
   and `Responding`); it is not CRASHED, never reaches `settings.plugins.crashed` or the quarantine

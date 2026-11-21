@@ -40,6 +40,16 @@ pub enum BackendError {
     /// at fault, not the plugin: it is never counted as a failed load of the plugin.
     #[error("{0}")]
     Spawn(String),
+    /// The plugin's state does not fit the channel it travels on (a plugin in its own process
+    /// hands it over in one frame of at most `limit` bytes). The plugin is fine and keeps
+    /// running; the state cannot be saved.
+    #[error("the plugin state is {bytes} bytes; the most it can hand over is {limit} bytes")]
+    StateTooLarge {
+        /// The size of the state, in bytes.
+        bytes: u64,
+        /// The most that fits, in bytes.
+        limit: u64,
+    },
 }
 
 impl BackendError {
@@ -47,6 +57,15 @@ impl BackendError {
     /// [`crate::NOT_RESPONDING`]).
     pub fn is_not_responding(&self) -> bool {
         matches!(self, Self::Failed(text) if text.starts_with(crate::NOT_RESPONDING))
+    }
+
+    /// The size and the limit of a state that was too large to hand over
+    /// ([`BackendError::StateTooLarge`]).
+    pub fn state_too_large(&self) -> Option<(u64, u64)> {
+        match self {
+            Self::StateTooLarge { bytes, limit } => Some((*bytes, *limit)),
+            _ => None,
+        }
     }
 
     /// True when the plugin's host process could not be started ([`BackendError::Spawn`]).
@@ -841,6 +860,9 @@ pub struct NullStats {
     sync_captures: AtomicUsize,
     /// The null instances are alive but do not answer (see [`NullStats::set_not_responding`]).
     not_responding: AtomicBool,
+    /// The most bytes a null instance hands over (0: no limit; see
+    /// [`NullStats::set_state_limit`]).
+    state_limit: AtomicU64,
     /// A state the plugin gives itself (a patch picked in its own window), taken by the null
     /// instances at their next call.
     own_edit: Mutex<Option<Vec<u8>>>,
@@ -970,6 +992,12 @@ impl NullStats {
     /// late answer does.
     pub fn set_not_responding(&self, on: bool) {
         self.not_responding.store(on, Ordering::Relaxed);
+    }
+    /// Makes the null instances hand over at most `limit` bytes of state, as a plugin in its own
+    /// process does (one frame of the channel carries so much): a larger state is an
+    /// [`BackendError::StateTooLarge`] answer and the instance lives on. 0 lifts the limit.
+    pub fn set_state_limit(&self, limit: u64) {
+        self.state_limit.store(limit, Ordering::Relaxed);
     }
     /// Background capture requests the null instances received.
     pub fn capture_requests(&self) -> usize {
@@ -1279,6 +1307,16 @@ impl NullInstance {
         Ok(())
     }
 
+    /// The state, or [`BackendError::StateTooLarge`] when it is over the stats' limit.
+    fn handed_over(&self) -> Result<PluginStateBlob, BackendError> {
+        let limit = self.stats.state_limit.load(Ordering::Relaxed);
+        let bytes = self.state.0.len() as u64;
+        if limit > 0 && bytes > limit {
+            return Err(BackendError::StateTooLarge { bytes, limit });
+        }
+        Ok(self.state.clone())
+    }
+
     /// Takes the state the plugin gave itself since the last call.
     fn take_own_edit(&mut self) {
         let edit = self
@@ -1453,7 +1491,7 @@ impl PluginInstance for NullInstance {
         self.take_own_edit();
         self.stats.sync_captures.fetch_add(1, Ordering::Relaxed);
         self.capture_out = false;
-        Ok(self.state.clone())
+        self.handed_over()
     }
 
     fn background_capture(&self) -> bool {
@@ -1474,7 +1512,7 @@ impl PluginInstance for NullInstance {
             return None;
         }
         self.capture_out = false;
-        Some(Ok(self.state.clone()))
+        Some(self.handed_over())
     }
 
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError> {

@@ -603,3 +603,186 @@ fn the_notice_names_the_devices_and_whether_a_state_was_stored() {
         "Lead, Pad did not hand over their current settings; their last captured settings were saved."
     );
 }
+
+/// A state of `n` MiB.
+fn mib(n: usize) -> Vec<u8> {
+    vec![7u8; n << 20]
+}
+
+#[test]
+fn a_state_over_the_cap_keeps_the_stored_one_marks_the_device_and_clears_when_one_fits() {
+    let (mut core, stats, dev) = bg_core(None);
+    set_live(&stats, b"fits");
+    core.plugins_capture_all();
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"fits"[..]));
+    assert_eq!(core.view().plugin_status(&dev).state_too_large, None);
+
+    // 17 MiB: over the 16 MiB a device may store.
+    set_live(&stats, &mib(17));
+    core.plugins_capture_all();
+    core.plugins_capture_all();
+    assert_eq!(
+        stored(&core, &dev).as_deref(),
+        Some(&b"fits"[..]),
+        "the last state that fitted stays"
+    );
+    core.frame();
+    let status = core.view().plugin_status(&dev);
+    assert_eq!(status.state_too_large, Some((17 << 20, 16 << 20)));
+    assert!(
+        status.failed.is_none() && status.crashed.is_none(),
+        "the plugin itself is fine"
+    );
+    assert_eq!(
+        log_count(&core, "state not stored"),
+        1,
+        "one line for the situation, not one per capture"
+    );
+    assert!(
+        core.last_rejection().is_none(),
+        "no notice per capture, only at save"
+    );
+
+    // A state that fits again clears it.
+    set_live(&stats, b"small again");
+    core.plugins_capture_all();
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"small again"[..]));
+    core.frame();
+    assert_eq!(core.view().plugin_status(&dev).state_too_large, None);
+    assert_eq!(log_count(&core, "state is stored again"), 1);
+}
+
+#[test]
+fn a_save_with_a_state_over_the_cap_says_so_once_and_writes_the_last_state_that_fitted() {
+    let (mut core, stats, dev) = bg_core(None);
+    set_live(&stats, b"one");
+    core.plugins_capture_all();
+    set_live(&stats, &mib(17));
+    let dir = temp("too-large-save");
+    let file = dir.join("song.atomik");
+    core.save_as_interactive(&file).expect("the save completes");
+    assert!(file.exists());
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"one"[..]));
+    assert_eq!(
+        core.last_rejection(),
+        Some(
+            "Atomik Test Gain is too large to save (17 MB, the limit is 16 MB); its last state that fitted was saved."
+        )
+    );
+    // The next save, still too large, says it again (it is still true); a save after the state
+    // fits says nothing.
+    set_live(&stats, b"two");
+    core.save_as_interactive(&file).expect("the second save");
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"two"[..]));
+    assert_eq!(
+        core.last_rejection(),
+        Some(
+            "Atomik Test Gain is too large to save (17 MB, the limit is 16 MB); its last state that fitted was saved."
+        ),
+        "no new notice for a state that fitted"
+    );
+    assert_eq!(core.view().plugin_status(&dev).state_too_large, None);
+}
+
+#[test]
+fn a_state_the_plugin_cannot_hand_over_is_marked_and_the_plugin_is_left_running() {
+    let (mut core, stats, dev) = bg_core(None);
+    set_live(&stats, b"one");
+    core.plugins_capture_all();
+    // The channel to a plugin in its own process carries 64 MiB; a smaller limit stands in.
+    stats.set_state_limit(1000);
+    set_live(&stats, &[1u8; 2000]);
+    core.plugins_capture_all();
+    core.plugins_capture_all();
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"one"[..]));
+    core.frame();
+    let status = core.view().plugin_status(&dev);
+    assert_eq!(status.state_too_large, Some((2000, 1000)));
+    let id = core.plugin_instance(&dev).unwrap();
+    assert!(!core.plugin_host().manager_ref().is_lost(id));
+    assert!(status.failed.is_none() && status.crashed.is_none());
+    assert_eq!(log_count(&core, "cannot hand over its state"), 1);
+    assert_eq!(log_count(&core, "cannot capture state"), 0);
+    stats.set_state_limit(0);
+    core.plugins_capture_all();
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&[1u8; 2000][..]));
+    core.frame();
+    assert_eq!(core.view().plugin_status(&dev).state_too_large, None);
+}
+
+#[test]
+fn a_background_capture_over_the_cap_is_marked_like_a_synchronous_one() {
+    let (mut core, stats, dev) = bg_core(None);
+    patch(&mut core, &stats, &dev, &mib(17));
+    for t in 0..8 {
+        core.plugin_tick(10.0 + f64::from(t) * 2.0);
+        core.frame();
+    }
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b""[..]));
+    assert_eq!(
+        core.view().plugin_status(&dev).state_too_large,
+        Some((17 << 20, 16 << 20))
+    );
+    assert!(core.last_rejection().is_none());
+}
+
+#[test]
+fn the_too_large_notices_name_the_devices_the_sizes_and_whether_a_state_was_stored() {
+    use crate::app_core::plugins::{TooLarge, too_large_notice, unsaved_settings_notice};
+    let device = TooLarge {
+        bytes: 23 << 20,
+        limit: 16 << 20,
+        project: false,
+        frame: false,
+    };
+    let project = TooLarge {
+        bytes: 140 << 20,
+        limit: 128 << 20,
+        project: true,
+        frame: false,
+    };
+    let one = vec!["Lead".to_string()];
+    assert_eq!(
+        too_large_notice(&one, &[device], false),
+        "Lead is too large to save (23 MB, the limit is 16 MB); it was saved without a state."
+    );
+    assert_eq!(
+        too_large_notice(&one, &[project], true),
+        "Lead is too large to save (the plugin states of the project would total 140 MB, the limit is 128 MB); its last state that fitted was saved."
+    );
+    let two = vec!["Lead".to_string(), "Pad".to_string()];
+    assert_eq!(
+        too_large_notice(&two, &[device, device], true),
+        "Lead, Pad are too large to save; their last states that fitted were saved."
+    );
+    assert_eq!(
+        unsaved_settings_notice(&two),
+        "The current settings of Lead, Pad could not be saved; their last saved settings were kept."
+    ); // Every one of them has its French text, with the names and the sizes kept.
+    use atomik_ui::i18n::{Lang, tr, with_language};
+    let french = |text: String| with_language(Lang::French, || tr(&text).into_owned());
+    assert_eq!(
+        french(too_large_notice(&one, &[device], false)),
+        "Lead est trop volumineux pour être enregistré (23 Mo, la limite est de 16 Mo) ; il a été enregistré sans état."
+    );
+    assert_eq!(
+        french(too_large_notice(&one, &[device], true)),
+        "Lead est trop volumineux pour être enregistré (23 Mo, la limite est de 16 Mo) ; son dernier état qui tenait a été enregistré."
+    );
+    assert_eq!(
+        french(too_large_notice(&one, &[project], true)),
+        "Lead est trop volumineux pour être enregistré (les états des plugins du projet totaliseraient 140 Mo, la limite est de 128 Mo) ; son dernier état qui tenait a été enregistré."
+    );
+    assert_eq!(
+        french(too_large_notice(&one, &[project], false)),
+        "Lead est trop volumineux pour être enregistré (les états des plugins du projet totaliseraient 140 Mo, la limite est de 128 Mo) ; il a été enregistré sans état."
+    );
+    assert_eq!(
+        french(too_large_notice(&two, &[device, device], true)),
+        "Lead, Pad sont trop volumineux pour être enregistrés ; leurs derniers états qui tenaient ont été enregistrés."
+    );
+    assert_eq!(
+        french(unsaved_settings_notice(&two)),
+        "Les réglages actuels de Lead, Pad n'ont pas pu être enregistrés ; leurs derniers réglages enregistrés ont été conservés."
+    );
+}

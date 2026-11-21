@@ -5,7 +5,9 @@
 //! * `null.gain`: stereo effect, output = input x 0.5; param 0 "Pass" (0 or 1) at 1 gives
 //!   output = input. Events apply at their frame offset. Its state is the Pass value.
 //!   Every state request of any null plugin waits `ATOMIK_NULL_CAPTURE_DELAY_MS` milliseconds first
-//!   (default 0, read at each request): a plugin whose main thread is busy.
+//!   (default 0, read at each request): a plugin whose main thread is busy. With
+//!   `ATOMIK_NULL_STATE_BYTES` set (read at each request) a captured state is that many bytes
+//!   (the Pass value first, then zeros; at least 8): a plugin that embeds its samples.
 //! * `null.latency`: passthrough that reports 32 frames of latency.
 //! * `null.crash`: passthrough that aborts the process in `process` after N batches (N from
 //!   `ATOMIK_NULL_CRASH_AFTER`, default 0, read at activation).
@@ -40,6 +42,9 @@ pub const CRASH_AFTER_ENV: &str = "ATOMIK_NULL_CRASH_AFTER";
 
 /// Environment variable: how long a state request waits before it is answered, in milliseconds.
 pub const CAPTURE_DELAY_ENV: &str = "ATOMIK_NULL_CAPTURE_DELAY_MS";
+
+/// Environment variable: how many bytes a captured state of a null plugin has.
+pub const STATE_BYTES_ENV: &str = "ATOMIK_NULL_STATE_BYTES";
 
 /// Environment variable: microseconds `null.busy` spends per batch.
 pub const BUSY_US_ENV: &str = "ATOMIK_NULL_BUSY_US";
@@ -186,15 +191,23 @@ impl PluginInstance for BuiltinInstance {
         if delay > 0 {
             std::thread::sleep(Duration::from_millis(delay));
         }
-        Ok(PluginStateBlob(
-            self.pass.load(Ordering::Relaxed).to_le_bytes().to_vec(),
-        ))
+        let mut state = self.pass.load(Ordering::Relaxed).to_le_bytes().to_vec();
+        if let Some(bytes) = std::env::var(STATE_BYTES_ENV)
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+        {
+            state.resize(bytes.max(state.len()), 0);
+        }
+        Ok(PluginStateBlob(state))
     }
 
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError> {
-        let bytes: [u8; 8] =
-            state.0.as_slice().try_into().map_err(|_| {
-                BackendError::Failed("the null plugin state is 8 bytes".to_string())
+        let bytes: [u8; 8] = state
+            .0
+            .get(..8)
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(|| {
+                BackendError::Failed("the null plugin state is at least 8 bytes".to_string())
             })?;
         if !f64::from_le_bytes(bytes).is_finite() {
             return Err(BackendError::Failed(

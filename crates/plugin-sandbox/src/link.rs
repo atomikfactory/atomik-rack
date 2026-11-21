@@ -30,7 +30,7 @@ use atomik_plugin_host::{
 use atomik_plugin_ipc::{
     DeathHandle, FromChild, MAX_FRAME_BYTES, MAX_GUI_DIMENSION, MAX_LOG_BYTES,
     MAX_REPLY_JSON_BYTES, PANIC_LOG_PREFIX, PROTOCOL_VERSION, ToChild, WireLayout,
-    into_backend_error, read_frame_with, write_frame,
+    into_backend_error, read_frame_filtered, write_frame,
 };
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{ErrorKind, Read, Write};
@@ -380,6 +380,15 @@ impl Shared {
 
     /// Ends the stuck state when `id` is the request it waits for (true: the reply is of no
     /// use to anyone else).
+    /// True when a request with this id is out: the call that waits for it, the background
+    /// request, or the one the link is stuck on.
+    fn asked(&self, id: u64) -> bool {
+        let mb = lock(&self.mailbox);
+        mb.expect == Expect::Id(id)
+            || mb.bg_id == Some(id)
+            || mb.stuck.as_ref().is_some_and(|s| s.id == id)
+    }
+
     fn recover(&self, id: u64) -> bool {
         let mut mb = lock(&self.mailbox);
         if mb.stuck.as_ref().is_some_and(|s| s.id == id) {
@@ -905,13 +914,23 @@ fn run_reader(shared: &Shared, mut reader: Box<dyn Read + Send>, live: LiveGuard
     let bad = loop {
         // Replies are small and only the state has a blob: both limits are checked before
         // anything is allocated, so a hostile child cannot make the app grow.
-        let read = read_frame_with::<FromChild>(&mut reader, MAX_REPLY_JSON_BYTES, |m| {
-            if matches!(m, FromChild::State { .. }) {
-                MAX_FRAME_BYTES
-            } else {
-                0
-            }
-        });
+        // A state nobody is waiting for (its call gave up and the child is not stuck on it, or
+        // the request was dropped) is read off the pipe without being kept.
+        let read = read_frame_filtered::<FromChild>(
+            &mut reader,
+            MAX_REPLY_JSON_BYTES,
+            |m| {
+                if matches!(m, FromChild::State { .. }) {
+                    MAX_FRAME_BYTES
+                } else {
+                    0
+                }
+            },
+            |m| match m {
+                FromChild::State { id } => shared.asked(*id),
+                _ => true,
+            },
+        );
         match read {
             Ok((msg, blob)) => shared.route(msg, blob),
             Err(e) if e.kind() == ErrorKind::UnexpectedEof => break None,

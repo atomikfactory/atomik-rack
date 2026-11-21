@@ -3120,6 +3120,13 @@ Select a plugin device that is loading first => Sélectionnez d'abord un apparei
 {name} did not hand over its current settings; its last captured settings were saved. => {name} n'a pas transmis ses réglages actuels ; ses derniers réglages capturés ont été enregistrés.
 {name} did not hand over its current settings and none were captured before; it was saved without them. => {name} n'a pas transmis ses réglages actuels et aucun n'avait été capturé avant ; il a été enregistré sans eux.
 {names} did not hand over their current settings; their last captured settings were saved. => {names} n'ont pas transmis leurs réglages actuels ; leurs derniers réglages capturés ont été enregistrés.
+{name} is too large to save ({size} MB, the limit is {limit} MB); its last state that fitted was saved. => {name} est trop volumineux pour être enregistré ({size} Mo, la limite est de {limit} Mo) ; son dernier état qui tenait a été enregistré.
+{name} is too large to save ({size} MB, the limit is {limit} MB); it was saved without a state. => {name} est trop volumineux pour être enregistré ({size} Mo, la limite est de {limit} Mo) ; il a été enregistré sans état.
+{name} is too large to save (the plugin states of the project would total {size} MB, the limit is {limit} MB); its last state that fitted was saved. => {name} est trop volumineux pour être enregistré (les états des plugins du projet totaliseraient {size} Mo, la limite est de {limit} Mo) ; son dernier état qui tenait a été enregistré.
+{name} is too large to save (the plugin states of the project would total {size} MB, the limit is {limit} MB); it was saved without a state. => {name} est trop volumineux pour être enregistré (les états des plugins du projet totaliseraient {size} Mo, la limite est de {limit} Mo) ; il a été enregistré sans état.
+{names} are too large to save; their last states that fitted were saved. => {names} sont trop volumineux pour être enregistrés ; leurs derniers états qui tenaient ont été enregistrés.
+The current settings of {names} could not be saved; their last saved settings were kept. => Les réglages actuels de {names} n'ont pas pu être enregistrés ; leurs derniers réglages enregistrés ont été conservés.
+too large: {size} MB > {limit} MB => trop gros : {size} Mo > {limit} Mo
 Ctrl-click and Shift-click choose several => Ctrl-clic et Maj-clic en choisissent plusieurs
 
 # Stem separation

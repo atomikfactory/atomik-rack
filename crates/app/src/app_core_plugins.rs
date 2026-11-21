@@ -98,9 +98,9 @@ use atomik_model::{
 use atomik_plugin_host::ScanReport;
 use atomik_plugin_host::{
     CrashJournal, CreateTicket, EditorKind, HUNG, InUsePlugin, InstanceId, InstantiateRequest,
-    LOST, LogLevel, ManagerEvent, NativeParent, ParamPhase, PluginCache, PluginCatalog,
-    PluginHandle, PluginSettings, PluginStatus, PresetInfo, RecoveryDir, RescanMode, ScanJob,
-    ScanRunner, SoftAnswer, blacklist_in_use,
+    LOST, LogLevel, ManagerError, ManagerEvent, NativeParent, ParamPhase, PluginCache,
+    PluginCatalog, PluginHandle, PluginSettings, PluginStatus, PresetInfo, RecoveryDir, RescanMode,
+    ScanJob, ScanRunner, SoftAnswer, blacklist_in_use,
 };
 use atomik_render::plugins::{PluginHost, PluginIsolation};
 use atomik_ui::plugin_data::{
@@ -314,6 +314,96 @@ pub(crate) fn not_handed_notice(names: &[String], stored: bool) -> String {
     }
 }
 
+/// Why a plugin's state cannot be stored: it is over a size cap. The device carries one of these
+/// (see `PluginState::too_large`) from the capture that was refused until a capture fits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TooLarge {
+    /// The size that is over the cap: the state, or the total of the project's plugin states.
+    pub bytes: u64,
+    /// The cap, in bytes.
+    pub limit: u64,
+    /// The cap is the project's total, not the device's own (or the channel's).
+    pub project: bool,
+    /// The plugin could not hand the state over at all: it does not fit one frame of the channel
+    /// of a plugin in its own process.
+    pub frame: bool,
+}
+
+impl TooLarge {
+    /// The situation, without the size: what a log line is written again for.
+    fn situation(self) -> (u64, bool, bool) {
+        (self.limit, self.project, self.frame)
+    }
+}
+
+/// A size in megabytes, rounded up so that a state over its limit never reads as equal to it.
+pub(crate) fn megabytes(bytes: u64) -> u64 {
+    bytes.div_ceil(1 << 20)
+}
+
+/// The notice after a save, when the state of these devices (each with what was refused) was
+/// too large to store (`stored`: the document holds an earlier state that fitted for all of
+/// them). `names` and `sizes` run in step.
+pub(crate) fn too_large_notice(names: &[String], sizes: &[TooLarge], stored: bool) -> String {
+    match (names, sizes) {
+        ([one], [t]) => {
+            let (size, limit) = (megabytes(t.bytes), megabytes(t.limit));
+            match (t.project, stored) {
+                (true, true) => format!(
+                    "{one} is too large to save (the plugin states of the project would total {size} MB, the limit is {limit} MB); its last state that fitted was saved."
+                ),
+                (true, false) => format!(
+                    "{one} is too large to save (the plugin states of the project would total {size} MB, the limit is {limit} MB); it was saved without a state."
+                ),
+                (false, true) => format!(
+                    "{one} is too large to save ({size} MB, the limit is {limit} MB); its last state that fitted was saved."
+                ),
+                (false, false) => format!(
+                    "{one} is too large to save ({size} MB, the limit is {limit} MB); it was saved without a state."
+                ),
+            }
+        }
+        (many, _) => format!(
+            "{} are too large to save; their last states that fitted were saved.",
+            many.join(", ")
+        ),
+    }
+}
+
+/// The notice after a save when some plugins did not hand over their state and the state of
+/// others was too large: one text for both, so that a save still says one thing.
+pub(crate) fn unsaved_settings_notice(names: &[String]) -> String {
+    format!(
+        "The current settings of {} could not be saved; their last saved settings were kept.",
+        names.join(", ")
+    )
+}
+
+/// The app log line of a state that cannot be stored (written when the situation changes).
+pub(crate) fn too_large_log_line(device: &str, t: &TooLarge) -> String {
+    if t.frame {
+        format!(
+            "[{device}] cannot hand over its state: {} bytes, the plugin channel carries at most {}; the plugin keeps running and the stored state is kept",
+            t.bytes, t.limit
+        )
+    } else if t.project {
+        format!(
+            "[{device}] state not stored: the plugin states of the project would total {} bytes, the limit is {}; the last state that fitted is kept",
+            t.bytes, t.limit
+        )
+    } else {
+        format!(
+            "[{device}] state not stored: {} bytes, the limit is {}; the last state that fitted is kept",
+            t.bytes, t.limit
+        )
+    }
+}
+
+/// The app log line of a state that fits again.
+pub(crate) fn fits_again_log_line(device: &str, bytes: usize) -> String {
+    format!("[{device}] state is stored again: {bytes} bytes fit")
+}
+
 /// The app log line of a plugin device that went FAILED, with the full reason.
 pub(crate) fn failed_log_line(device: &str, reason: &str) -> String {
     format!("plugin [{device}] failed: {reason}")
@@ -511,6 +601,13 @@ pub(super) struct PluginState {
     /// save began: what they hold in the document is the last state captured (see
     /// [`AppCore::plugins_capture_for_save`]).
     pub(super) not_handed: Vec<DeviceKey>,
+    /// The devices whose state is over a size cap and cannot be stored: what was refused. Set by
+    /// the capture that was refused, cleared by the first one that fits (the stored state is
+    /// the last one that fitted meanwhile); the device panel shows it.
+    pub(super) too_large: BTreeMap<DeviceKey, TooLarge>,
+    /// The devices whose capture was refused for size since a save began (see
+    /// [`AppCore::plugins_capture_for_save`]).
+    pub(super) too_large_hit: Vec<DeviceKey>,
     /// How many times a hung plugin was reloaded by itself since the user last pressed RELOAD.
     auto_reloads: BTreeMap<DeviceKey, u8>,
     /// Devices whose saved state failed to restore: the blob is kept, never captured over.
@@ -624,6 +721,8 @@ impl PluginState {
             failed: BTreeMap::new(),
             crashed: BTreeMap::new(),
             not_handed: Vec::new(),
+            too_large: BTreeMap::new(),
+            too_large_hit: Vec::new(),
             auto_reloads: BTreeMap::new(),
             no_capture: BTreeSet::new(),
             live_desc: BTreeMap::new(),
@@ -1214,6 +1313,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.knob_reads.remove(key);
         self.plugins.live_desc.remove(key);
         self.plugins.crashed.remove(key);
+        self.plugins.too_large.remove(key);
     }
 
     /// Called by `rebuild_engine` before the engine is reset: captures the states and keeps (or,
@@ -1223,6 +1323,7 @@ impl<S: EngineSink> AppCore<S> {
         // on.
         self.plugins_capture_all();
         self.plugins.not_handed.clear();
+        self.plugins.too_large_hit.clear();
         let keep = !self.plugins.discard;
         let ids: Vec<InstanceId> = self.plugins.instances.values().copied().collect();
         for id in ids {
@@ -2117,6 +2218,9 @@ impl<S: EngineSink> AppCore<S> {
                     ));
                     return false;
                 }
+                if self.note_state_too_large(key, &e) {
+                    return false;
+                }
                 self.plugins
                     .log(format!("[{key}] cannot capture state: {e}"));
                 return false;
@@ -2189,9 +2293,12 @@ impl<S: EngineSink> AppCore<S> {
                     }
                 }
                 Err(e) if e.is_not_responding() => {}
-                Err(e) => self
-                    .plugins
-                    .log(format!("[{key}] cannot capture state: {e}")),
+                Err(e) => {
+                    if !self.note_state_too_large(&key, &e) {
+                        self.plugins
+                            .log(format!("[{key}] cannot capture state: {e}"));
+                    }
+                }
             }
             if landed.again {
                 // It changed again while the request was out: the next capture follows its
@@ -2202,6 +2309,39 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Notes that the state of `key` is over a cap: the marker the panel shows, the device named in
+    /// the save's notice, and one warning line when the situation changes (not one per capture).
+    fn state_refused(&mut self, key: &DeviceKey, t: TooLarge) {
+        let before = self.plugins.too_large.insert(key.clone(), t);
+        if before.is_none_or(|b| b.situation() != t.situation()) {
+            let line = too_large_log_line(&key.0, &t);
+            log::warn!("{line}");
+            self.plugins.log(line);
+        }
+        if !self.plugins.too_large_hit.contains(key) {
+            self.plugins.too_large_hit.push(key.clone());
+        }
+    }
+
+    /// When `e` says the plugin could not hand its state over because it does not fit its channel:
+    /// the same as a state over a cap (the plugin itself is fine and keeps running). False for any
+    /// other error.
+    fn note_state_too_large(&mut self, key: &DeviceKey, e: &ManagerError) -> bool {
+        let Some((bytes, limit)) = e.state_too_large() else {
+            return false;
+        };
+        self.state_refused(
+            key,
+            TooLarge {
+                bytes,
+                limit,
+                project: false,
+                frame: true,
+            },
+        );
+        true
+    }
+
     /// Puts a state the live plugin gave into the document (see [`Self::capture_instance_as`]).
     fn store_captured(
         &mut self,
@@ -2209,6 +2349,23 @@ impl<S: EngineSink> AppCore<S> {
         blob: atomik_device_sdk::PluginStateBlob,
         undoable: bool,
     ) -> bool {
+        // A state over a cap is not offered to the document (it would refuse it at every
+        // capture): the device is marked and keeps the last state that fitted.
+        if let Some(r) = self.doc().state_refusal(key, blob.0.len() as u64) {
+            self.state_refused(
+                key,
+                TooLarge {
+                    bytes: r.bytes,
+                    limit: r.limit,
+                    project: r.project,
+                    frame: false,
+                },
+            );
+            return false;
+        }
+        if self.plugins.too_large.remove(key).is_some() {
+            self.plugins.log(fits_again_log_line(&key.0, blob.0.len()));
+        }
         let stored = self
             .doc()
             .resolve(key)
@@ -2582,19 +2739,38 @@ impl<S: EngineSink> AppCore<S> {
     /// once, with one notice for all of them, so a save never goes stale silently.
     pub(super) fn plugins_capture_for_save(&mut self) {
         self.plugins.not_handed.clear();
+        self.plugins.too_large_hit.clear();
         self.plugins_capture_all();
         let keys = std::mem::take(&mut self.plugins.not_handed);
-        if keys.is_empty() {
+        let large = std::mem::take(&mut self.plugins.too_large_hit);
+        if keys.is_empty() && large.is_empty() {
             return;
         }
-        let names: Vec<String> = keys.iter().map(|k| self.device_label(k)).collect();
-        let stored = keys.iter().all(|k| {
-            self.doc()
+        let holds_state = |core: &Self, k: &DeviceKey| {
+            core.doc()
                 .resolve(k)
                 .and_then(|d| d.plugin.as_ref())
                 .is_some_and(|p| p.state.is_some())
-        });
-        let text = not_handed_notice(&names, stored);
+        };
+        let text = if large.is_empty() {
+            let names: Vec<String> = keys.iter().map(|k| self.device_label(k)).collect();
+            let stored = keys.iter().all(|k| holds_state(self, k));
+            not_handed_notice(&names, stored)
+        } else if keys.is_empty() {
+            let refused: Vec<(DeviceKey, TooLarge)> = large
+                .iter()
+                .filter_map(|k| Some((k.clone(), *self.plugins.too_large.get(k)?)))
+                .collect();
+            let names: Vec<String> = refused.iter().map(|(k, _)| self.device_label(k)).collect();
+            let sizes: Vec<TooLarge> = refused.iter().map(|(_, t)| *t).collect();
+            let stored = refused.iter().all(|(k, _)| holds_state(self, k));
+            too_large_notice(&names, &sizes, stored)
+        } else {
+            let mut all = keys.clone();
+            all.extend(large.iter().filter(|k| !keys.contains(k)).cloned());
+            let names: Vec<String> = all.iter().map(|k| self.device_label(k)).collect();
+            unsaved_settings_notice(&names)
+        };
         log::warn!("{text}");
         self.plugins.log(text.clone());
         self.reject(text);
@@ -3364,6 +3540,7 @@ impl<S: EngineSink> AppCore<S> {
                 // After an engine restart the device is a stand-in until the plugin is active.
                 loading: self.sink.has_engine() && self.plugins.offline.contains(key),
                 waiting,
+                state_too_large: self.plugins.too_large.get(key).map(|t| (t.bytes, t.limit)),
             },
             None if self.plugins.pending.contains(key) => PluginDeviceStatus {
                 has_editor: false,
@@ -3375,6 +3552,7 @@ impl<S: EngineSink> AppCore<S> {
                 quarantined: None,
                 loading: true,
                 waiting: None,
+                state_too_large: None,
             },
             // The user skipped the load: a stand-in with its saved state, RELOAD tries again.
             None if self.plugins.skipped.contains(key) => PluginDeviceStatus {
@@ -3399,6 +3577,7 @@ impl<S: EngineSink> AppCore<S> {
                     ),
                     loading: false,
                     waiting: None,
+                    state_too_large: None,
                 }
             }
             // The plugin is installed but its instance could not be created: FAILED with the
@@ -3413,6 +3592,7 @@ impl<S: EngineSink> AppCore<S> {
                 quarantined: None,
                 loading: false,
                 waiting: None,
+                state_too_large: None,
             },
             None => PluginDeviceStatus {
                 has_editor: false,
@@ -3424,6 +3604,7 @@ impl<S: EngineSink> AppCore<S> {
                 quarantined: None,
                 loading: false,
                 waiting: None,
+                state_too_large: None,
             },
         }
     }

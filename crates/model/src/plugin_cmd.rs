@@ -4,8 +4,8 @@
 
 use crate::history::Edit;
 use crate::plugin::{
-    MAX_PINNED_PARAMS, MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES, PluginCommand,
-    PluginDoc, check_matches_registered, key_base_of_name, plugin_device, validate_layout,
+    MAX_PINNED_PARAMS, PluginCommand, PluginDoc, check_matches_registered, key_base_of_name,
+    plugin_device, validate_layout,
 };
 use crate::{DeviceKey, ModelError, RackDoc, rules};
 use atomik_device_sdk::{DeviceKind, Registry};
@@ -324,17 +324,15 @@ fn check_state_size(
 ) -> Result<(), ModelError> {
     plugin_device(doc, device)?;
     let len = state.0.len() as u64;
-    if len > MAX_PLUGIN_STATE_BYTES {
-        return Err(bad(format!(
-            "the state of {device} is {len} bytes; the limit is 16 MiB per plugin"
-        )));
-    }
-    let others = doc.plugin_state_bytes(Some(device));
-    if others + len > MAX_PROJECT_PLUGIN_STATE_BYTES {
-        return Err(bad(format!(
-            "the plugin states of the project would total {} bytes; the limit is 128 MiB",
-            others + len
-        )));
+    if let Some(r) = doc.state_refusal(device, len) {
+        return Err(bad(if r.project {
+            format!(
+                "the plugin states of the project would total {} bytes; the limit is 128 MiB",
+                r.bytes
+            )
+        } else {
+            format!("the state of {device} is {len} bytes; the limit is 16 MiB per plugin")
+        }));
     }
     Ok(())
 }
