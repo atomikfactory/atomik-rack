@@ -986,8 +986,10 @@ held pointer button, an open plugin editor window, a Learn strip or a docked fra
 the last frame that painted something (not one that only the status poll asked for), so meter ballistics and
 lights settle. With an audio stream open (or a plugin loaded) and none of that, the loop wakes every 100 ms
 (`IDLE_STREAM_WAKE`) for the engine garbage, the plugin notifications and the status poll; an open stream alone
-no longer means 60 Hz. While every window has no area (minimized) it wakes every 250 ms (`MINIMIZED_WAKE`)
-and paints nothing; a resize to no area returns before the graphics target is reallocated and before anything
+no longer means 60 Hz. While every window has no area (minimized) and nothing animates it wakes every 250 ms
+(`MINIMIZED_WAKE`) and paints nothing; with something animating (the transport plays, a glide or a snapshot
+marker is timed on the frame) it keeps the frame period and still paints nothing, and the paint tail does not
+apply; a resize to no area returns before the graphics target is reallocated and before anything
 is laid out, and the restore lays out and paints once. Live MIDI wakes the loop at once through an event-loop
 proxy (`ControlHub::set_waker`), so a mapped control does not wait for the next slow wake. Exact deadlines (a
 quit time, a screenshot, a submenu switch, the graphics back-off) always win over the slow wake. The headless

@@ -251,8 +251,9 @@ pub(super) fn presents_with_vsync(open_windows: usize) -> bool {
 /// moves (see [`Wakers::stream`]).
 pub(super) const IDLE_STREAM_WAKE: Duration = Duration::from_millis(100);
 
-/// How often the loop wakes while every window is minimized: nothing is painted, only the
-/// housekeeping runs.
+/// How often the loop wakes while every window is minimized and nothing animates: nothing is
+/// painted, only the housekeeping runs. Something that animates (the transport plays, a glide runs)
+/// keeps the frame period even then, because its timed work runs on the frame.
 pub(super) const MINIMIZED_WAKE: Duration = Duration::from_millis(250);
 
 /// How long after the last frame that painted something the loop stays at the full rate, so
@@ -283,15 +284,19 @@ pub(super) struct Wakers {
 ///
 /// Three rates: the frame period while something animates or a paint was less than
 /// [`PAINT_TAIL`] ago, [`IDLE_STREAM_WAKE`] while only the stream or loaded plugins want a look,
-/// and [`MINIMIZED_WAKE`] instead of both while every window is minimized. With none of them the
-/// loop sleeps until an event. The tail only applies where a housekeeping wake exists anyway: a
+/// and [`MINIMIZED_WAKE`] instead of the idle rate while every window is minimized (the paint tail does
+/// not apply then: nothing is painted). A minimized app with something animating keeps the frame
+/// period and paints nothing. With none of them the loop sleeps until an event. The tail only applies where a housekeeping wake exists anyway: a
 /// project with no stream and no plugin has no frames to keep going.
 pub(super) fn wake_after(w: Wakers, frame: Duration) -> Option<Duration> {
     let housekeeping = w.stream || w.plugins;
     let tail = housekeeping && w.since_paint.is_some_and(|ago| ago < PAINT_TAIL);
-    let wanted = w.animating || housekeeping;
     if w.minimized {
-        return wanted.then_some(MINIMIZED_WAKE);
+        return if w.animating {
+            Some(frame)
+        } else {
+            housekeeping.then_some(MINIMIZED_WAKE)
+        };
     }
     if w.animating || tail {
         Some(frame)
@@ -484,7 +489,8 @@ mod tests {
     }
 
     #[test]
-    fn minimized_windows_wake_every_quarter_second_and_paint_nothing() {
+    fn minimized_and_idle_wakes_every_quarter_second_minimized_and_animating_keeps_the_frame_period_and_nothing_paints()
+     {
         let min = |animating, stream, plugins| Wakers {
             animating,
             stream,
@@ -495,9 +501,10 @@ mod tests {
         let quarter = Some(Duration::from_millis(250));
         assert_eq!(wake_after(min(false, true, false), FRAME), quarter);
         assert_eq!(wake_after(min(false, false, true), FRAME), quarter);
-        // Something that would run frames is looked at at the minimized rate.
-        assert_eq!(wake_after(min(true, true, false), FRAME), quarter);
-        assert_eq!(wake_after(min(true, false, false), FRAME), quarter);
+        // The tail of a paint does not apply while minimized (these have since_paint zero).
+        // Something that animates keeps the frame period, minimized or not.
+        assert_eq!(wake_after(min(true, true, false), FRAME), Some(FRAME));
+        assert_eq!(wake_after(min(true, false, false), FRAME), Some(FRAME));
         // Nothing to look at: no wake at all.
         assert_eq!(wake_after(min(false, false, false), FRAME), None);
         assert!(!paints_on_wake(true));

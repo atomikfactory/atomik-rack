@@ -1534,13 +1534,15 @@ glide or a morph runs, a plugin loads or is captured, a plugin editor window is 
 It also stays at the full rate for one second (`PAINT_TAIL`) after the last frame that painted something,
 except a frame that only the status poll asked for and a frame painted again because it was not shown. With an
 audio stream open (or a plugin loaded) and none of that, it wakes every 100 ms (`IDLE_STREAM_WAKE`). While every
-window has no area it wakes every 250 ms (`MINIMIZED_WAKE`) and paints nothing; a resize to no area is dropped
+window has no area and nothing animates it wakes every 250 ms (`MINIMIZED_WAKE`) and paints nothing; with something
+animating it keeps the frame period and paints nothing, because the timed work of the frame (a snapshot recalled at
+a marker, a glide, a momentary pulse, a preview note) runs there; a resize to no area is dropped
 before the graphics target is reallocated and before the shell lays out. A project with no stream and no plugin
 still sleeps until an event, and the tail applies only where a slow wake exists anyway. Live MIDI wakes the loop at
 once (an event-loop proxy called from the MIDI thread when a message is queued), and the exact deadlines (quit time,
 screenshot, submenu switch, graphics back-off) win over every rate.
 
-The DSP figures of the status line are held steady for ten seconds while they move by less than five points
+The DSP figures of the status line are held steady for ten seconds while they move by less than two points
 (`status::DspHold`): an idle engine's load jitters by a fraction of a point, which flipped the rounded figure and
 repainted the whole window every couple of seconds for nothing. A real change shows at once.
 
@@ -1553,7 +1555,7 @@ paint of anything that changes starts it. Painting nothing while minimized is th
 
 **Limits.** Work that is polled on the frame but is not in the list (engine garbage, the plugin event pumps of idle
 plugins, the status poll, the recovery writer, the plugin cache writer, an idle plugin's notifications, the templates
-folder, autosave timers) runs at most 100 ms late while idle, 250 ms while minimized. A change that happens with
+folder, autosave timers) runs at most 100 ms late while idle, 250 ms while minimized and idle. A change that happens with
 nothing awake is seen at the next slow wake, up to 100 ms later, and then runs at the full rate. A control surface
 or an open plugin editor keeps the full rate for as long as it is open. A small move of the DSP figures in the status
 line shows up to ten seconds late.

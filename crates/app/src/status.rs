@@ -399,8 +399,8 @@ pub fn crash_context(s: &AudioStatus) -> String {
 /// [`DSP_JUMP`].
 pub const DSP_HOLD: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// A move of the DSP load or its peak (1.0 = 100 %) that is shown at once: 5 points.
-pub const DSP_JUMP: f32 = 0.05;
+/// A move of the DSP load or its peak (1.0 = 100 %) that is shown at once: 2 points.
+pub const DSP_JUMP: f32 = 0.02;
 
 /// Keeps the DSP figures of the status line steady. An idle engine's load jitters by a fraction of
 /// a point, which flips the rounded figure and repaints the whole window a few times a second for
@@ -731,7 +731,20 @@ mod tests {
         let mut jitter = reading(0.009, 0.014);
         hold.apply(&mut jitter, at(base, 500));
         assert_eq!(status_text(&jitter), status_text(&first));
-        // A jump of five points shows at once.
+        // A rise of four points (12 to 16 %) shows at once.
+        let mut rise = reading(0.12, 0.12);
+        hold.apply(&mut rise, at(base, 550));
+        assert!(
+            (rise.dsp_load - 0.12).abs() < 1e-6,
+            "far above the first figures"
+        );
+        let mut rise = reading(0.16, 0.16);
+        hold.apply(&mut rise, at(base, 580));
+        assert!(
+            (rise.dsp_load - 0.16).abs() < 1e-6,
+            "four points up is not held"
+        );
+        // A big jump shows at once too.
         let mut spike = reading(0.30, 0.45);
         hold.apply(&mut spike, at(base, 600));
         assert!((spike.dsp_load - 0.30).abs() < 1e-6);

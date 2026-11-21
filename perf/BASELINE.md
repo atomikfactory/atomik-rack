@@ -301,7 +301,8 @@ process.
 The same reference machine and release build, the transport stopped and nothing sounding (no `--play`). Before is
 the branch this change started from, after is this change. The first two rows of CPU are the process CPU time over
 40 s after a 20 s settle, read at the start and the end of the window with no other probe on the app, three runs
-each (two for minimized): the numbers move by a few tenths of a percent from run to run, so the runs are listed.
+each (two for minimized, with the transport stopped: a minimized window with something
+animating keeps the frame period): the numbers move by a few tenths of a percent from run to run, so the runs are listed.
 The sampler rows are `scripts/perf/sample-app.ps1` (20 s window): its UI probe sends the window a message every
 100 ms, which wakes the app about ten more times a second in both columns, and the settings file it writes keeps the
 first-run audio setup panel (live meters, repaints all the time) from opening. "Wakes" is the app's own `ui activity`
@@ -318,7 +319,7 @@ line.
 
 What is left with the stream open is the audio stream's own thread, not the interface: the empty project with audio
 on is 0.3 to 0.4 points above the no-audio figure in the better runs. The status line's DSP figures are held steady
-for ten seconds while they move by less than five points; before that, an idle engine's jitter in the rounded figure
+for ten seconds while they move by less than two points; before that, an idle engine's jitter in the rounded figure
 repainted the whole window every couple of seconds (3 paints a second in the stress rack).
 
 ## Render workers parked between callbacks (2026-11-20)
