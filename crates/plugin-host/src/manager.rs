@@ -1490,7 +1490,18 @@ impl PluginManager {
                 return;
             }
         };
-        if m.reattach.is_some() {
+        if let Some(job) = &m.reattach
+            && job.rate.to_bits() != m.cfg.sample_rate.to_bits()
+        {
+            // The activation that landed used another rate than the one now wanted (it was
+            // started by a restart, or by an earlier request): the processor goes back and the
+            // plugin activates again with the wanted one. The run mode and block size never
+            // change after the instance was created.
+            m.phase = Phase::Inactive;
+            if !m.instance.begin_deactivate(processor) {
+                m.phase = Phase::Deactivating;
+            }
+        } else if m.reattach.is_some() {
             Self::reattached(id, m, processor, reaper);
         } else if m.parked {
             // The instance was parked while it activated: nobody wants the processor.

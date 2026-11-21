@@ -245,3 +245,28 @@ fn a_device_removed_while_its_plugin_is_still_reattaching_leaves_no_instance() {
     assert_eq!(stats.destroyed(), 1);
     assert!(core.plugins_ready());
 }
+
+#[test]
+fn an_engine_restart_while_a_plugin_loads_activates_it_with_the_current_values() {
+    let (mut core, stats) = core_with(1);
+    let dev = key("p0");
+    slow(&stats, 8);
+    core.plugins_discard_on_next_reset();
+    core.rebuild_engine();
+    for _ in 0..3 {
+        core.frame();
+    }
+    assert!(core.plugins.pending.contains(&dev), "still loading");
+    // The rebuild drops the creation that started with the old values and queues a new one,
+    // which reads the document's rate when it starts.
+    stats.set_shutdown_delay(5);
+    core.rebuild_engine();
+    assert_eq!(leaving(&core), 1, "the first start is ending");
+    frames_until(&mut core, 300, |c| c.plugin_instance(&dev).is_some());
+    assert_eq!(
+        stats.last_sample_rate(),
+        f64::from(core.doc().sample_rate),
+        "activated at the current rate"
+    );
+    assert_eq!(core.plugin_instance_count(), 1);
+}

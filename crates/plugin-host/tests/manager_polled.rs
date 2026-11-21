@@ -448,3 +448,51 @@ fn an_offline_instance_restores_activates_and_restarts_without_polling() {
         "the restart is done at the batch it was asked for, whatever the plugin takes"
     );
 }
+
+/// A restart's activation at 44.1 kHz is in flight when the engine restarts and the instance is
+/// parked; the reattach asks for `wanted`. Returns the stats and the polls until the handle.
+fn reattach_during_activation(wanted: f64) -> Arc<NullStats> {
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request(None)).unwrap();
+    let (mut h, id) = harness_of(handle);
+    h.process();
+    stats.set_activate_delay(4);
+    m.set_sample_rate(44_100.0);
+    h.process(); // hands the processor back
+    m.poll(); // deactivated at once, the activation at 44.1 kHz is out
+    m.retain(id, true);
+    drop(h);
+    m.poll();
+    let mut got = None;
+    for _ in 0..60 {
+        match m.begin_reattach(id, wanted) {
+            Ok(Some(handle)) => {
+                got = Some(handle);
+                break;
+            }
+            Ok(None) | Err(atomik_plugin_host::ManagerError::NotParked(_)) => {}
+            Err(e) => panic!("{e}"),
+        }
+        m.poll();
+    }
+    assert!(got.is_some(), "the instance was reattached");
+    assert_eq!(
+        stats.last_sample_rate(),
+        wanted,
+        "the processor handed out was activated at the wanted rate"
+    );
+    stats
+}
+
+#[test]
+fn a_reattach_at_another_rate_than_the_activation_in_flight_activates_again_once() {
+    let stats = reattach_during_activation(96_000.0);
+    // Created, restarted, then once more for the new rate.
+    assert_eq!((stats.activated(), stats.deactivated()), (3, 2));
+}
+
+#[test]
+fn a_reattach_at_the_rate_of_the_activation_in_flight_adds_no_pair() {
+    let stats = reattach_during_activation(44_100.0);
+    assert_eq!((stats.activated(), stats.deactivated()), (2, 1));
+}
