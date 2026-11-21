@@ -48,11 +48,15 @@ fn a_panic_of_the_plugin_reaches_the_manager_with_message_place_and_operation_an
         "{text}"
     );
     assert!(text.contains("builtin.rs:"), "the place is named: {text}");
-    // The device failed because of the error status the panic became.
-    for _ in 0..50 {
+    // The device fails because of the error status the panic became: every block is answered
+    // with it from now on, so the run of bad blocks reaches its limit (a late batch in between
+    // does not count and does not break the run, hence a condition and not a count).
+    let mut blocks = 0;
+    while meters(&h)[METER_STATE] != DeviceState::Failed.as_f32() {
         h.process();
+        blocks += 1;
+        assert!(blocks < 20_000, "the device never failed");
     }
-    assert_eq!(meters(&h)[METER_STATE], DeviceState::Failed.as_f32());
     drop(h);
     sb.manager.poll();
     sb.finish();
