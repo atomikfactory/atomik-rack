@@ -83,8 +83,9 @@ pub struct SandboxConfig {
     pub create_timeout: Duration,
     /// Every other main-thread call.
     pub call_timeout: Duration,
-    /// The calls that only polish the interface (param text, pins, layout, closing the editor):
-    /// a miss never stops the child, see [`SandboxConfig::new`].
+    /// The calls that only polish the interface (param text, pins, layout, resize, closing the
+    /// editor): the longest one is waited for. A late answer is still used and never stops the
+    /// child, see [`SandboxConfig::new`].
     pub text_timeout: Duration,
     /// Offline (bounce) audio: how long a batch may take before the child counts as hung.
     pub offline_watchdog: Duration,
@@ -103,8 +104,9 @@ impl SandboxConfig {
     /// the live app.
     ///
     /// A call that matters (create, activate, state, deactivate) that is not answered in time
-    /// stops the child. A cosmetic one only drops its request: the child is marked slow after a
-    /// few misses in a row and stopped after many.
+    /// stops the child, unless it shows a sign of life. A cosmetic request is waited for only a
+    /// moment (a share of one frame's allowance), its late answer is used when it comes, and the
+    /// child is marked slow after a few late answers within a few seconds.
     pub fn new(command: HostCommand) -> Self {
         Self {
             command,
@@ -164,8 +166,11 @@ impl Grouping {
     }
 }
 
-/// How long a slow instance is left alone between two cosmetic calls.
+/// How long a slow instance is left alone between two waits for its cosmetic answers.
 const SLOW_RETRY: Duration = Duration::from_secs(1);
+
+/// How long a late cosmetic answer counts toward an instance being slow.
+const SLOW_WINDOW: Duration = Duration::from_secs(5);
 
 /// The number the next instance's block and doorbell carry: one counter for the whole process,
 /// since the CLAP and the VST3 backend share the block folder and the doorbell namespace.
@@ -328,6 +333,7 @@ impl SandboxBackend {
             watchdog: self.config.offline_watchdog,
             hung: self.config.hung_after,
             slow_retry: SLOW_RETRY,
+            slow_window: SLOW_WINDOW,
             bounce: self.config.bounce,
         }
     }
@@ -356,6 +362,7 @@ impl PluginBackend for SandboxBackend {
             self.timeouts(),
             host.messenger().clone(),
             live,
+            host.budget().clone(),
         )?;
         Ok(Box::new(instance))
     }
@@ -372,6 +379,7 @@ impl PluginBackend for SandboxBackend {
             self.timeouts(),
             host.messenger().clone(),
             live,
+            host.budget().clone(),
         )?;
         Ok(Some(Box::new(pending)))
     }

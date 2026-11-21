@@ -128,6 +128,7 @@ fn a_child_that_ends_before_start_processing_still_yields_a_crashed_event() {
                 crate::fake::test_timeouts(),
                 host.messenger().clone(),
                 crate::link::LiveGuard::new(&live),
+                host.budget().clone(),
             )?;
             Ok(Box::new(instance))
         }

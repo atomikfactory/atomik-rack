@@ -592,6 +592,47 @@ fn display_texts_come_from_the_app_and_stale_ones_are_asked_for_again() {
 }
 
 #[test]
+fn a_text_that_lands_late_fills_its_row_only_while_the_row_shows_the_value_it_was_asked_for() {
+    let mut d = plugin_rack();
+    let mut v = pane_on(d.doc(), "synth");
+    let _ = v.take_text_requests();
+    assert_eq!(v.shown_text(10), None, "the number until the text lands");
+    // The plugin answers late for the value the row still shows.
+    assert_eq!(v.offer_texts(&[(10, 0.0, "0.00 dB".into())]), 1);
+    assert_eq!(v.shown_text(10), Some("0.00 dB"));
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), &registry());
+    assert!(dl.texts().contains(&"0.00 dB"), "{:?}", dl.texts());
+    // The value changes; the text of the old value then lands: it is not shown for the new one.
+    apply(
+        &mut d,
+        Command::SetParam {
+            key: key("synth"),
+            param: "p10".into(),
+            value: 0.5,
+            merge: None,
+        },
+    );
+    v.sync(d.doc(), &registry());
+    assert_eq!(v.take_text_requests(), vec![(10, 0.5)]);
+    assert_eq!(
+        v.offer_texts(&[(10, 0.0, "stale".into())]),
+        0,
+        "not the value any more"
+    );
+    assert_eq!(v.shown_text(10), None);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), &registry());
+    assert!(!dl.texts().contains(&"stale"));
+    assert!(dl.texts().contains(&"0.500"), "{:?}", dl.texts());
+    // The text of the new value lands after the old one: it fills the row.
+    assert_eq!(v.offer_texts(&[(10, 0.5, "0.50 dB".into())]), 1);
+    assert_eq!(v.shown_text(10), Some("0.50 dB"));
+    // A param the pane does not list is ignored.
+    assert_eq!(v.offer_texts(&[(9999, 0.0, "x".into())]), 0);
+}
+
+#[test]
 fn a_scroll_requests_only_the_newly_visible_params() {
     let d = big_rack();
     let mut v = pane_on(d.doc(), "big");

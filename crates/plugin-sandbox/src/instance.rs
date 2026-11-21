@@ -1,22 +1,25 @@
 //! [`RemoteInstance`]: the main-thread half of a plugin that runs in a child process.
 //!
-//! Every method is a call over the control link with a timeout (see [`crate::link`]). The
-//! instance goes through the states of the contract: Spawning (the Hello exchange, in
-//! [`RemoteInstance::start`]), Ready, Active (the processor is out) and Lost. No transition
-//! leaves Lost: once the child is gone or has been killed for not answering, every call
-//! fails with [`LOST`] and does no I/O; recovery is a new instance.
+//! Every method is a call over the control link with a timeout (see [`crate::link`]), except the
+//! cosmetic ones (a parameter's text, resizing or closing the editor, the default pins, a layout
+//! change), which ask and wait only a moment: what the plugin answers later is handed over by
+//! [`PluginInstance::take_soft_answers`]. The instance goes through the states of the
+//! contract: Spawning (the Hello exchange, in [`RemoteInstance::start`]), Ready, Active (the
+//! processor is out) and Lost. No transition leaves Lost: once the child is gone or has been
+//! killed for not answering, every call fails with [`LOST`] and does no I/O; recovery is a new
+//! instance.
 
-use crate::link::{Link, LiveGuard, Reply, Timeouts};
+use crate::link::{Grace, Link, LiveGuard, Reply, SoftAsked, SoftDone, SoftKind, Timeouts};
 use crate::processor::{PortCell, RemoteProcessor};
 use crate::transport::Transport;
 use atomik_core::BATCH;
 use atomik_device_sdk::{PluginLayout, PluginStateBlob, RunMode};
 use atomik_plugin_host::{
     ActivateConfig, BackendError, EditorKind, HostMessenger, LogLevel, NativeParent,
-    PendingInstance, PluginInstance, PluginMessage, PluginProcessor, PresetInfo, warmed,
+    PendingInstance, PluginInstance, PluginMessage, PluginProcessor, PresetInfo, SoftAnswer,
+    SoftBudget, warmed,
 };
 use atomik_plugin_ipc::{FromChild, ParentPort, ToChild, WireParent};
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -29,6 +32,9 @@ thread_local! {
 /// The shortest live deadline of a batch, whatever the sample rate.
 const MIN_PERIOD: Duration = Duration::from_micros(50);
 
+/// The most late cosmetic answers kept for the app to collect.
+const MAX_READY: usize = 256;
+
 /// A plugin instance in its own process.
 pub(crate) struct RemoteInstance {
     link: Link,
@@ -38,8 +44,12 @@ pub(crate) struct RemoteInstance {
     latency: u32,
     /// Activated for an offline bounce: `poll` flushes the child's notifications.
     offline_active: bool,
-    /// The last text the child gave for each param, shown while it is too busy to answer.
-    texts: BTreeMap<u32, String>,
+    /// Cosmetic answers that came after their call returned, for
+    /// [`PluginInstance::take_soft_answers`] (the newest [`MAX_READY`]).
+    ready: Vec<SoftAnswer>,
+    /// The latest size the editor was asked for while a resize was still out: it is sent when
+    /// that one is answered, so a drag never queues a backlog of sizes.
+    wanted_resize: Option<(u32, u32)>,
     /// When the `OpenGui` that is still out was sent (see
     /// [`PluginInstance::begin_open_external_gui`]).
     opening_since: Option<std::time::Instant>,
@@ -124,10 +134,11 @@ impl RemoteInstance {
         timeouts: Timeouts,
         messenger: HostMessenger,
         live: LiveGuard,
+        budget: SoftBudget,
     ) -> Result<Self, BackendError> {
         let death = port.death_handle();
         let warn = messenger.clone();
-        let mut link = Link::start(transport, death, timeouts, messenger, live)?;
+        let mut link = Link::start(transport, death, timeouts, messenger, live, budget)?;
         Self::unlink_block(&port, &warn);
         atomik_plugin_ipc::lifetime::allow_foreground(link.shared().pid());
         let reply = link
@@ -152,10 +163,11 @@ impl RemoteInstance {
         timeouts: Timeouts,
         messenger: HostMessenger,
         live: LiveGuard,
+        budget: SoftBudget,
     ) -> Result<PendingRemote, BackendError> {
         let death = port.death_handle();
         let warn = messenger.clone();
-        let link = Link::launch(transport, death, timeouts, messenger, live)?;
+        let link = Link::launch(transport, death, timeouts, messenger, live, budget)?;
         Ok(PendingRemote {
             link: Some(link),
             port: Some(port),
@@ -183,7 +195,8 @@ impl RemoteInstance {
             has_gui,
             latency,
             offline_active: false,
-            texts: BTreeMap::new(),
+            ready: Vec::new(),
+            wanted_resize: None,
             opening_since: None,
             deactivating_since: None,
         })
@@ -260,6 +273,82 @@ impl RemoteInstance {
             (FromChild::State { .. }, None) => Err(unexpected_none("CaptureState")),
             (other, _) => Err(self.link.unexpected("CaptureState", other)),
         }
+    }
+
+    /// Collects the cosmetic answers that came since the last time (once per frame, from
+    /// [`PluginInstance::poll`]).
+    fn service_soft(&mut self) {
+        for done in self.link.service_soft() {
+            self.apply_soft(done);
+        }
+    }
+
+    /// Puts a late cosmetic answer to use: a text or a size is kept for the app, a layout change
+    /// is kept for the next [`PluginInstance::take_layout_changed`] (the child says it once),
+    /// and the next size of a resize that was merged goes out.
+    fn apply_soft(&mut self, done: SoftDone) {
+        let Ok(reply) = done.answer else {
+            // An error to a request made for show is nothing to tell anyone, except that an
+            // editor that refuses to resize says so.
+            if let SoftKind::ResizeGui { w, h } = done.kind {
+                self.resized(w, h, None);
+            }
+            return;
+        };
+        match (done.kind, reply.msg) {
+            (
+                SoftKind::ParamText { param, plain },
+                FromChild::Text {
+                    text: Some(text), ..
+                },
+            ) => {
+                self.keep_ready(SoftAnswer::ParamText { param, plain, text });
+            }
+            (SoftKind::ResizeGui { w, h }, FromChild::GuiSized { w: tw, h: th, .. }) => {
+                self.resized(w, h, Some((tw, th)));
+            }
+            (SoftKind::ResizeGui { .. }, other) => {
+                let _ = self.link.unexpected("ResizeGui", &other);
+            }
+            (SoftKind::DefaultPins, FromChild::Pins { pins, .. }) => {
+                self.keep_ready(SoftAnswer::DefaultPins(pins));
+            }
+            (
+                SoftKind::TakeLayoutChanged,
+                FromChild::LayoutChanged {
+                    layout: Some(layout),
+                    ..
+                },
+            ) => self.link.shared().keep_late_layout(layout),
+            _ => {}
+        }
+    }
+
+    /// The answer to the resize to `(w, h)`: when a later size was asked for meanwhile it is sent
+    /// now and this answer is superseded, else the app is told what the editor took.
+    fn resized(&mut self, w: u32, h: u32, took: Option<(u32, u32)>) {
+        if let Some((nw, nh)) = self.wanted_resize.take()
+            && (nw, nh) != (w, h)
+        {
+            // Nothing is waited for: its answer is collected like this one.
+            let _ = self
+                .link
+                .soft_ask(SoftKind::ResizeGui { w: nw, h: nh }, Grace::None, |id| {
+                    ToChild::ResizeGui { id, w: nw, h: nh }
+                });
+            return;
+        }
+        self.keep_ready(SoftAnswer::GuiSized {
+            asked: (w, h),
+            took,
+        });
+    }
+
+    fn keep_ready(&mut self, answer: SoftAnswer) {
+        if self.ready.len() >= MAX_READY {
+            self.ready.remove(0);
+        }
+        self.ready.push(answer);
     }
 
     /// An `Ok`-or-`GuiOpened` reply (the child may say either to an `OpenGui`).
@@ -501,26 +590,24 @@ impl PluginInstance for RemoteInstance {
         if !plain.is_finite() {
             return None;
         }
-        // A plugin too busy to answer is not a failed one: the last text it gave stays up.
-        let Ok(reply) = self
+        let kind = SoftKind::ParamText { param: id, plain };
+        if self.link.soft_has(|k| *k == kind) {
+            // Asked already: the text comes with that request's answer.
+            return None;
+        }
+        // A plugin too busy to answer has no text yet, and none is made up: the app shows the
+        // number until the text arrives (see `take_soft_answers`).
+        match self
             .link
-            .soft_call("ParamText", self.timeouts().text, |rid| {
-                ToChild::ParamText {
-                    id: rid,
-                    param: id,
-                    plain,
-                }
-            })
-        else {
-            return self.texts.get(&id).cloned();
-        };
-        match reply.msg {
-            FromChild::Text { text, .. } => {
-                if let Some(text) = &text {
-                    self.texts.insert(id, text.clone());
-                }
-                text
-            }
+            .soft_ask(kind, Grace::Frame, |rid| ToChild::ParamText {
+                id: rid,
+                param: id,
+                plain,
+            }) {
+            Ok(SoftAsked::Answered(Reply {
+                msg: FromChild::Text { text, .. },
+                ..
+            })) => text,
             _ => None,
         }
     }
@@ -532,16 +619,21 @@ impl PluginInstance for RemoteInstance {
     }
 
     fn close_gui(&mut self) {
-        let call = self.timeouts().text;
+        // The one cosmetic call that waits its whole timeout: the window must not go while the
+        // plugin is still using it. It is one wait; the state is asked for afterwards in the
+        // background.
         let _ = self
             .link
-            .soft_call("CloseGui", call, |id| ToChild::CloseGui { id });
+            .soft_ask(SoftKind::CloseGui, Grace::Full, |id| ToChild::CloseGui {
+                id,
+            });
     }
 
     fn poll(&mut self) {
         // The reader thread does the work; the main thread only finishes what the audio side
         // could not do itself (it may not lock): ending a child it declared dead.
         self.link.shared().finish_audio_death();
+        self.service_soft();
         if self.offline_active && !self.link.is_lost() {
             // The child forwards notifications on a timer; a bounce must not depend on it. The
             // reader posts every notification before it delivers a reply, so when the Flush is
@@ -561,15 +653,18 @@ impl PluginInstance for RemoteInstance {
     }
 
     fn default_pins(&mut self) -> Vec<u32> {
-        let call = self.timeouts().text;
+        if self.link.soft_has(|k| *k == SoftKind::DefaultPins) {
+            return Vec::new();
+        }
         match self
             .link
-            .soft_call("DefaultPins", call, |id| ToChild::DefaultPins { id })
-        {
-            Ok(Reply {
+            .soft_ask(SoftKind::DefaultPins, Grace::Frame, |id| {
+                ToChild::DefaultPins { id }
+            }) {
+            Ok(SoftAsked::Answered(Reply {
                 msg: FromChild::Pins { pins, .. },
                 ..
-            }) => pins,
+            })) => pins,
             _ => Vec::new(),
         }
     }
@@ -577,24 +672,28 @@ impl PluginInstance for RemoteInstance {
     fn take_layout_changed(&mut self) -> bool {
         // The child tells a layout change once: one whose answer came after its call gave up
         // is kept for this one.
+        self.service_soft();
         if let Some(layout) = self.link.shared().take_late_layout() {
             self.layout = layout.into();
             return true;
         }
-        let call = self.timeouts().text;
+        if self.link.soft_has(|k| *k == SoftKind::TakeLayoutChanged) {
+            // Asked already: its answer is kept for the next call when it comes.
+            return false;
+        }
         match self
             .link
-            .soft_call("TakeLayoutChanged", call, |id| ToChild::TakeLayoutChanged {
-                id,
+            .soft_ask(SoftKind::TakeLayoutChanged, Grace::Frame, |id| {
+                ToChild::TakeLayoutChanged { id }
             }) {
-            Ok(Reply {
+            Ok(SoftAsked::Answered(Reply {
                 msg:
                     FromChild::LayoutChanged {
                         layout: Some(layout),
                         ..
                     },
                 ..
-            }) => {
+            })) => {
                 self.layout = layout.into();
                 true
             }
@@ -622,16 +721,39 @@ impl PluginInstance for RemoteInstance {
     }
 
     fn resize_gui(&mut self, w: u32, h: u32) -> Result<(u32, u32), BackendError> {
-        // A plugin too busy to answer is not a failed one: the frame keeps the size it asked
+        // A plugin too busy to answer is not a failed one: the caller keeps the size it asked
         // for, and the editor takes the next one it is given.
-        let call = self.timeouts().text;
-        let reply = self
+        self.request_resize_gui(w, h)?.ok_or_else(|| {
+            BackendError::Failed("the plugin has not answered the resize yet".to_string())
+        })
+    }
+
+    fn request_resize_gui(&mut self, w: u32, h: u32) -> Result<Option<(u32, u32)>, BackendError> {
+        if self
             .link
-            .soft_call("ResizeGui", call, |id| ToChild::ResizeGui { id, w, h })?;
-        match reply.msg {
-            FromChild::GuiSized { w, h, .. } => Ok((w, h)),
-            other => Err(self.link.unexpected("ResizeGui", &other)),
+            .soft_has(|k| matches!(k, SoftKind::ResizeGui { .. }))
+        {
+            // One is out: only the latest size is kept, and goes when that one is answered.
+            self.wanted_resize = Some((w, h));
+            return Ok(None);
         }
+        self.wanted_resize = None;
+        let asked = self
+            .link
+            .soft_ask(SoftKind::ResizeGui { w, h }, Grace::Frame, |id| {
+                ToChild::ResizeGui { id, w, h }
+            })?;
+        match asked {
+            SoftAsked::Pending => Ok(None),
+            SoftAsked::Answered(reply) => match reply.msg {
+                FromChild::GuiSized { w, h, .. } => Ok(Some((w, h))),
+                other => Err(self.link.unexpected("ResizeGui", &other)),
+            },
+        }
+    }
+
+    fn take_soft_answers(&mut self) -> Vec<SoftAnswer> {
+        std::mem::take(&mut self.ready)
     }
 
     fn poll_open_external_gui(&mut self) -> Option<Result<(), BackendError>> {
@@ -695,8 +817,18 @@ impl RemoteInstance {
         self.link.shared().rejected()
     }
 
-    /// True while the child misses cosmetic calls.
+    /// True while the child's cosmetic answers are late.
     pub(crate) fn is_slow(&self) -> bool {
         self.link.is_slow()
+    }
+
+    /// The cosmetic requests that are out or not yet collected.
+    pub(crate) fn soft_out(&self) -> bool {
+        self.link.soft_has(|_| true)
+    }
+
+    /// The allowance of waiting for cosmetic answers this instance draws on.
+    pub(crate) fn budget(&self) -> atomik_plugin_host::SoftBudget {
+        self.link.budget().clone()
     }
 }

@@ -185,47 +185,52 @@ fn a_preset_list_that_times_out_while_the_plugin_is_alive_does_not_stop_it() {
     assert_eq!(r.instance.list_presets().len(), 2, "answers again");
 }
 
-/// Soft calls on `r` until the twelfth real miss leaves the instance stuck, the child is lost, or
-/// ten seconds have passed (the number of calls that really wait does not depend on the clock).
-fn miss_until_stuck(r: &mut Rig) {
-    let limit = now() + Duration::from_secs(10);
+/// Cosmetic requests on `r`, one per frame, until the instance is stuck on one, the child is
+/// lost, or ten seconds have passed.
+fn ask_until_stuck(r: &mut Rig) {
+    let budget = r.instance.budget();
+    let limit = now() + Duration::from_secs(60);
+    let mut n = 0u32;
     while now() < limit && !r.instance.is_lost() && r.instance.not_responding().is_none() {
-        assert_eq!(r.instance.param_text(1, 0.5), None);
+        budget.begin_frame();
+        n += 1;
+        assert_eq!(r.instance.param_text(1, 0.001 * f64::from(n)), None);
+        r.instance.poll();
         std::thread::sleep(Duration::from_millis(2));
     }
 }
 
-/// Timeouts for the twelve-misses tests: a short soft wait, and no back-off between the calls so
-/// that every call really waits.
+/// Timeouts for the unanswered-request tests: a short cosmetic wait and a short `create`, the
+/// time after which a request that nothing answered is judged like any other call.
 fn miss_timeouts() -> crate::link::Timeouts {
     let mut timeouts = test_timeouts();
     timeouts.text = Duration::from_millis(30);
-    timeouts.slow_retry = Duration::ZERO;
+    timeouts.create = Duration::from_millis(1500);
     timeouts
 }
 
 #[test]
-fn a_child_whose_beat_is_rarer_than_a_short_wait_is_still_alive_over_the_run_of_misses() {
-    // One beat every ~40 ms against a 30 ms wait (whose own window is 15 ms): most waits see no
-    // beat at all, the run of misses does. A live plugin must not be stopped for that.
+fn a_child_whose_beat_is_rarer_than_a_short_wait_is_still_alive_over_the_run_of_polls() {
+    // One beat every ~40 ms: most single samples see no beat at all, the run of frames does. A
+    // live plugin must not be stopped for that.
     let mut r = started(
         blocked_once(|req| matches!(req, ToChild::ParamText { .. })),
         miss_timeouts(),
     );
     r.fake.ctl.set_audio_idle(Duration::from_millis(40));
-    miss_until_stuck(&mut r);
+    ask_until_stuck(&mut r);
     assert!(!r.instance.is_lost(), "a live plugin was stopped");
     assert!(!r.fake.ctl.was_killed());
     assert_eq!(r.instance.not_responding().as_deref(), Some("ParamText"));
 }
 
 #[test]
-fn twelve_missed_soft_calls_do_not_stop_a_plugin_that_is_alive() {
+fn cosmetic_requests_unanswered_for_the_create_timeout_do_not_stop_a_plugin_that_is_alive() {
     let mut r = started(
         blocked_once(|req| matches!(req, ToChild::ParamText { .. })),
         miss_timeouts(),
     );
-    miss_until_stuck(&mut r);
+    ask_until_stuck(&mut r);
     assert!(!r.instance.is_lost(), "a live plugin was stopped");
     assert_eq!(r.instance.not_responding().as_deref(), Some("ParamText"));
     assert!(!r.instance.is_lost() && !r.fake.ctl.was_killed());
@@ -236,10 +241,56 @@ fn twelve_missed_soft_calls_do_not_stop_a_plugin_that_is_alive() {
         asked,
         "a stuck instance is not asked"
     );
-    // The fake answers what it was sent, in order: the last answer ends the state.
+    // The fake answers what it was sent, in order: the answer of the request the link is stuck
+    // on ends the state.
     r.fake.ctl.release();
     eventually("recovery", || r.instance.not_responding().is_none());
     assert!(!r.fake.ctl.was_killed());
+}
+
+#[test]
+fn cosmetic_requests_unanswered_for_the_create_timeout_stop_a_plugin_with_no_sign_of_life() {
+    let mut r = started(
+        FakeOptions::default()
+            .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)),
+        miss_timeouts(),
+    );
+    ask_until_stuck(&mut r);
+    assert!(r.instance.is_lost(), "a silent plugin is stopped");
+    assert!(r.fake.ctl.was_killed());
+    assert!(r.instance.not_responding().is_none(), "lost, not stuck");
+    let reason = super::policy::exit_reason(&r);
+    assert!(reason.contains("did not answer ParamText"), "{reason}");
+}
+
+#[test]
+fn a_few_late_cosmetic_answers_stop_nothing_and_mark_nothing() {
+    // The plugin answers each request after 120 ms, well before the create timeout.
+    let mut r = started(
+        FakeOptions::default().script(|req, _| match req {
+            ToChild::ParamText { id, plain, .. } => Some(Action::Delayed(
+                Duration::from_millis(120),
+                super::policy::text(*id, &format!("{plain:.3}")),
+            )),
+            _ => None,
+        }),
+        test_timeouts(),
+    );
+    let budget = r.instance.budget();
+    let limit = now() + Duration::from_secs(60);
+    let mut got = 0;
+    let mut n = 0u32;
+    while got < 5 && now() < limit {
+        budget.begin_frame();
+        n += 1;
+        let _ = r.instance.param_text(1, f64::from(n));
+        r.instance.poll();
+        got += r.instance.take_soft_answers().len();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(got >= 5, "the late answers came");
+    assert!(!r.instance.is_lost() && !r.fake.ctl.was_killed());
+    assert!(r.instance.not_responding().is_none());
 }
 
 #[test]

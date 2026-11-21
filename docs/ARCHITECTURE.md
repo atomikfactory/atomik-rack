@@ -5151,10 +5151,34 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     the next batch exactly as in process (a bounce counts in batches, never in time). Main-thread
     calls have timeouts. The ones that matter (10 s create, activate and state; 2 s deactivate and
     flush) kill the child when they are not answered, unless it shows a sign of life (below). The
-    cosmetic ones (param text, default pins,
-    layout changes, closing the editor; 250 ms) only drop the request: the last text stays up, the
-    instance counts as slow after three misses in a row and is then asked once a second (a
-    warning says so), and the child is stopped after twelve, unless it shows a sign of life.
+    cosmetic ones (param text, default pins, layout changes, resize, closing the editor) are
+    requests that do not hold the interface: each goes into a small table of the link (the newest
+    64, the oldest dropped), the reader thread files its answer there whenever it comes, and the
+    main thread waits for it only a moment. The moment is what is left of one allowance of 20 ms
+    per frame that every instance of the manager shares (`SoftBudget`, `SOFT_FRAME_BUDGET`; the
+    manager begins a frame at each `poll`), at most 250 ms for one request, and none for an
+    instance that was waited for in vain already in this frame (a wait is recorded as a stall only
+    when it was asked to last 50 ms or more, so a short wait that the system woke late is not one,
+    though it still eats the allowance). An answer that is not there in
+    time is delivered later: `PluginInstance::take_soft_answers` hands the app the parameter texts
+    and editor sizes that arrived (`PluginManager::take_soft_answers`, outside the event stream
+    because they depend on the clock), and the parameter pane fills a row with a late text only if
+    the row still shows the value it was asked for. A parameter whose text is not there shows its
+    number meanwhile, never the text of its previous value. Resizing keeps at most one `ResizeGui` out
+    per instance: while one is, only the latest size wanted is remembered and sent when the answer
+    lands (ten sizes of a drag make two requests), and the frame or window follows the size the
+    editor took when that answer comes. A late layout change is kept for the next restart, as
+    before. Closing the editor is the one cosmetic call that waits its whole 250 ms (the window must
+    not go while the plugin may still use it); the state is asked for afterwards in the
+    background. The instance counts as slow when three of its cosmetic answers were late within
+    five seconds (a request not answered within the allowance, or an answer older than 250 ms
+    when it came); a fast answer does not end that, time does. A slow instance is waited for at
+    most once a second, its requests still go out and their answers are still used, and one
+    warning per slow episode tells the user. A soft request that nothing answered for as long
+    as an activation takes (10 s) is judged like any other unanswered call: NOT RESPONDING when
+    the child is alive, stopped when it shows no sign of life; late cosmetic answers alone never
+    stop or mark a child. A bounce waits the whole 250 ms for a cosmetic answer, without the
+    allowance. A plugin in this process answers every cosmetic call at once.
     *A plugin that is alive is never stopped by a timeout.* The child's audio thread stores a
     growing number in the `pulse` word of the block header on every pass of its wait loop (one
     relaxed store, at least every 10 ms, whatever the plugin's main thread is doing). A wait that
@@ -5167,8 +5191,8 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     the state as `ManagerEvent::NotResponding` and `Responding` and answers `PluginManager::not_responding`.
     A child with no sign of life is stopped as before, with the same text. A bounce
     (`SandboxConfig::bounce`) keeps stopping on a timeout and never enters the state, so its event
-    stream does not depend on the clock. A reply that comes late is ignored,
-    except a layout change, which the child says only once and the instance keeps. The child
+    stream does not depend on the clock. A reply that comes late is ignored, except a cosmetic
+    answer (above) and a layout change, which the child says only once and the instance keeps. The child
     takes a private handle to its real stdout for frames and
     points its stdout at stderr (`take_frame_stdout`), so a plugin that prints cannot corrupt the
     stream.

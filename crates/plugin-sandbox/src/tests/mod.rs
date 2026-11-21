@@ -8,6 +8,7 @@ mod notifications;
 mod policy;
 mod processor;
 mod rpc;
+mod soft;
 mod stuck;
 mod supervision;
 

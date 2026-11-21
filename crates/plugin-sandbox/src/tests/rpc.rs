@@ -265,16 +265,28 @@ fn a_sixteen_mebibyte_state_round_trips() {
 // ----- timeouts ---------------------------------------------------------------------------------
 
 #[test]
-fn param_text_that_is_not_answered_does_not_kill_the_child() {
-    let mut r = rig(FakeOptions::default()
-        .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)));
-    let started = now();
-    assert_eq!(r.instance.param_text(1, 0.5), None);
-    let took = now().saturating_duration_since(started);
-    assert!(took >= test_timeouts().text, "{took:?}");
-    assert!(took < Duration::from_secs(3), "{took:?}");
-    assert!(!r.instance.is_lost());
-    assert!(!r.fake.ctl.was_killed());
+fn param_text_that_is_not_answered_waits_only_the_frame_allowance_and_does_not_kill_the_child() {
+    let mut timeouts = test_timeouts();
+    timeouts.text = Duration::from_secs(2);
+    let started = start_with(
+        FakeOptions::default()
+            .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)),
+        timeouts,
+    );
+    let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let budget = instance.budget();
+    budget.begin_frame();
+    assert_eq!(instance.param_text(1, 0.5), None);
+    // What the link was asked to wait: once, and the allowance of the frame, not the 2 s timeout.
+    assert_eq!(budget.waits(), 1);
+    assert!(budget.asked() > Duration::ZERO);
+    assert!(
+        budget.asked() <= atomik_plugin_host::SOFT_FRAME_BUDGET,
+        "{:?}",
+        budget.asked()
+    );
+    assert!(!instance.is_lost());
+    assert!(!started.fake.ctl.was_killed());
 }
 
 #[test]
@@ -572,6 +584,7 @@ fn begun(
         test_timeouts(),
         manager.messenger(),
         LiveGuard::new(&live),
+        atomik_plugin_host::SoftBudget::default(),
     )
     .map_err(|e| e.to_string())
     .expect("the threads start");
@@ -671,19 +684,60 @@ fn a_call_that_times_out_is_recorded_with_that_outcome() {
 }
 
 #[test]
-fn a_slow_soft_call_is_recorded_too() {
+fn a_cosmetic_request_never_holds_the_main_thread_long_enough_to_be_a_stall() {
     let mut timeouts = test_timeouts();
-    timeouts.text = Duration::from_millis(80);
+    timeouts.text = Duration::from_millis(500);
+    let started = start_with(
+        FakeOptions::default().script(|req, _| {
+            matches!(
+                req,
+                ToChild::ParamText { .. } | ToChild::ResizeGui { .. } | ToChild::DefaultPins { .. }
+            )
+            .then_some(Action::Silent)
+        }),
+        timeouts,
+    );
+    let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let budget = instance.budget();
+    let _ = stalls(&started.manager);
+    for n in 0..5 {
+        budget.begin_frame();
+        assert_eq!(instance.param_text(1, f64::from(n)), None);
+        let _ = instance.request_resize_gui(300 + n, 200);
+        let _ = instance.default_pins();
+    }
+    let got = stalls(&started.manager);
+    assert!(
+        got.iter().all(|(call, _, _)| !matches!(
+            call.as_str(),
+            "ParamText" | "ResizeGui" | "DefaultPins"
+        )),
+        "{got:?}"
+    );
+}
+
+#[test]
+fn closing_the_editor_is_one_bounded_wait_and_is_recorded() {
+    let mut timeouts = test_timeouts();
+    timeouts.text = Duration::from_millis(120);
     let started = start_with(
         FakeOptions::default()
-            .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)),
+            .script(|req, _| matches!(req, ToChild::CloseGui { .. }).then_some(Action::Silent)),
         timeouts,
     );
     let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
     let _ = stalls(&started.manager);
-    assert_eq!(instance.param_text(1, 0.5), None);
+    instance.close_gui();
     let got = stalls(&started.manager);
     assert_eq!(got.len(), 1, "{got:?}");
-    assert_eq!(got[0].0, "ParamText");
+    assert_eq!(got[0].0, "CloseGui");
     assert_eq!(got[0].2, atomik_plugin_host::StallOutcome::TimedOut);
+    let asked = started
+        .fake
+        .ctl
+        .requests()
+        .iter()
+        .filter(|q| matches!(q, ToChild::CloseGui { .. }))
+        .count();
+    assert_eq!(asked, 1, "one request, one wait");
 }

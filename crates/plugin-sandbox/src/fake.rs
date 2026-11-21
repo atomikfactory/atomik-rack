@@ -116,6 +116,11 @@ impl Control {
             .store(idle.as_micros() as u64, Ordering::SeqCst);
     }
 
+    /// Makes the next [`Action::Blocked`] request wait for [`Control::release`] again.
+    pub fn hold(&self) {
+        self.released.store(false, Ordering::SeqCst);
+    }
+
     /// Lets the [`Action::Blocked`] request that is waiting (or the next one) be answered.
     pub fn release(&self) {
         self.released.store(true, Ordering::SeqCst);
@@ -531,6 +536,7 @@ pub(crate) fn test_timeouts() -> Timeouts {
         watchdog: Duration::from_millis(400),
         hung: Duration::ZERO,
         slow_retry: Duration::from_millis(20),
+        slow_window: Duration::from_secs(5),
         bounce: false,
     }
 }
@@ -580,12 +586,22 @@ pub(crate) fn start(options: FakeOptions) -> Started {
 
 /// Starts an instance over a fake child with these timeouts.
 pub(crate) fn start_with(options: FakeOptions, timeouts: Timeouts) -> Started {
+    start_with_budget(options, timeouts, atomik_plugin_host::SoftBudget::default())
+}
+
+/// Starts an instance over a fake child with these timeouts, drawing on `budget` (shared with
+/// other instances that were given the same one).
+pub(crate) fn start_with_budget(
+    options: FakeOptions,
+    timeouts: Timeouts,
+    budget: atomik_plugin_host::SoftBudget,
+) -> Started {
     let (_device, manager) = plugin_channel(InstanceId(1));
     let messenger: HostMessenger = manager.messenger();
     let live = Arc::new(AtomicUsize::new(0));
     let (transport, port, fake) = fake_transport(options, make_ports());
     let guard = LiveGuard::new(&live);
-    let instance = RemoteInstance::start(transport, port, timeouts, messenger, guard);
+    let instance = RemoteInstance::start(transport, port, timeouts, messenger, guard, budget);
     Started {
         instance,
         fake,

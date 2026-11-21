@@ -1171,3 +1171,40 @@ only make workers park inside long callbacks and wait for an OS wake-up between 
 only from the thread count (it cannot tell two cores of four threads from four cores).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AQ. Cosmetic plugin answers never hold a frame: ask now, use later, and a slow plugin is judged by time
+
+**Question.** The interface asks a sandboxed plugin for things that only polish it: the text of a parameter value
+(one request per visible row of the parameter pane for every new value, all in one frame), the size of an editor
+(one per resize event of a window or dock drag), the default pins, a layout change, closing the editor. Each waited up
+to 250 ms on the interface thread for the plugin's main thread, which a plugin keeps busy exactly when it loads a
+preset or builds a window. Three misses made the instance slow for a second, but one answer reset the count, so a
+plugin that answered between its stalls cost three full waits again and again; twelve misses stopped the process
+although it was alive (the rule of AO covered the important calls, not these).
+
+**Decision.** A cosmetic request is sent at once and filed in a small table of the link; the reader thread files the
+answer whenever it comes, and the app collects the late ones every frame (parameter texts and editor sizes) and puts
+them to use: a text fills its row only if the row still shows the value it was asked for, and a parameter whose
+text is not there shows its number, never the text of the previous value. The main thread waits for an answer only
+for what is left of one allowance of 20 ms per frame shared by all instances, never longer than 250 ms for one
+request, and not at all for an instance that was waited for in vain already in this frame. An instance is slow while
+three of its answers within five seconds were late; one fast answer does not end that, time does. A slow instance is
+waited for once a second at most (its requests still go out and their answers are still used), and the user gets one
+warning per slow episode instead of one per recovery. Resizing keeps one request out per instance and only the
+latest wanted size behind it, so a drag is two requests, not a backlog. Closing the editor keeps its single bounded
+wait of 250 ms, since the window must not go while the plugin may still use it; the state is then asked for in the
+background as before. Late cosmetic answers never stop or mark a plugin; a request that nothing answered for as
+long as an activation takes (the `create` timeout, 10 s) is judged like any other unanswered call: NOT RESPONDING
+when the process shows a sign of life, stopped when it does not. A bounce keeps a plain wait of 250 ms and no
+allowance, so it does not depend on the frame. A plugin in this process still answers synchronously.
+
+**Rejected.** Dropping the late answer (the pane stayed on the number although the plugin had answered); a thread
+that asks the plugin on the app's behalf (another place that can stall, and the answer still has to reach the UI
+thread); a shorter wait per call without a shared allowance (thirty rows still add up); keeping the last text up
+while the plugin is busy (it is the text of another value); killing after a count of misses (a live plugin is
+never stopped for being slow).
+
+**Open.** The 20 ms allowance and the five-second window are not tuned against real plugins; the hand check is a
+parameter pane open while a sampler plugin loads a large patch.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

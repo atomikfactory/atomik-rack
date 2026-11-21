@@ -32,6 +32,7 @@ pub mod paths;
 mod scan;
 mod settings;
 mod slot;
+mod soft;
 mod standin;
 pub mod testing;
 mod threads;
@@ -69,6 +70,7 @@ pub use slot::{
     ParamPhase, PluginMessage, PluginSlot, ReapItem, ReaperQueue, STALL_THRESHOLD, StallOutcome,
     plugin_channel, warm, warmed,
 };
+pub use soft::{SOFT_FRAME_BUDGET, SoftAnswer, SoftBudget};
 pub use standin::{PluginStandIn, stand_in};
 pub use threads::{
     AudioThreadGuard, assert_main_thread, is_audio_thread, is_main_thread, mark_main_thread,
