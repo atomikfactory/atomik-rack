@@ -81,7 +81,7 @@ use crate::audio_record::{
     TAP_SECONDS, TrackInput, input_peak, input_peaks, input_settings, place_lap, plan_tap,
     track_input,
 };
-use crate::audio_writer::{Ctl, FinishInfo, TakeResult, WriterConfig, WriterTrack, spawn};
+use crate::audio_writer::{Ctl, FinishInfo, TakeResult, WriterConfig, WriterTrack, spawn_with};
 use atomik_engine::TapControls;
 use atomik_model::console::MASTER_TYPE;
 use atomik_model::song::AUDIO_TRACK_TYPE;
@@ -281,14 +281,15 @@ impl<S: EngineSink> AppCore<S> {
             generation: self.audio.generation,
             take,
         };
-        let (ctl, writer) = match spawn(tap, config, self.audio.tx.clone()) {
-            Ok(w) => w,
-            Err(e) => {
-                self.sink.stop_audio_record();
-                self.reject(format!("audio recording: cannot start the writer: {e}"));
-                return false;
-            }
-        };
+        let (ctl, writer) =
+            match spawn_with(tap, config, self.audio.tx.clone(), self.audio.writer_faults) {
+                Ok(w) => w,
+                Err(e) => {
+                    self.sink.stop_audio_record();
+                    self.reject(format!("audio recording: cannot start the writer: {e}"));
+                    return false;
+                }
+            };
         self.audio.rec_pending += 1;
         let state = self.sink.transport_state();
         let start_song_frame =

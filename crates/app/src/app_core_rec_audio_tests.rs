@@ -1366,3 +1366,43 @@ fn an_armed_track_is_heard_when_stopped_but_not_in_plain_playback() {
     core.transport_action(TransportAction::Stop);
     assert_eq!(monitor_params(&mut core), vec![(id, 1.0)]);
 }
+
+#[test]
+fn a_take_too_long_to_finish_ends_with_a_notice_and_the_app_goes_on() {
+    let mut core = core_with(2);
+    core.audio.writer_faults = crate::audio_writer::Faults {
+        lap_limit_samples: Some(1_000),
+    };
+    let key = add_audio_track(&mut core, "Long");
+    arm(&mut core, &key, true);
+    core.transport_action(TransportAction::ToggleRecord);
+    pump(&mut core, 9_600, 480);
+    core.transport_action(TransportAction::Stop);
+    pump(&mut core, 2_400, 480);
+    core.wait_background();
+    assert!(!core.is_recording());
+    assert_eq!(core.audio.rec_pending, 0, "the writer's result was taken");
+    let message = core.last_rejection().unwrap_or_default().to_owned();
+    assert!(
+        message.contains("too long to finish in memory"),
+        "{message}"
+    );
+    assert!(clips(&core, &key).is_empty(), "no clip for a lost take");
+    assert!(core.doc().assets.is_empty(), "no half-registered asset");
+    // The in-progress file stays in the bundle for the next start to recover.
+    let audio = core.bundle_root().unwrap().join("Audio");
+    let kept = std::fs::read_dir(&audio)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("rec-"))
+        .count();
+    assert_eq!(kept, 1);
+    // The next take is an ordinary one.
+    core.audio.writer_faults = Default::default();
+    core.transport_action(TransportAction::ToggleRecord);
+    pump(&mut core, 9_600, 480);
+    core.transport_action(TransportAction::Stop);
+    pump(&mut core, 2_400, 480);
+    core.wait_background();
+    assert_eq!(clips(&core, &key).len(), 1);
+}

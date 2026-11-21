@@ -320,6 +320,11 @@ may break APIs and the patch and project formats.
   shuts down or restarts its engine keeps its library loaded until it has been released, instead of crashing
   as it is let go. An event a plugin process places beyond the 64 frames of a block is delivered on the block's
   last frame; a project and a bounce with events inside the block are unchanged.
+- **Stopping a very long recording no longer risks closing the app.** At the end of a take each lap is read back to
+  be stored; the memory for it is now asked for in a way that can fail without aborting. When a take is too long
+  to finish in memory, or storing a lap fails for any other reason, the recording ends with a notice that names the
+  files, the files stay in the project's `Audio` folder, and they come back as a recovered take the next time
+  Atomik Rack starts; the app keeps running. A take that finishes is stored exactly as before.
 
 ## [0.5.0-rc.1] - 2026-11-18
 
