@@ -259,6 +259,14 @@ may break APIs and the patch and project formats.
   batch. A plugin that cannot keep up at all is no longer waited for at every block: after a few misses in a row it
   is only asked once per block for a short while, which keeps the CPU it costs the app low, and then tried with a
   full wait again. Exports are unchanged and stay identical with the sandbox on or off.
+- **The app no longer closes when the graphics driver resets or the computer wakes from sleep.** A driver reset or
+  update, a wake from sleep, a remote-desktop switch or a graphics memory shortage used to end the app with a panic
+  and lose unsaved work. The app now notices that the graphics device is gone, builds the graphics again (every
+  window, detached pane, plugin frame and strip comes back and is repainted) and goes on; playback, the project and
+  the plugins are not touched. If the graphics do not come back at once the app keeps running and the sound keeps
+  playing, tries again every few seconds, and writes a recovery copy of the project after the first failure. A window
+  larger than the graphics card allows (a very large or multi-monitor window) is drawn at the largest size it
+  allows instead of failing.
 
 ## [0.5.0-rc.1] - 2026-11-18
 
