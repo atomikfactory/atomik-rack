@@ -7,6 +7,7 @@
 use crate::args::{Args, Format};
 use crate::audio::{AudioThread, HANDOVER_TIMEOUT, SHUTDOWN_TIMEOUT};
 use crate::builtin::BuiltinBackend;
+use crate::driver::TickVote;
 use crate::editor::{Editor, WindowSystem};
 use crate::notify::to_wire;
 use atomik_device_sdk::{MAX_PLUGIN_PARAMS, PluginFormat, PluginRef, PluginStateBlob, RunMode};
@@ -89,6 +90,10 @@ pub struct Control {
     active: bool,
     messages: Option<ManagerEnd>,
     editor: Editor,
+    /// What this control wants of the tick rate (see [`TickVote`]).
+    tick_vote: TickVote,
+    /// `forward` passed something on since the tick began.
+    forwarded: bool,
 }
 
 impl Control {
@@ -115,6 +120,8 @@ impl Control {
             active: false,
             messages: None,
             editor: Editor::default(),
+            tick_vote: TickVote::new(),
+            forwarded: false,
         }
     }
 
@@ -194,12 +201,24 @@ impl Control {
         None
     }
 
+    /// True while this control wants the fast tick (tests).
+    #[cfg(test)]
+    fn wants_fast_tick(&self) -> bool {
+        self.tick_vote.is_fast()
+    }
+
     /// Polls the plugin and forwards what it posted since the last tick.
+    ///
+    /// The tick turns slow (see [`crate::driver::TICK_IDLE`]) after a tick in which nothing was
+    /// forwarded, when no editor is open; a call from the parent turns it fast again.
     fn tick(&mut self, windows: &mut dyn WindowSystem) -> Option<u8> {
+        self.forwarded = false;
         if let Some(instance) = self.instance.as_mut() {
             instance.poll();
         }
-        self.forward(windows)
+        let code = self.forward(windows);
+        self.tick_vote.set(self.forwarded || self.editor.is_open());
+        code
     }
 
     /// Writes every notification the plugin has posted so far, in the order it posted them. Done
@@ -208,6 +227,7 @@ impl Control {
     fn forward(&mut self, windows: &mut dyn WindowSystem) -> Option<u8> {
         // A panic of the plugin on the audio thread: the parent logs it with the plugin's name.
         for text in self.audio.take_panic_lines() {
+            self.forwarded = true;
             let log = FromChild::Log {
                 level: WireLevel::Warning,
                 text,
@@ -217,6 +237,7 @@ impl Control {
             }
         }
         while let Some(message) = self.messages.as_ref().and_then(ManagerEnd::try_recv) {
+            self.forwarded = true;
             if let Some(instance) = self.instance.as_deref_mut() {
                 match &message {
                     PluginMessage::GuiResize { w, h } => {
@@ -254,6 +275,7 @@ impl Control {
         blob: Option<Vec<u8>>,
         windows: &mut dyn WindowSystem,
     ) -> Option<u8> {
+        self.tick_vote.set(true);
         if !self.greeted {
             return match msg {
                 ToChild::Hello { protocol } if protocol == PROTOCOL_VERSION => {

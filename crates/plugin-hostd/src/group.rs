@@ -317,14 +317,14 @@ pub fn spawn_reader<P: PostGroup>(post: P) {
     }
 }
 
-/// Posts a tick every [`crate::driver::TICK`], never more than one that has not been handled.
+/// Posts a tick every [`crate::driver::tick_interval`], never more than one that has not been handled.
 pub fn spawn_ticker<P: PostGroup>(post: P, pending: Arc<std::sync::atomic::AtomicBool>) {
     use std::sync::atomic::Ordering;
     let started = std::thread::Builder::new()
         .name("host-ticker".to_string())
         .spawn(move || {
             loop {
-                std::thread::sleep(crate::driver::TICK);
+                crate::driver::tick_pause();
                 if !pending.swap(true, Ordering::AcqRel) && !post.post(GroupEvent::Tick) {
                     return;
                 }

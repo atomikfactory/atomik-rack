@@ -350,3 +350,25 @@ window). The "before" figures are the rows of that section.
 The automatic count with an affinity mask is not a row: the app picks its count before the mask applies, so it started
 seven workers on four logical processors, and that run did not answer the window probe (the workers run at the
 callback's priority). Give the worker count explicitly in such a run, as the script's help says.
+
+## Plugin processes: idle cost and thread priority (2026-11-21)
+
+The release app with `--stress-plugins` (16 plugin processes: 8 synths and 8 effects, CLAP and VST3 test plugins,
+sandbox on), 10 s settle, then CPU time and context switches of the 16 `atomik-plugin-host` processes over 20 s
+(a performance-counter sample per second over their threads), three runs per row, same machine and build dir as
+above, no `--play`, nothing sounding. "no audio" is `--no-audio`: no batch is ever sent, so the processes are
+truly idle. "audio on, stopped" is the default audio stream with the transport stopped: the app still sends the
+plugins a request per batch, so that row also pays for the batches (the saving there is the spin and the
+ticker only). The built-in null host format cannot take the stress project (the test plugins' ids are not its
+ids), so the real test plugins stand in for it.
+
+| Scenario | CPU of all 16 processes, % of one core, before | after | Context switches/s before | after |
+|---|---|---|---|---|
+| Idle, no audio | 21.4, 23.5, 17.6 | 4.2, 5.2, 2.0 | 9 250 to 9 800 | 2 550 to 2 650 |
+| Audio on, transport stopped | 45.6, 45.3, 52.2 | 35.2, 35.3, 34.8 | 24 800 to 25 300 | 19 900 to 20 800 |
+
+`cargo test --release -p atomik-plugin-hostd --test overhead -- --ignored --nocapture` (one 64-frame batch of a
+VST3 test synth through the child): before, round trip 0.5 us per batch (p99 18.0 us sandboxed against
+16.8 us in process), paced child CPU 1.7 %; after (two runs), round trip 0.2 and 0.4 us (p99 17.4 and 17.7 us against
+17.7 and 17.2 in process), paced child CPU 2.8 and 0.9 %, parent 1.6 and 0.3 %: the run to run spread of the paced
+CPU figure (read through a PowerShell call) is larger than the change. No late buffer in either.

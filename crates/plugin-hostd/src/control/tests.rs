@@ -649,3 +649,47 @@ fn a_plugin_whose_presets_need_it_is_asked_on_the_main_thread_as_before() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn the_tick_turns_slow_when_nothing_happens_and_fast_again_for_a_call_or_an_editor() {
+    let mut r = rig().instantiated();
+    assert!(r.control.wants_fast_tick(), "a new control starts fast");
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert!(
+        !r.control.wants_fast_tick(),
+        "a tick that forwarded nothing, with no editor, votes slow"
+    );
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert!(!r.control.wants_fast_tick());
+    r.send(ToChild::Flush { id: 9 });
+    r.sink.frames();
+    assert!(
+        r.control.wants_fast_tick(),
+        "a call from the parent votes fast"
+    );
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert!(!r.control.wants_fast_tick());
+    r.open(2);
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert!(
+        r.control.wants_fast_tick(),
+        "an open editor keeps the tick fast"
+    );
+    r.send(ToChild::CloseGui { id: 3 });
+    r.sink.frames();
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert!(!r.control.wants_fast_tick(), "closed again: slow");
+}
+
+#[test]
+fn a_tick_that_forwarded_something_stays_fast() {
+    let mut r = rig_with(vec![PluginMessage::StateDirty], false, None).instantiated();
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert_eq!(r.sink.frames(), vec![FromChild::StateDirty]);
+    assert!(r.control.wants_fast_tick(), "traffic keeps the rate up");
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert!(
+        !r.control.wants_fast_tick(),
+        "and a quiet tick after it lets it go"
+    );
+}

@@ -150,6 +150,13 @@ may break APIs and the patch and project formats.
   MIDI control) stays in the list of that plugin, so nothing in an existing project is lost or changes sound.
   A plugin that is slow to answer is listed in full, as before. The plugin list file is rebuilt by the next scan
   (an older file is still read until then).
+- **An idle plugin process costs far less, and a busy one answers on time.** The audio thread of a plugin's own
+  process now runs at the priority of the app's audio thread instead of below it, so under load the plugin no
+  longer answers a batch late because the app's thread waits for a lower-priority one. A process with nothing to
+  do waits longer and longer for the next batch (10, 50, then 100 ms), no longer spins after a wait that timed
+  out, and polls its plugin every 100 ms instead of every 16 ms while no editor is open; a batch, an editor or a
+  call from the app brings the quick rhythm back at once. The app still sees an idle process alive (it beats at
+  least every 100 ms). Thirty idle plugins no longer keep thirty processes waking well over a hundred times a second.
 
 ### Fixed
 - **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio track now
