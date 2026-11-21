@@ -21,6 +21,7 @@ use crate::slot::{
     DeviceEnd, InstanceId, LogLevel, ManagerEnd, ParamPhase, PluginMessage, PluginSlot,
     ReaperQueue, StallOutcome, plugin_channel,
 };
+use crate::soft::{SoftAnswer, SoftBudget};
 use crate::threads::assert_main_thread;
 use atomik_core::BATCH;
 use atomik_device_sdk::{
@@ -318,6 +319,9 @@ pub struct CaptureLanded {
 /// How many stall records the manager keeps for a caller that does not drain them.
 const MAX_STALLS: usize = 64;
 
+/// The most cosmetic answers kept for [`PluginManager::take_soft_answers`] (the newest).
+const MAX_SOFT_ANSWERS: usize = 256;
+
 /// A blocking call on a plugin's process that held the main thread up for at least
 /// [`crate::STALL_THRESHOLD`]. Kept apart from [`ManagerEvent`]: it depends on wall time, and the
 /// event stream must not (an offline bounce polls it after every batch).
@@ -366,6 +370,12 @@ pub struct PluginManager {
     queued: Vec<ManagerEvent>,
     /// Slow-call records waiting for [`PluginManager::take_stalls`] (the newest [`MAX_STALLS`]).
     stalls: Vec<StallRecord>,
+    /// Cosmetic answers that arrived late, waiting for [`PluginManager::take_soft_answers`]
+    /// (the newest [`MAX_SOFT_ANSWERS`]). Like the stalls they depend on wall time, so they are
+    /// not events.
+    soft_answers: Vec<(InstanceId, SoftAnswer)>,
+    /// The allowance of waiting for cosmetic answers that every instance shares in a frame.
+    soft: SoftBudget,
     next_id: u64,
     creating: BTreeMap<u64, Creating>,
     next_ticket: u64,
@@ -389,6 +399,8 @@ impl PluginManager {
             reaper: ReaperQueue::default(),
             queued: Vec::new(),
             stalls: Vec::new(),
+            soft_answers: Vec::new(),
+            soft: SoftBudget::default(),
             next_id: 1,
             creating: BTreeMap::new(),
             next_ticket: 1,
@@ -487,7 +499,10 @@ impl PluginManager {
             .ok_or(ManagerError::NoBackend(request.plugin.format))?;
         let id = InstanceId(self.next_id);
         let (device_end, end) = plugin_channel(id);
-        let instance = backend.instantiate(&request.plugin, HostHandle::new(end.messenger()))?;
+        let instance = backend.instantiate(
+            &request.plugin,
+            HostHandle::with_budget(end.messenger(), self.soft.clone()),
+        )?;
         let handle = self.complete(request, instance, device_end, end)?;
         self.next_id += 1;
         Ok(handle)
@@ -513,8 +528,10 @@ impl PluginManager {
             .ok_or(ManagerError::NoBackend(request.plugin.format))?;
         let id = InstanceId(self.next_id);
         let (device_end, end) = plugin_channel(id);
-        let pending =
-            backend.begin_instantiate(&request.plugin, HostHandle::new(end.messenger()))?;
+        let pending = backend.begin_instantiate(
+            &request.plugin,
+            HostHandle::with_budget(end.messenger(), self.soft.clone()),
+        )?;
         let started = pending.map(|pending| {
             // The id belongs to this start: the next one gets another.
             self.next_id += 1;
@@ -777,7 +794,9 @@ impl PluginManager {
             .unwrap_or_default()
     }
 
-    /// The plugin's display text of a param value (never asked on the audio thread).
+    /// The plugin's display text of a param value (never asked on the audio thread). A plugin
+    /// in another process that does not answer within the frame's allowance gives `None` and the
+    /// text arrives later through [`PluginManager::take_soft_answers`].
     pub fn param_text(&mut self, id: InstanceId, param: u32, plain: f64) -> Option<String> {
         assert_main_thread("PluginManager::param_text");
         self.instances
@@ -902,6 +921,23 @@ impl PluginManager {
     ) -> Result<(u32, u32), ManagerError> {
         assert_main_thread("PluginManager::resize_gui");
         Ok(self.get(id)?.instance.resize_gui(w, h)?)
+    }
+
+    /// Asks the plugin's editor to resize without waiting for a plugin that is busy (see
+    /// [`PluginInstance::request_resize_gui`]): `Some(size)` is the size it took, `None` means
+    /// the answer comes later through [`PluginManager::take_soft_answers`] as a
+    /// [`SoftAnswer::GuiSized`].
+    ///
+    /// # Errors
+    /// An unknown instance, or what the plugin said.
+    pub fn request_resize_gui(
+        &mut self,
+        id: InstanceId,
+        w: u32,
+        h: u32,
+    ) -> Result<Option<(u32, u32)>, ManagerError> {
+        assert_main_thread("PluginManager::request_resize_gui");
+        Ok(self.get(id)?.instance.request_resize_gui(w, h)?)
     }
 
     /// Closes the editor and captures the state it may have changed.
@@ -1102,11 +1138,28 @@ impl PluginManager {
         std::mem::take(&mut self.stalls)
     }
 
+    /// The cosmetic answers that arrived since the last call, oldest first (at most the newest
+    /// 256): the parameter texts and editor sizes a plugin in another process answered after the
+    /// call that asked had returned (see [`SoftAnswer`]). Empty, without allocating, when there
+    /// are none.
+    pub fn take_soft_answers(&mut self) -> Vec<(InstanceId, SoftAnswer)> {
+        assert_main_thread("PluginManager::take_soft_answers");
+        std::mem::take(&mut self.soft_answers)
+    }
+
+    /// The allowance of waiting for cosmetic answers that the instances of this manager share
+    /// (a new frame begins at every [`PluginManager::poll`]).
+    pub fn soft_budget(&self) -> &SoftBudget {
+        &self.soft
+    }
+
     /// Runs the main-thread work of every instance: reaps dropped devices, runs the plugins'
     /// callbacks and timers, translates their messages into events and advances restarts.
-    /// Called every UI frame.
+    /// Called every UI frame, which is also what begins a frame of the allowance for waiting
+    /// for cosmetic answers.
     pub fn poll(&mut self) -> Vec<ManagerEvent> {
         assert_main_thread("PluginManager::poll");
+        self.soft.begin_frame();
         let mut events = std::mem::take(&mut self.queued);
         // Everything one device left behind is handled together: its own processor, and one it
         // handed back or was sent but never took.
@@ -1178,6 +1231,12 @@ impl PluginManager {
         // A parked instance is polled too: with audio off an instance lives parked and its
         // editor and timers must keep running.
         m.instance.poll();
+        for answer in m.instance.take_soft_answers() {
+            if self.soft_answers.len() >= MAX_SOFT_ANSWERS {
+                self.soft_answers.remove(0);
+            }
+            self.soft_answers.push((id, answer));
+        }
         // Only a live plugin that kept running past a timeout is ever in this state: an offline
         // render never gets here, so the event stream of a bounce does not depend on the clock.
         let stuck = m.instance.not_responding();

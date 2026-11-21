@@ -9,6 +9,7 @@
 //! * [`NullBackend`] is an in-repo implementation for tests: it needs no plugin file.
 
 use crate::slot::HostMessenger;
+use crate::soft::{SoftAnswer, SoftBudget};
 use atomik_core::{BATCH, Batch, ExprKind};
 use atomik_device_sdk::{
     PluginCategory, PluginFormat, PluginLayout, PluginRef, PluginStateBlob, RunMode,
@@ -383,17 +384,30 @@ pub enum NativeParent {
 #[derive(Debug, Clone)]
 pub struct HostHandle {
     messenger: HostMessenger,
+    budget: SoftBudget,
 }
 
 impl HostHandle {
-    /// A handle posting to `messenger`.
+    /// A handle posting to `messenger`, with an allowance of waiting for cosmetic answers of
+    /// its own.
     pub fn new(messenger: HostMessenger) -> Self {
-        Self { messenger }
+        Self::with_budget(messenger, SoftBudget::default())
+    }
+
+    /// A handle posting to `messenger` whose instance draws on `budget`, the allowance the
+    /// manager shares between all its instances.
+    pub fn with_budget(messenger: HostMessenger, budget: SoftBudget) -> Self {
+        Self { messenger, budget }
     }
 
     /// The thread-safe message sender.
     pub fn messenger(&self) -> &HostMessenger {
         &self.messenger
+    }
+
+    /// The allowance of waiting for cosmetic answers (see [`SoftBudget`]).
+    pub fn budget(&self) -> &SoftBudget {
+        &self.budget
     }
 }
 
@@ -480,7 +494,9 @@ pub trait PluginInstance {
     fn read_params(&mut self) -> Vec<(u32, f64)> {
         Vec::new()
     }
-    /// The display text of a param value, from the plugin.
+    /// The display text of a param value, from the plugin. A plugin in another process that
+    /// does not answer at once gives `None` and the text comes later as a
+    /// [`SoftAnswer::ParamText`].
     fn param_text(&mut self, id: u32, plain: f64) -> Option<String>;
     /// Opens the editor inside `parent`; returns its size in pixels.
     fn open_gui(&mut self, parent: NativeParent, scale: f64) -> Result<(u32, u32), BackendError>;
@@ -494,6 +510,23 @@ pub trait PluginInstance {
         Err(BackendError::Unsupported(
             "this plugin's editor cannot be resized".to_string(),
         ))
+    }
+    /// [`PluginInstance::resize_gui`] for the interface thread, which must not wait for a plugin
+    /// that is busy: `Some(size)` is the answer ([`PluginInstance::resize_gui`] gives it at
+    /// once for a plugin in this process), `None` means the request is out (or merged into the
+    /// one that is) and the size the editor took comes later as a [`SoftAnswer::GuiSized`]. At
+    /// most one request is out at a time; while it is, only the latest size asked for is kept.
+    ///
+    /// # Errors
+    /// What [`PluginInstance::resize_gui`] fails with.
+    fn request_resize_gui(&mut self, w: u32, h: u32) -> Result<Option<(u32, u32)>, BackendError> {
+        self.resize_gui(w, h).map(Some)
+    }
+    /// The cosmetic answers that arrived since the last call, oldest first (see [`SoftAnswer`]).
+    /// Never waits. Only a plugin in another process has any: for the others every cosmetic
+    /// call is answered at once.
+    fn take_soft_answers(&mut self) -> Vec<SoftAnswer> {
+        Vec::new()
     }
     /// Whether the plugin has an editor the host can embed.
     fn has_gui(&self) -> bool {
@@ -698,6 +731,9 @@ pub struct NullStats {
     pending_layout: Mutex<Option<PluginLayout>>,
     /// The layout the plugin has since: new instances start with it.
     changed_layout: Mutex<Option<PluginLayout>>,
+    /// The null instances answer no cosmetic request while this is set (see
+    /// [`NullStats::set_soft_busy`]).
+    soft_busy: AtomicBool,
 }
 
 impl NullStats {
@@ -716,6 +752,14 @@ impl NullStats {
             .pending_layout
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(layout);
+    }
+
+    /// While set, the null instances are busy with their own work as a plugin in another
+    /// process is while it loads a preset: [`PluginInstance::param_text`] gives `None` and
+    /// [`PluginInstance::request_resize_gui`] gives `None` (merging the sizes asked for), and
+    /// when it is cleared the answers come through [`PluginInstance::take_soft_answers`].
+    pub fn set_soft_busy(&self, busy: bool) {
+        self.soft_busy.store(busy, Ordering::Relaxed);
     }
 
     /// Makes the null instances capture in the background like a plugin in another process:
@@ -920,6 +964,8 @@ impl PluginBackend for NullBackend {
             opening: None,
             opening_in: None,
             deactivating: None,
+            texts_asked: Vec::new(),
+            resize_asked: None,
         }))
     }
 }
@@ -939,6 +985,10 @@ struct NullInstance {
     opening_in: Option<NativeParent>,
     /// Polls left before a slow deactivation is done.
     deactivating: Option<usize>,
+    /// The values whose text was asked for while the instance was busy.
+    texts_asked: Vec<(u32, f64)>,
+    /// The latest size asked for while the instance was busy.
+    resize_asked: Option<(u32, u32)>,
 }
 
 impl Drop for NullInstance {
@@ -1152,8 +1202,48 @@ impl PluginInstance for NullInstance {
             .collect()
     }
 
-    fn param_text(&mut self, _id: u32, plain: f64) -> Option<String> {
+    fn param_text(&mut self, id: u32, plain: f64) -> Option<String> {
+        if self.stats.soft_busy.load(Ordering::Relaxed) {
+            if !self.texts_asked.contains(&(id, plain)) {
+                self.texts_asked.push((id, plain));
+            }
+            return None;
+        }
         Some(format!("{plain}"))
+    }
+
+    fn request_resize_gui(&mut self, w: u32, h: u32) -> Result<Option<(u32, u32)>, BackendError> {
+        if !self.stats.soft_busy.load(Ordering::Relaxed) {
+            return self.resize_gui(w, h).map(Some);
+        }
+        if self.editor_kind() != EditorKind::External {
+            return Err(BackendError::Unsupported(
+                "the null plugin has no editor".to_string(),
+            ));
+        }
+        self.resize_asked = Some((w, h));
+        Ok(None)
+    }
+
+    fn take_soft_answers(&mut self) -> Vec<SoftAnswer> {
+        if self.stats.soft_busy.load(Ordering::Relaxed) {
+            return Vec::new();
+        }
+        let mut out: Vec<SoftAnswer> = std::mem::take(&mut self.texts_asked)
+            .into_iter()
+            .map(|(param, plain)| SoftAnswer::ParamText {
+                param,
+                plain,
+                text: format!("{plain}"),
+            })
+            .collect();
+        if let Some((w, h)) = self.resize_asked.take() {
+            out.push(SoftAnswer::GuiSized {
+                asked: (w, h),
+                took: self.resize_gui(w, h).ok(),
+            });
+        }
+        out
     }
 
     fn open_gui(&mut self, _parent: NativeParent, _scale: f64) -> Result<(u32, u32), BackendError> {
