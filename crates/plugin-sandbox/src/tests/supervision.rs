@@ -130,7 +130,10 @@ fn a_child_that_exits_with_code_3_after_the_hello_is_reported_with_its_code_and_
         reason.contains("the stub plugin died on purpose"),
         "{reason}"
     );
-    assert_eq!(live.load(Ordering::SeqCst), 0, "the child is reaped");
+    // The reader posts the exit message just before it lets go of its guard.
+    eventually("the child to be reaped", || {
+        live.load(Ordering::SeqCst) == 0
+    });
 }
 
 #[test]

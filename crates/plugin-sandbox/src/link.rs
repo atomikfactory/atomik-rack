@@ -1551,8 +1551,15 @@ impl Link {
             return Ok(SoftAsked::Pending);
         }
         let start = now();
-        let waited = self.shared.noted(what, |shared| shared.wait_soft(id, wait));
+        // A wait is a stall of the plugin only when it was asked to last that long: a short one
+        // that the operating system woke late is not (it still eats the frame's allowance).
+        let waited = if wait >= STALL_THRESHOLD {
+            self.shared.noted(what, |shared| shared.wait_soft(id, wait))
+        } else {
+            self.shared.wait_soft(id, wait)
+        };
         if grace == Grace::Frame && !self.timeouts.bounce {
+            self.budget.grant(wait);
             self.budget.spend(now().saturating_duration_since(start));
         }
         match waited {

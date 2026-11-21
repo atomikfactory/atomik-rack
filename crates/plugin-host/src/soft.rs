@@ -29,6 +29,10 @@ struct BudgetCells {
     spent_us: AtomicU64,
     /// The number of the frame.
     frame: AtomicU64,
+    /// Microseconds the waits of this frame were asked to last.
+    asked_us: AtomicU64,
+    /// How many waits this frame granted.
+    waits: AtomicU64,
 }
 
 impl SoftBudget {
@@ -36,6 +40,8 @@ impl SoftBudget {
     /// more.
     pub fn begin_frame(&self) {
         self.shared.spent_us.store(0, Ordering::Relaxed);
+        self.shared.asked_us.store(0, Ordering::Relaxed);
+        self.shared.waits.store(0, Ordering::Relaxed);
         self.shared.frame.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -52,6 +58,24 @@ impl SoftBudget {
     /// How long has been waited in this frame.
     pub fn spent(&self) -> Duration {
         Duration::from_micros(self.shared.spent_us.load(Ordering::Relaxed))
+    }
+
+    /// Records that a wait of `asked` was granted in this frame (what the code asked for, whatever
+    /// the operating system then made of it).
+    pub fn grant(&self, asked: Duration) {
+        let us = u64::try_from(asked.as_micros()).unwrap_or(u64::MAX);
+        self.shared.asked_us.fetch_add(us, Ordering::Relaxed);
+        self.shared.waits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The total time the waits granted in this frame were asked to last.
+    pub fn asked(&self) -> Duration {
+        Duration::from_micros(self.shared.asked_us.load(Ordering::Relaxed))
+    }
+
+    /// How many waits were granted in this frame.
+    pub fn waits(&self) -> u64 {
+        self.shared.waits.load(Ordering::Relaxed)
     }
 
     /// Records a wait of `waited`.
