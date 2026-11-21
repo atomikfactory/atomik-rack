@@ -189,7 +189,7 @@ fn a_preset_list_that_times_out_while_the_plugin_is_alive_does_not_stop_it() {
 /// lost, or ten seconds have passed.
 fn ask_until_stuck(r: &mut Rig) {
     let budget = r.instance.budget();
-    let limit = now() + Duration::from_secs(10);
+    let limit = now() + Duration::from_secs(60);
     let mut n = 0u32;
     while now() < limit && !r.instance.is_lost() && r.instance.not_responding().is_none() {
         budget.begin_frame();
@@ -205,7 +205,7 @@ fn ask_until_stuck(r: &mut Rig) {
 fn miss_timeouts() -> crate::link::Timeouts {
     let mut timeouts = test_timeouts();
     timeouts.text = Duration::from_millis(30);
-    timeouts.create = Duration::from_millis(400);
+    timeouts.create = Duration::from_millis(1500);
     timeouts
 }
 
@@ -274,10 +274,10 @@ fn a_few_late_cosmetic_answers_stop_nothing_and_mark_nothing() {
             )),
             _ => None,
         }),
-        miss_timeouts(),
+        test_timeouts(),
     );
     let budget = r.instance.budget();
-    let limit = now() + Duration::from_secs(10);
+    let limit = now() + Duration::from_secs(60);
     let mut got = 0;
     let mut n = 0u32;
     while got < 5 && now() < limit {

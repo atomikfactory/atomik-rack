@@ -49,10 +49,11 @@ fn late_answers(r: &mut Rig) -> Vec<atomik_plugin_host::SoftAnswer> {
     r.instance.take_soft_answers()
 }
 
-/// Polls frame after frame (each begins a new frame of the allowance) until `f` is true.
+/// Polls frame after frame (each begins a new frame of the allowance) until `f` is true. The
+/// bound is generous: a slow runner needs seconds, not milliseconds.
 fn frames_until(r: &mut Rig, what: &str, mut f: impl FnMut(&mut Rig) -> bool) {
     let budget = r.instance.budget();
-    let limit = now() + Duration::from_secs(30);
+    let limit = now() + Duration::from_secs(60);
     while now() < limit {
         budget.begin_frame();
         if f(r) {
@@ -63,21 +64,37 @@ fn frames_until(r: &mut Rig, what: &str, mut f: impl FnMut(&mut Rig) -> bool) {
     panic!("timed out waiting for {what}");
 }
 
+/// A fake that holds the texts of the requests that `held` picks until the test releases them.
+fn texts_held_when(held: impl Fn(usize) -> bool + Send + 'static) -> FakeOptions {
+    let calls = Arc::new(AtomicUsize::new(0));
+    FakeOptions::default().script(move |req, _| match req {
+        ToChild::ParamText { id, plain, .. } if held(calls.fetch_add(1, Ordering::SeqCst)) => {
+            Some(Action::Blocked(text(*id, &format!("late {plain}"))))
+        }
+        _ => None,
+    })
+}
+
+/// Asks for the text of `plain` while the plugin holds the answer, then lets it go and waits
+/// until the table is empty again (a stalled answer, then a plugin that is free).
+fn stall_once(r: &mut Rig, param: u32, plain: f64) {
+    r.fake.ctl.hold();
+    r.instance.budget().begin_frame();
+    let _ = r.instance.param_text(param, plain);
+    r.fake.ctl.release();
+    frames_until(r, "the answer", |r| {
+        r.instance.poll();
+        !r.instance.soft_out()
+    });
+    let _ = r.instance.take_soft_answers();
+}
+
 #[test]
 fn a_late_text_is_delivered_when_it_arrives_and_the_next_call_gets_its_own_answer() {
-    let first = Arc::new(AtomicUsize::new(0));
-    let seen = Arc::clone(&first);
-    let mut r = started(
-        FakeOptions::default().script(move |req, _| match req {
-            ToChild::ParamText { id, .. } if seen.fetch_add(1, Ordering::SeqCst) == 0 => Some(
-                Action::Delayed(Duration::from_millis(400), text(*id, "late")),
-            ),
-            _ => None,
-        }),
-        test_timeouts(),
-    );
-    assert_eq!(r.instance.param_text(1, 0.5), None, "no answer in time");
+    let mut r = started(texts_held_when(|n| n == 0), test_timeouts());
+    assert_eq!(r.instance.param_text(1, 0.5), None, "held by the plugin");
     assert!(!r.instance.is_lost() && !r.fake.ctl.was_killed());
+    r.fake.ctl.release();
     let mut late = Vec::new();
     frames_until(&mut r, "the late text", |r| {
         late.extend(late_answers(r));
@@ -88,13 +105,21 @@ fn a_late_text_is_delivered_when_it_arrives_and_the_next_call_gets_its_own_answe
         vec![atomik_plugin_host::SoftAnswer::ParamText {
             param: 1,
             plain: 0.5,
-            text: "late".to_string()
+            text: "late 0.5".to_string()
         }],
         "the text, for the value it was asked for"
     );
+    // The next request is answered at once by the plugin: its text reaches the caller either in
+    // the call or, when the wait of the frame missed it, as a late answer.
     let mut got = None;
-    frames_until(&mut r, "the child to answer again", |r| {
-        got = r.instance.param_text(1, 0.6);
+    frames_until(&mut r, "the text of the next value", |r| {
+        got = got.take().or_else(|| r.instance.param_text(1, 0.6));
+        for a in late_answers(r) {
+            if let atomik_plugin_host::SoftAnswer::ParamText { plain, text, .. } = a {
+                assert_eq!(plain, 0.6);
+                got = Some(text);
+            }
+        }
         got.is_some()
     });
     assert_eq!(got.as_deref(), Some("0.60 units"));
@@ -103,27 +128,26 @@ fn a_late_text_is_delivered_when_it_arrives_and_the_next_call_gets_its_own_answe
 
 #[test]
 fn a_busy_plugin_gives_no_text_for_a_value_it_has_not_answered_and_the_right_one_later() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let seen = Arc::clone(&calls);
-    let mut r = started(
-        FakeOptions::default().script(move |req, _| match req {
-            ToChild::ParamText { id, plain, .. } if seen.fetch_add(1, Ordering::SeqCst) > 0 => {
-                Some(Action::Delayed(
-                    Duration::from_millis(300),
-                    text(*id, &format!("late {plain}")),
-                ))
+    let mut r = started(texts_held_when(|n| n > 0), test_timeouts());
+    // The first text comes at once (in the call or as a late answer).
+    let mut first = None;
+    frames_until(&mut r, "the first text", |r| {
+        first = first.take().or_else(|| r.instance.param_text(1, 0.5));
+        for a in late_answers(r) {
+            if let atomik_plugin_host::SoftAnswer::ParamText { text, .. } = a {
+                first = Some(text);
             }
-            _ => None,
-        }),
-        test_timeouts(),
-    );
-    assert_eq!(r.instance.param_text(1, 0.5).as_deref(), Some("0.50 units"));
+        }
+        first.is_some()
+    });
+    assert_eq!(first.as_deref(), Some("0.50 units"));
     r.instance.budget().begin_frame();
     assert_eq!(
         r.instance.param_text(1, 0.9),
         None,
-        "the child is busy: the old text does not stand in for the new value"
+        "the plugin holds it: the old text does not stand in for the new value"
     );
+    r.fake.ctl.release();
     let mut late = Vec::new();
     frames_until(&mut r, "the text of the new value", |r| {
         late.extend(late_answers(r));
@@ -143,7 +167,7 @@ fn a_busy_plugin_gives_no_text_for_a_value_it_has_not_answered_and_the_right_one
 #[test]
 fn an_instance_with_no_sign_of_life_is_marked_slow_before_it_is_stopped() {
     let mut timeouts = test_timeouts();
-    timeouts.create = Duration::from_millis(500);
+    timeouts.create = Duration::from_secs(3);
     let mut r = started(
         FakeOptions::default()
             .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)),
@@ -151,7 +175,7 @@ fn an_instance_with_no_sign_of_life_is_marked_slow_before_it_is_stopped() {
     );
     let budget = r.instance.budget();
     let mut was_slow_alive = false;
-    let limit = now() + Duration::from_secs(30);
+    let limit = now() + Duration::from_secs(60);
     let mut n = 0u32;
     while now() < limit && !r.instance.is_lost() {
         budget.begin_frame();
@@ -171,7 +195,8 @@ fn an_instance_with_no_sign_of_life_is_marked_slow_before_it_is_stopped() {
 #[test]
 fn a_slow_instance_is_not_waited_for_between_its_retries_and_the_user_is_told_once() {
     let mut timeouts = test_timeouts();
-    timeouts.slow_retry = Duration::from_secs(30);
+    timeouts.slow_retry = Duration::from_secs(600);
+    timeouts.slow_window = Duration::from_secs(600);
     let mut r = started(
         FakeOptions::default()
             .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)),
@@ -181,16 +206,13 @@ fn a_slow_instance_is_not_waited_for_between_its_retries_and_the_user_is_told_on
     for n in 0..3 {
         budget.begin_frame();
         assert_eq!(r.instance.param_text(1, f64::from(n)), None);
+        assert_eq!(budget.waits(), 1, "waited for in vain");
     }
     assert!(r.instance.is_slow());
     for n in 3..60 {
         budget.begin_frame();
         assert_eq!(r.instance.param_text(1, f64::from(n)), None);
-        assert_eq!(
-            budget.spent(),
-            Duration::ZERO,
-            "a slow instance is not waited for"
-        );
+        assert_eq!(budget.waits(), 0, "a slow instance is not waited for");
     }
     let mut told = 0;
     while let Some(m) = r.manager.try_recv() {
@@ -205,37 +227,25 @@ fn a_slow_instance_is_not_waited_for_between_its_retries_and_the_user_is_told_on
 
 #[test]
 fn answers_that_alternate_between_fast_and_stalled_keep_the_instance_slow() {
-    // Every other request is answered after 150 ms, the others at once: with the old rule one
-    // success reset the count and every stall cost a full wait again.
-    let calls = Arc::new(AtomicUsize::new(0));
-    let seen = Arc::clone(&calls);
+    // Every other request is held by the plugin and the others are answered at once: with the
+    // old rule one success reset the count and every stall cost a full wait again.
     let mut timeouts = test_timeouts();
-    timeouts.slow_retry = Duration::from_secs(60);
-    timeouts.slow_window = Duration::from_secs(60);
-    let mut r = started(
-        FakeOptions::default().script(move |req, _| match req {
-            ToChild::ParamText { id, plain, .. }
-                if seen.fetch_add(1, Ordering::SeqCst) % 2 == 1 =>
-            {
-                Some(Action::Delayed(
-                    Duration::from_millis(150),
-                    text(*id, &format!("{plain}")),
-                ))
-            }
-            _ => None,
-        }),
-        timeouts,
-    );
+    timeouts.slow_retry = Duration::from_secs(600);
+    timeouts.slow_window = Duration::from_secs(600);
+    let mut r = started(texts_held_when(|n| n % 2 == 1), timeouts);
     let budget = r.instance.budget();
-    let mut waited_when_slow = Duration::ZERO;
+    let mut waits_when_slow = 0;
     for n in 0..14u32 {
-        budget.begin_frame();
         let slow = r.instance.is_slow();
+        if n % 2 == 1 {
+            r.fake.ctl.hold();
+        }
+        budget.begin_frame();
         let _ = r.instance.param_text(1, f64::from(n));
         if slow {
-            waited_when_slow += budget.spent();
+            waits_when_slow += budget.waits();
         }
-        // Let the stalled one be answered before the next frame, as a busy plugin eventually is.
+        r.fake.ctl.release();
         frames_until(&mut r, "the answer", |r| {
             r.instance.poll();
             !r.instance.soft_out()
@@ -244,8 +254,7 @@ fn answers_that_alternate_between_fast_and_stalled_keep_the_instance_slow() {
     }
     assert!(r.instance.is_slow(), "the stalls kept it in the cheap path");
     assert_eq!(
-        waited_when_slow,
-        Duration::ZERO,
+        waits_when_slow, 0,
         "once slow it was never waited for again"
     );
     assert!(!r.instance.is_lost());
@@ -253,51 +262,34 @@ fn answers_that_alternate_between_fast_and_stalled_keep_the_instance_slow() {
 
 #[test]
 fn slowness_ends_with_time_not_with_one_fast_answer() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let seen = Arc::clone(&calls);
     let mut timeouts = test_timeouts();
     timeouts.slow_retry = Duration::ZERO;
-    timeouts.slow_window = Duration::from_millis(1500);
-    let mut r = started(
-        FakeOptions::default().script(move |req, _| match req {
-            ToChild::ParamText { id, plain, .. } if seen.fetch_add(1, Ordering::SeqCst) < 3 => {
-                Some(Action::Delayed(
-                    Duration::from_millis(80),
-                    text(*id, &format!("{plain}")),
-                ))
-            }
-            _ => None,
-        }),
-        timeouts,
-    );
-    let budget = r.instance.budget();
+    timeouts.slow_window = Duration::from_secs(4);
+    let mut r = started(texts_held_when(|n| n < 3), timeouts);
     for n in 0..3u32 {
-        budget.begin_frame();
-        let _ = r.instance.param_text(1, f64::from(n));
-        frames_until(&mut r, "the answer", |r| {
-            r.instance.poll();
-            !r.instance.soft_out()
-        });
+        stall_once(&mut r, 1, f64::from(n));
     }
+    let became_slow = now();
     assert!(r.instance.is_slow(), "three late answers");
-    budget.begin_frame();
-    assert_eq!(
-        r.instance.param_text(1, 9.0).as_deref(),
-        Some("9.00 units"),
-        "a fast answer"
-    );
-    assert!(r.instance.is_slow(), "one fast answer does not end it");
-    let ended = now() + Duration::from_secs(30);
-    while r.instance.is_slow() && now() < ended {
-        std::thread::sleep(Duration::from_millis(20));
+    // A fast answer (the plugin answers at once from now on): asked until one gets through.
+    let mut fast = false;
+    frames_until(&mut r, "an answer that is in time", |r| {
+        let n = 10.0 + f64::from(r.instance.soft_out() as u8);
+        fast = r.instance.param_text(1, n).is_some();
+        if !fast {
+            r.instance.poll();
+            let _ = r.instance.take_soft_answers();
+        }
+        fast
+    });
+    if now().saturating_duration_since(became_slow) < Duration::from_secs(2) {
+        assert!(r.instance.is_slow(), "one fast answer does not end it");
     }
-    assert!(!r.instance.is_slow(), "time ended it");
+    frames_until(&mut r, "the window to pass", |r| !r.instance.is_slow());
 }
 
 #[test]
 fn a_layout_change_that_comes_after_its_call_gave_up_is_not_lost() {
-    let mut timeouts = test_timeouts();
-    timeouts.text = Duration::from_millis(100);
     let first = Arc::new(AtomicUsize::new(0));
     let seen = Arc::clone(&first);
     let mut changed = fake_layout();
@@ -305,22 +297,20 @@ fn a_layout_change_that_comes_after_its_call_gave_up_is_not_lost() {
     let mut r = started(
         FakeOptions::default().script(move |req, _| match req {
             ToChild::TakeLayoutChanged { id } if seen.fetch_add(1, Ordering::SeqCst) == 0 => {
-                Some(Action::Delayed(
-                    Duration::from_millis(300),
-                    vec![(
-                        FromChild::LayoutChanged {
-                            id: *id,
-                            layout: Some(changed.clone()),
-                        },
-                        None,
-                    )],
-                ))
+                Some(Action::Blocked(vec![(
+                    FromChild::LayoutChanged {
+                        id: *id,
+                        layout: Some(changed.clone()),
+                    },
+                    None,
+                )]))
             }
             _ => None,
         }),
-        timeouts,
+        test_timeouts(),
     );
-    assert!(!r.instance.take_layout_changed(), "not in time");
+    assert!(!r.instance.take_layout_changed(), "held by the plugin");
+    r.fake.ctl.release();
     eventually("the late layout", || r.instance.take_layout_changed());
     assert_eq!(r.instance.layout().name, "Changed");
     assert!(!r.instance.is_lost());

@@ -116,6 +116,11 @@ impl Control {
             .store(idle.as_micros() as u64, Ordering::SeqCst);
     }
 
+    /// Makes the next [`Action::Blocked`] request wait for [`Control::release`] again.
+    pub fn hold(&self) {
+        self.released.store(false, Ordering::SeqCst);
+    }
+
     /// Lets the [`Action::Blocked`] request that is waiting (or the next one) be answered.
     pub fn release(&self) {
         self.released.store(true, Ordering::SeqCst);

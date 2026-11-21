@@ -5157,7 +5157,9 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     main thread waits for it only a moment. The moment is what is left of one allowance of 20 ms
     per frame that every instance of the manager shares (`SoftBudget`, `SOFT_FRAME_BUDGET`; the
     manager begins a frame at each `poll`), at most 250 ms for one request, and none for an
-    instance that was waited for in vain already in this frame. An answer that is not there in
+    instance that was waited for in vain already in this frame (a wait is recorded as a stall only
+    when it was asked to last 50 ms or more, so a short wait that the system woke late is not one,
+    though it still eats the allowance). An answer that is not there in
     time is delivered later: `PluginInstance::take_soft_answers` hands the app the parameter texts
     and editor sizes that arrived (`PluginManager::take_soft_answers`, outside the event stream
     because they depend on the clock), and the parameter pane fills a row with a late text only if
