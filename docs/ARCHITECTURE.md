@@ -5166,6 +5166,20 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     are unchanged and nothing on the audio path knows about groups. The crash domain is the process: when it
     ends or is stopped every member is lost and each reason names the group. An instance that is dropped leaves
     its slot and the process goes on. With the default setting the wire is the ungrouped one.
+  - *Thread priorities and the idle schedule.* The child's audio thread runs at the priority of the app's audio
+    thread (time-critical on Windows, the highest the system allows elsewhere; no MMCSS), because the app waits
+    for its answer on every batch. The thread waits for the next request on a schedule (`Pace` in
+    [audio.rs](../crates/plugin-hostd/src/audio.rs)): 10 ms while requests come, then 50 ms and finally 100 ms
+    when nothing arrives or no processor is started (50 ms at most while one is started, so a wake-up the plugin
+    asks for is not held back), and it spins only right after an answered request, never after a wait that timed
+    out. A request rings the doorbell and a command from the child's main thread (`install`, `take`) rings it
+    through a `ChildWaker`, so neither waits for a timeout. The schedule is tied to the sign of life: the app
+    judges a child alive from `Header.pulse`, which the audio thread bumps on every pass of `wait_request`, over
+    `ALIVE_WINDOW` (500 ms) and over its samples across calls, so no wait may exceed 100 ms (`LONGEST_WAIT`;
+    `wait_request` also parks in slices of at most `MAX_PARK`). The child's ticker (polls the plugin, forwards
+    what it posted) runs every 16 ms while an editor is open, a call just came or the plugin just posted
+    something, and every 100 ms otherwise (`TickVote` in
+    [driver.rs](../crates/plugin-hostd/src/driver.rs)).
   - *Editors inside the app window.* An editor is normally a top-level window of the child, owned by the app
     window. With `OpenGui { embed: true, owner }` the child instead makes it a frameless **child** of `owner`,
     a window the app made (`src/embed.rs` is the one `unsafe` call, `with_parent_window`), and tells the app its

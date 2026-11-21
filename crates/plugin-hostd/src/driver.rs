@@ -9,12 +9,98 @@ use atomik_plugin_ipc::lifetime::exit_after;
 use atomik_plugin_ipc::{ToChild, read_frame};
 use std::io::ErrorKind;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Mutex, PoisonError, mpsc};
 use std::time::Duration;
 
-/// How often the plugin is polled and its messages are forwarded.
+/// How often the plugin is polled and its messages are forwarded while there is something going
+/// on (an editor is open, the parent just called, the plugin just posted something).
 pub const TICK: Duration = Duration::from_millis(16);
+
+/// How often it is polled when nothing is going on.
+pub const TICK_IDLE: Duration = Duration::from_millis(100);
+
+/// How many controls of this process want the fast tick.
+static FAST: AtomicUsize = AtomicUsize::new(0);
+
+/// The ticker thread, to be woken when the tick turns fast again.
+static TICKER: Mutex<Option<std::thread::Thread>> = Mutex::new(None);
+
+/// One control's vote for the tick rate: fast while an editor is open or the control has just
+/// worked, slow otherwise. The process ticks fast while any control votes for it (a group
+/// process holds several). A new vote is fast, so the first ticks come quickly.
+#[derive(Debug)]
+pub struct TickVote {
+    fast: bool,
+}
+
+impl TickVote {
+    /// A vote for the fast tick.
+    pub fn new() -> Self {
+        FAST.fetch_add(1, Ordering::AcqRel);
+        Self { fast: true }
+    }
+
+    /// Votes fast or slow. Turning fast when the process was ticking slowly wakes the ticker, so
+    /// the next tick does not wait for the rest of the slow interval.
+    pub fn set(&mut self, fast: bool) {
+        if fast == self.fast {
+            return;
+        }
+        self.fast = fast;
+        if fast {
+            if FAST.fetch_add(1, Ordering::AcqRel) == 0
+                && let Some(ticker) = TICKER
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .as_ref()
+            {
+                ticker.unpark();
+            }
+        } else {
+            FAST.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+
+    /// The vote now.
+    #[cfg(test)]
+    pub fn is_fast(&self) -> bool {
+        self.fast
+    }
+}
+
+impl Default for TickVote {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for TickVote {
+    fn drop(&mut self) {
+        self.set(false);
+    }
+}
+
+/// The interval the ticker waits now.
+pub fn tick_interval() -> Duration {
+    if FAST.load(Ordering::Acquire) > 0 {
+        TICK
+    } else {
+        TICK_IDLE
+    }
+}
+
+/// What the ticker thread does between two ticks: waits [`tick_interval`], or less when a control
+/// votes fast meanwhile.
+pub fn tick_pause() {
+    {
+        let mut ticker = TICKER.lock().unwrap_or_else(PoisonError::into_inner);
+        if ticker.is_none() {
+            *ticker = Some(std::thread::current());
+        }
+    }
+    std::thread::park_timeout(tick_interval());
+}
 
 /// How long the main thread has to end the process after the control channel closed, before a
 /// watchdog thread ends it anyway.
@@ -63,13 +149,13 @@ pub fn spawn_reader<P: Post>(post: P) {
     }
 }
 
-/// Posts a tick every [`TICK`], never more than one that has not been handled.
+/// Posts a tick every [`tick_interval`], never more than one that has not been handled.
 pub fn spawn_ticker<P: Post>(post: P, pending: Arc<AtomicBool>) {
     let started = std::thread::Builder::new()
         .name("host-ticker".to_string())
         .spawn(move || {
             loop {
-                std::thread::sleep(TICK);
+                tick_pause();
                 if !pending.swap(true, Ordering::AcqRel) && !post.post(Event::Tick) {
                     return;
                 }

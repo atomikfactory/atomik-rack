@@ -3,22 +3,78 @@
 //! It owns the [`ChildPort`] for the whole life of the process and the real processor between
 //! `Activate` and `Deactivate`. It answers every request of the parent in the order it comes:
 //! with the processor when there is one, with an error answer when there is not. Between
-//! requests (at least every 10 ms) it takes the processor over from or hands it back to the main
-//! thread, and passes on a wake-up the plugin asked for.
+//! requests it takes the processor over from or hands it back to the main thread (a command rings
+//! the thread awake, see [`ChildWaker`]), and passes on a wake-up the plugin asked for.
+//!
+//! The thread runs at the priority of the app's audio thread (the parent waits for its answer on
+//! every batch), and it waits for the next request on a schedule ([`Pace`]): 10 ms while the
+//! parent is streaming, longer and longer when nothing comes (never more than [`LONGEST_WAIT`]).
+//! A request rings the doorbell, so the first batch after a long wait is not late. Every wait
+//! bumps the block's pulse, which is how the app sees the process alive: the schedule must keep
+//! the pulse moving at least every [`LONGEST_WAIT`], whatever the mode.
 //!
 //! After setup the loop makes no allocation of its own: the port's buffers are fixed, and the
 //! hand-over messages are the only thing that move between threads.
 
 use crate::panic_report;
 use atomik_plugin_host::{AudioThreadGuard, FtzGuard, PluginProcessor, ProcessStatus};
-use atomik_plugin_ipc::{AudioOp, ChildPort, ProcessorInfo};
+use atomik_plugin_ipc::{AudioOp, ChildPort, ChildWaker, ProcessorInfo};
 use std::io;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::Duration;
 
-/// How long the thread waits for a request before it looks at its other duties.
+/// How long the thread waits for a request while the parent is streaming (and right after one
+/// came), before it looks at its other duties.
 const WAIT: Duration = Duration::from_millis(10);
+
+/// The longest the thread waits between two looks at its duties: the pulse moves at least this
+/// often (the app judges the process alive over a window of 500 ms).
+pub const LONGEST_WAIT: Duration = Duration::from_millis(100);
+
+/// The longest wait while a processor is started: a wake-up the plugin asks for is passed on at
+/// the next look, so the wait stays short enough for a plugin that wakes itself.
+pub const LONGEST_WAIT_STARTED: Duration = Duration::from_millis(50);
+
+/// Passes of silence (no request, no command) at the base wait before the first longer step.
+const QUIET_PASSES: u32 = 5;
+
+/// The wait schedule of the audio thread: how long it parks for the next request.
+#[derive(Debug, Default)]
+pub struct Pace {
+    /// Waits in a row that ended without a request or a command.
+    quiet: u32,
+}
+
+impl Pace {
+    /// A request came or a command was handled: back to the base wait.
+    pub fn busy(&mut self) {
+        self.quiet = 0;
+    }
+
+    /// A wait ended with nothing to do.
+    pub fn idle(&mut self) {
+        self.quiet = self.quiet.saturating_add(1);
+    }
+
+    /// The next wait. `started`: a processor is processing (it may ask for a wake-up, and the
+    /// plugin may be about to get batches again), otherwise there is none or it is stopped.
+    pub fn wait(&self, started: bool) -> Duration {
+        if self.quiet < QUIET_PASSES {
+            return WAIT;
+        }
+        let (middle, longest) = if started {
+            (Duration::from_millis(25), LONGEST_WAIT_STARTED)
+        } else {
+            (Duration::from_millis(50), LONGEST_WAIT)
+        };
+        if self.quiet < QUIET_PASSES + 10 {
+            middle
+        } else {
+            longest
+        }
+    }
+}
 
 /// How long the main thread waits for the audio thread to take or give a processor.
 pub const HANDOVER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -34,6 +90,8 @@ enum Command {
 /// The main thread's handle on the audio thread.
 pub struct AudioThread {
     commands: Sender<Command>,
+    /// Ends the audio thread's wait when a command is waiting for it.
+    waker: ChildWaker,
     /// The log lines of a panic the thread caught, for the main thread to pass on.
     panics: Receiver<Vec<String>>,
 }
@@ -47,18 +105,24 @@ impl AudioThread {
         let (commands, rx) = mpsc::channel();
         let (report, panics) = mpsc::channel();
         panic_report::install();
+        let waker = port.waker();
         std::thread::Builder::new()
             .name(panic_report::AUDIO_THREAD_NAME.to_string())
             .spawn(move || serve(port, &rx, &report))?;
-        Ok(Self { commands, panics })
+        Ok(Self {
+            commands,
+            waker,
+            panics,
+        })
     }
 
     /// Gives the audio thread the processor; returns once it has taken it over (and told the
     /// parent its sleep rule and tail). False when it did not answer in time.
     pub fn install(&self, processor: Box<dyn PluginProcessor>) -> bool {
         let (ack, acked) = mpsc::channel();
-        self.commands.send(Command::Install(processor, ack)).is_ok()
-            && acked.recv_timeout(HANDOVER_TIMEOUT).is_ok()
+        let sent = self.commands.send(Command::Install(processor, ack)).is_ok();
+        self.waker.wake();
+        sent && acked.recv_timeout(HANDOVER_TIMEOUT).is_ok()
     }
 
     /// The log lines of a panic the plugin raised on the audio thread since the last call
@@ -76,6 +140,7 @@ impl AudioThread {
     pub fn take(&self, timeout: Duration) -> Option<Box<dyn PluginProcessor>> {
         let (reply, replied) = mpsc::channel();
         self.commands.send(Command::Take(reply)).ok()?;
+        self.waker.wake();
         // A timeout or a vanished audio thread both mean there is nothing to hand back.
         replied.recv_timeout(timeout).unwrap_or_default()
     }
@@ -89,9 +154,22 @@ struct Held {
     poisoned: bool,
 }
 
-fn priority() {
-    // Failing to raise the priority is not an error: the plugin still works.
-    let _ = thread_priority::set_current_thread_priority(thread_priority::ThreadPriority::Max);
+/// Gives the thread the priority of the app's audio thread (the parent waits for this thread on
+/// every batch, so it must not run below it): time-critical on Windows, where the crate has no
+/// MMCSS support, the highest the system allows elsewhere. Failing is not an error: the plugin
+/// still works, with the priority it had.
+fn priority() -> bool {
+    #[cfg(windows)]
+    {
+        use thread_priority::windows::{
+            WinAPIThreadPriority, set_winapi_thread_priority, thread_native_id,
+        };
+        set_winapi_thread_priority(thread_native_id(), WinAPIThreadPriority::TimeCritical).is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        thread_priority::set_current_thread_priority(thread_priority::ThreadPriority::Max).is_ok()
+    }
 }
 
 fn publish_info(port: &ChildPort, held: &Held) {
@@ -102,7 +180,8 @@ fn publish_info(port: &ChildPort, held: &Held) {
 }
 
 fn serve(mut port: ChildPort, commands: &Receiver<Command>, report: &Sender<Vec<String>>) {
-    priority();
+    let _ = priority();
+    let mut pace = Pace::default();
     let mut held: Option<Held> = None;
     // What the thread already told stderr (which the parent shows with a lost process).
     let (mut said_none, mut said_poisoned) = (false, false);
@@ -110,6 +189,7 @@ fn serve(mut port: ChildPort, commands: &Receiver<Command>, report: &Sender<Vec<
         loop {
             match commands.try_recv() {
                 Ok(Command::Install(processor, ack)) => {
+                    pace.busy();
                     let h = Held {
                         processor,
                         started: false,
@@ -120,6 +200,7 @@ fn serve(mut port: ChildPort, commands: &Receiver<Command>, report: &Sender<Vec<
                     let _ = ack.send(());
                 }
                 Ok(Command::Take(reply)) => {
+                    pace.busy();
                     let taken = held.take().map(|mut h| {
                         if h.started && !h.poisoned {
                             let _guard = AudioThreadGuard::enter();
@@ -138,7 +219,14 @@ fn serve(mut port: ChildPort, commands: &Receiver<Command>, report: &Sender<Vec<
                 Err(TryRecvError::Disconnected) => return,
             }
         }
-        if let Some(request) = port.wait_request(WAIT) {
+        let started = held.as_ref().is_some_and(|h| h.started && !h.poisoned);
+        let waited = port.wait_request(pace.wait(started));
+        if waited.is_some() {
+            pace.busy();
+        } else {
+            pace.idle();
+        }
+        if let Some(request) = waited {
             let op = request.op();
             match held.as_mut() {
                 Some(h) if !h.poisoned => {
@@ -383,5 +471,155 @@ mod tests {
             lines.get(1).is_none_or(|l| l.contains("atomik_")),
             "the backtrace line, when there is one, names our frames: {lines:?}"
         );
+    }
+
+    #[test]
+    fn the_wait_schedule_lengthens_in_steps_never_past_the_longest_and_resets_on_work() {
+        for started in [false, true] {
+            let mut pace = Pace::default();
+            let ceiling = if started {
+                LONGEST_WAIT_STARTED
+            } else {
+                LONGEST_WAIT
+            };
+            assert_eq!(
+                pace.wait(started),
+                WAIT,
+                "a fresh pace starts at the base wait"
+            );
+            let mut last = Duration::ZERO;
+            let mut seen = Vec::new();
+            for _ in 0..10_000 {
+                let w = pace.wait(started);
+                assert!(w >= last, "the wait never shrinks while nothing happens");
+                assert!(
+                    w <= LONGEST_WAIT && w <= ceiling,
+                    "{w:?} is past the pulse bound"
+                );
+                if seen.last() != Some(&w) {
+                    seen.push(w);
+                }
+                last = w;
+                pace.idle();
+            }
+            assert_eq!(seen.len(), 3, "base, middle and longest step: {seen:?}");
+            assert_eq!(last, ceiling);
+            pace.busy();
+            assert_eq!(pace.wait(started), WAIT, "work brings the base wait back");
+        }
+    }
+
+    #[test]
+    fn a_processing_child_waits_less_than_an_unstarted_one_when_idle() {
+        let mut pace = Pace::default();
+        for _ in 0..100 {
+            pace.idle();
+        }
+        assert!(pace.wait(true) < pace.wait(false));
+    }
+
+    /// Beats seen by the parent over `span` of idleness, sampled every 10 ms: the number of times
+    /// the pulse had moved since the previous sample.
+    fn moves_over(parent: &ParentPort, span: Duration) -> (usize, u64) {
+        let (mut last, mut moves) = (parent.pulse(), 0);
+        let end = Deadline::after(span);
+        while !end.passed() {
+            std::thread::sleep(Duration::from_millis(10));
+            let p = parent.pulse();
+            if p != last {
+                moves += 1;
+                last = p;
+            }
+        }
+        (moves, last)
+    }
+
+    /// The pulse of an idle child, watched after the schedule has reached its longest wait
+    /// (5 waits of 10 ms, 10 of 50 ms, then 100 ms), keeps moving: 4 of the 10 ms samples in
+    /// 1.5 s saw it move. The longest wait gives about 15 in that time; the bound is loose
+    /// because a loaded machine parks late.
+    fn assert_pulse_keeps_moving(parent: &ParentPort, what: &str) {
+        // Past the first steps of the schedule (5 x 10 ms, 10 x 50 ms, then the longest wait).
+        std::thread::sleep(Duration::from_millis(800));
+        let (moves, last) = moves_over(parent, Duration::from_millis(1500));
+        assert!(
+            moves >= 4,
+            "{what}: the pulse moved only {moves} times in 1.5 s (at {last})"
+        );
+    }
+
+    #[test]
+    fn the_pulse_keeps_moving_while_no_processor_is_installed() {
+        let (parent, _audio) = rig();
+        assert_pulse_keeps_moving(&parent, "no processor");
+    }
+
+    fn submit_op(parent: &mut ParentPort, op: AudioOp) {
+        let mut out = [[0.0; BATCH]; 2];
+        let mut events = EventList::with_capacity(8);
+        let mut io = PluginIo {
+            frames: BATCH,
+            main_in: &[],
+            main_in_silent: true,
+            sidechain: &[],
+            sidechain_silent: true,
+            main_out: &mut out,
+            aux_out: &mut [],
+            events_in: &[],
+            events_out: &mut events,
+            transport: PluginTransport::default(),
+            dropped: 0,
+        };
+        let t = parent.submit(op, &io);
+        assert_eq!(
+            parent.wait_done(t, Deadline::after(Duration::from_secs(10))),
+            Poll::Done
+        );
+        parent.take_response(t, &mut io);
+    }
+
+    #[test]
+    fn the_pulse_keeps_moving_while_a_processor_is_stopped_and_while_it_is_started_and_idle() {
+        let (mut parent, audio) = rig();
+        let probe = Probe {
+            flushed: Arc::new(AtomicBool::new(false)),
+            audio: Arc::new(AtomicBool::new(false)),
+        };
+        assert!(audio.install(Box::new(probe)));
+        assert_pulse_keeping_up(&mut parent, "an installed, stopped processor", None);
+        assert_pulse_keeping_up(
+            &mut parent,
+            "a started processor with no requests",
+            Some(AudioOp::Start),
+        );
+    }
+
+    fn assert_pulse_keeping_up(parent: &mut ParentPort, what: &str, op: Option<AudioOp>) {
+        if let Some(op) = op {
+            submit_op(parent, op);
+        }
+        assert_pulse_keeps_moving(parent, what);
+    }
+
+    #[test]
+    fn a_request_and_a_command_after_a_long_idle_are_served_without_a_long_wait() {
+        let (mut parent, audio) = rig();
+        // Idle until the schedule has reached its longest wait.
+        std::thread::sleep(Duration::from_millis(900));
+        let probe = || Probe {
+            flushed: Arc::new(AtomicBool::new(false)),
+            audio: Arc::new(AtomicBool::new(false)),
+        };
+        // The waker, not the end of the wait, hands the command over: it is acknowledged long
+        // before the hand-over timeout (a generous bound, not a latency claim).
+        let bound = Deadline::after(HANDOVER_TIMEOUT);
+        assert!(audio.install(Box::new(probe())));
+        assert!(!bound.passed());
+        std::thread::sleep(Duration::from_millis(900));
+        submit_op(&mut parent, AudioOp::Start);
+        std::thread::sleep(Duration::from_millis(900));
+        let bound = Deadline::after(HANDOVER_TIMEOUT);
+        assert!(audio.take(Duration::from_secs(5)).is_some());
+        assert!(!bound.passed());
     }
 }
