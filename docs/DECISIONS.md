@@ -1380,3 +1380,34 @@ not on real plugins; the hand check is a bursty third-party effect at a 480-fram
 sandbox batches in the log before and after.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AV. A panic of the interface is contained and the app keeps running, with limits
+
+**Decision.** The windowed event loop catches a panic in a window event, in the per-tick work and in a window's
+redraw. It asks for a recovery snapshot of every open song, drops the gestures and menus in flight, repaints,
+and shows a notice strip (Save, Dismiss) that stays until dismissed. The crash report is written as before. The
+notice is raised once and not again within 30 s. After five panicking ticks or redraws in a row the content of
+the window is paused (the notice alone is drawn, Save and Ctrl+S still work) rather than painting into a loop;
+the pause lasts until the app is restarted. Exit is bounded the same way: the wait for the recovery writer and
+the removal of the scratch folder give up after 5 s.
+
+**Why.** The release profile unwinds so that faults can be contained, and the engine, the plugin calls and the
+document's apply, undo and redo already are. The rest of the UI thread was the one place where a bug cost the
+whole session, including everything since the last snapshot. Mainstream DAWs keep running after a contained
+fault in a view and tell the user to save; the notice says the same and recommends restarting, because the
+state after a panic may be inconsistent in ways the app cannot check.
+
+**Limits.** The repair is the minimum that is safe: gestures, menus and the merge group are dropped; view state
+beyond that is not rebuilt. The document is not touched (a command is planned before it changes anything). A
+panic that keeps coming pauses the content instead of recovering. Only the windowed loop is guarded: the
+headless shell, the QA server and the tests still see panics, so a test that expects one is unaffected. A panic
+inside a plugin's own process or the engine keeps its own containment. A scripted run that contained a panic ends with a non-zero exit code. The autosave period is unchanged.
+
+**Rejected.** Rebuilding the whole shell after a panic (loses more than it saves and could panic again);
+catching inside every handler (hides the failing site and costs a guard per call); exiting after the first panic
+with a recovery copy (what happened before: the work since the snapshot was lost).
+
+**Open.** The five-in-a-row limit and the 30 s quiet period are judgement values; the hand check is a forced
+panic in a long session (`ATOMIK_UI_PANIC`).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

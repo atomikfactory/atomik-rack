@@ -836,3 +836,40 @@ fn where_editors_cannot_dock_the_button_is_disabled_and_says_why() {
         help.text
     );
 }
+
+#[test]
+fn the_internal_error_notice_offers_save_and_dismiss_and_only_save_when_paused() {
+    let mut b = banner(BannerKind::InternalError { halted: false });
+    let t = banner_texts(&b);
+    assert!(
+        t.iter()
+            .any(|s| s.starts_with("Internal error: a recovery copy was saved")),
+        "{t:?}"
+    );
+    assert!(has(&t, "SAVE") && has(&t, "DISMISS"), "{t:?}");
+
+    // SAVE asks the app to save and leaves the notice up.
+    let p = b.save_rect().unwrap().center();
+    assert_eq!(
+        banner_actions(&banner_click(&mut b, p)),
+        [PluginBannerAction::SaveProject]
+    );
+    assert!(b.is_visible());
+    // DISMISS hides it.
+    let p = b.dismiss_rect().unwrap().center();
+    assert_eq!(
+        banner_actions(&banner_click(&mut b, p)),
+        [PluginBannerAction::DismissError]
+    );
+    assert!(!b.is_visible());
+
+    // Paused: the text says so and only SAVE is left.
+    let paused = banner(BannerKind::InternalError { halted: true });
+    let t = banner_texts(&paused);
+    assert!(
+        t.iter().any(|s| s.starts_with("Repeated internal errors")),
+        "{t:?}"
+    );
+    assert!(has(&t, "SAVE") && !has(&t, "DISMISS"), "{t:?}");
+    assert!(paused.dismiss_rect().is_none());
+}

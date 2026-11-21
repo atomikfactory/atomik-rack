@@ -13,6 +13,11 @@
 //!   the lock when the process ends in any way, so a marker that can be locked belongs to a
 //!   process that is gone: the next start learns of an unclean exit without asking whether a pid
 //!   is alive (and a reused pid cannot fool it). A clean quit removes the file.
+//! * **Bounded exit.** A stalled disk or network folder must not hang the app at exit: the wait
+//!   for the writer ([`RecoveryWriter::wait_for`], [`RecoveryWriter`]'s `Drop`) and the removal of
+//!   the scratch folder ([`remove_dir_bounded`]) give up after [`EXIT_WAIT`]. A snapshot the
+//!   writer was still writing is left to finish (or not) by itself: it is a rename of a complete
+//!   temporary file, so the folder never holds half of one.
 //! * **Orphan recordings.** A recording streams to `rec-<pid>-<take>-<n>.wav`
 //!   (see `audio_writer`). [`scan_orphans`] lists, within bounds, such files whose process is gone.
 
@@ -22,7 +27,7 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Sender, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -34,6 +39,48 @@ const MARKER_PREFIX: &str = "session-";
 const MARKER_SUFFIX: &str = ".lock";
 /// Prefix of the folders of a session's scratch bundles (inside the OS temp folder).
 pub const SCRATCH_PREFIX: &str = "atomik-rack-session-";
+/// The longest the exit waits for the recovery writer, and for the scratch folder to be removed,
+/// before it goes on without them.
+pub const EXIT_WAIT: Duration = Duration::from_secs(5);
+
+/// Runs `work` on a helper thread and waits for it up to `limit`: true when it finished. A
+/// helper that is still running at the limit is left alone (it ends with the process), and so is
+/// the work when no thread can be made: then `work` runs here, as it would have anyway.
+pub fn run_bounded(limit: Duration, work: impl FnOnce() + Send + 'static) -> bool {
+    let (done, finished) = channel::<()>();
+    let work = std::sync::Arc::new(std::sync::Mutex::new(Some(work)));
+    let helper = std::sync::Arc::clone(&work);
+    let spawned = std::thread::Builder::new()
+        .name("atomik-exit-helper".into())
+        .spawn(move || {
+            let job = helper.lock().ok().and_then(|mut w| w.take());
+            if let Some(job) = job {
+                job();
+            }
+            let _ = done.send(());
+        });
+    if spawned.is_err() {
+        if let Some(job) = work.lock().ok().and_then(|mut w| w.take()) {
+            job();
+        }
+        return true;
+    }
+    finished.recv_timeout(limit).is_ok()
+}
+
+/// Removes `dir` and what is in it (best effort) without waiting longer than `limit` for a
+/// stalled disk: true when it is done. Whatever is left is found by the next start's scan of
+/// dead sessions' folders.
+pub fn remove_dir_bounded(dir: &Path, limit: Duration) -> bool {
+    let dir = dir.to_path_buf();
+    let done = run_bounded(limit, move || {
+        let _ = std::fs::remove_dir_all(&dir);
+    });
+    if !done {
+        log::warn!("the scratch folder is still being removed after {limit:?}; not waiting");
+    }
+    done
+}
 
 /// Writes `bytes` to `path` atomically: a temporary file next to it (flushed to disk), then a
 /// rename, so a crash leaves the old file or the new one, never half of one.
@@ -88,20 +135,32 @@ enum Job {
 pub struct RecoveryWriter {
     tx: Option<Sender<Job>>,
     handle: Option<JoinHandle<()>>,
+    /// Disconnects when the thread ends (its end of the channel is dropped with it).
+    ended: Option<Receiver<()>>,
+    /// How long `Drop` waits for the thread.
+    bound: Duration,
 }
 
 impl RecoveryWriter {
     /// Starts the thread. `None` when the operating system refuses a thread.
     pub fn new() -> Option<Self> {
+        Self::spawn(EXIT_WAIT, |s| {
+            let _ = write_snapshot(s);
+        })
+    }
+
+    /// Starts the thread with `write` as what it does for a snapshot (the tests give it one that
+    /// blocks) and `bound` as the longest `Drop` waits for it.
+    fn spawn(bound: Duration, write: impl Fn(Snapshot) + Send + 'static) -> Option<Self> {
         let (tx, rx) = channel::<Job>();
+        let (alive, ended) = channel::<()>();
         let handle = std::thread::Builder::new()
             .name("atomik-recovery".into())
             .spawn(move || {
+                let _alive = alive;
                 while let Ok(job) = rx.recv() {
                     match job {
-                        Job::Snapshot(s) => {
-                            let _ = write_snapshot(*s);
-                        }
+                        Job::Snapshot(s) => write(*s),
                         Job::Barrier(done) => {
                             let _ = done.send(());
                         }
@@ -112,6 +171,8 @@ impl RecoveryWriter {
         Some(Self {
             tx: Some(tx),
             handle: Some(handle),
+            ended: Some(ended),
+            bound,
         })
     }
 
@@ -140,7 +201,8 @@ impl RecoveryWriter {
         }
     }
 
-    /// Blocks until every queued snapshot is on disk (tests, the exit path).
+    /// Blocks until every queued snapshot is on disk (tests and offline paths, whose waits stay
+    /// exact; the exit path uses [`Self::wait_for`]).
     pub fn wait(&self) {
         let (done, wait) = channel();
         if let Some(tx) = &self.tx
@@ -149,13 +211,42 @@ impl RecoveryWriter {
             let _ = wait.recv();
         }
     }
+
+    /// Waits for every queued snapshot up to `limit`: true when they are on disk, false when the
+    /// writer is still busy at the limit (a stalled disk): the caller goes on without it.
+    pub fn wait_for(&self, limit: Duration) -> bool {
+        let (done, wait) = channel();
+        match &self.tx {
+            Some(tx) if tx.send(Job::Barrier(done)).is_ok() => match wait.recv_timeout(limit) {
+                Ok(()) | Err(RecvTimeoutError::Disconnected) => true,
+                Err(RecvTimeoutError::Timeout) => false,
+            },
+            _ => true,
+        }
+    }
 }
 
 impl Drop for RecoveryWriter {
     fn drop(&mut self) {
         self.tx = None;
+        // Joining a thread that is stuck in a write would hang the exit: past the bound the
+        // thread is left to end with the process.
+        let ended = self.ended.take();
+        let finished = ended.is_none_or(|rx| {
+            matches!(
+                rx.recv_timeout(self.bound),
+                Ok(()) | Err(RecvTimeoutError::Disconnected)
+            )
+        });
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            if finished {
+                let _ = handle.join();
+            } else {
+                log::warn!(
+                    "the recovery writer is still busy after {:?}; not waiting",
+                    self.bound
+                );
+            }
         }
     }
 }

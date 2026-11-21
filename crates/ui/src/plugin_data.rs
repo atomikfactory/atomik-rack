@@ -403,6 +403,10 @@ pub enum PluginBannerAction {
     KeepCrashed,
     /// After an unclean exit: open the newest recovery snapshot.
     OpenRecovery,
+    /// After a contained internal error: SAVE the project (the shell runs File > Save).
+    SaveProject,
+    /// After a contained internal error: DISMISS the notice.
+    DismissError,
 }
 
 /// One preset of a plugin as the parameter pane lists it.

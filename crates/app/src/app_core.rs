@@ -1595,6 +1595,12 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// A panic of the UI thread was contained: the drag-merge group that may be open ends, so the
+    /// next edit starts a step of its own.
+    pub(crate) fn drop_gestures(&mut self) {
+        self.document.end_merge();
+    }
+
     /// A panic was caught around a command, an undo or a redo: the document is only read while a
     /// command is planned and every edit checks before it changes anything, so what was open
     /// stays as it was. Tells the user, closes the drag-merge group and asks for an emergency

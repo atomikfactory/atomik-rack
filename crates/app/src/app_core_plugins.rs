@@ -3845,6 +3845,8 @@ impl<S: EngineSink> AppCore<S> {
                     self.reject("no recovery snapshot found".to_string());
                 }
             }
+            // The internal-error notice belongs to the shell: it saves, and hides its own strip.
+            PluginBannerAction::SaveProject | PluginBannerAction::DismissError => {}
         }
     }
 
@@ -3956,6 +3958,16 @@ impl<S: EngineSink> AppCore<S> {
         {
             writer.wait();
         }
+    }
+
+    /// Waits up to `limit` for the queued snapshots to reach the disk: true when they have (or
+    /// there is no writer), false when the writer is still busy at the limit.
+    pub fn wait_recovery_writes_for(&mut self, limit: std::time::Duration) -> bool {
+        self.plugins
+            .recovery
+            .as_ref()
+            .and_then(|r| r.writer.as_ref())
+            .is_none_or(|writer| writer.wait_for(limit))
     }
 
     /// Sets the autosave period in minutes (0 turns the periodic snapshot of a changed project
@@ -4361,7 +4373,10 @@ impl<S: EngineSink> AppCore<S> {
     /// layer calls it after the engine was shut down.
     pub fn shutdown_plugins(&mut self) {
         self.close_all_plugin_windows();
-        self.wait_recovery_writes();
+        // A stalled disk must not hang the exit: the wait for the last snapshot is bounded.
+        if !self.wait_recovery_writes_for(crate::recovery::EXIT_WAIT) {
+            log::warn!("a recovery snapshot is still being written at exit; not waiting for it");
+        }
         // A layout learned in the last frames is still written; the wait is bounded.
         self.save_learned_cache();
         self.wait_plugin_cache_writes();

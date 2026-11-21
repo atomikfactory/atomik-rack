@@ -302,9 +302,11 @@ impl AudioState {
         &self.assets
     }
 
-    /// Removes the session scratch folders (best effort).
+    /// Removes the session scratch folders (best effort). It runs on the UI thread at exit and
+    /// when a song is closed, so a stalled disk is not waited for past
+    /// [`crate::recovery::EXIT_WAIT`]; what is left is found by the next start's scan.
     pub(super) fn remove_scratch(&self) {
-        let _ = std::fs::remove_dir_all(&self.scratch_root);
+        crate::recovery::remove_dir_bounded(&self.scratch_root, crate::recovery::EXIT_WAIT);
     }
 }
 

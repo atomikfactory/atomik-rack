@@ -537,6 +537,15 @@ impl<B: AudioBackend> Workspace<B> {
         self.sync_shared();
     }
 
+    /// A panic of the UI thread was contained: every song drops its gestures, asks for a
+    /// recovery copy and, when `notice`, raises the notice; `halted` pauses the content (see
+    /// [`Shell::after_ui_panic`]). The song that was routed stays routed.
+    pub fn after_ui_panic(&mut self, notice: bool, halted: bool) {
+        for song in &mut self.songs {
+            song.shell.after_ui_panic(notice, halted);
+        }
+    }
+
     /// Reads the audio status of every song; the one with the audio last, so that its state is
     /// what the crash report names.
     pub fn poll_all(&mut self) {

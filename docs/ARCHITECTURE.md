@@ -8085,6 +8085,25 @@ A bug in a device must cost that device, not the session. The rules:
   `a_panicking_device_is_contained` ([multicore.rs](../crates/engine/tests/multicore.rs)),
   `a_panicking_decoder_returns_error` ([decode.rs](../crates/audio-file/src/decode.rs)).
 
+- **The UI thread.** The windowed event loop ([platform/app.rs](../crates/app/src/platform/app.rs)) runs
+  each of its dispatch points through `ui_guard::run` ([ui_guard.rs](../crates/app/src/ui_guard.rs)): a
+  window event, the per-tick work and a window's redraw. A caught panic (the hook has already written the crash
+  report) asks every open song for a recovery snapshot, drops the capture, menu, file drag and drag-merge group
+  that may have been left open, raises the internal-error notice of the banner strip once (not again within 30 s),
+  repaints everything and keeps the loop running. Five panicking ticks or redraws in a row pause the content:
+  `Shell::paint_in` draws the notice alone and the pointer reaches only its buttons, so Save stays reachable until
+  the app is restarted. A panic that ends a graphics rebuild half way counts as a failed attempt (the device is
+  treated as lost and the back-off retries). The locks on the UI thread's paths recover a poisoned guard, and a
+  `RefCell` borrow ends as the stack unwinds, so no state is left locked. Only the windowed loop is guarded:
+  the headless shell, the QA server and the tests drive the shell directly, so a test that expects a panic still
+  sees it. An unattended windowed run (`--quit-after`, `--screenshot`, a stress load) that contained a panic
+  keeps running but ends with a non-zero exit code and one log line (`ui_guard::exit_failure`), so a script that
+  reads only the exit code does not take it for a success; an attended session exits normally.
+  `ATOMIK_UI_PANIC=<event|frame|paint>[:<times>]` makes a point panic, for hand checks.
+- **Exit is bounded.** The wait for the recovery writer and the removal of the session's scratch folder give up
+  after `recovery::EXIT_WAIT` (5 s) instead of hanging on a stalled disk; `RecoveryWriter`'s `Drop` leaves a stuck
+  thread to end with the process. Offline paths keep their exact waits (`RecoveryWriter::wait`).
+
 ### HI-3: graph validity
 
 | Mechanism | Where |
