@@ -592,6 +592,19 @@ struct Activated {
     timing: CreateTiming,
 }
 
+/// Starts the activation; an offline run (a bounce's pre-roll) waits for the plugin so that it
+/// sees the activation done at the same batch in every process, whatever the link's timeouts.
+fn activate_now_or_later(
+    instance: &mut dyn PluginInstance,
+    cfg: &ActivateConfig,
+) -> Result<Option<Box<dyn PluginProcessor>>, BackendError> {
+    if cfg.mode == RunMode::Offline {
+        instance.activate(cfg).map(Some)
+    } else {
+        instance.begin_activate(cfg)
+    }
+}
+
 fn activate_config(request: &InstantiateRequest) -> ActivateConfig {
     ActivateConfig {
         sample_rate: request.sample_rate,
@@ -858,7 +871,13 @@ impl PluginManager {
     /// restored is not an error of the creation: the device is shown as FAILED.
     fn begin_restore(&mut self, request: &InstantiateRequest, mut boot: Booting) -> Advance {
         if let Some(state) = &request.state {
-            match boot.instance.begin_restore_state(state) {
+            // An offline render waits for the plugin (see `activate_now_or_later`).
+            let begun = if request.mode == RunMode::Offline {
+                boot.instance.restore_state(state).map(|()| true)
+            } else {
+                boot.instance.begin_restore_state(state)
+            };
+            match begun {
                 Ok(false) => return Advance::Wait(Stage::Restoring(boot)),
                 Ok(true) => {}
                 Err(e) => boot.restore_error = Some(e.to_string()),
@@ -875,7 +894,7 @@ impl PluginManager {
             Ok(prepared) => prepared,
             Err(e) => return Advance::Done(Box::new(Err(e.into()))),
         };
-        match boot.instance.begin_activate(&activate_config(request)) {
+        match activate_now_or_later(boot.instance.as_mut(), &activate_config(request)) {
             Ok(Some(processor)) => {
                 let handle = self.finish_boot(request, boot, prepared, processor);
                 Advance::Done(Box::new(Ok(handle)))
@@ -1389,7 +1408,7 @@ impl PluginManager {
     /// answer ([`Phase::Activating`]; the device stays as it is, with no processor, until then).
     fn activate_and_resume(id: InstanceId, m: &mut Managed, events: &mut Vec<ManagerEvent>) {
         m.layout_changed = m.instance.take_layout_changed();
-        match m.instance.begin_activate(&m.cfg) {
+        match activate_now_or_later(m.instance.as_mut(), &m.cfg) {
             Ok(Some(processor)) => Self::resume(id, m, processor, events),
             Ok(None) => m.phase = Phase::Activating,
             Err(e) => Self::restart_failed(id, m, e.to_string(), events),
@@ -1587,7 +1606,7 @@ impl PluginManager {
             return;
         }
         m.cfg.sample_rate = job.rate;
-        match m.instance.begin_activate(&m.cfg) {
+        match activate_now_or_later(m.instance.as_mut(), &m.cfg) {
             Ok(Some(processor)) => Self::reattached(id, m, processor, reaper),
             Ok(None) => m.phase = Phase::Activating,
             Err(e) => job.ready = Some(Err(e.into())),
@@ -1645,8 +1664,20 @@ impl PluginManager {
     /// An unknown instance, or one that is live in the engine ([`ManagerError::InUse`]).
     pub fn remove(&mut self, id: InstanceId) -> Result<(), ManagerError> {
         assert_main_thread("PluginManager::remove");
-        if !self.get(id)?.parked {
+        let m = self.get(id)?;
+        // A reattach that finished has unparked the instance, but its device is not taken yet.
+        if !(m.parked || m.reattach.is_some()) {
             return Err(ManagerError::InUse(id));
+        }
+        if let Some(Reattach {
+            ready: Some(Ok(handle)),
+            ..
+        }) = m.reattach.take()
+        {
+            // Its processor is out in that device: the reaper ends the instance on the next poll.
+            m.retained = false;
+            drop(handle);
+            return Ok(());
         }
         if let Some(m) = self.instances.remove(&id) {
             self.leave(id, m, None);

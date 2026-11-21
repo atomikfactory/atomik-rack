@@ -5177,6 +5177,25 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     the child is alive, stopped when it shows no sign of life; late cosmetic answers alone never
     stop or mark a child. A bounce waits the whole 250 ms for a cosmetic answer, without the
     allowance. A plugin in this process answers every cosmetic call at once.
+    *The live app never waits for loading, restarting or ending a plugin.* A creation is a small
+    state machine inside its ticket (`begin_create`, `poll_create`): Instantiating, Restoring (only
+    with saved state), Activating, then Ready, one polled step per call, and the device stays a
+    LOADING stand-in until then. Restore and activate are held requests like the editor's
+    (`Link::begin_held_call`, `poll_reply`): they are judged by the long load timeout and by the
+    child's sign of life, not by the 10 s one, since a sampler may restore for minutes, and a
+    failed step fails the device with the text the blocking call gives. A restart's deactivate and
+    activate are polled the same way (the device plays dry meanwhile). An engine restart parks
+    every instance: all their deactivations go out together, `PluginManager::begin_reattach`
+    sends the activation of each one as soon as it is inactive, and the app keeps a stand-in for a
+    device until its plugin answers, so K slow plugins cost the slowest one, not the sum. An
+    instance that goes away (a removed device, a closed project, a cancelled load) is handed to the
+    manager's leaving list at once (`ManagerEvent::Destroyed` is not delayed) and
+    `PluginManager::poll` deactivates it and ends its process across frames; a child that does not
+    end within a second of being asked is stopped, as the drop always did. At exit the manager asks
+    every process to end and waits for all of them together, at most 10 s. Offline rendering keeps
+    the blocking path (`PluginManager::instantiate`; a bounce's link restores, activates and ends
+    its children with plain waits), so a bounce stays byte-identical and its event stream never
+    depends on the clock.
     *A plugin that is alive is never stopped by a timeout.* The child's audio thread stores a
     growing number in the `pulse` word of the block header on every pass of its wait loop (one
     relaxed store, at least every 10 ms, whatever the plugin's main thread is doing). A wait that

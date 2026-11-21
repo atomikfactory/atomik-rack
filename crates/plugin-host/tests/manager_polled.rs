@@ -427,3 +427,24 @@ fn dropping_the_manager_ends_every_process_together_within_a_bound() {
     drop(m);
     assert_eq!(stats.destroyed(), gone);
 }
+
+#[test]
+fn an_offline_instance_restores_activates_and_restarts_without_polling() {
+    let (mut m, stats) = manager();
+    stats.set_background_create(Some(0));
+    stats.set_restore_delay(1_000);
+    stats.set_activate_delay(1_000);
+    let mut req = request(Some(vec![3]));
+    req.mode = RunMode::Offline;
+    let (answer, _) = create(&mut m, &req, 3);
+    let handle = answer.unwrap();
+    let (mut h, id) = harness_of(handle);
+    h.process();
+    m.restart(id).unwrap();
+    h.process(); // hands the processor back
+    assert_eq!(
+        m.poll(),
+        vec![ManagerEvent::Restarted(id)],
+        "the restart is done at the batch it was asked for, whatever the plugin takes"
+    );
+}
