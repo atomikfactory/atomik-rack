@@ -861,7 +861,10 @@ impl EngineHandle {
             HotEdit::PlayerData { device, data } => self.player_data_at(frame, device, data),
             HotEdit::Tempo(tempo) => self.push(frame, ControlOp::Tempo(tempo)),
             HotEdit::Song(song) => self.song_at(frame, song),
-            HotEdit::Transport(command) => self.push(frame, ControlOp::Transport(command)),
+            HotEdit::Transport(command) => {
+                self.streams.wake();
+                self.push(frame, ControlOp::Transport(command))
+            }
         }
     }
 
@@ -896,6 +899,12 @@ impl EngineHandle {
     /// its data missing (the missing frames play as silence). Never blocks.
     pub fn stream_underruns(&self) -> u64 {
         self.streams.stats.underruns.load(Ordering::Relaxed)
+    }
+
+    /// Rounds the streamer thread has run so far: a gauge of how busy it is (a streamer whose
+    /// rings are full rests between rounds, see `stream.rs`). Never blocks.
+    pub fn stream_rounds(&self) -> u64 {
+        self.streams.stats.rounds.load(Ordering::Relaxed)
     }
 
     /// Segment reads of interim warps that should have kept their pitch but found every
@@ -1167,6 +1176,8 @@ impl EngineHandle {
     /// # Errors
     /// [`EngineError::QueueFull`].
     pub fn transport(&mut self, command: crate::TransportCommand) -> Result<(), EngineError> {
+        // The streamer may be resting: a locate, a start or a loop change must find it awake.
+        self.streams.wake();
         // A lane of its own: it keeps its place behind the control messages queued before it,
         // but a parked retirement cannot hold it back.
         self.transport_tx

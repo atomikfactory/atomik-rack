@@ -590,8 +590,12 @@ new ones, so editing during playback does not retrigger a note that is already s
                   → bump the lane epoch, push a StreamRequest (wait-free)
                 every playing batch consumes exactly its frames from the ring (discards outside regions);
                 missing data = silence + underrun counter, never a wait
- streamer thread "atomik-streamer": polls requests every 1 ms, restarts lanes, fills each lane a few
-                chunks per round by calling StreamSource::read (the app's reader over the bundle WAV)
+ streamer thread "atomik-streamer": polls requests, restarts lanes, fills each lane a few
+                chunks per round by calling StreamSource::read (the app's reader over the bundle WAV);
+                rounds that fill or serve follow at once, a round with nothing to do waits 1 ms, and
+                only 100 such rounds in a row (a playing transport never gets there) bring the wait to
+                10 ms; a new lane set and every transport command wake it and restart that count (only
+                a refill request made by the audio thread alone after a long quiet waits up to 10 ms)
 ```
 
 ### 2.6 Recording

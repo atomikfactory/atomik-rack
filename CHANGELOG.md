@@ -182,6 +182,9 @@ may break APIs and the patch and project formats.
 - **The recovery snapshot of a project with plugins is written only when something changed.** The plugins are
   still asked for their state in every period, but the snapshot is written only when the project or a plugin
   state differs from the last one, so a project nobody touches no longer writes to the disk every minute.
+- **The audio streamer rests when it has been idle for a while.** After a tenth of a second with nothing to
+  fill it sleeps 10 ms between looks instead of 1 ms; playing, a locate, a loop change and any transport
+  command from the interface bring it back at once.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
