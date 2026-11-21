@@ -295,3 +295,58 @@ process.
 | Two cores / four threads: stress rack, 1 worker | 116 | 784 | 295 | 39 | 503 |
 | Two cores / four threads: stress rack, no workers | 20.4 | 823 | 307 | 39 | 503 |
 | Two cores / four threads: stress rack, 3 workers, linger engine default | 73 | 811 | 307 | 42 | 503 |
+
+## Render workers parked between callbacks (2026-11-20)
+
+`cargo test -p atomik-engine --release --test worker_linger -- --ignored --nocapture`, no audio device: the
+four-device patch with six voices per device, four render workers, a callback every 128 or 480 frames at 48 kHz paced
+like an audio thread (sleep, then spin to the deadline), 10 s per row. "before" forces the callback flag up for good
+(the workers spin for the whole linger between callbacks, as they did before the flag existed); "after" is the
+behaviour now. CPU is the whole process as a percentage of one core and includes the benchmark's own pacing loop
+(the row with no workers shows it: about 51 % at 128 frames, 16 % at 480). Idle spins are counted when a worker parks.
+The table is one run; a second run agreed within the usual spread (the p99 of the after rows at 128 frames was 128 to
+143 microseconds in both; the maximum is dominated by the machine's scheduling).
+
+```text
+frames workers linger  flag   | callback us: p50   p99   max | barrier spins | idle spins | parks | cpu % of a core
+   128       0       0  after  |             84.1 147.5  192.9 |             0 |          0 |     0 |   51.3
+   128       4   20000  before |             60.3 130.7  572.6 |          7916 |  533557059 | 26248 |  150.4
+   128       4   20000  after  |             67.1 128.0  299.4 |          3712 |   23038449 | 26246 |   60.0
+   128       4  100000  before |             44.9  64.3  115.4 |          1338 | 2201031675 | 15002 |  419.6
+   128       4  100000  after  |             65.0 141.7  315.7 |          5115 |   23379281 | 26246 |   58.1
+   128       4  500000  before |             41.6  61.1  150.7 |          2393 | 2438722445 |  1235 |  452.5
+   128       4  500000  after  |             66.2 143.4 1062.5 |         12259 |   23532273 | 26246 |   64.2
+   480       0       0  after  |            324.5 529.2  563.0 |             0 |          0 |     0 |   15.9
+   480       4   20000  before |            204.7 332.1  692.3 |         10400 |  149882766 |  7008 |   59.4
+   480       4   20000  after  |            183.8 275.8  822.6 |         11574 |   20072498 |  7023 |   11.6
+   480       4  100000  before |            195.6 263.0  850.2 |          8691 |  709431650 |  7003 |  122.8
+   480       4  100000  after  |            183.5 262.6  719.7 |          7287 |   19969866 |  7018 |   14.2
+   480       4  500000  before |            168.7 203.5  283.7 |          4500 |  2332296008 |  4006 |  392.8
+   480       4  500000  after  |            207.4 327.6  807.6 |          8247 |   23419475 |  7018 |   14.1
+```
+
+Reading it: the idle burn of the long linger (420 to 450 % at 128 frames, 390 % at 480) falls to the callback's duty
+cycle plus the pacing loop. The cost is the wake-up of a parked worker at the start of each callback: at 128 frames
+the median callback is about 66 microseconds instead of 42 to 60 and the p99 about 140 instead of 61 with the long
+linger (5 % of the 2.7 ms budget; the old behaviour with the short linger, which parked between callbacks too, had
+about 130). The 128-frame p99 therefore misses the "within 10 % of the long linger" target; the decision and the
+reasons are in [DECISIONS.md](../docs/DECISIONS.md#ap-render-workers-spin-only-inside-a-callback-and-the-automatic-count-follows-the-physical-cores).
+The parks column counts about two per worker per callback: the unpark at the start of a callback and the ones per
+dispatched level leave a token that makes one park return at once.
+
+### The running app after the change
+
+`scripts/perf/sample-app.ps1` with the release build of the commit that parks the workers between callbacks, on the
+same machine and rack as the idle baseline above (transport stopped, nothing sounding, no `--play`; 15 s settle, 20 s
+window). The "before" figures are the rows of that section.
+
+| Scenario | CPU % before | CPU % after |
+|---|---|---|
+| Stress rack, audio on, automatic workers (7 here: the count follows the physical cores) | 829 (8 workers) | 94 |
+| Stress rack, audio on, 2 workers | 216-219 | 34 |
+| Stress rack, audio on, no workers | 19.2-20.7 | 20.5 |
+| Two cores / four threads (affinity `0xF`): stress rack, 3 workers (`--workers 3`) | 310 | 55 |
+
+The automatic count with an affinity mask is not a row: the app picks its count before the mask applies, so it started
+seven workers on four logical processors, and that run did not answer the window probe (the workers run at the
+callback's priority). Give the worker count explicitly in such a run, as the script's help says.

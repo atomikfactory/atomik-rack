@@ -1824,7 +1824,9 @@ it (a threshold that follows the current callback too closely). A DEBUG line `in
 1440 frames, callback 96..480 frames, buffer 480` is written when the count rose (run with `ATOMIK_LOG=debug`). And
 it gives the render workers: their count, the linger, and the idle spins and parks so far, next to the late sandbox
 batches of the overload counters. `crates/audio-io/src/telemetry.rs` and `stream.rs` test the counters,
-`crates/engine/tests/worker_linger.rs` the worker read-out, and `diagnostics.rs` and `session_tests.rs` the report
+`crates/engine/tests/worker_linger.rs` the worker read-out (and, ignored, a paced benchmark of the callback
+duration, the idle spins and the process CPU per worker count and linger: `cargo test -p atomik-engine --release
+--test worker_linger -- --ignored --nocapture`), and `diagnostics.rs` and `session_tests.rs` the report
 and the status.
 
 Three more groups say how the app starts and how busy the UI is, with no behaviour change (the log is at INFO, the
