@@ -1844,6 +1844,34 @@ fn wire_inputs(p: &mut Planner<'_>, device: &DeviceKey) -> Result<(), ModelError
     Ok(())
 }
 
+/// What a device move that changes nothing is refused with.
+const ALREADY_THERE: &str = "the devices are already there";
+
+/// Whether `command` is a device move ([`WorkflowCommand::MoveDevices`] or
+/// [`WorkflowCommand::MoveDevicesToSlot`]) that would leave every device where it is. The model
+/// refuses such a move, so a view asks before it emits one. The move is looked at as the model
+/// makes it, not as it is written: an instrument takes its console channel along, a channel or
+/// bus its insert effects, a device of a sorted rack its whole group, and a place inside a stack
+/// becomes the place after it. False for any other command, and for a move the model refuses
+/// for another reason (the refusal then says why).
+pub fn move_changes_nothing(doc: &RackDoc, registry: &Registry, command: &crate::Command) -> bool {
+    let mut command = command.clone();
+    crate::rack_groups::expand_moves(doc, registry, &mut command);
+    let (keys, place) = match &command {
+        crate::Command::Workflow(WorkflowCommand::MoveDevices { keys, to, .. }) => {
+            (keys, Placement::Flat(*to))
+        }
+        crate::Command::Workflow(WorkflowCommand::MoveDevicesToSlot { keys, slot, .. }) => {
+            (keys, Placement::Slot(*slot))
+        }
+        _ => return false,
+    };
+    matches!(
+        move_devices(doc, keys, place),
+        Err(ModelError::OutOfRange(why)) if why == ALREADY_THERE
+    )
+}
+
 fn move_devices(doc: &RackDoc, keys: &[DeviceKey], place: Placement) -> Result<Edit, ModelError> {
     let first = keys
         .first()
@@ -1863,9 +1891,7 @@ fn move_devices(doc: &RackDoc, keys: &[DeviceKey], place: Placement) -> Result<E
     if parent.is_none() {
         let edit = rack_columns::plan_move(doc, keys, place)?;
         if rack_columns::is_noop(&edit) {
-            return Err(ModelError::OutOfRange(
-                "the devices are already there".into(),
-            ));
+            return Err(ModelError::OutOfRange(ALREADY_THERE.into()));
         }
         return Ok(edit);
     }
@@ -1895,9 +1921,7 @@ fn move_devices(doc: &RackDoc, keys: &[DeviceKey], place: Placement) -> Result<E
     target.extend(group.iter().cloned());
     target.extend_from_slice(&rest[at..]);
     if target == order {
-        return Err(ModelError::OutOfRange(
-            "the devices are already there".into(),
-        ));
+        return Err(ModelError::OutOfRange(ALREADY_THERE.into()));
     }
     let mut current = order;
     let mut edits = Vec::new();
