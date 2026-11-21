@@ -56,7 +56,13 @@ fn workers_park_between_callbacks_even_with_an_endless_linger() {
     let (mut engine, mut handle) = engine_lingering(2, u64::MAX);
     handle.submit_plan(real_patch(&c, 4).plan).unwrap();
     render_blocks(&mut engine, &[], 2, 4096, 128);
-    wait_until("both workers parked", || engine.worker_parks() >= 2);
+    // The workers park (and flush their spin counts) a moment after the last render call
+    // returns: wait until both counters stand still. Workers that spun on would never let them.
+    wait_until("the workers came to rest", || {
+        let before = (engine.worker_idle_spins(), engine.worker_parks());
+        std::thread::sleep(Duration::from_millis(100));
+        before.1 >= 2 && before == (engine.worker_idle_spins(), engine.worker_parks())
+    });
     let settled = engine.worker_idle_spins();
     let parks = engine.worker_parks();
     std::thread::sleep(Duration::from_millis(300));
