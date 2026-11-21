@@ -1346,6 +1346,22 @@ still out is late at once without a wait and neither counts nor resets). The sta
 workers that run plugin devices only read the published value, so several plugins may wait at once on different
 threads.
 
+A plugin that needs more than real time must not cost more than before, though: the first version spent 7 ms of every
+10 ms callback on such a plugin (each callback holds a few answered batches, which reset the miss count, before the
+wait that runs into the deadline), leaving the rest of the engine 30 % of the callback. So there is a second,
+independent rule per processor (plain integers, audio thread only, no clock read of its own). A callback is
+exhausted for a processor when one of its waits ran out at the published moment; a new callback is seen as the
+published value changing. After three exhausted callbacks in a row (`EXHAUSTED_AFTER`) the processor falls back to
+the old behaviour: its waits ignore the published value and last one batch period, for 100 callbacks
+(`FALLBACK_CALLBACKS`, about a second; counted, not timed). Then the budget is tried again; if it is exhausted three
+times again the next span is twice as long, up to 500 callbacks (`FALLBACK_MAX_CALLBACKS`, about five seconds). A
+callback inside the budget resets the count and the span. The miss-based cool-down works in both modes. Three
+callbacks are a short enough run to ignore one bad callback and a long one for a plugin that is simply too slow
+(30 ms of extra spin before it stops); 100 callbacks keep the retry cost near 3 % of the fall-back, and the doubling
+makes a plugin that never fits retry only a few times a minute. In a chain of plugins that fit alone but not
+together, only the plugin whose wait runs into the deadline is exhausted: it falls back, the ones before it keep
+the budget.
+
 The hang guard is unchanged and still counts batches without progress, not time: the one wait that can last
 several periods is that of the batch that submitted, and the other batches of the callback find the request still
 out and are late at once, so a silent child is declared hung after the same number of batches, which the audio

@@ -21,7 +21,7 @@ use atomik_plugin_host::{
 use atomik_plugin_ipc::{AudioOp, Deadline, MAX_EVENTS_IN, ParentPort, Poll, Ticket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long a live `start_processing`, `stop_processing` or `reset` may take. These are not
 /// audio: a plugin may need a few milliseconds to start, which is not a failure.
@@ -38,6 +38,17 @@ pub(crate) const COOL_AFTER: u32 = 4;
 /// 480-frame callback holds seven or eight batches: this is about three callbacks.
 pub(crate) const COOL_BATCHES: u32 = 24;
 
+/// How many callbacks in a row may use up the whole published budget (a wait ran out at the
+/// published moment) before the processor goes back to one batch period per wait.
+pub(crate) const EXHAUSTED_AFTER: u32 = 3;
+
+/// Callbacks the first fall-back lasts (about a second of 480-frame callbacks); each fall-back
+/// that follows renewed exhaustion lasts twice as long, up to [`FALLBACK_MAX_CALLBACKS`].
+pub(crate) const FALLBACK_CALLBACKS: u32 = 100;
+
+/// The longest fall-back, in callbacks (about five seconds).
+pub(crate) const FALLBACK_MAX_CALLBACKS: u32 = 500;
+
 /// What a live batch did to get its answer (kept in tests, to see what the processor asked).
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,11 +57,64 @@ pub(crate) enum WaitKind {
     Full(Deadline),
     /// One poll, no waiting (cool-down).
     Poll,
+    /// The budget was used up too often: waits are one period for this many callbacks.
+    Fallback(u32),
 }
 
 /// Where a processor puts its port back when it is dropped, so that the instance can activate
 /// again.
 pub(crate) type PortCell = Arc<Mutex<Option<ParentPort>>>;
+
+/// Whether the published budget is worth using for one processor: plain integers, audio
+/// thread only. A callback is exhausted when a wait ran out at the published moment (the plugin
+/// used the whole budget and still was not done). A new callback is seen as the published value
+/// changing.
+#[derive(Debug, Default)]
+struct BudgetState {
+    seen: Option<Instant>,
+    /// Callbacks left in the fall-back (0: the budget is used).
+    fallback: u32,
+    /// How long the next fall-back lasts (0: the first length).
+    span: u32,
+    /// Exhausted callbacks in a row.
+    run: u32,
+    /// The current callback had a wait up to the published moment.
+    waited: bool,
+    /// The current callback ran out of budget.
+    exhausted: bool,
+}
+
+impl BudgetState {
+    /// Called for every live batch with the published value; returns the value the wait may
+    /// use (`None` in a fall-back) and the length of a fall-back that begins now.
+    fn begin(&mut self, published: Option<Instant>) -> (Option<Instant>, Option<u32>) {
+        let mut entered = None;
+        if published.is_some() && published != self.seen {
+            if self.fallback > 0 {
+                self.fallback -= 1;
+            } else if self.waited {
+                if self.exhausted {
+                    self.run += 1;
+                    if self.run >= EXHAUSTED_AFTER {
+                        let span = self.span.clamp(FALLBACK_CALLBACKS, FALLBACK_MAX_CALLBACKS);
+                        self.fallback = span;
+                        self.span = span.saturating_mul(2).min(FALLBACK_MAX_CALLBACKS);
+                        self.run = 0;
+                        entered = Some(span);
+                    }
+                } else {
+                    self.run = 0;
+                    self.span = 0;
+                }
+            }
+            self.waited = false;
+            self.exhausted = false;
+        }
+        self.seen = published;
+        let usable = if self.fallback > 0 { None } else { published };
+        (usable, entered)
+    }
+}
 
 /// The audio half of a sandboxed plugin.
 pub(crate) struct RemoteProcessor {
@@ -77,6 +141,8 @@ pub(crate) struct RemoteProcessor {
     misses: u32,
     /// Batches left in the cool-down (0: not cooling).
     cooling: u32,
+    /// Whether the published budget is in use.
+    budget: BudgetState,
     #[cfg(test)]
     trace: Option<Arc<Mutex<Vec<WaitKind>>>>,
 }
@@ -116,6 +182,7 @@ impl RemoteProcessor {
             callback: None,
             misses: 0,
             cooling: 0,
+            budget: BudgetState::default(),
             #[cfg(test)]
             trace: None,
         }
@@ -327,7 +394,13 @@ impl RemoteProcessor {
         let published = if offline {
             None
         } else {
-            self.callback.as_ref().and_then(|c| c.read())
+            let seen = self.callback.as_ref().and_then(|c| c.read());
+            let (usable, _entered) = self.budget.begin(seen);
+            #[cfg(test)]
+            if let Some(span) = _entered {
+                Self::record(&self.trace, WaitKind::Fallback(span));
+            }
+            usable
         };
         let Self {
             port,
@@ -335,6 +408,7 @@ impl RemoteProcessor {
             merged,
             misses,
             cooling,
+            budget,
             ..
         } = self;
         let Some(port) = port.as_mut() else {
@@ -366,7 +440,18 @@ impl RemoteProcessor {
             let deadline = Deadline::after_or_until(period, published, MAX_LIVE_WAIT);
             #[cfg(test)]
             Self::record(&self.trace, WaitKind::Full(deadline));
-            port.wait_done(t, deadline)
+            let used_budget = published.is_some();
+            let polled = port.wait_done(t, deadline);
+            if used_budget {
+                budget.waited = true;
+                if let (Poll::TimedOut, Deadline::At(at), Some(until)) =
+                    (polled, deadline, published)
+                {
+                    // The wait ran to the published moment: the callback's budget is gone.
+                    budget.exhausted |= at >= until;
+                }
+            }
+            polled
         };
         match polled {
             Poll::Done => {

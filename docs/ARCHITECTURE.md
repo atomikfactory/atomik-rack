@@ -5279,9 +5279,15 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     events of a batch that could not be sent are carried to the next one at offset 0, so a note-off
     is never lost. After four full waits in a row that ran out, the processor polls the next 24
     batches once instead of waiting (late at once when the answer is not there; counted late all
-    the same) and then tries a full wait again; an answer ends the run. The state is per processor
-    and the render workers only read the published value, so plugins of one level may wait together
-    on different threads. Offline never reads the published value or the clock for a decision. A bounce (`SandboxConfig::bounce`, set by
+    the same) and then tries a full wait again; an answer ends the run. A second rule keeps the
+    budget from costing more than one period for a plugin that cannot fit: a callback in which a
+    wait ran out at the published moment is exhausted for that processor (a new callback is the
+    published value changing), and after three exhausted callbacks in a row its waits ignore the
+    published value and last one period for 100 callbacks, then the budget is tried again; renewed
+    exhaustion doubles the span up to 500 callbacks and a callback inside the budget resets it. The
+    state is per processor, plain integers, and the render workers only read the published value,
+    so plugins of one level may wait together on different threads. Offline never reads the published
+    value or the clock for a decision. A bounce (`SandboxConfig::bounce`, set by
     `atomik-render`, also for `--plugin-mode realtime`) and an offline instance wait for every batch
     up to a 30 s watchdog, so a sandboxed bounce is byte-identical to an in-process one.
   - *Crash.* When the child ends, the reader thread marks the block dead (`DeathHandle`) and posts

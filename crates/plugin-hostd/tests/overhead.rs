@@ -242,38 +242,57 @@ struct Work {
     /// Microseconds of work per batch (every eighth batch when `burst`).
     busy_us: u64,
     burst: bool,
+    /// Plugins in series, each doing this work.
+    plugins: usize,
 }
 
-const WORKS: [Work; 5] = [
+const WORKS: [Work; 7] = [
     Work {
         name: "steady 0.3 ms per batch",
         busy_us: 300,
         burst: false,
+        plugins: 1,
     },
     Work {
         name: "burst: 3 ms every 8th batch",
         busy_us: 3_000,
         burst: true,
+        plugins: 1,
     },
     Work {
         name: "burst: 6 ms every 8th batch",
         busy_us: 6_000,
         burst: true,
+        plugins: 1,
     },
     Work {
         name: "steady 1.8 ms per batch",
         busy_us: 1_800,
         burst: false,
+        plugins: 1,
+    },
+    Work {
+        name: "steady 0.9 ms (at the budget)",
+        busy_us: 900,
+        burst: false,
+        plugins: 1,
+    },
+    Work {
+        name: "2 plugins, burst 4 ms each",
+        busy_us: 4_000,
+        burst: true,
+        plugins: 2,
     },
     Work {
         name: "steady 20 ms per batch",
         busy_us: 20_000,
         burst: false,
+        plugins: 1,
     },
 ];
 
 /// Callbacks of one run (480 frames, one every 10 ms): 4 s of audio.
-const WAIT_CALLBACKS: usize = 400;
+const WAIT_CALLBACKS: usize = 800;
 
 /// The share of a callback the audio side publishes for its plugins (as the stream does).
 const PUBLISHED: Duration = Duration::from_millis(7);
@@ -314,18 +333,27 @@ fn wait_run(work: &Work, publish: bool) -> Wait {
             .push(("ATOMIK_NULL_BUSY_BURST".into(), "1".into()));
     }
     let mut sb = Sandbox::null(config);
-    let handle = sb
-        .manager
-        .instantiate(&request(&null_plugin("null.busy"), RunMode::Realtime))
-        .expect("the busy plugin starts");
-    let mut h = effect(handle, 0.25);
+    let mut hs: Vec<_> = (0..work.plugins)
+        .map(|_| {
+            let handle = sb
+                .manager
+                .instantiate(&request(&null_plugin("null.busy"), RunMode::Realtime))
+                .expect("the busy plugin starts");
+            effect(handle, 0.25)
+        })
+        .collect();
+    let lates = |hs: &[atomik_testkit::harness::DeviceHarness]| -> f32 {
+        hs.iter()
+            .map(|h| sandbox_support::meters(h)[sandbox_support::METER_LATE])
+            .sum()
+    };
     // Settle: the first batches pay for the child's start-up.
     for _ in 0..200 {
-        h.process();
+        hs.iter_mut().for_each(|h| h.process());
         std::thread::sleep(Duration::from_millis(1));
     }
     let exe = host_command().program.to_string_lossy().replace('\'', "''");
-    let late_before = sandbox_support::meters(&h)[sandbox_support::METER_LATE];
+    let late_before = lates(&hs);
     let cpu_before = cpu_of(&exe);
     let period = Duration::from_secs_f64(BUFFER as f64 / SR);
     let start = Instant::now();
@@ -348,16 +376,16 @@ fn wait_run(work: &Work, publish: bool) -> Wait {
         let want = (n + 1) * BUFFER / BATCH;
         let t = Instant::now();
         while done < want {
-            h.process();
+            hs.iter_mut().for_each(|h| h.process());
             done += 1;
         }
         per_callback.push(t.elapsed().as_secs_f64() * 1e6);
     }
     let wall = start.elapsed().as_secs_f64();
     let cpu_after = cpu_of(&exe);
-    let late = sandbox_support::meters(&h)[sandbox_support::METER_LATE] - late_before;
+    let late = lates(&hs) - late_before;
     atomik_core::CallbackDeadline::shared().clear();
-    drop(h);
+    drop(hs);
     sb.manager.poll();
     sb.finish();
     let s = stats(per_callback);
