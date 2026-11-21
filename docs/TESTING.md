@@ -1879,7 +1879,8 @@ The parameters are `-Exe` (default `target\release\atomik.exe`), `-Scenario` (a 
 `all`), `-Settle` (seconds after the first window, default 15), `-Window` (seconds sampled, default 20), `-Affinity`
 (a processor mask, default none), `-OutDir` (default `atomik-perf` in the temp folder) and `-ExtraArgs` (more app
 arguments for every scenario). For each scenario it makes a fresh temporary settings folder and library folder (a
-reused settings folder keeps the saved window layout and skews the numbers), starts the app with `--settings`,
+reused settings folder keeps the saved window layout and skews the numbers; a settings file is written so that the
+first-run audio setup panel, which repaints all the time, does not open), starts the app with `--settings`,
 `--library`, `--no-midi` and `--quit-after`, waits for the first window, settles, samples, and deletes the
 folders. It writes one CSV (`perf-<date>.csv`, a row per scenario) and prints the same as a table. The exit code is 0
 unless the app crashed in a scenario. **It never passes `--play`**: the transport stays stopped, nothing sounds, and
@@ -1890,6 +1891,9 @@ The scenarios are `empty-noaudio` (`--no-audio`), `empty` (the audio stream runs
 `stress-audio-fx` (`--stress-audio --stress-fx`), `stress-detached` (`--stress --no-audio --detach rack,console`) and
 `stress-plugins` (`--stress-plugins`). The last needs the test plugins (`cargo build -p atomik-test-clap`) and the
 plugin scanner next to the app; when they are missing the script says so and writes a skipped row.
+
+`-Minimized` minimizes the window after the settle time and samples the minimized app (the row's scenario gets the
+suffix `+min`); with the transport stopped it should cost less than the same scenario with the window open.
 
 The columns:
 
@@ -1906,6 +1910,10 @@ The columns:
   sends the main window a `WM_NULL` message and times the round trip through the app's window procedure; a probe not
   answered in 2 s counts as a timeout. A busy or blocked UI thread shows here first. Reading them next to the
   `ui stall` lines of the log says what blocked.
+- `WakesPerSec`, `PaintsPerSec`: the average of the app's own `ui activity` lines after the settle time: the event
+  loop's wake-ups and the main window's paints per second. The script runs the app with `ATOMIK_LOG=debug` unless the
+  variable is set, because those lines are debug lines. An idle app with the stream open reads about 10 wakes, a
+  minimized one about 4, a playing one about 60.
 - `FirstWindowMs`: from the start of the process to a window handle.
 
 Two ways to look at a small machine on a development machine:

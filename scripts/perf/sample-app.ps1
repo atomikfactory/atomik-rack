@@ -23,6 +23,10 @@
     FirstFrameMs, Adapter
                    read from the app's own log of the run (the "startup ... first frame
                    presented" line and the "graphics adapter" line), when they are there
+    WakesPerSec, PaintsPerSec
+                   the average of the app's own "ui activity" lines after the settle time (event
+                   loop wake-ups and main window paints per second); the script runs the app
+                   with ATOMIK_LOG=debug unless the variable is set, because the lines are debug
 
   The output is one CSV file (a row per scenario) and a text table. The exit code is 0 unless the
   app crashed in a scenario (it ended with an exit code other than 0 before it was asked to quit).
@@ -64,6 +68,10 @@
   low-power run pass the worker count yourself with -ExtraArgs '--workers','3' and a scenario
   that does not set one.
 
+.PARAMETER Minimized
+  Minimizes the app's window once it has settled and samples the minimized app (the scenario
+  name gets the suffix +min).
+
 .PARAMETER OutDir
   Where the CSV goes. Default: the folder atomik-perf in the temporary folder of the user.
 
@@ -82,6 +90,7 @@ param(
     [int]$Settle = 15,
     [int]$Window = 20,
     [int64]$Affinity = 0,
+    [switch]$Minimized,
     [string]$OutDir = '',
     [string[]]$ExtraArgs = @()
 )
@@ -120,6 +129,7 @@ foreach ($n in $names) {
 Add-Type -Namespace W -Name U -MemberDefinition @'
 [DllImport("user32.dll")] public static extern System.IntPtr SendMessageTimeoutW(System.IntPtr h, uint msg, System.IntPtr w, System.IntPtr l, uint flags, uint timeoutMs, out System.IntPtr result);
 public delegate bool EnumProc(System.IntPtr h, System.IntPtr l);
+[DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr h, int cmd);
 [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, System.IntPtr l);
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr h, out uint pid);
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr h);
@@ -148,14 +158,28 @@ function Test-PluginStressReady {
 
 function Get-LogFacts {
     param([string]$Config)
-    $facts = @{ FirstFrameMs = $null; Adapter = $null }
+    $facts = @{ FirstFrameMs = $null; Adapter = $null; Wakes = $null; Paints = $null }
     $log = Join-Path (Join-Path $Config 'logs') 'atomik.log'
     if (-not (Test-Path -LiteralPath $log)) { return $facts }
     try {
         $text = Get-Content -LiteralPath $log -Encoding UTF8 -ErrorAction Stop
+        $wakes = New-Object System.Collections.Generic.List[double]
+        $paints = New-Object System.Collections.Generic.List[double]
         foreach ($line in $text) {
             if ($line -match 'startup (\d+) ms: first frame presented') { $facts.FirstFrameMs = [int]$Matches[1] }
             elseif ($line -match 'graphics adapter: (.+)$') { $facts.Adapter = $Matches[1].Trim() }
+            elseif ($line -match 'ui activity: (\d+) wakes/s') {
+                $wakes.Add([double]$Matches[1])
+                if ($line -match 'main (\d+) paints/s') { $paints.Add([double]$Matches[1]) } else { $paints.Add(0) }
+            }
+        }
+        # One line every 5 s: leave out the ones written while the app was settling.
+        $skip = [int][math]::Floor($Settle / 5)
+        if ($wakes.Count -gt $skip) {
+            $w = @($wakes | Select-Object -Skip $skip)
+            $p = @($paints | Select-Object -Skip $skip)
+            $facts.Wakes = [math]::Round(($w | Measure-Object -Average).Average, 1)
+            $facts.Paints = [math]::Round(($p | Measure-Object -Average).Average, 1)
         }
     } catch {}
     return $facts
@@ -167,18 +191,23 @@ function Measure-Scenario {
     $lib = Join-Path $tmp 'lib'
     New-Item -ItemType Directory -Force $lib | Out-Null
     $settings = Join-Path $tmp 'settings.json'
+    # A settings file that exists means the first-run audio setup panel does not open: the panel has
+    # live meters that repaint all the time, which is not what an idle app looks like.
+    Set-Content -LiteralPath $settings -Value '{}' -Encoding ASCII
     $quitAfter = $Settle + $Window + 20
     $all = @('--settings', "`"$settings`"", '--library', "`"$lib`"", '--no-midi', '--quit-after', $quitAfter) +
         $ScenarioArgs + $ExtraArgs
     $row = [ordered]@{
-        Scenario = $Name; CpuPctOneCore = $null; WS_MB = $null; Private_MB = $null; Threads = $null
+        Scenario = $(if ($Minimized) { "$Name+min" } else { $Name }); CpuPctOneCore = $null; WS_MB = $null; Private_MB = $null; Threads = $null
         Handles = $null; Children = ''; GpuUtilPct = $null; GpuDedicMB = $null
         UiP50ms = $null; UiP95ms = $null; UiMaxms = $null; UiTimeouts = $null; Probes = $null
-        FirstWindowMs = $null; FirstFrameMs = $null; Adapter = $null; Note = ''
+        FirstWindowMs = $null; FirstFrameMs = $null; Adapter = $null; WakesPerSec = $null; PaintsPerSec = $null; Note = ''
     }
     $crashed = $false
     $job = $null
     $p = $null
+    $logEnvSet = -not [string]::IsNullOrEmpty($env:ATOMIK_LOG)
+    if (-not $logEnvSet) { $env:ATOMIK_LOG = 'debug' }
     try {
         $sw = [Diagnostics.Stopwatch]::StartNew()
         $p = Start-Process -FilePath $Exe -ArgumentList $all -PassThru
@@ -196,6 +225,10 @@ function Measure-Scenario {
             return [pscustomobject]$row, $crashed
         }
         Start-Sleep -Seconds $Settle
+        if ($Minimized) {
+            [W.U]::ShowWindow($h, 6) | Out-Null
+            Start-Sleep -Seconds 3
+        }
         if ($p.HasExited) {
             $row.Note = "exited during settle, code $($p.ExitCode)"
             $crashed = ($p.ExitCode -ne 0)
@@ -275,11 +308,14 @@ function Measure-Scenario {
             $crashed = $true
         }
     } finally {
+        if (-not $logEnvSet) { Remove-Item Env:ATOMIK_LOG -ErrorAction SilentlyContinue }
         if ($job) { Remove-Job $job -Force -ErrorAction SilentlyContinue }
         if ($p -and -not $p.HasExited) { try { $p.Kill() } catch {} }
         $facts = Get-LogFacts -Config $tmp
         $row.FirstFrameMs = $facts.FirstFrameMs
         $row.Adapter = $facts.Adapter
+        $row.WakesPerSec = $facts.Wakes
+        $row.PaintsPerSec = $facts.Paints
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     }
     return [pscustomobject]$row, $crashed
@@ -302,9 +338,9 @@ foreach ($name in $names) {
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $csv = Join-Path $OutDir "perf-$stamp.csv"
 $cols = 'Scenario', 'CpuPctOneCore', 'WS_MB', 'Private_MB', 'Threads', 'Handles', 'GpuUtilPct', 'GpuDedicMB',
-    'UiP50ms', 'UiP95ms', 'UiMaxms', 'UiTimeouts', 'Probes', 'FirstWindowMs', 'FirstFrameMs', 'Children', 'Adapter', 'Note'
+    'WakesPerSec', 'PaintsPerSec', 'UiP50ms', 'UiP95ms', 'UiMaxms', 'UiTimeouts', 'Probes', 'FirstWindowMs', 'FirstFrameMs', 'Children', 'Adapter', 'Note'
 $rows | Select-Object $cols | Export-Csv -Path $csv -NoTypeInformation -Encoding UTF8
-$rows | Format-Table Scenario, CpuPctOneCore, WS_MB, Private_MB, Threads, Handles, GpuUtilPct, GpuDedicMB,
+$rows | Format-Table Scenario, CpuPctOneCore, WakesPerSec, PaintsPerSec, WS_MB, Private_MB, Threads, Handles, GpuUtilPct, GpuDedicMB,
     UiP50ms, UiP95ms, UiMaxms, UiTimeouts, FirstFrameMs, Note -AutoSize | Out-String -Width 250 | Write-Host
 Write-Host "CSV written to $csv"
 if ($anyCrash) { Write-Host 'The app crashed in at least one scenario.'; exit 1 }

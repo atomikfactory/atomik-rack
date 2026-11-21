@@ -296,6 +296,31 @@ process.
 | Two cores / four threads: stress rack, no workers | 20.4 | 823 | 307 | 39 | 503 |
 | Two cores / four threads: stress rack, 3 workers, linger engine default | 73 | 811 | 307 | 42 | 503 |
 
+## Idle wake-ups: full frame rate only while something moves (2026-11-21)
+
+The same reference machine and release build, the transport stopped and nothing sounding (no `--play`). Before is
+the branch this change started from, after is this change. The first two rows of CPU are the process CPU time over
+40 s after a 20 s settle, read at the start and the end of the window with no other probe on the app, three runs
+each (two for minimized): the numbers move by a few tenths of a percent from run to run, so the runs are listed.
+The sampler rows are `scripts/perf/sample-app.ps1` (20 s window): its UI probe sends the window a message every
+100 ms, which wakes the app about ten more times a second in both columns, and the settings file it writes keeps the
+first-run audio setup panel (live meters, repaints all the time) from opening. "Wakes" is the app's own `ui activity`
+line.
+
+| Scenario | CPU % before | CPU % after | Wakes/s before | Wakes/s after |
+|---|---|---|---|---|
+| Empty project, audio on (40 s runs) | 0.86, 1.17, 1.29 | 0.43, 0.66, 0.86 | 60 | 10 |
+| Empty project, audio on, minimized (40 s runs) | 1.29, 1.48 | 0.63, 0.74 | 60 | 4 |
+| Empty project, no audio (sampler) | 0.31 | 0.31 | 6 | 6 |
+| Empty project, audio on (sampler) | 0.93 | 1.25 | 62 | 14 |
+| Empty project, audio on, minimized (sampler) | 1.63 | 0.78 | 62 | 6.5 |
+| Stress rack, audio on, no workers (sampler) | 20.2 | 16.5 | 60 | 14 |
+
+What is left with the stream open is the audio stream's own thread, not the interface: the empty project with audio
+on is 0.3 to 0.4 points above the no-audio figure in the better runs. The status line's DSP figures are held steady
+for ten seconds while they move by less than five points; before that, an idle engine's jitter in the rounded figure
+repainted the whole window every couple of seconds (3 paints a second in the stress rack).
+
 ## Render workers parked between callbacks (2026-11-20)
 
 `cargo test -p atomik-engine --release --test worker_linger -- --ignored --nocapture`, no audio device: the
