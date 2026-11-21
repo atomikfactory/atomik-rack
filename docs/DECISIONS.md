@@ -1208,3 +1208,32 @@ never stopped for being slow).
 parameter pane open while a sampler plugin loads a large patch.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AR. The live interface never waits for a plugin to load, restart or end; offline rendering does
+
+**Question.** After the state captures and the cosmetic calls, three more things still held the interface thread,
+each for up to 10 s: creating a plugin (restoring its saved state and activating it ran in one frame, so a sampler
+restoring a big library froze the app), a restart or an engine restart (every instance deactivated one after the
+other, then activated one after the other, so K slow plugins cost K waits), and removing a device or closing a project
+(the instance was deactivated and its process ended in a blocking drop of up to three and a half seconds).
+
+**Decision.** In the live app the interface thread starts these calls and looks again on a later frame. A creation
+goes through starting, restoring and activating as polled steps with the long load timeout and the sign-of-life
+judgement; a restart re-activates the same way and the device plays dry meanwhile; an engine restart sends every
+deactivation and then every activation without waiting, and a device is a stand-in until its plugin is active; an
+instance that goes away is destroyed for the app at once and deactivated and ended by the next frames, with the
+existing bounds (a process that does not end a second after it was asked is stopped). A plugin in this process
+and everything offline keep the blocking calls: a bounce, an export and a freeze never depend on how long a plugin
+takes, and its event stream never carries a time-dependent entry. The rule is "the live interface never waits for a
+plugin; offline rendering does".
+
+**Rejected.** Running the creation on a thread (a plugin needs the thread it was created on for some calls, and the
+polled requests already exist); waiting for all deactivations together and then all activations together (the
+interface still stands still for the slowest plugin); letting the old instance finish before an undo may create a new
+one (the user would wait for a plugin that was removed on purpose); killing a plugin that is alive but slow to restore
+(only the load timeout and the absence of a sign of life stop one).
+
+**Open.** A sampler that restores for minutes is not yet tried against the real thing; the hand check is a project
+whose sampler holds a large library, opened, restarted by a sample rate change and removed.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

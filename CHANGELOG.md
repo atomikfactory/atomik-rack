@@ -206,6 +206,13 @@ may break APIs and the patch and project formats.
   sends the plugin only the first and the last size. A plugin that answers some requests and stalls on others is
   treated as slow for a few seconds instead of being forgiven by one fast answer, with one warning per episode,
   and a plugin that is alive is no longer stopped for being slow to answer these.
+- Opening a project with heavy plugins, restarting a plugin and removing one no longer freeze the app. Restoring a
+  plugin's saved state and activating it (a sampler loading a large library) used to run in one frame, a restart or
+  an audio restart deactivated and re-activated plugins one after the other, and removing a plugin or closing a
+  project waited for each plugin to finish and its process to end. The app now starts these and looks again on the
+  next frames: the device shows LOADING until its plugin is ready, an audio restart waits for the slowest plugin
+  instead of the sum, and a removed plugin is gone from the project at once while its process ends in the
+  background. A bounce or an export still waits for its plugins, so its result does not change.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

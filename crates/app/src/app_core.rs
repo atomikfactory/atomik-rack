@@ -4811,6 +4811,10 @@ mod plugins_sandbox_tests;
 mod plugins_capture_tests;
 
 #[cfg(test)]
+#[path = "app_core_plugins_polled_tests.rs"]
+mod plugins_polled_tests;
+
+#[cfg(test)]
 #[path = "app_core_plugin_learn_tests.rs"]
 mod plugin_learn_tests;
 

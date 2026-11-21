@@ -403,6 +403,11 @@ impl Shared {
         mb.ended.then_some(Waited::Ended)
     }
 
+    /// True once the child is reaped (see [`Shared::wait_reason`]); never waits.
+    fn finished(&self) -> bool {
+        lock(&self.mailbox).reason.is_some()
+    }
+
     /// Waits until the child is reaped and returns why it ended.
     pub fn wait_reason(&self, timeout: Duration) -> Option<String> {
         let start = now();
@@ -1016,6 +1021,10 @@ pub(crate) struct Link {
     soft_progress: Option<std::time::Instant>,
     /// When the child was asked to end (set once; the drop waits from then on).
     shutdown_at: Option<std::time::Instant>,
+    /// When [`Link::poll_shutdown`] stopped a child that did not end when asked.
+    killed_at: Option<std::time::Instant>,
+    /// [`Link::poll_shutdown`] has waited out the child already: the drop does not wait again.
+    waited_out: bool,
     /// A request sent by [`Link::begin_call`] whose answer [`Link::finish_call`] has not taken.
     pending: bool,
     /// A request sent by [`Link::begin_held_call`] whose answer may take minutes: until
@@ -1123,6 +1132,8 @@ impl Link {
             missed_frame: None,
             soft_progress: None,
             shutdown_at: None,
+            killed_at: None,
+            waited_out: false,
             pending: false,
             held: None,
             vitals: None,
@@ -1268,7 +1279,17 @@ impl Link {
         what: &'static str,
         make: impl FnOnce(u64) -> ToChild,
     ) -> Result<(), BackendError> {
-        self.begin_call(make)?;
+        self.begin_held_call_with(what, make, None)
+    }
+
+    /// [`Link::begin_held_call`] for a request that carries `blob` (a state to restore).
+    pub fn begin_held_call_with(
+        &mut self,
+        what: &'static str,
+        make: impl FnOnce(u64) -> ToChild,
+        blob: Option<&[u8]>,
+    ) -> Result<(), BackendError> {
+        self.begin_call_with(make, blob)?;
         // Taken by `poll_reply` only: a `finish_call` must not mistake it for its own.
         self.pending = false;
         self.held = Some(what);
@@ -1384,6 +1405,14 @@ impl Link {
     /// slowest child, not the sum. Any other call on this link before the finish abandons the
     /// request (its answer is dropped).
     pub fn begin_call(&mut self, make: impl FnOnce(u64) -> ToChild) -> Result<(), BackendError> {
+        self.begin_call_with(make, None)
+    }
+
+    fn begin_call_with(
+        &mut self,
+        make: impl FnOnce(u64) -> ToChild,
+        blob: Option<&[u8]>,
+    ) -> Result<(), BackendError> {
         if let Some(e) = self.busy("a request") {
             return Err(e);
         }
@@ -1394,7 +1423,7 @@ impl Link {
         self.next_id += 1;
         let id = self.next_id;
         self.shared.expect(Expect::Id(id));
-        self.send(&make(id), None)?;
+        self.send(&make(id), blob)?;
         self.pending = true;
         Ok(())
     }
@@ -1705,6 +1734,35 @@ impl Link {
         self.shutdown_at = Some(now());
     }
 
+    /// Moves the end of the child on without waiting: asks it to end when nobody did, and says
+    /// true once it has ended. A child that has not ended [`SHUTDOWN_GRACE`] after it was asked
+    /// is stopped, and one that outlives that by the grace the drop gives it counts as done
+    /// too: the drop that follows then does not wait for it again. The app calls it once per
+    /// frame for the instances that are leaving.
+    pub fn poll_shutdown(&mut self) -> bool {
+        self.begin_shutdown();
+        if self.shared.finished() || self.waited_out {
+            return true;
+        }
+        let at = now();
+        let asked = self.shutdown_at.unwrap_or(at);
+        match self.killed_at {
+            None if at.saturating_duration_since(asked) >= SHUTDOWN_GRACE => {
+                self.shared
+                    .kill("the plugin process did not end when asked and was stopped".to_string());
+                self.killed_at = Some(at);
+            }
+            Some(killed)
+                if at.saturating_duration_since(killed) >= EXIT_GRACE + STDERR_GRACE * 2 =>
+            {
+                self.waited_out = true;
+                return true;
+            }
+            _ => {}
+        }
+        false
+    }
+
     /// The error for a reply of the wrong kind: the child breaks the protocol.
     pub fn unexpected(&self, what: &str, got: &FromChild) -> BackendError {
         let text = format!("the plugin process answered {what} with {got:?}");
@@ -1713,23 +1771,33 @@ impl Link {
     }
 }
 
-impl Drop for Link {
-    /// Asks the child to end (unless that was done already), gives it what is left of a
-    /// second, then kills it; leaves no thread behind that can end.
-    fn drop(&mut self) {
+impl Link {
+    /// Asks the child to end (unless that was done already) and waits for it: what is left of
+    /// [`SHUTDOWN_GRACE`], then the grace after it was stopped. A bounce ends its children
+    /// this way, so that what it renders never depends on how a frame was paced.
+    pub fn wait_for_end(&mut self) {
         self.begin_shutdown();
         let waited = self
             .shutdown_at
             .map_or(Duration::ZERO, |t| now().saturating_duration_since(t));
-        if self
-            .shared
-            .wait_reason(SHUTDOWN_GRACE.saturating_sub(waited))
-            .is_none()
-        {
+        let wait = if self.waited_out {
+            Duration::ZERO
+        } else {
+            SHUTDOWN_GRACE.saturating_sub(waited)
+        };
+        if self.shared.wait_reason(wait).is_none() && !self.waited_out {
             self.shared
                 .kill("the plugin process did not end when asked and was stopped".to_string());
             let _ = self.shared.wait_reason(EXIT_GRACE + STDERR_GRACE * 2);
         }
+    }
+}
+
+impl Drop for Link {
+    /// Asks the child to end (unless that was done already), gives it what is left of a
+    /// second, then kills it; leaves no thread behind that can end.
+    fn drop(&mut self) {
+        self.wait_for_end();
         // Only a finished thread is joined: a stuck one (a grandchild holding the pipe) must
         // not stall the caller.
         let finished = lock(&self.shared.mailbox).reason.is_some();

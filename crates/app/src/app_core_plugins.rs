@@ -1013,16 +1013,27 @@ impl<S: EngineSink> AppCore<S> {
                 return Some((standin, descriptor));
             }
             if usable && same {
-                self.plugins.offline.remove(key);
-                match self.plugins.host.manager().reattach(id, sample_rate) {
-                    Ok(handle) => {
+                match self.plugins.host.manager().begin_reattach(id, sample_rate) {
+                    Ok(Some(handle)) => {
+                        self.plugins.offline.remove(key);
                         self.adopt_descriptor(&type_id, handle.descriptor);
                         self.plugins
                             .live_desc
                             .insert(key.clone(), handle.descriptor);
                         return Some((Box::new(handle.device), handle.descriptor));
                     }
+                    Ok(None) => {
+                        // The plugin is still deactivating or activating (a busy one: the
+                        // restart does not wait for it): the stand-in plays until it is active
+                        // again, and `adopt_offline` swaps its device in.
+                        self.plugins.offline.insert(key.clone());
+                        let factory = self.registry.get(&type_id)?;
+                        let descriptor = factory.descriptor;
+                        let standin = self.registry.create(&type_id)?;
+                        return Some((standin, descriptor));
+                    }
                     Err(e) => {
+                        self.plugins.offline.remove(key);
                         self.plugins.failed.insert(key.clone(), e.to_string());
                     }
                 }
@@ -1333,9 +1344,15 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.paint_first = on;
     }
 
-    /// True when no instance is waiting to be created.
+    /// True when no instance is waiting to be created or to be given its device again after an
+    /// engine restart.
     pub fn plugins_ready(&self) -> bool {
-        self.plugins.pending.is_empty()
+        self.plugins.pending.is_empty() && !self.reattaching()
+    }
+
+    /// An engine restart left instances behind stand-ins until their plugins are active again.
+    fn reattaching(&self) -> bool {
+        self.sink.has_engine() && !self.plugins.offline.is_empty()
     }
 
     /// Runs frames until every pending instance is created (tests and scripts), for at most
@@ -1347,9 +1364,9 @@ impl<S: EngineSink> AppCore<S> {
             reason = "a wall-clock bound for tests and scripts; it never reaches the engine"
         )]
         let started = std::time::Instant::now();
-        while !self.plugins.pending.is_empty() {
+        while !self.plugins_ready() {
             if started.elapsed() >= WAIT_PLUGINS_LIMIT {
-                let left = self.plugins.pending.len();
+                let left = self.plugins.pending.len() + self.plugins.offline.len();
                 log::warn!(
                     "{left} plugin(s) were not created within {} s; loading goes on in the background",
                     WAIT_PLUGINS_LIMIT.as_secs()
@@ -1857,7 +1874,8 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    /// Attaches the instances created while no engine ran, now that one exists.
+    /// Attaches the instances created while no engine ran, now that one exists, and the ones an
+    /// engine restart left behind stand-ins while their plugins deactivated and activated.
     fn adopt_offline(&mut self) {
         if self.plugins.offline.is_empty() || !self.sink.has_engine() {
             return;
@@ -1868,14 +1886,16 @@ impl<S: EngineSink> AppCore<S> {
                 self.plugins.offline.remove(&key);
                 continue;
             };
-            match self.plugins.host.manager().reattach(id, sample_rate) {
-                Ok(handle) => {
+            match self.plugins.host.manager().begin_reattach(id, sample_rate) {
+                Ok(Some(handle)) => {
                     self.plugins.offline.remove(&key);
                     self.plugins
                         .live_desc
                         .insert(key.clone(), handle.descriptor);
                     self.swap_in_device(&key, Box::new(handle.device));
                 }
+                // The plugin is not active yet: next frame.
+                Ok(None) => {}
                 // The reaper has not parked it yet: next frame.
                 Err(atomik_plugin_host::ManagerError::NotParked(_)) => {}
                 Err(e) => {
@@ -2909,7 +2929,8 @@ impl<S: EngineSink> AppCore<S> {
                 crashed: self.plugins.crashed.get(key).cloned(),
                 not_responding: self.plugins.host.manager_ref().not_responding(*id),
                 quarantined: None,
-                loading: false,
+                // After an engine restart the device is a stand-in until the plugin is active.
+                loading: self.sink.has_engine() && self.plugins.offline.contains(key),
                 waiting,
             },
             None if self.plugins.pending.contains(key) => PluginDeviceStatus {

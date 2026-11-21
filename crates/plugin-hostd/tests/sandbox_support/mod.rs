@@ -255,12 +255,14 @@ impl Sandbox {
     }
 
     /// Waits until `n` children are alive (they end asynchronously).
-    pub fn wait_children(&self, n: usize, within: Duration) -> bool {
+    pub fn wait_children(&mut self, n: usize, within: Duration) -> bool {
         let limit = std::time::Instant::now() + within;
         while self.backend.live_children() != n {
             if std::time::Instant::now() >= limit {
                 return false;
             }
+            // The live app polls every frame: an instance that left is ended across polls.
+            self.manager.poll();
             std::thread::sleep(Duration::from_millis(5));
         }
         true
