@@ -325,6 +325,12 @@ may break APIs and the patch and project formats.
   to finish in memory, or storing a lap fails for any other reason, the recording ends with a notice that names the
   files, the files stay in the project's `Audio` folder, and they come back as a recovered take the next time
   Atomik Rack starts; the app keeps running. A take that finishes is stored exactly as before.
+- **A recording that cannot be written stops at once, and a nearly full disk is announced.** When writing a take
+  fails (the disk is full, or the system reports another error) the recording now ends in the same frame, as if
+  stop had been pressed, with one notice that gives the reason and names the files that were kept for recovery; the
+  transport keeps running. Before, the app went on showing a recording that was no longer being written. When an
+  audio take starts with less room on the disk than ten minutes of it need (twice, for the copy stored at the
+  end), a notice says so; the take still starts.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

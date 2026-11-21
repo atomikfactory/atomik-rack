@@ -56,6 +56,13 @@ keeps out of the program. Nothing is sent anywhere; the value is read and compar
 [DECISIONS.md](DECISIONS.md#w-how-the-interface-is-translated); `cargo deny check` passes with the licences the policy
 already allows.
 
+The free space of a disk (`fs4` 1.1, `MIT OR Apache-2.0`, built on `rustix` on Unix and `windows-sys` on Windows,
+both already in the lock file) was added for the warning shown when an audio take starts on a nearly full disk. The
+standard library cannot say how much room a volume has, no crate of the workspace could, and reading it by hand means
+a platform call (`statvfs`, `GetDiskFreeSpaceExW`) that the workspace's `unsafe` policy keeps out of the program. The
+default features are all it needs; nothing is sent anywhere. The choice is in
+[DECISIONS.md](DECISIONS.md#ay-the-free-space-warning-before-a-take-is-a-floor-of-ten-minutes-of-audio-twice-over-and-only-a-warning).
+
 The hand tracking crate (`atomik-vision`) added three groups of dependencies; the choices are in
 [DECISIONS.md](DECISIONS.md#ad-webcam-hand-tracking-the-camera-the-models-privacy-and-the-gesture-rules).
 

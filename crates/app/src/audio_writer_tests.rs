@@ -422,6 +422,7 @@ fn a_take_too_long_to_finish_in_memory_ends_with_a_notice_and_keeps_its_files() 
     let partial = cfgw.tracks[0].path.clone();
     let faults = Faults {
         lap_limit_samples: Some(1_000),
+        fail_after_frames: None,
     };
     let (ctl, _) = spawn_with(tap, cfgw, rig.tx.clone(), faults).unwrap();
     render(&mut rig.engine, 0, 4_096, 64);
@@ -459,6 +460,7 @@ fn a_take_under_the_limit_is_stored_as_usual() {
     let partial = cfgw.tracks[0].path.clone();
     let faults = Faults {
         lap_limit_samples: Some(1_000_000),
+        fail_after_frames: None,
     };
     let (ctl, _) = spawn_with(tap, cfgw, rig.tx.clone(), faults).unwrap();
     render(&mut rig.engine, 0, 4_096, 64);
@@ -467,4 +469,56 @@ fn a_take_under_the_limit_is_stored_as_usual() {
     assert_eq!(result.laps.len(), 1);
     assert_eq!(bits(&memory(&result.laps[0].asset)[0]), expect(0, 0, 4_096));
     assert!(!partial.exists(), "stored takes still delete their files");
+}
+
+#[test]
+fn a_write_error_sets_the_flag_names_the_reason_and_keeps_the_files() {
+    let mut rig = Rig::new("diskfull");
+    let tap = rig.handle.record_tap(&[0, 1], 16_384).unwrap();
+    let mut cfgw = rig.config(&[("a", TrackInput::Stereo(0, 1))], 23, u64::MAX);
+    orphan_named(&mut cfgw, &rig);
+    let partial = cfgw.tracks[0].path.clone();
+    let faults = Faults {
+        lap_limit_samples: None,
+        fail_after_frames: Some(2_000),
+    };
+    let (_ctl, _, failed) = spawn_watched(tap, cfgw, rig.tx.clone(), faults).unwrap();
+    assert!(
+        !failed.load(Ordering::Acquire),
+        "clear until something fails"
+    );
+    render(&mut rig.engine, 0, 8_192, 64);
+    // No finish is sent: the writer ends by itself, as soon as it cannot write.
+    let message = match rig.result() {
+        Ok(_) => panic!("a take that cannot be written has no laps"),
+        Err(m) => m,
+    };
+    assert!(
+        failed.load(Ordering::Acquire),
+        "set before the result is sent"
+    );
+    assert!(message.contains("the disk is full"), "{message}");
+    assert!(message.contains("rec-4242-23-0.wav"), "{message}");
+    let reader = WavStreamReader::open(&partial).expect("a valid WAV");
+    assert!(
+        reader.frames() >= 2_000,
+        "what was written stays: {}",
+        reader.frames()
+    );
+    assert!(rig.rx.try_recv().is_err(), "one result, one notice");
+    // The next take has a flag of its own, clear.
+    let tap = rig.handle.record_tap(&[0], 8_192).unwrap();
+    let next = rig.config(&[("b", TrackInput::Mono(0))], 24, u64::MAX);
+    let (ctl, _, failed_next) =
+        spawn_watched(tap, next, rig.tx.clone(), Faults::default()).unwrap();
+    assert!(!failed_next.load(Ordering::Acquire));
+    ctl.send(Ctl::Cancel).unwrap();
+}
+
+#[test]
+fn another_write_error_gives_its_own_text() {
+    let e = hound::Error::IoError(std::io::Error::other("the device went away"));
+    assert!(write_reason(&e).contains("the device went away"));
+    let full = hound::Error::IoError(std::io::ErrorKind::StorageFull.into());
+    assert_eq!(write_reason(&full), "the disk is full");
 }

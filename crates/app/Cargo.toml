@@ -64,6 +64,8 @@ rfd.workspace = true
 arboard.workspace = true
 # The language of the operating system, for the System choice of the language setting.
 sys-locale.workspace = true
+# The free space of the volume a recording is written to, checked when a take starts.
+fs4.workspace = true
 pollster.workspace = true
 png.workspace = true
 serde.workspace = true

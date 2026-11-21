@@ -1467,3 +1467,26 @@ while after a bad block (the plugin would miss the notes and parameters that fol
 a preset loads.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AY. The free-space warning before a take is a floor of ten minutes of audio, twice over, and only a warning
+
+**Decision.** When an audio take starts, the app asks the system how much room is left on the volume of the
+project's `Audio` folder and shows a notice when it is less than ten minutes of the take's own audio, twice over
+(`record_space::FREE_SPACE_MINUTES`; 460 MB for one stereo track at 48 kHz). The take starts anyway. The twice is
+the stored copy: when a take ends, each lap is written again under its content hash before the in-progress file is
+deleted. A take whose writer cannot write stops at once, keeps its files for the next start to recover, and says why;
+the transport keeps running.
+
+**Why.** Ten minutes is a song-length take and is a small part of any disk the app is installed on, so the warning
+is rare and means something; a longer take on a nearly full disk is exactly the case the notice is for. A refusal
+would be wrong because the number is an estimate (quotas, other programs writing, a volume that cannot say), and
+because a short take on a small disk is a normal thing to do.
+
+**Limits.** The check is made when the take starts, not when a track is armed, because that is where the folder is
+chosen. A disk that fills up during a take is caught by the writer's error, not by the estimate. The system call
+comes from the `fs4` crate (see [DEPENDENCIES.md](DEPENDENCIES.md)).
+
+**Rejected.** Refusing to record below the floor; checking on every arm (the folder is not chosen yet, and the
+notice would repeat); a floor in bytes whatever the sample rate and track count.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

@@ -2016,6 +2016,7 @@ impl<S: EngineSink> AppCore<S> {
             self.playing = state.playing;
         }
         self.feed_take(&state);
+        self.stop_failed_audio_take();
         self.feed_listen(&state);
         self.feed_player_preview();
         self.show_transport();
