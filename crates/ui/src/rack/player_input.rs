@@ -20,7 +20,7 @@ impl RackView {
     /// The player half of [`RackView::set_device_meter_values`]: the values are rounded (the
     /// panels draw whole numbers), the panel is re-recorded only when a rounded value changed
     /// and a repaint is requested only when the panel is on screen.
-    pub(super) fn player_meter_feed(&mut self, i: usize, values: &[f32]) {
+    pub(super) fn player_meter_feed(&mut self, i: usize, values: &[f32]) -> bool {
         let q: Vec<f32> = values
             .iter()
             .take(MAX_PLAYER_METERS)
@@ -33,7 +33,7 @@ impl RackView {
             })
             .collect();
         if q == self.devices[i].meters {
-            return;
+            return false;
         }
         self.devices[i].meters = q;
         self.devices[i].bump_live();
@@ -45,6 +45,7 @@ impl RackView {
         if self.flip == Flip::Front && !d.folded && d.y + d.height >= top && d.y <= bottom {
             self.repaint = true;
         }
+        true
     }
 
     // ------------------------------------------------------------------ geometry and state for hosts and tests
