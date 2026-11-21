@@ -326,3 +326,167 @@ fn a_plugin_that_never_answers_is_never_asked_to_be_waited_for_more_than_the_all
     }
     assert!(!r.instance.is_lost(), "asking stops nothing by itself");
 }
+
+/// A fake that holds the list of presets and the param values until the test releases them.
+fn held_lists() -> FakeOptions {
+    FakeOptions::default().script(|req, _| match req {
+        ToChild::ListPresets { id } => Some(Action::Blocked(vec![(
+            FromChild::Presets {
+                id: *id,
+                presets: vec![atomik_plugin_ipc::WirePreset {
+                    id: "w".into(),
+                    name: "Warm".into(),
+                    group: "Factory".into(),
+                }],
+            },
+            None,
+        )])),
+        ToChild::ReadParams { id } => Some(Action::Blocked(vec![(
+            FromChild::ParamValues {
+                id: *id,
+                values: vec![(4, 0.25)],
+            },
+            None,
+        )])),
+        _ => None,
+    })
+}
+
+#[test]
+fn the_list_of_presets_is_asked_once_and_arrives_in_a_later_frame() {
+    let mut r = rig_with(held_lists(), test_timeouts(), SoftBudget::default());
+    let budget = r.instance.budget();
+    budget.begin_frame();
+    assert_eq!(r.instance.begin_list_presets().ok(), Some(None));
+    // The plugin has not answered: asking again sends nothing and waits for nothing.
+    assert_eq!(r.instance.begin_list_presets().ok(), Some(None));
+    assert_eq!(budget.waits(), 0, "nothing was waited for");
+    let asked = |r: &Rig| requests_of(r, |q| matches!(q, ToChild::ListPresets { .. }));
+    frames_until(&mut r, "the request", |r| asked(r) >= 1);
+    for _ in 0..5 {
+        r.instance.poll();
+    }
+    assert_eq!(asked(&r), 1, "one request for two asks");
+    r.fake.ctl.release();
+    let mut got = Vec::new();
+    frames_until(&mut r, "the list", |r| {
+        got.extend(r.instance.take_soft_answers());
+        !got.is_empty()
+    });
+    assert_eq!(
+        got,
+        vec![SoftAnswer::Presets(Some(vec![
+            atomik_plugin_host::PresetInfo {
+                id: "w".into(),
+                name: "Warm".into(),
+                group: "Factory".into(),
+            }
+        ]))]
+    );
+    assert!(!r.instance.is_lost() && !r.fake.ctl.was_killed());
+}
+
+#[test]
+fn a_list_of_presets_the_plugin_refused_is_told_as_a_failure_not_as_an_empty_list() {
+    let mut r = rig_with(
+        FakeOptions::default().script(|req, _| match req {
+            ToChild::ListPresets { id } => Some(Action::Blocked(vec![(
+                FromChild::Err {
+                    id: *id,
+                    kind: WireErrorKind::Failed,
+                    text: "cannot read the folders".to_string(),
+                },
+                None,
+            )])),
+            _ => None,
+        }),
+        test_timeouts(),
+        SoftBudget::default(),
+    );
+    r.instance.budget().begin_frame();
+    assert_eq!(r.instance.begin_list_presets().ok(), Some(None));
+    r.fake.ctl.release();
+    let mut got = Vec::new();
+    frames_until(&mut r, "the failure", |r| {
+        got.extend(r.instance.take_soft_answers());
+        !got.is_empty()
+    });
+    assert_eq!(got, vec![SoftAnswer::Presets(None)]);
+    assert!(!r.instance.is_lost());
+}
+
+#[test]
+fn the_param_values_come_later_and_a_second_ask_does_not_send_a_second_request() {
+    let mut r = rig_with(held_lists(), test_timeouts(), SoftBudget::default());
+    r.instance.budget().begin_frame();
+    assert_eq!(r.instance.begin_read_params().ok(), Some(None));
+    assert_eq!(r.instance.begin_read_params().ok(), Some(None));
+    let asked = |r: &Rig| requests_of(r, |q| matches!(q, ToChild::ReadParams { .. }));
+    frames_until(&mut r, "the request", |r| asked(r) >= 1);
+    for _ in 0..5 {
+        r.instance.poll();
+    }
+    assert_eq!(asked(&r), 1, "one request for two asks");
+    r.fake.ctl.release();
+    let mut got = Vec::new();
+    frames_until(&mut r, "the values", |r| {
+        got.extend(r.instance.take_soft_answers());
+        !got.is_empty()
+    });
+    assert_eq!(got, vec![SoftAnswer::Params(Some(vec![(4, 0.25)]))]);
+}
+
+#[test]
+fn a_preset_load_is_a_polled_step_that_ends_when_the_plugin_has_answered() {
+    let mut r = rig_with(
+        FakeOptions::default().script(|req, _| match req {
+            ToChild::LoadPreset { id, .. } => {
+                Some(Action::Blocked(vec![(FromChild::Ok { id: *id }, None)]))
+            }
+            _ => None,
+        }),
+        test_timeouts(),
+        SoftBudget::default(),
+    );
+    assert!(matches!(r.instance.begin_load_preset("w"), Ok(false)));
+    assert!(r.instance.poll_load_preset().is_none(), "not answered yet");
+    // Everything else fails at once while the load is out: nothing waits behind it.
+    assert!(r.instance.capture_state().is_err());
+    r.fake.ctl.release();
+    let mut done = None;
+    frames_until(&mut r, "the load", |r| {
+        done = r.instance.poll_load_preset();
+        done.is_some()
+    });
+    assert!(matches!(done, Some(Ok(()))), "{done:?}");
+    assert!(r.instance.poll_load_preset().is_some(), "and it stays done");
+    assert!(!r.instance.is_lost() && !r.fake.ctl.was_killed());
+}
+
+#[test]
+fn a_preset_load_the_plugin_refuses_ends_with_its_error() {
+    let mut r = rig_with(
+        FakeOptions::default().script(|req, _| match req {
+            ToChild::LoadPreset { id, .. } => Some(Action::Blocked(vec![(
+                FromChild::Err {
+                    id: *id,
+                    kind: WireErrorKind::Failed,
+                    text: "no preset `w`".to_string(),
+                },
+                None,
+            )])),
+            _ => None,
+        }),
+        test_timeouts(),
+        SoftBudget::default(),
+    );
+    assert!(matches!(r.instance.begin_load_preset("w"), Ok(false)));
+    r.fake.ctl.release();
+    let mut done = None;
+    frames_until(&mut r, "the refusal", |r| {
+        done = r.instance.poll_load_preset();
+        done.is_some()
+    });
+    assert!(matches!(done, Some(Err(_))), "{done:?}");
+    assert!(!r.instance.is_lost());
+}

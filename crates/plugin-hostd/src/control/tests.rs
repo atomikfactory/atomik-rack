@@ -64,7 +64,12 @@ struct FakeBackend {
     fail_open: bool,
     /// The host handle the last instance was given: the test posts through it.
     host: Arc<Mutex<Option<HostHandle>>>,
+    /// The gate the next instance's preset walk waits for (see `FakeInstance::preset_gate`).
+    gate: Arc<Mutex<Option<Gate>>>,
 }
+
+/// A gate a walk of preset folders waits for: open when the flag is true.
+type Gate = Arc<(Mutex<bool>, std::sync::Condvar)>;
 
 impl PluginBackend for FakeBackend {
     fn format(&self) -> PluginFormat {
@@ -87,6 +92,7 @@ impl PluginBackend for FakeBackend {
         i.host = Some(host);
         i.on_poll = self.on_poll.clone();
         i.fail_open = self.fail_open;
+        i.preset_gate = self.gate.lock().unwrap().clone();
         Ok(Box::new(i))
     }
 }
@@ -119,17 +125,24 @@ struct Rig {
     windows: FakeWindows,
     log: Log,
     host: Arc<Mutex<Option<HostHandle>>>,
+    gate: Arc<Mutex<Option<Gate>>>,
 }
 
-fn rig_with(on_poll: Vec<PluginMessage>, fail_open: bool, out: Option<Box<dyn Write>>) -> Rig {
+fn rig_with(
+    on_poll: Vec<PluginMessage>,
+    fail_open: bool,
+    out: Option<Box<dyn Write + Send>>,
+) -> Rig {
     let log = log();
     let sink = Sink::default();
     let host = Arc::new(Mutex::new(None));
+    let gate = Arc::new(Mutex::new(None));
     let backend = FakeBackend {
         log: Rc::clone(&log),
         on_poll,
         fail_open,
         host: Arc::clone(&host),
+        gate: Arc::clone(&gate),
     };
     let out = out.unwrap_or_else(|| Box::new(sink.clone()));
     let mut control = Control::new(&args(), Box::new(backend), audio(), out);
@@ -149,6 +162,7 @@ fn rig_with(on_poll: Vec<PluginMessage>, fail_open: bool, out: Option<Box<dyn Wr
         windows,
         log,
         host,
+        gate,
     }
 }
 
@@ -581,4 +595,57 @@ fn flush_before_instantiate_is_an_error() {
         r.sink.frames().as_slice(),
         [FromChild::Err { id: 1, .. }]
     ));
+}
+
+#[test]
+fn the_preset_walk_runs_on_a_thread_of_its_own_while_the_main_thread_goes_on() {
+    let r = rig();
+    let gate: Gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    *r.gate.lock().unwrap() = Some(Arc::clone(&gate));
+    let mut r = r.instantiated();
+    // The walk is held: it cannot finish until the test opens the gate.
+    assert_eq!(r.send(ToChild::ListPresets { id: 5 }), None);
+    assert!(
+        r.sink.frames().is_empty(),
+        "no answer is written by the main thread, which did not walk"
+    );
+    // The main thread answers the next request while the walk is still going.
+    r.send(ToChild::LatencyFrames { id: 6 });
+    assert_eq!(
+        r.sink.frames(),
+        vec![FromChild::Latency { id: 6, frames: 0 }]
+    );
+    {
+        let (open, cv) = &*gate;
+        *open.lock().unwrap() = true;
+        cv.notify_all();
+    }
+    // The walk's thread writes its own answer; the bound is generous (a slow runner).
+    let mut got = Vec::new();
+    for _ in 0..3000 {
+        got.extend(r.sink.frames());
+        if !got.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(got.len(), 1, "{got:?}");
+    match &got[0] {
+        FromChild::Presets { id, presets } => {
+            assert_eq!(*id, 5);
+            assert_eq!(presets.len(), 1);
+            assert_eq!(presets[0].id, "walked", "the list came from the walk");
+        }
+        other => panic!("not the list: {other:?}"),
+    }
+}
+
+#[test]
+fn a_plugin_whose_presets_need_it_is_asked_on_the_main_thread_as_before() {
+    let mut r = rig().instantiated();
+    assert_eq!(r.send(ToChild::ListPresets { id: 5 }), None);
+    match r.sink.frames().as_slice() {
+        [FromChild::Presets { id: 5, presets }] => assert_eq!(presets[0].id, "inline"),
+        other => panic!("{other:?}"),
+    }
 }

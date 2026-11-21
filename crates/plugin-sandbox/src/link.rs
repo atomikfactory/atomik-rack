@@ -164,12 +164,18 @@ pub(crate) enum SoftKind {
     TakeLayoutChanged,
     /// Closing the editor.
     CloseGui,
+    /// The presets the plugin offers.
+    ListPresets,
+    /// The param values the plugin holds.
+    ReadParams,
 }
 
 impl SoftKind {
     /// The name of the call, in logs and errors.
     pub(crate) fn name(self) -> &'static str {
         match self {
+            Self::ListPresets => "ListPresets",
+            Self::ReadParams => "ReadParams",
             Self::ParamText { .. } => "ParamText",
             Self::ResizeGui { .. } => "ResizeGui",
             Self::DefaultPins => "DefaultPins",

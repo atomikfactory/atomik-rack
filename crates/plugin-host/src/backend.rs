@@ -423,6 +423,10 @@ pub struct PresetInfo {
     pub group: String,
 }
 
+/// What lists a plugin's presets from files, on any thread (see
+/// [`PluginInstance::preset_lister`]).
+pub type PresetLister = Box<dyn FnOnce() -> Vec<PresetInfo> + Send>;
+
 /// The main-thread half of one plugin. Every method is `[main-thread]`.
 pub trait PluginInstance {
     /// The plugin's layout.
@@ -527,6 +531,45 @@ pub trait PluginInstance {
     /// values (a preset or a patch change). Empty when the plugin cannot be asked.
     fn read_params(&mut self) -> Vec<(u32, f64)> {
         Vec::new()
+    }
+    /// A function that lists the presets without the plugin, to run on another thread (the folder
+    /// walk of a format that keeps presets as files): the plugin's main thread may be busy while
+    /// the files are listed. `None` when listing needs the plugin itself.
+    fn preset_lister(&mut self) -> Option<PresetLister> {
+        None
+    }
+    /// [`PluginInstance::list_presets`] for the live app, which does not wait for a plugin that
+    /// is busy: `Some(list)` when the answer was there at once (a plugin in this process), `None`
+    /// when it comes later as [`SoftAnswer::Presets`] through
+    /// [`PluginInstance::take_soft_answers`].
+    ///
+    /// # Errors
+    /// The link to the plugin is lost, stuck on an earlier call or busy with a held one.
+    fn begin_list_presets(&mut self) -> Result<Option<Vec<PresetInfo>>, BackendError> {
+        Ok(Some(self.list_presets()))
+    }
+    /// [`PluginInstance::read_params`] for the live app, in the way of
+    /// [`PluginInstance::begin_list_presets`]: the values come later as [`SoftAnswer::Params`].
+    ///
+    /// # Errors
+    /// The link to the plugin is lost, stuck on an earlier call or busy with a held one.
+    fn begin_read_params(&mut self) -> Result<Option<Vec<(u32, f64)>>, BackendError> {
+        Ok(Some(self.read_params()))
+    }
+    /// [`PluginInstance::load_preset`] for the live app, which does not wait for a plugin that is
+    /// loading (a sampler reading its library): true when the preset is loaded, false when it is
+    /// being loaded and [`PluginInstance::poll_load_preset`] says when it is done. Offline
+    /// renders keep the waiting call.
+    ///
+    /// # Errors
+    /// What [`PluginInstance::load_preset`] fails with.
+    fn begin_load_preset(&mut self, id: &str) -> Result<bool, BackendError> {
+        self.load_preset(id).map(|()| true)
+    }
+    /// The outcome of the load that [`PluginInstance::begin_load_preset`] started, once; `None`
+    /// while the plugin has not answered. Never waits.
+    fn poll_load_preset(&mut self) -> Option<Result<(), BackendError>> {
+        Some(Ok(()))
     }
     /// The display text of a param value, from the plugin. A plugin in another process that
     /// does not answer at once gives `None` and the text comes later as a
@@ -792,9 +835,36 @@ pub struct NullStats {
     /// The null instances answer no cosmetic request while this is set (see
     /// [`NullStats::set_soft_busy`]).
     soft_busy: AtomicBool,
+    /// Polls a preset load of a null instance takes (see [`NullStats::set_preset_delay`]).
+    preset_delay: AtomicUsize,
+    /// The next list of presets a busy null instance answers fails (see
+    /// [`NullStats::fail_next_preset_list`]).
+    fail_preset_list: AtomicBool,
+    /// Preset lists asked for and param reads asked for through the live-app calls.
+    preset_lists: AtomicUsize,
+    param_reads: AtomicUsize,
 }
 
 impl NullStats {
+    /// Makes a preset load take `polls` polls of the instance (a sampler reading its library):
+    /// [`PluginInstance::begin_load_preset`] answers "not yet" and
+    /// [`PluginInstance::poll_load_preset`] says when it is done.
+    pub fn set_preset_delay(&self, polls: usize) {
+        self.preset_delay.store(polls, Ordering::Relaxed);
+    }
+    /// Makes the next preset list that a busy instance (see [`NullStats::set_soft_busy`])
+    /// answers a failed one.
+    pub fn fail_next_preset_list(&self) {
+        self.fail_preset_list.store(true, Ordering::Relaxed);
+    }
+    /// How many times the presets were asked for with [`PluginInstance::begin_list_presets`].
+    pub fn preset_lists(&self) -> usize {
+        self.preset_lists.load(Ordering::Relaxed)
+    }
+    /// How many times the params were asked for with [`PluginInstance::begin_read_params`].
+    pub fn param_reads(&self) -> usize {
+        self.param_reads.load(Ordering::Relaxed)
+    }
     /// Makes a restart's deactivation take `polls` polls of the instance (a plugin that is busy
     /// but alive): [`PluginInstance::begin_deactivate`] answers "not yet" and
     /// [`PluginInstance::poll_deactivate`] says when it is done.
@@ -1052,6 +1122,9 @@ impl PluginBackend for NullBackend {
             ending: None,
             texts_asked: Vec::new(),
             resize_asked: None,
+            presets_asked: false,
+            params_asked: false,
+            loading: None,
         }))
     }
 
@@ -1117,6 +1190,12 @@ struct NullInstance {
     texts_asked: Vec<(u32, f64)>,
     /// The latest size asked for while the instance was busy.
     resize_asked: Option<(u32, u32)>,
+    /// The presets were asked for while the instance was busy.
+    presets_asked: bool,
+    /// The param values were asked for while the instance was busy.
+    params_asked: bool,
+    /// A slow preset load: the polls left and what it ends with.
+    loading: Option<(usize, Result<(), BackendError>)>,
 }
 
 impl Drop for NullInstance {
@@ -1389,6 +1468,47 @@ impl PluginInstance for NullInstance {
             .collect()
     }
 
+    fn begin_list_presets(&mut self) -> Result<Option<Vec<PresetInfo>>, BackendError> {
+        self.stuck_error("ListPresets")?;
+        self.stats.preset_lists.fetch_add(1, Ordering::Relaxed);
+        if self.stats.soft_busy.load(Ordering::Relaxed) {
+            self.presets_asked = true;
+            return Ok(None);
+        }
+        Ok(Some(self.list_presets()))
+    }
+
+    fn begin_read_params(&mut self) -> Result<Option<Vec<(u32, f64)>>, BackendError> {
+        self.stuck_error("ReadParams")?;
+        self.stats.param_reads.fetch_add(1, Ordering::Relaxed);
+        if self.stats.soft_busy.load(Ordering::Relaxed) {
+            self.params_asked = true;
+            return Ok(None);
+        }
+        Ok(Some(self.read_params()))
+    }
+
+    fn begin_load_preset(&mut self, id: &str) -> Result<bool, BackendError> {
+        let done = self.load_preset(id);
+        let polls = self.stats.preset_delay.load(Ordering::Relaxed);
+        if polls == 0 {
+            return done.map(|()| true);
+        }
+        self.loading = Some((polls, done));
+        Ok(false)
+    }
+
+    fn poll_load_preset(&mut self) -> Option<Result<(), BackendError>> {
+        let Some((left, done)) = self.loading.take() else {
+            return Some(Ok(()));
+        };
+        if left > 1 {
+            self.loading = Some((left - 1, done));
+            return None;
+        }
+        Some(done)
+    }
+
     fn param_text(&mut self, id: u32, plain: f64) -> Option<String> {
         if self.stats.soft_busy.load(Ordering::Relaxed) {
             if !self.texts_asked.contains(&(id, plain)) {
@@ -1424,6 +1544,13 @@ impl PluginInstance for NullInstance {
                 text: format!("{plain}"),
             })
             .collect();
+        if std::mem::take(&mut self.presets_asked) {
+            let failed = self.stats.fail_preset_list.swap(false, Ordering::Relaxed);
+            out.push(SoftAnswer::Presets((!failed).then(|| self.list_presets())));
+        }
+        if std::mem::take(&mut self.params_asked) {
+            out.push(SoftAnswer::Params(Some(self.read_params())));
+        }
         if let Some((w, h)) = self.resize_asked.take() {
             out.push(SoftAnswer::GuiSized {
                 asked: (w, h),

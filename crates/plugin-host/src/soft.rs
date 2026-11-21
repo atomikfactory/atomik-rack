@@ -7,6 +7,7 @@
 //! never waits for it for long: [`SoftBudget`] is the one allowance a frame has for all instances
 //! together, and an answer that is not there in time is delivered later as a [`SoftAnswer`].
 
+use crate::backend::PresetInfo;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -109,6 +110,12 @@ pub enum SoftAnswer {
     },
     /// The param ids a panel should pin by default.
     DefaultPins(Vec<u32>),
+    /// The presets the plugin offers, asked for with
+    /// [`crate::PluginInstance::begin_list_presets`] (`None`: the plugin did not list them).
+    Presets(Option<Vec<PresetInfo>>),
+    /// The param values the plugin holds, asked for with
+    /// [`crate::PluginInstance::begin_read_params`] (`None`: the plugin did not say).
+    Params(Option<Vec<(u32, f64)>>),
 }
 
 #[cfg(test)]

@@ -1171,6 +1171,59 @@ impl PluginManager {
             .unwrap_or_default()
     }
 
+    /// Asks for the presets the plugin offers without waiting (the live app): `Some(list)` when
+    /// the answer was there at once, `None` when it arrives later as [`SoftAnswer::Presets`]
+    /// through [`PluginManager::take_soft_answers`].
+    ///
+    /// # Errors
+    /// An unknown instance, or a plugin that is lost, stuck or busy with a held call.
+    pub fn request_presets(
+        &mut self,
+        id: InstanceId,
+    ) -> Result<Option<Vec<crate::PresetInfo>>, ManagerError> {
+        assert_main_thread("PluginManager::request_presets");
+        Ok(self.get(id)?.instance.begin_list_presets()?)
+    }
+
+    /// Asks for the param values the plugin holds without waiting, in the way of
+    /// [`PluginManager::request_presets`] (the answer is a [`SoftAnswer::Params`]).
+    ///
+    /// # Errors
+    /// An unknown instance, or a plugin that is lost, stuck or busy with a held call.
+    pub fn request_params(
+        &mut self,
+        id: InstanceId,
+    ) -> Result<Option<Vec<(u32, f64)>>, ManagerError> {
+        assert_main_thread("PluginManager::request_params");
+        Ok(self.get(id)?.instance.begin_read_params()?)
+    }
+
+    /// Starts loading a preset into a living instance without waiting (the live app): true when
+    /// it is loaded, false when [`PluginManager::poll_load_preset`] says when it is. Read the
+    /// new state afterwards.
+    ///
+    /// # Errors
+    /// An unknown instance, or what the plugin said.
+    pub fn begin_load_preset(
+        &mut self,
+        id: InstanceId,
+        preset: &str,
+    ) -> Result<bool, ManagerError> {
+        assert_main_thread("PluginManager::begin_load_preset");
+        let m = self.get(id)?;
+        // A capture asked for before the load describes the state that is being replaced.
+        m.capture.stale |= m.capture.out;
+        Ok(m.instance.begin_load_preset(preset)?)
+    }
+
+    /// The outcome of the preset load [`PluginManager::begin_load_preset`] started, once;
+    /// `None` while the plugin has not answered.
+    pub fn poll_load_preset(&mut self, id: InstanceId) -> Option<Result<(), ManagerError>> {
+        assert_main_thread("PluginManager::poll_load_preset");
+        let m = self.instances.get_mut(&id)?;
+        Some(m.instance.poll_load_preset()?.map_err(ManagerError::from))
+    }
+
     /// The plugin's display text of a param value (never asked on the audio thread). A plugin
     /// in another process that does not answer within the frame's allowance gives `None` and the
     /// text arrives later through [`PluginManager::take_soft_answers`].

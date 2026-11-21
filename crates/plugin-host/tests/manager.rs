@@ -777,6 +777,62 @@ fn a_preset_moves_the_param_values_the_manager_reads_back() {
     );
 }
 
+#[test]
+fn the_presets_and_the_params_are_asked_for_without_waiting_and_come_through_the_soft_answers() {
+    use atomik_plugin_host::SoftAnswer;
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    stats.set_presets(true);
+    // A plugin that answers at once gives the list and the values at once.
+    assert_eq!(m.request_presets(id).unwrap().map(|l| l.len()), Some(3));
+    assert!(m.request_params(id).unwrap().is_some());
+    // A busy one gives neither now, and each comes later as a cosmetic answer.
+    stats.set_soft_busy(true);
+    assert_eq!(m.request_presets(id).unwrap(), None);
+    assert_eq!(m.request_params(id).unwrap(), None);
+    m.poll();
+    assert!(m.take_soft_answers().is_empty(), "still busy");
+    stats.set_soft_busy(false);
+    m.poll();
+    let answers: Vec<SoftAnswer> = m.take_soft_answers().into_iter().map(|(_, a)| a).collect();
+    assert!(
+        matches!(&answers[..], [SoftAnswer::Presets(Some(p)), SoftAnswer::Params(Some(_))] if p.len() == 3),
+        "{answers:?}"
+    );
+    assert!(
+        m.request_presets(atomik_plugin_host::InstanceId(999))
+            .is_err()
+    );
+}
+
+#[test]
+fn a_preset_load_the_plugin_takes_time_for_is_polled_and_a_refusal_ends_it_with_its_error() {
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    stats.set_presets(true);
+    stats.set_preset_delay(3);
+    assert!(!m.begin_load_preset(id, "warm").unwrap(), "not loaded yet");
+    assert!(m.poll_load_preset(id).is_none());
+    assert!(m.poll_load_preset(id).is_none());
+    assert!(matches!(m.poll_load_preset(id), Some(Ok(()))));
+    assert_eq!(m.capture_state(id).unwrap().0, b"preset:warm");
+    // A preset the plugin does not know ends with the error, after the delay as well.
+    assert!(!m.begin_load_preset(id, "nope").unwrap());
+    let mut ended = None;
+    for _ in 0..5 {
+        ended = m.poll_load_preset(id);
+        if ended.is_some() {
+            break;
+        }
+    }
+    assert!(matches!(ended, Some(Err(_))), "{ended:?}");
+    // Without a delay the load is done when the call returns.
+    stats.set_preset_delay(0);
+    assert!(m.begin_load_preset(id, "init").unwrap());
+}
+
 // ----- background capture ----------------------------------------------------------------------------
 
 #[test]
