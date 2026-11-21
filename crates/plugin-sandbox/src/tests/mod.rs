@@ -8,6 +8,7 @@ mod notifications;
 mod policy;
 mod processor;
 mod rpc;
+mod stuck;
 mod supervision;
 
 use crate::fake::{Fake, FakeOptions, start};

@@ -673,6 +673,10 @@ impl PluginInstance for RemoteInstance {
         self.link.is_lost()
     }
 
+    fn not_responding(&self) -> Option<String> {
+        self.link.stuck()
+    }
+
     fn begin_shutdown(&mut self) {
         self.link.begin_shutdown();
     }

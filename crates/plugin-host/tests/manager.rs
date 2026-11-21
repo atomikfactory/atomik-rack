@@ -904,3 +904,37 @@ fn a_stall_record_is_kept_out_of_the_event_stream_and_comes_from_take_stalls() {
     assert_eq!(kept.len(), 64);
     assert_eq!(kept.last().map(|s| s.ms), Some(99));
 }
+
+// ----- a plugin that is alive but does not answer ----------------------------------------------------
+
+#[test]
+fn a_plugin_that_does_not_answer_is_reported_once_when_it_starts_and_once_when_it_is_back() {
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    assert!(m.not_responding(id).is_none());
+    assert!(m.poll().is_empty());
+    stats.set_not_responding(true);
+    assert_eq!(m.not_responding(id).as_deref(), Some("CaptureState"));
+    let err = m.capture_state(id).unwrap_err();
+    assert!(err.is_not_responding(), "{err}");
+    assert!(
+        !ManagerError::UnknownInstance(id).is_not_responding(),
+        "only the busy error says so"
+    );
+    let events = m.poll();
+    assert_eq!(
+        events,
+        vec![ManagerEvent::NotResponding {
+            instance: id,
+            call: "CaptureState".to_string()
+        }]
+    );
+    assert!(m.poll().is_empty(), "reported once");
+    stats.set_not_responding(false);
+    assert!(m.not_responding(id).is_none());
+    assert_eq!(m.poll(), vec![ManagerEvent::Responding(id)]);
+    assert!(m.poll().is_empty());
+    assert!(m.capture_state(id).is_ok(), "it works again");
+    drop(handle);
+}

@@ -5134,17 +5134,32 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     reply, and a bounce asks for a `Flush` after every batch, so a callback reaches the host before
     the next batch exactly as in process (a bounce counts in batches, never in time). Main-thread
     calls have timeouts. The ones that matter (10 s create, activate and state; 2 s deactivate and
-    flush) kill the child when they are not answered. The cosmetic ones (param text, default pins,
+    flush) kill the child when they are not answered, unless it shows a sign of life (below). The
+    cosmetic ones (param text, default pins,
     layout changes, closing the editor; 250 ms) only drop the request: the last text stays up, the
     instance counts as slow after three misses in a row and is then asked once a second (a
-    warning says so), and the child is stopped after twelve. A reply that comes late is ignored,
+    warning says so), and the child is stopped after twelve, unless it shows a sign of life.
+    *A plugin that is alive is never stopped by a timeout.* The child's audio thread stores a
+    growing number in the `pulse` word of the block header on every pass of its wait loop (one
+    relaxed store, at least every 10 ms, whatever the plugin's main thread is doing). A wait that
+    times out reads it at the start and at the end of its last half second (a polled wait samples
+    it at every poll): a child whose pulse moved is alive, and then the call fails with an error
+    that begins `the plugin is not responding` (`NOT_RESPONDING`), the process is left running and
+    the link is stuck on that request: every later call fails at once without being sent (soft calls
+    answer their neutral result), `PluginInstance::not_responding` names the call, and the late
+    answer, when the reader thread sees its id, ends the state by itself. The manager reports
+    the state as `ManagerEvent::NotResponding` and `Responding` and answers `PluginManager::not_responding`.
+    A child with no sign of life is stopped as before, with the same text. A bounce
+    (`SandboxConfig::bounce`) keeps stopping on a timeout and never enters the state, so its event
+    stream does not depend on the clock. A reply that comes late is ignored,
     except a layout change, which the child says only once and the instance keeps. The child
     takes a private handle to its real stdout for frames and
     points its stdout at stderr (`take_frame_stdout`), so a plugin that prints cannot corrupt the
     stream.
   - *Audio.* One shared block per instance (a mapped file of 54 528 bytes: header, one request area,
     one response area with the main and the aux output channels, raw `f32` bits and fixed-capacity
-    events), exchanged by sequence numbers.
+    events), exchanged by sequence numbers; the header also holds the child's `pulse` (the protocol
+    version is 3).
     `RemoteProcessor::process` copies the block in, rings the doorbell (Windows named event, Linux
     shared futex, macOS shared ulock; one atomic swap and no system call while the child is awake)
     and spins until the answer, the death flag or the deadline. Live, the deadline is one batch

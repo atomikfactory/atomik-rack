@@ -37,6 +37,12 @@ pub const LOST: &str = "the plugin process stopped";
 /// reloads such a plugin from its last captured state).
 pub const HUNG: &str = "the plugin process stopped answering audio batches";
 
+/// How the error of a call begins when the plugin's process is alive but its main thread has not
+/// answered an earlier request: the plugin is NOT RESPONDING, calls fail at once instead of
+/// waiting, and it answers again by itself when the late answer arrives. The process is not
+/// stopped.
+pub const NOT_RESPONDING: &str = "the plugin is not responding";
+
 /// What to create.
 #[derive(Debug, Clone)]
 pub struct InstantiateRequest {
@@ -109,6 +115,14 @@ pub enum ManagerError {
     /// The instance is live in the engine and cannot be removed from here.
     #[error("plugin instance {0:?} is in use")]
     InUse(InstanceId),
+}
+
+impl ManagerError {
+    /// True when the call failed because the plugin is alive but busy and did not answer (see
+    /// [`NOT_RESPONDING`]): nothing is wrong with the plugin, its answer is just not there.
+    pub fn is_not_responding(&self) -> bool {
+        matches!(self, Self::Backend(e) if e.is_not_responding())
+    }
 }
 
 /// Something that happened to an instance, for the app to act on.
@@ -200,6 +214,18 @@ pub enum ManagerEvent {
     },
     /// The instance was deactivated and destroyed.
     Destroyed(InstanceId),
+    /// The plugin's process is alive but its main thread did not answer `call` in time (sandbox
+    /// only): the plugin counts as NOT RESPONDING, calls on it fail at once, and the process is
+    /// left running. Never produced in an offline render.
+    NotResponding {
+        /// The instance.
+        instance: InstanceId,
+        /// The name of the call that was not answered.
+        call: String,
+    },
+    /// The plugin answered the call that [`ManagerEvent::NotResponding`] reported: it is
+    /// responding again.
+    Responding(InstanceId),
     /// The plugin's process ended (sandbox): the device is CRASHED until RELOAD creates a new
     /// instance.
     Crashed {
@@ -260,6 +286,8 @@ struct Managed {
     deferred_restart: bool,
     /// The background capture of the plugin state (see [`PluginManager::request_capture`]).
     capture: CaptureSlot,
+    /// The call the plugin has not answered while its process is alive, as the last poll saw it.
+    not_responding: Option<String>,
 }
 
 /// The one background capture an instance can have outstanding.
@@ -396,6 +424,13 @@ impl PluginManager {
     /// The plugin's layout now.
     pub fn layout(&self, id: InstanceId) -> Option<&PluginLayout> {
         self.instances.get(&id).map(|m| &m.layout)
+    }
+
+    /// The call the instance has not answered although its process is alive (see
+    /// [`NOT_RESPONDING`]); `None` when it responds, is gone or is unknown. Answers from the
+    /// instance itself, so it is current between two polls.
+    pub fn not_responding(&self, id: InstanceId) -> Option<String> {
+        self.instances.get(&id)?.instance.not_responding()
     }
 
     /// The ids of every instance (live and parked), in creation order.
@@ -567,6 +602,7 @@ impl PluginManager {
                 editor_opening: false,
                 deferred_restart: false,
                 capture: CaptureSlot::default(),
+                not_responding: None,
             },
         );
         Ok(PluginHandle {
@@ -1127,6 +1163,20 @@ impl PluginManager {
         // A parked instance is polled too: with audio off an instance lives parked and its
         // editor and timers must keep running.
         m.instance.poll();
+        // Only a live plugin that kept running past a timeout is ever in this state: an offline
+        // render never gets here, so the event stream of a bounce does not depend on the clock.
+        let stuck = m.instance.not_responding();
+        if stuck != m.not_responding {
+            match (&m.not_responding, &stuck) {
+                (None, Some(call)) => events.push(ManagerEvent::NotResponding {
+                    instance: id,
+                    call: call.clone(),
+                }),
+                (Some(_), None) => events.push(ManagerEvent::Responding(id)),
+                _ => {}
+            }
+            m.not_responding = stuck;
+        }
         let mut restart = false;
         while let Some(msg) = m.end.try_recv() {
             match msg {
