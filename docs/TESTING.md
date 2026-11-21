@@ -1816,6 +1816,15 @@ Diagnostics carries its tail). Three kinds of line say where the UI thread waite
 Help > Export Diagnostics also counts the plugin-call stalls and the slow frames since the app started, each with
 its longest. `crates/app/src/ui_stall.rs` has the tests of the line shapes and the rate limit.
 
+The parameter pane, the patch browser and preset loads do not wait for a plugin either.
+`app_core_plugins_presets_tests.rs` uses the null backend's busy mode and its poll-counted delays
+(`NullStats::set_soft_busy`, `set_preset_delay`, `fail_next_preset_list`) to pin that the pane opens at once,
+that the list is asked for once, that a failed list is asked for again at the next opening and not sooner than a
+pause later, and that a load's undo step goes back to the settings from before it. The `soft.rs` tests of
+`crates/plugin-sandbox/src/tests` hold the same requests in the fake child until the test releases them, and
+`crates/plugin-hostd/src/control/tests.rs` pins that the preset walk answers from a thread of its own while the
+main thread goes on.
+
 Two more groups are in the report. For lost input (the `input overruns` of the status line) it gives how many times
 the render callback trimmed the captured input, the most frames the ring held just before such a trim, the smallest
 and the largest callback seen and the buffer size the stream was opened with, so a trim count that grows with a

@@ -5041,6 +5041,21 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   `SetState`. `PluginInstance::read_params` (sandbox: `ReadParams` and `ParamValues`) gives the host
   values the plugin holds, and `AppCore::refresh_knobs` writes the changed ones into the document as
   `SetParam`s folded into the same undo step, without echoing them back to the plugin.
+  In the live app none of these waits for the plugin (see "the live app never waits" below): the
+  list of presets and the param values are cosmetic requests (`PluginInstance::begin_list_presets`,
+  `begin_read_params`, answered later as `SoftAnswer::Presets` and `Params`), a preset load is a
+  polled held request (`begin_load_preset`, `poll_load_preset`; `AppCore::plugins_poll_preset_loads`
+  carries it a step per frame: the state the step goes back to is captured first when the plugin
+  changed since the last capture, then the load, then the state that results, which becomes the one
+  `SetState` with no merge id). The list is asked for once per instance (`PresetList`): the pane and
+  the browser show nothing until it lands, and a list the plugin failed to give is never taken for "no
+  presets": the next opening of the pane or the browser asks again, not sooner than five seconds after
+  the failure. Knob values that arrive late join the step of the change only while the document is
+  still as that change left it. Where the format keeps presets as files (VST3) the plugin's process
+  walks the folders on a thread of its own (`PluginInstance::preset_lister`) and that thread writes
+  the answer, so a plugin whose main thread is busy does not hold the walk up; CLAP discovery needs
+  the plugin and stays on its main thread. A bounce and a plugin in this process keep the
+  synchronous calls.
 - **Format v9.** `plugin` is written after `inner`: format, id, name, vendor, version, `path_hint`
   (shown, never used), a compact `layout` (sockets and **only the used param rows**), base64
   `state`, pins, run mode, powered. Params are saved sparsely. Canonical save, load, save is
@@ -5151,11 +5166,11 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     the next batch exactly as in process (a bounce counts in batches, never in time). Main-thread
     calls have timeouts. The ones that matter (10 s create, activate and state; 2 s deactivate and
     flush) kill the child when they are not answered, unless it shows a sign of life (below). The
-    cosmetic ones (param text, default pins, layout changes, resize, closing the editor) are
-    requests that do not hold the interface: each goes into a small table of the link (the newest
-    64, the oldest dropped), the reader thread files its answer there whenever it comes, and the
-    main thread waits for it only a moment. The moment is what is left of one allowance of 20 ms
-    per frame that every instance of the manager shares (`SoftBudget`, `SOFT_FRAME_BUDGET`; the
+    cosmetic ones (param text, default pins, layout changes, the list of presets, the param values,
+    resize, closing the editor) are requests that do not hold the interface: each goes into a small
+    table of the link (the newest 64, the oldest dropped), the reader thread files its answer there
+    whenever it comes, and the main thread waits for it only a moment. The moment is what is
+    left of one allowance of 20 ms per frame that every instance of the manager shares (`SoftBudget`, `SOFT_FRAME_BUDGET`; the
     manager begins a frame at each `poll`), at most 250 ms for one request, and none for an
     instance that was waited for in vain already in this frame (a wait is recorded as a stall only
     when it was asked to last 50 ms or more, so a short wait that the system woke late is not one,

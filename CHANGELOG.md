@@ -213,6 +213,14 @@ may break APIs and the patch and project formats.
   next frames: the device shows LOADING until its plugin is ready, an audio restart waits for the slowest plugin
   instead of the sum, and a removed plugin is gone from the project at once while its process ends in the
   background. A bounce or an export still waits for its plugins, so its result does not change.
+- Opening a plugin's parameter pane or the patch browser, and loading one of its presets, no longer freeze the app
+  while the plugin is busy. The list of presets used to be read while the interface waited (up to ten seconds, and
+  a failed read was remembered as "this plugin has no presets"), and a preset load waited for the plugin and then
+  for its new settings. The app now asks for the list once and shows it when it arrives, asks again the next time
+  the pane or the browser opens when the plugin did not answer, loads a preset in the background (the undo step
+  still goes back to the settings from before the load) and moves the knobs when the plugin's values arrive. The
+  folders of VST3 presets are listed by the plugin's helper process on a thread of its own, so a plugin that is
+  loading something does not hold the list up.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

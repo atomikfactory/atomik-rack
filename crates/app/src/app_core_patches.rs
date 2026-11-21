@@ -552,6 +552,8 @@ impl<S: EngineSink> AppCore<S> {
         match self.patch_folder(device) {
             Some(folder) if folder.is_dir() => self.show_folder(folder),
             _ if self.show_presets_only() => {}
+            // The plugin has not listed its presets yet: they show when they come.
+            _ if self.plugin_presets_loading(device) => {}
             Some(folder) => self.report(format!(
                 "The patch folder '{}' does not exist yet: save a patch first",
                 folder.display()
@@ -599,6 +601,7 @@ impl<S: EngineSink> AppCore<S> {
             // A patch saved or copied in since the last browse shows up.
             self.patches.cache.remove(&folder);
         }
+        self.retry_failed_presets(device);
         self.browse_patches(device);
     }
 
