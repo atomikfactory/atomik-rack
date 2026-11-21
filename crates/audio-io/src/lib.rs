@@ -400,10 +400,30 @@ pub fn count_cpu_list(list: &str) -> Option<usize> {
     (count > 0).then_some(count)
 }
 
-/// The worker count of [`auto_workers`] for this machine.
-pub fn auto_workers_here() -> u16 {
+/// The worker count the app picks on its own for a machine with `physical` cores and `logical`
+/// hardware threads: one worker per physical core but the audio thread's own, never more than
+/// [`AUTO_WORKERS_MAX`]; a dual-core machine gets one worker and a single core none, however
+/// many threads the cores run. A physical count that is unknown (0) or larger than the logical
+/// count (a process limited to some of the machine's threads) cannot be trusted, and the guess
+/// of [`guess_smt_ways`] stands in for it.
+pub fn auto_workers_for(physical: usize, logical: usize) -> u16 {
+    if physical == 0 || physical > logical {
+        return auto_workers(logical, guess_smt_ways(logical, false));
+    }
+    auto_workers(physical, 1)
+}
+
+/// The physical core count and the logical thread count this process can use, as
+/// [`auto_workers_here`] reads them. The physical count is 0 when the system does not say.
+pub fn core_counts_here() -> (usize, usize) {
     let logical = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-    auto_workers(logical, smt_ways_here())
+    (num_cpus::get_physical(), logical)
+}
+
+/// The worker count of [`auto_workers_for`] for this machine.
+pub fn auto_workers_here() -> u16 {
+    let (physical, logical) = core_counts_here();
+    auto_workers_for(physical, logical)
 }
 
 /// Nanoseconds on a monotonic clock, counted from the first call. The clock the app hands the
@@ -435,6 +455,45 @@ mod auto_tests {
         assert_eq!(auto_workers(32, 2), 8); // capped
         assert_eq!(auto_workers(12, 1), 8); // 12 real cores, capped
         assert_eq!(auto_workers(8, 0), 7, "a zero count reads as one way");
+    }
+
+    #[test]
+    fn the_worker_policy_follows_the_physical_cores() {
+        // (physical cores, logical threads, workers)
+        let table: [(usize, usize, u16); 12] = [
+            (1, 1, 0),
+            (1, 2, 0),
+            (2, 2, 1),
+            (2, 4, 1),
+            (4, 4, 3),
+            (4, 8, 3),
+            (6, 12, 5),
+            (8, 16, 7),
+            (16, 32, 8), // capped
+            (8, 8, 7),   // Apple silicon style: no SMT
+            (0, 4, 3),   // unknown physical count: the logical guess (no SMT below 8 threads)
+            (0, 16, 7),  // unknown: two ways on a large even machine
+        ];
+        for (physical, logical, workers) in table {
+            assert_eq!(
+                auto_workers_for(physical, logical),
+                workers,
+                "{physical} cores, {logical} threads"
+            );
+        }
+        // More cores than threads (a process limited to some threads): the guess again.
+        assert_eq!(auto_workers_for(8, 4), 3);
+        assert_eq!(auto_workers_for(8, 2), 1);
+        assert_eq!(auto_workers_for(0, 0), 0);
+        assert!(auto_workers_for(64, 128) <= AUTO_WORKERS_MAX);
+    }
+
+    #[test]
+    fn this_machine_reports_a_sane_worker_count() {
+        let (_, logical) = core_counts_here();
+        assert!(logical >= 1);
+        assert!(auto_workers_here() <= AUTO_WORKERS_MAX);
+        assert!(usize::from(auto_workers_here()) < logical.max(2));
     }
 
     #[test]

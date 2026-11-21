@@ -84,6 +84,13 @@ The hand tracking crate (`atomik-vision`) added three groups of dependencies; th
   configured as the update check is: HTTPS only, no redirect, timeouts), `zune-jpeg`, `clap` and `ctrlc` (the demo
   tool only).
 
+**`num_cpus` 1.17** (`MIT OR Apache-2.0`, safe API, used by `atomik-audio-io` only; it pulls `hermit-abi` on one
+target and `libc`, both already in `Cargo.lock`) reports the number of physical cores, which the standard library
+does not (`available_parallelism` counts hardware threads). The automatic render worker count needs it so that a
+dual-core machine running four threads is not given three workers. It reads the processor topology through the
+system (a Windows API call, `/proc/cpuinfo` on Linux, `sysctl` on macOS). The alternative was the guess from the
+thread count the app made before, which cannot tell two cores of four threads from four cores.
+
 The Guitar Pro readers of `atomik-tab` added two dependencies, both declared once in the workspace and used by that
 crate only. **`quick-xml` 0.41** (`MIT`, no dependencies besides `memchr`, which the workspace already builds) reads the
 XML score (`score.gpif`) of `.gpx` and `.gp` files; the file is read once into a capped tree of at most 3 million

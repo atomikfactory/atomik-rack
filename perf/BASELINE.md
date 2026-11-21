@@ -333,3 +333,20 @@ about 130). The 128-frame p99 therefore misses the "within 10 % of the long ling
 reasons are in [DECISIONS.md](../docs/DECISIONS.md#ap-render-workers-spin-only-inside-a-callback-and-the-automatic-count-follows-the-physical-cores).
 The parks column counts about two per worker per callback: the unpark at the start of a callback and the ones per
 dispatched level leave a token that makes one park return at once.
+
+### The running app after the change
+
+`scripts/perf/sample-app.ps1` with the release build of the commit that parks the workers between callbacks, on the
+same machine and rack as the idle baseline above (transport stopped, nothing sounding, no `--play`; 15 s settle, 20 s
+window). The "before" figures are the rows of that section.
+
+| Scenario | CPU % before | CPU % after |
+|---|---|---|
+| Stress rack, audio on, automatic workers (7 here: the count follows the physical cores) | 829 (8 workers) | 94 |
+| Stress rack, audio on, 2 workers | 216-219 | 34 |
+| Stress rack, audio on, no workers | 19.2-20.7 | 20.5 |
+| Two cores / four threads (affinity `0xF`): stress rack, 3 workers (`--workers 3`) | 310 | 55 |
+
+The automatic count with an affinity mask is not a row: the app picks its count before the mask applies, so it started
+seven workers on four logical processors, and that run did not answer the window probe (the workers run at the
+callback's priority). Give the worker count explicitly in such a run, as the script's help says.

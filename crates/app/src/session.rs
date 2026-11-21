@@ -651,7 +651,10 @@ impl<B: AudioBackend> LiveSession<B> {
         };
         let threads = atomik_audio_io::cap_workers_here(requested);
         if settings.workers_auto {
-            log::info!("render workers: {threads} (automatic)");
+            let (physical, logical) = atomik_audio_io::core_counts_here();
+            log::info!(
+                "render workers: {threads} (automatic; {physical} physical cores, {logical} logical)"
+            );
         } else if threads != settings.workers {
             log::info!(
                 "render workers: {} requested, {threads} started (one core stays free)",
