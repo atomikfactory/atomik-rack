@@ -586,7 +586,7 @@ fn params_and_reload_emit_their_actions() {
     assert!(acts.contains(&UiAction::OpenPluginParams { device: key("fx") }));
     let acts = press_button(&mut v, &d, "fx", PluginButton::Reload);
     assert!(acts.contains(&UiAction::ReloadPlugin { device: key("fx") }));
-    // RELOAD is dim while the instance is being created: the press does nothing.
+    // While the instance is being created the same button says SKIP and skips the load.
     v.set_plugin_status(
         &key("fx"),
         PluginDeviceStatus {
@@ -596,11 +596,43 @@ fn params_and_reload_emit_their_actions() {
     );
     let acts = press_button(&mut v, &d, "fx", PluginButton::Reload);
     assert!(!acts.contains(&UiAction::ReloadPlugin { device: key("fx") }));
-    assert!(
-        texts_of(&mut v, d.doc())
-            .iter()
-            .any(|t| t.contains("LOADING"))
+    assert!(acts.contains(&UiAction::SkipPlugin { device: key("fx") }));
+    let texts = texts_of(&mut v, d.doc());
+    assert!(texts.iter().any(|t| t.contains("LOADING")));
+    assert!(texts.iter().any(|t| t == "SKIP"), "{texts:?}");
+}
+
+#[test]
+fn a_skipped_plugin_matches_golden_says_skipped_and_reload_brings_it_back() {
+    let (d, mut v) = setup();
+    v.set_plugin_status(
+        &key("synth"),
+        PluginDeviceStatus {
+            skipped: true,
+            ..PluginDeviceStatus::default()
+        },
     );
+    let texts = texts_of(&mut v, d.doc());
+    for t in ["SKIPPED", "RELOAD tries again", "RELOAD"] {
+        assert!(
+            texts.iter().any(|x| x.contains(t)),
+            "missing {t:?}: {texts:?}"
+        );
+    }
+    for t in ["CRASHED", "FAILED", "LOADING", "QUARANTINED"] {
+        assert!(
+            !texts.iter().any(|x| x.contains(t)),
+            "skipped is not {t}: {texts:?}"
+        );
+    }
+    check(
+        "plugin_panel_skipped_1x.json",
+        &paint_rack(&mut v, d.doc()).to_json(),
+    );
+    let acts = press_button(&mut v, &d, "synth", PluginButton::Reload);
+    assert!(acts.contains(&UiAction::ReloadPlugin {
+        device: key("synth")
+    }));
 }
 
 #[test]

@@ -461,7 +461,7 @@ struct PresetLoad {
 }
 
 /// How many plugin processes load at the same time when a project opens.
-const MAX_STARTING: usize = 8;
+pub(super) const MAX_STARTING: usize = 8;
 
 /// A pending device whose plugin is loading.
 struct Starting {
@@ -492,9 +492,12 @@ pub(super) struct PluginState {
     loaded: BTreeMap<InstanceId, InUsePlugin>,
     /// Devices whose instance is waiting to be created, in order.
     pub(super) pending: VecDeque<DeviceKey>,
-    /// The pending devices whose plugin process has been started, loading while the ones before
-    /// them attach (see [`AppCore::instantiate_one`]).
+    /// The pending devices whose plugin process has been started: every one of them loads, and
+    /// the ones that are ready attach in queue order (see [`AppCore::instantiate_one`]).
     starting: BTreeMap<DeviceKey, Starting>,
+    /// Devices whose creation the user skipped: stand-ins that keep their saved state, nothing
+    /// queues them again until RELOAD (a skipped device is not crashed and not quarantined).
+    skipped: BTreeSet<DeviceKey>,
     /// How many instances the current batch of creations started with (for "3/8").
     batch_total: usize,
     /// Seconds between autosave snapshots of a changed project (0: off).
@@ -614,6 +617,7 @@ impl PluginState {
             loaded: BTreeMap::new(),
             pending: VecDeque::new(),
             starting: BTreeMap::new(),
+            skipped: BTreeSet::new(),
             batch_total: 0,
             autosave_secs: DEFAULT_AUTOSAVE_MINUTES * 60.0,
             batch_done: 0,
@@ -1018,6 +1022,7 @@ impl<S: EngineSink> AppCore<S> {
                 }
             } else if installed
                 && !self.plugins.pending.contains(&key)
+                && !self.plugins.skipped.contains(&key)
                 && !self.quarantine_blocks(&plugin, &key)
             {
                 self.plugins.failed.remove(&key);
@@ -1135,6 +1140,7 @@ impl<S: EngineSink> AppCore<S> {
         if usable
             && !self.plugins.failed.contains_key(key)
             && !self.plugins.pending.contains(key)
+            && !self.plugins.skipped.contains(key)
             && !self.quarantine_blocks(&plugin, key)
         {
             self.plugins.pending.push_back(key.clone());
@@ -1238,6 +1244,7 @@ impl<S: EngineSink> AppCore<S> {
             self.plugins.failed.clear();
             self.plugins.crashed.clear();
             self.plugins.load_anyway.clear();
+            self.plugins.skipped.clear();
             self.plugins.no_capture.clear();
             self.plugins.live_desc.clear();
         }
@@ -1312,6 +1319,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.crashed.remove(flat);
         self.plugins.auto_reloads.remove(flat);
         self.plugins.load_anyway.remove(flat);
+        self.plugins.skipped.remove(flat);
         self.plugins.no_capture.remove(flat);
         self.plugins.shown.remove(flat);
         self.view
@@ -1735,8 +1743,11 @@ impl<S: EngineSink> AppCore<S> {
     // ------------------------------------------------------------------ creating instances
 
     /// Moves the pending creations on: starts the plugin process of every pending device (up to
-    /// [`MAX_STARTING`] at a time, so they all load at the same time), then attaches the one at
-    /// the front of the queue once it is ready (one per frame, always in queue order).
+    /// [`MAX_STARTING`] at a time, so they all load at the same time), moves every started
+    /// creation on, then attaches the oldest one that is ready (one per frame: an attach does
+    /// real work). A plugin that takes minutes to load does not hold the ones queued after it:
+    /// they attach as soon as they are ready, and what the project sounds like and how its
+    /// devices are keyed do not depend on the order.
     fn instantiate_one(&mut self) {
         if self.plugins.paint_first
             && let Some(front) = self.plugins.pending.front()
@@ -1746,13 +1757,15 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         self.start_pending();
-        let Some(key) = self.plugins.pending.front().cloned() else {
+        let Some(key) = self.next_ready_creation() else {
             return;
         };
         let Some(ticket) = self.plugins.starting.get(&key).map(|s| s.ticket) else {
             return;
         };
         let Some(answer) = self.plugins.host.manager().poll_create(ticket) else {
+            // The ticket is spent without an answer: start the device over.
+            self.plugins.starting.remove(&key);
             return;
         };
         let Some(Starting {
@@ -1764,7 +1777,7 @@ impl<S: EngineSink> AppCore<S> {
         else {
             return;
         };
-        self.plugins.pending.pop_front();
+        self.plugins.pending.retain(|k| k != &key);
         self.finish_batch_step();
         match answer {
             Ok(handle) => {
@@ -1800,6 +1813,23 @@ impl<S: EngineSink> AppCore<S> {
                 self.plugin_failed_in_a_row(&type_id, "Could not load", &message);
             }
         }
+    }
+
+    /// Moves every started creation on without installing any, and says which is the oldest one
+    /// (in queue order) that is ready to attach.
+    fn next_ready_creation(&mut self) -> Option<DeviceKey> {
+        let keys: Vec<DeviceKey> = self.plugins.pending.iter().cloned().collect();
+        let mut first = None;
+        for key in keys {
+            let Some(ticket) = self.plugins.starting.get(&key).map(|s| s.ticket) else {
+                continue;
+            };
+            if self.plugins.host.manager().creation_ready(ticket) != Some(false) && first.is_none()
+            {
+                first = Some(key);
+            }
+        }
+        first
     }
 
     /// One creation of the batch is over.
@@ -2628,6 +2658,8 @@ impl<S: EngineSink> AppCore<S> {
         let (powered, pinned, plugin) = (pd.powered, pd.run_on_audio_thread, pd.plugin_ref());
         let Some(id) = self.plugins.instances.get(device).copied() else {
             // A stand-in whose plugin changed (a relink): queue the new one.
+            // A relink is a new plugin: the skip belonged to the old one.
+            self.plugins.skipped.remove(device);
             if self.plugin_usable(&plugin)
                 && !self.plugins.pending.contains(device)
                 && !self.quarantine_blocks(&plugin, device)
@@ -2954,6 +2986,9 @@ impl<S: EngineSink> AppCore<S> {
                 self.plugins.load_anyway.insert(device.clone());
                 self.reload_plugin(device);
             }
+            UiAction::SkipPlugin { device } => {
+                self.skip_plugin(device);
+            }
             UiAction::LoadPluginPreset { device, preset } => {
                 self.load_plugin_preset(device, preset);
                 self.feed_preset_bar();
@@ -3007,6 +3042,7 @@ impl<S: EngineSink> AppCore<S> {
         let plugin = pd.plugin_ref();
         let state = pd.state.as_deref().cloned();
         self.plugins.failed.remove(device);
+        self.plugins.skipped.remove(device);
         if let Some(id) = self.plugins.instances.get(device).copied()
             && self.plugins.host.manager().stop_unresponsive(id)
         {
@@ -3055,6 +3091,39 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             None => self.queue_instance(device, &plugin),
+        }
+    }
+
+    /// SKIP: stops creating the plugin of `device` (a plugin process that was loading ends, not
+    /// waited for) and leaves the device a stand-in that keeps its saved state and says SKIPPED.
+    /// It is not a crash: nothing is recorded in the crashed settings and no quarantine count
+    /// moves. RELOAD tries again. False when the device is not loading.
+    pub fn skip_plugin(&mut self, device: &DeviceKey) -> bool {
+        if !self.plugins.pending.contains(device) {
+            return false;
+        }
+        self.plugins.pending.retain(|k| k != device);
+        self.cancel_starting(Some(device));
+        self.finish_batch_step();
+        self.plugins.skipped.insert(device.clone());
+        self.plugins.failed.remove(device);
+        self.plugins.log(format!(
+            "[{device}] skipped: loading stopped at your request"
+        ));
+        true
+    }
+
+    /// The command `plugin.skip_loading`: skips the selected plugin device while it loads.
+    pub fn skip_selected_plugin(&mut self) {
+        let loading = self
+            .view
+            .primary()
+            .filter(|d| self.plugins.pending.contains(d));
+        match loading {
+            Some(device) => {
+                self.skip_plugin(&device);
+            }
+            None => self.report("Select a plugin device that is loading first"),
         }
     }
 
@@ -3285,6 +3354,7 @@ impl<S: EngineSink> AppCore<S> {
                 failed,
                 crashed: self.plugins.crashed.get(key).cloned(),
                 not_responding: self.plugins.host.manager_ref().not_responding(*id),
+                skipped: false,
                 quarantined: None,
                 // After an engine restart the device is a stand-in until the plugin is active.
                 loading: self.sink.has_engine() && self.plugins.offline.contains(key),
@@ -3296,9 +3366,15 @@ impl<S: EngineSink> AppCore<S> {
                 failed,
                 crashed: None,
                 not_responding: None,
+                skipped: false,
                 quarantined: None,
                 loading: true,
                 waiting: None,
+            },
+            // The user skipped the load: a stand-in with its saved state, RELOAD tries again.
+            None if self.plugins.skipped.contains(key) => PluginDeviceStatus {
+                skipped: true,
+                ..PluginDeviceStatus::default()
             },
             // The plugin is installed but quarantined: the project did not load it.
             None if self.plugin_usable(plugin) && self.quarantine_blocks(plugin, key) => {
@@ -3308,6 +3384,7 @@ impl<S: EngineSink> AppCore<S> {
                     failed,
                     crashed: None,
                     not_responding: None,
+                    skipped: false,
                     quarantined: Some(
                         self.plugins
                             .user
@@ -3327,6 +3404,7 @@ impl<S: EngineSink> AppCore<S> {
                 failed,
                 crashed: None,
                 not_responding: None,
+                skipped: false,
                 quarantined: None,
                 loading: false,
                 waiting: None,
@@ -3337,6 +3415,7 @@ impl<S: EngineSink> AppCore<S> {
                 failed,
                 crashed: None,
                 not_responding: None,
+                skipped: false,
                 quarantined: None,
                 loading: false,
                 waiting: None,

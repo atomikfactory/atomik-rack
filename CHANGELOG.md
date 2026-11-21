@@ -85,6 +85,11 @@ may break APIs and the patch and project formats.
   handles, child processes, GPU use and how quickly the window answers; `-Affinity` pins it to fewer cores.
   docs/TESTING.md explains the columns and two low-power recipes, and perf/BASELINE.md has the idle rows of the
   running app.
+- **Skip on a plugin that is loading.** A plugin device that says LOADING has a SKIP button where RELOAD is, and the
+  command Skip Loading Plugin does the same for the selected device. It stops creating that plugin (its process ends
+  without anything waiting for it), leaves the device a stand-in with its saved state untouched, and shows SKIPPED.
+  RELOAD tries again from that state. A skipped plugin is not a crash and does not count towards quarantine, and a
+  saved project keeps what it held.
 
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last
@@ -236,6 +241,10 @@ may break APIs and the patch and project formats.
   plugin's own device is replaced. The engine is still restarted when a second copy of the same plugin was built
   with the old ports, since that copy has to follow. The plugin list file is now written by a background thread,
   so learning what a plugin looks like, or ending a scan with thousands of plugins, no longer stalls a frame.
+- **A plugin that is slow to load no longer keeps the plugins after it waiting.** Every plugin that is starting is
+  followed each frame and the ones that are ready come up as they finish, one per frame and oldest first, so a
+  plugin that waits for a licence dialog or reads a huge library no longer leaves the others as silent stand-ins.
+  The device keys, the order of the project and what it sounds like do not change.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

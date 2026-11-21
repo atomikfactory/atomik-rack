@@ -7330,6 +7330,7 @@ impl<B: AudioBackend> Shell<B> {
             ("plugin.learn_midi", None) => self
                 .core
                 .plugin_learn_command(atomik_ui::PluginLearnMode::Midi),
+            ("plugin.skip_loading", None) => self.core.skip_selected_plugin(),
             ("rack.combine", None) => {
                 self.core.combine_selection();
             }

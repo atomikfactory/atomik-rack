@@ -181,8 +181,11 @@ pub struct PluginDeviceStatus {
     /// The plugin is quarantined, so the project did not load it: the reason (empty when it is
     /// not known). LOAD ANYWAY (the RELOAD button) loads it.
     pub quarantined: Option<String>,
-    /// The instance is being created.
+    /// The instance is being created (SKIP stops it).
     pub loading: bool,
+    /// The user skipped the creation: the device is a stand-in with its saved state, nothing
+    /// crashed. RELOAD creates the plugin.
+    pub skipped: bool,
     /// The instance waits for the audio engine (audio is off): the reason. The editor and the
     /// params work; the device makes no sound until audio runs.
     pub waiting: Option<String>,

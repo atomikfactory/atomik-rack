@@ -1285,3 +1285,36 @@ stand-in's value is not read back from the plugin when a preset loads. The hand 
 older version that automates a stand-in of a sampler or synth plugin, opened, saved and bounced.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AT. Plugins attach as they become ready, and a plugin that is loading can be skipped
+
+**Question.** Up to eight plugins load at the same time, but the app followed and attached only the one at the front
+of the queue: a plugin that waits for a licence dialog or reads a huge library for minutes left every later,
+already loaded plugin a silent stand-in. A loading device offered no way out except waiting for the load timeout
+or removing the device.
+
+**Decision.** Every started creation is advanced each frame without being installed (`PluginManager::creation_ready`
+stops at an active plugin, so nothing of it is listed or reported before the app takes it), and the oldest ready
+one in queue order is attached, one per frame. Devices are keyed by their path, not by the order of attachment, and
+an attach changes no audio of the others, so the project sounds the same whichever plugin finishes first. SKIP is
+the RELOAD button while a device says LOADING, and the command Skip Loading Plugin for the selected device: it
+cancels the creation (the process ends across frames), leaves the stand-in with the stored state untouched, and the
+device says SKIPPED. A skipped device is not queued again by a rebuild, a rescan or a paste; RELOAD creates it. It
+is not a crash and not a failed load, so neither the crashed settings nor the quarantine count change.
+
+Making the child (the shared block, the doorbell and the process) took about 7 ms per plugin on the development
+machine and 60 to 80 ms for the eight that start in one frame, which a virus scanner makes longer. The sandbox now
+does it on a short-lived `plugin-spawn` thread per start, so the interface thread spends about 0.3 ms for eight;
+the start says "not ready" until the child is handed over, and a start that is skipped before that ends its child as
+soon as it is there. A child that cannot be made is reported through the creation like any other load error, so it
+counts as a failed load for the quarantine.
+
+**Rejected.** Attaching every ready creation in one frame (an attach does real work and would lengthen the frame);
+installing a creation in the manager as soon as it is ready and attaching it later (events of an instance the app
+does not know yet would be dropped); a separate SKIP button (the panel has no room, and RELOAD is disabled while
+loading anyway); treating a skip as a failure (a quarantine for a plugin the user chose not to wait for).
+
+**Open.** Whether a plugin that stays LOADING for minutes should offer SKIP more prominently, for example in the
+status line; the load timeout (ten minutes) still ends a load that nobody skips.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

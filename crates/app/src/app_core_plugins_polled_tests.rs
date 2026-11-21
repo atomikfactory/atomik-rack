@@ -270,3 +270,166 @@ fn an_engine_restart_while_a_plugin_loads_activates_it_with_the_current_values()
     );
     assert_eq!(core.plugin_instance_count(), 1);
 }
+
+/// The core after an engine restart for a new document with the creations "in the background"
+/// and the first `held` of them never answering until released.
+fn restart_with_held(core: &mut AppCore<OfflineSink>, stats: &NullStats, held: usize) {
+    stats.set_background_create(Some(1));
+    stats.hold_next_creates(held);
+    core.plugins_discard_on_next_reset();
+    core.rebuild_engine();
+}
+
+fn loading_word(core: &AppCore<OfflineSink>, dev: &DeviceKey) -> (bool, bool) {
+    let status = core.view().plugin_status(dev);
+    (status.loading, status.skipped)
+}
+
+#[test]
+fn a_plugin_that_never_loads_does_not_hold_the_ones_queued_after_it() {
+    let (mut core, stats) = core_with(3);
+    let (p0, p1, p2) = (key("p0"), key("p1"), key("p2"));
+    restart_with_held(&mut core, &stats, 1);
+    frames_until(&mut core, 400, |c| {
+        c.plugin_instance(&p1).is_some() && c.plugin_instance(&p2).is_some()
+    });
+    assert!(core.plugin_instance(&p0).is_none(), "the first still loads");
+    assert!(core.plugins.pending.contains(&p0));
+    assert_eq!(core.plugins.pending.len(), 1);
+    assert_eq!(loading_word(&core, &p0), (true, false), "LOADING");
+    assert!(core.plugin_loading().is_some(), "the status line goes on");
+    // Releasing it lets it come up after the others.
+    stats.release_held_creates();
+    frames_until(&mut core, 400, |c| c.plugin_instance(&p0).is_some());
+    assert!(core.plugins_ready());
+    assert_eq!(core.plugin_instance_count(), 3);
+    assert_eq!(core.plugin_loading(), None);
+}
+
+#[test]
+fn one_creation_is_attached_per_frame_oldest_ready_first() {
+    let (mut core, stats) = core_with(4);
+    restart_with_held(&mut core, &stats, 0);
+    stats.set_restore_delay(0);
+    stats.set_activate_delay(0);
+    let mut order = Vec::new();
+    for _ in 0..40 {
+        let before = core.plugin_instance_count();
+        core.frame();
+        let gained = core.plugin_instance_count() - before;
+        assert!(gained <= 1, "at most one attach per frame");
+        for i in 0..4 {
+            let dev = key(&format!("p{i}"));
+            if core.plugin_instance(&dev).is_some() && !order.contains(&dev) {
+                order.push(dev);
+            }
+        }
+        if core.plugins_ready() {
+            break;
+        }
+    }
+    let wanted: Vec<DeviceKey> = (0..4).map(|i| key(&format!("p{i}"))).collect();
+    assert_eq!(order, wanted, "queue order when all are ready together");
+}
+
+#[test]
+fn skipping_a_loading_plugin_leaves_a_stand_in_with_its_state_and_reload_brings_it_up() {
+    let (mut core, stats) = core_with(2);
+    let (p0, p1) = (key("p0"), key("p1"));
+    let stored = core
+        .doc()
+        .resolve(&p0)
+        .and_then(|d| d.plugin.as_deref())
+        .and_then(|pd| pd.state.as_deref().cloned())
+        .expect("a stored state");
+    restart_with_held(&mut core, &stats, 1);
+    frames_until(&mut core, 400, |c| c.plugin_instance(&p1).is_some());
+    assert_eq!(loading_word(&core, &p0), (true, false));
+    let before = stats.destroyed();
+    core.handle_action(UiAction::SkipPlugin { device: p0.clone() });
+    core.frame();
+    assert!(!core.plugins.pending.contains(&p0));
+    assert!(core.plugin_instance(&p0).is_none());
+    assert_eq!(loading_word(&core, &p0), (false, true), "SKIPPED");
+    assert_eq!(core.plugin_loading(), None);
+    // The child that was loading is taken down by the frames.
+    frames_until(&mut core, 200, |c| leaving(c) == 0);
+    assert_eq!(stats.destroyed(), before + 1);
+    // Not a crash and not a failure: nothing recorded.
+    assert!(core.plugins.settings.crashed.is_empty());
+    assert!(core.plugin_crash(&p0).is_none());
+    assert!(core.plugin_failure(&p0).is_none());
+    assert!(!core.plugins.user.is_quarantined(GAIN));
+    assert!(core.view().plugin_status(&p0).crashed.is_none());
+    // Frames and an engine restart do not queue it again.
+    for _ in 0..10 {
+        core.frame();
+    }
+    core.rebuild_engine();
+    for _ in 0..10 {
+        core.frame();
+    }
+    assert!(core.plugin_instance(&p0).is_none());
+    assert_eq!(loading_word(&core, &p0), (false, true));
+    // A save keeps the state the project holds.
+    core.plugins_capture_all();
+    let kept = core
+        .doc()
+        .resolve(&p0)
+        .and_then(|d| d.plugin.as_deref())
+        .and_then(|pd| pd.state.as_deref().cloned());
+    assert_eq!(kept, Some(stored), "the stored state is untouched");
+    // RELOAD creates it from that state.
+    stats.set_background_create(None);
+    core.handle_action(UiAction::ReloadPlugin { device: p0.clone() });
+    frames_until(&mut core, 400, |c| c.plugin_instance(&p0).is_some());
+    assert_eq!(loading_word(&core, &p0), (false, false));
+    assert!(core.plugins_ready());
+}
+
+#[test]
+fn skipping_the_front_of_a_full_queue_lets_the_next_plugin_start() {
+    // MAX_STARTING creations load at once: hold all of them, with two more waiting.
+    let n = crate::app_core::plugins::MAX_STARTING + 2;
+    let (mut core, stats) = core_with(n);
+    let dev = |i: usize| key(&format!("p{i}"));
+    restart_with_held(&mut core, &stats, crate::app_core::plugins::MAX_STARTING);
+    for _ in 0..30 {
+        core.frame();
+    }
+    assert_eq!(core.plugin_instance_count(), 0, "every slot is held");
+    assert_eq!(core.plugins.pending.len(), n);
+    core.handle_action(UiAction::SkipPlugin { device: dev(0) });
+    frames_until(&mut core, 400, |c| {
+        c.plugin_instance(&dev(crate::app_core::plugins::MAX_STARTING))
+            .is_some()
+    });
+    assert!(
+        core.plugin_instance(&dev(crate::app_core::plugins::MAX_STARTING + 1))
+            .is_none()
+    );
+    assert_eq!(loading_word(&core, &dev(0)), (false, true));
+    assert_eq!(
+        loading_word(&core, &dev(1)),
+        (true, false),
+        "the rest still load"
+    );
+}
+
+#[test]
+fn the_skip_command_acts_on_the_selected_loading_device() {
+    let (mut core, stats) = core_with(2);
+    let (p0, p1) = (key("p0"), key("p1"));
+    restart_with_held(&mut core, &stats, 1);
+    frames_until(&mut core, 400, |c| c.plugin_instance(&p1).is_some());
+    // A live device is not loading: nothing to skip.
+    core.select(Some(p1.clone()));
+    core.skip_selected_plugin();
+    core.frame();
+    assert!(core.plugin_instance(&p1).is_some());
+    assert_eq!(loading_word(&core, &p1), (false, false));
+    core.select(Some(p0.clone()));
+    core.skip_selected_plugin();
+    core.frame();
+    assert_eq!(loading_word(&core, &p0), (false, true));
+}

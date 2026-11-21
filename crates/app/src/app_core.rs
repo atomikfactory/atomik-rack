@@ -1352,6 +1352,7 @@ impl<S: EngineSink> AppCore<S> {
             | UiAction::OpenPluginParams { .. }
             | UiAction::ClosePluginParams
             | UiAction::ReloadPlugin { .. }
+            | UiAction::SkipPlugin { .. }
             | UiAction::AutomatePluginParam { .. }
             | UiAction::LoadPluginPreset { .. }
             | UiAction::StepPluginPreset { .. }

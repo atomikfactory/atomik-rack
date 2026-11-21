@@ -6033,7 +6033,10 @@ it is not 0, so a project saved before aux outputs loads with none.
   every host block size feed it the same blocks.
 - **Instances.** Opening a project (or adding a device) inserts a silent stand-in at once and
   creates the real instance one per frame, with "Loading plugins 3/8" in the status bar. An audio
-  restart keeps the instances (they are only re-activated at the new rate). A removed device's
+  restart keeps the instances (they are only re-activated at the new rate). Plugins that are ready
+  come up as they finish, one per frame, so a slow one does not hold the others; while a device says
+  LOADING its RELOAD button reads SKIP (also the command Skip Loading Plugin), which stops that load
+  and leaves a SKIPPED stand-in with its saved state until RELOAD. A removed device's
   plugin is destroyed on the UI thread after the engine let go of it.
 - **State.** The plugin's state is captured before every save, when its editor closes, a quiet
   second after the plugin says it changed, before an engine restart or the removal of its device,
