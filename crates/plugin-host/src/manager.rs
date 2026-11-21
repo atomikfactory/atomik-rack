@@ -9,6 +9,13 @@
 //! deactivates and destroys the plugin on the main thread, or **parks** it when an engine
 //! restart wants to keep the instance ([`PluginManager::retain`], [`PluginManager::reattach`]).
 //!
+//! The live app never waits for a plugin here. A creation is a small state machine that
+//! [`PluginManager::poll_create`] moves one step per call (starting, restoring the saved state,
+//! activating), a restart or an engine restart re-activates a plugin the same way, and an
+//! instance that goes away is handed to a **leaving** list that deactivates it and ends its
+//! process across later polls. Offline rendering keeps the blocking calls
+//! ([`PluginManager::instantiate`]): its results never depend on how long a plugin takes.
+//!
 //! Every entry point is `[main-thread]` and checks it in debug builds.
 
 use crate::backend::{
@@ -29,7 +36,7 @@ use atomik_device_sdk::{
     RunMode, descriptor_for,
 };
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The error text of a call on an instance whose process is gone.
 pub const LOST: &str = "the plugin process stopped";
@@ -78,7 +85,8 @@ pub struct PluginHandle {
     pub timing: CreateTiming,
 }
 
-/// The time the manager spent on the stages of a creation that it runs on the main thread.
+/// How long the stages of a creation that the manager runs itself took, from the request that
+/// began each to its answer (the creation is polled, so this includes the time between polls).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct CreateTiming {
     /// Restoring the saved state into the new instance.
@@ -91,8 +99,8 @@ pub struct CreateTiming {
 /// the audio path or the saved state.
 // Justification: wall-clock time is the point of a load timing; main thread only (HI-2).
 #[allow(clippy::disallowed_methods)]
-fn clock() -> std::time::Instant {
-    std::time::Instant::now()
+fn clock() -> Instant {
+    Instant::now()
 }
 
 /// What the manager can fail with.
@@ -264,8 +272,12 @@ enum Phase {
     /// A stop was requested; the processor is on its way back.
     Stopping,
     /// The processor is back and the plugin is deactivating (it may take a while: it is
-    /// polled, not waited for); it activates again when it is done.
+    /// polled, not waited for); it activates again when it is done (a parked instance stays
+    /// inactive).
     Deactivating,
+    /// The plugin is activating again (polled, not waited for); the device takes the processor
+    /// when it is done (for a parked instance that is being reattached, a new device does).
+    Activating,
     /// The plugin is inactive and the device has no processor (a failed re-activation).
     Inactive,
 }
@@ -289,6 +301,21 @@ struct Managed {
     capture: CaptureSlot,
     /// The call the plugin has not answered while its process is alive, as the last poll saw it.
     not_responding: Option<String>,
+    /// The plugin's param table changed at the restart that is activating it.
+    layout_changed: bool,
+    /// A restart was asked for while the plugin was activating: it restarts again when it is
+    /// done (the activation in flight used the old settings).
+    again: bool,
+    /// A parked instance that is being reattached to a new device (see
+    /// [`PluginManager::begin_reattach`]).
+    reattach: Option<Reattach>,
+}
+
+/// A reattach in progress: the instance deactivates, then activates at `rate`.
+struct Reattach {
+    rate: f64,
+    /// The new device, or why there is none, once the activation is over.
+    ready: Option<Result<PluginHandle, ManagerError>>,
 }
 
 /// The one background capture an instance can have outstanding.
@@ -355,10 +382,174 @@ struct Started {
     end: ManagerEnd,
 }
 
+/// An instance the backend gave, on its way to being active: the saved state is restored, then
+/// the plugin is activated (see [`PluginManager::poll_create`]).
+struct Booting {
+    instance: Box<dyn PluginInstance>,
+    device_end: DeviceEnd,
+    end: ManagerEnd,
+    /// Why the saved state could not be restored, if it could not.
+    restore_error: Option<String>,
+    /// When the restore began.
+    began: Instant,
+    /// How long the restore took (set when it is over).
+    restore: Duration,
+    /// When the activation began.
+    activating_since: Instant,
+}
+
+/// The descriptor and layout a device is built from.
+type Prepared = (&'static DeviceDescriptor, PluginLayout);
+
+/// Where a creation is.
+enum Stage {
+    /// The backend creates the instance when the ticket is first polled (and blocks).
+    Sync,
+    /// The plugin is starting in another process.
+    Instantiating(Started),
+    /// The saved state is being restored.
+    Restoring(Booting),
+    /// The plugin is activating.
+    Activating(Booting, Prepared),
+}
+
 struct Creating {
     request: InstantiateRequest,
-    /// `None`: the backend creates the instance when the ticket is first polled.
-    started: Option<Started>,
+    stage: Stage,
+}
+
+/// One step of a creation.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "moved by value once per poll of one creation; boxing the stage would only add a copy"
+)]
+enum Advance {
+    /// Not there yet: where it is.
+    Wait(Stage),
+    /// The handle or the error.
+    Done(Box<Result<PluginHandle, ManagerError>>),
+}
+
+/// What an instance that is going away is waiting for.
+enum Leave {
+    /// A restart's activation is out: its answer is collected, then deactivated.
+    Activating,
+    /// A deactivation is out.
+    Deactivating,
+    /// Only the process that outlives the instance is left (a plugin in this process has none).
+    Ending,
+}
+
+/// What is going away.
+enum Leaver {
+    /// A plugin that was starting in another process.
+    Pending(Box<dyn PendingInstance>),
+    Instance(Box<dyn PluginInstance>),
+}
+
+/// An instance that left the manager and is being taken down across polls, so that nobody waits
+/// for a plugin that is busy: [`PluginManager::poll`] moves it through the deactivation to the
+/// end of its process.
+struct Leaving {
+    id: InstanceId,
+    what: Leaver,
+    step: Leave,
+    /// The end shutdown was started.
+    begun: bool,
+    /// What the instance said while it went away (a stall of its own deactivation).
+    end: Option<ManagerEnd>,
+}
+
+impl Leaving {
+    /// A creation that is abandoned: what it started is ended. A plugin that has not been
+    /// created yet (a backend that creates it when polled) has nothing to end.
+    fn of_creation(stage: Stage) -> Option<Self> {
+        let (what, end) = match stage {
+            Stage::Sync => return None,
+            Stage::Instantiating(started) => (Leaver::Pending(started.pending), started.end),
+            Stage::Restoring(b) | Stage::Activating(b, _) => (Leaver::Instance(b.instance), b.end),
+        };
+        Some(Self {
+            id: end.slot().id(),
+            what,
+            step: Leave::Ending,
+            begun: false,
+            end: Some(end),
+        })
+    }
+
+    /// One poll of the way out; true when it is over and the instance can be dropped.
+    fn advance(&mut self, stalls: &mut Vec<StallRecord>) -> bool {
+        loop {
+            let Leaver::Instance(instance) = &mut self.what else {
+                return self.end_step(stalls);
+            };
+            match self.step {
+                Leave::Activating => match instance.poll_activate() {
+                    // The activation produced the processor that must go back first.
+                    Some(Ok(processor)) => {
+                        self.step = if instance.begin_deactivate(processor) {
+                            Leave::Ending
+                        } else {
+                            Leave::Deactivating
+                        };
+                    }
+                    Some(Err(_)) => self.step = Leave::Ending,
+                    None if instance.is_lost() => self.step = Leave::Ending,
+                    None => return false,
+                },
+                Leave::Deactivating => {
+                    if instance.poll_deactivate() || instance.is_lost() {
+                        self.step = Leave::Ending;
+                    } else {
+                        return false;
+                    }
+                }
+                Leave::Ending => return self.end_step(stalls),
+            }
+        }
+    }
+
+    /// Starts ending the process and says whether it has ended.
+    fn end_step(&mut self, stalls: &mut Vec<StallRecord>) -> bool {
+        let done = match &mut self.what {
+            Leaver::Pending(pending) => {
+                if !self.begun {
+                    pending.begin_shutdown();
+                    self.begun = true;
+                }
+                pending.poll_shutdown()
+            }
+            Leaver::Instance(instance) => {
+                if !self.begun {
+                    instance.begin_shutdown();
+                    self.begun = true;
+                }
+                instance.poll_shutdown()
+            }
+        };
+        if done {
+            drain_stalls(self.id, self.end.as_ref(), stalls);
+        }
+        done
+    }
+}
+
+/// Moves the stall records an instance posted into `stalls`.
+fn drain_stalls(id: InstanceId, end: Option<&ManagerEnd>, stalls: &mut Vec<StallRecord>) {
+    while let Some(msg) = end.and_then(ManagerEnd::try_recv) {
+        if let PluginMessage::Stall { call, ms, outcome } = msg {
+            push_stall(
+                stalls,
+                StallRecord {
+                    instance: id,
+                    call,
+                    ms,
+                    outcome,
+                },
+            );
+        }
+    }
 }
 
 /// The main-thread owner of the plugin instances.
@@ -379,6 +570,8 @@ pub struct PluginManager {
     next_id: u64,
     creating: BTreeMap<u64, Creating>,
     next_ticket: u64,
+    /// Instances that left and are being taken down (see [`Leaving`]).
+    leaving: Vec<Leaving>,
 }
 
 fn descriptor_of(
@@ -388,6 +581,23 @@ fn descriptor_of(
     let mut layout = layout.clone();
     truncate_params(&mut layout);
     descriptor_for(plugin, &layout).map(|d| (d, layout))
+}
+
+/// What an activated instance brings to [`PluginManager::install`].
+struct Activated {
+    processor: Box<dyn PluginProcessor>,
+    descriptor: &'static DeviceDescriptor,
+    layout: PluginLayout,
+    restore_error: Option<String>,
+    timing: CreateTiming,
+}
+
+fn activate_config(request: &InstantiateRequest) -> ActivateConfig {
+    ActivateConfig {
+        sample_rate: request.sample_rate,
+        frames: BATCH as u32,
+        mode: request.mode,
+    }
 }
 
 impl PluginManager {
@@ -404,6 +614,7 @@ impl PluginManager {
             next_id: 1,
             creating: BTreeMap::new(),
             next_ticket: 1,
+            leaving: Vec::new(),
         }
     }
 
@@ -421,6 +632,12 @@ impl PluginManager {
     /// Number of instances (live and parked).
     pub fn instance_count(&self) -> usize {
         self.instances.len()
+    }
+
+    /// Number of instances that left and are still being taken down: their plugin is
+    /// deactivating or its process has not ended yet (see [`PluginManager::poll`]).
+    pub fn leaving_count(&self) -> usize {
+        self.leaving.len()
     }
 
     /// Whether the instance exists.
@@ -532,22 +749,25 @@ impl PluginManager {
             &request.plugin,
             HostHandle::with_budget(end.messenger(), self.soft.clone()),
         )?;
-        let started = pending.map(|pending| {
-            // The id belongs to this start: the next one gets another.
-            self.next_id += 1;
-            Started {
-                pending,
-                device_end,
-                end,
+        let stage = match pending {
+            Some(pending) => {
+                // The id belongs to this start: the next one gets another.
+                self.next_id += 1;
+                Stage::Instantiating(Started {
+                    pending,
+                    device_end,
+                    end,
+                })
             }
-        });
+            None => Stage::Sync,
+        };
         let ticket = CreateTicket(self.next_ticket);
         self.next_ticket += 1;
         self.creating.insert(
             ticket.0,
             Creating {
                 request: request.clone(),
-                started,
+                stage,
             },
         );
         Ok(ticket)
@@ -555,35 +775,145 @@ impl PluginManager {
 
     /// Moves the creation `ticket` on without blocking (see [`PluginManager::begin_create`]):
     /// `None` while the plugin is not ready, then the handle or the error. The answer spends
-    /// the ticket.
+    /// the ticket. A plugin in another process goes through starting, restoring its saved
+    /// state (when there is one) and activating, each a request that is polled, so a sampler
+    /// that restores a big library for minutes does not hold the caller up; every error is the
+    /// one the blocking [`PluginManager::instantiate`] gives.
     pub fn poll_create(
         &mut self,
         ticket: CreateTicket,
     ) -> Option<Result<PluginHandle, ManagerError>> {
         assert_main_thread("PluginManager::poll_create");
-        let creating = self.creating.get_mut(&ticket.0)?;
-        let ready = match creating.started.as_mut() {
-            Some(started) => Some(started.pending.poll()?),
-            None => None,
-        };
-        let Creating { request, started } = self.creating.remove(&ticket.0)?;
-        Some(match (started, ready) {
-            (Some(started), Some(Ok(instance))) => {
-                self.complete(&request, instance, started.device_end, started.end)
+        let Creating { request, stage } = self.creating.remove(&ticket.0)?;
+        match self.advance_creation(&request, stage) {
+            Advance::Done(result) => Some(*result),
+            Advance::Wait(stage) => {
+                self.creating.insert(ticket.0, Creating { request, stage });
+                None
             }
-            (Some(_), Some(Err(e))) => Err(e.into()),
-            _ => self.instantiate(&request),
-        })
+        }
     }
 
-    /// Abandons the creation `ticket`: a plugin that was starting in another process ends.
+    /// Abandons the creation `ticket`: a plugin that was starting in another process ends (the
+    /// end is polled, not waited for).
     pub fn cancel_create(&mut self, ticket: CreateTicket) {
         assert_main_thread("PluginManager::cancel_create");
-        self.creating.remove(&ticket.0);
+        let Some(Creating { stage, .. }) = self.creating.remove(&ticket.0) else {
+            return;
+        };
+        self.leaving.extend(Leaving::of_creation(stage));
+        self.advance_leaving();
+    }
+
+    /// One step of a creation: as far as it can go without waiting.
+    fn advance_creation(&mut self, request: &InstantiateRequest, mut stage: Stage) -> Advance {
+        loop {
+            stage = match stage {
+                Stage::Sync => return Advance::Done(Box::new(self.instantiate(request))),
+                Stage::Instantiating(mut started) => match started.pending.poll() {
+                    None => return Advance::Wait(Stage::Instantiating(started)),
+                    Some(Err(e)) => return Advance::Done(Box::new(Err(e.into()))),
+                    Some(Ok(instance)) => {
+                        let boot = Booting {
+                            instance,
+                            device_end: started.device_end,
+                            end: started.end,
+                            restore_error: None,
+                            began: clock(),
+                            restore: Duration::ZERO,
+                            activating_since: clock(),
+                        };
+                        match self.begin_restore(request, boot) {
+                            Advance::Wait(stage) => stage,
+                            done @ Advance::Done(_) => return done,
+                        }
+                    }
+                },
+                Stage::Restoring(mut boot) => match boot.instance.poll_restore_state() {
+                    None => return Advance::Wait(Stage::Restoring(boot)),
+                    Some(result) => {
+                        boot.restore_error = result.err().map(|e| e.to_string());
+                        boot.restore = clock().saturating_duration_since(boot.began);
+                        match self.begin_activation(request, boot) {
+                            Advance::Wait(stage) => stage,
+                            done @ Advance::Done(_) => return done,
+                        }
+                    }
+                },
+                Stage::Activating(mut boot, prepared) => match boot.instance.poll_activate() {
+                    None => return Advance::Wait(Stage::Activating(boot, prepared)),
+                    Some(Err(e)) => return Advance::Done(Box::new(Err(e.into()))),
+                    Some(Ok(processor)) => {
+                        let handle = self.finish_boot(request, boot, prepared, processor);
+                        return Advance::Done(Box::new(Ok(handle)));
+                    }
+                },
+            };
+        }
+    }
+
+    /// Starts restoring the saved state, if there is one: the next stage, or the end of the
+    /// creation. State first (so a latency that depends on it is right at activation), rack
+    /// params after (the device re-sends every param the rack sets). A state that cannot be
+    /// restored is not an error of the creation: the device is shown as FAILED.
+    fn begin_restore(&mut self, request: &InstantiateRequest, mut boot: Booting) -> Advance {
+        if let Some(state) = &request.state {
+            match boot.instance.begin_restore_state(state) {
+                Ok(false) => return Advance::Wait(Stage::Restoring(boot)),
+                Ok(true) => {}
+                Err(e) => boot.restore_error = Some(e.to_string()),
+            }
+        }
+        boot.restore = clock().saturating_duration_since(boot.began);
+        self.begin_activation(request, boot)
+    }
+
+    /// Starts the activation: the next stage, or the end of the creation.
+    fn begin_activation(&mut self, request: &InstantiateRequest, mut boot: Booting) -> Advance {
+        boot.activating_since = clock();
+        let prepared = match descriptor_of(&request.plugin, boot.instance.layout()) {
+            Ok(prepared) => prepared,
+            Err(e) => return Advance::Done(Box::new(Err(e.into()))),
+        };
+        match boot.instance.begin_activate(&activate_config(request)) {
+            Ok(Some(processor)) => {
+                let handle = self.finish_boot(request, boot, prepared, processor);
+                Advance::Done(Box::new(Ok(handle)))
+            }
+            Ok(None) => Advance::Wait(Stage::Activating(boot, prepared)),
+            Err(e) => Advance::Done(Box::new(Err(e.into()))),
+        }
+    }
+
+    /// The instance is active: the device and the handle.
+    fn finish_boot(
+        &mut self,
+        request: &InstantiateRequest,
+        boot: Booting,
+        (descriptor, layout): Prepared,
+        processor: Box<dyn PluginProcessor>,
+    ) -> PluginHandle {
+        let timing = CreateTiming {
+            restore: boot.restore,
+            activate: clock().saturating_duration_since(boot.activating_since),
+        };
+        self.install(
+            request,
+            boot.instance,
+            boot.device_end,
+            boot.end,
+            Activated {
+                processor,
+                descriptor,
+                layout,
+                restore_error: boot.restore_error,
+                timing,
+            },
+        )
     }
 
     /// The rest of an instantiation once the backend gave the instance: the state, the
-    /// descriptor, the activation and the device.
+    /// descriptor, the activation and the device (all of it waiting for the plugin).
     fn complete(
         &mut self,
         request: &InstantiateRequest,
@@ -591,10 +921,7 @@ impl PluginManager {
         device_end: DeviceEnd,
         end: ManagerEnd,
     ) -> Result<PluginHandle, ManagerError> {
-        let id = end.slot().id();
         let began = clock();
-        // State first (so a latency that depends on it is right at activation), rack params
-        // after (the device re-sends every param the rack sets).
         let restore_error = request
             .state
             .as_ref()
@@ -602,17 +929,45 @@ impl PluginManager {
             .map(|e| e.to_string());
         let restored = clock();
         let (descriptor, layout) = descriptor_of(&request.plugin, instance.layout())?;
-        let cfg = ActivateConfig {
-            sample_rate: request.sample_rate,
-            frames: BATCH as u32,
-            mode: request.mode,
-        };
-        let processor = instance.activate(&cfg)?;
-        let latency = instance.latency_frames();
+        let processor = instance.activate(&activate_config(request))?;
         let timing = CreateTiming {
             restore: restored.saturating_duration_since(began),
             activate: clock().saturating_duration_since(restored),
         };
+        Ok(self.install(
+            request,
+            instance,
+            device_end,
+            end,
+            Activated {
+                processor,
+                descriptor,
+                layout,
+                restore_error,
+                timing,
+            },
+        ))
+    }
+
+    /// Records the active instance and wraps its processor in a device.
+    fn install(
+        &mut self,
+        request: &InstantiateRequest,
+        instance: Box<dyn PluginInstance>,
+        device_end: DeviceEnd,
+        end: ManagerEnd,
+        active: Activated,
+    ) -> PluginHandle {
+        let Activated {
+            processor,
+            descriptor,
+            layout,
+            restore_error,
+            timing,
+        } = active;
+        let id = end.slot().id();
+        let cfg = activate_config(request);
+        let latency = instance.latency_frames();
         let slot = end.slot().clone();
         slot.set_latency(latency, cfg.sample_rate);
         slot.set_pinned(request.pinned);
@@ -635,16 +990,19 @@ impl PluginManager {
                 deferred_restart: false,
                 capture: CaptureSlot::default(),
                 not_responding: None,
+                layout_changed: false,
+                again: false,
+                reattach: None,
             },
         );
-        Ok(PluginHandle {
+        PluginHandle {
             id,
             device,
             layout,
             descriptor,
             restore_error,
             timing,
-        })
+        }
     }
 
     // ----- state, text, editor --------------------------------------------------------------------
@@ -1014,6 +1372,9 @@ impl PluginManager {
                 m.phase = Phase::Stopping;
             }
             Phase::Stopping | Phase::Deactivating => {}
+            // The activation in flight used the settings of before: once it is done the plugin
+            // restarts again.
+            Phase::Activating => m.again = true,
             Phase::Inactive => {
                 // The plugin is inactive and the device has no processor: activate now.
                 let mut events = Vec::new();
@@ -1023,45 +1384,103 @@ impl PluginManager {
         }
     }
 
+    /// Starts re-activating the plugin after a restart: the device resumes now when the plugin
+    /// activated at once (a plugin in this process), else when [`PluginManager::poll`] sees the
+    /// answer ([`Phase::Activating`]; the device stays as it is, with no processor, until then).
     fn activate_and_resume(id: InstanceId, m: &mut Managed, events: &mut Vec<ManagerEvent>) {
-        let layout_changed = m.instance.take_layout_changed();
-        match m.instance.activate(&m.cfg) {
-            Ok(processor) => {
-                let latency = m.instance.latency_frames();
-                m.end.slot().set_latency(latency, m.cfg.sample_rate);
-                if m.end.resume(processor).is_err() {
-                    // The ring cannot be full in the protocol; if it is, try again next time.
-                    m.phase = Phase::Inactive;
-                    events.push(ManagerEvent::RestartFailed {
-                        instance: id,
-                        reason: "the device did not take the processor".to_string(),
-                    });
-                    return;
-                }
-                m.phase = Phase::Running;
-                events.push(ManagerEvent::Restarted(id));
-                if latency != m.latency {
-                    m.latency = latency;
-                    events.push(ManagerEvent::LatencyChanged {
-                        instance: id,
-                        frames: latency,
-                    });
-                }
-                if layout_changed {
-                    m.layout = m.instance.layout().clone();
-                    events.push(ManagerEvent::LayoutChanged {
-                        instance: id,
-                        layout: m.layout.clone(),
-                    });
-                }
-            }
+        m.layout_changed = m.instance.take_layout_changed();
+        match m.instance.begin_activate(&m.cfg) {
+            Ok(Some(processor)) => Self::resume(id, m, processor, events),
+            Ok(None) => m.phase = Phase::Activating,
+            Err(e) => Self::restart_failed(id, m, e.to_string(), events),
+        }
+    }
+
+    fn restart_failed(
+        id: InstanceId,
+        m: &mut Managed,
+        reason: String,
+        events: &mut Vec<ManagerEvent>,
+    ) {
+        m.phase = Phase::Inactive;
+        m.again = false;
+        events.push(ManagerEvent::RestartFailed {
+            instance: id,
+            reason,
+        });
+    }
+
+    /// The plugin is active again: the device takes the processor back.
+    fn resume(
+        id: InstanceId,
+        m: &mut Managed,
+        processor: Box<dyn PluginProcessor>,
+        events: &mut Vec<ManagerEvent>,
+    ) {
+        let latency = m.instance.latency_frames();
+        m.end.slot().set_latency(latency, m.cfg.sample_rate);
+        if m.end.resume(processor).is_err() {
+            // The ring cannot be full in the protocol; if it is, try again next time.
+            Self::restart_failed(
+                id,
+                m,
+                "the device did not take the processor".to_string(),
+                events,
+            );
+            return;
+        }
+        m.phase = Phase::Running;
+        events.push(ManagerEvent::Restarted(id));
+        if latency != m.latency {
+            m.latency = latency;
+            events.push(ManagerEvent::LatencyChanged {
+                instance: id,
+                frames: latency,
+            });
+        }
+        if std::mem::take(&mut m.layout_changed) {
+            m.layout = m.instance.layout().clone();
+            events.push(ManagerEvent::LayoutChanged {
+                instance: id,
+                layout: m.layout.clone(),
+            });
+        }
+        if std::mem::take(&mut m.again) {
+            m.end.request_stop();
+            m.phase = Phase::Stopping;
+        }
+    }
+
+    /// The plugin that [`Phase::Activating`] waited for answered.
+    fn activated(
+        id: InstanceId,
+        m: &mut Managed,
+        answer: Result<Box<dyn PluginProcessor>, BackendError>,
+        reaper: &ReaperQueue,
+        events: &mut Vec<ManagerEvent>,
+    ) {
+        let processor = match answer {
+            Ok(processor) => processor,
             Err(e) => {
-                m.phase = Phase::Inactive;
-                events.push(ManagerEvent::RestartFailed {
-                    instance: id,
-                    reason: e.to_string(),
-                });
+                if let Some(job) = &mut m.reattach {
+                    job.ready = Some(Err(e.into()));
+                    m.phase = Phase::Inactive;
+                } else {
+                    Self::restart_failed(id, m, e.to_string(), events);
+                }
+                return;
             }
+        };
+        if m.reattach.is_some() {
+            Self::reattached(id, m, processor, reaper);
+        } else if m.parked {
+            // The instance was parked while it activated: nobody wants the processor.
+            m.phase = Phase::Inactive;
+            if !m.instance.begin_deactivate(processor) {
+                m.phase = Phase::Deactivating;
+            }
+        } else {
+            Self::resume(id, m, processor, events);
         }
     }
 
@@ -1091,6 +1510,9 @@ impl PluginManager {
         if !m.parked {
             return Err(ManagerError::NotParked(id));
         }
+        if m.phase == Phase::Activating || m.reattach.is_some() {
+            return Err(BackendError::Failed("the plugin is still activating".to_string()).into());
+        }
         let (descriptor, layout) = descriptor_of(&m.plugin, m.instance.layout())?;
         m.cfg.sample_rate = sample_rate;
         let processor = m.instance.activate(&m.cfg)?;
@@ -1114,7 +1536,110 @@ impl PluginManager {
         })
     }
 
-    /// Destroys a parked instance for good.
+    /// [`PluginManager::reattach`] for the live app, which does not wait for a plugin that is
+    /// busy: `Some(handle)` when the instance was activated at once (a plugin in this process),
+    /// `None` when its deactivation or activation is still going on. Call it again on a later
+    /// frame: [`PluginManager::poll`] moves the instance on in between, and the call that finds
+    /// it active gives the handle. Until then the instance stays parked.
+    ///
+    /// # Errors
+    /// An unknown or live instance ([`ManagerError::NotParked`]: the reaper has not parked it
+    /// yet, ask again on the next frame), or an activation failure.
+    pub fn begin_reattach(
+        &mut self,
+        id: InstanceId,
+        sample_rate: f64,
+    ) -> Result<Option<PluginHandle>, ManagerError> {
+        assert_main_thread("PluginManager::begin_reattach");
+        let reaper = self.reaper.clone();
+        let m = self.get(id)?;
+        // A reattach that finished has unparked the instance but its device is not collected yet.
+        if !m.parked && m.reattach.is_none() {
+            return Err(ManagerError::NotParked(id));
+        }
+        m.reattach
+            .get_or_insert(Reattach {
+                rate: sample_rate,
+                ready: None,
+            })
+            .rate = sample_rate;
+        Self::step_reattach(id, m, &reaper);
+        match m.reattach.as_mut().and_then(|job| job.ready.take()) {
+            Some(answer) => {
+                m.reattach = None;
+                answer.map(Some)
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Moves a reattach on: once the plugin is inactive it is activated at the new rate.
+    fn step_reattach(id: InstanceId, m: &mut Managed, reaper: &ReaperQueue) {
+        let Some(job) = &mut m.reattach else {
+            return;
+        };
+        if m.phase != Phase::Inactive || job.ready.is_some() {
+            return;
+        }
+        // A layout that cannot be a device fails before the plugin is activated.
+        if let Err(e) = descriptor_of(&m.plugin, m.instance.layout()) {
+            job.ready = Some(Err(e.into()));
+            return;
+        }
+        m.cfg.sample_rate = job.rate;
+        match m.instance.begin_activate(&m.cfg) {
+            Ok(Some(processor)) => Self::reattached(id, m, processor, reaper),
+            Ok(None) => m.phase = Phase::Activating,
+            Err(e) => job.ready = Some(Err(e.into())),
+        }
+    }
+
+    /// The parked plugin is active: a new device takes its processor.
+    fn reattached(
+        id: InstanceId,
+        m: &mut Managed,
+        processor: Box<dyn PluginProcessor>,
+        reaper: &ReaperQueue,
+    ) {
+        let Some(job) = &mut m.reattach else {
+            return;
+        };
+        let (descriptor, layout) = match descriptor_of(&m.plugin, m.instance.layout()) {
+            Ok(prepared) => prepared,
+            Err(e) => {
+                job.ready = Some(Err(e.into()));
+                m.phase = Phase::Inactive;
+                return;
+            }
+        };
+        let (device_end, stale) = m.end.new_device_end();
+        drop(stale);
+        let latency = m.instance.latency_frames();
+        m.latency = latency;
+        m.end.slot().set_latency(latency, m.cfg.sample_rate);
+        m.layout = layout.clone();
+        m.parked = false;
+        m.phase = Phase::Running;
+        let device = PluginDevice::new(
+            descriptor,
+            &layout,
+            processor,
+            device_end,
+            m.cfg.sample_rate,
+        )
+        .with_reaper(reaper.clone());
+        job.ready = Some(Ok(PluginHandle {
+            id,
+            device,
+            layout,
+            descriptor,
+            restore_error: None,
+            timing: CreateTiming::default(),
+        }));
+    }
+
+    /// Destroys a parked instance for good. Its plugin is deactivated and its process ended by
+    /// the next polls, not waited for.
     ///
     /// # Errors
     /// An unknown instance, or one that is live in the engine ([`ManagerError::InUse`]).
@@ -1123,9 +1648,37 @@ impl PluginManager {
         if !self.get(id)?.parked {
             return Err(ManagerError::InUse(id));
         }
-        self.instances.remove(&id);
+        if let Some(m) = self.instances.remove(&id) {
+            self.leave(id, m, None);
+        }
         self.queued.push(ManagerEvent::Destroyed(id));
+        self.advance_leaving();
         Ok(())
+    }
+
+    /// Hands an instance that is gone from the manager to the leaving list: what it still waits
+    /// for (an activation, a deactivation) is carried on by [`PluginManager::poll`]. A plugin
+    /// whose deactivation `processor` just started is `deactivating`.
+    fn leave(&mut self, id: InstanceId, m: Managed, deactivating: Option<bool>) {
+        let step = match (deactivating, m.phase) {
+            (Some(true), _) => Leave::Ending,
+            (Some(false), _) | (None, Phase::Deactivating) => Leave::Deactivating,
+            (None, Phase::Activating) => Leave::Activating,
+            (None, _) => Leave::Ending,
+        };
+        self.leaving.push(Leaving {
+            id,
+            what: Leaver::Instance(m.instance),
+            step,
+            begun: false,
+            end: Some(m.end),
+        });
+    }
+
+    /// Moves the instances that are leaving on; the ones that are done are dropped.
+    fn advance_leaving(&mut self) {
+        let stalls = &mut self.stalls;
+        self.leaving.retain_mut(|l| !l.advance(stalls));
     }
 
     // ----- the per-frame work -----------------------------------------------------------------------
@@ -1168,13 +1721,12 @@ impl PluginManager {
             let entry = left.entry(item.slot.id()).or_default();
             entry.extend(item.processor);
         }
-        // The instances that end now are shut down together, so that a project with dozens of
-        // plugins does not wait for its slow ones one after the other.
-        let mut doomed = Vec::new();
         for (id, processors) in left {
-            self.reap(id, processors, &mut events, &mut doomed);
+            self.reap(id, processors, &mut events);
         }
-        shut_down_together(doomed);
+        // The instances that ended are deactivated and their processes end together, across
+        // polls, so that a project with dozens of plugins waits for none of its slow ones.
+        self.advance_leaving();
         let ids: Vec<InstanceId> = self.instances.keys().copied().collect();
         for id in ids {
             self.poll_one(id, &mut events);
@@ -1182,12 +1734,15 @@ impl PluginManager {
         events
     }
 
+    /// A device went away. The instance is parked when an engine restart keeps it, else it is
+    /// gone for good ([`ManagerEvent::Destroyed`]) and goes to the leaving list. Its plugin is
+    /// deactivated without waiting for it (an offline instance waits: a bounce must see the
+    /// same thing in every run).
     fn reap(
         &mut self,
         id: InstanceId,
         mut processors: Vec<Box<dyn PluginProcessor>>,
         events: &mut Vec<ManagerEvent>,
-        doomed: &mut Vec<Managed>,
     ) {
         let Some(m) = self.instances.get_mut(&id) else {
             return;
@@ -1197,34 +1752,32 @@ impl PluginManager {
         // the backend can deactivate with the last one.
         let active = processors.pop();
         drop(processors);
-        if let Some(p) = active {
-            m.instance.deactivate(p);
-        }
+        // `Some(done)`: the deactivation was started and `done` says whether it is over.
+        let deactivation = active.map(|p| {
+            if m.cfg.mode == RunMode::Offline {
+                m.instance.deactivate(p);
+                true
+            } else {
+                m.instance.begin_deactivate(p)
+            }
+        });
         if m.retained {
             m.parked = true;
-            m.phase = Phase::Inactive;
+            m.phase = match (deactivation, m.phase) {
+                (Some(false), _) | (None, Phase::Deactivating) => Phase::Deactivating,
+                (None, Phase::Activating) => Phase::Activating,
+                _ => Phase::Inactive,
+            };
             return;
         }
-        // What the instance said while it deactivated (a stall of that very call) is not
-        // dropped with it.
-        while let Some(msg) = m.end.try_recv() {
-            if let PluginMessage::Stall { call, ms, outcome } = msg {
-                push_stall(
-                    &mut self.stalls,
-                    StallRecord {
-                        instance: id,
-                        call,
-                        ms,
-                        outcome,
-                    },
-                );
-            }
+        if let Some(m) = self.instances.remove(&id) {
+            self.leave(id, m, deactivation);
         }
-        doomed.extend(self.instances.remove(&id));
         events.push(ManagerEvent::Destroyed(id));
     }
 
     fn poll_one(&mut self, id: InstanceId, events: &mut Vec<ManagerEvent>) {
+        let reaper = self.reaper.clone();
         let Some(m) = self.instances.get_mut(&id) else {
             return;
         };
@@ -1348,6 +1901,8 @@ impl PluginManager {
         if restart && !m.parked && m.phase == Phase::Running {
             m.end.request_stop();
             m.phase = Phase::Stopping;
+        } else if restart && !m.parked && m.phase == Phase::Activating {
+            m.again = true;
         }
         if m.phase == Phase::Stopping
             && let Some(processor) = m.end.take_processor()
@@ -1367,23 +1922,59 @@ impl PluginManager {
             }
         }
         if m.phase == Phase::Deactivating && m.instance.poll_deactivate() {
-            Self::activate_and_resume(id, m, events);
+            if m.parked {
+                m.phase = Phase::Inactive;
+            } else {
+                Self::activate_and_resume(id, m, events);
+            }
         }
+        if m.phase == Phase::Activating
+            && let Some(answer) = m.instance.poll_activate()
+        {
+            Self::activated(id, m, answer, &reaper, events);
+        }
+        Self::step_reattach(id, m, &reaper);
     }
 }
 
-/// Starts the end of every instance, then drops them: whatever each one waits for (a child
-/// process that must exit) is waited for once, on a shared deadline.
-fn shut_down_together(mut doomed: Vec<Managed>) {
-    for m in &mut doomed {
-        m.instance.begin_shutdown();
+/// The longest [`shut_down_together`] waits for processes that do not end.
+const SHUTDOWN_BOUND: Duration = Duration::from_secs(10);
+
+/// Starts the end of every instance, then waits for all of them at once (the cost is the
+/// slowest process, not the sum; a process that does not end when asked is stopped by its
+/// instance after the grace it allows), then drops them.
+fn shut_down_together(mut doomed: Vec<Managed>, mut leaving: Vec<Leaving>) {
+    let began = clock();
+    let mut scratch = Vec::new();
+    loop {
+        let mut all = true;
+        for m in &mut doomed {
+            m.instance.begin_shutdown();
+            all &= m.instance.poll_shutdown();
+        }
+        for l in &mut leaving {
+            all &= l.end_step(&mut scratch);
+        }
+        if all || clock().saturating_duration_since(began) >= SHUTDOWN_BOUND {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
     }
     drop(doomed);
+    drop(leaving);
 }
 
 impl Drop for PluginManager {
     fn drop(&mut self) {
-        shut_down_together(std::mem::take(&mut self.instances).into_values().collect());
+        let mut leaving = std::mem::take(&mut self.leaving);
+        // A plugin that was still starting ends with the rest.
+        for (_, creating) in std::mem::take(&mut self.creating) {
+            leaving.extend(Leaving::of_creation(creating.stage));
+        }
+        shut_down_together(
+            std::mem::take(&mut self.instances).into_values().collect(),
+            leaving,
+        );
     }
 }
 
