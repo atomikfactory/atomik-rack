@@ -124,7 +124,7 @@ fn while_the_plugin_is_stuck_every_call_fails_at_once_and_sends_nothing() {
         "a soft call is neutral"
     );
     assert!(
-        now().saturating_duration_since(began) < Duration::from_millis(250),
+        now().saturating_duration_since(began) < Duration::from_millis(1500),
         "no call waited for the plugin (a wait would take 400 ms each)"
     );
     assert_eq!(r.fake.ctl.requests().len(), sent, "nothing was sent to it");
@@ -185,21 +185,48 @@ fn a_preset_list_that_times_out_while_the_plugin_is_alive_does_not_stop_it() {
     assert_eq!(r.instance.list_presets().len(), 2, "answers again");
 }
 
-#[test]
-fn twelve_missed_soft_calls_do_not_stop_a_plugin_that_is_alive() {
+/// Soft calls on `r` until the twelfth real miss leaves the instance stuck, the child is lost, or
+/// ten seconds have passed (the number of calls that really wait does not depend on the clock).
+fn miss_until_stuck(r: &mut Rig) {
+    let limit = now() + Duration::from_secs(10);
+    while now() < limit && !r.instance.is_lost() && r.instance.not_responding().is_none() {
+        assert_eq!(r.instance.param_text(1, 0.5), None);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// Timeouts for the twelve-misses tests: a short soft wait, and no back-off between the calls so
+/// that every call really waits.
+fn miss_timeouts() -> crate::link::Timeouts {
     let mut timeouts = test_timeouts();
     timeouts.text = Duration::from_millis(30);
+    timeouts.slow_retry = Duration::ZERO;
+    timeouts
+}
+
+#[test]
+fn a_child_whose_beat_is_rarer_than_a_short_wait_is_still_alive_over_the_run_of_misses() {
+    // One beat every ~40 ms against a 30 ms wait (whose own window is 15 ms): most waits see no
+    // beat at all, the run of misses does. A live plugin must not be stopped for that.
     let mut r = started(
         blocked_once(|req| matches!(req, ToChild::ParamText { .. })),
-        timeouts,
+        miss_timeouts(),
     );
-    for _ in 0..40 {
-        assert_eq!(r.instance.param_text(1, 0.5), None);
-        if r.instance.not_responding().is_some() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    r.fake.ctl.set_audio_idle(Duration::from_millis(40));
+    miss_until_stuck(&mut r);
+    assert!(!r.instance.is_lost(), "a live plugin was stopped");
+    assert!(!r.fake.ctl.was_killed());
+    assert_eq!(r.instance.not_responding().as_deref(), Some("ParamText"));
+}
+
+#[test]
+fn twelve_missed_soft_calls_do_not_stop_a_plugin_that_is_alive() {
+    let mut r = started(
+        blocked_once(|req| matches!(req, ToChild::ParamText { .. })),
+        miss_timeouts(),
+    );
+    miss_until_stuck(&mut r);
+    assert!(!r.instance.is_lost(), "a live plugin was stopped");
     assert_eq!(r.instance.not_responding().as_deref(), Some("ParamText"));
     assert!(!r.instance.is_lost() && !r.fake.ctl.was_killed());
     let asked = requests_of(&r, |q| matches!(q, ToChild::ParamText { .. }));

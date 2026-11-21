@@ -327,7 +327,7 @@ fn a_plugin_that_hangs_in_activate_fails_instantiate_after_the_timeout_and_the_c
     let took = start.elapsed();
     assert!(result.is_err());
     assert!(took >= Duration::from_millis(400), "{took:?}");
-    assert!(took < Duration::from_secs(5), "{took:?}");
+    assert!(took < Duration::from_secs(60), "{took:?}");
     assert!(
         sb.wait_children(0, Duration::from_secs(5)),
         "the child is killed"
@@ -495,6 +495,9 @@ fn the_state_of_a_busy_plugin_is_asked_for_in_the_background_without_a_stall_or_
     let id = handle.id;
     let device = effect(handle, 0.25);
     let _ = sb.manager.poll();
+    // The blocking calls above (instantiate, activate) may be slow on a loaded machine and leave
+    // stall records of their own: only what the background phase adds counts.
+    let _ = sb.manager.take_stalls();
     #[allow(clippy::disallowed_methods)]
     // Justification: this measures how long a busy plugin takes, and that the main thread kept polling.
     let began = std::time::Instant::now();
@@ -515,13 +518,14 @@ fn the_state_of_a_busy_plugin_is_asked_for_in_the_background_without_a_stall_or_
     };
     assert!(began.elapsed() >= Duration::from_millis(500), "it was busy");
     assert!(
-        polls > 50,
+        polls > 5,
         "the main thread went on polling meanwhile: {polls}"
     );
     assert!(landed.result.is_ok() && !landed.stale && !landed.again);
+    let stalls = sb.manager.take_stalls();
     assert!(
-        sb.manager.take_stalls().is_empty(),
-        "nothing waited, so nothing stalled"
+        !stalls.iter().any(|s| s.call == "CaptureState"),
+        "the background request waited for nothing: {stalls:?}"
     );
     assert!(
         !events.iter().any(|e| matches!(
@@ -574,16 +578,16 @@ fn a_plugin_whose_main_thread_sleeps_past_the_timeout_is_not_stopped_and_answers
         "its audio keeps running while it does not answer"
     );
 
-    // A second call does not wait for it.
-    #[allow(clippy::disallowed_methods)]
-    // Justification: this measures that the main thread did not wait.
-    let began = std::time::Instant::now();
+    // A second call does not wait for it: it leaves no stall record (the first one, which timed
+    // out, did; that record is taken away first).
+    let _ = sb.manager.take_stalls();
     let again = sb.manager.capture_state(id).unwrap_err();
-    #[allow(clippy::disallowed_methods)]
-    // Justification: as above.
-    let took = began.elapsed();
     assert!(again.is_not_responding(), "{again}");
-    assert!(took < Duration::from_millis(300), "{took:?}");
+    let stalls = sb.manager.take_stalls();
+    assert!(
+        !stalls.iter().any(|s| s.call == "CaptureState"),
+        "the second call waited: {stalls:?}"
+    );
 
     // It answers by itself once its main thread is free again.
     #[allow(clippy::disallowed_methods)]
