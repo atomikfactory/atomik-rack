@@ -96,7 +96,7 @@ pub fn tail_from_code(code: u64) -> TailLength {
 mod tests {
     use super::*;
     use crate::layout::{WireEvent, WireTransport};
-    use atomik_core::ExprKind;
+    use atomik_core::{BATCH, ExprKind};
     use atomik_plugin_host::{PluginEvent, PluginEventKind, PluginTransport};
     use proptest::prelude::*;
 
@@ -152,7 +152,7 @@ mod tests {
             (any::<[u8; 3]>(), 2u8..=3)
                 .prop_map(|(bytes, len)| PluginEventKind::Midi { bytes, len }),
         ];
-        (any::<u16>(), kind).prop_map(|(offset, kind)| PluginEvent { offset, kind })
+        (0..BATCH as u16, kind).prop_map(|(offset, kind)| PluginEvent { offset, kind })
     }
 
     proptest! {
@@ -217,6 +217,30 @@ mod tests {
             prop_assert_eq!(back.loop_start_beats.to_bits(), t.loop_start_beats.to_bits());
             prop_assert_eq!(back.loop_end_beats.to_bits(), t.loop_end_beats.to_bits());
             prop_assert_eq!(back.sample_rate.to_bits(), t.sample_rate.to_bits());
+        }
+    }
+
+    #[test]
+    fn an_offset_past_the_batch_is_pulled_back_to_its_last_frame() {
+        let at = |offset: u32| WireEvent {
+            tag: crate::layout::EV_PITCH_BEND,
+            offset,
+            ..WireEvent::default()
+        };
+        let last = BATCH as u16 - 1;
+        for (wire, want) in [
+            (63, 63),
+            (0, 0),
+            (64, last),
+            (65, last),
+            (65_535, last),
+            (65_536, last),
+            (u32::MAX, last),
+        ] {
+            let e = at(wire)
+                .decode()
+                .expect("an offset never refuses the event");
+            assert_eq!(e.offset, want, "offset {wire}");
         }
     }
 

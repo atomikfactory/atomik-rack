@@ -313,6 +313,13 @@ may break APIs and the patch and project formats.
   blocks in a row, and a good block starts the count again. A panic still fails it at once. The rule looks only at
   what the plugin returned, so a bounce, live playback, a plugin in the app and a sandboxed one agree, and a
   project with no bad block renders exactly as before.
+- **A misbehaving plugin can no longer take the app down through an oversized state, at exit, or through an
+  out-of-range event.** A VST3 or CLAP plugin that seeks far into its state stream and writes, or that writes
+  without end, now gets an error from the stream at 64 MB (the most the app can carry anyway) instead of
+  exhausting memory; saving a large VST3 state holds one copy less. A plugin that is still in use when the app
+  shuts down or restarts its engine keeps its library loaded until it has been released, instead of crashing
+  as it is let go. An event a plugin process places beyond the 64 frames of a block is delivered on the block's
+  last frame; a project and a bounce with events inside the block are unchanged.
 
 ## [0.5.0-rc.1] - 2026-11-18
 
