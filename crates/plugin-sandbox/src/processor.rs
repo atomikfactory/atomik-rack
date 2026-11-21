@@ -7,7 +7,14 @@
 //! block's death flag, so a dead child answers [`ProcessStatus::Lost`] within one call. When
 //! the offline watchdog runs out the processor only marks the block dead: the main thread
 //! (the instance's `poll`) kills the process, because killing needs a lock.
+//!
+//! Live, a batch is waited for one period, or until the moment the running audio callback
+//! published as the end of its plugin budget when that is later (one atomic load): a plugin
+//! with bursty work uses the callback's slack instead of dropping the batch. A plugin that
+//! misses [`COOL_AFTER`] full waits in a row stops being spun for during [`COOL_BATCHES`]
+//! batches: each is polled once and counted late at once, then a full wait is tried again.
 
+use atomik_core::CallbackDeadline;
 use atomik_plugin_host::{
     PluginEvent, PluginIo, PluginProcessor, ProcessStatus, SleepRule, TailLength,
 };
@@ -19,6 +26,27 @@ use std::time::Duration;
 /// How long a live `start_processing`, `stop_processing` or `reset` may take. These are not
 /// audio: a plugin may need a few milliseconds to start, which is not a failure.
 pub(crate) const LIVE_OP_DEADLINE: Duration = Duration::from_millis(50);
+
+/// The longest a live batch is waited for, whatever deadline the callback published: the
+/// callback's slack is a buffer (a few ten milliseconds at most), never more.
+pub(crate) const MAX_LIVE_WAIT: Duration = Duration::from_millis(100);
+
+/// How many full waits in a row may run out before the processor stops spinning for the plugin.
+pub(crate) const COOL_AFTER: u32 = 4;
+
+/// How many batches are polled once instead of waited for after [`COOL_AFTER`] misses. A
+/// 480-frame callback holds seven or eight batches: this is about three callbacks.
+pub(crate) const COOL_BATCHES: u32 = 24;
+
+/// What a live batch did to get its answer (kept in tests, to see what the processor asked).
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WaitKind {
+    /// A full wait up to this deadline.
+    Full(Deadline),
+    /// One poll, no waiting (cool-down).
+    Poll,
+}
 
 /// Where a processor puts its port back when it is dropped, so that the instance can activate
 /// again.
@@ -43,6 +71,14 @@ pub(crate) struct RemoteProcessor {
     hang_after: u32,
     /// Set when the child is declared hung, for the main thread to give the reason.
     hung: Option<Arc<AtomicBool>>,
+    /// When the running callback must be done (live only; `None`: a batch gets one period).
+    callback: Option<Arc<CallbackDeadline>>,
+    /// Full waits that ran out in a row (reset by an answer).
+    misses: u32,
+    /// Batches left in the cool-down (0: not cooling).
+    cooling: u32,
+    #[cfg(test)]
+    trace: Option<Arc<Mutex<Vec<WaitKind>>>>,
 }
 
 /// What became of the request that was in flight before a new exchange.
@@ -77,7 +113,27 @@ impl RemoteProcessor {
             last_done: 0,
             hang_after: 0,
             hung: None,
+            callback: None,
+            misses: 0,
+            cooling: 0,
+            #[cfg(test)]
+            trace: None,
         }
+    }
+
+    /// Lets a live batch use what is left of the audio callback's budget: `callback` holds the
+    /// moment the running callback published as the end of its plugin budget. Read with one
+    /// atomic load per batch; offline processors never read it.
+    pub fn with_callback_deadline(mut self, callback: Arc<CallbackDeadline>) -> Self {
+        self.callback = Some(callback);
+        self
+    }
+
+    /// Records every live wait of this processor in `trace`.
+    #[cfg(test)]
+    pub fn with_trace(mut self, trace: Arc<Mutex<Vec<WaitKind>>>) -> Self {
+        self.trace = Some(trace);
+        self
     }
 
     /// Declares the child hung after `batches` late batches in a row in which it completed no
@@ -263,10 +319,22 @@ impl RemoteProcessor {
     /// Runs one batch, without the hang guard.
     fn process_batch(&mut self, io: &mut PluginIo<'_>) -> ProcessStatus {
         let (offline, watchdog, period) = (self.offline, self.watchdog, self.period);
+        // A batch of the cool-down is used up whatever becomes of it.
+        let cool = !offline && self.cooling > 0;
+        if cool {
+            self.cooling -= 1;
+        }
+        let published = if offline {
+            None
+        } else {
+            self.callback.as_ref().and_then(|c| c.read())
+        };
         let Self {
             port,
             carry,
             merged,
+            misses,
+            cooling,
             ..
         } = self;
         let Some(port) = port.as_mut() else {
@@ -288,15 +356,50 @@ impl RemoteProcessor {
             Self::carry_over(carry, io);
             return ProcessStatus::Late;
         }
-        let deadline = Deadline::after(if offline { watchdog } else { period });
-        match port.wait_done(t, deadline) {
-            Poll::Done => port.take_response(t, io).status,
+        let polled = if offline {
+            port.wait_done(t, Deadline::after(watchdog))
+        } else if cool {
+            #[cfg(test)]
+            Self::record(&self.trace, WaitKind::Poll);
+            port.poll(t)
+        } else {
+            let deadline = Deadline::after_or_until(period, published, MAX_LIVE_WAIT);
+            #[cfg(test)]
+            Self::record(&self.trace, WaitKind::Full(deadline));
+            port.wait_done(t, deadline)
+        };
+        match polled {
+            Poll::Done => {
+                *misses = 0;
+                *cooling = 0;
+                port.take_response(t, io).status
+            }
             Poll::Dead => ProcessStatus::Lost,
             Poll::TimedOut if offline => {
                 port.mark_dead();
                 ProcessStatus::Lost
             }
-            Poll::TimedOut | Poll::Pending => ProcessStatus::Late,
+            Poll::TimedOut => {
+                // A full wait ran out: enough of them in a row and the plugin is not spun for.
+                *misses += 1;
+                if *misses >= COOL_AFTER {
+                    *cooling = COOL_BATCHES;
+                    // After the cool-down one more miss starts the next one.
+                    *misses = COOL_AFTER - 1;
+                }
+                ProcessStatus::Late
+            }
+            Poll::Pending => ProcessStatus::Late,
+        }
+    }
+
+    #[cfg(test)]
+    fn record(trace: &Option<Arc<Mutex<Vec<WaitKind>>>>, kind: WaitKind) {
+        if let Some(trace) = trace {
+            trace
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(kind);
         }
     }
 }

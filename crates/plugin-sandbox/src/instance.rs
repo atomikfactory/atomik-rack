@@ -12,7 +12,7 @@
 use crate::link::{Grace, Link, LiveGuard, Reply, SoftAsked, SoftDone, SoftKind, Timeouts};
 use crate::processor::{PortCell, RemoteProcessor};
 use crate::transport::Transport;
-use atomik_core::BATCH;
+use atomik_core::{BATCH, CallbackDeadline};
 use atomik_device_sdk::{PluginLayout, PluginStateBlob, RunMode};
 use atomik_plugin_host::{
     ActivateConfig, BackendError, EditorKind, HostMessenger, LogLevel, NativeParent,
@@ -44,6 +44,11 @@ pub(crate) struct RemoteInstance {
     latency: u32,
     /// Activated for an offline bounce: `poll` flushes the child's notifications.
     offline_active: bool,
+    /// The end of the running audio callback's plugin budget, which a live batch may wait for.
+    callback: Arc<CallbackDeadline>,
+    /// Where the processor records its live waits (tests).
+    #[cfg(test)]
+    pub(crate) trace: Option<Arc<Mutex<Vec<crate::processor::WaitKind>>>>,
     /// Cosmetic answers that came after their call returned, for
     /// [`PluginInstance::take_soft_answers`] (the newest [`MAX_READY`]).
     ready: Vec<SoftAnswer>,
@@ -222,6 +227,9 @@ impl RemoteInstance {
             has_gui,
             latency,
             offline_active: false,
+            callback: Arc::clone(CallbackDeadline::shared()),
+            #[cfg(test)]
+            trace: None,
             ready: Vec::new(),
             wanted_resize: None,
             opening_since: None,
@@ -313,10 +321,16 @@ impl RemoteInstance {
         );
         if !wait_all {
             // Live only: an offline batch waits for its answer up to the watchdog instead.
-            processor = processor.with_hang_guard(
-                Self::hang_batches(period, self.timeouts().hung),
-                self.link.shared().hung_flag(),
-            );
+            processor = processor
+                .with_hang_guard(
+                    Self::hang_batches(period, self.timeouts().hung),
+                    self.link.shared().hung_flag(),
+                )
+                .with_callback_deadline(Arc::clone(&self.callback));
+        }
+        #[cfg(test)]
+        if let Some(trace) = &self.trace {
+            processor = processor.with_trace(Arc::clone(trace));
         }
         Ok(Box::new(processor))
     }
@@ -1015,6 +1029,12 @@ impl RemoteInstance {
     /// The cosmetic requests that are out or not yet collected.
     pub(crate) fn soft_out(&self) -> bool {
         self.link.soft_has(|_| true)
+    }
+
+    /// Reads the callback's budget from `callback` instead of the process's (tests).
+    #[cfg(test)]
+    pub(crate) fn set_callback_deadline(&mut self, callback: Arc<CallbackDeadline>) {
+        self.callback = callback;
     }
 
     /// The allowance of waiting for cosmetic answers this instance draws on.

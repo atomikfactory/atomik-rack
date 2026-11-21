@@ -33,7 +33,7 @@ The picture shows the main arrows only; the table below is exact.
 
 | Crate | Path | Workspace dependencies | `unsafe` allowed in | What it is |
 |---|---|---|---|---|
-| `atomik-core` | [crates/core](../crates/core) | none | none | Batch constants, time (`SampleRate`, `Tempo`, ticks, `PPQ` = 15 360, `TimeInfo` with the transport position `tick`, `ticks_per_frame`, `loop_wrap`, `time_signature`), the tempo map (steps and linear ramps) and the meter map (`tempo_map.rs`, `meter_map.rs`), params, note events, the scales and chords of `theory.rs` (allocation-free, shared by the note editors and the note players) |
+| `atomik-core` | [crates/core](../crates/core) | none | none | Batch constants, time (`SampleRate`, `Tempo`, ticks, `PPQ` = 15 360, `TimeInfo` with the transport position `tick`, `ticks_per_frame`, `loop_wrap`, `time_signature`), the tempo map (steps and linear ramps) and the meter map (`tempo_map.rs`, `meter_map.rs`), params, note events, the scales and chords of `theory.rs` (allocation-free, shared by the note editors and the note players), the published end of the audio callback's plugin budget (`callback_deadline.rs`) |
 | `atomik-device-sdk` | [crates/device-sdk](../crates/device-sdk) | core | none | `DeviceDescriptor`, the `Device` trait (with stages and `swap_samples`), `ProcessContext`, `Registry` (with `register_with_samples`), `SampleMap` and `Zone` with `reverse` (`samples.rs`), `PlayerData` (step sequencer patterns, `player.rs`), `Device::swap_player_data`, `Registry::register_with_player_data`, `ScopeTap` and `Device::scope_tap` (the ring of recent frames a metering device hands to the UI, `scope.rs`) |
 | `atomik-dsp` | [crates/dsp](../crates/dsp) | core | none | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables and a 32-wave additive bank, mip levels by FFT truncation), filters, the 24 dB ladder with an anti-aliased drive (`ladder.rs`), envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the streaming note tracker of the practice grader (`listen.rs`: onsets, pitch, chroma), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) and the plucked string (`pluck`: a waveguide with a Lagrange-tuned loop, the pick and the instrument bodies) |
 | `atomik-devices` | [crates/devices](../crates/devices) | core, device-sdk, dsp | none | `poly-synth` (and the `mono-bass` and `dual-layer` built on its voice), the `organ`, `plucked` (plucked strings), `wavetable-synth`, `fm-synth`, `sampler`, `granular`, `drum-machine`, `loop-slicer`, `line-mixer`, `stereo-delay`, the `echo`, the six effects, the `guitar-amp`, `step-sequencer`, `arpeggiator`, `channel`, `master`, `audio-track`, the `spectrum` and `phase-meter` analysers (see [DEVICES.md](DEVICES.md)) |
@@ -5270,9 +5270,18 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     `RemoteProcessor::process` copies the block in, rings the doorbell (Windows named event, Linux
     shared futex, macOS shared ulock; one atomic swap and no system call while the child is awake)
     and spins until the answer, the death flag or the deadline. Live, the deadline is one batch
-    period: a late answer gives `ProcessStatus::Late` (dry for an effect, silence otherwise, the
-    `late` meter counts it), and the events of a batch that could not be sent are carried to the
-    next one at offset 0, so a note-off is never lost. A bounce (`SandboxConfig::bounce`, set by
+    period, or the moment the running audio callback published as the end of its plugin budget when
+    that is later (`CallbackDeadline` in `atomik-core`: the output callback of `atomik-audio-io`
+    stores its start plus 70 % of the buffer duration in one relaxed atomic, the processor loads it
+    once per batch; never waited past, capped at 100 ms, and a stale or missing value is the plain
+    period, so a callback without slack behaves as before). A late answer gives
+    `ProcessStatus::Late` (dry for an effect, silence otherwise, the `late` meter counts it), and the
+    events of a batch that could not be sent are carried to the next one at offset 0, so a note-off
+    is never lost. After four full waits in a row that ran out, the processor polls the next 24
+    batches once instead of waiting (late at once when the answer is not there; counted late all
+    the same) and then tries a full wait again; an answer ends the run. The state is per processor
+    and the render workers only read the published value, so plugins of one level may wait together
+    on different threads. Offline never reads the published value or the clock for a decision. A bounce (`SandboxConfig::bounce`, set by
     `atomik-render`, also for `--plugin-mode realtime`) and an offline instance wait for every batch
     up to a 30 s watchdog, so a sandboxed bounce is byte-identical to an in-process one.
   - *Crash.* When the child ends, the reader thread marks the block dead (`DeathHandle`) and posts
@@ -7949,7 +7958,7 @@ The spectrum and the phase meter (section 6k) have panels of the same kind (`FxK
 | The automation hold (the lanes a take is writing) is a fixed array of atomics the player loads once per batch; setting it is a few stores from the UI thread | `AutomationHold` in [player.rs](../crates/engine/src/player.rs); [song_automation_hold.rs](../crates/engine/tests/song_automation_hold.rs) runs it under the counting allocator |
 | Disk, decoding, hashing and WAV writing exist only in non-RT crates and threads | `atomik-audio-file`, the app workers, the streamer |
 | `unsafe` is denied workspace-wide; only the plugin backends and the sandbox wire (whole crates), two host modules, the test allocator and the test plugins allow it, each block with a `SAFETY:` comment | root `Cargo.toml`; the `unsafe` column of the crate table in section 1; [unsafe_policy.rs](../crates/plugin-host/tests/unsafe_policy.rs) |
-| The plugin sandbox's engine side copies into the mapped block and spins on its own child for at most one batch period live (a bounce waits up to the watchdog): the one bounded wait on the render path, with no lock, no allocation and no blocking system call | `RemoteProcessor` in [plugin-sandbox/src/processor.rs](../crates/plugin-sandbox/src/processor.rs), `ParentPort` in [plugin-ipc/src/parent.rs](../crates/plugin-ipc/src/parent.rs); the no-alloc tests there and in [plugin-hostd/tests](../crates/plugin-hostd/tests) |
+| The plugin sandbox's engine side copies into the mapped block and spins on its own child for at most one batch period live, or up to the end of the callback's published plugin budget (a bounce waits up to the watchdog): the one bounded wait on the render path, with no lock, no allocation and no blocking system call | `RemoteProcessor` in [plugin-sandbox/src/processor.rs](../crates/plugin-sandbox/src/processor.rs), `ParentPort` in [plugin-ipc/src/parent.rs](../crates/plugin-ipc/src/parent.rs); the no-alloc tests there and in [plugin-hostd/tests](../crates/plugin-hostd/tests) |
 
 Tests (the counting allocator is described in [TESTING.md](TESTING.md#allocation-guard-hi-1)):
 

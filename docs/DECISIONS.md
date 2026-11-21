@@ -1322,3 +1322,45 @@ loading anyway); treating a skip as a failure (a quarantine for a plugin the use
 status line; the load timeout (ten minutes) still ends a load that nobody skips.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AU. A sandboxed plugin is waited for up to the callback's budget, and one that cannot keep up stops being spun for
+
+**Question.** For every 64-frame batch the audio thread sent the request to the plugin process and spun until the
+answer or one batch period (1.3 ms at 48 kHz). The real budget is the host buffer (10 ms at 480 frames), so a
+plugin with bursty work (a block-based transform, look-ahead, a preset that has just loaded) missed the period
+although it fitted the buffer easily: the batch was dropped (dry for an effect, silence for an instrument) and
+heard. And since the parent spins while the child works, a sandboxed plugin cost about twice its own CPU.
+
+**Decision.** The output callback publishes, at its start, the moment by which its plugins must have answered: its
+start plus 70 % of the buffer duration (`CALLBACK_PLUGIN_BUDGET_PERCENT`; the rest is for the mix, the conversion
+and the hand-over). It is one relaxed atomic store of a time in `CallbackDeadline` (`atomik-core`), a cell of the
+process that the stream writes and every live processor reads, so the stream and the plugin layer need no wiring
+between them (there is one live callback per process, and a restarted stream writes the same cell). A live batch
+waits until the later of one period from now and the published moment, never longer than 100 ms from now and never
+past the published moment: a callback with no slack, a stale value from an earlier callback and a missing value
+all mean the plain period. Offline processors never read it, nor the clock for a decision. When a plugin has run
+out of four full waits in a row, the next 24 batches (about three callbacks) are only polled once and are late at
+once when the answer is not there, and then a full wait is tried again; one more miss starts the next cool-down,
+and an answer ends the run. Only waits that were actually spent count (a batch that finds the previous request
+still out is late at once without a wait and neither counts nor resets). The state is per processor; the render
+workers that run plugin devices only read the published value, so several plugins may wait at once on different
+threads.
+
+The hang guard is unchanged and still counts batches without progress, not time: the one wait that can last
+several periods is that of the batch that submitted, and the other batches of the callback find the request still
+out and are late at once, so a silent child is declared hung after the same number of batches, which the audio
+callbacks deliver at the device's pace, as before (a test runs a silent child with and without a published budget
+and compares the counts).
+
+**Rejected.** Passing the deadline through the session, the engine and the manager to each instance (a dozen
+signatures, and every stream restart would have to hand it over again); waiting for the whole buffer (the plugins
+would leave nothing for the rest of the callback); a longer period for everything (a plugin that is truly late would
+hold the callback longer, and the first batch of a callback could not use the slack of the others); pipelining by one
+batch (it adds 64 frames of latency that the in-process path would have to copy to keep bounces identical); sharing
+one wait between all plugins of a level (not in this change).
+
+**Open.** The 70 %, the four misses and the 24 batches are measured on the test plugin only (`perf/BASELINE.md`),
+not on real plugins; the hand check is a bursty third-party effect at a 480-frame buffer, counting the late
+sandbox batches in the log before and after.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
