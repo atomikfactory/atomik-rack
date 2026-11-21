@@ -267,6 +267,16 @@ may break APIs and the patch and project formats.
   playing, tries again every few seconds, and writes a recovery copy of the project after the first failure. A window
   larger than the graphics card allows (a very large or multi-monitor window) is drawn at the largest size it
   allows instead of failing.
+- **A computer without a working graphics driver now gets a message instead of a window that flashes and
+  vanishes.** The interface is drawn on the graphics card with no other drawing path. When no acceptable adapter
+  (DirectX 12, Vulkan or Metal) exists, or the window cannot get a graphics device at start, the app shows a box
+  that says a driver with DirectX 12 or Vulkan (Metal on macOS) is needed, lists the adapters it found and names the
+  log file, writes the same to the log and exits with an error code; a scripted run (`--quit-after`,
+  `--screenshot`, the stress runs) only logs and exits, without a box. The app no longer picks a software adapter by
+  chance, which crashes this renderer a few seconds after start: it is used only when named with
+  `WGPU_ADAPTER_NAME`, with a warning in the log that it is not supported. The same rule applies when the graphics
+  are rebuilt after a lost device, which keeps trying every few seconds instead of showing a box. A
+  `WGPU_ADAPTER_NAME` that matches nothing is now reported the same way instead of ending the app with a panic.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

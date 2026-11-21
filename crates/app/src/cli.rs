@@ -169,6 +169,15 @@ pub struct Cli {
 }
 
 impl Cli {
+    /// Whether nobody is at the screen to click a dialog: a run that quits by itself, renders a
+    /// screenshot or is a stress run. A blocking message box is never shown to such a run.
+    pub fn unattended(&self) -> bool {
+        self.quit_after.is_some()
+            || self.screenshot.is_some()
+            || self.stress
+            || self.stress_song_loads()
+    }
+
     /// Whether one of the `--stress-*` loads that build a generated song project is on.
     pub fn stress_song_loads(&self) -> bool {
         self.stress_song
@@ -303,6 +312,16 @@ mod tests {
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(std::iter::once("atomik").chain(args.iter().copied())).unwrap()
+    }
+
+    #[test]
+    fn a_run_that_quits_by_itself_or_renders_a_picture_is_unattended() {
+        assert!(!parse(&[]).unattended());
+        assert!(!parse(&["--play"]).unattended());
+        assert!(parse(&["--quit-after", "20"]).unattended());
+        assert!(parse(&["--screenshot", "shot.png"]).unattended());
+        assert!(parse(&["--stress"]).unattended());
+        assert!(parse(&["--stress-fx"]).unattended());
     }
 
     #[test]

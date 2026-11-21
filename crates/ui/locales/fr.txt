@@ -3574,3 +3574,9 @@ Pick hardness => Dureté du médiator
 Course mode => Mode du chœur
 Course detune => Désaccord du chœur
 Body mix => Mélange du corps
+
+# Start without a usable graphics adapter
+Graphics driver needed => Pilote graphique requis
+This version of Atomik Rack needs a graphics driver that supports DirectX 12 or Vulkan (Metal on macOS), and none that works was found. => Cette version d'Atomik Rack a besoin d'un pilote graphique compatible avec DirectX 12 ou Vulkan (Metal sous macOS), et aucun pilote fonctionnel n'a été trouvé.
+Graphics found: {found} => Cartes graphiques trouvées : {found}
+Details are in the log file: {path} => Les détails se trouvent dans le fichier journal : {path}

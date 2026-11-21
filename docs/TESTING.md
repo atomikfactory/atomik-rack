@@ -1938,6 +1938,30 @@ repaint, and `atomik.log` to hold a pair of lines for every loss: `graphics devi
 device lost: ...` (WARN), then `graphics restored (attempt 1); graphics adapter: ...` (INFO). A failed attempt would
 log `graphics rebuild attempt N failed: ...; next attempt in X s` instead, and the app keeps running.
 
+## Graphics adapter selection
+
+The rule is unit-tested without a GPU (`platform/gpu_select.rs`): a table of machines (integrated and discrete,
+discrete only, software only, an adapter that cannot present, a name, the power preference), the message texts in
+English and French, and the report that shows a box only to an attended run. The adapter is never a software one
+unless `WGPU_ADAPTER_NAME` names it, and the same rule serves the first start and every rebuild after a lost device;
+a rebuild that finds no adapter logs and tries again on the back-off, it never shows the box.
+
+By hand, with the release app, a throw-away settings folder and no sound (never `--play`); each run needs a machine
+with a hardware adapter and, for the first check, the Windows software adapter (`Microsoft Basic Render Driver`):
+
+```text
+set WGPU_ADAPTER_NAME=Microsoft Basic Render Driver
+target\release\atomik.exe --settings %TEMP%\gpu\settings.json --library %TEMP%\gpu\lib --no-midi --quit-after 20
+```
+
+- The software adapter named by hand still starts, with a `WARN` line in `atomik.log` that it is not supported and may
+  crash (it usually does, a few seconds after start: that is the reason for the warning).
+- `set WGPU_ADAPTER_NAME=no such adapter` (or `set WGPU_BACKEND=gl` on a machine without an OpenGL driver) must end
+  with a non-zero exit code and an `ERROR` line that says a graphics driver is needed and lists what was found. This
+  run is scripted (`--quit-after`), so there is no box; without `--quit-after` the same start shows the box and
+  waits for a click.
+- With no variable set the app starts as before and logs the same `graphics adapter:` line.
+
 ## Device loss and stalled streams
 
 `crates/audio-io/src/liveness.rs` has the pure liveness tests (the `max(4 periods, 250 ms)`

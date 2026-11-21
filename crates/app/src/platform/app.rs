@@ -5,6 +5,7 @@ use super::cursor;
 use super::dock_frames::DockFrames;
 use super::gpu::{FrameResult, GpuContext, WindowSurface, render_offscreen, write_png};
 use super::gpu_recovery::{self, ForcedLoss, Recovery};
+use super::gpu_select::{self, AdapterDesc};
 use super::learn_strips::{Dock, LearnStrips};
 use super::plugin_windows::PluginWindows;
 use super::window_logic;
@@ -324,6 +325,8 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let status = shell.status_text().to_string();
     log::info!("{status}");
     let event_loop = EventLoop::new().map_err(|e| format!("event loop: {e}"))?;
+    let unattended = cli.unattended();
+    let config_dir = config.dir.clone();
     crate::text_clipboard::install();
     let now = clock::now();
     let screenshot_at = cli
@@ -421,13 +424,37 @@ pub fn run(cli: Cli) -> Result<(), String> {
             std::env::var(gpu_recovery::FORCE_LOSS_ENV).ok().as_deref(),
         )
         .map(|period| ForcedLoss::new(period, Duration::ZERO)),
+        graphics_ok: false,
+        start_failure: None,
         #[cfg(target_os = "macos")]
         native: None,
     };
     event_loop
         .run_app(&mut app)
         .map_err(|e| format!("event loop: {e}"))?;
+    let failure = app.start_failure.take();
     app.shutdown();
+    if let Some(failure) = failure {
+        let log_path =
+            crate::logging::RotatingFile::path_of(&crate::logging::log_dir(&config_dir), 0);
+        let report = gpu_select::start_report(
+            &failure.found,
+            &failure.reason,
+            &log_path.display().to_string(),
+            unattended,
+        );
+        // The one place a message box appears for graphics: the start, and only when someone is
+        // at the screen (a scripted run logs and exits).
+        if let Some((title, text)) = &report.dialog {
+            rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Error)
+                .set_title(title)
+                .set_description(text)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+        }
+        return Err(report.log);
+    }
     Ok(())
 }
 
@@ -511,8 +538,20 @@ struct App {
     recovery: Recovery,
     /// The test switch that takes the device away every so often (`ATOMIK_GPU_LOSS_EVERY`).
     forced_loss: Option<ForcedLoss>,
+    /// A surface was made at least once: from then on a graphics failure is a loss to recover
+    /// from, not a start that cannot work.
+    graphics_ok: bool,
+    /// Why the first surface could not be made (no acceptable adapter, no device): the start
+    /// ends with a message and a non-zero exit code.
+    start_failure: Option<StartFailure>,
     #[cfg(target_os = "macos")]
     native: Option<super::native_menu::NativeMenus>,
+}
+
+/// A start that found no usable graphics: the adapters seen and the error.
+struct StartFailure {
+    found: Vec<AdapterDesc>,
+    reason: String,
 }
 
 /// The monitors as [`MonitorInfo`] and the index of the primary one.
@@ -656,7 +695,7 @@ impl App {
     /// Opens and closes the OS windows to match what the shell wants (call after every call
     /// into the shell). A window that cannot be opened is attached again.
     fn sync_windows(&mut self, event_loop: &ActiveEventLoop) {
-        if self.stopped {
+        if self.stopped || self.start_failure.is_some() {
             return;
         }
         let routed = self.shell.routed();
@@ -684,6 +723,12 @@ impl App {
             for kind in plan.create {
                 if let Err(e) = self.create_window(event_loop, (id, kind)) {
                     log::error!("cannot create the {kind:?} window of song {}: {e}", id.0);
+                    if self.start_failure.is_some() {
+                        // No graphics at the start: nothing can be shown, and the run ends
+                        // with a message (see `run`).
+                        event_loop.exit();
+                        return;
+                    }
                     if kind != WindowKind::Main {
                         self.shell.window_closed(kind);
                     } else if !self.shell.close_song(id) {
@@ -772,10 +817,24 @@ impl App {
         let surface = if self.recovery.is_down() || self.gpu.is_lost() {
             None
         } else {
-            Some(
-                self.gpu
-                    .create_surface(Arc::clone(&window), size.width, size.height)?,
-            )
+            match self
+                .gpu
+                .create_surface(Arc::clone(&window), size.width, size.height)
+            {
+                Ok(surface) => {
+                    self.graphics_ok = true;
+                    Some(surface)
+                }
+                Err(reason) => {
+                    if !self.graphics_ok && self.start_failure.is_none() {
+                        self.start_failure = Some(StartFailure {
+                            found: self.gpu.found().to_vec(),
+                            reason: reason.clone(),
+                        });
+                    }
+                    return Err(reason);
+                }
+            }
         };
         if let Some(theme) = window.theme() {
             self.shell

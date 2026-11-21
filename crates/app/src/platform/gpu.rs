@@ -6,14 +6,19 @@
 //! frame and builds the whole context again (see [`super::gpu_recovery`]). No surface or render
 //! target is ever configured larger than the device's texture limit.
 //!
+//! The adapter is chosen here by the rule of [`super::gpu_select`] (never a software adapter
+//! unless it is named in `WGPU_ADAPTER_NAME`), for the first start and for every rebuild alike;
+//! when none is acceptable the surface cannot be made and the caller says why.
+//!
 //! The GPU parts are not unit-tested (they need a GPU); the flag and the decisions are, and the
 //! user checks the rest (`ATOMIK_GPU_LOSS_EVERY` forces a loss).
 
 use super::gpu_recovery::clamp_size;
+use super::gpu_select::{self, AdapterDesc, Kind, Overrides};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use vello::peniko::Color;
-use vello::util::{RenderContext, RenderSurface};
+use vello::util::RenderSurface;
 use vello::wgpu;
 use vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene};
 use winit::window::Window;
@@ -153,10 +158,212 @@ fn device_type_name(kind: wgpu::DeviceType) -> &'static str {
     }
 }
 
+/// The kind of an adapter for the selection rule.
+fn kind_of(kind: wgpu::DeviceType) -> Kind {
+    match kind {
+        wgpu::DeviceType::DiscreteGpu => Kind::Discrete,
+        wgpu::DeviceType::IntegratedGpu => Kind::Integrated,
+        wgpu::DeviceType::VirtualGpu => Kind::Virtual,
+        wgpu::DeviceType::Cpu => Kind::Cpu,
+        wgpu::DeviceType::Other => Kind::Other,
+    }
+}
+
+/// One adapter with the device and queue made on it.
+struct DeviceHandle {
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+/// The instance and the devices made on it. The adapter is chosen by [`gpu_select::choose`]
+/// instead of the renderer library's own pick, so a software adapter is never used by chance.
+struct Devices {
+    instance: wgpu::Instance,
+    devices: Vec<DeviceHandle>,
+    /// The adapters seen by the last selection, for the message of a start that found none.
+    found: Vec<AdapterDesc>,
+}
+
+impl Devices {
+    fn new() -> Self {
+        let backends = wgpu::Backends::from_env().unwrap_or_default();
+        let flags = wgpu::InstanceFlags::from_build_config().with_env();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            display: None,
+            backends,
+            flags,
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            backend_options: wgpu::BackendOptions::from_env_or_default(),
+        });
+        Self {
+            instance,
+            devices: Vec::new(),
+            found: Vec::new(),
+        }
+    }
+
+    /// The id of a device that can present to `surface` (any, without one), made when there is
+    /// none yet.
+    async fn device(&mut self, surface: Option<&wgpu::Surface<'_>>) -> Result<usize, String> {
+        let existing = match surface {
+            Some(s) => self
+                .devices
+                .iter()
+                .position(|d| d.adapter.is_surface_supported(s)),
+            None => (!self.devices.is_empty()).then_some(0),
+        };
+        match existing {
+            Some(id) => Ok(id),
+            None => self.new_device(surface).await,
+        }
+    }
+
+    /// Chooses an adapter by the rule and makes a device on it.
+    async fn new_device(&mut self, surface: Option<&wgpu::Surface<'_>>) -> Result<usize, String> {
+        let adapters = self
+            .instance
+            .enumerate_adapters(wgpu::Backends::all())
+            .await;
+        let described: Vec<AdapterDesc> = adapters
+            .iter()
+            .map(|a| {
+                let info = a.get_info();
+                AdapterDesc {
+                    name: info.name,
+                    backend: backend_name(info.backend).to_string(),
+                    kind: kind_of(info.device_type),
+                    can_present: surface.is_none_or(|s| a.is_surface_supported(s)),
+                }
+            })
+            .collect();
+        self.found.clone_from(&described);
+        let Some(pick) = gpu_select::choose(&described, &Overrides::from_env()) else {
+            return Err(format!(
+                "no acceptable graphics adapter (found: {})",
+                gpu_select::found_text(&described)
+            ));
+        };
+        let adapter = adapters
+            .into_iter()
+            .nth(pick.index)
+            .ok_or("the chosen graphics adapter is gone")?;
+        if pick.forced_software {
+            log::warn!(
+                "the software graphics adapter {:?} was chosen by WGPU_ADAPTER_NAME: it is not \
+                 supported and may crash",
+                described[pick.index].name
+            );
+        }
+        let maybe = wgpu::Features::CLEAR_TEXTURE | wgpu::Features::PIPELINE_CACHE;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features: adapter.features() & maybe,
+                required_limits: wgpu::Limits::default(),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| format!("cannot create the graphics device: {e}"))?;
+        self.devices.push(DeviceHandle {
+            adapter,
+            device,
+            queue,
+        });
+        Ok(self.devices.len() - 1)
+    }
+
+    /// The surface of `target` with its render targets, configured for device `dev_id`.
+    fn render_surface(
+        &self,
+        dev_id: usize,
+        target: wgpu::Surface<'static>,
+        width: u32,
+        height: u32,
+        present_mode: wgpu::PresentMode,
+    ) -> Result<RenderSurface<'static>, String> {
+        let handle = &self.devices[dev_id];
+        let format = target
+            .get_capabilities(&handle.adapter)
+            .formats
+            .into_iter()
+            .find(|f| {
+                matches!(
+                    f,
+                    wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Bgra8Unorm
+                )
+            })
+            .ok_or("the surface has no supported format")?;
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width,
+            height,
+            present_mode,
+            color_space: wgpu::SurfaceColorSpace::Auto,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: vec![],
+        };
+        let (target_texture, target_view) = targets(width, height, &handle.device);
+        let surface = RenderSurface {
+            surface: target,
+            config,
+            dev_id,
+            format,
+            target_texture,
+            target_view,
+            blitter: wgpu::util::TextureBlitter::new(&handle.device, format),
+        };
+        self.configure_surface(&surface);
+        Ok(surface)
+    }
+
+    fn resize_surface(&self, surface: &mut RenderSurface<'_>, width: u32, height: u32) {
+        let (texture, view) = targets(width, height, &self.devices[surface.dev_id].device);
+        surface.target_texture = texture;
+        surface.target_view = view;
+        surface.config.width = width;
+        surface.config.height = height;
+        self.configure_surface(surface);
+    }
+
+    fn set_present_mode(&self, surface: &mut RenderSurface<'_>, mode: wgpu::PresentMode) {
+        surface.config.present_mode = mode;
+        self.configure_surface(surface);
+    }
+
+    fn configure_surface(&self, surface: &RenderSurface<'_>) {
+        let device = &self.devices[surface.dev_id].device;
+        surface.surface.configure(device, &surface.config);
+    }
+}
+
+/// The texture the renderer draws into (a compute shader cannot bind the surface texture) and
+/// its view; the surface gets a blit of it.
+fn targets(width: u32, height: u32, device: &wgpu::Device) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
+}
+
 /// The GPU state every window shares: one instance and adapter, one device, and one vello
 /// renderer per device (the renderer's pipelines are built once, not once per window).
 pub struct GpuContext {
-    context: RenderContext,
+    context: Devices,
     /// Indexed like `context.devices`; created the first time a surface uses the device.
     renderers: Vec<Option<Renderer>>,
     /// What the callbacks of this context's devices recorded.
@@ -204,7 +411,7 @@ impl GpuContext {
     /// An empty context: the device is picked when the first surface is created.
     pub fn new() -> Self {
         Self {
-            context: RenderContext::new(),
+            context: Devices::new(),
             renderers: Vec::new(),
             health: Arc::new(GpuHealth::default()),
             watched: 0,
@@ -221,6 +428,12 @@ impl GpuContext {
         }
     }
 
+    /// The adapters the last selection saw (none when the system has no graphics adapter at
+    /// all), for the start-up message.
+    pub fn found(&self) -> &[AdapterDesc] {
+        &self.context.found
+    }
+
     /// What the callbacks of this context's devices recorded.
     pub fn health(&self) -> &Arc<GpuHealth> {
         &self.health
@@ -234,7 +447,7 @@ impl GpuContext {
     /// The adapter line of the device in use, once there is one.
     pub fn adapter_line(&self) -> Option<String> {
         let handle = self.context.devices.first()?;
-        let info = handle.adapter().get_info();
+        let info = handle.adapter.get_info();
         let driver = format!("{} {}", info.driver, info.driver_info);
         Some(crate::startup::adapter_line(
             &info.name,
@@ -293,16 +506,13 @@ impl GpuContext {
         // The device is picked here, before the surface is configured, so the callbacks are on
         // it for everything that follows.
         let dev_id = pollster::block_on(self.context.device(Some(&target)))
-            .ok_or("GPU surface: no compatible GPU device")?;
+            .map_err(|e| format!("GPU surface: {e}"))?;
         self.watch_new_devices();
         let (width, height) = clamp_size(width, height, self.max_side(dev_id));
-        let surface = pollster::block_on(self.context.create_render_surface(
-            target,
-            width,
-            height,
-            wgpu::PresentMode::AutoVsync,
-        ))
-        .map_err(|e| format!("GPU surface: {e}"))?;
+        let surface = self
+            .context
+            .render_surface(dev_id, target, width, height, wgpu::PresentMode::AutoVsync)
+            .map_err(|e| format!("GPU surface: {e}"))?;
         crate::startup::mark(crate::startup::ADAPTER_CHOSEN);
         self.note_adapter(surface.dev_id);
         self.renderer_for(surface.dev_id)?;
@@ -318,7 +528,7 @@ impl GpuContext {
         }
         self.adapter_noted = true;
         if let Some(handle) = self.context.devices.get(dev_id) {
-            let info = handle.adapter().get_info();
+            let info = handle.adapter.get_info();
             let driver = format!("{} {}", info.driver, info.driver_info);
             let line = crate::startup::adapter_line(
                 &info.name,
@@ -441,8 +651,8 @@ pub fn render_offscreen(
     width: u32,
     height: u32,
 ) -> Result<Vec<u8>, String> {
-    let mut context = RenderContext::new();
-    let id = pollster::block_on(context.device(None)).ok_or("no compatible GPU device")?;
+    let mut context = Devices::new();
+    let id = pollster::block_on(context.device(None))?;
     let handle = &context.devices[id];
     let (device, queue) = (&handle.device, &handle.queue);
     let health = Arc::new(GpuHealth::default());
