@@ -33,7 +33,7 @@ sudo apt-get install libasound2-dev libfontconfig1-dev pkg-config
 cargo build --release --workspace
 ```
 
-The window uses the GPU through wgpu, so a working Vulkan (or OpenGL) driver is needed to run the application.
+The window is drawn on the GPU through wgpu with compute shaders, and there is no other drawing path: a graphics driver that supports DirectX 12 or Vulkan (Metal on macOS) is needed to run the application. A machine without one gets a message that says so, and the log lists the adapters that were found; a software adapter is never used on its own.
 
 ### Optional: ASIO on Windows
 
