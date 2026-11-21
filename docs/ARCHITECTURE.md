@@ -984,11 +984,19 @@ shutdown, detaching and attaching a pane); `keymap.json` is looked at when a win
 and when a menu opens.
 
 A project opens its plugins together: `PluginManager::begin_create` starts the child processes of up
-to eight pending devices (`PluginBackend::begin_instantiate`, `PendingInstance::poll`), and the
-devices attach one per frame in document order, so the result does not depend on which plugin
-loads first. Plugins loaded into the app process are still created one per frame. A freeze or a bounce
-with sandboxed plugins starts its own children next to the live ones, so the process count doubles
-while it runs; the live children are not reused, because the offline output must stay bit-identical.
+to eight pending devices (`PluginBackend::begin_instantiate`, `PendingInstance::poll`). The sandbox
+gathers the numbers on the interface thread and makes the shared block, the doorbell and the process
+on a short-lived `plugin-spawn` thread per start (creating a process took about 7 ms each on the
+development machine, 60 to 80 ms for eight in one frame; the interface thread now spends about
+0.3 ms), and the start reports "not ready" until that thread has handed the child over. Every started
+creation is followed each frame (`PluginManager::creation_ready`, which advances it without
+installing it) and the ready ones attach one per frame, oldest first, so a plugin that takes minutes
+to load does not hold the others and the result does not depend on which plugin loads first. SKIP on
+a LOADING device (`AppCore::skip_plugin`) cancels its creation and leaves a SKIPPED stand-in that
+nothing queues again until RELOAD. Plugins loaded into the app process are still created one per
+frame. A freeze or a bounce with sandboxed plugins starts its own children next to the live ones, so
+the process count doubles while it runs; the live children are not reused, because the offline
+output must stay bit-identical.
 
 ### 2.7a Export as an audio file
 
@@ -5372,7 +5380,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (663) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (664) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

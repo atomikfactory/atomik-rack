@@ -496,3 +496,60 @@ fn a_reattach_at_the_rate_of_the_activation_in_flight_adds_no_pair() {
     let stats = reattach_during_activation(44_100.0);
     assert_eq!((stats.activated(), stats.deactivated()), (2, 1));
 }
+
+#[test]
+fn a_held_creation_does_not_stop_the_others_and_a_ready_one_is_installed_only_when_taken() {
+    let (mut m, stats) = manager();
+    stats.set_background_create(Some(1));
+    stats.hold_next_creates(1);
+    let held = m.begin_create(&request(None)).unwrap();
+    let a = m.begin_create(&request(None)).unwrap();
+    let b = m.begin_create(&request(None)).unwrap();
+    let mut ready = [false; 3];
+    for _ in 0..50 {
+        ready = [held, a, b].map(|t| m.creation_ready(t) == Some(true));
+    }
+    assert_eq!(ready, [false, true, true], "only the held one is not ready");
+    assert_eq!(m.instance_count(), 0, "being ready is not being installed");
+    assert!(m.poll_create(held).is_none());
+    // Taking a ready creation installs it; asking again after the answer finds a spent ticket.
+    let first = m.poll_create(a).expect("ready").expect("starts");
+    assert_eq!(m.instance_count(), 1);
+    assert_eq!(m.creation_ready(a), None, "spent");
+    let second = m.poll_create(b).expect("ready").expect("starts");
+    assert_eq!(m.instance_count(), 2);
+    assert_ne!(first.id, second.id);
+    // The held one goes on once released.
+    stats.release_held_creates();
+    for _ in 0..50 {
+        if m.creation_ready(held) == Some(true) {
+            break;
+        }
+    }
+    let third = m.poll_create(held).expect("ready").expect("starts");
+    assert_eq!(m.instance_count(), 3);
+    drop((first, second, third));
+}
+
+#[test]
+fn a_ready_creation_that_is_cancelled_ends_its_plugin_across_polls() {
+    let (mut m, stats) = manager();
+    stats.set_background_create(Some(0));
+    stats.set_shutdown_delay(3);
+    let ticket = m.begin_create(&request(Some(vec![1]))).unwrap();
+    for _ in 0..50 {
+        if m.creation_ready(ticket) == Some(true) {
+            break;
+        }
+    }
+    assert_eq!(m.creation_ready(ticket), Some(true));
+    assert_eq!(stats.created(), 1);
+    m.cancel_create(ticket);
+    assert_eq!(m.instance_count(), 0);
+    assert_eq!(m.leaving_count(), 1);
+    for _ in 0..50 {
+        m.poll();
+    }
+    assert_eq!(m.leaving_count(), 0);
+    assert_eq!(stats.destroyed(), 1);
+}

@@ -35,6 +35,11 @@ pub enum BackendError {
     /// The plugin or the backend failed.
     #[error("{0}")]
     Failed(String),
+    /// The plugin's host process could not be started (the host program is missing or blocked,
+    /// no memory, the shared block or the doorbell could not be made). The app or the machine is
+    /// at fault, not the plugin: it is never counted as a failed load of the plugin.
+    #[error("{0}")]
+    Spawn(String),
 }
 
 impl BackendError {
@@ -42,6 +47,11 @@ impl BackendError {
     /// [`crate::NOT_RESPONDING`]).
     pub fn is_not_responding(&self) -> bool {
         matches!(self, Self::Failed(text) if text.starts_with(crate::NOT_RESPONDING))
+    }
+
+    /// True when the plugin's host process could not be started ([`BackendError::Spawn`]).
+    pub fn is_spawn_failure(&self) -> bool {
+        matches!(self, Self::Spawn(_))
     }
 }
 
@@ -812,6 +822,12 @@ pub struct NullStats {
     activate_delay: AtomicUsize,
     shutdown_delay: AtomicUsize,
     background_create: AtomicUsize,
+    /// How many of the next background starts are held (see [`NullStats::hold_next_creates`]).
+    hold_creates: AtomicUsize,
+    /// How many of the next background starts fail as a host process that cannot start does.
+    fail_spawns: AtomicUsize,
+    /// Counts the releases of held starts (see [`NullStats::release_held_creates`]).
+    release_creates: AtomicUsize,
     /// The next restore of a null instance fails.
     fail_restore: AtomicBool,
     /// The null instances capture in the background, as a plugin in another process does.
@@ -891,6 +907,22 @@ impl NullStats {
     pub fn set_background_create(&self, polls: Option<usize>) {
         self.background_create
             .store(polls.map_or(0, |p| p + 1), Ordering::Relaxed);
+    }
+    /// Holds the next `n` background starts (see [`NullStats::set_background_create`]): each
+    /// answers "not ready" however often it is polled, as a plugin that waits for a licence
+    /// dialog does, until [`NullStats::release_held_creates`]. The starts after them are not
+    /// held.
+    pub fn hold_next_creates(&self, n: usize) {
+        self.hold_creates.store(n, Ordering::Relaxed);
+    }
+    /// Makes the next `n` background starts fail as a plugin host process that cannot be started
+    /// does ([`BackendError::Spawn`]).
+    pub fn fail_next_spawns(&self, n: usize) {
+        self.fail_spawns.store(n, Ordering::Relaxed);
+    }
+    /// Lets the starts held so far go on (the ones held later stay held).
+    pub fn release_held_creates(&self) {
+        self.release_creates.fetch_add(1, Ordering::Relaxed);
     }
     /// Makes the next restore of a null instance fail.
     pub fn fail_next_restore(&self) {
@@ -1138,9 +1170,24 @@ impl PluginBackend for NullBackend {
             return Ok(None);
         }
         let instance = self.instantiate(plugin, host)?;
+        // Starts come from the interface thread one at a time: a load and a store are enough.
+        let to_hold = self.stats.hold_creates.load(Ordering::Relaxed);
+        self.stats
+            .hold_creates
+            .store(to_hold.saturating_sub(1), Ordering::Relaxed);
+        let to_fail = self.stats.fail_spawns.load(Ordering::Relaxed);
+        self.stats
+            .fail_spawns
+            .store(to_fail.saturating_sub(1), Ordering::Relaxed);
+        let held = (to_hold > 0).then(|| self.stats.release_creates.load(Ordering::Relaxed));
         Ok(Some(Box::new(NullPending {
             instance: Some(instance),
             polls: polls - 1,
+            held,
+            fail: (to_fail > 0).then(|| {
+                BackendError::Spawn("cannot start the plugin host: the null test failure".into())
+            }),
+            stats: Arc::clone(&self.stats),
         })))
     }
 }
@@ -1150,13 +1197,28 @@ impl PluginBackend for NullBackend {
 struct NullPending {
     instance: Option<Box<dyn PluginInstance>>,
     polls: usize,
+    /// Held (see [`NullStats::hold_next_creates`]): the release count it started under.
+    held: Option<usize>,
+    /// The start fails with this once its polls are over.
+    fail: Option<BackendError>,
+    stats: Arc<NullStats>,
 }
 
 impl PendingInstance for NullPending {
     fn poll(&mut self) -> Option<Result<Box<dyn PluginInstance>, BackendError>> {
+        if let Some(since) = self.held {
+            if self.stats.release_creates.load(Ordering::Relaxed) == since {
+                return None;
+            }
+            self.held = None;
+        }
         if self.polls > 0 {
             self.polls -= 1;
             return None;
+        }
+        if let Some(e) = self.fail.take() {
+            self.instance = None;
+            return Some(Err(e));
         }
         self.instance.take().map(Ok)
     }

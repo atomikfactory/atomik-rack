@@ -139,8 +139,11 @@ pub struct SandboxBackend {
     /// How instances share children (see [`SandboxBackend::set_grouping`]).
     grouping: Mutex<Grouping>,
     /// The group children by what their instances share.
-    hubs: Mutex<BTreeMap<String, Vec<Weak<Hub>>>>,
+    hubs: Arc<Hubs>,
 }
+
+/// The group children by what their instances share.
+type Hubs = Mutex<BTreeMap<String, Vec<Weak<Hub>>>>;
 
 /// The sharing rule: the setting and what single plugins ask for.
 #[derive(Debug, Default)]
@@ -191,7 +194,7 @@ impl SandboxBackend {
             live: Arc::new(AtomicUsize::new(0)),
             members: Arc::new(AtomicUsize::new(0)),
             grouping: Mutex::new(Grouping::default()),
-            hubs: Mutex::new(BTreeMap::new()),
+            hubs: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -226,11 +229,9 @@ impl SandboxBackend {
         self.members.load(Ordering::SeqCst)
     }
 
-    /// Makes the shared block and the doorbell and starts the child for `plugin`.
-    fn spawn(
-        &self,
-        plugin: &PluginRef,
-    ) -> Result<(Transport, ParentPort, LiveGuard), BackendError> {
+    /// Gathers what starting the child for `plugin` needs (the numbers, the file, the sharing
+    /// rule) on the calling thread, so the part that costs time can run on another one.
+    fn prepare(&self, plugin: &PluginRef) -> Result<Launch, BackendError> {
         let file = self
             .files
             .lock()
@@ -239,54 +240,110 @@ impl SandboxBackend {
             .cloned()
             .ok_or_else(|| BackendError::UnknownPlugin(plugin.id.clone()))?;
         let number = NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed);
-        let pid = std::process::id();
-        let io_error = |what: &str, e: std::io::Error| {
-            BackendError::Failed(format!("cannot create the plugin's {what}: {e}"))
-        };
-        let block_path = default_block_dir().join(block_file_name(pid, number));
-        let doorbell_name = DoorbellName::for_instance(pid, number);
-        let block = SharedBlock::create(&block_path).map_err(|e| io_error("audio block", e))?;
-        let doorbell =
-            Doorbell::create(&doorbell_name, &block).map_err(|e| io_error("doorbell", e))?;
-        let port = ParentPort::new(block, doorbell);
-
         let key = self
             .grouping
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .key(plugin, &file);
+        Ok(Launch {
+            format: self.format,
+            command: self.config.command.clone(),
+            file,
+            plugin_id: plugin.id.clone(),
+            pid: std::process::id(),
+            number,
+            key,
+            live: Arc::clone(&self.live),
+            members: Arc::clone(&self.members),
+            hubs: Arc::clone(&self.hubs),
+        })
+    }
+
+    /// Makes the shared block and the doorbell and starts the child for `plugin`.
+    fn spawn(
+        &self,
+        plugin: &PluginRef,
+    ) -> Result<(Transport, ParentPort, LiveGuard), BackendError> {
+        self.prepare(plugin)?.run()
+    }
+
+    fn timeouts(&self) -> Timeouts {
+        Timeouts {
+            load: self.config.load_timeout,
+            create: self.config.create_timeout,
+            call: self.config.call_timeout,
+            text: self.config.text_timeout,
+            watchdog: self.config.offline_watchdog,
+            hung: self.config.hung_after,
+            slow_retry: SLOW_RETRY,
+            slow_window: SLOW_WINDOW,
+            bounce: self.config.bounce,
+        }
+    }
+}
+
+/// Everything it takes to start the child of one instance, owned, so that it can run on a
+/// helper thread: the shared block and the doorbell, then the process (or the join of a group
+/// child). Creating a process costs milliseconds (more with a virus scanner watching), which
+/// the interface thread must not spend for every plugin of a project that opens.
+struct Launch {
+    format: PluginFormat,
+    command: HostCommand,
+    file: PathBuf,
+    plugin_id: String,
+    pid: u32,
+    number: u64,
+    /// What the instance shares its child with (`None`: a child of its own).
+    key: Option<String>,
+    live: Arc<AtomicUsize>,
+    members: Arc<AtomicUsize>,
+    hubs: Arc<Hubs>,
+}
+
+impl Launch {
+    fn run(self) -> Result<(Transport, ParentPort, LiveGuard), BackendError> {
+        let io_error = |what: &str, e: std::io::Error| {
+            BackendError::Spawn(format!("cannot create the plugin's {what}: {e}"))
+        };
+        let block_path = default_block_dir().join(block_file_name(self.pid, self.number));
+        let doorbell_name = DoorbellName::for_instance(self.pid, self.number);
+        let block = SharedBlock::create(&block_path).map_err(|e| io_error("audio block", e))?;
+        let doorbell =
+            Doorbell::create(&doorbell_name, &block).map_err(|e| io_error("doorbell", e))?;
+        let port = ParentPort::new(block, doorbell);
+
         // A path that is not text cannot travel over the control channel: that instance gets a
         // child of its own.
         if let (Some(key), Some(plugin_file), Some(block)) =
-            (key, file.to_str(), block_path.to_str())
+            (&self.key, self.file.to_str(), block_path.to_str())
         {
             let attach = Attach {
                 plugin_file: plugin_file.to_string(),
-                plugin_id: plugin.id.clone(),
+                plugin_id: self.plugin_id.clone(),
                 block: block.to_string(),
                 doorbell: doorbell_name.0.clone(),
             };
-            let transport = self.join_group(&key, attach)?;
+            let transport = self.join_group(key, attach)?;
             return Ok((transport, port, LiveGuard::new(&self.members)));
         }
 
-        let command = &self.config.command;
+        let command = &self.command;
         let mut args = command.args.clone();
         args.push(self.format.name().into());
-        args.push(file.clone().into_os_string());
-        args.push(plugin.id.clone().into());
+        args.push(self.file.clone().into_os_string());
+        args.push(self.plugin_id.clone().into());
         args.push("--block".into());
         args.push(block_path.into_os_string());
         args.push("--doorbell".into());
         args.push(doorbell_name.0.into());
         args.push("--parent-pid".into());
-        args.push(pid.to_string().into());
+        args.push(self.pid.to_string().into());
         let transport =
             transport::spawn_process(&command.program, &args, &command.envs).map_err(|e| {
-                BackendError::Failed(format!(
+                BackendError::Spawn(format!(
                     "cannot start {} for {}: {e}",
                     command.program.display(),
-                    file.display()
+                    self.file.display()
                 ))
             })?;
         Ok((transport, port, LiveGuard::new(&self.live)))
@@ -303,38 +360,93 @@ impl SandboxBackend {
                 return Ok(transport);
             }
         }
-        let command = &self.config.command;
+        let command = &self.command;
         let mut args = command.args.clone();
         args.push("--group".into());
         args.push(self.format.name().into());
         args.push("--parent-pid".into());
-        args.push(std::process::id().to_string().into());
+        args.push(self.pid.to_string().into());
         let transport =
             transport::spawn_process(&command.program, &args, &command.envs).map_err(|e| {
-                BackendError::Failed(format!(
+                BackendError::Spawn(format!(
                     "cannot start {} for a plugin group: {e}",
                     command.program.display()
                 ))
             })?;
         let hub = Hub::start(transport, LiveGuard::new(&self.live));
         let transport = hub.join(attach).ok_or_else(|| {
-            BackendError::Failed("the plugin group ended before it took the plugin".to_string())
+            BackendError::Spawn("the plugin group ended before it took the plugin".to_string())
         })?;
         list.push(Arc::downgrade(&hub));
         Ok(transport)
     }
+}
 
-    fn timeouts(&self) -> Timeouts {
-        Timeouts {
-            load: self.config.load_timeout,
-            create: self.config.create_timeout,
-            call: self.config.call_timeout,
-            text: self.config.text_timeout,
-            watchdog: self.config.offline_watchdog,
-            hung: self.config.hung_after,
-            slow_retry: SLOW_RETRY,
-            slow_window: SLOW_WINDOW,
-            bounce: self.config.bounce,
+/// What the helper thread hands over: the instance that is starting, or why it could not.
+type Begun = Result<instance::PendingRemote, BackendError>;
+
+/// An instance whose child is being started on a helper thread (see [`Launch`]): the interface
+/// thread only gets "not ready yet" until the child is there, then the start goes on as any other
+/// ([`instance::PendingRemote`]). Abandoning it while the child is still starting ends that child
+/// as soon as it is there.
+struct Spawning {
+    from: std::sync::mpsc::Receiver<Begun>,
+    /// The start itself once the helper is done.
+    begun: Option<instance::PendingRemote>,
+    /// The helper failed: the error, until it is handed out.
+    failed: Option<BackendError>,
+    /// The helper is gone and nothing is left to take from it.
+    closed: bool,
+}
+
+impl Spawning {
+    /// Takes the helper's answer if it came.
+    fn arrive(&mut self) {
+        if self.begun.is_some() || self.failed.is_some() || self.closed {
+            return;
+        }
+        match self.from.try_recv() {
+            Ok(Ok(pending)) => self.begun = Some(pending),
+            Ok(Err(e)) => self.failed = Some(e),
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.closed = true;
+                self.failed = Some(BackendError::Spawn(
+                    "the thread that starts the plugin's process ended without an answer".into(),
+                ));
+            }
+        }
+    }
+}
+
+impl PendingInstance for Spawning {
+    fn poll(&mut self) -> Option<Result<Box<dyn PluginInstance>, BackendError>> {
+        self.arrive();
+        if let Some(e) = self.failed.take() {
+            return Some(Err(e));
+        }
+        self.begun.as_mut()?.poll()
+    }
+
+    fn begin_shutdown(&mut self) {
+        self.arrive();
+        if let Some(pending) = &mut self.begun {
+            pending.begin_shutdown();
+        }
+    }
+
+    fn poll_shutdown(&mut self) -> bool {
+        self.arrive();
+        match &mut self.begun {
+            Some(pending) => {
+                // The helper may have answered after the abandon: the shutdown is asked for
+                // again (asking twice is harmless).
+                pending.begin_shutdown();
+                pending.poll_shutdown()
+            }
+            // The helper is still working (the polls wait for it) or it failed, in which case
+            // there is no child to end.
+            None => self.failed.is_some() || self.closed,
         }
     }
 }
@@ -372,15 +484,32 @@ impl PluginBackend for SandboxBackend {
         plugin: &PluginRef,
         host: HostHandle,
     ) -> Result<Option<Box<dyn PendingInstance>>, BackendError> {
-        let (transport, port, live) = self.spawn(plugin)?;
-        let pending = RemoteInstance::begin(
-            transport,
-            port,
+        let launch = self.prepare(plugin)?;
+        let (timeouts, messenger, budget) = (
             self.timeouts(),
             host.messenger().clone(),
-            live,
             host.budget().clone(),
-        )?;
-        Ok(Some(Box::new(pending)))
+        );
+        let (to, from) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("plugin-spawn".into())
+            .spawn(move || {
+                let begun = launch.run().and_then(|(transport, port, live)| {
+                    RemoteInstance::begin(transport, port, timeouts, messenger, live, budget)
+                });
+                // The receiver is gone when the start was dropped: the child ends with it.
+                let _ = to.send(begun);
+            })
+            .map_err(|e| {
+                BackendError::Spawn(format!(
+                    "cannot start the thread that starts the plugin: {e}"
+                ))
+            })?;
+        Ok(Some(Box::new(Spawning {
+            from,
+            begun: None,
+            failed: None,
+            closed: false,
+        })))
     }
 }

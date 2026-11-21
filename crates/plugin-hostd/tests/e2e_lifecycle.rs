@@ -626,3 +626,94 @@ fn a_plugin_whose_main_thread_sleeps_past_the_timeout_is_not_stopped_and_answers
     let _ = sb.manager.poll();
     sb.finish();
 }
+
+// ----- starting many plugins at once ------------------------------------------------------------
+
+#[test]
+// Justification: the test waits for child processes against the wall clock and measures a spawn.
+#[allow(clippy::disallowed_methods)]
+fn eight_null_plugins_start_together_and_a_ready_one_is_not_installed_until_taken() {
+    const N: usize = 8;
+    let mut sb = null_sandbox();
+    let began = std::time::Instant::now();
+    let mut tickets = Vec::new();
+    let mut spawn = Vec::new();
+    for _ in 0..N {
+        let t = std::time::Instant::now();
+        let ticket = sb
+            .manager
+            .begin_create(&request(&null_plugin("null.gain"), RunMode::Realtime))
+            .expect("the child starts");
+        spawn.push(t.elapsed());
+        tickets.push(ticket);
+    }
+    let started = began.elapsed();
+    // Each frame follows every creation; none of them is installed by being ready.
+    let limit = std::time::Instant::now() + Duration::from_secs(60);
+    let mut ready = vec![false; N];
+    while ready.iter().any(|r| !r) {
+        assert!(std::time::Instant::now() < limit, "{ready:?}");
+        for (i, t) in tickets.iter().enumerate() {
+            ready[i] = sb.manager.creation_ready(*t) == Some(true);
+        }
+        assert!(
+            sb.manager.instance_ids().is_empty(),
+            "a ready creation is not an instance yet"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let mut handles = Vec::new();
+    for t in &tickets {
+        handles.push(
+            sb.manager
+                .poll_create(*t)
+                .expect("ready")
+                .expect("the null plugin starts"),
+        );
+    }
+    assert_eq!(sb.manager.instance_ids().len(), N);
+    assert_eq!(sb.manager.creation_ready(tickets[0]), None, "spent");
+    eprintln!(
+        "spawn of {N} null children on the interface thread: total {started:?}, each {spawn:?}"
+    );
+    drop(handles);
+    sb.finish();
+}
+
+#[test]
+// Justification: the test waits for child processes against the wall clock and measures a spawn.
+#[allow(clippy::disallowed_methods)]
+fn a_start_that_is_skipped_at_once_leaves_no_child_and_the_others_come_up() {
+    let mut sb = null_sandbox();
+    let tickets: Vec<_> = (0..3)
+        .map(|_| {
+            sb.manager
+                .begin_create(&request(&null_plugin("null.gain"), RunMode::Realtime))
+                .expect("the child starts")
+        })
+        .collect();
+    // The skip comes while the helper thread may still be starting the process.
+    sb.manager.cancel_create(tickets[1]);
+    assert_eq!(sb.manager.creation_ready(tickets[1]), None, "spent");
+    let limit = std::time::Instant::now() + Duration::from_secs(60);
+    let mut handles = Vec::new();
+    for t in [tickets[0], tickets[2]] {
+        let handle = loop {
+            assert!(std::time::Instant::now() < limit, "not ready in time");
+            sb.manager.poll();
+            if let Some(answer) = sb.manager.poll_create(t) {
+                break answer.expect("the null plugin starts");
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        handles.push(handle);
+    }
+    // Only the two that were not skipped have a child; the skipped one's ends across polls.
+    assert!(
+        sb.wait_children(2, Duration::from_secs(30)),
+        "{} children",
+        sb.backend.live_children()
+    );
+    drop(handles);
+    sb.finish();
+}

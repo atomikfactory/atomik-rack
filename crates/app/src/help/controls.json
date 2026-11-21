@@ -671,7 +671,7 @@
   },
   "rack.plugin_reload": {
     "title": "Reload plugin",
-    "text": "Creates the plugin again from its saved state. Use it after a plugin has crashed.",
+    "text": "Creates the plugin again from its saved state. Use it after a plugin has crashed. While a plugin is loading the button says SKIP: it stops the load, keeps the saved state and leaves the device a stand-in until you press RELOAD.",
     "more": "Devices"
   },
   "rack.plugin_relink": {

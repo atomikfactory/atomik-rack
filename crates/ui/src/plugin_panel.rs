@@ -376,8 +376,8 @@ fn one_line(reason: &str) -> String {
         .join(" | ")
 }
 
-/// The status lines of a device (MISSING beats QUARANTINED beats CRASHED beats NOT RESPONDING
-/// beats FAILED beats LOADING beats the meter state).
+/// The status lines of a device (MISSING beats QUARANTINED beats SKIPPED beats CRASHED beats
+/// NOT RESPONDING beats FAILED beats LOADING beats the meter state).
 pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines {
     let meter = |i: usize| meters.get(i).copied().unwrap_or(0.0);
     let latency =
@@ -400,6 +400,14 @@ pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines 
             } else {
                 one_line(reason)
             },
+        };
+    }
+    if status.skipped {
+        return StatusLines {
+            state: "SKIPPED".into(),
+            error: false,
+            latency: None,
+            detail: "RELOAD tries again".into(),
         };
     }
     if status.crashed.is_some() || meter(METER_STATE).round() as i32 == 5 {
@@ -627,12 +635,15 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
             PluginButton::ToChannel => panel_button(c, theme, r, b.label(), !info.has_channel),
             PluginButton::Reload => {
                 // A quarantined plugin was not loaded: the same button loads it.
+                // A plugin that is loading is not reloaded: the button skips the load.
                 let label = if info.status.quarantined.is_some() {
                     fit_label("LOAD ANYWAY", r.width() - 6.0, 7.2)
+                } else if info.status.loading {
+                    "SKIP".to_owned()
                 } else {
                     b.label().to_owned()
                 };
-                panel_button(c, theme, r, &label, !info.status.loading);
+                panel_button(c, theme, r, &label, true);
             }
             PluginButton::OpenGui | PluginButton::Params | PluginButton::Relink => {
                 panel_button(c, theme, r, b.label(), true);
@@ -744,6 +755,22 @@ thread panicked
         let missing = PluginDeviceStatus {
             missing: Some("gone".into()),
             ..crashed
+        };
+        assert_eq!(status_lines(&missing, &[]).state, "MISSING");
+    }
+
+    #[test]
+    fn a_skipped_plugin_says_skipped_without_an_error_and_loses_to_missing() {
+        let skipped = PluginDeviceStatus {
+            skipped: true,
+            ..PluginDeviceStatus::default()
+        };
+        let l = status_lines(&skipped, &[]);
+        assert_eq!((l.state.as_str(), l.error), ("SKIPPED", false));
+        assert!(l.detail.contains("RELOAD"));
+        let missing = PluginDeviceStatus {
+            missing: Some("gone".into()),
+            ..skipped
         };
         assert_eq!(status_lines(&missing, &[]).state, "MISSING");
     }

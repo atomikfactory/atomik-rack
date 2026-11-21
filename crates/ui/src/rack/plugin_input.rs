@@ -207,7 +207,10 @@ impl RackView {
                 }
             }
             PluginButton::Reload => {
-                if !self.devices[i].plugin_status.loading {
+                // While the plugin loads the button is SKIP.
+                if self.devices[i].plugin_status.loading {
+                    self.direct.push(UiAction::SkipPlugin { device: abs });
+                } else {
                     self.direct.push(UiAction::ReloadPlugin { device: abs });
                 }
             }

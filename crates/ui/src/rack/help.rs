@@ -80,7 +80,9 @@ fn plugin_button(b: PluginButton) -> &'static str {
         PluginButton::OpenGui => "Open the plugin's own editor window",
         PluginButton::Params => "Open the parameter pane",
         PluginButton::ToChannel => "Add a mixer channel for this instrument",
-        PluginButton::Reload => "Recreate the plugin instance from its saved state",
+        PluginButton::Reload => {
+            "Recreate the plugin instance from its saved state; SKIP while it loads stops loading it"
+        }
         PluginButton::Relink => "Point this stand-in at another installed plugin",
         PluginButton::Mpe => {
             "Send the notes as MPE on channels 2 to 16 to a plugin that takes MIDI"
