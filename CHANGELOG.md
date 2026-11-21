@@ -99,6 +99,9 @@ may break APIs and the patch and project formats.
   rendered buffer and follows the clock as above.
 
 ### Fixed
+- **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
+  (with the channel right above it) was refused with "the devices are already there": the instrument takes its
+  channel along, so nothing would move. The drop is now ignored, like any drop on the place a device already has.
 - **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio track now
   picks the track like a click on the rest of the header (select, Shift or Ctrl to extend, drag, right click for
   the menu) and still clears the clip lamp; it only cleared the lamp before, so a selection could not be started
