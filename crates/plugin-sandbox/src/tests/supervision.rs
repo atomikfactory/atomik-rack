@@ -111,6 +111,7 @@ fn start_real(
         timeouts,
         manager.messenger(),
         LiveGuard::new(&live),
+        atomik_plugin_host::SoftBudget::default(),
     );
     (instance, manager, live)
 }

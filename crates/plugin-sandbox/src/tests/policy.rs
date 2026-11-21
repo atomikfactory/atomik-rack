@@ -1,7 +1,7 @@
-//! What the app does when the child is slow, hung or hostile: cosmetic calls that miss never
-//! stop it, repeated misses and unanswered important calls do, late batches in a row make it
-//! hung, notifications out of bounds are refused, edit bursts are coalesced, and many children
-//! end together.
+//! What the app does when the child is slow, hung or hostile: cosmetic requests that are late
+//! never stop it, unanswered important calls do, late batches in a row make it hung,
+//! notifications out of bounds are refused, edit bursts are coalesced, and many children end
+//! together.
 
 use super::*;
 use crate::clock::now;
@@ -10,7 +10,7 @@ use atomik_plugin_host::{HUNG, LogLevel, ParamPhase, PluginInstance, PluginIo, P
 use atomik_plugin_ipc::{FromChild, ToChild, WireLevel, WirePhase};
 use std::sync::atomic::Ordering;
 
-fn text(id: u64, text: &str) -> Vec<(FromChild, Option<Vec<u8>>)> {
+pub(super) fn text(id: u64, text: &str) -> Vec<(FromChild, Option<Vec<u8>>)> {
     vec![(
         FromChild::Text {
             id,
@@ -33,7 +33,7 @@ fn started(options: FakeOptions, timeouts: crate::link::Timeouts) -> Rig {
     }
 }
 
-fn exit_reason(r: &Rig) -> String {
+pub(super) fn exit_reason(r: &Rig) -> String {
     loop {
         if let PluginMessage::ProcessExited { reason } = next_message(&r.manager) {
             return reason;
@@ -41,12 +41,30 @@ fn exit_reason(r: &Rig) -> String {
     }
 }
 
-// ----- cosmetic calls -----------------------------------------------------------------------------
+// ----- cosmetic requests ----------------------------------------------------------------------------
+
+/// Everything the instance has answered late since the last call.
+fn late_answers(r: &mut Rig) -> Vec<atomik_plugin_host::SoftAnswer> {
+    r.instance.poll();
+    r.instance.take_soft_answers()
+}
+
+/// Polls frame after frame (each begins a new frame of the allowance) until `f` is true.
+fn frames_until(r: &mut Rig, what: &str, mut f: impl FnMut(&mut Rig) -> bool) {
+    let budget = r.instance.budget();
+    let limit = now() + Duration::from_secs(30);
+    while now() < limit {
+        budget.begin_frame();
+        if f(r) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    panic!("timed out waiting for {what}");
+}
 
 #[test]
-fn a_late_text_is_dropped_and_the_next_call_gets_its_own_answer() {
-    let mut timeouts = test_timeouts();
-    timeouts.text = Duration::from_millis(100);
+fn a_late_text_is_delivered_when_it_arrives_and_the_next_call_gets_its_own_answer() {
     let first = Arc::new(AtomicUsize::new(0));
     let seen = Arc::clone(&first);
     let mut r = started(
@@ -56,111 +74,224 @@ fn a_late_text_is_dropped_and_the_next_call_gets_its_own_answer() {
             ),
             _ => None,
         }),
-        timeouts,
+        test_timeouts(),
     );
     assert_eq!(r.instance.param_text(1, 0.5), None, "no answer in time");
     assert!(!r.instance.is_lost() && !r.fake.ctl.was_killed());
+    let mut late = Vec::new();
+    frames_until(&mut r, "the late text", |r| {
+        late.extend(late_answers(r));
+        !late.is_empty()
+    });
+    assert_eq!(
+        late,
+        vec![atomik_plugin_host::SoftAnswer::ParamText {
+            param: 1,
+            plain: 0.5,
+            text: "late".to_string()
+        }],
+        "the text, for the value it was asked for"
+    );
     let mut got = None;
-    eventually("the child to answer again", || {
+    frames_until(&mut r, "the child to answer again", |r| {
         got = r.instance.param_text(1, 0.6);
         got.is_some()
     });
-    assert_eq!(got.as_deref(), Some("0.60 units"), "not the late text");
+    assert_eq!(got.as_deref(), Some("0.60 units"));
     assert!(!r.instance.is_lost() && !r.fake.ctl.was_killed());
 }
 
 #[test]
-fn a_busy_plugin_keeps_showing_the_last_text_it_gave() {
-    let mut timeouts = test_timeouts();
-    timeouts.text = Duration::from_millis(100);
+fn a_busy_plugin_gives_no_text_for_a_value_it_has_not_answered_and_the_right_one_later() {
     let calls = Arc::new(AtomicUsize::new(0));
     let seen = Arc::clone(&calls);
     let mut r = started(
         FakeOptions::default().script(move |req, _| match req {
-            ToChild::ParamText { id, .. } if seen.fetch_add(1, Ordering::SeqCst) > 0 => Some(
-                Action::Delayed(Duration::from_millis(500), text(*id, "late")),
-            ),
+            ToChild::ParamText { id, plain, .. } if seen.fetch_add(1, Ordering::SeqCst) > 0 => {
+                Some(Action::Delayed(
+                    Duration::from_millis(300),
+                    text(*id, &format!("late {plain}")),
+                ))
+            }
             _ => None,
         }),
-        timeouts,
+        test_timeouts(),
     );
     assert_eq!(r.instance.param_text(1, 0.5).as_deref(), Some("0.50 units"));
+    r.instance.budget().begin_frame();
     assert_eq!(
-        r.instance.param_text(1, 0.9).as_deref(),
-        Some("0.50 units"),
-        "the child is busy: the last text stays"
+        r.instance.param_text(1, 0.9),
+        None,
+        "the child is busy: the old text does not stand in for the new value"
+    );
+    let mut late = Vec::new();
+    frames_until(&mut r, "the text of the new value", |r| {
+        late.extend(late_answers(r));
+        !late.is_empty()
+    });
+    assert_eq!(
+        late,
+        vec![atomik_plugin_host::SoftAnswer::ParamText {
+            param: 1,
+            plain: 0.9,
+            text: "late 0.9".to_string()
+        }]
     );
     assert!(!r.instance.is_lost());
 }
 
 #[test]
-fn a_cosmetic_call_that_keeps_missing_marks_the_instance_slow_and_then_stops_the_child() {
+fn an_instance_with_no_sign_of_life_is_marked_slow_before_it_is_stopped() {
     let mut timeouts = test_timeouts();
-    timeouts.text = Duration::from_millis(30);
+    timeouts.create = Duration::from_millis(500);
     let mut r = started(
         FakeOptions::default()
             .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)),
         timeouts,
     );
+    let budget = r.instance.budget();
     let mut was_slow_alive = false;
-    for _ in 0..100 {
-        let _ = r.instance.param_text(1, 0.5);
-        if r.instance.is_lost() {
-            break;
-        }
-        was_slow_alive |= r.instance.is_slow();
-        std::thread::sleep(Duration::from_millis(25));
+    let limit = now() + Duration::from_secs(30);
+    let mut n = 0u32;
+    while now() < limit && !r.instance.is_lost() {
+        budget.begin_frame();
+        n += 1;
+        let _ = r.instance.param_text(1, f64::from(n));
+        r.instance.poll();
+        was_slow_alive |= r.instance.is_slow() && !r.instance.is_lost();
+        std::thread::sleep(Duration::from_millis(5));
     }
     assert!(was_slow_alive, "slow before it was stopped");
     assert!(r.instance.is_lost());
     assert!(r.fake.ctl.was_killed());
     let reason = exit_reason(&r);
-    assert!(reason.contains("12 times in a row"), "{reason}");
+    assert!(reason.contains("did not answer ParamText"), "{reason}");
 }
 
 #[test]
-fn a_slow_instance_is_left_alone_between_its_retries_and_the_user_is_told() {
+fn a_slow_instance_is_not_waited_for_between_its_retries_and_the_user_is_told_once() {
     let mut timeouts = test_timeouts();
-    timeouts.text = Duration::from_millis(30);
     timeouts.slow_retry = Duration::from_secs(30);
     let mut r = started(
         FakeOptions::default()
             .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)),
         timeouts,
     );
-    for _ in 0..3 {
-        assert_eq!(r.instance.param_text(1, 0.5), None);
+    let budget = r.instance.budget();
+    for n in 0..3 {
+        budget.begin_frame();
+        assert_eq!(r.instance.param_text(1, f64::from(n)), None);
     }
     assert!(r.instance.is_slow());
-    let asked = r
-        .fake
-        .ctl
-        .requests()
-        .iter()
-        .filter(|q| matches!(q, ToChild::ParamText { .. }))
-        .count();
-    let t = now();
-    for _ in 0..50 {
-        assert_eq!(r.instance.param_text(1, 0.5), None);
-    }
-    assert!(now().saturating_duration_since(t) < Duration::from_millis(30));
-    let after = r
-        .fake
-        .ctl
-        .requests()
-        .iter()
-        .filter(|q| matches!(q, ToChild::ParamText { .. }))
-        .count();
-    assert_eq!(after, asked, "nothing more was sent");
-    let mut told = false;
-    while let Some(m) = r.manager.try_recv() {
-        told |= matches!(
-            m,
-            PluginMessage::Log { level: LogLevel::Warning, text } if text.contains("slow")
+    for n in 3..60 {
+        budget.begin_frame();
+        assert_eq!(r.instance.param_text(1, f64::from(n)), None);
+        assert_eq!(
+            budget.spent(),
+            Duration::ZERO,
+            "a slow instance is not waited for"
         );
     }
-    assert!(told, "a warning says the plugin is slow");
+    let mut told = 0;
+    while let Some(m) = r.manager.try_recv() {
+        told += usize::from(matches!(
+            m,
+            PluginMessage::Log { level: LogLevel::Warning, text } if text.contains("slow")
+        ));
+    }
+    assert_eq!(told, 1, "one warning for the whole slow episode");
     assert!(!r.instance.is_lost());
+}
+
+#[test]
+fn answers_that_alternate_between_fast_and_stalled_keep_the_instance_slow() {
+    // Every other request is answered after 150 ms, the others at once: with the old rule one
+    // success reset the count and every stall cost a full wait again.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&calls);
+    let mut timeouts = test_timeouts();
+    timeouts.slow_retry = Duration::from_secs(60);
+    timeouts.slow_window = Duration::from_secs(60);
+    let mut r = started(
+        FakeOptions::default().script(move |req, _| match req {
+            ToChild::ParamText { id, plain, .. }
+                if seen.fetch_add(1, Ordering::SeqCst) % 2 == 1 =>
+            {
+                Some(Action::Delayed(
+                    Duration::from_millis(150),
+                    text(*id, &format!("{plain}")),
+                ))
+            }
+            _ => None,
+        }),
+        timeouts,
+    );
+    let budget = r.instance.budget();
+    let mut waited_when_slow = Duration::ZERO;
+    for n in 0..14u32 {
+        budget.begin_frame();
+        let slow = r.instance.is_slow();
+        let _ = r.instance.param_text(1, f64::from(n));
+        if slow {
+            waited_when_slow += budget.spent();
+        }
+        // Let the stalled one be answered before the next frame, as a busy plugin eventually is.
+        frames_until(&mut r, "the answer", |r| {
+            r.instance.poll();
+            !r.instance.soft_out()
+        });
+        let _ = r.instance.take_soft_answers();
+    }
+    assert!(r.instance.is_slow(), "the stalls kept it in the cheap path");
+    assert_eq!(
+        waited_when_slow,
+        Duration::ZERO,
+        "once slow it was never waited for again"
+    );
+    assert!(!r.instance.is_lost());
+}
+
+#[test]
+fn slowness_ends_with_time_not_with_one_fast_answer() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&calls);
+    let mut timeouts = test_timeouts();
+    timeouts.slow_retry = Duration::ZERO;
+    timeouts.slow_window = Duration::from_millis(1500);
+    let mut r = started(
+        FakeOptions::default().script(move |req, _| match req {
+            ToChild::ParamText { id, plain, .. } if seen.fetch_add(1, Ordering::SeqCst) < 3 => {
+                Some(Action::Delayed(
+                    Duration::from_millis(80),
+                    text(*id, &format!("{plain}")),
+                ))
+            }
+            _ => None,
+        }),
+        timeouts,
+    );
+    let budget = r.instance.budget();
+    for n in 0..3u32 {
+        budget.begin_frame();
+        let _ = r.instance.param_text(1, f64::from(n));
+        frames_until(&mut r, "the answer", |r| {
+            r.instance.poll();
+            !r.instance.soft_out()
+        });
+    }
+    assert!(r.instance.is_slow(), "three late answers");
+    budget.begin_frame();
+    assert_eq!(
+        r.instance.param_text(1, 9.0).as_deref(),
+        Some("9.00 units"),
+        "a fast answer"
+    );
+    assert!(r.instance.is_slow(), "one fast answer does not end it");
+    let ended = now() + Duration::from_secs(30);
+    while r.instance.is_slow() && now() < ended {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!r.instance.is_slow(), "time ended it");
 }
 
 #[test]

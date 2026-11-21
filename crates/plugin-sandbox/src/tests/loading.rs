@@ -64,6 +64,7 @@ fn a_pending_load_is_polled_past_the_create_timeout_without_blocking() {
         slow_load_timeouts(),
         manager.messenger(),
         LiveGuard::new(&live),
+        atomik_plugin_host::SoftBudget::default(),
     )
     .map_err(|e| e.to_string())
     .unwrap();
