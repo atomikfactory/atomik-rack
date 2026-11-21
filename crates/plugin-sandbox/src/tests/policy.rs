@@ -20,7 +20,7 @@ pub(super) fn text(id: u64, text: &str) -> Vec<(FromChild, Option<Vec<u8>>)> {
     )]
 }
 
-fn started(options: FakeOptions, timeouts: crate::link::Timeouts) -> Rig {
+pub(super) fn started(options: FakeOptions, timeouts: crate::link::Timeouts) -> Rig {
     let s = start_with(options, timeouts);
     Rig {
         instance: s

@@ -252,6 +252,13 @@ may break APIs and the patch and project formats.
   followed each frame and the ones that are ready come up as they finish, one per frame and oldest first, so a
   plugin that waits for a licence dialog or reads a huge library no longer leaves the others as silent stand-ins.
   The device keys, the order of the project and what it sounds like do not change.
+- **Fewer dropouts from heavy third-party plugins.** A plugin that works in bursts (a block-based effect, a
+  look-ahead, a preset that has just loaded) used to lose the batch whenever it took longer than one 64-frame
+  block, although the audio buffer had room for it; it was heard as a glitch even at a few per cent of the audio
+  load. The app now lets a plugin use what is left of the buffer (the first 70 % of it) before it gives up on the
+  batch. A plugin that cannot keep up at all is no longer waited for at every block: after a few misses in a row it
+  is only asked once per block for a short while, which keeps the CPU it costs the app low, and then tried with a
+  full wait again. Exports are unchanged and stay identical with the sandbox on or off.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

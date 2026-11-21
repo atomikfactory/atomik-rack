@@ -15,6 +15,10 @@
 //! * `null.noisy`: a passthrough that prints to stdout everywhere (instantiate, activate, process,
 //!   poll), with `println!` and with raw writes, to test that stdout is not the control channel.
 //! * `null.synth`: an instrument, a sine per held note, cut at note off.
+//! * `null.busy`: a passthrough that keeps the processor busy (a spin, so the work shows as CPU)
+//!   for `ATOMIK_NULL_BUSY_US` microseconds per batch (default 0, read at activation). With
+//!   `ATOMIK_NULL_BUSY_BURST` set it is cheap for seven batches and busy on the eighth, like a
+//!   plugin that works in blocks.
 
 use atomik_core::{BATCH, Batch};
 use atomik_device_sdk::{
@@ -37,6 +41,12 @@ pub const CRASH_AFTER_ENV: &str = "ATOMIK_NULL_CRASH_AFTER";
 /// Environment variable: how long a state request waits before it is answered, in milliseconds.
 pub const CAPTURE_DELAY_ENV: &str = "ATOMIK_NULL_CAPTURE_DELAY_MS";
 
+/// Environment variable: microseconds `null.busy` spends per batch.
+pub const BUSY_US_ENV: &str = "ATOMIK_NULL_BUSY_US";
+
+/// Environment variable: set, `null.busy` is busy on every eighth batch only.
+pub const BUSY_BURST_ENV: &str = "ATOMIK_NULL_BUSY_BURST";
+
 /// Frames of latency `null.latency` reports.
 const LATENCY: u32 = 32;
 
@@ -54,6 +64,7 @@ enum Kind {
     HangActivate,
     Synth,
     Noisy,
+    Busy,
 }
 
 impl Kind {
@@ -67,6 +78,7 @@ impl Kind {
             "null.hang-activate" => Self::HangActivate,
             "null.synth" => Self::Synth,
             "null.noisy" => Self::Noisy,
+            "null.busy" => Self::Busy,
             _ => return None,
         })
     }
@@ -152,6 +164,7 @@ impl PluginInstance for BuiltinInstance {
                 Box::new(NoisyProcessor)
             }
             Kind::Synth => Box::new(SynthProcessor::new(cfg.sample_rate)),
+            Kind::Busy => Box::new(BusyProcessor::from_env()),
         })
     }
 
@@ -306,6 +319,56 @@ impl PluginProcessor for GainProcessor {
         Self::fill(io, pos, BATCH, Self::gain_of(pass));
         self.pass.store(pass.to_bits(), Ordering::Relaxed);
         ProcessStatus::Continue
+    }
+}
+
+/// A passthrough that spins for a while in every batch, or in every eighth (a measuring aid).
+struct BusyProcessor {
+    spin: Duration,
+    burst: bool,
+    batches: u64,
+}
+
+impl BusyProcessor {
+    fn from_env() -> Self {
+        let us = std::env::var(BUSY_US_ENV)
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        Self {
+            spin: Duration::from_micros(us),
+            burst: std::env::var_os(BUSY_BURST_ENV).is_some(),
+            batches: 0,
+        }
+    }
+}
+
+impl PluginProcessor for BusyProcessor {
+    fn start_processing(&mut self) -> bool {
+        true
+    }
+
+    fn stop_processing(&mut self) {}
+
+    fn reset(&mut self) {}
+
+    fn process(&mut self, io: &mut PluginIo<'_>) -> ProcessStatus {
+        self.batches += 1;
+        if !self.burst || self.batches.is_multiple_of(8) {
+            spin_for(self.spin);
+        }
+        copy_through(io);
+        ProcessStatus::Continue
+    }
+}
+
+/// Burns CPU for `d`: a plugin's work, which a sleep would not be.
+// Justification: a test plugin that imitates DSP time; it feeds no signal path (HI-2).
+#[allow(clippy::disallowed_methods)]
+fn spin_for(d: Duration) {
+    let end = std::time::Instant::now() + d;
+    while std::time::Instant::now() < end {
+        std::hint::spin_loop();
     }
 }
 

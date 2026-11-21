@@ -15,6 +15,7 @@ use crate::select::{
 };
 use crate::telemetry::{self, LoadMeter, TelemetryState, XrunDetector, event_channel};
 use crate::{DeviceInfo, HostInfo, HostKind, IoError, StreamSpec, Telemetry, XrunEvent, XrunKind};
+use atomik_core::CallbackDeadline;
 use atomik_engine::{Engine, FrameClock};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rtrb::{Consumer, Producer};
@@ -272,6 +273,7 @@ pub fn start_with_input(
                 payload,
                 adapter: CallbackAdapter::new(in_channels, out_choice.channels, max_frames),
                 clock: Arc::clone(&clock),
+                deadline: Arc::clone(CallbackDeadline::shared()),
                 telemetry: Arc::clone(&telemetry),
                 promotion: Arc::clone(&promotion),
                 detector: XrunDetector::new(),
@@ -553,6 +555,19 @@ fn choose(
     })
 }
 
+/// The share of a callback's duration that sandboxed plugins may use before the callback gives
+/// up on them; the rest is for everything that happens after the plugins (the mix, the
+/// conversion, the hand-over to the device).
+const CALLBACK_PLUGIN_BUDGET_PERCENT: u64 = 70;
+
+/// How long into a callback of `frames` at `sample_rate` plugins may be waited for.
+fn plugin_budget(frames: usize, sample_rate: u32) -> Duration {
+    let frames = u64::try_from(frames).unwrap_or(u64::MAX);
+    let nanos = frames.saturating_mul(10_000_000 * CALLBACK_PLUGIN_BUDGET_PERCENT)
+        / u64::from(sample_rate).max(1);
+    Duration::from_nanos(nanos)
+}
+
 /// What the output callback owns and gives back when dropped.
 struct OutputPayload {
     engine: Engine,
@@ -568,6 +583,9 @@ struct OutputCallback {
     payload: ReturnOnDrop<OutputPayload>,
     adapter: CallbackAdapter,
     clock: Arc<FrameClock>,
+    /// Where each callback publishes when its plugins must have answered (see
+    /// [`CALLBACK_PLUGIN_BUDGET_PERCENT`]).
+    deadline: Arc<CallbackDeadline>,
     telemetry: Arc<TelemetryState>,
     promotion: Arc<Promotion>,
     detector: XrunDetector,
@@ -595,6 +613,10 @@ impl OutputCallback {
         self.clock.publish(payload.engine.host_frames(), start);
         let out_ch = usize::from(self.adapter.outputs()).max(1);
         let frames = data.len() / out_ch;
+        // One relaxed store: the end of what sandboxed plugins may use of this callback.
+        if let Some(at) = start.checked_add(plugin_budget(frames, self.sample_rate)) {
+            self.deadline.publish(at);
+        }
         let timestamp = info.timestamp();
         self.telemetry
             .on_output_timing(timestamp.callback, timestamp.playback, self.sample_rate);
@@ -800,6 +822,17 @@ fn push_int<T: IntSample>(writer: &mut RingWriter, scratch: &mut [f32], src: &[T
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_plugin_budget_is_a_share_of_the_buffer() {
+        // 480 frames at 48 kHz are 10 ms: 7 ms for the plugins.
+        assert_eq!(plugin_budget(480, 48_000), Duration::from_millis(7));
+        assert_eq!(plugin_budget(64, 48_000), Duration::from_nanos(933_333));
+        assert_eq!(plugin_budget(0, 48_000), Duration::ZERO);
+        // A rate of zero is no division by zero.
+        assert!(plugin_budget(480, 0) > Duration::ZERO);
+    }
+
     #[test]
     fn a_backend_that_never_releases_the_engine_is_an_error_not_an_abort() {
         // The fake backend keeps the callback (here: just the sender) alive forever.

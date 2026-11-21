@@ -159,7 +159,7 @@ pub fn null_plugin(id: &str) -> PluginRef {
 }
 
 /// Every null plugin the child knows.
-pub const NULL_IDS: [&str; 8] = [
+pub const NULL_IDS: [&str; 9] = [
     "null.gain",
     "null.latency",
     "null.crash",
@@ -168,6 +168,7 @@ pub const NULL_IDS: [&str; 8] = [
     "null.hang-activate",
     "null.synth",
     "null.noisy",
+    "null.busy",
 ];
 
 /// The command of the child under test.
