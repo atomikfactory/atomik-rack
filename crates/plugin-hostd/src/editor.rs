@@ -348,6 +348,10 @@ pub(crate) mod fakes {
         /// A walk of the preset folders that waits for this gate to open (`true`) before it
         /// answers, and that the plugin lists on another thread: its own list is another one.
         pub preset_gate: Option<std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>>,
+        /// The bytes of the state `capture_state` gives, and the length of the text `param_text`
+        /// gives (0: none).
+        pub state_len: usize,
+        pub text_len: usize,
     }
 
     impl FakeInstance {
@@ -374,6 +378,8 @@ pub(crate) mod fakes {
                 host: None,
                 on_poll: Vec::new(),
                 preset_gate: None,
+                state_len: 0,
+                text_len: 0,
             }
         }
     }
@@ -393,7 +399,7 @@ pub(crate) mod fakes {
             0
         }
         fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError> {
-            Ok(PluginStateBlob::default())
+            Ok(PluginStateBlob(vec![0; self.state_len]))
         }
         fn restore_state(&mut self, _state: &PluginStateBlob) -> Result<(), BackendError> {
             Ok(())
@@ -417,7 +423,7 @@ pub(crate) mod fakes {
             }))
         }
         fn param_text(&mut self, _id: u32, _plain: f64) -> Option<String> {
-            None
+            (self.text_len > 0).then(|| "x".repeat(self.text_len))
         }
         fn open_gui(
             &mut self,

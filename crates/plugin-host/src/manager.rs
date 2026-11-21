@@ -134,6 +134,15 @@ impl ManagerError {
         matches!(self, Self::Backend(e) if e.is_not_responding())
     }
 
+    /// The size and the limit of a state the plugin could not hand over because it does not fit
+    /// its channel ([`BackendError::StateTooLarge`]).
+    pub fn state_too_large(&self) -> Option<(u64, u64)> {
+        match self {
+            Self::Backend(e) => e.state_too_large(),
+            _ => None,
+        }
+    }
+
     /// True when the plugin's host process could not be started: not the plugin's fault, so it
     /// does not count towards the quarantine ([`BackendError::Spawn`]).
     pub fn is_spawn_failure(&self) -> bool {

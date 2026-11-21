@@ -42,6 +42,18 @@ use std::sync::Arc;
 pub const MAX_PLUGIN_STATE_BYTES: u64 = 16 * 1024 * 1024;
 /// Largest total of all plugin state blobs of a project, in bytes.
 pub const MAX_PROJECT_PLUGIN_STATE_BYTES: u64 = 128 * 1024 * 1024;
+/// Which size cap refused a plugin state (see [`RackDoc::state_refusal`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StateRefusal {
+    /// The size that is over the cap: the state's own bytes, or the total of all the project's
+    /// plugin states with this one in place of the stored one.
+    pub bytes: u64,
+    /// The cap it is over, in bytes.
+    pub limit: u64,
+    /// The cap is the project's total, not the one device's.
+    pub project: bool,
+}
+
 /// Most params one plugin device pins as panel knobs.
 pub const MAX_PINNED_PARAMS: usize = 16;
 /// Most param rows a layout holds (the SDK's `MAX_PLUGIN_PARAMS`).
@@ -561,6 +573,25 @@ impl RackDoc {
             }
         }
         doc
+    }
+
+    /// The cap that would refuse a state of `len` bytes for the plugin device at `device`, if any
+    /// (the same rule `SyncState` and `SetState` apply): the per-plugin cap first, then the
+    /// project's total.
+    pub fn state_refusal(&self, device: &DeviceKey, len: u64) -> Option<StateRefusal> {
+        if len > MAX_PLUGIN_STATE_BYTES {
+            return Some(StateRefusal {
+                bytes: len,
+                limit: MAX_PLUGIN_STATE_BYTES,
+                project: false,
+            });
+        }
+        let total = self.plugin_state_bytes(Some(device)) + len;
+        (total > MAX_PROJECT_PLUGIN_STATE_BYTES).then_some(StateRefusal {
+            bytes: total,
+            limit: MAX_PROJECT_PLUGIN_STATE_BYTES,
+            project: true,
+        })
     }
 
     /// Total state bytes of all plugin devices, skipping the one at `except` (path key).

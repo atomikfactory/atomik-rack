@@ -6,12 +6,12 @@ use crate::editor::fakes::{FakeInstance, FakeWindows, Log, log};
 use atomik_plugin_host::{ParamPhase, ScannedPlugin};
 use atomik_plugin_ipc::{
     ChildPort, Doorbell, DoorbellName, SharedBlock, WireParent, WirePhase, block_file_name,
-    default_block_dir, read_frame,
+    default_block_dir, into_backend_error, read_frame,
 };
 use std::io;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// A writer the test can read back.
@@ -66,6 +66,8 @@ struct FakeBackend {
     host: Arc<Mutex<Option<HostHandle>>>,
     /// The gate the next instance's preset walk waits for (see `FakeInstance::preset_gate`).
     gate: Arc<Mutex<Option<Gate>>>,
+    /// The size of the state and of a param text the next instance gives.
+    sizes: Arc<(AtomicUsize, AtomicUsize)>,
 }
 
 /// A gate a walk of preset folders waits for: open when the flag is true.
@@ -93,6 +95,8 @@ impl PluginBackend for FakeBackend {
         i.on_poll = self.on_poll.clone();
         i.fail_open = self.fail_open;
         i.preset_gate = self.gate.lock().unwrap().clone();
+        i.state_len = self.sizes.0.load(Ordering::Relaxed);
+        i.text_len = self.sizes.1.load(Ordering::Relaxed);
         Ok(Box::new(i))
     }
 }
@@ -126,6 +130,7 @@ struct Rig {
     log: Log,
     host: Arc<Mutex<Option<HostHandle>>>,
     gate: Arc<Mutex<Option<Gate>>>,
+    sizes: Arc<(AtomicUsize, AtomicUsize)>,
 }
 
 fn rig_with(
@@ -137,12 +142,14 @@ fn rig_with(
     let sink = Sink::default();
     let host = Arc::new(Mutex::new(None));
     let gate = Arc::new(Mutex::new(None));
+    let sizes = Arc::new((AtomicUsize::new(0), AtomicUsize::new(0)));
     let backend = FakeBackend {
         log: Rc::clone(&log),
         on_poll,
         fail_open,
         host: Arc::clone(&host),
         gate: Arc::clone(&gate),
+        sizes: Arc::clone(&sizes),
     };
     let out = out.unwrap_or_else(|| Box::new(sink.clone()));
     let mut control = Control::new(&args(), Box::new(backend), audio(), out);
@@ -163,6 +170,7 @@ fn rig_with(
         log,
         host,
         gate,
+        sizes,
     }
 }
 
@@ -692,4 +700,68 @@ fn a_tick_that_forwarded_something_stays_fast() {
         !r.control.wants_fast_tick(),
         "and a quiet tick after it lets it go"
     );
+}
+
+#[test]
+fn a_state_over_the_frame_limit_is_an_error_naming_the_size_and_the_child_goes_on() {
+    let r = rig();
+    r.sizes.0.store(MAX_FRAME_BYTES + 1, Ordering::Relaxed);
+    let mut r = r.instantiated();
+    for id in [5, 6] {
+        let end = r.send(ToChild::CaptureState { id });
+        assert_eq!(end, None, "the child does not end for a large state");
+        match r.sink.frames().as_slice() {
+            [
+                FromChild::Err {
+                    id: got,
+                    kind,
+                    text,
+                },
+            ] => {
+                assert_eq!(*got, id);
+                assert_eq!(*kind, WireErrorKind::StateTooLarge);
+                assert_eq!(
+                    into_backend_error(*kind, text.clone()),
+                    BackendError::StateTooLarge {
+                        bytes: MAX_FRAME_BYTES as u64 + 1,
+                        limit: MAX_FRAME_BYTES as u64,
+                    }
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    // Still answering.
+    assert_eq!(r.send(ToChild::LatencyFrames { id: 7 }), None);
+    assert!(matches!(
+        r.sink.frames().as_slice(),
+        [FromChild::Latency { id: 7, .. }]
+    ));
+}
+
+#[test]
+fn a_reply_the_parent_would_refuse_is_an_error_and_the_child_goes_on() {
+    let r = rig();
+    // A param text longer than the JSON of a reply may be.
+    r.sizes.1.store(MAX_REPLY_JSON_BYTES + 1, Ordering::Relaxed);
+    let mut r = r.instantiated();
+    let end = r.send(ToChild::ParamText {
+        id: 8,
+        param: 0,
+        plain: 0.0,
+    });
+    assert_eq!(end, None);
+    assert!(matches!(
+        r.sink.frames().as_slice(),
+        [FromChild::Err {
+            id: 8,
+            kind: WireErrorKind::Failed,
+            ..
+        }]
+    ));
+    assert_eq!(r.send(ToChild::LatencyFrames { id: 9 }), None);
+    assert!(matches!(
+        r.sink.frames().as_slice(),
+        [FromChild::Latency { id: 9, .. }]
+    ));
 }

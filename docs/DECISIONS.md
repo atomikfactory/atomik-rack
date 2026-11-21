@@ -1411,3 +1411,59 @@ with a recovery copy (what happened before: the work since the snapshot was lost
 panic in a long session (`ATOMIK_UI_PANIC`).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+
+## AW. A plugin state that is too large is reported and never dropped silently, and never stops the plugin
+
+**Decision.** A state the document refuses (over 16 MiB for a device, 128 MiB for the project) or that a
+plugin in its own process cannot hand over (over the 64 MiB of one frame, or a reply over the 1 MiB JSON limit)
+is not offered to the document again at every capture. The device carries a marker until a capture fits: its
+panel shows `too large: <size> > <limit>` on the second line (the vendor line gives way), the plugin keeps its
+status word, a save names the device once in its notice, and the log has one warning line per change of
+situation. The project keeps the last state that fitted. The child answers `StateTooLarge` (with the size and the
+limit) instead of ending, and the app never stops the plugin for it.
+
+**Why.** The plugin is healthy and playing: calling that FAILED or CRASHED would be false and a reload would
+restore the old state and repeat. Dropping the state silently makes a project that "saved fine" lose its
+samples; every mainstream host that has a size limit tells the user at save time instead. A marker that stays
+on the device is the part that is still true after the toast is gone.
+
+**Limits.** Short term only: the project format is unchanged, so a state over the caps is still not stored.
+Storing large states beside the audio assets and streaming them over the pipe in pieces is the real fix and is
+not done. The panel line is short (the panel is narrow); the full words are in the notice and the log.
+
+**Rejected.** A new status word (hides the real state); raising the caps (the document is one JSON text and every
+capture copies the state); stopping the plugin at the limit (what happened before).
+
+**Open.** A real sampler's state sizes against the two caps, by hand.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AX. A plugin fails after a run of bad blocks, not at the first one
+
+**Decision.** A block in which a plugin's `process` returns an error, or writes a non-finite sample, is a bad
+block: it is counted and replaced by what a late batch gets (the dry input for an effect, silence for the
+rest), with a linear ramp over the block going into the fallback and over the first good block coming back, so
+that the output does not click. The device fails, with the reason of the last bad block, only after
+`bad_run_limit` (a quarter of a second of 64-frame blocks) in a row; a good block starts the count again. A
+panic fails it at once; a late or refused batch is not a bad block and does not change the count; a plugin that
+cannot start processing still fails at once.
+
+**Why.** Plugins return an error or a NaN for a block while they load a preset, and on a denormal or a division
+by zero, and are fine on the next one; hosts that stop the plugin for good make a glitch cost the user a RELOAD
+and the take. The rule looks only at what the plugin returned, so a bounce, live playback, a plugin in the app
+and one in its own process agree and the sandbox on and off render the same bytes; a project with no bad block is
+untouched, because the ramp only exists around a bad block.
+
+**Limits.** The ramp is one block (1.3 ms at 48 kHz), not the bypass crossfade's 5 ms: a ramp across blocks would
+need state that outlives the block and the next block may be bad again. Aux outputs are cut. A late batch keeps its
+hard cut (existing projects render the same). Finite garbage (1e20) is not detected.
+
+**Rejected.** Failing after a fixed number of bad blocks whatever the rate (a quarter of a second is the same
+audio at every rate); the 5 ms ramp (a bad block only reaches the fallback at its end); muting the plugin for a
+while after a bad block (the plugin would miss the notes and parameters that follow).
+
+**Open.** The quarter of a second is a judgement value; the hand check is a third-party plugin that glitches while
+a preset loads.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

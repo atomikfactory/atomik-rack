@@ -28,6 +28,19 @@ pub fn write_frame(
     msg: &impl Serialize,
     blob: Option<&[u8]>,
 ) -> io::Result<()> {
+    write_frame_with(w, msg, blob, MAX_FRAME_BYTES)
+}
+
+/// [`write_frame`] with a tighter limit for the JSON (the blob keeps [`MAX_FRAME_BYTES`]): a
+/// writer whose reader refuses a longer JSON says so itself, with `InvalidData`, before
+/// anything is written.
+pub fn write_frame_with(
+    w: &mut impl Write,
+    msg: &impl Serialize,
+    blob: Option<&[u8]>,
+    json_limit: usize,
+) -> io::Result<()> {
+    let json_limit = json_limit.min(MAX_FRAME_BYTES);
     let mut value = serde_json::to_value(msg)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
     if let Some(blob) = blob {
@@ -47,9 +60,9 @@ pub fn write_frame(
     }
     let json = serde_json::to_vec(&value)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
-    if json.len() > MAX_FRAME_BYTES {
+    if json.len() > json_limit {
         return Err(invalid_data(format!(
-            "a frame of {} bytes is over the limit of {MAX_FRAME_BYTES}",
+            "a frame of {} bytes is over the limit of {json_limit}",
             json.len()
         )));
     }
@@ -79,6 +92,19 @@ pub fn read_frame_with<T: DeserializeOwned>(
     r: &mut impl Read,
     json_limit: usize,
     blob_limit: impl FnOnce(&T) -> usize,
+) -> io::Result<(T, Option<Vec<u8>>)> {
+    read_frame_filtered(r, json_limit, blob_limit, |_| true)
+}
+
+/// [`read_frame_with`] where `wanted` says, from the decoded message, whether its blob is of use
+/// to anyone. A blob nobody wants is still read off the stream (the next frame follows it) but
+/// in small pieces that are dropped at once: it is never held in memory, and the frame comes
+/// back with no blob. The blob is checked against `blob_limit` first either way.
+pub fn read_frame_filtered<T: DeserializeOwned>(
+    r: &mut impl Read,
+    json_limit: usize,
+    blob_limit: impl FnOnce(&T) -> usize,
+    wanted: impl FnOnce(&T) -> bool,
 ) -> io::Result<(T, Option<Vec<u8>>)> {
     let json_limit = json_limit.min(MAX_FRAME_BYTES);
     let mut len = [0u8; 4];
@@ -116,6 +142,16 @@ pub fn read_frame_with<T: DeserializeOwned>(
                 return Err(invalid_data(format!(
                     "a frame blob of {n} bytes is over the limit of {limit}"
                 )));
+            }
+            if !wanted(&msg) {
+                let skipped = io::copy(&mut Read::take(&mut *r, n), &mut io::sink())?;
+                if skipped != n {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "the stream ended inside a frame blob",
+                    ));
+                }
+                return Ok((msg, None));
             }
             // `take` grows the buffer as bytes arrive, so a lying length cannot make us
             // allocate the whole limit for a stream that ends early.
@@ -315,5 +351,47 @@ mod tests {
         );
         let (_, blob) = read_frame_with::<Msg>(&mut Cursor::new(bytes), 1 << 20, |_| 100).unwrap();
         assert_eq!(blob.map(|b| b.len()), Some(100));
+    }
+
+    #[test]
+    fn a_json_over_the_tighter_write_limit_is_refused_before_anything_is_written() {
+        let full = write(&msg(1), None);
+        let json_len = full.len() - 4;
+        let mut out = Vec::new();
+        let err = write_frame_with(&mut out, &msg(1), None, json_len - 1).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert!(out.is_empty(), "nothing was written");
+        write_frame_with(&mut out, &msg(1), None, json_len).unwrap();
+        assert_eq!(out, full);
+    }
+
+    #[test]
+    fn an_unwanted_blob_is_read_off_the_stream_and_dropped_and_the_next_frame_follows() {
+        let mut bytes = write(&msg(1), Some(&[5u8; 100_000]));
+        bytes.extend(write(&msg(2), Some(&[6u8; 10])));
+        let mut r = Cursor::new(bytes);
+        let (a, blob): (Msg, _) =
+            read_frame_filtered(&mut r, 1 << 20, |_| 1 << 20, |m: &Msg| m.id != 1).unwrap();
+        assert_eq!((a.id, blob), (1, None), "the blob of frame 1 was dropped");
+        let (b, blob): (Msg, _) =
+            read_frame_filtered(&mut r, 1 << 20, |_| 1 << 20, |m: &Msg| m.id != 1).unwrap();
+        assert_eq!((b.id, blob), (2, Some(vec![6u8; 10])));
+    }
+
+    #[test]
+    fn an_unwanted_blob_still_has_to_fit_its_limit_and_the_stream_still_has_to_hold_it() {
+        let bytes = write(&msg(1), Some(&[0u8; 100]));
+        let err = read_frame_filtered(
+            &mut Cursor::new(bytes.clone()),
+            1 << 20,
+            |_| 10,
+            |_: &Msg| false,
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        let cut = bytes[..bytes.len() - 5].to_vec();
+        let err = read_frame_filtered(&mut Cursor::new(cut), 1 << 20, |_| 1000, |_: &Msg| false)
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
     }
 }

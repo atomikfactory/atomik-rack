@@ -290,6 +290,26 @@ may break APIs and the patch and project formats.
 - **Quitting no longer hangs on a stalled disk.** The wait for the last recovery copy to be written, and the
   removal of the session's scratch folder, give up after five seconds and let the app exit; what is left behind
   is cleaned up by the next start.
+- **A plugin state that is too large to save is no longer lost silently, and no longer stops the plugin.** A
+  plugin that embeds its samples in its state (a sampler) could produce a state over the 16 MiB a device may store:
+  the save kept the older state without a word, and above the 64 MiB one frame of the channel to a plugin in its
+  own process carries, the plugin's process ended at every capture. Now the process answers that it cannot hand
+  the state over (and what size it is) and stays alive and playing, the same holds for any answer too large for
+  the channel, and the app does not stop the plugin for it. The device shows `too large: 23 MB > 16 MB` in the
+  plugin panel's second line, in the warning colour, for as long as its state does not fit (the plugin's own
+  status word, RUNNING, is not replaced); a save names the device in its notice once ("... is too large to save
+  (23 MB, the limit is 16 MB); its last state that fitted was saved."); the log gets one warning line per change of
+  situation, not one per capture. The last state that fitted stays in the project, and the marker clears at the
+  first capture that fits. A state the app did not ask for no longer takes memory while it is read from the pipe.
+- **One bad block no longer fails a plugin until RELOAD.** A plugin whose `process` returned an error once, or
+  produced one non-finite sample in one block (as some do while loading a preset), was marked FAILED for good, in
+  the app's process and in a plugin process alike. Such a block is now replaced like a late one: the dry input for
+  an effect, silence for an instrument, with a one-block ramp into the fallback and back so that it does not click;
+  it is counted (`bad plugin blocks` in the status line's overload part, in Help > Export Diagnostics and in the QA
+  `session_status`). The device fails, with the same reasons as before, only after a quarter of a second of bad
+  blocks in a row, and a good block starts the count again. A panic still fails it at once. The rule looks only at
+  what the plugin returned, so a bounce, live playback, a plugin in the app and a sandboxed one agree, and a
+  project with no bad block renders exactly as before.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

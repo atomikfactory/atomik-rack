@@ -547,6 +547,68 @@ fn the_state_of_a_busy_plugin_is_asked_for_in_the_background_without_a_stall_or_
     sb.finish();
 }
 
+// ----- a state too large for the channel ------------------------------------------------------------
+
+/// What one frame of the control channel carries (`MAX_FRAME_BYTES`).
+const FRAME_LIMIT: u64 = 64 << 20;
+
+#[test]
+fn a_state_over_the_frame_limit_is_an_error_not_a_dead_child() {
+    // The null plugin embeds 65 MiB of "samples" in its state: one more than a frame holds.
+    let mut sb = Sandbox::null(config_with_env("ATOMIK_NULL_STATE_BYTES", "68157440"));
+    let handle = instantiate_null(&mut sb, "null.gain", RunMode::Realtime);
+    let id = handle.id;
+    let mut device = effect(handle, 0.5);
+    // Every capture, in the foreground and in the background, gets the same answer; none of
+    // them ends the child.
+    for _ in 0..2 {
+        let e = sb.manager.capture_state(id).unwrap_err();
+        assert_eq!(e.state_too_large(), Some((68_157_440, FRAME_LIMIT)), "{e}");
+    }
+    sb.manager.request_capture(id).unwrap();
+    let landed = loop {
+        let _ = sb.manager.poll();
+        if let Some(landed) = sb.manager.poll_capture(id) {
+            break landed;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(
+        landed.result.unwrap_err().state_too_large(),
+        Some((68_157_440, FRAME_LIMIT))
+    );
+    // The plugin is alive and still processes audio.
+    let events = sb.manager.poll();
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            ManagerEvent::Crashed { .. } | ManagerEvent::Failed { .. }
+        )),
+        "{events:?}"
+    );
+    for _ in 0..5 {
+        device.process();
+    }
+    assert!(out_l(&device).iter().all(|s| *s == 0.25));
+    assert!(!sb.manager.is_lost(id));
+    drop(device);
+    let _ = sb.manager.poll();
+    sb.finish();
+}
+
+#[test]
+fn a_large_state_that_fits_the_frame_travels_whole() {
+    let mut sb = Sandbox::null(config_with_env("ATOMIK_NULL_STATE_BYTES", "3145728"));
+    let handle = instantiate_null(&mut sb, "null.gain", RunMode::Realtime);
+    let id = handle.id;
+    let device = effect(handle, 0.5);
+    let blob = sb.manager.capture_state(id).unwrap();
+    assert_eq!(blob.0.len(), 3 << 20);
+    drop(device);
+    let _ = sb.manager.poll();
+    sb.finish();
+}
+
 // ----- a plugin that is alive but busy is not stopped -----------------------------------------------
 
 #[test]

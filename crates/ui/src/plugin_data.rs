@@ -189,6 +189,10 @@ pub struct PluginDeviceStatus {
     /// The instance waits for the audio engine (audio is off): the reason. The editor and the
     /// params work; the device makes no sound until audio runs.
     pub waiting: Option<String>,
+    /// The plugin's state is over a size cap and cannot be stored: the size and the limit, in
+    /// bytes. The plugin runs fine (this is not a state word); the project keeps the last state
+    /// that fitted until a capture fits again.
+    pub state_too_large: Option<(u64, u64)>,
 }
 
 /// How a scan walks the files (mirror of the host's `RescanMode`).

@@ -50,7 +50,7 @@ pub use cache::{
 };
 pub use catalog::{FailedFile, PluginCatalog, PluginEntry, PluginStatus, RegisterReport};
 pub use child::{ChildScanner, MAX_SCAN_OUTPUT, STDERR_REASON_BYTES, ScannerCommand};
-pub use device::{METER_VALUES, PluginDevice};
+pub use device::{METER_VALUES, PluginDevice, bad_run_limit};
 pub use fpenv::{FLUSH_SUPPORTED, FtzGuard, denormals_flushed};
 pub use journal::{CrashJournal, InUsePlugin, RecoveryDir, blacklist_in_use};
 pub use manager::{

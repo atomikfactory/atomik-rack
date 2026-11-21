@@ -462,6 +462,7 @@ mod tests {
                 },
                 overload: OverloadStats {
                     late_sandbox_batches: 9,
+                    bad_plugin_blocks: 4,
                     ..OverloadStats::default()
                 },
                 ..AudioStatus::default()
@@ -473,6 +474,7 @@ mod tests {
             "input trims: 3 trims, backlog max 1440 frames, callback 96..480 frames, buffer requested 480",
             "render workers: 3 threads, linger 500000 spins, idle spins 77, parks 5",
             "late sandbox batches: 9",
+            "bad plugin blocks: 4",
         ] {
             assert!(text.contains(want), "{want}: {text}");
         }

@@ -24,8 +24,8 @@ fn meters(h: &atomik_testkit::harness::DeviceHarness) -> [f32; 8] {
 // ----- Late ---------------------------------------------------------------------------------
 
 #[test]
-fn the_late_batches_are_the_last_meter_value() {
-    assert_eq!(METER_VALUES, 6);
+fn the_late_batches_are_a_meter_value_and_are_not_bad_blocks() {
+    assert_eq!(METER_VALUES, 7);
     let (probe, shared) = Probe::new();
     shared.set_status(ProcessStatus::Late);
     let (mut h, _r) = harness(rig("sb.meter", &fx_layout(), Box::new(probe)));
@@ -36,6 +36,7 @@ fn the_late_batches_are_the_last_meter_value() {
         h.process();
     }
     assert_eq!(meters(&h)[5], 3.0);
+    assert_eq!(meters(&h)[6], 0.0, "a late batch is not a bad block");
 }
 
 #[test]

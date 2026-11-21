@@ -161,3 +161,22 @@ fn a_background_capture_on_a_lost_child_fails() {
     assert_eq!(got.unwrap().unwrap_err(), lost_error());
     assert!(r.instance.request_capture().is_err());
 }
+
+#[test]
+fn a_state_nobody_asked_for_is_read_off_the_pipe_without_being_kept() {
+    let mut r = rig(FakeOptions::default());
+    // A state with a large blob for a request that is not out, then a notification: the stream
+    // stays in step, the child lives and the next real capture is answered with its own state.
+    let big = vec![9u8; 3 << 20];
+    r.fake.ctl.send(&FromChild::State { id: 4242 }, Some(&big));
+    r.fake.ctl.send(&FromChild::StateDirty, None);
+    eventually("the notification behind it", || {
+        r.manager.try_recv() == Some(PluginMessage::StateDirty)
+    });
+    assert!(!r.instance.is_lost());
+    assert!(!r.fake.ctl.was_killed());
+    assert_eq!(
+        r.instance.capture_state().unwrap(),
+        PluginStateBlob(b"fake state".to_vec())
+    );
+}
