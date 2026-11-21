@@ -7,8 +7,8 @@ use atomik_device_sdk::{
 };
 use atomik_plugin_host::paths::Os;
 use atomik_plugin_host::{
-    FailureKind, LoadStatus, PluginCache, PluginSettings, RescanMode, ScanFailure, ScanProgress,
-    ScanRequest, ScanResult, ScanRunner, ScannedPlugin, rescan,
+    FailureKind, LoadStatus, PluginCache, PluginSettings, RescanMode, SCANNER_VERSION, ScanFailure,
+    ScanProgress, ScanRequest, ScanResult, ScanRunner, ScannedPlugin, rescan,
 };
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -466,6 +466,36 @@ fn the_scanner_version_invalidates_cached_entries() {
     cache.set_scanner_version_for_test(0);
     run(&s, &mut cache, &fake, RescanMode::Incremental);
     assert_eq!(fake.take(), ["a.clap"]);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_cache_file_of_the_previous_scanner_loads_and_is_scanned_again_by_the_next_scan() {
+    // The scanner that listed every controller proxy wrote version 3. Its file is still read
+    // (the listed plugins and their layouts are there for the app to start with), and the next
+    // scan replaces each of its entries by one the new scanner made.
+    const { assert!(SCANNER_VERSION > 3) };
+    let d = temp("oldscan");
+    plugin_files(&d, &["a.clap"]);
+    let s = enabled(&d);
+    let mut cache = PluginCache::default();
+    let fake = Fake::ok();
+    run(&s, &mut cache, &fake, RescanMode::Incremental);
+    fake.take();
+    cache.set_scanner_version_for_test(3);
+    let file = d.join("plugins.json");
+    cache.save(&file).unwrap();
+    let (mut loaded, status) = PluginCache::load(&file);
+    assert_eq!(status, LoadStatus::Loaded);
+    assert_eq!(
+        loaded.files().count(),
+        1,
+        "the old entries are kept for now"
+    );
+    assert!(loaded.files().all(|f| f.scanner_version == 3));
+    run(&s, &mut loaded, &fake, RescanMode::Incremental);
+    assert_eq!(fake.take(), ["a.clap"], "scanned again");
+    assert!(loaded.files().all(|f| f.scanner_version == SCANNER_VERSION));
     let _ = std::fs::remove_dir_all(&d);
 }
 

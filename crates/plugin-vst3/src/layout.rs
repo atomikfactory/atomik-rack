@@ -11,7 +11,9 @@ use crate::values::Steps;
 use atomik_device_sdk::{
     Channels, MAX_AUX_OUTPUTS, MAX_PLUGIN_PARAMS, PluginKindHint, PluginLayout, PluginParamInfo,
 };
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::c_void;
+use std::time::{Duration, Instant};
 use vst3::ComPtr;
 use vst3::Steinberg::Vst::*;
 use vst3::Steinberg::*;
@@ -460,11 +462,13 @@ fn read_units(unit_info: Option<&ComPtr<IUnitInfo>>) -> Vec<(i32, i32, String)> 
     out
 }
 
-/// The parameters the host lists: not hidden, not read-only, not a program change, in the
-/// plugin's own order, capped at [`MAX_PLUGIN_PARAMS`]. Also the step counts of the
-/// stepped ones (sorted by id) and whether the table was cut.
+/// The parameters the host lists: not hidden, not read-only, not a program change, not a MIDI
+/// controller proxy (`proxies`, see [`read_midi_proxies`]), in the plugin's own order, capped at
+/// [`MAX_PLUGIN_PARAMS`]. Also the step counts of the stepped ones (sorted by id; a proxy that
+/// is left out keeps its own, so a value for it still converts) and whether the table was cut.
 pub(crate) fn read_params(
     controller: Option<&ComPtr<IEditController>>,
+    proxies: &BTreeSet<u32>,
 ) -> (Vec<PluginParamInfo>, Steps, bool) {
     let Some(c) = controller else {
         return (Vec::new(), Vec::new(), false);
@@ -474,6 +478,7 @@ pub(crate) fn read_params(
     // SAFETY: a live controller.
     let count = unsafe { c.getParameterCount() }.max(0);
     let mut out: Vec<PluginParamInfo> = Vec::new();
+    let mut seen: BTreeSet<u32> = BTreeSet::new();
     let mut steps: Steps = Vec::new();
     let mut truncated = false;
     let skip = ParameterInfo_::ParameterFlags_::kIsHidden
@@ -486,16 +491,20 @@ pub(crate) fn read_params(
         if unsafe { c.getParameterInfo(i, &mut info) } != kResultOk {
             continue;
         }
-        if info.flags & skip != 0 || out.iter().any(|p| p.id == info.id) {
+        if info.flags & skip != 0 || !seen.insert(info.id) {
             continue;
-        }
-        if out.len() >= MAX_PLUGIN_PARAMS {
-            truncated = true;
-            break;
         }
         let stepped = info.stepCount > 0;
         if stepped {
             steps.push((info.id, info.stepCount as u32));
+        }
+        if proxies.contains(&info.id) {
+            continue;
+        }
+        if out.len() >= MAX_PLUGIN_PARAMS {
+            // The rest is not listed; the loop goes on only to collect the steps.
+            truncated = true;
+            continue;
         }
         out.push(PluginParamInfo {
             id: info.id,
@@ -515,6 +524,78 @@ pub(crate) fn read_params(
 /// How many controller numbers `IMidiMapping` is asked about: 0 to 127, aftertouch (128) and
 /// pitch bend (129).
 pub(crate) const MIDI_CONTROLLERS: usize = 130;
+
+/// How many MIDI channels the proxy sweep asks about.
+const MIDI_CHANNELS: i16 = 16;
+
+/// The longest the whole proxy sweep may take: a plugin that is slower to answer keeps its full
+/// table (see [`read_midi_proxies`]).
+pub(crate) const MIDI_PROXY_BUDGET: Duration = Duration::from_millis(500);
+
+/// The current time, for the budget of the proxy sweep only: it decides how long the host keeps
+/// asking, never what the audio does.
+// Justification: wall-clock time is the point of a time budget; main thread only (HI-2).
+#[allow(clippy::disallowed_methods)]
+fn clock() -> Instant {
+    Instant::now()
+}
+
+/// The parameter ids that only stand for a MIDI controller on one channel, from `IMidiMapping`
+/// asked for all 16 channels and all [`MIDI_CONTROLLERS`] numbers of the first event bus.
+///
+/// A plugin that emulates controllers publishes one parameter for every channel and controller
+/// pair (hundreds of entries, none of them a control a person automates). Such a parameter is
+/// assigned to exactly one pair, and its controller number is assigned to a different parameter
+/// on at least one other channel. A parameter that every channel (or only one) reaches through
+/// the same controller is a real control (a mod wheel, a volume) and is not a proxy. The mapping
+/// itself is not touched: [`read_midi_map`] still tells the processor where controllers go.
+///
+/// `None` when the plugin has no `IMidiMapping`, or took longer than `budget` to answer (the
+/// host stops asking and keeps the full table).
+pub(crate) fn read_midi_proxies(
+    controller: Option<&ComPtr<IEditController>>,
+    budget: Duration,
+) -> Option<BTreeSet<u32>> {
+    let map = controller.and_then(|c| c.cast::<IMidiMapping>())?;
+    let began = clock();
+    // The parameter each channel gives a controller number (`None`: no assignment).
+    let mut by_controller: Vec<Vec<Option<u32>>> = Vec::with_capacity(MIDI_CONTROLLERS);
+    for n in 0..MIDI_CONTROLLERS {
+        let mut row = Vec::with_capacity(MIDI_CHANNELS as usize);
+        for channel in 0..MIDI_CHANNELS {
+            if clock().saturating_duration_since(began) > budget {
+                return None;
+            }
+            let mut id: ParamID = 0;
+            // SAFETY: a live mapping and a valid out pointer.
+            let assigned =
+                unsafe { map.getMidiControllerAssignment(0, channel, n as i16, &mut id) }
+                    == kResultTrue;
+            row.push(assigned.then_some(id));
+        }
+        by_controller.push(row);
+    }
+    Some(proxy_ids(&by_controller))
+}
+
+/// The proxies among `by_controller` (one row per controller number, one slot per channel; see
+/// [`read_midi_proxies`]): the ids assigned once, on a controller number whose channels do not
+/// all reach the same parameter.
+pub(crate) fn proxy_ids(by_controller: &[Vec<Option<u32>>]) -> BTreeSet<u32> {
+    let mut uses: BTreeMap<u32, u32> = BTreeMap::new();
+    for id in by_controller.iter().flatten().flatten() {
+        *uses.entry(*id).or_insert(0) += 1;
+    }
+    let mut out = BTreeSet::new();
+    for row in by_controller {
+        let distinct: BTreeSet<u32> = row.iter().flatten().copied().collect();
+        if distinct.len() < 2 {
+            continue;
+        }
+        out.extend(distinct.into_iter().filter(|id| uses[id] == 1));
+    }
+    out
+}
 
 /// The params the plugin maps MIDI controllers to, for the first event bus and channel 0
 /// (`None` where a controller has no assignment).
@@ -619,7 +700,8 @@ pub(crate) fn read(
 ) -> Result<Read, String> {
     let main_in = main_channels(plan.main_in(), "main input")?;
     let main_out = main_channels(plan.main_out(), "main output")?;
-    let (params, steps, params_truncated) = read_params(controller);
+    let proxies = read_midi_proxies(controller, MIDI_PROXY_BUDGET).unwrap_or_default();
+    let (params, steps, params_truncated) = read_params(controller, &proxies);
     let layout = PluginLayout {
         name: class.name.clone(),
         vendor: class.vendor.clone(),
@@ -776,5 +858,43 @@ mod tests {
             kind_of("Instrumental", true, false, true),
             PluginKindHint::Effect
         );
+    }
+
+    /// One row per controller number, one slot per channel.
+    fn rows(f: impl Fn(usize, usize) -> Option<u32>) -> Vec<Vec<Option<u32>>> {
+        (0..MIDI_CONTROLLERS)
+            .map(|n| (0..16).map(|c| f(n, c)).collect())
+            .collect()
+    }
+
+    #[test]
+    fn a_parameter_per_channel_and_controller_is_a_proxy() {
+        let map = rows(|n, c| (n < 128).then(|| 1_000 + (c * 128 + n) as u32));
+        let proxies = proxy_ids(&map);
+        assert_eq!(proxies.len(), 16 * 128);
+        assert!(proxies.contains(&1_000) && proxies.contains(&(1_000 + 16 * 128 - 1)));
+    }
+
+    #[test]
+    fn a_parameter_every_channel_reaches_through_one_controller_is_a_real_control() {
+        // The mod wheel goes to param 7 on every channel; CC 74 has a stand-in per channel.
+        let map = rows(|n, c| match n {
+            1 => Some(7),
+            74 => Some(500 + c as u32),
+            _ => None,
+        });
+        let proxies = proxy_ids(&map);
+        assert!(!proxies.contains(&7));
+        assert_eq!(proxies.len(), 16);
+    }
+
+    #[test]
+    fn a_mapping_on_one_channel_only_or_none_at_all_lists_everything() {
+        let one_channel = rows(|n, c| (c == 0 && n < 4).then_some(n as u32));
+        assert!(proxy_ids(&one_channel).is_empty());
+        assert!(proxy_ids(&rows(|_, _| None)).is_empty());
+        // The same parameter assigned twice (two controllers share it) is not a stand-in.
+        let shared = rows(|n, c| (n < 2).then(|| 100 + c as u32));
+        assert!(proxy_ids(&shared).is_empty(), "each id is assigned twice");
     }
 }
