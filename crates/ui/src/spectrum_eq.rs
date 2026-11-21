@@ -1079,7 +1079,8 @@ impl SpectrumEqView {
                 t,
                 &label,
                 pt(
-                    freq_x(plot, f).clamp(plot.x0 + 6.0, plot.x1 - 6.0),
+                    // Not `clamp`: a plot narrower than 12 units has no room between its ends.
+                    freq_x(plot, f).max(plot.x0 + 6.0).min(plot.x1 - 6.0),
                     plot.y1 + 12.0,
                 ),
                 Align::Center,
