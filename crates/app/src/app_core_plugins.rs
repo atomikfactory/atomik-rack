@@ -1808,9 +1808,14 @@ impl<S: EngineSink> AppCore<S> {
                 let message = e.to_string();
                 self.plugins.log(format!("[{key}] cannot load: {message}"));
                 self.plugins.failed.insert(key, message.clone());
-                let type_id = plugin.type_id();
-                self.plugins.load_failed.insert(type_id.clone());
-                self.plugin_failed_in_a_row(&type_id, "Could not load", &message);
+                // A host process that could not be started is the app's or the machine's
+                // fault, not the plugin's: the device says FAILED (RELOAD retries) but the
+                // quarantine does not count it.
+                if !e.is_spawn_failure() {
+                    let type_id = plugin.type_id();
+                    self.plugins.load_failed.insert(type_id.clone());
+                    self.plugin_failed_in_a_row(&type_id, "Could not load", &message);
+                }
             }
         }
     }

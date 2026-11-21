@@ -395,6 +395,8 @@ impl WireErrorKind {
             BackendError::UnknownPlugin(t) => (Self::UnknownPlugin, t.clone()),
             BackendError::Unsupported(t) => (Self::Unsupported, t.clone()),
             BackendError::Failed(t) => (Self::Failed, t.clone()),
+            // Only the app side starts the child: the child never says this itself.
+            BackendError::Spawn(t) => (Self::Failed, t.clone()),
         }
     }
 }

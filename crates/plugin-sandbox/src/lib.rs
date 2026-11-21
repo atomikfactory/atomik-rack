@@ -303,7 +303,7 @@ struct Launch {
 impl Launch {
     fn run(self) -> Result<(Transport, ParentPort, LiveGuard), BackendError> {
         let io_error = |what: &str, e: std::io::Error| {
-            BackendError::Failed(format!("cannot create the plugin's {what}: {e}"))
+            BackendError::Spawn(format!("cannot create the plugin's {what}: {e}"))
         };
         let block_path = default_block_dir().join(block_file_name(self.pid, self.number));
         let doorbell_name = DoorbellName::for_instance(self.pid, self.number);
@@ -340,7 +340,7 @@ impl Launch {
         args.push(self.pid.to_string().into());
         let transport =
             transport::spawn_process(&command.program, &args, &command.envs).map_err(|e| {
-                BackendError::Failed(format!(
+                BackendError::Spawn(format!(
                     "cannot start {} for {}: {e}",
                     command.program.display(),
                     self.file.display()
@@ -368,14 +368,14 @@ impl Launch {
         args.push(self.pid.to_string().into());
         let transport =
             transport::spawn_process(&command.program, &args, &command.envs).map_err(|e| {
-                BackendError::Failed(format!(
+                BackendError::Spawn(format!(
                     "cannot start {} for a plugin group: {e}",
                     command.program.display()
                 ))
             })?;
         let hub = Hub::start(transport, LiveGuard::new(&self.live));
         let transport = hub.join(attach).ok_or_else(|| {
-            BackendError::Failed("the plugin group ended before it took the plugin".to_string())
+            BackendError::Spawn("the plugin group ended before it took the plugin".to_string())
         })?;
         list.push(Arc::downgrade(&hub));
         Ok(transport)
@@ -411,7 +411,7 @@ impl Spawning {
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.closed = true;
-                self.failed = Some(BackendError::Failed(
+                self.failed = Some(BackendError::Spawn(
                     "the thread that starts the plugin's process ended without an answer".into(),
                 ));
             }
@@ -501,7 +501,7 @@ impl PluginBackend for SandboxBackend {
                 let _ = to.send(begun);
             })
             .map_err(|e| {
-                BackendError::Failed(format!(
+                BackendError::Spawn(format!(
                     "cannot start the thread that starts the plugin: {e}"
                 ))
             })?;

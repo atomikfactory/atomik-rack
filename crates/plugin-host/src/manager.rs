@@ -133,6 +133,12 @@ impl ManagerError {
     pub fn is_not_responding(&self) -> bool {
         matches!(self, Self::Backend(e) if e.is_not_responding())
     }
+
+    /// True when the plugin's host process could not be started: not the plugin's fault, so it
+    /// does not count towards the quarantine ([`BackendError::Spawn`]).
+    pub fn is_spawn_failure(&self) -> bool {
+        matches!(self, Self::Backend(e) if e.is_spawn_failure())
+    }
 }
 
 /// Something that happened to an instance, for the app to act on.

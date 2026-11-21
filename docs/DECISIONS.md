@@ -1306,8 +1306,12 @@ Making the child (the shared block, the doorbell and the process) took about 7 m
 machine and 60 to 80 ms for the eight that start in one frame, which a virus scanner makes longer. The sandbox now
 does it on a short-lived `plugin-spawn` thread per start, so the interface thread spends about 0.3 ms for eight;
 the start says "not ready" until the child is handed over, and a start that is skipped before that ends its child as
-soon as it is there. A child that cannot be made is reported through the creation like any other load error, so it
-counts as a failed load for the quarantine.
+soon as it is there. A child that cannot be made (the host program is missing or blocked, no memory, the shared block
+or the doorbell could not be created) is the app's or the machine's fault, not the plugin's: it is its own error kind
+(`BackendError::Spawn`, `is_spawn_failure`), the device says FAILED with the text and RELOAD retries, and nothing is
+added to the crashed settings or counted towards the quarantine (a missing host program would otherwise quarantine
+every plugin of a project). A creation that ends because it was skipped, cancelled by an engine rebuild, by removing
+the device or by closing the project is never an error at all.
 
 **Rejected.** Attaching every ready creation in one frame (an attach does real work and would lengthen the frame);
 installing a creation in the manager as soon as it is ready and attaching it later (events of an instance the app

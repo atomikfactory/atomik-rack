@@ -433,3 +433,71 @@ fn the_skip_command_acts_on_the_selected_loading_device() {
     core.frame();
     assert_eq!(loading_word(&core, &p0), (false, true));
 }
+
+#[test]
+fn a_host_process_that_cannot_start_is_not_the_plugins_failure_and_reload_retries() {
+    let (mut core, stats) = core_with(1);
+    let dev = key("p0");
+    stats.set_background_create(Some(1));
+    core.plugins_discard_on_next_reset();
+    stats.fail_next_spawns(1);
+    core.rebuild_engine();
+    for round in 0..3 {
+        frames_until(&mut core, 200, |c| !c.plugins.pending.contains(&dev));
+        let why = core.plugin_failure(&dev).expect("FAILED").to_string();
+        assert!(why.contains("cannot start the plugin host"), "{why}");
+        assert_eq!(core.plugins.user.failures(GAIN), 0, "round {round}");
+        assert!(!core.plugins.user.is_quarantined(GAIN), "round {round}");
+        assert!(core.plugins.settings.crashed.is_empty());
+        assert!(core.view().plugin_status(&dev).failed.is_some());
+        stats.fail_next_spawns(usize::from(round < 2));
+        core.handle_action(UiAction::ReloadPlugin {
+            device: dev.clone(),
+        });
+    }
+    // The fourth try starts: RELOAD brought it up.
+    frames_until(&mut core, 200, |c| c.plugin_instance(&dev).is_some());
+    assert!(core.plugin_failure(&dev).is_none());
+    assert_eq!(core.plugins.user.failures(GAIN), 0);
+}
+
+#[test]
+fn a_creation_that_fails_inside_the_plugin_still_counts_toward_the_quarantine() {
+    let (mut core, stats) = core_with(1);
+    let dev = key("p0");
+    slow(&stats, 1);
+    for _ in 0..3 {
+        stats.fail_next_activation();
+        core.plugins_discard_on_next_reset();
+        core.rebuild_engine();
+        frames_until(&mut core, 200, |c| !c.plugins.pending.contains(&dev));
+    }
+    assert!(core.plugins.user.is_quarantined(GAIN));
+}
+
+#[test]
+fn a_creation_cancelled_by_a_rebuild_a_removal_or_a_close_counts_for_nothing() {
+    let (mut core, stats) = core_with(2);
+    let (p0, p1) = (key("p0"), key("p1"));
+    restart_with_held(&mut core, &stats, 2);
+    for _ in 0..5 {
+        core.frame();
+    }
+    // An engine rebuild cancels both starts.
+    core.rebuild_engine();
+    for _ in 0..5 {
+        core.frame();
+    }
+    // Removing a device that is loading cancels its start.
+    apply(&mut core, Command::RemoveDevice { key: p1.clone() });
+    // Closing the project (a new document) cancels what is left.
+    core.plugins_discard_on_next_reset();
+    core.rebuild_engine();
+    for _ in 0..10 {
+        core.frame();
+    }
+    assert_eq!(core.plugins.user.failures(GAIN), 0);
+    assert!(!core.plugins.user.is_quarantined(GAIN));
+    assert!(core.plugin_failure(&p0).is_none());
+    assert!(core.plugins.settings.crashed.is_empty());
+}
