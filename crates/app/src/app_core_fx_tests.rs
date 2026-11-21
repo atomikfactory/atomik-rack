@@ -156,6 +156,106 @@ fn a_stale_sequence_number_is_not_applied_twice() {
     assert_ne!(c.view().device_meters(&key("comp")), &first[..]);
 }
 
+/// The panel revision of device `k` in the rack view.
+fn revision(c: &AppCore<RecordingSink>, name: &str) -> u64 {
+    c.view()
+        .panel_revisions()
+        .into_iter()
+        .find(|(k, _)| k.0 == name)
+        .map(|(_, r)| r)
+        .expect("the panel exists")
+}
+#[test]
+fn a_device_publishing_the_same_values_every_batch_is_fed_once_and_its_panel_stays_put() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, "atomik.compressor", "comp");
+    let id = c.device_id(&key("comp")).unwrap();
+    let still = vec![0.0, 0.0, 0.0];
+    c.sink_mut().device_values.insert(id, (still.clone(), 1));
+    // The silent device settles on its floor.
+    let mut seq = 1;
+    for _ in 0..200 {
+        seq += 1;
+        c.sink_mut().device_values.insert(id, (still.clone(), seq));
+        c.frame();
+    }
+    let settled = c.view().device_meters(&key("comp")).to_vec();
+    let rev = revision(&c, "comp");
+    // The engine runs and publishes a new sequence with every batch, the values are the same.
+    // Something else changes the panel's meters behind the feed's back: an unneeded feed would
+    // put the silence back, a skipped one leaves the change alone.
+    let loud = [0.5, 0.35, 6.0];
+    assert!(c.view_mut().set_device_meter_values(&key("comp"), &loud));
+    let tampered = c.view().device_meters(&key("comp")).to_vec();
+    assert_ne!(tampered, settled);
+    let rev_tampered = revision(&c, "comp");
+    for _ in 0..50 {
+        seq += 1;
+        c.sink_mut().device_values.insert(id, (still.clone(), seq));
+        c.frame();
+    }
+    assert_eq!(
+        c.view().device_meters(&key("comp")),
+        &tampered[..],
+        "unchanged values are not fed again"
+    );
+    assert_eq!(
+        revision(&c, "comp"),
+        rev_tampered,
+        "and the panel is not touched"
+    );
+    assert!(rev_tampered > rev);
+}
+
+#[test]
+fn a_changed_value_is_fed_and_moves_the_panel_revision() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, "atomik.compressor", "comp");
+    let id = c.device_id(&key("comp")).unwrap();
+    let mut seq = 0;
+    for _ in 0..200 {
+        seq += 1;
+        c.sink_mut().device_values.insert(id, (vec![0.0; 3], seq));
+        c.frame();
+    }
+    let rev = revision(&c, "comp");
+    seq += 1;
+    c.sink_mut()
+        .device_values
+        .insert(id, (vec![0.5, 0.35, 6.0], seq));
+    c.frame();
+    assert!(revision(&c, "comp") > rev, "a new value reaches the panel");
+    assert!(c.view().device_meters(&key("comp"))[0] > -20.0);
+}
+
+#[test]
+fn a_rebuilt_panel_is_fed_again_although_the_values_did_not_change() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, "atomik.compressor", "comp");
+    let id = c.device_id(&key("comp")).unwrap();
+    let loud = vec![0.5, 0.35, 6.0];
+    let mut seq = 0;
+    for _ in 0..3 {
+        seq += 1;
+        c.sink_mut().device_values.insert(id, (loud.clone(), seq));
+        c.frame();
+    }
+    let shown = c.view().device_meters(&key("comp")).to_vec();
+    assert!(!shown.is_empty());
+    // A structure change rebuilds the panels; the one of `comp` is made again from the old one's
+    // values, then the feed is told to start over: it feeds the same values once more.
+    let rebuilds = c.view().rebuild_count();
+    add(&mut c, "atomik.reverb", "verb");
+    assert!(c.view().rebuild_count() > rebuilds);
+    assert!(
+        c.view_mut()
+            .set_device_meter_values(&key("comp"), &[0.0; 3])
+    );
+    seq += 1;
+    c.sink_mut().device_values.insert(id, (loud.clone(), seq));
+    c.frame();
+    assert_eq!(c.view().device_meters(&key("comp")), &shown[..]);
+}
 #[test]
 fn every_effect_type_that_publishes_is_fed_and_the_others_are_left_alone() {
     let mut c = AppCore::new(RecordingSink::new());

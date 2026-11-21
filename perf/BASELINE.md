@@ -322,6 +322,26 @@ on is 0.3 to 0.4 points above the no-audio figure in the better runs. The status
 for ten seconds while they move by less than two points; before that, an idle engine's jitter in the rounded figure
 repainted the whole window every couple of seconds (3 paints a second in the stress rack).
 
+## Meter feeds with the engine running and nothing sounding (2026-11-21)
+
+The same reference machine and release build, the transport stopped, no `--play`, `scripts/perf/sample-app.ps1`
+(15 s settle, 20 s window, one run per row). Before is the branch this change started from (the idle wake item
+already on it), after is this change. The stress rack's devices are silent, so their published values do not move;
+the engine still publishes a new sequence with every batch.
+
+| Scenario | CPU % before | CPU % after | GPU % before | GPU % after | Paints/s before | Paints/s after |
+|---|---|---|---|---|---|---|
+| Stress rack, audio on, no workers | 17.9 | 16.9 | 0.87 | 0.53 | 0.1 | 0.5 |
+| Stress rack, audio on | 69 | 92 | 3.2 | 0.9 | 0.2 | 0 |
+| Stress rack, no audio, rack and mixer detached | 0.78 | 0.47 | 0 | 0 | 0 | 0 |
+| Empty project, audio on | 1.09 | 1.09 | 0.02 | 0.02 | 0 | 0 |
+
+Wakes stay at 14 a second (6 detached without audio) in both columns. The stopped stress rack already paints about
+nothing before this change (the earlier item's full-rate tail ends because the panels settle), so the paint count does
+not fall further; the 17 points over the no-audio row are the engine's own render of 100 devices on the audio thread,
+which the interface cannot reduce (the run with render workers varies with how the workers spin). The differences
+between before and after are within the run-to-run spread of the sampler.
+
 ## Render workers parked between callbacks (2026-11-20)
 
 `cargo test -p atomik-engine --release --test worker_linger -- --ignored --nocapture`, no audio device: the

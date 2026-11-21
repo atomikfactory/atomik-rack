@@ -166,6 +166,13 @@ may break APIs and the patch and project formats.
   run at the full rate, and the full rate lasts a second after the last thing drawn, so meters and lights settle
   as before. Live MIDI wakes the app at once. The DSP figures in the status line no longer flip with the tiniest
   jitter of an idle engine: a small move (under two points) shows up to ten seconds late, a real change at once.
+- **A device that shows the same meter values every batch is not fed again.** The engine publishes a new
+  sequence with every batch while it runs, so every metered effect, plugin and note player was handed its
+  values on every frame even when nothing sounded. The app now keeps what it last fed each device and
+  skips a device whose values are identical and whose panel had settled on them; a panel that is made again
+  (an edit that changes the rack, a container opened) is fed once more. Meters show the same values with the
+  same ballistics. A stopped rack was already painting about zero frames a second; this removes the
+  per-device work behind it.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

@@ -155,6 +155,29 @@ pub fn channel_meters(
     }
 }
 
+/// What [`AppCore::feed_device_meters`] remembers of a device: the publish sequence and the
+/// values it last fed the view, and whether the view settled on them (a feed of the same values
+/// again would change nothing, see `RackView::set_device_meter_values`).
+#[derive(Debug, Default)]
+struct MeterFeed {
+    seq: u64,
+    raw: Vec<f32>,
+    settled: bool,
+}
+
+impl MeterFeed {
+    /// Whether `values` are bit for bit the ones fed last and the view had settled on them.
+    fn unchanged(&self, values: &[f32]) -> bool {
+        self.settled
+            && self.raw.len() == values.len()
+            && self
+                .raw
+                .iter()
+                .zip(values)
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+    }
+}
+
 /// The app state without a window: document, registry, rack view, the device key ↔ engine id
 /// map, the engine topology and the engine sink.
 ///
@@ -492,8 +515,11 @@ pub struct AppCore<S: EngineSink> {
     /// A freeze or unfreeze changed the engine graph while the transport ran: the engine is
     /// rebuilt at the next stop instead of cutting the sound (the song is held back too).
     restart_deferred: bool,
-    /// Effect meter feed: the last publish sequence applied per device.
-    fx_meter_seq: BTreeMap<DeviceKey, u64>,
+    /// Effect meter feed: the last publish sequence and values applied per device.
+    fx_meter_seq: BTreeMap<DeviceKey, MeterFeed>,
+    /// The rack view's [`RackView::rebuild_count`] when the meters were last fed: a rebuilt panel
+    /// starts empty, so the values are fed again.
+    fx_meter_rebuilds: u64,
     /// Effect meter feed: the reused read buffer (never reallocated after construction).
     fx_meter_buf: Vec<f32>,
     /// Momentary params (the gain tool's RESET): the device, the param and the frames left before
@@ -726,6 +752,7 @@ impl<S: EngineSink> AppCore<S> {
             pending_pre_roll: None,
             restart_deferred: false,
             fx_meter_seq: BTreeMap::new(),
+            fx_meter_rebuilds: 0,
             fx_meter_buf: vec![0.0; FX_METER_CAPACITY],
             param_pulses: Vec::new(),
             plugin_params: PluginParamsView::new(theme),
@@ -2087,11 +2114,20 @@ impl<S: EngineSink> AppCore<S> {
     /// It covers every device of a type with a visual that publishes values
     /// ([`atomik_ui::fx::FxKind::meter_count`] above 0), whether or not its panel is on
     /// screen (cheap: a lock-free read per effect; the view repaints only for visible
-    /// panels). A device whose publish sequence did not move since the last feed is skipped,
-    /// so a paused engine costs no view work. Allocation-free after the first feed of a
-    /// device (one key clone), with one reused buffer.
+    /// panels). A device whose publish sequence did not move since the last feed is skipped, so
+    /// a paused engine costs no view work; while the engine runs the sequence moves with every
+    /// batch, so a device whose values are bit for bit the ones fed last, and which its panel
+    /// settled on, is skipped as well. Allocation-free after the first feed of a device (one key
+    /// clone and one values copy), with one reused buffer.
     pub fn feed_device_meters(&mut self) {
         let mut buf = std::mem::take(&mut self.fx_meter_buf);
+        let rebuilds = self.view.rebuild_count();
+        if rebuilds != self.fx_meter_rebuilds {
+            self.fx_meter_rebuilds = rebuilds;
+            for feed in self.fx_meter_seq.values_mut() {
+                feed.settled = false;
+            }
+        }
         // Effects with a display and the note players (the sequencer's cursor, the
         // arpeggiator's held and upcoming keys) publish values; the list holds the
         // flat devices, so the ones inside containers are fed by their path key.
@@ -2102,17 +2138,30 @@ impl<S: EngineSink> AppCore<S> {
             let Some((n, seq)) = self.sink.read_device_meter_values(*id, &mut buf) else {
                 continue;
             };
-            match self.fx_meter_seq.get_mut(key) {
-                Some(last) if *last == seq => continue,
-                Some(last) => *last = seq,
-                None => {
-                    self.fx_meter_seq.insert(key.clone(), seq);
+            let values = &buf[..n];
+            let feed = match self.fx_meter_seq.get_mut(key) {
+                Some(feed) if feed.seq == seq => continue,
+                Some(feed) => {
+                    feed.seq = seq;
+                    feed
                 }
-            }
-            self.view.set_device_meter_values(key, &buf[..n]);
+                None => self.fx_meter_seq.entry(key.clone()).or_insert(MeterFeed {
+                    seq,
+                    ..MeterFeed::default()
+                }),
+            };
             if self.seq_editor.device() == Some(key) {
-                self.seq_editor.set_meter_values(&buf[..n]);
+                self.seq_editor.set_meter_values(values);
             }
+            // The sequence moves with every batch while the engine runs, so a device that
+            // publishes the same values (a quiet effect, a stopped player) is told apart by
+            // its values: once the panel settled on them, feeding them again is skipped.
+            if feed.unchanged(values) {
+                continue;
+            }
+            feed.settled = !self.view.set_device_meter_values(key, values);
+            feed.raw.clear();
+            feed.raw.extend_from_slice(values);
         }
         self.fx_meter_buf = buf;
     }

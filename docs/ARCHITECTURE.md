@@ -3295,9 +3295,15 @@ of this is saved in the project.
   with a count, an owner id and a publish sequence that only grows; any other device costs one bool
   test per batch. The UI reads with `EngineHandle::device_meter_values(id, out)` or
   `Meters::device_values` (`AppCore::device_meter_values(key, out)`), getting `(count, seq)`; an
-  unchanged `seq` means no news. A removed device (or a swapped plan) clears its slot, and a reader
-  only gets values from the slot whose owner is the id it asked for, so a reused slot never shows
-  old values.
+  unchanged `seq` means no news. The sequence also moves with every batch while the engine runs, so
+  `AppCore::feed_device_meters` keeps the values it last fed per device and skips a device whose
+  values are bit for bit the same, once its panel settled on them (`RackView::set_device_meter_values`
+  answers `false` for that; the effect, plugin and note-player panels do, every other panel answers
+  `true` and is fed on). The feed starts over when the rack view rebuilds its panels
+  (`RackView::rebuild_count`). A panel is still recorded whole when a value it shows changes: a
+  display list per device, replaced when its revision moves.
+  A removed device (or a swapped plan) clears its slot, and a reader only gets values from the slot whose
+  owner is the id it asked for, so a reused slot never shows old values.
 - **Model and app.** The model keeps the console (`Console`, channels bound to rack devices, master,
   8 returns, VCA groups); every instrument gets a channel automatically. Solo is additive and
   returns are solo-safe; the app sets `internal.solo_silence` and the `internal.vca_*` feed on the
