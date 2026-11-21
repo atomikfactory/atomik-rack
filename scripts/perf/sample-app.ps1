@@ -119,6 +119,23 @@ foreach ($n in $names) {
 
 Add-Type -Namespace W -Name U -MemberDefinition @'
 [DllImport("user32.dll")] public static extern System.IntPtr SendMessageTimeoutW(System.IntPtr h, uint msg, System.IntPtr w, System.IntPtr l, uint flags, uint timeoutMs, out System.IntPtr result);
+public delegate bool EnumProc(System.IntPtr h, System.IntPtr l);
+[DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, System.IntPtr l);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr h, out uint pid);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr h);
+[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassNameW(System.IntPtr h, System.Text.StringBuilder s, int n);
+[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextLengthW(System.IntPtr h);
+// The first visible, titled top-level window of the process that is not its console. A build
+// with a console has the console as the process main window: probing that one would measure
+// the console host, not the app.
+public static System.IntPtr AppWindow(uint pid) {
+    System.IntPtr best = System.IntPtr.Zero;
+    EnumWindows((h, l) => { uint p; GetWindowThreadProcessId(h, out p);
+        if (p == pid && best == System.IntPtr.Zero && IsWindowVisible(h) && GetWindowTextLengthW(h) > 0) {
+            var c = new System.Text.StringBuilder(256); GetClassNameW(h, c, 256);
+            if (c.ToString() != "ConsoleWindowClass") best = h; }
+        return true; }, System.IntPtr.Zero);
+    return best; }
 '@
 
 function Test-PluginStressReady {
@@ -169,7 +186,8 @@ function Measure-Scenario {
         while ($sw.ElapsedMilliseconds -lt 60000) {
             $p.Refresh()
             if ($p.HasExited) { break }
-            if ($p.MainWindowHandle -ne [IntPtr]::Zero) { $row.FirstWindowMs = $sw.ElapsedMilliseconds; break }
+            $h = [W.U]::AppWindow([uint32]$p.Id)
+            if ($h -ne [IntPtr]::Zero) { $row.FirstWindowMs = $sw.ElapsedMilliseconds; break }
             Start-Sleep -Milliseconds 25
         }
         if ($p.HasExited) {
@@ -177,7 +195,6 @@ function Measure-Scenario {
             $crashed = $true
             return [pscustomobject]$row, $crashed
         }
-        $h = $p.MainWindowHandle
         Start-Sleep -Seconds $Settle
         if ($p.HasExited) {
             $row.Note = "exited during settle, code $($p.ExitCode)"
