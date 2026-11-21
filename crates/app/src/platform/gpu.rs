@@ -1,9 +1,17 @@
 //! vello on wgpu (through `vello::wgpu`): one shared context, a surface per window, and the
 //! offscreen screenshot.
 //!
-//! Not unit-tested (needs a GPU); it compiles on every target and the user checks it.
+//! A device the driver took away (a reset, a driver update, a wake from sleep) is reported by
+//! two callbacks that only set the flag of [`GpuHealth`]; the app notices it at the start of a
+//! frame and builds the whole context again (see [`super::gpu_recovery`]). No surface or render
+//! target is ever configured larger than the device's texture limit.
+//!
+//! The GPU parts are not unit-tested (they need a GPU); the flag and the decisions are, and the
+//! user checks the rest (`ATOMIK_GPU_LOSS_EVERY` forces a loss).
 
-use std::sync::Arc;
+use super::gpu_recovery::clamp_size;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use vello::peniko::Color;
 use vello::util::{RenderContext, RenderSurface};
 use vello::wgpu;
@@ -19,8 +27,91 @@ pub enum FrameResult {
     Skipped,
     /// The surface was reconfigured; redraw.
     Reconfigured,
-    /// The surface is lost; recreate the GPU state.
+    /// The device or the surface is lost; the whole GPU state is built again.
     Lost,
+}
+
+/// What the graphics driver's callbacks recorded about one device: they set the flag and keep
+/// the words, nothing else (no logging, no work), and the UI thread reads it every frame.
+#[derive(Debug, Default)]
+pub struct GpuHealth {
+    lost: AtomicBool,
+    /// Why the device was lost, until the UI thread has said it.
+    reason: Mutex<Option<String>>,
+    /// The errors that do not lose the device (a rejected command), each distinct text once,
+    /// until the UI thread has said them.
+    notes: Mutex<Notes>,
+}
+
+#[derive(Debug, Default)]
+struct Notes {
+    pending: Vec<String>,
+    seen: Vec<String>,
+}
+
+/// The most distinct non-fatal error texts kept per device.
+const MAX_NOTES: usize = 16;
+
+impl GpuHealth {
+    /// Records that the device is lost, with the reason (the first reason is kept).
+    pub fn mark_lost(&self, why: &str) {
+        if !self.lost.swap(true, Ordering::AcqRel)
+            && let Ok(mut r) = self.reason.lock()
+        {
+            *r = Some(why.to_string());
+        }
+    }
+
+    /// Whether the device was reported lost.
+    #[must_use]
+    pub fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::Acquire)
+    }
+
+    /// The reason of the loss, once.
+    #[must_use]
+    pub fn take_reason(&self) -> Option<String> {
+        self.reason.lock().ok().and_then(|mut r| r.take())
+    }
+
+    /// Records an error that leaves the device usable.
+    pub fn note(&self, text: &str) {
+        if let Ok(mut n) = self.notes.lock()
+            && n.seen.len() < MAX_NOTES
+            && !n.seen.iter().any(|s| s == text)
+        {
+            n.seen.push(text.to_string());
+            n.pending.push(text.to_string());
+        }
+    }
+
+    /// The non-fatal errors recorded since the last call.
+    #[must_use]
+    pub fn take_notes(&self) -> Vec<String> {
+        self.notes
+            .lock()
+            .map(|mut n| std::mem::take(&mut n.pending))
+            .unwrap_or_default()
+    }
+
+    /// What the uncaptured-error callback does with `error`: running out of memory or an
+    /// internal failure loses the device; a rejected command is only noted.
+    fn on_error(&self, error: &wgpu::Error) {
+        match error {
+            wgpu::Error::Validation { description, .. } => self.note(description),
+            other => self.mark_lost(&format!("graphics error: {other}")),
+        }
+    }
+
+    /// Installs the two callbacks on `device`.
+    fn watch(self: &Arc<Self>, device: &wgpu::Device) {
+        let health = Arc::clone(self);
+        device.on_uncaptured_error(Arc::new(move |e: wgpu::Error| health.on_error(&e)));
+        let health = Arc::clone(self);
+        device.set_device_lost_callback(move |reason, message| {
+            health.mark_lost(&format!("{reason:?}: {message}"));
+        });
+    }
 }
 
 fn renderer_options() -> RendererOptions {
@@ -68,6 +159,15 @@ pub struct GpuContext {
     context: RenderContext,
     /// Indexed like `context.devices`; created the first time a surface uses the device.
     renderers: Vec<Option<Renderer>>,
+    /// What the callbacks of this context's devices recorded.
+    health: Arc<GpuHealth>,
+    /// How many of `context.devices` have the callbacks.
+    watched: usize,
+    /// The adapter line was kept for the diagnostics report.
+    adapter_noted: bool,
+    /// A context built after a loss keeps the adapter line without writing it again (the
+    /// recovery line carries it).
+    quiet_adapter: bool,
 }
 
 impl std::fmt::Debug for GpuContext {
@@ -106,7 +206,72 @@ impl GpuContext {
         Self {
             context: RenderContext::new(),
             renderers: Vec::new(),
+            health: Arc::new(GpuHealth::default()),
+            watched: 0,
+            adapter_noted: false,
+            quiet_adapter: false,
         }
+    }
+
+    /// An empty context for the graphics of an app that lost its device.
+    pub fn rebuilt() -> Self {
+        Self {
+            quiet_adapter: true,
+            ..Self::new()
+        }
+    }
+
+    /// What the callbacks of this context's devices recorded.
+    pub fn health(&self) -> &Arc<GpuHealth> {
+        &self.health
+    }
+
+    /// Whether a device of this context was lost.
+    pub fn is_lost(&self) -> bool {
+        self.health.is_lost()
+    }
+
+    /// The adapter line of the device in use, once there is one.
+    pub fn adapter_line(&self) -> Option<String> {
+        let handle = self.context.devices.first()?;
+        let info = handle.adapter().get_info();
+        let driver = format!("{} {}", info.driver, info.driver_info);
+        Some(crate::startup::adapter_line(
+            &info.name,
+            backend_name(info.backend),
+            device_type_name(info.device_type),
+            &driver,
+        ))
+    }
+
+    /// Takes every device away, as a driver reset does (the test switch of the recovery): the
+    /// callbacks report it like the real thing.
+    pub fn force_loss(&self) {
+        for handle in &self.context.devices {
+            handle.device.destroy();
+            let _ = handle.device.poll(wgpu::PollType::Poll);
+        }
+        if !self.health.is_lost() {
+            self.health.mark_lost("lost on request (test switch)");
+        }
+    }
+
+    /// Puts the callbacks on the devices made since the last call.
+    fn watch_new_devices(&mut self) {
+        for handle in self.context.devices.iter().skip(self.watched) {
+            self.health.watch(&handle.device);
+        }
+        self.watched = self.context.devices.len();
+    }
+
+    /// The largest side a surface or render target of device `dev_id` may have.
+    fn max_side(&self, dev_id: usize) -> u32 {
+        self.context
+            .devices
+            .get(dev_id)
+            .map_or(wgpu::Limits::default().max_texture_dimension_2d, |h| {
+                h.device.limits().max_texture_dimension_2d
+            })
     }
 
     /// Creates the surface (vsync: `AutoVsync`) for `window`, and the renderer of its device
@@ -117,10 +282,24 @@ impl GpuContext {
         width: u32,
         height: u32,
     ) -> Result<WindowSurface, String> {
-        let surface = pollster::block_on(self.context.create_surface(
-            window,
-            width.max(1),
-            height.max(1),
+        if self.is_lost() {
+            return Err("GPU surface: the graphics device is lost".to_string());
+        }
+        let target = self
+            .context
+            .instance
+            .create_surface(window)
+            .map_err(|e| format!("GPU surface: {e}"))?;
+        // The device is picked here, before the surface is configured, so the callbacks are on
+        // it for everything that follows.
+        let dev_id = pollster::block_on(self.context.device(Some(&target)))
+            .ok_or("GPU surface: no compatible GPU device")?;
+        self.watch_new_devices();
+        let (width, height) = clamp_size(width, height, self.max_side(dev_id));
+        let surface = pollster::block_on(self.context.create_render_surface(
+            target,
+            width,
+            height,
             wgpu::PresentMode::AutoVsync,
         ))
         .map_err(|e| format!("GPU surface: {e}"))?;
@@ -133,19 +312,25 @@ impl GpuContext {
 
     /// Writes the adapter of device `dev_id` to the log and keeps it for the diagnostics report,
     /// the first time a device is used. Selection is untouched: this only reads the adapter.
-    fn note_adapter(&self, dev_id: usize) {
-        if crate::startup::adapter().is_some() {
+    fn note_adapter(&mut self, dev_id: usize) {
+        if self.adapter_noted || (!self.quiet_adapter && crate::startup::adapter().is_some()) {
             return;
         }
+        self.adapter_noted = true;
         if let Some(handle) = self.context.devices.get(dev_id) {
             let info = handle.adapter().get_info();
             let driver = format!("{} {}", info.driver, info.driver_info);
-            crate::startup::set_adapter(crate::startup::adapter_line(
+            let line = crate::startup::adapter_line(
                 &info.name,
                 backend_name(info.backend),
                 device_type_name(info.device_type),
                 &driver,
-            ));
+            );
+            if self.quiet_adapter {
+                crate::startup::keep_adapter(line);
+            } else {
+                crate::startup::set_adapter(line);
+            }
         }
     }
 
@@ -176,9 +361,9 @@ impl GpuContext {
         slot.as_mut().ok_or_else(|| "renderer".to_string())
     }
 
-    /// Resizes `surface` (physical pixels).
+    /// Resizes `surface` (physical pixels), to at most the device's texture limit on a side.
     pub fn resize(&mut self, surface: &mut WindowSurface, width: u32, height: u32) {
-        let (w, h) = (width.max(1), height.max(1));
+        let (w, h) = clamp_size(width, height, self.max_side(surface.surface.dev_id));
         let s = &mut surface.surface;
         if (w, h) != (s.config.width, s.config.height) {
             self.context.resize_surface(s, w, h);
@@ -192,6 +377,9 @@ impl GpuContext {
         scene: &Scene,
         base: Color,
     ) -> FrameResult {
+        if self.is_lost() {
+            return FrameResult::Lost;
+        }
         let surface = &mut surface.surface;
         let texture = match surface.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
@@ -203,7 +391,10 @@ impl GpuContext {
                 self.context.configure_surface(surface);
                 return FrameResult::Reconfigured;
             }
-            wgpu::CurrentSurfaceTexture::Lost => return FrameResult::Lost,
+            wgpu::CurrentSurfaceTexture::Lost => {
+                self.health.mark_lost("the window surface was lost");
+                return FrameResult::Lost;
+            }
             #[allow(unreachable_patterns)] // Future variants: skip the frame.
             _ => return FrameResult::Skipped,
         };
@@ -254,6 +445,9 @@ pub fn render_offscreen(
     let id = pollster::block_on(context.device(None)).ok_or("no compatible GPU device")?;
     let handle = &context.devices[id];
     let (device, queue) = (&handle.device, &handle.queue);
+    let health = Arc::new(GpuHealth::default());
+    health.watch(device);
+    let (width, height) = clamp_size(width, height, device.limits().max_texture_dimension_2d);
     let mut renderer =
         Renderer::new(device, renderer_options()).map_err(|e| format!("renderer: {e}"))?;
     let size = wgpu::Extent3d {
@@ -313,6 +507,9 @@ pub fn render_offscreen(
     rx.recv()
         .map_err(|e| e.to_string())?
         .map_err(|e| format!("map: {e}"))?;
+    if health.is_lost() {
+        return Err("the graphics device was lost".to_string());
+    }
     let mapped = buffer
         .get_mapped_range(..)
         .map_err(|e| format!("mapped range: {e:?}"))?;
@@ -342,6 +539,44 @@ pub fn write_png(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lost_device_sets_the_flag_and_keeps_the_first_reason() {
+        let health = GpuHealth::default();
+        assert!(!health.is_lost());
+        assert_eq!(health.take_reason(), None);
+        health.mark_lost("Unknown: the driver reset");
+        health.mark_lost("a later echo");
+        assert!(health.is_lost());
+        assert_eq!(
+            health.take_reason().as_deref(),
+            Some("Unknown: the driver reset")
+        );
+        // Said once; the flag stays until the context is replaced.
+        assert_eq!(health.take_reason(), None);
+        assert!(health.is_lost());
+    }
+
+    #[test]
+    fn a_rejected_command_is_noted_once_and_does_not_lose_the_device() {
+        let health = GpuHealth::default();
+        health.note("bad bind group");
+        health.note("bad bind group");
+        health.note("bad pipeline");
+        assert!(!health.is_lost());
+        assert_eq!(health.take_notes(), ["bad bind group", "bad pipeline"]);
+        health.note("bad bind group");
+        assert!(health.take_notes().is_empty());
+    }
+
+    #[test]
+    fn the_notes_are_bounded() {
+        let health = GpuHealth::default();
+        for i in 0..100 {
+            health.note(&format!("error {i}"));
+        }
+        assert_eq!(health.take_notes().len(), MAX_NOTES);
+    }
 
     #[test]
     fn the_adapter_words_name_the_backend_and_the_kind() {

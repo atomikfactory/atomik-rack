@@ -104,6 +104,14 @@ pub fn set_adapter(text: String) {
     }
 }
 
+/// Keeps the adapter line for the diagnostics report without writing it to the log (the graphics
+/// were built again after a loss, and the line of that says so itself).
+pub fn keep_adapter(text: String) {
+    if let Ok(mut a) = ADAPTER.lock() {
+        *a = Some(text);
+    }
+}
+
 /// The adapter line, once the renderer picked its adapter.
 #[must_use]
 pub fn adapter() -> Option<String> {

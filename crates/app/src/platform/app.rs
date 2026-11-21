@@ -4,6 +4,7 @@
 use super::cursor;
 use super::dock_frames::DockFrames;
 use super::gpu::{FrameResult, GpuContext, WindowSurface, render_offscreen, write_png};
+use super::gpu_recovery::{self, ForcedLoss, Recovery};
 use super::learn_strips::{Dock, LearnStrips};
 use super::plugin_windows::PluginWindows;
 use super::window_logic;
@@ -415,6 +416,11 @@ pub fn run(cli: Cli) -> Result<(), String> {
         plugin_windows: PluginWindows::default(),
         learn_strips: LearnStrips::default(),
         dock_frames: DockFrames::default(),
+        recovery: Recovery::default(),
+        forced_loss: gpu_recovery::forced_period(
+            std::env::var(gpu_recovery::FORCE_LOSS_ENV).ok().as_deref(),
+        )
+        .map(|period| ForcedLoss::new(period, Duration::ZERO)),
         #[cfg(target_os = "macos")]
         native: None,
     };
@@ -501,6 +507,10 @@ struct App {
     learn_strips: LearnStrips,
     /// The plugin editors that sit inside the main window.
     dock_frames: DockFrames,
+    /// The loss of the graphics device and the way back (see [`super::gpu_recovery`]).
+    recovery: Recovery,
+    /// The test switch that takes the device away every so often (`ATOMIK_GPU_LOSS_EVERY`).
+    forced_loss: Option<ForcedLoss>,
     #[cfg(target_os = "macos")]
     native: Option<super::native_menu::NativeMenus>,
 }
@@ -758,9 +768,15 @@ impl App {
         // shell does in logical units follows.
         let scale = self.shell.ui_scale(window.scale_factor());
         let size = window.inner_size();
-        let surface = self
-            .gpu
-            .create_surface(Arc::clone(&window), size.width, size.height)?;
+        // While the graphics are down the window opens without a surface; the rebuild gives it one.
+        let surface = if self.recovery.is_down() || self.gpu.is_lost() {
+            None
+        } else {
+            Some(
+                self.gpu
+                    .create_surface(Arc::clone(&window), size.width, size.height)?,
+            )
+        };
         if let Some(theme) = window.theme() {
             self.shell
                 .set_system_dark(theme == winit::window::Theme::Dark);
@@ -787,7 +803,7 @@ impl App {
         self.windows.insert(
             key,
             AppWindow {
-                surface: Some(surface),
+                surface,
                 window: Arc::clone(&window),
                 scene: Scene::new(),
                 cache: SceneCache::new(),
@@ -1109,6 +1125,10 @@ impl App {
 
     fn redraw(&mut self, key: Key, reason: PaintReason) {
         let kind = key.1;
+        self.service_graphics();
+        if self.recovery.is_down() {
+            return; // no surface until the graphics are back; the rebuild repaints everything
+        }
         let Some(window) = self.windows.get(&key).map(|w| Arc::clone(&w.window)) else {
             return;
         };
@@ -1127,7 +1147,21 @@ impl App {
                 self.gpu.resize(surface, size.width, size.height);
                 self.gpu.render(surface, &w.scene, Color::BLACK)
             }
-            None => return,
+            // A window that was minimized while the graphics were rebuilt has no surface yet.
+            None => {
+                match self
+                    .gpu
+                    .create_surface(Arc::clone(&window), size.width, size.height)
+                {
+                    Ok(surface) => {
+                        w.surface = Some(surface);
+                        self.shell.repaint_window(kind);
+                        window.request_redraw();
+                    }
+                    Err(e) => self.gpu.health().mark_lost(&e),
+                }
+                return;
+            }
         };
         match result {
             FrameResult::Presented => crate::startup::mark(crate::startup::FIRST_FRAME),
@@ -1140,19 +1174,133 @@ impl App {
                 self.retry_cause = Some(PaintReason::Surface);
                 window.request_redraw();
             }
+            // The device (or the surface) is gone: the flag is set, and the next check at the
+            // start of a frame tears the graphics down and builds them again.
             FrameResult::Lost => {
                 self.retry_cause = Some(PaintReason::Surface);
-                w.surface = None;
-                match self
-                    .gpu
-                    .create_surface(Arc::clone(&window), size.width, size.height)
-                {
-                    Ok(surface) => w.surface = Some(surface),
-                    Err(e) => log::error!("{e}"),
-                }
-                window.request_redraw();
+                self.shell.repaint_window(kind);
+                self.service_graphics();
             }
         }
+    }
+
+    /// Checked at the start of every frame: forces the test loss when the switch is on, says
+    /// what the graphics driver reported, and tears the graphics down and builds them again when
+    /// the device is lost. Audio, the document and the plugins are not touched.
+    fn service_graphics(&mut self) {
+        let at = clock::now().saturating_duration_since(self.epoch);
+        if let Some(forced) = &mut self.forced_loss
+            && forced.due(at)
+            && !self.recovery.is_down()
+            && !self.gpu.is_lost()
+        {
+            log::info!(
+                "graphics device loss forced by {}",
+                gpu_recovery::FORCE_LOSS_ENV
+            );
+            self.gpu.force_loss();
+        }
+        for note in self.gpu.health().take_notes() {
+            log::warn!("graphics error (the device is still usable): {note}");
+        }
+        let lost = self.gpu.is_lost();
+        if lost && !self.recovery.is_down() {
+            let why = self.gpu.health().take_reason().unwrap_or_default();
+            log::warn!("graphics device lost: {why}");
+        }
+        let decision = self.recovery.poll(at, lost);
+        if decision.teardown {
+            self.tear_down_graphics();
+        }
+        if decision.rebuild {
+            self.rebuild_graphics(at);
+        }
+    }
+
+    /// Lets go of every surface of every window (main, detached, docked frames, Learn strips)
+    /// while the device they belong to is dead. The windows stay; they are black until the
+    /// graphics are back.
+    fn tear_down_graphics(&mut self) {
+        for w in self.windows.values_mut() {
+            w.surface = None;
+        }
+        self.dock_frames.drop_surfaces();
+        self.learn_strips.drop_surfaces();
+    }
+
+    /// One attempt to build the graphics again: a new context (instance, adapter, device and
+    /// renderer), a surface for every window, and a repaint of everything. A failure is logged
+    /// and tried again after the back-off; the first one asks for a recovery snapshot so the
+    /// work is safe even if graphics never come back.
+    fn rebuild_graphics(&mut self, at: Duration) {
+        self.tear_down_graphics();
+        // The old context goes with its dead device before the new one is made.
+        self.gpu = GpuContext::rebuilt();
+        let attempt = self.recovery.attempts();
+        match self.recreate_surfaces() {
+            Ok(()) => {
+                self.recovery.finished(at, true);
+                let adapter = self.gpu.adapter_line().unwrap_or_default();
+                log::info!("graphics restored (attempt {attempt}); {adapter}");
+                self.repaint_everything();
+            }
+            Err(e) => {
+                self.tear_down_graphics();
+                let snapshot = self.recovery.finished(at, false);
+                let wait = self
+                    .recovery
+                    .next_attempt()
+                    .map_or(Duration::ZERO, |t| t.saturating_sub(at));
+                log::warn!(
+                    "graphics rebuild attempt {attempt} failed: {e}; next attempt in {:.1} s",
+                    wait.as_secs_f64()
+                );
+                if snapshot {
+                    for id in self.shell.ids() {
+                        if let Some(song) = self.shell.song_mut(id) {
+                            song.core_mut().request_recovery_snapshot();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Gives every window, docked frame and Learn strip a surface on the new context.
+    fn recreate_surfaces(&mut self) -> Result<(), String> {
+        for w in self.windows.values_mut() {
+            let size = w.window.inner_size();
+            if size.width == 0 || size.height == 0 {
+                continue; // minimized: the surface is made when the window is drawn again
+            }
+            w.surface = Some(self.gpu.create_surface(
+                Arc::clone(&w.window),
+                size.width,
+                size.height,
+            )?);
+        }
+        self.dock_frames
+            .recreate_surfaces(&mut self.gpu, &mut self.text)?;
+        self.learn_strips
+            .recreate_surfaces(&mut self.gpu, &mut self.text)
+    }
+
+    /// Marks every window of every song to be painted and asks the system for a redraw.
+    fn repaint_everything(&mut self) {
+        self.pace_presentation();
+        for doc in self.shell.ids() {
+            if !self.shell.select(doc) {
+                continue;
+            }
+            self.shell.core_mut().view_mut().request_repaint();
+            for ((d, kind), w) in &self.windows {
+                if *d == doc {
+                    self.shell.repaint_window(*kind);
+                    w.window.request_redraw();
+                }
+            }
+        }
+        self.shell.select(self.shell.play_focus());
     }
 
     /// Renders every open window offscreen: `base` for the main window, `base-rack` and
@@ -2362,6 +2510,7 @@ impl ApplicationHandler for App {
             event_loop.exit();
             return;
         }
+        self.service_graphics();
         #[cfg(target_os = "macos")]
         {
             let commands = self
@@ -2446,9 +2595,24 @@ impl ApplicationHandler for App {
             .map(|t| self.epoch + Duration::from_secs_f64(t.max(0.0)));
         // A file drag the system sends no cursor events for is followed by polling the cursor.
         let drag_poll = dragging.then(|| now + FILE_DRAG_POLL);
-        for t in [self.quit_at, self.screenshot_at, menu_wake, drag_poll]
-            .into_iter()
-            .flatten()
+        // A rebuild of the graphics that is waiting for its back-off, and the next forced loss.
+        let graphics_wake = [
+            self.recovery.next_attempt(),
+            self.forced_loss.as_ref().map(ForcedLoss::next),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+        .map(|t| self.epoch + t);
+        for t in [
+            self.quit_at,
+            self.screenshot_at,
+            menu_wake,
+            drag_poll,
+            graphics_wake,
+        ]
+        .into_iter()
+        .flatten()
         {
             deadline = Some(deadline.map_or(t, |d| d.min(t)));
         }

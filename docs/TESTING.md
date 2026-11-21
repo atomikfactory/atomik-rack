@@ -1917,6 +1917,27 @@ path), run `-Scenario all` once with the laptop on mains power and idle, and sen
 Export Diagnostics writes (home folders are already hidden in it). The CSV rows and the adapter line are enough to
 compare that machine with the reference rows of `perf/BASELINE.md`.
 
+## Graphics device loss
+
+The decisions are unit-tested without a GPU: the back-off schedule, the surface size clamp, the forced-loss period,
+the state machine from "lost" to "tear down" to "rebuild" (`platform/gpu_recovery.rs`) and the flag the driver
+callbacks set (`platform/gpu.rs`). Creating and rebuilding real surfaces needs a window and a GPU, so there is no
+automated test of the rebuild itself; this is the hand check.
+
+`ATOMIK_GPU_LOSS_EVERY=<seconds>` (at least 1) makes the app destroy its graphics device that often, which takes the
+real device-lost path: the callback fires, the surfaces are dropped and everything is built again. Run the release
+app with a throw-away settings folder and no sound (never `--play`), for example:
+
+```text
+set ATOMIK_GPU_LOSS_EVERY=6
+target\release\atomik.exe --settings %TEMP%\loss\settings.json --library %TEMP%\loss\lib --no-midi --stress --quit-after 40
+```
+
+Expect each window (also the detached rack and mixer, with `--detach rack,console`) to flash black for a moment and
+repaint, and `atomik.log` to hold a pair of lines for every loss: `graphics device loss forced by ...` and `graphics
+device lost: ...` (WARN), then `graphics restored (attempt 1); graphics adapter: ...` (INFO). A failed attempt would
+log `graphics rebuild attempt N failed: ...; next attempt in X s` instead, and the app keeps running.
+
 ## Device loss and stalled streams
 
 `crates/audio-io/src/liveness.rs` has the pure liveness tests (the `max(4 periods, 250 ms)`

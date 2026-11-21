@@ -6813,6 +6813,23 @@ winit and GPU code is not (it needs a window and a GPU).
   Every window has its own `Scene` and `SceneCache`; the `TextEngine` is shared. `render_offscreen`
   (`--screenshot`) is separate and writes one PNG per open window (`shot.png`, `shot-rack.png`,
   `shot-console.png`).
+- **A lost graphics device is rebuilt, not fatal.** The context installs two callbacks on every device it makes
+  (`GpuHealth`): the uncaptured-error handler and the device-lost callback only set an atomic flag and keep the
+  reason text (running out of memory or an internal error loses the device; a rejected command is only noted, once
+  per text). `App::service_graphics` reads the flag at the start of every frame and every tick, and a frame that
+  reports `FrameResult::Lost` raises it too. The decisions are in
+  [gpu_recovery.rs](../crates/app/src/platform/gpu_recovery.rs) (plain data, unit-tested): `Recovery::poll` says
+  "tear down now" once and "rebuild now" when due, with the waits 0.5 s, 1 s, 2 s, then 5 s after a failed attempt
+  (a loss within ten seconds of a rebuild waits like a retry, so a failing device cannot spin the app). Tearing
+  down drops the surface of every window (main, detached rack and mixer, other secondary windows), of every docked
+  plugin frame's title bar (`DockFrames`) and of every Learn strip (`LearnStrips`); rebuilding makes a new
+  `GpuContext` (instance, adapter, device and the vello renderer, which holds the image atlas), a surface for each
+  of them, and repaints everything. Nothing else holds a device resource: scenes, the scene cache and the text
+  engine are recorded on the CPU. Audio, the document and the plugins are not touched. A failed attempt logs one
+  line and the first one asks for a recovery snapshot. A surface or render target is never larger than the device's
+  `max_texture_dimension_2d` (`clamp_size`). The log has one WARN line when the device is lost (with the reason)
+  and one INFO line when the graphics are back (with the adapter line). `ATOMIK_GPU_LOSS_EVERY=<seconds>` destroys
+  the device that often, for testing.
 - **The arrangement keeps two recorded layers.** `ArrangementView` records the lanes (backgrounds,
   grid, clips, waveforms, drags, take ghosts) and the track list into `DisplayList`s stamped with
   a process-unique revision ([paint_cache.rs](../crates/ui/src/arrangement/paint_cache.rs)), so a
