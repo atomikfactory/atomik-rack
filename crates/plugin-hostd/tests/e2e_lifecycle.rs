@@ -627,6 +627,46 @@ fn a_plugin_whose_main_thread_sleeps_past_the_timeout_is_not_stopped_and_answers
     sb.finish();
 }
 
+#[test]
+fn an_idle_child_at_its_longest_wait_is_seen_alive_when_its_main_thread_does_not_answer() {
+    let mut cfg = config_with_env("ATOMIK_NULL_CAPTURE_DELAY_MS", "2500");
+    cfg.create_timeout = Duration::from_millis(500);
+    let mut sb = Sandbox::null(cfg);
+    let handle = instantiate_null(&mut sb, "null.gain", RunMode::Realtime);
+    let id = handle.id;
+    let device = effect(handle, 0.25);
+    let _ = sb.manager.poll();
+    // No batch is processed: the child's audio thread idles through its wait schedule until it
+    // sits at the longest wait, and the pulse it bumps is the only sign of life it gives.
+    std::thread::sleep(Duration::from_millis(1500));
+    let err = sb.manager.capture_state(id).unwrap_err();
+    assert!(err.is_not_responding(), "{err}");
+    assert_eq!(
+        sb.backend.live_children(),
+        1,
+        "the idle child was not stopped"
+    );
+    assert_eq!(
+        sb.manager.not_responding(id).as_deref(),
+        Some("CaptureState")
+    );
+    #[allow(clippy::disallowed_methods)]
+    // Justification: a bound on how long the test waits for the child.
+    let limit = std::time::Instant::now() + Duration::from_secs(30);
+    while sb.manager.not_responding(id).is_some() {
+        let _ = sb.manager.poll();
+        #[allow(clippy::disallowed_methods)]
+        // Justification: as above.
+        let now = std::time::Instant::now();
+        assert!(now < limit, "the plugin answers in the end");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(sb.backend.live_children(), 1, "still the same child");
+    drop(device);
+    let _ = sb.manager.poll();
+    sb.finish();
+}
+
 // ----- starting many plugins at once ------------------------------------------------------------
 
 #[test]
