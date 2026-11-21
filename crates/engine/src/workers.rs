@@ -34,7 +34,13 @@
 //! * **Parking.** An idle worker spins [`WORKER_SPIN_LIMIT`] times (or the engine's
 //!   `EngineOptions::worker_linger_spins`), then parks. `unpark` keeps a token, so a wake-up
 //!   that races the decision to park is never lost. A linger longer than the callback period
-//!   keeps workers awake while audio runs, so no callback depends on an OS wake-up.
+//!   keeps workers awake while a callback runs, so no level depends on an OS wake-up.
+//! * **Callback flag.** A worker spins only while a render call that uses the pool is in
+//!   progress: the audio thread raises an atomic flag at the start of such a call
+//!   ([`Pool::begin_callback`]), unparks every live worker so the wake-up overlaps the call's
+//!   serial work, and lowers the flag at its end ([`Pool::end_callback`]). A worker that finds
+//!   the flag down parks at once, so a long linger costs nothing between callbacks or while
+//!   the transport is stopped. Both calls are atomics and `unpark`: no allocation, no lock.
 //! * **Determinism.** A device's output depends only on its own state and its gathered
 //!   inputs, which are identical whatever thread runs it; the scatter order is the plan order.
 //!   So output is bit-identical for any worker count.
@@ -103,6 +109,9 @@ struct Shared {
     parks: AtomicU64,
     /// Idle spins before parking.
     linger: u64,
+    /// A render call that uses the pool is in progress: idle workers may spin (up to
+    /// `linger`); otherwise they park.
+    callback_active: AtomicBool,
 }
 
 struct Link {
@@ -128,6 +137,8 @@ pub enum PoolError {
 pub(crate) struct Pool {
     links: Vec<Link>,
     shared: Arc<Shared>,
+    /// Keep `callback_active` raised (see [`Pool::set_always_active`]; audio side only).
+    always_active: bool,
 }
 
 impl Pool {
@@ -144,6 +155,7 @@ impl Pool {
             idle_spins: AtomicU64::new(0),
             parks: AtomicU64::new(0),
             linger,
+            callback_active: AtomicBool::new(false),
         });
         let mut links = Vec::with_capacity(usize::from(threads));
         let mut first_error = None;
@@ -174,7 +186,36 @@ impl Pool {
         {
             return Err(PoolError::Spawn(source));
         }
-        Ok(Self { links, shared })
+        Ok(Self {
+            links,
+            shared,
+            always_active: false,
+        })
+    }
+
+    /// Marks the start of a render call that will use the pool: idle workers may spin from
+    /// now on, and every live one is woken so it is running when the first level needs it.
+    /// Atomics and `unpark` only (audio thread).
+    pub(crate) fn begin_callback(&self) {
+        self.shared.callback_active.store(true, Ordering::Release);
+        for link in self.links.iter().filter(|l| !l.dead) {
+            link.thread.unpark();
+        }
+    }
+
+    /// Marks the end of the render call: a worker that runs out of jobs parks instead of
+    /// spinning. Stays raised while [`Pool::set_always_active`] is on.
+    pub(crate) fn end_callback(&self) {
+        if !self.always_active {
+            self.shared.callback_active.store(false, Ordering::Release);
+        }
+    }
+
+    /// Test and benchmark switch: keep the callback flag raised for good, so idle workers spin
+    /// for their whole linger between callbacks (the behaviour before the flag existed).
+    pub(crate) fn set_always_active(&mut self, on: bool) {
+        self.always_active = on;
+        self.shared.callback_active.store(on, Ordering::Release);
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -250,7 +291,8 @@ impl Drop for Pool {
     }
 }
 
-/// Worker main loop: run jobs; when idle spin a bounded number of times, then park.
+/// Worker main loop: run jobs; when idle spin a bounded number of times while a callback is
+/// active, then park (at once when none is).
 fn worker(
     mut jobs: Consumer<Job>,
     mut done: Producer<Job>,
@@ -277,7 +319,7 @@ fn worker(
         if shared.shutdown.load(Ordering::Acquire) {
             break;
         }
-        if spins < shared.linger {
+        if spins < shared.linger && shared.callback_active.load(Ordering::Acquire) {
             spins += 1;
             unflushed += 1;
             std::hint::spin_loop();
@@ -293,6 +335,12 @@ fn worker(
 }
 
 impl RoutingPlan {
+    /// Whether any level holds two or more devices, so a render call would hand work to the
+    /// pool.
+    pub(crate) fn has_parallel_level(&self) -> bool {
+        self.level_starts.windows(2).any(|w| w[1] - w[0] > 1)
+    }
+
     /// Like `process`, with the devices of each level spread over the audio thread and the
     /// pool's workers. Never allocates, frees, locks or blocks (the audio thread only spins
     /// while waiting for the level's last device). Returns the barrier spins: busy-wait

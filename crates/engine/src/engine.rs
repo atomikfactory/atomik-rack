@@ -1431,6 +1431,14 @@ impl Engine {
         );
         self.host_frames += frames as u64;
         self.last_render_spins = 0;
+        // Workers spin only while a call that can hand them work is running.
+        let pooled = match (&self.routing, &self.pool) {
+            (Some(routing), Some(pool)) if pool.len() > 0 && routing.has_parallel_level() => {
+                pool.begin_callback();
+                true
+            }
+            _ => false,
+        };
         let mut done = 0;
         while done < frames {
             let n = (BATCH - self.fifo_pos).min(frames - done);
@@ -1454,6 +1462,9 @@ impl Engine {
                 self.run_batch();
                 self.fifo_pos = 0;
             }
+        }
+        if pooled && let Some(pool) = &self.pool {
+            pool.end_callback();
         }
         self.max_render_spins = self.max_render_spins.max(self.last_render_spins);
     }
@@ -1494,6 +1505,16 @@ impl Engine {
     #[doc(hidden)]
     pub fn worker_parks(&self) -> u64 {
         self.pool.as_ref().map_or(0, Pool::parks)
+    }
+
+    /// Keeps the workers' callback flag raised for good, so idle workers spin for their whole
+    /// linger between callbacks, as they did before the flag existed (benchmark hook; not a
+    /// stable API). Output is the same either way.
+    #[doc(hidden)]
+    pub fn set_workers_always_active(&mut self, on: bool) {
+        if let Some(pool) = &mut self.pool {
+            pool.set_always_active(on);
+        }
     }
 
     /// Idle spins a worker performs before parking (`EngineOptions::worker_linger_spins`, or

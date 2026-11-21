@@ -128,6 +128,13 @@ may break APIs and the patch and project formats.
   while a plugin does not answer completes with that plugin's last captured settings and says so once ("... did
   not hand over its current settings; its last captured settings were saved."); an audio restart or removing the
   device goes on the same way and writes a line in the plugin log.
+- **Much lower CPU use while stopped, and a better worker count on dual-core machines.** The render workers used to
+  spin for a long time after every audio callback so as to be awake for the next one, which kept several cores
+  busy even with the transport stopped and nothing sounding. They now spin only while a callback is running and
+  park as soon as it ends, with the same audio. The Auto worker count follows the physical cores (read from the
+  system) instead of a guess from the thread count: one worker on a dual-core machine, even with four threads, and
+  none on a single core. The log line at stream start gives the physical and logical counts. An explicit worker
+  count is never changed.
 
 ### Fixed
 - **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio track now

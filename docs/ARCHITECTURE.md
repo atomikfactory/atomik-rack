@@ -2941,12 +2941,20 @@ thread moves `Box<Node>`s into per-worker `rtrb` job queues and gets them back t
 (no `unsafe`, no locks). Gathering inputs and scattering outputs always happen on the audio thread,
 in plan order, so the output is bit-identical for any worker count. The audio thread waits at a
 barrier (a bounded spin, then yielding its core; counted as telemetry); idle workers spin, then
-park. The app and `atomik-play` start at most `cores - 1` workers. A level with a single device is
-never dispatched. The app's default is an automatic count (`auto_workers` in
-[audio-io](../crates/audio-io/src/lib.rs)): one worker per physical core but the audio thread's own,
-at most 8. Simultaneous multithreading is read from the kernel on Linux and guessed elsewhere
+park, and spin only while a render call that can use them is running: the audio thread raises an
+atomic flag at the start of such a call (`Pool::begin_callback`, which also unparks every live
+worker so the wake-up overlaps the call's serial work) and lowers it at the end, and a worker that
+finds it down parks at once. A long linger therefore keeps workers awake for the whole callback
+and costs nothing between callbacks or while the transport is stopped; both calls are atomics and
+`unpark`, so the audio thread still allocates and locks nothing. The app and `atomik-play` start
+at most `cores - 1` workers. A level with a single device is never dispatched. The app's default
+is an automatic count (`auto_workers_for` in [audio-io](../crates/audio-io/src/lib.rs)): one
+worker per physical core but the audio thread's own, at most 8, one on a dual-core machine and
+none on a single core. The physical core count comes from the `num_cpus` crate; when it reports
+nothing, or more cores than threads, the old guess from the thread count stands in
 (`workers_auto` in `settings.json`; a file that sets `workers` and not `workers_auto` keeps its
-number, the Audio settings tab has an Auto chip).
+number, the Audio settings tab has an Auto chip). The stream start logs the count with the
+physical and logical counts it was derived from.
 
 ### Per-device processing time
 

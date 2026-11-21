@@ -1134,3 +1134,40 @@ not answer (the user loses the rest of the project to one busy plugin).
 button; whether the notice after a save should offer to save again once the plugin answers.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AP. Render workers spin only inside a callback, and the automatic count follows the physical cores
+
+**Question.** With an audio stream open, every render worker kept a core busy even with the transport stopped and
+nothing sounding: the app's worker linger (500 000 spins, chosen so that workers are already awake when a callback
+needs them) is longer than the gap between two callbacks, so workers never parked. A stopped 100-device rack cost
+829 % of one core with 8 workers and 216 % with 2 (about 20 % with none), and a machine of two cores and four
+threads was counted as four cores and given three workers.
+
+**Decision.** The pool has an atomic "a callback is active" flag. The audio thread raises it at the start of every
+render call that can use the pool (a plan with a level of two or more devices, a pool that is not empty), unparks
+every live worker so the wake-up overlaps the first serial work of the call, and lowers it at the end of the call.
+A worker spins while it has spun fewer than the linger **and** the flag is up; otherwise it parks. Inside a callback
+nothing changes; between callbacks no worker spins. The audio thread uses atomics and `unpark` only. The linger
+setting keeps its choices and its default (500 000 spins): it now bounds the spinning inside one callback, which is
+bounded by the callback itself, so the long value costs nothing between callbacks and keeps workers awake through
+a long callback. Offline rendering is unchanged in output (bit-identical for any worker count). The automatic worker
+count is one per physical core but the audio thread's own, at most 8, one worker on two cores and none on one core;
+the physical count comes from the `num_cpus` crate, with the old thread-count guess as the fallback when it reports
+nothing or more cores than threads. An explicit worker count is never overridden.
+
+**Evidence.** The paced benchmark (`bench_paced_callbacks_per_linger` in `crates/engine/tests/worker_linger.rs`,
+release, 4 workers, a callback every 2.7 ms at 128 frames, no audio device; the table is in `perf/BASELINE.md`)
+shows the process CPU falling from 420 to 450 % of a core with the long linger (flag forced up, the old behaviour) to
+about 60 % at 128 frames, of which about 50 points are the benchmark's own pacing loop, and from 390 % to 14 % at 480
+frames. The price is the OS wake-up of a parked worker at the start of each callback: at 128 frames the median
+callback rose from about 42 to about 66 microseconds and the p99 from about 61 to about 140 microseconds (the p99 is
+5 % of the 2.7 ms budget), against a p99 of 130 for the old behaviour with the short engine linger; at 480 frames the
+p99 is about 260 to 330 microseconds against 200 to 260. The after rows are alike whatever the linger, so the
+default does not change.
+
+**Rejected.** Keeping workers spinning for a short time after a callback (the gap is 2.7 ms at 128 frames, longer
+than any useful grace, and it would bring the idle cost back in proportion); lowering the default linger (it would
+only make workers park inside long callbacks and wait for an OS wake-up between levels); a count of workers read
+only from the thread count (it cannot tell two cores of four threads from four cores).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
