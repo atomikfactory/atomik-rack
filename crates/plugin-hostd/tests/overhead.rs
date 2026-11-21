@@ -11,8 +11,14 @@
 //! Printed per plugin: the mean, median and 99th percentile of one batch in process and through
 //! the child (the difference is the sandbox's round trip), and the CPU time each process used
 //! during a paced run of 10 s of audio (one 480-frame buffer every 10 ms).
+//!
+//! A second probe measures the wait on a slow plugin (see
+//! `the_wait_on_a_slow_plugin_with_and_without_the_callbacks_budget`).
 #![allow(clippy::disallowed_methods)] // Justification: a manual benchmark; timing is its output.
 
+atomik_testkit::install_alloc_guard!();
+
+mod sandbox_support;
 mod support;
 
 use atomik_core::{BATCH, Batch};
@@ -225,5 +231,167 @@ fn the_sandbox_overhead_per_batch_and_its_cpu_at_48_khz_with_480_frame_buffers()
         std::env::var("ATOMIK_OVERHEAD_ID"),
     ) {
         report("installed VST3", &path, &id);
+    }
+}
+
+// ----- the wait on a plugin that works in bursts -----------------------------------------------
+
+/// What one scenario of the wait probe does: the work of the busy test plugin.
+struct Work {
+    name: &'static str,
+    /// Microseconds of work per batch (every eighth batch when `burst`).
+    busy_us: u64,
+    burst: bool,
+}
+
+const WORKS: [Work; 5] = [
+    Work {
+        name: "steady 0.3 ms per batch",
+        busy_us: 300,
+        burst: false,
+    },
+    Work {
+        name: "burst: 3 ms every 8th batch",
+        busy_us: 3_000,
+        burst: true,
+    },
+    Work {
+        name: "burst: 6 ms every 8th batch",
+        busy_us: 6_000,
+        burst: true,
+    },
+    Work {
+        name: "steady 1.8 ms per batch",
+        busy_us: 1_800,
+        burst: false,
+    },
+    Work {
+        name: "steady 20 ms per batch",
+        busy_us: 20_000,
+        burst: false,
+    },
+];
+
+/// Callbacks of one run (480 frames, one every 10 ms): 4 s of audio.
+const WAIT_CALLBACKS: usize = 400;
+
+/// The share of a callback the audio side publishes for its plugins (as the stream does).
+const PUBLISHED: Duration = Duration::from_millis(7);
+
+/// CPU seconds the processes started from `exe` have used so far.
+fn cpu_of(exe: &str) -> f64 {
+    let script = format!(
+        "(Get-Process | Where-Object {{ $_.Path -eq '{exe}' }} |          ForEach-Object {{ $_.TotalProcessorTime.TotalSeconds }} | Measure-Object -Sum).Sum"
+    );
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .expect("powershell runs");
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .replace(',', ".")
+        .parse()
+        .unwrap_or(f64::NAN)
+}
+
+struct Wait {
+    late: usize,
+    batches: usize,
+    /// Time spent inside the plugin calls, per callback, in microseconds.
+    mean_us: f64,
+    p99_us: f64,
+    child_cpu: f64,
+}
+
+fn wait_run(work: &Work, publish: bool) -> Wait {
+    use sandbox_support::{Sandbox, effect, host_command, null_plugin, request};
+    let mut config =
+        sandbox_support::config_with_env("ATOMIK_NULL_BUSY_US", &work.busy_us.to_string());
+    if work.burst {
+        config
+            .command
+            .envs
+            .push(("ATOMIK_NULL_BUSY_BURST".into(), "1".into()));
+    }
+    let mut sb = Sandbox::null(config);
+    let handle = sb
+        .manager
+        .instantiate(&request(&null_plugin("null.busy"), RunMode::Realtime))
+        .expect("the busy plugin starts");
+    let mut h = effect(handle, 0.25);
+    // Settle: the first batches pay for the child's start-up.
+    for _ in 0..200 {
+        h.process();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let exe = host_command().program.to_string_lossy().replace('\'', "''");
+    let late_before = sandbox_support::meters(&h)[sandbox_support::METER_LATE];
+    let cpu_before = cpu_of(&exe);
+    let period = Duration::from_secs_f64(BUFFER as f64 / SR);
+    let start = Instant::now();
+    let mut per_callback = Vec::with_capacity(WAIT_CALLBACKS);
+    let mut done = 0usize;
+    for n in 0..WAIT_CALLBACKS {
+        let due = start + period * n as u32;
+        // Sleep most of the way, spin the rest: a device callback is on time.
+        if let Some(wait) = due.checked_duration_since(Instant::now()) {
+            if wait > Duration::from_millis(2) {
+                std::thread::sleep(wait - Duration::from_millis(2));
+            }
+            while Instant::now() < due {
+                std::hint::spin_loop();
+            }
+        }
+        if publish {
+            atomik_core::CallbackDeadline::shared().publish(Instant::now() + PUBLISHED);
+        }
+        let want = (n + 1) * BUFFER / BATCH;
+        let t = Instant::now();
+        while done < want {
+            h.process();
+            done += 1;
+        }
+        per_callback.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    let wall = start.elapsed().as_secs_f64();
+    let cpu_after = cpu_of(&exe);
+    let late = sandbox_support::meters(&h)[sandbox_support::METER_LATE] - late_before;
+    atomik_core::CallbackDeadline::shared().clear();
+    drop(h);
+    sb.manager.poll();
+    sb.finish();
+    let s = stats(per_callback);
+    Wait {
+        late: late as usize,
+        batches: done,
+        mean_us: s.mean,
+        p99_us: s.p99,
+        child_cpu: (cpu_after - cpu_before) / wall * 100.0,
+    }
+}
+
+/// Late batches, the time the app spends inside the plugin calls and the child's CPU, for a
+/// plugin that works in bursts, with the wait of one batch period and with the wait up to the
+/// share of the callback the audio side publishes. Run it in release for honest numbers:
+///
+/// ```text
+/// cargo test --release -p atomik-plugin-hostd --test overhead -- --ignored --nocapture wait_on
+/// ```
+#[test]
+#[ignore = "a benchmark, run by hand"]
+fn the_wait_on_a_slow_plugin_with_and_without_the_callbacks_budget() {
+    println!("480-frame callbacks at 48 kHz ({WAIT_CALLBACKS} of them), budget {PUBLISHED:?}");
+    println!(
+        "{:<30} {:<12} {:>12} {:>12} {:>13} {:>10}",
+        "plugin work", "wait", "late/batches", "mean us/cb", "p99 us/cb", "child CPU"
+    );
+    for work in &WORKS {
+        for (label, publish) in [("one batch", false), ("callback", true)] {
+            let r = wait_run(work, publish);
+            println!(
+                "{:<30} {:<12} {:>5}/{:<6} {:>12.0} {:>12.0} {:>9.1} %",
+                work.name, label, r.late, r.batches, r.mean_us, r.p99_us, r.child_cpu
+            );
+        }
     }
 }

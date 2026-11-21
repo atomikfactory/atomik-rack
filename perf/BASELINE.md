@@ -372,3 +372,37 @@ VST3 test synth through the child): before, round trip 0.5 us per batch (p99 18.
 16.8 us in process), paced child CPU 1.7 %; after (two runs), round trip 0.2 and 0.4 us (p99 17.4 and 17.7 us against
 17.7 and 17.2 in process), paced child CPU 2.8 and 0.9 %, parent 1.6 and 0.3 %: the run to run spread of the paced
 CPU figure (read through a PowerShell call) is larger than the change. No late buffer in either.
+
+## The wait on a plugin that works in bursts (2026-11-21)
+
+`cargo test --release -p atomik-plugin-hostd --test overhead -- --ignored --nocapture wait_on`: the built-in busy
+test plugin (`null.busy`: a passthrough that spins for N microseconds per batch, or on every eighth batch) in a real
+child, driven through the plugin manager and the device as a paced 480-frame callback at 48 kHz (400 callbacks,
+4 s, one every 10 ms, 3000 batches), device-less: the probe publishes the callback's budget itself (7 ms, the
+70 % of the buffer the stream publishes) in the styles that use it. Same machine and release profile as above,
+nothing sounding. "late" is the device's late-batch count; "app" is the mean time per callback the audio side
+spent inside the plugin calls (the spin: it follows the plugin's own work), and its 99th percentile; "child" is the
+plugin process's CPU in % of one core (read through a PowerShell call, so a few points of noise). The four columns
+separate the two parts of the change: **before** is the wait of one batch period without the cool-down (the
+cool-down was switched off for this column by building it with a huge miss count); **budget** adds the published
+deadline; **cool-down** is one batch period with the cool-down; **both** is the shipped behaviour.
+
+| Plugin work | before: late, app us (p99), child | budget: late, app us (p99), child | cool-down: late, app us (p99), child | both: late, app us (p99), child |
+|---|---|---|---|---|
+| steady 0.3 ms per batch | 0, 2271 (2447), 22 % | 0, 2273 (2447), 25 % | 0, 2283 (2492), 25 % | 0, 2281 (2501), 22 % |
+| burst: 3 ms every 8th batch | 1595, 688 (1358), 16 % | 0, 2835 (3045), 29 % | 1595, 687 (1356), 13 % | 0, 2840 (3118), 25 % |
+| burst: 6 ms every 8th batch | 1595, 689 (1359), 32 % | 0, 5648 (6046), 59 % | 1595, 686 (1358), 32 % | 0, 5653 (6066), 59 % |
+| steady 1.8 ms per batch (cannot keep up) | 3000, 1344 (1361), 19 % | 1800, 7003 (7005), 69 % | 3000, 344 (1355), 18 % | 1803, 6985 (7006), 75 % |
+| steady 20 ms per batch (cannot keep up) | 3000, 458 (1355), 65 % | 3000, 2368 (7011), 67 % | 3000, 232 (1354), 66 % | 3000, 1197 (7011), 67 % |
+
+What it shows. A plugin that fits the buffer but not one batch (the two burst rows) lost 1595 of 3000 batches (a late
+batch leaves the request out, so the batches that follow it in the callback are late too); with the budget it loses
+none, and the audio side spends the plugin's own work time waiting for it (3 ms and 6 ms of one callback's 10 ms),
+which is the price of not dropping the batch and the same as the plugin costs in process. A plugin that cannot keep
+up (the last two rows) still loses batches, and now holds the audio thread longer: the budget lets the first wait
+run to the deadline, 7 ms of every 10 ms (70 % of a core) in the 1.8 ms row, where the plugin does answer most of
+the waits. The cool-down is what bounds the 20 ms row (a plugin that answers nothing in time): the wait runs out
+four times, then the next 24 batches are only polled, and the app time per callback falls from 2368 to 1197 us
+(and from 458 to 232 us with one batch period). It does not cut the cost of a plugin that keeps answering within
+its waits (the 1.8 ms row): those waits are real work, not a miss. The child's CPU is the plugin's work and does
+not change. Both the burst and the heavy rows are the test plugin's, not a measurement of a real plugin.
