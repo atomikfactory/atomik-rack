@@ -82,6 +82,8 @@ pub(crate) struct Control {
     dead: AtomicBool,
     /// A [`Action::Blocked`] request may be answered now.
     released: AtomicBool,
+    /// Extra microseconds the audio thread idles per pass: a slow beat (a loaded machine).
+    audio_idle_us: AtomicU64,
 }
 
 impl Control {
@@ -104,7 +106,14 @@ impl Control {
             wake: AtomicBool::new(false),
             dead: AtomicBool::new(false),
             released: AtomicBool::new(false),
+            audio_idle_us: AtomicU64::new(0),
         }
+    }
+
+    /// Makes the audio thread idle `idle` on every pass, so its sign of life beats that rarely.
+    pub fn set_audio_idle(&self, idle: Duration) {
+        self.audio_idle_us
+            .store(idle.as_micros() as u64, Ordering::SeqCst);
     }
 
     /// Lets the [`Action::Blocked`] request that is waiting (or the next one) be answered.
@@ -415,6 +424,10 @@ fn run_audio(ctl: &Control, mut port: ChildPort) {
         {
             std::thread::sleep(Duration::from_millis(1));
             continue;
+        }
+        let idle = ctl.audio_idle_us.load(Ordering::SeqCst);
+        if idle > 0 {
+            std::thread::sleep(Duration::from_micros(idle));
         }
         let Some(req) = port.wait_request(Duration::from_millis(2)) else {
             continue;

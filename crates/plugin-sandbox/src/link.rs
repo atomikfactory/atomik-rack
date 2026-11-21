@@ -1093,7 +1093,11 @@ impl Link {
     /// Whether a call that timed out leaves the child alone: it showed a sign of life, the link
     /// is not a bounce's, and the call is one that has an id to wait for. Without it the child
     /// is stopped.
-    fn spares(&self, alive: bool, id: u64) -> bool {
+    fn spares(&mut self, alive: bool, id: u64) -> bool {
+        // A short wait can fall between two beats of a healthy child on a loaded machine: the
+        // samples taken at earlier calls count too (the beat must have moved within
+        // `ALIVE_WINDOW` of them).
+        let alive = alive || self.alive_by_polling();
         alive && id != 0 && !self.timeouts.bounce
     }
 
@@ -1291,6 +1295,7 @@ impl Link {
         }
         self.next_id += 1;
         let id = self.next_id;
+        self.sense();
         self.shared.expect(Expect::Id(id));
         self.send(&make(id), None)?;
         match self.shared.wait_noted(what, timeout) {
