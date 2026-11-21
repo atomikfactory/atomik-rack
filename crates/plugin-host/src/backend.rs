@@ -444,6 +444,25 @@ pub trait PluginInstance {
     fn poll_deactivate(&mut self) -> bool {
         true
     }
+    /// Starts [`PluginInstance::activate`] without waiting for the plugin: `Some` is the audio
+    /// half when the activation was done at once, `None` means [`PluginInstance::poll_activate`]
+    /// will tell. A plugin that loads a big library as it activates must not hold up the
+    /// interface; the default activates at once.
+    ///
+    /// # Errors
+    /// What [`PluginInstance::activate`] fails with.
+    fn begin_activate(
+        &mut self,
+        cfg: &ActivateConfig,
+    ) -> Result<Option<Box<dyn PluginProcessor>>, BackendError> {
+        self.activate(cfg).map(Some)
+    }
+    /// The audio half of the activation that [`PluginInstance::begin_activate`] started, or why
+    /// it failed, once; `None` while the plugin has not answered (or none is going on). Never
+    /// waits.
+    fn poll_activate(&mut self) -> Option<Result<Box<dyn PluginProcessor>, BackendError>> {
+        None
+    }
     /// The latency the plugin reports now, in frames.
     fn latency_frames(&self) -> u32;
     /// Starts saving the plugin state without waiting for it: the next
@@ -475,6 +494,21 @@ pub trait PluginInstance {
     }
     /// Restores a saved state.
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError>;
+    /// Starts [`PluginInstance::restore_state`] without waiting for the plugin: true when the
+    /// state is restored already, false when [`PluginInstance::poll_restore_state`] will tell.
+    /// A sampler that loads its library as it restores may take minutes; the default restores at
+    /// once.
+    ///
+    /// # Errors
+    /// What [`PluginInstance::restore_state`] fails with.
+    fn begin_restore_state(&mut self, state: &PluginStateBlob) -> Result<bool, BackendError> {
+        self.restore_state(state).map(|()| true)
+    }
+    /// The outcome of the restore that [`PluginInstance::begin_restore_state`] started, once;
+    /// `None` while the plugin has not answered. Never waits.
+    fn poll_restore_state(&mut self) -> Option<Result<(), BackendError>> {
+        Some(Ok(()))
+    }
     /// The presets the plugin offers, in its own order (empty when it has none or the format
     /// cannot list them).
     fn list_presets(&mut self) -> Vec<PresetInfo> {
@@ -601,6 +635,13 @@ pub trait PluginInstance {
     /// process) without waiting for it, so that the manager can start every instance's end
     /// first and then wait for all of them at once. Dropping still works without this call.
     fn begin_shutdown(&mut self) {}
+    /// True once what [`PluginInstance::begin_shutdown`] started is over: the child process has
+    /// ended (or was stopped after the grace the sandbox allows). Never waits, and starts the
+    /// shutdown itself when nobody did. Dropping the instance then does not wait any more. The
+    /// default is true: a plugin in this process has nothing that outlives it.
+    fn poll_shutdown(&mut self) -> bool {
+        true
+    }
 }
 
 /// One plugin found in a file.
@@ -626,6 +667,14 @@ pub trait PendingInstance {
     /// Moves the start on without blocking: `None` while the plugin is not ready, then the
     /// instance or why it could not be made.
     fn poll(&mut self) -> Option<Result<Box<dyn PluginInstance>, BackendError>>;
+    /// Starts abandoning the start without waiting for it (see
+    /// [`PluginInstance::begin_shutdown`]); dropping still works without this call.
+    fn begin_shutdown(&mut self) {}
+    /// True once the plugin's process that was starting has ended (see
+    /// [`PluginInstance::poll_shutdown`]).
+    fn poll_shutdown(&mut self) -> bool {
+        true
+    }
 }
 
 /// A plugin format. The sandbox (`atomik-plugin-sandbox`) implements the same traits.
@@ -713,6 +762,15 @@ pub struct NullStats {
     fixed_gui_size: Mutex<Option<(u32, u32)>>,
     presets: AtomicBool,
     deactivate_delay: AtomicUsize,
+    /// Polls a restore, an activation and a shutdown of a null instance take (a plugin that is
+    /// busy but alive), and the polls a start in the background takes plus one (0: instances
+    /// are created at once, as a plugin in this process is).
+    restore_delay: AtomicUsize,
+    activate_delay: AtomicUsize,
+    shutdown_delay: AtomicUsize,
+    background_create: AtomicUsize,
+    /// The next restore of a null instance fails.
+    fail_restore: AtomicBool,
     /// The null instances capture in the background, as a plugin in another process does.
     background_capture: AtomicBool,
     /// A background capture is not answered while this is set (a plugin whose main thread is
@@ -742,6 +800,31 @@ impl NullStats {
     /// [`PluginInstance::poll_deactivate`] says when it is done.
     pub fn set_deactivate_delay(&self, polls: usize) {
         self.deactivate_delay.store(polls, Ordering::Relaxed);
+    }
+    /// Makes a restore take `polls` polls of the instance: [`PluginInstance::begin_restore_state`]
+    /// answers "not yet" and [`PluginInstance::poll_restore_state`] says when it is done.
+    pub fn set_restore_delay(&self, polls: usize) {
+        self.restore_delay.store(polls, Ordering::Relaxed);
+    }
+    /// Makes an activation take `polls` polls of the instance (see
+    /// [`PluginInstance::begin_activate`]).
+    pub fn set_activate_delay(&self, polls: usize) {
+        self.activate_delay.store(polls, Ordering::Relaxed);
+    }
+    /// Makes the end of an instance take `polls` polls (see [`PluginInstance::poll_shutdown`]).
+    pub fn set_shutdown_delay(&self, polls: usize) {
+        self.shutdown_delay.store(polls, Ordering::Relaxed);
+    }
+    /// Makes the backend create instances in the background, as a plugin in another process is:
+    /// [`PluginBackend::begin_instantiate`] answers a pending start that is ready after `polls`
+    /// polls. `None` (the default) creates them at once.
+    pub fn set_background_create(&self, polls: Option<usize>) {
+        self.background_create
+            .store(polls.map_or(0, |p| p + 1), Ordering::Relaxed);
+    }
+    /// Makes the next restore of a null instance fail.
+    pub fn fail_next_restore(&self) {
+        self.fail_restore.store(true, Ordering::Relaxed);
     }
     /// Makes the null plugin change its layout (its buses, as a plugin does after a sign-in) at
     /// the next restart of an instance: [`PluginInstance::take_layout_changed`] answers true once
@@ -964,11 +1047,50 @@ impl PluginBackend for NullBackend {
             opening: None,
             opening_in: None,
             deactivating: None,
+            restoring: None,
+            activating: None,
+            ending: None,
             texts_asked: Vec::new(),
             resize_asked: None,
         }))
     }
+
+    fn begin_instantiate(
+        &self,
+        plugin: &PluginRef,
+        host: HostHandle,
+    ) -> Result<Option<Box<dyn PendingInstance>>, BackendError> {
+        let polls = self.stats.background_create.load(Ordering::Relaxed);
+        if polls == 0 {
+            return Ok(None);
+        }
+        let instance = self.instantiate(plugin, host)?;
+        Ok(Some(Box::new(NullPending {
+            instance: Some(instance),
+            polls: polls - 1,
+        })))
+    }
 }
+
+/// A null instance that is "starting in the background" (see
+/// [`NullStats::set_background_create`]).
+struct NullPending {
+    instance: Option<Box<dyn PluginInstance>>,
+    polls: usize,
+}
+
+impl PendingInstance for NullPending {
+    fn poll(&mut self) -> Option<Result<Box<dyn PluginInstance>, BackendError>> {
+        if self.polls > 0 {
+            self.polls -= 1;
+            return None;
+        }
+        self.instance.take().map(Ok)
+    }
+}
+
+/// What a slow null activation ends with.
+type ActivationResult = Result<Box<dyn PluginProcessor>, BackendError>;
 
 struct NullInstance {
     layout: PluginLayout,
@@ -985,6 +1107,12 @@ struct NullInstance {
     opening_in: Option<NativeParent>,
     /// Polls left before a slow deactivation is done.
     deactivating: Option<usize>,
+    /// A slow restore: the polls left and what it ends with.
+    restoring: Option<(usize, Result<(), BackendError>)>,
+    /// A slow activation: the polls left and what it ends with.
+    activating: Option<(usize, ActivationResult)>,
+    /// A slow end: the polls left.
+    ending: Option<usize>,
     /// The values whose text was asked for while the instance was busy.
     texts_asked: Vec<(u32, f64)>,
     /// The latest size asked for while the instance was busy.
@@ -1092,6 +1220,60 @@ impl PluginInstance for NullInstance {
         }
     }
 
+    fn begin_activate(
+        &mut self,
+        cfg: &ActivateConfig,
+    ) -> Result<Option<Box<dyn PluginProcessor>>, BackendError> {
+        let done = self.activate(cfg);
+        let polls = self.stats.activate_delay.load(Ordering::Relaxed);
+        if polls == 0 {
+            return done.map(Some);
+        }
+        self.activating = Some((polls, done));
+        Ok(None)
+    }
+
+    fn poll_activate(&mut self) -> Option<Result<Box<dyn PluginProcessor>, BackendError>> {
+        let (left, done) = self.activating.take()?;
+        if left > 1 {
+            self.activating = Some((left - 1, done));
+            return None;
+        }
+        Some(done)
+    }
+
+    fn begin_restore_state(&mut self, state: &PluginStateBlob) -> Result<bool, BackendError> {
+        let done = self.restore_state(state);
+        let polls = self.stats.restore_delay.load(Ordering::Relaxed);
+        if polls == 0 {
+            return done.map(|()| true);
+        }
+        self.restoring = Some((polls, done));
+        Ok(false)
+    }
+
+    fn poll_restore_state(&mut self) -> Option<Result<(), BackendError>> {
+        let Some((left, done)) = self.restoring.take() else {
+            return Some(Ok(()));
+        };
+        if left > 1 {
+            self.restoring = Some((left - 1, done));
+            return None;
+        }
+        Some(done)
+    }
+
+    fn poll_shutdown(&mut self) -> bool {
+        let left = self
+            .ending
+            .unwrap_or_else(|| self.stats.shutdown_delay.load(Ordering::Relaxed));
+        if left == 0 {
+            return true;
+        }
+        self.ending = Some(left - 1);
+        false
+    }
+
     fn take_layout_changed(&mut self) -> bool {
         let pending = self
             .stats
@@ -1156,6 +1338,11 @@ impl PluginInstance for NullInstance {
 
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError> {
         self.stuck_error("RestoreState")?;
+        if self.stats.fail_restore.swap(false, Ordering::Relaxed) {
+            return Err(BackendError::Failed(
+                "the null plugin could not restore".to_string(),
+            ));
+        }
         self.state = state.clone();
         let index = std::str::from_utf8(&state.0)
             .ok()

@@ -55,11 +55,18 @@ pub(crate) struct RemoteInstance {
     opening_since: Option<std::time::Instant>,
     /// When a [`PluginInstance::begin_deactivate`] went out and has no answer yet.
     deactivating_since: Option<std::time::Instant>,
+    /// When a [`PluginInstance::begin_activate`] went out and has no answer yet, and what it
+    /// asked for.
+    activating: Option<(std::time::Instant, ActivateConfig)>,
+    /// When a [`PluginInstance::begin_restore_state`] went out and has no answer yet.
+    restoring_since: Option<std::time::Instant>,
 }
 
 /// The name of the editor request, in errors and the held-call guard.
 const OPEN_GUI: &str = "OpenGui";
 const DEACTIVATE: &str = "Deactivate";
+const ACTIVATE: &str = "Activate";
+const RESTORE_STATE: &str = "RestoreState";
 
 enum Stage {
     /// The Hello is out.
@@ -113,6 +120,23 @@ impl PendingInstance for PendingRemote {
                 Some(RemoteInstance::instantiated(link, port, reply).map(|i| Box::new(i) as _))
             }
         }
+    }
+
+    fn begin_shutdown(&mut self) {
+        if let Some(link) = &mut self.link {
+            link.begin_shutdown();
+        }
+    }
+
+    fn poll_shutdown(&mut self) -> bool {
+        let Some(link) = &mut self.link else {
+            return true;
+        };
+        if link.timeouts().bounce {
+            link.wait_for_end();
+            return true;
+        }
+        link.poll_shutdown()
     }
 }
 
@@ -199,6 +223,8 @@ impl RemoteInstance {
             wanted_resize: None,
             opening_since: None,
             deactivating_since: None,
+            activating: None,
+            restoring_since: None,
         })
     }
 
@@ -230,6 +256,65 @@ impl RemoteInstance {
             std::thread::sleep(Duration::from_millis(1));
         }
         self.deactivating_since = None;
+    }
+
+    /// What an activation needs before it is sent: a usable sample rate and the audio port.
+    fn check_activatable(&self, cfg: &ActivateConfig) -> Result<(), BackendError> {
+        if !(cfg.sample_rate.is_finite() && cfg.sample_rate > 0.0) {
+            return Err(BackendError::Failed(format!(
+                "cannot activate at the sample rate {}",
+                cfg.sample_rate
+            )));
+        }
+        if self
+            .port
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_none()
+        {
+            return Err(BackendError::Failed(
+                "the plugin is already active".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The audio half from the child's answer to `Activate`.
+    fn activated(
+        &mut self,
+        reply: Reply,
+        cfg: &ActivateConfig,
+    ) -> Result<Box<dyn PluginProcessor>, BackendError> {
+        let offline = cfg.mode == RunMode::Offline;
+        let FromChild::Activated { latency, .. } = reply.msg else {
+            return Err(self.link.unexpected(ACTIVATE, &reply.msg));
+        };
+        self.latency = latency;
+        // A bounce waits for every batch whatever mode the plugin was told.
+        let wait_all = offline || self.timeouts().bounce;
+        self.offline_active = wait_all;
+        let port = self
+            .port
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .ok_or_else(|| BackendError::Failed("the plugin is already active".to_string()))?;
+        let period = Self::period(cfg.sample_rate);
+        let mut processor = RemoteProcessor::new(
+            port,
+            Arc::clone(&self.port),
+            wait_all,
+            period,
+            self.timeouts().watchdog,
+        );
+        if !wait_all {
+            // Live only: an offline batch waits for its answer up to the watchdog instead.
+            processor = processor.with_hang_guard(
+                Self::hang_batches(period, self.timeouts().hung),
+                self.link.shared().hung_flag(),
+            );
+        }
+        Ok(Box::new(processor))
     }
 
     fn period(sample_rate: f64) -> Duration {
@@ -367,26 +452,10 @@ impl PluginInstance for RemoteInstance {
 
     fn activate(&mut self, cfg: &ActivateConfig) -> Result<Box<dyn PluginProcessor>, BackendError> {
         self.finish_deactivate();
-        if !(cfg.sample_rate.is_finite() && cfg.sample_rate > 0.0) {
-            return Err(BackendError::Failed(format!(
-                "cannot activate at the sample rate {}",
-                cfg.sample_rate
-            )));
-        }
-        if self
-            .port
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_none()
-        {
-            return Err(BackendError::Failed(
-                "the plugin is already active".to_string(),
-            ));
-        }
-        let offline = cfg.mode == RunMode::Offline;
-        let (rate, frames) = (cfg.sample_rate, cfg.frames);
+        self.check_activatable(cfg)?;
+        let (rate, frames, offline) = (cfg.sample_rate, cfg.frames, cfg.mode == RunMode::Offline);
         let reply = self.link.call(
-            "Activate",
+            ACTIVATE,
             self.timeouts().create,
             |id| ToChild::Activate {
                 id,
@@ -396,35 +465,39 @@ impl PluginInstance for RemoteInstance {
             },
             None,
         )?;
-        let FromChild::Activated { latency, .. } = reply.msg else {
-            return Err(self.link.unexpected("Activate", &reply.msg));
-        };
-        self.latency = latency;
-        // A bounce waits for every batch whatever mode the plugin was told.
-        let wait_all = offline || self.timeouts().bounce;
-        self.offline_active = wait_all;
-        let port = self
-            .port
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
-            .ok_or_else(|| BackendError::Failed("the plugin is already active".to_string()))?;
-        let period = Self::period(cfg.sample_rate);
-        let mut processor = RemoteProcessor::new(
-            port,
-            Arc::clone(&self.port),
-            wait_all,
-            period,
-            self.timeouts().watchdog,
-        );
-        if !wait_all {
-            // Live only: an offline batch waits for its answer up to the watchdog instead.
-            processor = processor.with_hang_guard(
-                Self::hang_batches(period, self.timeouts().hung),
-                self.link.shared().hung_flag(),
-            );
+        self.activated(reply, cfg)
+    }
+
+    fn begin_activate(
+        &mut self,
+        cfg: &ActivateConfig,
+    ) -> Result<Option<Box<dyn PluginProcessor>>, BackendError> {
+        if self.timeouts().bounce {
+            // A bounce waits for the child, whatever mode the plugin is told.
+            return self.activate(cfg).map(Some);
         }
-        Ok(Box::new(processor))
+        self.finish_deactivate();
+        self.check_activatable(cfg)?;
+        let (rate, frames, offline) = (cfg.sample_rate, cfg.frames, cfg.mode == RunMode::Offline);
+        self.link
+            .begin_held_call(ACTIVATE, |id| ToChild::Activate {
+                id,
+                sample_rate: rate,
+                frames,
+                offline,
+            })?;
+        self.activating = Some((crate::clock::now(), *cfg));
+        Ok(None)
+    }
+
+    fn poll_activate(&mut self) -> Option<Result<Box<dyn PluginProcessor>, BackendError>> {
+        let (since, cfg) = self.activating?;
+        // As long as a load's: the app stays responsive meanwhile, and a child that is alive and
+        // working (a sampler loading its library as it activates) is not stopped for being slow.
+        let wait = self.timeouts().load;
+        let answer = self.link.poll_reply(ACTIVATE, since, wait)?;
+        self.activating = None;
+        Some(answer.and_then(|reply| self.activated(reply, &cfg)))
     }
 
     fn deactivate(&mut self, processor: Box<dyn PluginProcessor>) {
@@ -527,7 +600,7 @@ impl PluginInstance for RemoteInstance {
 
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError> {
         let reply = self.link.call(
-            "RestoreState",
+            RESTORE_STATE,
             self.timeouts().create,
             |id| ToChild::RestoreState { id },
             Some(&state.0),
@@ -535,8 +608,38 @@ impl PluginInstance for RemoteInstance {
         if Self::is_ok(&reply) {
             Ok(())
         } else {
-            Err(self.link.unexpected("RestoreState", &reply.msg))
+            Err(self.link.unexpected(RESTORE_STATE, &reply.msg))
         }
+    }
+
+    fn begin_restore_state(&mut self, state: &PluginStateBlob) -> Result<bool, BackendError> {
+        if self.timeouts().bounce {
+            return self.restore_state(state).map(|()| true);
+        }
+        self.link.begin_held_call_with(
+            RESTORE_STATE,
+            |id| ToChild::RestoreState { id },
+            Some(&state.0),
+        )?;
+        self.restoring_since = Some(crate::clock::now());
+        Ok(false)
+    }
+
+    fn poll_restore_state(&mut self) -> Option<Result<(), BackendError>> {
+        let Some(since) = self.restoring_since else {
+            return Some(Ok(()));
+        };
+        // A sampler may restore for minutes: as long as a load, judged by its sign of life.
+        let wait = self.timeouts().load;
+        let answer = self.link.poll_reply(RESTORE_STATE, since, wait)?;
+        self.restoring_since = None;
+        Some(answer.and_then(|reply| {
+            if Self::is_ok(&reply) {
+                Ok(())
+            } else {
+                Err(self.link.unexpected(RESTORE_STATE, &reply.msg))
+            }
+        }))
     }
 
     fn read_params(&mut self) -> Vec<(u32, f64)> {
@@ -807,6 +910,15 @@ impl PluginInstance for RemoteInstance {
 
     fn begin_shutdown(&mut self) {
         self.link.begin_shutdown();
+    }
+
+    fn poll_shutdown(&mut self) -> bool {
+        if self.timeouts().bounce {
+            // A bounce waits for its children (the drop would, too).
+            self.link.wait_for_end();
+            return true;
+        }
+        self.link.poll_shutdown()
     }
 }
 
