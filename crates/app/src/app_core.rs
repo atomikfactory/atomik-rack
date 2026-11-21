@@ -1023,8 +1023,11 @@ impl<S: EngineSink> AppCore<S> {
             }
             _ => None,
         };
-        // A device that goes away takes its latest plugin state into the undo history.
-        self.plugins_flush_dirty(false);
+        // A device that goes away takes its latest plugin state into the undo history: a command
+        // that cannot remove or replace one leaves the plugin to its background capture.
+        if !Self::command_keeps_plugins(&command) {
+            self.plugins_flush_dirty(false);
+        }
         let merge = param_merge(&command);
         // A group's fader, mute or solo moved by hand is a move of its lane's param, for
         // recording.
@@ -4802,6 +4805,10 @@ mod plugins_latency_tests;
 #[cfg(test)]
 #[path = "app_core_plugins_sandbox_tests.rs"]
 mod plugins_sandbox_tests;
+
+#[cfg(test)]
+#[path = "app_core_plugins_capture_tests.rs"]
+mod plugins_capture_tests;
 
 #[cfg(test)]
 #[path = "app_core_plugin_learn_tests.rs"]

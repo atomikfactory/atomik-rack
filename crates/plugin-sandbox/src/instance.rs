@@ -253,6 +253,15 @@ impl RemoteInstance {
         Ok(false)
     }
 
+    /// The state a `State` reply carries.
+    fn state_of(&self, reply: Reply) -> Result<PluginStateBlob, BackendError> {
+        match (&reply.msg, reply.blob) {
+            (FromChild::State { .. }, Some(blob)) => Ok(PluginStateBlob(blob)),
+            (FromChild::State { .. }, None) => Err(unexpected_none("CaptureState")),
+            (other, _) => Err(self.link.unexpected("CaptureState", other)),
+        }
+    }
+
     /// An `Ok`-or-`GuiOpened` reply (the child may say either to an `OpenGui`).
     fn is_ok(reply: &Reply) -> bool {
         matches!(
@@ -384,26 +393,47 @@ impl PluginInstance for RemoteInstance {
     }
 
     fn begin_capture_state(&mut self) {
+        if self.link.background_out() {
+            // The request that is out answers the call that collects.
+            return;
+        }
         // A failure shows again when the state is collected.
         let _ = self.link.begin_call(|id| ToChild::CaptureState { id });
     }
 
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError> {
         let timeout = self.timeouts().create;
-        let reply = match self.link.finish_call("CaptureState", timeout) {
+        // A background request that is out is waited for, not repeated.
+        let reply = match self.link.finish_background("CaptureState", timeout) {
             Some(reply) => reply?,
-            None => self.link.call(
-                "CaptureState",
-                timeout,
-                |id| ToChild::CaptureState { id },
-                None,
-            )?,
+            None => match self.link.finish_call("CaptureState", timeout) {
+                Some(reply) => reply?,
+                None => self.link.call(
+                    "CaptureState",
+                    timeout,
+                    |id| ToChild::CaptureState { id },
+                    None,
+                )?,
+            },
         };
-        match (&reply.msg, reply.blob) {
-            (FromChild::State { .. }, Some(blob)) => Ok(PluginStateBlob(blob)),
-            (FromChild::State { .. }, None) => Err(unexpected_none("CaptureState")),
-            (other, _) => Err(self.link.unexpected("CaptureState", other)),
-        }
+        self.state_of(reply)
+    }
+
+    fn background_capture(&self) -> bool {
+        true
+    }
+
+    fn request_capture(&mut self) -> Result<(), BackendError> {
+        self.link
+            .begin_background(|id| ToChild::CaptureState { id })
+    }
+
+    fn poll_capture(&mut self) -> Option<Result<PluginStateBlob, BackendError>> {
+        let reply = match self.link.poll_background()? {
+            Ok(reply) => reply,
+            Err(e) => return Some(Err(e)),
+        };
+        Some(self.state_of(reply))
     }
 
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError> {
@@ -641,6 +671,16 @@ impl PluginInstance for RemoteInstance {
 
     fn is_lost(&self) -> bool {
         self.link.is_lost()
+    }
+
+    fn not_responding(&self) -> Option<String> {
+        self.link.stuck()
+    }
+
+    fn stop_process(&mut self) {
+        self.link
+            .shared()
+            .kill("the plugin did not respond and was stopped at the user's request".to_string());
     }
 
     fn begin_shutdown(&mut self) {

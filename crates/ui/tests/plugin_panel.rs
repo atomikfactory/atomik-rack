@@ -309,6 +309,29 @@ fn a_missing_plugin_matches_golden_and_says_why() {
 }
 
 #[test]
+fn a_plugin_that_does_not_answer_says_so_and_still_offers_reload() {
+    let (d, mut v) = setup();
+    v.set_plugin_status(
+        &key("synth"),
+        PluginDeviceStatus {
+            not_responding: Some("CaptureState".into()),
+            ..PluginDeviceStatus::default()
+        },
+    );
+    let texts = texts_of(&mut v, d.doc());
+    for t in ["NOT RESPONDING", "the plugin is busy", "RELOAD"] {
+        assert!(
+            texts.iter().any(|x| x.contains(t)),
+            "missing {t:?}: {texts:?}"
+        );
+    }
+    assert!(
+        !texts.iter().any(|x| x.contains("CRASHED")),
+        "it is alive: {texts:?}"
+    );
+}
+
+#[test]
 fn a_quarantined_plugin_matches_golden_says_why_and_load_anyway_asks_for_a_load() {
     let (d, mut v) = setup();
     v.set_plugin_status(

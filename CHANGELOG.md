@@ -120,6 +120,14 @@ may break APIs and the patch and project formats.
   follow a clock, so they are unchanged. Streamed (long, disk-read) audio, which was silent while following, now
   plays from where the clock reaches each clip, at the clip's own rate; a clip warped to the song tempo plays its
   rendered buffer and follows the clock as above.
+- **A plugin that does not answer shows NOT RESPONDING.** A sandboxed plugin that is alive but does not answer a
+  request in time (its main thread is busy with a dialog, a sample load or a licence check) is shown as NOT
+  RESPONDING in its panel, with the note "the plugin is busy and does not answer; its audio keeps running". The app
+  stops waiting for it and asks it nothing more, and the state ends by itself when the plugin answers; RELOAD stops
+  it and starts a new one from the last captured settings. Saving, archiving, sharing, a template or a version
+  while a plugin does not answer completes with that plugin's last captured settings and says so once ("... did
+  not hand over its current settings; its last captured settings were saved."); an audio restart or removing the
+  device goes on the same way and writes a line in the plugin log.
 
 ### Fixed
 - **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio track now
@@ -169,6 +177,20 @@ may break APIs and the patch and project formats.
 - A plugin that answers every audio batch a little late is no longer declared hung. Only a plugin that completes
   no request at all for about three seconds is stopped; a slow one just counts its late batches. A plugin the app
   stopped for not answering no longer counts toward the quarantine (three real crashes in a row still do).
+- Editing in a plugin's window no longer freezes the app. The app used to wait for the plugin's state on the
+  interface thread a second after each change, when the plugin was busiest (a patch loading in its window), and
+  stopped a working plugin that took ten seconds to answer. The state is now asked for in the background and
+  stored when it arrives (one undo step, as before). A recovery snapshot is written from the states stored so far
+  instead of asking every plugin again, a command that cannot remove a plugin no longer waits for one, and
+  closing an editor does not wait either. Saving, archiving, sharing and an audio restart still wait for the
+  state, since they need it at once.
+- A plugin that is busy is no longer stopped. When a plugin did not answer within ten seconds the app used to
+  stop its process, losing its sound and any settings made in its window since the last capture, even though the
+  plugin was working. The app now stops a plugin only when its process shows no sign of life (its audio thread
+  stopped running). A plugin that is alive but silent shows NOT RESPONDING in its panel, with the note that its
+  audio keeps running; the app stops waiting for it, asks it nothing more, and the plugin goes back to normal by
+  itself when it answers. It does not count as a crash and never leads to the quarantine. A bounce or an export
+  still stops a plugin that does not answer.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

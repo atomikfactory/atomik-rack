@@ -4,6 +4,8 @@
 //!
 //! * `null.gain`: stereo effect, output = input x 0.5; param 0 "Pass" (0 or 1) at 1 gives
 //!   output = input. Events apply at their frame offset. Its state is the Pass value.
+//!   Every state request of any null plugin waits `ATOMIK_NULL_CAPTURE_DELAY_MS` milliseconds first
+//!   (default 0, read at each request): a plugin whose main thread is busy.
 //! * `null.latency`: passthrough that reports 32 frames of latency.
 //! * `null.crash`: passthrough that aborts the process in `process` after N batches (N from
 //!   `ATOMIK_NULL_CRASH_AFTER`, default 0, read at activation).
@@ -31,6 +33,9 @@ use std::time::Duration;
 
 /// Environment variable: how many batches `null.crash` processes before it aborts.
 pub const CRASH_AFTER_ENV: &str = "ATOMIK_NULL_CRASH_AFTER";
+
+/// Environment variable: how long a state request waits before it is answered, in milliseconds.
+pub const CAPTURE_DELAY_ENV: &str = "ATOMIK_NULL_CAPTURE_DELAY_MS";
 
 /// Frames of latency `null.latency` reports.
 const LATENCY: u32 = 32;
@@ -161,6 +166,13 @@ impl PluginInstance for BuiltinInstance {
     }
 
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError> {
+        let delay = std::env::var(CAPTURE_DELAY_ENV)
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        if delay > 0 {
+            std::thread::sleep(Duration::from_millis(delay));
+        }
         Ok(PluginStateBlob(
             self.pass.load(Ordering::Relaxed).to_le_bytes().to_vec(),
         ))

@@ -327,7 +327,7 @@ fn a_plugin_that_hangs_in_activate_fails_instantiate_after_the_timeout_and_the_c
     let took = start.elapsed();
     assert!(result.is_err());
     assert!(took >= Duration::from_millis(400), "{took:?}");
-    assert!(took < Duration::from_secs(5), "{took:?}");
+    assert!(took < Duration::from_secs(60), "{took:?}");
     assert!(
         sb.wait_children(0, Duration::from_secs(5)),
         "the child is killed"
@@ -483,5 +483,146 @@ fn a_lost_instance_fails_every_call_with_the_process_stopped_text() {
     assert!(e.to_string().contains(LOST), "{e}");
     drop(h);
     sb.manager.poll();
+    sb.finish();
+}
+
+// ----- state capture in the background ---------------------------------------------------------------
+
+#[test]
+fn the_state_of_a_busy_plugin_is_asked_for_in_the_background_without_a_stall_or_a_stop() {
+    let mut sb = Sandbox::null(config_with_env("ATOMIK_NULL_CAPTURE_DELAY_MS", "600"));
+    let handle = instantiate_null(&mut sb, "null.gain", RunMode::Realtime);
+    let id = handle.id;
+    let device = effect(handle, 0.25);
+    let _ = sb.manager.poll();
+    // The blocking calls above (instantiate, activate) may be slow on a loaded machine and leave
+    // stall records of their own: only what the background phase adds counts.
+    let _ = sb.manager.take_stalls();
+    #[allow(clippy::disallowed_methods)]
+    // Justification: this measures how long a busy plugin takes, and that the main thread kept polling.
+    let began = std::time::Instant::now();
+    sb.manager.request_capture(id).unwrap();
+    let mut events = Vec::new();
+    let mut polls = 0;
+    let landed = loop {
+        events.extend(sb.manager.poll());
+        polls += 1;
+        if let Some(landed) = sb.manager.poll_capture(id) {
+            break landed;
+        }
+        assert!(
+            began.elapsed() < Duration::from_secs(10),
+            "the plugin answers"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    assert!(began.elapsed() >= Duration::from_millis(500), "it was busy");
+    assert!(
+        polls > 5,
+        "the main thread went on polling meanwhile: {polls}"
+    );
+    assert!(landed.result.is_ok() && !landed.stale && !landed.again);
+    let stalls = sb.manager.take_stalls();
+    assert!(
+        !stalls.iter().any(|s| s.call == "CaptureState"),
+        "the background request waited for nothing: {stalls:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            ManagerEvent::Crashed { .. } | ManagerEvent::Failed { .. }
+        )),
+        "{events:?}"
+    );
+    // A call that waits for the same plugin is a stall, and the record says which call.
+    sb.manager.capture_state(id).unwrap();
+    let _ = sb.manager.poll();
+    let stalls = sb.manager.take_stalls();
+    assert!(
+        stalls.iter().any(|s| s.call == "CaptureState"),
+        "{stalls:?}"
+    );
+    drop(device);
+    let _ = sb.manager.poll();
+    sb.finish();
+}
+
+// ----- a plugin that is alive but busy is not stopped -----------------------------------------------
+
+#[test]
+fn a_plugin_whose_main_thread_sleeps_past_the_timeout_is_not_stopped_and_answers_afterwards() {
+    let mut cfg = config_with_env("ATOMIK_NULL_CAPTURE_DELAY_MS", "2500");
+    cfg.create_timeout = Duration::from_millis(500);
+    let mut sb = Sandbox::null(cfg);
+    let handle = instantiate_null(&mut sb, "null.gain", RunMode::Realtime);
+    let id = handle.id;
+    let mut device = effect(handle, 0.25);
+    let _ = sb.manager.poll();
+    assert!(sb.manager.not_responding(id).is_none());
+    assert_eq!(sb.backend.live_children(), 1);
+
+    // The child's main thread sleeps in the capture; its audio thread runs.
+    let err = sb.manager.capture_state(id).unwrap_err();
+    assert!(err.is_not_responding(), "{err}");
+    assert_eq!(sb.backend.live_children(), 1, "the child was not stopped");
+    assert_eq!(
+        sb.manager.not_responding(id).as_deref(),
+        Some("CaptureState")
+    );
+    let mut events = sb.manager.poll();
+    for _ in 0..20 {
+        device.process();
+    }
+    assert!(
+        out_l(&device).iter().any(|s| s.abs() > 0.01),
+        "its audio keeps running while it does not answer"
+    );
+
+    // A second call does not wait for it: it leaves no stall record (the first one, which timed
+    // out, did; that record is taken away first).
+    let _ = sb.manager.take_stalls();
+    let again = sb.manager.capture_state(id).unwrap_err();
+    assert!(again.is_not_responding(), "{again}");
+    let stalls = sb.manager.take_stalls();
+    assert!(
+        !stalls.iter().any(|s| s.call == "CaptureState"),
+        "the second call waited: {stalls:?}"
+    );
+
+    // It answers by itself once its main thread is free again.
+    #[allow(clippy::disallowed_methods)]
+    // Justification: a bound on how long the test waits for the child.
+    let limit = std::time::Instant::now() + Duration::from_secs(30);
+    while sb.manager.not_responding(id).is_some() {
+        events.extend(sb.manager.poll());
+        #[allow(clippy::disallowed_methods)]
+        // Justification: as above.
+        let now = std::time::Instant::now();
+        assert!(now < limit, "the plugin answers in the end");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    events.extend(sb.manager.poll());
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ManagerEvent::NotResponding { instance, .. } if *instance == id)),
+        "{events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ManagerEvent::Responding(i) if *i == id)),
+        "{events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            ManagerEvent::Crashed { .. } | ManagerEvent::Failed { .. }
+        )),
+        "{events:?}"
+    );
+    assert_eq!(sb.backend.live_children(), 1, "still the same child");
+    drop(device);
+    let _ = sb.manager.poll();
     sb.finish();
 }

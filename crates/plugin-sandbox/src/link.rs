@@ -4,18 +4,25 @@
 //!
 //! Only the main thread makes calls and only one is in flight at a time, so a single slot is
 //! enough; replies are matched by request id and anything else is ignored. A call that matters
-//! and is not answered in time kills the child; a cosmetic one (see [`Link::soft_call`]) only
-//! drops its request. Once the child is killed the link is lost, and every call fails at
-//! once without any I/O. The reader thread is the one that learns that the child ended: it
-//! reaps the exit status, reads the stderr tail, marks the audio block dead (so the engine
-//! side sees [`atomik_plugin_host::ProcessStatus::Lost`]) and posts
-//! [`PluginMessage::ProcessExited`].
+//! and is not answered in time kills the child, unless the child shows a sign of life (its audio
+//! thread still bumps the counter of the block, see [`ALIVE_WINDOW`]): a live plugin whose main
+//! thread is busy is never stopped for being slow. Its call fails, the link is then stuck on
+//! that request (every call fails at once without being sent, see [`Link::stuck`]) and
+//! recovers by itself when the reader thread sees the late answer. A cosmetic call (see
+//! [`Link::soft_call`]) only drops its request. One request at a time can instead be a
+//! background request (see
+//! [`Link::begin_background`]): it has a slot of its own, so the state of a plugin whose main
+//! thread is busy can be asked for while the UI goes on, and nothing times it out. Once the
+//! child is killed the link is lost, and every call fails at once without any I/O. The reader
+//! thread is the one that learns that the child ended: it reaps the exit status, reads the
+//! stderr tail, marks the audio block dead (so the engine side sees
+//! [`atomik_plugin_host::ProcessStatus::Lost`]) and posts [`PluginMessage::ProcessExited`].
 
 use crate::clock::now;
 use crate::transport::{ChildProcess, Transport};
 use atomik_plugin_host::{
-    BackendError, HUNG, HostMessenger, LOST, LogLevel, ParamPhase, PluginMessage, STALL_THRESHOLD,
-    StallOutcome,
+    BackendError, HUNG, HostMessenger, LOST, LogLevel, NOT_RESPONDING, ParamPhase, PluginMessage,
+    STALL_THRESHOLD, StallOutcome,
 };
 use atomik_plugin_ipc::{
     DeathHandle, FromChild, MAX_FRAME_BYTES, MAX_GUI_DIMENSION, MAX_LOG_BYTES,
@@ -50,6 +57,11 @@ const MISSES_TO_SLOW: u32 = 3;
 /// that is merely busy answers sooner or later, one that never does is wedged.
 const MISSES_TO_KILL: u32 = 12;
 
+/// How recently the child's audio thread must have shown a sign of life for the child to count
+/// as alive when a call times out: the counter in the block header has to change within this
+/// window (the child's audio loop comes round every few milliseconds).
+pub(crate) const ALIVE_WINDOW: Duration = Duration::from_millis(500);
+
 /// The most parameter edits held back for the main thread at once.
 const MAX_HELD_EDITS: usize = 4096;
 
@@ -61,7 +73,7 @@ pub(crate) struct Timeouts {
     /// this is minutes, not seconds; the waits are polled, so the app stays responsive.
     pub load: Duration,
     /// Activate, capture and restore state: a call that is not answered in time kills the
-    /// child.
+    /// child, unless it shows a sign of life (then the instance is stuck, see [`Link::stuck`]).
     pub create: Duration,
     /// Every other call that matters (deactivate, flush): killing as well.
     pub call: Duration,
@@ -118,16 +130,42 @@ pub(crate) struct Reply {
 struct Mailbox {
     expect: Expect,
     reply: Option<Reply>,
+    /// The id of the background request that is out, if any (see [`Link::begin_background`]).
+    bg_id: Option<u64>,
+    /// The answer to it, until [`Link::poll_background`] takes it.
+    bg_reply: Option<Reply>,
+    /// The request a timed-out call left unanswered while the child was alive: the link is
+    /// stuck on it until its answer comes (see [`Shared::enter_stuck`]).
+    stuck: Option<Stuck>,
     /// The child's stdout closed: nothing more will come.
     ended: bool,
     /// Set once the child is reaped: why it ended.
     reason: Option<String>,
 }
 
+/// A request that was not answered in time by a child that is alive.
+#[derive(Debug, Clone)]
+struct Stuck {
+    id: u64,
+    /// The name of the call.
+    what: String,
+}
+
 enum Waited {
     Reply(Reply),
     Ended,
-    TimedOut,
+    /// The time ran out. `alive`: the child's audio thread showed a sign of life in the last
+    /// part of the wait (see [`ALIVE_WINDOW`]).
+    TimedOut {
+        alive: bool,
+    },
+}
+
+/// Takes the answer of the background request that is out, ending it.
+fn take_background(mb: &mut Mailbox) -> Option<Reply> {
+    let reply = mb.bg_reply.take()?;
+    mb.bg_id = None;
+    Some(reply)
 }
 
 /// What the main thread and the helper threads share.
@@ -165,26 +203,105 @@ impl Shared {
     }
 
     fn wait(&self, timeout: Duration) -> Waited {
+        self.wait_for(timeout, |mb| {
+            let reply = mb.reply.take()?;
+            mb.expect = Expect::Nothing;
+            Some(reply)
+        })
+    }
+
+    /// Waits until `take` finds a reply in the mailbox, the child ends or `timeout` passes.
+    fn wait_for(
+        &self,
+        timeout: Duration,
+        mut take: impl FnMut(&mut Mailbox) -> Option<Reply>,
+    ) -> Waited {
         let start = now();
+        // The counter is read twice, at the start and at the end of the last `window` of the
+        // wait: the child counts as alive when it moved in between. No time is added.
+        let window = ALIVE_WINDOW.min(timeout / 2);
+        let sample_at = timeout - window;
+        let mut before = None;
         let mut mb = lock(&self.mailbox);
         loop {
-            if let Some(reply) = mb.reply.take() {
-                mb.expect = Expect::Nothing;
+            if let Some(reply) = take(&mut mb) {
                 return Waited::Reply(reply);
             }
             if mb.ended {
                 return Waited::Ended;
             }
-            let left = timeout.saturating_sub(now().saturating_duration_since(start));
-            if left.is_zero() {
-                return Waited::TimedOut;
+            let elapsed = now().saturating_duration_since(start);
+            if before.is_none() && elapsed >= sample_at {
+                before = Some(self.death.pulse());
             }
+            let left = timeout.saturating_sub(elapsed);
+            if left.is_zero() {
+                let alive = before.is_some_and(|b| self.death.pulse() != b);
+                return Waited::TimedOut { alive };
+            }
+            let step = if before.is_none() {
+                sample_at.saturating_sub(elapsed).min(left)
+            } else {
+                left
+            };
             mb = self
                 .cv
-                .wait_timeout(mb, left)
+                .wait_timeout(mb, step)
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
         }
+    }
+
+    /// The child's sign of life: changes while its audio thread runs.
+    fn pulse(&self) -> u64 {
+        self.death.pulse()
+    }
+
+    /// Leaves the request `id`, which a timed-out call gave up on, as the one the link is stuck
+    /// on: until its answer arrives every call fails at once. When the answer is already there
+    /// (it came after the wait ended) it is returned instead and the link is not stuck. With
+    /// `background` the request is the background one, whose slot is emptied.
+    fn enter_stuck(&self, id: u64, what: &str, background: bool) -> Option<Reply> {
+        let mut mb = lock(&self.mailbox);
+        let reply = if background {
+            let reply = mb.bg_reply.take().filter(|_| mb.bg_id == Some(id));
+            mb.bg_id = None;
+            mb.bg_reply = None;
+            reply
+        } else if mb.expect == Expect::Id(id) {
+            mb.expect = Expect::Nothing;
+            mb.reply.take()
+        } else {
+            None
+        };
+        if reply.is_none() {
+            mb.stuck = Some(Stuck {
+                id,
+                what: what.to_string(),
+            });
+        }
+        reply
+    }
+
+    /// Ends the stuck state when `id` is the request it waits for (true: the reply is of no
+    /// use to anyone else).
+    fn recover(&self, id: u64) -> bool {
+        let mut mb = lock(&self.mailbox);
+        if mb.stuck.as_ref().is_some_and(|s| s.id == id) {
+            mb.stuck = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The name of the call the link is stuck on: the plugin's process is alive but its main
+    /// thread has not answered it. `None` when it is not stuck or the process is gone.
+    pub fn stuck(&self) -> Option<String> {
+        if self.is_lost() {
+            return None;
+        }
+        lock(&self.mailbox).stuck.as_ref().map(|s| s.what.clone())
     }
 
     /// What the wait would return now, without waiting.
@@ -227,6 +344,53 @@ impl Shared {
         } else {
             false
         }
+    }
+
+    /// Hands `reply` to the background request when `id` is the one that is out (true; the reply
+    /// is taken), else leaves it where it is.
+    fn deliver_background(&self, reply: &mut Option<Reply>, id: u64) -> bool {
+        let mut mb = lock(&self.mailbox);
+        if mb.bg_id != Some(id) {
+            return false;
+        }
+        mb.bg_reply = reply.take();
+        self.cv.notify_all();
+        true
+    }
+
+    fn expect_background(&self, id: u64) {
+        let mut mb = lock(&self.mailbox);
+        mb.bg_id = Some(id);
+        mb.bg_reply = None;
+    }
+
+    fn clear_background(&self) {
+        let mut mb = lock(&self.mailbox);
+        mb.bg_id = None;
+        mb.bg_reply = None;
+    }
+
+    fn background_out(&self) -> bool {
+        lock(&self.mailbox).bg_id.is_some()
+    }
+
+    /// The id of the background request that is out.
+    fn background_id(&self) -> Option<u64> {
+        lock(&self.mailbox).bg_id
+    }
+
+    /// What the background request has now, without waiting: its answer, or that the child
+    /// ended (which also ends the request).
+    fn try_take_background(&self) -> Option<Waited> {
+        let mut mb = lock(&self.mailbox);
+        if let Some(reply) = take_background(&mut mb) {
+            return Some(Waited::Reply(reply));
+        }
+        if mb.ended {
+            mb.bg_id = None;
+            return Some(Waited::Ended);
+        }
+        None
     }
 
     /// The flag the audio side sets when the child answers no batch.
@@ -297,14 +461,23 @@ impl Shared {
     /// the app which call held the main thread up and how it ended. Only the main thread's
     /// blocking calls go through here.
     fn wait_noted(&self, what: &str, timeout: Duration) -> Waited {
+        self.noted(what, |shared| shared.wait(timeout))
+    }
+
+    /// [`Shared::wait_noted`] for the answer to the background request that is out.
+    fn wait_background_noted(&self, what: &str, timeout: Duration) -> Waited {
+        self.noted(what, |shared| shared.wait_for(timeout, take_background))
+    }
+
+    fn noted(&self, what: &str, wait: impl FnOnce(&Self) -> Waited) -> Waited {
         let start = now();
-        let waited = self.wait(timeout);
+        let waited = wait(self);
         let elapsed = now().saturating_duration_since(start);
         if elapsed >= STALL_THRESHOLD {
             let outcome = match waited {
                 Waited::Reply(_) => StallOutcome::Answered,
                 Waited::Ended => StallOutcome::ChildGone,
-                Waited::TimedOut => StallOutcome::TimedOut,
+                Waited::TimedOut { .. } => StallOutcome::TimedOut,
             };
             self.messenger.post(PluginMessage::Stall {
                 call: what.to_string(),
@@ -487,7 +660,18 @@ impl Shared {
             } => Some(layout.clone()),
             _ => None,
         };
-        if !self.deliver(Reply { msg, blob }, Expect::Id(id))
+        if self.recover(id) {
+            // The answer a stuck link waited for: the call that asked gave up long ago.
+            return;
+        }
+        let mut reply = Some(Reply { msg, blob });
+        if self.deliver_background(&mut reply, id) {
+            return;
+        }
+        let Some(reply) = reply else {
+            return;
+        };
+        if !self.deliver(reply, Expect::Id(id))
             && let Some(layout) = late_layout
         {
             // The call that asked has given up, and the child will not say it again.
@@ -608,6 +792,27 @@ pub(crate) struct Link {
     /// [`Link::poll_reply`] has it, every other call fails at once without being sent, so it
     /// neither abandons that request nor counts as a miss of a busy child.
     held: Option<&'static str>,
+    /// What the main thread saw of the child's sign of life between polls (see
+    /// [`Link::alive_by_polling`]).
+    vitals: Option<Vitals>,
+}
+
+/// The child's sign of life as the polled waits see it.
+#[derive(Debug, Clone, Copy)]
+struct Vitals {
+    /// The counter at the last sample.
+    pulse: u64,
+    /// When it was sampled.
+    sampled: std::time::Instant,
+    /// When it was last seen to change.
+    changed: Option<std::time::Instant>,
+}
+
+/// The error of a call made on a link that is stuck on `call`.
+fn not_responding(call: &str, what: &str) -> BackendError {
+    BackendError::Failed(format!(
+        "{NOT_RESPONDING}: it has not answered {call} yet; {what} was not sent"
+    ))
 }
 
 impl Link {
@@ -634,6 +839,9 @@ impl Link {
             mailbox: Mutex::new(Mailbox {
                 expect: Expect::Hello,
                 reply: None,
+                bg_id: None,
+                bg_reply: None,
+                stuck: None,
                 ended: false,
                 reason: None,
             }),
@@ -681,6 +889,7 @@ impl Link {
             shutdown_at: None,
             pending: false,
             held: None,
+            vitals: None,
         };
         if link.reader.is_none() || link.writer.is_none() {
             link.shared
@@ -748,21 +957,65 @@ impl Link {
     ) -> Option<Result<Reply, BackendError>> {
         let waited = match self.shared.try_take() {
             Some(waited) => waited,
-            None if now().saturating_duration_since(since) >= timeout => Waited::TimedOut,
-            None => return None,
+            None if now().saturating_duration_since(since) >= timeout => Waited::TimedOut {
+                alive: self.alive_by_polling(),
+            },
+            None => {
+                self.sense();
+                return None;
+            }
         };
         self.pending = false;
         self.held = None;
-        Some(self.settle(waited, what, timeout))
+        let id = self.next_id;
+        Some(self.settle(waited, what, timeout, id, false))
+    }
+
+    /// Takes a sample of the child's sign of life (the polled waits call it on every poll).
+    fn sense(&mut self) {
+        let (pulse, t) = (self.shared.pulse(), now());
+        let v = self.vitals.get_or_insert(Vitals {
+            pulse,
+            sampled: t,
+            changed: None,
+        });
+        if pulse != v.pulse {
+            // A change seen after a long gap is dated at the sample before it: it says nothing
+            // about the last moments.
+            v.changed = Some(if t.saturating_duration_since(v.sampled) <= ALIVE_WINDOW {
+                t
+            } else {
+                v.sampled
+            });
+            v.pulse = pulse;
+        }
+        v.sampled = t;
+    }
+
+    /// True when the sign of life changed within [`ALIVE_WINDOW`] of the polls so far.
+    fn alive_by_polling(&mut self) -> bool {
+        self.sense();
+        let t = now();
+        self.vitals
+            .and_then(|v| v.changed)
+            .is_some_and(|c| t.saturating_duration_since(c) <= ALIVE_WINDOW)
     }
 
     /// The error of a call made while a held request is out (see [`Link::begin_held_call`]).
     fn busy(&self, what: &str) -> Option<BackendError> {
-        self.held.map(|held| {
-            BackendError::Failed(format!(
+        if let Some(held) = self.held {
+            return Some(BackendError::Failed(format!(
                 "the plugin is busy with {held}; {what} was not sent"
-            ))
-        })
+            )));
+        }
+        self.stuck().map(|call| not_responding(&call, what))
+    }
+
+    /// The name of the call the plugin has not answered although its process is alive (its main
+    /// thread is busy): until the answer comes, every call fails at once without being sent, and
+    /// the answer ends the state by itself. `None` when it is not stuck or the child is gone.
+    pub fn stuck(&self) -> Option<String> {
+        self.shared.stuck()
     }
 
     /// The name of the held request that is out, if any.
@@ -782,6 +1035,8 @@ impl Link {
         // Taken by `poll_reply` only: a `finish_call` must not mistake it for its own.
         self.pending = false;
         self.held = Some(what);
+        self.vitals = None;
+        self.sense();
         Ok(())
     }
 
@@ -831,15 +1086,31 @@ impl Link {
 
     fn await_reply(&mut self, what: &str, timeout: Duration) -> Result<Reply, BackendError> {
         let waited = self.shared.wait_noted(what, timeout);
-        self.settle(waited, what, timeout)
+        let id = self.next_id;
+        self.settle(waited, what, timeout, id, false)
     }
 
-    /// Turns what a wait ended with into the reply or the error.
+    /// Whether a call that timed out leaves the child alone: it showed a sign of life, the link
+    /// is not a bounce's, and the call is one that has an id to wait for. Without it the child
+    /// is stopped.
+    fn spares(&mut self, alive: bool, id: u64) -> bool {
+        // A short wait can fall between two beats of a healthy child on a loaded machine: the
+        // samples taken at earlier calls count too (the beat must have moved within
+        // `ALIVE_WINDOW` of them).
+        let alive = alive || self.alive_by_polling();
+        alive && id != 0 && !self.timeouts.bounce
+    }
+
+    /// Turns what a wait for the request `id` ended with into the reply or the error. A request
+    /// that went unanswered while the child is alive does not stop it: the link is stuck on it
+    /// (`background`: the request was the background one).
     fn settle(
         &mut self,
         waited: Waited,
         what: &str,
         timeout: Duration,
+        id: u64,
+        background: bool,
     ) -> Result<Reply, BackendError> {
         match waited {
             Waited::Reply(reply) => match reply.msg {
@@ -847,8 +1118,20 @@ impl Link {
                 _ => Ok(reply),
             },
             Waited::Ended => Err(lost()),
-            Waited::TimedOut => {
+            Waited::TimedOut { alive } => {
                 let ms = timeout.as_millis();
+                if self.spares(alive, id) {
+                    // The answer may have come between the end of the wait and now.
+                    if let Some(reply) = self.shared.enter_stuck(id, what, background) {
+                        return self.settle(Waited::Reply(reply), what, timeout, id, background);
+                    }
+                    return Err(BackendError::Failed(format!(
+                        "{NOT_RESPONDING}: it did not answer {what} within {ms} ms"
+                    )));
+                }
+                if background {
+                    self.shared.clear_background();
+                }
                 self.shared.kill(format!(
                     "the plugin process did not answer {what} within {ms} ms and was stopped"
                 ));
@@ -893,6 +1176,69 @@ impl Link {
             return None;
         }
         Some(self.await_reply(what, timeout))
+    }
+
+    /// Sends the request `make(id)` as the background request: its answer goes to a slot of its
+    /// own, so it can be out while other calls go on, and [`Link::poll_background`] takes it
+    /// without waiting. Nothing times it out: a child whose main thread is busy answers when
+    /// it is free. Only one is out at a time; asking while one is out changes nothing.
+    pub fn begin_background(
+        &mut self,
+        make: impl FnOnce(u64) -> ToChild,
+    ) -> Result<(), BackendError> {
+        if self.shared.is_lost() {
+            return Err(lost());
+        }
+        if let Some(call) = self.stuck() {
+            return Err(not_responding(&call, "a request"));
+        }
+        if self.shared.background_out() {
+            return Ok(());
+        }
+        self.next_id += 1;
+        let id = self.next_id;
+        self.shared.expect_background(id);
+        let sent = self.send(&make(id), None);
+        if sent.is_err() {
+            self.shared.clear_background();
+        }
+        sent
+    }
+
+    /// True while the background request has not been answered or collected.
+    pub fn background_out(&self) -> bool {
+        self.shared.background_out()
+    }
+
+    /// The answer to the background request, without waiting; `None` while it has not come. A
+    /// child that ended answers with a lost link.
+    pub fn poll_background(&mut self) -> Option<Result<Reply, BackendError>> {
+        Some(match self.shared.try_take_background()? {
+            Waited::Reply(reply) => match reply.msg {
+                FromChild::Err { kind, text, .. } => Err(into_backend_error(kind, text)),
+                _ => Ok(reply),
+            },
+            Waited::Ended | Waited::TimedOut { .. } => Err(lost()),
+        })
+    }
+
+    /// Waits up to `timeout` for the background request that is out, like [`Link::call`]: a
+    /// call that needs the state now (a save) takes the request that is out instead of
+    /// sending a second one. `None` when none is out.
+    pub fn finish_background(
+        &mut self,
+        what: &str,
+        timeout: Duration,
+    ) -> Option<Result<Reply, BackendError>> {
+        if !self.shared.background_out() {
+            return None;
+        }
+        let id = self.shared.background_id()?;
+        let waited = self.shared.wait_background_noted(what, timeout);
+        if matches!(waited, Waited::Ended) {
+            self.shared.clear_background();
+        }
+        Some(self.settle(waited, what, timeout, id, true))
     }
 
     /// Sends the request `make(id)` (with `blob`) and waits `timeout` for its answer. A lost
@@ -949,6 +1295,7 @@ impl Link {
         }
         self.next_id += 1;
         let id = self.next_id;
+        self.sense();
         self.shared.expect(Expect::Id(id));
         self.send(&make(id), None)?;
         match self.shared.wait_noted(what, timeout) {
@@ -960,7 +1307,7 @@ impl Link {
                 }
             }
             Waited::Ended => Err(lost()),
-            Waited::TimedOut => {
+            Waited::TimedOut { alive } => {
                 self.misses += 1;
                 self.last_miss = Some(now());
                 let ms = timeout.as_millis();
@@ -970,6 +1317,22 @@ impl Link {
                     ));
                 }
                 if self.misses >= MISSES_TO_KILL {
+                    if self.spares(alive, id) {
+                        // Busy, not wedged: the process shows a sign of life.
+                        if let Some(reply) = self.shared.enter_stuck(id, what, false) {
+                            self.misses = 0;
+                            return match reply.msg {
+                                FromChild::Err { kind, text, .. } => {
+                                    Err(into_backend_error(kind, text))
+                                }
+                                _ => Ok(reply),
+                            };
+                        }
+                        let n = self.misses;
+                        return Err(BackendError::Failed(format!(
+                            "{NOT_RESPONDING}: it did not answer {what} {n} times in a row"
+                        )));
+                    }
                     let n = self.misses;
                     self.shared.kill(format!(
                         "the plugin process did not answer {what} {n} times in a row and was stopped"

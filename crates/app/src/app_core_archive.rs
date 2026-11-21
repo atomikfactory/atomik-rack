@@ -134,7 +134,7 @@ impl<S: EngineSink> AppCore<S> {
         if self.archive.running.is_some() {
             return self.archive_refused("A project archive is already being made".to_owned());
         }
-        self.plugins_capture_all();
+        self.plugins_capture_for_save();
         let mut saved = self.doc().clone();
         saved.prune_unreferenced_assets();
         let text = match atomik_model::save_project_checked(&saved) {

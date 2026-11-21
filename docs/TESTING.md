@@ -1800,7 +1800,11 @@ Diagnostics carries its tail). Three kinds of line say where the UI thread waite
   at least 50 ms (`STALL_THRESHOLD`): the call, the device, the milliseconds and how it ended (`answered`,
   `timed out`, `child gone`). The same line is in the plugin log of the app. It comes from the control link in
   `crates/plugin-sandbox/src/link.rs`, so a fast call writes nothing; the tests in
-  `crates/plugin-sandbox/src/tests/rpc.rs` pin that one late answer leaves exactly one record.
+  `crates/plugin-sandbox/src/tests/rpc.rs` pin that one late answer leaves exactly one record. The state of a
+  plugin is asked for in the background in the live app, so a `CaptureState` line now means a save, an archive, a
+  share, an audio restart, an undo or a command that could remove a device waited for the plugin; the tests in
+  `crates/plugin-sandbox/src/tests/background.rs` pin that a background request leaves no record, and
+  `app_core_plugins_capture_tests.rs` counts the synchronous captures of the paths that must not wait.
 - `ui stall 180 ms: frame` is a whole UI tick or window redraw that took at least 100 ms. At most one such line is
   written per second, and the next says how many it hid. Only the windowed app writes it (a bounce, the QA server
   and the tests do not).

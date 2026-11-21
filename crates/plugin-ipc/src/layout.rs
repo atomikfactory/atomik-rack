@@ -5,7 +5,7 @@
 //! ```text
 //! offset      size   what
 //!      0        64   Header   magic, version, req_seq, done_seq, child_dead, doorbell word,
-//!                             wake flag, processor info
+//!                             wake flag, processor info, pulse
 //!     64    33 920   Request  ticket, op, channel counts, silent flags, transport, main_in,
 //!                             sidechain, events (parent writes, child reads)
 //! 33 984    20 544   Response ticket, status, ok, dropped, main_out, aux_out, events
@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64};
 
 /// Version of the block layout and of the control protocol. The child refuses a block whose
 /// version differs.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 /// First word of a block: `ATSB`.
 pub const MAGIC: u32 = u32::from_le_bytes(*b"ATSB");
 /// Channels of each audio area (main in, sidechain, main out): 0 to 2.
@@ -159,6 +159,11 @@ pub struct Header {
     pub info_rule: AtomicU32,
     /// The processor's tail code (`u64::MAX` is infinite).
     pub info_tail: AtomicU64,
+    /// The sign of life: the child's audio thread stores a growing number here on every pass of
+    /// its loop, which comes round every few milliseconds even when nothing is asked of it,
+    /// whatever the plugin's main thread is doing. A value that stops changing means the audio
+    /// thread is not running.
+    pub pulse: AtomicU64,
 }
 
 /// What the parent sends for one exchange.
@@ -415,7 +420,7 @@ mod tests {
 
     #[test]
     fn the_constants_are_the_ones_of_the_contract() {
-        assert_eq!(PROTOCOL_VERSION, 2);
+        assert_eq!(PROTOCOL_VERSION, 3);
         assert_eq!(MAGIC.to_le_bytes(), *b"ATSB");
         assert_eq!(MAX_CHANNELS, 2);
         assert_eq!(MAX_AUX_CHANNELS, 14);
@@ -455,6 +460,7 @@ mod tests {
         assert_eq!(offset_of!(Header, wake), 32);
         assert_eq!(offset_of!(Header, info_rule), 36);
         assert_eq!(offset_of!(Header, info_tail), 40);
+        assert_eq!(offset_of!(Header, pulse), 48);
     }
 
     #[test]

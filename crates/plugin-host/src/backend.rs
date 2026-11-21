@@ -36,6 +36,14 @@ pub enum BackendError {
     Failed(String),
 }
 
+impl BackendError {
+    /// True when the call failed because the plugin is alive but busy and did not answer (see
+    /// [`crate::NOT_RESPONDING`]).
+    pub fn is_not_responding(&self) -> bool {
+        matches!(self, Self::Failed(text) if text.starts_with(crate::NOT_RESPONDING))
+    }
+}
+
 // ----- events and the process view ----------------------------------------------------------
 
 /// A format-neutral plugin event. Note ids are assigned by the host.
@@ -431,6 +439,26 @@ pub trait PluginInstance {
     fn begin_capture_state(&mut self) {}
     /// Saves the plugin state.
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError>;
+    /// True when [`PluginInstance::request_capture`] really goes out without waiting (a plugin
+    /// in another process, whose main thread may be busy). The default is false: the manager
+    /// then captures at the request, which is cheap for a plugin in this process.
+    fn background_capture(&self) -> bool {
+        false
+    }
+    /// Asks for the plugin state without waiting; [`PluginInstance::poll_capture`] collects it
+    /// when it has arrived. At most one is outstanding (the manager keeps to that). While one is
+    /// out, [`PluginInstance::capture_state`] waits for it instead of sending a second request.
+    ///
+    /// # Errors
+    /// The request could not be sent (the plugin is gone).
+    fn request_capture(&mut self) -> Result<(), BackendError> {
+        Ok(())
+    }
+    /// The state asked for by [`PluginInstance::request_capture`], or `None` while it has not
+    /// come. Never waits and never stops the plugin for being slow.
+    fn poll_capture(&mut self) -> Option<Result<PluginStateBlob, BackendError>> {
+        None
+    }
     /// Restores a saved state.
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError>;
     /// The presets the plugin offers, in its own order (empty when it has none or the format
@@ -526,6 +554,16 @@ pub trait PluginInstance {
     fn is_lost(&self) -> bool {
         false
     }
+    /// The name of the call the plugin has not answered although its process is alive (a
+    /// sandboxed plugin whose main thread is busy): until the answer comes every call fails at
+    /// once with an error that [`BackendError::is_not_responding`] recognises, and the answer
+    /// ends the state by itself. `None` when the plugin responds.
+    fn not_responding(&self) -> Option<String> {
+        None
+    }
+    /// Stops the plugin's process because the user chose to, after it did not respond (RELOAD):
+    /// the instance is lost from then on, as after a crash. Nothing for a plugin in this process.
+    fn stop_process(&mut self) {}
     /// The instance is about to be dropped: starts ending whatever outlives a call (a child
     /// process) without waiting for it, so that the manager can start every instance's end
     /// first and then wait for all of them at once. Dropping still works without this call.
@@ -642,6 +680,20 @@ pub struct NullStats {
     fixed_gui_size: Mutex<Option<(u32, u32)>>,
     presets: AtomicBool,
     deactivate_delay: AtomicUsize,
+    /// The null instances capture in the background, as a plugin in another process does.
+    background_capture: AtomicBool,
+    /// A background capture is not answered while this is set (a plugin whose main thread is
+    /// busy).
+    captures_held: AtomicBool,
+    /// Background capture requests received.
+    capture_requests: AtomicUsize,
+    /// Synchronous `capture_state` calls received.
+    sync_captures: AtomicUsize,
+    /// The null instances are alive but do not answer (see [`NullStats::set_not_responding`]).
+    not_responding: AtomicBool,
+    /// A state the plugin gives itself (a patch picked in its own window), taken by the null
+    /// instances at their next call.
+    own_edit: Mutex<Option<Vec<u8>>>,
     /// The layout the instances take at their next restart (see [`NullStats::change_layout`]).
     pending_layout: Mutex<Option<PluginLayout>>,
     /// The layout the plugin has since: new instances start with it.
@@ -664,6 +716,39 @@ impl NullStats {
             .pending_layout
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(layout);
+    }
+
+    /// Makes the null instances capture in the background like a plugin in another process:
+    /// [`PluginInstance::request_capture`] sends nothing to wait for and
+    /// [`PluginInstance::poll_capture`] answers when [`NullStats::hold_captures`] lets it.
+    pub fn set_background_capture(&self, on: bool) {
+        self.background_capture.store(on, Ordering::Relaxed);
+    }
+    /// While held, a background capture is not answered (the plugin's main thread is busy); the
+    /// state it then gives is the one the plugin holds when the hold ends.
+    pub fn hold_captures(&self, hold: bool) {
+        self.captures_held.store(hold, Ordering::Relaxed);
+    }
+    /// Makes the null plugin change its own state to `state` (not a restore from the app): the
+    /// instances hold it from their next poll, capture or request.
+    pub fn edit_state(&self, state: &[u8]) {
+        *self.own_edit.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.to_vec());
+    }
+    /// Makes every null instance alive but not answering, as a sandboxed plugin whose main
+    /// thread is busy is once a call has timed out: [`PluginInstance::not_responding`] names a
+    /// call and the calls that need an answer (capture, restore, preset load) fail at once with
+    /// an error [`BackendError::is_not_responding`] recognises. False ends it, as the plugin's
+    /// late answer does.
+    pub fn set_not_responding(&self, on: bool) {
+        self.not_responding.store(on, Ordering::Relaxed);
+    }
+    /// Background capture requests the null instances received.
+    pub fn capture_requests(&self) -> usize {
+        self.capture_requests.load(Ordering::Relaxed)
+    }
+    /// Synchronous state captures the null instances served.
+    pub fn sync_captures(&self) -> usize {
+        self.sync_captures.load(Ordering::Relaxed)
     }
 
     /// Instances created.
@@ -831,6 +916,7 @@ impl PluginBackend for NullBackend {
             state: PluginStateBlob::default(),
             held: BTreeMap::new(),
             stats: Arc::clone(&self.stats),
+            capture_out: false,
             opening: None,
             opening_in: None,
             deactivating: None,
@@ -845,6 +931,8 @@ struct NullInstance {
     state: PluginStateBlob,
     held: BTreeMap<u32, f64>,
     stats: Arc<NullStats>,
+    /// A background capture was requested and not collected.
+    capture_out: bool,
     /// Polls left before a slow external editor is open.
     opening: Option<usize>,
     /// The app window a slow editor that is opening goes into, when it goes into one.
@@ -860,6 +948,31 @@ impl Drop for NullInstance {
 }
 
 impl NullInstance {
+    /// The error of a call made while the null plugin is set not to respond (see
+    /// [`NullStats::set_not_responding`]).
+    fn stuck_error(&self, what: &str) -> Result<(), BackendError> {
+        if self.stats.not_responding.load(Ordering::Relaxed) {
+            return Err(BackendError::Failed(format!(
+                "{}: it has not answered CaptureState yet; {what} was not sent",
+                crate::NOT_RESPONDING
+            )));
+        }
+        Ok(())
+    }
+
+    /// Takes the state the plugin gave itself since the last call.
+    fn take_own_edit(&mut self) {
+        let edit = self
+            .stats
+            .own_edit
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(state) = edit {
+            self.state = PluginStateBlob(state);
+        }
+    }
+
     /// Counts an editor opened inside `parent`.
     fn note_embedded(&self, parent: NativeParent) {
         self.stats.embedded_opens.fetch_add(1, Ordering::Relaxed);
@@ -955,11 +1068,44 @@ impl PluginInstance for NullInstance {
         }
     }
 
+    fn not_responding(&self) -> Option<String> {
+        self.stats
+            .not_responding
+            .load(Ordering::Relaxed)
+            .then(|| "CaptureState".to_string())
+    }
+
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError> {
+        self.stuck_error("CaptureState")?;
+        self.take_own_edit();
+        self.stats.sync_captures.fetch_add(1, Ordering::Relaxed);
+        self.capture_out = false;
         Ok(self.state.clone())
     }
 
+    fn background_capture(&self) -> bool {
+        self.stats.background_capture.load(Ordering::Relaxed)
+    }
+
+    fn request_capture(&mut self) -> Result<(), BackendError> {
+        self.stuck_error("a request")?;
+        self.take_own_edit();
+        self.stats.capture_requests.fetch_add(1, Ordering::Relaxed);
+        self.capture_out = true;
+        Ok(())
+    }
+
+    fn poll_capture(&mut self) -> Option<Result<PluginStateBlob, BackendError>> {
+        self.take_own_edit();
+        if !self.capture_out || self.stats.captures_held.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.capture_out = false;
+        Some(Ok(self.state.clone()))
+    }
+
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError> {
+        self.stuck_error("RestoreState")?;
         self.state = state.clone();
         let index = std::str::from_utf8(&state.0)
             .ok()
@@ -984,6 +1130,7 @@ impl PluginInstance for NullInstance {
     }
 
     fn load_preset(&mut self, id: &str) -> Result<(), BackendError> {
+        self.stuck_error("LoadPreset")?;
         if !self.stats.presets.load(Ordering::Relaxed) {
             return Err(BackendError::Unsupported(
                 "the null plugin has no presets".to_string(),
@@ -1021,7 +1168,9 @@ impl PluginInstance for NullInstance {
         }
     }
 
-    fn poll(&mut self) {}
+    fn poll(&mut self) {
+        self.take_own_edit();
+    }
 
     fn editor_kind(&self) -> EditorKind {
         if self.stats.external_editor.load(Ordering::Relaxed) {

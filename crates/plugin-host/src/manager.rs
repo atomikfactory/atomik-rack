@@ -37,6 +37,12 @@ pub const LOST: &str = "the plugin process stopped";
 /// reloads such a plugin from its last captured state).
 pub const HUNG: &str = "the plugin process stopped answering audio batches";
 
+/// How the error of a call begins when the plugin's process is alive but its main thread has not
+/// answered an earlier request: the plugin is NOT RESPONDING, calls fail at once instead of
+/// waiting, and it answers again by itself when the late answer arrives. The process is not
+/// stopped.
+pub const NOT_RESPONDING: &str = "the plugin is not responding";
+
 /// What to create.
 #[derive(Debug, Clone)]
 pub struct InstantiateRequest {
@@ -109,6 +115,14 @@ pub enum ManagerError {
     /// The instance is live in the engine and cannot be removed from here.
     #[error("plugin instance {0:?} is in use")]
     InUse(InstanceId),
+}
+
+impl ManagerError {
+    /// True when the call failed because the plugin is alive but busy and did not answer (see
+    /// [`NOT_RESPONDING`]): nothing is wrong with the plugin, its answer is just not there.
+    pub fn is_not_responding(&self) -> bool {
+        matches!(self, Self::Backend(e) if e.is_not_responding())
+    }
 }
 
 /// Something that happened to an instance, for the app to act on.
@@ -200,6 +214,18 @@ pub enum ManagerEvent {
     },
     /// The instance was deactivated and destroyed.
     Destroyed(InstanceId),
+    /// The plugin's process is alive but its main thread did not answer `call` in time (sandbox
+    /// only): the plugin counts as NOT RESPONDING, calls on it fail at once, and the process is
+    /// left running. Never produced in an offline render.
+    NotResponding {
+        /// The instance.
+        instance: InstanceId,
+        /// The name of the call that was not answered.
+        call: String,
+    },
+    /// The plugin answered the call that [`ManagerEvent::NotResponding`] reported: it is
+    /// responding again.
+    Responding(InstanceId),
     /// The plugin's process ended (sandbox): the device is CRASHED until RELOAD creates a new
     /// instance.
     Crashed {
@@ -258,6 +284,35 @@ struct Managed {
     editor_opening: bool,
     /// A restart asked for while the editor was opening.
     deferred_restart: bool,
+    /// The background capture of the plugin state (see [`PluginManager::request_capture`]).
+    capture: CaptureSlot,
+    /// The call the plugin has not answered while its process is alive, as the last poll saw it.
+    not_responding: Option<String>,
+}
+
+/// The one background capture an instance can have outstanding.
+#[derive(Default)]
+struct CaptureSlot {
+    /// A request is out and has not been collected.
+    out: bool,
+    /// Another request came while this one was out: the state may have changed since.
+    again: bool,
+    /// The plugin's state was replaced while the request was out: its answer is out of date.
+    stale: bool,
+    /// The answer, when it came at the request (a plugin in this process) or the request failed.
+    ready: Option<Result<PluginStateBlob, BackendError>>,
+}
+
+/// A background capture that has come back, from [`PluginManager::poll_capture`].
+#[derive(Debug)]
+pub struct CaptureLanded {
+    /// The state, or why there is none.
+    pub result: Result<PluginStateBlob, ManagerError>,
+    /// Another capture was asked for while this one was out: the plugin may have changed again.
+    pub again: bool,
+    /// The plugin's state was replaced (restored) while the request was out, or the instance is
+    /// gone: the answer must not be stored.
+    pub stale: bool,
 }
 
 /// How many stall records the manager keeps for a caller that does not drain them.
@@ -369,6 +424,28 @@ impl PluginManager {
     /// The plugin's layout now.
     pub fn layout(&self, id: InstanceId) -> Option<&PluginLayout> {
         self.instances.get(&id).map(|m| &m.layout)
+    }
+
+    /// The call the instance has not answered although its process is alive (see
+    /// [`NOT_RESPONDING`]); `None` when it responds, is gone or is unknown. Answers from the
+    /// instance itself, so it is current between two polls.
+    pub fn not_responding(&self, id: InstanceId) -> Option<String> {
+        self.instances.get(&id)?.instance.not_responding()
+    }
+
+    /// Stops the process of an instance that does not respond (see [`NOT_RESPONDING`]) at the
+    /// user's request: it is lost from then on, like a crashed one, and the app replaces it.
+    /// Returns false when the instance is unknown or does respond.
+    pub fn stop_unresponsive(&mut self, id: InstanceId) -> bool {
+        assert_main_thread("PluginManager::stop_unresponsive");
+        let Some(m) = self.instances.get_mut(&id) else {
+            return false;
+        };
+        if m.instance.not_responding().is_none() {
+            return false;
+        }
+        m.instance.stop_process();
+        true
     }
 
     /// The ids of every instance (live and parked), in creation order.
@@ -539,6 +616,8 @@ impl PluginManager {
                 parked: false,
                 editor_opening: false,
                 deferred_restart: false,
+                capture: CaptureSlot::default(),
+                not_responding: None,
             },
         );
         Ok(PluginHandle {
@@ -559,19 +638,86 @@ impl PluginManager {
     /// An unknown instance, or what the plugin said.
     pub fn capture_state(&mut self, id: InstanceId) -> Result<PluginStateBlob, ManagerError> {
         assert_main_thread("PluginManager::capture_state");
-        Ok(self.get(id)?.instance.capture_state()?)
+        let m = self.get(id)?;
+        // This answer replaces the background one (a remote instance waits for the request that
+        // is out instead of sending another).
+        m.capture = CaptureSlot::default();
+        Ok(m.instance.capture_state()?)
     }
 
     /// Sends the capture request to the instances in `ids` without waiting; the
     /// [`PluginManager::capture_state`] of each collects its answer. A remote instance not
-    /// collected afterwards just drops the answer.
+    /// collected afterwards just drops the answer. An instance with a background capture out
+    /// is left to that one.
     pub fn begin_capture(&mut self, ids: &[InstanceId]) {
         assert_main_thread("PluginManager::begin_capture");
         for id in ids {
-            if let Some(m) = self.instances.get_mut(id) {
+            if let Some(m) = self.instances.get_mut(id)
+                && !m.capture.out
+            {
                 m.instance.begin_capture_state();
             }
         }
+    }
+
+    /// Asks the instance for its state without waiting for it (the live app's way: a plugin
+    /// whose main thread is busy answers when it is free, and nothing here stands still);
+    /// [`PluginManager::poll_capture`] collects it. At most one request is out per instance: a
+    /// request while one is out only notes that the state may have changed since (the answer
+    /// then says `again`). A plugin in this process answers at once.
+    ///
+    /// # Errors
+    /// An unknown instance.
+    pub fn request_capture(&mut self, id: InstanceId) -> Result<(), ManagerError> {
+        assert_main_thread("PluginManager::request_capture");
+        let m = self.get(id)?;
+        if m.capture.out {
+            m.capture.again = true;
+            return Ok(());
+        }
+        m.capture = CaptureSlot {
+            out: true,
+            ..CaptureSlot::default()
+        };
+        if m.instance.background_capture() {
+            if let Err(e) = m.instance.request_capture() {
+                m.capture.ready = Some(Err(e));
+            }
+        } else {
+            m.capture.ready = Some(m.instance.capture_state());
+        }
+        Ok(())
+    }
+
+    /// True while a [`PluginManager::request_capture`] of the instance has not been collected.
+    pub fn capture_out(&self, id: InstanceId) -> bool {
+        self.instances.get(&id).is_some_and(|m| m.capture.out)
+    }
+
+    /// The answer to [`PluginManager::request_capture`] if it has come; never waits. An
+    /// instance that is gone answers at once with a stale error.
+    pub fn poll_capture(&mut self, id: InstanceId) -> Option<CaptureLanded> {
+        assert_main_thread("PluginManager::poll_capture");
+        let Some(m) = self.instances.get_mut(&id) else {
+            return Some(CaptureLanded {
+                result: Err(ManagerError::UnknownInstance(id)),
+                again: false,
+                stale: true,
+            });
+        };
+        if !m.capture.out {
+            return None;
+        }
+        let got = match m.capture.ready.take() {
+            Some(got) => got,
+            None => m.instance.poll_capture()?,
+        };
+        let slot = std::mem::take(&mut m.capture);
+        Some(CaptureLanded {
+            result: got.map_err(ManagerError::from),
+            again: slot.again,
+            stale: slot.stale,
+        })
     }
 
     /// Saves every instance's state (before a save a).
@@ -579,7 +725,10 @@ impl PluginManager {
         assert_main_thread("PluginManager::capture_all");
         self.instances
             .iter_mut()
-            .map(|(id, m)| (*id, m.instance.capture_state().map_err(ManagerError::from)))
+            .map(|(id, m)| {
+                m.capture = CaptureSlot::default();
+                (*id, m.instance.capture_state().map_err(ManagerError::from))
+            })
             .collect()
     }
 
@@ -593,7 +742,10 @@ impl PluginManager {
         state: &PluginStateBlob,
     ) -> Result<(), ManagerError> {
         assert_main_thread("PluginManager::restore_state");
-        Ok(self.get(id)?.instance.restore_state(state)?)
+        let m = self.get(id)?;
+        // A capture asked for before this restore describes the state that is being replaced.
+        m.capture.stale |= m.capture.out;
+        Ok(m.instance.restore_state(state)?)
     }
 
     /// The presets the plugin offers (empty for an unknown instance).
@@ -760,7 +912,19 @@ impl PluginManager {
         assert_main_thread("PluginManager::close_gui");
         let m = self.get(id)?;
         m.instance.close_gui();
+        m.capture = CaptureSlot::default();
         Ok(m.instance.capture_state().ok())
+    }
+
+    /// Closes the editor without capturing: the live app asks for the state afterwards with
+    /// [`PluginManager::request_capture`], so a plugin that is busy does not hold it up.
+    ///
+    /// # Errors
+    /// An unknown instance.
+    pub fn close_editor(&mut self, id: InstanceId) -> Result<(), ManagerError> {
+        assert_main_thread("PluginManager::close_editor");
+        self.get(id)?.instance.close_gui();
+        Ok(())
     }
 
     // ----- restarts ---------------------------------------------------------------------------------
@@ -1014,6 +1178,20 @@ impl PluginManager {
         // A parked instance is polled too: with audio off an instance lives parked and its
         // editor and timers must keep running.
         m.instance.poll();
+        // Only a live plugin that kept running past a timeout is ever in this state: an offline
+        // render never gets here, so the event stream of a bounce does not depend on the clock.
+        let stuck = m.instance.not_responding();
+        if stuck != m.not_responding {
+            match (&m.not_responding, &stuck) {
+                (None, Some(call)) => events.push(ManagerEvent::NotResponding {
+                    instance: id,
+                    call: call.clone(),
+                }),
+                (Some(_), None) => events.push(ManagerEvent::Responding(id)),
+                _ => {}
+            }
+            m.not_responding = stuck;
+        }
         let mut restart = false;
         while let Some(msg) = m.end.try_recv() {
             match msg {

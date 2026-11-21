@@ -6,7 +6,7 @@ use crate::clock::now;
 use crate::fake::{Action, FAKE_PID, FakeOptions, fake_layout, start_with, test_timeouts};
 use atomik_device_sdk::PluginStateBlob;
 use atomik_plugin_host::{EditorKind, NativeParent, PluginInstance};
-use atomik_plugin_ipc::{FromChild, ToChild, WireErrorKind, WireParent};
+use atomik_plugin_ipc::{FromChild, PROTOCOL_VERSION, ToChild, WireErrorKind, WireParent};
 use std::sync::atomic::Ordering;
 
 #[test]
@@ -22,7 +22,12 @@ fn the_hello_exchange_and_instantiate_give_the_layout_and_the_facts() {
     assert_eq!(r.live.load(Ordering::SeqCst), 1);
     let requests = r.fake.ctl.requests();
     assert!(
-        matches!(requests[0], ToChild::Hello { protocol: 2 }),
+        matches!(
+            requests[0],
+            ToChild::Hello {
+                protocol: PROTOCOL_VERSION
+            }
+        ),
         "{requests:?}"
     );
     assert!(matches!(requests[1], ToChild::Instantiate { .. }));

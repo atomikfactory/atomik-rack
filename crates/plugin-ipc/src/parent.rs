@@ -284,6 +284,14 @@ impl ParentPort {
         self.block.header().done_seq.load(Ordering::Acquire)
     }
 
+    /// The child's sign of life: a number its audio thread changes on every pass of its loop
+    /// (see [`ChildPort::wait_request`](crate::ChildPort::wait_request)). It keeps changing while
+    /// the child's audio thread runs, whatever its main thread is doing, and stops when it does
+    /// not. One atomic load.
+    pub fn pulse(&self) -> u64 {
+        self.block.header().pulse.load(Ordering::Relaxed)
+    }
+
     /// What the child wrote at activation.
     pub fn info(&self) -> ProcessorInfo {
         let header = self.block.header();
@@ -348,6 +356,11 @@ impl DeathHandle {
     /// True once the child is gone.
     pub fn is_dead(&self) -> bool {
         self.block.header().child_dead.load(Ordering::Acquire) != 0
+    }
+
+    /// The child's sign of life (see [`ParentPort::pulse`]), readable from any thread.
+    pub fn pulse(&self) -> u64 {
+        self.block.header().pulse.load(Ordering::Relaxed)
     }
 }
 

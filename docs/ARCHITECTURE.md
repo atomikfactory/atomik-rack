@@ -5070,6 +5070,35 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   `settings.json` and `ui-state.json` are written with the same temporary-file-and-rename write
   (`recovery::atomic_write`); a file that does not parse is renamed `<name>.bad`, the defaults are
   used and the status line says so once.
+- **Plugin state is collected in the background.** The live UI never waits for a plugin's state
+  (the plugin answers on its own main thread, which is busy exactly when its patch has just
+  changed). `PluginManager::request_capture` / `poll_capture` ask for it without waiting: a sandboxed
+  instance sends `CaptureState` over a slot of the control link of its own
+  (`Link::begin_background`), nothing times it out, and a plugin in the app's own process answers at
+  the request. At most one request is out per instance; a request while one is out only makes the
+  answer say `again`, and a state restored into the plugin meanwhile makes the answer `stale` (it is
+  dropped). `AppCore::plugin_tick` asks one `STATE_QUIET_SECS` after a plugin flags its state dirty,
+  and `plugins_poll_captures` stores what has arrived (`store_captured`, one undo step as before; an
+  answer that is late, failed or stale never replaces a stored state). A periodic recovery snapshot
+  asks every loaded plugin and is written when all have answered or after `SNAPSHOT_GRACE_SECS`,
+  with the states stored by then; a snapshot after a capture changed a state is written from the
+  stored states alone, so a plugin that flags itself dirty after every capture cannot make the app
+  capture in a loop. Closing an editor requests a capture after the soft `CloseGui`. A command waits
+  for a plugin only where the stored state is about to be consumed (`plugins_flush_dirty`: undo,
+  redo and the commands `command_keeps_plugins` does not clear: it is an exhaustive match over
+  the command enums in `app_core_plugins_keep.rs`, so a new variant must be classified, and only
+  removing or replacing a device, copying one out of the document (a duplicate carries the
+  stored state), a container or plugin command and freezing a track wait), and save, archive, share,
+  templates, versions and an audio restart (`plugins_capture_all`) still capture synchronously;
+  they take the request that is out instead of sending a second one. A plugin that is alive but does
+  not answer (the sandbox's NOT RESPONDING state, `PluginManager::not_responding`) is never waited
+  for or stopped: its captures fail at once and the document keeps the state stored for it. A save,
+  archive, share, template or version (`plugins_capture_for_save`) tells the user once which
+  devices did not hand over their settings, an audio restart and a removal only log it, and no
+  background request is sent to it. The state shows as `NOT RESPONDING` in the panel
+  (`PluginDeviceStatus::not_responding`) and in the plugin log and the file log (`ManagerEvent::NotResponding`
+  and `Responding`); it is not CRASHED, never reaches `settings.plugins.crashed` or the quarantine
+  count, and RELOAD stops the process (`PluginManager::stop_unresponsive`) and creates a new instance.
 - **Orphaned recordings.** An audio take streams to `Audio/rec-<pid>-<take>-<n>.wav` (2.6). At start
   and when a project opens, `recover_orphan_recordings` scans (bounded) the opened bundle's `Audio/`
   and the session scratch bundles in the temp folder for such files whose process has no live marker
@@ -5113,17 +5142,32 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     reply, and a bounce asks for a `Flush` after every batch, so a callback reaches the host before
     the next batch exactly as in process (a bounce counts in batches, never in time). Main-thread
     calls have timeouts. The ones that matter (10 s create, activate and state; 2 s deactivate and
-    flush) kill the child when they are not answered. The cosmetic ones (param text, default pins,
+    flush) kill the child when they are not answered, unless it shows a sign of life (below). The
+    cosmetic ones (param text, default pins,
     layout changes, closing the editor; 250 ms) only drop the request: the last text stays up, the
     instance counts as slow after three misses in a row and is then asked once a second (a
-    warning says so), and the child is stopped after twelve. A reply that comes late is ignored,
+    warning says so), and the child is stopped after twelve, unless it shows a sign of life.
+    *A plugin that is alive is never stopped by a timeout.* The child's audio thread stores a
+    growing number in the `pulse` word of the block header on every pass of its wait loop (one
+    relaxed store, at least every 10 ms, whatever the plugin's main thread is doing). A wait that
+    times out reads it at the start and at the end of its last half second (a polled wait samples
+    it at every poll): a child whose pulse moved is alive, and then the call fails with an error
+    that begins `the plugin is not responding` (`NOT_RESPONDING`), the process is left running and
+    the link is stuck on that request: every later call fails at once without being sent (soft calls
+    answer their neutral result), `PluginInstance::not_responding` names the call, and the late
+    answer, when the reader thread sees its id, ends the state by itself. The manager reports
+    the state as `ManagerEvent::NotResponding` and `Responding` and answers `PluginManager::not_responding`.
+    A child with no sign of life is stopped as before, with the same text. A bounce
+    (`SandboxConfig::bounce`) keeps stopping on a timeout and never enters the state, so its event
+    stream does not depend on the clock. A reply that comes late is ignored,
     except a layout change, which the child says only once and the instance keeps. The child
     takes a private handle to its real stdout for frames and
     points its stdout at stderr (`take_frame_stdout`), so a plugin that prints cannot corrupt the
     stream.
   - *Audio.* One shared block per instance (a mapped file of 54 528 bytes: header, one request area,
     one response area with the main and the aux output channels, raw `f32` bits and fixed-capacity
-    events), exchanged by sequence numbers.
+    events), exchanged by sequence numbers; the header also holds the child's `pulse` (the protocol
+    version is 3).
     `RemoteProcessor::process` copies the block in, rings the doorbell (Windows named event, Linux
     shared futex, macOS shared ulock; one atomic swap and no system call while the child is awake)
     and spins until the answer, the death flag or the deadline. Live, the deadline is one batch

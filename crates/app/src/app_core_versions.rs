@@ -92,7 +92,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// The song as a project text and the audio it uses, as a save would write it.
     fn snapshot_text(&mut self) -> Result<(String, std::collections::BTreeSet<String>), AppError> {
-        self.plugins_capture_all();
+        self.plugins_capture_for_save();
         let mut snapshot = self.doc().clone();
         snapshot.prune_unreferenced_assets();
         let text = atomik_model::save_project_checked(&snapshot)?;

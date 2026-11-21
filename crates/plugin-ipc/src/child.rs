@@ -26,6 +26,8 @@ pub struct ChildPort {
     doorbell: Doorbell,
     /// The last ticket answered; the child is the only writer of `done_seq`.
     last_done: u64,
+    /// Passes of the wait loop so far: the value of the pulse the parent reads.
+    beats: u64,
     events_in: Vec<PluginEvent>,
     events_out: EventList,
 }
@@ -38,6 +40,7 @@ impl ChildPort {
             block,
             doorbell,
             last_done,
+            beats: 0,
             events_in: Vec::with_capacity(MAX_EVENTS_IN),
             events_out: EventList::with_capacity(MAX_EVENTS_OUT),
         }
@@ -69,9 +72,23 @@ impl ChildPort {
             .store(ticket, Ordering::Release);
     }
 
+    /// Shows the parent that this thread is running: one relaxed store of a growing number, no
+    /// allocation and no lock. [`ChildPort::wait_request`] does it on every pass, so a child whose
+    /// audio thread loops on it is seen alive whatever its main thread is doing.
+    fn beat(&mut self) {
+        self.beats = self.beats.wrapping_add(1);
+        self.block
+            .header()
+            .pulse
+            .store(self.beats, Ordering::Relaxed);
+    }
+
     /// Blocks until a request or `timeout`: spins for about 50 us, then parks on the doorbell.
     /// `None` on timeout. A request taken but not completed is returned again by the next call.
+    /// Every call (and every park inside it) bumps the block's pulse, the sign of life the
+    /// parent reads without the plugin's main thread.
     pub fn wait_request(&mut self, timeout: Duration) -> Option<Request<'_>> {
+        self.beat();
         let start = now();
         let end = start.checked_add(timeout).unwrap_or(start);
         let spin_end = (start + SPIN).min(end);
@@ -102,6 +119,7 @@ impl ChildPort {
             if t < spin_end {
                 std::hint::spin_loop();
             } else {
+                self.beat();
                 self.doorbell.wait(end - t);
             }
         }

@@ -174,6 +174,10 @@ pub struct PluginDeviceStatus {
     /// The plugin's process ended (sandbox): the reason, the exit code or signal and the last
     /// lines it wrote. RELOAD creates a new instance.
     pub crashed: Option<String>,
+    /// The plugin's process is alive but its main thread did not answer a call in time (sandbox):
+    /// the name of the call. The app stopped waiting for it and asks it no more until it answers,
+    /// its audio keeps running; RELOAD stops it and creates a new instance.
+    pub not_responding: Option<String>,
     /// The plugin is quarantined, so the project did not load it: the reason (empty when it is
     /// not known). LOAD ANYWAY (the RELOAD button) loads it.
     pub quarantined: Option<String>,
