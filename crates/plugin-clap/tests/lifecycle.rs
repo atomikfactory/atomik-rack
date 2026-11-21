@@ -229,7 +229,8 @@ fn reload_after_a_failure_restarts_the_device() {
     let mut m = manager_for(&["atomik-test-clap-variants"]);
     let (mut h, id, _) = open(&mut m, "atomik.test.error");
     *h.input_mut("in_l") = [0.25; BATCH];
-    run(&mut h, 2);
+    // It fails after a run of bad blocks, not at the first one.
+    run(&mut h, atomik_plugin_host::bad_run_limit(48_000.0) as usize);
     let events = m.poll();
     assert!(
         events

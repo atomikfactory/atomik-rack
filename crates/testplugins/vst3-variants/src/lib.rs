@@ -170,9 +170,17 @@ enum Fault {
     Start,
     Process,
     Nan,
+    /// An error status on the third block only, a pass-through otherwise.
+    ProcessOnce,
+    /// Non-finite output on the third block only, a pass-through otherwise.
+    NanOnce,
 }
 
-struct Faulty(Fault);
+/// The block (counting from 1) a "once" fault hits.
+const FAULT_BLOCK: u32 = 3;
+
+/// A plugin with one thing wrong; the number is how many blocks it has processed.
+struct Faulty(Fault, u32);
 
 impl Dsp for Faulty {
     fn ports(&self) -> Ports {
@@ -202,10 +210,26 @@ impl Dsp for Faulty {
     }
 
     fn process(&mut self, io: &mut Io<'_>) -> Status {
+        self.1 = self.1.saturating_add(1);
+        let once = self.1 == FAULT_BLOCK;
         match self.0 {
             Fault::Process => Status::Error,
+            Fault::ProcessOnce if once => Status::Error,
             Fault::Nan => {
                 io.output = [[f32::NAN; BLOCK]; 2];
+                Status::Continue
+            }
+            Fault::NanOnce if once => {
+                io.output = [[f32::NAN; BLOCK]; 2];
+                Status::Continue
+            }
+            Fault::ProcessOnce | Fault::NanOnce => {
+                // Half the input, so that the dry input and the plugin's own output differ.
+                for c in 0..2 {
+                    for i in 0..BLOCK {
+                        io.output[c][i] = io.input[c][i] * 0.5;
+                    }
+                }
                 Status::Continue
             }
             _ => {
@@ -386,6 +410,8 @@ info!(ACTIVATE_INFO, "Atomik Test Activate Fails", 5);
 info!(START_INFO, "Atomik Test Start Fails", 6);
 info!(ERROR_INFO, "Atomik Test Error", 7);
 info!(NAN_INFO, "Atomik Test Nan", 8);
+info!(ERROR_ONCE_INFO, "Atomik Test Error Once", 12);
+info!(NAN_ONCE_INFO, "Atomik Test Nan Once", 13);
 
 static PICKY_INFO: Info = Info {
     name: "Atomik Test Picky Synth",
@@ -399,7 +425,7 @@ static PICKY_INFO: Info = Info {
 info!(PROXIES_INFO, "Atomik Test Proxies", 10);
 info!(PROXIES_SLOW_INFO, "Atomik Test Slow Proxies", 11);
 
-static PLUGINS: [PluginDef; 11] = [
+static PLUGINS: [PluginDef; 13] = [
     PluginDef {
         info: &SPLIT_INFO,
         create: || {
@@ -418,23 +444,31 @@ static PLUGINS: [PluginDef; 11] = [
     },
     PluginDef {
         info: &INIT_INFO,
-        create: || Box::new(Faulty(Fault::Init)),
+        create: || Box::new(Faulty(Fault::Init, 0)),
     },
     PluginDef {
         info: &ACTIVATE_INFO,
-        create: || Box::new(Faulty(Fault::Activate)),
+        create: || Box::new(Faulty(Fault::Activate, 0)),
     },
     PluginDef {
         info: &START_INFO,
-        create: || Box::new(Faulty(Fault::Start)),
+        create: || Box::new(Faulty(Fault::Start, 0)),
     },
     PluginDef {
         info: &ERROR_INFO,
-        create: || Box::new(Faulty(Fault::Process)),
+        create: || Box::new(Faulty(Fault::Process, 0)),
     },
     PluginDef {
         info: &NAN_INFO,
-        create: || Box::new(Faulty(Fault::Nan)),
+        create: || Box::new(Faulty(Fault::Nan, 0)),
+    },
+    PluginDef {
+        info: &ERROR_ONCE_INFO,
+        create: || Box::new(Faulty(Fault::ProcessOnce, 0)),
+    },
+    PluginDef {
+        info: &NAN_ONCE_INFO,
+        create: || Box::new(Faulty(Fault::NanOnce, 0)),
     },
     PluginDef {
         info: &PICKY_INFO,

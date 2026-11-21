@@ -301,6 +301,15 @@ may break APIs and the patch and project formats.
   (23 MB, the limit is 16 MB); its last state that fitted was saved."); the log gets one warning line per change of
   situation, not one per capture. The last state that fitted stays in the project, and the marker clears at the
   first capture that fits. A state the app did not ask for no longer takes memory while it is read from the pipe.
+- **One bad block no longer fails a plugin until RELOAD.** A plugin whose `process` returned an error once, or
+  produced one non-finite sample in one block (as some do while loading a preset), was marked FAILED for good, in
+  the app's process and in a plugin process alike. Such a block is now replaced like a late one: the dry input for
+  an effect, silence for an instrument, with a one-block ramp into the fallback and back so that it does not click;
+  it is counted (`bad plugin blocks` in the status line's overload part, in Help > Export Diagnostics and in the QA
+  `session_status`). The device fails, with the same reasons as before, only after a quarter of a second of bad
+  blocks in a row, and a good block starts the count again. A panic still fails it at once. The rule looks only at
+  what the plugin returned, so a bounce, live playback, a plugin in the app and a sandboxed one agree, and a
+  project with no bad block renders exactly as before.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

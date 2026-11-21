@@ -1438,3 +1438,32 @@ capture copies the state); stopping the plugin at the limit (what happened befor
 **Open.** A real sampler's state sizes against the two caps, by hand.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AX. A plugin fails after a run of bad blocks, not at the first one
+
+**Decision.** A block in which a plugin's `process` returns an error, or writes a non-finite sample, is a bad
+block: it is counted and replaced by what a late batch gets (the dry input for an effect, silence for the
+rest), with a linear ramp over the block going into the fallback and over the first good block coming back, so
+that the output does not click. The device fails, with the reason of the last bad block, only after
+`bad_run_limit` (a quarter of a second of 64-frame blocks) in a row; a good block starts the count again. A
+panic fails it at once; a late or refused batch is not a bad block and does not change the count; a plugin that
+cannot start processing still fails at once.
+
+**Why.** Plugins return an error or a NaN for a block while they load a preset, and on a denormal or a division
+by zero, and are fine on the next one; hosts that stop the plugin for good make a glitch cost the user a RELOAD
+and the take. The rule looks only at what the plugin returned, so a bounce, live playback, a plugin in the app
+and one in its own process agree and the sandbox on and off render the same bytes; a project with no bad block is
+untouched, because the ramp only exists around a bad block.
+
+**Limits.** The ramp is one block (1.3 ms at 48 kHz), not the bypass crossfade's 5 ms: a ramp across blocks would
+need state that outlives the block and the next block may be bad again. Aux outputs are cut. A late batch keeps its
+hard cut (existing projects render the same). Finite garbage (1e20) is not detected.
+
+**Rejected.** Failing after a fixed number of bad blocks whatever the rate (a quarter of a second is the same
+audio at every rate); the 5 ms ramp (a bad block only reaches the fallback at its end); muting the plugin for a
+while after a bad block (the plugin would miss the notes and parameters that follow).
+
+**Open.** The quarter of a second is a judgement value; the hand check is a third-party plugin that glitches while
+a preset loads.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

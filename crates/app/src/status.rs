@@ -169,11 +169,14 @@ pub struct OverloadStats {
     /// Sandbox batches whose result came back after the audio thread needed it, summed over the
     /// sandboxed plugins in the rack.
     pub late_sandbox_batches: u64,
+    /// Blocks a plugin answered with an error or non-finite output, replaced by the dry input or
+    /// silence, summed over the plugins in the rack.
+    pub bad_plugin_blocks: u64,
 }
 
 impl OverloadStats {
     /// Every counter with its label, in the order the status bar shows them.
-    pub fn fields(&self) -> [(&'static str, u64); 6] {
+    pub fn fields(&self) -> [(&'static str, u64); 7] {
         [
             ("dropped events", self.dropped_events),
             ("input overruns", self.input_overruns),
@@ -181,6 +184,7 @@ impl OverloadStats {
             ("plugin drops", self.plugin_drops),
             ("control stalled", self.control_stalled),
             ("late sandbox batches", self.late_sandbox_batches),
+            ("bad plugin blocks", self.bad_plugin_blocks),
         ]
     }
 
@@ -509,6 +513,7 @@ mod tests {
                 plugin_drops: 2,
                 control_stalled: 1,
                 late_sandbox_batches: 9,
+                bad_plugin_blocks: 3,
             },
             ..running()
         };
@@ -517,7 +522,8 @@ mod tests {
             "WASAPI \u{b7} Virtual Cable Input \u{b7} 48 kHz \u{b7} buffer 480 \
              \u{b7} DSP 3% (peak 5%) \u{b7} xruns 2 \u{b7} dropped events 4 \
              \u{b7} record overflow 128 \u{b7} plugin drops 2 \u{b7} control stalled 1 \
-             \u{b7} late sandbox batches 9 \u{b7} MIDI Example Keyboard \u{2192} Bass"
+             \u{b7} late sandbox batches 9 \u{b7} bad plugin blocks 3 \
+             \u{b7} MIDI Example Keyboard \u{2192} Bass"
         );
         let one = AudioStatus {
             overload: OverloadStats {

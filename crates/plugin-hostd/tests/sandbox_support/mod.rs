@@ -336,9 +336,10 @@ pub fn request_with_state(
 /// The meter slots of a plugin device.
 pub const METER_STATE: usize = 2;
 pub const METER_LATE: usize = 5;
+pub const METER_BAD: usize = 6;
 
-pub fn meters(h: &DeviceHarness) -> [f32; 6] {
-    let mut m = [0.0f32; 6];
+pub fn meters(h: &DeviceHarness) -> [f32; 8] {
+    let mut m = [0.0f32; 8];
     h.device().meter_values(&mut m);
     m
 }

@@ -2116,16 +2116,17 @@ impl<S: EngineSink> AppCore<S> {
         self.fx_meter_buf = buf;
     }
 
-    /// The drops and late sandbox batches the plugins in the rack report, summed:
-    /// `(plugin_drops, late_sandbox_batches)`. Each plugin device publishes both as running
-    /// totals among its meter values (see `atomik_plugin_host`'s device); this is a lock-free
-    /// read per plugin, for the status bar a few times a second.
-    pub fn plugin_overload(&self) -> (u64, u64) {
-        // Positions of the two counters in a plugin device's meter values.
+    /// The drops, late sandbox batches and bad blocks the plugins in the rack report, summed:
+    /// `(plugin_drops, late_sandbox_batches, bad_plugin_blocks)`. Each plugin device publishes
+    /// them as running totals among its meter values (see `atomik_plugin_host`'s device); this
+    /// is a lock-free read per plugin, for the status bar a few times a second.
+    pub fn plugin_overload(&self) -> (u64, u64, u64) {
+        // Positions of the counters in a plugin device's meter values.
         const DROPPED: usize = 4;
         const LATE: usize = 5;
-        let mut buf = [0.0_f32; LATE + 1];
-        let (mut dropped, mut late) = (0.0_f64, 0.0_f64);
+        const BAD: usize = 6;
+        let mut buf = [0.0_f32; BAD + 1];
+        let (mut dropped, mut late, mut bad) = (0.0_f64, 0.0_f64, 0.0_f64);
         for key in &self.plugin_devices {
             let Some(id) = self.ids.get(key) else {
                 continue;
@@ -2137,8 +2138,11 @@ impl<S: EngineSink> AppCore<S> {
                 dropped += f64::from(buf[DROPPED]);
                 late += f64::from(buf[LATE]);
             }
+            if n > BAD {
+                bad += f64::from(buf[BAD]);
+            }
         }
-        (dropped as u64, late as u64)
+        (dropped as u64, late as u64, bad as u64)
     }
 
     fn sync_ops(&mut self, ops: &[SyncOp]) {

@@ -156,9 +156,17 @@ enum Fault {
     Start,
     Process,
     Nan,
+    /// An error status on the third block only, a pass-through otherwise.
+    ProcessOnce,
+    /// Non-finite output on the third block only, a pass-through otherwise.
+    NanOnce,
 }
 
-struct Faulty(Fault);
+/// The block (counting from 1) a "once" fault hits.
+const FAULT_BLOCK: u32 = 3;
+
+/// A plugin with one thing wrong; the number is how many blocks it has processed.
+struct Faulty(Fault, u32);
 
 impl Dsp for Faulty {
     fn ports(&self) -> Ports {
@@ -188,10 +196,26 @@ impl Dsp for Faulty {
     }
 
     fn process(&mut self, io: &mut Io<'_>) -> Status {
+        self.1 = self.1.saturating_add(1);
+        let once = self.1 == FAULT_BLOCK;
         match self.0 {
             Fault::Process => Status::Error,
+            Fault::ProcessOnce if once => Status::Error,
             Fault::Nan => {
                 io.output = [[f32::NAN; BLOCK]; 2];
+                Status::Continue
+            }
+            Fault::NanOnce if once => {
+                io.output = [[f32::NAN; BLOCK]; 2];
+                Status::Continue
+            }
+            Fault::ProcessOnce | Fault::NanOnce => {
+                // Half the input, so that the dry input and the plugin's own output differ.
+                for c in 0..2 {
+                    for i in 0..BLOCK {
+                        io.output[c][i] = io.input[c][i] * 0.5;
+                    }
+                }
                 Status::Continue
             }
             _ => {
@@ -254,8 +278,18 @@ info!(
     c"atomik.test.nan",
     feat::CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
 );
+info!(
+    ERROR_ONCE_INFO,
+    c"atomik.test.error-once",
+    feat::CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
+);
+info!(
+    NAN_ONCE_INFO,
+    c"atomik.test.nan-once",
+    feat::CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
+);
 
-static PLUGINS: [PluginDef; 8] = [
+static PLUGINS: [PluginDef; 10] = [
     PluginDef {
         info: &MIDI_INFO,
         create: || {
@@ -271,23 +305,31 @@ static PLUGINS: [PluginDef; 8] = [
     },
     PluginDef {
         info: &INIT_INFO,
-        create: || Box::new(Faulty(Fault::Init)),
+        create: || Box::new(Faulty(Fault::Init, 0)),
     },
     PluginDef {
         info: &ACTIVATE_INFO,
-        create: || Box::new(Faulty(Fault::Activate)),
+        create: || Box::new(Faulty(Fault::Activate, 0)),
     },
     PluginDef {
         info: &START_INFO,
-        create: || Box::new(Faulty(Fault::Start)),
+        create: || Box::new(Faulty(Fault::Start, 0)),
     },
     PluginDef {
         info: &ERROR_INFO,
-        create: || Box::new(Faulty(Fault::Process)),
+        create: || Box::new(Faulty(Fault::Process, 0)),
     },
     PluginDef {
         info: &NAN_INFO,
-        create: || Box::new(Faulty(Fault::Nan)),
+        create: || Box::new(Faulty(Fault::Nan, 0)),
+    },
+    PluginDef {
+        info: &ERROR_ONCE_INFO,
+        create: || Box::new(Faulty(Fault::ProcessOnce, 0)),
+    },
+    PluginDef {
+        info: &NAN_ONCE_INFO,
+        create: || Box::new(Faulty(Fault::NanOnce, 0)),
     },
     PluginDef {
         info: &MULTI_INFO,

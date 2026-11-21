@@ -11719,9 +11719,10 @@ impl<B: AudioBackend> Shell<B> {
         } else if !status.faulted {
             self.fault_announced = false;
         }
-        let (plugin_drops, late_batches) = self.core.plugin_overload();
+        let (plugin_drops, late_batches, bad_blocks) = self.core.plugin_overload();
         status.overload.plugin_drops = plugin_drops;
         status.overload.late_sandbox_batches = late_batches;
+        status.overload.bad_plugin_blocks = bad_blocks;
         self.overload = status.overload;
         self.audio_status = status.clone();
         self.sync_cpu_hint();

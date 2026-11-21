@@ -222,6 +222,8 @@ pub const V_NAN: u32 = 8;
 pub const V_PICKY: u32 = 9;
 pub const V_PROXIES: u32 = 10;
 pub const V_PROXIES_SLOW: u32 = 11;
+pub const V_ERROR_ONCE: u32 = 12;
+pub const V_NAN_ONCE: u32 = 13;
 
 /// The first controller proxy id of the proxies plugins (`atomik_test_vst3_variants::PROXY_BASE`).
 pub const PROXY_BASE: u32 = 1_000;
@@ -232,6 +234,10 @@ pub enum Variant {
     Mono,
     Error,
     Nan,
+    /// An error status on the third block only.
+    ErrorOnce,
+    /// Non-finite output on the third block only.
+    NanOnce,
     StartFails,
     ActivateFails,
 }
@@ -242,11 +248,15 @@ impl Variant {
             (Format::Clap, Variant::Mono) => "atomik.test.mono".to_string(),
             (Format::Clap, Variant::Error) => "atomik.test.error".to_string(),
             (Format::Clap, Variant::Nan) => "atomik.test.nan".to_string(),
+            (Format::Clap, Variant::ErrorOnce) => "atomik.test.error-once".to_string(),
+            (Format::Clap, Variant::NanOnce) => "atomik.test.nan-once".to_string(),
             (Format::Clap, Variant::StartFails) => "atomik.test.start-fails".to_string(),
             (Format::Clap, Variant::ActivateFails) => "atomik.test.activate-fails".to_string(),
             (Format::Vst3, Variant::Mono) => variant_id(V_MONO),
             (Format::Vst3, Variant::Error) => variant_id(V_ERROR),
             (Format::Vst3, Variant::Nan) => variant_id(V_NAN),
+            (Format::Vst3, Variant::ErrorOnce) => variant_id(V_ERROR_ONCE),
+            (Format::Vst3, Variant::NanOnce) => variant_id(V_NAN_ONCE),
             (Format::Vst3, Variant::StartFails) => variant_id(V_START),
             (Format::Vst3, Variant::ActivateFails) => variant_id(V_ACTIVATE),
         }

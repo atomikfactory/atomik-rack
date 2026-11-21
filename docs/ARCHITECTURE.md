@@ -4996,9 +4996,11 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   a 5 ms bypass crossfade to the dry main input (an effect's dry input is delayed by the plugin's
   reported latency, so a bypassed latent plugin stays where the delay compensation put it), applies
   the sleep and skip rules (they depend only on batch content), sets flush-to-zero around `process`,
-  and turns an error status, a panic or a non-finite output into FAILED (silence, or dry for
-  effects). Nothing in this path allocates or locks (`assert_no_alloc` tests at host blocks 1, 64,
-  333, 480, 512 with workers 1, 2, 4 and a restart in the middle).
+  and turns a panic, or a run of bad blocks (an error status or a non-finite output; `bad_run_limit`,
+  a quarter of a second), into FAILED (silence, or dry for effects). A single bad block is replaced by the
+  same fallback with a one-block ramp and counted (the seventh meter value, `bad plugin blocks`).
+  Nothing in this path allocates or locks (`assert_no_alloc` tests at host blocks 1, 64, 333, 480,
+  512 with workers 1, 2, 4 and a restart in the middle).
 - **Lifecycle (the manager).** The winit thread is the plugin main thread. `PluginManager` owns each
   instance's main-thread half, moves only the audio processor half into the `PluginDevice`, and
   talks to it through a `PluginSlot` (atomics) and wait-free `rtrb` rings. A **restart** (sample
