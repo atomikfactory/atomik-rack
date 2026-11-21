@@ -1523,3 +1523,44 @@ the next activation. A request ignored by the rule is lost, not queued: the plug
 request, on the interface thread); a time window (a bounce would depend on the machine).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BA. The interface runs at full frame rate only while something moves, and a minimized window does almost nothing
+
+**Decision.** The windowed event loop has three wake rates. At the full frame period (60 Hz) it runs while something
+moves or is polled at that rate: the transport plays or records, a take, a deferred start or a momentary param
+pulse is in flight, a live input analysis, a sampling or the camera runs, a control surface is open, MIDI was heard
+in the last second, a worker or an import is busy, a menu or tooltip waits for the pointer, the rack scrolls, a
+glide or a morph runs, a plugin loads or is captured, a plugin editor window is open, or a pointer button is held.
+It also stays at the full rate for one second (`PAINT_TAIL`) after the last frame that painted something,
+except a frame that only the status poll asked for and a frame painted again because it was not shown. With an
+audio stream open (or a plugin loaded) and none of that, it wakes every 100 ms (`IDLE_STREAM_WAKE`). While every
+window has no area it wakes every 250 ms (`MINIMIZED_WAKE`) and paints nothing; a resize to no area is dropped
+before the graphics target is reallocated and before the shell lays out. A project with no stream and no plugin
+still sleeps until an event, and the tail applies only where a slow wake exists anyway. Live MIDI wakes the loop at
+once (an event-loop proxy called from the MIDI thread when a message is queued), and the exact deadlines (quit time,
+screenshot, submenu switch, graphics back-off) win over every rate.
+
+The DSP figures of the status line are held steady for ten seconds while they move by less than five points
+(`status::DspHold`): an idle engine's load jitters by a fraction of a point, which flipped the rounded figure and
+repainted the whole window every couple of seconds for nothing. A real change shows at once.
+
+**Why.** An open stream used to mean 60 wakes a second, each running the whole housekeeping frame, for a stopped
+transport and an empty rack: a measurable share of a core, no deep CPU sleep, and the same while minimized. Mainstream
+hosts drop their interface to a few updates a second when idle or hidden and go back to full rate on input or
+playback. The second of tail is long enough for a meter's ballistics and a light to settle and for an animation that
+repaints every few frames to keep itself going, so the tail covers what the list of causes does not name; the first
+paint of anything that changes starts it. Painting nothing while minimized is the cheapest saving of all.
+
+**Limits.** Work that is polled on the frame but is not in the list (engine garbage, the plugin event pumps of idle
+plugins, the status poll, the recovery writer, the plugin cache writer, an idle plugin's notifications, the templates
+folder, autosave timers) runs at most 100 ms late while idle, 250 ms while minimized. A change that happens with
+nothing awake is seen at the next slow wake, up to 100 ms later, and then runs at the full rate. A control surface
+or an open plugin editor keeps the full rate for as long as it is open. A small move of the DSP figures in the status
+line shows up to ten seconds late.
+
+**Rejected.** Waking on every cause with a proxy (the causes live on many threads and in many places; the list plus
+the paint tail is smaller and cannot miss a visible change for longer than the slow period); a longer idle period
+(a mapped control or a worker's result would wait visibly); throttling by painting less often at the full rate (the
+cost is the frame, not only the paint).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

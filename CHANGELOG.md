@@ -157,6 +157,14 @@ may break APIs and the patch and project formats.
   out, and polls its plugin every 100 ms instead of every 16 ms while no editor is open; a batch, an editor or a
   call from the app brings the quick rhythm back at once. The app still sees an idle process alive (it beats at
   least every 100 ms). Thirty idle plugins no longer keep thirty processes waking well over a hundred times a second.
+- **The app uses almost no CPU while nothing moves, and less still when minimized.** An open audio stream no longer
+  keeps the interface running sixty frames a second. With the transport stopped and nothing animating, the app looks
+  at the engine, the meters and the plugins ten times a second; a minimized window does it four times a second and
+  draws nothing, and a resize to nothing no longer rebuilds the graphics target. Playback, recording, a drag, a menu,
+  a plugin that loads, live MIDI and anything else that moves still run at the full rate, and the full rate lasts a
+  second after the last thing drawn, so meters and lights settle as before. Live MIDI wakes the app at once. The DSP
+  figures in the status line no longer flip with the tiniest jitter of an idle engine: a small move shows up to ten
+  seconds late, a real change at once.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

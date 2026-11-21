@@ -395,6 +395,43 @@ pub fn crash_context(s: &AudioStatus) -> String {
     format!("audio {audio}; MIDI {midi}")
 }
 
+/// How long the DSP figures of the status line stay as they are while they move by less than
+/// [`DSP_JUMP`].
+pub const DSP_HOLD: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// A move of the DSP load or its peak (1.0 = 100 %) that is shown at once: 5 points.
+pub const DSP_JUMP: f32 = 0.05;
+
+/// Keeps the DSP figures of the status line steady. An idle engine's load jitters by a fraction of
+/// a point, which flips the rounded figure and repaints the whole window a few times a second for
+/// nothing; a figure that moved by less than [`DSP_JUMP`] is shown again as it was until
+/// [`DSP_HOLD`] has passed, and a real change shows at once.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DspHold {
+    shown: Option<(f32, f32, std::time::Instant)>,
+}
+
+impl DspHold {
+    /// Puts the figures to show into `status` (read at `at`).
+    pub fn apply(&mut self, status: &mut AudioStatus, at: std::time::Instant) {
+        if !status.running {
+            self.shown = None;
+            return;
+        }
+        let (load, peak) = (status.dsp_load, status.dsp_peak);
+        if let Some((l, p, since)) = self.shown
+            && at.saturating_duration_since(since) < DSP_HOLD
+            && (load - l).abs() < DSP_JUMP
+            && (peak - p).abs() < DSP_JUMP
+        {
+            status.dsp_load = l;
+            status.dsp_peak = p;
+            return;
+        }
+        self.shown = Some((load, peak, at));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -667,5 +704,65 @@ mod tests {
         );
         s.plugin_mode = Some("in-process");
         assert!(status_text(&s).ends_with("plugins: in-process"));
+    }
+
+    fn at(base: std::time::Instant, ms: u64) -> std::time::Instant {
+        base + std::time::Duration::from_millis(ms)
+    }
+
+    #[test]
+    fn a_small_jitter_of_the_dsp_figures_is_held_and_a_jump_shows_at_once() {
+        #[allow(clippy::disallowed_methods)]
+        // Justification: instants for the arithmetic of the hold; nothing depends on the time.
+        let base = std::time::Instant::now();
+        let mut hold = DspHold::default();
+        let reading = |load: f32, peak: f32| AudioStatus {
+            dsp_load: load,
+            dsp_peak: peak,
+            ..running()
+        };
+        let mut first = reading(0.004, 0.010);
+        hold.apply(&mut first, base);
+        assert!(
+            (first.dsp_load - 0.004).abs() < 1e-6,
+            "the first reading is shown"
+        );
+        // A fraction of a point either way: the same text for ten seconds.
+        let mut jitter = reading(0.009, 0.014);
+        hold.apply(&mut jitter, at(base, 500));
+        assert_eq!(status_text(&jitter), status_text(&first));
+        // A jump of five points shows at once.
+        let mut spike = reading(0.30, 0.45);
+        hold.apply(&mut spike, at(base, 600));
+        assert!((spike.dsp_load - 0.30).abs() < 1e-6);
+        assert!((spike.dsp_peak - 0.45).abs() < 1e-6);
+        // After the hold the small change shows too.
+        let mut later = reading(0.31, 0.46);
+        hold.apply(&mut later, at(base, 600 + 10_000));
+        assert!((later.dsp_load - 0.31).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_stream_that_stops_forgets_the_held_figures() {
+        #[allow(clippy::disallowed_methods)]
+        // Justification: instants for the arithmetic of the hold; nothing depends on the time.
+        let base = std::time::Instant::now();
+        let mut hold = DspHold::default();
+        let mut on = AudioStatus {
+            dsp_load: 0.20,
+            ..running()
+        };
+        hold.apply(&mut on, base);
+        let mut off = AudioStatus::default();
+        hold.apply(&mut off, at(base, 10));
+        let mut again = AudioStatus {
+            dsp_load: 0.21,
+            ..running()
+        };
+        hold.apply(&mut again, at(base, 20));
+        assert!(
+            (again.dsp_load - 0.21).abs() < 1e-6,
+            "a new stream starts from its own reading"
+        );
     }
 }

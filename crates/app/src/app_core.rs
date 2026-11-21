@@ -4524,6 +4524,9 @@ mod track_color_ops;
 #[path = "app_core_io.rs"]
 mod io_ops;
 
+#[path = "app_core_wake.rs"]
+mod wake_ops;
+
 #[path = "app_core_cpu.rs"]
 mod cpu_ops;
 pub use cpu_ops::{DeviceCpu, TrackCpu};

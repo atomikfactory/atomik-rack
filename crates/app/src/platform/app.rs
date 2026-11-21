@@ -326,6 +326,13 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let status = shell.status_text().to_string();
     log::info!("{status}");
     let event_loop = EventLoop::new().map_err(|e| format!("event loop: {e}"))?;
+    // Live MIDI input wakes the loop at once: the idle loop sleeps between its slow polls, and
+    // a mapped control or a transport command must not wait for the next one.
+    let midi_wake = event_loop.create_proxy();
+    shell.core().control_hub().set_waker(Arc::new(move || {
+        // A closed loop has nothing left to wake.
+        let _ = midi_wake.send_event(());
+    }));
     let unattended = cli.unattended();
     let config_dir = config.dir.clone();
     crate::text_clipboard::install();
@@ -408,6 +415,9 @@ pub fn run(cli: Cli) -> Result<(), String> {
         next_status: now,
         frame_watch: crate::ui_stall::FrameWatch::default(),
         activity: crate::ui_activity::Activity::new(),
+        last_paint: None,
+        held_buttons: window_logic::HeldButtons::default(),
+        poll_paint: false,
         event_cause: None,
         retry_cause: None,
         screenshot: cli.screenshot.clone(),
@@ -526,6 +536,14 @@ struct App {
     frame_watch: crate::ui_stall::FrameWatch,
     /// The wake-up and paint counters (see [`crate::ui_activity`]).
     activity: crate::ui_activity::Activity,
+    /// When a window was last painted: the loop stays at the full frame rate for a while after
+    /// it (see [`window_logic::PAINT_TAIL`]).
+    last_paint: Option<Instant>,
+    /// The pointer buttons held down now: a drag or a hold needs frames even when the pointer
+    /// does not move.
+    held_buttons: window_logic::HeldButtons,
+    /// The paints of this tick were asked for by the status poll alone.
+    poll_paint: bool,
     /// What the last window event says about the paints that follow it (an input, a resize, a
     /// focus change); cleared at the end of the tick that painted them.
     event_cause: Option<PaintReason>,
@@ -1212,6 +1230,9 @@ impl App {
         }
         self.advance_activity();
         self.activity.paint(kind, reason);
+        if window_logic::paint_extends_tail(reason, self.poll_paint) {
+            self.last_paint = Some(clock::now());
+        }
         self.paint_scene(key);
         let Some(w) = self.windows.get_mut(&key) else {
             return;
@@ -1456,6 +1477,27 @@ impl App {
         }
     }
 
+    /// Whether any window of any song has something to paint.
+    fn anything_to_paint(&self) -> bool {
+        self.shell.ids().into_iter().any(|id| {
+            self.shell
+                .song(id)
+                .is_some_and(|s| !s.windows_to_paint().is_empty())
+        })
+    }
+
+    /// Whether every window of the app has no area (or the system says it is minimized) and
+    /// no plugin window needs the frames: nothing is painted and the loop wakes slowly.
+    fn all_minimized(&self) -> bool {
+        let sizes = self.windows.values().map(|w| {
+            let size = w.window.inner_size();
+            window_logic::is_minimized((size.width, size.height))
+                || w.window.is_minimized() == Some(true)
+        });
+        let others = self.plugin_windows.any() || self.learn_strips.any() || self.dock_frames.any();
+        window_logic::all_minimized(sizes, others)
+    }
+
     /// Paints and presents every window that has something to paint.
     fn paint_due_windows(&mut self) {
         for id in self.shell.ids() {
@@ -1472,6 +1514,7 @@ impl App {
         }
         // The cause of this tick's paints is spent; a frame that was not shown keeps its own.
         self.event_cause = self.retry_cause.take();
+        self.poll_paint = false;
     }
 
     /// Asks for a redraw of every window that has something to paint.
@@ -2386,6 +2429,7 @@ impl App {
         self.modifiers = Modifiers::NONE;
         self.mod_events.reset();
         self.buttons = translate::PointerMap::default();
+        self.held_buttons.reset();
         let halted = self.ui_guard.is_halted();
         let _ = ui_guard::run(|| {
             self.shell.after_ui_panic(verdict.notice, halted);
@@ -2538,6 +2582,11 @@ impl App {
                 }
             }
             WindowEvent::Resized(size) => {
+                // A window with no area is minimized: the graphics target is not reallocated and
+                // nothing is laid out until it comes back with a real size.
+                if window_logic::is_minimized((size.width, size.height)) {
+                    return;
+                }
                 if let Some(w) = self.windows.get_mut(&key)
                     && let Some(surface) = &mut w.surface
                 {
@@ -2589,6 +2638,10 @@ impl App {
                     ElementState::Pressed => self.buttons.press(button, self.modifiers, self.os),
                     ElementState::Released => self.buttons.release(button, self.modifiers),
                 };
+                match state {
+                    ElementState::Pressed => self.held_buttons.press(),
+                    ElementState::Released => self.held_buttons.release(),
+                }
                 let Some((button, modifiers)) = mapped else {
                     return;
                 };
@@ -2641,6 +2694,7 @@ impl App {
                 self.redraw(key, reason);
             }
             WindowEvent::Focused(false) => {
+                self.held_buttons.reset();
                 // The releases of the keys held now will never arrive.
                 self.modifiers = Modifiers::NONE;
                 self.mod_events.reset();
@@ -2722,15 +2776,21 @@ impl App {
             self.screenshot_at = None;
             self.take_screenshots(&path);
         }
+        // A paint that only the status poll asks for does not keep the loop at the full rate.
+        let marked_before = self.anything_to_paint();
         if now >= self.next_status {
             self.next_status = now + STATUS_PERIOD;
             self.shell.poll_all();
         }
+        self.poll_paint = !marked_before && self.anything_to_paint();
         // Only the windows with something new repaint: the meters redraw the console's window.
         // Every one of them is painted here, in turn. Leaving it to the OS's redraw requests
         // would let the one the OS serves first (the focused one, on Windows) take all the
         // time and starve the others while it animates.
-        self.paint_due_windows();
+        let minimized = self.all_minimized();
+        if window_logic::paints_on_wake(minimized) {
+            self.paint_due_windows();
+        }
         // Audio imports and loads finish on worker threads: poll them even without a stream.
         let songs: Vec<_> = self
             .shell
@@ -2738,25 +2798,19 @@ impl App {
             .into_iter()
             .filter_map(|id| self.shell.song(id))
             .collect();
+        let seconds = now.saturating_duration_since(self.epoch).as_secs_f64();
         let wakers = window_logic::Wakers {
-            frames: songs.iter().any(|s| {
-                s.core().sink().is_running()
-                    || s.is_busy()
-                    || s.context_menu_pending()
-                    || s.tooltip_pending()
-                    || s.core().view().is_auto_scrolling()
-                    || s.core().chord_trainer_active()
-                    || s.core().view().unfold_pending()
-                    || s.core().view().pad_lights_active()
-                    || s.core().snapshot_morphing()
-                    || s.core().macro_gliding()
-                    || !s.core().plugins_ready()
-            }) || self.plugin_windows.any()
+            animating: songs.iter().any(|s| s.wants_fast_frames(seconds))
+                || self.held_buttons.any()
+                || self.plugin_windows.any()
                 || self.learn_strips.any()
                 || self.dock_frames.any(),
+            stream: songs.iter().any(|s| s.core().sink().is_running()),
             plugins: songs.iter().any(|s| s.core().plugin_instance_count() > 0),
+            minimized,
+            since_paint: self.last_paint.map(|t| now.saturating_duration_since(t)),
         };
-        let mut deadline = window_logic::wake_after(wakers, FRAME).map(|d| now + d);
+        let deadline = window_logic::wake_after(wakers, FRAME).map(|d| now + d);
         // A submenu switch waits for its deadline: wake exactly then.
         let menu_wake = songs
             .iter()
@@ -2774,18 +2828,16 @@ impl App {
         .flatten()
         .min()
         .map(|t| self.epoch + t);
-        for t in [
-            self.quit_at,
-            self.screenshot_at,
-            menu_wake,
-            drag_poll,
-            graphics_wake,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            deadline = Some(deadline.map_or(t, |d| d.min(t)));
-        }
+        let deadline = window_logic::earliest(
+            deadline,
+            [
+                self.quit_at,
+                self.screenshot_at,
+                menu_wake,
+                drag_poll,
+                graphics_wake,
+            ],
+        );
         event_loop.set_control_flow(match deadline {
             Some(d) => ControlFlow::WaitUntil(d),
             None => ControlFlow::Wait,

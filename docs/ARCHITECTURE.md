@@ -976,9 +976,22 @@ changes nothing. An import, a recording or opening another project waits for the
 (`AppCore::settle_save`), and a save that starts while audio is loading, recording, converting or
 freezing runs blocking. Scripts, tests and the QA server keep the blocking `AppCore::save`.
 
-The event loop sleeps until an event when nothing is due. A loaded plugin only asks for a look every
-100 ms (`PLUGIN_IDLE_POLL`: its notifications, dirty flags and main-thread work); frames at 60 Hz
-run while audio runs, a worker is busy, a plugin is being created or an editor is open.
+The event loop sleeps until an event when nothing is due, and otherwise wakes at one of three rates
+(`window_logic::wake_after`). Frames at 60 Hz run only while something moves or is polled at that rate
+(`Shell::wants_fast_frames`, which joins `AppCore::wants_fast_frames` with what the shell and the views hold:
+the transport, a take, a deferred start, a momentary param pulse, a live input analysis, a sampling, the
+camera, a control surface, MIDI heard in the last second, a worker or import, a menu or tooltip that waits
+for the pointer, a scroll, glide or morph, a plugin that loads or is captured) plus what the platform owns (a
+held pointer button, an open plugin editor window, a Learn strip or a docked frame), and for one second after
+the last frame that painted something (not one that only the status poll asked for), so meter ballistics and
+lights settle. With an audio stream open (or a plugin loaded) and none of that, the loop wakes every 100 ms
+(`IDLE_STREAM_WAKE`) for the engine garbage, the plugin notifications and the status poll; an open stream alone
+no longer means 60 Hz. While every window has no area (minimized) it wakes every 250 ms (`MINIMIZED_WAKE`)
+and paints nothing; a resize to no area returns before the graphics target is reallocated and before anything
+is laid out, and the restore lays out and paints once. Live MIDI wakes the loop at once through an event-loop
+proxy (`ControlHub::set_waker`), so a mapped control does not wait for the next slow wake. Exact deadlines (a
+quit time, a screenshot, a submenu switch, the graphics back-off) always win over the slow wake. The headless
+shell, the QA server and the tests drive the shell directly and never see these rates.
 `ui-state.json` is written atomically and at most every two seconds (`Shell::flush_ui_state`, and on
 shutdown, detaching and attaching a pane); `keymap.json` is looked at when a window gets the focus
 and when a menu opens.

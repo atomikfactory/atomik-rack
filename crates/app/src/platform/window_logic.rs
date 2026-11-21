@@ -11,7 +11,7 @@ use crate::windows::{
 use atomik_ui::UiEvent;
 use atomik_ui::kurbo::Point;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use winit::dpi::{LogicalPosition, PhysicalPosition, Position};
 
 /// What a window event says about the paint that follows it, for the paint counters (see
@@ -247,30 +247,133 @@ pub(super) fn presents_with_vsync(open_windows: usize) -> bool {
     open_windows <= 1
 }
 
-/// How often the loop looks at the plugins (their main-thread work, parameter notifications,
-/// dirty flags) while nothing else asks for frames.
-pub(super) const PLUGIN_IDLE_POLL: Duration = Duration::from_millis(100);
+/// How often the loop runs its housekeeping frame while an audio stream is open and nothing
+/// moves (see [`Wakers::stream`]).
+pub(super) const IDLE_STREAM_WAKE: Duration = Duration::from_millis(100);
+
+/// How often the loop wakes while every window is minimized: nothing is painted, only the
+/// housekeeping runs.
+pub(super) const MINIMIZED_WAKE: Duration = Duration::from_millis(250);
+
+/// How long after the last frame that painted something the loop stays at the full rate, so
+/// the meters' ballistics and the lights settle and animations that repaint every few frames
+/// keep going.
+pub(super) const PAINT_TAIL: Duration = Duration::from_secs(1);
 
 /// What keeps the event loop awake between events.
 #[derive(Debug, Default, Clone, Copy)]
 pub(super) struct Wakers {
-    /// Audio runs, a worker is busy, a menu or tooltip is about to open, the rack auto-scrolls,
-    /// a plugin is being created, or a plugin editor is open: frames at the full rate.
-    pub frames: bool,
+    /// Something moves or is polled at the frame rate: the transport plays or records, a worker
+    /// is busy, a menu or tooltip is about to open, the rack scrolls, glides or morphs, a plugin
+    /// loads, is captured or has an editor open, a button is held, live MIDI was heard (the
+    /// questions of the shell and the core, plus what the platform owns).
+    pub animating: bool,
+    /// An audio stream is open: engine garbage, meters and the plugins are looked at now and then
+    /// even when nothing moves.
+    pub stream: bool,
     /// A plugin instance is loaded: its notifications are polled.
     pub plugins: bool,
+    /// Every window has no area (minimized): nothing is painted.
+    pub minimized: bool,
+    /// The time since the last frame that painted something; `None` before the first.
+    pub since_paint: Option<Duration>,
 }
 
-/// How long the loop may sleep: a frame while something animates, the plugin poll period while
-/// only loaded plugins need looking at, forever (until an event) otherwise.
+/// How long the loop may sleep.
+///
+/// Three rates: the frame period while something animates or a paint was less than
+/// [`PAINT_TAIL`] ago, [`IDLE_STREAM_WAKE`] while only the stream or loaded plugins want a look,
+/// and [`MINIMIZED_WAKE`] instead of both while every window is minimized. With none of them the
+/// loop sleeps until an event. The tail only applies where a housekeeping wake exists anyway: a
+/// project with no stream and no plugin has no frames to keep going.
 pub(super) fn wake_after(w: Wakers, frame: Duration) -> Option<Duration> {
-    if w.frames {
+    let housekeeping = w.stream || w.plugins;
+    let tail = housekeeping && w.since_paint.is_some_and(|ago| ago < PAINT_TAIL);
+    let wanted = w.animating || housekeeping;
+    if w.minimized {
+        return wanted.then_some(MINIMIZED_WAKE);
+    }
+    if w.animating || tail {
         Some(frame)
-    } else if w.plugins {
-        Some(PLUGIN_IDLE_POLL)
+    } else if housekeeping {
+        Some(IDLE_STREAM_WAKE)
     } else {
         None
     }
+}
+
+/// The pointer buttons held down now. A drag or a hold (a repeating button, a held key of the
+/// piano) needs frames even while the pointer does not move.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct HeldButtons(u32);
+
+impl HeldButtons {
+    /// A button went down.
+    pub(super) fn press(&mut self) {
+        self.0 = self.0.saturating_add(1);
+    }
+
+    /// A button came up (a release whose press this window never saw counts for nothing).
+    pub(super) fn release(&mut self) {
+        self.0 = self.0.saturating_sub(1);
+    }
+
+    /// The releases will never come (the window lost the focus, the interface was reset).
+    pub(super) fn reset(&mut self) {
+        self.0 = 0;
+    }
+
+    /// Whether any button is held.
+    pub(super) fn any(self) -> bool {
+        self.0 > 0
+    }
+}
+
+/// Whether a paint restarts the full-rate tail. A frame that was painted again after it was not
+/// shown (`Surface`) does not, and neither does a paint that only the status poll caused
+/// (`poll_only`): the poll repaints the status line a few times a second while nothing else
+/// moves, and counting those would keep the loop at the full rate for ever. The person's input,
+/// a view that keeps itself painting (the playhead, the meters, a scroll), a value that moved on
+/// a tick, a resize and a focus change do.
+pub(super) fn paint_extends_tail(reason: PaintReason, poll_only: bool) -> bool {
+    !poll_only && reason != PaintReason::Surface
+}
+
+/// Whether the loop paints the windows on this wake: not while they are all minimized.
+pub(super) fn paints_on_wake(minimized: bool) -> bool {
+    !minimized
+}
+
+/// Whether a window with this inner size is minimized (it has no area).
+pub(super) fn is_minimized(size: (u32, u32)) -> bool {
+    size.0 == 0 || size.1 == 0
+}
+
+/// Whether the app counts as minimized: it has windows and none has an area. A window with a
+/// plugin editor, a Learn strip or a docked frame beside it is not minimized for this purpose:
+/// those windows are pumped on the frame.
+pub(super) fn all_minimized(sizes: impl IntoIterator<Item = bool>, others_open: bool) -> bool {
+    let mut any = false;
+    for minimized in sizes {
+        if !minimized {
+            return false;
+        }
+        any = true;
+    }
+    any && !others_open
+}
+
+/// The earliest of the loop's own wake time and the deadlines that must be met exactly (a quit
+/// time, a screenshot, a menu switch, the graphics back-off): a deadline earlier than the next
+/// housekeeping wake wins.
+pub(super) fn earliest(
+    base: Option<Instant>,
+    deadlines: impl IntoIterator<Item = Option<Instant>>,
+) -> Option<Instant> {
+    deadlines
+        .into_iter()
+        .flatten()
+        .fold(base, |best, t| Some(best.map_or(t, |b| b.min(t))))
 }
 
 #[cfg(test)]
@@ -317,20 +420,147 @@ mod tests {
         assert!(window_icon().is_some());
     }
 
+    const FRAME: Duration = Duration::from_micros(16_667);
+
+    fn wakers() -> Wakers {
+        Wakers::default()
+    }
+
     #[test]
-    fn an_idle_project_with_a_plugin_polls_at_ten_hertz_and_one_without_sleeps_on() {
-        let frame = Duration::from_micros(16_667);
-        assert_eq!(wake_after(Wakers::default(), frame), None);
+    fn a_project_with_no_stream_and_no_plugin_sleeps_until_an_event() {
+        assert_eq!(wake_after(wakers(), FRAME), None);
+        // The tail of a paint keeps nothing going where nothing wakes the loop anyway.
+        let painted = Wakers {
+            since_paint: Some(Duration::ZERO),
+            ..wakers()
+        };
+        assert_eq!(wake_after(painted, FRAME), None);
+    }
+
+    #[test]
+    fn every_animating_cause_runs_frames_at_the_full_rate() {
+        for (stream, plugins) in [(false, false), (true, false), (false, true), (true, true)] {
+            let w = Wakers {
+                animating: true,
+                stream,
+                plugins,
+                ..wakers()
+            };
+            assert_eq!(wake_after(w, FRAME), Some(FRAME), "{w:?}");
+        }
+    }
+
+    #[test]
+    fn an_open_stream_with_nothing_moving_wakes_ten_times_a_second() {
+        let stream = Wakers {
+            stream: true,
+            ..wakers()
+        };
+        assert_eq!(wake_after(stream, FRAME), Some(Duration::from_millis(100)));
         let plugins = Wakers {
             plugins: true,
-            ..Wakers::default()
+            ..wakers()
         };
-        assert_eq!(wake_after(plugins, frame), Some(Duration::from_millis(100)));
-        let busy = Wakers {
-            frames: true,
-            plugins: true,
+        assert_eq!(wake_after(plugins, FRAME), Some(IDLE_STREAM_WAKE));
+    }
+
+    #[test]
+    fn the_full_rate_lasts_a_second_after_the_last_paint() {
+        let at = |ago_ms: u64| Wakers {
+            stream: true,
+            since_paint: Some(Duration::from_millis(ago_ms)),
+            ..wakers()
         };
-        assert_eq!(wake_after(busy, frame), Some(frame));
+        assert_eq!(wake_after(at(0), FRAME), Some(FRAME));
+        assert_eq!(wake_after(at(999), FRAME), Some(FRAME));
+        assert_eq!(wake_after(at(1000), FRAME), Some(IDLE_STREAM_WAKE));
+        assert_eq!(wake_after(at(60_000), FRAME), Some(IDLE_STREAM_WAKE));
+        // No paint yet: the idle rate.
+        let none = Wakers {
+            stream: true,
+            ..wakers()
+        };
+        assert_eq!(wake_after(none, FRAME), Some(IDLE_STREAM_WAKE));
+    }
+
+    #[test]
+    fn minimized_windows_wake_every_quarter_second_and_paint_nothing() {
+        let min = |animating, stream, plugins| Wakers {
+            animating,
+            stream,
+            plugins,
+            minimized: true,
+            since_paint: Some(Duration::ZERO),
+        };
+        let quarter = Some(Duration::from_millis(250));
+        assert_eq!(wake_after(min(false, true, false), FRAME), quarter);
+        assert_eq!(wake_after(min(false, false, true), FRAME), quarter);
+        // Something that would run frames is looked at at the minimized rate.
+        assert_eq!(wake_after(min(true, true, false), FRAME), quarter);
+        assert_eq!(wake_after(min(true, false, false), FRAME), quarter);
+        // Nothing to look at: no wake at all.
+        assert_eq!(wake_after(min(false, false, false), FRAME), None);
+        assert!(!paints_on_wake(true));
+        assert!(paints_on_wake(false));
+    }
+
+    #[test]
+    fn only_the_status_poll_and_a_repeated_frame_leave_the_tail_alone() {
+        for reason in PaintReason::ALL {
+            let repeated = reason == PaintReason::Surface;
+            assert_eq!(paint_extends_tail(reason, false), !repeated, "{reason:?}");
+            assert!(
+                !paint_extends_tail(reason, true),
+                "{reason:?}: a poll-only paint"
+            );
+        }
+    }
+
+    #[test]
+    fn held_buttons_count_presses_and_releases_and_forget_on_reset() {
+        let mut held = HeldButtons::default();
+        assert!(!held.any());
+        held.press();
+        held.press();
+        held.release();
+        assert!(held.any(), "one of two is still down");
+        held.release();
+        assert!(!held.any());
+        held.release();
+        held.press();
+        assert!(held.any(), "a stray release does not owe a press");
+        held.reset();
+        assert!(!held.any());
+    }
+
+    #[test]
+    fn a_zero_area_window_is_minimized_and_the_app_is_when_all_of_them_are() {
+        assert!(is_minimized((0, 0)));
+        assert!(is_minimized((0, 600)));
+        assert!(is_minimized((800, 0)));
+        assert!(!is_minimized((1, 1)));
+        assert!(all_minimized([true], false));
+        assert!(all_minimized([true, true], false));
+        assert!(!all_minimized([true, false], false));
+        // A plugin editor window beside them keeps the frames going.
+        assert!(!all_minimized([true, true], true));
+        // No window at all is not minimized.
+        assert!(!all_minimized([], false));
+    }
+
+    #[test]
+    fn a_deadline_earlier_than_the_idle_wake_wins() {
+        #[allow(clippy::disallowed_methods)]
+        // Justification: a test of the arithmetic on instants; nothing depends on the time.
+        let now = Instant::now();
+        let idle = now + IDLE_STREAM_WAKE;
+        let soon = now + Duration::from_millis(30);
+        let late = now + Duration::from_secs(5);
+        assert_eq!(earliest(Some(idle), [Some(late), None]), Some(idle));
+        assert_eq!(earliest(Some(idle), [Some(late), Some(soon)]), Some(soon));
+        // The deadline alone sets the wake when the loop would otherwise sleep.
+        assert_eq!(earliest(None, [None, Some(late)]), Some(late));
+        assert_eq!(earliest(None, [None, None]), None);
     }
 
     #[test]

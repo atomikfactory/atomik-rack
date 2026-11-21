@@ -93,6 +93,8 @@ pub(super) struct MidiControl {
     last: Option<(Arc<str>, ChannelMessage)>,
     /// The messages received in all.
     received: u64,
+    /// The frame-clock time (seconds) of the last frame that found input waiting.
+    input_at: Option<f64>,
     /// The device each control surface is locked to (runtime only, never saved), by surface name.
     pub(super) locks: BTreeMap<String, DeviceKey>,
     /// The surface whose message is being handled, for the mappings that follow a lock.
@@ -119,6 +121,7 @@ impl MidiControl {
             inbox: Vec::new(),
             last: None,
             received: 0,
+            input_at: None,
             locks: BTreeMap::new(),
             origin: None,
             learn_surface: None,
@@ -128,6 +131,17 @@ impl MidiControl {
 
     pub(super) fn learning(&self) -> bool {
         self.learn_mode || self.armed.is_some()
+    }
+
+    /// Whether live MIDI needs frames at `now` (the frame clock, seconds): a message waits in
+    /// the hub or was handled less than [`super::wake_ops::MIDI_ACTIVE_SECS`] ago, a control is
+    /// being learned, or a held move waits for its timeout.
+    pub(super) fn wants_frames(&self, now: f64) -> bool {
+        self.input_at
+            .is_some_and(|at| (now - at).abs() < super::wake_ops::MIDI_ACTIVE_SECS)
+            || self.hub.has_pending()
+            || self.learning()
+            || !self.gestures.is_empty()
     }
 
     /// Opens or refreshes the gesture of `key` and returns its merge id.
@@ -383,6 +397,9 @@ impl<S: EngineSink> AppCore<S> {
         self.midi.now = now;
         let mut inbox = std::mem::take(&mut self.midi.inbox);
         self.midi.hub.drain(&mut inbox);
+        if !inbox.is_empty() {
+            self.midi.input_at = Some(now);
+        }
         for Inbound { port, message } in inbox.drain(..) {
             self.midi.received += 1;
             self.midi.last = Some((Arc::clone(&port), message));
