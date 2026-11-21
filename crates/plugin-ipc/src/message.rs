@@ -257,6 +257,11 @@ pub enum FromChild {
     LatencyChanged,
     /// Notification: the param table changed.
     RescanParams,
+    /// Notification: only the titles of params changed; the new layout.
+    ParamTitles {
+        /// The layout the plugin has now.
+        layout: WireLayout,
+    },
     /// Notification: the plugin asks to be restarted.
     RequestRestart,
     /// Notification: the plugin resized its editor.
@@ -861,7 +866,7 @@ mod tests {
             (
                 FromChild::LayoutChanged {
                     id: 5,
-                    layout: Some(wire),
+                    layout: Some(wire.clone()),
                 },
                 None,
             ),
@@ -899,6 +904,12 @@ mod tests {
             (FromChild::StateDirty, None),
             (FromChild::LatencyChanged, None),
             (FromChild::RescanParams, None),
+            (
+                FromChild::ParamTitles {
+                    layout: wire.clone(),
+                },
+                None,
+            ),
             (FromChild::RequestRestart, None),
             (FromChild::GuiResize { w: 1, h: 2 }, None),
             (

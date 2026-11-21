@@ -13,7 +13,7 @@ use atomik_device_sdk::{Device, PluginFormat, PluginRef, PluginStateBlob, RunMod
 use atomik_plugin_host::{
     HostMessenger, InstantiateRequest, LogLevel, ManagerError, ManagerEvent, NullBackend,
     NullBehavior, NullPlugin, NullStats, ParamPhase, PluginHandle, PluginManager, PluginMessage,
-    PluginProvider, mark_main_thread,
+    PluginProvider, RESTART_BURST, RESTART_QUIET_POLLS, mark_main_thread,
 };
 use atomik_testkit::harness::DeviceHarness;
 use std::path::PathBuf;
@@ -1029,4 +1029,108 @@ fn pinned_params_are_in_the_table_of_an_instance_made_after_they_were_set() {
     m.set_pinned_params(&plugin, Vec::new());
     let cleared = m.instantiate(&request("null.fx")).unwrap();
     assert!(cleared.layout.params.iter().all(|p| p.id != 777));
+}
+
+/// What one restart request costs: post it, begin, hand the processor back, finish.
+fn ask_and_restart(
+    m: &mut PluginManager,
+    h: &mut DeviceHarness,
+    messenger: &HostMessenger,
+) -> Vec<ManagerEvent> {
+    messenger.post(PluginMessage::RequestRestart);
+    let mut events = m.poll();
+    run(h, 2);
+    events.extend(m.poll());
+    events
+}
+
+fn warnings(events: &[ManagerEvent]) -> usize {
+    events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                ManagerEvent::Log {
+                    level: LogLevel::Warning,
+                    ..
+                }
+            )
+        })
+        .count()
+}
+
+/// A plugin that asks again and again is honoured for a burst of restarts, then ignored (and the
+/// log says so once). The rule counts polls, never time: after enough polls without a request it
+/// is honoured again.
+#[test]
+fn a_plugin_that_keeps_asking_for_restarts_is_ignored_after_a_burst() {
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let messenger = m.slot(handle.id).unwrap().messenger();
+    let (mut h, id) = harness_of(handle);
+    h.process();
+    let mut events = Vec::new();
+    for _ in 0..(RESTART_BURST + 6) {
+        events.extend(ask_and_restart(&mut m, &mut h, &messenger));
+    }
+    assert_eq!(stats.activated(), 1 + RESTART_BURST as usize, "{events:?}");
+    assert_eq!(warnings(&events), 1, "said once: {events:?}");
+    // It keeps running in its last activation.
+    h.process();
+    assert!(!m.slot(id).unwrap().stop_requested());
+
+    // A calm stretch ends the burst: the next request is honoured, and a new burst may warn.
+    for _ in 0..RESTART_QUIET_POLLS {
+        h.process();
+        assert!(m.poll().is_empty());
+    }
+    let events = ask_and_restart(&mut m, &mut h, &messenger);
+    assert!(events.contains(&ManagerEvent::Restarted(id)), "{events:?}");
+    assert_eq!(stats.activated(), 2 + RESTART_BURST as usize);
+}
+
+/// Requests spread out in time never reach the limit.
+#[test]
+fn restart_requests_with_calm_in_between_are_all_honoured() {
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let messenger = m.slot(handle.id).unwrap().messenger();
+    let (mut h, _id) = harness_of(handle);
+    h.process();
+    let mut events = Vec::new();
+    for _ in 0..(RESTART_BURST + 3) {
+        events.extend(ask_and_restart(&mut m, &mut h, &messenger));
+        for _ in 0..RESTART_QUIET_POLLS {
+            h.process();
+            events.extend(m.poll());
+        }
+    }
+    assert_eq!(stats.activated(), 1 + RESTART_BURST as usize + 3);
+    assert_eq!(warnings(&events), 0, "{events:?}");
+}
+
+#[test]
+fn renamed_params_reach_the_app_without_a_restart() {
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let messenger = m.slot(handle.id).unwrap().messenger();
+    let (mut h, id) = harness_of(handle);
+    h.process();
+    let mut renamed = m.layout(id).unwrap().clone();
+    renamed.params[0].name = "Renamed".to_string();
+    messenger.post(PluginMessage::ParamTitles(Box::new(renamed.clone())));
+    let events = m.poll();
+    assert_eq!(
+        events,
+        vec![ManagerEvent::ParamTitlesChanged {
+            instance: id,
+            layout: renamed.clone()
+        }]
+    );
+    assert_eq!(m.layout(id), Some(&renamed));
+    // The same titles again are nothing new.
+    messenger.post(PluginMessage::ParamTitles(Box::new(renamed.clone())));
+    assert!(m.poll().is_empty());
+    run(&mut h, 2);
+    assert_eq!(stats.activated(), 1);
 }

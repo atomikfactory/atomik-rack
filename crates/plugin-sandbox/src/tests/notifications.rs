@@ -220,3 +220,20 @@ fn an_unanswered_flush_kills_the_child_and_a_lost_instance_sends_none() {
     instance.poll();
     assert_eq!(started.fake.ctl.requests().len(), before);
 }
+
+#[test]
+fn renamed_params_arrive_as_the_new_layout() {
+    let r = rig(FakeOptions::default());
+    let mut layout = crate::fake::fake_layout();
+    layout.params[0].name = "Renamed".to_string();
+    r.fake.ctl.send(
+        &FromChild::ParamTitles {
+            layout: layout.clone(),
+        },
+        None,
+    );
+    assert_eq!(
+        next_message(&r.manager),
+        PluginMessage::ParamTitles(Box::new(layout.into()))
+    );
+}

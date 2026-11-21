@@ -844,6 +844,9 @@ impl Shared {
             FromChild::StateDirty => return post(PluginMessage::StateDirty),
             FromChild::LatencyChanged => return post(PluginMessage::LatencyChanged),
             FromChild::RescanParams => return post(PluginMessage::RescanParams),
+            FromChild::ParamTitles { layout } => {
+                return post(PluginMessage::ParamTitles(Box::new(layout.clone().into())));
+            }
             FromChild::RequestRestart => return post(PluginMessage::RequestRestart),
             FromChild::GuiResize { w, h } => {
                 if *w > MAX_GUI_DIMENSION || *h > MAX_GUI_DIMENSION {

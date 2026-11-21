@@ -1714,6 +1714,9 @@ impl<S: EngineSink> AppCore<S> {
             ManagerEvent::LayoutChanged { instance, layout } => {
                 self.plugin_layout_changed(instance, layout);
             }
+            ManagerEvent::ParamTitlesChanged { instance, layout } => {
+                self.plugin_titles_changed(instance, layout);
+            }
             ManagerEvent::GuiResize { instance, w, h } => {
                 if let Some(key) = self.plugins.keys.get(&instance).cloned()
                     && self.plugin_editor_docked(&key)
@@ -2958,6 +2961,39 @@ impl<S: EngineSink> AppCore<S> {
             .resolve(key)
             .and_then(|d| self.registry.get(&d.type_id))
             .is_some_and(|f| f.descriptor.param_by_key(&format!("p{id}")).is_some())
+    }
+
+    /// The live plugin renamed params and nothing else changed: the document and the registry take
+    /// the new titles. The device stays: its sockets and its param
+    /// ids are the same, and the plugin did not restart.
+    fn plugin_titles_changed(
+        &mut self,
+        instance: InstanceId,
+        layout: atomik_device_sdk::PluginLayout,
+    ) {
+        let Some(key) = self.plugins.keys.get(&instance).cloned() else {
+            return;
+        };
+        let Some(plugin) = self.plugins.loaded.get(&instance).map(|i| i.plugin.clone()) else {
+            return;
+        };
+        if self
+            .doc()
+            .resolve(&key)
+            .and_then(|d| d.plugin.as_deref())
+            .is_some_and(|p| p.layout == layout)
+        {
+            return;
+        }
+        let _ = self.sync_silent(Command::Plugin(PluginCommand::SyncLayout {
+            device: key,
+            layout: layout.clone(),
+        }));
+        // The scan cache and the catalog do not learn titles (a plugin renames its params per
+        // patch); the registry does, so the rack shows what the plugin shows.
+        if let Ok(descriptor) = atomik_device_sdk::descriptor_for(&plugin, &layout) {
+            self.adopt_descriptor(&plugin.type_id(), descriptor);
+        }
     }
 
     /// The plugin's param table or ports changed: register the new descriptor and rebuild the
