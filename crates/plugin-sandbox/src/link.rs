@@ -378,8 +378,6 @@ impl Shared {
         reply
     }
 
-    /// Ends the stuck state when `id` is the request it waits for (true: the reply is of no
-    /// use to anyone else).
     /// True when a request with this id is out: the call that waits for it, the background
     /// request, or the one the link is stuck on.
     fn asked(&self, id: u64) -> bool {
@@ -389,6 +387,8 @@ impl Shared {
             || mb.stuck.as_ref().is_some_and(|s| s.id == id)
     }
 
+    /// Ends the stuck state when `id` is the request it waits for (true: the reply is of no
+    /// use to anyone else).
     fn recover(&self, id: u64) -> bool {
         let mut mb = lock(&self.mailbox);
         if mb.stuck.as_ref().is_some_and(|s| s.id == id) {
