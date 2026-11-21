@@ -8085,6 +8085,10 @@ A bug in a device must cost that device, not the session. The rules:
   `a_panicking_device_is_contained` ([multicore.rs](../crates/engine/tests/multicore.rs)),
   `a_panicking_decoder_returns_error` ([decode.rs](../crates/audio-file/src/decode.rs)).
 
+- **Exit is bounded.** The wait for the recovery writer and the removal of the session's scratch folder give up
+  after `recovery::EXIT_WAIT` (5 s) instead of hanging on a stalled disk; `RecoveryWriter`'s `Drop` leaves a stuck
+  thread to end with the process. Offline paths keep their exact waits (`RecoveryWriter::wait`).
+
 ### HI-3: graph validity
 
 | Mechanism | Where |

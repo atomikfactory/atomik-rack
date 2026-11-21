@@ -236,3 +236,98 @@ fn a_song_folder_of_a_live_session_is_not_offered() {
 fn a_missing_recovery_folder_offers_nothing() {
     assert!(crashed_song_snapshots(&dir("songs-none").join("absent")).is_empty());
 }
+
+/// A writer whose sink blocks until the test releases it; `entered` says it got a snapshot.
+fn blocked_writer(bound: Duration) -> (RecoveryWriter, Sender<()>, Receiver<()>) {
+    let (release, released) = channel::<()>();
+    let (entered_tx, entered) = channel::<()>();
+    let released = std::sync::Mutex::new(released);
+    let writer = RecoveryWriter::spawn(bound, move |_| {
+        let _ = entered_tx.send(());
+        let _ = released.lock().unwrap().recv();
+    })
+    .unwrap();
+    (writer, release, entered)
+}
+
+/// Runs `f` on a thread and fails the test when it has not returned within a generous bound (a
+/// regression to an unbounded wait would otherwise hang the whole run).
+fn returns_within_a_generous_bound<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(Duration::from_secs(60))
+        .expect("the call must return: its wait is bounded")
+}
+
+fn submit_one(writer: &RecoveryWriter, d: &Path) {
+    writer.submit(empty_doc(), RecoveryDir::new(d), "s".into(), 1, 3, None);
+}
+
+#[test]
+fn a_blocked_writer_does_not_hold_the_bounded_wait_forever() {
+    let d = dir("blocked-wait");
+    let (writer, release, entered) = blocked_writer(Duration::from_millis(50));
+    submit_one(&writer, &d);
+    entered
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the sink got the snapshot");
+    let (writer, done) = returns_within_a_generous_bound(move || {
+        let done = writer.wait_for(Duration::from_millis(100));
+        (writer, done)
+    });
+    assert!(!done, "the writer is still blocked: the wait says so");
+    // The caller goes on; once the sink returns, the wait succeeds.
+    release.send(()).unwrap();
+    assert!(writer.wait_for(Duration::from_secs(60)));
+}
+
+#[test]
+fn dropping_a_blocked_writer_returns_after_the_bound() {
+    let d = dir("blocked-drop");
+    let (writer, release, entered) = blocked_writer(Duration::from_millis(50));
+    submit_one(&writer, &d);
+    entered
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the sink got the snapshot");
+    returns_within_a_generous_bound(move || drop(writer));
+    // Let the left-behind thread end.
+    release.send(()).unwrap();
+}
+
+#[test]
+fn an_idle_writer_ends_cleanly_and_writes_what_was_queued() {
+    let d = dir("clean-drop");
+    let writer = RecoveryWriter::new().unwrap();
+    submit_one(&writer, &d);
+    assert!(writer.wait_for(Duration::from_secs(60)));
+    drop(writer);
+    assert!(RecoveryDir::new(&d).newest().is_some());
+}
+
+#[test]
+fn bounded_work_reports_whether_it_finished() {
+    assert!(returns_within_a_generous_bound(|| run_bounded(
+        Duration::from_secs(60),
+        || {}
+    )));
+    let (release, released) = channel::<()>();
+    let done = returns_within_a_generous_bound(move || {
+        let done = run_bounded(Duration::from_millis(50), move || {
+            let _ = released.recv();
+        });
+        let _ = release.send(());
+        done
+    });
+    assert!(!done, "the work was still blocked at the bound");
+}
+
+#[test]
+fn the_scratch_folder_is_removed_before_the_call_returns_when_the_disk_is_fine() {
+    let d = dir("scratch-removal");
+    std::fs::create_dir_all(d.join("a/b")).unwrap();
+    std::fs::write(d.join("a/b/x.wav"), b"x").unwrap();
+    assert!(remove_dir_bounded(&d, Duration::from_secs(60)));
+    assert!(!d.exists());
+}

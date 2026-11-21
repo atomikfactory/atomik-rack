@@ -277,6 +277,9 @@ may break APIs and the patch and project formats.
   `WGPU_ADAPTER_NAME`, with a warning in the log that it is not supported. The same rule applies when the graphics
   are rebuilt after a lost device, which keeps trying every few seconds instead of showing a box. A
   `WGPU_ADAPTER_NAME` that matches nothing is now reported the same way instead of ending the app with a panic.
+- **Quitting no longer hangs on a stalled disk.** The wait for the last recovery copy to be written, and the
+  removal of the session's scratch folder, give up after five seconds and let the app exit; what is left behind
+  is cleaned up by the next start.
 
 ## [0.5.0-rc.1] - 2026-11-18
 
