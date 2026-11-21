@@ -414,23 +414,23 @@ enum Stage {
     Restoring(Booting),
     /// The plugin is activating.
     Activating(Booting, Prepared),
+    /// The plugin is active and waits to be installed (see [`PluginManager::creation_ready`]).
+    Ready(Box<Readied>),
+    /// The creation failed; the error waits to be handed out.
+    Failed(Box<ManagerError>),
+}
+
+/// A plugin that is active but not installed yet: the manager has not listed it, so nothing of
+/// it is polled or reported until [`PluginManager::poll_create`] hands the handle out.
+struct Readied {
+    boot: Booting,
+    prepared: Prepared,
+    processor: Box<dyn PluginProcessor>,
 }
 
 struct Creating {
     request: InstantiateRequest,
     stage: Stage,
-}
-
-/// One step of a creation.
-#[allow(
-    clippy::large_enum_variant,
-    reason = "moved by value once per poll of one creation; boxing the stage would only add a copy"
-)]
-enum Advance {
-    /// Not there yet: where it is.
-    Wait(Stage),
-    /// The handle or the error.
-    Done(Box<Result<PluginHandle, ManagerError>>),
 }
 
 /// What an instance that is going away is waiting for.
@@ -467,15 +467,27 @@ impl Leaving {
     /// A creation that is abandoned: what it started is ended. A plugin that has not been
     /// created yet (a backend that creates it when polled) has nothing to end.
     fn of_creation(stage: Stage) -> Option<Self> {
+        let mut step = Leave::Ending;
         let (what, end) = match stage {
-            Stage::Sync => return None,
+            Stage::Sync | Stage::Failed(_) => return None,
             Stage::Instantiating(started) => (Leaver::Pending(started.pending), started.end),
             Stage::Restoring(b) | Stage::Activating(b, _) => (Leaver::Instance(b.instance), b.end),
+            // Active but never installed: the processor goes back first, then the process ends.
+            Stage::Ready(ready) => {
+                let Readied {
+                    boot, processor, ..
+                } = *ready;
+                let mut instance = boot.instance;
+                if !instance.begin_deactivate(processor) {
+                    step = Leave::Deactivating;
+                }
+                (Leaver::Instance(instance), boot.end)
+            }
         };
         Some(Self {
             id: end.slot().id(),
             what,
-            step: Leave::Ending,
+            step,
             begun: false,
             end: Some(end),
         })
@@ -834,12 +846,36 @@ impl PluginManager {
         assert_main_thread("PluginManager::poll_create");
         let Creating { request, stage } = self.creating.remove(&ticket.0)?;
         match self.advance_creation(&request, stage) {
-            Advance::Done(result) => Some(*result),
-            Advance::Wait(stage) => {
+            Stage::Sync => Some(self.instantiate(&request)),
+            Stage::Failed(e) => Some(Err(*e)),
+            Stage::Ready(ready) => {
+                let Readied {
+                    boot,
+                    prepared,
+                    processor,
+                } = *ready;
+                Some(Ok(self.finish_boot(&request, boot, prepared, processor)))
+            }
+            stage => {
                 self.creating.insert(ticket.0, Creating { request, stage });
                 None
             }
         }
+    }
+
+    /// Moves the creation `ticket` on without blocking and without installing it, and says
+    /// whether it can be answered now: `true` once the plugin is active (or failed, or is a
+    /// backend that creates it when polled), `false` while it loads, `None` for a spent or
+    /// unknown ticket. A ready creation is not part of the manager yet (it is not listed, polled
+    /// or reported), so the caller can poll every creation each frame and still choose when to
+    /// take each handle with [`PluginManager::poll_create`].
+    pub fn creation_ready(&mut self, ticket: CreateTicket) -> Option<bool> {
+        assert_main_thread("PluginManager::creation_ready");
+        let Creating { request, stage } = self.creating.remove(&ticket.0)?;
+        let stage = self.advance_creation(&request, stage);
+        let ready = matches!(stage, Stage::Sync | Stage::Ready(_) | Stage::Failed(_));
+        self.creating.insert(ticket.0, Creating { request, stage });
+        Some(ready)
     }
 
     /// Abandons the creation `ticket`: a plugin that was starting in another process ends (the
@@ -853,14 +889,15 @@ impl PluginManager {
         self.advance_leaving();
     }
 
-    /// One step of a creation: as far as it can go without waiting.
-    fn advance_creation(&mut self, request: &InstantiateRequest, mut stage: Stage) -> Advance {
+    /// One step of a creation: as far as it can go without waiting. It stops at an active plugin
+    /// (the stage `Ready`) and at an error (`Failed`) without installing anything.
+    fn advance_creation(&mut self, request: &InstantiateRequest, mut stage: Stage) -> Stage {
         loop {
             stage = match stage {
-                Stage::Sync => return Advance::Done(Box::new(self.instantiate(request))),
+                Stage::Sync | Stage::Ready(_) | Stage::Failed(_) => return stage,
                 Stage::Instantiating(mut started) => match started.pending.poll() {
-                    None => return Advance::Wait(Stage::Instantiating(started)),
-                    Some(Err(e)) => return Advance::Done(Box::new(Err(e.into()))),
+                    None => return Stage::Instantiating(started),
+                    Some(Err(e)) => return Stage::Failed(Box::new(e.into())),
                     Some(Ok(instance)) => {
                         let boot = Booting {
                             instance,
@@ -871,30 +908,25 @@ impl PluginManager {
                             restore: Duration::ZERO,
                             activating_since: clock(),
                         };
-                        match self.begin_restore(request, boot) {
-                            Advance::Wait(stage) => stage,
-                            done @ Advance::Done(_) => return done,
-                        }
+                        self.begin_restore(request, boot)
                     }
                 },
                 Stage::Restoring(mut boot) => match boot.instance.poll_restore_state() {
-                    None => return Advance::Wait(Stage::Restoring(boot)),
+                    None => return Stage::Restoring(boot),
                     Some(result) => {
                         boot.restore_error = result.err().map(|e| e.to_string());
                         boot.restore = clock().saturating_duration_since(boot.began);
-                        match self.begin_activation(request, boot) {
-                            Advance::Wait(stage) => stage,
-                            done @ Advance::Done(_) => return done,
-                        }
+                        self.begin_activation(request, boot)
                     }
                 },
                 Stage::Activating(mut boot, prepared) => match boot.instance.poll_activate() {
-                    None => return Advance::Wait(Stage::Activating(boot, prepared)),
-                    Some(Err(e)) => return Advance::Done(Box::new(Err(e.into()))),
-                    Some(Ok(processor)) => {
-                        let handle = self.finish_boot(request, boot, prepared, processor);
-                        return Advance::Done(Box::new(Ok(handle)));
-                    }
+                    None => return Stage::Activating(boot, prepared),
+                    Some(Err(e)) => return Stage::Failed(Box::new(e.into())),
+                    Some(Ok(processor)) => Stage::Ready(Box::new(Readied {
+                        boot,
+                        prepared,
+                        processor,
+                    })),
                 },
             };
         }
@@ -904,7 +936,7 @@ impl PluginManager {
     /// creation. State first (so a latency that depends on it is right at activation), rack
     /// params after (the device re-sends every param the rack sets). A state that cannot be
     /// restored is not an error of the creation: the device is shown as FAILED.
-    fn begin_restore(&mut self, request: &InstantiateRequest, mut boot: Booting) -> Advance {
+    fn begin_restore(&mut self, request: &InstantiateRequest, mut boot: Booting) -> Stage {
         if let Some(state) = &request.state {
             // An offline render waits for the plugin (see `activate_now_or_later`).
             let begun = if request.mode == RunMode::Offline {
@@ -913,7 +945,7 @@ impl PluginManager {
                 boot.instance.begin_restore_state(state)
             };
             match begun {
-                Ok(false) => return Advance::Wait(Stage::Restoring(boot)),
+                Ok(false) => return Stage::Restoring(boot),
                 Ok(true) => {}
                 Err(e) => boot.restore_error = Some(e.to_string()),
             }
@@ -923,7 +955,7 @@ impl PluginManager {
     }
 
     /// Starts the activation: the next stage, or the end of the creation.
-    fn begin_activation(&mut self, request: &InstantiateRequest, mut boot: Booting) -> Advance {
+    fn begin_activation(&mut self, request: &InstantiateRequest, mut boot: Booting) -> Stage {
         boot.activating_since = clock();
         let prepared = match descriptor_of(
             &request.plugin,
@@ -931,15 +963,16 @@ impl PluginManager {
             &self.pins_of(&request.plugin),
         ) {
             Ok(prepared) => prepared,
-            Err(e) => return Advance::Done(Box::new(Err(e.into()))),
+            Err(e) => return Stage::Failed(Box::new(e.into())),
         };
         match activate_now_or_later(boot.instance.as_mut(), &activate_config(request)) {
-            Ok(Some(processor)) => {
-                let handle = self.finish_boot(request, boot, prepared, processor);
-                Advance::Done(Box::new(Ok(handle)))
-            }
-            Ok(None) => Advance::Wait(Stage::Activating(boot, prepared)),
-            Err(e) => Advance::Done(Box::new(Err(e.into()))),
+            Ok(Some(processor)) => Stage::Ready(Box::new(Readied {
+                boot,
+                prepared,
+                processor,
+            })),
+            Ok(None) => Stage::Activating(boot, prepared),
+            Err(e) => Stage::Failed(Box::new(e.into())),
         }
     }
 

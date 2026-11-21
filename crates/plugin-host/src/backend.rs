@@ -812,6 +812,10 @@ pub struct NullStats {
     activate_delay: AtomicUsize,
     shutdown_delay: AtomicUsize,
     background_create: AtomicUsize,
+    /// How many of the next background starts are held (see [`NullStats::hold_next_creates`]).
+    hold_creates: AtomicUsize,
+    /// Counts the releases of held starts (see [`NullStats::release_held_creates`]).
+    release_creates: AtomicUsize,
     /// The next restore of a null instance fails.
     fail_restore: AtomicBool,
     /// The null instances capture in the background, as a plugin in another process does.
@@ -891,6 +895,17 @@ impl NullStats {
     pub fn set_background_create(&self, polls: Option<usize>) {
         self.background_create
             .store(polls.map_or(0, |p| p + 1), Ordering::Relaxed);
+    }
+    /// Holds the next `n` background starts (see [`NullStats::set_background_create`]): each
+    /// answers "not ready" however often it is polled, as a plugin that waits for a licence
+    /// dialog does, until [`NullStats::release_held_creates`]. The starts after them are not
+    /// held.
+    pub fn hold_next_creates(&self, n: usize) {
+        self.hold_creates.store(n, Ordering::Relaxed);
+    }
+    /// Lets the starts held so far go on (the ones held later stay held).
+    pub fn release_held_creates(&self) {
+        self.release_creates.fetch_add(1, Ordering::Relaxed);
     }
     /// Makes the next restore of a null instance fail.
     pub fn fail_next_restore(&self) {
@@ -1138,9 +1153,17 @@ impl PluginBackend for NullBackend {
             return Ok(None);
         }
         let instance = self.instantiate(plugin, host)?;
+        // Starts come from the interface thread one at a time: a load and a store are enough.
+        let to_hold = self.stats.hold_creates.load(Ordering::Relaxed);
+        self.stats
+            .hold_creates
+            .store(to_hold.saturating_sub(1), Ordering::Relaxed);
+        let held = (to_hold > 0).then(|| self.stats.release_creates.load(Ordering::Relaxed));
         Ok(Some(Box::new(NullPending {
             instance: Some(instance),
             polls: polls - 1,
+            held,
+            stats: Arc::clone(&self.stats),
         })))
     }
 }
@@ -1150,10 +1173,19 @@ impl PluginBackend for NullBackend {
 struct NullPending {
     instance: Option<Box<dyn PluginInstance>>,
     polls: usize,
+    /// Held (see [`NullStats::hold_next_creates`]): the release count it started under.
+    held: Option<usize>,
+    stats: Arc<NullStats>,
 }
 
 impl PendingInstance for NullPending {
     fn poll(&mut self) -> Option<Result<Box<dyn PluginInstance>, BackendError>> {
+        if let Some(since) = self.held {
+            if self.stats.release_creates.load(Ordering::Relaxed) == since {
+                return None;
+            }
+            self.held = None;
+        }
         if self.polls > 0 {
             self.polls -= 1;
             return None;
