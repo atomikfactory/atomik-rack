@@ -98,7 +98,7 @@ use atomik_plugin_host::{
     CrashJournal, CreateTicket, EditorKind, HUNG, InUsePlugin, InstanceId, InstantiateRequest,
     LOST, LogLevel, ManagerEvent, NativeParent, ParamPhase, PluginCache, PluginCatalog,
     PluginHandle, PluginSettings, PluginStatus, PresetInfo, RecoveryDir, RescanMode, ScanJob,
-    ScanRunner, blacklist_in_use,
+    ScanRunner, SoftAnswer, blacklist_in_use,
 };
 use atomik_render::plugins::{PluginHost, PluginIsolation};
 use atomik_ui::plugin_data::{
@@ -1223,6 +1223,7 @@ impl<S: EngineSink> AppCore<S> {
     /// one pending instance, the scan job, the parameter texts and the view feeds.
     pub(super) fn plugins_frame(&mut self) {
         self.plugins_poll_events();
+        self.apply_soft_answers();
         self.plugins_poll_captures();
         self.instantiate_one();
         self.adopt_offline();
@@ -2818,7 +2819,35 @@ impl<S: EngineSink> AppCore<S> {
         self.plugin_params.set_presets(list, current);
     }
 
+    /// Puts to use the cosmetic answers that plugins in other processes gave after the call that
+    /// asked: a parameter text goes to the pane when its row still shows the value it was asked
+    /// for, and the size an editor took goes where the resize that asked for it was made.
+    fn apply_soft_answers(&mut self) {
+        let mut texts: Vec<(u32, f32, String)> = Vec::new();
+        for (id, answer) in self.plugins.host.manager().take_soft_answers() {
+            let Some(device) = self.plugins.keys.get(&id).cloned() else {
+                continue;
+            };
+            match answer {
+                SoftAnswer::ParamText { param, plain, text } => {
+                    if self.plugin_params_open && self.plugin_params.device() == Some(&device) {
+                        texts.push((param, plain as f32, text));
+                    }
+                }
+                SoftAnswer::GuiSized { asked, took } => self.plugin_gui_sized(&device, asked, took),
+                // Nothing in the app asks for the default pins of a plugin that is already
+                // running.
+                SoftAnswer::DefaultPins(_) => {}
+            }
+        }
+        if !texts.is_empty() {
+            self.plugin_params.offer_texts(&texts);
+        }
+    }
+
     /// Answers the pane's display-text requests from the plugin (main thread, once per request).
+    /// A plugin that is too busy to answer in the frame's allowance gives nothing now: its text
+    /// comes later (see [`Self::apply_soft_answers`]), and the pane shows the number until then.
     fn answer_param_texts(&mut self) {
         if !self.plugin_params_open {
             return;
@@ -3710,22 +3739,35 @@ impl<S: EngineSink> AppCore<S> {
         let Some(id) = self.plugins.instances.get(device).copied() else {
             return;
         };
-        match self.plugins.host.manager().resize_gui(id, w, h) {
-            Ok((aw, ah)) => {
-                self.plugins.remembered.insert(device.clone(), (aw, ah));
-                if (aw, ah) != (w, h) {
-                    self.plugins
-                        .window_requests
-                        .push(PluginWindowRequest::Resize {
-                            device: device.clone(),
-                            w: aw,
-                            h: ah,
-                        });
-                }
-            }
-            Err(_) => {
-                self.plugins.remembered.insert(device.clone(), (w, h));
-            }
+        match self.plugins.host.manager().request_resize_gui(id, w, h) {
+            Ok(Some(took)) => self.plugin_window_sized(device, (w, h), Some(took)),
+            // The plugin is busy: the size it takes comes later, see `plugin_gui_sized`.
+            Ok(None) => {}
+            Err(_) => self.plugin_window_sized(device, (w, h), None),
+        }
+    }
+
+    /// The editor of `device` answered the resize to `asked` with the size it `took` (`None`: it
+    /// cannot be resized): the window follows when the plugin adjusted the size.
+    pub(super) fn plugin_window_sized(
+        &mut self,
+        device: &DeviceKey,
+        asked: (u32, u32),
+        took: Option<(u32, u32)>,
+    ) {
+        let Some((aw, ah)) = took else {
+            self.plugins.remembered.insert(device.clone(), asked);
+            return;
+        };
+        self.plugins.remembered.insert(device.clone(), (aw, ah));
+        if (aw, ah) != asked {
+            self.plugins
+                .window_requests
+                .push(PluginWindowRequest::Resize {
+                    device: device.clone(),
+                    w: aw,
+                    h: ah,
+                });
         }
     }
 

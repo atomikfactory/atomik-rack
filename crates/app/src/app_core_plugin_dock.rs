@@ -288,13 +288,30 @@ impl<S: EngineSink> AppCore<S> {
         let Some(id) = self.plugins.instances.get(device).copied() else {
             return;
         };
-        let (aw, ah) = self
-            .plugins
-            .host
-            .manager()
-            .resize_gui(id, w, h)
-            .unwrap_or(frame.size);
+        let (aw, ah) = match self.plugins.host.manager().request_resize_gui(id, w, h) {
+            Ok(Some(took)) => took,
+            // The plugin is busy: the frame follows the drag, and the size the plugin takes is
+            // applied when it answers (see `plugin_gui_sized`).
+            Ok(None) => return,
+            Err(_) => frame.size,
+        };
         self.plugin_dock_plugin_resized(device, aw, ah);
+    }
+
+    /// A resize that was still out when the user stopped dragging was answered by a plugin that
+    /// had been busy: the frame or the window follows the size it took.
+    pub(super) fn plugin_gui_sized(
+        &mut self,
+        device: &DeviceKey,
+        asked: (u32, u32),
+        took: Option<(u32, u32)>,
+    ) {
+        if let Some(frame) = self.plugins.dock.frames.get(device).copied() {
+            let (w, h) = took.unwrap_or(frame.size);
+            self.plugin_dock_plugin_resized(device, w, h);
+        } else if self.plugins.windows.get(device) == Some(&EditorWindow::Open) {
+            self.plugin_window_sized(device, asked, took);
+        }
     }
 
     /// The user moved the frame: its top-left corner inside the app window, in pixels.

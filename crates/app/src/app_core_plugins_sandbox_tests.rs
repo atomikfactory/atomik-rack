@@ -1447,3 +1447,114 @@ fn the_created_line_names_the_stages_of_a_load() {
         "plugin [echo] created in 2.31 s (spawn 0.04, instantiate 1.90, restore 0.00, activate 0.31, attach 0.06)"
     );
 }
+
+// ------------------------------------------------------------------ cosmetic answers that come late
+
+/// The ids of the params the pane shows a plugin text for now.
+fn texted(core: &AppCore<OfflineSink>) -> Vec<u32> {
+    (0..64)
+        .filter(|id| core.plugin_params().shown_text(*id).is_some())
+        .collect()
+}
+
+#[test]
+fn the_parameter_pane_shows_a_late_text_when_it_lands_and_never_a_text_for_another_value() {
+    let (mut core, stats, dev) = lost_core();
+    stats.set_soft_busy(true);
+    core.handle_action(UiAction::OpenPluginParams {
+        device: dev.clone(),
+    });
+    core.frame();
+    assert!(
+        texted(&core).is_empty(),
+        "the plugin is busy: the pane shows the numbers"
+    );
+    // The plugin is free: the texts it owes arrive in the next frame.
+    stats.set_soft_busy(false);
+    core.frame();
+    assert_eq!(texted(&core), vec![1, 2, 3, 4], "every row got its text");
+    assert_eq!(core.plugin_params().shown_text(1), Some("0"));
+    // Busy again, the gain changes twice before the plugin answers: the answers come in order
+    // and only the one for the value the row shows now is kept.
+    stats.set_soft_busy(true);
+    set_param(&mut core, "echo", "p1", -6.0);
+    core.frame();
+    assert_eq!(core.plugin_params().shown_text(1), None, "not the old text");
+    set_param(&mut core, "echo", "p1", -12.0);
+    core.frame();
+    assert_eq!(core.plugin_params().shown_text(1), None);
+    stats.set_soft_busy(false);
+    core.frame();
+    assert_eq!(
+        core.plugin_params().shown_text(1),
+        Some("-12"),
+        "the text of the value the row shows"
+    );
+}
+
+#[test]
+fn a_busy_plugin_leaves_no_parameter_text_or_resize_in_the_stall_log() {
+    let (mut core, stats, dev) = dock_core(PluginEditorHome::InApp);
+    open(&mut core, &dev);
+    core.take_plugin_dock_requests();
+    core.plugin_dock_created(&dev, owner());
+    stats.set_soft_busy(true);
+    core.handle_action(UiAction::OpenPluginParams {
+        device: dev.clone(),
+    });
+    // Drain what the setting up logged, then work against a plugin that answers nothing.
+    core.frame();
+    let _ = core.plugin_log();
+    for n in 0..30 {
+        core.plugin_dock_user_resized(&dev, 600 + n, 400);
+        set_param(&mut core, "echo", "p1", -(n as f32));
+        core.frame();
+    }
+    let stalls: Vec<String> = core
+        .plugin_log()
+        .into_iter()
+        .filter(|l| l.contains("ui stall"))
+        .collect();
+    assert!(
+        stalls
+            .iter()
+            .all(|l| !l.contains("ParamText") && !l.contains("ResizeGui")),
+        "{stalls:?}"
+    );
+    // Only the size the user stopped at was asked of the plugin, once it was free.
+    assert!(stats.gui_sizes().is_empty());
+    stats.set_soft_busy(false);
+    core.frame();
+    assert_eq!(stats.gui_sizes(), vec![(629, 400)]);
+    assert_eq!(core.docked_editor(&dev).map(|d| d.size), Some((629, 400)));
+}
+
+#[test]
+fn a_size_that_a_busy_editor_takes_later_is_applied_and_a_fixed_one_springs_the_frame_back() {
+    let (mut core, stats, dev) = dock_core(PluginEditorHome::InApp);
+    open(&mut core, &dev);
+    core.take_plugin_dock_requests();
+    core.plugin_dock_created(&dev, owner());
+    let start = core.docked_editor(&dev).map(|d| d.size);
+    stats.set_soft_busy(true);
+    core.plugin_dock_user_resized(&dev, 700, 520);
+    core.plugin_dock_user_resized(&dev, 800, 600);
+    assert_eq!(
+        core.docked_editor(&dev).map(|d| d.size),
+        start,
+        "no answer yet"
+    );
+    assert_eq!(core.take_plugin_dock_requests(), vec![]);
+    stats.set_fixed_gui_size(Some((640, 480)));
+    stats.set_soft_busy(false);
+    core.frame();
+    assert_eq!(
+        core.take_plugin_dock_requests(),
+        vec![DockRequest::Resize {
+            device: dev.clone(),
+            w: 640,
+            h: 480
+        }]
+    );
+    assert_eq!(core.docked_editor(&dev).map(|d| d.size), Some((640, 480)));
+}

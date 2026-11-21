@@ -198,6 +198,14 @@ may break APIs and the patch and project formats.
   audio keeps running; the app stops waiting for it, asks it nothing more, and the plugin goes back to normal by
   itself when it answers. It does not count as a crash and never leads to the quarantine. A bounce or an export
   still stops a plugin that does not answer.
+- The parameter pane and resizing a plugin window no longer make the app stutter while a plugin is busy. The app used
+  to wait up to a quarter of a second for every value text the pane showed and for every size of a window or dock
+  drag, one after the other, so a plugin that was loading a patch could freeze the interface for seconds. It now
+  asks, waits at most 20 ms per frame for all plugins together, and uses the answer when the plugin gives it: the
+  pane shows the number until the plugin's own text arrives (never the text of the previous value), and a drag
+  sends the plugin only the first and the last size. A plugin that answers some requests and stalls on others is
+  treated as slow for a few seconds instead of being forgiven by one fast answer, with one warning per episode,
+  and a plugin that is alive is no longer stopped for being slow to answer these.
 
 ## [0.5.0-rc.1] - 2026-11-18
 
