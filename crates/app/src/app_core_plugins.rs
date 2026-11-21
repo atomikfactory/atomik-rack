@@ -84,6 +84,7 @@
 //! that a run did not quit cleanly, which shows the banner for any project, plugins or not.
 
 use super::AppCore;
+use crate::plugin_cache_writer::CacheWriter;
 use crate::plugins_user::PluginsUser;
 use crate::recovery::{RecoveryWriter, SessionMarker};
 use crate::sink::EngineSink;
@@ -540,6 +541,8 @@ pub(super) struct PluginState {
     /// The devices whose param values were asked for after a patch change, with the document
     /// revision the answer may still join the undo step of.
     knob_reads: BTreeMap<DeviceKey, u64>,
+    /// The thread that writes the scan cache (started when the first write is due).
+    cache_writer: Option<CacheWriter>,
     /// The preset loaded last into each device, until anything else changes its state.
     preset_current: BTreeMap<DeviceKey, String>,
     /// Merge id of the state captures that make one undo step, and when the last one was.
@@ -633,6 +636,7 @@ impl PluginState {
             presets: BTreeMap::new(),
             preset_loads: BTreeMap::new(),
             knob_reads: BTreeMap::new(),
+            cache_writer: None,
             preset_current: BTreeMap::new(),
             state_merge: (STATE_MERGE_BASE, f64::NEG_INFINITY),
             discard: false,
@@ -2701,8 +2705,9 @@ impl<S: EngineSink> AppCore<S> {
             .is_some_and(|f| f.descriptor.param_by_key(&format!("p{id}")).is_some())
     }
 
-    /// The plugin's param table changed: register the new descriptor and restart the engine with
-    /// the reattached instance, so the device is rebuilt keeping values by key.
+    /// The plugin's param table or ports changed: register the new descriptor and rebuild the
+    /// device of that plugin alone, keeping values by key ([`Self::swap_device_layout`]). The
+    /// whole engine is rebuilt only when another live instance of the same plugin has to follow.
     fn plugin_layout_changed(
         &mut self,
         instance: InstanceId,
@@ -2725,7 +2730,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         self.report_cables_off(&plugin, &layout);
         let _ = self.sync_silent(Command::Plugin(PluginCommand::SyncLayout {
-            device: key,
+            device: key.clone(),
             layout: layout.clone(),
         }));
         // The scan cache, the catalog and the registry all learn the new layout: a plugin added
@@ -2734,7 +2739,55 @@ impl<S: EngineSink> AppCore<S> {
         if let Ok(descriptor) = atomik_device_sdk::descriptor_for(&plugin, &layout) {
             self.adopt_descriptor(&plugin.type_id(), descriptor);
         }
-        self.rebuild_engine();
+        if !self.swap_device_layout(&key, &plugin, instance) {
+            self.rebuild_engine();
+        }
+    }
+
+    /// Gives the engine the device of `key` for the layout its plugin has now, without
+    /// restarting the engine (the transport, the other devices and their tails keep going): a
+    /// stand-in of the new shape takes the device's place, the instance is parked when the old
+    /// device goes, and [`Self::adopt_offline`] puts the new live device in as soon as the
+    /// plugin is active again (the way a plugin that is busy deactivating is waited for after
+    /// an engine restart). True when that was done or there was nothing to replace.
+    ///
+    /// False when the engine has to be rebuilt after all: another live instance of the same
+    /// plugin was built with the old shape, and the registry describes the new one now, so only
+    /// a restart makes them agree (that instance is created again, as after any restart).
+    fn swap_device_layout(&mut self, key: &DeviceKey, plugin: &PluginRef, id: InstanceId) -> bool {
+        let type_id = plugin.type_id();
+        let Some(shape) = self.registry.get(&type_id).map(|f| f.descriptor) else {
+            return false;
+        };
+        let follows = self.plugins.live_desc.iter().any(|(other, built)| {
+            other != key
+                && self.plugins.instances.contains_key(other)
+                && !same_shape(built, shape)
+                && self
+                    .doc()
+                    .resolve(other)
+                    .and_then(|d| d.plugin.as_ref())
+                    .is_some_and(|p| p.plugin_ref() == *plugin)
+        });
+        if follows {
+            return false;
+        }
+        if !self.sink.has_engine() || self.plugins.offline.contains(key) {
+            // No device of its own in the engine: the one that is made when the instance is
+            // attached again takes the new shape from the registry.
+            return true;
+        }
+        if !self.ids.contains_key(key) {
+            return false;
+        }
+        let Some(standin) = self.registry.create(&type_id) else {
+            return false;
+        };
+        self.plugins.host.manager().retain(id, true);
+        self.plugins.offline.insert(key.clone());
+        self.plugins.live_desc.insert(key.clone(), shape);
+        self.swap_in_device(key, standin);
+        true
     }
 
     /// The live plugin `plugin` reported `layout`, which is not what the scan cache holds: the
@@ -3515,15 +3568,47 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.scan_note.as_deref()
     }
 
-    /// Writes `plugins.json` when a live plugin taught the cache a layout.
+    /// Writes `plugins.json` when a live plugin taught the cache a layout, and tells the user
+    /// when an earlier write failed. The learning of several layouts in one frame is one write.
     fn save_learned_cache(&mut self) {
-        if !std::mem::take(&mut self.plugins.cache_dirty) {
-            return;
+        if std::mem::take(&mut self.plugins.cache_dirty) {
+            self.queue_cache_save();
         }
-        if let Some(path) = &self.plugins.paths.cache
-            && let Err(e) = self.plugins.cache.save(path)
+        if let Some(error) = self
+            .plugins
+            .cache_writer
+            .as_ref()
+            .and_then(CacheWriter::take_error)
         {
-            self.reject(format!("{}: {e}", path.display()));
+            self.reject(error);
+        }
+    }
+
+    /// Hands the scan cache to the writer thread, which serialises it and writes the file: the
+    /// interface thread only makes the copy. Where no thread can be had the file is written here,
+    /// as it always was.
+    fn queue_cache_save(&mut self) {
+        let Some(path) = self.plugins.paths.cache.clone() else {
+            return;
+        };
+        if self.plugins.cache_writer.is_none() {
+            self.plugins.cache_writer = CacheWriter::new();
+        }
+        match &self.plugins.cache_writer {
+            Some(writer) => writer.submit(self.plugins.cache.clone(), path),
+            None => {
+                if let Err(e) = self.plugins.cache.save(&path) {
+                    self.reject(format!("{}: {e}", path.display()));
+                }
+            }
+        }
+    }
+
+    /// Waits for the scan cache writes that were handed over to reach the disk (tests, and the
+    /// exit path, which waits a bounded time).
+    pub fn wait_plugin_cache_writes(&mut self) {
+        if let Some(writer) = &self.plugins.cache_writer {
+            writer.wait(crate::plugin_cache_writer::EXIT_WAIT);
         }
     }
 
@@ -3547,15 +3632,15 @@ impl<S: EngineSink> AppCore<S> {
         };
         self.plugins.log(note.clone());
         self.plugins.scan_note = Some(note);
-        if let Some(path) = &self.plugins.paths.cache
-            && let Err(e) = self.plugins.cache.save(path)
-        {
-            self.reject(format!("{}: {e}", path.display()));
-        }
+        // The scan's own result is the file's content now: a layout learned before it ended
+        // is in this cache too, so the pending write is not needed.
+        self.plugins.cache_dirty = false;
+        self.queue_cache_save();
         self.refresh_plugin_catalog();
     }
 
-    /// Waits for a running scan and applies it (tests and scripts).
+    /// Waits for a running scan and applies it, and for the cache file to be written (tests and
+    /// scripts).
     pub fn wait_scan(&mut self) {
         while self.plugins.job.is_some() {
             if self.plugins.job.as_ref().is_some_and(ScanJob::is_finished) {
@@ -3564,6 +3649,7 @@ impl<S: EngineSink> AppCore<S> {
                 std::thread::yield_now();
             }
         }
+        self.wait_plugin_cache_writes();
     }
 
     // ------------------------------------------------------------------ banners
@@ -3615,9 +3701,7 @@ impl<S: EngineSink> AppCore<S> {
             PluginBannerAction::DisableCrashed => {
                 if let Some(crashed) = self.plugins.previous_crash.take() {
                     blacklist_in_use(&mut self.plugins.cache, &crashed);
-                    if let Some(path) = &self.plugins.paths.cache {
-                        let _ = self.plugins.cache.save(path);
-                    }
+                    self.queue_cache_save();
                     self.refresh_plugin_catalog();
                 }
                 self.plugins.hide_banner();
@@ -4152,6 +4236,9 @@ impl<S: EngineSink> AppCore<S> {
     pub fn shutdown_plugins(&mut self) {
         self.close_all_plugin_windows();
         self.wait_recovery_writes();
+        // A layout learned in the last frames is still written; the wait is bounded.
+        self.save_learned_cache();
+        self.wait_plugin_cache_writes();
         self.plugins_poll_events();
         if let Some(journal) = &mut self.plugins.journal {
             let _ = journal.clean_exit();
@@ -4175,6 +4262,25 @@ impl<S: EngineSink> AppCore<S> {
     /// The live instance behind a plugin device.
     pub fn plugin_instance(&self, device: &DeviceKey) -> Option<InstanceId> {
         self.plugins.instances.get(device).copied()
+    }
+
+    /// True while the instance behind `device` is parked and its device is not in the engine
+    /// (audio is off, or the plugin is being given a device of its new layout).
+    pub fn plugin_parked(&self, device: &DeviceKey) -> bool {
+        self.plugins.offline.contains(device)
+    }
+
+    /// The descriptor the engine device of `device` was built with.
+    pub fn plugin_built_descriptor(&self, device: &DeviceKey) -> Option<&'static DeviceDescriptor> {
+        self.plugins.live_desc.get(device).copied()
+    }
+
+    /// How many scan cache writes the writer thread has finished.
+    pub fn plugin_cache_writes(&self) -> u64 {
+        self.plugins
+            .cache_writer
+            .as_ref()
+            .map_or(0, CacheWriter::written)
     }
 
     /// True while a preset is being loaded into the plugin behind `device`.

@@ -4999,7 +4999,14 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   deactivates and activates again and sends it back; the device then re-sends every param the rack
   ever set. Dropping a device never destroys the plugin on the dropping thread: `Drop` posts to the
   **reaper queue**, and `poll` tears down on the main thread. An engine restart keeps the living
-  instances (`retain`, then `reattach` at the new rate: nothing is created again). Plugin callbacks
+  instances (`retain`, then `reattach` at the new rate: nothing is created again). A plugin that
+  reports another param table or other ports while it runs gets a new device of its own and nothing
+  else restarts (`AppCore::swap_device_layout`): a stand-in of the new shape takes the place of its
+  device, the instance is parked when the old device goes, and `adopt_offline` puts the live device in
+  when the plugin is active again, so the transport and the other devices keep going. The whole
+  engine is rebuilt only when another live instance of the same plugin was built with the old shape
+  (the registry describes the new one now, and that instance is created again as after any restart).
+  A plugin opened over an older scan whose ports differ is learned without an engine restart too. Plugin callbacks
   into the host only post to a bounded message ring that `poll` drains; a full ring drops and
   counts.
 - **Latency and PDC.** The reported latency (clamped to 1 s) is an atomic on the slot;
@@ -5018,7 +5025,11 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   carries a path: a device resolves only by (format, id) against that cache. A project that uses
   missing or disabled plugins opens with **stand-ins** that keep cables, channel, song track,
   automation, macro targets, pins and the state blob byte for byte, and RELOAD or a rescan swaps the
-  real plugin in.
+  real plugin in. The file can be tens of megabytes, so the interface thread never writes it: a scan's
+  end, a layout learned from a live plugin and the DISABLE of a crashed plugin hand a copy of the cache
+  to one writer thread ([plugin_cache_writer.rs](../crates/app/src/plugin_cache_writer.rs)), which
+  serialises and writes it; only the newest copy handed over is written, a failure is reported by the
+  next frame, and the exit waits for it at most five seconds.
 - **Plugin manager.** What the user decides about a plugin (a star, tags, hidden by Disable, the quarantine after
   three failures in a row) is kept by plugin id in `plugins_user.json` beside the settings, apart from the scan cache
   and the catalog, which it never touches: the browser and the menus hide a disabled or quarantined plugin, while a

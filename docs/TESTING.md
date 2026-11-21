@@ -1823,7 +1823,9 @@ that the list is asked for once, that a failed list is asked for again at the ne
 pause later, and that a load's undo step goes back to the settings from before it. The `soft.rs` tests of
 `crates/plugin-sandbox/src/tests` hold the same requests in the fake child until the test releases them, and
 `crates/plugin-hostd/src/control/tests.rs` pins that the preset walk answers from a thread of its own while the
-main thread goes on.
+main thread goes on. `app_core_plugins_layout_tests.rs` counts the engine starts (`OfflineSink::resets`) to pin
+that a changed layout replaces one device and not the engine, and `crates/app/src/plugin_cache_writer.rs` has the
+tests of the thread that writes `plugins.json`.
 
 Two more groups are in the report. For lost input (the `input overruns` of the status line) it gives how many times
 the render callback trimmed the captured input, the most frames the ring held just before such a trim, the smallest

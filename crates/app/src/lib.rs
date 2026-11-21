@@ -76,6 +76,7 @@ pub mod mixcheck_worker;
 pub(crate) mod offline_sink;
 pub mod palette;
 pub mod platform;
+pub mod plugin_cache_writer;
 pub mod plugin_setup;
 #[cfg(test)]
 pub(crate) mod plugin_test_support;

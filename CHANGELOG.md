@@ -221,6 +221,11 @@ may break APIs and the patch and project formats.
   still goes back to the settings from before the load) and moves the knobs when the plugin's values arrive. The
   folders of VST3 presets are listed by the plugin's helper process on a thread of its own, so a plugin that is
   loading something does not hold the list up.
+- A plugin that changes its parameters or its ports while it runs, or that is opened over an older scan, no longer
+  restarts the whole audio engine (which stopped playback and silenced every other device for a moment): only that
+  plugin's own device is replaced. The engine is still restarted when a second copy of the same plugin was built
+  with the old ports, since that copy has to follow. The plugin list file is now written by a background thread,
+  so learning what a plugin looks like, or ending a scan with thousands of plugins, no longer stalls a frame.
 
 ## [0.5.0-rc.1] - 2026-11-18
 
