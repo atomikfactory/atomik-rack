@@ -11,7 +11,8 @@ use atomik_plugin_host::{
     TailLength,
 };
 use atomik_plugin_ipc::{
-    AudioOp, Deadline, MAX_EVENTS_IN, MAX_EVENTS_OUT, Poll, ProcessorInfo, Response, Ticket,
+    AudioOp, Deadline, MAX_EVENTS_IN, MAX_EVENTS_OUT, MAX_PARK, Poll, ProcessorInfo, Response,
+    Ticket,
 };
 use std::thread;
 use std::time::Duration;
@@ -636,5 +637,90 @@ fn the_pulse_moves_while_the_child_is_parked_on_the_doorbell() {
     thread::sleep(Duration::from_millis(100));
     let early = parent.pulse();
     assert_ne!(early, 0, "the loop has started");
+    server.join().unwrap();
+}
+
+#[test]
+fn a_long_wait_bumps_the_pulse_at_least_every_max_park() {
+    let (parent, mut child) = pair();
+    let server = thread::spawn(move || {
+        assert!(child.wait_request(Duration::from_millis(700)).is_none());
+    });
+    server.join().unwrap();
+    // One beat at the start and one before each park of at most MAX_PARK: seven parks fit in
+    // 700 ms. A slow machine parks late, so the bound is loose; one park for the whole wait
+    // (the old behaviour) would leave two beats.
+    assert!(
+        MAX_PARK <= Duration::from_millis(100),
+        "the sign of life is judged over half a second"
+    );
+    assert!(
+        parent.pulse() >= 4,
+        "a 700 ms wait moved the pulse {} times",
+        parent.pulse()
+    );
+}
+
+#[test]
+fn a_waker_ends_a_long_wait_that_is_parked() {
+    let (parent, mut child) = pair();
+    let waker = child.waker();
+    let server = thread::spawn(move || {
+        // Far longer than the test may take: only the waker can end it in time.
+        assert!(child.wait_request(Duration::from_secs(120)).is_none());
+    });
+    // Wait until the child is parked in the doorbell (its pulse moved past the first beats).
+    let deadline = Deadline::after(SECOND);
+    while parent.pulse() < 2 && !deadline.passed() {
+        thread::sleep(Duration::from_millis(10));
+    }
+    waker.wake();
+    server.join().unwrap();
+}
+
+#[test]
+fn a_waker_that_rang_before_the_wait_ends_it_at_once() {
+    let (_parent, mut child) = pair();
+    child.waker().wake();
+    assert!(child.wait_request(Duration::from_secs(120)).is_none());
+    // The ring was used up: the next wait is an ordinary one.
+    assert!(child.wait_request(Duration::from_millis(20)).is_none());
+}
+
+#[test]
+fn a_request_reaches_a_child_that_idled_through_several_parks() {
+    let (mut parent, mut child) = pair();
+    let server = thread::spawn(move || {
+        let req = child.wait_request(Duration::from_secs(120)).expect("woken");
+        req.complete(|_| (ProcessStatus::Continue, true));
+    });
+    // Several park slices pass with nothing to do.
+    let deadline = Deadline::after(SECOND);
+    while parent.pulse() < 4 && !deadline.passed() {
+        thread::sleep(Duration::from_millis(10));
+    }
+    let t = submit_empty(&mut parent);
+    // The doorbell wakes the child, not the end of a park: the bound is the machine's, not 100 ms.
+    assert_eq!(parent.wait_done(t, wait(SECOND)), Poll::Done);
+    server.join().unwrap();
+}
+
+#[test]
+fn a_ring_left_over_from_an_answered_request_does_not_end_the_next_wait() {
+    let (mut parent, mut child) = pair();
+    let server = thread::spawn(move || {
+        child
+            .wait_request(SECOND)
+            .unwrap()
+            .complete(|_| (ProcessStatus::Continue, true));
+        // The parent's ring for that request may still be pending: a stale ring is not a wake.
+        let req = child.wait_request(SECOND).expect("the second request");
+        req.complete(|_| (ProcessStatus::Continue, true));
+    });
+    let t = submit_empty(&mut parent);
+    assert_eq!(parent.wait_done(t, wait(SECOND)), Poll::Done);
+    thread::sleep(Duration::from_millis(150));
+    let t = submit_empty(&mut parent);
+    assert_eq!(parent.wait_done(t, wait(SECOND)), Poll::Done);
     server.join().unwrap();
 }
