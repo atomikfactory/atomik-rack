@@ -5136,7 +5136,10 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   `AppCore::plugin_tick` queues a snapshot when the document differs from its saved state and from
   the last snapshot (the document revision, see 2.2) and the autosave period has passed (Settings,
   Workflow, **Autosave**: off, 1, 2, 5 (default), 10, 15 or 30 minutes; while a plugin is loaded
-  every 60 s whatever changed, and after a plugin state capture). The frame only clones the
+  every 60 s, and after a plugin state capture). The periodic snapshot of a project with a plugin
+  asks every plugin first and is written only when the document differs from the last snapshot (and
+  from its saved state) or a capture stored a different state; a project whose plugins nobody touches
+  writes nothing, and the period then starts again. The frame only clones the
   document; one `RecoveryWriter` thread serialises, writes
   `<config>/recovery/<project>-<sequence>.recover.atomik` through a temporary file and a rename, and
   prunes to the newest three, so two snapshots never prune each other. A snapshot of a project with audio

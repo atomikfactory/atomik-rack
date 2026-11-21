@@ -4143,7 +4143,7 @@ impl<S: EngineSink> AppCore<S> {
             asked |= self.request_capture_for(&key, undoable);
         }
         if !asked {
-            self.write_recovery_snapshot(now);
+            self.finish_periodic_snapshot(now);
             return;
         }
         self.plugins.snapshot_wait = Some(now);
@@ -4159,7 +4159,25 @@ impl<S: EngineSink> AppCore<S> {
         };
         if self.plugins.capturing.is_empty() || now - since >= SNAPSHOT_GRACE_SECS {
             self.plugins.snapshot_wait = None;
+            self.finish_periodic_snapshot(now);
+        }
+    }
+
+    /// The end of a periodic snapshot, once the plugins were asked: writes it when something
+    /// differs from what the last snapshot held (the document, or a plugin state a capture
+    /// stored since: the capture marks it `wanted`), and otherwise only starts the next period.
+    /// A project whose plugins nobody touches writes nothing.
+    fn finish_periodic_snapshot(&mut self, now: f64) {
+        let revision = self.document.revision();
+        let differs = self
+            .plugins
+            .recovery
+            .as_ref()
+            .is_some_and(|r| r.wanted || (r.revision != Some(revision) && self.is_dirty()));
+        if differs {
             self.write_recovery_snapshot(now);
+        } else if let Some(r) = &mut self.plugins.recovery {
+            r.last = Some(now);
         }
     }
 
@@ -4176,8 +4194,6 @@ impl<S: EngineSink> AppCore<S> {
         let doc: RackDoc = self.document.doc().clone();
         let bundle = self.bundle_root().map(Path::to_path_buf);
         let Some(recovery) = self.plugins.recovery.as_mut() else {
-        } else if let Some(r) = &mut self.plugins.recovery {
-            r.last = Some(now);
             return;
         };
         recovery.last = Some(now);
@@ -4202,6 +4218,13 @@ impl<S: EngineSink> AppCore<S> {
         if let Some(r) = &mut self.plugins.recovery {
             r.wanted = true;
         }
+    }
+
+    /// The sequence number of the newest recovery snapshot queued (it moves with each one; 0
+    /// before any).
+    #[cfg(test)]
+    pub(super) fn recovery_sequence(&self) -> u64 {
+        self.plugins.recovery.as_ref().map_or(0, |r| r.sequence)
     }
 
     /// Waits for the queued snapshots to reach the disk (tests, and the exit path).

@@ -179,6 +179,9 @@ may break APIs and the patch and project formats.
   menu and listening checks no longer copy lists, so an idle frame allocates nothing (a test counts it). The
   templates folder is read when a menu opens, when a window gets the focus and after Save as Template, not once
   a second.
+- **The recovery snapshot of a project with plugins is written only when something changed.** The plugins are
+  still asked for their state in every period, but the snapshot is written only when the project or a plugin
+  state differs from the last one, so a project nobody touches no longer writes to the disk every minute.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

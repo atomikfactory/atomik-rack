@@ -228,9 +228,12 @@ fn a_periodic_snapshot_asks_in_the_background_and_goes_without_a_plugin_that_is_
     let syncs = stats.sync_captures();
     core.plugin_tick(0.0);
     core.wait_recovery_writes();
-    // The first tick of a loaded project snapshots: the plugin answered at once.
+    // The first tick of a loaded project with an edit nobody saved snapshots: the plugin
+    // answered at once.
     assert_eq!(snapshots(&dir), 1);
-    // The next one: the plugin is busy, the snapshot waits for the grace, then goes without it.
+    // The project changes and the plugin is busy: the snapshot waits for the grace, then goes
+    // without it.
+    apply(&mut core, Command::SetTempo(100.0));
     stats.hold_captures(true);
     core.plugin_tick(1_000.0);
     core.wait_recovery_writes();
@@ -243,6 +246,71 @@ fn a_periodic_snapshot_asks_in_the_background_and_goes_without_a_plugin_that_is_
     assert_eq!(snapshots(&dir), 2, "written with what is stored");
     assert_eq!(stats.sync_captures(), syncs);
     assert_eq!(stored(&core, &dev).as_deref(), Some(&b""[..]));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The sequence number of the newest snapshot: it moves with every snapshot that is queued.
+fn queued(core: &AppCore<OfflineSink>) -> u64 {
+    core.recovery_sequence()
+}
+
+/// Ticks `periods` periods apart from `from` (each tick one frame): returns the time after.
+fn periods(core: &mut AppCore<OfflineSink>, from: f64, n: u32) -> f64 {
+    let mut t = from;
+    for _ in 0..n {
+        core.frame();
+        core.plugin_tick(t);
+        t += 1_000.0;
+    }
+    t
+}
+
+#[test]
+fn a_loaded_plugin_that_nobody_touches_writes_no_snapshot_in_any_period() {
+    let dir = temp("untouched");
+    let (mut core, stats, dev) = bg_core(Some(&dir));
+    // The first period writes the unsaved project once; after that nothing changes.
+    let mut t = periods(&mut core, 0.0, 1);
+    core.wait_recovery_writes();
+    let written = queued(&core);
+    assert_eq!(snapshots(&dir), 1);
+    let asked = stats.capture_requests();
+    t = periods(&mut core, t, 6);
+    core.wait_recovery_writes();
+    assert_eq!(queued(&core), written, "six quiet periods queued nothing");
+    assert_eq!(snapshots(&dir), 1);
+    assert!(
+        stats.capture_requests() > asked,
+        "the plugin is still asked in every period (it may have moved without saying so)"
+    );
+    // A command on the project: the next period writes one.
+    apply(&mut core, Command::SetTempo(101.0));
+    t = periods(&mut core, t, 1);
+    core.wait_recovery_writes();
+    assert!(queued(&core) > written, "a document edit is snapshotted");
+    let after_edit = queued(&core);
+    // Quiet again.
+    t = periods(&mut core, t, 3);
+    core.wait_recovery_writes();
+    assert_eq!(queued(&core), after_edit);
+    // A plugin that says its state changed: stored by the capture, written by the next tick.
+    patch(&mut core, &stats, &dev, b"patched");
+    t = periods(&mut core, t, 1);
+    core.wait_recovery_writes();
+    assert!(
+        queued(&core) > after_edit,
+        "a flagged state change is snapshotted"
+    );
+    let after_flag = queued(&core);
+    // A plugin that changes its state without saying so: the period's own capture finds it.
+    set_live(&stats, b"moved quietly");
+    periods(&mut core, t, 1);
+    core.wait_recovery_writes();
+    assert!(
+        queued(&core) > after_flag,
+        "an unflagged state change is snapshotted"
+    );
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"moved quietly"[..]));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

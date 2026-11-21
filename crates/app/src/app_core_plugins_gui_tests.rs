@@ -404,13 +404,18 @@ fn recovery_snapshots_are_written_every_minute_rotate_to_three_and_never_touch_t
             })
             .unwrap_or(0)
     };
+    // The project differs from its saved state: the first tick with a plugin loaded writes one.
+    apply(&mut core, Command::SetTempo(100.0));
     core.plugin_tick(1000.0);
     core.wait_recovery_writes();
     assert_eq!(count(), 1, "the first tick with a plugin loaded writes one");
+    apply(&mut core, Command::SetTempo(101.0));
     core.plugin_tick(1030.0);
     core.wait_recovery_writes();
     assert_eq!(count(), 1, "not before a minute has passed");
     for (i, now) in [1061.0, 1122.0, 1183.0, 1244.0].into_iter().enumerate() {
+        // Something changed in the minute: that is what a snapshot is for.
+        apply(&mut core, Command::SetTempo(102.0 + i as f64));
         core.plugin_tick(now);
         core.wait_recovery_writes();
         assert_eq!(count(), (i + 2).min(3), "kept: the last three (tick {now})");
