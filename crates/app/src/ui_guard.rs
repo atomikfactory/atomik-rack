@@ -140,6 +140,19 @@ pub fn run<R>(f: impl FnOnce() -> R) -> Result<R, String> {
     })
 }
 
+/// Why an unattended run (a script or smoke test: `--quit-after`, `--screenshot`, a stress load)
+/// must end with a failure code: it contained `caught` panics and went on, which a script that
+/// only reads the exit code would take for a success. `None` for an attended session, which exits
+/// normally when the user quits, and for a run that caught nothing.
+#[must_use]
+pub fn exit_failure(unattended: bool, caught: u64) -> Option<String> {
+    (unattended && caught > 0).then(|| {
+        format!(
+            "{caught} internal error(s) of the interface were contained during this unattended run"
+        )
+    })
+}
+
 /// The test switch: makes a point panic a number of times.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ForcedPanic {

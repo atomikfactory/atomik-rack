@@ -8096,7 +8096,10 @@ A bug in a device must cost that device, not the session. The rules:
   treated as lost and the back-off retries). The locks on the UI thread's paths recover a poisoned guard, and a
   `RefCell` borrow ends as the stack unwinds, so no state is left locked. Only the windowed loop is guarded:
   the headless shell, the QA server and the tests drive the shell directly, so a test that expects a panic still
-  sees it. `ATOMIK_UI_PANIC=<event|frame|paint>[:<times>]` makes a point panic, for hand checks.
+  sees it. An unattended windowed run (`--quit-after`, `--screenshot`, a stress load) that contained a panic
+  keeps running but ends with a non-zero exit code and one log line (`ui_guard::exit_failure`), so a script that
+  reads only the exit code does not take it for a success; an attended session exits normally.
+  `ATOMIK_UI_PANIC=<event|frame|paint>[:<times>]` makes a point panic, for hand checks.
 - **Exit is bounded.** The wait for the recovery writer and the removal of the session's scratch folder give up
   after `recovery::EXIT_WAIT` (5 s) instead of hanging on a stalled disk; `RecoveryWriter`'s `Drop` leaves a stuck
   thread to end with the process. Offline paths keep their exact waits (`RecoveryWriter::wait`).

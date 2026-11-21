@@ -285,7 +285,8 @@ may break APIs and the patch and project formats.
   saved, and recommends saving and restarting, with Save and Dismiss buttons. It is raised once, not again for
   every repeat within half a minute. If frames or drawings keep failing (five in a row) the window's content is
   paused so the app does not spin: only the notice is drawn, its Save button and Ctrl+S still work, and
-  restarting the app brings everything back.
+  restarting the app brings everything back. A scripted run (`--quit-after`, `--screenshot`, the stress runs) that
+  caught such an error still keeps going but exits with a failure code, so a script does not report success.
 - **Quitting no longer hangs on a stalled disk.** The wait for the last recovery copy to be written, and the
   removal of the session's scratch folder, give up after five seconds and let the app exit; what is left behind
   is cleaned up by the next start.

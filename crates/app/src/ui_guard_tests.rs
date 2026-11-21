@@ -79,6 +79,18 @@ fn event_panics_never_halt_the_content() {
 }
 
 #[test]
+fn an_unattended_run_that_caught_a_panic_exits_with_a_failure() {
+    assert!(exit_failure(true, 1).is_some());
+    assert!(exit_failure(true, 7).unwrap().contains('7'));
+    assert!(exit_failure(true, 0).is_none());
+    assert!(
+        exit_failure(false, 3).is_none(),
+        "an attended session exits normally"
+    );
+    assert!(exit_failure(false, 0).is_none());
+}
+
+#[test]
 fn the_test_switch_parses_and_counts_down() {
     assert_eq!(ForcedPanic::parse(None), None);
     assert_eq!(ForcedPanic::parse(Some("")), None);

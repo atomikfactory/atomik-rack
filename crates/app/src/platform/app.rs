@@ -459,6 +459,10 @@ pub fn run(cli: Cli) -> Result<(), String> {
         }
         return Err(report.log);
     }
+    // A scripted run that contained a panic must not look like a success.
+    if let Some(why) = ui_guard::exit_failure(unattended, app.ui_guard.total()) {
+        return Err(why);
+    }
     Ok(())
 }
 

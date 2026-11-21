@@ -1401,7 +1401,7 @@ state after a panic may be inconsistent in ways the app cannot check.
 beyond that is not rebuilt. The document is not touched (a command is planned before it changes anything). A
 panic that keeps coming pauses the content instead of recovering. Only the windowed loop is guarded: the
 headless shell, the QA server and the tests still see panics, so a test that expects one is unaffected. A panic
-inside a plugin's own process or the engine keeps its own containment. The autosave period is unchanged.
+inside a plugin's own process or the engine keeps its own containment. A scripted run that contained a panic ends with a non-zero exit code. The autosave period is unchanged.
 
 **Rejected.** Rebuilding the whole shell after a panic (loses more than it saves and could panic again);
 catching inside every handler (hides the failing site and costs a guard per call); exiting after the first panic
