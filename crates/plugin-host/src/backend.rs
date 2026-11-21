@@ -9,6 +9,7 @@
 //! * [`NullBackend`] is an in-repo implementation for tests: it needs no plugin file.
 
 use crate::slot::HostMessenger;
+use crate::soft::{SoftAnswer, SoftBudget};
 use atomik_core::{BATCH, Batch, ExprKind};
 use atomik_device_sdk::{
     PluginCategory, PluginFormat, PluginLayout, PluginRef, PluginStateBlob, RunMode,
@@ -34,6 +35,43 @@ pub enum BackendError {
     /// The plugin or the backend failed.
     #[error("{0}")]
     Failed(String),
+    /// The plugin's host process could not be started (the host program is missing or blocked,
+    /// no memory, the shared block or the doorbell could not be made). The app or the machine is
+    /// at fault, not the plugin: it is never counted as a failed load of the plugin.
+    #[error("{0}")]
+    Spawn(String),
+    /// The plugin's state does not fit the channel it travels on (a plugin in its own process
+    /// hands it over in one frame of at most `limit` bytes). The plugin is fine and keeps
+    /// running; the state cannot be saved.
+    #[error("the plugin state is {bytes} bytes; the most it can hand over is {limit} bytes")]
+    StateTooLarge {
+        /// The size of the state, in bytes.
+        bytes: u64,
+        /// The most that fits, in bytes.
+        limit: u64,
+    },
+}
+
+impl BackendError {
+    /// True when the call failed because the plugin is alive but busy and did not answer (see
+    /// [`crate::NOT_RESPONDING`]).
+    pub fn is_not_responding(&self) -> bool {
+        matches!(self, Self::Failed(text) if text.starts_with(crate::NOT_RESPONDING))
+    }
+
+    /// The size and the limit of a state that was too large to hand over
+    /// ([`BackendError::StateTooLarge`]).
+    pub fn state_too_large(&self) -> Option<(u64, u64)> {
+        match self {
+            Self::StateTooLarge { bytes, limit } => Some((*bytes, *limit)),
+            _ => None,
+        }
+    }
+
+    /// True when the plugin's host process could not be started ([`BackendError::Spawn`]).
+    pub fn is_spawn_failure(&self) -> bool {
+        matches!(self, Self::Spawn(_))
+    }
 }
 
 // ----- events and the process view ----------------------------------------------------------
@@ -375,17 +413,30 @@ pub enum NativeParent {
 #[derive(Debug, Clone)]
 pub struct HostHandle {
     messenger: HostMessenger,
+    budget: SoftBudget,
 }
 
 impl HostHandle {
-    /// A handle posting to `messenger`.
+    /// A handle posting to `messenger`, with an allowance of waiting for cosmetic answers of
+    /// its own.
     pub fn new(messenger: HostMessenger) -> Self {
-        Self { messenger }
+        Self::with_budget(messenger, SoftBudget::default())
+    }
+
+    /// A handle posting to `messenger` whose instance draws on `budget`, the allowance the
+    /// manager shares between all its instances.
+    pub fn with_budget(messenger: HostMessenger, budget: SoftBudget) -> Self {
+        Self { messenger, budget }
     }
 
     /// The thread-safe message sender.
     pub fn messenger(&self) -> &HostMessenger {
         &self.messenger
+    }
+
+    /// The allowance of waiting for cosmetic answers (see [`SoftBudget`]).
+    pub fn budget(&self) -> &SoftBudget {
+        &self.budget
     }
 }
 
@@ -400,6 +451,10 @@ pub struct PresetInfo {
     /// The folder or program list it belongs to (empty for none).
     pub group: String,
 }
+
+/// What lists a plugin's presets from files, on any thread (see
+/// [`PluginInstance::preset_lister`]).
+pub type PresetLister = Box<dyn FnOnce() -> Vec<PresetInfo> + Send>;
 
 /// The main-thread half of one plugin. Every method is `[main-thread]`.
 pub trait PluginInstance {
@@ -422,6 +477,25 @@ pub trait PluginInstance {
     fn poll_deactivate(&mut self) -> bool {
         true
     }
+    /// Starts [`PluginInstance::activate`] without waiting for the plugin: `Some` is the audio
+    /// half when the activation was done at once, `None` means [`PluginInstance::poll_activate`]
+    /// will tell. A plugin that loads a big library as it activates must not hold up the
+    /// interface; the default activates at once.
+    ///
+    /// # Errors
+    /// What [`PluginInstance::activate`] fails with.
+    fn begin_activate(
+        &mut self,
+        cfg: &ActivateConfig,
+    ) -> Result<Option<Box<dyn PluginProcessor>>, BackendError> {
+        self.activate(cfg).map(Some)
+    }
+    /// The audio half of the activation that [`PluginInstance::begin_activate`] started, or why
+    /// it failed, once; `None` while the plugin has not answered (or none is going on). Never
+    /// waits.
+    fn poll_activate(&mut self) -> Option<Result<Box<dyn PluginProcessor>, BackendError>> {
+        None
+    }
     /// The latency the plugin reports now, in frames.
     fn latency_frames(&self) -> u32;
     /// Starts saving the plugin state without waiting for it: the next
@@ -431,8 +505,43 @@ pub trait PluginInstance {
     fn begin_capture_state(&mut self) {}
     /// Saves the plugin state.
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError>;
+    /// True when [`PluginInstance::request_capture`] really goes out without waiting (a plugin
+    /// in another process, whose main thread may be busy). The default is false: the manager
+    /// then captures at the request, which is cheap for a plugin in this process.
+    fn background_capture(&self) -> bool {
+        false
+    }
+    /// Asks for the plugin state without waiting; [`PluginInstance::poll_capture`] collects it
+    /// when it has arrived. At most one is outstanding (the manager keeps to that). While one is
+    /// out, [`PluginInstance::capture_state`] waits for it instead of sending a second request.
+    ///
+    /// # Errors
+    /// The request could not be sent (the plugin is gone).
+    fn request_capture(&mut self) -> Result<(), BackendError> {
+        Ok(())
+    }
+    /// The state asked for by [`PluginInstance::request_capture`], or `None` while it has not
+    /// come. Never waits and never stops the plugin for being slow.
+    fn poll_capture(&mut self) -> Option<Result<PluginStateBlob, BackendError>> {
+        None
+    }
     /// Restores a saved state.
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError>;
+    /// Starts [`PluginInstance::restore_state`] without waiting for the plugin: true when the
+    /// state is restored already, false when [`PluginInstance::poll_restore_state`] will tell.
+    /// A sampler that loads its library as it restores may take minutes; the default restores at
+    /// once.
+    ///
+    /// # Errors
+    /// What [`PluginInstance::restore_state`] fails with.
+    fn begin_restore_state(&mut self, state: &PluginStateBlob) -> Result<bool, BackendError> {
+        self.restore_state(state).map(|()| true)
+    }
+    /// The outcome of the restore that [`PluginInstance::begin_restore_state`] started, once;
+    /// `None` while the plugin has not answered. Never waits.
+    fn poll_restore_state(&mut self) -> Option<Result<(), BackendError>> {
+        Some(Ok(()))
+    }
     /// The presets the plugin offers, in its own order (empty when it has none or the format
     /// cannot list them).
     fn list_presets(&mut self) -> Vec<PresetInfo> {
@@ -452,7 +561,48 @@ pub trait PluginInstance {
     fn read_params(&mut self) -> Vec<(u32, f64)> {
         Vec::new()
     }
-    /// The display text of a param value, from the plugin.
+    /// A function that lists the presets without the plugin, to run on another thread (the folder
+    /// walk of a format that keeps presets as files): the plugin's main thread may be busy while
+    /// the files are listed. `None` when listing needs the plugin itself.
+    fn preset_lister(&mut self) -> Option<PresetLister> {
+        None
+    }
+    /// [`PluginInstance::list_presets`] for the live app, which does not wait for a plugin that
+    /// is busy: `Some(list)` when the answer was there at once (a plugin in this process), `None`
+    /// when it comes later as [`SoftAnswer::Presets`] through
+    /// [`PluginInstance::take_soft_answers`].
+    ///
+    /// # Errors
+    /// The link to the plugin is lost, stuck on an earlier call or busy with a held one.
+    fn begin_list_presets(&mut self) -> Result<Option<Vec<PresetInfo>>, BackendError> {
+        Ok(Some(self.list_presets()))
+    }
+    /// [`PluginInstance::read_params`] for the live app, in the way of
+    /// [`PluginInstance::begin_list_presets`]: the values come later as [`SoftAnswer::Params`].
+    ///
+    /// # Errors
+    /// The link to the plugin is lost, stuck on an earlier call or busy with a held one.
+    fn begin_read_params(&mut self) -> Result<Option<Vec<(u32, f64)>>, BackendError> {
+        Ok(Some(self.read_params()))
+    }
+    /// [`PluginInstance::load_preset`] for the live app, which does not wait for a plugin that is
+    /// loading (a sampler reading its library): true when the preset is loaded, false when it is
+    /// being loaded and [`PluginInstance::poll_load_preset`] says when it is done. Offline
+    /// renders keep the waiting call.
+    ///
+    /// # Errors
+    /// What [`PluginInstance::load_preset`] fails with.
+    fn begin_load_preset(&mut self, id: &str) -> Result<bool, BackendError> {
+        self.load_preset(id).map(|()| true)
+    }
+    /// The outcome of the load that [`PluginInstance::begin_load_preset`] started, once; `None`
+    /// while the plugin has not answered. Never waits.
+    fn poll_load_preset(&mut self) -> Option<Result<(), BackendError>> {
+        Some(Ok(()))
+    }
+    /// The display text of a param value, from the plugin. A plugin in another process that
+    /// does not answer at once gives `None` and the text comes later as a
+    /// [`SoftAnswer::ParamText`].
     fn param_text(&mut self, id: u32, plain: f64) -> Option<String>;
     /// Opens the editor inside `parent`; returns its size in pixels.
     fn open_gui(&mut self, parent: NativeParent, scale: f64) -> Result<(u32, u32), BackendError>;
@@ -466,6 +616,23 @@ pub trait PluginInstance {
         Err(BackendError::Unsupported(
             "this plugin's editor cannot be resized".to_string(),
         ))
+    }
+    /// [`PluginInstance::resize_gui`] for the interface thread, which must not wait for a plugin
+    /// that is busy: `Some(size)` is the answer ([`PluginInstance::resize_gui`] gives it at
+    /// once for a plugin in this process), `None` means the request is out (or merged into the
+    /// one that is) and the size the editor took comes later as a [`SoftAnswer::GuiSized`]. At
+    /// most one request is out at a time; while it is, only the latest size asked for is kept.
+    ///
+    /// # Errors
+    /// What [`PluginInstance::resize_gui`] fails with.
+    fn request_resize_gui(&mut self, w: u32, h: u32) -> Result<Option<(u32, u32)>, BackendError> {
+        self.resize_gui(w, h).map(Some)
+    }
+    /// The cosmetic answers that arrived since the last call, oldest first (see [`SoftAnswer`]).
+    /// Never waits. Only a plugin in another process has any: for the others every cosmetic
+    /// call is answered at once.
+    fn take_soft_answers(&mut self) -> Vec<SoftAnswer> {
+        Vec::new()
     }
     /// Whether the plugin has an editor the host can embed.
     fn has_gui(&self) -> bool {
@@ -526,10 +693,27 @@ pub trait PluginInstance {
     fn is_lost(&self) -> bool {
         false
     }
+    /// The name of the call the plugin has not answered although its process is alive (a
+    /// sandboxed plugin whose main thread is busy): until the answer comes every call fails at
+    /// once with an error that [`BackendError::is_not_responding`] recognises, and the answer
+    /// ends the state by itself. `None` when the plugin responds.
+    fn not_responding(&self) -> Option<String> {
+        None
+    }
+    /// Stops the plugin's process because the user chose to, after it did not respond (RELOAD):
+    /// the instance is lost from then on, as after a crash. Nothing for a plugin in this process.
+    fn stop_process(&mut self) {}
     /// The instance is about to be dropped: starts ending whatever outlives a call (a child
     /// process) without waiting for it, so that the manager can start every instance's end
     /// first and then wait for all of them at once. Dropping still works without this call.
     fn begin_shutdown(&mut self) {}
+    /// True once what [`PluginInstance::begin_shutdown`] started is over: the child process has
+    /// ended (or was stopped after the grace the sandbox allows). Never waits, and starts the
+    /// shutdown itself when nobody did. Dropping the instance then does not wait any more. The
+    /// default is true: a plugin in this process has nothing that outlives it.
+    fn poll_shutdown(&mut self) -> bool {
+        true
+    }
 }
 
 /// One plugin found in a file.
@@ -555,6 +739,14 @@ pub trait PendingInstance {
     /// Moves the start on without blocking: `None` while the plugin is not ready, then the
     /// instance or why it could not be made.
     fn poll(&mut self) -> Option<Result<Box<dyn PluginInstance>, BackendError>>;
+    /// Starts abandoning the start without waiting for it (see
+    /// [`PluginInstance::begin_shutdown`]); dropping still works without this call.
+    fn begin_shutdown(&mut self) {}
+    /// True once the plugin's process that was starting has ended (see
+    /// [`PluginInstance::poll_shutdown`]).
+    fn poll_shutdown(&mut self) -> bool {
+        true
+    }
 }
 
 /// A plugin format. The sandbox (`atomik-plugin-sandbox`) implements the same traits.
@@ -642,18 +834,121 @@ pub struct NullStats {
     fixed_gui_size: Mutex<Option<(u32, u32)>>,
     presets: AtomicBool,
     deactivate_delay: AtomicUsize,
+    /// Polls a restore, an activation and a shutdown of a null instance take (a plugin that is
+    /// busy but alive), and the polls a start in the background takes plus one (0: instances
+    /// are created at once, as a plugin in this process is).
+    restore_delay: AtomicUsize,
+    activate_delay: AtomicUsize,
+    shutdown_delay: AtomicUsize,
+    background_create: AtomicUsize,
+    /// How many of the next background starts are held (see [`NullStats::hold_next_creates`]).
+    hold_creates: AtomicUsize,
+    /// How many of the next background starts fail as a host process that cannot start does.
+    fail_spawns: AtomicUsize,
+    /// Counts the releases of held starts (see [`NullStats::release_held_creates`]).
+    release_creates: AtomicUsize,
+    /// The next restore of a null instance fails.
+    fail_restore: AtomicBool,
+    /// The null instances capture in the background, as a plugin in another process does.
+    background_capture: AtomicBool,
+    /// A background capture is not answered while this is set (a plugin whose main thread is
+    /// busy).
+    captures_held: AtomicBool,
+    /// Background capture requests received.
+    capture_requests: AtomicUsize,
+    /// Synchronous `capture_state` calls received.
+    sync_captures: AtomicUsize,
+    /// The null instances are alive but do not answer (see [`NullStats::set_not_responding`]).
+    not_responding: AtomicBool,
+    /// The most bytes a null instance hands over (0: no limit; see
+    /// [`NullStats::set_state_limit`]).
+    state_limit: AtomicU64,
+    /// A state the plugin gives itself (a patch picked in its own window), taken by the null
+    /// instances at their next call.
+    own_edit: Mutex<Option<Vec<u8>>>,
     /// The layout the instances take at their next restart (see [`NullStats::change_layout`]).
     pending_layout: Mutex<Option<PluginLayout>>,
     /// The layout the plugin has since: new instances start with it.
     changed_layout: Mutex<Option<PluginLayout>>,
+    /// The null instances answer no cosmetic request while this is set (see
+    /// [`NullStats::set_soft_busy`]).
+    soft_busy: AtomicBool,
+    /// Polls a preset load of a null instance takes (see [`NullStats::set_preset_delay`]).
+    preset_delay: AtomicUsize,
+    /// The next list of presets a busy null instance answers fails (see
+    /// [`NullStats::fail_next_preset_list`]).
+    fail_preset_list: AtomicBool,
+    /// Preset lists asked for and param reads asked for through the live-app calls.
+    preset_lists: AtomicUsize,
+    param_reads: AtomicUsize,
 }
 
 impl NullStats {
+    /// Makes a preset load take `polls` polls of the instance (a sampler reading its library):
+    /// [`PluginInstance::begin_load_preset`] answers "not yet" and
+    /// [`PluginInstance::poll_load_preset`] says when it is done.
+    pub fn set_preset_delay(&self, polls: usize) {
+        self.preset_delay.store(polls, Ordering::Relaxed);
+    }
+    /// Makes the next preset list that a busy instance (see [`NullStats::set_soft_busy`])
+    /// answers a failed one.
+    pub fn fail_next_preset_list(&self) {
+        self.fail_preset_list.store(true, Ordering::Relaxed);
+    }
+    /// How many times the presets were asked for with [`PluginInstance::begin_list_presets`].
+    pub fn preset_lists(&self) -> usize {
+        self.preset_lists.load(Ordering::Relaxed)
+    }
+    /// How many times the params were asked for with [`PluginInstance::begin_read_params`].
+    pub fn param_reads(&self) -> usize {
+        self.param_reads.load(Ordering::Relaxed)
+    }
     /// Makes a restart's deactivation take `polls` polls of the instance (a plugin that is busy
     /// but alive): [`PluginInstance::begin_deactivate`] answers "not yet" and
     /// [`PluginInstance::poll_deactivate`] says when it is done.
     pub fn set_deactivate_delay(&self, polls: usize) {
         self.deactivate_delay.store(polls, Ordering::Relaxed);
+    }
+    /// Makes a restore take `polls` polls of the instance: [`PluginInstance::begin_restore_state`]
+    /// answers "not yet" and [`PluginInstance::poll_restore_state`] says when it is done.
+    pub fn set_restore_delay(&self, polls: usize) {
+        self.restore_delay.store(polls, Ordering::Relaxed);
+    }
+    /// Makes an activation take `polls` polls of the instance (see
+    /// [`PluginInstance::begin_activate`]).
+    pub fn set_activate_delay(&self, polls: usize) {
+        self.activate_delay.store(polls, Ordering::Relaxed);
+    }
+    /// Makes the end of an instance take `polls` polls (see [`PluginInstance::poll_shutdown`]).
+    pub fn set_shutdown_delay(&self, polls: usize) {
+        self.shutdown_delay.store(polls, Ordering::Relaxed);
+    }
+    /// Makes the backend create instances in the background, as a plugin in another process is:
+    /// [`PluginBackend::begin_instantiate`] answers a pending start that is ready after `polls`
+    /// polls. `None` (the default) creates them at once.
+    pub fn set_background_create(&self, polls: Option<usize>) {
+        self.background_create
+            .store(polls.map_or(0, |p| p + 1), Ordering::Relaxed);
+    }
+    /// Holds the next `n` background starts (see [`NullStats::set_background_create`]): each
+    /// answers "not ready" however often it is polled, as a plugin that waits for a licence
+    /// dialog does, until [`NullStats::release_held_creates`]. The starts after them are not
+    /// held.
+    pub fn hold_next_creates(&self, n: usize) {
+        self.hold_creates.store(n, Ordering::Relaxed);
+    }
+    /// Makes the next `n` background starts fail as a plugin host process that cannot be started
+    /// does ([`BackendError::Spawn`]).
+    pub fn fail_next_spawns(&self, n: usize) {
+        self.fail_spawns.store(n, Ordering::Relaxed);
+    }
+    /// Lets the starts held so far go on (the ones held later stay held).
+    pub fn release_held_creates(&self) {
+        self.release_creates.fetch_add(1, Ordering::Relaxed);
+    }
+    /// Makes the next restore of a null instance fail.
+    pub fn fail_next_restore(&self) {
+        self.fail_restore.store(true, Ordering::Relaxed);
     }
     /// Makes the null plugin change its layout (its buses, as a plugin does after a sign-in) at
     /// the next restart of an instance: [`PluginInstance::take_layout_changed`] answers true once
@@ -664,6 +959,53 @@ impl NullStats {
             .pending_layout
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(layout);
+    }
+
+    /// While set, the null instances are busy with their own work as a plugin in another
+    /// process is while it loads a preset: [`PluginInstance::param_text`] gives `None` and
+    /// [`PluginInstance::request_resize_gui`] gives `None` (merging the sizes asked for), and
+    /// when it is cleared the answers come through [`PluginInstance::take_soft_answers`].
+    pub fn set_soft_busy(&self, busy: bool) {
+        self.soft_busy.store(busy, Ordering::Relaxed);
+    }
+
+    /// Makes the null instances capture in the background like a plugin in another process:
+    /// [`PluginInstance::request_capture`] sends nothing to wait for and
+    /// [`PluginInstance::poll_capture`] answers when [`NullStats::hold_captures`] lets it.
+    pub fn set_background_capture(&self, on: bool) {
+        self.background_capture.store(on, Ordering::Relaxed);
+    }
+    /// While held, a background capture is not answered (the plugin's main thread is busy); the
+    /// state it then gives is the one the plugin holds when the hold ends.
+    pub fn hold_captures(&self, hold: bool) {
+        self.captures_held.store(hold, Ordering::Relaxed);
+    }
+    /// Makes the null plugin change its own state to `state` (not a restore from the app): the
+    /// instances hold it from their next poll, capture or request.
+    pub fn edit_state(&self, state: &[u8]) {
+        *self.own_edit.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.to_vec());
+    }
+    /// Makes every null instance alive but not answering, as a sandboxed plugin whose main
+    /// thread is busy is once a call has timed out: [`PluginInstance::not_responding`] names a
+    /// call and the calls that need an answer (capture, restore, preset load) fail at once with
+    /// an error [`BackendError::is_not_responding`] recognises. False ends it, as the plugin's
+    /// late answer does.
+    pub fn set_not_responding(&self, on: bool) {
+        self.not_responding.store(on, Ordering::Relaxed);
+    }
+    /// Makes the null instances hand over at most `limit` bytes of state, as a plugin in its own
+    /// process does (one frame of the channel carries so much): a larger state is an
+    /// [`BackendError::StateTooLarge`] answer and the instance lives on. 0 lifts the limit.
+    pub fn set_state_limit(&self, limit: u64) {
+        self.state_limit.store(limit, Ordering::Relaxed);
+    }
+    /// Background capture requests the null instances received.
+    pub fn capture_requests(&self) -> usize {
+        self.capture_requests.load(Ordering::Relaxed)
+    }
+    /// Synchronous state captures the null instances served.
+    pub fn sync_captures(&self) -> usize {
+        self.sync_captures.load(Ordering::Relaxed)
     }
 
     /// Instances created.
@@ -831,12 +1173,87 @@ impl PluginBackend for NullBackend {
             state: PluginStateBlob::default(),
             held: BTreeMap::new(),
             stats: Arc::clone(&self.stats),
+            capture_out: false,
             opening: None,
             opening_in: None,
             deactivating: None,
+            restoring: None,
+            activating: None,
+            ending: None,
+            texts_asked: Vec::new(),
+            resize_asked: None,
+            presets_asked: false,
+            params_asked: false,
+            loading: None,
         }))
     }
+
+    fn begin_instantiate(
+        &self,
+        plugin: &PluginRef,
+        host: HostHandle,
+    ) -> Result<Option<Box<dyn PendingInstance>>, BackendError> {
+        let polls = self.stats.background_create.load(Ordering::Relaxed);
+        if polls == 0 {
+            return Ok(None);
+        }
+        let instance = self.instantiate(plugin, host)?;
+        // Starts come from the interface thread one at a time: a load and a store are enough.
+        let to_hold = self.stats.hold_creates.load(Ordering::Relaxed);
+        self.stats
+            .hold_creates
+            .store(to_hold.saturating_sub(1), Ordering::Relaxed);
+        let to_fail = self.stats.fail_spawns.load(Ordering::Relaxed);
+        self.stats
+            .fail_spawns
+            .store(to_fail.saturating_sub(1), Ordering::Relaxed);
+        let held = (to_hold > 0).then(|| self.stats.release_creates.load(Ordering::Relaxed));
+        Ok(Some(Box::new(NullPending {
+            instance: Some(instance),
+            polls: polls - 1,
+            held,
+            fail: (to_fail > 0).then(|| {
+                BackendError::Spawn("cannot start the plugin host: the null test failure".into())
+            }),
+            stats: Arc::clone(&self.stats),
+        })))
+    }
 }
+
+/// A null instance that is "starting in the background" (see
+/// [`NullStats::set_background_create`]).
+struct NullPending {
+    instance: Option<Box<dyn PluginInstance>>,
+    polls: usize,
+    /// Held (see [`NullStats::hold_next_creates`]): the release count it started under.
+    held: Option<usize>,
+    /// The start fails with this once its polls are over.
+    fail: Option<BackendError>,
+    stats: Arc<NullStats>,
+}
+
+impl PendingInstance for NullPending {
+    fn poll(&mut self) -> Option<Result<Box<dyn PluginInstance>, BackendError>> {
+        if let Some(since) = self.held {
+            if self.stats.release_creates.load(Ordering::Relaxed) == since {
+                return None;
+            }
+            self.held = None;
+        }
+        if self.polls > 0 {
+            self.polls -= 1;
+            return None;
+        }
+        if let Some(e) = self.fail.take() {
+            self.instance = None;
+            return Some(Err(e));
+        }
+        self.instance.take().map(Ok)
+    }
+}
+
+/// What a slow null activation ends with.
+type ActivationResult = Result<Box<dyn PluginProcessor>, BackendError>;
 
 struct NullInstance {
     layout: PluginLayout,
@@ -845,12 +1262,30 @@ struct NullInstance {
     state: PluginStateBlob,
     held: BTreeMap<u32, f64>,
     stats: Arc<NullStats>,
+    /// A background capture was requested and not collected.
+    capture_out: bool,
     /// Polls left before a slow external editor is open.
     opening: Option<usize>,
     /// The app window a slow editor that is opening goes into, when it goes into one.
     opening_in: Option<NativeParent>,
     /// Polls left before a slow deactivation is done.
     deactivating: Option<usize>,
+    /// A slow restore: the polls left and what it ends with.
+    restoring: Option<(usize, Result<(), BackendError>)>,
+    /// A slow activation: the polls left and what it ends with.
+    activating: Option<(usize, ActivationResult)>,
+    /// A slow end: the polls left.
+    ending: Option<usize>,
+    /// The values whose text was asked for while the instance was busy.
+    texts_asked: Vec<(u32, f64)>,
+    /// The latest size asked for while the instance was busy.
+    resize_asked: Option<(u32, u32)>,
+    /// The presets were asked for while the instance was busy.
+    presets_asked: bool,
+    /// The param values were asked for while the instance was busy.
+    params_asked: bool,
+    /// A slow preset load: the polls left and what it ends with.
+    loading: Option<(usize, Result<(), BackendError>)>,
 }
 
 impl Drop for NullInstance {
@@ -860,6 +1295,41 @@ impl Drop for NullInstance {
 }
 
 impl NullInstance {
+    /// The error of a call made while the null plugin is set not to respond (see
+    /// [`NullStats::set_not_responding`]).
+    fn stuck_error(&self, what: &str) -> Result<(), BackendError> {
+        if self.stats.not_responding.load(Ordering::Relaxed) {
+            return Err(BackendError::Failed(format!(
+                "{}: it has not answered CaptureState yet; {what} was not sent",
+                crate::NOT_RESPONDING
+            )));
+        }
+        Ok(())
+    }
+
+    /// The state, or [`BackendError::StateTooLarge`] when it is over the stats' limit.
+    fn handed_over(&self) -> Result<PluginStateBlob, BackendError> {
+        let limit = self.stats.state_limit.load(Ordering::Relaxed);
+        let bytes = self.state.0.len() as u64;
+        if limit > 0 && bytes > limit {
+            return Err(BackendError::StateTooLarge { bytes, limit });
+        }
+        Ok(self.state.clone())
+    }
+
+    /// Takes the state the plugin gave itself since the last call.
+    fn take_own_edit(&mut self) {
+        let edit = self
+            .stats
+            .own_edit
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(state) = edit {
+            self.state = PluginStateBlob(state);
+        }
+    }
+
     /// Counts an editor opened inside `parent`.
     fn note_embedded(&self, parent: NativeParent) {
         self.stats.embedded_opens.fetch_add(1, Ordering::Relaxed);
@@ -929,6 +1399,60 @@ impl PluginInstance for NullInstance {
         }
     }
 
+    fn begin_activate(
+        &mut self,
+        cfg: &ActivateConfig,
+    ) -> Result<Option<Box<dyn PluginProcessor>>, BackendError> {
+        let done = self.activate(cfg);
+        let polls = self.stats.activate_delay.load(Ordering::Relaxed);
+        if polls == 0 {
+            return done.map(Some);
+        }
+        self.activating = Some((polls, done));
+        Ok(None)
+    }
+
+    fn poll_activate(&mut self) -> Option<Result<Box<dyn PluginProcessor>, BackendError>> {
+        let (left, done) = self.activating.take()?;
+        if left > 1 {
+            self.activating = Some((left - 1, done));
+            return None;
+        }
+        Some(done)
+    }
+
+    fn begin_restore_state(&mut self, state: &PluginStateBlob) -> Result<bool, BackendError> {
+        let done = self.restore_state(state);
+        let polls = self.stats.restore_delay.load(Ordering::Relaxed);
+        if polls == 0 {
+            return done.map(|()| true);
+        }
+        self.restoring = Some((polls, done));
+        Ok(false)
+    }
+
+    fn poll_restore_state(&mut self) -> Option<Result<(), BackendError>> {
+        let Some((left, done)) = self.restoring.take() else {
+            return Some(Ok(()));
+        };
+        if left > 1 {
+            self.restoring = Some((left - 1, done));
+            return None;
+        }
+        Some(done)
+    }
+
+    fn poll_shutdown(&mut self) -> bool {
+        let left = self
+            .ending
+            .unwrap_or_else(|| self.stats.shutdown_delay.load(Ordering::Relaxed));
+        if left == 0 {
+            return true;
+        }
+        self.ending = Some(left - 1);
+        false
+    }
+
     fn take_layout_changed(&mut self) -> bool {
         let pending = self
             .stats
@@ -955,11 +1479,49 @@ impl PluginInstance for NullInstance {
         }
     }
 
+    fn not_responding(&self) -> Option<String> {
+        self.stats
+            .not_responding
+            .load(Ordering::Relaxed)
+            .then(|| "CaptureState".to_string())
+    }
+
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError> {
-        Ok(self.state.clone())
+        self.stuck_error("CaptureState")?;
+        self.take_own_edit();
+        self.stats.sync_captures.fetch_add(1, Ordering::Relaxed);
+        self.capture_out = false;
+        self.handed_over()
+    }
+
+    fn background_capture(&self) -> bool {
+        self.stats.background_capture.load(Ordering::Relaxed)
+    }
+
+    fn request_capture(&mut self) -> Result<(), BackendError> {
+        self.stuck_error("a request")?;
+        self.take_own_edit();
+        self.stats.capture_requests.fetch_add(1, Ordering::Relaxed);
+        self.capture_out = true;
+        Ok(())
+    }
+
+    fn poll_capture(&mut self) -> Option<Result<PluginStateBlob, BackendError>> {
+        self.take_own_edit();
+        if !self.capture_out || self.stats.captures_held.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.capture_out = false;
+        Some(self.handed_over())
     }
 
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError> {
+        self.stuck_error("RestoreState")?;
+        if self.stats.fail_restore.swap(false, Ordering::Relaxed) {
+            return Err(BackendError::Failed(
+                "the null plugin could not restore".to_string(),
+            ));
+        }
         self.state = state.clone();
         let index = std::str::from_utf8(&state.0)
             .ok()
@@ -984,6 +1546,7 @@ impl PluginInstance for NullInstance {
     }
 
     fn load_preset(&mut self, id: &str) -> Result<(), BackendError> {
+        self.stuck_error("LoadPreset")?;
         if !self.stats.presets.load(Ordering::Relaxed) {
             return Err(BackendError::Unsupported(
                 "the null plugin has no presets".to_string(),
@@ -1005,8 +1568,96 @@ impl PluginInstance for NullInstance {
             .collect()
     }
 
-    fn param_text(&mut self, _id: u32, plain: f64) -> Option<String> {
+    fn begin_list_presets(&mut self) -> Result<Option<Vec<PresetInfo>>, BackendError> {
+        self.stuck_error("ListPresets")?;
+        self.stats.preset_lists.fetch_add(1, Ordering::Relaxed);
+        if self.stats.soft_busy.load(Ordering::Relaxed) {
+            self.presets_asked = true;
+            return Ok(None);
+        }
+        Ok(Some(self.list_presets()))
+    }
+
+    fn begin_read_params(&mut self) -> Result<Option<Vec<(u32, f64)>>, BackendError> {
+        self.stuck_error("ReadParams")?;
+        self.stats.param_reads.fetch_add(1, Ordering::Relaxed);
+        if self.stats.soft_busy.load(Ordering::Relaxed) {
+            self.params_asked = true;
+            return Ok(None);
+        }
+        Ok(Some(self.read_params()))
+    }
+
+    fn begin_load_preset(&mut self, id: &str) -> Result<bool, BackendError> {
+        let done = self.load_preset(id);
+        let polls = self.stats.preset_delay.load(Ordering::Relaxed);
+        if polls == 0 {
+            return done.map(|()| true);
+        }
+        self.loading = Some((polls, done));
+        Ok(false)
+    }
+
+    fn poll_load_preset(&mut self) -> Option<Result<(), BackendError>> {
+        let Some((left, done)) = self.loading.take() else {
+            return Some(Ok(()));
+        };
+        if left > 1 {
+            self.loading = Some((left - 1, done));
+            return None;
+        }
+        Some(done)
+    }
+
+    fn param_text(&mut self, id: u32, plain: f64) -> Option<String> {
+        if self.stats.soft_busy.load(Ordering::Relaxed) {
+            if !self.texts_asked.contains(&(id, plain)) {
+                self.texts_asked.push((id, plain));
+            }
+            return None;
+        }
         Some(format!("{plain}"))
+    }
+
+    fn request_resize_gui(&mut self, w: u32, h: u32) -> Result<Option<(u32, u32)>, BackendError> {
+        if !self.stats.soft_busy.load(Ordering::Relaxed) {
+            return self.resize_gui(w, h).map(Some);
+        }
+        if self.editor_kind() != EditorKind::External {
+            return Err(BackendError::Unsupported(
+                "the null plugin has no editor".to_string(),
+            ));
+        }
+        self.resize_asked = Some((w, h));
+        Ok(None)
+    }
+
+    fn take_soft_answers(&mut self) -> Vec<SoftAnswer> {
+        if self.stats.soft_busy.load(Ordering::Relaxed) {
+            return Vec::new();
+        }
+        let mut out: Vec<SoftAnswer> = std::mem::take(&mut self.texts_asked)
+            .into_iter()
+            .map(|(param, plain)| SoftAnswer::ParamText {
+                param,
+                plain,
+                text: format!("{plain}"),
+            })
+            .collect();
+        if std::mem::take(&mut self.presets_asked) {
+            let failed = self.stats.fail_preset_list.swap(false, Ordering::Relaxed);
+            out.push(SoftAnswer::Presets((!failed).then(|| self.list_presets())));
+        }
+        if std::mem::take(&mut self.params_asked) {
+            out.push(SoftAnswer::Params(Some(self.read_params())));
+        }
+        if let Some((w, h)) = self.resize_asked.take() {
+            out.push(SoftAnswer::GuiSized {
+                asked: (w, h),
+                took: self.resize_gui(w, h).ok(),
+            });
+        }
+        out
     }
 
     fn open_gui(&mut self, _parent: NativeParent, _scale: f64) -> Result<(u32, u32), BackendError> {
@@ -1021,7 +1672,9 @@ impl PluginInstance for NullInstance {
         }
     }
 
-    fn poll(&mut self) {}
+    fn poll(&mut self) {
+        self.take_own_edit();
+    }
 
     fn editor_kind(&self) -> EditorKind {
         if self.stats.external_editor.load(Ordering::Relaxed) {

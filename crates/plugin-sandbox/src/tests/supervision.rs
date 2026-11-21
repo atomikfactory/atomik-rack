@@ -111,6 +111,7 @@ fn start_real(
         timeouts,
         manager.messenger(),
         LiveGuard::new(&live),
+        atomik_plugin_host::SoftBudget::default(),
     );
     (instance, manager, live)
 }
@@ -129,7 +130,10 @@ fn a_child_that_exits_with_code_3_after_the_hello_is_reported_with_its_code_and_
         reason.contains("the stub plugin died on purpose"),
         "{reason}"
     );
-    assert_eq!(live.load(Ordering::SeqCst), 0, "the child is reaped");
+    // The reader posts the exit message just before it lets go of its guard.
+    eventually("the child to be reaped", || {
+        live.load(Ordering::SeqCst) == 0
+    });
 }
 
 #[test]
@@ -142,6 +146,11 @@ fn a_child_that_hangs_is_killed_when_its_call_times_out() {
     eventually("the killed child to be reaped", || {
         live.load(Ordering::SeqCst) == 0
     });
-    // The failed start dropped the instance: nothing is reported, and nothing is left.
+    // The failed start dropped the instance: nothing is reported but the stall of the wait that
+    // ran out, and nothing is left.
+    assert!(matches!(
+        manager.try_recv(),
+        Some(PluginMessage::Stall { ref call, .. }) if call == "Instantiate"
+    ));
     assert_eq!(manager.try_recv(), None);
 }

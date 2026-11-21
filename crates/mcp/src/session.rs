@@ -574,6 +574,7 @@ fn overload_json(o: atomik_app::status::OverloadStats) -> Value {
         "plugin_drops": o.plugin_drops,
         "control_stalled": o.control_stalled,
         "late_sandbox_batches": o.late_sandbox_batches,
+        "bad_plugin_blocks": o.bad_plugin_blocks,
     })
 }
 
@@ -583,7 +584,7 @@ fn status_def() -> Value {
     definition(
         "session_status",
         "The open session: title, unsaved changes, the recent songs, status line, focused pane, undo/redo \
-availability, whether a take records, the automation lanes armed for recording, the overload counters (dropped events, input overruns, record overflow, plugin drops, control stalls, late sandbox batches), window size, and the document (devices, cables, song; automation lanes with their write mode).",
+availability, whether a take records, the automation lanes armed for recording, the overload counters (dropped events, input overruns, record overflow, plugin drops, control stalls, late sandbox batches, bad plugin blocks), window size, and the document (devices, cables, song; automation lanes with their write mode).",
         &[(
             "include_params",
             "boolean",

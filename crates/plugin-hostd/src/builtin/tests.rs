@@ -85,6 +85,7 @@ fn every_null_plugin_id_is_known_and_others_are_not() {
         "null.hang-activate",
         "null.synth",
         "null.noisy",
+        "null.busy",
     ] {
         assert!(Kind::of(id).is_some(), "{id}");
     }
@@ -384,4 +385,29 @@ fn the_synth_steals_the_first_voice_when_all_are_busy() {
     synth.note_on(69, 1.0, 1);
     let a = synth.voices.iter().find(|v| v.key == 69).unwrap();
     assert!((a.step - 440.0 / 48_000.0).abs() < 1e-12);
+}
+
+#[test]
+fn the_busy_plugin_passes_audio_through_and_works_on_every_batch_or_every_eighth() {
+    let input = [ramp(), ramp()];
+    // Built directly: the work comes from the environment at activation.
+    let mut every = BusyProcessor {
+        spin: Duration::ZERO,
+        burst: false,
+        batches: 0,
+    };
+    let mut burst = BusyProcessor {
+        spin: Duration::ZERO,
+        burst: true,
+        batches: 0,
+    };
+    for _ in 0..16 {
+        assert_eq!(run(&mut every, &input, &[], 2)[0], input[0]);
+        assert_eq!(run(&mut burst, &input, &[], 2)[1], input[1]);
+    }
+    assert_eq!((every.batches, burst.batches), (16, 16));
+    let mut plugin = instance("null.busy");
+    let mut processor = plugin.activate(&config()).unwrap();
+    assert!(processor.start_processing());
+    assert_eq!(run(&mut *processor, &input, &[], 2)[0], input[0]);
 }

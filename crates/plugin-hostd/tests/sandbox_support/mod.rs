@@ -14,8 +14,8 @@ use atomik_device_sdk::{PluginFormat, PluginRef, PluginStateBlob, RunMode};
 use atomik_plugin_clap::ClapBackend;
 use atomik_plugin_host::testing::{clap_test_plugin, vst3_test_plugin};
 use atomik_plugin_host::{
-    BackendError, DeviceState, HostHandle, InstantiateRequest, PluginBackend, PluginHandle,
-    PluginInstance, PluginManager, ScannedPlugin, mark_main_thread,
+    BackendError, DeviceState, HostHandle, InstantiateRequest, PendingInstance, PluginBackend,
+    PluginHandle, PluginInstance, PluginManager, ScannedPlugin, mark_main_thread,
 };
 use atomik_plugin_sandbox::{HostCommand, SandboxBackend, SandboxConfig};
 use atomik_plugin_vst3::Vst3Backend;
@@ -159,7 +159,7 @@ pub fn null_plugin(id: &str) -> PluginRef {
 }
 
 /// Every null plugin the child knows.
-pub const NULL_IDS: [&str; 8] = [
+pub const NULL_IDS: [&str; 9] = [
     "null.gain",
     "null.latency",
     "null.crash",
@@ -168,6 +168,7 @@ pub const NULL_IDS: [&str; 8] = [
     "null.hang-activate",
     "null.synth",
     "null.noisy",
+    "null.busy",
 ];
 
 /// The command of the child under test.
@@ -205,6 +206,13 @@ impl PluginBackend for Shared {
         host: HostHandle,
     ) -> Result<Box<dyn PluginInstance>, BackendError> {
         self.0.instantiate(plugin, host)
+    }
+    fn begin_instantiate(
+        &self,
+        plugin: &PluginRef,
+        host: HostHandle,
+    ) -> Result<Option<Box<dyn PendingInstance>>, BackendError> {
+        self.0.begin_instantiate(plugin, host)
     }
 }
 
@@ -255,12 +263,14 @@ impl Sandbox {
     }
 
     /// Waits until `n` children are alive (they end asynchronously).
-    pub fn wait_children(&self, n: usize, within: Duration) -> bool {
+    pub fn wait_children(&mut self, n: usize, within: Duration) -> bool {
         let limit = std::time::Instant::now() + within;
         while self.backend.live_children() != n {
             if std::time::Instant::now() >= limit {
                 return false;
             }
+            // The live app polls every frame: an instance that left is ended across polls.
+            self.manager.poll();
             std::thread::sleep(Duration::from_millis(5));
         }
         true
@@ -326,9 +336,10 @@ pub fn request_with_state(
 /// The meter slots of a plugin device.
 pub const METER_STATE: usize = 2;
 pub const METER_LATE: usize = 5;
+pub const METER_BAD: usize = 6;
 
-pub fn meters(h: &DeviceHarness) -> [f32; 6] {
-    let mut m = [0.0f32; 6];
+pub fn meters(h: &DeviceHarness) -> [f32; 8] {
+    let mut m = [0.0f32; 8];
     h.device().meter_values(&mut m);
     m
 }

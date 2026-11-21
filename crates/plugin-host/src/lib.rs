@@ -32,6 +32,7 @@ pub mod paths;
 mod scan;
 mod settings;
 mod slot;
+mod soft;
 mod standin;
 pub mod testing;
 mod threads;
@@ -41,7 +42,7 @@ pub use backend::{
     ActivateConfig, BackendError, EditorKind, EventList, HostHandle, NULL_PRESETS, NativeParent,
     NullBackend, NullBehavior, NullPlugin, NullStats, PendingInstance, PluginBackend, PluginEvent,
     PluginEventKind, PluginInstance, PluginIo, PluginProcessor, PluginTransport, PresetInfo,
-    ProcessStatus, ScannedPlugin, SleepRule, TailLength,
+    PresetLister, ProcessStatus, ScannedPlugin, SleepRule, TailLength,
 };
 pub use cache::{
     BlacklistEntry, CACHE_VERSION, CachedFile, FileStamp, LoadStatus, PluginCache, SCANNER_VERSION,
@@ -49,12 +50,12 @@ pub use cache::{
 };
 pub use catalog::{FailedFile, PluginCatalog, PluginEntry, PluginStatus, RegisterReport};
 pub use child::{ChildScanner, MAX_SCAN_OUTPUT, STDERR_REASON_BYTES, ScannerCommand};
-pub use device::{METER_VALUES, PluginDevice};
+pub use device::{METER_VALUES, PluginDevice, bad_run_limit};
 pub use fpenv::{FLUSH_SUPPORTED, FtzGuard, denormals_flushed};
 pub use journal::{CrashJournal, InUsePlugin, RecoveryDir, blacklist_in_use};
 pub use manager::{
-    CreateTicket, HUNG, InstantiateRequest, LOST, ManagerError, ManagerEvent, PluginHandle,
-    PluginManager, PluginProvider,
+    CaptureLanded, CreateTicket, CreateTiming, HUNG, InstantiateRequest, LOST, ManagerError,
+    ManagerEvent, NOT_RESPONDING, PluginHandle, PluginManager, PluginProvider, StallRecord,
 };
 pub use scan::{
     ALL_FORMATS, FailureKind, MAX_PARALLEL_SCANS, RescanMode, ScanEnv, ScanError, ScanFailure,
@@ -66,8 +67,10 @@ pub use settings::{
 };
 pub use slot::{
     DeviceEnd, DeviceState, HostMessenger, InstanceId, LogLevel, MESSAGE_CAPACITY, ManagerEnd,
-    ParamPhase, PluginMessage, PluginSlot, ReapItem, ReaperQueue, plugin_channel, warm, warmed,
+    ParamPhase, PluginMessage, PluginSlot, ReapItem, ReaperQueue, STALL_THRESHOLD, StallOutcome,
+    plugin_channel, warm, warmed,
 };
+pub use soft::{SOFT_FRAME_BUDGET, SoftAnswer, SoftBudget};
 pub use standin::{PluginStandIn, stand_in};
 pub use threads::{
     AudioThreadGuard, assert_main_thread, is_audio_thread, is_main_thread, mark_main_thread,

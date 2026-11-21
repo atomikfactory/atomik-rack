@@ -364,6 +364,15 @@ pub struct StatusLines {
     /// The last line: the reason of MISSING or FAILED, else the dropped-event count when there
     /// are some.
     pub detail: String,
+    /// A second line for a plugin that runs fine but whose state is over a size cap and is not
+    /// stored: `too large: 23 MB > 16 MB` (the app's notice at save time has the full words).
+    pub note: Option<String>,
+}
+
+/// The size of a state in megabytes, rounded up so that a state over its limit never reads as
+/// equal to it.
+fn megabytes(bytes: u64) -> u64 {
+    bytes.div_ceil(1 << 20)
 }
 
 /// A multi-line reason on one line: the non-empty lines joined with ` | `.
@@ -376,9 +385,24 @@ fn one_line(reason: &str) -> String {
         .join(" | ")
 }
 
-/// The status lines of a device (MISSING beats QUARANTINED beats CRASHED beats FAILED beats
-/// LOADING beats the meter state).
+/// The status lines of a device (MISSING beats QUARANTINED beats SKIPPED beats CRASHED beats
+/// NOT RESPONDING beats FAILED beats LOADING beats the meter state).
 pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines {
+    let mut lines = state_lines(status, meters);
+    lines.note = status
+        .state_too_large
+        .map(|(bytes, limit)| {
+            format!(
+                "too large: {} MB > {} MB",
+                megabytes(bytes),
+                megabytes(limit)
+            )
+        })
+        .filter(|_| status.missing.is_none());
+    lines
+}
+
+fn state_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines {
     let meter = |i: usize| meters.get(i).copied().unwrap_or(0.0);
     let latency =
         (meter(METER_LATENCY) >= 1.0).then(|| format!("{} fr", meter(METER_LATENCY) as u64));
@@ -388,6 +412,7 @@ pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines 
             error: true,
             latency: None,
             detail: r.clone(),
+            note: None,
         };
     }
     if let Some(reason) = &status.quarantined {
@@ -400,6 +425,16 @@ pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines 
             } else {
                 one_line(reason)
             },
+            note: None,
+        };
+    }
+    if status.skipped {
+        return StatusLines {
+            state: "SKIPPED".into(),
+            error: false,
+            latency: None,
+            detail: "RELOAD tries again".into(),
+            note: None,
         };
     }
     if status.crashed.is_some() || meter(METER_STATE).round() as i32 == 5 {
@@ -409,6 +444,16 @@ pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines 
             latency,
             // One line: the exit code first, then what the process wrote last.
             detail: status.crashed.as_deref().map(one_line).unwrap_or_default(),
+            note: None,
+        };
+    }
+    if status.not_responding.is_some() {
+        return StatusLines {
+            state: "NOT RESPONDING".into(),
+            error: true,
+            latency,
+            detail: "the plugin is busy and does not answer; its audio keeps running".into(),
+            note: None,
         };
     }
     let failed_meter = meter(METER_STATE).round() as i32 == 3;
@@ -418,6 +463,7 @@ pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines 
             error: true,
             latency,
             detail: status.failed.clone().unwrap_or_default(),
+            note: None,
         };
     }
     if let Some(why) = &status.waiting {
@@ -426,6 +472,7 @@ pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines 
             error: true,
             latency,
             detail: format!("waiting for the audio engine ({why})"),
+            note: None,
         };
     }
     if status.loading {
@@ -434,6 +481,7 @@ pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines 
             error: false,
             latency: None,
             detail: "creating the plugin, this can take a few seconds".into(),
+            note: None,
         };
     }
     let dropped = meter(METER_DROPPED) as u64;
@@ -450,6 +498,7 @@ pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines 
         } else {
             String::new()
         },
+        note: None,
     }
 }
 
@@ -545,12 +594,21 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
     } else {
         format!("{} {}", doc.layout.vendor, doc.layout.version)
     };
-    c.text(&TextRun::new(
-        fit_label(&second, w, 7.5),
-        pt(x, y0 + 19.5),
-        7.5,
-        theme.text_muted,
-    ));
+    match &lines.note {
+        // The second line, in the warning colour, while the state cannot be stored.
+        Some(note) => c.text(&TextRun::new(
+            fit_label(note, w, 6.8),
+            pt(x, y0 + 19.5),
+            6.8,
+            warn_color(theme),
+        )),
+        None => c.text(&TextRun::new(
+            fit_label(&second, w, 7.5),
+            pt(x, y0 + 19.5),
+            7.5,
+            theme.text_muted,
+        )),
+    };
     // State and latency.
     c.text(
         &TextRun::new(
@@ -619,12 +677,15 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
             PluginButton::ToChannel => panel_button(c, theme, r, b.label(), !info.has_channel),
             PluginButton::Reload => {
                 // A quarantined plugin was not loaded: the same button loads it.
+                // A plugin that is loading is not reloaded: the button skips the load.
                 let label = if info.status.quarantined.is_some() {
                     fit_label("LOAD ANYWAY", r.width() - 6.0, 7.2)
+                } else if info.status.loading {
+                    "SKIP".to_owned()
                 } else {
                     b.label().to_owned()
                 };
-                panel_button(c, theme, r, &label, !info.status.loading);
+                panel_button(c, theme, r, &label, true);
             }
             PluginButton::OpenGui | PluginButton::Params | PluginButton::Relink => {
                 panel_button(c, theme, r, b.label(), true);
@@ -715,6 +776,47 @@ mod tests {
     }
 
     #[test]
+    fn a_state_over_a_cap_is_a_second_line_and_never_replaces_the_state_word() {
+        let status = PluginDeviceStatus {
+            state_too_large: Some((23 << 20, 16 << 20)),
+            ..PluginDeviceStatus::default()
+        };
+        let l = status_lines(&status, &[0.0, 0.0, 0.0]);
+        assert_eq!((l.state.as_str(), l.error), ("RUNNING", false));
+        assert_eq!(l.note.as_deref(), Some("too large: 23 MB > 16 MB"));
+        // A size just over a limit never reads as equal to it.
+        let status = PluginDeviceStatus {
+            state_too_large: Some(((16 << 20) + 1, 16 << 20)),
+            ..PluginDeviceStatus::default()
+        };
+        let l = status_lines(&status, &[]);
+        assert_eq!(l.note.as_deref(), Some("too large: 17 MB > 16 MB"));
+        // The other states keep their words and their reasons, and the note is still there.
+        let failed = PluginDeviceStatus {
+            failed: Some("the plugin returned an error status".into()),
+            ..status.clone()
+        };
+        let l = status_lines(&failed, &[]);
+        assert_eq!(l.state, "FAILED");
+        assert_eq!(l.detail, "the plugin returned an error status");
+        assert!(l.note.is_some());
+        // A stand-in has no live state to be too large.
+        let missing = PluginDeviceStatus {
+            missing: Some("gone".into()),
+            ..status
+        };
+        assert_eq!(status_lines(&missing, &[]).note, None);
+        assert_eq!(status_lines(&PluginDeviceStatus::default(), &[]).note, None);
+    }
+
+    #[test]
+    fn the_second_line_is_translated_with_its_numbers_kept() {
+        use crate::i18n::{Lang, tr, with_language};
+        let text = with_language(Lang::French, || tr("too large: 23 MB > 16 MB").into_owned());
+        assert_eq!(text, "trop gros : 23 Mo > 16 Mo");
+    }
+
+    #[test]
     fn a_crashed_device_is_crashed_not_failed_and_the_reason_is_one_line() {
         let ok = PluginDeviceStatus::default();
         let l = status_lines(&ok, &[0.0, 0.0, 5.0]);
@@ -738,6 +840,61 @@ thread panicked
             ..crashed
         };
         assert_eq!(status_lines(&missing, &[]).state, "MISSING");
+    }
+
+    #[test]
+    fn a_skipped_plugin_says_skipped_without_an_error_and_loses_to_missing() {
+        let skipped = PluginDeviceStatus {
+            skipped: true,
+            ..PluginDeviceStatus::default()
+        };
+        let l = status_lines(&skipped, &[]);
+        assert_eq!((l.state.as_str(), l.error), ("SKIPPED", false));
+        assert!(l.detail.contains("RELOAD"));
+        let missing = PluginDeviceStatus {
+            missing: Some("gone".into()),
+            ..skipped
+        };
+        assert_eq!(status_lines(&missing, &[]).state, "MISSING");
+    }
+
+    #[test]
+    fn a_plugin_that_is_alive_but_does_not_answer_is_not_responding_not_crashed() {
+        let busy = PluginDeviceStatus {
+            not_responding: Some("CaptureState".into()),
+            ..PluginDeviceStatus::default()
+        };
+        // Its audio keeps running: the meter state says RUNNING and the word is NOT RESPONDING.
+        let l = status_lines(&busy, &[0.0, 0.0, 0.0, 64.0]);
+        assert_eq!((l.state.as_str(), l.error), ("NOT RESPONDING", true));
+        assert_eq!(
+            l.detail,
+            "the plugin is busy and does not answer; its audio keeps running"
+        );
+        assert_eq!(l.latency.as_deref(), Some("64 fr"));
+        // A process that is gone is CRASHED, and a missing plugin MISSING, whatever else.
+        let crashed = PluginDeviceStatus {
+            crashed: Some("exited".into()),
+            ..busy.clone()
+        };
+        assert_eq!(status_lines(&crashed, &[]).state, "CRASHED");
+        let missing = PluginDeviceStatus {
+            missing: Some("gone".into()),
+            ..busy.clone()
+        };
+        assert_eq!(status_lines(&missing, &[]).state, "MISSING");
+        // It beats FAILED and LOADING.
+        let failed = PluginDeviceStatus {
+            failed: Some("x".into()),
+            loading: true,
+            ..busy
+        };
+        assert_eq!(status_lines(&failed, &[]).state, "NOT RESPONDING");
+        assert_eq!(
+            status_lines(&PluginDeviceStatus::default(), &[]).state,
+            "RUNNING",
+            "and it ends with the answer"
+        );
     }
 
     #[test]

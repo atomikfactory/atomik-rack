@@ -608,6 +608,26 @@ fn a_quarantined_plugin_device_in_french() {
 }
 
 #[test]
+fn a_loading_and_a_skipped_plugin_device_in_french() {
+    use atomik_ui::plugin_data::PluginDeviceStatus;
+    use support::container::paint_rack;
+    use support::plugin::plugin_rack;
+    let d = plugin_rack();
+    let reg = registry();
+    french("plugin_panel_skipped_1x.json", || {
+        let mut v = plain_view(d.doc(), &reg);
+        v.set_plugin_status(
+            &key("synth"),
+            PluginDeviceStatus {
+                skipped: true,
+                ..PluginDeviceStatus::default()
+            },
+        );
+        paint_rack(&mut v, d.doc())
+    });
+}
+
+#[test]
 fn the_plugin_manager_with_its_process_column_and_a_quarantine_reason_in_french() {
     use atomik_device_sdk::PluginFormat;
     use atomik_ui::plugin_data::{PluginEntryStatus, PluginProcessChoice};

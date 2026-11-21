@@ -1360,6 +1360,11 @@ fn tap_cables(
     base.saturating_add(u16::try_from(2 * taps.len()).unwrap_or(u16::MAX))
 }
 
+/// True when two plugin descriptors list the same params (by key, in order).
+fn same_param_table(a: &DeviceDescriptor, b: &DeviceDescriptor) -> bool {
+    a.params.len() == b.params.len() && a.params.iter().zip(b.params).all(|(x, y)| x.key == y.key)
+}
+
 /// The plugin devices of the expansion, by patch id, and how many plugin devices there are.
 fn build_plugin_devices(
     expanded: &ExpandedRack,
@@ -1406,6 +1411,16 @@ fn build_plugin_devices(
         if let Some(reason) = handle.restore_error {
             return Err(RenderError::Project(format!(
                 "plugin {name}: its saved state could not be restored: {reason}"
+            )));
+        }
+        // The lanes and values of the song were resolved against the registry's descriptor: the
+        // instance must list the same params in the same order, or a lane would drive another
+        // param (a plugin that changed since the last scan, or answered differently this time).
+        if let Some(f) = registry.get(&e.type_id)
+            && !same_param_table(f.descriptor, handle.descriptor)
+        {
+            return Err(RenderError::Project(format!(
+                "plugin {name}: its param table is not the one it was scanned with; scan the plugins again"
             )));
         }
         supplied.insert(patch_id(e.key.0.clone()), Box::new(handle.device));
@@ -1779,6 +1794,144 @@ mod tests {
             assert_eq!(ids.len(), 1);
             assert_eq!(host.manager_ref().run_mode(ids[0]), Some(mode), "{mode:?}");
         }
+    }
+
+    /// A project with the proxies test plugin (it publishes a parameter for every controller
+    /// and channel) as device `px`, saved by a scanner that listed them: a stored value on the
+    /// stand-in 1005 and its layout row. Returns the document, the scan cache and the id of the
+    /// stand-in's param.
+    fn proxies_project() -> (RackDoc, atomik_plugin_host::PluginCache, &'static str) {
+        use atomik_device_sdk::PluginParamInfo;
+        use atomik_model::PluginCommand;
+        use atomik_plugin_host::testing::vst3_test_plugin;
+        let file = vst3_test_plugin("atomik-test-vst3-variants").expect("the test plugin builds");
+        let cache = crate::plugins::scan_in_process(&[file]);
+        let mut registry = registry();
+        let mut host = PluginHost::new();
+        host.set_catalog(&cache, &crate::plugins::bounce_settings(), &mut registry);
+        let entry = host
+            .catalog()
+            .entries()
+            .iter()
+            .find(|e| e.name == "Atomik Test Proxies")
+            .expect("the proxies plugin is listed")
+            .clone();
+        let mut d = Document::new(empty_doc());
+        d.apply(
+            Command::Plugin(PluginCommand::Add {
+                index: usize::MAX,
+                container: None,
+                plugin: entry.plugin,
+                layout: entry.layout,
+                path_hint: None,
+                key: Some(key("px")),
+                auto_split: false,
+            }),
+            &registry,
+        )
+        .unwrap();
+        let mut doc = d.doc().clone();
+        let device = doc.devices.iter_mut().find(|d| d.key == key("px")).unwrap();
+        device.params.insert("p1005".to_string(), 0.75);
+        device
+            .plugin
+            .as_mut()
+            .unwrap()
+            .layout
+            .params
+            .push(PluginParamInfo {
+                id: 1005,
+                name: "MIDI CC 5 Chan 1".to_string(),
+                module: "MIDI Params".to_string(),
+                min: 0.0,
+                max: 1.0,
+                default: 0.5,
+                stepped: false,
+                steps: 0,
+            });
+        (doc, cache, "p1005")
+    }
+
+    /// A project that uses a controller stand-in bounces with it: the descriptor the song was
+    /// resolved against and the instance list the same params, with the stand-in among them.
+    #[test]
+    fn a_stand_in_the_project_uses_is_in_the_registry_and_in_the_instance_of_a_bounce() {
+        let (doc, cache, param) = proxies_project();
+        let mut registry = registry();
+        let mut host = PluginHost::new();
+        host.set_pinned_params(doc.plugin_pinned_rows());
+        host.set_catalog(&cache, &crate::plugins::bounce_settings(), &mut registry);
+        atomik_model::register_stand_ins(&doc, &mut registry).unwrap();
+        let type_id = doc.device(&key("px")).unwrap().type_id.clone();
+        assert!(
+            registry
+                .get(&type_id)
+                .unwrap()
+                .descriptor
+                .param_by_key(param)
+                .is_some()
+        );
+        {
+            let mut bounce = PluginBounce {
+                host: Some(&mut host),
+                mode: RunMode::Offline,
+                missing: MissingPlugins::Error,
+            };
+            render_doc_with(
+                &doc,
+                &registry,
+                &ProjectOptions::default(),
+                None,
+                &mut bounce,
+            )
+            .expect("the bounce builds the plugin and runs");
+        }
+        // The instance a bounce builds, looked at while it lives.
+        let expanded = doc.expand(&registry);
+        let mut bounce = PluginBounce {
+            host: Some(&mut host),
+            mode: RunMode::Offline,
+            missing: MissingPlugins::Error,
+        };
+        build_plugin_devices(&expanded, &registry, &doc, &mut bounce, &|k| k).unwrap();
+        let id = host.manager_ref().instance_ids()[0];
+        let ids: Vec<u32> = host
+            .manager_ref()
+            .layout(id)
+            .unwrap()
+            .params
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(ids, [1, 2, 3, 4, 1005]);
+    }
+
+    /// An instance that lists other params than the registry's descriptor (the scan and the
+    /// instance disagreed) is refused: a lane would drive another param.
+    #[test]
+    fn an_instance_with_another_param_table_than_the_registry_is_refused() {
+        let (doc, cache, _) = proxies_project();
+        let mut registry = registry();
+        let mut host = PluginHost::new();
+        host.set_pinned_params(doc.plugin_pinned_rows());
+        host.set_catalog(&cache, &crate::plugins::bounce_settings(), &mut registry);
+        atomik_model::register_stand_ins(&doc, &mut registry).unwrap();
+        // The instance is made without the pin the registry was built with.
+        host.set_pinned_params(std::collections::BTreeMap::new());
+        let mut bounce = PluginBounce {
+            host: Some(&mut host),
+            mode: RunMode::Offline,
+            missing: MissingPlugins::Error,
+        };
+        let err = render_doc_with(
+            &doc,
+            &registry,
+            &ProjectOptions::default(),
+            None,
+            &mut bounce,
+        )
+        .expect_err("refused");
+        assert!(err.to_string().contains("scan the plugins again"), "{err}");
     }
 }
 

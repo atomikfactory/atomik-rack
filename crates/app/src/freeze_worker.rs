@@ -112,6 +112,7 @@ pub(crate) fn plugin_host(
     // in this process too, on this thread, from the saved state of the document.
     let isolation = plugins.isolation.unwrap_or(PluginIsolation::InProcess);
     let mut host = PluginHost::with_isolation(isolation);
+    host.set_pinned_params(doc.plugin_pinned_rows());
     host.set_catalog(&plugins.cache, &plugins.settings, registry);
     Ok(Some(host))
 }

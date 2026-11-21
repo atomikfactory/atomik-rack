@@ -18,7 +18,7 @@ use crate::values;
 use atomik_device_sdk::{PluginLayout, PluginStateBlob, RunMode};
 use atomik_plugin_host::{
     ActivateConfig, BackendError, LogLevel, NativeParent, PluginInstance as HostInstance,
-    PluginMessage, PluginProcessor, PresetInfo, assert_main_thread, is_main_thread,
+    PluginMessage, PluginProcessor, PresetInfo, PresetLister, assert_main_thread, is_main_thread,
 };
 use std::ffi::{c_char, c_void};
 use std::sync::Arc;
@@ -485,6 +485,12 @@ impl HostInstance for Vst3Instance {
     fn list_presets(&mut self) -> Vec<PresetInfo> {
         assert_main_thread("listing the presets of a VST3 plugin");
         presets::list(&self.preset_roots())
+    }
+
+    fn preset_lister(&mut self) -> Option<PresetLister> {
+        // The folders are known from the class: the walk needs no plugin call.
+        let roots = self.preset_roots();
+        Some(Box::new(move || presets::list(&roots)))
     }
 
     fn load_preset(&mut self, id: &str) -> Result<(), BackendError> {

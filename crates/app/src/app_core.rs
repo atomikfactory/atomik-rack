@@ -1023,8 +1023,11 @@ impl<S: EngineSink> AppCore<S> {
             }
             _ => None,
         };
-        // A device that goes away takes its latest plugin state into the undo history.
-        self.plugins_flush_dirty(false);
+        // A device that goes away takes its latest plugin state into the undo history: a command
+        // that cannot remove or replace one leaves the plugin to its background capture.
+        if !Self::command_keeps_plugins(&command) {
+            self.plugins_flush_dirty(false);
+        }
         let merge = param_merge(&command);
         // A group's fader, mute or solo moved by hand is a move of its lane's param, for
         // recording.
@@ -1349,6 +1352,7 @@ impl<S: EngineSink> AppCore<S> {
             | UiAction::OpenPluginParams { .. }
             | UiAction::ClosePluginParams
             | UiAction::ReloadPlugin { .. }
+            | UiAction::SkipPlugin { .. }
             | UiAction::AutomatePluginParam { .. }
             | UiAction::LoadPluginPreset { .. }
             | UiAction::StepPluginPreset { .. }
@@ -1591,6 +1595,12 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// A panic of the UI thread was contained: the drag-merge group that may be open ends, so the
+    /// next edit starts a step of its own.
+    pub(crate) fn drop_gestures(&mut self) {
+        self.document.end_merge();
+    }
+
     /// A panic was caught around a command, an undo or a redo: the document is only read while a
     /// command is planned and every edit checks before it changes anything, so what was open
     /// stays as it was. Tells the user, closes the drag-merge group and asks for an emergency
@@ -1817,6 +1827,8 @@ impl<S: EngineSink> AppCore<S> {
         self.set_saved(doc.clone());
         self.end_patch_browse_for_new_document();
         self.document = Document::new(doc);
+        // The new project's plugin params that a plugin's own table leaves out stay listed.
+        self.plugins_pin_document_params();
         self.file = file;
         self.history_opened = self.history_clock.now();
         self.history_stamp = None;
@@ -2104,16 +2116,17 @@ impl<S: EngineSink> AppCore<S> {
         self.fx_meter_buf = buf;
     }
 
-    /// The drops and late sandbox batches the plugins in the rack report, summed:
-    /// `(plugin_drops, late_sandbox_batches)`. Each plugin device publishes both as running
-    /// totals among its meter values (see `atomik_plugin_host`'s device); this is a lock-free
-    /// read per plugin, for the status bar a few times a second.
-    pub fn plugin_overload(&self) -> (u64, u64) {
-        // Positions of the two counters in a plugin device's meter values.
+    /// The drops, late sandbox batches and bad blocks the plugins in the rack report, summed:
+    /// `(plugin_drops, late_sandbox_batches, bad_plugin_blocks)`. Each plugin device publishes
+    /// them as running totals among its meter values (see `atomik_plugin_host`'s device); this
+    /// is a lock-free read per plugin, for the status bar a few times a second.
+    pub fn plugin_overload(&self) -> (u64, u64, u64) {
+        // Positions of the counters in a plugin device's meter values.
         const DROPPED: usize = 4;
         const LATE: usize = 5;
-        let mut buf = [0.0_f32; LATE + 1];
-        let (mut dropped, mut late) = (0.0_f64, 0.0_f64);
+        const BAD: usize = 6;
+        let mut buf = [0.0_f32; BAD + 1];
+        let (mut dropped, mut late, mut bad) = (0.0_f64, 0.0_f64, 0.0_f64);
         for key in &self.plugin_devices {
             let Some(id) = self.ids.get(key) else {
                 continue;
@@ -2125,8 +2138,11 @@ impl<S: EngineSink> AppCore<S> {
                 dropped += f64::from(buf[DROPPED]);
                 late += f64::from(buf[LATE]);
             }
+            if n > BAD {
+                bad += f64::from(buf[BAD]);
+            }
         }
-        (dropped as u64, late as u64)
+        (dropped as u64, late as u64, bad as u64)
     }
 
     fn sync_ops(&mut self, ops: &[SyncOp]) {
@@ -4792,6 +4808,10 @@ mod plugins_layout_tests;
 mod plugins_vst3_tests;
 
 #[cfg(test)]
+#[path = "app_core_plugins_proxies_tests.rs"]
+mod plugins_proxies_tests;
+
+#[cfg(test)]
 #[path = "app_core_plugins_real_tests.rs"]
 mod plugins_real_tests;
 
@@ -4802,6 +4822,18 @@ mod plugins_latency_tests;
 #[cfg(test)]
 #[path = "app_core_plugins_sandbox_tests.rs"]
 mod plugins_sandbox_tests;
+
+#[cfg(test)]
+#[path = "app_core_plugins_capture_tests.rs"]
+mod plugins_capture_tests;
+
+#[cfg(test)]
+#[path = "app_core_plugins_polled_tests.rs"]
+mod plugins_polled_tests;
+
+#[cfg(test)]
+#[path = "app_core_plugins_presets_tests.rs"]
+mod plugins_presets_tests;
 
 #[cfg(test)]
 #[path = "app_core_plugin_learn_tests.rs"]

@@ -28,8 +28,8 @@ fn ev(offset: u16, kind: NoteKind) -> NoteEvent {
     NoteEvent { offset, kind }
 }
 
-fn meters(h: &atomik_testkit::harness::DeviceHarness) -> [f32; 5] {
-    let mut m = [0.0f32; 5];
+fn meters(h: &atomik_testkit::harness::DeviceHarness) -> [f32; 8] {
+    let mut m = [0.0f32; 8];
     h.device().meter_values(&mut m);
     m
 }
@@ -641,13 +641,22 @@ fn an_idle_synth_stops_being_processed_and_a_note_wakes_it() {
 
 // ----- plugins that misbehave ----------------------------------------------------------------------
 
-fn failed_state(format: Format, v: Variant) -> (Vec<PluginMessage>, [f32; BATCH], f32) {
+/// How many bad blocks in a row fail a device at the rate of the harness.
+fn bad_run() -> usize {
+    atomik_plugin_host::bad_run_limit(SR) as usize
+}
+
+fn failed_state(
+    format: Format,
+    v: Variant,
+    blocks: usize,
+) -> (Vec<PluginMessage>, [f32; BATCH], f32) {
     let k = kit_variants(format);
     let mut rig = rig_for(&*k.backend, &k.variant(v), RunMode::Realtime);
     let mut h = rig.harness();
     *h.input_mut("in_l") = [0.25; BATCH];
     *h.input_mut("in_r") = [0.25; BATCH];
-    for _ in 0..4 {
+    for _ in 0..blocks {
         h.process();
     }
     let out = *h.output("out_l");
@@ -656,9 +665,13 @@ fn failed_state(format: Format, v: Variant) -> (Vec<PluginMessage>, [f32; BATCH]
 }
 
 #[test]
-fn a_plugin_that_returns_an_error_status_becomes_failed_and_the_effect_goes_dry() {
-    // CLAP: an error status is a failure.
-    let (msgs, out, state) = failed_state(Format::Clap, Variant::Error);
+fn a_plugin_that_keeps_returning_an_error_status_becomes_failed_after_a_run_and_the_effect_goes_dry()
+ {
+    // CLAP: an error status is a bad block; a run of them is a failure.
+    let (msgs, _, state) = failed_state(Format::Clap, Variant::Error, bad_run() - 1);
+    assert_eq!(state, 0.0, "clap: still running one block short of the run");
+    assert!(msgs.is_empty(), "{msgs:?}");
+    let (msgs, out, state) = failed_state(Format::Clap, Variant::Error, bad_run());
     assert_eq!(state, 3.0, "clap: failed");
     assert!(out.iter().all(|s| *s == 0.25), "dry");
     let failures = msgs
@@ -672,7 +685,7 @@ fn a_plugin_that_returns_an_error_status_becomes_failed_and_the_effect_goes_dry(
 fn a_vst3_plugin_that_answers_a_result_other_than_ok_does_not_fail_and_is_reported_once() {
     // VST3: hosts commonly ignore a non-OK result (plugins give it while they load or sign
     // in). The device plays dry/silence for those blocks, keeps going and says so once.
-    let (msgs, out, state) = failed_state(Format::Vst3, Variant::Error);
+    let (msgs, out, state) = failed_state(Format::Vst3, Variant::Error, bad_run() + 4);
     assert_ne!(state, 3.0, "not failed");
     assert!(out.iter().all(|s| *s == 0.25), "dry");
     assert!(
@@ -689,9 +702,65 @@ fn a_vst3_plugin_that_answers_a_result_other_than_ok_does_not_fail_and_is_report
 }
 
 #[test]
-fn a_plugin_that_produces_non_finite_output_becomes_failed() {
+fn one_error_block_and_one_non_finite_block_are_the_dry_input_for_that_block_only() {
     for format in FORMATS {
-        let (msgs, out, state) = failed_state(format, Variant::Nan);
+        for v in [Variant::ErrorOnce, Variant::NanOnce] {
+            let k = kit_variants(format);
+            let mut rig = rig_for(&*k.backend, &k.variant(v), RunMode::Realtime);
+            let mut h = rig.harness();
+            *h.input_mut("in_l") = [0.25; BATCH];
+            *h.input_mut("in_r") = [0.25; BATCH];
+            // The plugin plays the input at half level, and is bad on its third block.
+            let blocks: Vec<Batch> = (0..6)
+                .map(|_| {
+                    h.process();
+                    *h.output("out_l")
+                })
+                .collect();
+            let what = format!("{} {v:?}", format.name());
+            assert!(blocks[..2].iter().flatten().all(|s| *s == 0.125), "{what}");
+            let bad = blocks[2];
+            assert!(
+                bad.iter().all(|s| s.is_finite()),
+                "{what}: nothing bad gets out"
+            );
+            assert_eq!(bad[BATCH - 1], 0.25, "{what}: dry at the end of the block");
+            assert!(blocks[4..].iter().flatten().all(|s| *s == 0.125), "{what}");
+            let m = meters(&h);
+            assert_eq!(m[2], 0.0, "{what}: never failed");
+            let msgs = messages(&rig);
+            assert!(
+                !msgs
+                    .iter()
+                    .any(|m| matches!(m, PluginMessage::Failed { .. })),
+                "{what}: {msgs:?}"
+            );
+            if format == Format::Vst3 && v == Variant::ErrorOnce {
+                // A VST3 result other than OK is a refused block, not a bad one: dry, reported.
+                assert_eq!(m[6], 0.0, "{what}");
+                assert!(
+                    msgs.iter()
+                        .any(|m| matches!(m, PluginMessage::Refused { .. }))
+                );
+            } else {
+                assert_eq!(m[6], 1.0, "{what}: one bad block");
+                assert!(
+                    bad.windows(2).all(|w| w[0] <= w[1]),
+                    "{what}: a ramp, no click"
+                );
+                assert_eq!(blocks[3][BATCH - 1], 0.125, "{what}: back on the plugin");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_plugin_that_keeps_producing_non_finite_output_becomes_failed_after_a_run() {
+    for format in FORMATS {
+        let (msgs, _, state) = failed_state(format, Variant::Nan, bad_run() - 1);
+        assert_eq!(state, 0.0, "{}: still running", format.name());
+        assert!(msgs.is_empty(), "{msgs:?}");
+        let (msgs, out, state) = failed_state(format, Variant::Nan, bad_run());
         assert_eq!(state, 3.0, "{}", format.name());
         assert!(out.iter().all(|s| *s == 0.25));
         assert!(
@@ -704,7 +773,7 @@ fn a_plugin_that_produces_non_finite_output_becomes_failed() {
 #[test]
 fn a_plugin_that_cannot_start_processing_becomes_failed() {
     for format in FORMATS {
-        let (_, out, state) = failed_state(format, Variant::StartFails);
+        let (_, out, state) = failed_state(format, Variant::StartFails, 4);
         assert_eq!(state, 3.0, "{}", format.name());
         assert!(out.iter().all(|s| *s == 0.25));
     }

@@ -15,6 +15,12 @@
 //!   `OPEN RECOVERY` (when a recovery snapshot exists) emits
 //!   [`PluginBannerAction::OpenRecovery`] and leaves the question open.
 //!
+//! * [`BannerKind::InternalError`]: an error inside the interface was contained and the app kept
+//!   running; a recovery copy was saved. `SAVE` emits [`PluginBannerAction::SaveProject`] (the app
+//!   runs File > Save) and leaves the notice up; `DISMISS` ([`PluginBannerAction::DismissError`])
+//!   hides it. When the errors repeat ([`BannerKind::InternalError::halted`]) the window is
+//!   paused and only `SAVE` is offered.
+//!
 //! Hosting: `set_bounds` (only the width and the top-left matter), `show`, `handle`, `paint`,
 //! `height` (0 while hidden, else the strip, so lay the rack out below it).
 
@@ -48,6 +54,11 @@ pub enum BannerKind {
         plugins: Vec<String>,
         /// A recovery snapshot exists.
         has_recovery: bool,
+    },
+    /// An error inside the interface was contained; the app is still running.
+    InternalError {
+        /// The errors repeat: the window's content is paused and only SAVE is offered.
+        halted: bool,
     },
 }
 
@@ -200,6 +211,29 @@ impl PluginBannerView {
         self.crash_buttons().and_then(|b| b.2)
     }
 
+    fn error_buttons(&self) -> Option<(Rect, Option<Rect>)> {
+        let Some(BannerKind::InternalError { halted }) = &self.kind else {
+            return None;
+        };
+        if *halted {
+            let r = self.right_buttons(&[80.0]);
+            Some((r[0], None))
+        } else {
+            let r = self.right_buttons(&[80.0, 90.0]);
+            Some((r[0], Some(r[1])))
+        }
+    }
+
+    /// The SAVE button of the internal-error notice.
+    pub fn save_rect(&self) -> Option<Rect> {
+        self.error_buttons().map(|b| b.0)
+    }
+
+    /// The DISMISS button of the internal-error notice (not offered while the window is paused).
+    pub fn dismiss_rect(&self) -> Option<Rect> {
+        self.error_buttons().and_then(|b| b.1)
+    }
+
     /// What the button under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
         let text = |label: &str| match label {
@@ -209,6 +243,8 @@ impl PluginBannerView {
             }
             "DISABLE" => "Disable the plugins that were loaded when Atomik ended",
             "KEEP" => "Keep those plugins enabled",
+            "SAVE" => "Save the project now",
+            "DISMISS" => "Hide this notice",
             _ => "Open the recovery copy saved before Atomik ended",
         };
         self.button_list()
@@ -259,6 +295,11 @@ impl PluginBannerView {
             self.hide();
         } else if self.recovery_rect().is_some_and(|r| r.contains(pos)) {
             emit(out, PluginBannerAction::OpenRecovery);
+        } else if self.save_rect().is_some_and(|r| r.contains(pos)) {
+            emit(out, PluginBannerAction::SaveProject);
+        } else if self.dismiss_rect().is_some_and(|r| r.contains(pos)) {
+            emit(out, PluginBannerAction::DismissError);
+            self.hide();
         }
     }
 
@@ -294,6 +335,14 @@ impl PluginBannerView {
                 "Atomik ended unexpectedly while these plugins were loaded: {}",
                 plugins.join(", ")
             ),
+            BannerKind::InternalError { halted: false } => {
+                "Internal error: a recovery copy was saved. Save your work and restart Atomik"
+                    .to_string()
+            }
+            BannerKind::InternalError { halted: true } => {
+                "Repeated internal errors: this window is paused. Save your work and restart Atomik"
+                    .to_string()
+            }
         };
         let leftmost = self
             .button_list()
@@ -328,6 +377,12 @@ impl PluginBannerView {
             v.push((b, "KEEP", false));
             if let Some(r) = r {
                 v.push((r, "OPEN RECOVERY", false));
+            }
+        }
+        if let Some((save, dismiss)) = self.error_buttons() {
+            v.push((save, "SAVE", false));
+            if let Some(dismiss) = dismiss {
+                v.push((dismiss, "DISMISS", false));
             }
         }
         v

@@ -8,10 +8,21 @@
 //!    as events with host note ids,
 //! 3. applies the skipping rules (sleep, zero tail, power off),
 //! 4. calls the processor with exactly 64 frames inside a panic boundary and a flush-to-zero
-//!    guard, and fails the device on an error status, a panic or non-finite output (a sandboxed
-//!    plugin may also answer `Late`: no wet signal this batch, counted; or `Lost`: its process
-//!    is gone and the device is CRASHED for good),
+//!    guard, and fails the device on a panic, or on a run of bad blocks (an error status or
+//!    non-finite output: see below; a sandboxed plugin may also answer `Late`: no wet signal this
+//!    batch, counted; or `Lost`: its process is gone and the device is CRASHED for good),
 //! 5. writes the outputs through the 5 ms bypass crossfade and forwards a note effect's notes.
+//!
+//! **Bad blocks.** One block that comes back with an error status, or with a non-finite sample, is
+//! not the end of the plugin (a plugin does this while it loads a preset, or on a denormal or a
+//! division by zero, and is fine on the next block). The block gets what a late batch gets: the
+//! dry input for an effect, silence for the rest, with a one-block linear ramp from the last
+//! output into the fallback, and another from the fallback back into the plugin's output on
+//! the first good block, so that it does not click; it is counted (the
+//! `bad_blocks` meter value). The device fails, with the reason of the last bad block, only after
+//! [`bad_run_limit`] bad blocks in a row; a good block starts the count again. A panic fails the
+//! device at once. The rule looks only at what the plugin returned, so a live run, a bounce, a
+//! plugin in this process and one in its own process agree.
 //!
 //! **Aux outputs.** A plugin with more stereo output buses than the main one has up to seven pairs
 //! of `out_aux_<k>_l/r` sockets; the processor fills them beside the main output. They are wet
@@ -65,8 +76,20 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 /// Number of meter values a plugin device publishes: input peak, output peak, state, latency
-/// frames, dropped events, late batches (sandbox: batches whose result did not arrive in time).
-pub const METER_VALUES: usize = 6;
+/// frames, dropped events, late batches (sandbox: batches whose result did not arrive in time),
+/// bad blocks (an error status or non-finite output, replaced by the dry input or silence).
+pub const METER_VALUES: usize = 7;
+
+/// How much audio of bad blocks in a row fails the device (seconds).
+const BAD_RUN_SECONDS: f64 = 0.25;
+
+/// How many bad blocks in a row fail the device at `sample_rate`: [`BAD_RUN_SECONDS`] of
+/// 64-frame blocks, at least one.
+pub fn bad_run_limit(sample_rate: f64) -> u32 {
+    (sample_rate * BAD_RUN_SECONDS / BATCH as f64)
+        .ceil()
+        .max(1.0) as u32
+}
 
 /// Events the device can hold per batch: the notes of a full note buffer, the extra Offs of an
 /// all-notes-off, and the param changes.
@@ -188,6 +211,20 @@ pub struct PluginDevice {
     late: u64,
     /// Batches the plugin refused (answered a non-OK result): silent, not a failure.
     refused: u64,
+    /// Bad blocks (an error status or non-finite output) in all, and in a row.
+    bad_blocks: u64,
+    bad_run: u32,
+    /// Bad blocks in a row that fail the device (see [`bad_run_limit`]).
+    bad_limit: u32,
+    /// The block being processed is a bad one (set by `run_plugin`, read by `write_outputs`).
+    bad_now: bool,
+    /// The last main output was the plugin's own (not the dry input or silence); false at the
+    /// start and after a reset, when there is nothing to ramp from.
+    prev_wet: bool,
+    /// The fallback that is playing holds a bad block: the way back to the plugin is ramped.
+    episode_bad: bool,
+    /// The last frame written to the main outputs.
+    last_out: [f32; 2],
 }
 
 fn idle_batches_for(sample_rate: f64) -> u32 {
@@ -358,6 +395,13 @@ impl PluginDevice {
             dropped: 0,
             late: 0,
             refused: 0,
+            bad_blocks: 0,
+            bad_run: 0,
+            bad_limit: bad_run_limit(activation_rate),
+            bad_now: false,
+            prev_wet: false,
+            episode_bad: false,
+            last_out: [0.0; 2],
         }
     }
 
@@ -454,6 +498,18 @@ impl PluginDevice {
         self.messenger.post(PluginMessage::Failed { reason });
     }
 
+    /// One bad block: it is counted, its output is the fallback, and the device fails when this
+    /// is the [`bad_run_limit`]th in a row. Always false (no wet signal).
+    fn bad_block(&mut self, reason: &'static str) -> bool {
+        self.bad_blocks += 1;
+        self.bad_now = true;
+        self.bad_run = self.bad_run.saturating_add(1);
+        if self.bad_run >= self.bad_limit {
+            self.fail(reason);
+        }
+        false
+    }
+
     /// The plugin's process is gone: CRASHED for good (a new instance replaces it).
     fn fail_lost(&mut self) {
         self.failed = true;
@@ -483,6 +539,7 @@ impl PluginDevice {
             match self.to_manager.push(processor) {
                 Ok(()) => {
                     self.failed = false;
+                    self.bad_run = 0;
                     self.sleeping = false;
                     self.state = DeviceState::Restarting;
                     self.close_all_notes();
@@ -494,6 +551,9 @@ impl PluginDevice {
             self.processor = Some(processor);
             self.started = false;
             self.failed = false;
+            self.bad_run = 0;
+            // A new processor starts afresh: no ramp back from a failed one.
+            self.episode_bad = false;
             self.sleeping = false;
             self.quiet_batches = 0;
             self.state = DeviceState::Running;
@@ -1021,13 +1081,14 @@ impl PluginDevice {
 
         match result {
             Err(_) => {
+                // Not a bad block to wait out: the plugin's state cannot be trusted. Its output
+                // is still ramped into the fallback like a bad block's (a plugin in its own
+                // process answers a panic with an error status, and both must sound the same).
+                self.bad_now = true;
                 self.fail("the plugin panicked");
                 false
             }
-            Ok(ProcessStatus::Error) => {
-                self.fail("the plugin returned an error status");
-                false
-            }
+            Ok(ProcessStatus::Error) => self.bad_block("the plugin returned an error status"),
             Ok(ProcessStatus::Late) => {
                 // Not a failure: this batch has no wet signal, the state stays as it was.
                 self.late += 1;
@@ -1055,9 +1116,9 @@ impl PluginDevice {
                     .chain(&self.aux_wet)
                     .any(|b| !b.iter().all(|s| s.is_finite()))
                 {
-                    self.fail("the plugin produced non-finite output");
-                    return false;
+                    return self.bad_block("the plugin produced non-finite output");
                 }
+                self.bad_run = 0;
                 if status == ProcessStatus::Sleep && rule == SleepRule::PluginDecides {
                     self.sleeping = true;
                 }
@@ -1123,9 +1184,11 @@ impl PluginDevice {
         if !wet_valid {
             self.bypass_mix = target;
             self.write_aux(ctx, false);
-            *ctx.output(out_l) = dry[0];
-            *ctx.output(out_r) = dry[1];
-            self.out_peak = peak(&dry[0], &dry[1]);
+            let (mut left, mut right) = (dry[0], dry[1]);
+            self.smooth_bad_blocks(false, &mut left, &mut right);
+            *ctx.output(out_l) = left;
+            *ctx.output(out_r) = right;
+            self.out_peak = peak(&left, &right);
             return;
         }
         let wet_left = self.wet[0];
@@ -1147,10 +1210,43 @@ impl PluginDevice {
             left[i] = mix(wet_left[i], dry[0][i], m);
             right[i] = mix(wet_right[i], dry[1][i], m);
         }
+        self.smooth_bad_blocks(true, &mut left, &mut right);
         self.out_peak = peak(&left, &right);
         *ctx.output(out_l) = left;
         *ctx.output(out_r) = right;
         self.write_aux(ctx, true);
+    }
+
+    /// Takes the click out of a bad block: where the output jumps between the plugin's own and the
+    /// fallback (the dry input or silence) because a block was bad, the jump is taken out by a
+    /// linear ramp over the block that has it (the bad block going in, the first good block
+    /// coming back). Nothing else changes the output: with no bad block this only remembers the
+    /// last frame.
+    fn smooth_bad_blocks(&mut self, wet_valid: bool, left: &mut Batch, right: &mut Batch) {
+        let jump = if wet_valid {
+            let back = !self.prev_wet && self.episode_bad;
+            self.episode_bad = false;
+            back
+        } else if self.prev_wet {
+            // The plugin's output ends here only for a bad block (a late batch keeps its hard cut).
+            self.episode_bad = self.bad_now;
+            self.bad_now
+        } else {
+            self.episode_bad |= self.bad_now;
+            false
+        };
+        self.prev_wet = wet_valid;
+        if jump {
+            let offset = [self.last_out[0] - left[0], self.last_out[1] - right[0]];
+            if offset.iter().all(|o| o.is_finite()) {
+                for i in 0..BATCH {
+                    let gain = 1.0 - (i + 1) as f32 / BATCH as f32;
+                    left[i] += offset[0] * gain;
+                    right[i] += offset[1] * gain;
+                }
+            }
+        }
+        self.last_out = [left[BATCH - 1], right[BATCH - 1]];
     }
 
     /// Moves the bypass mix towards `target` for one batch, recording each frame's mix.
@@ -1194,6 +1290,7 @@ impl Device for PluginDevice {
         self.sample_rate = info.sample_rate.hz();
         self.fade_step = fade_step_for(self.sample_rate);
         self.idle_batches = idle_batches_for(self.sample_rate);
+        self.bad_limit = bad_run_limit(self.sample_rate);
         if !self.dry_ring[0].is_empty() {
             let len = dry_ring_len(self.sample_rate);
             if len != self.dry_ring[0].len() {
@@ -1211,6 +1308,9 @@ impl Device for PluginDevice {
     fn reset(&mut self) {
         self.close_all_notes();
         self.sleeping = false;
+        self.bad_run = 0;
+        self.prev_wet = false;
+        self.episode_bad = false;
         self.quiet_batches = 0;
         for ring in &mut self.dry_ring {
             ring.fill(0.0);
@@ -1264,6 +1364,7 @@ impl Device for PluginDevice {
         self.service_handshake();
         let powered = self.slot.powered();
         let bypassed = self.bypass || !powered;
+        self.bad_now = false;
         let raw = [
             input_copy(ctx, self.sockets.in_l),
             input_copy(ctx, self.sockets.in_r),
@@ -1314,6 +1415,7 @@ impl Device for PluginDevice {
             self.slot.latency() as f32,
             self.dropped as f32,
             self.late as f32,
+            self.bad_blocks as f32,
         ];
         let n = out.len().min(values.len());
         out[..n].copy_from_slice(&values[..n]);

@@ -716,6 +716,12 @@ pub enum UiAction {
         /// The plugin device (path key).
         device: DeviceKey,
     },
+    /// SKIP on a plugin panel that says LOADING: stop creating the plugin. The device stays a
+    /// stand-in with its saved state (SKIPPED); RELOAD tries again. `device` is the **path key**.
+    SkipPlugin {
+        /// The plugin device (path key).
+        device: DeviceKey,
+    },
     /// A preset of the plugin was chosen in the parameter pane: the app loads it into the live
     /// plugin as one undo step.
     LoadPluginPreset {

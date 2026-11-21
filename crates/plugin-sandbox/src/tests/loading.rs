@@ -64,6 +64,7 @@ fn a_pending_load_is_polled_past_the_create_timeout_without_blocking() {
         slow_load_timeouts(),
         manager.messenger(),
         LiveGuard::new(&live),
+        atomik_plugin_host::SoftBudget::default(),
     )
     .map_err(|e| e.to_string())
     .unwrap();
@@ -299,4 +300,63 @@ fn two_instances_open_their_editors_each_in_its_own_child() {
     assert_eq!(b.begin_open_external_gui(None), Ok(false));
     eventually("B to be asked again", || opens(b_ctl) == 2);
     assert_eq!(opens(a_ctl), 1);
+}
+
+fn begin_pending(
+    options: FakeOptions,
+    id: u64,
+    live: &Arc<AtomicUsize>,
+) -> (
+    crate::instance::PendingRemote,
+    crate::fake::Fake,
+    atomik_plugin_host::ManagerEnd,
+) {
+    let (_device, manager) = plugin_channel(InstanceId(id));
+    let (transport, port, fake) = fake_transport(options, make_ports());
+    let pending = RemoteInstance::begin(
+        transport,
+        port,
+        slow_load_timeouts(),
+        manager.messenger(),
+        LiveGuard::new(live),
+        atomik_plugin_host::SoftBudget::default(),
+    )
+    .map_err(|e| e.to_string())
+    .unwrap();
+    (pending, fake, manager)
+}
+
+#[test]
+fn a_plugin_that_never_answers_instantiate_does_not_hold_the_other_starts() {
+    let live = Arc::new(AtomicUsize::new(0));
+    let silent = FakeOptions::default()
+        .script(|req, _| matches!(req, ToChild::Instantiate { .. }).then_some(Action::Silent));
+    let (mut first, first_fake, _first_end) = begin_pending(silent, 1, &live);
+    let (mut second, _second_fake, _second_end) =
+        begin_pending(slow_instantiate(Duration::from_millis(50)), 2, &live);
+    let (mut third, _third_fake, _third_end) =
+        begin_pending(slow_instantiate(Duration::from_millis(50)), 3, &live);
+    let t = now();
+    let (mut second_up, mut third_up) = (None, None);
+    while second_up.is_none() || third_up.is_none() {
+        assert!(first.poll().is_none(), "the first never answers");
+        second_up = second_up.or_else(|| second.poll());
+        third_up = third_up.or_else(|| third.poll());
+        assert!(
+            now().saturating_duration_since(t) < Duration::from_secs(8),
+            "the others came up while the first still loads"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(second_up.is_some_and(|r| r.is_ok()));
+    assert!(third_up.is_some_and(|r| r.is_ok()));
+    assert!(!first_fake.ctl.was_killed(), "the first is still loading");
+    // Skipping the first ends its child without waiting for it.
+    first.begin_shutdown();
+    let t = now();
+    while !first.poll_shutdown() {
+        assert!(now().saturating_duration_since(t) < Duration::from_secs(8));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(first_fake.ctl.was_killed());
 }

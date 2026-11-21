@@ -62,6 +62,34 @@ may break APIs and the patch and project formats.
   bottom, the chosen type's full swing at the top) or to the rotary speed: the new `wheel_cv_out` socket carries
   the wheel and, patched to the Speed CV of a rotary speaker, a wheel above half switches it to fast. The rotary
   speaker itself is unchanged.
+- **Where the UI waits on a plugin is in the log.** A call the UI thread makes on a plugin's process that takes
+  50 ms or more writes `ui stall 10012 ms: CaptureState [m1] (timed out)` (the call, the device, the time and how
+  it ended), a UI tick or redraw of 100 ms or more writes `ui stall 180 ms: frame` (at most one a second), and a
+  plugin that finished loading writes `plugin [m1] created in 2.31 s (spawn 0.04, instantiate 1.90, restore 0.00,
+  activate 0.31, attach 0.06)` to the log file as well as the plugin log. Help > Export Diagnostics counts the
+  stalls and slow frames with the longest of each.
+- **Lost input and the render workers in the diagnostics.** Help > Export Diagnostics now gives the number of times
+  the render callback trimmed the captured input, the most frames the ring held before a trim, the smallest and
+  largest callback seen and the requested buffer size (a DEBUG line `input trimmed: 3 trims, backlog max 1440
+  frames, callback 96..480 frames, buffer 480` says it when the count rose), and the render workers: how many, the
+  linger, the idle spins and the parks. The trim rule itself is unchanged.
+- **Start-up timeline, graphics adapter and UI activity in the log.** The log file gets one line per start-up stage
+  with the milliseconds since the process began (`startup 412 ms: first frame presented`; first window, adapter,
+  renderer, first frame, audio stream) and `graphics adapter: <name> · <backend> · <type> · <driver>`, the adapter
+  the renderer uses (the choice itself is unchanged). With `ATOMIK_LOG=debug` a line every 5 s counts the event-loop
+  wake-ups and the paints per window with their causes (`ui activity: 60 wakes/s, main 60 paints/s (live 58,
+  input 2)`). Help > Export Diagnostics carries the adapter, the last second and the totals since the start.
+- **A script that measures the running app.** `scripts/perf/sample-app.ps1` (Windows PowerShell) starts the release
+  app per scenario (empty, stress rack, workers, detached windows, audio tracks, plugins) with fresh settings and
+  library folders, never plays audio, and writes a CSV row with CPU as a percentage of one core, memory, threads,
+  handles, child processes, GPU use and how quickly the window answers; `-Affinity` pins it to fewer cores.
+  docs/TESTING.md explains the columns and two low-power recipes, and perf/BASELINE.md has the idle rows of the
+  running app.
+- **Skip on a plugin that is loading.** A plugin device that says LOADING has a SKIP button where RELOAD is, and the
+  command Skip Loading Plugin does the same for the selected device. It stops creating that plugin (its process ends
+  without anything waiting for it), leaves the device a stand-in with its saved state untouched, and shows SKIPPED.
+  RELOAD tries again from that state. A skipped plugin is not a crash and does not count towards quarantine, and a
+  saved project keeps what it held.
 
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last
@@ -97,8 +125,43 @@ may break APIs and the patch and project formats.
   follow a clock, so they are unchanged. Streamed (long, disk-read) audio, which was silent while following, now
   plays from where the clock reaches each clip, at the clip's own rate; a clip warped to the song tempo plays its
   rendered buffer and follows the clock as above.
+- **A plugin that does not answer shows NOT RESPONDING.** A sandboxed plugin that is alive but does not answer a
+  request in time (its main thread is busy with a dialog, a sample load or a licence check) is shown as NOT
+  RESPONDING in its panel, with the note "the plugin is busy and does not answer; its audio keeps running". The app
+  stops waiting for it and asks it nothing more, and the state ends by itself when the plugin answers; RELOAD stops
+  it and starts a new one from the last captured settings. Saving, archiving, sharing, a template or a version
+  while a plugin does not answer completes with that plugin's last captured settings and says so once ("... did
+  not hand over its current settings; its last captured settings were saved."); an audio restart or removing the
+  device goes on the same way and writes a line in the plugin log.
+- **Much lower CPU use while stopped, and a better worker count on dual-core machines.** The render workers used to
+  spin for a long time after every audio callback so as to be awake for the next one, which kept several cores
+  busy even with the transport stopped and nothing sounding. They now spin only while a callback is running and
+  park as soon as it ends, with the same audio. The Auto worker count follows the physical cores (read from the
+  system) instead of a guess from the thread count: one worker on a dual-core machine, even with four threads, and
+  none on a single core. The log line at stream start gives the physical and logical counts. An explicit worker
+  count is never changed.
+- **Plugin parameter lists no longer fill up with MIDI controller entries, and the parameters that were cut off are
+  back.** Many VST3 plugins publish one parameter for every MIDI channel and controller number ("MIDI CC 9 Chan
+  12", hundreds of them, more than half of every parameter list on a typical set of plugins) and the 2 048-entry
+  limit used to cut real parameters off after them. The scan and every instance now ask the plugin which
+  parameters only stand for a controller on one channel and leave those out of the list, the saved project, the
+  menus and the plugin list file; the controllers still reach the plugin as before. A parameter your project
+  still uses (a stored value, an automation lane in a track or a note clip, a macro target, a pin or a learned
+  MIDI control) stays in the list of that plugin, so nothing in an existing project is lost or changes sound.
+  A plugin that is slow to answer is listed in full, as before. The plugin list file is rebuilt by the next scan
+  (an older file is still read until then).
+- **An idle plugin process costs far less, and a busy one answers on time.** The audio thread of a plugin's own
+  process now runs at the priority of the app's audio thread instead of below it, so under load the plugin no
+  longer answers a batch late because the app's thread waits for a lower-priority one. A process with nothing to
+  do waits longer and longer for the next batch (10, 50, then 100 ms), no longer spins after a wait that timed
+  out, and polls its plugin every 100 ms instead of every 16 ms while no editor is open; a batch, an editor or a
+  call from the app brings the quick rhythm back at once. The app still sees an idle process alive (it beats at
+  least every 100 ms). Thirty idle plugins no longer keep thirty processes waking well over a hundred times a second.
 
 ### Fixed
+- **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
+  (with the channel right above it) was refused with "the devices are already there": the instrument takes its
+  channel along, so nothing would move. The drop is now ignored, like any drop on the place a device already has.
 - **Selecting audio tracks in the sequencer.** A click on the level meter in the header of an audio track now
   picks the track like a click on the rest of the header (select, Shift or Ctrl to extend, drag, right click for
   the menu) and still clears the clip lamp; it only cleared the lamp before, so a selection could not be started
@@ -143,6 +206,113 @@ may break APIs and the patch and project formats.
   also plays (the bass note, say), is closed first and then started again; before, the second start landed on the
   sounding key. Switching the bypass on also closes the keys that thru had passed on, which used to hang until the
   key was pressed again.
+- A plugin that answers every audio batch a little late is no longer declared hung. Only a plugin that completes
+  no request at all for about three seconds is stopped; a slow one just counts its late batches. A plugin the app
+  stopped for not answering no longer counts toward the quarantine (three real crashes in a row still do).
+- Editing in a plugin's window no longer freezes the app. The app used to wait for the plugin's state on the
+  interface thread a second after each change, when the plugin was busiest (a patch loading in its window), and
+  stopped a working plugin that took ten seconds to answer. The state is now asked for in the background and
+  stored when it arrives (one undo step, as before). A recovery snapshot is written from the states stored so far
+  instead of asking every plugin again, a command that cannot remove a plugin no longer waits for one, and
+  closing an editor does not wait either. Saving, archiving, sharing and an audio restart still wait for the
+  state, since they need it at once.
+- A plugin that is busy is no longer stopped. When a plugin did not answer within ten seconds the app used to
+  stop its process, losing its sound and any settings made in its window since the last capture, even though the
+  plugin was working. The app now stops a plugin only when its process shows no sign of life (its audio thread
+  stopped running). A plugin that is alive but silent shows NOT RESPONDING in its panel, with the note that its
+  audio keeps running; the app stops waiting for it, asks it nothing more, and the plugin goes back to normal by
+  itself when it answers. It does not count as a crash and never leads to the quarantine. A bounce or an export
+  still stops a plugin that does not answer.
+- The parameter pane and resizing a plugin window no longer make the app stutter while a plugin is busy. The app used
+  to wait up to a quarter of a second for every value text the pane showed and for every size of a window or dock
+  drag, one after the other, so a plugin that was loading a patch could freeze the interface for seconds. It now
+  asks, waits at most 20 ms per frame for all plugins together, and uses the answer when the plugin gives it: the
+  pane shows the number until the plugin's own text arrives (never the text of the previous value), and a drag
+  sends the plugin only the first and the last size. A plugin that answers some requests and stalls on others is
+  treated as slow for a few seconds instead of being forgiven by one fast answer, with one warning per episode,
+  and a plugin that is alive is no longer stopped for being slow to answer these.
+- Opening a project with heavy plugins, restarting a plugin and removing one no longer freeze the app. Restoring a
+  plugin's saved state and activating it (a sampler loading a large library) used to run in one frame, a restart or
+  an audio restart deactivated and re-activated plugins one after the other, and removing a plugin or closing a
+  project waited for each plugin to finish and its process to end. The app now starts these and looks again on the
+  next frames: the device shows LOADING until its plugin is ready, an audio restart waits for the slowest plugin
+  instead of the sum, and a removed plugin is gone from the project at once while its process ends in the
+  background. A bounce or an export still waits for its plugins, so its result does not change.
+- Opening a plugin's parameter pane or the patch browser, and loading one of its presets, no longer freeze the app
+  while the plugin is busy. The list of presets used to be read while the interface waited (up to ten seconds, and
+  a failed read was remembered as "this plugin has no presets"), and a preset load waited for the plugin and then
+  for its new settings. The app now asks for the list once and shows it when it arrives, asks again the next time
+  the pane or the browser opens when the plugin did not answer, loads a preset in the background (the undo step
+  still goes back to the settings from before the load) and moves the knobs when the plugin's values arrive. The
+  folders of VST3 presets are listed by the plugin's helper process on a thread of its own, so a plugin that is
+  loading something does not hold the list up.
+- A plugin that changes its parameters or its ports while it runs, or that is opened over an older scan, no longer
+  restarts the whole audio engine (which stopped playback and silenced every other device for a moment): only that
+  plugin's own device is replaced. The engine is still restarted when a second copy of the same plugin was built
+  with the old ports, since that copy has to follow. The plugin list file is now written by a background thread,
+  so learning what a plugin looks like, or ending a scan with thousands of plugins, no longer stalls a frame.
+- **A plugin that is slow to load no longer keeps the plugins after it waiting.** Every plugin that is starting is
+  followed each frame and the ones that are ready come up as they finish, one per frame and oldest first, so a
+  plugin that waits for a licence dialog or reads a huge library no longer leaves the others as silent stand-ins.
+  The device keys, the order of the project and what it sounds like do not change.
+- **Fewer dropouts from heavy third-party plugins.** A plugin that works in bursts (a block-based effect, a
+  look-ahead, a preset that has just loaded) used to lose the batch whenever it took longer than one 64-frame
+  block, although the audio buffer had room for it; it was heard as a glitch even at a few per cent of the audio
+  load. The app now lets a plugin use what is left of the buffer (the first 70 % of it) before it gives up on the
+  batch. A plugin that cannot keep up at all is no longer waited for at every block: after a few misses in a row it
+  is only asked once per block for a short while, which keeps the CPU it costs the app low, and then tried with a
+  full wait again. Exports are unchanged and stay identical with the sandbox on or off.
+- **The app no longer closes when the graphics driver resets or the computer wakes from sleep.** A driver reset or
+  update, a wake from sleep, a remote-desktop switch or a graphics memory shortage used to end the app with a panic
+  and lose unsaved work. The app now notices that the graphics device is gone, builds the graphics again (every
+  window, detached pane, plugin frame and strip comes back and is repainted) and goes on; playback, the project and
+  the plugins are not touched. If the graphics do not come back at once the app keeps running and the sound keeps
+  playing, tries again every few seconds, and writes a recovery copy of the project after the first failure. A window
+  larger than the graphics card allows (a very large or multi-monitor window) is drawn at the largest size it
+  allows instead of failing.
+- **A computer without a working graphics driver now gets a message instead of a window that flashes and
+  vanishes.** The interface is drawn on the graphics card with no other drawing path. When no acceptable adapter
+  (DirectX 12, Vulkan or Metal) exists, or the window cannot get a graphics device at start, the app shows a box
+  that says a driver with DirectX 12 or Vulkan (Metal on macOS) is needed, lists the adapters it found and names the
+  log file, writes the same to the log and exits with an error code; a scripted run (`--quit-after`,
+  `--screenshot`, the stress runs) only logs and exits, without a box. The app no longer picks a software adapter by
+  chance, which crashes this renderer a few seconds after start: it is used only when named with
+  `WGPU_ADAPTER_NAME`, with a warning in the log that it is not supported. The same rule applies when the graphics
+  are rebuilt after a lost device, which keeps trying every few seconds instead of showing a box. A
+  `WGPU_ADAPTER_NAME` that matches nothing is now reported the same way instead of ending the app with a panic.
+- **An internal error in the interface no longer closes the app.** A fault in an event handler, a frame or a
+  window's drawing used to end the whole app and lose everything since the last autosave. The app now catches it,
+  asks for a recovery copy of every open project at once, drops the drag or menu that was open, repaints, and goes
+  on; the crash report is still written, and audio, the project and the plugins are not touched. A notice strip
+  stays above the rack until it is dismissed: it says that an internal error happened and a recovery copy was
+  saved, and recommends saving and restarting, with Save and Dismiss buttons. It is raised once, not again for
+  every repeat within half a minute. If frames or drawings keep failing (five in a row) the window's content is
+  paused so the app does not spin: only the notice is drawn, its Save button and Ctrl+S still work, and
+  restarting the app brings everything back. A scripted run (`--quit-after`, `--screenshot`, the stress runs) that
+  caught such an error still keeps going but exits with a failure code, so a script does not report success.
+- **Quitting no longer hangs on a stalled disk.** The wait for the last recovery copy to be written, and the
+  removal of the session's scratch folder, give up after five seconds and let the app exit; what is left behind
+  is cleaned up by the next start.
+- **A plugin state that is too large to save is no longer lost silently, and no longer stops the plugin.** A
+  plugin that embeds its samples in its state (a sampler) could produce a state over the 16 MiB a device may store:
+  the save kept the older state without a word, and above the 64 MiB one frame of the channel to a plugin in its
+  own process carries, the plugin's process ended at every capture. Now the process answers that it cannot hand
+  the state over (and what size it is) and stays alive and playing, the same holds for any answer too large for
+  the channel, and the app does not stop the plugin for it. The device shows `too large: 23 MB > 16 MB` in the
+  plugin panel's second line, in the warning colour, for as long as its state does not fit (the plugin's own
+  status word, RUNNING, is not replaced); a save names the device in its notice once ("... is too large to save
+  (23 MB, the limit is 16 MB); its last state that fitted was saved."); the log gets one warning line per change of
+  situation, not one per capture. The last state that fitted stays in the project, and the marker clears at the
+  first capture that fits. A state the app did not ask for no longer takes memory while it is read from the pipe.
+- **One bad block no longer fails a plugin until RELOAD.** A plugin whose `process` returned an error once, or
+  produced one non-finite sample in one block (as some do while loading a preset), was marked FAILED for good, in
+  the app's process and in a plugin process alike. Such a block is now replaced like a late one: the dry input for
+  an effect, silence for an instrument, with a one-block ramp into the fallback and back so that it does not click;
+  it is counted (`bad plugin blocks` in the status line's overload part, in Help > Export Diagnostics and in the QA
+  `session_status`). The device fails, with the same reasons as before, only after a quarter of a second of bad
+  blocks in a row, and a good block starts the count again. A panic still fails it at once. The rule looks only at
+  what the plugin returned, so a bounce, live playback, a plugin in the app and a sandboxed one agree, and a
+  project with no bad block renders exactly as before.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

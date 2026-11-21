@@ -7,22 +7,114 @@
 //! block's death flag, so a dead child answers [`ProcessStatus::Lost`] within one call. When
 //! the offline watchdog runs out the processor only marks the block dead: the main thread
 //! (the instance's `poll`) kills the process, because killing needs a lock.
+//!
+//! Live, a batch is waited for one period, or until the moment the running audio callback
+//! published as the end of its plugin budget when that is later (one atomic load): a plugin
+//! with bursty work uses the callback's slack instead of dropping the batch. A plugin that
+//! misses [`COOL_AFTER`] full waits in a row stops being spun for during [`COOL_BATCHES`]
+//! batches: each is polled once and counted late at once, then a full wait is tried again.
 
+use atomik_core::CallbackDeadline;
 use atomik_plugin_host::{
     PluginEvent, PluginIo, PluginProcessor, ProcessStatus, SleepRule, TailLength,
 };
 use atomik_plugin_ipc::{AudioOp, Deadline, MAX_EVENTS_IN, ParentPort, Poll, Ticket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long a live `start_processing`, `stop_processing` or `reset` may take. These are not
 /// audio: a plugin may need a few milliseconds to start, which is not a failure.
 pub(crate) const LIVE_OP_DEADLINE: Duration = Duration::from_millis(50);
 
+/// The longest a live batch is waited for, whatever deadline the callback published: the
+/// callback's slack is a buffer (a few ten milliseconds at most), never more.
+pub(crate) const MAX_LIVE_WAIT: Duration = Duration::from_millis(100);
+
+/// How many full waits in a row may run out before the processor stops spinning for the plugin.
+pub(crate) const COOL_AFTER: u32 = 4;
+
+/// How many batches are polled once instead of waited for after [`COOL_AFTER`] misses. A
+/// 480-frame callback holds seven or eight batches: this is about three callbacks.
+pub(crate) const COOL_BATCHES: u32 = 24;
+
+/// How many callbacks in a row may use up the whole published budget (a wait ran out at the
+/// published moment) before the processor goes back to one batch period per wait.
+pub(crate) const EXHAUSTED_AFTER: u32 = 3;
+
+/// Callbacks the first fall-back lasts (about a second of 480-frame callbacks); each fall-back
+/// that follows renewed exhaustion lasts twice as long, up to [`FALLBACK_MAX_CALLBACKS`].
+pub(crate) const FALLBACK_CALLBACKS: u32 = 100;
+
+/// The longest fall-back, in callbacks (about five seconds).
+pub(crate) const FALLBACK_MAX_CALLBACKS: u32 = 500;
+
+/// What a live batch did to get its answer (kept in tests, to see what the processor asked).
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WaitKind {
+    /// A full wait up to this deadline.
+    Full(Deadline),
+    /// One poll, no waiting (cool-down).
+    Poll,
+    /// The budget was used up too often: waits are one period for this many callbacks.
+    Fallback(u32),
+}
+
 /// Where a processor puts its port back when it is dropped, so that the instance can activate
 /// again.
 pub(crate) type PortCell = Arc<Mutex<Option<ParentPort>>>;
+
+/// Whether the published budget is worth using for one processor: plain integers, audio
+/// thread only. A callback is exhausted when a wait ran out at the published moment (the plugin
+/// used the whole budget and still was not done). A new callback is seen as the published value
+/// changing.
+#[derive(Debug, Default)]
+struct BudgetState {
+    seen: Option<Instant>,
+    /// Callbacks left in the fall-back (0: the budget is used).
+    fallback: u32,
+    /// How long the next fall-back lasts (0: the first length).
+    span: u32,
+    /// Exhausted callbacks in a row.
+    run: u32,
+    /// The current callback had a wait up to the published moment.
+    waited: bool,
+    /// The current callback ran out of budget.
+    exhausted: bool,
+}
+
+impl BudgetState {
+    /// Called for every live batch with the published value; returns the value the wait may
+    /// use (`None` in a fall-back) and the length of a fall-back that begins now.
+    fn begin(&mut self, published: Option<Instant>) -> (Option<Instant>, Option<u32>) {
+        let mut entered = None;
+        if published.is_some() && published != self.seen {
+            if self.fallback > 0 {
+                self.fallback -= 1;
+            } else if self.waited {
+                if self.exhausted {
+                    self.run += 1;
+                    if self.run >= EXHAUSTED_AFTER {
+                        let span = self.span.clamp(FALLBACK_CALLBACKS, FALLBACK_MAX_CALLBACKS);
+                        self.fallback = span;
+                        self.span = span.saturating_mul(2).min(FALLBACK_MAX_CALLBACKS);
+                        self.run = 0;
+                        entered = Some(span);
+                    }
+                } else {
+                    self.run = 0;
+                    self.span = 0;
+                }
+            }
+            self.waited = false;
+            self.exhausted = false;
+        }
+        self.seen = published;
+        let usable = if self.fallback > 0 { None } else { published };
+        (usable, entered)
+    }
+}
 
 /// The audio half of a sandboxed plugin.
 pub(crate) struct RemoteProcessor {
@@ -35,12 +127,24 @@ pub(crate) struct RemoteProcessor {
     carry: Vec<PluginEvent>,
     /// The carry followed by the new batch's events, as submitted.
     merged: Vec<PluginEvent>,
-    /// Late batches in a row.
+    /// Late batches in a row during which the child completed nothing.
     late_streak: u32,
+    /// The child's completed-request counter as of the previous batch.
+    last_done: u64,
     /// How many make the child hung (0: never; offline batches are not counted).
     hang_after: u32,
     /// Set when the child is declared hung, for the main thread to give the reason.
     hung: Option<Arc<AtomicBool>>,
+    /// When the running callback must be done (live only; `None`: a batch gets one period).
+    callback: Option<Arc<CallbackDeadline>>,
+    /// Full waits that ran out in a row (reset by an answer).
+    misses: u32,
+    /// Batches left in the cool-down (0: not cooling).
+    cooling: u32,
+    /// Whether the published budget is in use.
+    budget: BudgetState,
+    #[cfg(test)]
+    trace: Option<Arc<Mutex<Vec<WaitKind>>>>,
 }
 
 /// What became of the request that was in flight before a new exchange.
@@ -72,14 +176,38 @@ impl RemoteProcessor {
             carry: Vec::with_capacity(MAX_EVENTS_IN),
             merged: Vec::with_capacity(MAX_EVENTS_IN),
             late_streak: 0,
+            last_done: 0,
             hang_after: 0,
             hung: None,
+            callback: None,
+            misses: 0,
+            cooling: 0,
+            budget: BudgetState::default(),
+            #[cfg(test)]
+            trace: None,
         }
     }
 
-    /// Declares the child hung after `batches` late batches in a row: the block is marked dead
-    /// (so the engine sees `Lost` from then on) and `flag` is set; the main thread ends the
-    /// process. Only atomic stores happen on the audio thread.
+    /// Lets a live batch use what is left of the audio callback's budget: `callback` holds the
+    /// moment the running callback published as the end of its plugin budget. Read with one
+    /// atomic load per batch; offline processors never read it.
+    pub fn with_callback_deadline(mut self, callback: Arc<CallbackDeadline>) -> Self {
+        self.callback = Some(callback);
+        self
+    }
+
+    /// Records every live wait of this processor in `trace`.
+    #[cfg(test)]
+    pub fn with_trace(mut self, trace: Arc<Mutex<Vec<WaitKind>>>) -> Self {
+        self.trace = Some(trace);
+        self
+    }
+
+    /// Declares the child hung after `batches` late batches in a row in which it completed no
+    /// request at all: the block is marked dead (so the engine sees `Lost` from then on) and
+    /// `flag` is set; the main thread ends the process. A child that keeps completing
+    /// requests, however late, is slow rather than hung and is never declared so. Only atomic
+    /// loads and stores happen on the audio thread.
     pub fn with_hang_guard(mut self, batches: u32, flag: Arc<AtomicBool>) -> Self {
         self.hang_after = batches;
         self.hung = Some(flag);
@@ -88,7 +216,13 @@ impl RemoteProcessor {
 
     /// Counts the batch's result for the hang guard.
     fn note(&mut self, status: ProcessStatus) -> ProcessStatus {
-        if status != ProcessStatus::Late {
+        let done = self
+            .port
+            .as_ref()
+            .map_or(self.last_done, ParentPort::done_seq);
+        let progressed = done != self.last_done;
+        self.last_done = done;
+        if status != ProcessStatus::Late || progressed {
             self.late_streak = 0;
         } else if self.hang_after > 0 && !self.offline {
             self.late_streak = self.late_streak.saturating_add(1);
@@ -252,10 +386,29 @@ impl RemoteProcessor {
     /// Runs one batch, without the hang guard.
     fn process_batch(&mut self, io: &mut PluginIo<'_>) -> ProcessStatus {
         let (offline, watchdog, period) = (self.offline, self.watchdog, self.period);
+        // A batch of the cool-down is used up whatever becomes of it.
+        let cool = !offline && self.cooling > 0;
+        if cool {
+            self.cooling -= 1;
+        }
+        let published = if offline {
+            None
+        } else {
+            let seen = self.callback.as_ref().and_then(|c| c.read());
+            let (usable, _entered) = self.budget.begin(seen);
+            #[cfg(test)]
+            if let Some(span) = _entered {
+                Self::record(&self.trace, WaitKind::Fallback(span));
+            }
+            usable
+        };
         let Self {
             port,
             carry,
             merged,
+            misses,
+            cooling,
+            budget,
             ..
         } = self;
         let Some(port) = port.as_mut() else {
@@ -277,15 +430,61 @@ impl RemoteProcessor {
             Self::carry_over(carry, io);
             return ProcessStatus::Late;
         }
-        let deadline = Deadline::after(if offline { watchdog } else { period });
-        match port.wait_done(t, deadline) {
-            Poll::Done => port.take_response(t, io).status,
+        let polled = if offline {
+            port.wait_done(t, Deadline::after(watchdog))
+        } else if cool {
+            #[cfg(test)]
+            Self::record(&self.trace, WaitKind::Poll);
+            port.poll(t)
+        } else {
+            let deadline = Deadline::after_or_until(period, published, MAX_LIVE_WAIT);
+            #[cfg(test)]
+            Self::record(&self.trace, WaitKind::Full(deadline));
+            let used_budget = published.is_some();
+            let polled = port.wait_done(t, deadline);
+            if used_budget {
+                budget.waited = true;
+                if let (Poll::TimedOut, Deadline::At(at), Some(until)) =
+                    (polled, deadline, published)
+                {
+                    // The wait ran to the published moment: the callback's budget is gone.
+                    budget.exhausted |= at >= until;
+                }
+            }
+            polled
+        };
+        match polled {
+            Poll::Done => {
+                *misses = 0;
+                *cooling = 0;
+                port.take_response(t, io).status
+            }
             Poll::Dead => ProcessStatus::Lost,
             Poll::TimedOut if offline => {
                 port.mark_dead();
                 ProcessStatus::Lost
             }
-            Poll::TimedOut | Poll::Pending => ProcessStatus::Late,
+            Poll::TimedOut => {
+                // A full wait ran out: enough of them in a row and the plugin is not spun for.
+                *misses += 1;
+                if *misses >= COOL_AFTER {
+                    *cooling = COOL_BATCHES;
+                    // After the cool-down one more miss starts the next one.
+                    *misses = COOL_AFTER - 1;
+                }
+                ProcessStatus::Late
+            }
+            Poll::Pending => ProcessStatus::Late,
+        }
+    }
+
+    #[cfg(test)]
+    fn record(trace: &Option<Arc<Mutex<Vec<WaitKind>>>>, kind: WaitKind) {
+        if let Some(trace) = trace {
+            trace
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(kind);
         }
     }
 }

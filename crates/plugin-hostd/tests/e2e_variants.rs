@@ -16,8 +16,8 @@ use atomik_device_sdk::{PluginRef, RunMode};
 use atomik_plugin_host::{PluginHandle, PluginManager};
 use atomik_testkit::harness::DeviceHarness;
 use sandbox_support::{
-    FORMATS, Format, METER_STATE, SETTLE, SR, Sandbox, bits, config, hex, meters, process_settled,
-    request,
+    FORMATS, Format, METER_BAD, METER_STATE, SETTLE, SR, Sandbox, bits, config, hex, meters,
+    process_settled, request,
 };
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -57,6 +57,8 @@ fn variants(format: Format) -> (PathBuf, Vec<(&'static str, PluginRef)>) {
             ("start fails", "atomik.test.start-fails"),
             ("process error", "atomik.test.error"),
             ("nan", "atomik.test.nan"),
+            ("error once", "atomik.test.error-once"),
+            ("nan once", "atomik.test.nan-once"),
         ]
         .into_iter()
         .map(|(n, id)| (n, id.to_string()))
@@ -71,6 +73,8 @@ fn variants(format: Format) -> (PathBuf, Vec<(&'static str, PluginRef)>) {
             ("process error", 7),
             ("nan", 8),
             ("picky synth", 9),
+            ("error once", 12),
+            ("nan once", 13),
         ]
         .into_iter()
         .map(|(n, w)| (n, hex([0xA70F_1C02, 0x4A5B_4C01, 0x8D2E_1F00, w])))
@@ -225,6 +229,58 @@ fn every_edge_case_plugin_ends_up_in_the_sandbox_where_it_ends_up_in_process() {
             ran += usize::from(matches!(got, Outcome::Ran { .. }));
         }
         assert!(ran >= 2, "{}: some of them run at all", format.name());
+        drop(local);
+        sb.finish();
+    }
+}
+
+/// The bits of every output of each of `blocks` offline blocks of `plugin` driven with a constant
+/// input, and its bad-block count.
+fn render(
+    manager: &mut PluginManager,
+    plugin: &PluginRef,
+    blocks: usize,
+) -> (Vec<Vec<Vec<u32>>>, f32) {
+    let handle = manager
+        .instantiate(&request(plugin, RunMode::Offline))
+        .expect("the plugin starts");
+    let mut h = drive(handle, 0.25);
+    let out = (0..blocks)
+        .map(|_| {
+            h.process();
+            outputs(&h)
+        })
+        .collect();
+    let bad = meters(&h)[METER_BAD];
+    drop(h);
+    manager.poll();
+    (out, bad)
+}
+
+#[test]
+fn a_bad_block_renders_the_same_bits_in_the_sandbox_and_in_process() {
+    for format in FORMATS {
+        let (file, plugins) = variants(format);
+        let once: Vec<(&str, PluginRef)> = plugins
+            .into_iter()
+            .filter(|(name, _)| name.ends_with("once"))
+            .collect();
+        let refs: Vec<PluginRef> = once.iter().map(|(_, p)| p.clone()).collect();
+        let mut sb = Sandbox::new(format.plugin_format(), config(), &[(file.clone(), refs)]);
+        let mut local = sandbox_support::in_process(format, &[file]);
+        for (name, p) in &once {
+            let want = render(&mut local, p, 8);
+            let got = render(&mut sb.manager, p, 8);
+            assert_eq!(
+                got,
+                want,
+                "{} {name}: the same bits, block for block",
+                format.name()
+            );
+            if *name == "nan once" {
+                assert_eq!(got.1, 1.0, "{} {name}: one bad block", format.name());
+            }
+        }
         drop(local);
         sb.finish();
     }

@@ -81,7 +81,7 @@ pub use sync::{
     TICKS_PER_CLOCK, TICKS_PER_POSITION, clocks_in, song_position_bytes, song_position_ticks,
 };
 #[doc(hidden)]
-pub use workers::WORKER_SPIN_LIMIT;
+pub use workers::{WORKER_SPIN_LIMIT, WorkerStats};
 
 #[cfg(test)]
 atomik_testkit::install_alloc_guard!();

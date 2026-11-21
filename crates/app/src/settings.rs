@@ -92,8 +92,11 @@ pub const BUFFER_CHOICES: [u32; 6] = [64, 128, 256, 512, 1024, 2048];
 pub const WORKER_CHOICES: [u16; 7] = [0, 1, 2, 3, 4, 6, 8];
 /// Worker linger values offered by the settings dialog (spins; 0 = engine default).
 pub const LINGER_CHOICES: [u64; 4] = [0, 20_000, 100_000, 500_000];
-/// Default worker linger (spins), as `atomik-play --worker-linger`: workers keep spinning
-/// between callbacks instead of being woken by each one (OI-1 mitigation).
+/// Default worker linger (spins), as `atomik-play --worker-linger`: the bound on how long an
+/// idle worker spins inside an audio callback before it parks, so it is still awake for the
+/// next level of the same callback (OI-1 mitigation). Workers park as soon as the callback
+/// ends, so a long linger no longer costs CPU between callbacks or with the transport stopped;
+/// the value is kept (see DECISIONS.md, "Render workers spin only inside a callback").
 pub const DEFAULT_LINGER_SPINS: u64 = 500_000;
 /// Smallest accepted buffer size.
 pub const MIN_BUFFER: u32 = 16;

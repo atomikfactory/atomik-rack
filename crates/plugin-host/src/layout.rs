@@ -4,8 +4,9 @@
 
 use atomik_device_sdk::{
     AUX_OUT_KEYS, CV_AMOUNT_KEYS, CV_DEST_KEYS, CV_IN_KEYS, DeviceDescriptor, MAX_AUX_OUTPUTS,
-    MAX_PLUGIN_PARAMS, MPE_SEND_KEY, PLUGIN_CV_INPUTS, PluginLayout, SocketId,
+    MAX_PLUGIN_PARAMS, MPE_SEND_KEY, PLUGIN_CV_INPUTS, PluginLayout, PluginParamInfo, SocketId,
 };
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The key of a plugin param: `p` and the plugin's own 32-bit id in decimal.
 pub fn param_key(id: u32) -> String {
@@ -30,6 +31,32 @@ pub fn param_ids(descriptor: &DeviceDescriptor) -> Vec<u32> {
         .skip(1)
         .filter_map(|p| parse_param_key(p.key))
         .collect()
+}
+
+/// Adds the `pins` the layout does not list to its param table: the params a project still
+/// uses although the plugin's table leaves them out (MIDI controller proxies the plugin
+/// publishes). They come after the plugin's own params, in id order, so the table is the same
+/// wherever it is built (the scan's registry entry and the live instance agree). A pin the
+/// layout already has is ignored. The table never grows past [`MAX_PLUGIN_PARAMS`]: the plugin's
+/// last params make room, a pin is never the one that goes. No pins, no change.
+pub fn merge_pinned(layout: &mut PluginLayout, pins: &[PluginParamInfo]) {
+    if pins.is_empty() {
+        return;
+    }
+    let have: BTreeSet<u32> = layout.params.iter().map(|p| p.id).collect();
+    let extra: BTreeMap<u32, &PluginParamInfo> = pins
+        .iter()
+        .filter(|p| !have.contains(&p.id))
+        .map(|p| (p.id, p))
+        .collect();
+    if extra.is_empty() {
+        return;
+    }
+    let room = MAX_PLUGIN_PARAMS.saturating_sub(extra.len());
+    layout.params.truncate(room);
+    layout
+        .params
+        .extend(extra.into_values().take(MAX_PLUGIN_PARAMS).cloned());
 }
 
 /// Cuts a layout's param table to [`MAX_PLUGIN_PARAMS`], keeping the first ones. Returns true

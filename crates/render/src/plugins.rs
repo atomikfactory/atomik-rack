@@ -13,7 +13,7 @@
 //! worker count; the output is bit-identical only for plugins that are deterministic functions of
 //! those inputs (the in-repo test plugins are). [`determinism_note`] is the line the CLI prints.
 
-use atomik_device_sdk::{PluginFormat, PluginRef, Registry, RunMode};
+use atomik_device_sdk::{PluginFormat, PluginParamInfo, PluginRef, Registry, RunMode};
 use atomik_plugin_clap::ClapBackend;
 use atomik_plugin_host::{
     BackendError, CachedFile, FileStamp, HostHandle, LoadStatus, ManagerEvent, PluginBackend,
@@ -172,6 +172,9 @@ pub struct PluginHost {
     manager: PluginManager,
     backends: Backends,
     catalog: PluginCatalog,
+    /// The params a project uses that the scanned tables leave out (see
+    /// [`PluginHost::set_pinned_params`]).
+    pins: BTreeMap<PluginRef, Vec<PluginParamInfo>>,
 }
 
 impl std::fmt::Debug for PluginHost {
@@ -224,6 +227,7 @@ impl PluginHost {
             manager,
             backends,
             catalog: PluginCatalog::default(),
+            pins: BTreeMap::new(),
         }
     }
 
@@ -245,6 +249,7 @@ impl PluginHost {
                 sandboxed: isolation.is_sandboxed(),
             },
             catalog: PluginCatalog::default(),
+            pins: BTreeMap::new(),
         }
     }
 
@@ -304,11 +309,39 @@ impl PluginHost {
         self.catalog.unregister_from(registry);
         let mut catalog = PluginCatalog::from_cache(cache, settings);
         let backends = &self.backends;
-        let report = catalog.register_into(registry, &mut |plugin, path| {
-            backends.register(plugin, path);
-        });
+        let report = catalog.register_pinned_into(
+            registry,
+            &mut |plugin, path| {
+                backends.register(plugin, path);
+            },
+            &self.pins,
+        );
         self.catalog = catalog;
         report
+    }
+
+    /// Sets the params a project uses although the plugin's own table leaves them out, per
+    /// plugin: the rows of the layout the document keeps for them. A plugin may not list the
+    /// parameters it publishes only as stand-ins for MIDI controllers; one that a lane, a
+    /// learned control, a macro or a stored value still names has to stay in the table, or the
+    /// project would lose it. The descriptors [`Self::set_catalog`] registers from now on and
+    /// every instance the manager makes list these rows after the plugin's own (see
+    /// [`atomik_plugin_host::layout::merge_pinned`]), so the registry and the instances agree.
+    /// Call it before `set_catalog`, or call `set_catalog` again after it.
+    pub fn set_pinned_params(&mut self, pins: BTreeMap<PluginRef, Vec<PluginParamInfo>>) {
+        // A plugin that had pins and has none now is cleared.
+        for plugin in self.pins.keys().filter(|p| !pins.contains_key(*p)) {
+            self.manager.set_pinned_params(plugin, Vec::new());
+        }
+        for (plugin, rows) in &pins {
+            self.manager.set_pinned_params(plugin, rows.clone());
+        }
+        self.pins = pins;
+    }
+
+    /// The pinned params of the host (see [`Self::set_pinned_params`]).
+    pub fn pinned_params(&self) -> &BTreeMap<PluginRef, Vec<PluginParamInfo>> {
+        &self.pins
     }
 
     /// Whether `plugin` is installed and usable (listed `Ok` in the catalog).

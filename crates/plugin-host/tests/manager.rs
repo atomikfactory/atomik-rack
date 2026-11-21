@@ -776,3 +776,257 @@ fn a_preset_moves_the_param_values_the_manager_reads_back() {
             .is_empty()
     );
 }
+
+#[test]
+fn the_presets_and_the_params_are_asked_for_without_waiting_and_come_through_the_soft_answers() {
+    use atomik_plugin_host::SoftAnswer;
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    stats.set_presets(true);
+    // A plugin that answers at once gives the list and the values at once.
+    assert_eq!(m.request_presets(id).unwrap().map(|l| l.len()), Some(3));
+    assert!(m.request_params(id).unwrap().is_some());
+    // A busy one gives neither now, and each comes later as a cosmetic answer.
+    stats.set_soft_busy(true);
+    assert_eq!(m.request_presets(id).unwrap(), None);
+    assert_eq!(m.request_params(id).unwrap(), None);
+    m.poll();
+    assert!(m.take_soft_answers().is_empty(), "still busy");
+    stats.set_soft_busy(false);
+    m.poll();
+    let answers: Vec<SoftAnswer> = m.take_soft_answers().into_iter().map(|(_, a)| a).collect();
+    assert!(
+        matches!(&answers[..], [SoftAnswer::Presets(Some(p)), SoftAnswer::Params(Some(_))] if p.len() == 3),
+        "{answers:?}"
+    );
+    assert!(
+        m.request_presets(atomik_plugin_host::InstanceId(999))
+            .is_err()
+    );
+}
+
+#[test]
+fn a_preset_load_the_plugin_takes_time_for_is_polled_and_a_refusal_ends_it_with_its_error() {
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    stats.set_presets(true);
+    stats.set_preset_delay(3);
+    assert!(!m.begin_load_preset(id, "warm").unwrap(), "not loaded yet");
+    assert!(m.poll_load_preset(id).is_none());
+    assert!(m.poll_load_preset(id).is_none());
+    assert!(matches!(m.poll_load_preset(id), Some(Ok(()))));
+    assert_eq!(m.capture_state(id).unwrap().0, b"preset:warm");
+    // A preset the plugin does not know ends with the error, after the delay as well.
+    assert!(!m.begin_load_preset(id, "nope").unwrap());
+    let mut ended = None;
+    for _ in 0..5 {
+        ended = m.poll_load_preset(id);
+        if ended.is_some() {
+            break;
+        }
+    }
+    assert!(matches!(ended, Some(Err(_))), "{ended:?}");
+    // Without a delay the load is done when the call returns.
+    stats.set_preset_delay(0);
+    assert!(m.begin_load_preset(id, "init").unwrap());
+}
+
+// ----- background capture ----------------------------------------------------------------------------
+
+#[test]
+fn a_background_capture_is_requested_without_waiting_and_collected_when_it_lands() {
+    let (mut m, stats) = manager();
+    stats.set_background_capture(true);
+    stats.hold_captures(true);
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    m.restore_state(id, &PluginStateBlob(vec![5])).unwrap();
+    m.request_capture(id).unwrap();
+    assert!(m.capture_out(id));
+    assert!(m.poll_capture(id).is_none(), "the plugin is busy");
+    assert_eq!(stats.sync_captures(), 0, "nothing was waited for");
+    stats.hold_captures(false);
+    let landed = m.poll_capture(id).expect("it landed");
+    assert_eq!(landed.result.unwrap(), PluginStateBlob(vec![5]));
+    assert!(!landed.again && !landed.stale);
+    assert!(!m.capture_out(id));
+    assert!(m.poll_capture(id).is_none(), "collected once");
+}
+
+#[test]
+fn a_request_while_one_is_out_sends_nothing_and_says_ask_again() {
+    let (mut m, stats) = manager();
+    stats.set_background_capture(true);
+    stats.hold_captures(true);
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    m.request_capture(id).unwrap();
+    m.request_capture(id).unwrap();
+    m.request_capture(id).unwrap();
+    assert_eq!(stats.capture_requests(), 1);
+    stats.hold_captures(false);
+    let landed = m.poll_capture(id).expect("it landed");
+    assert!(landed.again, "the state may have changed since the request");
+    m.request_capture(id).unwrap();
+    assert_eq!(stats.capture_requests(), 2);
+}
+
+#[test]
+fn a_state_restored_while_a_capture_is_out_makes_its_answer_stale() {
+    let (mut m, stats) = manager();
+    stats.set_background_capture(true);
+    stats.hold_captures(true);
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    m.request_capture(id).unwrap();
+    m.restore_state(id, &PluginStateBlob(vec![7])).unwrap();
+    stats.hold_captures(false);
+    let landed = m.poll_capture(id).expect("it landed");
+    assert!(landed.stale);
+    // A request after the restore is current.
+    m.request_capture(id).unwrap();
+    let landed = m.poll_capture(id).expect("it landed");
+    assert!(!landed.stale);
+    assert_eq!(landed.result.unwrap(), PluginStateBlob(vec![7]));
+}
+
+#[test]
+fn a_synchronous_capture_takes_the_place_of_the_one_that_is_out() {
+    let (mut m, stats) = manager();
+    stats.set_background_capture(true);
+    stats.hold_captures(true);
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    m.request_capture(id).unwrap();
+    assert_eq!(m.capture_state(id).unwrap(), PluginStateBlob(Vec::new()));
+    assert!(!m.capture_out(id));
+    assert!(m.poll_capture(id).is_none());
+}
+
+#[test]
+fn a_plugin_in_this_process_answers_a_background_request_at_once() {
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    m.restore_state(id, &PluginStateBlob(vec![3])).unwrap();
+    m.request_capture(id).unwrap();
+    let landed = m.poll_capture(id).expect("at once");
+    assert_eq!(landed.result.unwrap(), PluginStateBlob(vec![3]));
+    assert_eq!(stats.capture_requests(), 0, "no background request existed");
+}
+
+#[test]
+fn an_instance_that_is_gone_answers_a_capture_poll_as_stale() {
+    let (mut m, _) = manager();
+    let landed = m
+        .poll_capture(atomik_plugin_host::InstanceId(99))
+        .expect("an answer");
+    assert!(landed.stale && landed.result.is_err());
+}
+
+#[test]
+fn a_stall_record_is_kept_out_of_the_event_stream_and_comes_from_take_stalls() {
+    let (mut m, _) = manager();
+    // The handle is kept: dropping it would destroy the instance and post its own event.
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    assert!(m.take_stalls().is_empty());
+    let messenger = m.slot(id).unwrap().messenger();
+    assert!(messenger.post(PluginMessage::Stall {
+        call: "CaptureState".to_string(),
+        ms: 70,
+        outcome: atomik_plugin_host::StallOutcome::Answered,
+    }));
+    assert_eq!(m.poll(), vec![], "wall-time diagnostics are not events");
+    let stalls = m.take_stalls();
+    assert_eq!(stalls.len(), 1);
+    assert_eq!(
+        (stalls[0].instance, stalls[0].call.as_str(), stalls[0].ms),
+        (id, "CaptureState", 70)
+    );
+    assert!(m.take_stalls().is_empty(), "taken once");
+    // A caller that never drains them cannot make the list grow without bound.
+    for ms in 0..100 {
+        let _ = messenger.post(PluginMessage::Stall {
+            call: "ReadParams".to_string(),
+            ms,
+            outcome: atomik_plugin_host::StallOutcome::TimedOut,
+        });
+        let _ = m.poll();
+    }
+    let kept = m.take_stalls();
+    assert_eq!(kept.len(), 64);
+    assert_eq!(kept.last().map(|s| s.ms), Some(99));
+}
+
+// ----- a plugin that is alive but does not answer ----------------------------------------------------
+
+#[test]
+fn a_plugin_that_does_not_answer_is_reported_once_when_it_starts_and_once_when_it_is_back() {
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    assert!(m.not_responding(id).is_none());
+    assert!(m.poll().is_empty());
+    stats.set_not_responding(true);
+    assert_eq!(m.not_responding(id).as_deref(), Some("CaptureState"));
+    let err = m.capture_state(id).unwrap_err();
+    assert!(err.is_not_responding(), "{err}");
+    assert!(
+        !ManagerError::UnknownInstance(id).is_not_responding(),
+        "only the busy error says so"
+    );
+    let events = m.poll();
+    assert_eq!(
+        events,
+        vec![ManagerEvent::NotResponding {
+            instance: id,
+            call: "CaptureState".to_string()
+        }]
+    );
+    assert!(m.poll().is_empty(), "reported once");
+    stats.set_not_responding(false);
+    assert!(m.not_responding(id).is_none());
+    assert_eq!(m.poll(), vec![ManagerEvent::Responding(id)]);
+    assert!(m.poll().is_empty());
+    assert!(m.capture_state(id).is_ok(), "it works again");
+    drop(handle);
+}
+
+#[test]
+fn pinned_params_are_in_the_table_of_an_instance_made_after_they_were_set() {
+    let (mut m, _stats) = manager();
+    let plugin = request("null.fx").plugin;
+    let row = param(777, "Pinned", 0.0, 1.0, 0.5, false);
+    let plain = m.instantiate(&request("null.fx")).unwrap();
+    assert!(plain.layout.params.iter().all(|p| p.id != 777));
+    assert!(plain.descriptor.param_by_key("p777").is_none());
+
+    m.set_pinned_params(&plugin, vec![row.clone()]);
+    let pinned = m.instantiate(&request("null.fx")).unwrap();
+    let ids: Vec<u32> = pinned.layout.params.iter().map(|p| p.id).collect();
+    assert_eq!(
+        ids,
+        [1, 2, 3, 4, 777],
+        "the plugin's own params, then the pin"
+    );
+    assert!(pinned.descriptor.param_by_key("p777").is_some());
+    assert_eq!(m.layout(pinned.id).unwrap(), &pinned.layout);
+    // The instance made before keeps the table it had; another plugin is not touched.
+    assert!(
+        m.layout(plain.id)
+            .unwrap()
+            .params
+            .iter()
+            .all(|p| p.id != 777)
+    );
+    let other = m.instantiate(&request("null.fx2")).unwrap();
+    assert!(other.layout.params.iter().all(|p| p.id != 777));
+
+    // Clearing the pins gives the plugin's own table again.
+    m.set_pinned_params(&plugin, Vec::new());
+    let cleared = m.instantiate(&request("null.fx")).unwrap();
+    assert!(cleared.layout.params.iter().all(|p| p.id != 777));
+}

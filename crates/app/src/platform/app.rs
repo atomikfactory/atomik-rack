@@ -4,6 +4,8 @@
 use super::cursor;
 use super::dock_frames::DockFrames;
 use super::gpu::{FrameResult, GpuContext, WindowSurface, render_offscreen, write_png};
+use super::gpu_recovery::{self, ForcedLoss, Recovery};
+use super::gpu_select::{self, AdapterDesc};
 use super::learn_strips::{Dock, LearnStrips};
 use super::plugin_windows::PluginWindows;
 use super::window_logic;
@@ -22,6 +24,8 @@ use crate::stress::{
     stress_audio_dir, stress_drums_dir, stress_sampler_dir, stress_slicer_dir, write_stress_audio,
 };
 use crate::translate::{self, FileDrag};
+use crate::ui_activity::PaintReason;
+use crate::ui_guard::{self, Dispatch, ForcedPanic, UiGuard};
 use crate::ui_state::ui_state_path;
 use crate::windows::{self, DocId, MonitorInfo, WindowHit, WindowKind, WindowRect, ZOrder};
 use crate::workspace::Workspace;
@@ -322,6 +326,8 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let status = shell.status_text().to_string();
     log::info!("{status}");
     let event_loop = EventLoop::new().map_err(|e| format!("event loop: {e}"))?;
+    let unattended = cli.unattended();
+    let config_dir = config.dir.clone();
     crate::text_clipboard::install();
     let now = clock::now();
     let screenshot_at = cli
@@ -400,6 +406,10 @@ pub fn run(cli: Cli) -> Result<(), String> {
         clicks: ClickCounter::new(),
         epoch: now,
         next_status: now,
+        frame_watch: crate::ui_stall::FrameWatch::default(),
+        activity: crate::ui_activity::Activity::new(),
+        event_cause: None,
+        retry_cause: None,
         screenshot: cli.screenshot.clone(),
         screenshot_at,
         quit_at: cli
@@ -410,13 +420,49 @@ pub fn run(cli: Cli) -> Result<(), String> {
         plugin_windows: PluginWindows::default(),
         learn_strips: LearnStrips::default(),
         dock_frames: DockFrames::default(),
+        recovery: Recovery::default(),
+        forced_loss: gpu_recovery::forced_period(
+            std::env::var(gpu_recovery::FORCE_LOSS_ENV).ok().as_deref(),
+        )
+        .map(|period| ForcedLoss::new(period, Duration::ZERO)),
+        graphics_ok: false,
+        rebuilding: false,
+        ui_guard: UiGuard::default(),
+        forced_panic: ForcedPanic::parse(std::env::var(ui_guard::FORCE_PANIC_ENV).ok().as_deref()),
+        start_failure: None,
         #[cfg(target_os = "macos")]
         native: None,
     };
     event_loop
         .run_app(&mut app)
         .map_err(|e| format!("event loop: {e}"))?;
+    let failure = app.start_failure.take();
     app.shutdown();
+    if let Some(failure) = failure {
+        let log_path =
+            crate::logging::RotatingFile::path_of(&crate::logging::log_dir(&config_dir), 0);
+        let report = gpu_select::start_report(
+            &failure.found,
+            &failure.reason,
+            &log_path.display().to_string(),
+            unattended,
+        );
+        // The one place a message box appears for graphics: the start, and only when someone is
+        // at the screen (a scripted run logs and exits).
+        if let Some((title, text)) = &report.dialog {
+            rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Error)
+                .set_title(title)
+                .set_description(text)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+        }
+        return Err(report.log);
+    }
+    // A scripted run that contained a panic must not look like a success.
+    if let Some(why) = ui_guard::exit_failure(unattended, app.ui_guard.total()) {
+        return Err(why);
+    }
     Ok(())
 }
 
@@ -476,6 +522,15 @@ struct App {
     clicks: ClickCounter,
     epoch: Instant,
     next_status: Instant,
+    /// Decides which slow frames are written to the log.
+    frame_watch: crate::ui_stall::FrameWatch,
+    /// The wake-up and paint counters (see [`crate::ui_activity`]).
+    activity: crate::ui_activity::Activity,
+    /// What the last window event says about the paints that follow it (an input, a resize, a
+    /// focus change); cleared at the end of the tick that painted them.
+    event_cause: Option<PaintReason>,
+    /// A cause for the paint after the next one: a frame that was not shown is painted again.
+    retry_cause: Option<PaintReason>,
     screenshot: Option<PathBuf>,
     /// When set, the screenshot waits until then (else it is taken at the first frame).
     screenshot_at: Option<Instant>,
@@ -487,8 +542,31 @@ struct App {
     learn_strips: LearnStrips,
     /// The plugin editors that sit inside the main window.
     dock_frames: DockFrames,
+    /// The loss of the graphics device and the way back (see [`super::gpu_recovery`]).
+    recovery: Recovery,
+    /// The test switch that takes the device away every so often (`ATOMIK_GPU_LOSS_EVERY`).
+    forced_loss: Option<ForcedLoss>,
+    /// A surface was made at least once: from then on a graphics failure is a loss to recover
+    /// from, not a start that cannot work.
+    graphics_ok: bool,
+    /// A rebuild of the graphics is under way: a panic that finds it set ended the attempt half
+    /// way.
+    rebuilding: bool,
+    /// The panics of the UI thread that were contained (see [`crate::ui_guard`]).
+    ui_guard: UiGuard,
+    /// The test switch that makes a dispatch point panic (`ATOMIK_UI_PANIC`).
+    forced_panic: Option<ForcedPanic>,
+    /// Why the first surface could not be made (no acceptable adapter, no device): the start
+    /// ends with a message and a non-zero exit code.
+    start_failure: Option<StartFailure>,
     #[cfg(target_os = "macos")]
     native: Option<super::native_menu::NativeMenus>,
+}
+
+/// A start that found no usable graphics: the adapters seen and the error.
+struct StartFailure {
+    found: Vec<AdapterDesc>,
+    reason: String,
 }
 
 /// The monitors as [`MonitorInfo`] and the index of the primary one.
@@ -632,7 +710,7 @@ impl App {
     /// Opens and closes the OS windows to match what the shell wants (call after every call
     /// into the shell). A window that cannot be opened is attached again.
     fn sync_windows(&mut self, event_loop: &ActiveEventLoop) {
-        if self.stopped {
+        if self.stopped || self.start_failure.is_some() {
             return;
         }
         let routed = self.shell.routed();
@@ -660,6 +738,12 @@ impl App {
             for kind in plan.create {
                 if let Err(e) = self.create_window(event_loop, (id, kind)) {
                     log::error!("cannot create the {kind:?} window of song {}: {e}", id.0);
+                    if self.start_failure.is_some() {
+                        // No graphics at the start: nothing can be shown, and the run ends
+                        // with a message (see `run`).
+                        event_loop.exit();
+                        return;
+                    }
                     if kind != WindowKind::Main {
                         self.shell.window_closed(kind);
                     } else if !self.shell.close_song(id) {
@@ -739,13 +823,34 @@ impl App {
                 .create_window(attributes)
                 .map_err(|e| e.to_string())?,
         );
+        crate::startup::mark(crate::startup::FIRST_WINDOW);
         // The windows are told the display scale times the application zoom: everything the
         // shell does in logical units follows.
         let scale = self.shell.ui_scale(window.scale_factor());
         let size = window.inner_size();
-        let surface = self
-            .gpu
-            .create_surface(Arc::clone(&window), size.width, size.height)?;
+        // While the graphics are down the window opens without a surface; the rebuild gives it one.
+        let surface = if self.recovery.is_down() || self.gpu.is_lost() {
+            None
+        } else {
+            match self
+                .gpu
+                .create_surface(Arc::clone(&window), size.width, size.height)
+            {
+                Ok(surface) => {
+                    self.graphics_ok = true;
+                    Some(surface)
+                }
+                Err(reason) => {
+                    if !self.graphics_ok && self.start_failure.is_none() {
+                        self.start_failure = Some(StartFailure {
+                            found: self.gpu.found().to_vec(),
+                            reason: reason.clone(),
+                        });
+                    }
+                    return Err(reason);
+                }
+            }
+        };
         if let Some(theme) = window.theme() {
             self.shell
                 .set_system_dark(theme == winit::window::Theme::Dark);
@@ -772,7 +877,7 @@ impl App {
         self.windows.insert(
             key,
             AppWindow {
-                surface: Some(surface),
+                surface,
                 window: Arc::clone(&window),
                 scene: Scene::new(),
                 cache: SceneCache::new(),
@@ -1050,8 +1155,54 @@ impl App {
         w.cache.trim();
     }
 
-    fn redraw(&mut self, key: Key) {
+    /// A whole tick or redraw that began at `began` is over: a slow one is logged (see
+    /// [`crate::ui_stall`]). Only this live, windowed loop calls it, so bounces, the QA server
+    /// and the tests never log frame stalls.
+    fn note_frame_time(&mut self, began: Instant) {
+        let now = clock::now();
+        if let Some(line) = self
+            .frame_watch
+            .note(now.saturating_duration_since(began), now)
+        {
+            log::warn!("{line}");
+        }
+    }
+
+    /// The reason the window `kind` of song `doc` is painted now: the person's input, a window
+    /// event, a change something marked, or a view that keeps itself painting.
+    fn paint_reason(&self, doc: DocId, kind: WindowKind) -> PaintReason {
+        if let Some(cause) = self.event_cause {
+            return cause;
+        }
+        let marked = self
+            .shell
+            .song(doc)
+            .is_some_and(|s| s.repaint_marked_in(kind));
+        if marked {
+            PaintReason::Update
+        } else {
+            PaintReason::Live
+        }
+    }
+
+    /// Counts the seconds that ended (publishing them for the diagnostics report) and writes the
+    /// debug line of the counters now and then.
+    fn advance_activity(&mut self) {
+        let at = clock::now().saturating_duration_since(self.epoch);
+        if self.activity.advance(at) {
+            crate::ui_activity::publish(self.activity.snapshot());
+            if let Some(line) = self.activity.debug_line() {
+                log::debug!("{line}");
+            }
+        }
+    }
+
+    fn redraw(&mut self, key: Key, reason: PaintReason) {
         let kind = key.1;
+        self.service_graphics();
+        if self.recovery.is_down() {
+            return; // no surface until the graphics are back; the rebuild repaints everything
+        }
         let Some(window) = self.windows.get(&key).map(|w| Arc::clone(&w.window)) else {
             return;
         };
@@ -1059,6 +1210,8 @@ impl App {
         if size.width == 0 || size.height == 0 {
             return; // minimized
         }
+        self.advance_activity();
+        self.activity.paint(kind, reason);
         self.paint_scene(key);
         let Some(w) = self.windows.get_mut(&key) else {
             return;
@@ -1068,25 +1221,162 @@ impl App {
                 self.gpu.resize(surface, size.width, size.height);
                 self.gpu.render(surface, &w.scene, Color::BLACK)
             }
-            None => return,
-        };
-        match result {
-            FrameResult::Presented => {}
-            // Painted but not shown: the shell has marked the window clean, so ask again.
-            FrameResult::Skipped => self.shell.repaint_window(kind),
-            FrameResult::Reconfigured => window.request_redraw(),
-            FrameResult::Lost => {
-                w.surface = None;
+            // A window that was minimized while the graphics were rebuilt has no surface yet.
+            None => {
                 match self
                     .gpu
                     .create_surface(Arc::clone(&window), size.width, size.height)
                 {
-                    Ok(surface) => w.surface = Some(surface),
-                    Err(e) => log::error!("{e}"),
+                    Ok(surface) => {
+                        w.surface = Some(surface);
+                        self.shell.repaint_window(kind);
+                        window.request_redraw();
+                    }
+                    Err(e) => self.gpu.health().mark_lost(&e),
                 }
+                return;
+            }
+        };
+        match result {
+            FrameResult::Presented => crate::startup::mark(crate::startup::FIRST_FRAME),
+            // Painted but not shown: the shell has marked the window clean, so ask again.
+            FrameResult::Skipped => {
+                self.retry_cause = Some(PaintReason::Surface);
+                self.shell.repaint_window(kind);
+            }
+            FrameResult::Reconfigured => {
+                self.retry_cause = Some(PaintReason::Surface);
                 window.request_redraw();
             }
+            // The device (or the surface) is gone: the flag is set, and the next check at the
+            // start of a frame tears the graphics down and builds them again.
+            FrameResult::Lost => {
+                self.retry_cause = Some(PaintReason::Surface);
+                self.shell.repaint_window(kind);
+                self.service_graphics();
+            }
         }
+    }
+
+    /// Checked at the start of every frame: forces the test loss when the switch is on, says
+    /// what the graphics driver reported, and tears the graphics down and builds them again when
+    /// the device is lost. Audio, the document and the plugins are not touched.
+    fn service_graphics(&mut self) {
+        let at = clock::now().saturating_duration_since(self.epoch);
+        if let Some(forced) = &mut self.forced_loss
+            && forced.due(at)
+            && !self.recovery.is_down()
+            && !self.gpu.is_lost()
+        {
+            log::info!(
+                "graphics device loss forced by {}",
+                gpu_recovery::FORCE_LOSS_ENV
+            );
+            self.gpu.force_loss();
+        }
+        for note in self.gpu.health().take_notes() {
+            log::warn!("graphics error (the device is still usable): {note}");
+        }
+        let lost = self.gpu.is_lost();
+        if lost && !self.recovery.is_down() {
+            let why = self.gpu.health().take_reason().unwrap_or_default();
+            log::warn!("graphics device lost: {why}");
+        }
+        let decision = self.recovery.poll(at, lost);
+        if decision.teardown {
+            self.tear_down_graphics();
+        }
+        if decision.rebuild {
+            self.rebuild_graphics(at);
+        }
+    }
+
+    /// Lets go of every surface of every window (main, detached, docked frames, Learn strips)
+    /// while the device they belong to is dead. The windows stay; they are black until the
+    /// graphics are back.
+    fn tear_down_graphics(&mut self) {
+        for w in self.windows.values_mut() {
+            w.surface = None;
+        }
+        self.dock_frames.drop_surfaces();
+        self.learn_strips.drop_surfaces();
+    }
+
+    /// One attempt to build the graphics again: a new context (instance, adapter, device and
+    /// renderer), a surface for every window, and a repaint of everything. A failure is logged
+    /// and tried again after the back-off; the first one asks for a recovery snapshot so the
+    /// work is safe even if graphics never come back.
+    fn rebuild_graphics(&mut self, at: Duration) {
+        self.rebuilding = true;
+        self.tear_down_graphics();
+        // The old context goes with its dead device before the new one is made.
+        self.gpu = GpuContext::rebuilt();
+        let attempt = self.recovery.attempts();
+        match self.recreate_surfaces() {
+            Ok(()) => {
+                self.recovery.finished(at, true);
+                let adapter = self.gpu.adapter_line().unwrap_or_default();
+                log::info!("graphics restored (attempt {attempt}); {adapter}");
+                self.repaint_everything();
+            }
+            Err(e) => {
+                self.tear_down_graphics();
+                let snapshot = self.recovery.finished(at, false);
+                let wait = self
+                    .recovery
+                    .next_attempt()
+                    .map_or(Duration::ZERO, |t| t.saturating_sub(at));
+                log::warn!(
+                    "graphics rebuild attempt {attempt} failed: {e}; next attempt in {:.1} s",
+                    wait.as_secs_f64()
+                );
+                if snapshot {
+                    for id in self.shell.ids() {
+                        if let Some(song) = self.shell.song_mut(id) {
+                            song.core_mut().request_recovery_snapshot();
+                        }
+                    }
+                }
+            }
+        }
+        self.rebuilding = false;
+    }
+
+    /// Gives every window, docked frame and Learn strip a surface on the new context.
+    fn recreate_surfaces(&mut self) -> Result<(), String> {
+        for w in self.windows.values_mut() {
+            let size = w.window.inner_size();
+            if size.width == 0 || size.height == 0 {
+                continue; // minimized: the surface is made when the window is drawn again
+            }
+            w.surface = Some(self.gpu.create_surface(
+                Arc::clone(&w.window),
+                size.width,
+                size.height,
+            )?);
+        }
+        self.dock_frames
+            .recreate_surfaces(&mut self.gpu, &mut self.text)?;
+        self.learn_strips
+            .recreate_surfaces(&mut self.gpu, &mut self.text)
+    }
+
+    /// Marks every window of every song to be painted and asks the system for a redraw.
+    fn repaint_everything(&mut self) {
+        self.pace_presentation();
+        for doc in self.shell.ids() {
+            if !self.shell.select(doc) {
+                continue;
+            }
+            self.shell.core_mut().view_mut().request_repaint();
+            for ((d, kind), w) in &self.windows {
+                if *d == doc {
+                    self.shell.repaint_window(*kind);
+                    w.window.request_redraw();
+                }
+            }
+        }
+        self.shell.select(self.shell.play_focus());
     }
 
     /// Renders every open window offscreen: `base` for the main window, `base-rack` and
@@ -1170,10 +1460,18 @@ impl App {
     fn paint_due_windows(&mut self) {
         for id in self.shell.ids() {
             let due = self.shell.song(id).map(|s| s.windows_to_paint());
-            for kind in due.unwrap_or_default() {
-                self.redraw((id, kind));
+            // The reasons are read before the first paint clears the marks.
+            let due: Vec<_> = due
+                .unwrap_or_default()
+                .into_iter()
+                .map(|kind| (kind, self.paint_reason(id, kind)))
+                .collect();
+            for (kind, reason) in due {
+                self.redraw((id, kind), reason);
             }
         }
+        // The cause of this tick's paints is spent; a frame that was not shown keeps its own.
+        self.event_cause = self.retry_cause.take();
     }
 
     /// Asks for a redraw of every window that has something to paint.
@@ -2030,6 +2328,77 @@ impl App {
         }
     }
 
+    /// Runs one dispatch point of the loop with a panic contained (see [`crate::ui_guard`]): the
+    /// panic hook has written the crash report by the time it is caught here.
+    fn guarded(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        point: Dispatch,
+        f: impl FnOnce(&mut Self, &ActiveEventLoop),
+    ) {
+        let outcome = ui_guard::run(|| {
+            if self.forced_panic.as_mut().is_some_and(|f| f.take(point)) {
+                panic!("UI panic forced by {}", ui_guard::FORCE_PANIC_ENV);
+            }
+            f(self, event_loop);
+        });
+        match outcome {
+            Ok(()) => self.ui_guard.completed(point),
+            Err(message) => self.after_ui_panic(event_loop, point, &message),
+        }
+    }
+
+    /// A panic of `point` was caught: the state it may have left half done is repaired, a
+    /// recovery copy is asked for, the notice is raised (once, see [`UiGuard`]) and the app
+    /// goes on. Audio, the document and the plugins are not touched.
+    fn after_ui_panic(&mut self, event_loop: &ActiveEventLoop, point: Dispatch, message: &str) {
+        let at = clock::now().saturating_duration_since(self.epoch);
+        let verdict = self.ui_guard.caught(point, at);
+        if verdict.notice {
+            log::error!(
+                "internal error in the interface ({} #{}): {message}; a recovery copy was asked \
+                 for and the app keeps running{}",
+                point.name(),
+                self.ui_guard.total(),
+                if verdict.halt {
+                    "; repeated errors paused the content of the window"
+                } else {
+                    ""
+                }
+            );
+        } else {
+            log::debug!(
+                "internal error in the interface again ({}): {message}",
+                point.name()
+            );
+        }
+        // A graphics rebuild that ended half way counts as a failed attempt: the device is
+        // treated as lost and the back-off decides when to try again.
+        if std::mem::take(&mut self.rebuilding) {
+            let _ = ui_guard::run(|| {
+                self.tear_down_graphics();
+                self.recovery.finished(at, false);
+            });
+        }
+        // What the event or the frame was in the middle of is gone with it.
+        self.event_cause = None;
+        self.retry_cause = None;
+        self.modifiers = Modifiers::NONE;
+        self.mod_events.reset();
+        self.buttons = translate::PointerMap::default();
+        let halted = self.ui_guard.is_halted();
+        let _ = ui_guard::run(|| {
+            self.shell.after_ui_panic(verdict.notice, halted);
+            self.shell.select(self.shell.play_focus());
+        });
+        let _ = ui_guard::run(|| self.repaint_everything());
+        if point == Dispatch::Frame {
+            // The tick did not get to say when it wants to run again.
+            let wake = clock::now() + ui_guard::RETRY_AFTER_PANIC;
+            event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
+        }
+    }
+
     fn ui(&mut self, event_loop: &ActiveEventLoop, key: Key, event: UiEvent) {
         let requests = self.dispatch(key, &event);
         self.after_event(event_loop, requests);
@@ -2038,6 +2407,32 @@ impl App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.guarded(event_loop, Dispatch::Event, Self::on_resumed);
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if matches!(event, WindowEvent::RedrawRequested) {
+            let began = clock::now();
+            self.guarded(event_loop, Dispatch::Paint, |app, event_loop| {
+                app.on_window_event(event_loop, id, event);
+            });
+            self.note_frame_time(began);
+        } else {
+            self.guarded(event_loop, Dispatch::Event, |app, event_loop| {
+                app.on_window_event(event_loop, id, event);
+            });
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let began = clock::now();
+        self.guarded(event_loop, Dispatch::Frame, Self::on_tick);
+        self.note_frame_time(began);
+    }
+}
+
+impl App {
+    fn on_resumed(&mut self, event_loop: &ActiveEventLoop) {
         if !self.windows.is_empty() {
             return;
         }
@@ -2060,7 +2455,7 @@ impl ApplicationHandler for App {
         self.request_redraws();
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+    fn on_window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         self.shell.apply_language_globally();
         // The frame of a plugin editor inside the main window: its buttons and drags.
         if let Some(doc) = self.dock_frames.doc_of(id) {
@@ -2110,6 +2505,10 @@ impl ApplicationHandler for App {
             }
             // Anything else ends the group: keep the order of events.
             _ => self.flush_files(event_loop, key),
+        }
+        self.advance_activity();
+        if let Some(cause) = window_logic::paint_cause_of(&event) {
+            self.event_cause = Some(cause);
         }
         self.shell.select(key.0);
         let zoom = self.shell.app_zoom();
@@ -2237,7 +2636,10 @@ impl ApplicationHandler for App {
                 let event = translate::ime(&ime);
                 self.ui(event_loop, key, event);
             }
-            WindowEvent::RedrawRequested => self.redraw(key),
+            WindowEvent::RedrawRequested => {
+                let reason = self.paint_reason(key.0, kind);
+                self.redraw(key, reason);
+            }
             WindowEvent::Focused(false) => {
                 // The releases of the keys held now will never arrive.
                 self.modifiers = Modifiers::NONE;
@@ -2266,7 +2668,9 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    fn on_tick(&mut self, event_loop: &ActiveEventLoop) {
+        self.advance_activity();
+        self.activity.wake();
         self.shell.apply_language_globally();
         let dragging = self.follow_file_drags();
         self.flush_all_files(event_loop);
@@ -2276,6 +2680,7 @@ impl ApplicationHandler for App {
             event_loop.exit();
             return;
         }
+        self.service_graphics();
         #[cfg(target_os = "macos")]
         {
             let commands = self
@@ -2360,9 +2765,24 @@ impl ApplicationHandler for App {
             .map(|t| self.epoch + Duration::from_secs_f64(t.max(0.0)));
         // A file drag the system sends no cursor events for is followed by polling the cursor.
         let drag_poll = dragging.then(|| now + FILE_DRAG_POLL);
-        for t in [self.quit_at, self.screenshot_at, menu_wake, drag_poll]
-            .into_iter()
-            .flatten()
+        // A rebuild of the graphics that is waiting for its back-off, and the next forced loss.
+        let graphics_wake = [
+            self.recovery.next_attempt(),
+            self.forced_loss.as_ref().map(ForcedLoss::next),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+        .map(|t| self.epoch + t);
+        for t in [
+            self.quit_at,
+            self.screenshot_at,
+            menu_wake,
+            drag_poll,
+            graphics_wake,
+        ]
+        .into_iter()
+        .flatten()
         {
             deadline = Some(deadline.map_or(t, |d| d.min(t)));
         }

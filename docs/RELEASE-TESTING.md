@@ -74,13 +74,15 @@ its items to this file in the same pull request, with the automated test it comp
 
 ### HW-AUD-03 Ten minutes of the cumulative stress project
 - **Applies to:** Windows, macOS, Linux
-- **Preconditions:** the cumulative stress project saved from the app (every `--stress-*` option together)
-  as a project file.
-- **Steps:** `atomik-play --stats --duration 600 <project>` on the default output.
-- **Expected:** the command exits with 0 after ten minutes; the summary shows `cb_p99_us` under the
-  buffer period and no xruns.
+- **Preconditions:** the in-repo test plugins built next to the app (`cargo build -p atomik-test-clap`).
+- **Steps:** start the app with every stress load and the transport running, for example `atomik --stress-plugins
+  --stress-fx --stress-audio --stress-containers --stress-players --stress-sampler --stress-drums --stress-slicer
+  --play`, leave it for ten minutes, then open Help > Export Diagnostics. (`atomik-play` plays patch files only, not
+  projects: for a single patch use `atomik-play --stats --duration 600 <patch>`.)
+- **Expected:** the app runs the ten minutes without a crash or a stall, the status line shows no overload, and the
+  overload counters of the report read 0 (dropped events, input overruns, late sandbox batches).
 - **Automated:** none
-- **Known bad:** a non-zero exit, or a callback p99 above the buffer period.
+- **Known bad:** a crash, a frozen window, or an overload counter that grew during the run.
 
 ### HW-AUD-04 Input monitoring
 - **Applies to:** Windows, macOS, Linux

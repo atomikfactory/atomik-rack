@@ -59,7 +59,7 @@ fn a_registered_plugin_whose_program_cannot_start_is_a_clear_failure() {
         .map(|_| ())
         .unwrap_err();
     match err {
-        BackendError::Failed(text) => assert!(text.contains("cannot start"), "{text}"),
+        BackendError::Spawn(text) => assert!(text.contains("cannot start"), "{text}"),
         other => panic!("{other:?}"),
     }
     // An id of another file stays unknown.
@@ -82,7 +82,35 @@ fn registering_a_file_again_replaces_its_plugins_path() {
         .map(|_| ())
         .unwrap_err();
     match err {
-        BackendError::Failed(text) => assert!(text.contains("moved.clap"), "{text}"),
+        BackendError::Spawn(text) => assert!(text.contains("moved.clap"), "{text}"),
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+// Justification: waits for a helper thread against the wall clock.
+#[allow(clippy::disallowed_methods)]
+fn a_host_program_that_cannot_start_is_a_spawn_failure_not_a_plugin_failure() {
+    mark_main_thread();
+    let b = backend("no-such-program");
+    b.register_plugin_file(Path::new("x.clap"), &[clap("x.y")]);
+    // Blocking creation.
+    let err = b.instantiate(&clap("x.y"), host()).map(|_| ()).unwrap_err();
+    assert!(err.is_spawn_failure(), "{err:?}");
+    // Polled creation: the failure comes from the start, whenever the helper is done.
+    let mut pending = b
+        .begin_instantiate(&clap("x.y"), host())
+        .expect("the start begins")
+        .expect("a sandbox starts in the background");
+    let limit = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let err = loop {
+        if let Some(answer) = pending.poll() {
+            break answer.map(|_| ()).unwrap_err();
+        }
+        assert!(std::time::Instant::now() < limit, "no answer");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    assert!(err.is_spawn_failure(), "{err:?}");
+    // An unknown plugin is not a spawn failure.
+    assert!(!BackendError::UnknownPlugin("x".into()).is_spawn_failure());
 }

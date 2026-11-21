@@ -12,7 +12,7 @@ use atomik_core::{BATCH, NoteEvent, NoteKind};
 use atomik_device_sdk::{Device, RunMode};
 use atomik_plugin_host::{
     PluginEvent, PluginEventKind as K, PluginIo, PluginMessage, PluginProcessor, ProcessStatus,
-    SleepRule, TailLength,
+    SleepRule, TailLength, bad_run_limit,
 };
 use std::sync::{Arc, Mutex};
 use support::*;
@@ -466,29 +466,198 @@ fn an_instrument_with_an_open_note_never_sleeps_even_when_silent() {
 
 // ----- failure --------------------------------------------------------------------------------
 
+/// Bad blocks in a row that fail a device at the test rate.
+fn run() -> usize {
+    bad_run_limit(SR) as usize
+}
+
+/// The device's meter values.
+fn meters(h: &atomik_testkit::harness::DeviceHarness) -> [f32; 8] {
+    let mut m = [0.0f32; 8];
+    h.device().meter_values(&mut m);
+    m
+}
+
 #[test]
-fn an_error_status_marks_the_device_failed_dry_for_effects_and_posts_one_message() {
+fn a_permanent_error_status_fails_the_device_after_a_run_of_bad_blocks_dry_for_effects() {
     let (probe, shared) = Probe::new();
     shared.set_out(ProbeOut::Constant(0.5));
     shared.set_status(ProcessStatus::Error);
     let (mut h, r) = harness(rig("st.error-fx", &fx_layout(), Box::new(probe)));
     *h.input_mut("in_l") = [0.75; BATCH];
     *h.input_mut("in_r") = [0.25; BATCH];
-    for _ in 0..4 {
+    for n in 1..=run() {
         h.process();
         assert!(
             h.output("out_l").iter().all(|s| *s == 0.75),
             "the dry input"
         );
         assert!(h.output("out_r").iter().all(|s| *s == 0.25));
+        let m = meters(&h);
+        assert_eq!(m[6], n as f32, "every bad block is counted");
+        if n < run() {
+            assert_eq!(m[2], 0.0, "not failed yet after {n} bad blocks");
+            assert!(drain_messages(&r.manager).is_empty());
+        }
     }
-    assert_eq!(shared.calls(), 1, "never called again");
+    assert_eq!(shared.calls(), run(), "called for every block of the run");
+    assert_eq!(meters(&h)[2], 3.0, "failed at the end of the run");
     let msgs = drain_messages(&r.manager);
-    assert_eq!(msgs.len(), 1, "{msgs:?}");
-    assert!(matches!(msgs[0], PluginMessage::Failed { .. }));
-    let mut m = [0.0f32; 5];
-    h.device().meter_values(&mut m);
-    assert_eq!(m[2], 3.0, "failed");
+    assert_eq!(
+        msgs,
+        vec![PluginMessage::Failed {
+            reason: "the plugin returned an error status"
+        }],
+        "one message, with the reason of the last bad block"
+    );
+    for _ in 0..3 {
+        h.process();
+        assert!(h.output("out_l").iter().all(|s| *s == 0.75));
+    }
+    assert_eq!(shared.calls(), run(), "never called again");
+    assert_eq!(
+        meters(&h)[6],
+        run() as f32,
+        "a failed device counts no more"
+    );
+}
+
+#[test]
+fn one_bad_block_is_the_dry_input_counted_and_the_plugin_goes_on() {
+    for status_error in [false, true] {
+        let (probe, shared) = Probe::new();
+        shared.set_out(ProbeOut::Constant(0.5));
+        let id = format!("st.one-bad-fx-{status_error}");
+        let (mut h, r) = harness(rig(&id, &fx_layout(), Box::new(probe)));
+        *h.input_mut("in_l") = [0.75; BATCH];
+        *h.input_mut("in_r") = [0.25; BATCH];
+        for _ in 0..3 {
+            h.process();
+            assert!(h.output("out_l").iter().all(|s| *s == 0.5), "wet");
+        }
+        // The bad block: an error status (what the plugin wrote is not used) or a NaN.
+        if status_error {
+            shared.set_status(ProcessStatus::Error);
+        } else {
+            shared.set_out(ProbeOut::Nan);
+        }
+        h.process();
+        let l = h.output("out_l").to_vec();
+        assert!(
+            l.iter().all(|s| s.is_finite()),
+            "nothing bad reaches the cables"
+        );
+        assert_eq!(l[BATCH - 1], 0.75, "the block ends on the dry input");
+        assert!(l.windows(2).all(|w| w[0] <= w[1]), "a ramp up, no click");
+        assert!(
+            l[0] > 0.5 && l[0] < 0.52,
+            "it starts at the last wet frame: {}",
+            l[0]
+        );
+        assert_eq!(h.output("out_r")[BATCH - 1], 0.25);
+        assert_eq!(meters(&h)[6], 1.0, "counted");
+        // The plugin is fine again: the next block ramps back to it, then it is untouched.
+        shared.set_status(ProcessStatus::Continue);
+        shared.set_out(ProbeOut::Constant(0.5));
+        h.process();
+        let l = h.output("out_l").to_vec();
+        assert_eq!(l[BATCH - 1], 0.5, "back on the plugin's output");
+        assert!(l.windows(2).all(|w| w[0] >= w[1]), "a ramp down, no click");
+        for _ in 0..3 {
+            h.process();
+            assert!(h.output("out_l").iter().all(|s| *s == 0.5), "wet");
+        }
+        let m = meters(&h);
+        assert_eq!((m[2], m[6]), (0.0, 1.0), "never failed, counted once");
+        assert_eq!(shared.calls(), 8, "called for every block");
+        assert!(
+            drain_messages(&r.manager).is_empty(),
+            "nothing was reported"
+        );
+    }
+}
+
+#[test]
+fn one_bad_block_of_an_instrument_is_silence_and_the_instrument_goes_on() {
+    let (probe, shared) = Probe::new();
+    shared.set_out(ProbeOut::Constant(0.5));
+    let (mut h, _r) = harness(rig("st.one-bad-synth", &synth_layout(), Box::new(probe)));
+    for _ in 0..3 {
+        h.process();
+    }
+    shared.set_out(ProbeOut::Nan);
+    h.process();
+    let l = h.output("out_l").to_vec();
+    assert!(l.iter().all(|s| s.is_finite()));
+    assert_eq!(l[BATCH - 1], 0.0, "silence at the end of the bad block");
+    assert!(l.windows(2).all(|w| w[0] >= w[1]) && l[0] < 0.5 && l[0] > 0.48);
+    shared.set_out(ProbeOut::Constant(0.5));
+    h.process();
+    assert_eq!(h.output("out_l")[BATCH - 1], 0.5);
+    h.process();
+    assert!(h.output("out_l").iter().all(|s| *s == 0.5));
+    let m = meters(&h);
+    assert_eq!((m[2], m[6]), (0.0, 1.0));
+}
+
+#[test]
+fn a_run_of_non_finite_blocks_fails_the_device_with_its_reason_and_a_good_block_starts_the_run_again()
+ {
+    let (probe, shared) = Probe::new();
+    shared.set_out(ProbeOut::Constant(0.5));
+    let (mut h, r) = harness(rig("st.nan-run", &fx_layout(), Box::new(probe)));
+    *h.input_mut("in_l") = [0.5; BATCH];
+    h.process();
+    // One short of the limit, a good block, one short of the limit again: still running.
+    for _ in 0..2 {
+        shared.set_out(ProbeOut::Nan);
+        for _ in 0..run() - 1 {
+            h.process();
+        }
+        assert_eq!(meters(&h)[2], 0.0, "running");
+        shared.set_out(ProbeOut::Constant(0.5));
+        h.process();
+    }
+    assert!(drain_messages(&r.manager).is_empty());
+    assert_eq!(meters(&h)[6], (2 * (run() - 1)) as f32);
+    // The whole run: failed on its last block, with the reason of the cause.
+    shared.set_out(ProbeOut::Nan);
+    for _ in 0..run() {
+        h.process();
+    }
+    assert_eq!(meters(&h)[2], 3.0, "failed");
+    assert_eq!(
+        drain_messages(&r.manager),
+        vec![PluginMessage::Failed {
+            reason: "the plugin produced non-finite output"
+        }]
+    );
+    h.process();
+    assert!(h.output("out_l").iter().all(|s| *s == 0.5), "dry");
+}
+
+#[test]
+fn a_late_batch_is_not_a_bad_block_and_does_not_break_a_run() {
+    let (probe, shared) = Probe::new();
+    shared.set_out(ProbeOut::Constant(0.5));
+    let (mut h, _r) = harness(rig("st.late-run", &fx_layout(), Box::new(probe)));
+    shared.set_status(ProcessStatus::Error);
+    for _ in 0..run() - 1 {
+        h.process();
+    }
+    shared.set_status(ProcessStatus::Late);
+    for _ in 0..5 {
+        h.process();
+    }
+    let m = meters(&h);
+    assert_eq!((m[2], m[5], m[6]), (0.0, 5.0, (run() - 1) as f32));
+    shared.set_status(ProcessStatus::Error);
+    h.process();
+    assert_eq!(
+        meters(&h)[2],
+        3.0,
+        "the late batches left the run where it was"
+    );
 }
 
 #[test]
@@ -544,22 +713,24 @@ fn a_failed_instrument_is_silent() {
     shared.set_out(ProbeOut::Constant(0.5));
     shared.set_status(ProcessStatus::Error);
     let (mut h, _r) = harness(rig("st.error-synth", &synth_layout(), Box::new(probe)));
-    for _ in 0..3 {
+    for _ in 0..run() + 3 {
         h.process();
         assert!(h.output("out_l").iter().all(|s| *s == 0.0));
     }
+    assert_eq!(meters(&h)[2], 3.0, "failed after the run of bad blocks");
 }
 
 #[test]
-fn non_finite_output_fails_the_device_and_never_reaches_the_cables() {
+fn non_finite_output_never_reaches_the_cables_and_a_run_of_it_fails_the_device() {
     let (probe, shared) = Probe::new();
     shared.set_out(ProbeOut::Nan);
     let (mut h, r) = harness(rig("st.nan", &fx_layout(), Box::new(probe)));
     *h.input_mut("in_l") = [0.5; BATCH];
-    h.process();
-    assert!(h.output("out_l").iter().all(|s| *s == 0.5), "dry, not NaN");
-    h.process();
-    assert_eq!(shared.calls(), 1);
+    for _ in 0..run() + 2 {
+        h.process();
+        assert!(h.output("out_l").iter().all(|s| *s == 0.5), "dry, not NaN");
+    }
+    assert_eq!(shared.calls(), run(), "not called again once failed");
     assert!(
         drain_messages(&r.manager)
             .iter()
@@ -685,7 +856,10 @@ fn a_failed_device_is_reloaded_through_the_same_hand_shake() {
     shared.set_status(ProcessStatus::Error);
     let (mut h, mut r) = harness(rig("st.reload", &fx_layout(), Box::new(probe)));
     *h.input_mut("in_l") = [0.5; BATCH];
-    h.process();
+    for _ in 0..run() {
+        h.process();
+    }
+    assert_eq!(meters(&h)[2], 3.0, "failed");
     r.manager.request_stop();
     h.process();
     let old = r

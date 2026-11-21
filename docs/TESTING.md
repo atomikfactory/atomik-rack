@@ -427,7 +427,8 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   plugin-side helpers: factory, `IComponent`, `IAudioProcessor`, `IEditController`, `IMidiMapping`,
   `IUnitInfo`, note expressions, a headless `IPlugView`, a split component/controller variant) and
   the libraries `vst3` (the four test plugins, same names as the CLAP ones), `vst3-variants` (a
-  split gain, a mono effect, a 5.1-only effect the host refuses, plugins that fail to initialise,
+  split gain, a mono effect, a 5.1-only effect the host refuses, plugins that stand a parameter for
+  every controller and channel (one answers `IMidiMapping` slowly), plugins that fail to initialise,
   set up, start or process, one that returns NaN), `vst3-bad`, `vst3-hang`, `vst3-crash`,
   `vst3-leak`. `atomik_plugin_host::testing::vst3_test_plugin("atomik-test-vst3")` builds a library
   and installs it as a `.vst3` **bundle** with the layout of the running OS. The shell announces a
@@ -439,8 +440,11 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   `cross_format.rs` requires the CLAP and the VST3 effect to give the same bits (and a rack mixing
   both to bounce identically across blocks and workers), `vst3_host.rs` holds the VST3 specifics
   (proxies, buses, parameter queues, `IMidiMapping`, the state sections, restarts, the editor, edits
-  made in it). `render/tests/plugin_demo_vst3.rs` does the same for a whole project
-  (`examples/projects/plugin-demo-vst3` against its all-CLAP twin).
+  made in it), `midi_proxies.rs` the controller stand-ins left out of the table and the slow plugin that keeps
+  its full one. `render/tests/plugin_demo_vst3.rs` does the same for a whole project
+  (`examples/projects/plugin-demo-vst3` against its all-CLAP twin). `model/tests/plugin_pinned.rs` counts every way a
+  document can name a plugin param, and `app_core_plugins_proxies_tests.rs` follows a used stand-in through the
+  plugin going live, a save, a load and a rescan.
 - **Live equals bounce.** A bounce with plugins runs the plugin loop of `render/src/plugin_pass.rs`
   (a pre-roll, then a manager poll and a PDC recompile after every 64-frame batch); the twin tests
   in `app/src/app_core_plugins*_tests.rs` therefore settle the live side first
@@ -1790,6 +1794,173 @@ Hand checks (a person at the machine):
 - Unset `APPDATA` (Windows) or `HOME` and `XDG_CONFIG_HOME` (Linux, macOS) and start: a toast says
   there is no config folder, and plugin scanning, the journal and recovery still work for the run,
   in the temp folder.
+
+### Finding what blocks the UI
+
+When the app freezes or lags with a plugin loaded, read `atomik.log` in `<config folder>/logs` (Help > Export
+Diagnostics carries its tail). Three kinds of line say where the UI thread waited:
+
+- `ui stall 10012 ms: CaptureState [m1] (timed out)` is a call the UI thread made on a plugin's process that took
+  at least 50 ms (`STALL_THRESHOLD`): the call, the device, the milliseconds and how it ended (`answered`,
+  `timed out`, `child gone`). The same line is in the plugin log of the app. It comes from the control link in
+  `crates/plugin-sandbox/src/link.rs`, so a fast call writes nothing; the tests in
+  `crates/plugin-sandbox/src/tests/rpc.rs` pin that one late answer leaves exactly one record. The state of a
+  plugin is asked for in the background in the live app, so a `CaptureState` line now means a save, an archive, a
+  share, an audio restart, an undo or a command that could remove a device waited for the plugin; the tests in
+  `crates/plugin-sandbox/src/tests/background.rs` pin that a background request leaves no record, and
+  `app_core_plugins_capture_tests.rs` counts the synchronous captures of the paths that must not wait.
+- `ui stall 180 ms: frame` is a whole UI tick or window redraw that took at least 100 ms. At most one such line is
+  written per second, and the next says how many it hid. Only the windowed app writes it (a bounce, the QA server
+  and the tests do not).
+- `plugin [m1] created in 2.31 s (spawn 0.04, instantiate 1.90, restore 0.00, activate 0.31, attach 0.06)` is the
+  load of a plugin by stage: starting its process, the process loading the plugin (this includes the time the app
+  takes to get to it, since the creations are taken one per frame in order), restoring its state, activating it and
+  attaching it to the rack.
+
+Help > Export Diagnostics also counts the plugin-call stalls and the slow frames since the app started, each with
+its longest. `crates/app/src/ui_stall.rs` has the tests of the line shapes and the rate limit.
+
+The parameter pane, the patch browser and preset loads do not wait for a plugin either.
+`app_core_plugins_presets_tests.rs` uses the null backend's busy mode and its poll-counted delays
+(`NullStats::set_soft_busy`, `set_preset_delay`, `fail_next_preset_list`) to pin that the pane opens at once,
+that the list is asked for once, that a failed list is asked for again at the next opening and not sooner than a
+pause later, and that a load's undo step goes back to the settings from before it. The `soft.rs` tests of
+`crates/plugin-sandbox/src/tests` hold the same requests in the fake child until the test releases them, and
+`crates/plugin-hostd/src/control/tests.rs` pins that the preset walk answers from a thread of its own while the
+main thread goes on. `app_core_plugins_layout_tests.rs` counts the engine starts (`OfflineSink::resets`) to pin
+that a changed layout replaces one device and not the engine, and `crates/app/src/plugin_cache_writer.rs` has the
+tests of the thread that writes `plugins.json`.
+
+Two more groups are in the report. For lost input (the `input overruns` of the status line) it gives how many times
+the render callback trimmed the captured input, the most frames the ring held just before such a trim, the smallest
+and the largest callback seen and the buffer size the stream was opened with, so a trim count that grows with a
+backlog far above the callback size (capture running ahead) can be told from one that grows with a backlog just over
+it (a threshold that follows the current callback too closely). A DEBUG line `input trimmed: 3 trims, backlog max
+1440 frames, callback 96..480 frames, buffer 480` is written when the count rose (run with `ATOMIK_LOG=debug`). And
+it gives the render workers: their count, the linger, and the idle spins and parks so far, next to the late sandbox
+batches of the overload counters. `crates/audio-io/src/telemetry.rs` and `stream.rs` test the counters,
+`crates/engine/tests/worker_linger.rs` the worker read-out (and, ignored, a paced benchmark of the callback
+duration, the idle spins and the process CPU per worker count and linger: `cargo test -p atomik-engine --release
+--test worker_linger -- --ignored --nocapture`), and `diagnostics.rs` and `session_tests.rs` the report
+and the status.
+
+Three more groups say how the app starts and how busy the UI is, with no behaviour change (the log is at INFO, the
+last at DEBUG). `startup 412 ms: first frame presented` is one line per stage with the milliseconds since the process
+began: `first window created`, `graphics adapter chosen`, `device and renderer ready`, `first frame presented` and
+`audio stream running`, each written once. `graphics adapter: <name> · <backend> · <type> · <driver>` names the
+adapter the renderer uses (backend DX12, Vulkan or Metal; type discrete, integrated, virtual, CPU or other); it is
+also in Help > Export Diagnostics, which says "not chosen yet" before the first window. With `ATOMIK_LOG=debug` a line
+`ui activity: 60 wakes/s, main 60 paints/s (live 58, input 2)` is written every 5 s for the last full second: the
+event-loop wake-ups and, per window, the paints, split by what asked for them. `input` is the person (pointer,
+wheel, keys), `live` a view that keeps itself painting (the playhead, the meters, a scroll), `update` a change
+something marked on a tick (an engine or plugin poll, a finished load, a live value; the first paints too),
+`resize` a size or scale change, `focus` a window gained focus or was uncovered, and `surface` a frame that was not
+shown and is painted again. The report has the last second and the totals since the start. The wake-up and paint
+counts are plain integers on the UI thread (`crates/app/src/ui_activity.rs`, tested with explicit durations);
+`startup.rs` has the tests of the line shapes and `platform/gpu.rs` those of the adapter words.
+
+### Measuring the running app
+
+`scripts/perf/sample-app.ps1` (Windows PowerShell 5.1, Windows only) measures the real app, so a change that is meant
+to make it lighter can show a before and an after from the same tool. Build the release app first (`cargo build
+--release -p atomik-app`), then run it from the repository:
+
+```text
+powershell -ExecutionPolicy Bypass -File scripts\perf\sample-app.ps1 -Scenario all
+```
+
+The parameters are `-Exe` (default `target\release\atomik.exe`), `-Scenario` (a name, a comma separated list, or
+`all`), `-Settle` (seconds after the first window, default 15), `-Window` (seconds sampled, default 20), `-Affinity`
+(a processor mask, default none), `-OutDir` (default `atomik-perf` in the temp folder) and `-ExtraArgs` (more app
+arguments for every scenario). For each scenario it makes a fresh temporary settings folder and library folder (a
+reused settings folder keeps the saved window layout and skews the numbers), starts the app with `--settings`,
+`--library`, `--no-midi` and `--quit-after`, waits for the first window, settles, samples, and deletes the
+folders. It writes one CSV (`perf-<date>.csv`, a row per scenario) and prints the same as a table. The exit code is 0
+unless the app crashed in a scenario. **It never passes `--play`**: the transport stays stopped, nothing sounds, and
+the script refuses `--play` in `-ExtraArgs`. The measuring needs no sound, and a test machine may be in a room.
+
+The scenarios are `empty-noaudio` (`--no-audio`), `empty` (the audio stream runs, the project is empty),
+`empty-workers0` (`--workers 0`), `stress` (the 100-device rack, `--stress`), `stress-workers0`, `stress-workers2`,
+`stress-audio-fx` (`--stress-audio --stress-fx`), `stress-detached` (`--stress --no-audio --detach rack,console`) and
+`stress-plugins` (`--stress-plugins`). The last needs the test plugins (`cargo build -p atomik-test-clap`) and the
+plugin scanner next to the app; when they are missing the script says so and writes a skipped row.
+
+The columns:
+
+- `CpuPctOneCore`: the process CPU time over the window as a percentage of one core, so 100 is one core fully busy and
+  800 is eight. This is the number to watch on a machine with few cores.
+- `WS_MB`, `Private_MB`: working set and private bytes at the end of the window. Private bytes are what the app
+  holds; the working set is what is resident now.
+- `Threads`, `Handles`: of the app process. `Children`: its child processes with their private megabytes (plugin
+  host processes, once plugins are loaded).
+- `GpuUtilPct`, `GpuDedicMB`: GPU engine use and dedicated GPU memory of the app, from the Windows performance
+  counters; empty where the counters are missing. `Adapter` and `FirstFrameMs` are read from the run's own log (the
+  lines of the previous section), so a row says which adapter it ran on.
+- `UiP50ms`, `UiP95ms`, `UiMaxms`, `UiTimeouts`, `Probes`: how quickly the window answers. Every 100 ms the script
+  sends the main window a `WM_NULL` message and times the round trip through the app's window procedure; a probe not
+  answered in 2 s counts as a timeout. A busy or blocked UI thread shows here first. Reading them next to the
+  `ui stall` lines of the log says what blocked.
+- `FirstWindowMs`: from the start of the process to a window handle.
+
+Two ways to look at a small machine on a development machine:
+
+- Two cores and four threads: pin the app with `-Affinity 0xF` (the first four logical processors, which are two
+  cores with hyper-threading). The app picks its number of render workers when it starts, before the mask applies, so
+  give it explicitly with `-ExtraArgs '--workers','3'` (or `1`, `0`) and a scenario that does not set one, for
+  example `-Scenario stress -Affinity 0xF -ExtraArgs '--workers','3'`. A mask of other width gives other core counts.
+- Software rendering is not a recipe: the Windows software adapter is not usable for this renderer (the app does not
+  run on it), so there is no way to try software rendering here. To see which adapter a run used, read the
+  `graphics adapter:` line of the log or of Help > Export Diagnostics.
+
+For a tester with an integrated-graphics laptop: build the release app (or install a release and pass `-Exe` its
+path), run `-Scenario all` once with the laptop on mains power and idle, and send back the CSV and the file Help >
+Export Diagnostics writes (home folders are already hidden in it). The CSV rows and the adapter line are enough to
+compare that machine with the reference rows of `perf/BASELINE.md`.
+
+## Graphics device loss
+
+The decisions are unit-tested without a GPU: the back-off schedule, the surface size clamp, the forced-loss period,
+the state machine from "lost" to "tear down" to "rebuild" (`platform/gpu_recovery.rs`) and the flag the driver
+callbacks set (`platform/gpu.rs`). Creating and rebuilding real surfaces needs a window and a GPU, so there is no
+automated test of the rebuild itself; this is the hand check.
+
+`ATOMIK_GPU_LOSS_EVERY=<seconds>` (at least 1) makes the app destroy its graphics device that often, which takes the
+real device-lost path: the callback fires, the surfaces are dropped and everything is built again. Run the release
+app with a throw-away settings folder and no sound (never `--play`), for example:
+
+```text
+set ATOMIK_GPU_LOSS_EVERY=6
+target\release\atomik.exe --settings %TEMP%\loss\settings.json --library %TEMP%\loss\lib --no-midi --stress --quit-after 40
+```
+
+Expect each window (also the detached rack and mixer, with `--detach rack,console`) to flash black for a moment and
+repaint, and `atomik.log` to hold a pair of lines for every loss: `graphics device loss forced by ...` and `graphics
+device lost: ...` (WARN), then `graphics restored (attempt 1); graphics adapter: ...` (INFO). A failed attempt would
+log `graphics rebuild attempt N failed: ...; next attempt in X s` instead, and the app keeps running.
+
+## Graphics adapter selection
+
+The rule is unit-tested without a GPU (`platform/gpu_select.rs`): a table of machines (integrated and discrete,
+discrete only, software only, an adapter that cannot present, a name, the power preference), the message texts in
+English and French, and the report that shows a box only to an attended run. The adapter is never a software one
+unless `WGPU_ADAPTER_NAME` names it, and the same rule serves the first start and every rebuild after a lost device;
+a rebuild that finds no adapter logs and tries again on the back-off, it never shows the box.
+
+By hand, with the release app, a throw-away settings folder and no sound (never `--play`); each run needs a machine
+with a hardware adapter and, for the first check, the Windows software adapter (`Microsoft Basic Render Driver`):
+
+```text
+set WGPU_ADAPTER_NAME=Microsoft Basic Render Driver
+target\release\atomik.exe --settings %TEMP%\gpu\settings.json --library %TEMP%\gpu\lib --no-midi --quit-after 20
+```
+
+- The software adapter named by hand still starts, with a `WARN` line in `atomik.log` that it is not supported and may
+  crash (it usually does, a few seconds after start: that is the reason for the warning).
+- `set WGPU_ADAPTER_NAME=no such adapter` (or `set WGPU_BACKEND=gl` on a machine without an OpenGL driver) must end
+  with a non-zero exit code and an `ERROR` line that says a graphics driver is needed and lists what was found. This
+  run is scripted (`--quit-after`), so there is no box; without `--quit-after` the same start shows the box and
+  waits for a click.
+- With no variable set the app starts as before and logs the same `graphics adapter:` line.
 
 ## Device loss and stalled streams
 

@@ -324,6 +324,15 @@ pub(crate) mod fakes {
         }
     }
 
+    /// A preset with the id `id`.
+    fn preset(id: &str) -> atomik_plugin_host::PresetInfo {
+        atomik_plugin_host::PresetInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            group: String::new(),
+        }
+    }
+
     pub struct FakeInstance {
         pub log: Log,
         pub layout: PluginLayout,
@@ -336,6 +345,13 @@ pub(crate) mod fakes {
         /// The host handle the plugin posts through, and what it posts at its next `poll`.
         pub host: Option<HostHandle>,
         pub on_poll: Vec<PluginMessage>,
+        /// A walk of the preset folders that waits for this gate to open (`true`) before it
+        /// answers, and that the plugin lists on another thread: its own list is another one.
+        pub preset_gate: Option<std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>>,
+        /// The bytes of the state `capture_state` gives, and the length of the text `param_text`
+        /// gives (0: none).
+        pub state_len: usize,
+        pub text_len: usize,
     }
 
     impl FakeInstance {
@@ -361,6 +377,9 @@ pub(crate) mod fakes {
                 resize_fails: false,
                 host: None,
                 on_poll: Vec::new(),
+                preset_gate: None,
+                state_len: 0,
+                text_len: 0,
             }
         }
     }
@@ -380,13 +399,31 @@ pub(crate) mod fakes {
             0
         }
         fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError> {
-            Ok(PluginStateBlob::default())
+            Ok(PluginStateBlob(vec![0; self.state_len]))
         }
         fn restore_state(&mut self, _state: &PluginStateBlob) -> Result<(), BackendError> {
             Ok(())
         }
+        fn list_presets(&mut self) -> Vec<atomik_plugin_host::PresetInfo> {
+            vec![preset("inline")]
+        }
+        fn preset_lister(&mut self) -> Option<atomik_plugin_host::PresetLister> {
+            let gate = self.preset_gate.clone()?;
+            Some(Box::new(move || {
+                let (open, cv) = &*gate;
+                let mut open = open
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                while !*open {
+                    open = cv
+                        .wait(open)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                }
+                vec![preset("walked")]
+            }))
+        }
         fn param_text(&mut self, _id: u32, _plain: f64) -> Option<String> {
-            None
+            (self.text_len > 0).then(|| "x".repeat(self.text_len))
         }
         fn open_gui(
             &mut self,

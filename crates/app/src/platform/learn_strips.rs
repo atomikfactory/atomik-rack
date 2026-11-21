@@ -109,6 +109,28 @@ impl LearnStrips {
         !self.strips.is_empty()
     }
 
+    /// Lets go of every strip's surface (the graphics device was lost).
+    pub(super) fn drop_surfaces(&mut self) {
+        for strip in self.strips.values_mut() {
+            strip.surface = None;
+        }
+    }
+
+    /// Gives every strip a surface on the new context and paints it (the graphics were built
+    /// again); a strip that had none because its surface failed to open gets one too.
+    pub(super) fn recreate_surfaces(
+        &mut self,
+        gpu: &mut GpuContext,
+        text: &mut TextEngine,
+    ) -> Result<(), String> {
+        for strip in self.strips.values_mut() {
+            let surface = gpu.create_surface(Arc::clone(&strip.window), strip.at.2, strip.at.3)?;
+            strip.surface = Some(surface);
+            paint(gpu, text, strip);
+        }
+        Ok(())
+    }
+
     /// Opens, moves, closes and repaints the strips of song `doc` so that each editor of `docks`
     /// has one, with what `core` says about its Learn mode.
     #[allow(clippy::too_many_arguments)]

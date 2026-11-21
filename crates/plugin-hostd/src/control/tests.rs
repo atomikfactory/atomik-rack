@@ -6,12 +6,12 @@ use crate::editor::fakes::{FakeInstance, FakeWindows, Log, log};
 use atomik_plugin_host::{ParamPhase, ScannedPlugin};
 use atomik_plugin_ipc::{
     ChildPort, Doorbell, DoorbellName, SharedBlock, WireParent, WirePhase, block_file_name,
-    default_block_dir, read_frame,
+    default_block_dir, into_backend_error, read_frame,
 };
 use std::io;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// A writer the test can read back.
@@ -64,7 +64,14 @@ struct FakeBackend {
     fail_open: bool,
     /// The host handle the last instance was given: the test posts through it.
     host: Arc<Mutex<Option<HostHandle>>>,
+    /// The gate the next instance's preset walk waits for (see `FakeInstance::preset_gate`).
+    gate: Arc<Mutex<Option<Gate>>>,
+    /// The size of the state and of a param text the next instance gives.
+    sizes: Arc<(AtomicUsize, AtomicUsize)>,
 }
+
+/// A gate a walk of preset folders waits for: open when the flag is true.
+type Gate = Arc<(Mutex<bool>, std::sync::Condvar)>;
 
 impl PluginBackend for FakeBackend {
     fn format(&self) -> PluginFormat {
@@ -87,6 +94,9 @@ impl PluginBackend for FakeBackend {
         i.host = Some(host);
         i.on_poll = self.on_poll.clone();
         i.fail_open = self.fail_open;
+        i.preset_gate = self.gate.lock().unwrap().clone();
+        i.state_len = self.sizes.0.load(Ordering::Relaxed);
+        i.text_len = self.sizes.1.load(Ordering::Relaxed);
         Ok(Box::new(i))
     }
 }
@@ -119,17 +129,27 @@ struct Rig {
     windows: FakeWindows,
     log: Log,
     host: Arc<Mutex<Option<HostHandle>>>,
+    gate: Arc<Mutex<Option<Gate>>>,
+    sizes: Arc<(AtomicUsize, AtomicUsize)>,
 }
 
-fn rig_with(on_poll: Vec<PluginMessage>, fail_open: bool, out: Option<Box<dyn Write>>) -> Rig {
+fn rig_with(
+    on_poll: Vec<PluginMessage>,
+    fail_open: bool,
+    out: Option<Box<dyn Write + Send>>,
+) -> Rig {
     let log = log();
     let sink = Sink::default();
     let host = Arc::new(Mutex::new(None));
+    let gate = Arc::new(Mutex::new(None));
+    let sizes = Arc::new((AtomicUsize::new(0), AtomicUsize::new(0)));
     let backend = FakeBackend {
         log: Rc::clone(&log),
         on_poll,
         fail_open,
         host: Arc::clone(&host),
+        gate: Arc::clone(&gate),
+        sizes: Arc::clone(&sizes),
     };
     let out = out.unwrap_or_else(|| Box::new(sink.clone()));
     let mut control = Control::new(&args(), Box::new(backend), audio(), out);
@@ -149,6 +169,8 @@ fn rig_with(on_poll: Vec<PluginMessage>, fail_open: bool, out: Option<Box<dyn Wr
         windows,
         log,
         host,
+        gate,
+        sizes,
     }
 }
 
@@ -580,5 +602,166 @@ fn flush_before_instantiate_is_an_error() {
     assert!(matches!(
         r.sink.frames().as_slice(),
         [FromChild::Err { id: 1, .. }]
+    ));
+}
+
+#[test]
+fn the_preset_walk_runs_on_a_thread_of_its_own_while_the_main_thread_goes_on() {
+    let r = rig();
+    let gate: Gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    *r.gate.lock().unwrap() = Some(Arc::clone(&gate));
+    let mut r = r.instantiated();
+    // The walk is held: it cannot finish until the test opens the gate.
+    assert_eq!(r.send(ToChild::ListPresets { id: 5 }), None);
+    assert!(
+        r.sink.frames().is_empty(),
+        "no answer is written by the main thread, which did not walk"
+    );
+    // The main thread answers the next request while the walk is still going.
+    r.send(ToChild::LatencyFrames { id: 6 });
+    assert_eq!(
+        r.sink.frames(),
+        vec![FromChild::Latency { id: 6, frames: 0 }]
+    );
+    {
+        let (open, cv) = &*gate;
+        *open.lock().unwrap() = true;
+        cv.notify_all();
+    }
+    // The walk's thread writes its own answer; the bound is generous (a slow runner).
+    let mut got = Vec::new();
+    for _ in 0..3000 {
+        got.extend(r.sink.frames());
+        if !got.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(got.len(), 1, "{got:?}");
+    match &got[0] {
+        FromChild::Presets { id, presets } => {
+            assert_eq!(*id, 5);
+            assert_eq!(presets.len(), 1);
+            assert_eq!(presets[0].id, "walked", "the list came from the walk");
+        }
+        other => panic!("not the list: {other:?}"),
+    }
+}
+
+#[test]
+fn a_plugin_whose_presets_need_it_is_asked_on_the_main_thread_as_before() {
+    let mut r = rig().instantiated();
+    assert_eq!(r.send(ToChild::ListPresets { id: 5 }), None);
+    match r.sink.frames().as_slice() {
+        [FromChild::Presets { id: 5, presets }] => assert_eq!(presets[0].id, "inline"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_tick_turns_slow_when_nothing_happens_and_fast_again_for_a_call_or_an_editor() {
+    let mut r = rig().instantiated();
+    assert!(r.control.wants_fast_tick(), "a new control starts fast");
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert!(
+        !r.control.wants_fast_tick(),
+        "a tick that forwarded nothing, with no editor, votes slow"
+    );
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert!(!r.control.wants_fast_tick());
+    r.send(ToChild::Flush { id: 9 });
+    r.sink.frames();
+    assert!(
+        r.control.wants_fast_tick(),
+        "a call from the parent votes fast"
+    );
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert!(!r.control.wants_fast_tick());
+    r.open(2);
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert!(
+        r.control.wants_fast_tick(),
+        "an open editor keeps the tick fast"
+    );
+    r.send(ToChild::CloseGui { id: 3 });
+    r.sink.frames();
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert!(!r.control.wants_fast_tick(), "closed again: slow");
+}
+
+#[test]
+fn a_tick_that_forwarded_something_stays_fast() {
+    let mut r = rig_with(vec![PluginMessage::StateDirty], false, None).instantiated();
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert_eq!(r.sink.frames(), vec![FromChild::StateDirty]);
+    assert!(r.control.wants_fast_tick(), "traffic keeps the rate up");
+    r.control.on_event(Event::Tick, &mut r.windows);
+    assert!(
+        !r.control.wants_fast_tick(),
+        "and a quiet tick after it lets it go"
+    );
+}
+
+#[test]
+fn a_state_over_the_frame_limit_is_an_error_naming_the_size_and_the_child_goes_on() {
+    let r = rig();
+    r.sizes.0.store(MAX_FRAME_BYTES + 1, Ordering::Relaxed);
+    let mut r = r.instantiated();
+    for id in [5, 6] {
+        let end = r.send(ToChild::CaptureState { id });
+        assert_eq!(end, None, "the child does not end for a large state");
+        match r.sink.frames().as_slice() {
+            [
+                FromChild::Err {
+                    id: got,
+                    kind,
+                    text,
+                },
+            ] => {
+                assert_eq!(*got, id);
+                assert_eq!(*kind, WireErrorKind::StateTooLarge);
+                assert_eq!(
+                    into_backend_error(*kind, text.clone()),
+                    BackendError::StateTooLarge {
+                        bytes: MAX_FRAME_BYTES as u64 + 1,
+                        limit: MAX_FRAME_BYTES as u64,
+                    }
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    // Still answering.
+    assert_eq!(r.send(ToChild::LatencyFrames { id: 7 }), None);
+    assert!(matches!(
+        r.sink.frames().as_slice(),
+        [FromChild::Latency { id: 7, .. }]
+    ));
+}
+
+#[test]
+fn a_reply_the_parent_would_refuse_is_an_error_and_the_child_goes_on() {
+    let r = rig();
+    // A param text longer than the JSON of a reply may be.
+    r.sizes.1.store(MAX_REPLY_JSON_BYTES + 1, Ordering::Relaxed);
+    let mut r = r.instantiated();
+    let end = r.send(ToChild::ParamText {
+        id: 8,
+        param: 0,
+        plain: 0.0,
+    });
+    assert_eq!(end, None);
+    assert!(matches!(
+        r.sink.frames().as_slice(),
+        [FromChild::Err {
+            id: 8,
+            kind: WireErrorKind::Failed,
+            ..
+        }]
+    ));
+    assert_eq!(r.send(ToChild::LatencyFrames { id: 9 }), None);
+    assert!(matches!(
+        r.sink.frames().as_slice(),
+        [FromChild::Latency { id: 9, .. }]
     ));
 }

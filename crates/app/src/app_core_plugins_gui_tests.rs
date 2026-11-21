@@ -888,6 +888,12 @@ fn a_plugin_that_fails_at_run_time_shows_failed_with_the_reason_and_reload_tries
     add_plugin(&mut core, "clap.atomik.test.error", "bad");
     add_plugin(&mut core, SYNTH, "lead");
     settle(&mut core);
+    assert!(
+        core.plugin_failure(&key("bad")).is_none(),
+        "a few bad blocks are not a failure"
+    );
+    // It fails after a run of bad blocks (a quarter of a second of audio), not at the first.
+    stepped(&mut core, 64 * 400);
     let reason = core.plugin_failure(&key("bad")).map(str::to_string);
     assert!(reason.is_some(), "the device reported its failure");
     assert!(core.view().plugin_status(&key("bad")).failed.is_some());
@@ -904,13 +910,18 @@ fn a_plugin_that_fails_at_run_time_shows_failed_with_the_reason_and_reload_tries
         "{:?}",
         core.plugin_log()
     );
-    // RELOAD resets the device; this plugin fails again at its first block.
+    // RELOAD resets the device; this plugin fails again after its run of bad blocks.
     core.handle_action(UiAction::ReloadPlugin { device: key("bad") });
     assert!(
         core.plugin_failure(&key("bad")).is_none(),
         "cleared by RELOAD"
     );
     settle(&mut core);
+    assert!(
+        core.plugin_failure(&key("bad")).is_none(),
+        "the run starts again"
+    );
+    stepped(&mut core, 64 * 400);
     assert!(core.plugin_failure(&key("bad")).is_some());
 }
 

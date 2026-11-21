@@ -32,8 +32,8 @@ fn ev(offset: u16, kind: NoteKind) -> NoteEvent {
     NoteEvent { offset, kind }
 }
 
-fn meters(h: &atomik_testkit::harness::DeviceHarness) -> [f32; 5] {
-    let mut m = [0.0f32; 5];
+fn meters(h: &atomik_testkit::harness::DeviceHarness) -> [f32; 8] {
+    let mut m = [0.0f32; 8];
     h.device().meter_values(&mut m);
     m
 }
@@ -634,13 +634,18 @@ fn a_gui_edit_in_the_plugin_reaches_the_app_as_a_gesture() {
 
 // ----- plugins that misbehave ----------------------------------------------------------------------------
 
-fn failed_state(id: &str) -> (Vec<PluginMessage>, [f32; BATCH], f32) {
+/// How many bad blocks in a row fail a device (the harness runs at 48 kHz).
+fn bad_run() -> usize {
+    atomik_plugin_host::bad_run_limit(48_000.0) as usize
+}
+
+fn failed_state(id: &str, blocks: usize) -> (Vec<PluginMessage>, [f32; BATCH], f32) {
     let (backend, _) = backend_for("atomik-test-clap-variants");
     let mut rig = rig(&backend, id);
     let mut h = rig.harness();
     *h.input_mut("in_l") = [0.25; BATCH];
     *h.input_mut("in_r") = [0.25; BATCH];
-    for _ in 0..4 {
+    for _ in 0..blocks {
         h.process();
     }
     let out = *h.output("out_l");
@@ -649,8 +654,14 @@ fn failed_state(id: &str) -> (Vec<PluginMessage>, [f32; BATCH], f32) {
 }
 
 #[test]
-fn a_plugin_that_returns_an_error_status_becomes_failed_and_the_effect_goes_dry() {
-    let (msgs, out, state) = failed_state("atomik.test.error");
+fn a_plugin_that_keeps_returning_an_error_status_becomes_failed_after_a_run_and_the_effect_goes_dry()
+ {
+    // One block short of the run: bad blocks, counted, not failed.
+    let (msgs, out, state) = failed_state("atomik.test.error", bad_run() - 1);
+    assert_eq!(state, 0.0, "still running");
+    assert!(out.iter().all(|s| *s == 0.25), "dry");
+    assert!(msgs.is_empty(), "{msgs:?}");
+    let (msgs, out, state) = failed_state("atomik.test.error", bad_run());
     assert_eq!(state, 3.0, "failed");
     assert!(out.iter().all(|s| *s == 0.25), "dry");
     let failures = msgs
@@ -661,8 +672,12 @@ fn a_plugin_that_returns_an_error_status_becomes_failed_and_the_effect_goes_dry(
 }
 
 #[test]
-fn a_plugin_that_produces_non_finite_output_becomes_failed() {
-    let (msgs, out, state) = failed_state("atomik.test.nan");
+fn a_plugin_that_keeps_producing_non_finite_output_becomes_failed_after_a_run() {
+    let (msgs, out, state) = failed_state("atomik.test.nan", bad_run() - 1);
+    assert_eq!(state, 0.0, "still running");
+    assert!(out.iter().all(|s| *s == 0.25), "dry, never NaN");
+    assert!(msgs.is_empty(), "{msgs:?}");
+    let (msgs, out, state) = failed_state("atomik.test.nan", bad_run());
     assert_eq!(state, 3.0);
     assert!(out.iter().all(|s| *s == 0.25));
     assert!(
@@ -672,8 +687,51 @@ fn a_plugin_that_produces_non_finite_output_becomes_failed() {
 }
 
 #[test]
+fn one_error_block_and_one_non_finite_block_are_the_dry_input_for_that_block_only() {
+    for id in ["atomik.test.error-once", "atomik.test.nan-once"] {
+        let (backend, _) = backend_for("atomik-test-clap-variants");
+        let mut rig = rig(&backend, id);
+        let mut h = rig.harness();
+        *h.input_mut("in_l") = [0.25; BATCH];
+        *h.input_mut("in_r") = [0.25; BATCH];
+        // The plugin plays the input at half level, and is bad on its third block.
+        let blocks: Vec<Batch> = (0..6)
+            .map(|_| {
+                h.process();
+                *h.output("out_l")
+            })
+            .collect();
+        assert!(blocks[..2].iter().flatten().all(|s| *s == 0.125), "{id}");
+        let bad = blocks[2];
+        assert!(
+            bad.iter().all(|s| s.is_finite()),
+            "{id}: nothing bad gets out"
+        );
+        assert_eq!(
+            bad[BATCH - 1],
+            0.25,
+            "{id}: the dry input at the end of the block"
+        );
+        assert!(
+            bad.windows(2).all(|w| w[0] <= w[1]),
+            "{id}: a ramp, no click"
+        );
+        assert_eq!(blocks[3][BATCH - 1], 0.125, "{id}: back on the plugin");
+        assert!(blocks[4..].iter().flatten().all(|s| *s == 0.125), "{id}");
+        let m = meters(&h);
+        assert_eq!((m[2], m[6]), (0.0, 1.0), "{id}: running, one bad block");
+        assert!(
+            messages(&rig)
+                .iter()
+                .all(|m| !matches!(m, PluginMessage::Failed { .. })),
+            "{id}"
+        );
+    }
+}
+
+#[test]
 fn a_plugin_that_cannot_start_processing_becomes_failed() {
-    let (_, out, state) = failed_state("atomik.test.start-fails");
+    let (_, out, state) = failed_state("atomik.test.start-fails", 4);
     assert_eq!(state, 3.0);
     assert!(out.iter().all(|s| *s == 0.25));
 }

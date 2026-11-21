@@ -170,9 +170,17 @@ enum Fault {
     Start,
     Process,
     Nan,
+    /// An error status on the third block only, a pass-through otherwise.
+    ProcessOnce,
+    /// Non-finite output on the third block only, a pass-through otherwise.
+    NanOnce,
 }
 
-struct Faulty(Fault);
+/// The block (counting from 1) a "once" fault hits.
+const FAULT_BLOCK: u32 = 3;
+
+/// A plugin with one thing wrong; the number is how many blocks it has processed.
+struct Faulty(Fault, u32);
 
 impl Dsp for Faulty {
     fn ports(&self) -> Ports {
@@ -202,10 +210,26 @@ impl Dsp for Faulty {
     }
 
     fn process(&mut self, io: &mut Io<'_>) -> Status {
+        self.1 = self.1.saturating_add(1);
+        let once = self.1 == FAULT_BLOCK;
         match self.0 {
             Fault::Process => Status::Error,
+            Fault::ProcessOnce if once => Status::Error,
             Fault::Nan => {
                 io.output = [[f32::NAN; BLOCK]; 2];
+                Status::Continue
+            }
+            Fault::NanOnce if once => {
+                io.output = [[f32::NAN; BLOCK]; 2];
+                Status::Continue
+            }
+            Fault::ProcessOnce | Fault::NanOnce => {
+                // Half the input, so that the dry input and the plugin's own output differ.
+                for c in 0..2 {
+                    for i in 0..BLOCK {
+                        io.output[c][i] = io.input[c][i] * 0.5;
+                    }
+                }
                 Status::Continue
             }
             _ => {
@@ -278,6 +302,80 @@ impl Dsp for Picky {
     }
 }
 
+/// The first parameter id of the controller proxies of [`Proxies`]: `PROXY_BASE + channel * 128
+/// + controller`.
+pub const PROXY_BASE: u32 = 1_000;
+
+/// An effect that stands every controller number of every channel for a parameter of its own
+/// (16 x 128 of them), the way a plugin that emulates controllers does. The real parameters are
+/// the first one (id 1), two that come after all the proxies (ids 2 and 3), and one that every
+/// channel reaches through pitch bend (id 4).
+struct Proxies {
+    /// Answers each `IMidiMapping` call slowly.
+    slow: bool,
+}
+
+impl Dsp for Proxies {
+    fn ports(&self) -> Ports {
+        Ports::effect(false)
+    }
+
+    fn params(&self) -> Vec<ParamSpec> {
+        let real = |id: u32, name: &str| ParamSpec {
+            id,
+            name: name.to_string(),
+            module: String::new(),
+            min: 0.0,
+            max: 1.0,
+            default: 0.5,
+            stepped: false,
+        };
+        let mut out = vec![real(1, "First")];
+        for channel in 0..16u32 {
+            for controller in 0..128u32 {
+                out.push(ParamSpec {
+                    module: "MIDI Params".to_string(),
+                    ..real(
+                        PROXY_BASE + channel * 128 + controller,
+                        &format!("MIDI CC {controller} Chan {}", channel + 1),
+                    )
+                });
+            }
+        }
+        out.push(real(2, "Late A"));
+        out.push(real(3, "Late B"));
+        out.push(real(4, "Bend"));
+        out
+    }
+
+    fn set_param(&mut self, _id: u32, _value: f64) {}
+
+    fn param(&self, _id: u32) -> f64 {
+        0.5
+    }
+
+    fn midi_assignment(&self, channel: i16, number: i16) -> Option<u32> {
+        match number {
+            0..=127 => Some(PROXY_BASE + u32::from(channel as u16) * 128 + number as u32),
+            129 => Some(4),
+            _ => None,
+        }
+    }
+
+    fn midi_delay(&self) -> std::time::Duration {
+        if self.slow {
+            std::time::Duration::from_millis(2)
+        } else {
+            std::time::Duration::ZERO
+        }
+    }
+
+    fn process(&mut self, io: &mut Io<'_>) -> Status {
+        io.output = io.input;
+        Status::Continue
+    }
+}
+
 /// The class id words shared by this library: only the last word differs.
 pub const fn cid(n: u32) -> [u32; 4] {
     [0xA70F_1C02, 0x4A5B_4C01, 0x8D2E_1F00, n]
@@ -312,6 +410,8 @@ info!(ACTIVATE_INFO, "Atomik Test Activate Fails", 5);
 info!(START_INFO, "Atomik Test Start Fails", 6);
 info!(ERROR_INFO, "Atomik Test Error", 7);
 info!(NAN_INFO, "Atomik Test Nan", 8);
+info!(ERROR_ONCE_INFO, "Atomik Test Error Once", 12);
+info!(NAN_ONCE_INFO, "Atomik Test Nan Once", 13);
 
 static PICKY_INFO: Info = Info {
     name: "Atomik Test Picky Synth",
@@ -322,7 +422,10 @@ static PICKY_INFO: Info = Info {
     midi: false,
 };
 
-static PLUGINS: [PluginDef; 9] = [
+info!(PROXIES_INFO, "Atomik Test Proxies", 10);
+info!(PROXIES_SLOW_INFO, "Atomik Test Slow Proxies", 11);
+
+static PLUGINS: [PluginDef; 13] = [
     PluginDef {
         info: &SPLIT_INFO,
         create: || {
@@ -341,23 +444,31 @@ static PLUGINS: [PluginDef; 9] = [
     },
     PluginDef {
         info: &INIT_INFO,
-        create: || Box::new(Faulty(Fault::Init)),
+        create: || Box::new(Faulty(Fault::Init, 0)),
     },
     PluginDef {
         info: &ACTIVATE_INFO,
-        create: || Box::new(Faulty(Fault::Activate)),
+        create: || Box::new(Faulty(Fault::Activate, 0)),
     },
     PluginDef {
         info: &START_INFO,
-        create: || Box::new(Faulty(Fault::Start)),
+        create: || Box::new(Faulty(Fault::Start, 0)),
     },
     PluginDef {
         info: &ERROR_INFO,
-        create: || Box::new(Faulty(Fault::Process)),
+        create: || Box::new(Faulty(Fault::Process, 0)),
     },
     PluginDef {
         info: &NAN_INFO,
-        create: || Box::new(Faulty(Fault::Nan)),
+        create: || Box::new(Faulty(Fault::Nan, 0)),
+    },
+    PluginDef {
+        info: &ERROR_ONCE_INFO,
+        create: || Box::new(Faulty(Fault::ProcessOnce, 0)),
+    },
+    PluginDef {
+        info: &NAN_ONCE_INFO,
+        create: || Box::new(Faulty(Fault::NanOnce, 0)),
     },
     PluginDef {
         info: &PICKY_INFO,
@@ -368,6 +479,14 @@ static PLUGINS: [PluginDef; 9] = [
                 buf: Vec::with_capacity(8_192),
             })
         },
+    },
+    PluginDef {
+        info: &PROXIES_INFO,
+        create: || Box::new(Proxies { slow: false }),
+    },
+    PluginDef {
+        info: &PROXIES_SLOW_INFO,
+        create: || Box::new(Proxies { slow: true }),
     },
 ];
 

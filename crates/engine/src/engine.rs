@@ -509,6 +509,8 @@ pub struct EngineHandle {
     launch_cell: Arc<crate::launch::LaunchCell>,
     /// What the launcher did: launches and stops with their song ticks.
     launch_rx: Consumer<crate::launch::LaunchEvent>,
+    /// The render worker pool's counters, when the engine has workers.
+    workers: Option<crate::workers::WorkerCounters>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -559,7 +561,7 @@ pub fn new_engine_with_arena(
         arena: arena_capacity,
         ..Capacities::default()
     };
-    let (mut engine, handle) = new_engine_with(cfg, caps);
+    let (mut engine, mut handle) = new_engine_with(cfg, caps);
     let workers = options.workers;
     if workers.threads > 0 {
         let linger = match options.worker_linger_spins {
@@ -569,6 +571,7 @@ pub fn new_engine_with_arena(
         // If the OS refuses every worker thread the engine renders single-threaded: the
         // output does not depend on the worker count.
         engine.pool = Pool::new(workers.threads, workers.on_thread_start, linger).ok();
+        handle.workers = engine.pool.as_ref().map(Pool::counters);
     }
     (engine, handle)
 }
@@ -672,6 +675,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         reference,
         launch_cell,
         launch_rx,
+        workers: None,
     };
     (engine, handle)
 }
@@ -1292,6 +1296,15 @@ impl EngineHandle {
         })
     }
 
+    /// What the render workers have done so far (all zero for an engine without workers): for
+    /// diagnostics, read from the control side without touching the audio thread.
+    pub fn worker_stats(&self) -> crate::WorkerStats {
+        self.workers
+            .as_ref()
+            .map(crate::workers::WorkerCounters::stats)
+            .unwrap_or_default()
+    }
+
     /// The first device that panicked while rendering, if any (sticky; see [`Engine::fault`]).
     /// Cheap and lock-free, so a UI can poll it every frame.
     pub fn fault(&self) -> Option<DeviceInstanceId> {
@@ -1418,6 +1431,14 @@ impl Engine {
         );
         self.host_frames += frames as u64;
         self.last_render_spins = 0;
+        // Workers spin only while a call that can hand them work is running.
+        let pooled = match (&self.routing, &self.pool) {
+            (Some(routing), Some(pool)) if pool.len() > 0 && routing.has_parallel_level() => {
+                pool.begin_callback();
+                true
+            }
+            _ => false,
+        };
         let mut done = 0;
         while done < frames {
             let n = (BATCH - self.fifo_pos).min(frames - done);
@@ -1441,6 +1462,9 @@ impl Engine {
                 self.run_batch();
                 self.fifo_pos = 0;
             }
+        }
+        if pooled && let Some(pool) = &self.pool {
+            pool.end_callback();
         }
         self.max_render_spins = self.max_render_spins.max(self.last_render_spins);
     }
@@ -1481,6 +1505,16 @@ impl Engine {
     #[doc(hidden)]
     pub fn worker_parks(&self) -> u64 {
         self.pool.as_ref().map_or(0, Pool::parks)
+    }
+
+    /// Keeps the workers' callback flag raised for good, so idle workers spin for their whole
+    /// linger between callbacks, as they did before the flag existed (benchmark hook; not a
+    /// stable API). Output is the same either way.
+    #[doc(hidden)]
+    pub fn set_workers_always_active(&mut self, on: bool) {
+        if let Some(pool) = &mut self.pool {
+            pool.set_always_active(on);
+        }
     }
 
     /// Idle spins a worker performs before parking (`EngineOptions::worker_linger_spins`, or

@@ -25,11 +25,11 @@ pub mod parent;
 pub mod stdio;
 
 pub use block::{SharedBlock, block_file_name, default_block_dir, sweep_stale_blocks};
-pub use child::{ChildPort, Request};
+pub use child::{ChildPort, ChildWaker, MAX_PARK, Request};
 pub use codec::AudioOp;
 pub use deadline::Deadline;
 pub use doorbell::{Doorbell, DoorbellName};
-pub use frame::{read_frame, read_frame_with, write_frame};
+pub use frame::{read_frame, read_frame_filtered, read_frame_with, write_frame, write_frame_with};
 pub use group::{
     FromGroup, GROUP_SLOT, MAX_GROUP_INSTANCES, SlotWriter, ToGroup, read_slot_frame,
     write_slot_frame,

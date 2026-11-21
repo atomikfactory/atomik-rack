@@ -12,20 +12,35 @@ use crate::parent::ProcessorInfo;
 use atomik_core::{BATCH, Batch};
 use atomik_plugin_host::{EventList, PluginEvent, PluginIo, ProcessStatus};
 use std::ptr::{addr_of, addr_of_mut};
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// How long the child spins on the request counter before it parks on the doorbell. A parent
 /// that rings once per 64-frame batch is back within this time, so the child never sleeps.
+/// Only a call that follows an answered request spins: a wait that timed out means the parent
+/// is not streaming, and the next call parks at once.
 const SPIN: Duration = Duration::from_micros(50);
+
+/// The longest the child parks on the doorbell without showing a sign of life. A call with a
+/// longer timeout parks in slices of this length and bumps the pulse before each, so the pulse
+/// moves at least this often whatever wait the caller asked for (the parent judges the child
+/// alive from it over a window of half a second).
+pub const MAX_PARK: Duration = Duration::from_millis(100);
 
 /// The child end of one block.
 #[derive(Debug)]
 pub struct ChildPort {
     block: SharedBlock,
-    doorbell: Doorbell,
+    doorbell: Arc<Doorbell>,
+    /// Set by a [`ChildWaker`]: the next (or the running) wait returns `None` at once.
+    kicked: Arc<AtomicBool>,
+    /// The last call returned a request: the next one spins before it parks.
+    spin_next: bool,
     /// The last ticket answered; the child is the only writer of `done_seq`.
     last_done: u64,
+    /// Passes of the wait loop so far: the value of the pulse the parent reads.
+    beats: u64,
     events_in: Vec<PluginEvent>,
     events_out: EventList,
 }
@@ -36,8 +51,11 @@ impl ChildPort {
         let last_done = block.header().done_seq.load(Ordering::Acquire);
         Self {
             block,
-            doorbell,
+            doorbell: Arc::new(doorbell),
+            kicked: Arc::new(AtomicBool::new(false)),
+            spin_next: false,
             last_done,
+            beats: 0,
             events_in: Vec::with_capacity(MAX_EVENTS_IN),
             events_out: EventList::with_capacity(MAX_EVENTS_OUT),
         }
@@ -63,18 +81,47 @@ impl ChildPort {
             addr_of_mut!((*resp).n_events).write(0);
         }
         self.last_done = ticket;
+        self.spin_next = true;
         self.block
             .header()
             .done_seq
             .store(ticket, Ordering::Release);
     }
 
-    /// Blocks until a request or `timeout`: spins for about 50 us, then parks on the doorbell.
-    /// `None` on timeout. A request taken but not completed is returned again by the next call.
+    /// A handle another thread of the child uses to end a wait early (see [`ChildWaker`]).
+    pub fn waker(&self) -> ChildWaker {
+        ChildWaker {
+            doorbell: Arc::clone(&self.doorbell),
+            kicked: Arc::clone(&self.kicked),
+        }
+    }
+
+    /// Shows the parent that this thread is running: one relaxed store of a growing number, no
+    /// allocation and no lock. [`ChildPort::wait_request`] does it on every pass, so a child whose
+    /// audio thread loops on it is seen alive whatever its main thread is doing.
+    fn beat(&mut self) {
+        self.beats = self.beats.wrapping_add(1);
+        self.block
+            .header()
+            .pulse
+            .store(self.beats, Ordering::Relaxed);
+    }
+
+    /// Blocks until a request or `timeout`: right after an answered request it spins for about
+    /// 50 us, then it parks on the doorbell (at once when the last call timed out). `None` on
+    /// timeout, or when a [`ChildWaker`] ended the wait. A request taken but not completed is
+    /// returned again by the next call. Every call (and every park inside it, which lasts at
+    /// most [`MAX_PARK`]) bumps the block's pulse, the sign of life the parent reads without the
+    /// plugin's main thread.
     pub fn wait_request(&mut self, timeout: Duration) -> Option<Request<'_>> {
+        self.beat();
         let start = now();
         let end = start.checked_add(timeout).unwrap_or(start);
-        let spin_end = (start + SPIN).min(end);
+        let spin_end = if std::mem::take(&mut self.spin_next) {
+            (start + SPIN).min(end)
+        } else {
+            start
+        };
         loop {
             if let Some(ticket) = self.pending() {
                 let req = self.block.request();
@@ -95,6 +142,9 @@ impl ChildPort {
                     }
                 }
             }
+            if self.kicked.swap(false, Ordering::AcqRel) {
+                return None;
+            }
             let t = now();
             if t >= end {
                 return None;
@@ -102,7 +152,8 @@ impl ChildPort {
             if t < spin_end {
                 std::hint::spin_loop();
             } else {
-                self.doorbell.wait(end - t);
+                self.beat();
+                self.doorbell.wait((end - t).min(MAX_PARK));
             }
         }
     }
@@ -121,6 +172,22 @@ impl ChildPort {
     /// The plugin asked to be processed: the parent's `wake_requested` returns true once.
     pub fn request_wake(&self) {
         self.block.header().wake.store(1, Ordering::Release);
+    }
+}
+
+/// Ends the waits of a [`ChildPort`] from another thread of the child: the audio thread then
+/// looks at its other duties without waiting for its timeout.
+#[derive(Debug, Clone)]
+pub struct ChildWaker {
+    doorbell: Arc<Doorbell>,
+    kicked: Arc<AtomicBool>,
+}
+
+impl ChildWaker {
+    /// Makes the running or the next `wait_request` return `None` at once. Never blocks.
+    pub fn wake(&self) {
+        self.kicked.store(true, Ordering::Release);
+        self.doorbell.ring();
     }
 }
 
@@ -210,6 +277,7 @@ impl Request<'_> {
             addr_of_mut!((*resp).dropped).write(dropped);
         }
         port.last_done = ticket;
+        port.spin_next = true;
         // Release: the response written above is visible to the parent that sees this value.
         port.block
             .header()

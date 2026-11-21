@@ -355,7 +355,7 @@ impl<S: EngineSink> AppCore<S> {
             source,
         };
         std::fs::create_dir_all(dir).map_err(|e| io(dir, e))?;
-        self.plugins_capture_all();
+        self.plugins_capture_for_save();
         let keep: BTreeSet<String> = self.document.referenced_assets();
         let mut saved = self.doc().clone();
         saved.prune_unreferenced_assets();

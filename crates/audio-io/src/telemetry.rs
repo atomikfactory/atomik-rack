@@ -271,6 +271,14 @@ pub(crate) struct TelemetryState {
     fault: AtomicU64,
     /// Input frames lost to clock drift (published by the render callback).
     input_lost: AtomicU64,
+    /// Input trims that discarded frames, and the most frames the ring held before one of them
+    /// (published by the render callback).
+    input_trims: AtomicU64,
+    input_backlog_max: AtomicU32,
+    /// The smallest and the largest callback seen, in frames (0: none yet). Only the render
+    /// callback writes them.
+    frames_min: AtomicU32,
+    frames_max: AtomicU32,
     /// A stream error said the device is gone (sticky).
     device_lost: AtomicBool,
     load: LoadMeter,
@@ -315,6 +323,14 @@ impl TelemetryState {
     ) -> Option<XrunKind> {
         self.callbacks.fetch_add(1, Ordering::Relaxed);
         self.buffer_frames.store(frames, Ordering::Relaxed);
+        if frames > 0 {
+            // One writer (the render callback), so a plain load and store cannot lose an update.
+            let low = self.frames_min.load(Ordering::Relaxed);
+            if low == 0 || frames < low {
+                self.frames_min.store(frames, Ordering::Relaxed);
+            }
+            self.frames_max.fetch_max(frames, Ordering::Relaxed);
+        }
         self.max_spins.fetch_max(barrier_spins, Ordering::Relaxed);
         let kind = detector.classify(at, frames, sample_rate, render);
         match kind {
@@ -363,6 +379,14 @@ impl TelemetryState {
         self.input_lost.store(frames, Ordering::Relaxed);
     }
 
+    /// Publishes how often the render callback trimmed the input ring and the largest backlog
+    /// before such a trim, in frames (two relaxed stores per callback).
+    pub(crate) fn set_input_trims(&self, trims: u64, backlog_max_frames: u32) {
+        self.input_trims.store(trims, Ordering::Relaxed);
+        self.input_backlog_max
+            .store(backlog_max_frames, Ordering::Relaxed);
+    }
+
     /// Records that the backend reported the device gone (sticky; one relaxed store).
     pub(crate) fn set_device_lost(&self) {
         self.device_lost.store(true, Ordering::Relaxed);
@@ -403,6 +427,10 @@ impl TelemetryState {
             input_latency_frames: self.in_capture.get().saturating_add(self.in_backlog.get()),
             output_latency_frames: self.out_playback.get(),
             input_overruns: self.input_lost.load(Ordering::Relaxed),
+            input_trims: self.input_trims.load(Ordering::Relaxed),
+            input_backlog_max_frames: self.input_backlog_max.load(Ordering::Relaxed),
+            callback_frames_min: self.frames_min.load(Ordering::Relaxed),
+            callback_frames_max: self.frames_max.load(Ordering::Relaxed),
             device_lost: self.device_lost.load(Ordering::Relaxed),
             callback: self.histogram.snapshot(),
             faulted: fault != 0,
@@ -431,6 +459,24 @@ mod tests {
         let t = state.snapshot();
         assert!(t.faulted);
         assert_eq!(t.faulted_device, None);
+    }
+
+    #[test]
+    fn the_callback_size_range_and_the_input_trims_are_published() {
+        let state = TelemetryState::new();
+        let t = state.snapshot();
+        assert_eq!((t.callback_frames_min, t.callback_frames_max), (0, 0));
+        assert_eq!((t.input_trims, t.input_backlog_max_frames), (0, 0));
+        let mut d = XrunDetector::new();
+        let t0 = origin();
+        for (i, frames) in [480u32, 96, 256, 96, 480].into_iter().enumerate() {
+            let at = t0 + Duration::from_millis(10 * i as u64);
+            state.on_callback(&mut d, at, frames, 48_000, Duration::from_micros(50), 0);
+        }
+        state.set_input_trims(3, 1440);
+        let t = state.snapshot();
+        assert_eq!((t.callback_frames_min, t.callback_frames_max), (96, 480));
+        assert_eq!((t.input_trims, t.input_backlog_max_frames), (3, 1440));
     }
 
     #[allow(clippy::disallowed_methods)] // Justification: test-only origin of a simulated timeline.

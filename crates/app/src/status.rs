@@ -13,6 +13,9 @@ pub struct AudioStatus {
     pub sample_rate: u32,
     /// Actual buffer size, once the host reported it.
     pub buffer_frames: Option<u32>,
+    /// The buffer size the stream was opened with, when the host accepted one (the actual size
+    /// of each callback is `buffer_frames`).
+    pub buffer_requested: Option<u32>,
     /// Average DSP load (1.0 = 100 %) over the last reading.
     pub dsp_load: f32,
     /// Peak DSP load over the last reading.
@@ -67,6 +70,39 @@ pub struct AudioStatus {
     pub sync: SyncStatus,
     /// Where plugins run (`sandbox` or `in-process`); set while plugins are on.
     pub plugin_mode: Option<&'static str>,
+    /// How the render callback trimmed the captured input (see [`InputTrim`]).
+    pub input_trim: InputTrim,
+    /// The render workers: how many, the linger, and what they have done.
+    pub workers: atomik_engine::WorkerStats,
+}
+
+/// What the render callback did to the captured input ring, for the diagnostics: the count of
+/// trims that discarded frames, the largest backlog before one, and the range of callback sizes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InputTrim {
+    /// Trims that discarded captured frames since the stream started.
+    pub trims: u64,
+    /// The most frames the ring held just before a trim.
+    pub backlog_max_frames: u32,
+    /// The smallest callback seen, in frames (0 before the first).
+    pub callback_min: u32,
+    /// The largest callback seen, in frames (0 before the first).
+    pub callback_max: u32,
+}
+
+/// The one debug line written when the trim count rose, e.g. `input trimmed: 3 trims, backlog max
+/// 1440 frames, callback 96..480 frames, buffer 480`.
+pub fn input_trim_line(s: &AudioStatus) -> String {
+    let t = &s.input_trim;
+    format!(
+        "input trimmed: {} trims, backlog max {} frames, callback {}..{} frames, buffer {}",
+        t.trims,
+        t.backlog_max_frames,
+        t.callback_min,
+        t.callback_max,
+        s.buffer_requested
+            .map_or("unknown".to_string(), |n| n.to_string())
+    )
 }
 
 /// What MIDI clock is doing (see [`crate::settings::SyncSettings`]).
@@ -133,11 +169,14 @@ pub struct OverloadStats {
     /// Sandbox batches whose result came back after the audio thread needed it, summed over the
     /// sandboxed plugins in the rack.
     pub late_sandbox_batches: u64,
+    /// Blocks a plugin answered with an error or non-finite output, replaced by the dry input or
+    /// silence, summed over the plugins in the rack.
+    pub bad_plugin_blocks: u64,
 }
 
 impl OverloadStats {
     /// Every counter with its label, in the order the status bar shows them.
-    pub fn fields(&self) -> [(&'static str, u64); 6] {
+    pub fn fields(&self) -> [(&'static str, u64); 7] {
         [
             ("dropped events", self.dropped_events),
             ("input overruns", self.input_overruns),
@@ -145,6 +184,7 @@ impl OverloadStats {
             ("plugin drops", self.plugin_drops),
             ("control stalled", self.control_stalled),
             ("late sandbox batches", self.late_sandbox_batches),
+            ("bad plugin blocks", self.bad_plugin_blocks),
         ]
     }
 
@@ -359,6 +399,25 @@ pub fn crash_context(s: &AudioStatus) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_input_trim_line_has_the_shape_of_the_log() {
+        let mut s = AudioStatus {
+            input_trim: InputTrim {
+                trims: 3,
+                backlog_max_frames: 1440,
+                callback_min: 96,
+                callback_max: 480,
+            },
+            ..AudioStatus::default()
+        };
+        assert_eq!(
+            input_trim_line(&s),
+            "input trimmed: 3 trims, backlog max 1440 frames, callback 96..480 frames, buffer unknown"
+        );
+        s.buffer_requested = Some(480);
+        assert!(input_trim_line(&s).ends_with(", buffer 480"));
+    }
+
     fn running() -> AudioStatus {
         AudioStatus {
             host: "WASAPI".into(),
@@ -454,6 +513,7 @@ mod tests {
                 plugin_drops: 2,
                 control_stalled: 1,
                 late_sandbox_batches: 9,
+                bad_plugin_blocks: 3,
             },
             ..running()
         };
@@ -462,7 +522,8 @@ mod tests {
             "WASAPI \u{b7} Virtual Cable Input \u{b7} 48 kHz \u{b7} buffer 480 \
              \u{b7} DSP 3% (peak 5%) \u{b7} xruns 2 \u{b7} dropped events 4 \
              \u{b7} record overflow 128 \u{b7} plugin drops 2 \u{b7} control stalled 1 \
-             \u{b7} late sandbox batches 9 \u{b7} MIDI Example Keyboard \u{2192} Bass"
+             \u{b7} late sandbox batches 9 \u{b7} bad plugin blocks 3 \
+             \u{b7} MIDI Example Keyboard \u{2192} Bass"
         );
         let one = AudioStatus {
             overload: OverloadStats {

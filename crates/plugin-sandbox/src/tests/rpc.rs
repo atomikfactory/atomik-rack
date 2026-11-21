@@ -6,7 +6,7 @@ use crate::clock::now;
 use crate::fake::{Action, FAKE_PID, FakeOptions, fake_layout, start_with, test_timeouts};
 use atomik_device_sdk::PluginStateBlob;
 use atomik_plugin_host::{EditorKind, NativeParent, PluginInstance};
-use atomik_plugin_ipc::{FromChild, ToChild, WireErrorKind, WireParent};
+use atomik_plugin_ipc::{FromChild, PROTOCOL_VERSION, ToChild, WireErrorKind, WireParent};
 use std::sync::atomic::Ordering;
 
 #[test]
@@ -22,7 +22,12 @@ fn the_hello_exchange_and_instantiate_give_the_layout_and_the_facts() {
     assert_eq!(r.live.load(Ordering::SeqCst), 1);
     let requests = r.fake.ctl.requests();
     assert!(
-        matches!(requests[0], ToChild::Hello { protocol: 2 }),
+        matches!(
+            requests[0],
+            ToChild::Hello {
+                protocol: PROTOCOL_VERSION
+            }
+        ),
         "{requests:?}"
     );
     assert!(matches!(requests[1], ToChild::Instantiate { .. }));
@@ -260,16 +265,28 @@ fn a_sixteen_mebibyte_state_round_trips() {
 // ----- timeouts ---------------------------------------------------------------------------------
 
 #[test]
-fn param_text_that_is_not_answered_does_not_kill_the_child() {
-    let mut r = rig(FakeOptions::default()
-        .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)));
-    let started = now();
-    assert_eq!(r.instance.param_text(1, 0.5), None);
-    let took = now().saturating_duration_since(started);
-    assert!(took >= test_timeouts().text, "{took:?}");
-    assert!(took < Duration::from_secs(3), "{took:?}");
-    assert!(!r.instance.is_lost());
-    assert!(!r.fake.ctl.was_killed());
+fn param_text_that_is_not_answered_waits_only_the_frame_allowance_and_does_not_kill_the_child() {
+    let mut timeouts = test_timeouts();
+    timeouts.text = Duration::from_secs(2);
+    let started = start_with(
+        FakeOptions::default()
+            .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)),
+        timeouts,
+    );
+    let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let budget = instance.budget();
+    budget.begin_frame();
+    assert_eq!(instance.param_text(1, 0.5), None);
+    // What the link was asked to wait: once, and the allowance of the frame, not the 2 s timeout.
+    assert_eq!(budget.waits(), 1);
+    assert!(budget.asked() > Duration::ZERO);
+    assert!(
+        budget.asked() <= atomik_plugin_host::SOFT_FRAME_BUDGET,
+        "{:?}",
+        budget.asked()
+    );
+    assert!(!instance.is_lost());
+    assert!(!started.fake.ctl.was_killed());
 }
 
 #[test]
@@ -567,6 +584,7 @@ fn begun(
         test_timeouts(),
         manager.messenger(),
         LiveGuard::new(&live),
+        atomik_plugin_host::SoftBudget::default(),
     )
     .map_err(|e| e.to_string())
     .expect("the threads start");
@@ -598,4 +616,128 @@ fn a_begun_instance_whose_child_speaks_another_protocol_fails_and_the_child_is_s
     let err = result.map(|_| ()).unwrap_err().to_string();
     assert!(err.contains("protocol 99"), "{err}");
     assert!(fake.ctl.was_killed());
+}
+
+/// The stall records the plugin has posted so far: (call, outcome).
+fn stalls(m: &ManagerEnd) -> Vec<(String, u64, atomik_plugin_host::StallOutcome)> {
+    let mut out = Vec::new();
+    while let Some(msg) = m.try_recv() {
+        if let PluginMessage::Stall { call, ms, outcome } = msg {
+            out.push((call, ms, outcome));
+        }
+    }
+    out
+}
+
+fn slow_read_params(delay: Duration) -> FakeOptions {
+    FakeOptions::default().script(move |req, _| match req {
+        ToChild::ReadParams { id } => Some(Action::Delayed(
+            delay,
+            vec![(
+                FromChild::ParamValues {
+                    id: *id,
+                    values: vec![(1, 0.5)],
+                },
+                None,
+            )],
+        )),
+        _ => None,
+    })
+}
+
+#[test]
+fn a_call_answered_after_the_threshold_leaves_exactly_one_stall_record() {
+    let mut r = rig(slow_read_params(Duration::from_millis(150)));
+    let _ = stalls(&r.manager);
+    assert_eq!(r.instance.read_params(), vec![(1, 0.5)]);
+    let got = stalls(&r.manager);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].0, "ReadParams");
+    assert!(got[0].1 >= 100, "{got:?}");
+    assert_eq!(got[0].2, atomik_plugin_host::StallOutcome::Answered);
+}
+
+#[test]
+fn a_fast_call_leaves_no_stall_record() {
+    let mut r = rig(FakeOptions::default());
+    let _ = r.instance.read_params();
+    let _ = r.instance.list_presets();
+    assert!(stalls(&r.manager).is_empty());
+}
+
+#[test]
+fn a_call_that_times_out_is_recorded_with_that_outcome() {
+    let mut timeouts = test_timeouts();
+    timeouts.create = Duration::from_millis(120);
+    let started = start_with(
+        FakeOptions::default()
+            .script(|req, _| matches!(req, ToChild::ReadParams { .. }).then_some(Action::Silent)),
+        timeouts,
+    );
+    let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let _ = stalls(&started.manager);
+    assert!(instance.read_params().is_empty());
+    let got = stalls(&started.manager);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].0, "ReadParams");
+    assert_eq!(got[0].2, atomik_plugin_host::StallOutcome::TimedOut);
+}
+
+#[test]
+fn a_cosmetic_request_never_holds_the_main_thread_long_enough_to_be_a_stall() {
+    let mut timeouts = test_timeouts();
+    timeouts.text = Duration::from_millis(500);
+    let started = start_with(
+        FakeOptions::default().script(|req, _| {
+            matches!(
+                req,
+                ToChild::ParamText { .. } | ToChild::ResizeGui { .. } | ToChild::DefaultPins { .. }
+            )
+            .then_some(Action::Silent)
+        }),
+        timeouts,
+    );
+    let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let budget = instance.budget();
+    let _ = stalls(&started.manager);
+    for n in 0..5 {
+        budget.begin_frame();
+        assert_eq!(instance.param_text(1, f64::from(n)), None);
+        let _ = instance.request_resize_gui(300 + n, 200);
+        let _ = instance.default_pins();
+    }
+    let got = stalls(&started.manager);
+    assert!(
+        got.iter().all(|(call, _, _)| !matches!(
+            call.as_str(),
+            "ParamText" | "ResizeGui" | "DefaultPins"
+        )),
+        "{got:?}"
+    );
+}
+
+#[test]
+fn closing_the_editor_is_one_bounded_wait_and_is_recorded() {
+    let mut timeouts = test_timeouts();
+    timeouts.text = Duration::from_millis(120);
+    let started = start_with(
+        FakeOptions::default()
+            .script(|req, _| matches!(req, ToChild::CloseGui { .. }).then_some(Action::Silent)),
+        timeouts,
+    );
+    let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let _ = stalls(&started.manager);
+    instance.close_gui();
+    let got = stalls(&started.manager);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].0, "CloseGui");
+    assert_eq!(got[0].2, atomik_plugin_host::StallOutcome::TimedOut);
+    let asked = started
+        .fake
+        .ctl
+        .requests()
+        .iter()
+        .filter(|q| matches!(q, ToChild::CloseGui { .. }))
+        .count();
+    assert_eq!(asked, 1, "one request, one wait");
 }

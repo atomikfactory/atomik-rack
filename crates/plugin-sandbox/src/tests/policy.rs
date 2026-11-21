@@ -1,7 +1,7 @@
-//! What the app does when the child is slow, hung or hostile: cosmetic calls that miss never
-//! stop it, repeated misses and unanswered important calls do, late batches in a row make it
-//! hung, notifications out of bounds are refused, edit bursts are coalesced, and many children
-//! end together.
+//! What the app does when the child is slow, hung or hostile: cosmetic requests that are late
+//! never stop it, unanswered important calls do, late batches in a row make it hung,
+//! notifications out of bounds are refused, edit bursts are coalesced, and many children end
+//! together.
 
 use super::*;
 use crate::clock::now;
@@ -10,7 +10,7 @@ use atomik_plugin_host::{HUNG, LogLevel, ParamPhase, PluginInstance, PluginIo, P
 use atomik_plugin_ipc::{FromChild, ToChild, WireLevel, WirePhase};
 use std::sync::atomic::Ordering;
 
-fn text(id: u64, text: &str) -> Vec<(FromChild, Option<Vec<u8>>)> {
+pub(super) fn text(id: u64, text: &str) -> Vec<(FromChild, Option<Vec<u8>>)> {
     vec![(
         FromChild::Text {
             id,
@@ -20,7 +20,7 @@ fn text(id: u64, text: &str) -> Vec<(FromChild, Option<Vec<u8>>)> {
     )]
 }
 
-fn started(options: FakeOptions, timeouts: crate::link::Timeouts) -> Rig {
+pub(super) fn started(options: FakeOptions, timeouts: crate::link::Timeouts) -> Rig {
     let s = start_with(options, timeouts);
     Rig {
         instance: s
@@ -33,7 +33,7 @@ fn started(options: FakeOptions, timeouts: crate::link::Timeouts) -> Rig {
     }
 }
 
-fn exit_reason(r: &Rig) -> String {
+pub(super) fn exit_reason(r: &Rig) -> String {
     loop {
         if let PluginMessage::ProcessExited { reason } = next_message(&r.manager) {
             return reason;
@@ -41,132 +41,255 @@ fn exit_reason(r: &Rig) -> String {
     }
 }
 
-// ----- cosmetic calls -----------------------------------------------------------------------------
+// ----- cosmetic requests ----------------------------------------------------------------------------
+
+/// Everything the instance has answered late since the last call.
+fn late_answers(r: &mut Rig) -> Vec<atomik_plugin_host::SoftAnswer> {
+    r.instance.poll();
+    r.instance.take_soft_answers()
+}
+
+/// Polls frame after frame (each begins a new frame of the allowance) until `f` is true. The
+/// bound is generous: a slow runner needs seconds, not milliseconds.
+fn frames_until(r: &mut Rig, what: &str, mut f: impl FnMut(&mut Rig) -> bool) {
+    let budget = r.instance.budget();
+    let limit = now() + Duration::from_secs(60);
+    while now() < limit {
+        budget.begin_frame();
+        if f(r) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    panic!("timed out waiting for {what}");
+}
+
+/// A fake that holds the texts of the requests that `held` picks until the test releases them.
+fn texts_held_when(held: impl Fn(usize) -> bool + Send + 'static) -> FakeOptions {
+    let calls = Arc::new(AtomicUsize::new(0));
+    FakeOptions::default().script(move |req, _| match req {
+        ToChild::ParamText { id, plain, .. } if held(calls.fetch_add(1, Ordering::SeqCst)) => {
+            Some(Action::Blocked(text(*id, &format!("late {plain}"))))
+        }
+        _ => None,
+    })
+}
+
+/// Asks for the text of `plain` while the plugin holds the answer, then lets it go and waits
+/// until the table is empty again (a stalled answer, then a plugin that is free).
+fn stall_once(r: &mut Rig, param: u32, plain: f64) {
+    r.fake.ctl.hold();
+    r.instance.budget().begin_frame();
+    let _ = r.instance.param_text(param, plain);
+    r.fake.ctl.release();
+    frames_until(r, "the answer", |r| {
+        r.instance.poll();
+        !r.instance.soft_out()
+    });
+    let _ = r.instance.take_soft_answers();
+}
 
 #[test]
-fn a_late_text_is_dropped_and_the_next_call_gets_its_own_answer() {
-    let mut timeouts = test_timeouts();
-    timeouts.text = Duration::from_millis(100);
-    let first = Arc::new(AtomicUsize::new(0));
-    let seen = Arc::clone(&first);
-    let mut r = started(
-        FakeOptions::default().script(move |req, _| match req {
-            ToChild::ParamText { id, .. } if seen.fetch_add(1, Ordering::SeqCst) == 0 => Some(
-                Action::Delayed(Duration::from_millis(400), text(*id, "late")),
-            ),
-            _ => None,
-        }),
-        timeouts,
-    );
-    assert_eq!(r.instance.param_text(1, 0.5), None, "no answer in time");
+fn a_late_text_is_delivered_when_it_arrives_and_the_next_call_gets_its_own_answer() {
+    let mut r = started(texts_held_when(|n| n == 0), test_timeouts());
+    assert_eq!(r.instance.param_text(1, 0.5), None, "held by the plugin");
     assert!(!r.instance.is_lost() && !r.fake.ctl.was_killed());
+    r.fake.ctl.release();
+    let mut late = Vec::new();
+    frames_until(&mut r, "the late text", |r| {
+        late.extend(late_answers(r));
+        !late.is_empty()
+    });
+    assert_eq!(
+        late,
+        vec![atomik_plugin_host::SoftAnswer::ParamText {
+            param: 1,
+            plain: 0.5,
+            text: "late 0.5".to_string()
+        }],
+        "the text, for the value it was asked for"
+    );
+    // The next request is answered at once by the plugin: its text reaches the caller either in
+    // the call or, when the wait of the frame missed it, as a late answer.
     let mut got = None;
-    eventually("the child to answer again", || {
-        got = r.instance.param_text(1, 0.6);
+    frames_until(&mut r, "the text of the next value", |r| {
+        got = got.take().or_else(|| r.instance.param_text(1, 0.6));
+        for a in late_answers(r) {
+            if let atomik_plugin_host::SoftAnswer::ParamText { plain, text, .. } = a {
+                assert_eq!(plain, 0.6);
+                got = Some(text);
+            }
+        }
         got.is_some()
     });
-    assert_eq!(got.as_deref(), Some("0.60 units"), "not the late text");
+    assert_eq!(got.as_deref(), Some("0.60 units"));
     assert!(!r.instance.is_lost() && !r.fake.ctl.was_killed());
 }
 
 #[test]
-fn a_busy_plugin_keeps_showing_the_last_text_it_gave() {
-    let mut timeouts = test_timeouts();
-    timeouts.text = Duration::from_millis(100);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let seen = Arc::clone(&calls);
-    let mut r = started(
-        FakeOptions::default().script(move |req, _| match req {
-            ToChild::ParamText { id, .. } if seen.fetch_add(1, Ordering::SeqCst) > 0 => Some(
-                Action::Delayed(Duration::from_millis(500), text(*id, "late")),
-            ),
-            _ => None,
-        }),
-        timeouts,
-    );
-    assert_eq!(r.instance.param_text(1, 0.5).as_deref(), Some("0.50 units"));
+fn a_busy_plugin_gives_no_text_for_a_value_it_has_not_answered_and_the_right_one_later() {
+    let mut r = started(texts_held_when(|n| n > 0), test_timeouts());
+    // The first text comes at once (in the call or as a late answer).
+    let mut first = None;
+    frames_until(&mut r, "the first text", |r| {
+        first = first.take().or_else(|| r.instance.param_text(1, 0.5));
+        for a in late_answers(r) {
+            if let atomik_plugin_host::SoftAnswer::ParamText { text, .. } = a {
+                first = Some(text);
+            }
+        }
+        first.is_some()
+    });
+    assert_eq!(first.as_deref(), Some("0.50 units"));
+    r.instance.budget().begin_frame();
     assert_eq!(
-        r.instance.param_text(1, 0.9).as_deref(),
-        Some("0.50 units"),
-        "the child is busy: the last text stays"
+        r.instance.param_text(1, 0.9),
+        None,
+        "the plugin holds it: the old text does not stand in for the new value"
+    );
+    r.fake.ctl.release();
+    let mut late = Vec::new();
+    frames_until(&mut r, "the text of the new value", |r| {
+        late.extend(late_answers(r));
+        !late.is_empty()
+    });
+    assert_eq!(
+        late,
+        vec![atomik_plugin_host::SoftAnswer::ParamText {
+            param: 1,
+            plain: 0.9,
+            text: "late 0.9".to_string()
+        }]
     );
     assert!(!r.instance.is_lost());
 }
 
 #[test]
-fn a_cosmetic_call_that_keeps_missing_marks_the_instance_slow_and_then_stops_the_child() {
+fn an_instance_with_no_sign_of_life_is_marked_slow_before_it_is_stopped() {
     let mut timeouts = test_timeouts();
-    timeouts.text = Duration::from_millis(30);
+    timeouts.create = Duration::from_secs(3);
     let mut r = started(
         FakeOptions::default()
             .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)),
         timeouts,
     );
+    let budget = r.instance.budget();
     let mut was_slow_alive = false;
-    for _ in 0..100 {
-        let _ = r.instance.param_text(1, 0.5);
-        if r.instance.is_lost() {
-            break;
-        }
-        was_slow_alive |= r.instance.is_slow();
-        std::thread::sleep(Duration::from_millis(25));
+    let limit = now() + Duration::from_secs(60);
+    let mut n = 0u32;
+    while now() < limit && !r.instance.is_lost() {
+        budget.begin_frame();
+        n += 1;
+        let _ = r.instance.param_text(1, f64::from(n));
+        r.instance.poll();
+        was_slow_alive |= r.instance.is_slow() && !r.instance.is_lost();
+        std::thread::sleep(Duration::from_millis(5));
     }
     assert!(was_slow_alive, "slow before it was stopped");
     assert!(r.instance.is_lost());
     assert!(r.fake.ctl.was_killed());
     let reason = exit_reason(&r);
-    assert!(reason.contains("12 times in a row"), "{reason}");
+    assert!(reason.contains("did not answer ParamText"), "{reason}");
 }
 
 #[test]
-fn a_slow_instance_is_left_alone_between_its_retries_and_the_user_is_told() {
+fn a_slow_instance_is_not_waited_for_between_its_retries_and_the_user_is_told_once() {
     let mut timeouts = test_timeouts();
-    timeouts.text = Duration::from_millis(30);
-    timeouts.slow_retry = Duration::from_secs(30);
+    timeouts.slow_retry = Duration::from_secs(600);
+    timeouts.slow_window = Duration::from_secs(600);
     let mut r = started(
         FakeOptions::default()
             .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)),
         timeouts,
     );
-    for _ in 0..3 {
-        assert_eq!(r.instance.param_text(1, 0.5), None);
+    let budget = r.instance.budget();
+    for n in 0..3 {
+        budget.begin_frame();
+        assert_eq!(r.instance.param_text(1, f64::from(n)), None);
+        assert_eq!(budget.waits(), 1, "waited for in vain");
     }
     assert!(r.instance.is_slow());
-    let asked = r
-        .fake
-        .ctl
-        .requests()
-        .iter()
-        .filter(|q| matches!(q, ToChild::ParamText { .. }))
-        .count();
-    let t = now();
-    for _ in 0..50 {
-        assert_eq!(r.instance.param_text(1, 0.5), None);
+    for n in 3..60 {
+        budget.begin_frame();
+        assert_eq!(r.instance.param_text(1, f64::from(n)), None);
+        assert_eq!(budget.waits(), 0, "a slow instance is not waited for");
     }
-    assert!(now().saturating_duration_since(t) < Duration::from_millis(30));
-    let after = r
-        .fake
-        .ctl
-        .requests()
-        .iter()
-        .filter(|q| matches!(q, ToChild::ParamText { .. }))
-        .count();
-    assert_eq!(after, asked, "nothing more was sent");
-    let mut told = false;
+    let mut told = 0;
     while let Some(m) = r.manager.try_recv() {
-        told |= matches!(
+        told += usize::from(matches!(
             m,
             PluginMessage::Log { level: LogLevel::Warning, text } if text.contains("slow")
-        );
+        ));
     }
-    assert!(told, "a warning says the plugin is slow");
+    assert_eq!(told, 1, "one warning for the whole slow episode");
     assert!(!r.instance.is_lost());
 }
 
 #[test]
-fn a_layout_change_that_comes_after_its_call_gave_up_is_not_lost() {
+fn answers_that_alternate_between_fast_and_stalled_keep_the_instance_slow() {
+    // Every other request is held by the plugin and the others are answered at once: with the
+    // old rule one success reset the count and every stall cost a full wait again.
     let mut timeouts = test_timeouts();
-    timeouts.text = Duration::from_millis(100);
+    timeouts.slow_retry = Duration::from_secs(600);
+    timeouts.slow_window = Duration::from_secs(600);
+    let mut r = started(texts_held_when(|n| n % 2 == 1), timeouts);
+    let budget = r.instance.budget();
+    let mut waits_when_slow = 0;
+    for n in 0..14u32 {
+        let slow = r.instance.is_slow();
+        if n % 2 == 1 {
+            r.fake.ctl.hold();
+        }
+        budget.begin_frame();
+        let _ = r.instance.param_text(1, f64::from(n));
+        if slow {
+            waits_when_slow += budget.waits();
+        }
+        r.fake.ctl.release();
+        frames_until(&mut r, "the answer", |r| {
+            r.instance.poll();
+            !r.instance.soft_out()
+        });
+        let _ = r.instance.take_soft_answers();
+    }
+    assert!(r.instance.is_slow(), "the stalls kept it in the cheap path");
+    assert_eq!(
+        waits_when_slow, 0,
+        "once slow it was never waited for again"
+    );
+    assert!(!r.instance.is_lost());
+}
+
+#[test]
+fn slowness_ends_with_time_not_with_one_fast_answer() {
+    let mut timeouts = test_timeouts();
+    timeouts.slow_retry = Duration::ZERO;
+    timeouts.slow_window = Duration::from_secs(4);
+    let mut r = started(texts_held_when(|n| n < 3), timeouts);
+    for n in 0..3u32 {
+        stall_once(&mut r, 1, f64::from(n));
+    }
+    let became_slow = now();
+    assert!(r.instance.is_slow(), "three late answers");
+    // A fast answer (the plugin answers at once from now on): asked until one gets through.
+    let mut fast = false;
+    frames_until(&mut r, "an answer that is in time", |r| {
+        let n = 10.0 + f64::from(r.instance.soft_out() as u8);
+        fast = r.instance.param_text(1, n).is_some();
+        if !fast {
+            r.instance.poll();
+            let _ = r.instance.take_soft_answers();
+        }
+        fast
+    });
+    if now().saturating_duration_since(became_slow) < Duration::from_secs(2) {
+        assert!(r.instance.is_slow(), "one fast answer does not end it");
+    }
+    frames_until(&mut r, "the window to pass", |r| !r.instance.is_slow());
+}
+
+#[test]
+fn a_layout_change_that_comes_after_its_call_gave_up_is_not_lost() {
     let first = Arc::new(AtomicUsize::new(0));
     let seen = Arc::clone(&first);
     let mut changed = fake_layout();
@@ -174,22 +297,20 @@ fn a_layout_change_that_comes_after_its_call_gave_up_is_not_lost() {
     let mut r = started(
         FakeOptions::default().script(move |req, _| match req {
             ToChild::TakeLayoutChanged { id } if seen.fetch_add(1, Ordering::SeqCst) == 0 => {
-                Some(Action::Delayed(
-                    Duration::from_millis(300),
-                    vec![(
-                        FromChild::LayoutChanged {
-                            id: *id,
-                            layout: Some(changed.clone()),
-                        },
-                        None,
-                    )],
-                ))
+                Some(Action::Blocked(vec![(
+                    FromChild::LayoutChanged {
+                        id: *id,
+                        layout: Some(changed.clone()),
+                    },
+                    None,
+                )]))
             }
             _ => None,
         }),
-        timeouts,
+        test_timeouts(),
     );
-    assert!(!r.instance.take_layout_changed(), "not in time");
+    assert!(!r.instance.take_layout_changed(), "held by the plugin");
+    r.fake.ctl.release();
     eventually("the late layout", || r.instance.take_layout_changed());
     assert_eq!(r.instance.layout().name, "Changed");
     assert!(!r.instance.is_lost());
@@ -252,6 +373,41 @@ fn late_batches_in_a_row_make_the_child_hung_and_the_main_thread_ends_it_within_
     assert!(r.fake.ctl.was_killed());
     let reason = exit_reason(&r);
     assert!(reason.starts_with(HUNG), "{reason}");
+}
+
+#[test]
+fn a_child_that_answers_every_batch_late_is_never_declared_hung() {
+    let mut timeouts = test_timeouts();
+    timeouts.hung = Duration::from_millis(60);
+    let mut r = started(FakeOptions::default(), timeouts);
+    let mut p = r
+        .instance
+        .activate(&cfg(48_000.0, RunMode::Realtime))
+        .expect("activation");
+    let mut b = super::processor::Bufs::new();
+    // Every answer takes several batch periods (one is 1.3 ms), yet each one comes.
+    r.fake.ctl.set_audio_delay(Duration::from_millis(8));
+    let hang_after = 45; // 60 ms of 64-frame batches at 48 kHz
+    // A batch is late when the answer lands after its deadline. On a machine where the sleep
+    // below overshoots, an answer may be there in time: that batch is simply taken. What must
+    // never happen, however long the run of late batches, is the child being declared lost.
+    let mut late = 0;
+    for _ in 0..3 * hang_after {
+        // The audio callback comes once per batch period.
+        std::thread::sleep(Duration::from_micros(1_300));
+        match p.process(&mut bufs_io(&mut b)) {
+            ProcessStatus::Late => late += 1,
+            ProcessStatus::Lost => panic!("declared lost after {late} late batches"),
+            _ => {}
+        }
+    }
+    assert!(
+        r.fake.ctl.audio_ops().len() >= 3,
+        "the child kept completing requests"
+    );
+    assert!(!r.instance.is_lost(), "the port is not marked dead");
+    r.instance.poll();
+    assert!(!r.fake.ctl.was_killed());
 }
 
 #[test]

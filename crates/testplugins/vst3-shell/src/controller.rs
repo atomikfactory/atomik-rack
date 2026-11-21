@@ -397,7 +397,22 @@ impl ControllerCore {
         number: i16,
         id: *mut u32,
     ) -> tresult {
-        if !self.info.midi || bus != 0 || channel != 0 {
+        if bus != 0 {
+            return kResultFalse;
+        }
+        let (own, delay) = {
+            let dsp = lock(&self.dsp);
+            (dsp.midi_assignment(channel, number), dsp.midi_delay())
+        };
+        if !delay.is_zero() {
+            std::thread::sleep(delay);
+        }
+        if let Some(p) = own {
+            // SAFETY: a valid out pointer.
+            unsafe { *id = p };
+            return kResultTrue;
+        }
+        if !self.info.midi || channel != 0 {
             return kResultFalse;
         }
         match midi_param(number) {

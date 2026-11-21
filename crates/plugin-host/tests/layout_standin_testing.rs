@@ -8,7 +8,8 @@ use atomik_device_sdk::{
     Channels, DeviceKind, PluginFormat, PluginKindHint, PluginRef, Registry, descriptor_for,
 };
 use atomik_plugin_host::layout::{
-    PluginSockets, layout_matches, param_ids, param_key, parse_param_key, truncate_params,
+    PluginSockets, layout_matches, merge_pinned, param_ids, param_key, parse_param_key,
+    truncate_params,
 };
 use atomik_plugin_host::stand_in;
 use atomik_plugin_host::testing::{cdylib_file_name, clap_file_name};
@@ -148,4 +149,63 @@ fn the_cdylib_file_names_follow_the_platform_convention() {
         assert_eq!(name, "libatomik_test_clap.so");
     }
     assert_eq!(clap_file_name("atomik_test_clap"), "atomik_test_clap.clap");
+}
+
+#[test]
+fn pinned_params_come_after_the_plugins_own_in_id_order_and_never_twice() {
+    let mut l = fx_layout();
+    let own: Vec<u32> = l.params.iter().map(|p| p.id).collect();
+    merge_pinned(&mut l, &[]);
+    assert_eq!(l, fx_layout(), "no pins, no change");
+    let pins = [
+        param(900, "Late", 0.0, 1.0, 0.5, false),
+        param(300, "Early", 0.0, 1.0, 0.5, false),
+        param(own[1], "Already listed", 0.0, 1.0, 0.5, false),
+        param(900, "Twice", 0.0, 1.0, 0.5, false),
+    ];
+    merge_pinned(&mut l, &pins);
+    let ids: Vec<u32> = l.params.iter().map(|p| p.id).collect();
+    assert_eq!(ids[..own.len()], own, "the plugin's own order is kept");
+    assert_eq!(
+        ids[own.len()..],
+        [300, 900],
+        "the pins follow, once each, in id order"
+    );
+    assert_eq!(
+        l.params[1].name,
+        fx_layout().params[1].name,
+        "a listed row is not replaced"
+    );
+    // The same pins on the same table change nothing more.
+    let before = l.clone();
+    merge_pinned(&mut l, &pins);
+    assert_eq!(l, before);
+    // A descriptor can be built from it.
+    descriptor("lay.pinned", &l);
+}
+
+#[test]
+fn a_full_table_makes_room_for_its_pins_at_the_end_and_stays_within_the_cap() {
+    let cap = atomik_device_sdk::MAX_PLUGIN_PARAMS;
+    let mut l = fx_layout();
+    l.params = (0..cap as u32)
+        .map(|i| param(i, "P", 0.0, 1.0, 0.5, false))
+        .collect();
+    let pins = [
+        param(50_000, "Pinned A", 0.0, 1.0, 0.5, false),
+        param(50_001, "Pinned B", 0.0, 1.0, 0.5, false),
+    ];
+    merge_pinned(&mut l, &pins);
+    assert_eq!(l.params.len(), cap);
+    let ids: Vec<u32> = l.params.iter().map(|p| p.id).collect();
+    assert_eq!(
+        ids[cap - 2..],
+        [50_000, 50_001],
+        "a pin is never the one that goes"
+    );
+    assert_eq!(
+        ids[cap - 3],
+        cap as u32 - 3,
+        "the plugin's last params made room"
+    );
 }

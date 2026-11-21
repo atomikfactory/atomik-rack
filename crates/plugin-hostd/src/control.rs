@@ -7,6 +7,7 @@
 use crate::args::{Args, Format};
 use crate::audio::{AudioThread, HANDOVER_TIMEOUT, SHUTDOWN_TIMEOUT};
 use crate::builtin::BuiltinBackend;
+use crate::driver::TickVote;
 use crate::editor::{Editor, WindowSystem};
 use crate::notify::to_wire;
 use atomik_device_sdk::{MAX_PLUGIN_PARAMS, PluginFormat, PluginRef, PluginStateBlob, RunMode};
@@ -16,11 +17,12 @@ use atomik_plugin_host::{
     PluginInstance, PluginMessage, plugin_channel,
 };
 use atomik_plugin_ipc::{
-    FromChild, MAX_PRESETS, PROTOCOL_VERSION, ToChild, WireErrorKind, WireLayout, WireLevel,
-    write_frame,
+    FromChild, MAX_FRAME_BYTES, MAX_PRESETS, MAX_REPLY_JSON_BYTES, PROTOCOL_VERSION, ToChild,
+    WireErrorKind, WireLayout, WireLevel, write_frame_with,
 };
 use atomik_plugin_vst3::Vst3Backend;
-use std::io::Write;
+use std::io::{self, Write};
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// The exit code for a protocol or setup mismatch.
 pub const EXIT_MISMATCH: u8 = 3;
@@ -78,7 +80,9 @@ pub fn make_backend(args: &Args) -> Box<dyn PluginBackend> {
 pub struct Control {
     plugin: PluginRef,
     backend: Box<dyn PluginBackend>,
-    out: Box<dyn Write>,
+    /// Where the frames go. The thread that lists presets writes its answer here too, so a
+    /// frame is written under the lock.
+    out: Arc<Mutex<Box<dyn Write + Send>>>,
     audio: AudioThread,
     greeted: bool,
     instance: Option<Box<dyn PluginInstance>>,
@@ -86,6 +90,10 @@ pub struct Control {
     active: bool,
     messages: Option<ManagerEnd>,
     editor: Editor,
+    /// What this control wants of the tick rate (see [`TickVote`]).
+    tick_vote: TickVote,
+    /// `forward` passed something on since the tick began.
+    forwarded: bool,
 }
 
 impl Control {
@@ -94,7 +102,7 @@ impl Control {
         args: &Args,
         backend: Box<dyn PluginBackend>,
         audio: AudioThread,
-        out: Box<dyn Write>,
+        out: Box<dyn Write + Send>,
     ) -> Self {
         Self {
             plugin: PluginRef {
@@ -105,13 +113,15 @@ impl Control {
                 id: args.plugin_id.clone(),
             },
             backend,
-            out,
+            out: Arc::new(Mutex::new(out)),
             audio,
             greeted: false,
             instance: None,
             active: false,
             messages: None,
             editor: Editor::default(),
+            tick_vote: TickVote::new(),
+            forwarded: false,
         }
     }
 
@@ -121,7 +131,45 @@ impl Control {
             protocol: PROTOCOL_VERSION,
             pid: std::process::id(),
         };
-        write_frame(&mut self.out, &hello, None).is_ok()
+        self.write(&hello, None)
+    }
+
+    /// Writes one frame; false when the parent's pipe is gone. A frame that cannot be sent
+    /// because it is too large is dropped (the pipe is fine): only [`Self::reply`] has an
+    /// answer to put in its place.
+    fn write(&self, msg: &FromChild, blob: Option<&[u8]>) -> bool {
+        match write_locked(&self.out, msg, blob) {
+            Ok(()) => true,
+            Err(e) => unsendable(&e),
+        }
+    }
+
+    /// Lists the presets on a thread of its own when the plugin's format keeps them as files, so
+    /// that a plugin whose main thread is busy does not hold the walk up (nor the walk, the
+    /// requests that follow): the thread writes the answer itself. False when the plugin has to
+    /// be asked on this thread.
+    fn list_presets_aside(&mut self, id: u64) -> bool {
+        let Some(lister) = self.instance.as_mut().and_then(|i| i.preset_lister()) else {
+            return false;
+        };
+        let out = Arc::clone(&self.out);
+        std::thread::Builder::new()
+            .name("host-presets".to_string())
+            .spawn(move || {
+                let reply = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(lister)) {
+                    Ok(list) => FromChild::Presets {
+                        id,
+                        presets: list.into_iter().take(MAX_PRESETS).map(Into::into).collect(),
+                    },
+                    Err(_) => err(id, &failed("listing the presets failed")),
+                };
+                // A gone parent is noticed by the main thread. An answer too large to send is
+                // replaced by an error: the parent waits for one.
+                if write_locked(&out, &reply, None).is_err_and(|e| unsendable(&e)) {
+                    write_locked(&out, &err(id, &too_large_answer()), None).ok();
+                }
+            })
+            .is_ok()
     }
 
     /// Reacts to one event; `Some(code)` ends the child with that exit code.
@@ -161,12 +209,24 @@ impl Control {
         None
     }
 
+    /// True while this control wants the fast tick (tests).
+    #[cfg(test)]
+    fn wants_fast_tick(&self) -> bool {
+        self.tick_vote.is_fast()
+    }
+
     /// Polls the plugin and forwards what it posted since the last tick.
+    ///
+    /// The tick turns slow (see [`crate::driver::TICK_IDLE`]) after a tick in which nothing was
+    /// forwarded, when no editor is open; a call from the parent turns it fast again.
     fn tick(&mut self, windows: &mut dyn WindowSystem) -> Option<u8> {
+        self.forwarded = false;
         if let Some(instance) = self.instance.as_mut() {
             instance.poll();
         }
-        self.forward(windows)
+        let code = self.forward(windows);
+        self.tick_vote.set(self.forwarded || self.editor.is_open());
+        code
     }
 
     /// Writes every notification the plugin has posted so far, in the order it posted them. Done
@@ -175,6 +235,7 @@ impl Control {
     fn forward(&mut self, windows: &mut dyn WindowSystem) -> Option<u8> {
         // A panic of the plugin on the audio thread: the parent logs it with the plugin's name.
         for text in self.audio.take_panic_lines() {
+            self.forwarded = true;
             let log = FromChild::Log {
                 level: WireLevel::Warning,
                 text,
@@ -184,6 +245,7 @@ impl Control {
             }
         }
         while let Some(message) = self.messages.as_ref().and_then(ManagerEnd::try_recv) {
+            self.forwarded = true;
             if let Some(instance) = self.instance.as_deref_mut() {
                 match &message {
                     PluginMessage::GuiResize { w, h } => {
@@ -207,7 +269,7 @@ impl Control {
     }
 
     fn notify(&mut self, msg: &FromChild, windows: &mut dyn WindowSystem) -> Option<u8> {
-        if write_frame(&mut self.out, msg, None).is_ok() {
+        if self.write(msg, None) {
             None
         } else {
             self.shutdown(windows);
@@ -221,6 +283,7 @@ impl Control {
         blob: Option<Vec<u8>>,
         windows: &mut dyn WindowSystem,
     ) -> Option<u8> {
+        self.tick_vote.set(true);
         if !self.greeted {
             return match msg {
                 ToChild::Hello { protocol } if protocol == PROTOCOL_VERSION => {
@@ -249,6 +312,7 @@ impl Control {
                 let reply = self.instantiate(id).unwrap_or_else(|e| err(id, &e));
                 self.reply(&reply, None, windows)
             }
+            ToChild::ListPresets { id } if self.list_presets_aside(id) => None,
             request => {
                 let id = request_id(&request);
                 let opens_editor = matches!(request, ToChild::OpenGui { .. });
@@ -334,6 +398,13 @@ impl Control {
             }
             ToChild::CaptureState { id } => {
                 let state = instance.capture_state()?;
+                // Over what one frame carries: said so, and the plugin goes on running.
+                if state.0.len() > MAX_FRAME_BYTES {
+                    return Err(BackendError::StateTooLarge {
+                        bytes: state.0.len() as u64,
+                        limit: MAX_FRAME_BYTES as u64,
+                    });
+                }
                 return Ok((FromChild::State { id }, Some(state.0)));
             }
             ToChild::RestoreState { id } => {
@@ -430,7 +501,17 @@ impl Control {
         if let Some(code) = self.forward(windows) {
             return Some(code);
         }
-        if write_frame(&mut self.out, msg, blob).is_ok() {
+        let written = match write_locked(&self.out, msg, blob) {
+            Ok(()) => true,
+            // The answer is too large for a frame: the parent gets an error in its place, never
+            // a dead child.
+            Err(e) if unsendable(&e) => match reply_id(msg) {
+                Some(id) => write_locked(&self.out, &err(id, &too_large_answer()), None).is_ok(),
+                None => true,
+            },
+            Err(_) => false,
+        };
+        if written {
             None
         } else {
             self.shutdown(windows);
@@ -476,6 +557,52 @@ impl Control {
             drop(instance);
         }
         self.messages = None;
+    }
+}
+
+/// Writes one frame to `out` under its lock. The JSON is held to what the parent's reader
+/// accepts ([`MAX_REPLY_JSON_BYTES`]) and the blob to [`MAX_FRAME_BYTES`]; see [`unsendable`].
+fn write_locked(
+    out: &Mutex<Box<dyn Write + Send>>,
+    msg: &FromChild,
+    blob: Option<&[u8]>,
+) -> io::Result<()> {
+    let mut out = out.lock().unwrap_or_else(PoisonError::into_inner);
+    write_frame_with(&mut *out, msg, blob, MAX_REPLY_JSON_BYTES)
+}
+
+/// True when a write failed because the frame itself cannot be sent (over a limit, or not
+/// encodable): nothing was written and the pipe is fine. Any other error means the parent is
+/// gone.
+fn unsendable(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::InvalidData | io::ErrorKind::InvalidInput
+    )
+}
+
+/// What a request is answered with when its answer is too large for the channel.
+fn too_large_answer() -> BackendError {
+    failed("the answer is too large to send over the plugin channel")
+}
+
+/// The request an answer belongs to (none for a notification).
+fn reply_id(msg: &FromChild) -> Option<u64> {
+    match msg {
+        FromChild::Ok { id }
+        | FromChild::Err { id, .. }
+        | FromChild::Instantiated { id, .. }
+        | FromChild::Activated { id, .. }
+        | FromChild::State { id }
+        | FromChild::Text { id, .. }
+        | FromChild::Latency { id, .. }
+        | FromChild::Pins { id, .. }
+        | FromChild::ParamValues { id, .. }
+        | FromChild::Presets { id, .. }
+        | FromChild::LayoutChanged { id, .. }
+        | FromChild::GuiOpened { id, .. }
+        | FromChild::GuiSized { id, .. } => Some(*id),
+        _ => None,
     }
 }
 

@@ -651,3 +651,70 @@ fn a_channel_moved_by_itself_leaves_its_instrument() {
     assert_eq!(d.doc().device(&ch).unwrap().column, 1);
     assert_eq!(d.doc().device(&key("synth")).unwrap().column, 0);
 }
+
+/// `move_changes_nothing` answers as the model does: for every place an instrument can be
+/// dropped at, it says "nothing" exactly when the model refuses the move as one that changes
+/// nothing. The instrument takes its channel along, so a place that is not the instrument's own
+/// can still be where the two already are.
+#[test]
+fn move_changes_nothing_answers_as_the_model_does_for_an_instrument_with_its_channel() {
+    let (mut d, r, ch) = rack(2);
+    let synth_at = |d: &Document| order(d).iter().position(|k| k == &key("synth")).unwrap();
+    let check = |d: &Document| {
+        let mut nothing = 0;
+        let mut own_place_only = true;
+        for index in 0..=d.doc().devices.len() {
+            let command = wf(WorkflowCommand::MoveDevicesToSlot {
+                keys: vec![key("synth")],
+                slot: RackSlot { column: 0, index },
+                route: true,
+            });
+            let said = atomik_model::move_changes_nothing(d.doc(), &r, &command);
+            let refused = match Document::new(d.doc().clone()).apply(command, &r) {
+                Ok(_) => false,
+                Err(e) => e.to_string().contains("already there"),
+            };
+            assert_eq!(said, refused, "index {index} of {:?}", order(d));
+            if said {
+                nothing += 1;
+                own_place_only &= index == synth_at(d);
+            }
+        }
+        (nothing, own_place_only)
+    };
+    // The channel right under its instrument, as created.
+    let (nothing, _) = check(&d);
+    assert!(nothing >= 1, "some place leaves the block where it is");
+    // The channel moved above its instrument: the place above the channel is not the
+    // instrument's own, and the two are already there once the channel follows.
+    let at = synth_at(&d);
+    run(
+        &mut d,
+        &r,
+        [wf(WorkflowCommand::MoveDevicesToSlot {
+            keys: vec![ch.clone()],
+            slot: RackSlot {
+                column: 0,
+                index: at,
+            },
+            route: false,
+        })],
+    );
+    assert!(
+        order(&d).iter().position(|k| k == &ch).unwrap() < synth_at(&d),
+        "{:?}",
+        order(&d)
+    );
+    let (nothing, own_place_only) = check(&d);
+    assert!(nothing >= 1);
+    assert!(
+        !own_place_only,
+        "a place that is not the instrument's own changes nothing"
+    );
+    // Another command is never a move that changes nothing.
+    assert!(!atomik_model::move_changes_nothing(
+        d.doc(),
+        &r,
+        &Command::AddRackColumn
+    ));
+}

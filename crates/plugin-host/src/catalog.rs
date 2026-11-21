@@ -8,11 +8,13 @@
 //! `ClapBackend::register_plugin_file`), still without loading it.
 
 use crate::cache::PluginCache;
+use crate::layout::merge_pinned;
 use crate::settings::PluginSettings;
 use atomik_device_sdk::{
-    PluginCategory, PluginFormat, PluginKindHint, PluginLayout, PluginRef, Registry, descriptor_for,
+    PluginCategory, PluginFormat, PluginKindHint, PluginLayout, PluginParamInfo, PluginRef,
+    Registry, descriptor_for,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Whether a plugin can be used.
@@ -199,13 +201,35 @@ impl PluginCatalog {
         registry: &mut Registry,
         files: &mut dyn FnMut(&PluginRef, &Path),
     ) -> RegisterReport {
+        self.register_pinned_into(registry, files, &BTreeMap::new())
+    }
+
+    /// [`Self::register_into`] where the descriptor of a plugin in `pins` also has those params
+    /// ([`merge_pinned`]): the ones a project uses although the scanned table leaves them out.
+    /// The entries' own layouts stay as scanned.
+    pub fn register_pinned_into(
+        &mut self,
+        registry: &mut Registry,
+        files: &mut dyn FnMut(&PluginRef, &Path),
+        pins: &BTreeMap<PluginRef, Vec<PluginParamInfo>>,
+    ) -> RegisterReport {
         let mut report = RegisterReport::default();
         for entry in &mut self.entries {
             if entry.status != PluginStatus::Ok {
                 continue;
             }
             let type_id = entry.plugin.type_id();
-            let result = descriptor_for(&entry.plugin, &entry.layout)
+            let merged;
+            let layout = match pins.get(&entry.plugin) {
+                Some(rows) => {
+                    let mut layout = entry.layout.clone();
+                    merge_pinned(&mut layout, rows);
+                    merged = layout;
+                    &merged
+                }
+                None => &entry.layout,
+            };
+            let result = descriptor_for(&entry.plugin, layout)
                 .map_err(|e| e.to_string())
                 .and_then(|d| {
                     registry

@@ -208,8 +208,8 @@ pub use pitch_edit::{
 };
 pub use plugin::{
     MAX_LAYOUT_PARAMS, MAX_PINNED_PARAMS, MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES,
-    PLUGIN_GESTURE_MERGE_BASE, PluginCommand, PluginDoc, cables_off_layout, map_plugin_layouts,
-    register_stand_ins,
+    PLUGIN_GESTURE_MERGE_BASE, PluginCommand, PluginDoc, StateRefusal, cables_off_layout,
+    map_plugin_layouts, register_stand_ins,
 };
 pub use plugin_files::{PluginFileRef, rewrite_paths};
 pub use project::{
@@ -252,7 +252,9 @@ pub use workflow::{
     ClipEntry, ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, TakeSnapshot,
     neighbour_clip, neighbour_device, neighbour_track,
 };
-pub use workflow_cmd::{ClipMove, ClipRepeat, MAX_REPEAT_COPIES, TakeTarget, WorkflowCommand};
+pub use workflow_cmd::{
+    ClipMove, ClipRepeat, MAX_REPEAT_COPIES, TakeTarget, WorkflowCommand, move_changes_nothing,
+};
 pub use workflow_create::{
     CreateOptions, CreateSource, CreateTarget, RouteNote, SEND_SLOTS_FULL, effect_route_note,
     first_free_send_slot, is_note_player, player_stack, preview_chain,

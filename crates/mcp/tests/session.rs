@@ -98,6 +98,7 @@ fn a_session_opens_the_starter_project_and_closes() {
         "plugin_drops",
         "control_stalled",
         "late_sandbox_batches",
+        "bad_plugin_blocks",
     ] {
         assert_eq!(v["overload"][key], 0, "{key}");
     }

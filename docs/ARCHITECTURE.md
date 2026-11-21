@@ -33,7 +33,7 @@ The picture shows the main arrows only; the table below is exact.
 
 | Crate | Path | Workspace dependencies | `unsafe` allowed in | What it is |
 |---|---|---|---|---|
-| `atomik-core` | [crates/core](../crates/core) | none | none | Batch constants, time (`SampleRate`, `Tempo`, ticks, `PPQ` = 15 360, `TimeInfo` with the transport position `tick`, `ticks_per_frame`, `loop_wrap`, `time_signature`), the tempo map (steps and linear ramps) and the meter map (`tempo_map.rs`, `meter_map.rs`), params, note events, the scales and chords of `theory.rs` (allocation-free, shared by the note editors and the note players) |
+| `atomik-core` | [crates/core](../crates/core) | none | none | Batch constants, time (`SampleRate`, `Tempo`, ticks, `PPQ` = 15 360, `TimeInfo` with the transport position `tick`, `ticks_per_frame`, `loop_wrap`, `time_signature`), the tempo map (steps and linear ramps) and the meter map (`tempo_map.rs`, `meter_map.rs`), params, note events, the scales and chords of `theory.rs` (allocation-free, shared by the note editors and the note players), the published end of the audio callback's plugin budget (`callback_deadline.rs`) |
 | `atomik-device-sdk` | [crates/device-sdk](../crates/device-sdk) | core | none | `DeviceDescriptor`, the `Device` trait (with stages and `swap_samples`), `ProcessContext`, `Registry` (with `register_with_samples`), `SampleMap` and `Zone` with `reverse` (`samples.rs`), `PlayerData` (step sequencer patterns, `player.rs`), `Device::swap_player_data`, `Registry::register_with_player_data`, `ScopeTap` and `Device::scope_tap` (the ring of recent frames a metering device hands to the UI, `scope.rs`) |
 | `atomik-dsp` | [crates/dsp](../crates/dsp) | core | none | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables and a 32-wave additive bank, mip levels by FFT truncation), filters, the 24 dB ladder with an anti-aliased drive (`ladder.rs`), envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the streaming note tracker of the practice grader (`listen.rs`: onsets, pitch, chroma), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) and the plucked string (`pluck`: a waveguide with a Lagrange-tuned loop, the pick and the instrument bodies) |
 | `atomik-devices` | [crates/devices](../crates/devices) | core, device-sdk, dsp | none | `poly-synth` (and the `mono-bass` and `dual-layer` built on its voice), the `organ`, `plucked` (plucked strings), `wavetable-synth`, `fm-synth`, `sampler`, `granular`, `drum-machine`, `loop-slicer`, `line-mixer`, `stereo-delay`, the `echo`, the six effects, the `guitar-amp`, `step-sequencer`, `arpeggiator`, `channel`, `master`, `audio-track`, the `spectrum` and `phase-meter` analysers (see [DEVICES.md](DEVICES.md)) |
@@ -984,11 +984,19 @@ shutdown, detaching and attaching a pane); `keymap.json` is looked at when a win
 and when a menu opens.
 
 A project opens its plugins together: `PluginManager::begin_create` starts the child processes of up
-to eight pending devices (`PluginBackend::begin_instantiate`, `PendingInstance::poll`), and the
-devices attach one per frame in document order, so the result does not depend on which plugin
-loads first. Plugins loaded into the app process are still created one per frame. A freeze or a bounce
-with sandboxed plugins starts its own children next to the live ones, so the process count doubles
-while it runs; the live children are not reused, because the offline output must stay bit-identical.
+to eight pending devices (`PluginBackend::begin_instantiate`, `PendingInstance::poll`). The sandbox
+gathers the numbers on the interface thread and makes the shared block, the doorbell and the process
+on a short-lived `plugin-spawn` thread per start (creating a process took about 7 ms each on the
+development machine, 60 to 80 ms for eight in one frame; the interface thread now spends about
+0.3 ms), and the start reports "not ready" until that thread has handed the child over. Every started
+creation is followed each frame (`PluginManager::creation_ready`, which advances it without
+installing it) and the ready ones attach one per frame, oldest first, so a plugin that takes minutes
+to load does not hold the others and the result does not depend on which plugin loads first. SKIP on
+a LOADING device (`AppCore::skip_plugin`) cancels its creation and leaves a SKIPPED stand-in that
+nothing queues again until RELOAD. Plugins loaded into the app process are still created one per
+frame. A freeze or a bounce with sandboxed plugins starts its own children next to the live ones, so
+the process count doubles while it runs; the live children are not reused, because the offline
+output must stay bit-identical.
 
 ### 2.7a Export as an audio file
 
@@ -2941,12 +2949,20 @@ thread moves `Box<Node>`s into per-worker `rtrb` job queues and gets them back t
 (no `unsafe`, no locks). Gathering inputs and scattering outputs always happen on the audio thread,
 in plan order, so the output is bit-identical for any worker count. The audio thread waits at a
 barrier (a bounded spin, then yielding its core; counted as telemetry); idle workers spin, then
-park. The app and `atomik-play` start at most `cores - 1` workers. A level with a single device is
-never dispatched. The app's default is an automatic count (`auto_workers` in
-[audio-io](../crates/audio-io/src/lib.rs)): one worker per physical core but the audio thread's own,
-at most 8. Simultaneous multithreading is read from the kernel on Linux and guessed elsewhere
+park, and spin only while a render call that can use them is running: the audio thread raises an
+atomic flag at the start of such a call (`Pool::begin_callback`, which also unparks every live
+worker so the wake-up overlaps the call's serial work) and lowers it at the end, and a worker that
+finds it down parks at once. A long linger therefore keeps workers awake for the whole callback
+and costs nothing between callbacks or while the transport is stopped; both calls are atomics and
+`unpark`, so the audio thread still allocates and locks nothing. The app and `atomik-play` start
+at most `cores - 1` workers. A level with a single device is never dispatched. The app's default
+is an automatic count (`auto_workers_for` in [audio-io](../crates/audio-io/src/lib.rs)): one
+worker per physical core but the audio thread's own, at most 8, one on a dual-core machine and
+none on a single core. The physical core count comes from the `num_cpus` crate; when it reports
+nothing, or more cores than threads, the old guess from the thread count stands in
 (`workers_auto` in `settings.json`; a file that sets `workers` and not `workers_auto` keeps its
-number, the Audio settings tab has an Auto chip).
+number, the Audio settings tab has an Auto chip). The stream start logs the count with the
+physical and logical counts it was derived from.
 
 ### Per-device processing time
 
@@ -4980,9 +4996,11 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   a 5 ms bypass crossfade to the dry main input (an effect's dry input is delayed by the plugin's
   reported latency, so a bypassed latent plugin stays where the delay compensation put it), applies
   the sleep and skip rules (they depend only on batch content), sets flush-to-zero around `process`,
-  and turns an error status, a panic or a non-finite output into FAILED (silence, or dry for
-  effects). Nothing in this path allocates or locks (`assert_no_alloc` tests at host blocks 1, 64,
-  333, 480, 512 with workers 1, 2, 4 and a restart in the middle).
+  and turns a panic, or a run of bad blocks (an error status or a non-finite output; `bad_run_limit`,
+  a quarter of a second), into FAILED (silence, or dry for effects). A single bad block is replaced by the
+  same fallback with a one-block ramp and counted (the seventh meter value, `bad plugin blocks`).
+  Nothing in this path allocates or locks (`assert_no_alloc` tests at host blocks 1, 64, 333, 480,
+  512 with workers 1, 2, 4 and a restart in the middle).
 - **Lifecycle (the manager).** The winit thread is the plugin main thread. `PluginManager` owns each
   instance's main-thread half, moves only the audio processor half into the `PluginDevice`, and
   talks to it through a `PluginSlot` (atomics) and wait-free `rtrb` rings. A **restart** (sample
@@ -4991,7 +5009,14 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   deactivates and activates again and sends it back; the device then re-sends every param the rack
   ever set. Dropping a device never destroys the plugin on the dropping thread: `Drop` posts to the
   **reaper queue**, and `poll` tears down on the main thread. An engine restart keeps the living
-  instances (`retain`, then `reattach` at the new rate: nothing is created again). Plugin callbacks
+  instances (`retain`, then `reattach` at the new rate: nothing is created again). A plugin that
+  reports another param table or other ports while it runs gets a new device of its own and nothing
+  else restarts (`AppCore::swap_device_layout`): a stand-in of the new shape takes the place of its
+  device, the instance is parked when the old device goes, and `adopt_offline` puts the live device in
+  when the plugin is active again, so the transport and the other devices keep going. The whole
+  engine is rebuilt only when another live instance of the same plugin was built with the old shape
+  (the registry describes the new one now, and that instance is created again as after any restart).
+  A plugin opened over an older scan whose ports differ is learned without an engine restart too. Plugin callbacks
   into the host only post to a bounded message ring that `poll` drains; a full ring drops and
   counts.
 - **Latency and PDC.** The reported latency (clamped to 1 s) is an atomic on the slot;
@@ -5010,7 +5035,11 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   carries a path: a device resolves only by (format, id) against that cache. A project that uses
   missing or disabled plugins opens with **stand-ins** that keep cables, channel, song track,
   automation, macro targets, pins and the state blob byte for byte, and RELOAD or a rescan swaps the
-  real plugin in.
+  real plugin in. The file can be tens of megabytes, so the interface thread never writes it: a scan's
+  end, a layout learned from a live plugin and the DISABLE of a crashed plugin hand a copy of the cache
+  to one writer thread ([plugin_cache_writer.rs](../crates/app/src/plugin_cache_writer.rs)), which
+  serialises and writes it; only the newest copy handed over is written, a failure is reported by the
+  next frame, and the exit waits for it at most five seconds.
 - **Plugin manager.** What the user decides about a plugin (a star, tags, hidden by Disable, the quarantine after
   three failures in a row) is kept by plugin id in `plugins_user.json` beside the settings, apart from the scan cache
   and the catalog, which it never touches: the browser and the menus hide a disabled or quarantined plugin, while a
@@ -5033,6 +5062,21 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   `SetState`. `PluginInstance::read_params` (sandbox: `ReadParams` and `ParamValues`) gives the host
   values the plugin holds, and `AppCore::refresh_knobs` writes the changed ones into the document as
   `SetParam`s folded into the same undo step, without echoing them back to the plugin.
+  In the live app none of these waits for the plugin (see "the live app never waits" below): the
+  list of presets and the param values are cosmetic requests (`PluginInstance::begin_list_presets`,
+  `begin_read_params`, answered later as `SoftAnswer::Presets` and `Params`), a preset load is a
+  polled held request (`begin_load_preset`, `poll_load_preset`; `AppCore::plugins_poll_preset_loads`
+  carries it a step per frame: the state the step goes back to is captured first when the plugin
+  changed since the last capture, then the load, then the state that results, which becomes the one
+  `SetState` with no merge id). The list is asked for once per instance (`PresetList`): the pane and
+  the browser show nothing until it lands, and a list the plugin failed to give is never taken for "no
+  presets": the next opening of the pane or the browser asks again, not sooner than five seconds after
+  the failure. Knob values that arrive late join the step of the change only while the document is
+  still as that change left it. Where the format keeps presets as files (VST3) the plugin's process
+  walks the folders on a thread of its own (`PluginInstance::preset_lister`) and that thread writes
+  the answer, so a plugin whose main thread is busy does not hold the walk up; CLAP discovery needs
+  the plugin and stays on its main thread. A bounce and a plugin in this process keep the
+  synchronous calls.
 - **Format v9.** `plugin` is written after `inner`: format, id, name, vendor, version, `path_hint`
   (shown, never used), a compact `layout` (sockets and **only the used param rows**), base64
   `state`, pins, run mode, powered. Params are saved sparsely. Canonical save, load, save is
@@ -5070,6 +5114,43 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   `settings.json` and `ui-state.json` are written with the same temporary-file-and-rename write
   (`recovery::atomic_write`); a file that does not parse is renamed `<name>.bad`, the defaults are
   used and the status line says so once.
+- **Plugin state is collected in the background.** The live UI never waits for a plugin's state
+  (the plugin answers on its own main thread, which is busy exactly when its patch has just
+  changed). `PluginManager::request_capture` / `poll_capture` ask for it without waiting: a sandboxed
+  instance sends `CaptureState` over a slot of the control link of its own
+  (`Link::begin_background`), nothing times it out, and a plugin in the app's own process answers at
+  the request. At most one request is out per instance; a request while one is out only makes the
+  answer say `again`, and a state restored into the plugin meanwhile makes the answer `stale` (it is
+  dropped). `AppCore::plugin_tick` asks one `STATE_QUIET_SECS` after a plugin flags its state dirty,
+  and `plugins_poll_captures` stores what has arrived (`store_captured`, one undo step as before; an
+  answer that is late, failed or stale never replaces a stored state). A periodic recovery snapshot
+  asks every loaded plugin and is written when all have answered or after `SNAPSHOT_GRACE_SECS`,
+  with the states stored by then; a snapshot after a capture changed a state is written from the
+  stored states alone, so a plugin that flags itself dirty after every capture cannot make the app
+  capture in a loop. Closing an editor requests a capture after the soft `CloseGui`. A command waits
+  for a plugin only where the stored state is about to be consumed (`plugins_flush_dirty`: undo,
+  redo and the commands `command_keeps_plugins` does not clear: it is an exhaustive match over
+  the command enums in `app_core_plugins_keep.rs`, so a new variant must be classified, and only
+  removing or replacing a device, copying one out of the document (a duplicate carries the
+  stored state), a container or plugin command and freezing a track wait), and save, archive, share,
+  templates, versions and an audio restart (`plugins_capture_all`) still capture synchronously;
+  they take the request that is out instead of sending a second one. A plugin that is alive but does
+  not answer (the sandbox's NOT RESPONDING state, `PluginManager::not_responding`) is never waited
+  for or stopped: its captures fail at once and the document keeps the state stored for it. The same
+  holds for a state too large to store: over the document's caps (`RackDoc::state_refusal`: 16 MiB per
+  plugin, 128 MiB for the project) or, for a plugin in its own process, over the 64 MiB one frame carries
+  (the child answers `WireErrorKind::StateTooLarge`, `BackendError::StateTooLarge`, and never ends for a
+  reply it cannot write: any reply over the frame or the 1 MiB reply JSON limit becomes an `Err`). The
+  device keeps the last state that fitted, carries `AppCore`'s `too_large` marker (the panel's second
+  line, `PluginDeviceStatus::state_too_large`) until a capture fits, and logs one warning per change of
+  situation. A save,
+  archive, share, template or version (`plugins_capture_for_save`) tells the user once which
+  devices did not hand over their settings or whose state was too large (one notice for all), an
+  audio restart and a removal only log it, and no
+  background request is sent to it. The state shows as `NOT RESPONDING` in the panel
+  (`PluginDeviceStatus::not_responding`) and in the plugin log and the file log (`ManagerEvent::NotResponding`
+  and `Responding`); it is not CRASHED, never reaches `settings.plugins.crashed` or the quarantine
+  count, and RELOAD stops the process (`PluginManager::stop_unresponsive`) and creates a new instance.
 - **Orphaned recordings.** An audio take streams to `Audio/rec-<pid>-<take>-<n>.wav` (2.6). At start
   and when a project opens, `recover_orphan_recordings` scans (bounded) the opened bundle's `Audio/`
   and the session scratch bundles in the temp folder for such files whose process has no live marker
@@ -5095,6 +5176,20 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     are unchanged and nothing on the audio path knows about groups. The crash domain is the process: when it
     ends or is stopped every member is lost and each reason names the group. An instance that is dropped leaves
     its slot and the process goes on. With the default setting the wire is the ungrouped one.
+  - *Thread priorities and the idle schedule.* The child's audio thread runs at the priority of the app's audio
+    thread (time-critical on Windows, the highest the system allows elsewhere; no MMCSS), because the app waits
+    for its answer on every batch. The thread waits for the next request on a schedule (`Pace` in
+    [audio.rs](../crates/plugin-hostd/src/audio.rs)): 10 ms while requests come, then 50 ms and finally 100 ms
+    when nothing arrives or no processor is started (50 ms at most while one is started, so a wake-up the plugin
+    asks for is not held back), and it spins only right after an answered request, never after a wait that timed
+    out. A request rings the doorbell and a command from the child's main thread (`install`, `take`) rings it
+    through a `ChildWaker`, so neither waits for a timeout. The schedule is tied to the sign of life: the app
+    judges a child alive from `Header.pulse`, which the audio thread bumps on every pass of `wait_request`, over
+    `ALIVE_WINDOW` (500 ms) and over its samples across calls, so no wait may exceed 100 ms (`LONGEST_WAIT`;
+    `wait_request` also parks in slices of at most `MAX_PARK`). The child's ticker (polls the plugin, forwards
+    what it posted) runs every 16 ms while an editor is open, a call just came or the plugin just posted
+    something, and every 100 ms otherwise (`TickVote` in
+    [driver.rs](../crates/plugin-hostd/src/driver.rs)).
   - *Editors inside the app window.* An editor is normally a top-level window of the child, owned by the app
     window. With `OpenGui { embed: true, owner }` the child instead makes it a frameless **child** of `owner`,
     a window the app made (`src/embed.rs` is the one `unsafe` call, `with_parent_window`), and tells the app its
@@ -5113,23 +5208,96 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     reply, and a bounce asks for a `Flush` after every batch, so a callback reaches the host before
     the next batch exactly as in process (a bounce counts in batches, never in time). Main-thread
     calls have timeouts. The ones that matter (10 s create, activate and state; 2 s deactivate and
-    flush) kill the child when they are not answered. The cosmetic ones (param text, default pins,
-    layout changes, closing the editor; 250 ms) only drop the request: the last text stays up, the
-    instance counts as slow after three misses in a row and is then asked once a second (a
-    warning says so), and the child is stopped after twelve. A reply that comes late is ignored,
-    except a layout change, which the child says only once and the instance keeps. The child
+    flush) kill the child when they are not answered, unless it shows a sign of life (below). The
+    cosmetic ones (param text, default pins, layout changes, the list of presets, the param values,
+    resize, closing the editor) are requests that do not hold the interface: each goes into a small
+    table of the link (the newest 64, the oldest dropped), the reader thread files its answer there
+    whenever it comes, and the main thread waits for it only a moment. The moment is what is
+    left of one allowance of 20 ms per frame that every instance of the manager shares (`SoftBudget`, `SOFT_FRAME_BUDGET`; the
+    manager begins a frame at each `poll`), at most 250 ms for one request, and none for an
+    instance that was waited for in vain already in this frame (a wait is recorded as a stall only
+    when it was asked to last 50 ms or more, so a short wait that the system woke late is not one,
+    though it still eats the allowance). An answer that is not there in
+    time is delivered later: `PluginInstance::take_soft_answers` hands the app the parameter texts
+    and editor sizes that arrived (`PluginManager::take_soft_answers`, outside the event stream
+    because they depend on the clock), and the parameter pane fills a row with a late text only if
+    the row still shows the value it was asked for. A parameter whose text is not there shows its
+    number meanwhile, never the text of its previous value. Resizing keeps at most one `ResizeGui` out
+    per instance: while one is, only the latest size wanted is remembered and sent when the answer
+    lands (ten sizes of a drag make two requests), and the frame or window follows the size the
+    editor took when that answer comes. A late layout change is kept for the next restart, as
+    before. Closing the editor is the one cosmetic call that waits its whole 250 ms (the window must
+    not go while the plugin may still use it); the state is asked for afterwards in the
+    background. The instance counts as slow when three of its cosmetic answers were late within
+    five seconds (a request not answered within the allowance, or an answer older than 250 ms
+    when it came); a fast answer does not end that, time does. A slow instance is waited for at
+    most once a second, its requests still go out and their answers are still used, and one
+    warning per slow episode tells the user. A soft request that nothing answered for as long
+    as an activation takes (10 s) is judged like any other unanswered call: NOT RESPONDING when
+    the child is alive, stopped when it shows no sign of life; late cosmetic answers alone never
+    stop or mark a child. A bounce waits the whole 250 ms for a cosmetic answer, without the
+    allowance. A plugin in this process answers every cosmetic call at once.
+    *The live app never waits for loading, restarting or ending a plugin.* A creation is a small
+    state machine inside its ticket (`begin_create`, `poll_create`): Instantiating, Restoring (only
+    with saved state), Activating, then Ready, one polled step per call, and the device stays a
+    LOADING stand-in until then. Restore and activate are held requests like the editor's
+    (`Link::begin_held_call`, `poll_reply`): they are judged by the long load timeout and by the
+    child's sign of life, not by the 10 s one, since a sampler may restore for minutes, and a
+    failed step fails the device with the text the blocking call gives. A restart's deactivate and
+    activate are polled the same way (the device plays dry meanwhile). An engine restart parks
+    every instance: all their deactivations go out together, `PluginManager::begin_reattach`
+    sends the activation of each one as soon as it is inactive, and the app keeps a stand-in for a
+    device until its plugin answers, so K slow plugins cost the slowest one, not the sum. An
+    instance that goes away (a removed device, a closed project, a cancelled load) is handed to the
+    manager's leaving list at once (`ManagerEvent::Destroyed` is not delayed) and
+    `PluginManager::poll` deactivates it and ends its process across frames; a child that does not
+    end within a second of being asked is stopped, as the drop always did. At exit the manager asks
+    every process to end and waits for all of them together, at most 10 s. Offline rendering keeps
+    the blocking path (`PluginManager::instantiate`; a bounce's link restores, activates and ends
+    its children with plain waits), so a bounce stays byte-identical and its event stream never
+    depends on the clock.
+    *A plugin that is alive is never stopped by a timeout.* The child's audio thread stores a
+    growing number in the `pulse` word of the block header on every pass of its wait loop (one
+    relaxed store, at least every 10 ms, whatever the plugin's main thread is doing). A wait that
+    times out reads it at the start and at the end of its last half second (a polled wait samples
+    it at every poll): a child whose pulse moved is alive, and then the call fails with an error
+    that begins `the plugin is not responding` (`NOT_RESPONDING`), the process is left running and
+    the link is stuck on that request: every later call fails at once without being sent (soft calls
+    answer their neutral result), `PluginInstance::not_responding` names the call, and the late
+    answer, when the reader thread sees its id, ends the state by itself. The manager reports
+    the state as `ManagerEvent::NotResponding` and `Responding` and answers `PluginManager::not_responding`.
+    A child with no sign of life is stopped as before, with the same text. A bounce
+    (`SandboxConfig::bounce`) keeps stopping on a timeout and never enters the state, so its event
+    stream does not depend on the clock. A reply that comes late is ignored, except a cosmetic
+    answer (above) and a layout change, which the child says only once and the instance keeps. The child
     takes a private handle to its real stdout for frames and
     points its stdout at stderr (`take_frame_stdout`), so a plugin that prints cannot corrupt the
     stream.
   - *Audio.* One shared block per instance (a mapped file of 54 528 bytes: header, one request area,
     one response area with the main and the aux output channels, raw `f32` bits and fixed-capacity
-    events), exchanged by sequence numbers.
+    events), exchanged by sequence numbers; the header also holds the child's `pulse` (the protocol
+    version is 3).
     `RemoteProcessor::process` copies the block in, rings the doorbell (Windows named event, Linux
     shared futex, macOS shared ulock; one atomic swap and no system call while the child is awake)
     and spins until the answer, the death flag or the deadline. Live, the deadline is one batch
-    period: a late answer gives `ProcessStatus::Late` (dry for an effect, silence otherwise, the
-    `late` meter counts it), and the events of a batch that could not be sent are carried to the
-    next one at offset 0, so a note-off is never lost. A bounce (`SandboxConfig::bounce`, set by
+    period, or the moment the running audio callback published as the end of its plugin budget when
+    that is later (`CallbackDeadline` in `atomik-core`: the output callback of `atomik-audio-io`
+    stores its start plus 70 % of the buffer duration in one relaxed atomic, the processor loads it
+    once per batch; never waited past, capped at 100 ms, and a stale or missing value is the plain
+    period, so a callback without slack behaves as before). A late answer gives
+    `ProcessStatus::Late` (dry for an effect, silence otherwise, the `late` meter counts it), and the
+    events of a batch that could not be sent are carried to the next one at offset 0, so a note-off
+    is never lost. After four full waits in a row that ran out, the processor polls the next 24
+    batches once instead of waiting (late at once when the answer is not there; counted late all
+    the same) and then tries a full wait again; an answer ends the run. A second rule keeps the
+    budget from costing more than one period for a plugin that cannot fit: a callback in which a
+    wait ran out at the published moment is exhausted for that processor (a new callback is the
+    published value changing), and after three exhausted callbacks in a row its waits ignore the
+    published value and last one period for 100 callbacks, then the budget is tried again; renewed
+    exhaustion doubles the span up to 500 callbacks and a callback inside the budget resets it. The
+    state is per processor, plain integers, and the render workers only read the published value,
+    so plugins of one level may wait together on different threads. Offline never reads the published
+    value or the clock for a decision. A bounce (`SandboxConfig::bounce`, set by
     `atomik-render`, also for `--plugin-mode realtime`) and an offline instance wait for every batch
     up to a 30 s watchdog, so a sandboxed bounce is byte-identical to an in-process one.
   - *Crash.* When the child ends, the reader thread marks the block dead (`DeathHandle`) and posts
@@ -5143,10 +5311,14 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     child also runs a watchdog thread that ends it a second after its parent's process is gone,
     and three seconds after the control channel closes, even when its main thread is stuck inside
     a plugin call (a stuck child is how an orphan used to survive). Live, `RemoteProcessor` counts
-    late batches in a row (plain integers on the audio thread, no lock): after three seconds' worth
-    the block is marked dead and the main thread ends the process with a reason that begins `HUNG`;
-    the app reloads such a plugin from its last captured state, twice in a row, then leaves it
-    CRASHED for the user (a bounce never counts: it waits for the watchdog). When instances are
+    late batches in a row in which the child completed nothing (its completed-request counter in
+    the block header did not move; plain integers and atomic loads on the audio thread, no lock):
+    after three seconds' worth the block is marked dead and the main thread ends the process with a
+    reason that begins `HUNG`. A child that keeps answering, however late, only raises the late
+    counter and is never declared hung. The app reloads a hung plugin from its last captured state,
+    twice in a row, then leaves it CRASHED for the user; a stop by the hang guard does not count
+    toward the quarantine, a real crash does (a bounce never counts: it waits for the watchdog).
+    When instances are
     dropped (closing a project, quitting) the manager asks every child to end first and waits for
     them on one shared deadline, so slow children cost one second together, not each. Everything a
     child sends is bounded before it is allocated: replies and notifications at 1 MiB of JSON,
@@ -5176,7 +5348,8 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   `ModuleEntry`) and keeps the module alive while a plugin of it lives; `layout.rs` lists the audio
   classes, negotiates the buses (stereo or mono main, an optional stereo sidechain, everything else
   deactivated, surround refused with the reason) and reads params (hidden, read-only and
-  program-change ones skipped, units as modules), `IMidiMapping` and note-expression support;
+  program-change ones skipped, and the per-channel controller stand-ins that `IMidiMapping` reveals, asked once
+  per scan and per instance with a half-second budget; units as modules), `IMidiMapping` and note-expression support;
   `instance.rs` is the main-thread half (component and controller created and connected through two
   proxies so neither holds the other, the controller brought in step with the component's state, the
   host `IComponentHandler`, the editor `IPlugView` with an `IPlugFrame` that is also an `IRunLoop`);
@@ -5246,7 +5419,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (663) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (664) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -6650,6 +6823,23 @@ winit and GPU code is not (it needs a window and a GPU).
   Every window has its own `Scene` and `SceneCache`; the `TextEngine` is shared. `render_offscreen`
   (`--screenshot`) is separate and writes one PNG per open window (`shot.png`, `shot-rack.png`,
   `shot-console.png`).
+- **A lost graphics device is rebuilt, not fatal.** The context installs two callbacks on every device it makes
+  (`GpuHealth`): the uncaptured-error handler and the device-lost callback only set an atomic flag and keep the
+  reason text (running out of memory or an internal error loses the device; a rejected command is only noted, once
+  per text). `App::service_graphics` reads the flag at the start of every frame and every tick, and a frame that
+  reports `FrameResult::Lost` raises it too. The decisions are in
+  [gpu_recovery.rs](../crates/app/src/platform/gpu_recovery.rs) (plain data, unit-tested): `Recovery::poll` says
+  "tear down now" once and "rebuild now" when due, with the waits 0.5 s, 1 s, 2 s, then 5 s after a failed attempt
+  (a loss within ten seconds of a rebuild waits like a retry, so a failing device cannot spin the app). Tearing
+  down drops the surface of every window (main, detached rack and mixer, other secondary windows), of every docked
+  plugin frame's title bar (`DockFrames`) and of every Learn strip (`LearnStrips`); rebuilding makes a new
+  `GpuContext` (instance, adapter, device and the vello renderer, which holds the image atlas), a surface for each
+  of them, and repaints everything. Nothing else holds a device resource: scenes, the scene cache and the text
+  engine are recorded on the CPU. Audio, the document and the plugins are not touched. A failed attempt logs one
+  line and the first one asks for a recovery snapshot. A surface or render target is never larger than the device's
+  `max_texture_dimension_2d` (`clamp_size`). The log has one WARN line when the device is lost (with the reason)
+  and one INFO line when the graphics are back (with the adapter line). `ATOMIK_GPU_LOSS_EVERY=<seconds>` destroys
+  the device that often, for testing.
 - **The arrangement keeps two recorded layers.** `ArrangementView` records the lanes (backgrounds,
   grid, clips, waveforms, drags, take ghosts) and the track list into `DisplayList`s stamped with
   a process-unique revision ([paint_cache.rs](../crates/ui/src/arrangement/paint_cache.rs)), so a
@@ -7801,7 +7991,7 @@ The spectrum and the phase meter (section 6k) have panels of the same kind (`FxK
 | The automation hold (the lanes a take is writing) is a fixed array of atomics the player loads once per batch; setting it is a few stores from the UI thread | `AutomationHold` in [player.rs](../crates/engine/src/player.rs); [song_automation_hold.rs](../crates/engine/tests/song_automation_hold.rs) runs it under the counting allocator |
 | Disk, decoding, hashing and WAV writing exist only in non-RT crates and threads | `atomik-audio-file`, the app workers, the streamer |
 | `unsafe` is denied workspace-wide; only the plugin backends and the sandbox wire (whole crates), two host modules, the test allocator and the test plugins allow it, each block with a `SAFETY:` comment | root `Cargo.toml`; the `unsafe` column of the crate table in section 1; [unsafe_policy.rs](../crates/plugin-host/tests/unsafe_policy.rs) |
-| The plugin sandbox's engine side copies into the mapped block and spins on its own child for at most one batch period live (a bounce waits up to the watchdog): the one bounded wait on the render path, with no lock, no allocation and no blocking system call | `RemoteProcessor` in [plugin-sandbox/src/processor.rs](../crates/plugin-sandbox/src/processor.rs), `ParentPort` in [plugin-ipc/src/parent.rs](../crates/plugin-ipc/src/parent.rs); the no-alloc tests there and in [plugin-hostd/tests](../crates/plugin-hostd/tests) |
+| The plugin sandbox's engine side copies into the mapped block and spins on its own child for at most one batch period live, or up to the end of the callback's published plugin budget (a bounce waits up to the watchdog): the one bounded wait on the render path, with no lock, no allocation and no blocking system call | `RemoteProcessor` in [plugin-sandbox/src/processor.rs](../crates/plugin-sandbox/src/processor.rs), `ParentPort` in [plugin-ipc/src/parent.rs](../crates/plugin-ipc/src/parent.rs); the no-alloc tests there and in [plugin-hostd/tests](../crates/plugin-hostd/tests) |
 
 Tests (the counting allocator is described in [TESTING.md](TESTING.md#allocation-guard-hi-1)):
 
@@ -7904,6 +8094,25 @@ A bug in a device must cost that device, not the session. The rules:
   [crates/engine/tests](../crates/engine/tests) fails if any profile sets `abort`. Tests:
   `a_panicking_device_is_contained` ([multicore.rs](../crates/engine/tests/multicore.rs)),
   `a_panicking_decoder_returns_error` ([decode.rs](../crates/audio-file/src/decode.rs)).
+
+- **The UI thread.** The windowed event loop ([platform/app.rs](../crates/app/src/platform/app.rs)) runs
+  each of its dispatch points through `ui_guard::run` ([ui_guard.rs](../crates/app/src/ui_guard.rs)): a
+  window event, the per-tick work and a window's redraw. A caught panic (the hook has already written the crash
+  report) asks every open song for a recovery snapshot, drops the capture, menu, file drag and drag-merge group
+  that may have been left open, raises the internal-error notice of the banner strip once (not again within 30 s),
+  repaints everything and keeps the loop running. Five panicking ticks or redraws in a row pause the content:
+  `Shell::paint_in` draws the notice alone and the pointer reaches only its buttons, so Save stays reachable until
+  the app is restarted. A panic that ends a graphics rebuild half way counts as a failed attempt (the device is
+  treated as lost and the back-off retries). The locks on the UI thread's paths recover a poisoned guard, and a
+  `RefCell` borrow ends as the stack unwinds, so no state is left locked. Only the windowed loop is guarded:
+  the headless shell, the QA server and the tests drive the shell directly, so a test that expects a panic still
+  sees it. An unattended windowed run (`--quit-after`, `--screenshot`, a stress load) that contained a panic
+  keeps running but ends with a non-zero exit code and one log line (`ui_guard::exit_failure`), so a script that
+  reads only the exit code does not take it for a success; an attended session exits normally.
+  `ATOMIK_UI_PANIC=<event|frame|paint>[:<times>]` makes a point panic, for hand checks.
+- **Exit is bounded.** The wait for the recovery writer and the removal of the session's scratch folder give up
+  after `recovery::EXIT_WAIT` (5 s) instead of hanging on a stalled disk; `RecoveryWriter`'s `Drop` leaves a stuck
+  thread to end with the process. Offline paths keep their exact waits (`RecoveryWriter::wait`).
 
 ### HI-3: graph validity
 

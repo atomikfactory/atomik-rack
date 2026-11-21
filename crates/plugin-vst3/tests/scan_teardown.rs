@@ -16,12 +16,12 @@ fn scanning_creates_and_destroys_every_instance_even_the_ones_that_fail_halfway(
     let lib = TestLib::open_path(&path);
     let b = Vst3Backend::new();
     let found = b.scan_file(&path).unwrap();
-    assert_eq!(found.len(), 9);
+    assert_eq!(found.len(), 13);
     assert!(found.iter().filter(|p| p.unsupported.is_some()).count() >= 3);
-    assert_eq!(lib.counter(counter::CREATED), 9, "one instance per class");
+    assert_eq!(lib.counter(counter::CREATED), 13, "one instance per class");
     assert_eq!(
         lib.counter(counter::DESTROYED),
-        9,
+        13,
         "the unsupported and the failed ones are torn down, too"
     );
 }

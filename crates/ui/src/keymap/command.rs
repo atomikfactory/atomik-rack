@@ -2145,6 +2145,12 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     ),
     cmd(
+        "plugin.skip_loading",
+        "Skip Loading Plugin",
+        G::Rack,
+        C::Global,
+    ),
+    cmd(
         "practice.count_in",
         "Practice: Count-in",
         G::Transport,

@@ -385,6 +385,8 @@ pub enum WireErrorKind {
     Unsupported,
     /// [`BackendError::Failed`].
     Failed,
+    /// [`BackendError::StateTooLarge`]: the text is the size and the limit, `"<bytes>/<limit>"`.
+    StateTooLarge,
 }
 
 impl WireErrorKind {
@@ -395,6 +397,11 @@ impl WireErrorKind {
             BackendError::UnknownPlugin(t) => (Self::UnknownPlugin, t.clone()),
             BackendError::Unsupported(t) => (Self::Unsupported, t.clone()),
             BackendError::Failed(t) => (Self::Failed, t.clone()),
+            BackendError::StateTooLarge { bytes, limit } => {
+                (Self::StateTooLarge, format!("{bytes}/{limit}"))
+            }
+            // Only the app side starts the child: the child never says this itself.
+            BackendError::Spawn(t) => (Self::Failed, t.clone()),
         }
     }
 }
@@ -406,6 +413,13 @@ pub fn into_backend_error(kind: WireErrorKind, text: String) -> BackendError {
         WireErrorKind::UnknownPlugin => BackendError::UnknownPlugin(text),
         WireErrorKind::Unsupported => BackendError::Unsupported(text),
         WireErrorKind::Failed => BackendError::Failed(text),
+        WireErrorKind::StateTooLarge => match text.split_once('/') {
+            Some((bytes, limit)) => match (bytes.parse(), limit.parse()) {
+                (Ok(bytes), Ok(limit)) => BackendError::StateTooLarge { bytes, limit },
+                _ => BackendError::Failed(text),
+            },
+            None => BackendError::Failed(text),
+        },
     }
 }
 
@@ -1070,6 +1084,10 @@ mod tests {
             BackendError::UnknownPlugin("x.y".to_string()),
             BackendError::Unsupported("no editor".to_string()),
             BackendError::Failed("boom".to_string()),
+            BackendError::StateTooLarge {
+                bytes: 70_000_000,
+                limit: 67_108_864,
+            },
         ] {
             let (kind, text) = WireErrorKind::of(&e);
             let (kind, _) = round_trip(&kind, None);

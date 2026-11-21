@@ -59,7 +59,8 @@ pub fn to_wire(message: PluginMessage) -> Option<FromChild> {
         // The tick polls the plugin anyway; the process exit is the parent's own business.
         PluginMessage::RequestCallback
         | PluginMessage::Refused { .. }
-        | PluginMessage::ProcessExited { .. } => return None,
+        | PluginMessage::ProcessExited { .. }
+        | PluginMessage::Stall { .. } => return None,
     })
 }
 

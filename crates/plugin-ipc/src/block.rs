@@ -350,6 +350,7 @@ mod tests {
         assert_eq!(header.version, PROTOCOL_VERSION);
         assert_eq!(header.req_seq.load(Ordering::Relaxed), 0);
         assert_eq!(header.done_seq.load(Ordering::Relaxed), 0);
+        assert_eq!(header.pulse.load(Ordering::Relaxed), 0);
         assert_eq!(std::fs::metadata(&path).unwrap().len(), BLOCK_SIZE as u64);
         assert_eq!(block.path(), path.as_path());
     }

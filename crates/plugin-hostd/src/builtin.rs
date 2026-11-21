@@ -4,6 +4,10 @@
 //!
 //! * `null.gain`: stereo effect, output = input x 0.5; param 0 "Pass" (0 or 1) at 1 gives
 //!   output = input. Events apply at their frame offset. Its state is the Pass value.
+//!   Every state request of any null plugin waits `ATOMIK_NULL_CAPTURE_DELAY_MS` milliseconds first
+//!   (default 0, read at each request): a plugin whose main thread is busy. With
+//!   `ATOMIK_NULL_STATE_BYTES` set (read at each request) a captured state is that many bytes
+//!   (the Pass value first, then zeros; at least 8): a plugin that embeds its samples.
 //! * `null.latency`: passthrough that reports 32 frames of latency.
 //! * `null.crash`: passthrough that aborts the process in `process` after N batches (N from
 //!   `ATOMIK_NULL_CRASH_AFTER`, default 0, read at activation).
@@ -13,6 +17,10 @@
 //! * `null.noisy`: a passthrough that prints to stdout everywhere (instantiate, activate, process,
 //!   poll), with `println!` and with raw writes, to test that stdout is not the control channel.
 //! * `null.synth`: an instrument, a sine per held note, cut at note off.
+//! * `null.busy`: a passthrough that keeps the processor busy (a spin, so the work shows as CPU)
+//!   for `ATOMIK_NULL_BUSY_US` microseconds per batch (default 0, read at activation). With
+//!   `ATOMIK_NULL_BUSY_BURST` set it is cheap for seven batches and busy on the eighth, like a
+//!   plugin that works in blocks.
 
 use atomik_core::{BATCH, Batch};
 use atomik_device_sdk::{
@@ -32,6 +40,18 @@ use std::time::Duration;
 /// Environment variable: how many batches `null.crash` processes before it aborts.
 pub const CRASH_AFTER_ENV: &str = "ATOMIK_NULL_CRASH_AFTER";
 
+/// Environment variable: how long a state request waits before it is answered, in milliseconds.
+pub const CAPTURE_DELAY_ENV: &str = "ATOMIK_NULL_CAPTURE_DELAY_MS";
+
+/// Environment variable: how many bytes a captured state of a null plugin has.
+pub const STATE_BYTES_ENV: &str = "ATOMIK_NULL_STATE_BYTES";
+
+/// Environment variable: microseconds `null.busy` spends per batch.
+pub const BUSY_US_ENV: &str = "ATOMIK_NULL_BUSY_US";
+
+/// Environment variable: set, `null.busy` is busy on every eighth batch only.
+pub const BUSY_BURST_ENV: &str = "ATOMIK_NULL_BUSY_BURST";
+
 /// Frames of latency `null.latency` reports.
 const LATENCY: u32 = 32;
 
@@ -49,6 +69,7 @@ enum Kind {
     HangActivate,
     Synth,
     Noisy,
+    Busy,
 }
 
 impl Kind {
@@ -62,6 +83,7 @@ impl Kind {
             "null.hang-activate" => Self::HangActivate,
             "null.synth" => Self::Synth,
             "null.noisy" => Self::Noisy,
+            "null.busy" => Self::Busy,
             _ => return None,
         })
     }
@@ -147,6 +169,7 @@ impl PluginInstance for BuiltinInstance {
                 Box::new(NoisyProcessor)
             }
             Kind::Synth => Box::new(SynthProcessor::new(cfg.sample_rate)),
+            Kind::Busy => Box::new(BusyProcessor::from_env()),
         })
     }
 
@@ -161,15 +184,30 @@ impl PluginInstance for BuiltinInstance {
     }
 
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError> {
-        Ok(PluginStateBlob(
-            self.pass.load(Ordering::Relaxed).to_le_bytes().to_vec(),
-        ))
+        let delay = std::env::var(CAPTURE_DELAY_ENV)
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        if delay > 0 {
+            std::thread::sleep(Duration::from_millis(delay));
+        }
+        let mut state = self.pass.load(Ordering::Relaxed).to_le_bytes().to_vec();
+        if let Some(bytes) = std::env::var(STATE_BYTES_ENV)
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+        {
+            state.resize(bytes.max(state.len()), 0);
+        }
+        Ok(PluginStateBlob(state))
     }
 
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError> {
-        let bytes: [u8; 8] =
-            state.0.as_slice().try_into().map_err(|_| {
-                BackendError::Failed("the null plugin state is 8 bytes".to_string())
+        let bytes: [u8; 8] = state
+            .0
+            .get(..8)
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(|| {
+                BackendError::Failed("the null plugin state is at least 8 bytes".to_string())
             })?;
         if !f64::from_le_bytes(bytes).is_finite() {
             return Err(BackendError::Failed(
@@ -294,6 +332,56 @@ impl PluginProcessor for GainProcessor {
         Self::fill(io, pos, BATCH, Self::gain_of(pass));
         self.pass.store(pass.to_bits(), Ordering::Relaxed);
         ProcessStatus::Continue
+    }
+}
+
+/// A passthrough that spins for a while in every batch, or in every eighth (a measuring aid).
+struct BusyProcessor {
+    spin: Duration,
+    burst: bool,
+    batches: u64,
+}
+
+impl BusyProcessor {
+    fn from_env() -> Self {
+        let us = std::env::var(BUSY_US_ENV)
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        Self {
+            spin: Duration::from_micros(us),
+            burst: std::env::var_os(BUSY_BURST_ENV).is_some(),
+            batches: 0,
+        }
+    }
+}
+
+impl PluginProcessor for BusyProcessor {
+    fn start_processing(&mut self) -> bool {
+        true
+    }
+
+    fn stop_processing(&mut self) {}
+
+    fn reset(&mut self) {}
+
+    fn process(&mut self, io: &mut PluginIo<'_>) -> ProcessStatus {
+        self.batches += 1;
+        if !self.burst || self.batches.is_multiple_of(8) {
+            spin_for(self.spin);
+        }
+        copy_through(io);
+        ProcessStatus::Continue
+    }
+}
+
+/// Burns CPU for `d`: a plugin's work, which a sleep would not be.
+// Justification: a test plugin that imitates DSP time; it feeds no signal path (HI-2).
+#[allow(clippy::disallowed_methods)]
+fn spin_for(d: Duration) {
+    let end = std::time::Instant::now() + d;
+    while std::time::Instant::now() < end {
+        std::hint::spin_loop();
     }
 }
 

@@ -1074,3 +1074,396 @@ freeze worker (the render path Join Clips of different files uses), also one ste
 second comp model for the editor; making the stereo link the default (it changes old renders).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AN. Plugin state is collected in the background in the live app; explicit saves still wait
+
+**Question.** A plugin answers a request for its state on its own main thread, which is busy exactly when the state
+has just changed (a patch loading in its window). The app asked on the UI thread, a second after each change, before
+every command and when an editor closed, so a busy plugin froze the whole interface until it answered or was stopped
+for taking too long.
+
+**Decision.** In the live app the state is asked for without waiting and stored when it arrives. The request has a
+slot of its own on the control link, so it can be out while other calls go on, and nothing times it out: a plugin
+that is busy answers when it is free, and one that is gone is noticed by the process watch as before. At most one
+request is out per instance. A request that comes while one is out only asks again when that one lands, and an
+answer that was overtaken by a restore of the state is dropped. A late, failed or dropped answer never replaces a
+stored state. The step in the undo history appears when the state arrives, and changes inside one request fold into
+it as bursts already did.
+
+A wait stays only where the stored state is about to be used: save, archive, share, templates, versions, an audio
+restart and a preset load need the state now, and undo, redo and any command that could remove, replace or copy a
+plugin device capture first, so the removal's undo and the copy carry the latest state. Those take
+the request that is out instead of sending another. A recovery snapshot never asks: it is written from
+the stored states, and a periodic one asks every plugin first and goes without those that have not
+answered after two seconds.
+
+**Rejected.** A shorter timeout (a working plugin is still stopped, and the freeze is only shorter); a thread that
+waits for the plugin (a second place that can stall, and the answer still has to reach the document on the UI
+thread); capturing on every parameter change (a plugin that flags itself dirty after a capture would loop).
+
+**Open.** What a save does when the plugin does not answer in time: see AO.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AO. A plugin that is alive is never stopped by a timeout; the user decides
+
+**Question.** A request to a sandboxed plugin that is not answered in time (ten seconds for the state, a restore,
+an activation or the presets; twelve missed cosmetic calls in a row) stopped the plugin's process and marked it
+crashed. In a real log this happened to a plugin that was working: its main thread was busy, its audio thread was
+still running. Stopping it lost the user's sound and every setting made in its window since the last capture.
+
+**Decision.** A timeout stops a plugin's process only when the process shows no sign of life. The sign of life is a
+counter in the shared block that the process's audio thread bumps on every pass of its loop (one relaxed store, a
+pass at least every ten milliseconds whatever the plugin's main thread does); a timed-out wait that sees it move in
+its last half second leaves the process alone. The call fails, and the plugin is NOT RESPONDING: the app stops
+waiting for it (every later call fails at once, without being sent, and a cosmetic call returns its neutral result),
+asks it for nothing more, and the state ends by itself when the late answer arrives. The plugin is not marked
+crashed, does not count toward the quarantine and keeps the last state stored for it. The user decides: RELOAD
+stops the process and starts a new one from the stored state. A save, archive, share, template or version while a
+plugin does not answer completes with the stored state and tells the user once; an audio restart and the removal of
+the device go on the same way and write a line in the plugin log. A process with no sign of life is stopped as
+before, with the same text, and offline rendering (a bounce, an export, a freeze) keeps its watchdog and stops on a
+timeout, so a render never depends on the clock and never enters the state.
+
+**Rejected.** Waiting without a limit (a wedged plugin would block a save forever); a longer timeout (a working plugin
+is still stopped, later); a heartbeat written by the plugin's main thread (it stops exactly when the plugin is
+busy); a thread in the app that pings the plugin (a second place that can stall); failing a save while a plugin does
+not answer (the user loses the rest of the project to one busy plugin).
+
+**Open.** Whether a plugin that stays NOT RESPONDING for minutes should offer to be stopped without the RELOAD
+button; whether the notice after a save should offer to save again once the plugin answers.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AP. Render workers spin only inside a callback, and the automatic count follows the physical cores
+
+**Question.** With an audio stream open, every render worker kept a core busy even with the transport stopped and
+nothing sounding: the app's worker linger (500 000 spins, chosen so that workers are already awake when a callback
+needs them) is longer than the gap between two callbacks, so workers never parked. A stopped 100-device rack cost
+829 % of one core with 8 workers and 216 % with 2 (about 20 % with none), and a machine of two cores and four
+threads was counted as four cores and given three workers.
+
+**Decision.** The pool has an atomic "a callback is active" flag. The audio thread raises it at the start of every
+render call that can use the pool (a plan with a level of two or more devices, a pool that is not empty), unparks
+every live worker so the wake-up overlaps the first serial work of the call, and lowers it at the end of the call.
+A worker spins while it has spun fewer than the linger **and** the flag is up; otherwise it parks. Inside a callback
+nothing changes; between callbacks no worker spins. The audio thread uses atomics and `unpark` only. The linger
+setting keeps its choices and its default (500 000 spins): it now bounds the spinning inside one callback, which is
+bounded by the callback itself, so the long value costs nothing between callbacks and keeps workers awake through
+a long callback. Offline rendering is unchanged in output (bit-identical for any worker count). The automatic worker
+count is one per physical core but the audio thread's own, at most 8, one worker on two cores and none on one core;
+the physical count comes from the `num_cpus` crate, with the old thread-count guess as the fallback when it reports
+nothing or more cores than threads. An explicit worker count is never overridden.
+
+**Evidence.** The paced benchmark (`bench_paced_callbacks_per_linger` in `crates/engine/tests/worker_linger.rs`,
+release, 4 workers, a callback every 2.7 ms at 128 frames, no audio device; the table is in `perf/BASELINE.md`)
+shows the process CPU falling from 420 to 450 % of a core with the long linger (flag forced up, the old behaviour) to
+about 60 % at 128 frames, of which about 50 points are the benchmark's own pacing loop, and from 390 % to 14 % at 480
+frames. The price is the OS wake-up of a parked worker at the start of each callback: at 128 frames the median
+callback rose from about 42 to about 66 microseconds and the p99 from about 61 to about 140 microseconds (the p99 is
+5 % of the 2.7 ms budget), against a p99 of 130 for the old behaviour with the short engine linger; at 480 frames the
+p99 is about 260 to 330 microseconds against 200 to 260. The after rows are alike whatever the linger, so the
+default does not change.
+
+**Rejected.** Keeping workers spinning for a short time after a callback (the gap is 2.7 ms at 128 frames, longer
+than any useful grace, and it would bring the idle cost back in proportion); lowering the default linger (it would
+only make workers park inside long callbacks and wait for an OS wake-up between levels); a count of workers read
+only from the thread count (it cannot tell two cores of four threads from four cores).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AQ. Cosmetic plugin answers never hold a frame: ask now, use later, and a slow plugin is judged by time
+
+**Question.** The interface asks a sandboxed plugin for things that only polish it: the text of a parameter value
+(one request per visible row of the parameter pane for every new value, all in one frame), the size of an editor
+(one per resize event of a window or dock drag), the default pins, a layout change, closing the editor. Each waited up
+to 250 ms on the interface thread for the plugin's main thread, which a plugin keeps busy exactly when it loads a
+preset or builds a window. Three misses made the instance slow for a second, but one answer reset the count, so a
+plugin that answered between its stalls cost three full waits again and again; twelve misses stopped the process
+although it was alive (the rule of AO covered the important calls, not these).
+
+**Decision.** A cosmetic request is sent at once and filed in a small table of the link; the reader thread files the
+answer whenever it comes, and the app collects the late ones every frame (parameter texts and editor sizes) and puts
+them to use: a text fills its row only if the row still shows the value it was asked for, and a parameter whose
+text is not there shows its number, never the text of the previous value. The main thread waits for an answer only
+for what is left of one allowance of 20 ms per frame shared by all instances, never longer than 250 ms for one
+request, and not at all for an instance that was waited for in vain already in this frame. An instance is slow while
+three of its answers within five seconds were late; one fast answer does not end that, time does. A slow instance is
+waited for once a second at most (its requests still go out and their answers are still used), and the user gets one
+warning per slow episode instead of one per recovery. Resizing keeps one request out per instance and only the
+latest wanted size behind it, so a drag is two requests, not a backlog. Closing the editor keeps its single bounded
+wait of 250 ms, since the window must not go while the plugin may still use it; the state is then asked for in the
+background as before. Late cosmetic answers never stop or mark a plugin; a request that nothing answered for as
+long as an activation takes (the `create` timeout, 10 s) is judged like any other unanswered call: NOT RESPONDING
+when the process shows a sign of life, stopped when it does not. A bounce keeps a plain wait of 250 ms and no
+allowance, so it does not depend on the frame. A plugin in this process still answers synchronously.
+
+**Rejected.** Dropping the late answer (the pane stayed on the number although the plugin had answered); a thread
+that asks the plugin on the app's behalf (another place that can stall, and the answer still has to reach the UI
+thread); a shorter wait per call without a shared allowance (thirty rows still add up); keeping the last text up
+while the plugin is busy (it is the text of another value); killing after a count of misses (a live plugin is
+never stopped for being slow).
+
+**Open.** The 20 ms allowance and the five-second window are not tuned against real plugins; the hand check is a
+parameter pane open while a sampler plugin loads a large patch.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AR. The live interface never waits for a plugin to load, restart or end; offline rendering does
+
+**Question.** After the state captures and the cosmetic calls, three more things still held the interface thread,
+each for up to 10 s: creating a plugin (restoring its saved state and activating it ran in one frame, so a sampler
+restoring a big library froze the app), a restart or an engine restart (every instance deactivated one after the
+other, then activated one after the other, so K slow plugins cost K waits), and removing a device or closing a project
+(the instance was deactivated and its process ended in a blocking drop of up to three and a half seconds).
+
+**Decision.** In the live app the interface thread starts these calls and looks again on a later frame. A creation
+goes through starting, restoring and activating as polled steps with the long load timeout and the sign-of-life
+judgement; a restart re-activates the same way and the device plays dry meanwhile; an engine restart sends every
+deactivation and then every activation without waiting, and a device is a stand-in until its plugin is active; an
+instance that goes away is destroyed for the app at once and deactivated and ended by the next frames, with the
+existing bounds (a process that does not end a second after it was asked is stopped). A plugin in this process
+and everything offline keep the blocking calls: a bounce, an export and a freeze never depend on how long a plugin
+takes, and its event stream never carries a time-dependent entry. The rule is "the live interface never waits for a
+plugin; offline rendering does".
+
+**Rejected.** Running the creation on a thread (a plugin needs the thread it was created on for some calls, and the
+polled requests already exist); waiting for all deactivations together and then all activations together (the
+interface still stands still for the slowest plugin); letting the old instance finish before an undo may create a new
+one (the user would wait for a plugin that was removed on purpose); killing a plugin that is alive but slow to restore
+(only the load timeout and the absence of a sign of life stop one).
+
+**Open.** A sampler that restores for minutes is not yet tried against the real thing; the hand check is a project
+whose sampler holds a large library, opened, restarted by a sample rate change and removed.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AS. A plugin's MIDI controller stand-ins are left out of its parameter list, unless the project uses them
+
+**Question.** Many VST3 plugins publish one parameter for every MIDI channel and controller number, so that a host
+without MIDI routing can still automate a controller. On a typical set of plugins most of all listed parameters
+were such stand-ins, many plugins hit the 2 048-entry limit with them and had real parameters cut off behind them,
+and each one was parsed at start, copied into every instance, written twice into the project's layout snapshot when
+the plugin went live, saved and offered in every menu. A project must still load with every lane, learned control,
+macro target and stored value intact, including the ones that name a stand-in, and a bounce must not change.
+
+**Decision.** A VST3 parameter is a stand-in when `IMidiMapping` assigns it to exactly one channel and controller
+pair, and that controller number goes to a different parameter on at least one other channel. The scan and every
+instance (and every re-read after a restart) ask for all 16 channels and all 130 controller numbers once, with a
+budget of half a second in total; a plugin that is slower, or has no mapping, keeps today's table. A parameter every
+channel reaches through the same controller (a mod wheel, a volume), or only one channel reaches, is a real control
+and stays. The stand-ins are left out of the table; the mapping itself is untouched, so controllers still reach the
+plugin, and a stand-in's step count is kept so a value for it still converts. The scanner version is 4, so the next
+scan rebuilds the plugin list file; an older file still loads and its entries are scanned again.
+
+*Keep what the project uses.* The document is the authority on what must stay: a parameter is **used** when a stored
+value, a track's automation lane, a note clip's parameter lane, a macro target or bank assignment, a panel pin or a
+learned MIDI control names it (`RackDoc::plugin_param_usage`, which also decides which layout rows a save keeps; the
+last two kinds were added to it, since the layout used to be recoverable from the scan and no longer is). The rows
+of the used parameters, taken from the layout snapshot the document keeps (its rows are what a save writes), are
+handed to the plugin host (`PluginHost::set_pinned_params`) before the descriptors are registered and before an
+instance is made. The registry's descriptor of the plugin and the layout of every instance are then the plugin's
+own table followed by those rows in id order (`merge_pinned`; the plugin's last parameters give way if the table
+would pass the cap, a pinned row never does), so the two agree, the descriptor knows `p<id>` before and after the
+plugin is live, and a rescan (which registers the descriptors again) and a reload (which pins what the loaded
+project uses) give the same table. The layout snapshot stored in an existing project (it lists the rows the project
+used when it was saved) loads unchanged; when the plugin goes live the live layout replaces it, which is the same
+rows plus the plugin's own table, so a project saved afterwards writes the same used rows as before. Pins are
+recomputed when a document is opened and before each instance is created, so a pasted device that uses a stand-in
+is covered too. The bounce refuses a plugin whose table no longer matches the registry's (the time budget could
+make the scan and a later instance differ), since a lane would then drive another parameter.
+
+**Rejected.** Dropping every parameter `IMidiMapping` names (it would remove a real volume or mod wheel control that
+a plugin maps to one controller); hiding the stand-ins in the menus only (the cost is the table, not the menu);
+passing the used ids into the instance's own table read (the scan, the registry and the live layout would each
+need the document, and a bounce needs the registry before the plugin is loaded); keeping a separate list of the
+stand-ins in the scan cache (a second copy of what the document already holds for the parameters that matter).
+
+**Open.** A referenced parameter the plugin no longer has at all (a newer plugin version dropped it) is pinned too
+while the project holds a row for it, so it shows in the list and does nothing; before it was a dead key. A
+stand-in's value is not read back from the plugin when a preset loads. The hand check is a project made with an
+older version that automates a stand-in of a sampler or synth plugin, opened, saved and bounced.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AT. Plugins attach as they become ready, and a plugin that is loading can be skipped
+
+**Question.** Up to eight plugins load at the same time, but the app followed and attached only the one at the front
+of the queue: a plugin that waits for a licence dialog or reads a huge library for minutes left every later,
+already loaded plugin a silent stand-in. A loading device offered no way out except waiting for the load timeout
+or removing the device.
+
+**Decision.** Every started creation is advanced each frame without being installed (`PluginManager::creation_ready`
+stops at an active plugin, so nothing of it is listed or reported before the app takes it), and the oldest ready
+one in queue order is attached, one per frame. Devices are keyed by their path, not by the order of attachment, and
+an attach changes no audio of the others, so the project sounds the same whichever plugin finishes first. SKIP is
+the RELOAD button while a device says LOADING, and the command Skip Loading Plugin for the selected device: it
+cancels the creation (the process ends across frames), leaves the stand-in with the stored state untouched, and the
+device says SKIPPED. A skipped device is not queued again by a rebuild, a rescan or a paste; RELOAD creates it. It
+is not a crash and not a failed load, so neither the crashed settings nor the quarantine count change.
+
+Making the child (the shared block, the doorbell and the process) took about 7 ms per plugin on the development
+machine and 60 to 80 ms for the eight that start in one frame, which a virus scanner makes longer. The sandbox now
+does it on a short-lived `plugin-spawn` thread per start, so the interface thread spends about 0.3 ms for eight;
+the start says "not ready" until the child is handed over, and a start that is skipped before that ends its child as
+soon as it is there. A child that cannot be made (the host program is missing or blocked, no memory, the shared block
+or the doorbell could not be created) is the app's or the machine's fault, not the plugin's: it is its own error kind
+(`BackendError::Spawn`, `is_spawn_failure`), the device says FAILED with the text and RELOAD retries, and nothing is
+added to the crashed settings or counted towards the quarantine (a missing host program would otherwise quarantine
+every plugin of a project). A creation that ends because it was skipped, cancelled by an engine rebuild, by removing
+the device or by closing the project is never an error at all.
+
+**Rejected.** Attaching every ready creation in one frame (an attach does real work and would lengthen the frame);
+installing a creation in the manager as soon as it is ready and attaching it later (events of an instance the app
+does not know yet would be dropped); a separate SKIP button (the panel has no room, and RELOAD is disabled while
+loading anyway); treating a skip as a failure (a quarantine for a plugin the user chose not to wait for).
+
+**Open.** Whether a plugin that stays LOADING for minutes should offer SKIP more prominently, for example in the
+status line; the load timeout (ten minutes) still ends a load that nobody skips.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AU. A sandboxed plugin is waited for up to the callback's budget, and one that cannot keep up stops being spun for
+
+**Question.** For every 64-frame batch the audio thread sent the request to the plugin process and spun until the
+answer or one batch period (1.3 ms at 48 kHz). The real budget is the host buffer (10 ms at 480 frames), so a
+plugin with bursty work (a block-based transform, look-ahead, a preset that has just loaded) missed the period
+although it fitted the buffer easily: the batch was dropped (dry for an effect, silence for an instrument) and
+heard. And since the parent spins while the child works, a sandboxed plugin cost about twice its own CPU.
+
+**Decision.** The output callback publishes, at its start, the moment by which its plugins must have answered: its
+start plus 70 % of the buffer duration (`CALLBACK_PLUGIN_BUDGET_PERCENT`; the rest is for the mix, the conversion
+and the hand-over). It is one relaxed atomic store of a time in `CallbackDeadline` (`atomik-core`), a cell of the
+process that the stream writes and every live processor reads, so the stream and the plugin layer need no wiring
+between them (there is one live callback per process, and a restarted stream writes the same cell). A live batch
+waits until the later of one period from now and the published moment, never longer than 100 ms from now and never
+past the published moment: a callback with no slack, a stale value from an earlier callback and a missing value
+all mean the plain period. Offline processors never read it, nor the clock for a decision. When a plugin has run
+out of four full waits in a row, the next 24 batches (about three callbacks) are only polled once and are late at
+once when the answer is not there, and then a full wait is tried again; one more miss starts the next cool-down,
+and an answer ends the run. Only waits that were actually spent count (a batch that finds the previous request
+still out is late at once without a wait and neither counts nor resets). The state is per processor; the render
+workers that run plugin devices only read the published value, so several plugins may wait at once on different
+threads.
+
+A plugin that needs more than real time must not cost more than before, though: the first version spent 7 ms of every
+10 ms callback on such a plugin (each callback holds a few answered batches, which reset the miss count, before the
+wait that runs into the deadline), leaving the rest of the engine 30 % of the callback. So there is a second,
+independent rule per processor (plain integers, audio thread only, no clock read of its own). A callback is
+exhausted for a processor when one of its waits ran out at the published moment; a new callback is seen as the
+published value changing. After three exhausted callbacks in a row (`EXHAUSTED_AFTER`) the processor falls back to
+the old behaviour: its waits ignore the published value and last one batch period, for 100 callbacks
+(`FALLBACK_CALLBACKS`, about a second; counted, not timed). Then the budget is tried again; if it is exhausted three
+times again the next span is twice as long, up to 500 callbacks (`FALLBACK_MAX_CALLBACKS`, about five seconds). A
+callback inside the budget resets the count and the span. The miss-based cool-down works in both modes. Three
+callbacks are a short enough run to ignore one bad callback and a long one for a plugin that is simply too slow
+(30 ms of extra spin before it stops); 100 callbacks keep the retry cost near 3 % of the fall-back, and the doubling
+makes a plugin that never fits retry only a few times a minute. In a chain of plugins that fit alone but not
+together, only the plugin whose wait runs into the deadline is exhausted: it falls back, the ones before it keep
+the budget.
+
+The hang guard is unchanged and still counts batches without progress, not time: the one wait that can last
+several periods is that of the batch that submitted, and the other batches of the callback find the request still
+out and are late at once, so a silent child is declared hung after the same number of batches, which the audio
+callbacks deliver at the device's pace, as before (a test runs a silent child with and without a published budget
+and compares the counts).
+
+**Rejected.** Passing the deadline through the session, the engine and the manager to each instance (a dozen
+signatures, and every stream restart would have to hand it over again); waiting for the whole buffer (the plugins
+would leave nothing for the rest of the callback); a longer period for everything (a plugin that is truly late would
+hold the callback longer, and the first batch of a callback could not use the slack of the others); pipelining by one
+batch (it adds 64 frames of latency that the in-process path would have to copy to keep bounces identical); sharing
+one wait between all plugins of a level (not in this change).
+
+**Open.** The 70 %, the four misses and the 24 batches are measured on the test plugin only (`perf/BASELINE.md`),
+not on real plugins; the hand check is a bursty third-party effect at a 480-frame buffer, counting the late
+sandbox batches in the log before and after.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AV. A panic of the interface is contained and the app keeps running, with limits
+
+**Decision.** The windowed event loop catches a panic in a window event, in the per-tick work and in a window's
+redraw. It asks for a recovery snapshot of every open song, drops the gestures and menus in flight, repaints,
+and shows a notice strip (Save, Dismiss) that stays until dismissed. The crash report is written as before. The
+notice is raised once and not again within 30 s. After five panicking ticks or redraws in a row the content of
+the window is paused (the notice alone is drawn, Save and Ctrl+S still work) rather than painting into a loop;
+the pause lasts until the app is restarted. Exit is bounded the same way: the wait for the recovery writer and
+the removal of the scratch folder give up after 5 s.
+
+**Why.** The release profile unwinds so that faults can be contained, and the engine, the plugin calls and the
+document's apply, undo and redo already are. The rest of the UI thread was the one place where a bug cost the
+whole session, including everything since the last snapshot. Mainstream DAWs keep running after a contained
+fault in a view and tell the user to save; the notice says the same and recommends restarting, because the
+state after a panic may be inconsistent in ways the app cannot check.
+
+**Limits.** The repair is the minimum that is safe: gestures, menus and the merge group are dropped; view state
+beyond that is not rebuilt. The document is not touched (a command is planned before it changes anything). A
+panic that keeps coming pauses the content instead of recovering. Only the windowed loop is guarded: the
+headless shell, the QA server and the tests still see panics, so a test that expects one is unaffected. A panic
+inside a plugin's own process or the engine keeps its own containment. A scripted run that contained a panic ends with a non-zero exit code. The autosave period is unchanged.
+
+**Rejected.** Rebuilding the whole shell after a panic (loses more than it saves and could panic again);
+catching inside every handler (hides the failing site and costs a guard per call); exiting after the first panic
+with a recovery copy (what happened before: the work since the snapshot was lost).
+
+**Open.** The five-in-a-row limit and the 30 s quiet period are judgement values; the hand check is a forced
+panic in a long session (`ATOMIK_UI_PANIC`).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+
+## AW. A plugin state that is too large is reported and never dropped silently, and never stops the plugin
+
+**Decision.** A state the document refuses (over 16 MiB for a device, 128 MiB for the project) or that a
+plugin in its own process cannot hand over (over the 64 MiB of one frame, or a reply over the 1 MiB JSON limit)
+is not offered to the document again at every capture. The device carries a marker until a capture fits: its
+panel shows `too large: <size> > <limit>` on the second line (the vendor line gives way), the plugin keeps its
+status word, a save names the device once in its notice, and the log has one warning line per change of
+situation. The project keeps the last state that fitted. The child answers `StateTooLarge` (with the size and the
+limit) instead of ending, and the app never stops the plugin for it.
+
+**Why.** The plugin is healthy and playing: calling that FAILED or CRASHED would be false and a reload would
+restore the old state and repeat. Dropping the state silently makes a project that "saved fine" lose its
+samples; every mainstream host that has a size limit tells the user at save time instead. A marker that stays
+on the device is the part that is still true after the toast is gone.
+
+**Limits.** Short term only: the project format is unchanged, so a state over the caps is still not stored.
+Storing large states beside the audio assets and streaming them over the pipe in pieces is the real fix and is
+not done. The panel line is short (the panel is narrow); the full words are in the notice and the log.
+
+**Rejected.** A new status word (hides the real state); raising the caps (the document is one JSON text and every
+capture copies the state); stopping the plugin at the limit (what happened before).
+
+**Open.** A real sampler's state sizes against the two caps, by hand.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AX. A plugin fails after a run of bad blocks, not at the first one
+
+**Decision.** A block in which a plugin's `process` returns an error, or writes a non-finite sample, is a bad
+block: it is counted and replaced by what a late batch gets (the dry input for an effect, silence for the
+rest), with a linear ramp over the block going into the fallback and over the first good block coming back, so
+that the output does not click. The device fails, with the reason of the last bad block, only after
+`bad_run_limit` (a quarter of a second of 64-frame blocks) in a row; a good block starts the count again. A
+panic fails it at once; a late or refused batch is not a bad block and does not change the count; a plugin that
+cannot start processing still fails at once.
+
+**Why.** Plugins return an error or a NaN for a block while they load a preset, and on a denormal or a division
+by zero, and are fine on the next one; hosts that stop the plugin for good make a glitch cost the user a RELOAD
+and the take. The rule looks only at what the plugin returned, so a bounce, live playback, a plugin in the app
+and one in its own process agree and the sandbox on and off render the same bytes; a project with no bad block is
+untouched, because the ramp only exists around a bad block.
+
+**Limits.** The ramp is one block (1.3 ms at 48 kHz), not the bypass crossfade's 5 ms: a ramp across blocks would
+need state that outlives the block and the next block may be bad again. Aux outputs are cut. A late batch keeps its
+hard cut (existing projects render the same). Finite garbage (1e20) is not detected.
+
+**Rejected.** Failing after a fixed number of bad blocks whatever the rate (a quarter of a second is the same
+audio at every rate); the 5 ms ramp (a bad block only reaches the fallback at its end); muting the plugin for a
+while after a bad block (the plugin would miss the notes and parameters that follow).
+
+**Open.** The quarter of a second is a judgement value; the hand check is a third-party plugin that glitches while
+a preset loads.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

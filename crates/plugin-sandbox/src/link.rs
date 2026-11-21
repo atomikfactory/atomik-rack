@@ -4,24 +4,35 @@
 //!
 //! Only the main thread makes calls and only one is in flight at a time, so a single slot is
 //! enough; replies are matched by request id and anything else is ignored. A call that matters
-//! and is not answered in time kills the child; a cosmetic one (see [`Link::soft_call`]) only
-//! drops its request. Once the child is killed the link is lost, and every call fails at
-//! once without any I/O. The reader thread is the one that learns that the child ended: it
-//! reaps the exit status, reads the stderr tail, marks the audio block dead (so the engine
-//! side sees [`atomik_plugin_host::ProcessStatus::Lost`]) and posts
-//! [`PluginMessage::ProcessExited`].
+//! and is not answered in time kills the child, unless the child shows a sign of life (its audio
+//! thread still bumps the counter of the block, see [`ALIVE_WINDOW`]): a live plugin whose main
+//! thread is busy is never stopped for being slow. Its call fails, the link is then stuck on
+//! that request (every call fails at once without being sent, see [`Link::stuck`]) and
+//! recovers by itself when the reader thread sees the late answer. A cosmetic request (see
+//! [`Link::soft_ask`]) is not a call at all: it goes into a small table of its own, the reader
+//! thread files its answer there whenever it comes, and the main thread waits for it only a
+//! moment (what is left of the frame's allowance, see [`atomik_plugin_host::SoftBudget`]) before
+//! it goes on and collects the answer in a later frame ([`Link::service_soft`]). One request at a
+//! time can also be a background request (see
+//! [`Link::begin_background`]): it has a slot of its own, so the state of a plugin whose main
+//! thread is busy can be asked for while the UI goes on, and nothing times it out. Once the
+//! child is killed the link is lost, and every call fails at once without any I/O. The reader
+//! thread is the one that learns that the child ended: it reaps the exit status, reads the
+//! stderr tail, marks the audio block dead (so the engine side sees
+//! [`atomik_plugin_host::ProcessStatus::Lost`]) and posts [`PluginMessage::ProcessExited`].
 
 use crate::clock::now;
 use crate::transport::{ChildProcess, Transport};
 use atomik_plugin_host::{
-    BackendError, HUNG, HostMessenger, LOST, LogLevel, ParamPhase, PluginMessage,
+    BackendError, HUNG, HostMessenger, LOST, LogLevel, NOT_RESPONDING, ParamPhase, PluginMessage,
+    STALL_THRESHOLD, SoftBudget, StallOutcome,
 };
 use atomik_plugin_ipc::{
     DeathHandle, FromChild, MAX_FRAME_BYTES, MAX_GUI_DIMENSION, MAX_LOG_BYTES,
     MAX_REPLY_JSON_BYTES, PANIC_LOG_PREFIX, PROTOCOL_VERSION, ToChild, WireLayout,
-    into_backend_error, read_frame_with, write_frame,
+    into_backend_error, read_frame_filtered, write_frame,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{ErrorKind, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -41,13 +52,18 @@ const STDERR_GRACE: Duration = Duration::from_millis(300);
 /// How long a dropped link waits for the child to end after `Shutdown`.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 
-/// How many cosmetic calls in a row may go unanswered before the instance counts as slow (the
-/// app then asks less often and says so).
-const MISSES_TO_SLOW: u32 = 3;
+/// How many late cosmetic answers within [`Timeouts::slow_window`] make an instance slow (the
+/// app then waits for it at most once in [`Timeouts::slow_retry`] and says so, once).
+const MISSES_TO_SLOW: usize = 3;
 
-/// How many cosmetic calls in a row may go unanswered before the child is stopped: a plugin
-/// that is merely busy answers sooner or later, one that never does is wedged.
-const MISSES_TO_KILL: u32 = 12;
+/// The most cosmetic requests held at once, answered or not: when a plugin is stalled and the
+/// interface keeps asking, the oldest are dropped (their answers are ignored when they come).
+const MAX_SOFT_OUT: usize = 64;
+
+/// How recently the child's audio thread must have shown a sign of life for the child to count
+/// as alive when a call times out: the counter in the block header has to change within this
+/// window (the child's audio loop comes round every few milliseconds).
+pub(crate) const ALIVE_WINDOW: Duration = Duration::from_millis(500);
 
 /// The most parameter edits held back for the main thread at once.
 const MAX_HELD_EDITS: usize = 4096;
@@ -60,19 +76,22 @@ pub(crate) struct Timeouts {
     /// this is minutes, not seconds; the waits are polled, so the app stays responsive.
     pub load: Duration,
     /// Activate, capture and restore state: a call that is not answered in time kills the
-    /// child.
+    /// child, unless it shows a sign of life (then the instance is stuck, see [`Link::stuck`]).
     pub create: Duration,
     /// Every other call that matters (deactivate, flush): killing as well.
     pub call: Duration,
-    /// Cosmetic calls (param text, pins, layout, closing the editor): an answer that is late is
-    /// dropped and the child is left alone; see [`Link::soft_call`].
+    /// Cosmetic requests (param text, pins, layout, resize, closing the editor): the longest one
+    /// is waited for, and the age after which an answer counts as late. An answer that is later
+    /// is still used when it comes, and the child is left alone; see [`Link::soft_ask`].
     pub text: Duration,
     /// Offline audio batches.
     pub watchdog: Duration,
     /// Live audio: how long a child may answer no batch at all before it counts as hung.
     pub hung: Duration,
-    /// How long a slow instance is left alone between two cosmetic calls.
+    /// How long a slow instance is left alone between two waits for its cosmetic answers.
     pub slow_retry: Duration,
+    /// How long a late cosmetic answer counts toward an instance being slow.
+    pub slow_window: Duration,
     /// A bounce: every batch waits for the child whatever mode the plugin is told.
     pub bounce: bool,
 }
@@ -117,16 +136,131 @@ pub(crate) struct Reply {
 struct Mailbox {
     expect: Expect,
     reply: Option<Reply>,
+    /// The id of the background request that is out, if any (see [`Link::begin_background`]).
+    bg_id: Option<u64>,
+    /// The answer to it, until [`Link::poll_background`] takes it.
+    bg_reply: Option<Reply>,
+    /// The request a timed-out call left unanswered while the child was alive: the link is
+    /// stuck on it until its answer comes (see [`Shared::enter_stuck`]).
+    stuck: Option<Stuck>,
+    /// The cosmetic requests that are out or whose answer has not been collected, oldest first.
+    soft: Vec<SoftReq>,
     /// The child's stdout closed: nothing more will come.
     ended: bool,
     /// Set once the child is reaped: why it ended.
     reason: Option<String>,
 }
 
+/// What a cosmetic request asked, so that its answer can be put to use whenever it comes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum SoftKind {
+    /// The display text of a parameter value.
+    ParamText { param: u32, plain: f64 },
+    /// The editor's size.
+    ResizeGui { w: u32, h: u32 },
+    /// The params a panel pins by default.
+    DefaultPins,
+    /// Whether the param table changed.
+    TakeLayoutChanged,
+    /// Closing the editor.
+    CloseGui,
+    /// The presets the plugin offers.
+    ListPresets,
+    /// The param values the plugin holds.
+    ReadParams,
+}
+
+impl SoftKind {
+    /// The name of the call, in logs and errors.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::ListPresets => "ListPresets",
+            Self::ReadParams => "ReadParams",
+            Self::ParamText { .. } => "ParamText",
+            Self::ResizeGui { .. } => "ResizeGui",
+            Self::DefaultPins => "DefaultPins",
+            Self::TakeLayoutChanged => "TakeLayoutChanged",
+            Self::CloseGui => "CloseGui",
+        }
+    }
+}
+
+/// A cosmetic request in the table.
+#[derive(Debug)]
+struct SoftReq {
+    id: u64,
+    kind: SoftKind,
+    /// When it was sent.
+    sent: std::time::Instant,
+    /// The answer and when the reader thread got it.
+    answer: Option<(Reply, std::time::Instant)>,
+    /// It was counted as a late answer already.
+    missed: bool,
+}
+
+/// A cosmetic request whose answer has come (see [`Link::service_soft`]).
+#[derive(Debug)]
+pub(crate) struct SoftDone {
+    pub kind: SoftKind,
+    pub answer: Result<Reply, BackendError>,
+}
+
+/// What asking for a cosmetic answer came back with.
+#[derive(Debug)]
+pub(crate) enum SoftAsked {
+    /// The answer was there within the wait.
+    Answered(Reply),
+    /// It was not: the request stays out and [`Link::service_soft`] hands the answer over.
+    Pending,
+}
+
+/// How long a cosmetic request may be waited for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Grace {
+    /// What is left of the frame's allowance, and not at all when the instance is slow or was
+    /// waited for in vain already in this frame.
+    Frame,
+    /// The whole cosmetic timeout, whatever the frame (closing an editor: the window must not
+    /// go while the plugin is still using it).
+    Full,
+    /// Not at all: the request goes out and the answer is collected later.
+    None,
+}
+
+/// A request that was not answered in time by a child that is alive.
+#[derive(Debug, Clone)]
+struct Stuck {
+    id: u64,
+    /// The name of the call.
+    what: String,
+}
+
 enum Waited {
     Reply(Reply),
     Ended,
-    TimedOut,
+    /// The time ran out. `alive`: the child's audio thread showed a sign of life in the last
+    /// part of the wait (see [`ALIVE_WINDOW`]).
+    TimedOut {
+        alive: bool,
+    },
+}
+
+/// Takes the answer of the background request that is out, ending it.
+fn take_background(mb: &mut Mailbox) -> Option<Reply> {
+    let reply = mb.bg_reply.take()?;
+    mb.bg_id = None;
+    Some(reply)
+}
+
+/// What [`Shared::collect_soft`] found.
+#[derive(Default)]
+struct SoftHarvest {
+    /// The answered requests, oldest first.
+    done: Vec<(SoftKind, Reply)>,
+    /// When answers that were late came, or now for requests that are out and late.
+    late: Vec<std::time::Instant>,
+    /// The oldest request that is still in the table.
+    oldest: Option<(u64, SoftKind)>,
 }
 
 /// What the main thread and the helper threads share.
@@ -164,26 +298,114 @@ impl Shared {
     }
 
     fn wait(&self, timeout: Duration) -> Waited {
+        self.wait_for(timeout, |mb| {
+            let reply = mb.reply.take()?;
+            mb.expect = Expect::Nothing;
+            Some(reply)
+        })
+    }
+
+    /// Waits until `take` finds a reply in the mailbox, the child ends or `timeout` passes.
+    fn wait_for(
+        &self,
+        timeout: Duration,
+        mut take: impl FnMut(&mut Mailbox) -> Option<Reply>,
+    ) -> Waited {
         let start = now();
+        // The counter is read twice, at the start and at the end of the last `window` of the
+        // wait: the child counts as alive when it moved in between. No time is added.
+        let window = ALIVE_WINDOW.min(timeout / 2);
+        let sample_at = timeout - window;
+        let mut before = None;
         let mut mb = lock(&self.mailbox);
         loop {
-            if let Some(reply) = mb.reply.take() {
-                mb.expect = Expect::Nothing;
+            if let Some(reply) = take(&mut mb) {
                 return Waited::Reply(reply);
             }
             if mb.ended {
                 return Waited::Ended;
             }
-            let left = timeout.saturating_sub(now().saturating_duration_since(start));
-            if left.is_zero() {
-                return Waited::TimedOut;
+            let elapsed = now().saturating_duration_since(start);
+            if before.is_none() && elapsed >= sample_at {
+                before = Some(self.death.pulse());
             }
+            let left = timeout.saturating_sub(elapsed);
+            if left.is_zero() {
+                let alive = before.is_some_and(|b| self.death.pulse() != b);
+                return Waited::TimedOut { alive };
+            }
+            let step = if before.is_none() {
+                sample_at.saturating_sub(elapsed).min(left)
+            } else {
+                left
+            };
             mb = self
                 .cv
-                .wait_timeout(mb, left)
+                .wait_timeout(mb, step)
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
         }
+    }
+
+    /// The child's sign of life: changes while its audio thread runs.
+    fn pulse(&self) -> u64 {
+        self.death.pulse()
+    }
+
+    /// Leaves the request `id`, which a timed-out call gave up on, as the one the link is stuck
+    /// on: until its answer arrives every call fails at once. When the answer is already there
+    /// (it came after the wait ended) it is returned instead and the link is not stuck. With
+    /// `background` the request is the background one, whose slot is emptied.
+    fn enter_stuck(&self, id: u64, what: &str, background: bool) -> Option<Reply> {
+        let mut mb = lock(&self.mailbox);
+        let reply = if background {
+            let reply = mb.bg_reply.take().filter(|_| mb.bg_id == Some(id));
+            mb.bg_id = None;
+            mb.bg_reply = None;
+            reply
+        } else if mb.expect == Expect::Id(id) {
+            mb.expect = Expect::Nothing;
+            mb.reply.take()
+        } else {
+            None
+        };
+        if reply.is_none() {
+            mb.stuck = Some(Stuck {
+                id,
+                what: what.to_string(),
+            });
+        }
+        reply
+    }
+
+    /// True when a request with this id is out: the call that waits for it, the background
+    /// request, or the one the link is stuck on.
+    fn asked(&self, id: u64) -> bool {
+        let mb = lock(&self.mailbox);
+        mb.expect == Expect::Id(id)
+            || mb.bg_id == Some(id)
+            || mb.stuck.as_ref().is_some_and(|s| s.id == id)
+    }
+
+    /// Ends the stuck state when `id` is the request it waits for (true: the reply is of no
+    /// use to anyone else).
+    fn recover(&self, id: u64) -> bool {
+        let mut mb = lock(&self.mailbox);
+        if mb.stuck.as_ref().is_some_and(|s| s.id == id) {
+            mb.stuck = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The name of the call the link is stuck on: the plugin's process is alive but its main
+    /// thread has not answered it. `None` when it is not stuck or the process is gone.
+    pub fn stuck(&self) -> Option<String> {
+        if self.is_lost() {
+            return None;
+        }
+        lock(&self.mailbox).stuck.as_ref().map(|s| s.what.clone())
     }
 
     /// What the wait would return now, without waiting.
@@ -194,6 +416,11 @@ impl Shared {
             return Some(Waited::Reply(reply));
         }
         mb.ended.then_some(Waited::Ended)
+    }
+
+    /// True once the child is reaped (see [`Shared::wait_reason`]); never waits.
+    fn finished(&self) -> bool {
+        lock(&self.mailbox).reason.is_some()
     }
 
     /// Waits until the child is reaped and returns why it ended.
@@ -228,6 +455,169 @@ impl Shared {
         }
     }
 
+    /// Hands `reply` to the background request when `id` is the one that is out (true; the reply
+    /// is taken), else leaves it where it is.
+    fn deliver_background(&self, reply: &mut Option<Reply>, id: u64) -> bool {
+        let mut mb = lock(&self.mailbox);
+        if mb.bg_id != Some(id) {
+            return false;
+        }
+        mb.bg_reply = reply.take();
+        self.cv.notify_all();
+        true
+    }
+
+    fn expect_background(&self, id: u64) {
+        let mut mb = lock(&self.mailbox);
+        mb.bg_id = Some(id);
+        mb.bg_reply = None;
+    }
+
+    fn clear_background(&self) {
+        let mut mb = lock(&self.mailbox);
+        mb.bg_id = None;
+        mb.bg_reply = None;
+    }
+
+    fn background_out(&self) -> bool {
+        lock(&self.mailbox).bg_id.is_some()
+    }
+
+    /// The id of the background request that is out.
+    fn background_id(&self) -> Option<u64> {
+        lock(&self.mailbox).bg_id
+    }
+
+    /// What the background request has now, without waiting: its answer, or that the child
+    /// ended (which also ends the request).
+    fn try_take_background(&self) -> Option<Waited> {
+        let mut mb = lock(&self.mailbox);
+        if let Some(reply) = take_background(&mut mb) {
+            return Some(Waited::Reply(reply));
+        }
+        if mb.ended {
+            mb.bg_id = None;
+            return Some(Waited::Ended);
+        }
+        None
+    }
+
+    // ----- cosmetic requests ------------------------------------------------------------------------
+
+    /// Files a request that was just sent (the oldest goes when the table is full).
+    fn add_soft(&self, req: SoftReq) {
+        let mut mb = lock(&self.mailbox);
+        if mb.soft.len() >= MAX_SOFT_OUT {
+            mb.soft.remove(0);
+        }
+        mb.soft.push(req);
+    }
+
+    /// Files the answer of the cosmetic request `id` when it is in the table (true; the reply is
+    /// taken), else leaves it where it is.
+    fn deliver_soft(&self, reply: &mut Option<Reply>, id: u64) -> bool {
+        let mut mb = lock(&self.mailbox);
+        let Some(req) = mb
+            .soft
+            .iter_mut()
+            .find(|r| r.id == id && r.answer.is_none())
+        else {
+            return false;
+        };
+        if let Some(reply) = reply.take() {
+            req.answer = Some((reply, now()));
+        }
+        self.cv.notify_all();
+        true
+    }
+
+    /// Waits until the answer of the cosmetic request `id` is in the table (it leaves it), the
+    /// child ends or `timeout` passes.
+    fn wait_soft(&self, id: u64, timeout: Duration) -> Waited {
+        let start = now();
+        let mut mb = lock(&self.mailbox);
+        loop {
+            if let Some(at) = mb
+                .soft
+                .iter()
+                .position(|r| r.id == id && r.answer.is_some())
+            {
+                let req = mb.soft.remove(at);
+                if let Some((reply, _)) = req.answer {
+                    return Waited::Reply(reply);
+                }
+            }
+            if mb.ended {
+                return Waited::Ended;
+            }
+            let left = timeout.saturating_sub(now().saturating_duration_since(start));
+            if left.is_zero() {
+                return Waited::TimedOut { alive: false };
+            }
+            mb = self
+                .cv
+                .wait_timeout(mb, left)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+
+    /// How many cosmetic requests are in the table (out or not yet collected).
+    fn soft_len(&self) -> usize {
+        lock(&self.mailbox).soft.len()
+    }
+
+    /// True when a cosmetic request of this kind is in the table, answered or not.
+    fn soft_has(&self, kind: impl Fn(&SoftKind) -> bool) -> bool {
+        lock(&self.mailbox).soft.iter().any(|r| kind(&r.kind))
+    }
+
+    /// Marks the request `id` as counted among the late answers.
+    fn soft_missed(&self, id: u64) {
+        if let Some(r) = lock(&self.mailbox).soft.iter_mut().find(|r| r.id == id) {
+            r.missed = true;
+        }
+    }
+
+    /// Takes the requests whose answer has come, oldest first, and counts the requests that are
+    /// still out for longer than `late` as late (once each).
+    fn collect_soft(&self, late: Duration, at: std::time::Instant) -> SoftHarvest {
+        let mut mb = lock(&self.mailbox);
+        let mut harvest = SoftHarvest::default();
+        let mut i = 0;
+        while i < mb.soft.len() {
+            if mb.soft[i].answer.is_some() {
+                let req = mb.soft.remove(i);
+                if let Some((reply, came)) = req.answer {
+                    if !req.missed && came.saturating_duration_since(req.sent) > late {
+                        harvest.late.push(came);
+                    }
+                    harvest.done.push((req.kind, reply));
+                }
+                continue;
+            }
+            let req = &mut mb.soft[i];
+            if !req.missed && at.saturating_duration_since(req.sent) > late {
+                req.missed = true;
+                harvest.late.push(at);
+            }
+            i += 1;
+        }
+        harvest.oldest = mb.soft.first().map(|r| (r.id, r.kind));
+        harvest
+    }
+
+    /// The link is stuck on the cosmetic request `id`, which leaves the table (see
+    /// [`Shared::enter_stuck`]).
+    fn enter_stuck_soft(&self, id: u64, what: &str) {
+        let mut mb = lock(&self.mailbox);
+        mb.soft.retain(|r| r.id != id);
+        mb.stuck = Some(Stuck {
+            id,
+            what: what.to_string(),
+        });
+    }
+
     /// The flag the audio side sets when the child answers no batch.
     pub fn hung_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.hung)
@@ -236,6 +626,11 @@ impl Shared {
     /// A layout change that arrived after its call had given up (taken once).
     pub fn take_late_layout(&self) -> Option<WireLayout> {
         lock(&self.late_layout).take()
+    }
+
+    /// Keeps a layout change that came after the wait for it ended: the child says it only once.
+    pub fn keep_late_layout(&self, layout: WireLayout) {
+        *lock(&self.late_layout) = Some(layout);
     }
 
     /// Notifications refused so far for being out of bounds.
@@ -290,6 +685,37 @@ impl Shared {
             level: LogLevel::Warning,
             text,
         });
+    }
+
+    /// Waits like [`Shared::wait`] and, when the wait took at least [`STALL_THRESHOLD`], tells
+    /// the app which call held the main thread up and how it ended. Only the main thread's
+    /// blocking calls go through here.
+    fn wait_noted(&self, what: &str, timeout: Duration) -> Waited {
+        self.noted(what, |shared| shared.wait(timeout))
+    }
+
+    /// [`Shared::wait_noted`] for the answer to the background request that is out.
+    fn wait_background_noted(&self, what: &str, timeout: Duration) -> Waited {
+        self.noted(what, |shared| shared.wait_for(timeout, take_background))
+    }
+
+    fn noted(&self, what: &str, wait: impl FnOnce(&Self) -> Waited) -> Waited {
+        let start = now();
+        let waited = wait(self);
+        let elapsed = now().saturating_duration_since(start);
+        if elapsed >= STALL_THRESHOLD {
+            let outcome = match waited {
+                Waited::Reply(_) => StallOutcome::Answered,
+                Waited::Ended => StallOutcome::ChildGone,
+                Waited::TimedOut { .. } => StallOutcome::TimedOut,
+            };
+            self.messenger.post(PluginMessage::Stall {
+                call: what.to_string(),
+                ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                outcome,
+            });
+        }
+        waited
     }
 
     /// Condemns the child: remembers `reason` (the first one wins), makes every later call
@@ -464,7 +890,18 @@ impl Shared {
             } => Some(layout.clone()),
             _ => None,
         };
-        if !self.deliver(Reply { msg, blob }, Expect::Id(id))
+        if self.recover(id) {
+            // The answer a stuck link waited for: the call that asked gave up long ago.
+            return;
+        }
+        let mut reply = Some(Reply { msg, blob });
+        if self.deliver_background(&mut reply, id) || self.deliver_soft(&mut reply, id) {
+            return;
+        }
+        let Some(reply) = reply else {
+            return;
+        };
+        if !self.deliver(reply, Expect::Id(id))
             && let Some(layout) = late_layout
         {
             // The call that asked has given up, and the child will not say it again.
@@ -477,13 +914,23 @@ fn run_reader(shared: &Shared, mut reader: Box<dyn Read + Send>, live: LiveGuard
     let bad = loop {
         // Replies are small and only the state has a blob: both limits are checked before
         // anything is allocated, so a hostile child cannot make the app grow.
-        let read = read_frame_with::<FromChild>(&mut reader, MAX_REPLY_JSON_BYTES, |m| {
-            if matches!(m, FromChild::State { .. }) {
-                MAX_FRAME_BYTES
-            } else {
-                0
-            }
-        });
+        // A state nobody is waiting for (its call gave up and the child is not stuck on it, or
+        // the request was dropped) is read off the pipe without being kept.
+        let read = read_frame_filtered::<FromChild>(
+            &mut reader,
+            MAX_REPLY_JSON_BYTES,
+            |m| {
+                if matches!(m, FromChild::State { .. }) {
+                    MAX_FRAME_BYTES
+                } else {
+                    0
+                }
+            },
+            |m| match m {
+                FromChild::State { id } => shared.asked(*id),
+                _ => true,
+            },
+        );
         match read {
             Ok((msg, blob)) => shared.route(msg, blob),
             Err(e) if e.kind() == ErrorKind::UnexpectedEof => break None,
@@ -565,6 +1012,14 @@ fn lost() -> BackendError {
     BackendError::Failed(LOST.to_string())
 }
 
+/// The answer of a request: the reply, or the error the child sent in its place.
+fn interpret(reply: Reply) -> Result<Reply, BackendError> {
+    match reply.msg {
+        FromChild::Err { kind, text, .. } => Err(into_backend_error(kind, text)),
+        _ => Ok(reply),
+    }
+}
+
 /// The link of one remote instance.
 pub(crate) struct Link {
     shared: Arc<Shared>,
@@ -573,18 +1028,55 @@ pub(crate) struct Link {
     writer: Option<JoinHandle<()>>,
     next_id: u64,
     timeouts: Timeouts,
-    /// Cosmetic calls in a row that were not answered in time.
-    misses: u32,
-    /// When the last cosmetic call went unanswered.
+    /// The allowance of waiting for cosmetic answers that every instance of the manager shares
+    /// in a frame.
+    budget: SoftBudget,
+    /// When the last cosmetic answer was late.
     last_miss: Option<std::time::Instant>,
+    /// The latest late cosmetic answers (the newest [`MISSES_TO_SLOW`]): the instance is slow
+    /// while all of them are within [`Timeouts::slow_window`].
+    recent_misses: VecDeque<std::time::Instant>,
+    /// The slow episode that the user was told about is still going on.
+    warned: bool,
+    /// The frame (see [`SoftBudget::frame`]) in which waiting for this instance's cosmetic
+    /// answer was in vain: it is not waited for again in that frame.
+    missed_frame: Option<u64>,
+    /// When a cosmetic answer last came, or the table last went from empty to one request: the
+    /// start of the silence that [`Link::service_soft`] measures.
+    soft_progress: Option<std::time::Instant>,
     /// When the child was asked to end (set once; the drop waits from then on).
     shutdown_at: Option<std::time::Instant>,
+    /// When [`Link::poll_shutdown`] stopped a child that did not end when asked.
+    killed_at: Option<std::time::Instant>,
+    /// [`Link::poll_shutdown`] has waited out the child already: the drop does not wait again.
+    waited_out: bool,
     /// A request sent by [`Link::begin_call`] whose answer [`Link::finish_call`] has not taken.
     pending: bool,
     /// A request sent by [`Link::begin_held_call`] whose answer may take minutes: until
     /// [`Link::poll_reply`] has it, every other call fails at once without being sent, so it
     /// neither abandons that request nor counts as a miss of a busy child.
     held: Option<&'static str>,
+    /// What the main thread saw of the child's sign of life between polls (see
+    /// [`Link::alive_by_polling`]).
+    vitals: Option<Vitals>,
+}
+
+/// The child's sign of life as the polled waits see it.
+#[derive(Debug, Clone, Copy)]
+struct Vitals {
+    /// The counter at the last sample.
+    pulse: u64,
+    /// When it was sampled.
+    sampled: std::time::Instant,
+    /// When it was last seen to change.
+    changed: Option<std::time::Instant>,
+}
+
+/// The error of a call made on a link that is stuck on `call`.
+fn not_responding(call: &str, what: &str) -> BackendError {
+    BackendError::Failed(format!(
+        "{NOT_RESPONDING}: it has not answered {call} yet; {what} was not sent"
+    ))
 }
 
 impl Link {
@@ -600,6 +1092,7 @@ impl Link {
         timeouts: Timeouts,
         messenger: HostMessenger,
         live: LiveGuard,
+        budget: SoftBudget,
     ) -> Result<Self, BackendError> {
         let Transport {
             writer,
@@ -611,6 +1104,10 @@ impl Link {
             mailbox: Mutex::new(Mailbox {
                 expect: Expect::Hello,
                 reply: None,
+                bg_id: None,
+                bg_reply: None,
+                stuck: None,
+                soft: Vec::new(),
                 ended: false,
                 reason: None,
             }),
@@ -653,11 +1150,18 @@ impl Link {
             writer: writer_handle.ok(),
             next_id: 0,
             timeouts,
-            misses: 0,
+            budget,
             last_miss: None,
+            recent_misses: VecDeque::with_capacity(MISSES_TO_SLOW + 1),
+            warned: false,
+            missed_frame: None,
+            soft_progress: None,
             shutdown_at: None,
+            killed_at: None,
+            waited_out: false,
             pending: false,
             held: None,
+            vitals: None,
         };
         if link.reader.is_none() || link.writer.is_none() {
             link.shared
@@ -681,8 +1185,9 @@ impl Link {
         timeouts: Timeouts,
         messenger: HostMessenger,
         live: LiveGuard,
+        budget: SoftBudget,
     ) -> Result<Self, BackendError> {
-        let mut link = Self::launch(transport, death, timeouts, messenger, live)?;
+        let mut link = Self::launch(transport, death, timeouts, messenger, live, budget)?;
         let reply = link
             .await_reply("Hello", timeouts.load)
             .map_err(|e| link.explain(e))?;
@@ -725,21 +1230,65 @@ impl Link {
     ) -> Option<Result<Reply, BackendError>> {
         let waited = match self.shared.try_take() {
             Some(waited) => waited,
-            None if now().saturating_duration_since(since) >= timeout => Waited::TimedOut,
-            None => return None,
+            None if now().saturating_duration_since(since) >= timeout => Waited::TimedOut {
+                alive: self.alive_by_polling(),
+            },
+            None => {
+                self.sense();
+                return None;
+            }
         };
         self.pending = false;
         self.held = None;
-        Some(self.settle(waited, what, timeout))
+        let id = self.next_id;
+        Some(self.settle(waited, what, timeout, id, false))
+    }
+
+    /// Takes a sample of the child's sign of life (the polled waits call it on every poll).
+    fn sense(&mut self) {
+        let (pulse, t) = (self.shared.pulse(), now());
+        let v = self.vitals.get_or_insert(Vitals {
+            pulse,
+            sampled: t,
+            changed: None,
+        });
+        if pulse != v.pulse {
+            // A change seen after a long gap is dated at the sample before it: it says nothing
+            // about the last moments.
+            v.changed = Some(if t.saturating_duration_since(v.sampled) <= ALIVE_WINDOW {
+                t
+            } else {
+                v.sampled
+            });
+            v.pulse = pulse;
+        }
+        v.sampled = t;
+    }
+
+    /// True when the sign of life changed within [`ALIVE_WINDOW`] of the polls so far.
+    fn alive_by_polling(&mut self) -> bool {
+        self.sense();
+        let t = now();
+        self.vitals
+            .and_then(|v| v.changed)
+            .is_some_and(|c| t.saturating_duration_since(c) <= ALIVE_WINDOW)
     }
 
     /// The error of a call made while a held request is out (see [`Link::begin_held_call`]).
     fn busy(&self, what: &str) -> Option<BackendError> {
-        self.held.map(|held| {
-            BackendError::Failed(format!(
+        if let Some(held) = self.held {
+            return Some(BackendError::Failed(format!(
                 "the plugin is busy with {held}; {what} was not sent"
-            ))
-        })
+            )));
+        }
+        self.stuck().map(|call| not_responding(&call, what))
+    }
+
+    /// The name of the call the plugin has not answered although its process is alive (its main
+    /// thread is busy): until the answer comes, every call fails at once without being sent, and
+    /// the answer ends the state by itself. `None` when it is not stuck or the child is gone.
+    pub fn stuck(&self) -> Option<String> {
+        self.shared.stuck()
     }
 
     /// The name of the held request that is out, if any.
@@ -755,10 +1304,22 @@ impl Link {
         what: &'static str,
         make: impl FnOnce(u64) -> ToChild,
     ) -> Result<(), BackendError> {
-        self.begin_call(make)?;
+        self.begin_held_call_with(what, make, None)
+    }
+
+    /// [`Link::begin_held_call`] for a request that carries `blob` (a state to restore).
+    pub fn begin_held_call_with(
+        &mut self,
+        what: &'static str,
+        make: impl FnOnce(u64) -> ToChild,
+        blob: Option<&[u8]>,
+    ) -> Result<(), BackendError> {
+        self.begin_call_with(make, blob)?;
         // Taken by `poll_reply` only: a `finish_call` must not mistake it for its own.
         self.pending = false;
         self.held = Some(what);
+        self.vitals = None;
+        self.sense();
         Ok(())
     }
 
@@ -807,16 +1368,32 @@ impl Link {
     }
 
     fn await_reply(&mut self, what: &str, timeout: Duration) -> Result<Reply, BackendError> {
-        let waited = self.shared.wait(timeout);
-        self.settle(waited, what, timeout)
+        let waited = self.shared.wait_noted(what, timeout);
+        let id = self.next_id;
+        self.settle(waited, what, timeout, id, false)
     }
 
-    /// Turns what a wait ended with into the reply or the error.
+    /// Whether a call that timed out leaves the child alone: it showed a sign of life, the link
+    /// is not a bounce's, and the call is one that has an id to wait for. Without it the child
+    /// is stopped.
+    fn spares(&mut self, alive: bool, id: u64) -> bool {
+        // A short wait can fall between two beats of a healthy child on a loaded machine: the
+        // samples taken at earlier calls count too (the beat must have moved within
+        // `ALIVE_WINDOW` of them).
+        let alive = alive || self.alive_by_polling();
+        alive && id != 0 && !self.timeouts.bounce
+    }
+
+    /// Turns what a wait for the request `id` ended with into the reply or the error. A request
+    /// that went unanswered while the child is alive does not stop it: the link is stuck on it
+    /// (`background`: the request was the background one).
     fn settle(
         &mut self,
         waited: Waited,
         what: &str,
         timeout: Duration,
+        id: u64,
+        background: bool,
     ) -> Result<Reply, BackendError> {
         match waited {
             Waited::Reply(reply) => match reply.msg {
@@ -824,8 +1401,20 @@ impl Link {
                 _ => Ok(reply),
             },
             Waited::Ended => Err(lost()),
-            Waited::TimedOut => {
+            Waited::TimedOut { alive } => {
                 let ms = timeout.as_millis();
+                if self.spares(alive, id) {
+                    // The answer may have come between the end of the wait and now.
+                    if let Some(reply) = self.shared.enter_stuck(id, what, background) {
+                        return self.settle(Waited::Reply(reply), what, timeout, id, background);
+                    }
+                    return Err(BackendError::Failed(format!(
+                        "{NOT_RESPONDING}: it did not answer {what} within {ms} ms"
+                    )));
+                }
+                if background {
+                    self.shared.clear_background();
+                }
                 self.shared.kill(format!(
                     "the plugin process did not answer {what} within {ms} ms and was stopped"
                 ));
@@ -841,6 +1430,14 @@ impl Link {
     /// slowest child, not the sum. Any other call on this link before the finish abandons the
     /// request (its answer is dropped).
     pub fn begin_call(&mut self, make: impl FnOnce(u64) -> ToChild) -> Result<(), BackendError> {
+        self.begin_call_with(make, None)
+    }
+
+    fn begin_call_with(
+        &mut self,
+        make: impl FnOnce(u64) -> ToChild,
+        blob: Option<&[u8]>,
+    ) -> Result<(), BackendError> {
         if let Some(e) = self.busy("a request") {
             return Err(e);
         }
@@ -851,7 +1448,7 @@ impl Link {
         self.next_id += 1;
         let id = self.next_id;
         self.shared.expect(Expect::Id(id));
-        self.send(&make(id), None)?;
+        self.send(&make(id), blob)?;
         self.pending = true;
         Ok(())
     }
@@ -870,6 +1467,69 @@ impl Link {
             return None;
         }
         Some(self.await_reply(what, timeout))
+    }
+
+    /// Sends the request `make(id)` as the background request: its answer goes to a slot of its
+    /// own, so it can be out while other calls go on, and [`Link::poll_background`] takes it
+    /// without waiting. Nothing times it out: a child whose main thread is busy answers when
+    /// it is free. Only one is out at a time; asking while one is out changes nothing.
+    pub fn begin_background(
+        &mut self,
+        make: impl FnOnce(u64) -> ToChild,
+    ) -> Result<(), BackendError> {
+        if self.shared.is_lost() {
+            return Err(lost());
+        }
+        if let Some(call) = self.stuck() {
+            return Err(not_responding(&call, "a request"));
+        }
+        if self.shared.background_out() {
+            return Ok(());
+        }
+        self.next_id += 1;
+        let id = self.next_id;
+        self.shared.expect_background(id);
+        let sent = self.send(&make(id), None);
+        if sent.is_err() {
+            self.shared.clear_background();
+        }
+        sent
+    }
+
+    /// True while the background request has not been answered or collected.
+    pub fn background_out(&self) -> bool {
+        self.shared.background_out()
+    }
+
+    /// The answer to the background request, without waiting; `None` while it has not come. A
+    /// child that ended answers with a lost link.
+    pub fn poll_background(&mut self) -> Option<Result<Reply, BackendError>> {
+        Some(match self.shared.try_take_background()? {
+            Waited::Reply(reply) => match reply.msg {
+                FromChild::Err { kind, text, .. } => Err(into_backend_error(kind, text)),
+                _ => Ok(reply),
+            },
+            Waited::Ended | Waited::TimedOut { .. } => Err(lost()),
+        })
+    }
+
+    /// Waits up to `timeout` for the background request that is out, like [`Link::call`]: a
+    /// call that needs the state now (a save) takes the request that is out instead of
+    /// sending a second one. `None` when none is out.
+    pub fn finish_background(
+        &mut self,
+        what: &str,
+        timeout: Duration,
+    ) -> Option<Result<Reply, BackendError>> {
+        if !self.shared.background_out() {
+            return None;
+        }
+        let id = self.shared.background_id()?;
+        let waited = self.shared.wait_background_noted(what, timeout);
+        if matches!(waited, Waited::Ended) {
+            self.shared.clear_background();
+        }
+        Some(self.settle(waited, what, timeout, id, true))
     }
 
     /// Sends the request `make(id)` (with `blob`) and waits `timeout` for its answer. A lost
@@ -895,73 +1555,193 @@ impl Link {
         self.await_reply(what, timeout)
     }
 
-    /// Like [`Link::call`] for a request that only polishes the interface (param text, pins,
-    /// the layout, closing the editor): when it is not answered in `timeout` the request is
-    /// dropped and the child is left alone, because a plugin that is busy on its main thread
-    /// (loading a sample, rebuilding its editor) answers none of them and is not at fault.
-    /// After a few misses in a row the instance counts as slow and is asked at most once a
-    /// second; after many the child is stopped, since it is wedged. An answer that arrives later
-    /// is ignored.
-    pub fn soft_call(
+    /// Asks the child a cosmetic question (param text, pins, the layout, resize, closing the
+    /// editor): one that only polishes the interface, which a plugin whose main thread is busy
+    /// (loading a sample, rebuilding its editor) answers late and is not at fault for.
+    ///
+    /// The request is sent at once and goes into a table where the reader thread files the
+    /// answer whenever it comes. How long this call waits for it is `grace`: with
+    /// [`Grace::Frame`] what is left of the frame's allowance (see [`SoftBudget`]), nothing for
+    /// an instance that is slow (it is waited for once in [`Timeouts::slow_retry`]) or that was
+    /// waited for in vain already in this frame. An answer that is not there then is
+    /// [`SoftAsked::Pending`]: it is not lost, [`Link::service_soft`] hands it over when it
+    /// comes. The child is never stopped for a late answer; a request that stays unanswered for
+    /// as long as an activation is judged like any other call there (see
+    /// [`Link::service_soft`]).
+    ///
+    /// # Errors
+    /// The link is lost, stuck on an earlier call or busy with a held one (nothing is sent), or
+    /// the child answered with an error.
+    pub fn soft_ask(
         &mut self,
-        what: &str,
-        timeout: Duration,
+        kind: SoftKind,
+        grace: Grace,
         make: impl FnOnce(u64) -> ToChild,
-    ) -> Result<Reply, BackendError> {
+    ) -> Result<SoftAsked, BackendError> {
+        let what = kind.name();
         if let Some(e) = self.busy(what) {
             return Err(e);
         }
-        self.pending = false;
         if self.shared.is_lost() {
             return Err(lost());
         }
-        if self.is_slow()
-            && self
-                .last_miss
-                .is_some_and(|t| now().saturating_duration_since(t) < self.timeouts.slow_retry)
-        {
-            return Err(BackendError::Failed(format!(
-                "the plugin is slow to answer {what}"
-            )));
-        }
+        self.warn_over_if_recovered();
+        let wait = self.grace_for(grace);
         self.next_id += 1;
         let id = self.next_id;
-        self.shared.expect(Expect::Id(id));
+        self.sense();
+        if self.shared.soft_len() == 0 {
+            self.soft_progress = Some(now());
+        }
+        self.shared.add_soft(SoftReq {
+            id,
+            kind,
+            sent: now(),
+            answer: None,
+            missed: false,
+        });
         self.send(&make(id), None)?;
-        match self.shared.wait(timeout) {
+        if wait.is_zero() {
+            return Ok(SoftAsked::Pending);
+        }
+        let start = now();
+        // A wait is a stall of the plugin only when it was asked to last that long: a short one
+        // that the operating system woke late is not (it still eats the frame's allowance).
+        let waited = if wait >= STALL_THRESHOLD {
+            self.shared.noted(what, |shared| shared.wait_soft(id, wait))
+        } else {
+            self.shared.wait_soft(id, wait)
+        };
+        if grace == Grace::Frame && !self.timeouts.bounce {
+            self.budget.grant(wait);
+            self.budget.spend(now().saturating_duration_since(start));
+        }
+        match waited {
             Waited::Reply(reply) => {
-                self.misses = 0;
-                match reply.msg {
-                    FromChild::Err { kind, text, .. } => Err(into_backend_error(kind, text)),
-                    _ => Ok(reply),
-                }
+                self.soft_progress = Some(now());
+                interpret(reply).map(SoftAsked::Answered)
             }
             Waited::Ended => Err(lost()),
-            Waited::TimedOut => {
-                self.misses += 1;
-                self.last_miss = Some(now());
-                let ms = timeout.as_millis();
-                if self.misses == MISSES_TO_SLOW {
-                    self.shared.warn(format!(
-                        "the plugin is slow to answer {what}; the app asks less often until it does"
-                    ));
-                }
-                if self.misses >= MISSES_TO_KILL {
-                    let n = self.misses;
-                    self.shared.kill(format!(
-                        "the plugin process did not answer {what} {n} times in a row and was stopped"
-                    ));
-                }
-                Err(BackendError::Failed(format!(
-                    "the plugin did not answer {what} within {ms} ms"
-                )))
+            Waited::TimedOut { .. } => {
+                self.shared.soft_missed(id);
+                self.missed_frame = Some(self.budget.frame());
+                self.note_miss(what, now());
+                Ok(SoftAsked::Pending)
             }
         }
     }
 
-    /// True while the child misses cosmetic calls (see [`Link::soft_call`]).
+    /// How long a cosmetic question is waited for now (see [`Link::soft_ask`]).
+    fn grace_for(&self, grace: Grace) -> Duration {
+        match grace {
+            Grace::None => Duration::ZERO,
+            Grace::Full => self.timeouts.text,
+            Grace::Frame if self.timeouts.bounce => self.timeouts.text,
+            Grace::Frame => {
+                let slow_and_recent = self.is_slow()
+                    && self.last_miss.is_some_and(|t| {
+                        now().saturating_duration_since(t) < self.timeouts.slow_retry
+                    });
+                if slow_and_recent || self.missed_frame == Some(self.budget.frame()) {
+                    return Duration::ZERO;
+                }
+                self.budget.left().min(self.timeouts.text)
+            }
+        }
+    }
+
+    /// Counts a late cosmetic answer; the third within the window makes the instance slow, and
+    /// the user is told once per slow episode.
+    fn note_miss(&mut self, what: &str, at: std::time::Instant) {
+        self.last_miss = Some(at);
+        self.recent_misses.push_back(at);
+        while self.recent_misses.len() > MISSES_TO_SLOW {
+            self.recent_misses.pop_front();
+        }
+        if self.is_slow() && !self.warned {
+            self.warned = true;
+            self.shared.warn(format!(
+                "the plugin is slow to answer {what}; the app asks less often until it does"
+            ));
+        }
+    }
+
+    /// A slow episode that has ended can be told about again.
+    fn warn_over_if_recovered(&mut self) {
+        if self.warned && !self.is_slow() {
+            self.warned = false;
+        }
+    }
+
+    /// True while the child's cosmetic answers are late: the last [`MISSES_TO_SLOW`] late ones
+    /// all came within [`Timeouts::slow_window`]. A fast answer does not end it, time does.
     pub fn is_slow(&self) -> bool {
-        self.misses >= MISSES_TO_SLOW
+        self.recent_misses.len() >= MISSES_TO_SLOW
+            && self
+                .recent_misses
+                .front()
+                .is_some_and(|t| now().saturating_duration_since(*t) <= self.timeouts.slow_window)
+    }
+
+    /// The allowance of waiting this link draws on.
+    #[cfg(test)]
+    pub fn budget(&self) -> &SoftBudget {
+        &self.budget
+    }
+
+    /// True when a cosmetic request of this kind is out or its answer is not yet collected.
+    pub fn soft_has(&self, kind: impl Fn(&SoftKind) -> bool) -> bool {
+        self.shared.soft_has(kind)
+    }
+
+    /// Takes the cosmetic answers that have come since the last call (the main thread calls it
+    /// once per frame), counts the ones that were late, and judges a plugin that has answered
+    /// none for as long as an activation takes: a child that is alive is NOT RESPONDING (the
+    /// link is stuck on its oldest request, see [`Link::stuck`], and recovers when the answer
+    /// comes), one that shows no sign of life is stopped. A bounce stops it in both cases. Does
+    /// nothing, and allocates nothing, when no request is out.
+    pub fn service_soft(&mut self) -> Vec<SoftDone> {
+        if self.shared.soft_len() == 0 || self.shared.is_lost() {
+            return Vec::new();
+        }
+        let at = now();
+        let gap = self
+            .vitals
+            .map_or(Duration::ZERO, |v| at.saturating_duration_since(v.sampled));
+        self.sense();
+        let harvest = self.shared.collect_soft(self.timeouts.text, at);
+        for late in harvest.late {
+            self.note_miss("a request", late);
+        }
+        let mut done = Vec::with_capacity(harvest.done.len());
+        for (kind, reply) in harvest.done {
+            self.soft_progress = Some(at);
+            done.push(SoftDone {
+                kind,
+                answer: interpret(reply),
+            });
+        }
+        let silent = self
+            .soft_progress
+            .is_some_and(|t| at.saturating_duration_since(t) >= self.timeouts.create);
+        // A long gap between two frames says nothing about the child's last moments: judge it
+        // from the next frame's samples.
+        if let Some((id, kind)) = harvest.oldest
+            && silent
+            && self.stuck().is_none()
+            && gap <= ALIVE_WINDOW
+        {
+            let what = kind.name();
+            if self.spares(false, id) {
+                self.shared.enter_stuck_soft(id, what);
+            } else {
+                let ms = self.timeouts.create.as_millis();
+                self.shared.kill(format!(
+                    "the plugin process did not answer {what} within {ms} ms and was stopped"
+                ));
+            }
+        }
+        done
     }
 
     /// Asks the child to end and returns at once; the drop then waits for it, together with the
@@ -979,6 +1759,35 @@ impl Link {
         self.shutdown_at = Some(now());
     }
 
+    /// Moves the end of the child on without waiting: asks it to end when nobody did, and says
+    /// true once it has ended. A child that has not ended [`SHUTDOWN_GRACE`] after it was asked
+    /// is stopped, and one that outlives that by the grace the drop gives it counts as done
+    /// too: the drop that follows then does not wait for it again. The app calls it once per
+    /// frame for the instances that are leaving.
+    pub fn poll_shutdown(&mut self) -> bool {
+        self.begin_shutdown();
+        if self.shared.finished() || self.waited_out {
+            return true;
+        }
+        let at = now();
+        let asked = self.shutdown_at.unwrap_or(at);
+        match self.killed_at {
+            None if at.saturating_duration_since(asked) >= SHUTDOWN_GRACE => {
+                self.shared
+                    .kill("the plugin process did not end when asked and was stopped".to_string());
+                self.killed_at = Some(at);
+            }
+            Some(killed)
+                if at.saturating_duration_since(killed) >= EXIT_GRACE + STDERR_GRACE * 2 =>
+            {
+                self.waited_out = true;
+                return true;
+            }
+            _ => {}
+        }
+        false
+    }
+
     /// The error for a reply of the wrong kind: the child breaks the protocol.
     pub fn unexpected(&self, what: &str, got: &FromChild) -> BackendError {
         let text = format!("the plugin process answered {what} with {got:?}");
@@ -987,23 +1796,33 @@ impl Link {
     }
 }
 
-impl Drop for Link {
-    /// Asks the child to end (unless that was done already), gives it what is left of a
-    /// second, then kills it; leaves no thread behind that can end.
-    fn drop(&mut self) {
+impl Link {
+    /// Asks the child to end (unless that was done already) and waits for it: what is left of
+    /// [`SHUTDOWN_GRACE`], then the grace after it was stopped. A bounce ends its children
+    /// this way, so that what it renders never depends on how a frame was paced.
+    pub fn wait_for_end(&mut self) {
         self.begin_shutdown();
         let waited = self
             .shutdown_at
             .map_or(Duration::ZERO, |t| now().saturating_duration_since(t));
-        if self
-            .shared
-            .wait_reason(SHUTDOWN_GRACE.saturating_sub(waited))
-            .is_none()
-        {
+        let wait = if self.waited_out {
+            Duration::ZERO
+        } else {
+            SHUTDOWN_GRACE.saturating_sub(waited)
+        };
+        if self.shared.wait_reason(wait).is_none() && !self.waited_out {
             self.shared
                 .kill("the plugin process did not end when asked and was stopped".to_string());
             let _ = self.shared.wait_reason(EXIT_GRACE + STDERR_GRACE * 2);
         }
+    }
+}
+
+impl Drop for Link {
+    /// Asks the child to end (unless that was done already), gives it what is left of a
+    /// second, then kills it; leaves no thread behind that can end.
+    fn drop(&mut self) {
+        self.wait_for_end();
         // Only a finished thread is joined: a stuck one (a grandchild holding the pipe) must
         // not stall the caller.
         let finished = lock(&self.shared.mailbox).reason.is_some();

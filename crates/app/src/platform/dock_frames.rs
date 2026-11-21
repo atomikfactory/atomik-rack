@@ -125,6 +125,29 @@ impl DockFrames {
         !self.frames.is_empty()
     }
 
+    /// Lets go of every title bar's surface (the graphics device was lost).
+    pub(super) fn drop_surfaces(&mut self) {
+        for frame in self.frames.values_mut() {
+            frame.surface = None;
+        }
+    }
+
+    /// Gives every title bar a surface on the new context and paints it (the graphics were built
+    /// again); a bar that had none because its surface failed to open gets one too.
+    pub(super) fn recreate_surfaces(
+        &mut self,
+        gpu: &mut GpuContext,
+        text: &mut TextEngine,
+    ) -> Result<(), String> {
+        for frame in self.frames.values_mut() {
+            let bar_h = frame.bar_height();
+            let surface = gpu.create_surface(Arc::clone(&frame.bar), frame.size.0, bar_h)?;
+            frame.surface = Some(surface);
+            frame.paint(gpu, text);
+        }
+        Ok(())
+    }
+
     /// The song whose frame window `id` is (a title bar or an area).
     pub(super) fn doc_of(&self, id: WindowId) -> Option<DocId> {
         self.ids.get(&id).map(|(doc, _)| *doc)

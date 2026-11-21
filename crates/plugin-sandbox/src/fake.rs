@@ -3,7 +3,9 @@
 //! timeouts, notifications, Lost, Late and offline) is tested without starting a process.
 //!
 //! The fake is scripted per request: [`Action::Reply`] answers, [`Action::Silent`] never
-//! answers (a hung plugin, until the parent kills it), [`Action::Exit`] ends the "process".
+//! answers (a hung plugin with no sign of life, until the parent kills it), [`Action::Blocked`]
+//! does not answer either but its audio thread goes on (a plugin whose main thread is busy: the
+//! parent must not stop it), [`Action::Exit`] ends the "process".
 
 use crate::instance::RemoteInstance;
 use crate::link::{LiveGuard, Timeouts};
@@ -30,8 +32,12 @@ pub(crate) const FAKE_PID: u32 = 4242;
 pub(crate) enum Action {
     /// Send these frames (message, blob).
     Reply(Vec<(FromChild, Option<Vec<u8>>)>),
-    /// Never answer: the child hangs until it is killed.
+    /// Never answer: the child hangs until it is killed, and its audio thread stops too (no
+    /// sign of life in the block).
     Silent,
+    /// Answer with these frames once the test calls [`Control::release`]: the plugin's main
+    /// thread is busy, but its audio thread runs and shows its sign of life.
+    Blocked(Vec<(FromChild, Option<Vec<u8>>)>),
     /// Answer with these frames after this long: a plugin that is busy, not hung. The fake
     /// serves no other request meanwhile.
     Delayed(Duration, Vec<(FromChild, Option<Vec<u8>>)>),
@@ -71,6 +77,13 @@ pub(crate) struct Control {
     audio_events: Mutex<Vec<Vec<PluginEvent>>>,
     info: Mutex<Option<ProcessorInfo>>,
     wake: AtomicBool,
+    /// The whole process hangs (see [`Action::Silent`]): the audio thread neither serves nor
+    /// shows a sign of life.
+    dead: AtomicBool,
+    /// A [`Action::Blocked`] request may be answered now.
+    released: AtomicBool,
+    /// Extra microseconds the audio thread idles per pass: a slow beat (a loaded machine).
+    audio_idle_us: AtomicU64,
 }
 
 impl Control {
@@ -91,7 +104,26 @@ impl Control {
             audio_events: Mutex::new(Vec::new()),
             info: Mutex::new(None),
             wake: AtomicBool::new(false),
+            dead: AtomicBool::new(false),
+            released: AtomicBool::new(false),
+            audio_idle_us: AtomicU64::new(0),
         }
+    }
+
+    /// Makes the audio thread idle `idle` on every pass, so its sign of life beats that rarely.
+    pub fn set_audio_idle(&self, idle: Duration) {
+        self.audio_idle_us
+            .store(idle.as_micros() as u64, Ordering::SeqCst);
+    }
+
+    /// Makes the next [`Action::Blocked`] request wait for [`Control::release`] again.
+    pub fn hold(&self) {
+        self.released.store(false, Ordering::SeqCst);
+    }
+
+    /// Lets the [`Action::Blocked`] request that is waiting (or the next one) be answered.
+    pub fn release(&self) {
+        self.released.store(true, Ordering::SeqCst);
     }
 
     /// Sends a frame to the parent (a notification, or an unsolicited reply).
@@ -332,10 +364,22 @@ fn run_control(ctl: &Control, mut stdin: PipeReader, mut script: Script, protoco
                 }
             }
             Action::Silent => {
+                ctl.dead.store(true, Ordering::SeqCst);
                 while !ctl.killed.load(Ordering::SeqCst) && !ctl.stop.load(Ordering::SeqCst) {
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 return;
+            }
+            Action::Blocked(frames) => {
+                while !ctl.released.load(Ordering::SeqCst) {
+                    if ctl.killed.load(Ordering::SeqCst) || ctl.stop.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                for (msg, blob) in frames {
+                    ctl.send(&msg, blob.as_deref());
+                }
             }
             Action::Delayed(delay, frames) => {
                 let until = crate::clock::now() + delay;
@@ -380,9 +424,15 @@ fn run_audio(ctl: &Control, mut port: ChildPort) {
         if ctl.wake.swap(false, Ordering::SeqCst) {
             port.request_wake();
         }
-        if ctl.audio_mode.load(Ordering::SeqCst) == AudioMode::Stall as u8 {
+        if ctl.audio_mode.load(Ordering::SeqCst) == AudioMode::Stall as u8
+            || ctl.dead.load(Ordering::SeqCst)
+        {
             std::thread::sleep(Duration::from_millis(1));
             continue;
+        }
+        let idle = ctl.audio_idle_us.load(Ordering::SeqCst);
+        if idle > 0 {
+            std::thread::sleep(Duration::from_micros(idle));
         }
         let Some(req) = port.wait_request(Duration::from_millis(2)) else {
             continue;
@@ -486,6 +536,7 @@ pub(crate) fn test_timeouts() -> Timeouts {
         watchdog: Duration::from_millis(400),
         hung: Duration::ZERO,
         slow_retry: Duration::from_millis(20),
+        slow_window: Duration::from_secs(5),
         bounce: false,
     }
 }
@@ -535,12 +586,22 @@ pub(crate) fn start(options: FakeOptions) -> Started {
 
 /// Starts an instance over a fake child with these timeouts.
 pub(crate) fn start_with(options: FakeOptions, timeouts: Timeouts) -> Started {
+    start_with_budget(options, timeouts, atomik_plugin_host::SoftBudget::default())
+}
+
+/// Starts an instance over a fake child with these timeouts, drawing on `budget` (shared with
+/// other instances that were given the same one).
+pub(crate) fn start_with_budget(
+    options: FakeOptions,
+    timeouts: Timeouts,
+    budget: atomik_plugin_host::SoftBudget,
+) -> Started {
     let (_device, manager) = plugin_channel(InstanceId(1));
     let messenger: HostMessenger = manager.messenger();
     let live = Arc::new(AtomicUsize::new(0));
     let (transport, port, fake) = fake_transport(options, make_ports());
     let guard = LiveGuard::new(&live);
-    let instance = RemoteInstance::start(transport, port, timeouts, messenger, guard);
+    let instance = RemoteInstance::start(transport, port, timeouts, messenger, guard, budget);
     Started {
         instance,
         fake,

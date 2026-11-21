@@ -1,12 +1,17 @@
 //! Unit tests of the private types over a fake child (and, for supervision, a real process).
 
+mod background;
+mod budget;
 mod loading;
 mod lost;
 mod no_alloc;
 mod notifications;
 mod policy;
+mod polled;
 mod processor;
 mod rpc;
+mod soft;
+mod stuck;
 mod supervision;
 
 use crate::fake::{Fake, FakeOptions, start};

@@ -174,14 +174,25 @@ pub struct PluginDeviceStatus {
     /// The plugin's process ended (sandbox): the reason, the exit code or signal and the last
     /// lines it wrote. RELOAD creates a new instance.
     pub crashed: Option<String>,
+    /// The plugin's process is alive but its main thread did not answer a call in time (sandbox):
+    /// the name of the call. The app stopped waiting for it and asks it no more until it answers,
+    /// its audio keeps running; RELOAD stops it and creates a new instance.
+    pub not_responding: Option<String>,
     /// The plugin is quarantined, so the project did not load it: the reason (empty when it is
     /// not known). LOAD ANYWAY (the RELOAD button) loads it.
     pub quarantined: Option<String>,
-    /// The instance is being created.
+    /// The instance is being created (SKIP stops it).
     pub loading: bool,
+    /// The user skipped the creation: the device is a stand-in with its saved state, nothing
+    /// crashed. RELOAD creates the plugin.
+    pub skipped: bool,
     /// The instance waits for the audio engine (audio is off): the reason. The editor and the
     /// params work; the device makes no sound until audio runs.
     pub waiting: Option<String>,
+    /// The plugin's state is over a size cap and cannot be stored: the size and the limit, in
+    /// bytes. The plugin runs fine (this is not a state word); the project keeps the last state
+    /// that fitted until a capture fits again.
+    pub state_too_large: Option<(u64, u64)>,
 }
 
 /// How a scan walks the files (mirror of the host's `RescanMode`).
@@ -396,6 +407,10 @@ pub enum PluginBannerAction {
     KeepCrashed,
     /// After an unclean exit: open the newest recovery snapshot.
     OpenRecovery,
+    /// After a contained internal error: SAVE the project (the shell runs File > Save).
+    SaveProject,
+    /// After a contained internal error: DISMISS the notice.
+    DismissError,
 }
 
 /// One preset of a plugin as the parameter pane lists it.

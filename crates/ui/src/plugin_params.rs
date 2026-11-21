@@ -13,7 +13,8 @@
 //!   (param id, plain value) pairs of the visible rows that have no fresh display text; the app
 //!   asks `PluginManager::param_text` and answers with [`PluginParamsView::set_texts`]. A text
 //!   is only shown for the value it was asked for; after an edit the number is shown until the
-//!   new text arrives.
+//!   new text arrives. A plugin that is busy answers later: [`PluginParamsView::offer_texts`]
+//!   takes such a text, and only for a row that still shows the value it was asked for.
 //! * A plugin that offers presets gets a preset bar in the search row (`<`, the name, `>`; the
 //!   name opens a list): [`PluginParamsView::set_presets`] gives the list and the preset
 //!   loaded last, and the pane answers with [`UiAction::LoadPluginPreset`] or
@@ -486,6 +487,41 @@ impl PluginParamsView {
             self.texts.insert(*id, (v.to_bits(), t.clone()));
         }
         self.repaint = true;
+    }
+
+    /// Gives display texts that the plugin answered after the frame that asked for them (see
+    /// [`PluginParamsView::set_texts`] for the tuples): a text fills its row only when the row
+    /// still shows the value it was asked for, so a text that comes late for a value that has
+    /// changed since is dropped. Returns how many were taken.
+    pub fn offer_texts(&mut self, texts: &[(u32, f32, String)]) -> usize {
+        let fits: Vec<&(u32, f32, String)> = texts
+            .iter()
+            .filter(|(id, v, _)| {
+                self.rows
+                    .iter()
+                    .find(|r| r.id == *id)
+                    .is_some_and(|row| self.value_of(row).to_bits() == v.to_bits())
+            })
+            .collect();
+        if fits.is_empty() {
+            return 0;
+        }
+        if self.texts.len() + fits.len() > TEXT_CACHE_MAX {
+            self.texts.clear();
+        }
+        for (id, v, t) in &fits {
+            self.texts.insert(*id, (v.to_bits(), t.clone()));
+        }
+        self.repaint = true;
+        fits.len()
+    }
+
+    /// The display text the pane shows for param `id` now: the plugin's own text for the value
+    /// the row shows, or `None` when it shows the number.
+    pub fn shown_text(&self, id: u32) -> Option<&str> {
+        let row = self.rows.iter().find(|r| r.id == id)?;
+        let (bits, text) = self.texts.get(&id)?;
+        (*bits == self.value_of(row).to_bits()).then_some(text.as_str())
     }
 
     /// The (param id, plain value) pairs of the visible rows that have no fresh text and were

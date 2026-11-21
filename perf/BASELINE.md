@@ -168,8 +168,9 @@ spins; both only matter on a live stream (see `atomik-play --stats` for the call
 
 Same machine, bench profile, medians of 21 runs (`cargo bench -p atomik-render --bench render_batch
 -- "rack/workers0|console-64/workers0"`, with `ATOMIK_BENCH_TIMING=1` for the second column). The
-per-device timing reads the clock twice around each device call; it is on only while View > CPU
-Meters is. A bounce renders the same samples either way.
+per-device timing reads the clock twice around each device call. The app always has it on (the
+engine measures every device all the time; View > Show Device CPU only shows the numbers), so the
+second column is what the running app pays. A bounce renders the same samples either way.
 
 ```text
 case                                   off           timing on
@@ -179,7 +180,7 @@ render/console-64/workers0/block256    1.486 s       1.565 s
 
 The rack case is 100 cheap devices, so it is the worst case for the overhead: about 70 ns per
 device per 64-frame batch, which is 0.5 % of the 1.33 ms callback at 48 kHz for 100 devices. With
-the readout off a device call pays two relaxed atomic loads.
+the timing off (the first column) a device call pays two relaxed atomic loads.
 
 ## I/O speed
 
@@ -267,3 +268,177 @@ at 1.3x speed, on the reference machine:
 
 The real-time stretcher costs about 2.4 ms per second of stereo audio per clip, so 32 clips at once take about 8 % of
 one core on top of the plain read.
+
+## Idle baseline of the running app (2026-11-20)
+
+The running app, not a bench: the rows were taken with an external sampler before the sampling script
+(`scripts/perf/sample-app.ps1`, see [docs/TESTING.md](../docs/TESTING.md#measuring-the-running-app)) existed, at
+commit `1940e40e`, on the reference machine above with the release build, the transport stopped and nothing
+sounding. CPU is a percentage of one core, so 829 is about eight cores busy. The linger rows are the same
+scenarios with `--linger` (the idle spins before a render worker parks). "Two cores / four threads" pins the
+process to four logical processors with an affinity mask. The GPU column is the dedicated memory of the app's
+process.
+
+| Scenario | CPU % | Private MB | Working set MB | Threads | GPU dedicated MB |
+|---|---|---|---|---|---|
+| Empty project, no audio | 0.16 | 681 | 179 | 36 | 503 |
+| Empty project, audio on | 1.6-2.3 | 686-697 | 188-191 | 47 | 503 |
+| Empty project, audio on, minimized | 2.2-3.5 | 690-693 | 190 | 47 | 503 |
+| Stress rack (100 devices), no audio | 0.23 | 727 | 219 | 36 | 503 |
+| Stress rack, audio on, automatic workers (8) | 829 | 804 | 298 | 47 | 503 |
+| Stress rack, audio on, 2 workers | 216-219 | 814-817 | 306-312 | 41 | 503 |
+| Stress rack, audio on, no workers | 19.2-20.7 | 811-818 | 307-309 | 39 | 503 |
+| Stress rack, 2 workers, worker linger 20 000 | 48-50 | 815-817 | 308 | 41 | 503 |
+| Stress rack, automatic workers, worker linger engine default | 124 | 817 | 310 | 47 | 503 |
+| Stress rack, no audio, rack and mixer detached | 0.16 | 801 | 282 | 42 | 757 |
+| Two cores / four threads (affinity): stress rack, 3 workers | 310 | 799 | 309 | 42 | 503 |
+| Two cores / four threads: stress rack, 1 worker | 116 | 784 | 295 | 39 | 503 |
+| Two cores / four threads: stress rack, no workers | 20.4 | 823 | 307 | 39 | 503 |
+| Two cores / four threads: stress rack, 3 workers, linger engine default | 73 | 811 | 307 | 42 | 503 |
+
+## Render workers parked between callbacks (2026-11-20)
+
+`cargo test -p atomik-engine --release --test worker_linger -- --ignored --nocapture`, no audio device: the
+four-device patch with six voices per device, four render workers, a callback every 128 or 480 frames at 48 kHz paced
+like an audio thread (sleep, then spin to the deadline), 10 s per row. "before" forces the callback flag up for good
+(the workers spin for the whole linger between callbacks, as they did before the flag existed); "after" is the
+behaviour now. CPU is the whole process as a percentage of one core and includes the benchmark's own pacing loop
+(the row with no workers shows it: about 51 % at 128 frames, 16 % at 480). Idle spins are counted when a worker parks.
+The table is one run; a second run agreed within the usual spread (the p99 of the after rows at 128 frames was 128 to
+143 microseconds in both; the maximum is dominated by the machine's scheduling).
+
+```text
+frames workers linger  flag   | callback us: p50   p99   max | barrier spins | idle spins | parks | cpu % of a core
+   128       0       0  after  |             84.1 147.5  192.9 |             0 |          0 |     0 |   51.3
+   128       4   20000  before |             60.3 130.7  572.6 |          7916 |  533557059 | 26248 |  150.4
+   128       4   20000  after  |             67.1 128.0  299.4 |          3712 |   23038449 | 26246 |   60.0
+   128       4  100000  before |             44.9  64.3  115.4 |          1338 | 2201031675 | 15002 |  419.6
+   128       4  100000  after  |             65.0 141.7  315.7 |          5115 |   23379281 | 26246 |   58.1
+   128       4  500000  before |             41.6  61.1  150.7 |          2393 | 2438722445 |  1235 |  452.5
+   128       4  500000  after  |             66.2 143.4 1062.5 |         12259 |   23532273 | 26246 |   64.2
+   480       0       0  after  |            324.5 529.2  563.0 |             0 |          0 |     0 |   15.9
+   480       4   20000  before |            204.7 332.1  692.3 |         10400 |  149882766 |  7008 |   59.4
+   480       4   20000  after  |            183.8 275.8  822.6 |         11574 |   20072498 |  7023 |   11.6
+   480       4  100000  before |            195.6 263.0  850.2 |          8691 |  709431650 |  7003 |  122.8
+   480       4  100000  after  |            183.5 262.6  719.7 |          7287 |   19969866 |  7018 |   14.2
+   480       4  500000  before |            168.7 203.5  283.7 |          4500 |  2332296008 |  4006 |  392.8
+   480       4  500000  after  |            207.4 327.6  807.6 |          8247 |   23419475 |  7018 |   14.1
+```
+
+Reading it: the idle burn of the long linger (420 to 450 % at 128 frames, 390 % at 480) falls to the callback's duty
+cycle plus the pacing loop. The cost is the wake-up of a parked worker at the start of each callback: at 128 frames
+the median callback is about 66 microseconds instead of 42 to 60 and the p99 about 140 instead of 61 with the long
+linger (5 % of the 2.7 ms budget; the old behaviour with the short linger, which parked between callbacks too, had
+about 130). The 128-frame p99 therefore misses the "within 10 % of the long linger" target; the decision and the
+reasons are in [DECISIONS.md](../docs/DECISIONS.md#ap-render-workers-spin-only-inside-a-callback-and-the-automatic-count-follows-the-physical-cores).
+The parks column counts about two per worker per callback: the unpark at the start of a callback and the ones per
+dispatched level leave a token that makes one park return at once.
+
+### The running app after the change
+
+`scripts/perf/sample-app.ps1` with the release build of the commit that parks the workers between callbacks, on the
+same machine and rack as the idle baseline above (transport stopped, nothing sounding, no `--play`; 15 s settle, 20 s
+window). The "before" figures are the rows of that section.
+
+| Scenario | CPU % before | CPU % after |
+|---|---|---|
+| Stress rack, audio on, automatic workers (7 here: the count follows the physical cores) | 829 (8 workers) | 94 |
+| Stress rack, audio on, 2 workers | 216-219 | 34 |
+| Stress rack, audio on, no workers | 19.2-20.7 | 20.5 |
+| Two cores / four threads (affinity `0xF`): stress rack, 3 workers (`--workers 3`) | 310 | 55 |
+
+The automatic count with an affinity mask is not a row: the app picks its count before the mask applies, so it started
+seven workers on four logical processors, and that run did not answer the window probe (the workers run at the
+callback's priority). Give the worker count explicitly in such a run, as the script's help says.
+
+## Plugin processes: idle cost and thread priority (2026-11-21)
+
+The release app with `--stress-plugins` (16 plugin processes: 8 synths and 8 effects, CLAP and VST3 test plugins,
+sandbox on), 10 s settle, then CPU time and context switches of the 16 `atomik-plugin-host` processes over 20 s
+(a performance-counter sample per second over their threads), three runs per row, same machine and build dir as
+above, no `--play`, nothing sounding. "no audio" is `--no-audio`: no batch is ever sent, so the processes are
+truly idle. "audio on, stopped" is the default audio stream with the transport stopped: the app still sends the
+plugins a request per batch, so that row also pays for the batches (the saving there is the spin and the
+ticker only). The built-in null host format cannot take the stress project (the test plugins' ids are not its
+ids), so the real test plugins stand in for it.
+
+| Scenario | CPU of all 16 processes, % of one core, before | after | Context switches/s before | after |
+|---|---|---|---|---|
+| Idle, no audio | 21.4, 23.5, 17.6 | 4.2, 5.2, 2.0 | 9 250 to 9 800 | 2 550 to 2 650 |
+| Audio on, transport stopped | 45.6, 45.3, 52.2 | 35.2, 35.3, 34.8 | 24 800 to 25 300 | 19 900 to 20 800 |
+
+`cargo test --release -p atomik-plugin-hostd --test overhead -- --ignored --nocapture` (one 64-frame batch of a
+VST3 test synth through the child): before, round trip 0.5 us per batch (p99 18.0 us sandboxed against
+16.8 us in process), paced child CPU 1.7 %; after (two runs), round trip 0.2 and 0.4 us (p99 17.4 and 17.7 us against
+17.7 and 17.2 in process), paced child CPU 2.8 and 0.9 %, parent 1.6 and 0.3 %: the run to run spread of the paced
+CPU figure (read through a PowerShell call) is larger than the change. No late buffer in either.
+
+## The wait on a plugin that works in bursts (2026-11-21)
+
+`cargo test --release -p atomik-plugin-hostd --test overhead -- --ignored --nocapture wait_on`: the built-in busy
+test plugin (`null.busy`: a passthrough that spins for N microseconds per batch, or on every eighth batch) in a real
+child, driven through the plugin manager and the device as a paced 480-frame callback at 48 kHz (400 callbacks,
+4 s, one every 10 ms, 3000 batches), device-less: the probe publishes the callback's budget itself (7 ms, the
+70 % of the buffer the stream publishes) in the styles that use it. Same machine and release profile as above,
+nothing sounding. "late" is the device's late-batch count; "app" is the mean time per callback the audio side
+spent inside the plugin calls (the spin: it follows the plugin's own work), and its 99th percentile; "child" is the
+plugin process's CPU in % of one core (read through a PowerShell call, so a few points of noise). The four columns
+separate the two parts of the change: **before** is the wait of one batch period without the cool-down (the
+cool-down was switched off for this column by building it with a huge miss count); **budget** adds the published
+deadline; **cool-down** is one batch period with the cool-down; **both** is the shipped behaviour.
+
+| Plugin work | before: late, app us (p99), child | budget: late, app us (p99), child | cool-down: late, app us (p99), child | both: late, app us (p99), child |
+|---|---|---|---|---|
+| steady 0.3 ms per batch | 0, 2271 (2447), 22 % | 0, 2273 (2447), 25 % | 0, 2283 (2492), 25 % | 0, 2281 (2501), 22 % |
+| burst: 3 ms every 8th batch | 1595, 688 (1358), 16 % | 0, 2835 (3045), 29 % | 1595, 687 (1356), 13 % | 0, 2840 (3118), 25 % |
+| burst: 6 ms every 8th batch | 1595, 689 (1359), 32 % | 0, 5648 (6046), 59 % | 1595, 686 (1358), 32 % | 0, 5653 (6066), 59 % |
+| steady 1.8 ms per batch (cannot keep up) | 3000, 1344 (1361), 19 % | 1800, 7003 (7005), 69 % | 3000, 344 (1355), 18 % | 1803, 6985 (7006), 75 % |
+| steady 20 ms per batch (cannot keep up) | 3000, 458 (1355), 65 % | 3000, 2368 (7011), 67 % | 3000, 232 (1354), 66 % | 3000, 1197 (7011), 67 % |
+
+What it shows. A plugin that fits the buffer but not one batch (the two burst rows) lost 1595 of 3000 batches (a late
+batch leaves the request out, so the batches that follow it in the callback are late too); with the budget it loses
+none, and the audio side spends the plugin's own work time waiting for it (3 ms and 6 ms of one callback's 10 ms),
+which is the price of not dropping the batch and the same as the plugin costs in process. A plugin that cannot keep
+up (the last two rows) still loses batches, and now holds the audio thread longer: the budget lets the first wait
+run to the deadline, 7 ms of every 10 ms (70 % of a core) in the 1.8 ms row, where the plugin does answer most of
+the waits. The cool-down is what bounds the 20 ms row (a plugin that answers nothing in time): the wait runs out
+four times, then the next 24 batches are only polled, and the app time per callback falls from 2368 to 1197 us
+(and from 458 to 232 us with one batch period). It does not cut the cost of a plugin that keeps answering within
+its waits (the 1.8 ms row): those waits are real work, not a miss. The child's CPU is the plugin's work and does
+not change. Both the burst and the heavy rows are the test plugin's, not a measurement of a real plugin.
+
+### The same probe with the fall-back rule (final code)
+
+The first version of the budget spent 7 ms of every 10 ms callback on a plugin that needs more than real time
+(table above, row "steady 1.8 ms"). A second rule now sends such a processor back to one period per wait: three
+callbacks in a row in which a wait ran out at the published moment, then 100 callbacks of one period, then the
+budget is tried again (the span doubles at each renewed exhaustion, up to 500 callbacks; a callback inside the
+budget resets it). Same probe, 800 callbacks (8 s, so the retries are in the average); "late" is summed over the
+plugins and "batches" is per plugin. Two rows are new: a plugin at the edge (0.9 ms per batch, 6.75 ms of work in
+a 7 ms budget) and two bursty plugins in series (4 ms each, which fit alone but not together).
+
+| Plugin work | wait | late/batches | app us per callback (p99) | child CPU |
+|---|---|---|---|---|
+| steady 0.3 ms per batch | one batch | 0/6000 | 2278 (2471) | 25 % |
+| | callback | 0/6000 | 2276 (2475) | 19 % |
+| burst: 3 ms every 8th batch | one batch | 3195/6000 | 685 (1358) | 16 % |
+| | callback | 0/6000 | 2835 (3059) | 29 % |
+| burst: 6 ms every 8th batch | one batch | 3195/6000 | 685 (1361) | 27 % |
+| | callback | 0/6000 | 5647 (6046) | 53 % |
+| steady 1.8 ms per batch (cannot keep up) | one batch | 6000/6000 | 344 (1354) | 19 % |
+| | callback | 5964/6000 | 454 (7002) | 20 % |
+| steady 0.9 ms (at the budget) | one batch | 8/6000 | 6768 (7281) | 72 % |
+| | callback | 0/6000 | 6775 (7255) | 66 % |
+| 2 plugins in series, burst 4 ms each | one batch | 6394/12000 | 1372 (2703) | 38 % |
+| | callback | 2795/12000 | 5531 (7033) | 62 % |
+| steady 20 ms per batch (cannot keep up) | one batch | 6000/6000 | 232 (1354) | 66 % |
+| | callback | 6000/6000 | 316 (7005) | 67 % |
+
+The burst rows keep 0 late batches at the same cost as before the rule. The rows where the plugin cannot fit are
+back to about the one-period cost (454 against 344 us, 316 against 232 us, the difference being the retry
+callbacks; the 1.8 ms row was 6985 us without the rule). The 0.3 ms row is unchanged. At the edge the work fits the
+budget, so no callback is exhausted and the rule never engages (the one-period column even drops 8 batches). For the two
+bursts in series the first plugin takes 4 ms of the 7 and answers; the second has 3 ms left, so its waits run out
+at the deadline and it falls back to one period, while the first keeps the budget: late batches fall from 6394 to
+2795 (the second plugin's bursts are still lost), and the audio side pays 5.5 ms per callback, most of it the first
+plugin's own work, against 1.4 ms. The two plugins do not fit together, which no wait length changes.
