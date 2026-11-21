@@ -220,6 +220,11 @@ pub const V_START: u32 = 6;
 pub const V_ERROR: u32 = 7;
 pub const V_NAN: u32 = 8;
 pub const V_PICKY: u32 = 9;
+pub const V_PROXIES: u32 = 10;
+pub const V_PROXIES_SLOW: u32 = 11;
+
+/// The first controller proxy id of the proxies plugins (`atomik_test_vst3_variants::PROXY_BASE`).
+pub const PROXY_BASE: u32 = 1_000;
 
 /// The edge-case plugins both formats have in their variants library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

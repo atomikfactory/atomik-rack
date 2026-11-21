@@ -42,7 +42,7 @@ pub use backend::{
     ActivateConfig, BackendError, EditorKind, EventList, HostHandle, NULL_PRESETS, NativeParent,
     NullBackend, NullBehavior, NullPlugin, NullStats, PendingInstance, PluginBackend, PluginEvent,
     PluginEventKind, PluginInstance, PluginIo, PluginProcessor, PluginTransport, PresetInfo,
-    ProcessStatus, ScannedPlugin, SleepRule, TailLength,
+    PresetLister, ProcessStatus, ScannedPlugin, SleepRule, TailLength,
 };
 pub use cache::{
     BlacklistEntry, CACHE_VERSION, CachedFile, FileStamp, LoadStatus, PluginCache, SCANNER_VERSION,

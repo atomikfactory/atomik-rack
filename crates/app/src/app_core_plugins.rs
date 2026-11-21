@@ -47,9 +47,10 @@
 //!
 //! # Presets
 //!
-//! [`AppCore::plugin_presets`] lists what the plugin offers (read once per instance),
-//! [`AppCore::load_plugin_preset`] and [`AppCore::step_plugin_preset`] load one into the live
-//! plugin and store the new state as one undo step. The parameter pane shows the list and
+//! [`AppCore::plugin_presets`] lists what the plugin offers (asked for once per instance and
+//! shown when the answer lands, never waited for), [`AppCore::load_plugin_preset`] and
+//! [`AppCore::step_plugin_preset`] load one into the live plugin (a polled step: the frames carry
+//! it on) and store the new state as one undo step. The parameter pane shows the list and
 //! the one loaded last.
 //!
 //! # Window geometry
@@ -83,6 +84,7 @@
 //! that a run did not quit cleanly, which shows the banner for any project, plugins or not.
 
 use super::AppCore;
+use crate::plugin_cache_writer::CacheWriter;
 use crate::plugins_user::PluginsUser;
 use crate::recovery::{RecoveryWriter, SessionMarker};
 use crate::sink::EngineSink;
@@ -417,11 +419,45 @@ struct Recovery {
 }
 
 /// What a background state capture is for when it arrives.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 pub(super) struct Capturing {
     /// A state that differs from the stored one becomes an undo step (the user changed the patch in
     /// the plugin's window, or closed it) instead of being stored silently.
     undoable: bool,
+    /// The state is the result of loading this preset: it becomes the one undo step of the
+    /// load (see [`AppCore::load_plugin_preset`]).
+    preset: Option<String>,
+}
+
+/// What the app knows of the presets a live plugin offers.
+#[derive(Debug, Clone)]
+pub(super) enum PresetList {
+    /// They were asked for and the list has not come yet.
+    Asking,
+    /// The plugin's presets (none for a plugin that has none).
+    Ready(Vec<PresetInfo>),
+    /// The plugin did not list them, at this time of the frame clock: they are asked for again
+    /// when the pane or the browser opens, not sooner than [`PRESET_RETRY_SECS`] later.
+    Failed(f64),
+}
+
+/// How long a failed list of presets is left alone before the next opening asks again.
+const PRESET_RETRY_SECS: f64 = 5.0;
+
+/// Where a preset load is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoadStage {
+    /// The state the plugin holds is being captured, so that the step goes back to it.
+    Before,
+    /// The plugin is loading the preset.
+    Loading,
+}
+
+/// A preset being loaded into a live plugin without the interface waiting for it.
+#[derive(Debug, Clone)]
+struct PresetLoad {
+    preset: String,
+    stage: LoadStage,
 }
 
 /// How many plugin processes load at the same time when a project opens.
@@ -497,8 +533,16 @@ pub(super) struct PluginState {
     /// Devices whose params the user edited in the plugin window since the last state capture:
     /// their state change is already an undo step of its own (the param gesture).
     pub(super) gesture_touched: BTreeSet<DeviceKey>,
-    /// The presets each live device's plugin offers (read when the pane or a step asks).
-    presets: BTreeMap<DeviceKey, Vec<PresetInfo>>,
+    /// The presets each live device's plugin offers (asked for when the pane, the browser or a
+    /// step needs them, and used when the answer lands).
+    presets: BTreeMap<DeviceKey, PresetList>,
+    /// The presets being loaded into live plugins.
+    preset_loads: BTreeMap<DeviceKey, PresetLoad>,
+    /// The devices whose param values were asked for after a patch change, with the document
+    /// revision the answer may still join the undo step of.
+    knob_reads: BTreeMap<DeviceKey, u64>,
+    /// The thread that writes the scan cache (started when the first write is due).
+    cache_writer: Option<CacheWriter>,
     /// The preset loaded last into each device, until anything else changes its state.
     preset_current: BTreeMap<DeviceKey, String>,
     /// Merge id of the state captures that make one undo step, and when the last one was.
@@ -590,6 +634,9 @@ impl PluginState {
             from_plugin: false,
             gesture_touched: BTreeSet::new(),
             presets: BTreeMap::new(),
+            preset_loads: BTreeMap::new(),
+            knob_reads: BTreeMap::new(),
+            cache_writer: None,
             preset_current: BTreeMap::new(),
             state_merge: (STATE_MERGE_BASE, f64::NEG_INFINITY),
             discard: false,
@@ -878,12 +925,51 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Tells the plugin host which params the document uses that a plugin's own table leaves out
+    /// (the controller stand-ins some plugins publish as parameters; see
+    /// [`PluginHost::set_pinned_params`]). Those params stay in the table of the plugin's
+    /// instances and in the descriptor of its type, so every lane, learned control, macro target
+    /// and stored value that names one keeps working, and the layout the document keeps for the
+    /// device does not lose its row when the live layout replaces it. Does nothing when the
+    /// answer is what the host has; otherwise the descriptors are registered again, without
+    /// touching any device (the engine is rebuilt or replaced by the caller as it was).
+    pub(super) fn plugins_pin_document_params(&mut self) {
+        let pins = self.document.doc().plugin_pinned_rows();
+        if &pins == self.plugins.host.pinned_params() {
+            return;
+        }
+        self.plugins.host.set_pinned_params(pins);
+        let types: Vec<String> = self
+            .registry
+            .plugin_type_ids()
+            .map(str::to_string)
+            .collect();
+        for type_id in types {
+            let _ = self.registry.unregister_plugin(&type_id);
+        }
+        let report = self.plugins.host.set_catalog(
+            &self.plugins.cache,
+            &self.plugins.settings,
+            &mut self.registry,
+        );
+        for (plugin, reason) in report.errors {
+            self.reject(format!("plugin {}: {reason}", plugin.id));
+        }
+        if let Err(e) = register_stand_ins(self.document.doc(), &mut self.registry) {
+            self.reject(e.to_string());
+        }
+    }
+
     /// The work of [`Self::refresh_plugin_catalog`] without the engine rebuild: true when a live
     /// device needs one (its plugin went away or its descriptor changed).
     fn register_catalog(&mut self) -> bool {
         // A project saved after a plugin grew new ports teaches the scan about them first, so
         // the catalog and the registry agree with the devices the project holds.
         self.adopt_document_ports();
+        // The params the project uses that a plugin's own table leaves out stay listed.
+        self.plugins
+            .host
+            .set_pinned_params(self.document.doc().plugin_pinned_rows());
         // The stand-ins of the last round go too: an installed plugin must not collide with its
         // own stand-in type (the ones still needed are registered again below).
         let types: Vec<String> = self
@@ -1118,6 +1204,8 @@ impl<S: EngineSink> AppCore<S> {
             self.plugins.dirty.remove(&id);
             self.plugins.capturing.remove(&id);
         }
+        self.plugins.preset_loads.remove(key);
+        self.plugins.knob_reads.remove(key);
         self.plugins.live_desc.remove(key);
         self.plugins.crashed.remove(key);
     }
@@ -1143,6 +1231,8 @@ impl<S: EngineSink> AppCore<S> {
             self.plugins.instances.clear();
             self.plugins.keys.clear();
             self.plugins.dirty.clear();
+            self.plugins.preset_loads.clear();
+            self.plugins.knob_reads.clear();
             self.plugins.capturing.clear();
             self.plugins.snapshot_wait = None;
             self.plugins.failed.clear();
@@ -1236,6 +1326,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins_poll_events();
         self.apply_soft_answers();
         self.plugins_poll_captures();
+        self.plugins_poll_preset_loads();
         self.instantiate_one();
         self.adopt_offline();
         self.poll_scan();
@@ -1265,8 +1356,17 @@ impl<S: EngineSink> AppCore<S> {
             .map(|(id, _)| *id)
             .collect();
         for id in due {
+            let key = self.plugins.keys.get(&id).cloned();
+            // A plugin that is loading a preset is not asked for its state: the load asks for
+            // it when it is done, and that is the step.
+            if key
+                .as_ref()
+                .is_some_and(|k| self.plugins.preset_loads.contains_key(k))
+            {
+                continue;
+            }
             self.plugins.dirty.remove(&id);
-            if let Some(key) = self.plugins.keys.get(&id).cloned() {
+            if let Some(key) = key {
                 self.request_capture_for(&key, true);
             }
         }
@@ -1714,6 +1814,9 @@ impl<S: EngineSink> AppCore<S> {
     /// Starts the creation of the pending devices that have not started yet, in queue order
     /// (see [`MAX_STARTING`]). A device that no longer needs an instance leaves the queue.
     fn start_pending(&mut self) {
+        // A device that came into the document since (a paste, a patch) may use params the host
+        // does not know to keep yet.
+        self.plugins_pin_document_params();
         let keys: Vec<DeviceKey> = self.plugins.pending.iter().cloned().collect();
         for key in keys {
             if self.plugins.starting.contains_key(&key) {
@@ -1955,8 +2058,13 @@ impl<S: EngineSink> AppCore<S> {
         let Some(id) = self.plugins.instances.get(key).copied() else {
             return false;
         };
-        // This capture waits for the request that is out and takes its place.
-        self.plugins.capturing.remove(&id);
+        // This capture waits for the request that is out and takes its place (a preset load
+        // whose result it was is over: the state is stored without a step of its own).
+        if let Some(out) = self.plugins.capturing.remove(&id)
+            && out.preset.is_some()
+        {
+            self.plugins.preset_loads.remove(key);
+        }
         if self.plugins.no_capture.contains(key) {
             return false;
         }
@@ -2026,6 +2134,16 @@ impl<S: EngineSink> AppCore<S> {
             let Some(key) = self.plugins.keys.get(&id).cloned() else {
                 continue;
             };
+            if let Some(preset) = wanted.preset {
+                // The result of a preset load: its own undo step, whatever else was due.
+                self.plugins.preset_loads.remove(&key);
+                match landed.result {
+                    Ok(blob) if !landed.stale => self.finish_preset_load(&key, id, blob, preset),
+                    Ok(_) => {}
+                    Err(e) => self.reject(format!("cannot read the plugin after loading: {e}")),
+                }
+                continue;
+            }
             if landed.stale {
                 continue;
             }
@@ -2125,11 +2243,31 @@ impl<S: EngineSink> AppCore<S> {
     /// holds the old ones. The changes join the undo step the state change just made (undo
     /// puts the old knobs back together with the old state), and nothing is sent to the
     /// plugin, which has the values already.
+    ///
+    /// The values are asked for without waiting: a plugin in another process that is busy
+    /// answers when it is free, and the knobs move then ([`Self::apply_soft_answers`]). That
+    /// answer still joins the undo step when nothing was done to the document meanwhile.
     fn refresh_knobs(&mut self, key: &DeviceKey) {
         let Some(id) = self.plugins.instances.get(key).copied() else {
             return;
         };
-        let values = self.plugins.host.manager().read_params(id);
+        match self.plugins.host.manager().request_params(id) {
+            Ok(Some(values)) => self.apply_param_values(key, values, true),
+            Ok(None) => {
+                self.plugins
+                    .knob_reads
+                    .insert(key.clone(), self.document.revision());
+            }
+            Err(e) => self
+                .plugins
+                .log(format!("[{key}] cannot read the params: {e}")),
+        }
+    }
+
+    /// Puts `values` (what the plugin holds) into the document as the knobs' values. With
+    /// `joins` they join the undo step the state change made; without (the document changed
+    /// since) they make one step of their own.
+    fn apply_param_values(&mut self, key: &DeviceKey, values: Vec<(u32, f64)>, joins: bool) {
         let changes: Vec<(String, f32)> = values
             .into_iter()
             .filter(|(param, _)| self.param_known(key, *param))
@@ -2145,8 +2283,8 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         self.plugins.from_plugin = true;
-        for (param, value) in changes {
-            self.join_next = true;
+        for (n, (param, value)) in changes.into_iter().enumerate() {
+            self.join_next = joins || n > 0;
             let _ = self.apply_command(Command::SetParam {
                 key: key.clone(),
                 param,
@@ -2158,18 +2296,68 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.from_plugin = false;
     }
 
-    /// The presets the plugin behind `device` offers, read once per instance. Empty for a
-    /// device without a live instance or for a plugin with none.
+    /// The presets the plugin behind `device` offers, asked for once per instance and never
+    /// waited for: empty for a device without a live instance, for a plugin with none, and
+    /// until the plugin's answer lands (see [`Self::plugin_presets_loading`]). A list the plugin
+    /// failed to give is not taken for "no presets": it is asked for again the next time the
+    /// pane or the browser opens (see [`Self::retry_failed_presets`]).
     pub fn plugin_presets(&mut self, device: &DeviceKey) -> Vec<PresetInfo> {
-        if let Some(list) = self.plugins.presets.get(device) {
-            return list.clone();
+        match self.plugins.presets.get(device) {
+            Some(PresetList::Ready(list)) => return list.clone(),
+            Some(PresetList::Asking | PresetList::Failed(_)) => return Vec::new(),
+            None => {}
         }
+        self.ask_presets(device);
+        match self.plugins.presets.get(device) {
+            Some(PresetList::Ready(list)) => list.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// True while the presets of `device` were asked for and the plugin has not answered.
+    pub fn plugin_presets_loading(&self, device: &DeviceKey) -> bool {
+        matches!(self.plugins.presets.get(device), Some(PresetList::Asking))
+    }
+
+    /// Asks the plugin behind `device` for its presets: the list is kept when it comes, at
+    /// once for a plugin in this process and on a later frame for a plugin in another process.
+    fn ask_presets(&mut self, device: &DeviceKey) {
         let Some(id) = self.plugins.instances.get(device).copied() else {
-            return Vec::new();
+            return;
         };
-        let list = self.plugins.host.manager().list_presets(id);
-        self.plugins.presets.insert(device.clone(), list.clone());
-        list
+        let now = self.plugins.clock;
+        let entry = match self.plugins.host.manager().request_presets(id) {
+            Ok(Some(list)) => PresetList::Ready(list),
+            Ok(None) => PresetList::Asking,
+            Err(e) => {
+                self.plugins
+                    .log(format!("[{device}] cannot list the presets: {e}"));
+                PresetList::Failed(now)
+            }
+        };
+        self.plugins.presets.insert(device.clone(), entry);
+    }
+
+    /// Asks again for the presets of `device` when the last answer was a failure that is at
+    /// least [`PRESET_RETRY_SECS`] old.
+    pub(super) fn retry_failed_presets(&mut self, device: &DeviceKey) {
+        if let Some(PresetList::Failed(at)) = self.plugins.presets.get(device)
+            && self.plugins.clock - *at >= PRESET_RETRY_SECS
+        {
+            self.plugins.presets.remove(device);
+            self.ask_presets(device);
+        }
+    }
+
+    /// The presets of `device` came: a patch browser aimed at it lists them.
+    fn presets_arrived(&mut self, device: &DeviceKey) {
+        let any = matches!(
+            self.plugins.presets.get(device),
+            Some(PresetList::Ready(list)) if !list.is_empty()
+        );
+        if any && self.browsing(device) {
+            self.browse_patches(device);
+        }
     }
 
     /// The id of the preset loaded last into `device` and still in place.
@@ -2180,47 +2368,132 @@ impl<S: EngineSink> AppCore<S> {
     /// Loads the preset `preset` into the plugin behind `device` as one undo step: undo puts
     /// the previous state back into the live plugin. A refusal shows as a toast and changes
     /// nothing.
+    ///
+    /// A plugin in another process may take long to load (a sampler reading its library), so
+    /// the load is a polled step: this call starts it and the frames carry it on
+    /// ([`Self::plugins_poll_preset_loads`]); the undo step is made, the knobs move and the
+    /// preset shows as the one loaded when the plugin has answered. True when the load went
+    /// through or is under way. A plugin in this process answers at once, and so does an
+    /// offline render.
     pub fn load_plugin_preset(&mut self, device: &DeviceKey, preset: &str) -> bool {
-        let Some(id) = self.plugins.instances.get(device).copied() else {
+        if !self.plugins.instances.contains_key(device) {
             self.reject("the plugin is not running".to_string());
             return false;
-        };
-        // The step must go back to what the plugin holds now, whatever it did since the last
-        // capture.
-        self.capture_instance(device);
-        if let Err(e) = self.plugins.host.manager().load_preset(id, preset) {
-            self.reject(e.to_string());
+        }
+        if self.plugins.preset_loads.contains_key(device) {
+            self.reject("a preset is still loading into this plugin".to_string());
             return false;
         }
-        let blob = match self.plugins.host.manager().capture_state(id) {
-            Ok(b) => b,
-            Err(e) => {
-                self.reject(format!("cannot read the plugin after loading: {e}"));
-                return false;
-            }
+        self.plugins.preset_loads.insert(
+            device.clone(),
+            PresetLoad {
+                preset: preset.to_string(),
+                stage: LoadStage::Before,
+            },
+        );
+        self.advance_preset_load(device)
+    }
+
+    /// Moves the preset loads on one step each (once per frame).
+    pub(super) fn plugins_poll_preset_loads(&mut self) {
+        if self.plugins.preset_loads.is_empty() {
+            return;
+        }
+        let keys: Vec<DeviceKey> = self.plugins.preset_loads.keys().cloned().collect();
+        for key in keys {
+            self.advance_preset_load(&key);
+        }
+    }
+
+    /// Takes the load of `key` as far as it goes without waiting: capturing the state the step
+    /// goes back to, loading, and asking for the state that results (which
+    /// [`Self::plugins_poll_captures`] turns into the undo step). False when it failed, which
+    /// is told to the user.
+    fn advance_preset_load(&mut self, key: &DeviceKey) -> bool {
+        let Some(load) = self.plugins.preset_loads.get(key).cloned() else {
+            return true;
         };
+        let Some(id) = self.plugins.instances.get(key).copied() else {
+            // The instance went (crashed, reloaded, removed): nothing to finish.
+            self.plugins.preset_loads.remove(key);
+            return false;
+        };
+        if load.stage == LoadStage::Before {
+            // The step must go back to what the plugin holds now, whatever it did since the
+            // last capture: the capture is asked for in the background and waited for here.
+            if self.plugins.dirty.contains_key(&id) {
+                self.plugins.dirty.remove(&id);
+                self.request_capture_for(key, false);
+            }
+            self.plugins_poll_captures();
+            if self.plugins.capturing.contains_key(&id) {
+                return true;
+            }
+            match self
+                .plugins
+                .host
+                .manager()
+                .begin_load_preset(id, &load.preset)
+            {
+                Err(e) => {
+                    self.plugins.preset_loads.remove(key);
+                    self.reject(e.to_string());
+                    return false;
+                }
+                Ok(true) => {}
+                Ok(false) => {
+                    if let Some(l) = self.plugins.preset_loads.get_mut(key) {
+                        l.stage = LoadStage::Loading;
+                    }
+                    return true;
+                }
+            }
+        } else {
+            match self.plugins.host.manager().poll_load_preset(id) {
+                None => return true,
+                Some(Err(e)) => {
+                    self.plugins.preset_loads.remove(key);
+                    self.reject(e.to_string());
+                    return false;
+                }
+                Some(Ok(())) => {}
+            }
+        }
+        // Loaded: the plugin's new state is asked for, and the step is made when it lands.
+        if let Err(e) = self.plugins.host.manager().request_capture(id) {
+            self.plugins.preset_loads.remove(key);
+            self.reject(format!("cannot read the plugin after loading: {e}"));
+            return false;
+        }
+        self.plugins.capturing.entry(id).or_default().preset = Some(load.preset);
+        self.plugins_poll_captures();
+        true
+    }
+
+    /// The state the plugin held after a preset load arrived: one undo step (no merge id), the
+    /// knobs follow, and the preset shows as the one loaded.
+    fn finish_preset_load(
+        &mut self,
+        key: &DeviceKey,
+        id: InstanceId,
+        blob: atomik_device_sdk::PluginStateBlob,
+        preset: String,
+    ) {
         self.plugins.dirty.retain(|i, _| *i != id);
-        self.plugins.no_capture.remove(device);
+        self.plugins.no_capture.remove(key);
         self.plugins.from_plugin = true;
-        // One step per load: no merge id.
         let done = self.apply_command(Command::Plugin(PluginCommand::SetState {
-            device: device.clone(),
+            device: key.clone(),
             state: blob,
             merge: None,
         }));
         self.plugins.from_plugin = false;
         match done {
             Ok(()) => {
-                self.refresh_knobs(device);
-                self.plugins
-                    .preset_current
-                    .insert(device.clone(), preset.to_string());
-                true
+                self.refresh_knobs(key);
+                self.plugins.preset_current.insert(key.clone(), preset);
             }
-            Err(e) => {
-                self.reject(e.to_string());
-                false
-            }
+            Err(e) => self.reject(e.to_string()),
         }
     }
 
@@ -2230,7 +2503,12 @@ impl<S: EngineSink> AppCore<S> {
     pub fn step_plugin_preset(&mut self, device: &DeviceKey, delta: i32) -> bool {
         let list = self.plugin_presets(device);
         if list.is_empty() {
-            self.reject("this plugin offers no presets".to_string());
+            let text = if self.plugin_presets_loading(device) {
+                "the presets of this plugin are still loading"
+            } else {
+                "this plugin offers no presets"
+            };
+            self.reject(text.to_string());
             return false;
         }
         let len = list.len() as i64;
@@ -2469,8 +2747,9 @@ impl<S: EngineSink> AppCore<S> {
             .is_some_and(|f| f.descriptor.param_by_key(&format!("p{id}")).is_some())
     }
 
-    /// The plugin's param table changed: register the new descriptor and restart the engine with
-    /// the reattached instance, so the device is rebuilt keeping values by key.
+    /// The plugin's param table or ports changed: register the new descriptor and rebuild the
+    /// device of that plugin alone, keeping values by key ([`Self::swap_device_layout`]). The
+    /// whole engine is rebuilt only when another live instance of the same plugin has to follow.
     fn plugin_layout_changed(
         &mut self,
         instance: InstanceId,
@@ -2493,7 +2772,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         self.report_cables_off(&plugin, &layout);
         let _ = self.sync_silent(Command::Plugin(PluginCommand::SyncLayout {
-            device: key,
+            device: key.clone(),
             layout: layout.clone(),
         }));
         // The scan cache, the catalog and the registry all learn the new layout: a plugin added
@@ -2502,7 +2781,55 @@ impl<S: EngineSink> AppCore<S> {
         if let Ok(descriptor) = atomik_device_sdk::descriptor_for(&plugin, &layout) {
             self.adopt_descriptor(&plugin.type_id(), descriptor);
         }
-        self.rebuild_engine();
+        if !self.swap_device_layout(&key, &plugin, instance) {
+            self.rebuild_engine();
+        }
+    }
+
+    /// Gives the engine the device of `key` for the layout its plugin has now, without
+    /// restarting the engine (the transport, the other devices and their tails keep going): a
+    /// stand-in of the new shape takes the device's place, the instance is parked when the old
+    /// device goes, and [`Self::adopt_offline`] puts the new live device in as soon as the
+    /// plugin is active again (the way a plugin that is busy deactivating is waited for after
+    /// an engine restart). True when that was done or there was nothing to replace.
+    ///
+    /// False when the engine has to be rebuilt after all: another live instance of the same
+    /// plugin was built with the old shape, and the registry describes the new one now, so only
+    /// a restart makes them agree (that instance is created again, as after any restart).
+    fn swap_device_layout(&mut self, key: &DeviceKey, plugin: &PluginRef, id: InstanceId) -> bool {
+        let type_id = plugin.type_id();
+        let Some(shape) = self.registry.get(&type_id).map(|f| f.descriptor) else {
+            return false;
+        };
+        let follows = self.plugins.live_desc.iter().any(|(other, built)| {
+            other != key
+                && self.plugins.instances.contains_key(other)
+                && !same_shape(built, shape)
+                && self
+                    .doc()
+                    .resolve(other)
+                    .and_then(|d| d.plugin.as_ref())
+                    .is_some_and(|p| p.plugin_ref() == *plugin)
+        });
+        if follows {
+            return false;
+        }
+        if !self.sink.has_engine() || self.plugins.offline.contains(key) {
+            // No device of its own in the engine: the one that is made when the instance is
+            // attached again takes the new shape from the registry.
+            return true;
+        }
+        if !self.ids.contains_key(key) {
+            return false;
+        }
+        let Some(standin) = self.registry.create(&type_id) else {
+            return false;
+        };
+        self.plugins.host.manager().retain(id, true);
+        self.plugins.offline.insert(key.clone());
+        self.plugins.live_desc.insert(key.clone(), shape);
+        self.swap_in_device(key, standin);
+        true
     }
 
     /// The live plugin `plugin` reported `layout`, which is not what the scan cache holds: the
@@ -2792,6 +3119,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugin_params.open(device.clone());
         self.plugin_params_open = true;
         self.plugin_params.sync(self.document.doc(), &self.registry);
+        self.retry_failed_presets(device);
         self.feed_preset_bar();
     }
 
@@ -2858,6 +3186,35 @@ impl<S: EngineSink> AppCore<S> {
                 // Nothing in the app asks for the default pins of a plugin that is already
                 // running.
                 SoftAnswer::DefaultPins(_) => {}
+                SoftAnswer::Presets(list) => {
+                    let now = self.plugins.clock;
+                    let entry = match list {
+                        Some(list) => PresetList::Ready(list),
+                        None => {
+                            self.plugins
+                                .log(format!("[{device}] the plugin did not list its presets"));
+                            PresetList::Failed(now)
+                        }
+                    };
+                    self.plugins.presets.insert(device.clone(), entry);
+                    self.presets_arrived(&device);
+                }
+                SoftAnswer::Params(values) => {
+                    // Only the read a patch change asked for is used, and only while the
+                    // document is as that change left it can it join the change's undo step.
+                    let Some(revision) = self.plugins.knob_reads.remove(&device) else {
+                        continue;
+                    };
+                    match values {
+                        Some(values) => {
+                            let joins = self.document.revision() == revision;
+                            self.apply_param_values(&device, values, joins);
+                        }
+                        None => self
+                            .plugins
+                            .log(format!("[{device}] the plugin did not give its params")),
+                    }
+                }
             }
         }
         if !texts.is_empty() {
@@ -3253,15 +3610,47 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.scan_note.as_deref()
     }
 
-    /// Writes `plugins.json` when a live plugin taught the cache a layout.
+    /// Writes `plugins.json` when a live plugin taught the cache a layout, and tells the user
+    /// when an earlier write failed. The learning of several layouts in one frame is one write.
     fn save_learned_cache(&mut self) {
-        if !std::mem::take(&mut self.plugins.cache_dirty) {
-            return;
+        if std::mem::take(&mut self.plugins.cache_dirty) {
+            self.queue_cache_save();
         }
-        if let Some(path) = &self.plugins.paths.cache
-            && let Err(e) = self.plugins.cache.save(path)
+        if let Some(error) = self
+            .plugins
+            .cache_writer
+            .as_ref()
+            .and_then(CacheWriter::take_error)
         {
-            self.reject(format!("{}: {e}", path.display()));
+            self.reject(error);
+        }
+    }
+
+    /// Hands the scan cache to the writer thread, which serialises it and writes the file: the
+    /// interface thread only makes the copy. Where no thread can be had the file is written here,
+    /// as it always was.
+    fn queue_cache_save(&mut self) {
+        let Some(path) = self.plugins.paths.cache.clone() else {
+            return;
+        };
+        if self.plugins.cache_writer.is_none() {
+            self.plugins.cache_writer = CacheWriter::new();
+        }
+        match &self.plugins.cache_writer {
+            Some(writer) => writer.submit(self.plugins.cache.clone(), path),
+            None => {
+                if let Err(e) = self.plugins.cache.save(&path) {
+                    self.reject(format!("{}: {e}", path.display()));
+                }
+            }
+        }
+    }
+
+    /// Waits for the scan cache writes that were handed over to reach the disk (tests, and the
+    /// exit path, which waits a bounded time).
+    pub fn wait_plugin_cache_writes(&mut self) {
+        if let Some(writer) = &self.plugins.cache_writer {
+            writer.wait(crate::plugin_cache_writer::EXIT_WAIT);
         }
     }
 
@@ -3285,15 +3674,15 @@ impl<S: EngineSink> AppCore<S> {
         };
         self.plugins.log(note.clone());
         self.plugins.scan_note = Some(note);
-        if let Some(path) = &self.plugins.paths.cache
-            && let Err(e) = self.plugins.cache.save(path)
-        {
-            self.reject(format!("{}: {e}", path.display()));
-        }
+        // The scan's own result is the file's content now: a layout learned before it ended
+        // is in this cache too, so the pending write is not needed.
+        self.plugins.cache_dirty = false;
+        self.queue_cache_save();
         self.refresh_plugin_catalog();
     }
 
-    /// Waits for a running scan and applies it (tests and scripts).
+    /// Waits for a running scan and applies it, and for the cache file to be written (tests and
+    /// scripts).
     pub fn wait_scan(&mut self) {
         while self.plugins.job.is_some() {
             if self.plugins.job.as_ref().is_some_and(ScanJob::is_finished) {
@@ -3302,6 +3691,7 @@ impl<S: EngineSink> AppCore<S> {
                 std::thread::yield_now();
             }
         }
+        self.wait_plugin_cache_writes();
     }
 
     // ------------------------------------------------------------------ banners
@@ -3353,9 +3743,7 @@ impl<S: EngineSink> AppCore<S> {
             PluginBannerAction::DisableCrashed => {
                 if let Some(crashed) = self.plugins.previous_crash.take() {
                     blacklist_in_use(&mut self.plugins.cache, &crashed);
-                    if let Some(path) = &self.plugins.paths.cache {
-                        let _ = self.plugins.cache.save(path);
-                    }
+                    self.queue_cache_save();
                     self.refresh_plugin_catalog();
                 }
                 self.plugins.hide_banner();
@@ -3890,6 +4278,9 @@ impl<S: EngineSink> AppCore<S> {
     pub fn shutdown_plugins(&mut self) {
         self.close_all_plugin_windows();
         self.wait_recovery_writes();
+        // A layout learned in the last frames is still written; the wait is bounded.
+        self.save_learned_cache();
+        self.wait_plugin_cache_writes();
         self.plugins_poll_events();
         if let Some(journal) = &mut self.plugins.journal {
             let _ = journal.clean_exit();
@@ -3913,6 +4304,30 @@ impl<S: EngineSink> AppCore<S> {
     /// The live instance behind a plugin device.
     pub fn plugin_instance(&self, device: &DeviceKey) -> Option<InstanceId> {
         self.plugins.instances.get(device).copied()
+    }
+
+    /// True while the instance behind `device` is parked and its device is not in the engine
+    /// (audio is off, or the plugin is being given a device of its new layout).
+    pub fn plugin_parked(&self, device: &DeviceKey) -> bool {
+        self.plugins.offline.contains(device)
+    }
+
+    /// The descriptor the engine device of `device` was built with.
+    pub fn plugin_built_descriptor(&self, device: &DeviceKey) -> Option<&'static DeviceDescriptor> {
+        self.plugins.live_desc.get(device).copied()
+    }
+
+    /// How many scan cache writes the writer thread has finished.
+    pub fn plugin_cache_writes(&self) -> u64 {
+        self.plugins
+            .cache_writer
+            .as_ref()
+            .map_or(0, CacheWriter::written)
+    }
+
+    /// True while a preset is being loaded into the plugin behind `device`.
+    pub fn plugin_preset_loading(&self, device: &DeviceKey) -> bool {
+        self.plugins.preset_loads.contains_key(device)
     }
 
     /// Why a plugin device is FAILED, if it is.

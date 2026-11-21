@@ -60,10 +60,13 @@ pub(crate) struct RemoteInstance {
     activating: Option<(std::time::Instant, ActivateConfig)>,
     /// When a [`PluginInstance::begin_restore_state`] went out and has no answer yet.
     restoring_since: Option<std::time::Instant>,
+    /// When a [`PluginInstance::begin_load_preset`] went out and has no answer yet.
+    loading_since: Option<std::time::Instant>,
 }
 
 /// The name of the editor request, in errors and the held-call guard.
 const OPEN_GUI: &str = "OpenGui";
+const LOAD_PRESET: &str = "LoadPreset";
 const DEACTIVATE: &str = "Deactivate";
 const ACTIVATE: &str = "Activate";
 const RESTORE_STATE: &str = "RestoreState";
@@ -225,6 +228,7 @@ impl RemoteInstance {
             deactivating_since: None,
             activating: None,
             restoring_since: None,
+            loading_since: None,
         })
     }
 
@@ -374,9 +378,13 @@ impl RemoteInstance {
     fn apply_soft(&mut self, done: SoftDone) {
         let Ok(reply) = done.answer else {
             // An error to a request made for show is nothing to tell anyone, except that an
-            // editor that refuses to resize says so.
-            if let SoftKind::ResizeGui { w, h } = done.kind {
-                self.resized(w, h, None);
+            // editor that refuses to resize says so, and that a list of presets that failed
+            // is asked for again later.
+            match done.kind {
+                SoftKind::ResizeGui { w, h } => self.resized(w, h, None),
+                SoftKind::ListPresets => self.keep_ready(SoftAnswer::Presets(None)),
+                SoftKind::ReadParams => self.keep_ready(SoftAnswer::Params(None)),
+                _ => {}
             }
             return;
         };
@@ -398,6 +406,15 @@ impl RemoteInstance {
             (SoftKind::DefaultPins, FromChild::Pins { pins, .. }) => {
                 self.keep_ready(SoftAnswer::DefaultPins(pins));
             }
+            (SoftKind::ListPresets, FromChild::Presets { presets, .. }) => {
+                let list = presets.into_iter().map(Into::into).collect();
+                self.keep_ready(SoftAnswer::Presets(Some(list)));
+            }
+            (SoftKind::ReadParams, FromChild::ParamValues { values, .. }) => {
+                self.keep_ready(SoftAnswer::Params(Some(values)));
+            }
+            (SoftKind::ListPresets, _) => self.keep_ready(SoftAnswer::Presets(None)),
+            (SoftKind::ReadParams, _) => self.keep_ready(SoftAnswer::Params(None)),
             (
                 SoftKind::TakeLayoutChanged,
                 FromChild::LayoutChanged {
@@ -687,6 +704,67 @@ impl PluginInstance for RemoteInstance {
         } else {
             Err(self.link.unexpected("LoadPreset", &reply.msg))
         }
+    }
+
+    fn begin_list_presets(&mut self) -> Result<Option<Vec<PresetInfo>>, BackendError> {
+        if self.timeouts().bounce {
+            return Ok(Some(self.list_presets()));
+        }
+        if self.link.soft_has(|k| *k == SoftKind::ListPresets) {
+            // Asked already: the list comes with that request's answer.
+            return Ok(None);
+        }
+        self.link
+            .soft_ask(SoftKind::ListPresets, Grace::None, |id| {
+                ToChild::ListPresets { id }
+            })
+            .map(|_| None)
+    }
+
+    fn begin_read_params(&mut self) -> Result<Option<Vec<(u32, f64)>>, BackendError> {
+        if self.timeouts().bounce {
+            return Ok(Some(self.read_params()));
+        }
+        if self.link.soft_has(|k| *k == SoftKind::ReadParams) {
+            return Ok(None);
+        }
+        self.link
+            .soft_ask(SoftKind::ReadParams, Grace::None, |id| {
+                ToChild::ReadParams { id }
+            })
+            .map(|_| None)
+    }
+
+    fn begin_load_preset(&mut self, preset: &str) -> Result<bool, BackendError> {
+        if self.timeouts().bounce {
+            // A bounce waits for the child, whatever mode the plugin is told.
+            return self.load_preset(preset).map(|()| true);
+        }
+        self.link
+            .begin_held_call(LOAD_PRESET, |id| ToChild::LoadPreset {
+                id,
+                preset: preset.to_string(),
+            })?;
+        self.loading_since = Some(crate::clock::now());
+        Ok(false)
+    }
+
+    fn poll_load_preset(&mut self) -> Option<Result<(), BackendError>> {
+        let Some(since) = self.loading_since else {
+            return Some(Ok(()));
+        };
+        // A sampler may read its library for minutes: as long as a load, judged by its sign of
+        // life.
+        let wait = self.timeouts().load;
+        let answer = self.link.poll_reply(LOAD_PRESET, since, wait)?;
+        self.loading_since = None;
+        Some(answer.and_then(|reply| {
+            if Self::is_ok(&reply) {
+                Ok(())
+            } else {
+                Err(self.link.unexpected(LOAD_PRESET, &reply.msg))
+            }
+        }))
     }
 
     fn param_text(&mut self, id: u32, plain: f64) -> Option<String> {

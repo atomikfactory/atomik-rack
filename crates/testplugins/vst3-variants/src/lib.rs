@@ -278,6 +278,80 @@ impl Dsp for Picky {
     }
 }
 
+/// The first parameter id of the controller proxies of [`Proxies`]: `PROXY_BASE + channel * 128
+/// + controller`.
+pub const PROXY_BASE: u32 = 1_000;
+
+/// An effect that stands every controller number of every channel for a parameter of its own
+/// (16 x 128 of them), the way a plugin that emulates controllers does. The real parameters are
+/// the first one (id 1), two that come after all the proxies (ids 2 and 3), and one that every
+/// channel reaches through pitch bend (id 4).
+struct Proxies {
+    /// Answers each `IMidiMapping` call slowly.
+    slow: bool,
+}
+
+impl Dsp for Proxies {
+    fn ports(&self) -> Ports {
+        Ports::effect(false)
+    }
+
+    fn params(&self) -> Vec<ParamSpec> {
+        let real = |id: u32, name: &str| ParamSpec {
+            id,
+            name: name.to_string(),
+            module: String::new(),
+            min: 0.0,
+            max: 1.0,
+            default: 0.5,
+            stepped: false,
+        };
+        let mut out = vec![real(1, "First")];
+        for channel in 0..16u32 {
+            for controller in 0..128u32 {
+                out.push(ParamSpec {
+                    module: "MIDI Params".to_string(),
+                    ..real(
+                        PROXY_BASE + channel * 128 + controller,
+                        &format!("MIDI CC {controller} Chan {}", channel + 1),
+                    )
+                });
+            }
+        }
+        out.push(real(2, "Late A"));
+        out.push(real(3, "Late B"));
+        out.push(real(4, "Bend"));
+        out
+    }
+
+    fn set_param(&mut self, _id: u32, _value: f64) {}
+
+    fn param(&self, _id: u32) -> f64 {
+        0.5
+    }
+
+    fn midi_assignment(&self, channel: i16, number: i16) -> Option<u32> {
+        match number {
+            0..=127 => Some(PROXY_BASE + u32::from(channel as u16) * 128 + number as u32),
+            129 => Some(4),
+            _ => None,
+        }
+    }
+
+    fn midi_delay(&self) -> std::time::Duration {
+        if self.slow {
+            std::time::Duration::from_millis(2)
+        } else {
+            std::time::Duration::ZERO
+        }
+    }
+
+    fn process(&mut self, io: &mut Io<'_>) -> Status {
+        io.output = io.input;
+        Status::Continue
+    }
+}
+
 /// The class id words shared by this library: only the last word differs.
 pub const fn cid(n: u32) -> [u32; 4] {
     [0xA70F_1C02, 0x4A5B_4C01, 0x8D2E_1F00, n]
@@ -322,7 +396,10 @@ static PICKY_INFO: Info = Info {
     midi: false,
 };
 
-static PLUGINS: [PluginDef; 9] = [
+info!(PROXIES_INFO, "Atomik Test Proxies", 10);
+info!(PROXIES_SLOW_INFO, "Atomik Test Slow Proxies", 11);
+
+static PLUGINS: [PluginDef; 11] = [
     PluginDef {
         info: &SPLIT_INFO,
         create: || {
@@ -368,6 +445,14 @@ static PLUGINS: [PluginDef; 9] = [
                 buf: Vec::with_capacity(8_192),
             })
         },
+    },
+    PluginDef {
+        info: &PROXIES_INFO,
+        create: || Box::new(Proxies { slow: false }),
+    },
+    PluginDef {
+        info: &PROXIES_SLOW_INFO,
+        create: || Box::new(Proxies { slow: true }),
     },
 ];
 

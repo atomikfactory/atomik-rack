@@ -180,6 +180,16 @@ pub trait Dsp: Send {
     fn grow(&mut self) -> bool {
         false
     }
+    /// The parameter the controller assigns to controller `number` on `channel` of the first
+    /// event bus, besides the shell's own mapping (a plugin that stands each controller and
+    /// channel for a parameter of its own).
+    fn midi_assignment(&self, _channel: i16, _number: i16) -> Option<u32> {
+        None
+    }
+    /// How long the controller takes to answer each `IMidiMapping` call (a slow plugin).
+    fn midi_delay(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
 }
 
 /// A stereo effect with no params that copies its input (the plugin of the isolation test

@@ -1237,3 +1237,51 @@ one (the user would wait for a plugin that was removed on purpose); killing a pl
 whose sampler holds a large library, opened, restarted by a sample rate change and removed.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AS. A plugin's MIDI controller stand-ins are left out of its parameter list, unless the project uses them
+
+**Question.** Many VST3 plugins publish one parameter for every MIDI channel and controller number, so that a host
+without MIDI routing can still automate a controller. On a typical set of plugins most of all listed parameters
+were such stand-ins, many plugins hit the 2 048-entry limit with them and had real parameters cut off behind them,
+and each one was parsed at start, copied into every instance, written twice into the project's layout snapshot when
+the plugin went live, saved and offered in every menu. A project must still load with every lane, learned control,
+macro target and stored value intact, including the ones that name a stand-in, and a bounce must not change.
+
+**Decision.** A VST3 parameter is a stand-in when `IMidiMapping` assigns it to exactly one channel and controller
+pair, and that controller number goes to a different parameter on at least one other channel. The scan and every
+instance (and every re-read after a restart) ask for all 16 channels and all 130 controller numbers once, with a
+budget of half a second in total; a plugin that is slower, or has no mapping, keeps today's table. A parameter every
+channel reaches through the same controller (a mod wheel, a volume), or only one channel reaches, is a real control
+and stays. The stand-ins are left out of the table; the mapping itself is untouched, so controllers still reach the
+plugin, and a stand-in's step count is kept so a value for it still converts. The scanner version is 4, so the next
+scan rebuilds the plugin list file; an older file still loads and its entries are scanned again.
+
+*Keep what the project uses.* The document is the authority on what must stay: a parameter is **used** when a stored
+value, a track's automation lane, a note clip's parameter lane, a macro target or bank assignment, a panel pin or a
+learned MIDI control names it (`RackDoc::plugin_param_usage`, which also decides which layout rows a save keeps; the
+last two kinds were added to it, since the layout used to be recoverable from the scan and no longer is). The rows
+of the used parameters, taken from the layout snapshot the document keeps (its rows are what a save writes), are
+handed to the plugin host (`PluginHost::set_pinned_params`) before the descriptors are registered and before an
+instance is made. The registry's descriptor of the plugin and the layout of every instance are then the plugin's
+own table followed by those rows in id order (`merge_pinned`; the plugin's last parameters give way if the table
+would pass the cap, a pinned row never does), so the two agree, the descriptor knows `p<id>` before and after the
+plugin is live, and a rescan (which registers the descriptors again) and a reload (which pins what the loaded
+project uses) give the same table. The layout snapshot stored in an existing project (it lists the rows the project
+used when it was saved) loads unchanged; when the plugin goes live the live layout replaces it, which is the same
+rows plus the plugin's own table, so a project saved afterwards writes the same used rows as before. Pins are
+recomputed when a document is opened and before each instance is created, so a pasted device that uses a stand-in
+is covered too. The bounce refuses a plugin whose table no longer matches the registry's (the time budget could
+make the scan and a later instance differ), since a lane would then drive another parameter.
+
+**Rejected.** Dropping every parameter `IMidiMapping` names (it would remove a real volume or mod wheel control that
+a plugin maps to one controller); hiding the stand-ins in the menus only (the cost is the table, not the menu);
+passing the used ids into the instance's own table read (the scan, the registry and the live layout would each
+need the document, and a bounce needs the registry before the plugin is loaded); keeping a separate list of the
+stand-ins in the scan cache (a second copy of what the document already holds for the parameters that matter).
+
+**Open.** A referenced parameter the plugin no longer has at all (a newer plugin version dropped it) is pinned too
+while the project holds a row for it, so it shows in the list and does nothing; before it was a dead key. A
+stand-in's value is not read back from the plugin when a preset loads. The hand check is a project made with an
+older version that automates a stand-in of a sampler or synth plugin, opened, saved and bounced.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

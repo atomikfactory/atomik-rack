@@ -15,10 +15,13 @@
 //! # What the format saves of the layout
 //!
 //! Saving writes only the layout rows the project **uses** (a stored value, an automation
-//! lane, a macro target or a pin), sorted by id, so a plugin with 2 000 params does not write
-//! 2 000 rows per instance. In memory the layout may hold the full table (the app has it from
-//! the scan, [`crate::PluginCommand::SyncLayout`]); [`crate::RackDoc::compacted`] is the
-//! document as a save and reload gives it back.
+//! lane of a track or of a note clip, a macro target, a pin or a learned MIDI control),
+//! sorted by id, so a plugin with 2 000 params does not write 2 000 rows per instance. In
+//! memory the layout may hold the full table (the app has it from the scan,
+//! [`crate::PluginCommand::SyncLayout`]); [`crate::RackDoc::compacted`] is the document as a
+//! save and reload gives it back. The used rows are also what a plugin must keep listing when
+//! its own table leaves them out ([`crate::RackDoc::plugin_pinned_rows`]: the controller
+//! stand-ins some plugins publish as params), so a saved lane never loses its row.
 //!
 //! # Dead keys
 //!
@@ -29,7 +32,7 @@
 use crate::{DeviceKey, ModelError, RackDevice, RackDoc, RackSlot};
 use atomik_device_sdk::{
     AUX_OUT_KEYS, CV_IN_KEYS, Channels, MAX_AUX_OUTPUTS, PluginFormat, PluginKindHint,
-    PluginLayout, PluginRef, PluginStateBlob, descriptor_for, is_plugin_type_id,
+    PluginLayout, PluginParamInfo, PluginRef, PluginStateBlob, descriptor_for, is_plugin_type_id,
 };
 use atomik_device_sdk::{DeviceDescriptor, Registry};
 use std::collections::{BTreeMap, BTreeSet};
@@ -489,7 +492,58 @@ impl RackDoc {
                 ids.insert(id);
             }
         }
+        // The lanes of a note clip, which may drive any device.
+        for t in &self.song.tracks {
+            for lane in t.note_lanes() {
+                for clip in &lane.clips {
+                    for p in &clip.param_lanes {
+                        if let Some(id) = param_id_of_key(&p.param)
+                            && let Some(ids) = used.get_mut(&p.device.0)
+                        {
+                            ids.insert(id);
+                        }
+                    }
+                }
+            }
+        }
+        // The controls a MIDI mapping (a learned one) drives.
+        for m in &self.midi_maps {
+            if let crate::MidiTarget::Param { device, param } = &m.target
+                && let Some(id) = param_id_of_key(param)
+                && let Some(ids) = used.get_mut(&device.0)
+            {
+                ids.insert(id);
+            }
+        }
         used
+    }
+
+    /// The layout rows the project uses, per plugin: what a plugin must still list although its
+    /// own table leaves them out (the controller stand-ins a plugin may publish as parameters).
+    /// A row is one a stored value, a lane (a track's or a note clip's), a macro target, a pin
+    /// or a MIDI mapping names, taken from the layout snapshot of the device that uses it (the
+    /// first device wins when two of the same plugin disagree). A param the snapshot has no row
+    /// for (a dead key) is not in the result. Rows are in id order.
+    pub fn plugin_pinned_rows(&self) -> BTreeMap<PluginRef, Vec<PluginParamInfo>> {
+        let used = self.plugin_param_usage();
+        let mut out: BTreeMap<PluginRef, BTreeMap<u32, PluginParamInfo>> = BTreeMap::new();
+        for (path, d) in {
+            let mut v = Vec::new();
+            walk_plugins(&self.devices, "", &mut v);
+            v
+        } {
+            let (Some(p), Some(ids)) = (&d.plugin, used.get(&path)) else {
+                continue;
+            };
+            let rows = out.entry(p.plugin_ref()).or_default();
+            for row in p.layout.params.iter().filter(|r| ids.contains(&r.id)) {
+                rows.entry(row.id).or_insert_with(|| row.clone());
+            }
+        }
+        out.into_iter()
+            .filter(|(_, rows)| !rows.is_empty())
+            .map(|(plugin, rows)| (plugin, rows.into_values().collect()))
+            .collect()
     }
 
     /// The document as a save and reload gives it back: every plugin layout keeps only the rows

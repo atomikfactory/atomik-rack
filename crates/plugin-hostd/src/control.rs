@@ -21,6 +21,7 @@ use atomik_plugin_ipc::{
 };
 use atomik_plugin_vst3::Vst3Backend;
 use std::io::Write;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// The exit code for a protocol or setup mismatch.
 pub const EXIT_MISMATCH: u8 = 3;
@@ -78,7 +79,9 @@ pub fn make_backend(args: &Args) -> Box<dyn PluginBackend> {
 pub struct Control {
     plugin: PluginRef,
     backend: Box<dyn PluginBackend>,
-    out: Box<dyn Write>,
+    /// Where the frames go. The thread that lists presets writes its answer here too, so a
+    /// frame is written under the lock.
+    out: Arc<Mutex<Box<dyn Write + Send>>>,
     audio: AudioThread,
     greeted: bool,
     instance: Option<Box<dyn PluginInstance>>,
@@ -94,7 +97,7 @@ impl Control {
         args: &Args,
         backend: Box<dyn PluginBackend>,
         audio: AudioThread,
-        out: Box<dyn Write>,
+        out: Box<dyn Write + Send>,
     ) -> Self {
         Self {
             plugin: PluginRef {
@@ -105,7 +108,7 @@ impl Control {
                 id: args.plugin_id.clone(),
             },
             backend,
-            out,
+            out: Arc::new(Mutex::new(out)),
             audio,
             greeted: false,
             instance: None,
@@ -121,7 +124,37 @@ impl Control {
             protocol: PROTOCOL_VERSION,
             pid: std::process::id(),
         };
-        write_frame(&mut self.out, &hello, None).is_ok()
+        self.write(&hello, None)
+    }
+
+    /// Writes one frame; false when the parent's pipe is gone.
+    fn write(&self, msg: &FromChild, blob: Option<&[u8]>) -> bool {
+        write_locked(&self.out, msg, blob)
+    }
+
+    /// Lists the presets on a thread of its own when the plugin's format keeps them as files, so
+    /// that a plugin whose main thread is busy does not hold the walk up (nor the walk, the
+    /// requests that follow): the thread writes the answer itself. False when the plugin has to
+    /// be asked on this thread.
+    fn list_presets_aside(&mut self, id: u64) -> bool {
+        let Some(lister) = self.instance.as_mut().and_then(|i| i.preset_lister()) else {
+            return false;
+        };
+        let out = Arc::clone(&self.out);
+        std::thread::Builder::new()
+            .name("host-presets".to_string())
+            .spawn(move || {
+                let reply = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(lister)) {
+                    Ok(list) => FromChild::Presets {
+                        id,
+                        presets: list.into_iter().take(MAX_PRESETS).map(Into::into).collect(),
+                    },
+                    Err(_) => err(id, &failed("listing the presets failed")),
+                };
+                // A gone parent is noticed by the main thread.
+                write_locked(&out, &reply, None);
+            })
+            .is_ok()
     }
 
     /// Reacts to one event; `Some(code)` ends the child with that exit code.
@@ -207,7 +240,7 @@ impl Control {
     }
 
     fn notify(&mut self, msg: &FromChild, windows: &mut dyn WindowSystem) -> Option<u8> {
-        if write_frame(&mut self.out, msg, None).is_ok() {
+        if self.write(msg, None) {
             None
         } else {
             self.shutdown(windows);
@@ -249,6 +282,7 @@ impl Control {
                 let reply = self.instantiate(id).unwrap_or_else(|e| err(id, &e));
                 self.reply(&reply, None, windows)
             }
+            ToChild::ListPresets { id } if self.list_presets_aside(id) => None,
             request => {
                 let id = request_id(&request);
                 let opens_editor = matches!(request, ToChild::OpenGui { .. });
@@ -430,7 +464,7 @@ impl Control {
         if let Some(code) = self.forward(windows) {
             return Some(code);
         }
-        if write_frame(&mut self.out, msg, blob).is_ok() {
+        if self.write(msg, blob) {
             None
         } else {
             self.shutdown(windows);
@@ -477,6 +511,12 @@ impl Control {
         }
         self.messages = None;
     }
+}
+
+/// Writes one frame to `out` under its lock; false when the pipe is gone.
+fn write_locked(out: &Mutex<Box<dyn Write + Send>>, msg: &FromChild, blob: Option<&[u8]>) -> bool {
+    let mut out = out.lock().unwrap_or_else(PoisonError::into_inner);
+    write_frame(&mut *out, msg, blob).is_ok()
 }
 
 fn failed(text: &str) -> BackendError {

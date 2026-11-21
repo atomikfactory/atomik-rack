@@ -777,6 +777,62 @@ fn a_preset_moves_the_param_values_the_manager_reads_back() {
     );
 }
 
+#[test]
+fn the_presets_and_the_params_are_asked_for_without_waiting_and_come_through_the_soft_answers() {
+    use atomik_plugin_host::SoftAnswer;
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    stats.set_presets(true);
+    // A plugin that answers at once gives the list and the values at once.
+    assert_eq!(m.request_presets(id).unwrap().map(|l| l.len()), Some(3));
+    assert!(m.request_params(id).unwrap().is_some());
+    // A busy one gives neither now, and each comes later as a cosmetic answer.
+    stats.set_soft_busy(true);
+    assert_eq!(m.request_presets(id).unwrap(), None);
+    assert_eq!(m.request_params(id).unwrap(), None);
+    m.poll();
+    assert!(m.take_soft_answers().is_empty(), "still busy");
+    stats.set_soft_busy(false);
+    m.poll();
+    let answers: Vec<SoftAnswer> = m.take_soft_answers().into_iter().map(|(_, a)| a).collect();
+    assert!(
+        matches!(&answers[..], [SoftAnswer::Presets(Some(p)), SoftAnswer::Params(Some(_))] if p.len() == 3),
+        "{answers:?}"
+    );
+    assert!(
+        m.request_presets(atomik_plugin_host::InstanceId(999))
+            .is_err()
+    );
+}
+
+#[test]
+fn a_preset_load_the_plugin_takes_time_for_is_polled_and_a_refusal_ends_it_with_its_error() {
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    stats.set_presets(true);
+    stats.set_preset_delay(3);
+    assert!(!m.begin_load_preset(id, "warm").unwrap(), "not loaded yet");
+    assert!(m.poll_load_preset(id).is_none());
+    assert!(m.poll_load_preset(id).is_none());
+    assert!(matches!(m.poll_load_preset(id), Some(Ok(()))));
+    assert_eq!(m.capture_state(id).unwrap().0, b"preset:warm");
+    // A preset the plugin does not know ends with the error, after the delay as well.
+    assert!(!m.begin_load_preset(id, "nope").unwrap());
+    let mut ended = None;
+    for _ in 0..5 {
+        ended = m.poll_load_preset(id);
+        if ended.is_some() {
+            break;
+        }
+    }
+    assert!(matches!(ended, Some(Err(_))), "{ended:?}");
+    // Without a delay the load is done when the call returns.
+    stats.set_preset_delay(0);
+    assert!(m.begin_load_preset(id, "init").unwrap());
+}
+
 // ----- background capture ----------------------------------------------------------------------------
 
 #[test]
@@ -937,4 +993,40 @@ fn a_plugin_that_does_not_answer_is_reported_once_when_it_starts_and_once_when_i
     assert!(m.poll().is_empty());
     assert!(m.capture_state(id).is_ok(), "it works again");
     drop(handle);
+}
+
+#[test]
+fn pinned_params_are_in_the_table_of_an_instance_made_after_they_were_set() {
+    let (mut m, _stats) = manager();
+    let plugin = request("null.fx").plugin;
+    let row = param(777, "Pinned", 0.0, 1.0, 0.5, false);
+    let plain = m.instantiate(&request("null.fx")).unwrap();
+    assert!(plain.layout.params.iter().all(|p| p.id != 777));
+    assert!(plain.descriptor.param_by_key("p777").is_none());
+
+    m.set_pinned_params(&plugin, vec![row.clone()]);
+    let pinned = m.instantiate(&request("null.fx")).unwrap();
+    let ids: Vec<u32> = pinned.layout.params.iter().map(|p| p.id).collect();
+    assert_eq!(
+        ids,
+        [1, 2, 3, 4, 777],
+        "the plugin's own params, then the pin"
+    );
+    assert!(pinned.descriptor.param_by_key("p777").is_some());
+    assert_eq!(m.layout(pinned.id).unwrap(), &pinned.layout);
+    // The instance made before keeps the table it had; another plugin is not touched.
+    assert!(
+        m.layout(plain.id)
+            .unwrap()
+            .params
+            .iter()
+            .all(|p| p.id != 777)
+    );
+    let other = m.instantiate(&request("null.fx2")).unwrap();
+    assert!(other.layout.params.iter().all(|p| p.id != 777));
+
+    // Clearing the pins gives the plugin's own table again.
+    m.set_pinned_params(&plugin, Vec::new());
+    let cleared = m.instantiate(&request("null.fx")).unwrap();
+    assert!(cleared.layout.params.iter().all(|p| p.id != 777));
 }

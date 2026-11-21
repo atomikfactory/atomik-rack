@@ -427,7 +427,8 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   plugin-side helpers: factory, `IComponent`, `IAudioProcessor`, `IEditController`, `IMidiMapping`,
   `IUnitInfo`, note expressions, a headless `IPlugView`, a split component/controller variant) and
   the libraries `vst3` (the four test plugins, same names as the CLAP ones), `vst3-variants` (a
-  split gain, a mono effect, a 5.1-only effect the host refuses, plugins that fail to initialise,
+  split gain, a mono effect, a 5.1-only effect the host refuses, plugins that stand a parameter for
+  every controller and channel (one answers `IMidiMapping` slowly), plugins that fail to initialise,
   set up, start or process, one that returns NaN), `vst3-bad`, `vst3-hang`, `vst3-crash`,
   `vst3-leak`. `atomik_plugin_host::testing::vst3_test_plugin("atomik-test-vst3")` builds a library
   and installs it as a `.vst3` **bundle** with the layout of the running OS. The shell announces a
@@ -439,8 +440,11 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   `cross_format.rs` requires the CLAP and the VST3 effect to give the same bits (and a rack mixing
   both to bounce identically across blocks and workers), `vst3_host.rs` holds the VST3 specifics
   (proxies, buses, parameter queues, `IMidiMapping`, the state sections, restarts, the editor, edits
-  made in it). `render/tests/plugin_demo_vst3.rs` does the same for a whole project
-  (`examples/projects/plugin-demo-vst3` against its all-CLAP twin).
+  made in it), `midi_proxies.rs` the controller stand-ins left out of the table and the slow plugin that keeps
+  its full one. `render/tests/plugin_demo_vst3.rs` does the same for a whole project
+  (`examples/projects/plugin-demo-vst3` against its all-CLAP twin). `model/tests/plugin_pinned.rs` counts every way a
+  document can name a plugin param, and `app_core_plugins_proxies_tests.rs` follows a used stand-in through the
+  plugin going live, a save, a load and a rescan.
 - **Live equals bounce.** A bounce with plugins runs the plugin loop of `render/src/plugin_pass.rs`
   (a pre-roll, then a manager poll and a PDC recompile after every 64-frame batch); the twin tests
   in `app/src/app_core_plugins*_tests.rs` therefore settle the live side first
@@ -1815,6 +1819,17 @@ Diagnostics carries its tail). Three kinds of line say where the UI thread waite
 
 Help > Export Diagnostics also counts the plugin-call stalls and the slow frames since the app started, each with
 its longest. `crates/app/src/ui_stall.rs` has the tests of the line shapes and the rate limit.
+
+The parameter pane, the patch browser and preset loads do not wait for a plugin either.
+`app_core_plugins_presets_tests.rs` uses the null backend's busy mode and its poll-counted delays
+(`NullStats::set_soft_busy`, `set_preset_delay`, `fail_next_preset_list`) to pin that the pane opens at once,
+that the list is asked for once, that a failed list is asked for again at the next opening and not sooner than a
+pause later, and that a load's undo step goes back to the settings from before it. The `soft.rs` tests of
+`crates/plugin-sandbox/src/tests` hold the same requests in the fake child until the test releases them, and
+`crates/plugin-hostd/src/control/tests.rs` pins that the preset walk answers from a thread of its own while the
+main thread goes on. `app_core_plugins_layout_tests.rs` counts the engine starts (`OfflineSink::resets`) to pin
+that a changed layout replaces one device and not the engine, and `crates/app/src/plugin_cache_writer.rs` has the
+tests of the thread that writes `plugins.json`.
 
 Two more groups are in the report. For lost input (the `input overruns` of the status line) it gives how many times
 the render callback trimmed the captured input, the most frames the ring held just before such a trim, the smallest

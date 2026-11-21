@@ -204,7 +204,7 @@ pub fn run(args: &Args, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Resul
         } else {
             PluginIsolation::InProcess
         };
-        let mut host = args.allow_plugins.then(|| {
+        let hosted = args.allow_plugins.then(|| {
             let mut host = PluginHost::with_isolation(isolation);
             let (cache, status) = load_cache(args.plugin_cache.as_deref());
             match (&status, &args.plugin_cache) {
@@ -223,10 +223,23 @@ pub fn run(args: &Args, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Resul
                 _ => {}
             }
             host.set_catalog(&cache, &bounce_settings(), &mut registry);
-            host
+            (host, cache)
         });
+        let (mut host, cache) = match hosted {
+            Some((host, cache)) => (Some(host), Some(cache)),
+            None => (None, None),
+        };
         let doc = atomik_model::load_project(&text, &registry)
             .map_err(|e| RenderError::Project(e.to_string()))?;
+        // The params the project uses that a plugin's own table leaves out (the controller
+        // stand-ins some plugins publish) are listed, in the descriptors and in the instances.
+        if let (Some(host), Some(cache)) = (host.as_mut(), cache.as_ref()) {
+            let pins = doc.plugin_pinned_rows();
+            if !pins.is_empty() {
+                host.set_pinned_params(pins);
+                host.set_catalog(cache, &bounce_settings(), &mut registry);
+            }
+        }
         let used = doc.plugin_devices();
         if !used.is_empty() && host.is_none() {
             let names: Vec<String> = used

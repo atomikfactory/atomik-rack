@@ -91,7 +91,17 @@ fn null_core(
     live: PluginLayout,
     cache_layout: PluginLayout,
 ) -> (AppCore<OfflineSink>, Arc<NullStats>) {
+    null_core_in(live, cache_layout, PluginPaths::default())
+}
+
+/// [`null_core`] with the config files kept in `paths`.
+fn null_core_in(
+    live: PluginLayout,
+    cache_layout: PluginLayout,
+    paths: PluginPaths,
+) -> (AppCore<OfflineSink>, Arc<NullStats>) {
     let mut config = config(true, &[PKG]);
+    config.paths = paths;
     let scanned = scanned_gain();
     config.cache.update_layout(&scanned.plugin, &cache_layout);
     let backend = NullBackend::new().with_plugin(NullPlugin {
@@ -554,4 +564,104 @@ fn a_port_shape_that_really_grows_is_learned_once_and_then_stays_stable() {
         assert_eq!(ids(&core), settled, "round {round}");
         assert_eq!(stats.created(), after, "round {round}");
     }
+}
+
+// ------------------------------------------------------------------ one device, not the engine
+
+/// How many times the engine was started from the document so far.
+fn engine_starts(core: &AppCore<OfflineSink>) -> usize {
+    core.sink.resets.len()
+}
+
+#[test]
+fn attaching_a_plugin_whose_layout_differs_from_the_scan_does_not_restart_the_engine() {
+    let base = scanned_gain().layout;
+    // The scan is the old one (no aux outputs); the plugin has them.
+    let (mut core, _stats) = null_core(with_aux(&base), base.clone());
+    assert!(!registered_has(&core, "out_aux_1_l"));
+    let starts = engine_starts(&core);
+    add_plugin(&mut core, GAIN, "a");
+    core.wait_plugins();
+    settle(&mut core);
+    assert!(core.plugin_instance(&key("a")).is_some());
+    assert!(
+        registered_has(&core, "out_aux_1_l"),
+        "the registry learned it"
+    );
+    assert_eq!(catalog_aux(&core), 2, "and the catalog");
+    assert_eq!(
+        engine_starts(&core),
+        starts,
+        "the device was swapped in alone, the engine was not restarted"
+    );
+}
+
+#[test]
+fn a_plugin_that_changes_its_layout_gets_a_new_device_alone_and_the_engine_keeps_running() {
+    let base = scanned_gain().layout;
+    let (mut core, stats) = null_core(base.clone(), base.clone());
+    add_plugin(&mut core, GAIN, "a");
+    core.wait_plugins();
+    settle(&mut core);
+    let (id, created) = (core.plugin_instance(&key("a")), stats.created());
+    let starts = engine_starts(&core);
+    stats.change_layout(with_aux(&base));
+    restart_until(&mut core, "a", |c| registered_has(c, "out_aux_1_l"));
+    for _ in 0..30 {
+        settle(&mut core);
+    }
+    assert_eq!(engine_starts(&core), starts, "no engine restart");
+    assert_eq!(core.plugin_instance(&key("a")), id, "the same instance");
+    assert_eq!(stats.created(), created, "none was created again");
+    assert!(
+        !core.plugin_parked(&key("a")),
+        "its live device is back in the engine"
+    );
+    let built = core
+        .plugin_built_descriptor(&key("a"))
+        .expect("a live device");
+    assert!(
+        built.socket_by_key("out_aux_1_l").is_some(),
+        "with the new ports"
+    );
+}
+
+#[test]
+fn another_live_instance_of_the_plugin_keeps_the_full_restart_for_a_changed_port_layout() {
+    let base = scanned_gain().layout;
+    let (mut core, stats) = null_core(base.clone(), base.clone());
+    add_plugin(&mut core, GAIN, "a");
+    add_plugin(&mut core, GAIN, "b");
+    core.wait_plugins();
+    settle(&mut core);
+    let starts = engine_starts(&core);
+    stats.change_layout(with_aux(&base));
+    restart_until(&mut core, "a", |c| registered_has(c, "out_aux_1_l"));
+    assert!(
+        engine_starts(&core) > starts,
+        "`b` was built with the old ports and the registry describes the new ones: only a restart brings them together"
+    );
+}
+
+#[test]
+fn a_layout_learned_from_a_live_plugin_is_written_to_the_scan_cache_by_the_writer_thread() {
+    let base = scanned_gain().layout;
+    let dir = temp("layout-cache-writer");
+    let (mut core, _stats) = null_core_in(with_aux(&base), base.clone(), PluginPaths::in_dir(&dir));
+    add_plugin(&mut core, GAIN, "a");
+    core.wait_plugins();
+    settle(&mut core);
+    core.wait_plugin_cache_writes();
+    let (cache, status) = atomik_plugin_host::PluginCache::load(&dir.join("plugins.json"));
+    assert!(
+        matches!(status, atomik_plugin_host::LoadStatus::Loaded),
+        "the file is complete: {status:?}"
+    );
+    let plugin = PluginRef::from_type_id(GAIN).unwrap();
+    assert_eq!(cache.layout_of(&plugin).unwrap().aux_out, 2);
+    assert!(
+        core.plugin_cache_writes() >= 1,
+        "the write went through the writer"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

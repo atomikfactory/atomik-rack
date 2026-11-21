@@ -23,7 +23,7 @@ use crate::backend::{
     PluginBackend, PluginInstance, PluginProcessor,
 };
 use crate::device::PluginDevice;
-use crate::layout::truncate_params;
+use crate::layout::{merge_pinned, truncate_params};
 use crate::slot::{
     DeviceEnd, InstanceId, LogLevel, ManagerEnd, ParamPhase, PluginMessage, PluginSlot,
     ReaperQueue, StallOutcome, plugin_channel,
@@ -32,10 +32,11 @@ use crate::soft::{SoftAnswer, SoftBudget};
 use crate::threads::assert_main_thread;
 use atomik_core::BATCH;
 use atomik_device_sdk::{
-    DescriptorError, DeviceDescriptor, PluginFormat, PluginLayout, PluginRef, PluginStateBlob,
-    RunMode, descriptor_for,
+    DescriptorError, DeviceDescriptor, PluginFormat, PluginLayout, PluginParamInfo, PluginRef,
+    PluginStateBlob, RunMode, descriptor_for,
 };
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// The error text of a call on an instance whose process is gone.
@@ -309,6 +310,8 @@ struct Managed {
     /// A parked instance that is being reattached to a new device (see
     /// [`PluginManager::begin_reattach`]).
     reattach: Option<Reattach>,
+    /// The pinned params the plugin had when this instance was made.
+    pins: Arc<Vec<PluginParamInfo>>,
 }
 
 /// A reattach in progress: the instance deactivates, then activates at `rate`.
@@ -572,14 +575,26 @@ pub struct PluginManager {
     next_ticket: u64,
     /// Instances that left and are being taken down (see [`Leaving`]).
     leaving: Vec<Leaving>,
+    /// The params each plugin lists beyond what it reports (see
+    /// [`PluginManager::set_pinned_params`]).
+    pins: BTreeMap<PluginRef, Arc<Vec<PluginParamInfo>>>,
+}
+
+/// `layout` as the rack lists it: what the plugin reports plus the `pins` (see
+/// [`PluginManager::set_pinned_params`]), cut to the most params a layout holds.
+fn listed_layout(layout: &PluginLayout, pins: &[PluginParamInfo]) -> PluginLayout {
+    let mut layout = layout.clone();
+    merge_pinned(&mut layout, pins);
+    truncate_params(&mut layout);
+    layout
 }
 
 fn descriptor_of(
     plugin: &PluginRef,
     layout: &PluginLayout,
+    pins: &[PluginParamInfo],
 ) -> Result<(&'static DeviceDescriptor, PluginLayout), DescriptorError> {
-    let mut layout = layout.clone();
-    truncate_params(&mut layout);
+    let layout = listed_layout(layout, pins);
     descriptor_for(plugin, &layout).map(|d| (d, layout))
 }
 
@@ -628,12 +643,32 @@ impl PluginManager {
             creating: BTreeMap::new(),
             next_ticket: 1,
             leaving: Vec::new(),
+            pins: BTreeMap::new(),
         }
     }
 
     /// Adds a format backend.
     pub fn add_backend(&mut self, backend: Box<dyn PluginBackend>) {
         self.backends.push(backend);
+    }
+
+    /// Sets the params the rack lists for `plugin` beyond what the plugin reports: a plugin may
+    /// leave out parameters it publishes only as stand-ins for MIDI controllers, and a project
+    /// that still uses one of them (a lane, a learned control, a stored value) has to find it in
+    /// the table. The rows are added to the layout of every instance made, and of every layout
+    /// change reported, from now on (see [`crate::layout::merge_pinned`]); instances that exist
+    /// keep the table they were made with. An empty list clears the pins of the plugin.
+    pub fn set_pinned_params(&mut self, plugin: &PluginRef, rows: Vec<PluginParamInfo>) {
+        if rows.is_empty() {
+            self.pins.remove(plugin);
+        } else {
+            self.pins.insert(plugin.clone(), Arc::new(rows));
+        }
+    }
+
+    /// The pinned params of `plugin` (see [`Self::set_pinned_params`]).
+    fn pins_of(&self, plugin: &PluginRef) -> Arc<Vec<PluginParamInfo>> {
+        self.pins.get(plugin).cloned().unwrap_or_default()
     }
 
     /// The reaper queue devices post to (it is already wired into every device the manager
@@ -890,7 +925,11 @@ impl PluginManager {
     /// Starts the activation: the next stage, or the end of the creation.
     fn begin_activation(&mut self, request: &InstantiateRequest, mut boot: Booting) -> Advance {
         boot.activating_since = clock();
-        let prepared = match descriptor_of(&request.plugin, boot.instance.layout()) {
+        let prepared = match descriptor_of(
+            &request.plugin,
+            boot.instance.layout(),
+            &self.pins_of(&request.plugin),
+        ) {
             Ok(prepared) => prepared,
             Err(e) => return Advance::Done(Box::new(Err(e.into()))),
         };
@@ -947,7 +986,11 @@ impl PluginManager {
             .and_then(|s| instance.restore_state(s).err())
             .map(|e| e.to_string());
         let restored = clock();
-        let (descriptor, layout) = descriptor_of(&request.plugin, instance.layout())?;
+        let (descriptor, layout) = descriptor_of(
+            &request.plugin,
+            instance.layout(),
+            &self.pins_of(&request.plugin),
+        )?;
         let processor = instance.activate(&activate_config(request))?;
         let timing = CreateTiming {
             restore: restored.saturating_duration_since(began),
@@ -1012,6 +1055,7 @@ impl PluginManager {
                 layout_changed: false,
                 again: false,
                 reattach: None,
+                pins: self.pins_of(&request.plugin),
             },
         );
         PluginHandle {
@@ -1169,6 +1213,59 @@ impl PluginManager {
             .get_mut(&id)
             .map(|m| m.instance.read_params())
             .unwrap_or_default()
+    }
+
+    /// Asks for the presets the plugin offers without waiting (the live app): `Some(list)` when
+    /// the answer was there at once, `None` when it arrives later as [`SoftAnswer::Presets`]
+    /// through [`PluginManager::take_soft_answers`].
+    ///
+    /// # Errors
+    /// An unknown instance, or a plugin that is lost, stuck or busy with a held call.
+    pub fn request_presets(
+        &mut self,
+        id: InstanceId,
+    ) -> Result<Option<Vec<crate::PresetInfo>>, ManagerError> {
+        assert_main_thread("PluginManager::request_presets");
+        Ok(self.get(id)?.instance.begin_list_presets()?)
+    }
+
+    /// Asks for the param values the plugin holds without waiting, in the way of
+    /// [`PluginManager::request_presets`] (the answer is a [`SoftAnswer::Params`]).
+    ///
+    /// # Errors
+    /// An unknown instance, or a plugin that is lost, stuck or busy with a held call.
+    pub fn request_params(
+        &mut self,
+        id: InstanceId,
+    ) -> Result<Option<Vec<(u32, f64)>>, ManagerError> {
+        assert_main_thread("PluginManager::request_params");
+        Ok(self.get(id)?.instance.begin_read_params()?)
+    }
+
+    /// Starts loading a preset into a living instance without waiting (the live app): true when
+    /// it is loaded, false when [`PluginManager::poll_load_preset`] says when it is. Read the
+    /// new state afterwards.
+    ///
+    /// # Errors
+    /// An unknown instance, or what the plugin said.
+    pub fn begin_load_preset(
+        &mut self,
+        id: InstanceId,
+        preset: &str,
+    ) -> Result<bool, ManagerError> {
+        assert_main_thread("PluginManager::begin_load_preset");
+        let m = self.get(id)?;
+        // A capture asked for before the load describes the state that is being replaced.
+        m.capture.stale |= m.capture.out;
+        Ok(m.instance.begin_load_preset(preset)?)
+    }
+
+    /// The outcome of the preset load [`PluginManager::begin_load_preset`] started, once;
+    /// `None` while the plugin has not answered.
+    pub fn poll_load_preset(&mut self, id: InstanceId) -> Option<Result<(), ManagerError>> {
+        assert_main_thread("PluginManager::poll_load_preset");
+        let m = self.instances.get_mut(&id)?;
+        Some(m.instance.poll_load_preset()?.map_err(ManagerError::from))
     }
 
     /// The plugin's display text of a param value (never asked on the audio thread). A plugin
@@ -1458,7 +1555,7 @@ impl PluginManager {
             });
         }
         if std::mem::take(&mut m.layout_changed) {
-            m.layout = m.instance.layout().clone();
+            m.layout = listed_layout(m.instance.layout(), &m.pins);
             events.push(ManagerEvent::LayoutChanged {
                 instance: id,
                 layout: m.layout.clone(),
@@ -1543,7 +1640,7 @@ impl PluginManager {
         if m.phase == Phase::Activating || m.reattach.is_some() {
             return Err(BackendError::Failed("the plugin is still activating".to_string()).into());
         }
-        let (descriptor, layout) = descriptor_of(&m.plugin, m.instance.layout())?;
+        let (descriptor, layout) = descriptor_of(&m.plugin, m.instance.layout(), &m.pins)?;
         m.cfg.sample_rate = sample_rate;
         let processor = m.instance.activate(&m.cfg)?;
         let (device_end, stale) = m.end.new_device_end();
@@ -1612,7 +1709,7 @@ impl PluginManager {
             return;
         }
         // A layout that cannot be a device fails before the plugin is activated.
-        if let Err(e) = descriptor_of(&m.plugin, m.instance.layout()) {
+        if let Err(e) = descriptor_of(&m.plugin, m.instance.layout(), &m.pins) {
             job.ready = Some(Err(e.into()));
             return;
         }
@@ -1634,7 +1731,7 @@ impl PluginManager {
         let Some(job) = &mut m.reattach else {
             return;
         };
-        let (descriptor, layout) = match descriptor_of(&m.plugin, m.instance.layout()) {
+        let (descriptor, layout) = match descriptor_of(&m.plugin, m.instance.layout(), &m.pins) {
             Ok(prepared) => prepared,
             Err(e) => {
                 job.ready = Some(Err(e.into()));

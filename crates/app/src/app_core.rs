@@ -1820,6 +1820,8 @@ impl<S: EngineSink> AppCore<S> {
         self.set_saved(doc.clone());
         self.end_patch_browse_for_new_document();
         self.document = Document::new(doc);
+        // The new project's plugin params that a plugin's own table leaves out stay listed.
+        self.plugins_pin_document_params();
         self.file = file;
         self.history_opened = self.history_clock.now();
         self.history_stamp = None;
@@ -4795,6 +4797,10 @@ mod plugins_layout_tests;
 mod plugins_vst3_tests;
 
 #[cfg(test)]
+#[path = "app_core_plugins_proxies_tests.rs"]
+mod plugins_proxies_tests;
+
+#[cfg(test)]
 #[path = "app_core_plugins_real_tests.rs"]
 mod plugins_real_tests;
 
@@ -4813,6 +4819,10 @@ mod plugins_capture_tests;
 #[cfg(test)]
 #[path = "app_core_plugins_polled_tests.rs"]
 mod plugins_polled_tests;
+
+#[cfg(test)]
+#[path = "app_core_plugins_presets_tests.rs"]
+mod plugins_presets_tests;
 
 #[cfg(test)]
 #[path = "app_core_plugin_learn_tests.rs"]

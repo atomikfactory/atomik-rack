@@ -4999,7 +4999,14 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   deactivates and activates again and sends it back; the device then re-sends every param the rack
   ever set. Dropping a device never destroys the plugin on the dropping thread: `Drop` posts to the
   **reaper queue**, and `poll` tears down on the main thread. An engine restart keeps the living
-  instances (`retain`, then `reattach` at the new rate: nothing is created again). Plugin callbacks
+  instances (`retain`, then `reattach` at the new rate: nothing is created again). A plugin that
+  reports another param table or other ports while it runs gets a new device of its own and nothing
+  else restarts (`AppCore::swap_device_layout`): a stand-in of the new shape takes the place of its
+  device, the instance is parked when the old device goes, and `adopt_offline` puts the live device in
+  when the plugin is active again, so the transport and the other devices keep going. The whole
+  engine is rebuilt only when another live instance of the same plugin was built with the old shape
+  (the registry describes the new one now, and that instance is created again as after any restart).
+  A plugin opened over an older scan whose ports differ is learned without an engine restart too. Plugin callbacks
   into the host only post to a bounded message ring that `poll` drains; a full ring drops and
   counts.
 - **Latency and PDC.** The reported latency (clamped to 1 s) is an atomic on the slot;
@@ -5018,7 +5025,11 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   carries a path: a device resolves only by (format, id) against that cache. A project that uses
   missing or disabled plugins opens with **stand-ins** that keep cables, channel, song track,
   automation, macro targets, pins and the state blob byte for byte, and RELOAD or a rescan swaps the
-  real plugin in.
+  real plugin in. The file can be tens of megabytes, so the interface thread never writes it: a scan's
+  end, a layout learned from a live plugin and the DISABLE of a crashed plugin hand a copy of the cache
+  to one writer thread ([plugin_cache_writer.rs](../crates/app/src/plugin_cache_writer.rs)), which
+  serialises and writes it; only the newest copy handed over is written, a failure is reported by the
+  next frame, and the exit waits for it at most five seconds.
 - **Plugin manager.** What the user decides about a plugin (a star, tags, hidden by Disable, the quarantine after
   three failures in a row) is kept by plugin id in `plugins_user.json` beside the settings, apart from the scan cache
   and the catalog, which it never touches: the browser and the menus hide a disabled or quarantined plugin, while a
@@ -5041,6 +5052,21 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   `SetState`. `PluginInstance::read_params` (sandbox: `ReadParams` and `ParamValues`) gives the host
   values the plugin holds, and `AppCore::refresh_knobs` writes the changed ones into the document as
   `SetParam`s folded into the same undo step, without echoing them back to the plugin.
+  In the live app none of these waits for the plugin (see "the live app never waits" below): the
+  list of presets and the param values are cosmetic requests (`PluginInstance::begin_list_presets`,
+  `begin_read_params`, answered later as `SoftAnswer::Presets` and `Params`), a preset load is a
+  polled held request (`begin_load_preset`, `poll_load_preset`; `AppCore::plugins_poll_preset_loads`
+  carries it a step per frame: the state the step goes back to is captured first when the plugin
+  changed since the last capture, then the load, then the state that results, which becomes the one
+  `SetState` with no merge id). The list is asked for once per instance (`PresetList`): the pane and
+  the browser show nothing until it lands, and a list the plugin failed to give is never taken for "no
+  presets": the next opening of the pane or the browser asks again, not sooner than five seconds after
+  the failure. Knob values that arrive late join the step of the change only while the document is
+  still as that change left it. Where the format keeps presets as files (VST3) the plugin's process
+  walks the folders on a thread of its own (`PluginInstance::preset_lister`) and that thread writes
+  the answer, so a plugin whose main thread is busy does not hold the walk up; CLAP discovery needs
+  the plugin and stays on its main thread. A bounce and a plugin in this process keep the
+  synchronous calls.
 - **Format v9.** `plugin` is written after `inner`: format, id, name, vendor, version, `path_hint`
   (shown, never used), a compact `layout` (sockets and **only the used param rows**), base64
   `state`, pins, run mode, powered. Params are saved sparsely. Canonical save, load, save is
@@ -5151,11 +5177,11 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     the next batch exactly as in process (a bounce counts in batches, never in time). Main-thread
     calls have timeouts. The ones that matter (10 s create, activate and state; 2 s deactivate and
     flush) kill the child when they are not answered, unless it shows a sign of life (below). The
-    cosmetic ones (param text, default pins, layout changes, resize, closing the editor) are
-    requests that do not hold the interface: each goes into a small table of the link (the newest
-    64, the oldest dropped), the reader thread files its answer there whenever it comes, and the
-    main thread waits for it only a moment. The moment is what is left of one allowance of 20 ms
-    per frame that every instance of the manager shares (`SoftBudget`, `SOFT_FRAME_BUDGET`; the
+    cosmetic ones (param text, default pins, layout changes, the list of presets, the param values,
+    resize, closing the editor) are requests that do not hold the interface: each goes into a small
+    table of the link (the newest 64, the oldest dropped), the reader thread files its answer there
+    whenever it comes, and the main thread waits for it only a moment. The moment is what is
+    left of one allowance of 20 ms per frame that every instance of the manager shares (`SoftBudget`, `SOFT_FRAME_BUDGET`; the
     manager begins a frame at each `poll`), at most 250 ms for one request, and none for an
     instance that was waited for in vain already in this frame (a wait is recorded as a stall only
     when it was asked to last 50 ms or more, so a short wait that the system woke late is not one,
@@ -5275,7 +5301,8 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   `ModuleEntry`) and keeps the module alive while a plugin of it lives; `layout.rs` lists the audio
   classes, negotiates the buses (stereo or mono main, an optional stereo sidechain, everything else
   deactivated, surround refused with the reason) and reads params (hidden, read-only and
-  program-change ones skipped, units as modules), `IMidiMapping` and note-expression support;
+  program-change ones skipped, and the per-channel controller stand-ins that `IMidiMapping` reveals, asked once
+  per scan and per instance with a half-second budget; units as modules), `IMidiMapping` and note-expression support;
   `instance.rs` is the main-thread half (component and controller created and connected through two
   proxies so neither holds the other, the controller brought in step with the component's state, the
   host `IComponentHandler`, the editor `IPlugView` with an `IPlugFrame` that is also an `IRunLoop`);
