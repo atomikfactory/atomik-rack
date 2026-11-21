@@ -423,3 +423,40 @@ fn the_processor_runs_on_whichever_thread_the_device_is_driven_from() {
         drop(h);
     }
 }
+
+// ----- the module outlives the audio half -------------------------------------------------------
+
+#[test]
+fn a_device_that_outlives_the_manager_and_the_backend_keeps_the_module_loaded_until_it_is_dropped()
+{
+    let _s = serial();
+    for format in FORMATS {
+        let k = kit(format);
+        // A second handle on the library, to read its entry and exit counters (it also keeps the
+        // file mapped, so a plugin released too late is seen in the counters, not as a crash).
+        let lib = TestLib::open_path(&k.path);
+        let mut m = manager_for(format, std::slice::from_ref(&k.path));
+        let (mut h, _id, _) = open(&mut m, &k.plugin(Plug::Gain));
+        run(&mut h, 3);
+        let init = lib.counter(counter::ENTRY_INIT);
+        let deinit = lib.counter(counter::ENTRY_DEINIT);
+        // The host goes away first (an engine restart or the exit), the device last: its
+        // processor is released after the manager and the backend that loaded the module.
+        drop(m);
+        assert_eq!(
+            lib.counter(counter::ENTRY_DEINIT),
+            deinit,
+            "{}: the module's exit ran while a device still held its processor",
+            format.name()
+        );
+        drop(h);
+        assert_eq!(lib.counter(counter::ENTRY_INIT), init);
+        if format == Format::Vst3 {
+            assert_eq!(
+                lib.counter(counter::ENTRY_DEINIT),
+                deinit + 1,
+                "the exit runs once the last device is gone"
+            );
+        }
+    }
+}

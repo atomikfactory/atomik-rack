@@ -7,6 +7,7 @@
 use crate::events::{EventListObj, zero_event};
 use crate::host::Hub;
 use crate::layout::{AudioPlan, Role};
+use crate::module::Module;
 use crate::params::ParamChanges;
 use crate::values::{self, Steps};
 use atomik_core::{BATCH, Batch, ExprKind};
@@ -42,6 +43,9 @@ pub(crate) struct Setup {
     /// Where every param value the rack sets is copied so the main thread can tell the
     /// controller (an editor shows the rack values).
     pub mirror: rtrb::Producer<(u32, f64)>,
+    /// The loaded module the plugin's code lives in: the processor keeps it loaded until the
+    /// plugin objects are released, whichever of the instance and the processor goes last.
+    pub module: Arc<Module>,
 }
 
 /// One bus's place in the channel storage.
@@ -79,6 +83,9 @@ pub(crate) struct Vst3Processor {
     context: ProcessContext,
     running: bool,
     tail: TailLength,
+    // Last on purpose: fields drop in declaration order, so every plugin object above is
+    // released before the module's exit function runs and the library is unloaded.
+    _module: Arc<Module>,
 }
 
 // SAFETY: the raw pointers point into heap buffers this struct owns, are rewritten before every
@@ -164,6 +171,7 @@ impl Vst3Processor {
             context,
             running: false,
             tail: TailLength::Finite(0),
+            _module: s.module,
         }
     }
 

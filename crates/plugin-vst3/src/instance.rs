@@ -379,6 +379,7 @@ impl HostInstance for Vst3Instance {
             hub: Arc::clone(&self.hub),
             edits: consumer,
             mirror: mirror_in,
+            module: Arc::clone(&self._module),
         })))
     }
 
