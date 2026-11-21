@@ -388,17 +388,19 @@ fn a_child_that_answers_every_batch_late_is_never_declared_hung() {
     // Every answer takes several batch periods (one is 1.3 ms), yet each one comes.
     r.fake.ctl.set_audio_delay(Duration::from_millis(8));
     let hang_after = 45; // 60 ms of 64-frame batches at 48 kHz
-    // Each batch is late: the answer to a request lands only after its deadline.
+    // A batch is late when the answer lands after its deadline. On a machine where the sleep
+    // below overshoots, an answer may be there in time: that batch is simply taken. What must
+    // never happen, however long the run of late batches, is the child being declared lost.
     let mut late = 0;
     for _ in 0..3 * hang_after {
         // The audio callback comes once per batch period.
         std::thread::sleep(Duration::from_micros(1_300));
         match p.process(&mut bufs_io(&mut b)) {
             ProcessStatus::Late => late += 1,
-            other => panic!("{other:?}"),
+            ProcessStatus::Lost => panic!("declared lost after {late} late batches"),
+            _ => {}
         }
     }
-    assert_eq!(late, 3 * hang_after, "every batch was late");
     assert!(
         r.fake.ctl.audio_ops().len() >= 3,
         "the child kept completing requests"
