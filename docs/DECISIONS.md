@@ -1101,6 +1101,36 @@ answered after two seconds.
 waits for the plugin (a second place that can stall, and the answer still has to reach the document on the UI
 thread); capturing on every parameter change (a plugin that flags itself dirty after a capture would loop).
 
-**Open.** What a save does when the plugin does not answer in time (it still waits and stops the plugin).
+**Open.** What a save does when the plugin does not answer in time: see AO.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AO. A plugin that is alive is never stopped by a timeout; the user decides
+
+**Question.** A request to a sandboxed plugin that is not answered in time (ten seconds for the state, a restore,
+an activation or the presets; twelve missed cosmetic calls in a row) stopped the plugin's process and marked it
+crashed. In a real log this happened to a plugin that was working: its main thread was busy, its audio thread was
+still running. Stopping it lost the user's sound and every setting made in its window since the last capture.
+
+**Decision.** A timeout stops a plugin's process only when the process shows no sign of life. The sign of life is a
+counter in the shared block that the process's audio thread bumps on every pass of its loop (one relaxed store, a
+pass at least every ten milliseconds whatever the plugin's main thread does); a timed-out wait that sees it move in
+its last half second leaves the process alone. The call fails, and the plugin is NOT RESPONDING: the app stops
+waiting for it (every later call fails at once, without being sent, and a cosmetic call returns its neutral result),
+asks it for nothing more, and the state ends by itself when the late answer arrives. The plugin is not marked
+crashed, does not count toward the quarantine and keeps the last state stored for it. The user decides: RELOAD
+stops the process and starts a new one from the stored state. A save, archive, share, template or version while a
+plugin does not answer completes with the stored state and tells the user once; an audio restart and the removal of
+the device go on the same way and write a line in the plugin log. A process with no sign of life is stopped as
+before, with the same text, and offline rendering (a bounce, an export, a freeze) keeps its watchdog and stops on a
+timeout, so a render never depends on the clock and never enters the state.
+
+**Rejected.** Waiting without a limit (a wedged plugin would block a save forever); a longer timeout (a working plugin
+is still stopped, later); a heartbeat written by the plugin's main thread (it stops exactly when the plugin is
+busy); a thread in the app that pings the plugin (a second place that can stall); failing a save while a plugin does
+not answer (the user loses the rest of the project to one busy plugin).
+
+**Open.** Whether a plugin that stays NOT RESPONDING for minutes should offer to be stopped without the RELOAD
+button; whether the notice after a save should offer to save again once the plugin answers.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.

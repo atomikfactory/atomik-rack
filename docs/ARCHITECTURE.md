@@ -5090,7 +5090,15 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   removing or replacing a device, copying one out of the document (a duplicate carries the
   stored state), a container or plugin command and freezing a track wait), and save, archive, share,
   templates, versions and an audio restart (`plugins_capture_all`) still capture synchronously;
-  they take the request that is out instead of sending a second one.
+  they take the request that is out instead of sending a second one. A plugin that is alive but does
+  not answer (the sandbox's NOT RESPONDING state, `PluginManager::not_responding`) is never waited
+  for or stopped: its captures fail at once and the document keeps the state stored for it. A save,
+  archive, share, template or version (`plugins_capture_for_save`) tells the user once which
+  devices did not hand over their settings, an audio restart and a removal only log it, and no
+  background request is sent to it. The state shows as `NOT RESPONDING` in the panel
+  (`PluginDeviceStatus::not_responding`) and in the plugin log and the file log (`ManagerEvent::NotResponding`
+  and `Responding`); it is not CRASHED, never reaches `settings.plugins.crashed` or the quarantine
+  count, and RELOAD stops the process (`PluginManager::stop_unresponsive`) and creates a new instance.
 - **Orphaned recordings.** An audio take streams to `Audio/rec-<pid>-<take>-<n>.wav` (2.6). At start
   and when a project opens, `recover_orphan_recordings` scans (bounded) the opened bundle's `Audio/`
   and the session scratch bundles in the temp folder for such files whose process has no live marker

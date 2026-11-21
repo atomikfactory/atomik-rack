@@ -3105,6 +3105,11 @@ Quarantined: => En quarantaine :
 QUARANTINED => EN QUARANTAINE
 LOAD ANYWAY => CHARGER QUAND MÊME
 it failed three times in a row: LOAD ANYWAY tries it => il a échoué trois fois de suite : CHARGER QUAND MÊME l'essaie
+NOT RESPONDING => NE RÉPOND PLUS
+the plugin is busy and does not answer; its audio keeps running => le plugin est occupé et ne répond pas ; son audio continue
+{name} did not hand over its current settings; its last captured settings were saved. => {name} n'a pas transmis ses réglages actuels ; ses derniers réglages capturés ont été enregistrés.
+{name} did not hand over its current settings and none were captured before; it was saved without them. => {name} n'a pas transmis ses réglages actuels et aucun n'avait été capturé avant ; il a été enregistré sans eux.
+{names} did not hand over their current settings; their last captured settings were saved. => {names} n'ont pas transmis leurs réglages actuels ; leurs derniers réglages capturés ont été enregistrés.
 Ctrl-click and Shift-click choose several => Ctrl-clic et Maj-clic en choisissent plusieurs
 
 # Stem separation

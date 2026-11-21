@@ -433,6 +433,21 @@ impl PluginManager {
         self.instances.get(&id)?.instance.not_responding()
     }
 
+    /// Stops the process of an instance that does not respond (see [`NOT_RESPONDING`]) at the
+    /// user's request: it is lost from then on, like a crashed one, and the app replaces it.
+    /// Returns false when the instance is unknown or does respond.
+    pub fn stop_unresponsive(&mut self, id: InstanceId) -> bool {
+        assert_main_thread("PluginManager::stop_unresponsive");
+        let Some(m) = self.instances.get_mut(&id) else {
+            return false;
+        };
+        if m.instance.not_responding().is_none() {
+            return false;
+        }
+        m.instance.stop_process();
+        true
+    }
+
     /// The ids of every instance (live and parked), in creation order.
     pub fn instance_ids(&self) -> Vec<InstanceId> {
         self.instances.keys().copied().collect()

@@ -561,6 +561,9 @@ pub trait PluginInstance {
     fn not_responding(&self) -> Option<String> {
         None
     }
+    /// Stops the plugin's process because the user chose to, after it did not respond (RELOAD):
+    /// the instance is lost from then on, as after a crash. Nothing for a plugin in this process.
+    fn stop_process(&mut self) {}
     /// The instance is about to be dropped: starts ending whatever outlives a call (a child
     /// process) without waiting for it, so that the manager can start every instance's end
     /// first and then wait for all of them at once. Dropping still works without this call.

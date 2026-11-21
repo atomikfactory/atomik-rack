@@ -282,6 +282,36 @@ pub(crate) fn crash_log_line(device: &str, reason: &str) -> String {
     format!("plugin [{device}] process ended: {reason}")
 }
 
+/// The app log line of a plugin whose process is alive but did not answer a call in time: it is
+/// left running.
+pub(crate) fn not_responding_log_line(device: &str, call: &str) -> String {
+    format!(
+        "plugin [{device}] not responding: the process is alive but did not answer {call}; it is left running and asked no more until it answers"
+    )
+}
+
+/// The app log line of a plugin that answered again after [`not_responding_log_line`].
+pub(crate) fn responding_log_line(device: &str) -> String {
+    format!("plugin [{device}] responding again")
+}
+
+/// The notice after a save, when the plugin of one device was alive but did not hand over its
+/// current state (`stored`: the document held a state from an earlier capture).
+pub(crate) fn not_handed_notice(names: &[String], stored: bool) -> String {
+    match names {
+        [one] if stored => format!(
+            "{one} did not hand over its current settings; its last captured settings were saved."
+        ),
+        [one] => format!(
+            "{one} did not hand over its current settings and none were captured before; it was saved without them."
+        ),
+        many => format!(
+            "{} did not hand over their current settings; their last captured settings were saved.",
+            many.join(", ")
+        ),
+    }
+}
+
 /// The app log line of a plugin device that went FAILED, with the full reason.
 pub(crate) fn failed_log_line(device: &str, reason: &str) -> String {
     format!("plugin [{device}] failed: {reason}")
@@ -438,6 +468,10 @@ pub(super) struct PluginState {
     failed: BTreeMap<DeviceKey, String>,
     /// Why a device is CRASHED: its plugin process ended (sandbox).
     crashed: BTreeMap<DeviceKey, String>,
+    /// The devices whose plugin was alive but did not hand over its state to a capture since a
+    /// save began: what they hold in the document is the last state captured (see
+    /// [`AppCore::plugins_capture_for_save`]).
+    pub(super) not_handed: Vec<DeviceKey>,
     /// How many times a hung plugin was reloaded by itself since the user last pressed RELOAD.
     auto_reloads: BTreeMap<DeviceKey, u8>,
     /// Devices whose saved state failed to restore: the blob is kept, never captured over.
@@ -541,6 +575,7 @@ impl PluginState {
             batch_done: 0,
             failed: BTreeMap::new(),
             crashed: BTreeMap::new(),
+            not_handed: Vec::new(),
             auto_reloads: BTreeMap::new(),
             no_capture: BTreeSet::new(),
             live_desc: BTreeMap::new(),
@@ -1079,7 +1114,10 @@ impl<S: EngineSink> AppCore<S> {
     /// Called by `rebuild_engine` before the engine is reset: captures the states and keeps (or,
     /// for a new document, drops) the living instances, so an audio restart does not reload them.
     pub(super) fn plugins_before_reset(&mut self) {
+        // A plugin that does not answer keeps the state stored for it (logged); the restart goes
+        // on.
         self.plugins_capture_all();
+        self.plugins.not_handed.clear();
         let keep = !self.plugins.discard;
         let ids: Vec<InstanceId> = self.plugins.instances.values().copied().collect();
         for id in ids {
@@ -1420,6 +1458,30 @@ impl<S: EngineSink> AppCore<S> {
                     if hung {
                         self.reload_hung_plugin(&key);
                     }
+                }
+            }
+            ManagerEvent::NotResponding { instance, call } => {
+                // Alive, so not CRASHED: it is not in the crashed settings and does not count
+                // toward the quarantine, and the state stored for it stays as it is.
+                let name = self
+                    .plugins
+                    .keys
+                    .get(&instance)
+                    .map_or_else(|| "plugin".to_string(), |k| k.0.clone());
+                log::warn!("{}", not_responding_log_line(&name, &call));
+                if let Some(key) = self.plugins.keys.get(&instance).cloned() {
+                    self.plugins.log(not_responding_log_line(&key.0, &call));
+                }
+            }
+            ManagerEvent::Responding(instance) => {
+                let name = self
+                    .plugins
+                    .keys
+                    .get(&instance)
+                    .map_or_else(|| "plugin".to_string(), |k| k.0.clone());
+                log::info!("{}", responding_log_line(&name));
+                if let Some(key) = self.plugins.keys.get(&instance).cloned() {
+                    self.plugins.log(responding_log_line(&key.0));
                 }
             }
             ManagerEvent::LayoutChanged { instance, layout } => {
@@ -1880,6 +1942,17 @@ impl<S: EngineSink> AppCore<S> {
         let blob = match self.plugins.host.manager().capture_state(id) {
             Ok(blob) => blob,
             Err(e) => {
+                if e.is_not_responding() {
+                    // Alive but busy: the document keeps the last state it holds, and the save
+                    // that asked tells the user.
+                    if !self.plugins.not_handed.contains(key) {
+                        self.plugins.not_handed.push(key.clone());
+                    }
+                    self.plugins.log(format!(
+                        "[{key}] did not hand over its state (not responding): the stored state is kept"
+                    ));
+                    return false;
+                }
                 self.plugins
                     .log(format!("[{key}] cannot capture state: {e}"));
                 return false;
@@ -1898,6 +1971,11 @@ impl<S: EngineSink> AppCore<S> {
             return false;
         };
         if self.plugins.no_capture.contains(key) {
+            return false;
+        }
+        if self.plugins.host.manager_ref().not_responding(id).is_some() {
+            // Nothing is sent to a plugin that does not answer; it asks for its state again
+            // when it is back (the stored state stays meanwhile).
             return false;
         }
         if let Err(e) = self.plugins.host.manager().request_capture(id) {
@@ -1936,6 +2014,7 @@ impl<S: EngineSink> AppCore<S> {
                         self.store_captured(&key, blob, wanted.undoable);
                     }
                 }
+                Err(e) if e.is_not_responding() => {}
                 Err(e) => self
                     .plugins
                     .log(format!("[{key}] cannot capture state: {e}")),
@@ -2161,6 +2240,30 @@ impl<S: EngineSink> AppCore<S> {
             self.capture_instance(&key);
         }
         self.plugins.dirty.clear();
+    }
+
+    /// [`Self::plugins_capture_all`] for a save, an archive, a share, a template or a version:
+    /// a plugin that is alive but does not hand over its state in time is not stopped, and what
+    /// the document holds for it (the last state captured) is what gets written; the user is told
+    /// once, with one notice for all of them, so a save never goes stale silently.
+    pub(super) fn plugins_capture_for_save(&mut self) {
+        self.plugins.not_handed.clear();
+        self.plugins_capture_all();
+        let keys = std::mem::take(&mut self.plugins.not_handed);
+        if keys.is_empty() {
+            return;
+        }
+        let names: Vec<String> = keys.iter().map(|k| self.device_label(k)).collect();
+        let stored = keys.iter().all(|k| {
+            self.doc()
+                .resolve(k)
+                .and_then(|d| d.plugin.as_ref())
+                .is_some_and(|p| p.state.is_some())
+        });
+        let text = not_handed_notice(&names, stored);
+        log::warn!("{text}");
+        self.plugins.log(text.clone());
+        self.reject(text);
     }
 
     /// Captures, now and waiting for the plugin, the instances whose plugin flagged its state
@@ -2556,6 +2659,15 @@ impl<S: EngineSink> AppCore<S> {
         let plugin = pd.plugin_ref();
         let state = pd.state.as_deref().cloned();
         self.plugins.failed.remove(device);
+        if let Some(id) = self.plugins.instances.get(device).copied()
+            && self.plugins.host.manager().stop_unresponsive(id)
+        {
+            // The user chose to give up on a plugin that did not respond: its process is
+            // stopped, which makes it a lost instance, replaced from the stored state below.
+            self.plugins.log(format!(
+                "[{device}] did not respond: stopped at your request, reloading it from its last state"
+            ));
+        }
         match self.plugins.instances.get(device).copied() {
             Some(id) if self.plugins.host.manager_ref().is_lost(id) => {
                 // Its process is gone and nothing can restart it: forget it (the engine keeps
@@ -2766,6 +2878,7 @@ impl<S: EngineSink> AppCore<S> {
                 missing: None,
                 failed,
                 crashed: self.plugins.crashed.get(key).cloned(),
+                not_responding: self.plugins.host.manager_ref().not_responding(*id),
                 quarantined: None,
                 loading: false,
                 waiting,
@@ -2775,6 +2888,7 @@ impl<S: EngineSink> AppCore<S> {
                 missing: None,
                 failed,
                 crashed: None,
+                not_responding: None,
                 quarantined: None,
                 loading: true,
                 waiting: None,
@@ -2786,6 +2900,7 @@ impl<S: EngineSink> AppCore<S> {
                     missing: None,
                     failed,
                     crashed: None,
+                    not_responding: None,
                     quarantined: Some(
                         self.plugins
                             .user
@@ -2804,6 +2919,7 @@ impl<S: EngineSink> AppCore<S> {
                 missing: None,
                 failed,
                 crashed: None,
+                not_responding: None,
                 quarantined: None,
                 loading: false,
                 waiting: None,
@@ -2813,6 +2929,7 @@ impl<S: EngineSink> AppCore<S> {
                 missing: Some(self.missing_reason(plugin)),
                 failed,
                 crashed: None,
+                not_responding: None,
                 quarantined: None,
                 loading: false,
                 waiting: None,

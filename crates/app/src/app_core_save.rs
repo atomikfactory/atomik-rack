@@ -934,7 +934,7 @@ impl<S: EngineSink> AppCore<S> {
     /// The UI-thread part of a save (see the module docs).
     fn prepare_save(&mut self, file: &Path, root: Option<PathBuf>, collect: bool) -> Job {
         // The plugins' own state goes into the document first.
-        self.plugins_capture_all();
+        self.plugins_capture_for_save();
         // A save to a new place and Collect Files bring the files the plugins name along.
         if collect || self.file.as_deref() != Some(file) {
             let folder = root.clone().unwrap_or_else(|| collect_root(file));

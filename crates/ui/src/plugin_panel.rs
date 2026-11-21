@@ -376,8 +376,8 @@ fn one_line(reason: &str) -> String {
         .join(" | ")
 }
 
-/// The status lines of a device (MISSING beats QUARANTINED beats CRASHED beats FAILED beats
-/// LOADING beats the meter state).
+/// The status lines of a device (MISSING beats QUARANTINED beats CRASHED beats NOT RESPONDING
+/// beats FAILED beats LOADING beats the meter state).
 pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines {
     let meter = |i: usize| meters.get(i).copied().unwrap_or(0.0);
     let latency =
@@ -409,6 +409,14 @@ pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines 
             latency,
             // One line: the exit code first, then what the process wrote last.
             detail: status.crashed.as_deref().map(one_line).unwrap_or_default(),
+        };
+    }
+    if status.not_responding.is_some() {
+        return StatusLines {
+            state: "NOT RESPONDING".into(),
+            error: true,
+            latency,
+            detail: "the plugin is busy and does not answer; its audio keeps running".into(),
         };
     }
     let failed_meter = meter(METER_STATE).round() as i32 == 3;
@@ -738,6 +746,45 @@ thread panicked
             ..crashed
         };
         assert_eq!(status_lines(&missing, &[]).state, "MISSING");
+    }
+
+    #[test]
+    fn a_plugin_that_is_alive_but_does_not_answer_is_not_responding_not_crashed() {
+        let busy = PluginDeviceStatus {
+            not_responding: Some("CaptureState".into()),
+            ..PluginDeviceStatus::default()
+        };
+        // Its audio keeps running: the meter state says RUNNING and the word is NOT RESPONDING.
+        let l = status_lines(&busy, &[0.0, 0.0, 0.0, 64.0]);
+        assert_eq!((l.state.as_str(), l.error), ("NOT RESPONDING", true));
+        assert_eq!(
+            l.detail,
+            "the plugin is busy and does not answer; its audio keeps running"
+        );
+        assert_eq!(l.latency.as_deref(), Some("64 fr"));
+        // A process that is gone is CRASHED, and a missing plugin MISSING, whatever else.
+        let crashed = PluginDeviceStatus {
+            crashed: Some("exited".into()),
+            ..busy.clone()
+        };
+        assert_eq!(status_lines(&crashed, &[]).state, "CRASHED");
+        let missing = PluginDeviceStatus {
+            missing: Some("gone".into()),
+            ..busy.clone()
+        };
+        assert_eq!(status_lines(&missing, &[]).state, "MISSING");
+        // It beats FAILED and LOADING.
+        let failed = PluginDeviceStatus {
+            failed: Some("x".into()),
+            loading: true,
+            ..busy
+        };
+        assert_eq!(status_lines(&failed, &[]).state, "NOT RESPONDING");
+        assert_eq!(
+            status_lines(&PluginDeviceStatus::default(), &[]).state,
+            "RUNNING",
+            "and it ends with the answer"
+        );
     }
 
     #[test]

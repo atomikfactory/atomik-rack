@@ -412,7 +412,7 @@ impl<S: EngineSink> AppCore<S> {
         if let Err(e) = self.set_song_info(info) {
             return Err(e.to_string());
         }
-        self.plugins_capture_all();
+        self.plugins_capture_for_save();
         let collected = match self.share_collect() {
             Ok(c) => c,
             Err(why) => return self.archive_refused(why),

@@ -461,3 +461,145 @@ fn the_predicate_sends_commands_that_copy_a_device_to_the_synchronous_side() {
         ])));
     }
 }
+
+// ----- a plugin that is alive but does not answer --------------------------------------------------
+
+fn log_count(core: &AppCore<OfflineSink>, needle: &str) -> usize {
+    core.plugin_log()
+        .iter()
+        .filter(|l| l.contains(needle))
+        .count()
+}
+
+#[test]
+fn a_plugin_that_does_not_answer_is_not_responding_and_it_clears_when_it_answers() {
+    let (mut core, stats, dev) = bg_core(None);
+    assert!(core.view().plugin_status(&dev).not_responding.is_none());
+    stats.set_not_responding(true);
+    core.frame();
+    let status = core.view().plugin_status(&dev);
+    assert_eq!(status.not_responding.as_deref(), Some("CaptureState"));
+    // Alive: not crashed, not failed, not quarantined, not in the settings, and the log says so
+    // once.
+    assert!(status.crashed.is_none() && status.failed.is_none() && status.quarantined.is_none());
+    assert!(core.plugin_crash(&dev).is_none());
+    assert!(core.plugins.settings.crashed.is_empty());
+    core.frame();
+    assert_eq!(log_count(&core, "not responding"), 1);
+    let id = core.plugin_instance(&dev).unwrap();
+    assert!(!core.plugin_host().manager_ref().is_lost(id));
+    stats.set_not_responding(false);
+    core.frame();
+    assert!(core.view().plugin_status(&dev).not_responding.is_none());
+    assert_eq!(log_count(&core, "responding again"), 1);
+    assert!(core.plugins.settings.crashed.is_empty());
+}
+
+#[test]
+fn a_save_while_a_plugin_does_not_answer_keeps_its_stored_state_and_tells_the_user_once() {
+    let (mut core, stats, dev) = bg_core(None);
+    set_live(&stats, b"one");
+    core.plugins_capture_all();
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"one"[..]));
+    set_live(&stats, b"two");
+    stats.set_not_responding(true);
+    core.frame();
+    let dir = temp("busy-save");
+    let file = dir.join("song.atomik");
+    core.save_as_interactive(&file)
+        .expect("the save completes without the plugin");
+    assert!(file.exists());
+    assert_eq!(
+        stored(&core, &dev).as_deref(),
+        Some(&b"one"[..]),
+        "the last captured state was kept and saved"
+    );
+    let notice = "Atomik Test Gain did not hand over its current settings; its last captured settings were saved.";
+    assert_eq!(core.last_rejection(), Some(notice));
+    assert_eq!(
+        log_count(&core, "did not hand over its current settings"),
+        1
+    );
+    assert!(core.plugins.settings.crashed.is_empty());
+    // The plugin answers again: the next save asks it normally and says nothing more.
+    stats.set_not_responding(false);
+    core.frame();
+    core.save_as_interactive(&file).expect("the second save");
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"two"[..]));
+    assert_eq!(
+        log_count(&core, "did not hand over its current settings"),
+        1
+    );
+}
+
+#[test]
+fn removing_a_plugin_that_does_not_answer_goes_on_with_the_stored_state_and_logs_it() {
+    let (mut core, stats, dev) = bg_core(None);
+    patch(&mut core, &stats, &dev, b"patched");
+    stats.set_not_responding(true);
+    core.frame();
+    apply(&mut core, Command::RemoveDevice { key: dev.clone() });
+    assert!(core.doc().device(&dev).is_none(), "the device is gone");
+    assert_eq!(log_count(&core, "did not hand over its state"), 1);
+    assert!(core.plugins.settings.crashed.is_empty());
+    assert!(core.undo());
+    core.wait_plugins();
+    assert_eq!(
+        stored(&core, &dev).as_deref(),
+        Some(&b""[..]),
+        "undo brings back the state that was stored"
+    );
+}
+
+#[test]
+fn an_engine_restart_with_a_plugin_that_does_not_answer_goes_on_and_says_nothing_to_the_user() {
+    let (mut core, stats, dev) = bg_core(None);
+    stats.set_not_responding(true);
+    core.frame();
+    let before = core.last_rejection().map(str::to_owned);
+    core.rebuild_engine();
+    core.wait_plugins();
+    assert_eq!(core.last_rejection().map(str::to_owned), before);
+    assert!(log_count(&core, "did not hand over its state") >= 1);
+    assert!(core.plugins.not_handed.is_empty());
+    assert!(
+        core.plugin_instance(&dev).is_some(),
+        "the instance lives on"
+    );
+    assert!(core.plugins.settings.crashed.is_empty());
+}
+
+#[test]
+fn a_background_capture_is_not_asked_of_a_plugin_that_does_not_answer() {
+    let (mut core, stats, dev) = bg_core(None);
+    patch(&mut core, &stats, &dev, b"patched");
+    stats.set_not_responding(true);
+    core.frame();
+    let asked = stats.capture_requests();
+    for t in 0..4 {
+        core.plugin_tick(10.0 + f64::from(t) * 2.0);
+        core.frame();
+    }
+    assert_eq!(stats.capture_requests(), asked);
+    assert_eq!(log_count(&core, "cannot capture"), 0, "no line per tick");
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b""[..]));
+}
+
+#[test]
+fn the_notice_names_the_devices_and_whether_a_state_was_stored() {
+    use crate::app_core::plugins::not_handed_notice;
+    let one = vec!["Lead".to_string()];
+    assert_eq!(
+        not_handed_notice(&one, true),
+        "Lead did not hand over its current settings; its last captured settings were saved."
+    );
+    assert_eq!(
+        not_handed_notice(&one, false),
+        "Lead did not hand over its current settings and none were captured before; it was saved without them."
+    );
+    let two = vec!["Lead".to_string(), "Pad".to_string()];
+    assert_eq!(
+        not_handed_notice(&two, true),
+        "Lead, Pad did not hand over their current settings; their last captured settings were saved."
+    );
+}

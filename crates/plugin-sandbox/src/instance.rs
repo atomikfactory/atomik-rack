@@ -677,6 +677,12 @@ impl PluginInstance for RemoteInstance {
         self.link.stuck()
     }
 
+    fn stop_process(&mut self) {
+        self.link
+            .shared()
+            .kill("the plugin did not respond and was stopped at the user's request".to_string());
+    }
+
     fn begin_shutdown(&mut self) {
         self.link.begin_shutdown();
     }
