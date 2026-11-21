@@ -683,6 +683,9 @@ pub struct Shell<B: AudioBackend> {
     /// The plugin banner above the rack: the project uses plugins, or the last run
     /// ended unexpectedly.
     banner: PluginBannerView,
+    /// Repeated internal errors paused the window's content (see `shell_fault`): only the
+    /// notice paints, and the pointer reaches only its buttons.
+    ui_halted: bool,
     /// The Plugins settings modal while it is open.
     plugin_settings: Option<PluginSettingsView>,
     /// The audio export panel (File > Export Song / Loop as Audio File) while it is open.
@@ -986,6 +989,7 @@ impl<B: AudioBackend> Shell<B> {
             wheel_menu: None,
             duck_menu: None,
             banner,
+            ui_halted: false,
             plugin_settings: None,
             relink: None,
             export: None,
@@ -5407,6 +5411,9 @@ impl<B: AudioBackend> Shell<B> {
         if !self.wins.contains_key(&window) {
             return Vec::new();
         }
+        if self.ui_halted && is_pointer_event(event) {
+            return self.halted_pointer(window, event);
+        }
         let modal = self.modal_open();
         let mut requests = self.handle_event_inner(window, event, under);
         self.track_tooltip(window, event);
@@ -7081,12 +7088,10 @@ impl<B: AudioBackend> Shell<B> {
             if pos.x >= banner_x && pos.y >= bar && pos.y < bar + self.banner.height() {
                 self.repaint = true;
                 let actions = self.banner.handle(event);
-                for action in actions {
-                    self.core.handle_action(action);
-                }
+                let requests = self.run_banner_actions(actions);
                 self.sync_plugin_ui();
                 self.layout_view();
-                return Vec::new();
+                return requests;
             }
         }
         if let Some(requests) = self.menu_bar_event(window, event) {
@@ -8681,7 +8686,8 @@ impl<B: AudioBackend> Shell<B> {
     fn sync_plugin_ui(&mut self) {
         if let Some(change) = self.core.take_plugin_banner_change() {
             match change {
-                Some(kind) => self.banner.show(kind),
+                Some(kind) if !self.ui_halted => self.banner.show(kind),
+                Some(_) => {}
                 None => self.banner.hide(),
             }
             self.layout_view();
@@ -11954,6 +11960,10 @@ impl<B: AudioBackend> Shell<B> {
         if !self.wins.contains_key(&window) {
             return;
         }
+        if self.ui_halted {
+            self.paint_halted(window, canvas);
+            return;
+        }
         match window {
             WindowKind::Main => self.paint_main(canvas),
             WindowKind::Rack
@@ -12307,6 +12317,11 @@ fn pointer_pos(event: &UiEvent) -> Option<Point> {
     }
 }
 
+/// Whether `event` is a pointer event (the ones a paused window sends to the notice only).
+fn is_pointer_event(event: &UiEvent) -> bool {
+    pointer_pos(event).is_some() || matches!(event, UiEvent::PointerLeave)
+}
+
 #[path = "shell_film.rs"]
 mod film_impl;
 
@@ -12327,6 +12342,9 @@ mod update_impl;
 
 #[path = "shell_export.rs"]
 mod export_impl;
+
+#[path = "shell_fault.rs"]
+mod fault_impl;
 
 #[path = "shell_windows.rs"]
 mod windows_impl;

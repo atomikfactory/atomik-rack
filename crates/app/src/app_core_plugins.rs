@@ -3845,6 +3845,8 @@ impl<S: EngineSink> AppCore<S> {
                     self.reject("no recovery snapshot found".to_string());
                 }
             }
+            // The internal-error notice belongs to the shell: it saves, and hides its own strip.
+            PluginBannerAction::SaveProject | PluginBannerAction::DismissError => {}
         }
     }
 

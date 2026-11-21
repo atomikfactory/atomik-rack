@@ -25,6 +25,7 @@ use crate::stress::{
 };
 use crate::translate::{self, FileDrag};
 use crate::ui_activity::PaintReason;
+use crate::ui_guard::{self, Dispatch, ForcedPanic, UiGuard};
 use crate::ui_state::ui_state_path;
 use crate::windows::{self, DocId, MonitorInfo, WindowHit, WindowKind, WindowRect, ZOrder};
 use crate::workspace::Workspace;
@@ -425,6 +426,9 @@ pub fn run(cli: Cli) -> Result<(), String> {
         )
         .map(|period| ForcedLoss::new(period, Duration::ZERO)),
         graphics_ok: false,
+        rebuilding: false,
+        ui_guard: UiGuard::default(),
+        forced_panic: ForcedPanic::parse(std::env::var(ui_guard::FORCE_PANIC_ENV).ok().as_deref()),
         start_failure: None,
         #[cfg(target_os = "macos")]
         native: None,
@@ -541,6 +545,13 @@ struct App {
     /// A surface was made at least once: from then on a graphics failure is a loss to recover
     /// from, not a start that cannot work.
     graphics_ok: bool,
+    /// A rebuild of the graphics is under way: a panic that finds it set ended the attempt half
+    /// way.
+    rebuilding: bool,
+    /// The panics of the UI thread that were contained (see [`crate::ui_guard`]).
+    ui_guard: UiGuard,
+    /// The test switch that makes a dispatch point panic (`ATOMIK_UI_PANIC`).
+    forced_panic: Option<ForcedPanic>,
     /// Why the first surface could not be made (no acceptable adapter, no device): the start
     /// ends with a message and a non-zero exit code.
     start_failure: Option<StartFailure>,
@@ -1292,6 +1303,7 @@ impl App {
     /// and tried again after the back-off; the first one asks for a recovery snapshot so the
     /// work is safe even if graphics never come back.
     fn rebuild_graphics(&mut self, at: Duration) {
+        self.rebuilding = true;
         self.tear_down_graphics();
         // The old context goes with its dead device before the new one is made.
         self.gpu = GpuContext::rebuilt();
@@ -1323,6 +1335,7 @@ impl App {
                 }
             }
         }
+        self.rebuilding = false;
     }
 
     /// Gives every window, docked frame and Learn strip a surface on the new context.
@@ -2311,6 +2324,77 @@ impl App {
         }
     }
 
+    /// Runs one dispatch point of the loop with a panic contained (see [`crate::ui_guard`]): the
+    /// panic hook has written the crash report by the time it is caught here.
+    fn guarded(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        point: Dispatch,
+        f: impl FnOnce(&mut Self, &ActiveEventLoop),
+    ) {
+        let outcome = ui_guard::run(|| {
+            if self.forced_panic.as_mut().is_some_and(|f| f.take(point)) {
+                panic!("UI panic forced by {}", ui_guard::FORCE_PANIC_ENV);
+            }
+            f(self, event_loop);
+        });
+        match outcome {
+            Ok(()) => self.ui_guard.completed(point),
+            Err(message) => self.after_ui_panic(event_loop, point, &message),
+        }
+    }
+
+    /// A panic of `point` was caught: the state it may have left half done is repaired, a
+    /// recovery copy is asked for, the notice is raised (once, see [`UiGuard`]) and the app
+    /// goes on. Audio, the document and the plugins are not touched.
+    fn after_ui_panic(&mut self, event_loop: &ActiveEventLoop, point: Dispatch, message: &str) {
+        let at = clock::now().saturating_duration_since(self.epoch);
+        let verdict = self.ui_guard.caught(point, at);
+        if verdict.notice {
+            log::error!(
+                "internal error in the interface ({} #{}): {message}; a recovery copy was asked \
+                 for and the app keeps running{}",
+                point.name(),
+                self.ui_guard.total(),
+                if verdict.halt {
+                    "; repeated errors paused the content of the window"
+                } else {
+                    ""
+                }
+            );
+        } else {
+            log::debug!(
+                "internal error in the interface again ({}): {message}",
+                point.name()
+            );
+        }
+        // A graphics rebuild that ended half way counts as a failed attempt: the device is
+        // treated as lost and the back-off decides when to try again.
+        if std::mem::take(&mut self.rebuilding) {
+            let _ = ui_guard::run(|| {
+                self.tear_down_graphics();
+                self.recovery.finished(at, false);
+            });
+        }
+        // What the event or the frame was in the middle of is gone with it.
+        self.event_cause = None;
+        self.retry_cause = None;
+        self.modifiers = Modifiers::NONE;
+        self.mod_events.reset();
+        self.buttons = translate::PointerMap::default();
+        let halted = self.ui_guard.is_halted();
+        let _ = ui_guard::run(|| {
+            self.shell.after_ui_panic(verdict.notice, halted);
+            self.shell.select(self.shell.play_focus());
+        });
+        let _ = ui_guard::run(|| self.repaint_everything());
+        if point == Dispatch::Frame {
+            // The tick did not get to say when it wants to run again.
+            let wake = clock::now() + ui_guard::RETRY_AFTER_PANIC;
+            event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
+        }
+    }
+
     fn ui(&mut self, event_loop: &ActiveEventLoop, key: Key, event: UiEvent) {
         let requests = self.dispatch(key, &event);
         self.after_event(event_loop, requests);
@@ -2319,6 +2403,32 @@ impl App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.guarded(event_loop, Dispatch::Event, Self::on_resumed);
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if matches!(event, WindowEvent::RedrawRequested) {
+            let began = clock::now();
+            self.guarded(event_loop, Dispatch::Paint, |app, event_loop| {
+                app.on_window_event(event_loop, id, event);
+            });
+            self.note_frame_time(began);
+        } else {
+            self.guarded(event_loop, Dispatch::Event, |app, event_loop| {
+                app.on_window_event(event_loop, id, event);
+            });
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let began = clock::now();
+        self.guarded(event_loop, Dispatch::Frame, Self::on_tick);
+        self.note_frame_time(began);
+    }
+}
+
+impl App {
+    fn on_resumed(&mut self, event_loop: &ActiveEventLoop) {
         if !self.windows.is_empty() {
             return;
         }
@@ -2341,7 +2451,7 @@ impl ApplicationHandler for App {
         self.request_redraws();
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+    fn on_window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         self.shell.apply_language_globally();
         // The frame of a plugin editor inside the main window: its buttons and drags.
         if let Some(doc) = self.dock_frames.doc_of(id) {
@@ -2523,10 +2633,8 @@ impl ApplicationHandler for App {
                 self.ui(event_loop, key, event);
             }
             WindowEvent::RedrawRequested => {
-                let began = clock::now();
                 let reason = self.paint_reason(key.0, kind);
                 self.redraw(key, reason);
-                self.note_frame_time(began);
             }
             WindowEvent::Focused(false) => {
                 // The releases of the keys held now will never arrive.
@@ -2556,8 +2664,7 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let began = clock::now();
+    fn on_tick(&mut self, event_loop: &ActiveEventLoop) {
         self.advance_activity();
         self.activity.wake();
         self.shell.apply_language_globally();
@@ -2679,6 +2786,5 @@ impl ApplicationHandler for App {
             Some(d) => ControlFlow::WaitUntil(d),
             None => ControlFlow::Wait,
         });
-        self.note_frame_time(began);
     }
 }

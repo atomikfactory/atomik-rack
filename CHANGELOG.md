@@ -277,6 +277,15 @@ may break APIs and the patch and project formats.
   `WGPU_ADAPTER_NAME`, with a warning in the log that it is not supported. The same rule applies when the graphics
   are rebuilt after a lost device, which keeps trying every few seconds instead of showing a box. A
   `WGPU_ADAPTER_NAME` that matches nothing is now reported the same way instead of ending the app with a panic.
+- **An internal error in the interface no longer closes the app.** A fault in an event handler, a frame or a
+  window's drawing used to end the whole app and lose everything since the last autosave. The app now catches it,
+  asks for a recovery copy of every open project at once, drops the drag or menu that was open, repaints, and goes
+  on; the crash report is still written, and audio, the project and the plugins are not touched. A notice strip
+  stays above the rack until it is dismissed: it says that an internal error happened and a recovery copy was
+  saved, and recommends saving and restarting, with Save and Dismiss buttons. It is raised once, not again for
+  every repeat within half a minute. If frames or drawings keep failing (five in a row) the window's content is
+  paused so the app does not spin: only the notice is drawn, its Save button and Ctrl+S still work, and
+  restarting the app brings everything back.
 - **Quitting no longer hangs on a stalled disk.** The wait for the last recovery copy to be written, and the
   removal of the session's scratch folder, give up after five seconds and let the app exit; what is left behind
   is cleaned up by the next start.

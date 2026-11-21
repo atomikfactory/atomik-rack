@@ -3580,3 +3580,10 @@ Graphics driver needed => Pilote graphique requis
 This version of Atomik Rack needs a graphics driver that supports DirectX 12 or Vulkan (Metal on macOS), and none that works was found. => Cette version d'Atomik Rack a besoin d'un pilote graphique compatible avec DirectX 12 ou Vulkan (Metal sous macOS), et aucun pilote fonctionnel n'a été trouvé.
 Graphics found: {found} => Cartes graphiques trouvées : {found}
 Details are in the log file: {path} => Les détails se trouvent dans le fichier journal : {path}
+
+# Notice after a contained internal error of the interface
+Internal error: a recovery copy was saved. Save your work and restart Atomik => Erreur interne : une copie de récupération a été enregistrée. Enregistrez votre travail et redémarrez Atomik
+Repeated internal errors: this window is paused. Save your work and restart Atomik => Erreurs internes répétées : cette fenêtre est en pause. Enregistrez votre travail et redémarrez Atomik
+DISMISS => MASQUER
+Save the project now => Enregistrer le projet maintenant
+Hide this notice => Masquer cette notice
