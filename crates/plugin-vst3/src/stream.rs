@@ -7,7 +7,12 @@ use vst3::Steinberg::IBStream_::IStreamSeekMode_::{kIBSeekCur, kIBSeekEnd, kIBSe
 use vst3::Steinberg::*;
 use vst3::{Class, ComWrapper};
 
-/// A growable in-memory stream with a read and write position.
+/// The most a stream may hold: the largest state the rest of the system can carry (the frame
+/// limit of the plugin protocol). A plugin that seeks or writes past it gets an error result
+/// instead of an allocation that could abort the process inside a callback.
+pub(crate) const MAX_STREAM_BYTES: usize = 64 << 20;
+
+/// A growable in-memory stream with a read and write position, capped at [`MAX_STREAM_BYTES`].
 pub(crate) struct MemStream {
     inner: Mutex<Inner>,
 }
@@ -36,9 +41,11 @@ impl MemStream {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The bytes written so far (the whole buffer).
-    pub(crate) fn bytes(&self) -> Vec<u8> {
-        self.lock().data.clone()
+    /// The bytes written so far (the whole buffer), taken out of the stream: it is empty after.
+    pub(crate) fn take_bytes(&self) -> Vec<u8> {
+        let mut s = self.lock();
+        s.pos = 0;
+        std::mem::take(&mut s.data)
     }
 
     /// Moves the read and write position back to the start.
@@ -74,8 +81,17 @@ impl IBStreamTrait for MemStream {
         }
         let mut s = self.lock();
         let n = num_bytes as usize;
-        let end = s.pos + n;
+        let end = match s.pos.checked_add(n) {
+            Some(end) if end <= MAX_STREAM_BYTES => end,
+            _ => return kOutOfMemory,
+        };
         if s.data.len() < end {
+            // `try_reserve` so that an allocation the system refuses is an error result, not an
+            // abort inside this callback.
+            let extra = end - s.data.len();
+            if s.data.try_reserve(extra).is_err() {
+                return kOutOfMemory;
+            }
             s.data.resize(end, 0);
         }
         let pos = s.pos;
@@ -100,10 +116,10 @@ impl IBStreamTrait for MemStream {
             m if m == kIBSeekEnd as i64 => s.data.len() as i64,
             _ => return kInvalidArgument,
         };
-        let target = base.saturating_add(pos);
-        if target < 0 {
-            return kInvalidArgument;
-        }
+        let target = match base.checked_add(pos) {
+            Some(t) if t >= 0 && t as u64 <= MAX_STREAM_BYTES as u64 => t,
+            _ => return kInvalidArgument,
+        };
         s.pos = target as usize;
         if !result.is_null() {
             // SAFETY: a non-null out pointer from the caller.
@@ -142,7 +158,7 @@ mod tests {
             assert_eq!(p.write(data.as_mut_ptr().cast(), 11, &mut n), kResultOk);
         }
         assert_eq!(n, 11);
-        assert_eq!(s.bytes(), b"hello world");
+        assert_eq!(s.lock().data, b"hello world");
         s.rewind();
         let mut out = [0u8; 20];
         // SAFETY: as above.
@@ -189,7 +205,7 @@ mod tests {
             p.seek(4, kIBSeekSet as i32, std::ptr::null_mut());
             p.write(one.as_mut_ptr().cast(), 1, &mut n);
         }
-        assert_eq!(s.bytes(), [b'a', b'b', 0, 0, b'z']);
+        assert_eq!(s.take_bytes(), [b'a', b'b', 0, 0, b'z']);
     }
 
     #[test]
@@ -210,5 +226,66 @@ mod tests {
             );
             assert_eq!(p.tell(std::ptr::null_mut()), kInvalidArgument);
         }
+    }
+
+    #[test]
+    fn a_hostile_plugin_cannot_grow_the_stream_past_the_cap() {
+        let s = MemStream::new(Vec::new());
+        let p = ptr(&s);
+        let mut b = [7u8; 4];
+        let mut at = 0i64;
+        let mut n = 0i32;
+        // SAFETY: valid buffers and out pointers; the offsets are deliberately hostile.
+        unsafe {
+            // A seek far beyond the cap, then a write: both refused, nothing allocated.
+            assert_eq!(
+                p.seek(i64::MAX, kIBSeekSet as i32, &mut at),
+                kInvalidArgument
+            );
+            assert_eq!(
+                p.seek(i64::MAX, kIBSeekCur as i32, &mut at),
+                kInvalidArgument
+            );
+            assert_eq!(
+                p.seek(i64::MIN, kIBSeekEnd as i32, &mut at),
+                kInvalidArgument
+            );
+            assert_eq!(p.seek(-1, kIBSeekCur as i32, &mut at), kInvalidArgument);
+            let over = MAX_STREAM_BYTES as i64 + 1;
+            assert_eq!(p.seek(over, kIBSeekSet as i32, &mut at), kInvalidArgument);
+            assert_eq!(p.write(b.as_mut_ptr().cast(), 4, &mut n), kResultOk);
+            // A seek to exactly the cap is allowed, but a write there would pass it.
+            assert_eq!(
+                p.seek(MAX_STREAM_BYTES as i64, kIBSeekSet as i32, &mut at),
+                kResultOk
+            );
+            assert_eq!(at, MAX_STREAM_BYTES as i64);
+            assert_eq!(p.write(b.as_mut_ptr().cast(), 1, &mut n), kOutOfMemory);
+            // A position plus a size that overflows `usize` arithmetic is refused as well.
+            assert_eq!(
+                p.write(b.as_mut_ptr().cast(), i32::MAX, &mut n),
+                kOutOfMemory
+            );
+        }
+        let s = s.take_bytes();
+        assert_eq!(s, [7, 7, 7, 7], "nothing grew past the first write");
+    }
+
+    #[test]
+    fn a_write_that_ends_at_the_cap_is_refused_beyond_it_without_growth() {
+        let s = MemStream::new(Vec::new());
+        let p = ptr(&s);
+        let mut b = [1u8; 8];
+        let mut n = 0i32;
+        // SAFETY: valid buffers and out pointers.
+        unsafe {
+            p.seek(
+                MAX_STREAM_BYTES as i64 - 4,
+                kIBSeekSet as i32,
+                std::ptr::null_mut(),
+            );
+            assert_eq!(p.write(b.as_mut_ptr().cast(), 8, &mut n), kOutOfMemory);
+        }
+        assert!(s.lock().data.is_empty());
     }
 }

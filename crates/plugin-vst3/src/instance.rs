@@ -310,7 +310,7 @@ impl Vst3Instance {
     fn state_of(&self, stream_for: impl Fn(*mut IBStream) -> bool) -> Option<Vec<u8>> {
         let stream = MemStream::new(Vec::new());
         let s = stream.as_com_ref::<IBStream>()?;
-        stream_for(s.as_ptr()).then(|| stream.bytes())
+        stream_for(s.as_ptr()).then(|| stream.take_bytes())
     }
 }
 

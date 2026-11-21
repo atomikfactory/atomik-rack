@@ -23,6 +23,39 @@ use std::ffi::{CStr, c_void};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+/// The most a plugin may write when it saves its state: the largest state the rest of the
+/// system can carry (the frame limit of the plugin protocol). A plugin that writes more gets a
+/// write error instead of memory growing without limit inside its callback.
+pub(crate) const MAX_STATE_BYTES: usize = 64 << 20;
+
+/// A byte sink that refuses to hold more than [`MAX_STATE_BYTES`].
+#[derive(Default)]
+struct CappedWriter {
+    bytes: Vec<u8>,
+}
+
+impl std::io::Write for CappedWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self.bytes.len().checked_add(buf.len()) {
+            Some(end) if end <= MAX_STATE_BYTES => {
+                self.bytes.try_reserve(buf.len()).map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::OutOfMemory, "out of memory")
+                })?;
+                self.bytes.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "the state is too large",
+            )),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// The `PluginInstance` of a CLAP plugin.
 pub(crate) struct ClapInstance {
     plugin: PluginInstance<ClapHost>,
@@ -184,10 +217,10 @@ impl HostInstance for ClapInstance {
         let ext = handle
             .get_extension::<PluginState>()
             .ok_or_else(|| BackendError::Unsupported("the plugin has no state".to_string()))?;
-        let mut bytes = Vec::new();
-        ext.save(&handle, &mut bytes)
+        let mut out = CappedWriter::default();
+        ext.save(&handle, &mut out)
             .map_err(|e| failed("saving the state", e))?;
-        Ok(PluginStateBlob(bytes))
+        Ok(PluginStateBlob(out.bytes))
     }
 
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError> {
@@ -420,4 +453,23 @@ impl Drop for ClapInstance {
 
 fn is_main() -> bool {
     atomik_plugin_host::is_main_thread()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn the_state_writer_refuses_what_would_pass_the_cap_and_keeps_what_it_has() {
+        let mut w = CappedWriter::default();
+        assert_eq!(w.write(b"abc").unwrap(), 3);
+        let big = vec![0u8; MAX_STATE_BYTES];
+        assert!(w.write(&big).is_err(), "past the cap");
+        assert_eq!(w.bytes, b"abc", "nothing was added by the refused write");
+        let rest = vec![1u8; MAX_STATE_BYTES - 3];
+        assert_eq!(w.write(&rest).unwrap(), rest.len(), "exactly to the cap");
+        assert!(w.write(b"x").is_err(), "one byte more");
+        assert_eq!(w.bytes.len(), MAX_STATE_BYTES);
+    }
 }
