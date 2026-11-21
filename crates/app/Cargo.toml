@@ -94,6 +94,8 @@ embed-resource.workspace = true
 [dev-dependencies]
 # The key-script helpers (`keymap::script`) for the end-to-end key tests of the shell.
 atomik-ui = { workspace = true, features = ["testkit"] }
+# The allocation guard for the idle-frame test.
+atomik-testkit.workspace = true
 
 [lints]
 workspace = true

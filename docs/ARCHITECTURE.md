@@ -984,7 +984,11 @@ camera, a control surface, MIDI heard in the last second, a worker or import, a 
 for the pointer, a scroll, glide or morph, a plugin that loads or is captured) plus what the platform owns (a
 held pointer button, an open plugin editor window, a Learn strip or a docked frame), and for one second after
 the last frame that painted something (not one that only the status poll asked for), so meter ballistics and
-lights settle. With an audio stream open (or a plugin loaded) and none of that, the loop wakes every 100 ms
+lights settle. The frame itself keeps nothing alive: a frame with nothing to show builds no list, string or
+map entry (the MIDI mapping, relink, film and export passes return before they build anything while their
+panel is closed, the plugin device list and the pinned plugin params are looked at again only when the
+document revision moved, and `crates/app/tests/idle_frame_alloc.rs` counts the allocations of idle frames).
+With an audio stream open (or a plugin loaded) and none of that, the loop wakes every 100 ms
 (`IDLE_STREAM_WAKE`) for the engine garbage, the plugin notifications and the status poll; an open stream alone
 no longer means 60 Hz. While every window has no area (minimized) and nothing animates it wakes every 250 ms
 (`MINIMIZED_WAKE`) and paints nothing; with something animating (the transport plays, a glide or a snapshot
@@ -4420,7 +4424,8 @@ and the native menu. Audio adds:
 - [`app_core_rate.rs`](../crates/app/src/app_core_rate.rs): a new project at a rate, the sample
   rate conversion with its audio, and the channel counts.
 - [`app_core_templates.rs`](../crates/app/src/app_core_templates.rs): the templates folder
-  (`Templates` beside the library folder, listed by name and refreshed by the shell once a second),
+  (`Templates` beside the library folder, listed by name and read again when a menu of the menu bar opens,
+  when a window gets the focus and after Save as Template or Reset Default Song, never on a timer),
   File > New from Template (`open_template`: the project opens with no file name, so Save cannot
   overwrite it, and its audio is copied into the session bundle by the adopt worker, so it plays at
   once and goes into the project folder on the first save), Save as Template and the default song

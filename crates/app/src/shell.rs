@@ -3345,20 +3345,22 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Feeds the relink panel the missing list; it closes when nothing is missing any more.
     fn sync_relink(&mut self) {
-        let entries: Vec<RelinkEntry> = self
-            .core
-            .missing_assets()
-            .iter()
-            .map(|m| RelinkEntry {
-                hash: m.hash.clone(),
-                name: m.name.clone(),
-            })
-            .collect();
-        if entries.is_empty() {
+        // Nothing is missing, or nobody looks at the list: no entries are built (they clone two
+        // strings each).
+        if self.core.missing_assets().is_empty() {
             if self.relink.take().is_some() {
                 self.repaint = true;
             }
         } else if let Some(view) = &mut self.relink {
+            let entries: Vec<RelinkEntry> = self
+                .core
+                .missing_assets()
+                .iter()
+                .map(|m| RelinkEntry {
+                    hash: m.hash.clone(),
+                    name: m.name.clone(),
+                })
+                .collect();
             view.set_missing(entries);
             if view.needs_repaint() {
                 self.repaint = true;
@@ -3413,6 +3415,10 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Feeds the MIDI Mappings panel the project's rows.
     fn sync_midi_maps(&mut self) {
+        // The rows and the ports are only built for a panel that is there to show them.
+        if self.midi_maps.is_none() {
+            return;
+        }
         let rows = self.core.midi_map_rows();
         let ports = self.midi_port_names();
         if let Some(view) = &mut self.midi_maps {
@@ -10956,10 +10962,6 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
         }
         self.core.transport_frame(now_seconds);
-        // A template dropped into the folder shows in File > New from Template.
-        if self.core.refresh_templates(now_seconds) {
-            self.repaint = true;
-        }
         self.save_click_level();
         self.core.plugin_tick(now_seconds);
         // A plugin window closed somewhere new: the position is kept for next time.

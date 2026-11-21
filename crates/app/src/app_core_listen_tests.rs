@@ -166,6 +166,23 @@ fn the_switch_turns_listening_on_and_off_and_shows_in_the_bar() {
 }
 
 #[test]
+fn the_allocation_free_input_check_agrees_with_the_list() {
+    for channels in 0..=9u16 {
+        let all = listen_ops::listen_inputs(channels);
+        for first in 0..12u16 {
+            for mono in [true, false] {
+                let input = SamplingInput { first, mono };
+                assert_eq!(
+                    listen_ops::is_listen_input(channels, input),
+                    all.contains(&input),
+                    "{channels} channels, {input:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn the_inputs_are_single_channels_then_pairs_and_the_next_one_cycles() {
     let all = listen_ops::listen_inputs(4);
     let labels: Vec<String> = all.iter().map(|i| i.label()).collect();

@@ -432,6 +432,11 @@ pub(crate) fn walk_plugins<'d>(
     out: &mut Vec<(String, &'d RackDevice)>,
 ) {
     for d in devices {
+        // A device that is neither a plugin nor a container needs no path (the walk runs every
+        // frame of the app for a document without plugins).
+        if d.plugin.is_none() && d.inner.is_none() {
+            continue;
+        }
         let path = format!("{prefix}{}", d.key.0);
         if d.plugin.is_some() {
             out.push((path.clone(), d));

@@ -279,6 +279,7 @@ dependencies = [
  "atomik-render",
  "atomik-stems",
  "atomik-tab",
+ "atomik-testkit",
  "atomik-ui",
  "atomik-update",
  "atomik-video",

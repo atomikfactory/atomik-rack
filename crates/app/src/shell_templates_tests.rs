@@ -165,21 +165,50 @@ fn the_file_menu_lists_the_templates_and_follows_the_folder() {
         ]
     );
     assert!(!item(&s, AppCommand::ResetDefaultSong).enabled);
-    // A project put into the folder shows after the next look at it.
+    // A project put into the folder shows when the menu opens, not on a timer.
     std::fs::create_dir_all(t.templates()).unwrap();
     std::fs::write(t.templates().join("Drums.atomik"), "{}").unwrap();
     std::fs::write(t.templates().join("Bass.atomik"), "{}").unwrap();
-    s.frame_at(10.0);
-    assert_eq!(template_labels(&s), ["Bass", "Drums"]);
-    std::fs::remove_file(t.templates().join("Bass.atomik")).unwrap();
-    s.frame_at(10.5);
-    assert_eq!(
-        template_labels(&s),
-        ["Bass", "Drums"],
-        "not within a second"
+    for i in 0..30 {
+        s.frame_at(10.0 + f64::from(i));
+    }
+    assert!(
+        template_labels(&s).is_empty(),
+        "frames do not read the folder"
     );
-    s.frame_at(12.0);
+    open_file_menu(&mut s);
+    assert_eq!(template_labels(&s), ["Bass", "Drums"]);
+    // A window that gets the focus looks again.
+    std::fs::remove_file(t.templates().join("Bass.atomik")).unwrap();
+    s.frame_at(100.0);
+    assert_eq!(template_labels(&s), ["Bass", "Drums"]);
+    s.window_focused(WindowKind::Main);
     assert_eq!(template_labels(&s), ["Drums"]);
+}
+
+/// Opens the File menu by a press on its title.
+fn open_file_menu(s: &mut Shell<NullBackend>) {
+    let at = Point::new(20.0, 8.0);
+    for event in [
+        UiEvent::PointerMove {
+            pos: at,
+            modifiers: Modifiers::NONE,
+        },
+        UiEvent::PointerDown {
+            pos: at,
+            button: atomik_ui::PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        },
+        UiEvent::PointerUp {
+            pos: at,
+            button: atomik_ui::PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+        },
+    ] {
+        s.handle(&event);
+    }
+    assert!(s.any_bar_open(), "the File menu is open");
 }
 
 #[test]

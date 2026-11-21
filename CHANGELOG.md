@@ -173,6 +173,12 @@ may break APIs and the patch and project formats.
   (an edit that changes the rack, a container opened) is fed once more. Meters show the same values with the
   same ballistics. A stopped rack was already painting about zero frames a second; this removes the
   per-device work behind it.
+- **A frame with nothing to show builds nothing, and the templates folder is not read on a timer.** The MIDI
+  mapping rows, the relink list and the film and export encoder text are made only while their panel is open,
+  the plugin device list and the pinned plugin params are looked at only when the project changed, and the
+  menu and listening checks no longer copy lists, so an idle frame allocates nothing (a test counts it). The
+  templates folder is read when a menu opens, when a window gets the focus and after Save as Template, not once
+  a second.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

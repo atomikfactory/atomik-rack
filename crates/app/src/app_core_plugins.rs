@@ -624,6 +624,11 @@ pub(super) struct PluginState {
     /// (blocking) creation of an instance starts.
     paint_first: bool,
     shown: BTreeMap<DeviceKey, PluginDeviceStatus>,
+    /// The document revision the pinned params were last compared at.
+    pins_checked: Option<u64>,
+    /// The plugin devices of the document at a revision, as `(flat key, plugin)`: the list the
+    /// views are fed from, rebuilt only when the document changed.
+    view_devices: Option<(u64, Vec<(DeviceKey, PluginRef)>)>,
     catalog_dirty: bool,
     /// The scan cache learned a layout from a live plugin: `plugins.json` is saved at the next frame.
     cache_dirty: bool,
@@ -730,6 +735,8 @@ impl PluginState {
             offline: BTreeSet::new(),
             paint_first: false,
             shown: BTreeMap::new(),
+            pins_checked: None,
+            view_devices: None,
             catalog_dirty: true,
             cache_dirty: false,
             merger: PluginGestureMerger::new(),
@@ -1037,6 +1044,13 @@ impl<S: EngineSink> AppCore<S> {
     /// answer is what the host has; otherwise the descriptors are registered again, without
     /// touching any device (the engine is rebuilt or replaced by the caller as it was).
     pub(super) fn plugins_pin_document_params(&mut self) {
+        // The pins are a function of the document, and equal revisions are equal documents: a
+        // frame that finds the document as it was has nothing to compare.
+        let revision = self.document.revision();
+        if self.plugins.pins_checked == Some(revision) {
+            return;
+        }
+        self.plugins.pins_checked = Some(revision);
         let pins = self.document.doc().plugin_pinned_rows();
         if &pins == self.plugins.host.pinned_params() {
             return;
@@ -3664,22 +3678,33 @@ impl<S: EngineSink> AppCore<S> {
             self.view.set_plugin_catalog(infos);
             self.view.set_plugin_failed_files(failed);
         }
-        let devices: Vec<(DeviceKey, PluginRef)> = self
-            .doc()
-            .plugin_devices()
-            .into_iter()
-            .filter_map(|(k, d)| Some((k, d.plugin.as_ref()?.plugin_ref())))
-            .collect();
-        for (key, plugin) in devices {
-            let mut status = self.plugin_status_of(&key, &plugin);
-            if let Some(id) = self.plugins.instances.get(&key)
+        let revision = self.document.revision();
+        if self.plugins.view_devices.as_ref().map(|(r, _)| *r) != Some(revision) {
+            let devices: Vec<(DeviceKey, PluginRef)> = self
+                .doc()
+                .plugin_devices()
+                .into_iter()
+                .filter_map(|(k, d)| Some((k, d.plugin.as_ref()?.plugin_ref())))
+                .collect();
+            self.plugins.view_devices = Some((revision, devices));
+        }
+        let mut changed: Vec<(usize, PluginDeviceStatus)> = Vec::new();
+        for (i, (key, plugin)) in self
+            .plugins
+            .view_devices
+            .iter()
+            .flat_map(|(_, devices)| devices.iter())
+            .enumerate()
+        {
+            let mut status = self.plugin_status_of(key, plugin);
+            if let Some(id) = self.plugins.instances.get(key)
                 && let Some(slot) = self.plugins.host.manager_ref().slot(*id)
                 && slot.device_state() == atomik_plugin_host::DeviceState::Failed
                 && status.failed.is_none()
             {
                 status.failed = Some("the plugin failed; press RELOAD".to_string());
             }
-            if let Some(id) = self.plugins.instances.get(&key)
+            if let Some(id) = self.plugins.instances.get(key)
                 && let Some(slot) = self.plugins.host.manager_ref().slot(*id)
                 && slot.device_state() == atomik_plugin_host::DeviceState::Crashed
                 && status.crashed.is_none()
@@ -3687,10 +3712,22 @@ impl<S: EngineSink> AppCore<S> {
                 // The device knows before the process's exit reason arrives.
                 status.crashed = Some(LOST.to_string());
             }
-            if self.plugins.shown.get(&key) != Some(&status) {
-                self.view.set_plugin_status(&key, status.clone());
-                self.plugins.shown.insert(key, status);
+            if self.plugins.shown.get(key) != Some(&status) {
+                changed.push((i, status));
             }
+        }
+        for (i, status) in changed {
+            let Some(key) = self
+                .plugins
+                .view_devices
+                .as_ref()
+                .and_then(|(_, devices)| devices.get(i))
+                .map(|(key, _)| key.clone())
+            else {
+                continue;
+            };
+            self.view.set_plugin_status(&key, status.clone());
+            self.plugins.shown.insert(key, status);
         }
     }
 
@@ -4139,6 +4176,8 @@ impl<S: EngineSink> AppCore<S> {
         let doc: RackDoc = self.document.doc().clone();
         let bundle = self.bundle_root().map(Path::to_path_buf);
         let Some(recovery) = self.plugins.recovery.as_mut() else {
+        } else if let Some(r) = &mut self.plugins.recovery {
+            r.last = Some(now);
             return;
         };
         recovery.last = Some(now);

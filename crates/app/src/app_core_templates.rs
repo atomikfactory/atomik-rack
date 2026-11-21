@@ -7,8 +7,9 @@
 //! folder, or `<name>/<name>.atomik` with its `Audio` folder, which is the layout Save As makes.
 //! The genre templates that ship in the factory folder (`Templates` there, see
 //! [`crate::factory`]) are listed first. [`AppCore::templates`] lists them by name (at most [`MAX_TEMPLATES`], sorted without regard to
-//! case); the shell refreshes the list a few times a second while the app runs, so a project
-//! dropped into the folder shows in File > New from Template without a restart.
+//! case); the shell reads the folder again when a menu of the menu bar opens, when a window gets the
+//! focus and after a template is saved or removed, so a project dropped into the folder shows
+//! in File > New from Template without a restart. The folder is never read on a timer.
 //!
 //! * [`AppCore::open_template`] opens a project as an **untitled** song: no file name, so Save asks
 //!   for one and the template is never written. Its audio is copied into the session scratch
@@ -49,9 +50,6 @@ pub const DEFAULT_SONG_NAME: &str = "Default Song";
 /// The most templates the File menu lists.
 pub const MAX_TEMPLATES: usize = atomik_ui::keymap::TEMPLATE_ARGS.len();
 
-/// Seconds between two looks at the templates folder.
-const REFRESH_SECONDS: f64 = 1.0;
-
 /// One template of the folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateEntry {
@@ -73,19 +71,9 @@ pub struct TemplatePreview {
 }
 
 /// What the core remembers about the templates folder.
+#[derive(Default)]
 pub(super) struct TemplatesState {
     entries: Vec<TemplateEntry>,
-    /// The time of the last look at the folder.
-    checked: f64,
-}
-
-impl Default for TemplatesState {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            checked: f64::NEG_INFINITY,
-        }
-    }
 }
 
 /// The templates in `dir`: the `.atomik` files in it and the `<name>/<name>.atomik` projects of
@@ -172,17 +160,9 @@ impl<S: EngineSink> AppCore<S> {
         &self.templates.entries
     }
 
-    /// Looks at the templates folder again when a second has passed since the last look (`now` is
-    /// any monotonic clock in seconds). True when the list changed.
-    pub fn refresh_templates(&mut self, now: f64) -> bool {
-        if now - self.templates.checked < REFRESH_SECONDS {
-            return false;
-        }
-        self.templates.checked = now;
-        self.reload_templates()
-    }
-
-    /// Looks at the templates folder now. True when the list changed.
+    /// Looks at the templates folder now. True when the list changed. The folder is read when
+    /// something asks (a menu opens, a window gets the focus, a template is saved or removed),
+    /// never on a timer.
     pub fn reload_templates(&mut self) -> bool {
         // The genre templates of the factory folder come first, then the user's own; the menu
         // lists at most MAX_TEMPLATES in all.
