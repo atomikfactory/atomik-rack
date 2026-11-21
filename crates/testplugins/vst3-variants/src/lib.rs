@@ -1,8 +1,9 @@
 //! Extra VST3 test plugins for the host edge cases (`atomik-test-vst3-variants`): a split
 //! component and controller effect, a mono effect, a surround-only effect (the host must refuse
 //! it) and plugins that fail at initialise, setup, start or process, or produce non-finite
-//! output. Kept apart from `atomik-test-vst3` so that library lists exactly the four plugins of
-//!
+//! output, plugins that ask the host for restarts (from inside setup, after every block) and one
+//! that retitles a param. Kept apart from `atomik-test-vst3` so that library lists exactly the
+//! four plugins of that set.
 
 use atomik_test_plugin_core::{BLOCK, Event, GainFx, TestSynth, TimedEvent};
 use atomik_test_vst3_shell::{
@@ -381,6 +382,141 @@ pub const fn cid(n: u32) -> [u32; 4] {
     [0xA70F_1C02, 0x4A5B_4C01, 0x8D2E_1F00, n]
 }
 
+/// `RestartFlags::kReloadComponent`.
+const RELOAD: i32 = 1;
+/// `RestartFlags::kLatencyChanged`.
+const LATENCY: i32 = 8;
+/// `RestartFlags::kParamTitlesChanged`.
+const TITLES: i32 = 16;
+
+/// A pass-through effect that tells the host from inside every activation that its latency
+/// changed and asks for a reload, as plugins do while they set themselves up. Its latency is
+/// the same all the time.
+struct Chatty {
+    asked: bool,
+}
+
+impl Dsp for Chatty {
+    fn ports(&self) -> Ports {
+        Ports::effect(false)
+    }
+
+    fn params(&self) -> Vec<ParamSpec> {
+        Vec::new()
+    }
+
+    fn set_param(&mut self, _id: u32, _value: f64) {}
+
+    fn param(&self, _id: u32) -> f64 {
+        0.0
+    }
+
+    fn activate(&mut self, _sample_rate: f64) -> bool {
+        self.asked = true;
+        true
+    }
+
+    fn host_flags(&mut self) -> i32 {
+        if std::mem::take(&mut self.asked) {
+            LATENCY | RELOAD
+        } else {
+            0
+        }
+    }
+
+    fn process(&mut self, io: &mut Io<'_>) -> Status {
+        io.output = io.input;
+        Status::Continue
+    }
+}
+
+/// A pass-through effect that asks for a reload after every block, whatever happened.
+struct Storm;
+
+impl Dsp for Storm {
+    fn ports(&self) -> Ports {
+        Ports::effect(false)
+    }
+
+    fn params(&self) -> Vec<ParamSpec> {
+        Vec::new()
+    }
+
+    fn set_param(&mut self, _id: u32, _value: f64) {}
+
+    fn param(&self, _id: u32) -> f64 {
+        0.0
+    }
+
+    fn host_flags(&mut self) -> i32 {
+        RELOAD
+    }
+
+    fn process(&mut self, io: &mut Io<'_>) -> Status {
+        io.output = io.input;
+        Status::Continue
+    }
+}
+
+/// An effect with one param whose title changes when the param is set to half or more or with the
+/// `RESCAN_PARAMS` test command, and announces `kParamTitlesChanged`: the table has the same id,
+/// range and steps after it.
+struct Retitle {
+    pending: bool,
+    renamed: bool,
+}
+
+impl Dsp for Retitle {
+    fn ports(&self) -> Ports {
+        Ports::effect(false)
+    }
+
+    fn params(&self) -> Vec<ParamSpec> {
+        vec![ParamSpec {
+            id: 1,
+            name: if self.renamed { "Drive" } else { "Level" }.to_string(),
+            module: String::new(),
+            min: 0.0,
+            max: 1.0,
+            default: 0.5,
+            stepped: false,
+        }]
+    }
+
+    fn set_param(&mut self, id: u32, value: f64) {
+        if id == 1 && value >= 0.5 {
+            self.pending = true;
+        }
+    }
+
+    fn param(&self, _id: u32) -> f64 {
+        0.5
+    }
+
+    fn host_flags(&mut self) -> i32 {
+        if std::mem::take(&mut self.pending) {
+            TITLES
+        } else {
+            0
+        }
+    }
+
+    fn grow(&mut self) -> bool {
+        self.renamed = true;
+        true
+    }
+
+    fn process(&mut self, io: &mut Io<'_>) -> Status {
+        for e in io.events {
+            if let Event::Param { id, value } = e.event {
+                self.set_param(id, value);
+            }
+        }
+        io.output = io.input;
+        Status::Continue
+    }
+}
+
 macro_rules! info {
     ($name:ident, $text:expr, $n:expr) => {
         static $name: Info = Info {
@@ -424,8 +560,28 @@ static PICKY_INFO: Info = Info {
 
 info!(PROXIES_INFO, "Atomik Test Proxies", 10);
 info!(PROXIES_SLOW_INFO, "Atomik Test Slow Proxies", 11);
+info!(CHATTY_INFO, "Atomik Test Chatty Activation", 14);
+info!(STORM_INFO, "Atomik Test Restart Storm", 15);
+info!(RETITLE_INFO, "Atomik Test Retitle", 16);
 
-static PLUGINS: [PluginDef; 13] = [
+static PLUGINS: [PluginDef; 16] = [
+    PluginDef {
+        info: &CHATTY_INFO,
+        create: || Box::new(Chatty { asked: false }),
+    },
+    PluginDef {
+        info: &STORM_INFO,
+        create: || Box::new(Storm),
+    },
+    PluginDef {
+        info: &RETITLE_INFO,
+        create: || {
+            Box::new(Retitle {
+                pending: false,
+                renamed: false,
+            })
+        },
+    },
     PluginDef {
         info: &SPLIT_INFO,
         create: || {

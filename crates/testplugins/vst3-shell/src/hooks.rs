@@ -202,6 +202,11 @@ impl Shared {
 
     /// `IComponentHandler::restartComponent(kLatencyChanged)`, when the host gave a handler.
     pub fn announce_latency(&self) {
+        self.announce(vst3::Steinberg::Vst::RestartFlags_::kLatencyChanged);
+    }
+
+    /// `IComponentHandler::restartComponent(flags)`, when the host gave a handler.
+    pub fn announce(&self, flags: i32) {
         let handler = self
             .handler
             .lock()
@@ -209,7 +214,7 @@ impl Shared {
             .clone();
         if let Some(h) = handler {
             // SAFETY: a live handler the host gave the controller.
-            unsafe { h.restartComponent(vst3::Steinberg::Vst::RestartFlags_::kLatencyChanged) };
+            unsafe { h.restartComponent(flags) };
         }
     }
 

@@ -224,6 +224,9 @@ pub const V_PROXIES: u32 = 10;
 pub const V_PROXIES_SLOW: u32 = 11;
 pub const V_ERROR_ONCE: u32 = 12;
 pub const V_NAN_ONCE: u32 = 13;
+pub const V_CHATTY: u32 = 14;
+pub const V_STORM: u32 = 15;
+pub const V_RETITLE: u32 = 16;
 
 /// The first controller proxy id of the proxies plugins (`atomik_test_vst3_variants::PROXY_BASE`).
 pub const PROXY_BASE: u32 = 1_000;
@@ -240,6 +243,12 @@ pub enum Variant {
     NanOnce,
     StartFails,
     ActivateFails,
+    /// Announces a latency change and asks for a restart from inside every activation.
+    Chatty,
+    /// Asks for a restart after every block.
+    Storm,
+    /// Changes the title of its one param when told to (see `retitle`).
+    Retitle,
 }
 
 impl Variant {
@@ -252,6 +261,9 @@ impl Variant {
             (Format::Clap, Variant::NanOnce) => "atomik.test.nan-once".to_string(),
             (Format::Clap, Variant::StartFails) => "atomik.test.start-fails".to_string(),
             (Format::Clap, Variant::ActivateFails) => "atomik.test.activate-fails".to_string(),
+            (Format::Clap, Variant::Chatty) => "atomik.test.chatty-activation".to_string(),
+            (Format::Clap, Variant::Storm) => "atomik.test.restart-storm".to_string(),
+            (Format::Clap, Variant::Retitle) => "atomik.test.retitle".to_string(),
             (Format::Vst3, Variant::Mono) => variant_id(V_MONO),
             (Format::Vst3, Variant::Error) => variant_id(V_ERROR),
             (Format::Vst3, Variant::Nan) => variant_id(V_NAN),
@@ -259,6 +271,9 @@ impl Variant {
             (Format::Vst3, Variant::NanOnce) => variant_id(V_NAN_ONCE),
             (Format::Vst3, Variant::StartFails) => variant_id(V_START),
             (Format::Vst3, Variant::ActivateFails) => variant_id(V_ACTIVATE),
+            (Format::Vst3, Variant::Chatty) => variant_id(V_CHATTY),
+            (Format::Vst3, Variant::Storm) => variant_id(V_STORM),
+            (Format::Vst3, Variant::Retitle) => variant_id(V_RETITLE),
         }
     }
 }

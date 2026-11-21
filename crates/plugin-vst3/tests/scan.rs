@@ -269,8 +269,8 @@ fn the_classes_of_the_split_plugin_are_not_listed_twice() {
     let (_, found) = variants();
     assert_eq!(
         found.len(),
-        13,
-        "thirteen plugins, the controller class is not one"
+        16,
+        "sixteen plugins, the controller class is not one"
     );
 }
 

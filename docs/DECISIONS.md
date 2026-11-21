@@ -1490,3 +1490,35 @@ comes from the `fs4` crate (see [DEPENDENCIES.md](DEPENDENCIES.md)).
 notice would repeat); a floor in bytes whatever the sample rate and track count.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AZ. A plugin's request for a restart is acted on only when it changes something, and a loop is cut off by counting polls
+
+**Decision.** When a plugin asks the host to restart it, the host restarts it only if something differs. A latency
+request restarts when the latency the plugin reports now is not the one its running activation was made with. A
+param-table rescan restarts when what the host caches differs (the ids and their order, the ranges, the step
+counts, the ports); when only titles or groups changed, nothing restarts and the app shows the new titles
+(`ManagerEvent::ParamTitlesChanged`). An explicit restart request is honoured. What a plugin asks for while the host
+is activating it is what that activation did and is dropped: the latency is read once after the activation. A
+plugin that still asks again and again is honoured `RESTART_BURST` = 4 times in a row; the fifth request and the
+ones after are ignored, one warning goes to the plugin's log, and the plugin keeps running in its last working
+activation. The burst ends after `RESTART_QUIET_POLLS` = 200 manager polls without a request, and the next request is
+honoured again. The comparison is made where the plugin lives: in the format backend's `poll`, which runs in the
+plugin's own process when the plugin is sandboxed, so a plugin in this process and a sandboxed one agree and only a
+request that matters crosses to the manager.
+
+**Why.** Plugins often announce a latency change from inside their own activation, and a plugin that announces
+unconditionally made every activation start the next one, for ever: dropouts, CPU, a stream of interface changes.
+Mainstream hosts restart a plugin for the change it announced, not for the announcement. Four in a row is more than a
+patch change or a sign-in needs (a latency change, then a layout change, then one more) and few enough that a loop
+costs a fraction of a second. The window is counted in polls, never in time, because an offline render polls once
+after every batch: a bounce does the same on every run, with the plugin sandbox on or off (200 polls are a few
+seconds at the interface rate and about two seconds of audio in a bounce, far longer than a restart takes).
+
+**Limits.** A plugin that asks for a restart once every few seconds for ever is honoured every time; that is a
+plugin that restarts on purpose. A latency that changes by itself while the plugin is parked (deactivated) is read at
+the next activation. A request ignored by the rule is lost, not queued: the plugin is not restarted later for it.
+
+**Rejected.** Comparing in the manager only (a sandboxed plugin would need a call into its process for every
+request, on the interface thread); a time window (a bounce would depend on the machine).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

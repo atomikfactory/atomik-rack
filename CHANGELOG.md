@@ -331,6 +331,15 @@ may break APIs and the patch and project formats.
   transport keeps running. Before, the app went on showing a recording that was no longer being written. When an
   audio take starts with less room on the disk than ten minutes of it need (twice, for the copy stored at the
   end), a notice says so; the take still starts.
+- **A plugin that asks to be restarted again and again no longer loops.** A plugin that announces a latency change
+  from inside its own activation (many do) made the host restart it, which made it announce again, for ever:
+  dropouts and a busy interface. The host now restarts a plugin for a latency that differs from the one it runs
+  with, for a parameter table whose ids, ranges or ports differ, and for an explicit request; what a plugin asks
+  while it is being activated is dropped, and its latency is read once afterwards. A change of parameter titles
+  alone (what many plugins announce when a preset loads) no longer deactivates and activates the plugin: the new
+  titles appear in the rack as they are. A plugin that still asks for a fifth restart in a row is ignored, with
+  one warning in its log, and keeps running in its last working activation; the rule counts polls, not time, so a
+  bounce is unchanged and the same with the plugin sandbox on or off.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

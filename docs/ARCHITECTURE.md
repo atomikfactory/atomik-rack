@@ -5007,10 +5007,21 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   rate, latency or param-table change, RELOAD) is a hand-shake: the manager requests a stop, the
   device answers silence or dry and hands the processor back at the next batch, the manager
   deactivates and activates again and sends it back; the device then re-sends every param the rack
-  ever set. Dropping a device never destroys the plugin on the dropping thread: `Drop` posts to the
-  **reaper queue**, and `poll` tears down on the main thread. An engine restart keeps the living
-  instances (`retain`, then `reattach` at the new rate: nothing is created again). A plugin that
-  reports another param table or other ports while it runs gets a new device of its own and nothing
+  ever set. A plugin's own request for one is acted on only when it changes something, and the
+  decision is made where the plugin lives (inside the plugin process when it is sandboxed), so both
+  agree: a latency request restarts only when the latency now differs from the one the running
+  activation was made with; a param-table rescan restarts only when what the host caches differs
+  (ids and their order, ranges, step counts, ports) while a change of titles alone goes to the app
+  as `ManagerEvent::ParamTitlesChanged` with no deactivate or activate; what a plugin asks for
+  while it is being activated is what that activation did and is dropped; and a plugin that asks
+  for restarts again and again is honoured `RESTART_BURST` (4) times, then ignored with one
+  warning in its log until it has gone `RESTART_QUIET_POLLS` (200) polls without asking (polls,
+  never time, so a bounce is the same on every run, sandbox on or off; see
+  [DECISIONS.md](DECISIONS.md) entry AZ). Dropping a device never destroys the plugin on the
+  dropping thread: `Drop` posts to the **reaper queue**, and `poll` tears down on the main thread. An
+  engine restart keeps the living instances (`retain`, then `reattach` at the new rate: nothing is
+  created again). A plugin that reports another param table or other ports while it runs gets a new
+  device of its own and nothing
   else restarts (`AppCore::swap_device_layout`): a stand-in of the new shape takes the place of its
   device, the instance is parked when the old device goes, and `adopt_offline` puts the live device in
   when the plugin is active again, so the transport and the other devices keep going. The whole

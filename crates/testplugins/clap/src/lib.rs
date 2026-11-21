@@ -107,6 +107,7 @@ impl Dsp for Gain {
         Requests {
             restart: std::mem::take(&mut self.restart),
             callback: false,
+            latency: false,
         }
     }
 }
@@ -316,6 +317,7 @@ impl Dsp for Bank {
             self.bank.add_extra();
             return atomik_test_clap_shell::MainAction {
                 rescan_params: true,
+                rescan_info: false,
             };
         }
         atomik_test_clap_shell::MainAction::default()
@@ -367,6 +369,7 @@ impl Dsp for Bank {
         Requests {
             restart: std::mem::take(&mut self.restart),
             callback: false,
+            latency: false,
         }
     }
 }

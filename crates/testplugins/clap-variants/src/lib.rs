@@ -1,11 +1,12 @@
 //! Extra CLAP test plugins for the host's edge cases: a MIDI-only synth, a mono effect, and
-//! plugins that fail at init, activation, start or process, or produce non-finite output
-//! (`atomik-test-clap-variants`). Kept apart from `atomik-test-clap` so that library keeps
+//! plugins that fail at init, activation, start or process, or produce non-finite output, and
+//! plugins that ask the host for restarts (from inside activation, after every block) or
+//! retitle a param (`atomik-test-clap-variants`). Kept apart from `atomik-test-clap` so that library keeps
 //! exactly the four plugins of the CLAP test set.
 
 use atomik_test_clap_shell::{
-    Dsp, Info, Io, LibraryDef, ParamSpec, PluginDef, Ports, Status, clap_library, dialect,
-    sys::plugin_features as feat,
+    Dsp, Info, Io, LibraryDef, MainAction, ParamSpec, PluginDef, Ports, Requests, Status,
+    clap_library, dialect, sys::plugin_features as feat,
 };
 use atomik_test_plugin_core::{BLOCK, Event, TestSynth, TimedEvent};
 
@@ -226,6 +227,140 @@ impl Dsp for Faulty {
     }
 }
 
+/// A pass-through effect that tells the host from inside every activation that its latency
+/// changed and asks for a restart, as plugins do while they set themselves up. Its latency is
+/// the same all the time.
+struct Chatty {
+    asked: bool,
+}
+
+impl Dsp for Chatty {
+    fn ports(&self) -> Ports {
+        Ports::effect(false)
+    }
+
+    fn params(&self) -> Vec<ParamSpec> {
+        Vec::new()
+    }
+
+    fn set_param(&mut self, _id: u32, _value: f64) {}
+
+    fn param(&self, _id: u32) -> f64 {
+        0.0
+    }
+
+    fn activate(&mut self, _sample_rate: f64) -> bool {
+        self.asked = true;
+        true
+    }
+
+    fn take_requests(&mut self) -> Requests {
+        let asked = std::mem::take(&mut self.asked);
+        Requests {
+            restart: asked,
+            latency: asked,
+            ..Requests::default()
+        }
+    }
+
+    fn process(&mut self, io: &mut Io<'_>) -> Status {
+        io.output = io.input;
+        Status::Continue
+    }
+}
+
+/// A pass-through effect that asks for a restart after every block, whatever happened.
+struct Storm;
+
+impl Dsp for Storm {
+    fn ports(&self) -> Ports {
+        Ports::effect(false)
+    }
+
+    fn params(&self) -> Vec<ParamSpec> {
+        Vec::new()
+    }
+
+    fn set_param(&mut self, _id: u32, _value: f64) {}
+
+    fn param(&self, _id: u32) -> f64 {
+        0.0
+    }
+
+    fn take_requests(&mut self) -> Requests {
+        Requests {
+            restart: true,
+            ..Requests::default()
+        }
+    }
+
+    fn process(&mut self, io: &mut Io<'_>) -> Status {
+        io.output = io.input;
+        Status::Continue
+    }
+}
+
+/// An effect with one param whose title changes in the plugin's main-thread callback (it asks
+/// for one when the param is set to half or more, or on the `REQUEST_CALLBACK` test command): it
+/// then rescans with the info flag and nothing else changes.
+struct Retitle {
+    pending: bool,
+    renamed: bool,
+}
+
+impl Dsp for Retitle {
+    fn ports(&self) -> Ports {
+        Ports::effect(false)
+    }
+
+    fn params(&self) -> Vec<ParamSpec> {
+        vec![ParamSpec {
+            id: 1,
+            name: if self.renamed { "Drive" } else { "Level" }.to_string(),
+            module: String::new(),
+            min: 0.0,
+            max: 1.0,
+            default: 0.5,
+            stepped: false,
+        }]
+    }
+
+    fn set_param(&mut self, id: u32, value: f64) {
+        if id == 1 && value >= 0.5 {
+            self.pending = true;
+        }
+    }
+
+    fn param(&self, _id: u32) -> f64 {
+        0.5
+    }
+
+    fn take_requests(&mut self) -> Requests {
+        Requests {
+            callback: std::mem::take(&mut self.pending),
+            ..Requests::default()
+        }
+    }
+
+    fn on_main_thread(&mut self) -> MainAction {
+        self.renamed = true;
+        MainAction {
+            rescan_info: true,
+            ..MainAction::default()
+        }
+    }
+
+    fn process(&mut self, io: &mut Io<'_>) -> Status {
+        for e in io.events {
+            if let Event::Param { id, value } = e.event {
+                self.set_param(id, value);
+            }
+        }
+        io.output = io.input;
+        Status::Continue
+    }
+}
+
 macro_rules! info {
     ($name:ident, $id:expr, $feature:expr) => {
         static $name: Info = Info {
@@ -289,7 +424,40 @@ info!(
     feat::CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
 );
 
-static PLUGINS: [PluginDef; 10] = [
+info!(
+    CHATTY_INFO,
+    c"atomik.test.chatty-activation",
+    feat::CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
+);
+info!(
+    STORM_INFO,
+    c"atomik.test.restart-storm",
+    feat::CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
+);
+info!(
+    RETITLE_INFO,
+    c"atomik.test.retitle",
+    feat::CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
+);
+
+static PLUGINS: [PluginDef; 13] = [
+    PluginDef {
+        info: &CHATTY_INFO,
+        create: || Box::new(Chatty { asked: false }),
+    },
+    PluginDef {
+        info: &STORM_INFO,
+        create: || Box::new(Storm),
+    },
+    PluginDef {
+        info: &RETITLE_INFO,
+        create: || {
+            Box::new(Retitle {
+                pending: false,
+                renamed: false,
+            })
+        },
+    },
     PluginDef {
         info: &MIDI_INFO,
         create: || {

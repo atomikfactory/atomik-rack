@@ -6076,7 +6076,9 @@ it is not 0, so a project saved before aux outputs loads with none.
   plugin announces a latency change (CLAP `latency.changed` and a restart request, VST3
   `restartComponent(kLatencyChanged)`); the host restarts it, reads the latency again after the
   re-activation (VST3 also after every `setActive` and every state restore) and the other channels
-  are re-aligned, with the one-click discontinuity of the new delay lines. A latency that comes from
+  are re-aligned, with the one-click discontinuity of the new delay lines. A plugin that
+  announces a latency that is the one it already has, or announces it from inside its own
+  activation, is not restarted: the host restarts only for a latency that differs. A latency that comes from
   a saved param (or from a container macro the song automates) is therefore followed live once the
   plugin has applied the value, and by a bounce from its first frame (see below).
 - **Crashes.** By default (Settings > Plugins, the sandbox option, on) each plugin instance runs in

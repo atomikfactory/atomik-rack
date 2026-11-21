@@ -46,6 +46,10 @@ pub(crate) struct Hub {
     pub wake: AtomicBool,
     /// `params.rescan` with a structural flag: re-read the param table.
     pub rescan: AtomicBool,
+    /// `latency.changed`: compare the latency with the one reported.
+    pub latency: AtomicBool,
+    /// `request_restart`: the plugin wants a restart.
+    pub restart: AtomicBool,
     pub timers: Mutex<Vec<Timer>>,
     next_timer: AtomicU32,
 }
@@ -64,6 +68,8 @@ impl Hub {
             callback: AtomicBool::new(false),
             wake: AtomicBool::new(false),
             rescan: AtomicBool::new(false),
+            latency: AtomicBool::new(false),
+            restart: AtomicBool::new(false),
             timers: Mutex::new(Vec::new()),
             next_timer: AtomicU32::new(1),
         })
@@ -102,7 +108,7 @@ pub(crate) struct SharedHandle {
 
 impl<'a> SharedHandler<'a> for SharedHandle {
     fn request_restart(&self) {
-        self.hub.messenger.post(PluginMessage::RequestRestart);
+        self.hub.restart.store(true, Ordering::Release);
     }
 
     fn request_process(&self) {
@@ -179,7 +185,6 @@ impl HostParamsImplMainThread for MainHandle {
         // ranges, new or removed params) needs the layout re-read and the device restarted.
         if flags.intersects(ParamRescanFlags::INFO | ParamRescanFlags::ALL) {
             self.hub.rescan.store(true, Ordering::Release);
-            self.hub.messenger.post(PluginMessage::RescanParams);
         }
     }
 
@@ -188,7 +193,7 @@ impl HostParamsImplMainThread for MainHandle {
 
 impl HostLatencyImpl for MainHandle {
     fn changed(&self) {
-        self.hub.messenger.post(PluginMessage::LatencyChanged);
+        self.hub.latency.store(true, Ordering::Release);
     }
 }
 

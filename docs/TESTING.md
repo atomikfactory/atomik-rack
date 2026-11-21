@@ -402,7 +402,9 @@ grows a param at run time), `clap-shell` is a minimal raw `clap-sys` CLAP plugin
 tested against a plugin not written with its own CLAP library), and `clap`, `clap-bad` (init fails),
 `clap-hang` (init never returns), `clap-crash` (segfaults in `create` or `process` when an
 environment variable asks for it), `clap-leak` (instance counters) and `clap-variants` (a MIDI-only
-synth, a mono effect, plugins that fail at activation or return errors or NaN) are the libraries.
+synth, a mono effect, plugins that fail at activation or return errors or NaN, plugins that ask
+for restarts from inside activation or after every block, one that retitles a param) are the
+libraries.
 
 - **Building.** The tests build the libraries themselves:
   `atomik_plugin_host::testing::clap_test_plugin("atomik-test-clap")` runs `cargo build -p ...` (the
@@ -429,7 +431,8 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   the libraries `vst3` (the four test plugins, same names as the CLAP ones), `vst3-variants` (a
   split gain, a mono effect, a 5.1-only effect the host refuses, plugins that stand a parameter for
   every controller and channel (one answers `IMidiMapping` slowly), plugins that fail to initialise,
-  set up, start or process, one that returns NaN), `vst3-bad`, `vst3-hang`, `vst3-crash`,
+  set up, start or process, one that returns NaN, plugins that ask for restarts from inside setup or
+  after every block, one that retitles a param), `vst3-bad`, `vst3-hang`, `vst3-crash`,
   `vst3-leak`. `atomik_plugin_host::testing::vst3_test_plugin("atomik-test-vst3")` builds a library
   and installs it as a `.vst3` **bundle** with the layout of the running OS. The shell announces a
   latency change itself (`restartComponent(kLatencyChanged)`), like the CLAP effect asks for a
@@ -463,7 +466,10 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   sandbox_only=true` runs it alone). `plugin-hostd/tests/e2e_variants.rs` loads every test library through
   the sandbox in both formats (a failing entry, an entry that never returns, many instances in a row, and
   each edge-case plugin, which must end up as it does in process); `e2e_gesture.rs` checks that an edit made
-  in a sandboxed plugin's editor reaches the app as a whole gesture (begin, change, end). A test plugin
+  in a sandboxed plugin's editor reaches the app as a whole gesture (begin, change, end).
+  `e2e_restarts.rs` drives the plugins that ask for restarts through the sandbox (none from inside
+  activation, a cut-off after a burst with one warning, renamed params with no restart); its in-process
+  twin is the end of `plugin-vst3/tests/lifecycle.rs`, which covers both formats. A test plugin
   reports such an edit when its state is loaded and `ATOMIK_TEST_GUI_EDIT_ON_RESTORE` is `<param>:<value>`.
   A live child that misses a batch's deadline passes the dry input, so the tests that compare a live output
   process until the child keeps up (`process_settled`). Editors need a desktop and stay hand checks.
