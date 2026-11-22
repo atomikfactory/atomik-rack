@@ -221,8 +221,9 @@ may break APIs and the patch and project formats.
   render workers asleep: a stopped rack no longer keeps them spinning through every callback (the 100-device stress
   rack with automatic workers falls from about 80 % of a core to about 17 %, what it costs with none). When the load
   reaches 30 % of that time the workers are used from the next batch, they are used for the first second after Play,
-  and they are given up again only after a second under 20 %. Exports and bounces still hand every level to the
-  workers. The sound is unchanged: a bounce is the same bytes for any worker count.
+  and they are given up again only after a second under 20 %. A project that has needed them while playing keeps
+  them for as long as it plays. Exports and bounces still hand every level to the workers. The sound is unchanged:
+  a bounce is the same bytes for any worker count.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
