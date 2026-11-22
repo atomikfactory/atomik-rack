@@ -211,6 +211,11 @@ may break APIs and the patch and project formats.
   of a plugin file: the clock starts again whenever the scanner reports a class, so a large shell file with many
   plugins in it is no longer judged by one limit for all of them. A file whose scan times out with nothing found is
   still blacklisted as before. Scan results of plugins that behave are unchanged.
+- **A crashed plugin is reloaded once by itself.** A plugin whose process crashed after it had run for ten seconds
+  is reloaded from its last captured state, as RELOAD does; the device says so in the plugin log and in a notice.
+  A second crash within five minutes stays CRASHED until RELOAD, and a plugin that dies while it loads, during an
+  export or a bounce, or by the crash that quarantines it is not reloaded. Every crash still counts toward the
+  quarantine.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

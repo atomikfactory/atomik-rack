@@ -144,6 +144,16 @@ const STATE_MERGE_BASE: u64 = PLUGIN_GESTURE_MERGE_BASE + (1 << 38);
 const STATE_STEP_GAP_SECS: f64 = 5.0;
 /// How many times in a row a plugin that stopped answering audio is reloaded without the user.
 const MAX_AUTO_RELOADS: u8 = 2;
+/// How long a plugin must have run, from the moment its instance was ready, for its crash to be
+/// answered by one automatic reload: a plugin that dies while it loads or at once after would
+/// only die again, so it stays CRASHED for the user to decide.
+pub(crate) const CRASH_RELOAD_MIN_ALIVE_SECS: f64 = 10.0;
+/// After an automatic reload because of a crash, a second crash within this long stays CRASHED
+/// until RELOAD. Five minutes: long enough that a plugin that dies on the same material each
+/// time (a bad state, a passage it cannot render) shows the pattern within one attempt and is
+/// not looped, and short enough that a one-off crash earlier in the session does not use up the
+/// allowance of a plugin that has behaved since.
+pub(crate) const CRASH_RELOAD_WINDOW_SECS: f64 = 300.0;
 /// An instance is created again for a port mismatch at most once per this long, per plugin and
 /// port shape (a guard against a recreate loop).
 const RECREATE_WINDOW_SECS: u64 = 30;
@@ -622,6 +632,12 @@ pub(super) struct PluginState {
     pub(super) too_large_hit: Vec<DeviceKey>,
     /// How many times a hung plugin was reloaded by itself since the user last pressed RELOAD.
     auto_reloads: BTreeMap<DeviceKey, u8>,
+    /// When (frame clock) a device was last reloaded by itself after its plugin process crashed,
+    /// until the user presses RELOAD or the device goes: a second crash within
+    /// [`CRASH_RELOAD_WINDOW_SECS`] of it is not answered.
+    crash_reloads: BTreeMap<DeviceKey, f64>,
+    /// When (frame clock) each live instance became ready: how long it ran before a crash.
+    ready_at: BTreeMap<InstanceId, f64>,
     /// Devices whose saved state failed to restore: the blob is kept, never captured over.
     no_capture: BTreeSet<DeviceKey>,
     /// The descriptor each live device was inserted with.
@@ -741,6 +757,8 @@ impl PluginState {
             too_large: BTreeMap::new(),
             too_large_hit: Vec::new(),
             auto_reloads: BTreeMap::new(),
+            crash_reloads: BTreeMap::new(),
+            ready_at: BTreeMap::new(),
             no_capture: BTreeSet::new(),
             live_desc: BTreeMap::new(),
             recreated: BTreeMap::new(),
@@ -1337,6 +1355,7 @@ impl<S: EngineSink> AppCore<S> {
 
     fn release_instance_maps(&mut self, key: &DeviceKey) {
         if let Some(id) = self.plugins.instances.remove(key) {
+            self.plugins.ready_at.remove(&id);
             self.plugins.keys.remove(&id);
             self.plugins.dirty.remove(&id);
             self.plugins.capturing.remove(&id);
@@ -1451,6 +1470,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.failed.remove(flat);
         self.plugins.crashed.remove(flat);
         self.plugins.auto_reloads.remove(flat);
+        self.plugins.crash_reloads.remove(flat);
         self.plugins.load_anyway.remove(flat);
         self.plugins.skipped.remove(flat);
         self.plugins.no_capture.remove(flat);
@@ -1713,9 +1733,16 @@ impl<S: EngineSink> AppCore<S> {
                         }
                     }
                     let hung = reason.starts_with(HUNG);
+                    let ran_for = self
+                        .plugins
+                        .ready_at
+                        .remove(&instance)
+                        .map(|at| self.plugins.clock - at);
                     self.plugins.crashed.insert(key.clone(), reason);
                     if hung {
                         self.reload_hung_plugin(&key);
+                    } else {
+                        self.reload_crashed_plugin(&key, ran_for);
                     }
                 }
             }
@@ -1851,6 +1878,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.plugins.log(format!("[{name}] {level:?}: {text}"));
             }
             ManagerEvent::Destroyed(id) => {
+                self.plugins.ready_at.remove(&id);
                 let ended_well = !self.plugins.bad.remove(&id);
                 if let Some(info) = self.plugins.loaded.remove(&id) {
                     if ended_well {
@@ -2086,6 +2114,7 @@ impl<S: EngineSink> AppCore<S> {
             ..
         } = handle;
         self.plugins.instances.insert(key.clone(), id);
+        self.plugins.ready_at.insert(id, self.plugins.clock);
         self.plugins.presets.remove(key);
         self.plugins.preset_current.remove(key);
         self.plugins.keys.insert(id, key.clone());
@@ -3231,6 +3260,7 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::ClosePluginParams => self.close_plugin_params(),
             UiAction::ReloadPlugin { device } => {
                 self.plugins.auto_reloads.remove(device);
+                self.plugins.crash_reloads.remove(device);
                 // RELOAD on a quarantined plugin is LOAD ANYWAY.
                 self.plugins.load_anyway.insert(device.clone());
                 self.reload_plugin(device);
@@ -3279,6 +3309,66 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins
             .log(format!("[{device}] hung: reloading it from its last state"));
         self.reload_plugin(device);
+    }
+
+    /// A plugin process crashed (it died by itself; the hang guard's stops are handled by
+    /// [`Self::reload_hung_plugin`]): it is reloaded from the document's last captured state, as
+    /// RELOAD does and through the same load queue, once. Not when the plugin ran for less than
+    /// [`CRASH_RELOAD_MIN_ALIVE_SECS`] (`ran_for`: it would only die again), not when it was
+    /// reloaded this way less than [`CRASH_RELOAD_WINDOW_SECS`] ago (a second crash stays
+    /// CRASHED until RELOAD, which gives the allowance back), not while an export or a bounce
+    /// renders, and not when the crash quarantined the plugin. The crash was counted toward the
+    /// quarantine already; the reload counts nothing itself, so a plugin that crashes after
+    /// every reload is quarantined after the same number of crashes as before.
+    fn reload_crashed_plugin(&mut self, device: &DeviceKey, ran_for: Option<f64>) {
+        let Some(type_id) = self
+            .doc()
+            .resolve(device)
+            .and_then(|d| d.plugin.as_ref())
+            .map(|p| p.type_id())
+        else {
+            return;
+        };
+        let now = self.plugins.clock;
+        let name = self.device_label(device);
+        let not = |why: String| format!("[{device}] not reloaded by itself: {why}");
+        if self.plugins.user.is_quarantined(&type_id) {
+            let line = not("the plugin is quarantined; press RELOAD to load it anyway".into());
+            self.plugins.log(line);
+        } else if ran_for.is_none_or(|secs| secs < CRASH_RELOAD_MIN_ALIVE_SECS) {
+            let line = not(format!(
+                "it had run for less than {CRASH_RELOAD_MIN_ALIVE_SECS:.0} s; press RELOAD to try again"
+            ));
+            self.plugins.log(line);
+        } else if self
+            .plugins
+            .crash_reloads
+            .get(device)
+            .is_some_and(|at| now - at < CRASH_RELOAD_WINDOW_SECS)
+        {
+            let line = not(format!(
+                "it crashed again within {:.0} minutes of its reload; press RELOAD to try once more",
+                CRASH_RELOAD_WINDOW_SECS / 60.0
+            ));
+            self.plugins.log(line);
+            self.report(format!(
+                "{name} crashed again and stays crashed; press RELOAD to try once more."
+            ));
+        } else if self.audio_export_busy() || self.freeze_busy() {
+            let line =
+                not("an export or a bounce is rendering; press RELOAD when it is done".into());
+            self.plugins.log(line);
+        } else {
+            self.plugins.crash_reloads.insert(device.clone(), now);
+            self.plugins.log(format!(
+                "[{device}] reloading it once from its last state (it had run for {:.0} s)",
+                ran_for.unwrap_or_default()
+            ));
+            self.report(format!(
+                "{name} crashed and was reloaded from its last state."
+            ));
+            self.reload_plugin(device);
+        }
     }
 
     /// RELOAD: a stand-in whose plugin is installed gets its instance; a live instance restores

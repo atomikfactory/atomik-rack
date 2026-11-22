@@ -1718,3 +1718,35 @@ number is only known once the file is loaded); a limit per file with no restart 
 classes in a separate cache section (a format change for what a flag on an entry says).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BF. A plugin that crashed after a while is reloaded once by itself, and its death is noticed from its process
+
+**Decision.** The app learns that a plugin process died from the process itself, not only from the end of its output pipe:
+a watcher thread of the link waits on the child (a wait on the process handle on Windows, `waitid` with `WNOWAIT` on Unix,
+which leaves the exit status to be collected as before; a group child has one watcher for all its members). A plugin that
+started a helper process which inherited the pipes used to look alive until the hang guard or the helper ended; it is now
+CRASHED when it dies. The pipe and the watcher lead to the same code, which does its work once, so there is one event and
+one log line per death; a child the app asked to end is never reported. A bounce keeps its deterministic waits and the same
+reporting as before.
+
+A crashed plugin (not one the hang guard stopped, which has its own two reloads) is reloaded once, by itself, from the
+document's last captured state, through the same path and load queue as RELOAD, when it had run for at least ten seconds
+from the moment its instance was ready (`CRASH_RELOAD_MIN_ALIVE_SECS`): a plugin that dies while it loads would only die
+again. The device says so in the plugin log and in a notice, once per crash. A second crash within five minutes of that
+reload (`CRASH_RELOAD_WINDOW_SECS`) stays CRASHED until RELOAD, which gives the allowance back; so does a crash during an
+export or a bounce, and a crash that quarantined the plugin. There is no setting for it: the hang reload has none either.
+
+**Counting.** Every crash is counted toward the quarantine, as before, including the one that is reloaded; the reload counts
+nothing and does not reset the count. A plugin that crashes after every reload is therefore quarantined by its third crash,
+and a plugin that crashes at every load is not looped, since a crash before ten seconds is not reloaded.
+
+**Why.** Ten seconds separates "died at load" from "died while working"; five minutes is long enough that a plugin that dies
+on the same material each time shows the pattern within one attempt, and short enough that a one-off crash earlier in the
+session does not use up the allowance of a plugin that has behaved since. Resting on the process rather than on traffic
+matters because a parked or sleeping plugin sends nothing.
+
+**Rejected.** Polling the process (a wake-up per child for nothing); one reload per session (a crash an hour ago would
+cost a plugin its allowance); reloading again and again with a back-off (a plugin that crashes on its own state would
+loop, and the user would learn of it late); a setting (nobody asked to switch it off, and the hang reload has none).
+
+**Status.** Decided by the owner on 2026-11-21 (one automatic reload, then stay crashed).

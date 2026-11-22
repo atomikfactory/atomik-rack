@@ -249,11 +249,14 @@ list for every release so that a result can be compared with the last one.
 ### HW-PLG-05 Kill the plugin process and recover
 - **Applies to:** Windows, macOS, Linux
 - **Preconditions:** HW-PLG-02 passed, a task manager or `kill`.
-- **Steps:** while playing, end the sandbox child process of one plugin.
-- **Expected:** the rest keeps playing, the plugin's panel shows that it crashed, and reloading it restores
-  its state; the app does not crash.
-- **Automated:** none
-- **Known bad:** silence of the whole engine, or a plugin that cannot be reloaded.
+- **Steps:** while playing, end the sandbox child process of one plugin, wait ten seconds, end it again.
+- **Expected:** the rest keeps playing; the first time the plugin goes quiet for a moment, comes back by itself
+  with its sound and says so in a notice; the second time (within five minutes) it stays CRASHED with the
+  reason, and RELOAD restores its state; the app does not crash.
+- **Automated:** `crates/plugin-hostd/tests/e2e_watch.rs` (the death is noticed at once), the crash tests in
+  `crates/app/src/app_core_plugins_sandbox_tests.rs` (the reload rule)
+- **Known bad:** silence of the whole engine, a plugin that cannot be reloaded, or one that is reloaded again
+  and again.
 
 ### HW-PLG-06 A hung plugin
 - **Applies to:** Windows, macOS, Linux

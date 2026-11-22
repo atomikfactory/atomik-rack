@@ -5377,7 +5377,8 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     returns `Lost`, the device turns `Crashed` (dry or silent, never called again), and the manager
     emits `ManagerEvent::Crashed`. A lost instance fails every call at once; `restart` and `reload`
     refuse it, and the app's RELOAD creates a new instance from the document's last captured state
-    and the rack's params.
+    and the rack's params. A plugin that had run for ten seconds is reloaded this way once by itself
+    (`reload_crashed_plugin` in the app); a second crash within five minutes stays CRASHED until RELOAD.
   - *Supervision.* A child never outlives the app. On Windows it joins a job object that ends
     its processes when the app's last handle to the job closes, whatever ends the app; every
     child also runs a watchdog thread that ends it a second after its parent's process is gone,
