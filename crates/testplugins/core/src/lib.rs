@@ -185,5 +185,18 @@ pub fn parse_gui_edit(text: &str) -> Option<(u32, f64)> {
     value.is_finite().then_some((id, value))
 }
 
+/// The environment variable that makes a test plugin take this many milliseconds to start
+/// processing (read at each start): a plugin that is slow to start, for the tests of a plugin in
+/// another process.
+pub const START_DELAY_MS_ENV: &str = "ATOMIK_TEST_START_MS";
+
+/// The milliseconds [`START_DELAY_MS_ENV`] asks for (0 when it is unset or not a number).
+pub fn start_delay_ms() -> u64 {
+    std::env::var(START_DELAY_MS_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests;

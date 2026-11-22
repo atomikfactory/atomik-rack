@@ -5,7 +5,7 @@
 //! only system call is the doorbell's non-blocking wake-up.
 
 use crate::block::SharedBlock;
-use crate::codec::{AudioOp, sleep_rule_from_code, status_from_code, tail_from_code};
+use crate::codec::{AudioOp, Before, sleep_rule_from_code, status_from_code, tail_from_code};
 use crate::deadline::{Deadline, now};
 use crate::doorbell::Doorbell;
 use crate::layout::{
@@ -110,6 +110,12 @@ impl ParentPort {
     /// `io.dropped` with the response). Returns [`Ticket::NONE`] and writes nothing when a
     /// request is still in flight: check [`ParentPort::outstanding`] first.
     pub fn submit(&mut self, op: AudioOp, io: &PluginIo<'_>) -> Ticket {
+        self.submit_before(op, Before::NONE, io)
+    }
+
+    /// [`ParentPort::submit`] with work for the child to do before the op (see [`Before`]): a start
+    /// that rides on the batch needing it. Never allocates.
+    pub fn submit_before(&mut self, op: AudioOp, before: Before, io: &PluginIo<'_>) -> Ticket {
         let Some(ticket) = self.next_ticket() else {
             return Ticket::NONE;
         };
@@ -126,7 +132,7 @@ impl ParentPort {
         // mapping. `&mut self` keeps a second writer out.
         unsafe {
             addr_of_mut!((*req).ticket).write(ticket);
-            addr_of_mut!((*req).op).write(op as u32);
+            addr_of_mut!((*req).op).write(before.word(op));
             addr_of_mut!((*req).main_in_ch).write(main_in.len() as u32);
             addr_of_mut!((*req).main_in_silent).write(u32::from(io.main_in_silent));
             addr_of_mut!((*req).sc_ch).write(sidechain.len() as u32);
@@ -148,6 +154,12 @@ impl ParentPort {
     /// Submits an op that carries no audio (`Start`, `Stop`, `Reset`). Never allocates. Returns
     /// [`Ticket::NONE`] when a request is still in flight.
     pub fn submit_op(&mut self, op: AudioOp) -> Ticket {
+        self.submit_op_before(op, Before::NONE)
+    }
+
+    /// [`ParentPort::submit_op`] with work for the child to do before the op (a stop that carries
+    /// the reset owed before it, for instance). Never allocates.
+    pub fn submit_op_before(&mut self, op: AudioOp, before: Before) -> Ticket {
         let Some(ticket) = self.next_ticket() else {
             return Ticket::NONE;
         };
@@ -155,7 +167,7 @@ impl ParentPort {
         // SAFETY: as in `submit`: no request is in flight, every pointer is inside the mapping.
         unsafe {
             addr_of_mut!((*req).ticket).write(ticket);
-            addr_of_mut!((*req).op).write(op as u32);
+            addr_of_mut!((*req).op).write(before.word(op));
             addr_of_mut!((*req).main_in_ch).write(0);
             addr_of_mut!((*req).main_in_silent).write(1);
             addr_of_mut!((*req).sc_ch).write(0);

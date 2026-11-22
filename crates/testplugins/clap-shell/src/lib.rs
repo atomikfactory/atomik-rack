@@ -816,6 +816,10 @@ extern "C" fn plugin_deactivate(plugin: *const clap_plugin) {
 }
 
 extern "C" fn plugin_start_processing(plugin: *const clap_plugin) -> bool {
+    let delay = atomik_test_plugin_core::start_delay_ms();
+    if delay > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(delay));
+    }
     lock(instance(plugin)).dsp.start_processing()
 }
 

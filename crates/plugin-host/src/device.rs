@@ -1291,6 +1291,12 @@ impl PluginDevice {
                 self.fail_lost();
                 false
             }
+            Ok(ProcessStatus::StartFailed) => {
+                // A plugin in its own process answers a refused start with the batch that carried
+                // it: the same failure as an in-process refusal, once.
+                self.fail("the plugin could not start processing");
+                false
+            }
             Ok(status) => {
                 if self.wet[..self.out_channels]
                     .iter()

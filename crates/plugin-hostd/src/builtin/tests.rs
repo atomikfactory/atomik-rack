@@ -86,6 +86,8 @@ fn every_null_plugin_id_is_known_and_others_are_not() {
         "null.synth",
         "null.noisy",
         "null.busy",
+        "null.refuse-start",
+        "null.hang-start",
     ] {
         assert!(Kind::of(id).is_some(), "{id}");
     }
@@ -410,4 +412,14 @@ fn the_busy_plugin_passes_audio_through_and_works_on_every_batch_or_every_eighth
     let mut processor = plugin.activate(&config()).unwrap();
     assert!(processor.start_processing());
     assert_eq!(run(&mut *processor, &input, &[], 2)[0], input[0]);
+}
+
+#[test]
+fn a_null_plugin_can_refuse_to_start_and_the_others_start() {
+    let cfg = config();
+    for (id, starts) in [("null.refuse-start", false), ("null.gain", true)] {
+        let mut inst = instance(id);
+        let mut processor = inst.activate(&cfg).unwrap();
+        assert_eq!(processor.start_processing(), starts, "{id}");
+    }
 }

@@ -312,6 +312,10 @@ impl ComponentCore {
     pub fn set_processing(&self, state: bool) -> tresult {
         if state {
             self.shared.add(probe::PROCESSING_STARTS, 1);
+            let delay = atomik_test_plugin_core::start_delay_ms();
+            if delay > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+            }
             if !lock(&self.proc).dsp.start_processing() {
                 return kResultFalse;
             }

@@ -325,6 +325,11 @@ pub enum ProcessStatus {
     /// Sandbox: the plugin's process is gone (crashed, killed or stopped by the watchdog).
     /// The device becomes CRASHED.
     Lost,
+    /// Sandbox: the plugin answered that it cannot start processing. The start rides on the first
+    /// batch that needs it (so a slow start is only a late batch), and this is how its refusal
+    /// comes back: the device becomes FAILED, as it does when an in-process plugin's
+    /// `start_processing` returns false. The batch carried no audio.
+    StartFailed,
 }
 
 /// How a plugin's editor is shown.

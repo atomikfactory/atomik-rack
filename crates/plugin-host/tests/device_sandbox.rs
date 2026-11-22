@@ -121,3 +121,28 @@ fn a_lost_instrument_is_silent_from_then_on() {
     }
     assert_eq!(shared.calls(), 1);
 }
+
+// ----- StartFailed ----------------------------------------------------------------------------
+
+#[test]
+fn a_start_a_plugin_in_its_own_process_refuses_fails_the_device_once_like_an_in_process_one() {
+    let (probe, shared) = Probe::new();
+    shared.set_out(ProbeOut::Constant(0.5));
+    shared.set_status(ProcessStatus::StartFailed);
+    let (mut h, r) = harness(rig("sb.start-refused", &fx_layout(), Box::new(probe)));
+    *h.input_mut("in_l") = [0.75; BATCH];
+    for _ in 0..4 {
+        h.process();
+        assert!(h.output("out_l").iter().all(|s| *s == 0.75), "dry");
+    }
+    assert_eq!(shared.calls(), 1, "the processor is never called again");
+    let msgs = drain_messages(&r.manager);
+    assert_eq!(
+        msgs,
+        vec![PluginMessage::Failed {
+            reason: "the plugin could not start processing"
+        }]
+    );
+    assert_eq!(meters(&h)[2], 3.0, "failed, not crashed");
+    assert_eq!(meters(&h)[6], 0.0, "not a bad block");
+}

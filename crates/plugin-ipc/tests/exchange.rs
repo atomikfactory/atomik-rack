@@ -11,8 +11,8 @@ use atomik_plugin_host::{
     TailLength,
 };
 use atomik_plugin_ipc::{
-    AudioOp, Deadline, MAX_EVENTS_IN, MAX_EVENTS_OUT, MAX_PARK, Poll, ProcessorInfo, Response,
-    Ticket,
+    AudioOp, Before, Deadline, MAX_EVENTS_IN, MAX_EVENTS_OUT, MAX_PARK, Poll, ProcessorInfo,
+    Response, Ticket,
 };
 use std::thread;
 use std::time::Duration;
@@ -721,6 +721,53 @@ fn a_ring_left_over_from_an_answered_request_does_not_end_the_next_wait() {
     assert_eq!(parent.wait_done(t, wait(SECOND)), Poll::Done);
     thread::sleep(Duration::from_millis(150));
     let t = submit_empty(&mut parent);
+    assert_eq!(parent.wait_done(t, wait(SECOND)), Poll::Done);
+    server.join().unwrap();
+}
+
+#[test]
+fn the_work_that_rides_on_a_request_arrives_with_its_op_and_its_audio() {
+    let (mut parent, mut child) = pair();
+    let work = Before::STOP.with(Before::START).with(Before::RESET);
+    let server = thread::spawn(move || {
+        let req = child.wait_request(SECOND).unwrap();
+        assert_eq!(req.op(), AudioOp::Process);
+        assert_eq!(req.before(), work);
+        req.complete(|io| {
+            assert_eq!(io.events_in.len(), 1, "the events came with the work");
+            (ProcessStatus::StartFailed, false)
+        });
+        let req = child.wait_request(SECOND).unwrap();
+        assert_eq!((req.op(), req.before()), (AudioOp::Stop, Before::RESET));
+        req.complete(|_| (ProcessStatus::Continue, true));
+        let req = child.wait_request(SECOND).unwrap();
+        assert_eq!((req.op(), req.before()), (AudioOp::Process, Before::NONE));
+        req.complete(|_| (ProcessStatus::Continue, true));
+    });
+    let mut main_out = [[0.0; BATCH]; 2];
+    let mut events_out = EventList::with_capacity(4);
+    let events = [note(2, 60)];
+    let mut io = PluginIo {
+        frames: BATCH,
+        main_in: &[],
+        main_in_silent: true,
+        sidechain: &[],
+        sidechain_silent: true,
+        main_out: &mut main_out,
+        aux_out: &mut [],
+        events_in: &events,
+        events_out: &mut events_out,
+        transport: PluginTransport::default(),
+        dropped: 0,
+    };
+    let t = parent.submit_before(AudioOp::Process, work, &io);
+    assert_eq!(parent.wait_done(t, wait(SECOND)), Poll::Done);
+    let response = parent.take_response(t, &mut io);
+    assert_eq!(response.status, ProcessStatus::StartFailed);
+    assert!(!response.ok);
+    let t = parent.submit_op_before(AudioOp::Stop, Before::RESET);
+    assert_eq!(parent.wait_done(t, wait(SECOND)), Poll::Done);
+    let t = parent.submit(AudioOp::Process, &io);
     assert_eq!(parent.wait_done(t, wait(SECOND)), Poll::Done);
     server.join().unwrap();
 }
