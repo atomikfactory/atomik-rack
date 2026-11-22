@@ -974,3 +974,111 @@ fn a_window_that_is_still_open_counts_when_the_geometry_is_read() {
     let geom = core.plugin_window_geoms()[GAIN];
     assert_eq!((geom.x, geom.y), (10, 20));
 }
+
+/// Times out whenever it has a time limit, scans fine with none; `crashy.clap` always crashes.
+struct Patient {
+    limits: std::sync::Mutex<Vec<(String, std::time::Duration)>>,
+    plugin: ScannedPlugin,
+}
+
+impl ScanRunner for Patient {
+    fn scan(
+        &self,
+        format: atomik_device_sdk::PluginFormat,
+        path: &Path,
+        timeout: std::time::Duration,
+        _cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<ScanResult, ScanFailure> {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        self.limits.lock().unwrap().push((name.clone(), timeout));
+        if name.starts_with("crashy") {
+            return Err(ScanFailure {
+                kind: FailureKind::Crash,
+                reason: "the scanner exited with code 3".to_string(),
+            });
+        }
+        if timeout != atomik_plugin_host::NO_TIME_LIMIT {
+            return Err(ScanFailure {
+                kind: FailureKind::Timeout,
+                reason: atomik_plugin_host::timeout_reason(timeout.as_secs()),
+            });
+        }
+        Ok(ScanResult {
+            path: path.to_path_buf(),
+            format,
+            plugins: vec![self.plugin.clone()],
+            error: None,
+        })
+    }
+}
+
+#[test]
+fn a_file_that_timed_out_is_scanned_again_with_no_time_limit_and_leaves_the_blacklist() {
+    let dir = temp("scan-no-limit");
+    let folder = dir.join("plugins");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("slow.clap"), b"slow").unwrap();
+    std::fs::write(folder.join("crashy.clap"), b"crash").unwrap();
+    let plugin = cache_of(&[PKG])
+        .files()
+        .flat_map(|f| f.plugins.clone())
+        .next()
+        .unwrap();
+    let runner = Arc::new(Patient {
+        limits: std::sync::Mutex::new(Vec::new()),
+        plugin,
+    });
+    let mut cfg = config_in(&dir, true);
+    cfg.cache = PluginCache::default();
+    cfg.settings.extra_paths = vec![folder.clone()];
+    cfg.runner = Some(runner.clone());
+    let mut core = AppCore::with_doc(OfflineSink::new(), empty_doc(), None);
+    core.configure_plugins(cfg);
+    core.set_plugin_scan_env(Arc::new(|_: &str| None));
+    scan_all(&mut core);
+    let failed = core.plugin_settings_data().failed;
+    assert_eq!(failed.len(), 2, "{failed:?}");
+    let path_of = |name: &str| {
+        failed
+            .iter()
+            .find(|f| f.path.ends_with(name))
+            .unwrap()
+            .path
+            .clone()
+    };
+    runner.limits.lock().unwrap().clear();
+
+    // A file that crashed is not run again by this action (its row does not offer it either).
+    core.handle_action(UiAction::PluginSettings(
+        PluginSettingsAction::RetryFileNoLimit(path_of("crashy.clap")),
+    ));
+    assert!(!core.plugin_scan_running());
+    assert!(runner.limits.lock().unwrap().is_empty());
+
+    // A file that timed out is run alone, with no limit, and a success takes it off the list.
+    core.handle_action(UiAction::PluginSettings(
+        PluginSettingsAction::RetryFileNoLimit(path_of("slow.clap")),
+    ));
+    core.wait_scan();
+    let seen = runner.limits.lock().unwrap().clone();
+    assert_eq!(
+        seen,
+        [("slow.clap".to_string(), atomik_plugin_host::NO_TIME_LIMIT)]
+    );
+    let failed: Vec<String> = core
+        .plugin_settings_data()
+        .failed
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert!(failed[0].ends_with("crashy.clap"));
+    assert_eq!(core.plugin_catalog().entries().len(), 1);
+
+    // The same action from the plugin manager does the same (here: nothing left to retry).
+    core.plugin_manager_action(&atomik_ui::PluginManagerAction::RescanNoLimit(
+        folder.join("slow.clap").to_string_lossy().into_owned(),
+    ));
+    assert!(!core.plugin_scan_running());
+    let _ = std::fs::remove_dir_all(dir);
+}

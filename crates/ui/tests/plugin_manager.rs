@@ -748,3 +748,58 @@ fn the_panel_matches_its_golden_and_follows_the_theme_and_scale() {
     assert_ne!(before.to_json(), after.to_json());
     assert!(v.needs_repaint());
 }
+
+#[test]
+fn a_chosen_file_that_timed_out_offers_no_time_limit_and_a_crashed_one_does_not() {
+    use PluginFormat::Clap;
+    let failed = |name: &str, reason: String| {
+        row(
+            None,
+            name,
+            Clap,
+            "",
+            PluginEntryStatus::Failed(reason),
+            1,
+            false,
+            &[],
+        )
+    };
+    let mut v = PluginManagerView::new(
+        Theme::dark(),
+        PluginManagerData {
+            rows: vec![
+                failed(
+                    "Crashed File",
+                    "the scanner exited with code 3 (0x3)".into(),
+                ),
+                failed("Slow File", atomik_plugin_host::timeout_reason(30)),
+            ],
+            scan: None,
+            scanner_available: true,
+            plugins_on: true,
+        },
+    );
+    v.set_bounds(BOUNDS);
+    // Nothing chosen: no button.
+    assert!(v.no_limit_rect().is_none());
+    // A file that crashed: still none.
+    click!(v, v.row_center(position_of(&v, "Crashed File")).unwrap());
+    assert!(v.no_limit_rect().is_none());
+    // A file that timed out: the button appears and asks for that file.
+    click!(v, v.row_center(position_of(&v, "Slow File")).unwrap());
+    let button = v.no_limit_rect().expect("the button");
+    let help = v.help_at(button.center()).expect("a tooltip");
+    assert!(help.text.starts_with("Scan again with no time limit"));
+    assert!(help.text.len() <= 90, "{}", help.text);
+    assert_eq!(
+        click!(v, center(button)),
+        [PluginManagerAction::RescanNoLimit(
+            "/plugins/slow-file".into()
+        )]
+    );
+    // While a scan runs there is no second scan to start.
+    let mut running = v.data().clone();
+    running.scan = Some(ScanProgressInfo { done: 0, total: 1 });
+    v.set_data(running);
+    assert!(v.no_limit_rect().is_none());
+}

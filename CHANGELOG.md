@@ -90,6 +90,11 @@ may break APIs and the patch and project formats.
   without anything waiting for it), leaves the device a stand-in with its saved state untouched, and shows SKIPPED.
   RELOAD tries again from that state. A skipped plugin is not a crash and does not count towards quarantine, and a
   saved project keeps what it held.
+- **Scan a plugin file again with no time limit.** A plugin file that is on the blacklist because its scan timed out
+  (a licence check, a first-run index) now has a NO TIME LIMIT button in the plugin manager (when the file is chosen)
+  and a NO LIMIT button next to RETRY in the plugin settings. It scans that one file with no time limit, with
+  progress and CANCEL like any scan; a file that scans leaves the blacklist, one that does not stays on it, and
+  cancelling changes nothing. A file blacklisted for a crash keeps today's actions only.
 
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last

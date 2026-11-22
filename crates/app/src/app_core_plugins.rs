@@ -3903,6 +3903,7 @@ impl<S: EngineSink> AppCore<S> {
                     self.start_scan(RescanMode::Incremental);
                 }
             }
+            PluginSettingsAction::RetryFileNoLimit(path) => self.scan_file_without_limit(path),
         }
     }
 
@@ -3939,6 +3940,45 @@ impl<S: EngineSink> AppCore<S> {
             Some(env) => ScanJob::start_with_env(settings, formats, os, mode, cache, runner, env),
             None => ScanJob::start(settings, formats, os, mode, cache, runner),
         });
+    }
+
+    /// Scans one blacklisted file again with no time limit, on the scan worker (progress and
+    /// cancel as for any scan). The file stays on the blacklist while it runs and leaves it only
+    /// when it scans; a scan that is cancelled changes nothing. A scan that is refused (one is
+    /// running already, plugins are off, no scanner) says so and touches nothing.
+    pub fn scan_file_without_limit(&mut self, path: &str) {
+        if self.plugins.job.is_some() {
+            return;
+        }
+        // Only a file that ran out of time is offered this (a crash or an error is not cured by
+        // waiting), so only such a file is run.
+        let Some(format) = self
+            .plugins
+            .cache
+            .blacklisted(Path::new(path))
+            .filter(|b| atomik_plugin_host::is_timeout_reason(&b.reason))
+            .map(|b| b.format)
+        else {
+            return;
+        };
+        if !self.plugins.settings.enabled {
+            self.scan_refused("enable third-party plugins (ENABLE switch) before scanning");
+            return;
+        }
+        let Some(runner) = self.plugins.runner.clone() else {
+            self.scan_refused(
+                "no plugin scanner can be run: the app could not start a scanner process",
+            );
+            return;
+        };
+        let cache = std::mem::take(&mut self.plugins.cache);
+        self.plugins.scan_note = None;
+        self.plugins.job = Some(ScanJob::start_file_without_limit(
+            self.plugins.settings.clone(),
+            (format, PathBuf::from(path)),
+            cache,
+            runner,
+        ));
     }
 
     /// Replaces the environment scans read the default folders from (`CLAP_PATH`, the OS folder
