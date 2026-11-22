@@ -401,7 +401,9 @@ with latency, sidechain and tail, a deterministic synth, a note effect, a 2 000-
 grows a param at run time), `clap-shell` is a minimal raw `clap-sys` CLAP plugin (so the host is
 tested against a plugin not written with its own CLAP library), and `clap`, `clap-bad` (init fails),
 `clap-hang` (init never returns), `clap-crash` (segfaults in `create` or `process` when an
-environment variable asks for it), `clap-leak` (instance counters) and `clap-variants` (a MIDI-only
+environment variable asks for it), `clap-mix` (four classes; environment variables make one hang or
+crash, make every class slow, or make one start a helper process whose id it writes to a file: the
+scanner robustness tests use it), `clap-leak` (instance counters) and `clap-variants` (a MIDI-only
 synth, a mono effect, plugins that fail at activation or return errors or NaN, plugins that ask
 for restarts from inside activation or after every block, one that retitles a param) are the
 libraries.
@@ -418,12 +420,13 @@ libraries.
 - **Reference oracle.** The effect and synth tests compare the output of the plugin through the real
   CLAP backend and the `PluginDevice` with the DSP core run directly, bit for bit, at host blocks 1,
   64, 333, 480 and 512 and workers 0, 1, 2, 4, under the allocation guard.
-- **Processes.** `plugin-scan/tests/scanner.rs` and `plugin-clap/tests/crash.rs` start real child
-  processes (a scanner that is killed at a timeout, a plugin that segfaults); `hang.rs` proves the
-  in-process loader would block, which is why scanning is out of process.
+- **Processes.** `plugin-scan/tests/scanner.rs`, `scanner_robust.rs` and `plugin-clap/tests/crash.rs` start
+  real child processes (a scanner that is killed at a timeout, a plugin that segfaults, a plugin whose helper
+  process must not outlive the scan, found by process id); `hang.rs` proves the in-process loader would block,
+  which is why scanning is out of process.
 - **Unsafe policy.** `plugin-host/tests/unsafe_policy.rs` fails if `unsafe` appears outside
-  `plugin-clap`, `plugin-vst3`, the test plugins and the audited `fpenv.rs`, or if a block lacks a
-  `SAFETY:` comment. The app, render and UI tests therefore cannot probe plugin libraries; they go
+  `plugin-clap`, `plugin-vst3`, the test plugins and the audited `fpenv.rs`, `ole.rs` and `procgroup.rs`, or
+  if a block lacks a `SAFETY:` comment. The app, render and UI tests therefore cannot probe plugin libraries; they go
   through the manager and the slot's message ring.
 - **VST3.** The same DSP core sits behind `vst3-shell` (a plugin shell over the `vst3` crate's
   plugin-side helpers: factory, `IComponent`, `IAudioProcessor`, `IEditController`, `IMidiMapping`,

@@ -1681,3 +1681,36 @@ heard); keeping parameter changes pending until the next real block (missing fro
 pre-roll with the output faded in (a clicking, half-formed wet signal).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+
+## BE. A plugin file is scanned class by class, and the scan's time limit is per class
+
+**Decision.** The scanner child prints one line when it knows the classes of a file (their ids and names, nothing created
+yet) and one more as each class is finished, then the result line. The parent measures the time limit per class: the clock
+starts with the child and starts again at every such line, so the limit of the plugin settings (30 s by default) is what one
+class may take, not what a whole file may take. When the child hangs or crashes inside a class, the classes that answered
+are kept, the first class without an answer is listed in the cache as unsupported with the reason, and the scanner is
+started again for the classes after it with that class and the answered ones left out (`MAX_CLASS_RESTARTS`, 8, at most).
+The file as a whole is blacklisted, as before, only when no class answered; two classes that fail before any answers also
+end the attempt, because a file in which everything fails is the file's fault. Everything a scanner child starts lives in a
+group that ends with it (a job object that kills on close on Windows, a process group elsewhere), so a timeout, a crash, a
+cancel and a finished scan all leave no helper process; the scanner runs below normal priority and with the system error
+dialogs off, so a crash is a crash at once. A machine with four logical CPUs or fewer runs one scanner at a time.
+
+**Why.** A shell file with a hundred classes was judged by one limit for all of them and blacklisted whole when one was
+slow, losing the ninety-nine that were fine. A limit per class is what a user sets the number for: how long one plugin may
+take to wake up. Counting only the scanner's own lines, not whatever a plugin prints, keeps a plugin that talks while it is
+stuck from keeping itself alive. The cache keeps no new field: a class that did not answer is an ordinary entry that is not
+supported, with the reason, so an old cache reads as before and the scanner version did not change (the entries of plugins
+that behave are the same bytes).
+
+**Limits.** A class that times out costs a full limit, then a restart of the file's load; a file of many bad classes costs
+up to nine limits before it is given up on. The retry with no time limit (NO TIME LIMIT in the plugin manager, NO LIMIT in the
+plugin settings) runs one file alone with no limit, and is offered for a file that is blacklisted for a timeout, not for
+one class listed as unsupported in a file that mostly worked; for that file a full rescan is the way to try again.
+
+**Rejected.** One limit that grows with the number of classes (a file that is slow to load is not slow per class, and the
+number is only known once the file is loaded); a limit per file with no restart (the old behaviour); keeping the answered
+classes in a separate cache section (a format change for what a flag on an entry says).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

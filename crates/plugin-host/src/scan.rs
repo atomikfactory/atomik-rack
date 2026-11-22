@@ -1,6 +1,6 @@
 //! Scanning: the scanner's result type, the runner seam, and the
 //! rescan driver that walks the search paths, decides what needs scanning from the cache,
-//! runs up to two scanners at a time and records results and failures.
+//! runs the scanners (see [`parallel_scans`]) and records results and failures.
 //!
 //! The consent gate lives here: [`rescan`] refuses to do anything while the user has not
 //! enabled plugins. No function of this module loads plugin code in the calling process; the
@@ -21,12 +21,38 @@ use std::time::Duration;
 /// The most scanner children that run at the same time.
 pub const MAX_PARALLEL_SCANS: usize = 8;
 
-/// How many scanner children run at the same time on a machine with `cores` logical cores: half
-/// of them, at least two and at most [`MAX_PARALLEL_SCANS`]. The scanners load plugin libraries,
-/// which is mostly waiting on the disk and on the plugins' own start-up, so more than one per core
-/// would only fight the audio thread.
+/// The most logical cores of a machine that runs its scanners one at a time.
+pub const SERIAL_SCAN_CORES: usize = 4;
+
+/// How many scanner children run at the same time on a machine with `cores` logical cores: one
+/// on a machine with [`SERIAL_SCAN_CORES`] or fewer (a scan must not take a core from the audio
+/// thread, which may be playing), otherwise half of them, at least two and at most
+/// [`MAX_PARALLEL_SCANS`]. The scanners load plugin libraries, which is mostly waiting on the
+/// disk and on the plugins' own start-up, so more than one per core would only fight the audio
+/// thread. A scan started while audio plays follows the same rule.
 pub fn parallel_scans(cores: usize) -> usize {
-    (cores / 2).clamp(2, MAX_PARALLEL_SCANS)
+    if cores <= SERIAL_SCAN_CORES {
+        1
+    } else {
+        (cores / 2).clamp(2, MAX_PARALLEL_SCANS)
+    }
+}
+
+/// The `timeout` that means "no limit" (the user's retry of a file that timed out).
+pub const NO_TIME_LIMIT: Duration = Duration::MAX;
+
+/// How a timeout reason starts (see [`timeout_reason`] and [`is_timeout_reason`]).
+const TIMEOUT_REASON_START: &str = "did not finish within ";
+
+/// The blacklist reason of a file whose scan ran out of time after `secs` seconds.
+pub fn timeout_reason(secs: u64) -> String {
+    format!("{TIMEOUT_REASON_START}{secs} s; the scanner was killed")
+}
+
+/// True when a blacklist `reason` is a timeout (what the plugin manager offers a retry with no
+/// time limit for), as opposed to a crash or an error.
+pub fn is_timeout_reason(reason: &str) -> bool {
+    reason.starts_with(TIMEOUT_REASON_START)
 }
 
 /// Every plugin format the backends support, in the order a scan visits them.
@@ -77,6 +103,48 @@ impl ScanResult {
             plugins,
             error: dto.error,
         })
+    }
+}
+
+/// One line the scanner prints before its final result line, so that the parent keeps what a
+/// scan found even when the scanner is killed half way through a file.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScanEvent {
+    /// The classes the scanner is about to visit, in order, as the file declares them (each
+    /// with the little that is known without creating it).
+    Classes(Vec<ScannedPlugin>),
+    /// One class, finished: created, read and activated once (or why that did not work).
+    Class(ScannedPlugin),
+}
+
+impl ScanEvent {
+    /// The event as one line of JSON.
+    pub fn to_json(&self) -> String {
+        let value = match self {
+            ScanEvent::Classes(all) => serde_json::json!({
+                "classes": all.iter().map(PluginDto::from_scanned).collect::<Vec<_>>()
+            }),
+            ScanEvent::Class(one) => serde_json::json!({ "class": PluginDto::from_scanned(one) }),
+        };
+        value.to_string()
+    }
+
+    /// Parses an event line of a scan of `format`; `None` for anything else (the final result
+    /// line, a line a plugin printed).
+    pub fn from_json(text: &str, format: PluginFormat) -> Option<Self> {
+        let mut value: serde_json::Value = serde_json::from_str(text).ok()?;
+        let object = value.as_object_mut()?;
+        if let Some(classes) = object.remove("classes") {
+            let dtos: Vec<PluginDto> = serde_json::from_value(classes).ok()?;
+            let all = dtos
+                .into_iter()
+                .map(|d| d.into_scanned(format))
+                .collect::<Result<Vec<_>, _>>()
+                .ok()?;
+            return Some(ScanEvent::Classes(all));
+        }
+        let dto: PluginDto = serde_json::from_value(object.remove("class")?).ok()?;
+        dto.into_scanned(format).ok().map(ScanEvent::Class)
     }
 }
 
@@ -307,46 +375,90 @@ pub fn rescan(
         let Some(outcome) = slot.into_inner().unwrap_or_else(PoisonError::into_inner) else {
             continue;
         };
-        match outcome {
-            Ok(result) => {
-                report.scanned += 1;
-                let problem = match (&result.error, result.plugins.is_empty()) {
-                    (Some(e), _) => Some(e.clone()),
-                    (None, true) => Some("the file holds no plugin".to_string()),
-                    (None, false) => None,
-                };
-                match problem {
-                    None => {
-                        report.ok += 1;
-                        cache.insert_file(CachedFile {
-                            path: path.clone(),
-                            format: *format,
-                            stamp: *stamp,
-                            scanner_version: SCANNER_VERSION,
-                            scanned_secs: crate::cache::now_secs(),
-                            plugins: result.plugins,
-                        });
-                    }
-                    Some(reason) => {
-                        report.failed += 1;
-                        report.failures.push((path.clone(), reason.clone()));
-                        cache.blacklist_file(path, *format, *stamp, reason);
-                    }
+        apply_outcome(&mut report, cache, (*format, path, *stamp), outcome);
+    }
+    Ok(report)
+}
+
+/// Records what the scan of one file gave: a cache entry for a file that scanned, a blacklist
+/// entry for one that is to blame, nothing for a scan that was cancelled or could not start.
+fn apply_outcome(
+    report: &mut ScanReport,
+    cache: &mut PluginCache,
+    (format, path, stamp): (PluginFormat, &Path, FileStamp),
+    outcome: JobResult,
+) {
+    match outcome {
+        Ok(result) => {
+            report.scanned += 1;
+            let problem = match (&result.error, result.plugins.is_empty()) {
+                (Some(e), _) => Some(e.clone()),
+                (None, true) => Some("the file holds no plugin".to_string()),
+                (None, false) => None,
+            };
+            match problem {
+                None => {
+                    report.ok += 1;
+                    cache.insert_file(CachedFile {
+                        path: path.to_path_buf(),
+                        format,
+                        stamp,
+                        scanner_version: SCANNER_VERSION,
+                        scanned_secs: crate::cache::now_secs(),
+                        plugins: result.plugins,
+                    });
                 }
-            }
-            Err(f) if f.kind.blames_file() => {
-                report.scanned += 1;
-                report.failed += 1;
-                report.failures.push((path.clone(), f.reason.clone()));
-                cache.blacklist_file(path, *format, *stamp, f.reason);
-            }
-            Err(f) => {
-                if f.kind == FailureKind::Spawn && report.spawn_error.is_none() {
-                    report.spawn_error = Some(f.reason);
+                Some(reason) => {
+                    report.failed += 1;
+                    report.failures.push((path.to_path_buf(), reason.clone()));
+                    cache.blacklist_file(path, format, stamp, reason);
                 }
             }
         }
+        Err(f) if f.kind.blames_file() => {
+            report.scanned += 1;
+            report.failed += 1;
+            report.failures.push((path.to_path_buf(), f.reason.clone()));
+            cache.blacklist_file(path, format, stamp, f.reason);
+        }
+        Err(f) => {
+            if f.kind == FailureKind::Spawn && report.spawn_error.is_none() {
+                report.spawn_error = Some(f.reason);
+            }
+        }
     }
+}
+
+/// Scans one file again with `timeout` (the user's retry of a file that timed out passes
+/// [`NO_TIME_LIMIT`]), updating `cache` the way a rescan does: a file that scans is cached and
+/// leaves the blacklist, a file that does not is blacklisted again with the new reason, a
+/// cancelled scan changes nothing.
+///
+/// # Errors
+/// [`ScanError::PluginsDisabled`] when the user has not enabled plugins; nothing is touched.
+pub fn rescan_file(
+    settings: &PluginSettings,
+    (format, path): (PluginFormat, &Path),
+    timeout: Duration,
+    cache: &mut PluginCache,
+    runner: &dyn ScanRunner,
+    cancel: &AtomicBool,
+    progress: &ScanProgress,
+) -> Result<ScanReport, ScanError> {
+    if !settings.enabled {
+        return Err(ScanError::PluginsDisabled);
+    }
+    let mut report = ScanReport::default();
+    let Some(stamp) = FileStamp::of(path) else {
+        report.removed = usize::from(cache.forget(path));
+        return Ok(report);
+    };
+    progress.total.store(1, Ordering::Relaxed);
+    progress.done.store(0, Ordering::Relaxed);
+    let outcome = runner.scan(format, path, timeout, cancel);
+    progress.done.store(1, Ordering::Relaxed);
+    report.cancelled = cancel.load(Ordering::Relaxed);
+    apply_outcome(&mut report, cache, (format, path, stamp), outcome);
     Ok(report)
 }
 
@@ -408,6 +520,38 @@ impl ScanJob {
         }
     }
 
+    /// Starts scanning the one file `path` again with no time limit, on its own worker (see
+    /// [`rescan_file`]); [`ScanJob::cancel`] stops it. `cache` is moved into the worker and
+    /// handed back by [`ScanJob::finish`].
+    pub fn start_file_without_limit(
+        settings: PluginSettings,
+        (format, path): (PluginFormat, PathBuf),
+        cache: PluginCache,
+        runner: std::sync::Arc<dyn ScanRunner>,
+    ) -> Self {
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let progress = std::sync::Arc::new(ScanProgress::default());
+        let (c, p) = (cancel.clone(), progress.clone());
+        let handle = std::thread::spawn(move || {
+            let mut cache = cache;
+            let report = rescan_file(
+                &settings,
+                (format, &path),
+                NO_TIME_LIMIT,
+                &mut cache,
+                runner.as_ref(),
+                &c,
+                &p,
+            );
+            (cache, report)
+        });
+        Self {
+            handle,
+            cancel,
+            progress,
+        }
+    }
+
     /// Asks the scan to stop: running children are killed, pending files are not started.
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
@@ -432,5 +576,70 @@ impl ScanJob {
                 Err(ScanError::BadResult("the scan worker panicked".to_string())),
             )
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_timeout_reason_is_told_apart_from_a_crash() {
+        assert!(is_timeout_reason(&timeout_reason(30)));
+        assert!(timeout_reason(30).contains("30 s") && timeout_reason(30).contains("killed"));
+        assert!(!is_timeout_reason("the scanner exited with code 3 (0x3)"));
+        assert!(!is_timeout_reason("the file holds no plugin"));
+    }
+
+    #[test]
+    fn scan_events_round_trip_as_single_lines() {
+        let plugin = |id: &str| ScannedPlugin {
+            plugin: atomik_device_sdk::PluginRef {
+                format: PluginFormat::Clap,
+                id: id.to_string(),
+            },
+            layout: atomik_device_sdk::PluginLayout {
+                name: "N".to_string(),
+                vendor: "V".to_string(),
+                version: "1".to_string(),
+                kind_hint: atomik_device_sdk::PluginKindHint::Instrument,
+                main_in: None,
+                main_out: None,
+                sidechain: false,
+                notes_in: true,
+                notes_out: false,
+                aux_out: 0,
+                params: Vec::new(),
+            },
+            category: atomik_device_sdk::PluginCategory::from_kind(
+                atomik_device_sdk::PluginKindHint::Instrument,
+            ),
+            unsupported: Some("why".to_string()),
+            params_truncated: false,
+        };
+        for event in [
+            ScanEvent::Classes(vec![plugin("a"), plugin("b")]),
+            ScanEvent::Class(plugin("a")),
+        ] {
+            let line = event.to_json();
+            assert!(!line.contains('\n'));
+            assert_eq!(ScanEvent::from_json(&line, PluginFormat::Clap), Some(event));
+        }
+        // The result line and noise are not events.
+        let result = ScanResult {
+            path: PathBuf::from("x.clap"),
+            format: PluginFormat::Clap,
+            plugins: Vec::new(),
+            error: None,
+        };
+        assert_eq!(
+            ScanEvent::from_json(&result.to_json(), PluginFormat::Clap),
+            None
+        );
+        assert_eq!(
+            ScanEvent::from_json("{\"class\": 3}", PluginFormat::Clap),
+            None
+        );
+        assert_eq!(ScanEvent::from_json("hello", PluginFormat::Clap), None);
     }
 }

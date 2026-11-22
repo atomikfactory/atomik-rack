@@ -199,6 +199,13 @@ may break APIs and the patch and project formats.
   the usual fade in, so it does not start from stale state or click. Comparing with the bypass on and off a few
   seconds apart is unchanged: the plugin keeps running meanwhile. A bounce parks the same way, so an export
   equals what you hear; one whose effect is bypassed throughout, or never, is unchanged.
+- **A plugin scan runs gently.** The scanner programs start below normal priority, so a rescan no longer competes with
+  playback or the interface, and a machine with four logical CPUs or fewer runs one scanner at a time (more CPUs: half
+  of them, at least two and at most eight, as before). A scan started while audio plays follows the same rule.
+- **The scan time limit is per plugin class, not per file.** The limit in the plugin settings now applies to each class
+  of a plugin file: the clock starts again whenever the scanner reports a class, so a large shell file with many
+  plugins in it is no longer judged by one limit for all of them. A file whose scan times out with nothing found is
+  still blacklisted as before. Scan results of plugins that behave are unchanged.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
@@ -390,6 +397,14 @@ may break APIs and the patch and project formats.
   with drifting clocks are still kept in step and never get extra delay for it. Export Diagnostics shows how much
   input backlog is allowed, and the status line shows it while extra room is in use.
   Takes land on the timeline where they did before, and a bounce is unchanged.
+- **One bad plugin class no longer costs the whole plugin file.** A plugin file with many classes used to be
+  blacklisted whole when one of them hung or crashed the scanner. The scanner now reports each class as it finishes it;
+  the classes that answered are kept, the class that did not is listed as unsupported with the reason, and the scanner
+  is started again for the classes after it. Only a file in which nothing answers is blacklisted.
+- **A crashing plugin no longer shows a system error dialog during a scan, and leaves nothing behind.** The scanner
+  turns the system error dialogs off, so a plugin that crashes while it loads is reported as a crash at once, not as a
+  timeout half a minute later. Everything a scanner starts (a plugin's helper process too) ends with it, whether the
+  scan finished, timed out, crashed or was cancelled.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

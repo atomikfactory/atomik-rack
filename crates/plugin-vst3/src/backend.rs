@@ -16,7 +16,7 @@ use atomik_device_sdk::{
 };
 use atomik_plugin_host::{
     ActivateConfig, BackendError, HostHandle, PluginBackend, PluginInstance as HostInstance,
-    ScannedPlugin, assert_main_thread, plugin_channel,
+    ScanEvent, ScannedPlugin, assert_main_thread, plugin_channel,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -71,6 +71,37 @@ impl Vst3Backend {
         Ok(module)
     }
 
+    /// What is known of a class without creating it: its name and the plugin it would be, marked
+    /// as not scanned until the scan of the class answers.
+    fn announced(class: &ClassInfo) -> ScannedPlugin {
+        let layout = PluginLayout {
+            name: class.name.clone(),
+            vendor: class.vendor.clone(),
+            version: class.version.clone(),
+            kind_hint: PluginKindHint::Effect,
+            main_in: None,
+            main_out: None,
+            sidechain: false,
+            notes_in: false,
+            notes_out: false,
+            aux_out: 0,
+            params: Vec::new(),
+        };
+        ScannedPlugin {
+            plugin: PluginRef {
+                format: PluginFormat::Vst3,
+                id: class_id_hex(&class.cid),
+            },
+            category: PluginCategory::from_vst3_sub_categories(
+                layout.kind_hint,
+                &class.sub_categories,
+            ),
+            layout,
+            unsupported: Some("not scanned".to_string()),
+            params_truncated: false,
+        }
+    }
+
     fn classes_of(module: &Arc<Module>, path: &Path) -> Result<Vec<ClassInfo>, BackendError> {
         let factory = module.factory().ok_or_else(|| {
             BackendError::NotAPlugin(format!("{}: no plugin factory", path.display()))
@@ -85,10 +116,38 @@ impl PluginBackend for Vst3Backend {
     }
 
     fn scan_file(&self, path: &Path) -> Result<Vec<ScannedPlugin>, BackendError> {
+        let mut found = Vec::new();
+        self.scan_file_each(path, &[], &mut |event| {
+            if let ScanEvent::Class(p) = event {
+                found.push(p);
+            }
+        })?;
+        Ok(found)
+    }
+
+    fn scan_file_each(
+        &self,
+        path: &Path,
+        skip: &[String],
+        emit: &mut dyn FnMut(ScanEvent),
+    ) -> Result<(), BackendError> {
         assert_main_thread("scanning a VST3 file");
         let module = self.load(path)?;
         let classes = Self::classes_of(&module, path)?;
-        let mut found = Vec::new();
+        if classes.is_empty() {
+            return Err(BackendError::NotAPlugin(format!(
+                "{}: the file holds no audio plugin",
+                path.display()
+            )));
+        }
+        let wanted = |class: &ClassInfo| {
+            let id = class_id_hex(&class.cid);
+            !skip.iter().any(|s| s.eq_ignore_ascii_case(&id))
+        };
+        let classes: Vec<ClassInfo> = classes.into_iter().filter(wanted).collect();
+        emit(ScanEvent::Classes(
+            classes.iter().map(Self::announced).collect(),
+        ));
         for class in classes {
             let plugin = PluginRef {
                 format: PluginFormat::Vst3,
@@ -97,19 +156,7 @@ impl PluginBackend for Vst3Backend {
             // The scan creates the plugin on a throw-away channel and drops it again.
             let (_device_end, manager) = plugin_channel(atomik_plugin_host::InstanceId(0));
             let hub = Hub::new(manager.messenger());
-            let mut layout_info = PluginLayout {
-                name: class.name.clone(),
-                vendor: class.vendor.clone(),
-                version: class.version.clone(),
-                kind_hint: PluginKindHint::Effect,
-                main_in: None,
-                main_out: None,
-                sidechain: false,
-                notes_in: false,
-                notes_out: false,
-                aux_out: 0,
-                params: Vec::new(),
-            };
+            let mut layout_info = Self::announced(&class).layout;
             let (unsupported, truncated) = match Vst3Instance::create(&module, &class, hub) {
                 Ok(mut instance) => {
                     let (layout, truncated) = instance.read();
@@ -136,21 +183,15 @@ impl PluginBackend for Vst3Backend {
                 layout_info.kind_hint,
                 &class.sub_categories,
             );
-            found.push(ScannedPlugin {
+            emit(ScanEvent::Class(ScannedPlugin {
                 plugin,
                 layout: layout_info,
                 category,
                 unsupported,
                 params_truncated: truncated,
-            });
+            }));
         }
-        if found.is_empty() {
-            return Err(BackendError::NotAPlugin(format!(
-                "{}: the file holds no audio plugin",
-                path.display()
-            )));
-        }
-        Ok(found)
+        Ok(())
     }
 
     fn instantiate(

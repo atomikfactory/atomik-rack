@@ -49,7 +49,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk, tab | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`), the tab sidecar of note clips (`tab_data.rs`), its edit operations (`tab_edit.rs`) and the technique renderer (`tab_render.rs`), the song chord sheets (`chord_sheets.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
-| `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
+| `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs`, `src/procgroup.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
 | `atomik-plugin-clap` | [crates/plugin-clap](../crates/plugin-clap) | core, device-sdk, plugin-host (clack-host, clack-extensions) | `crate` | The CLAP backend (every `unsafe` block has a `SAFETY:` comment) |
 | `atomik-plugin-vst3` | [crates/plugin-vst3](../crates/plugin-vst3) | core, device-sdk, plugin-host (vst3, libloading) | `crate` | The VST3 backend, hosting `.vst3` modules through the `vst3` bindings (every `unsafe` block has a `SAFETY:` comment) |
 | `atomik-plugin-scan` | [crates/plugin-scan](../crates/plugin-scan) | device-sdk, plugin-host, plugin-clap, plugin-vst3 | none | The out-of-process scanner (bin `atomik-plugin-scan`) |
@@ -5008,7 +5008,8 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
 
 - **Crates and the unsafe policy.** `atomik-plugin-host` (the generic `PluginDevice`, the
   `PluginManager`, the slot and hand-shake, scan, cache, catalog, journal, settings; `unsafe` only
-  in `fpenv.rs`, the floating-point control register, and `ole.rs`, `OleInitialize` on Windows),
+  in `fpenv.rs`, the floating-point control register, `ole.rs`, `OleInitialize` on Windows, and
+  `procgroup.rs`, the scan child's job object, process group and error mode),
   `atomik-plugin-clap` (the CLAP backend over `clack-host` and `clack-extensions` 0.2.0, pinned),
   `atomik-plugin-vst3` (the VST3 backend over the `vst3` crate 0.3.0, pinned, bindings generated
   from VST 3.8; the host layer is ours) and `atomik-plugin-ipc` (the sandbox wire: the mapped block
@@ -5089,8 +5090,13 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   Render).
 - **Scanner, cache, consent.** Plugins are off by default. `atomik-plugin-scan clap <path>` loads
   one file in a child process, activates every plugin once, and prints a JSON `ScanResult`; the app
-  runs up to two children with a hard timeout (default 30 s, 5 to 300), kills a hang, and blacklists
-  files that crash, hang, print garbage or are not plugins until they change or the user retries.
+  runs scanner children (one on a machine with four logical CPUs or fewer, otherwise half the CPUs,
+  two to eight) below normal priority, each in a group that ends with it and with the system error
+  dialogs off. The child announces the classes of the file and prints each class as it finishes it.
+  The time limit (default 30 s, 5 to 300) is per class: a hang or crash in one class keeps the classes
+  that answered, lists that class as unsupported and starts the scanner again for the rest, and a file
+  is blacklisted only when nothing in it answered (or it prints garbage or is not a plugin), until it
+  changes or the user retries.
   `plugins.json` (atomic write, versioned, incremental rescan by size and mtime) feeds
   `PluginCatalog`, which registers descriptors **without loading any plugin file**. A project never
   carries a path: a device resolves only by (format, id) against that cache. A project that uses
@@ -5455,7 +5461,7 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   equals the reference DSP and is bit-identical across blocks and workers under the allocation
   guard, PDC from a reported and a changed latency, thread-check per worker count, a restart in the
   middle of a render), `plugin-clap/tests/{process,lifecycle,state,gui,leak,crash,hang}.rs` against
-  the real backend and the test plugins, `plugin-scan/tests/scanner.rs` (real child process),
+  the real backend and the test plugins, `plugin-scan/tests/scanner.rs` and `scanner_robust.rs` (real child processes),
   `render/tests/plugin_demo.rs`, `plugin_demo_vst3.rs` and the app's `app_core_plugins*_tests.rs`
   (live equals the realtime bounce, including a saved latency and a latency that moves mid-song in
   both formats, stand-ins, one instance per frame, engine restart keeps instances, journal and
