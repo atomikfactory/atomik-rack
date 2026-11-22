@@ -224,6 +224,14 @@ may break APIs and the patch and project formats.
   and they are given up again only after a second under 20 %. A project that has needed them while playing keeps
   them for as long as it plays. Exports and bounces still hand every level to the workers. The sound is unchanged:
   a bounce is the same bytes for any worker count.
+- **A window that presents without waiting is painted at most once per frame.** With two or more windows open (a
+  detached rack or mixer, the spectrum or browser window, a second song) a sweep of the pointer, a drag or a scroll
+  built and rendered a full frame for every batch of events, many times more often than any screen shows. Such a
+  window now paints at most once per frame period (60 Hz); the paint that was held back happens when the period is
+  over and shows the latest state, even with no further event and no audio running. A resize, a scale change, a
+  window that is uncovered or gains the focus, a frame that was not shown, the first paint and screenshots are never
+  held back, a lone window keeps painting in step with its monitor as before, and the periodic activity line now
+  also says how many paints were held back per window.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

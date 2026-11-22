@@ -1847,3 +1847,43 @@ run up between two batches by the enter share and the growth of one batch, not t
 device timing switch but each has its own rule state.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BH. A window that presents without waiting is painted at most once per frame period
+
+**Decision.** With two or more windows open every surface presents without waiting for the vertical blank, and the
+loop paints them in turn on one thread. Such a window is now painted at most once per frame period, 60 Hz
+(`App::frame`, a field started from `FRAME`, so one place can change it later). The rule is a pure function
+(`window_logic::paint_gate`) of how the window presents, the time since the start of its last paint
+(`AppWindow::last_painted`), the period and the reason for the paint. A window with vsync is never held back. A
+window that was never painted is painted at once. Input, live and update paints wait for the rest of the period; a
+resize or scale change, a focus change or an uncover, a frame painted but not shown (the retry), a redraw the system
+asks for while nothing is marked (an exposure) and the screenshot paths are painted at once. A held-back paint
+changes nothing in the shell: the window stays marked, the reason is kept for the counters, and the loop's wake
+deadline becomes the earlier of its own and the time the period ends (`window_logic::loop_deadline`), also when no
+stream or plugin would wake it. A paint that arrives by a timer counts as due when it is up to an eighth of the
+period early (about 2 ms); input counts as due only at the full period.
+
+**Why.** A sweep of the pointer, a drag or a scroll delivers an event batch every millisecond or two, each marks the
+window and each cost a full scene build and render, many times what any display shows. The tick already sets the
+pace of animations; this puts the same bound on events. The vsync window is paced by its present call, and a timer
+that beats against the blank would show every other frame. Resizes, exposures and retries are things the system or the
+last frame is waiting for: a stale or stretched window during a live resize, or a frame that stays unshown, is worse
+than one more paint. The tolerance exists because the tick's timer is taken from the start of the tick and rounds to
+milliseconds, while the last paint is stamped a little later: without it a tick that arrives a hair early would be held
+and the cadence would slip by the difference every time. It is an eighth of the period because the unshown remainder
+costs at most that much and the cadence stays within 8 % of 60 Hz; input gets none so that a sweep never paints more
+often than the period allows.
+
+**Why the period is the app's and not the monitor's.** The windows can be on monitors of different rates and the app
+paints them from one loop, so there is no single rate to read; the vsync window already follows its monitor. A later
+low-power mode will lengthen the period, which is why it is a value the app holds and not a constant.
+
+**Limits.** The period is 60 Hz even on a faster monitor, so an unpaced window on a 144 Hz screen shows at most 60
+updates a second (the tick it replaces never did better). A held-back paint is delayed by at most one period. The
+counter of held-back paints counts each time a paint is asked for too early, not each distinct paint.
+
+**Rejected.** Pacing the vsync window as well (the timer beats against the blank and halves the rate); holding back
+resizes (stretched content during a live resize); reading the monitor's rate (several monitors, one loop); a
+tolerance for input too (a sweep could paint more often than the period allows).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

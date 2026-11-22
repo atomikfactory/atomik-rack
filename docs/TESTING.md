@@ -1505,7 +1505,9 @@ Hand checks, not automated (they need hardware):
 ## Detached windows
 
 The window code in `platform/` is not unit-tested (it needs a window and a GPU); what it decides is
-in `platform/window_logic.rs` and `windows.rs`, and the shell side is in `shell_windows_tests.rs`.
+in `platform/window_logic.rs` and `windows.rs`, and the shell side is in `shell_windows_tests.rs`. The frame cap
+(`paint_gate`, `loop_deadline`) has its own tests there, including a pointer sweep played on the pure functions; its
+hand check follows the list below.
 These are the hand checks, on every OS (`atomik --detach rack,console` opens both panes at start):
 
 - Detach and attach both panes from the View menu, with their shortcuts, and by closing the window.
@@ -1539,6 +1541,12 @@ These are the hand checks, on every OS (`atomik --detach rack,console` opens bot
 - Windows: the menu bar is in the main window only. macOS: the global menu works with each window
   focused,
   Cmd+` cycles the windows, and the frame time with three windows stays near 16 ms (if a frame takes more than 20 ms, try a present mode without vsync for the detached windows). Linux X11: positions are restored. Wayland: detaching works, positions are not restored, and a drag leaving its window cancels with the status note.
+- Frame cap: detach the rack (View menu) so two windows are open, start the app with `ATOMIK_LOG=debug`, and sweep
+  the pointer over the rack window for ten seconds (drag a knob or scroll the rack). The `ui activity` line, every
+  five seconds, shows the rack at about 60 paints/s or fewer with a `rack N deferred/s` part (before the cap it
+  showed several hundred paints/s on a fast mouse); the sweep still looks smooth, the last position is drawn when you
+  stop, and resizing the window shows no stretched content. Attach the rack again: with one window the paints
+  follow the monitor and no `deferred` part appears.
 
 Run on Windows only so far (three windows open, draw, close, quit and restore); macOS, Linux (X11
 and Wayland) and monitors of mixed scale have not been tried.
@@ -1906,7 +1914,9 @@ something marked on a tick (an engine or plugin poll, a finished load, a live va
 `resize` a size or scale change, `focus` a window gained focus or was uncovered, and `surface` a frame that was not
 shown and is painted again. The report has the last second and the totals since the start. The wake-up and paint
 counts are plain integers on the UI thread (`crates/app/src/ui_activity.rs`, tested with explicit durations);
-`startup.rs` has the tests of the line shapes and `platform/gpu.rs` those of the adapter words.
+`startup.rs` has the tests of the line shapes and `platform/gpu.rs` those of the adapter words. When a window is
+held back by the frame cap the line adds `rack 940 deferred/s` beside its paints (a paint wanted too early, counted
+each time it is asked for; the paint itself is counted when it happens).
 
 ### Measuring the running app
 

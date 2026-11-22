@@ -368,6 +368,84 @@ pub(super) fn all_minimized(sizes: impl IntoIterator<Item = bool>, others_open: 
     any && !others_open
 }
 
+/// What the frame cap says about a paint that is wanted now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PaintGate {
+    /// Paint now.
+    Now,
+    /// Paint later: the rest of the window's frame period.
+    Wait(Duration),
+}
+
+/// Whether a paint for `reason` may be held back by the frame cap. The person's input, a view
+/// that keeps itself painting and a change something marked can wait for the end of the frame
+/// period (the paint then shows the latest state). A resize or scale change must not show
+/// stale or stretched content, a focus change or an uncovered window is an exposure the system
+/// is waiting on, and a frame that was painted but not shown is a retry: none of them waits.
+pub(super) fn paint_deferrable(reason: PaintReason) -> bool {
+    match reason {
+        PaintReason::Input | PaintReason::Live | PaintReason::Update => true,
+        PaintReason::Resize | PaintReason::Focus | PaintReason::Surface => false,
+    }
+}
+
+/// How early a paint that arrives by a timer still counts as due: an eighth of the period. The
+/// animation tick is a timer of one period, taken from the start of the tick while the window's
+/// last paint was stamped a little after it, and the timer itself rounds to milliseconds; a
+/// tick that came a hair early must paint, not fall to every other tick. The person's input is
+/// not a timer and gets no tolerance, so a sweep of the pointer paints at most once per period.
+pub(super) fn frame_tolerance(period: Duration) -> Duration {
+    period / 8
+}
+
+/// Whether a window is painted now or waits, with `since_last` the time since its last paint
+/// (`None` before its first paint).
+///
+/// A window that presents with vsync is paced by its present call and is never held back (a
+/// timer beating against the vertical blank would halve the visible rate). A window that
+/// presents without waiting is painted at most once per `period`: a paint that
+/// [`paint_deferrable`] allows waits for the remainder of the period, and everything else is
+/// painted at once, as is a window that was never painted.
+pub(super) fn paint_gate(
+    vsync: bool,
+    since_last: Option<Duration>,
+    period: Duration,
+    reason: PaintReason,
+) -> PaintGate {
+    let Some(since) = since_last else {
+        return PaintGate::Now;
+    };
+    if vsync || !paint_deferrable(reason) {
+        return PaintGate::Now;
+    }
+    let slack = if reason == PaintReason::Input {
+        Duration::ZERO
+    } else {
+        frame_tolerance(period)
+    };
+    if since + slack >= period {
+        PaintGate::Now
+    } else {
+        PaintGate::Wait(period - since)
+    }
+}
+
+/// When the loop wakes next: its own wake (`wake`, from [`wake_after`], counted from `now`) or
+/// the time a held-back paint is due (`held_until`), whichever is earlier. It holds with no
+/// other waker: a project with no stream and no plugin still wakes for a window that waits.
+pub(super) fn loop_deadline(
+    now: Instant,
+    wake: Option<Duration>,
+    held_until: Option<Instant>,
+) -> Option<Instant> {
+    earliest(wake.map(|d| now + d), [held_until])
+}
+
+/// The earlier of two optional times: the due time of the paint that waits soonest.
+pub(super) fn sooner(a: Option<Instant>, b: Instant) -> Option<Instant> {
+    Some(a.map_or(b, |a| a.min(b)))
+}
+
 /// The earliest of the loop's own wake time and the deadlines that must be met exactly (a quit
 /// time, a screenshot, a menu switch, the graphics back-off): a deadline earlier than the next
 /// housekeeping wake wins.
@@ -575,6 +653,219 @@ mod tests {
         assert!(presents_with_vsync(1));
         assert!(!presents_with_vsync(2));
         assert!(!presents_with_vsync(3));
+    }
+
+    const MS: Duration = Duration::from_millis(1);
+
+    fn gate(vsync: bool, since: Option<Duration>, reason: PaintReason) -> PaintGate {
+        paint_gate(vsync, since, FRAME, reason)
+    }
+
+    #[test]
+    fn a_window_that_was_never_painted_is_painted_at_once() {
+        for vsync in [false, true] {
+            for reason in PaintReason::ALL {
+                assert_eq!(gate(vsync, None, reason), PaintGate::Now, "{reason:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn only_input_live_and_update_paints_wait_for_the_frame_period() {
+        let just_painted = Some(Duration::ZERO);
+        for reason in PaintReason::ALL {
+            let waits = matches!(
+                reason,
+                PaintReason::Input | PaintReason::Live | PaintReason::Update
+            );
+            assert_eq!(paint_deferrable(reason), waits, "{reason:?}");
+            let want = if waits {
+                PaintGate::Wait(FRAME)
+            } else {
+                PaintGate::Now
+            };
+            assert_eq!(gate(false, just_painted, reason), want, "{reason:?}");
+        }
+    }
+
+    #[test]
+    fn a_window_that_presents_with_vsync_is_never_held_back() {
+        for reason in PaintReason::ALL {
+            for ago_us in [0, 1, 500, 8_000, 16_000] {
+                let since = Some(Duration::from_micros(ago_us));
+                assert_eq!(
+                    gate(true, since, reason),
+                    PaintGate::Now,
+                    "{reason:?} {ago_us}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_wait_is_exactly_the_rest_of_the_period() {
+        for ago in [0u64, 1, 4_000, 10_000, 14_000] {
+            let since = Duration::from_micros(ago);
+            assert_eq!(
+                gate(false, Some(since), PaintReason::Input),
+                PaintGate::Wait(FRAME - since),
+                "{ago}"
+            );
+        }
+        // At the period and after it: due.
+        assert_eq!(gate(false, Some(FRAME), PaintReason::Input), PaintGate::Now);
+        assert_eq!(
+            gate(false, Some(FRAME + MS), PaintReason::Input),
+            PaintGate::Now
+        );
+    }
+
+    #[test]
+    fn a_tick_that_comes_a_hair_early_still_paints_but_input_is_held_to_the_period() {
+        let tol = frame_tolerance(FRAME);
+        assert!(tol >= MS && tol < FRAME / 4, "{tol:?}");
+        for reason in [PaintReason::Live, PaintReason::Update] {
+            // Steady ticks at the period, and early by 1 ms, by the whole tolerance.
+            for early in [Duration::ZERO, MS, tol] {
+                assert_eq!(gate(false, Some(FRAME - early), reason), PaintGate::Now);
+            }
+            // Earlier than the tolerance waits for the rest.
+            let since = FRAME - tol - MS;
+            assert_eq!(gate(false, Some(since), reason), PaintGate::Wait(tol + MS));
+        }
+        // Input has no tolerance: a millisecond early waits that millisecond.
+        assert_eq!(
+            gate(false, Some(FRAME - MS), PaintReason::Input),
+            PaintGate::Wait(MS)
+        );
+    }
+
+    /// The loop on the pure functions, one step per millisecond: `wanted(i)` says whether an
+    /// event marks the window at step `i`. Returns the steps of the paints. A paint that waits is
+    /// made at the due time (the wake deadline), as the loop does.
+    fn run_loop(
+        vsync: bool,
+        reason: PaintReason,
+        steps: u64,
+        mut wanted: impl FnMut(u64) -> bool,
+    ) -> Vec<u64> {
+        let mut paints: Vec<u64> = Vec::new();
+        let mut dirty = false;
+        let mut due: Option<u64> = None;
+        for t in 0..steps {
+            let event = wanted(t);
+            dirty |= event;
+            let woke = due.is_some_and(|d| t >= d);
+            if !dirty || !(event || woke) {
+                continue;
+            }
+            let since = paints.last().map(|p| MS * u32::try_from(t - p).unwrap());
+            match gate(vsync, since, reason) {
+                PaintGate::Now => {
+                    paints.push(t);
+                    dirty = false;
+                    due = None;
+                }
+                PaintGate::Wait(w) => {
+                    let at = t + (w.as_secs_f64() * 1000.0).ceil() as u64;
+                    due = Some(due.map_or(at, |d| d.min(at)));
+                }
+            }
+        }
+        paints
+    }
+
+    #[test]
+    fn a_pointer_sweep_paints_once_per_period_and_the_last_state_is_painted() {
+        // An event every millisecond for a second, then quiet for a few periods.
+        let paints = run_loop(false, PaintReason::Input, 1100, |i| i < 1000);
+        let in_sweep = paints.iter().filter(|p| **p < 1000).count();
+        assert!(
+            in_sweep as u128 <= Duration::from_secs(1).as_micros() / FRAME.as_micros() + 1,
+            "{in_sweep} paints in the sweep"
+        );
+        assert!(
+            in_sweep >= 55,
+            "{in_sweep}: the cap must not starve the sweep"
+        );
+        // The last event (step 999) is painted within one period, with no further event.
+        let last = paints.last().copied().unwrap();
+        assert!((999..=999 + 17).contains(&last), "{last}");
+        // Two paints are never closer than the period.
+        for w in paints.windows(2) {
+            assert!(w[1] - w[0] >= 17, "{w:?}");
+        }
+    }
+
+    #[test]
+    fn the_same_sweep_on_a_window_with_vsync_paints_on_every_event() {
+        let paints = run_loop(true, PaintReason::Input, 1100, |i| i < 1000);
+        assert_eq!(paints.len(), 1000);
+    }
+
+    #[test]
+    fn steady_ticks_paint_on_every_tick_with_and_without_jitter() {
+        let tol = frame_tolerance(FRAME);
+        for jitter in [Duration::ZERO, MS, tol] {
+            let mut last: Option<Duration> = None;
+            let mut painted = 0;
+            for tick in 0..120u32 {
+                // Every second tick comes early by the jitter.
+                let early = if tick % 2 == 1 {
+                    jitter
+                } else {
+                    Duration::ZERO
+                };
+                let t = FRAME * tick - early;
+                let since = last.map(|l| t - l);
+                if gate(false, since, PaintReason::Live) == PaintGate::Now {
+                    painted += 1;
+                    last = Some(t);
+                }
+            }
+            assert_eq!(painted, 120, "jitter {jitter:?}");
+        }
+    }
+
+    #[test]
+    fn one_window_keeps_its_deadlines_and_a_waiting_window_adds_one() {
+        #[allow(clippy::disallowed_methods)]
+        // Justification: a test of the arithmetic on instants; nothing depends on the time.
+        let now = Instant::now();
+        // Nothing waits: the deadline is the loop's own, for every combination of wakers.
+        for bits in 0..16u32 {
+            for since in [None, Some(Duration::ZERO), Some(Duration::from_secs(5))] {
+                let w = Wakers {
+                    animating: bits & 1 != 0,
+                    stream: bits & 2 != 0,
+                    plugins: bits & 4 != 0,
+                    minimized: bits & 8 != 0,
+                    since_paint: since,
+                };
+                assert_eq!(
+                    loop_deadline(now, wake_after(w, FRAME), None),
+                    wake_after(w, FRAME).map(|d| now + d),
+                    "{w:?}"
+                );
+            }
+        }
+        // A waiting window wakes the loop when nothing else would.
+        let due = now + Duration::from_millis(9);
+        assert_eq!(loop_deadline(now, None, Some(due)), Some(due));
+        // An earlier wake of the loop wins, a later one does not.
+        assert_eq!(
+            loop_deadline(now, Some(Duration::from_millis(3)), Some(due)),
+            Some(now + Duration::from_millis(3))
+        );
+        assert_eq!(
+            loop_deadline(now, Some(IDLE_STREAM_WAKE), Some(due)),
+            Some(due)
+        );
+        // The soonest of several waiting windows is kept.
+        let first = sooner(None, now + Duration::from_millis(12));
+        let both = sooner(first, due);
+        assert_eq!(both, Some(due));
+        assert_eq!(sooner(both, now + Duration::from_millis(15)), Some(due));
     }
 
     #[test]

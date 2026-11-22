@@ -1002,6 +1002,16 @@ is laid out, and the restore lays out and paints once. Live MIDI wakes the loop 
 proxy (`ControlHub::set_waker`), so a mapped control does not wait for the next slow wake. Exact deadlines (a
 quit time, a screenshot, a submenu switch, the graphics back-off) always win over the slow wake. The headless
 shell, the QA server and the tests drive the shell directly and never see these rates.
+A window that presents without waiting for the vertical blank (two or more windows are open) is painted at most
+once per frame period (`App::frame`, from `FRAME`; `window_logic::paint_gate`), measured from the start of that
+window's last paint (`AppWindow::last_painted`, apart from the app-wide `last_paint` of the paint tail). Input, live
+and update paints wait for the rest of the period; a resize or scale change, a focus change or uncover, a frame that
+was painted but not shown, the first paint of a window, a redraw the system asks for while nothing is marked, and the
+screenshot paths are painted at once. A held-back paint leaves the shell's marks alone, so the window is found again
+by the next tick, and the loop wakes when its period is over (`window_logic::loop_deadline`, `App::held_until`) even
+when no stream or plugin would wake it; a paint that came from a timer may be early by an eighth of the period
+(`frame_tolerance`), input may not. A lone window (vsync) is never held back. `ui activity` counts what was held
+back per window as `deferred`.
 `ui-state.json` is written atomically and at most every two seconds (`Shell::flush_ui_state`, and on
 shutdown, detaching and attaching a pane); `keymap.json` is looked at when a window gets the focus
 and when a menu opens.
@@ -7012,8 +7022,9 @@ winit and GPU code is not (it needs a window and a GPU).
   (`Shell::repaint_window`). With more than one window open the surfaces present without waiting for
   the vertical blank (`window_logic::presents_with_vsync`): the windows are painted one after the
   other on one thread, so a wait for one monitor's blank would stall the others, and monitors with
-  different refresh rates would drag each other down; the 60 Hz tick sets the pace. A lone window
-  keeps vsync.
+  different refresh rates would drag each other down; the 60 Hz tick sets the pace, and a window is
+  painted at most once per frame period (`window_logic::paint_gate`), so a burst of input events cannot
+  build more frames than the tick would. A lone window keeps vsync and is not capped.
 - **Invariants.** Every song has a main window, and it is the owner of the editors of that song's sandboxed
   plugins (`set_plugin_editor_owner`), whichever pane is detached; plugin editor windows are
   separate top-level windows (kept per song) and are not touched by any of this. Nothing here reaches the engine,

@@ -416,6 +416,8 @@ pub fn run(cli: Cli) -> Result<(), String> {
         frame_watch: crate::ui_stall::FrameWatch::default(),
         activity: crate::ui_activity::Activity::new(),
         last_paint: None,
+        frame: FRAME,
+        held_until: None,
         held_buttons: window_logic::HeldButtons::default(),
         poll_paint: false,
         event_cause: None,
@@ -501,6 +503,9 @@ struct AppWindow {
     title: String,
     /// The application zoom the window was last told (it is told again when it changes).
     zoom: f64,
+    /// When a paint of this window last started (`None` before the first). The frame cap reads
+    /// it; it is not the app-wide [`App::last_paint`], which only drives the paint tail.
+    last_painted: Option<Instant>,
 }
 
 struct App {
@@ -539,6 +544,12 @@ struct App {
     /// When a window was last painted: the loop stays at the full frame rate for a while after
     /// it (see [`window_logic::PAINT_TAIL`]).
     last_paint: Option<Instant>,
+    /// The shortest time between two paints of a window that presents without waiting for the
+    /// vertical blank (see [`window_logic::paint_gate`]): [`FRAME`] now, one place to change.
+    frame: Duration,
+    /// When the earliest paint that the frame cap held back in this tick is due; the loop wakes
+    /// then even when nothing else would.
+    held_until: Option<Instant>,
     /// The pointer buttons held down now: a drag or a hold needs frames even when the pointer
     /// does not move.
     held_buttons: window_logic::HeldButtons,
@@ -904,6 +915,7 @@ impl App {
                 cursor: (CursorHint::Default, 0),
                 title: self.shell.title_in(kind),
                 zoom,
+                last_painted: None,
             },
         );
         self.report_geom(key);
@@ -1215,6 +1227,28 @@ impl App {
         }
     }
 
+    /// Whether the window `key` is painted now for `reason` or waits (see
+    /// [`window_logic::paint_gate`]). A redraw the system asks for while nothing is marked is an
+    /// exposure and is never held back.
+    fn frame_gate(&self, key: Key, reason: PaintReason, now: Instant) -> window_logic::PaintGate {
+        let marked = self
+            .shell
+            .song(key.0)
+            .is_some_and(|s| s.needs_repaint_in(key.1));
+        let Some(w) = self.windows.get(&key) else {
+            return window_logic::PaintGate::Now;
+        };
+        if !marked {
+            return window_logic::PaintGate::Now;
+        }
+        window_logic::paint_gate(
+            window_logic::presents_with_vsync(self.windows.len()),
+            w.last_painted.map(|t| now.saturating_duration_since(t)),
+            self.frame,
+            reason,
+        )
+    }
+
     fn redraw(&mut self, key: Key, reason: PaintReason) {
         let kind = key.1;
         self.service_graphics();
@@ -1229,6 +1263,17 @@ impl App {
             return; // minimized
         }
         self.advance_activity();
+        let now = clock::now();
+        if let window_logic::PaintGate::Wait(wait) = self.frame_gate(key, reason, now) {
+            // Held back: nothing is painted and the shell's marks stay, so the window is asked
+            // for again; the loop wakes when the period is over.
+            self.activity.deferred(kind);
+            self.held_until = window_logic::sooner(self.held_until, now + wait);
+            return;
+        }
+        if let Some(w) = self.windows.get_mut(&key) {
+            w.last_painted = Some(now);
+        }
         self.activity.paint(kind, reason);
         if window_logic::paint_extends_tail(reason, self.poll_paint) {
             self.last_paint = Some(clock::now());
@@ -1512,8 +1557,15 @@ impl App {
                 self.redraw((id, kind), reason);
             }
         }
-        // The cause of this tick's paints is spent; a frame that was not shown keeps its own.
-        self.event_cause = self.retry_cause.take();
+        // The cause of this tick's paints is spent; a frame that was not shown keeps its own, and
+        // so does a paint that was held back (it is counted by what asked for it).
+        let held = self.held_until.is_some();
+        let retry = self.retry_cause.take();
+        self.event_cause = if held {
+            retry.or(self.event_cause)
+        } else {
+            retry
+        };
         self.poll_paint = false;
     }
 
@@ -2788,6 +2840,9 @@ impl App {
         // would let the one the OS serves first (the focused one, on Windows) take all the
         // time and starve the others while it animates.
         let minimized = self.all_minimized();
+        // What the frame cap holds back is found again below (a window it did not paint stays
+        // marked), so the deadline starts empty.
+        self.held_until = None;
         if window_logic::paints_on_wake(minimized) {
             self.paint_due_windows();
         }
@@ -2810,7 +2865,11 @@ impl App {
             minimized,
             since_paint: self.last_paint.map(|t| now.saturating_duration_since(t)),
         };
-        let deadline = window_logic::wake_after(wakers, FRAME).map(|d| now + d);
+        let deadline = window_logic::loop_deadline(
+            now,
+            window_logic::wake_after(wakers, self.frame),
+            self.held_until,
+        );
         // A submenu switch waits for its deadline: wake exactly then.
         let menu_wake = songs
             .iter()
