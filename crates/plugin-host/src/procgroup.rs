@@ -6,7 +6,12 @@
 //!   object (Windows) or lowers its niceness (Unix). A helper process a plugin starts while it
 //!   loads inherits the group and the priority.
 //! * [`ScanGroup::kill`], also run when the group is dropped, ends every process of the group: a
-//!   scan that timed out, crashed, was cancelled or even finished leaves nothing behind.
+//!   scan that timed out, crashed, was cancelled or even finished leaves nothing behind. A group
+//!   is signalled at most once, and on Unix only while its leader is not yet reaped: a process
+//!   group id is held only while the group has a member or its leader is a zombie, so a signal
+//!   after the reap could reach an unrelated process that was given the number. Callers order it
+//!   as [`leader_exited`] (looks, does not reap), [`ScanGroup::kill`], then `Child::wait`. On
+//!   Windows the job handle cannot be recycled under us, so `try_wait` and the handle are enough.
 //! * [`suppress_error_dialogs`] runs at the top of the scanner process: a crash is then a crash
 //!   at once, not a system dialog that waits for the user until the timeout.
 //!
@@ -18,6 +23,7 @@
 #![deny(clippy::undocumented_unsafe_blocks)]
 
 use std::process::{Child, Command};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// CREATE_NO_WINDOW: no console flashes up for every scanned file.
 #[cfg(windows)]
@@ -67,7 +73,9 @@ pub struct ScanGroup {
     #[cfg(windows)]
     job: Option<usize>,
     #[cfg(unix)]
-    pgid: Option<libc::pid_t>,
+    pgid: libc::pid_t,
+    /// True until the group has been signalled (or when there is no group to signal).
+    armed: AtomicBool,
 }
 
 impl ScanGroup {
@@ -77,45 +85,82 @@ impl ScanGroup {
     pub fn attach(child: &Child) -> Self {
         #[cfg(windows)]
         {
+            let job = os::new_job_with(child);
             Self {
-                job: os::new_job_with(child),
+                armed: AtomicBool::new(job.is_some()),
+                job,
             }
         }
         #[cfg(unix)]
         {
-            let pgid = libc::pid_t::try_from(child.id()).ok();
-            if let Some(pid) = pgid {
-                os::lower_priority(pid);
+            let pgid = libc::pid_t::try_from(child.id()).unwrap_or(0);
+            if pgid > 0 {
+                os::lower_priority(pgid);
             }
-            Self { pgid }
+            Self {
+                armed: AtomicBool::new(pgid > 1),
+                pgid,
+            }
         }
         #[cfg(not(any(windows, unix)))]
         {
             let _ = child;
-            Self {}
+            Self {
+                armed: AtomicBool::new(false),
+            }
         }
     }
 
-    /// Ends every process of the group, the child and whatever it started. Safe to call twice.
+    /// Runs `send` the first time only; false (and nothing run) every time after.
+    fn signal_once(&self, send: impl FnOnce()) -> bool {
+        if self.armed.swap(false, Ordering::AcqRel) {
+            send();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Ends every process of the group, the child and whatever it started. Only the first call
+    /// signals; later calls and the drop do nothing (see the module docs for why).
     pub fn kill(&self) {
-        #[cfg(windows)]
-        if let Some(job) = self.job {
-            os::terminate_job(job);
-        }
-        #[cfg(unix)]
-        if let Some(pgid) = self.pgid {
-            os::kill_group(pgid);
-        }
+        self.signal_once(|| {
+            #[cfg(windows)]
+            if let Some(job) = self.job {
+                os::terminate_job(job);
+            }
+            #[cfg(unix)]
+            os::kill_group(self.pgid);
+        });
     }
 }
 
 impl Drop for ScanGroup {
     fn drop(&mut self) {
+        // A group dropped without a kill still has its leader unreaped (the caller waits for the
+        // child only after the group is gone), so this signal is safe.
         self.kill();
         #[cfg(windows)]
         if let Some(job) = self.job.take() {
             os::close_job(job);
         }
+    }
+}
+
+/// Whether the child has ended, without reaping it on Unix (the zombie keeps the group id
+/// reserved until the caller has signalled the group and calls `Child::wait`). Windows reads
+/// the exit with `try_wait`: its job handle cannot be recycled.
+///
+/// # Errors
+/// The system call failed.
+pub fn leader_exited(child: &mut Child) -> std::io::Result<bool> {
+    #[cfg(unix)]
+    {
+        os::peek_exited(child.id())
+    }
+    #[cfg(not(unix))]
+    {
+        child.try_wait().map(|s| s.is_some())
     }
 }
 
@@ -199,6 +244,36 @@ mod os {
 
 #[cfg(unix)]
 mod os {
+    pub fn peek_exited(pid: u32) -> std::io::Result<bool> {
+        let Ok(id) = libc::id_t::try_from(pid) else {
+            return Ok(false);
+        };
+        // SAFETY: an all-zero `siginfo_t` is a valid value for `waitid` to fill in.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        // SAFETY: `waitid` with WNOWAIT and WNOHANG only looks at our own child `id`, which the
+        // caller has not reaped, and writes into `info`; it leaves the zombie in place.
+        let r = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                id,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if r != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // SAFETY: `info` was zeroed and then filled in by a successful `waitid`.
+            Ok(unsafe { info.si_pid() } != 0)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            Ok(info.si_pid != 0)
+        }
+    }
+
     pub fn lower_priority(pid: libc::pid_t) {
         let Ok(who) = libc::id_t::try_from(pid) else {
             return;
@@ -238,5 +313,59 @@ mod tests {
         assert_eq!(scan_creation_flags(), 0);
         // Niceness is positive: lower priority than the app.
         const { assert!(SCAN_NICE > 0) };
+    }
+}
+
+#[cfg(test)]
+mod once_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    /// A group that signals nothing real (no process, no job) but can be armed.
+    fn armed_group() -> ScanGroup {
+        ScanGroup {
+            #[cfg(windows)]
+            job: None,
+            #[cfg(unix)]
+            pgid: 0,
+            armed: AtomicBool::new(true),
+        }
+    }
+
+    #[test]
+    fn a_group_is_signalled_once_and_never_again_by_a_second_kill_or_the_drop() {
+        let sent = AtomicUsize::new(0);
+        let group = armed_group();
+        assert!(group.signal_once(|| {
+            sent.fetch_add(1, Ordering::SeqCst);
+        }));
+        for _ in 0..3 {
+            assert!(!group.signal_once(|| {
+                sent.fetch_add(1, Ordering::SeqCst);
+            }));
+        }
+        group.kill();
+        assert_eq!(sent.load(Ordering::SeqCst), 1);
+        // The explicit kill took the id: the drop has nothing left to signal.
+        assert!(!group.armed.load(Ordering::SeqCst));
+        drop(group);
+    }
+
+    #[test]
+    fn a_group_that_was_never_killed_is_still_armed_for_its_drop() {
+        let group = armed_group();
+        assert!(group.armed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_group_with_no_process_signals_nothing() {
+        let group = ScanGroup {
+            #[cfg(windows)]
+            job: None,
+            #[cfg(unix)]
+            pgid: 0,
+            armed: AtomicBool::new(false),
+        };
+        assert!(!group.signal_once(|| panic!("nothing to signal")));
     }
 }

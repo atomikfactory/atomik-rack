@@ -253,28 +253,36 @@ impl ChildScanner {
         self.spawned.fetch_add(1, Ordering::SeqCst);
         // From here on, however this function ends, nothing the child started outlives it.
         let group = ScanGroup::attach(&child);
-        let out_rx = child
-            .stdout
-            .take()
-            .map(|s| reader(s, MAX_SCAN_OUTPUT))
-            .ok_or_else(|| failure(FailureKind::Spawn, "no stdout pipe"))?;
-        let err_rx = child
-            .stderr
-            .take()
-            .map(|s| reader(s, STDERR_REASON_BYTES))
-            .ok_or_else(|| failure(FailureKind::Spawn, "no stderr pipe"))?;
+        // Every end of this function signals the group first and reaps the child after: on Unix
+        // the group id is safe to signal only while the leader is not reaped (see `procgroup`).
         let end_run = |child: &mut Child| {
             group.kill();
             let _ = child.kill();
             let _ = child.wait();
         };
+        let (Some(out), Some(err)) = (child.stdout.take(), child.stderr.take()) else {
+            end_run(&mut child);
+            return Err(failure(FailureKind::Spawn, "no output pipe"));
+        };
+        let out_rx = reader(out, MAX_SCAN_OUTPUT);
+        let err_rx = reader(err, STDERR_REASON_BYTES);
         let mut window_start = Instant::now();
         let mut lines_seen = 0usize;
         let end = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    // The helpers a plugin started die with the scanner, so that the pipes close.
+            match procgroup::leader_exited(&mut child) {
+                Ok(true) => {
+                    // The helpers a plugin started die with the scanner, so that the pipes close:
+                    // signal the group while the leader is still unreaped, then reap it.
                     group.kill();
+                    let status = match child.wait() {
+                        Ok(status) => status,
+                        Err(e) => {
+                            return Err(failure(
+                                FailureKind::Spawn,
+                                format!("waiting failed: {e}"),
+                            ));
+                        }
+                    };
                     if status.success() {
                         break End::Clean;
                     }
@@ -286,7 +294,7 @@ impl ChildScanner {
                     }
                     break End::Crash(reason);
                 }
-                Ok(None) => {
+                Ok(false) => {
                     if cancel.load(Ordering::Relaxed) {
                         end_run(&mut child);
                         return Err(failure(FailureKind::Cancelled, "cancelled"));

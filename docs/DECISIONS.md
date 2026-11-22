@@ -1696,6 +1696,10 @@ end the attempt, because a file in which everything fails is the file's fault. E
 group that ends with it (a job object that kills on close on Windows, a process group elsewhere), so a timeout, a crash, a
 cancel and a finished scan all leave no helper process; the scanner runs below normal priority and with the system error
 dialogs off, so a crash is a crash at once. A machine with four logical CPUs or fewer runs one scanner at a time.
+A group is signalled at most once, and on Unix only before its leader is reaped: a process group id is held only while the
+group has a member or its leader is a zombie, so a later signal could kill an unrelated process that was given the number.
+Every path therefore looks at the leader without reaping it (`waitid` with `WNOWAIT`), signals the group, then waits for the
+child; a group dropped unsignalled is signalled in its drop, still before the child is waited for.
 
 **Why.** A shell file with a hundred classes was judged by one limit for all of them and blacklisted whole when one was
 slow, losing the ninety-nine that were fine. A limit per class is what a user sets the number for: how long one plugin may
