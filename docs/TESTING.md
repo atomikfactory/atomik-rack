@@ -1582,19 +1582,25 @@ Hand checks, on every OS:
 
 `crates/plugin-host/tests/device_sleep.rs` runs the sleep rule against a ringing effect and against the same
 processor called in every block, and the outputs are equal bit for bit: what a resting plugin would have made is
-what it makes. It covers a tail of two seconds, one that reports none but rings for a second (not cut), a tail
-without end, a plugin whose output never goes quiet (never rests), the CLAP statuses (tail, continue if not
-quiet, continue, sleep) and the wakes (input, param, request of the plugin, play state). The bypass tests count
-the calls of the plugin (none after the fade), compare the dry output with the input delayed by the latency, and
-check the pre-roll and the fade against a reference without a step; a low-pass filter shows that live the plugin
-starts clean after the bypass and that a bounce (offline) renders what processing all along renders.
-`crates/plugin-vst3/tests/effect_sleep.rs` does the sleep part with the real test plugins of both formats, and
-`crates/plugin-hostd/tests/e2e_sleep.rs` renders the same script in the plugin's own process and in this one and
-compares every output block and state meter.
+what it makes. It covers a tail of two seconds, one that reports none but rings for a second (not cut), a VST3
+plugin with a tail without end that is silent for two seconds and then sounds on its own (never skipped, nothing
+lost), a CLAP plugin that rests on "continue if not quiet" whatever its tail says, a plugin whose output never
+goes quiet (never rests), the other CLAP statuses and the wakes (input, param, request of the plugin, play state).
+`device_bypass.rs` covers the bypass: toggling inside the park time is bit for bit what always calling gives and
+never clears the plugin, a bypass of ten seconds parks it (call count, dry signal and latency unchanged), the
+return is cleared, pre-rolled and faded without a step, a value set while parked reaches the plugin in one silent
+call (and automation costs one call in 38 blocks), and an effect bypassed from the first block to the last renders
+its dry signal. `crates/plugin-vst3/tests/effect_sleep.rs` does the sleep part with the real test plugins of both
+formats and `parked_params.rs` proves that a value set while parked or powered off is in the saved state.
+`crates/plugin-hostd/tests/e2e_sleep.rs` renders one script (sleep, wake, a short and a long bypass) in the
+plugin's own process and in this one and compares every output block and state meter, and checks the saved state
+of a parked effect in both.
 
 Hand checks, not automated (they need real plugins and your ears): put a reverb and a delay on a track, play a
 note or a hit and stop; the tail is never cut, and the CPU readout of the device falls to zero once it has died
-away. Bypass a heavy plugin: its CPU readout falls to zero, and switching the bypass off does not click.
+away. Bypass a heavy plugin and compare on and off a few seconds apart: no click, the sound comes back as it was.
+Leave it bypassed for ten seconds: its CPU readout falls to zero; switch it off, with no click. Turn a knob while
+it is bypassed, save, reopen: the value is there. A delay with a long delay time stays alive between hits.
 
 ## Hardware and manual tests
 

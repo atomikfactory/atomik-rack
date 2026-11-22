@@ -30,8 +30,8 @@ fn input(n: usize, again: usize) -> f32 {
 }
 
 /// What the DSP makes of the same input run in every block.
-fn expected(ring: u32, blocks: usize, again: usize) -> Vec<f32> {
-    let mut fx = core::RingFx::new(ring);
+fn expected(ring: u32, delay: u32, blocks: usize, again: usize) -> Vec<f32> {
+    let mut fx = core::RingFx::delayed(ring, delay);
     let mut out = Vec::new();
     for n in 0..blocks {
         let x = [[input(n, again); BATCH]; 2];
@@ -93,7 +93,7 @@ fn an_effect_with_a_two_second_tail_is_called_through_it_then_rests_and_wakes_on
         );
         assert_eq!(
             r.out,
-            expected(2 * SR as u32, blocks, again),
+            expected(2 * SR as u32, 0, blocks, again),
             "{format:?}: what rests is what the plugin would have made"
         );
         assert_eq!(
@@ -127,7 +127,7 @@ fn an_effect_that_reports_no_tail_but_rings_for_a_second_is_not_cut() {
         );
         assert_eq!(
             r.out,
-            expected(SR as u32, blocks, again),
+            expected(SR as u32, 0, blocks, again),
             "{format:?}: the whole ring is heard"
         );
         assert_eq!(r.calls_at[0], asleep_from as u64, "{format:?}");
@@ -139,19 +139,35 @@ fn an_effect_that_reports_no_tail_but_rings_for_a_second_is_not_cut() {
 }
 
 #[test]
-fn an_effect_with_an_infinite_tail_rests_on_the_silence_of_its_output() {
+fn an_effect_with_an_infinite_tail_is_never_skipped_in_vst3_and_rests_by_its_own_word_in_clap() {
+    // Silent for two seconds after its input, then it rings for one: nothing may be lost.
     for format in FORMATS {
-        let (blocks, again) = (3_000, 2_500);
-        let asleep_from = 3 + SECOND - 1 + SECOND;
+        let (blocks, again) = (4_600, 4_500);
         let r = run(
             format,
             Variant::Endless,
             blocks,
             again,
-            &[asleep_from - 1, again - 1],
+            &[3_500, again - 1, blocks - 1],
         );
-        assert_eq!(r.out, expected(SR as u32, blocks, again), "{format:?}");
-        assert_eq!(r.calls_at[0], asleep_from as u64, "{format:?}");
-        assert_eq!(r.calls_at[1], r.calls_at[0], "{format:?}");
+        assert_eq!(
+            r.out,
+            expected(SR as u32, 2 * SR as u32, blocks, again),
+            "{format:?}: the late ring is heard"
+        );
+        match format {
+            Format::Vst3 => {
+                assert_eq!(r.calls_at[0], 3_501, "{format:?}: called in every block");
+                assert_eq!(r.calls_at[1], again as u64, "{format:?}");
+                assert_eq!(r.state_at[0], 0.0, "{format:?}: never SLEEPING");
+            }
+            Format::Clap => {
+                // Tail while it has something left to sound (the ring ends in block 2251),
+                // then continue if not quiet: it rests after the idle second.
+                assert_eq!(r.calls_at[0], 3_002, "{format:?}");
+                assert_eq!(r.calls_at[1], 3_002, "{format:?}");
+                assert_eq!(r.state_at[0], 1.0, "{format:?}: SLEEPING");
+            }
+        }
     }
 }

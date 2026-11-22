@@ -25,6 +25,8 @@ const IDLE: usize = 750;
 struct Behaviour {
     rule: SleepRule,
     tail: TailLength,
+    /// Frames it is silent after its last non-silent input before it rings.
+    delay: u32,
     /// Frames it keeps ringing after its last non-silent input.
     ring: u32,
     ringing: ProcessStatus,
@@ -72,10 +74,14 @@ impl PluginProcessor for Ringer {
             .iter()
             .any(|b| b.iter().any(|s| s.to_bits() & 0x7FFF_FFFF != 0))
         {
-            self.left = self.b.ring;
+            self.left = self.b.delay + self.b.ring;
         }
         let ringing = self.left > 0;
-        let add = if ringing { 0.25 } else { 0.0 };
+        let add = if ringing && self.left <= self.b.ring {
+            0.25
+        } else {
+            0.0
+        };
         for (ch, out) in io.main_out.iter_mut().enumerate() {
             for (o, x) in out.iter_mut().zip(&io.main_in[ch]) {
                 *o = x + add;
@@ -104,6 +110,7 @@ fn zero_tail(tail: TailLength, ring: u32) -> Behaviour {
         rule: SleepRule::ZeroTail,
         tail,
         ring,
+        delay: 0,
         ringing: ProcessStatus::Continue,
         quiet: ProcessStatus::Continue,
     }
@@ -119,6 +126,7 @@ fn status_rule(
         rule: SleepRule::PluginDecides,
         tail,
         ring,
+        delay: 0,
         ringing,
         quiet,
     }
@@ -204,8 +212,32 @@ fn an_effect_that_reports_no_tail_but_rings_for_a_second_is_not_cut() {
 }
 
 #[test]
-fn an_infinite_tail_sleeps_on_the_silence_of_the_output_alone() {
-    let b = zero_tail(TailLength::Infinite, 48_000);
+fn a_vst3_style_plugin_with_an_infinite_tail_is_never_skipped_so_a_late_echo_is_not_lost() {
+    // Silent for two seconds after its input, then it sounds on its own: the declaration of an
+    // infinite tail is the plugin saying it may. The idle second passes in the silence.
+    let mut b = zero_tail(TailLength::Infinite, 48_000);
+    b.delay = 2 * 48_000;
+    let blocks = 4_000;
+    let (out, calls) = render(b, blocks, burst);
+    assert_eq!(out, reference(b, blocks, burst), "nothing is lost");
+    assert_eq!(calls, blocks, "called in every block");
+    let echo = out[3 * BATCH..].iter().filter(|s| **s != 0.0).count();
+    assert_eq!(echo, 48_000, "the echo is heard in full");
+    // Silent for the idle second before the echo: the output rule alone would have rested it.
+    let quiet = out[(3 + IDLE) * BATCH..1_500 * BATCH]
+        .iter()
+        .all(|s| *s == 0.0);
+    assert!(quiet);
+}
+
+#[test]
+fn a_clap_plugin_that_answers_continue_if_not_quiet_rests_whatever_its_tail_extension_says() {
+    let b = status_rule(
+        TailLength::Infinite,
+        48_000,
+        ProcessStatus::Tail,
+        ProcessStatus::ContinueIfNotQuiet,
+    );
     let blocks = 2_400;
     let (out, calls) = render(b, blocks, burst);
     assert_eq!(out, reference(b, blocks, burst));

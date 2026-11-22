@@ -362,9 +362,11 @@ impl Dsp for Retitle {
     }
 }
 
-/// An effect that rings for `ring` frames after its input and reports `tail` as its tail
-/// (`u32::MAX`: no end). It answers "tail" while it rings and "continue if not quiet" after, as
-/// plugins from some frameworks do.
+/// An effect that rings after its input and reports `tail` as its tail
+/// (`u32::MAX`: no end). It answers "tail" while it has something left to sound and "continue if
+/// not quiet" after, as plugins from some frameworks do.
+/// The plugin with no end is silent for two seconds after its input and then rings for one: it
+/// sounds on its own, as a long feedback delay does.
 struct Ringing {
     fx: RingFx,
     tail: u32,
@@ -586,7 +588,7 @@ static PLUGINS: [PluginDef; 16] = [
         info: &ENDLESS_INFO,
         create: || {
             Box::new(Ringing {
-                fx: RingFx::new(48_000),
+                fx: RingFx::delayed(48_000, 2 * 48_000),
                 tail: u32::MAX,
             })
         },

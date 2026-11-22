@@ -188,14 +188,17 @@ may break APIs and the patch and project formats.
 - **Reverbs and delays stop using CPU once their tail has died away.** A plugin now rests when its input has been
   silent for the tail it reports and its own output has been silent for a second, in both plugin formats; any
   input, note, parameter change, request of the plugin or play/stop wakes it. A plugin that reports no tail but
-  keeps ringing is no longer cut at the first silent block, a tail without end rests once the output is silent,
-  and CLAP plugins that answer "continue if not quiet" rest too (one that answers "tail" or "continue" is still
-  called). A bounce is unchanged for plugins that make silence from silence.
-- **A bypassed plugin uses no CPU.** An effect whose bypass has faded to the dry signal is no longer run; its delay
-  compensation, the dry signal and the end of held notes are unchanged, and parameter changes made meanwhile reach
-  the plugin when the bypass is switched off. Switching it off clears the plugin and runs it for 20 ms (or its
-  latency, if longer) with the output still dry before the usual fade in, so it does not start from stale state or
-  click. A bounce still runs a bypassed plugin, so a bounce does not depend on when the bypass came.
+  keeps ringing is no longer cut at the first silent block, and a VST3 plugin that declares a tail without end is
+  never put to sleep (it may sound on its own after a silence, like a long feedback delay). CLAP plugins that answer
+  "continue if not quiet" rest too (one that answers "tail" or "continue" is still called). A bounce is unchanged for
+  plugins that make silence from silence.
+- **A bypassed plugin uses no CPU after a while.** An effect that has been bypassed for 10 seconds without a break is
+  no longer run; its delay compensation, the dry signal and the end of held notes are unchanged, and a value you set
+  meanwhile reaches the plugin (and so a saved project) within a twentieth of a second. Switching the bypass off
+  after that clears the plugin and runs it for 20 ms (or its latency, if longer) with the output still dry before
+  the usual fade in, so it does not start from stale state or click. Comparing with the bypass on and off a few
+  seconds apart is unchanged: the plugin keeps running meanwhile. A bounce parks the same way, so an export
+  equals what you hear; one whose effect is bypassed throughout, or never, is unchanged.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

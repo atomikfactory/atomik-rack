@@ -1604,65 +1604,80 @@ by wall time (the audio thread has no clock it may read for this).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
 
+
 ## BC. A plugin rests when its input was silent for its tail and its own output for a second
 
 **Decision.** One rule for every plugin format and kind, decided per 64-frame block from batch content and from what the
 plugin returned, never from a clock. A plugin is not called in a block when nothing wakes it (an event of any kind, a
 param change included; a request of the plugin; a non-silent main or sidechain input; a change of the play state) and
-all of this holds: its input has been silent, with no event, for at least the tail it reports (a tail without end waives
-this); its own output (main, aux, and the notes it emits) has been at or below -120 dB for the idle time of one second,
-counted in calls (`IDLE_SECONDS`, 750 blocks at 48 kHz); no note is open; and the format leaves the choice to the host
-(VST3), or the plugin last answered "continue if not quiet" (CLAP). A CLAP plugin that answers "sleep" rests until
-woken, with no other condition; one that answers "tail" or "continue" is called every block. A plugin that is new,
-restarted, reset or just un-bypassed is observed for the idle second before it can rest. A VST3 instrument that rests is
-also told to stop processing and is started before the block that wakes it, as before.
+all of this holds: its input has been silent, with no event, for at least the tail it reports; its own output (main,
+aux, and the notes it emits) has been at or below -120 dB for the idle time of one second, counted in calls
+(`IDLE_SECONDS`, 750 blocks at 48 kHz); no note is open; and either the format leaves the choice to the host and the
+tail is not infinite (VST3), or the plugin last answered "continue if not quiet" (CLAP; what its tail extension says
+does not matter then). A VST3 plugin that declares an infinite tail is never skipped by the host. A CLAP plugin that
+answers "sleep" rests until woken, with no other condition; one that answers "tail" or "continue" is called every block.
+A plugin that is new, restarted, reset or just un-parked is observed for the idle second before it can rest. A VST3
+instrument that rests is also told to stop processing and is started before the block that wakes it, as before.
 
 **Why.** The old rule skipped a VST3 plugin only for a tail of exactly zero, so a reverb that reports a tail ran for
 ever on silence, and a plugin that reports none while it rings (a common framework default) was cut at the first silent
 input block. The CLAP path rested only on "sleep", so plugins that answer the other quiet statuses never did. Requiring
 the output to have been silent for a second is what makes a skipped call inaudible: a skipped plugin makes silence,
-because it had been making silence. Everything it looks at is in the batches or in the plugin's answers, so a live run, a
-bounce and a plugin in its own process agree, and nothing on the audio path allocates, locks or reads a clock.
+because it had been making silence. An infinite tail is the plugin saying it may sound with no input at any time (a
+feedback delay set to three seconds is silent for three seconds and then echoes), and silence so far says nothing about
+when; before this rule such a plugin was always called, and it still is. A CLAP plugin says for
+itself, per block. Everything the rule looks at is in the batches or in the plugin's answers, so a live run, a bounce and a plugin in its own process agree, and
+nothing on the audio path allocates, locks or reads a clock.
 
 **Limits.** A plugin whose output never goes quiet (a constant offset, noise, a dither) never rests, which is the safe
 side. A plugin that makes sound from the transport alone after a second of silence, with no event, is not woken
-mid-play (a change of the play state wakes it), as already for instruments. Any event, a param event of automation
+mid-play (a change of the play state wakes it), as already for instruments; a VST3 plugin that declares a finite tail
+and then sounds on its own is cut, the declaration being its word. Any event, a param event of automation
 included, restarts the idle second, so a plugin under continuous automation is always called. After a wake the plugin's
 modulation phase and similar state are where the last call left them, not where silent calls would have taken them.
 In a plugin's own process the tail it reports reaches the host one block late, which only matters if a plugin changes
 its tail while it runs.
 
 **Rejected.** Resting on the reported tail alone (cuts plugins that under-report); a fixed idle time with no output test
-(cuts any ring longer than it); trusting "continue" and "tail" to mean the plugin may rest (they mean the opposite in the
-CLAP specification); a wall-clock idle time (a bounce would differ from playback).
+(cuts any ring longer than it); resting an infinite tail on output silence (loses a late echo); trusting "continue" and
+"tail" to mean the plugin may rest (they mean the opposite in the CLAP specification); a wall-clock idle time (a bounce
+would differ from playback).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
 
-## BD. A bypassed effect is not called once the fade is done, and comes back cleared and pre-rolled
+## BD. A bypassed effect is parked after ten seconds of bypass, and comes back cleared and pre-rolled
 
-**Decision.** Live, an effect (not an instrument or a note effect) whose bypass has crossfaded to the dry signal is
-treated like a powered-off device: no `process` call, the dry ring and its delay compensation keep running, the end of an
-open note is still delivered, new notes are held back, and param changes stay pending and are sent in the first block
-after the bypass is switched off. The state shows as STOPPED. When the bypass is switched off, the plugin is reset
-(`reset`), then called for the pre-roll with its output held at the dry signal, then faded in over the usual 5 ms. The
-pre-roll is `PREROLL_SECONDS` (20 ms: 15 blocks at 48 kHz) or the plugin's latency in frames if that is longer, so that a
-plugin with look-ahead has produced real output by the time its first wet frame is used. A bounce (a device activated in
-offline mode) never parks the plugin.
+**Decision.** An effect (not an instrument or a note effect) is called as ever while its bypass is on, so comparing with
+and without it (on, off, on, a few seconds apart) is seamless. When the bypass has been on without a break for
+`PARK_AFTER_SECONDS` (10 s, 7500 blocks at 48 kHz, counted from the end of the 5 ms crossfade to the dry signal) the effect
+is parked like a powered-off device: no `process` call, the dry ring and its delay compensation keep running, the end of
+an open note is still delivered, new notes are held back. Pending param changes go to the plugin in one call, with silent
+input and discarded output, at most every `PARK_FLUSH_SECONDS` (50 ms); the plugin is still parked afterwards and the call
+counts for nothing else. The same call serves a powered-off device. The state shows as STOPPED. When the bypass is
+switched off after a park the plugin is reset (`reset`), then called for the pre-roll with its output held at the dry
+signal, then faded in over the usual 5 ms. The pre-roll is `PREROLL_SECONDS` (20 ms: 15 blocks at 48 kHz) or the plugin's
+latency in frames if that is longer, so that a plugin with look-ahead has produced real output by the time its first wet
+frame is used. The rule is the same live and in a bounce: it counts blocks.
 
-**Why.** A user who bypasses a heavy plugin to save CPU saved nothing: the plugin was processed for ever after the
-fade. A parked plugin has not heard the input for as long as it was bypassed, so without a reset a reverb would bring
-back the tail it had when it was bypassed, and without a pre-roll its filters and followers would start from stale state
-under the fade. The reset costs nothing audible because the output is still dry; the pre-roll is short enough that the
-switch is heard well within a tenth of a second. Offline the render must not depend on when a bypass came and must stay
-what it always was, so nothing is parked there; a wall clock is not involved either way. The device learns its mode from
-the activation of the plugin (it was never told before).
+**Why.** A user who bypasses a heavy plugin to save CPU saved nothing: the plugin was processed for ever after the fade.
+But parking at once would clear the plugin on every return of a comparison (a compressor with no gain reduction, a reverb
+with no tail, 20 ms late), so the plugin keeps running until the bypass has clearly become a decision. A parked plugin has
+not heard the input for as long as it was bypassed, so without a reset a reverb would bring back the tail it had, and
+without a pre-roll its filters and followers would start from stale state under the fade. A value set meanwhile must be in
+the plugin when its state is saved; waiting for the next real block left it out of a project saved meanwhile, so it is
+sent at once, rate-limited so that automation on a parked plugin costs one call in 38 blocks and not one per block.
+A bounce and live playback must agree, so nothing depends on the run mode; a bounce whose effect is bypassed throughout,
+or never, is what it was (the dry signal, or no change); only a bypass switched off after more than ten seconds
+differs from the version before, and there it equals the live result.
 
-**Limits.** Live and offline differ after a bypass: live the plugin restarts from a cleared state, offline it ran all
-along (only for a plugin whose output depends on its own history). A plugin that dislikes `reset` gets one per
-un-bypass. Instruments and note effects keep what bypass meant for them (silence or no notes, still called).
+**Limits.** After a park the plugin restarts from a cleared state (only audible for a plugin whose output depends on its
+history). A plugin that dislikes `reset` gets one per return from a park. Instruments and note effects keep what bypass
+meant for them (silence or no notes, still called). A value set in the plugin's own window reaches the plugin directly and
+is not affected.
 
-**Rejected.** Pre-rolling for the plugin's whole tail (unbounded cost on the audio thread); no reset (stale tails);
-parking a bounce too (would change what existing projects render); running the pre-roll with the output faded in
-(a clicking, half-formed wet signal).
+**Rejected.** Parking as soon as the fade ends (every comparison clears the plugin); pre-rolling for the plugin's whole
+tail (unbounded cost on the audio thread); no reset (stale tails); parking live only (an export would differ from what was
+heard); keeping parameter changes pending until the next real block (missing from a project saved meanwhile); running the
+pre-roll with the output faded in (a clicking, half-formed wet signal).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.

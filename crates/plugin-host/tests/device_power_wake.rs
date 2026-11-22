@@ -111,26 +111,29 @@ fn all_off_reaches_a_powered_off_plugin_as_an_off_per_open_key_and_the_cc() {
 }
 
 #[test]
-fn a_powered_off_plugin_still_ignores_new_notes_and_keeps_its_params_pending() {
+fn a_powered_off_plugin_still_ignores_new_notes_and_gets_a_param_in_one_call() {
     let (mut h, r, shared) = stopped_synth(&[]);
     let calls = shared.calls();
     h.push_note("notes_in", on(72));
+    h.process();
+    assert_eq!(shared.calls(), calls, "no call for a new note");
+    // A param is carried by one call (so a saved state has it); the plugin stays stopped.
     h.set_param("p2", 0.25);
     h.process();
-    assert_eq!(shared.calls(), calls, "no call for a new note or a param");
+    assert_eq!(shared.calls(), calls + 1, "one call carries the param");
+    let seen = events_since(&shared, calls);
+    assert!(
+        matches!(seen.as_slice(), [K::Param { id: 2, value }] if (*value - 0.25).abs() < 1e-6),
+        "{seen:?}"
+    );
     // An Off of a key that was never open is not worth a call either.
     h.push_note("notes_in", off(40));
     h.process();
-    assert_eq!(shared.calls(), calls);
-    // Power on: the param arrives, the held-back note does not.
+    assert_eq!(shared.calls(), calls + 1);
+    // Power on: the held-back note does not arrive.
     r.manager.slot().set_powered(true);
     h.process();
     let seen = events_since(&shared, calls);
-    assert!(
-        seen.iter()
-            .any(|k| matches!(k, K::Param { id: 2, value } if (*value - 0.25).abs() < 1e-6)),
-        "{seen:?}"
-    );
     assert!(
         !seen.iter().any(|k| matches!(k, K::NoteOn { .. })),
         "{seen:?}"
