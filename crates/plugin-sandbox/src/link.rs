@@ -1865,29 +1865,34 @@ impl Link {
     }
 }
 
+/// How long a drop gives a helper thread that has just been told the end to be done.
+const THREAD_GRACE: Duration = Duration::from_millis(100);
+
+/// Joins `handle` when its thread is done, or is done within [`THREAD_GRACE`]; a thread that is
+/// still running (the reader blocked on a pipe that a helper process holds open) is left alone.
+fn join_if_done(handle: Option<JoinHandle<()>>) {
+    let Some(h) = handle else { return };
+    let start = now();
+    while !h.is_finished() && now().saturating_duration_since(start) < THREAD_GRACE {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    if h.is_finished() {
+        let _ = h.join();
+    }
+}
+
 impl Drop for Link {
     /// Asks the child to end (unless that was done already), gives it what is left of a
-    /// second, then kills it; leaves no thread behind that can end.
+    /// second, then kills it; joins the helper threads that have ended and never waits for one
+    /// that has not. The process is gone by then, and the watcher has reported it, but a helper
+    /// process it started can hold the pipes open for as long as it lives (the app does not end
+    /// a plugin's helper itself): the reader thread then stays blocked in its read, with the
+    /// pipe handles, and ends by itself when the helper ends. Nothing else waits for it.
     fn drop(&mut self) {
         self.wait_for_end();
-        // Only a finished thread is joined: a stuck one (a grandchild holding the pipe) must
-        // not stall the caller.
-        let finished = lock(&self.shared.mailbox).reason.is_some();
-        if finished {
-            if let Some(h) = self.reader.take() {
-                let _ = h.join();
-            }
-            if let Some(h) = self.writer.take() {
-                let _ = h.join();
-            }
-        }
-        // The process has ended by now (it was asked, then killed), so its watcher is done; one
-        // that is not is not waited for.
-        if let Some(h) = self.watcher.take()
-            && h.is_finished()
-        {
-            let _ = h.join();
-        }
+        join_if_done(self.reader.take());
+        join_if_done(self.writer.take());
+        join_if_done(self.watcher.take());
     }
 }
 

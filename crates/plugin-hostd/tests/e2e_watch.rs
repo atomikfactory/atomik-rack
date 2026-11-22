@@ -166,9 +166,29 @@ fn a_plugin_process_killed_while_a_helper_holds_its_pipes_is_noticed_dead_once()
     );
     assert_no_more_crashes(&mut sb);
 
-    end_helper(helper);
-    assert_no_more_crashes(&mut sb);
+    // What the app does next: it drops the dead instance and reloads the plugin, while the first
+    // helper is still alive and holds the old pipes. Neither may wait for the helper.
+    let t = Instant::now();
     drop(handle);
+    sb.manager.poll();
+    assert!(
+        t.elapsed() < Duration::from_secs(20),
+        "the drop waited for the helper"
+    );
+    assert!(process_alive(helper), "the helper is still alive");
+    let _ = std::fs::remove_file(&pid_file);
+    let again = sb
+        .manager
+        .instantiate(&request(&plugin, RunMode::Realtime))
+        .expect("the reload completes while the first helper lives");
+    let second = wait_for_pid(&pid_file);
+    assert_ne!(second, helper);
+    assert!(process_alive(helper));
+    assert_no_more_crashes(&mut sb);
+
+    end_helper(helper);
+    end_helper(second);
+    drop(again);
     sb.manager.poll();
     sb.finish();
     let _ = std::fs::remove_dir_all(&dir);
@@ -219,9 +239,16 @@ fn a_group_process_killed_while_a_helper_holds_its_pipes_loses_every_member_once
     assert!(process_alive(helper));
     assert_no_more_crashes(&mut sb);
 
-    end_helper(helper);
+    // The dead instances are dropped while the helper still holds the group's pipes.
+    let t = Instant::now();
     drop(handles);
     sb.manager.poll();
+    assert!(
+        t.elapsed() < Duration::from_secs(20),
+        "the drop waited for the helper"
+    );
+    assert!(process_alive(helper));
+    end_helper(helper);
     sb.finish();
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -1745,6 +1745,10 @@ on the same material each time shows the pattern within one attempt, and short e
 session does not use up the allowance of a plugin that has behaved since. Resting on the process rather than on traffic
 matters because a parked or sleeping plugin sends nothing.
 
+**Limits.** A helper process that outlives its plugin and holds the pipes keeps one blocked reader thread and the pipe
+handles until the helper ends; dropping the dead instance does not wait for it (only threads that have ended are joined).
+The app does not end a plugin's helper itself.
+
 **Rejected.** Polling the process (a wake-up per child for nothing); one reload per session (a crash an hour ago would
 cost a plugin its allowance); reloading again and again with a back-off (a plugin that crashes on its own state would
 loop, and the user would learn of it late); a setting (nobody asked to switch it off, and the hang reload has none).
