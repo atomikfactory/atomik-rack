@@ -285,10 +285,9 @@ pub struct RoutingPlan {
     pub(crate) host_out: Vec<Route>,
     /// Merge buffer for Notes inputs that receive both a cable and scheduled notes.
     pub(crate) spare_notes: NoteBuffer,
-    /// One mode per level: handed to the workers or run inline (see [`crate::level_gate`]).
-    pub(crate) gates: Vec<crate::level_gate::LevelGate>,
-    /// Batches this routing has rendered with workers (paces the cost sampling).
-    pub(crate) batch_no: u64,
+    /// A level of this routing has a device a worker could take (read at the start of a render
+    /// call; true until the first batch has looked).
+    pub(crate) dispatchable: bool,
     /// Console state (boxed so `HotEdit::Routing` stays small).
     pub(crate) console: Box<ConsoleRouting>,
 }

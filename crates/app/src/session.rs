@@ -670,6 +670,8 @@ impl<B: AudioBackend> LiveSession<B> {
                 on_thread_start: Some(atomik_audio_io::promote_worker_thread),
             },
             worker_linger_spins: settings.worker_linger_spins,
+            // A live stream: the workers are used only while the audio thread needs help.
+            realtime: true,
         };
         // Document rates are whole Hz (the model accepts the standard rates only).
         let rate = config.sample_rate.hz().round() as u32;

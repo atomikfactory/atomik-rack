@@ -80,6 +80,8 @@ pub fn play<B: Backend>(
         },
         // Keep workers awake between callbacks (0 = the engine default).
         worker_linger_spins: args.worker_linger,
+        // A live stream: the workers are used only while the audio thread needs help.
+        realtime: true,
     };
     let (engine, mut handle) = new_engine_with_options(built.config, options);
     let live = handle.live_notes();

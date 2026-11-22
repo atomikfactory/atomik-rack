@@ -29,6 +29,11 @@ pub struct EngineOptions {
     /// by every callback, and still park after a longer idle. It only changes when
     /// workers sleep, never what they render.
     pub worker_linger_spins: u64,
+    /// The engine serves a live host with a deadline (an audio stream): the render workers are
+    /// used only while the audio thread needs help to keep up (see the load rule in
+    /// `load_gate.rs`). Offline renders leave it false and hand every level to the workers.
+    /// It changes when workers are woken, never what they render.
+    pub realtime: bool,
 }
 
 /// Slots of the live note queue kept for releases (see [`LiveNoteSender::push`]).

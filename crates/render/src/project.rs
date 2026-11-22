@@ -1177,6 +1177,8 @@ pub(crate) fn render_core(
             on_thread_start: None,
         },
         worker_linger_spins: 0,
+        // A bounce has no deadline: every level goes to the workers.
+        realtime: false,
     };
     let (mut engine, mut handle) = new_engine_with_options(built.config, engine_options);
     // The project's master tune is in force from the first batch (no glide), as a playback that

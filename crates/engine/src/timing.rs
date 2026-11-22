@@ -58,21 +58,22 @@ pub(crate) fn elapsed(started: (ClockFn, u64)) -> u64 {
     (started.0)().saturating_sub(started.1)
 }
 
-/// How often (in batches) a node is timed for the level gate when the per-device timing is off.
-pub(crate) const COST_SAMPLE_EVERY: u64 = 32;
-
-/// RT: what [`crate::plan::Node::run`] needs to time a run for the level gate when the
-/// per-device timing is off: the clock, and whether this batch is one of the sampled ones.
+/// RT: what [`crate::plan::Node::run`] needs to time a run for the load rule when the
+/// per-device timing is off: the clock, and whether this batch is one the load rule times.
 #[derive(Clone, Copy)]
 pub(crate) struct CostProbe {
     pub(crate) clock: ClockFn,
+    /// The batch runs inline: its timing sets the cost.
     pub(crate) due: bool,
+    /// The batch runs on the workers: its timing can only lower a cost (a run on a worker takes
+    /// at least as long as the same run at home), so a plan that became light is seen at once.
+    pub(crate) lower: bool,
 }
 
 /// Nanoseconds since the first call, on the OS monotonic counter: the engine's own clock for
-/// the level gate when no host clock is installed (a bounce, a benchmark). It allocates nothing
+/// the load rule when no host clock is installed (a bounce, a benchmark). It allocates nothing
 /// and takes no lock, and it only steers which thread runs a device, never the signal.
-#[allow(clippy::disallowed_methods)] // Justification: the level gate's clock; see the doc above.
+#[allow(clippy::disallowed_methods)] // Justification: the load rule clock; see the doc above.
 pub(crate) fn own_clock() -> u64 {
     static ORIGIN: OnceLock<std::time::Instant> = OnceLock::new();
     ORIGIN

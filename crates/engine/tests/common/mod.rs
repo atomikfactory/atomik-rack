@@ -89,18 +89,18 @@ pub fn assert_close(a: &[f32], b: &[f32], tol: f32) {
 
 /// An engine with `threads` workers, each running `on_thread_start` first. Every level of two
 /// or more devices is handed to the workers (`GateMode::ForceDispatch`), whatever it costs, so
-/// the tests that exercise the hand-over keep doing so; see `level_gate.rs` for the cost gate.
+/// the tests that exercise the hand-over keep doing so; see `load_gate.rs`.
 pub fn engine_with(
     cfg: EngineConfig,
     threads: u16,
     on_thread_start: Option<fn()>,
 ) -> (Engine, EngineHandle) {
     let (mut engine, handle) = engine_with_gate(cfg, threads, on_thread_start);
-    engine.set_level_gate_mode(atomik_engine::GateMode::ForceDispatch);
+    engine.set_gate_mode(atomik_engine::GateMode::ForceDispatch);
     (engine, handle)
 }
 
-/// Like [`engine_with`], with the cost gate deciding each level.
+/// Like [`engine_with`], with the host rule deciding (an offline engine hands every level over).
 pub fn engine_with_gate(
     cfg: EngineConfig,
     threads: u16,

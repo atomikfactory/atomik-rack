@@ -16,8 +16,8 @@ mod interface;
 mod io_peaks;
 mod launch;
 mod lens;
-mod level_gate;
 mod live;
+mod load_gate;
 mod offline;
 mod phase_lock;
 mod plan;
@@ -57,10 +57,8 @@ pub use launch::{
     LaunchAudioInput, LaunchCell, LaunchCommand, LaunchEvent, LaunchGrid, LaunchSlotInput,
     LaunchState, LaunchTrackInput, MAX_LAUNCH_TRACKS,
 };
-#[doc(hidden)]
-#[doc(hidden)]
-pub use level_gate::GateMode;
 pub use live::{EngineOptions, FrameClock, LIVE_RELEASE_HEADROOM, LiveNoteSender, WorkerConfig};
+pub use load_gate::{GateMode, set_default_gate_mode};
 pub use offline::{
     OfflineError, OfflineJob, render_offline, render_offline_scripted, render_offline_song,
     render_offline_with, try_render_offline, try_render_offline_scripted, try_render_offline_song,
@@ -84,6 +82,7 @@ pub use sync::{
     CLOCK, CONTINUE, ExternalClock, ExternalState, SONG_POSITION, START, STOP, SyncConfig, SyncOut,
     TICKS_PER_CLOCK, TICKS_PER_POSITION, clocks_in, song_position_bytes, song_position_ticks,
 };
+#[doc(hidden)]
 pub use workers::{WORKER_SPIN_LIMIT, WorkerStats};
 
 #[cfg(test)]

@@ -21,12 +21,15 @@
 //!   handed to a worker: it keeps its share position but runs on the audio thread (step 3 of a
 //!   level), for plugins that assume a stable thread. The answer is read on the audio thread
 //!   before each dispatch, so it may change while running.
-//! * **Which levels.** A level of one device is never dispatched, and a level of several only
-//!   when it is worth it: the audio thread decides before each level from the smoothed cost of
-//!   its nodes (`crate::level_gate`), with a lower leave threshold and a dwell so a level does not
-//!   flap, and runs the cheap ones inline. The node costs are timed on every call while the
-//!   per-device timing is on, otherwise on one batch in 32 with the engine's own clock; the
-//!   decision never reaches the signal. A level whose nodes have no cost yet is dispatched.
+//! * **When the workers are used.** A level of one device is never dispatched. For a live
+//!   engine (`EngineOptions::realtime`) the workers are used only while the audio thread needs
+//!   help: the summed cost of the plan against the batch budget (`crate::load_gate`: busy from
+//!   30 % at once, calm after a second under 20 %, busy for a second after the transport starts
+//!   and while a cost is unknown); a calm plan runs every level inline and wakes no worker. The
+//!   node costs are timed on every batch while the plan is calm and on one inline batch in 64
+//!   while it is busy (a run on a worker costs more than the same run at home), by the
+//!   per-device timing's clock when it is on, else by the engine's own. An offline engine has no deadline and hands every level of two or more devices over. The
+//!   decision never reaches the signal.
 //! * **Distribution.** Item `j` of a dispatched level of `n > 1` devices goes to participant
 //!   `j % p`, `p = min(workers + 1, n)`; participant 0 is the audio thread. Only workers that
 //!   received work are unparked. If a job queue is full the node simply runs on the audio
@@ -62,9 +65,9 @@
 use crate::arena::{Arena, RoutingPlan};
 use crate::console::Meters;
 use crate::fault::FaultState;
-use crate::level_gate::{GateMode, LevelCost};
+use crate::load_gate::{GateMode, LoadGate, PlanLoad};
 use crate::plan::{Node, count_overflow};
-use crate::timing::{COST_SAMPLE_EVERY, ClockFn, CostProbe};
+use crate::timing::{ClockFn, CostProbe};
 use atomik_core::{Batch, TimeInfo};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use std::sync::Arc;
@@ -153,9 +156,13 @@ pub(crate) struct Pool {
     always_active: bool,
     /// A render call that uses the pool is in progress (audio side only).
     in_callback: bool,
-    /// How each level is decided (see [`GateMode`]; audio side only).
+    /// How the engine decides when to use the workers (see [`GateMode`]; audio side only).
     pub(crate) gate_mode: GateMode,
-    /// The clock that times nodes for the level gate when the per-device timing is off.
+    /// The engine serves a live host with a deadline (`EngineOptions::realtime`).
+    realtime: bool,
+    /// The load rule's state (audio side only).
+    pub(crate) load: LoadGate,
+    /// The clock that times nodes for the load rule when the per-device timing is off.
     pub(crate) cost_clock: ClockFn,
 }
 
@@ -167,6 +174,7 @@ impl Pool {
         threads: u16,
         on_thread_start: Option<fn()>,
         linger: u64,
+        realtime: bool,
     ) -> Result<Self, PoolError> {
         // Read the origin of the gate's clock once here, off the audio thread.
         let _ = crate::timing::own_clock();
@@ -211,7 +219,9 @@ impl Pool {
             shared,
             always_active: false,
             in_callback: false,
-            gate_mode: GateMode::Auto,
+            gate_mode: crate::load_gate::default_gate_mode(),
+            realtime,
+            load: LoadGate::new(),
             cost_clock: crate::timing::own_clock,
         })
     }
@@ -250,6 +260,11 @@ impl Pool {
     pub(crate) fn set_always_active(&mut self, on: bool) {
         self.always_active = on;
         self.shared.callback_active.store(on, Ordering::Release);
+    }
+
+    /// The rule in force: the mode, with `Auto` resolved for the host.
+    pub(crate) fn mode(&self) -> GateMode {
+        self.gate_mode.resolve(self.realtime)
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -375,30 +390,48 @@ impl RoutingPlan {
         self.level_starts.windows(2).any(|w| w[1] - w[0] > 1)
     }
 
-    /// Whether a render call would hand work to the pool: some level is in dispatch mode (or
-    /// the mode forces it). A routing whose levels are all cheap leaves the workers parked.
-    pub(crate) fn wants_workers(&self, mode: GateMode) -> bool {
-        match mode {
-            GateMode::Auto => self.gates.iter().any(|g| g.dispatched()),
+    /// Whether a render call would hand work to the pool: the rule forces it, or the plan is
+    /// busy and some level has a device a worker could take. A calm plan leaves the workers
+    /// parked.
+    pub(crate) fn wants_workers(&self, pool: &Pool) -> bool {
+        match pool.mode() {
             GateMode::ForceInline => false,
             GateMode::ForceDispatch => self.has_parallel_level(),
+            _ => pool.load.busy() && self.dispatchable && self.has_parallel_level(),
         }
     }
 
-    /// What the nodes of steps `a..b` cost, as the gate reads it.
-    fn level_cost(&self, a: usize, b: usize, arena: &Arena) -> LevelCost {
-        let mut cost = LevelCost::default();
-        for step in &self.steps[a..b] {
+    /// What the plan costs in one batch: every device's cost, counted at its last stage.
+    fn plan_load(&self, arena: &Arena) -> PlanLoad {
+        let mut load = PlanLoad::default();
+        for step in self.steps.iter().filter(|step| step.last) {
             if let Some(Some(node)) = arena.nodes.get(self.devices[step.device].slot) {
-                cost.add(node.cost());
+                load.add(node.cost());
             }
         }
-        cost
+        load
+    }
+
+    /// How many devices of steps `a..b` a worker could take: those `run_level` would hand over,
+    /// that is not at the audio thread's own positions and not pinned to it.
+    fn sendable(&self, a: usize, b: usize, pool: &Pool, arena: &Arena) -> usize {
+        let participants = (pool.links.len() + 1).min(b - a);
+        self.steps[a..b]
+            .iter()
+            .enumerate()
+            .filter(|(j, step)| {
+                j % participants != 0
+                    && matches!(
+                        arena.nodes.get(self.devices[step.device].slot),
+                        Some(Some(node)) if !node.device.pinned_to_audio_thread()
+                    )
+            })
+            .count()
     }
 
     /// Like `process`, with the devices of each level spread over the audio thread and the
-    /// pool's workers when the level is worth it (see [`crate::level_gate`]); cheap levels run
-    /// inline. Never allocates, frees, locks or blocks (the audio thread only spins
+    /// pool's workers when the rule says so (see [`crate::load_gate`]); otherwise every level
+    /// runs inline. Never allocates, frees, locks or blocks (the audio thread only spins
     /// while waiting for the level's last device). Returns the barrier spins: busy-wait
     /// iterations in which the audio thread found no finished node to collect.
     ///
@@ -416,27 +449,38 @@ impl RoutingPlan {
         fault: &FaultState,
     ) -> u64 {
         self.read_host_inputs(host_in, meters);
-        let probe = Some(CostProbe {
-            clock: pool.cost_clock,
-            due: self.batch_no.is_multiple_of(COST_SAMPLE_EVERY),
-        });
-        self.batch_no = self.batch_no.wrapping_add(1);
+        let mode = pool.mode();
+        // The load rule: decided from the costs of the batches before this one, which this
+        // batch may time again: every batch while the plan is calm (so a rise is seen at once)
+        // and one inline batch in 64 while it is busy.
+        let mut busy = true;
+        let mut probing = false;
+        let mut probe = None;
+        if mode == GateMode::Load {
+            let budget = crate::timing::batch_budget_ns(time.sample_rate.hz());
+            busy = pool
+                .load
+                .update(self.plan_load(arena), budget, time.playing);
+            probing = busy && pool.load.probe_due();
+            probe = Some(CostProbe {
+                clock: pool.cost_clock,
+                due: !busy || probing,
+                lower: busy && !probing,
+            });
+        }
         let mut spins = 0u64;
+        let mut any = false;
         for level in 0..self.level_starts.len().saturating_sub(1) {
             let (a, b) = (self.level_starts[level], self.level_starts[level + 1]);
-            if b - a <= 1 || pool.links.is_empty() {
-                self.run_sequential(a, b, time, dropped, arena, meters, fault, probe);
-                continue;
-            }
-            let cost = self.level_cost(a, b, arena);
-            let participants = (pool.links.len() + 1).min(b - a);
-            let decided = self.gates[level].update(cost, participants);
-            let dispatch = match pool.gate_mode {
-                GateMode::Auto => decided,
-                GateMode::ForceInline => false,
-                GateMode::ForceDispatch => true,
-            };
+            let dispatch = b - a > 1
+                && !pool.links.is_empty()
+                && match mode {
+                    GateMode::ForceInline => false,
+                    GateMode::ForceDispatch => true,
+                    _ => busy && !probing && self.sendable(a, b, pool, arena) > 0,
+                };
             if dispatch {
+                any = true;
                 pool.ensure_callback();
                 let level_spins =
                     self.run_level(a, b, time, dropped, pool, arena, meters, fault, probe);
@@ -444,6 +488,9 @@ impl RoutingPlan {
             } else {
                 self.run_sequential(a, b, time, dropped, arena, meters, fault, probe);
             }
+        }
+        if mode == GateMode::Load && busy && !probing {
+            self.dispatchable = any;
         }
         self.write_host_outputs(host_out);
         spins

@@ -570,7 +570,13 @@ pub fn new_engine_with_arena(
         };
         // If the OS refuses every worker thread the engine renders single-threaded: the
         // output does not depend on the worker count.
-        engine.pool = Pool::new(workers.threads, workers.on_thread_start, linger).ok();
+        engine.pool = Pool::new(
+            workers.threads,
+            workers.on_thread_start,
+            linger,
+            options.realtime,
+        )
+        .ok();
         handle.workers = engine.pool.as_ref().map(Pool::counters);
     }
     (engine, handle)
@@ -1445,7 +1451,7 @@ impl Engine {
         // Workers spin only while a call that can hand them work is running.
         if let (Some(routing), Some(pool)) = (&self.routing, &mut self.pool)
             && pool.len() > 0
-            && routing.wants_workers(pool.gate_mode)
+            && routing.wants_workers(pool)
         {
             pool.begin_callback();
         }
@@ -1528,26 +1534,24 @@ impl Engine {
         }
     }
 
-    /// Decides every level from its measured cost (the default), runs every level inline, or
-    /// hands every level of two or more devices to the workers, as before the level gate
-    /// existed (test and benchmark hook; not a stable API). Output is the same in every mode.
+    /// Sets how the engine decides when the workers are used: by the host (the default: the
+    /// load rule for a live engine, every level handed over for an offline one), by the load
+    /// rule, never, or always (test and benchmark hook; not a stable API). Output is the same
+    /// in every mode.
     #[doc(hidden)]
-    pub fn set_level_gate_mode(&mut self, mode: crate::GateMode) {
+    pub fn set_gate_mode(&mut self, mode: crate::GateMode) {
         if let Some(pool) = &mut self.pool {
             pool.gate_mode = mode;
         }
     }
 
-    /// Per level of the current routing, whether it is handed to the workers now (test hook;
-    /// not a stable API).
+    /// Whether the load rule holds the plan busy now (test hook; not a stable API).
     #[doc(hidden)]
-    pub fn level_modes(&self) -> Vec<bool> {
-        self.routing.as_ref().map_or_else(Vec::new, |routing| {
-            routing.gates.iter().map(|g| g.dispatched()).collect()
-        })
+    pub fn workers_busy(&self) -> bool {
+        self.pool.as_ref().is_some_and(|pool| pool.load.busy())
     }
 
-    /// Replaces the clock that times devices for the level gate while the per-device timing is
+    /// Replaces the clock that times devices for the load rule while the per-device timing is
     /// off (test hook; not a stable API). The clock must not allocate, lock or block.
     #[doc(hidden)]
     pub fn set_level_cost_clock(&mut self, clock: crate::timing::ClockFn) {

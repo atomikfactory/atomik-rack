@@ -1755,46 +1755,72 @@ loop, and the user would learn of it late); a setting (nobody asked to switch it
 
 **Status.** Decided by the owner on 2026-11-21 (one automatic reload, then stay crashed).
 
-## BG. A level goes to the render workers only when handing it over saves time
+## BG. The render workers are used only while the audio thread needs help
 
-**Question.** Every level of two or more devices was handed to the worker pool whatever the devices cost. A level of
-trivial devices pays the queue hand-offs, a possible wake-up, the barrier and the cache migration for work that takes a
-few microseconds inline (lanes-200 was slower with two workers than with none), and a rack whose levels were all cheap
-still kept every worker spinning through every callback.
+**Question.** The engine woke the render workers on every callback of a project that has a level of two or more
+devices, and the workers spin through the whole callback. A stopped rack of 100 silent devices, which takes about a
+seventh of the callback time on the audio thread, kept 76 to 86 % of a core busy with automatic workers and 30 % with two,
+against 18 % with none. What a live engine needs to know is not whether spreading one level saves time but whether the
+audio thread needs help to meet its deadline.
 
-**Decision.** Each node keeps a smoothed cost in nanoseconds (an integer written by the thread that runs it, read by the
-audio thread between batches, like the CPU readout's total). Before each level the audio thread computes the time that
-spreading the level over its `p` threads would save, `total - max(longest node, total / p)`, and dispatches the level
-when that is at least 7 microseconds, runs it inline when it falls below 3.5 and keeps the mode in between; a change of
-mode also needs the opposite verdict for 64 batches in a row. A level whose nodes have no cost yet starts dispatched
-(what the engine did before, and safe for the deadline: a heavy device is never run inline unmeasured); the first
-verdict with every cost known applies at once. The callback flag follows the decision: it is raised at the start of a
-render call only when a level of the plan is in dispatch mode, and a level that turns to dispatch in the middle of a
-call raises it itself, so a plan of cheap levels leaves every worker parked. The saving rule, not a count of heavy
-nodes, because a level of 64 nodes of 3 us has no heavy node and still gains two thirds of its 190 us, while one heavy
-node among trivial ones saves only what the trivial ones cost. The cost is measured on every call while the per-device
-timing is on (the app always has it on: the same two clock reads feed the readout), and otherwise on one batch in 32
-with a clock of the engine itself (a bounce, the benchmarks, `atomik-play`); the sampling costs about two clock reads
-per node every 32 batches. Costs are smoothed half way per sample, so a level that turns heavy or cheap flips within
-about a fifth of a second of audio at the app's batch size. Nothing the gate reads reaches the signal: a node's output
-does not depend on its thread, and a bounce is the same bytes whichever way each level is decided (the tests force the
-gate both ways and flip it during a run). A multi-stage device's stages share one cost value; a device that cannot leave
-the audio thread is counted like any other (its cost can only lower the saving, so the gate errs towards inline).
+**Decision.** Each node keeps a smoothed cost in nanoseconds per batch (its stages added up; an integer written by the
+thread that runs it and read by the audio thread between batches, like the CPU readout's total). Before each batch a
+live engine (`EngineOptions::realtime`, set by the app's stream and `atomik-play`) sums the costs of the plan and compares
+the sum with the batch budget. The plan is **busy** when the sum reaches 30 % of the budget and **calm** after a second
+of audio under 20 %. Entering is immediate (the next batch after the smoothed cost crosses 30 %), leaving is slow, and
+between the shares nothing changes: a wrong "busy" costs some CPU, a wrong "calm" on a heavy project is a missed deadline.
+A calm plan runs every level inline and wakes no worker; a busy one hands every level over that has a device a worker can
+take (a device pinned to the audio thread cannot be taken, so a level of pinned devices wakes nobody). The callback flag and
+the wake-up at the start of a call follow the state, and a level that is handed over in the middle of a call raises the
+flag itself. A plan whose nodes have no cost yet is busy, and so is the first second after the transport starts (the
+stopped to playing edge): playback never begins inline and finds the load a batch late. The hold counts audio time.
+Offline engines (a bounce, an export, the freeze and analysis workers) have no deadline and want throughput, so they never
+use the rule and hand every level over, exactly as before; the choice is `EngineOptions::realtime`, false by default.
 
-**Evidence.** `perf/BASELINE.md`, "Levels handed to the render workers only when they are worth it": lanes-200 and
-lanes-2000 with two workers are faster than with none, console-64 keeps a 1.65 speed-up, rack keeps its time, the paced
-callback's p99 is no worse. The first thresholds (a level of at least 30 us with two nodes of at least 5 us) sent the
-console and rack benchmarks back to inline (64 strips of 3 us each are no heavy node), which is why the rule counts the
-saving; 20 and 10 us still lost on rack, 10 and 5 on lanes-200 (a 3-node level whose cost jitters from 7 to 22 us),
-and the dwell was raised from 4 to 64 batches so that one noisy sample cannot flip a level.
+**Costs.** While the plan is calm every device is timed on every batch, so a rise is seen at once: the worst delay to
+become busy is one batch plus the half-way smoothing (a jump to twice the enter share is seen in the first batch). That
+costs two clock reads per device per batch (a few tens of nanoseconds a pair, an estimate that was not measured on its
+own: the sampler's stopped-rack rows with the rule on show no difference from none). The app times every device call all the time already (its CPU readout), so the clock is the host's there;
+`atomik-play` runs with the device timing off and uses the engine's own clock, on the same batches. A busy plan cannot be
+timed where it runs: a node takes longer on a worker than at home (its data has moved to another core), which would read as a load over the leave share and keep a calm plan busy for
+ever; the first version of the rule, timed where the nodes run, left the stopped stress rack with seven workers at 87 %
+of a core in the sampler. So a
+busy plan runs one batch in 64 inline and timed (never in the hold, never while a cost is unknown, and only while the last
+inline load was under 50 % of the budget, so a probe batch cannot be a heavy one), and the batches it runs on workers can
+only lower a cost, never raise it, so a plan that became light is seen without waiting for a probe. The sum counts each
+device once, at its last stage, so a multi-stage device whose stages differ is read as their total.
 
-**Rejected.** Timing every node on every batch when no clock is installed (two clock reads per device per batch, about
-the whole cost of a trivial device); a fixed per-level cost threshold (it cannot tell a level of equal nodes from one
-heavy node); a flag per node that excludes cheap nodes from a dispatched level (a later item); skipping silent devices
-(a later item built on the per-node cost, out of scope here).
+**Paths that carry timing.** Playback start: the hold above, from the first playing batch. Live notes on a stopped
+transport: no hold, but the plan is calm and timed on every batch, so voices that raise the cost are seen in the next batch
+(at the enter share the audio thread alone carries 30 % of a batch before workers join; the paced benchmark's heaviest
+patch carries 12 %). A preview clock (a note player previewing while the song stands still): its devices run and are
+timed like any other. Audio streaming lanes and clips: they are part of the devices' cost; the streamer's own thread is not
+the render workers. Sandboxed plugin devices: their measured cost includes the wait for their process, which is real time
+the audio thread spends, so it counts towards busy (a plugin that waits long is a reason to have the other devices run
+beside it). A device pinned to the audio thread counts in the load but is never handed over. A plan swap in the middle of
+playback: the state lives in the pool, not in the plan; the devices that were in the arena keep their costs, a new device
+has none and makes the plan busy for the batches until it is timed. MIDI out and the metronome do not go through the nodes.
+Nothing the rule reads reaches the signal: a node's output does not depend on its thread, and a bounce is byte-identical
+whichever rule decides (the tests render the same project under the live rule, the offline rule, forced inline and forced
+dispatch, also while the busy state flips).
 
-**Limits.** The stopped 100-device stress rack with automatic workers still costs 80 to 90 % of a core, against 18 % with
-no workers: its devices are silent but their calls cost about 220 us a batch, which several of its levels can share, so
-they stay dispatched and the workers spin through the callback. Only skipping silent devices lowers that.
+**Evidence.** `perf/BASELINE.md`, "Render workers used only while the audio thread needs them": the stopped stress rack falls
+from 76 to 86 % to 16 to 19 % with automatic workers and from 30 to 34 % to 17 to 19 % with two, equal to the figure with no
+workers; the empty project is unchanged; the heaviest patch of the paced benchmark, inline, has a p99 under a fifth of the
+callback period. A rule that judged each level by the time spreading it would save (tried first, 7 us to dispatch) tied
+with dispatching everything on a bounce (rack 0.73 against 0.71 of the workers 0 time, console-64 0.61 against 0.61,
+lanes-200 1.04 against 0.96, lanes-2000 0.88 against 0.92) and could not lower the idle cost of the live rack, because as
+long as one level goes to the workers they spin through the whole callback; it was removed.
+
+**Rejected.** A per-level saved-time rule (above); timing every call on every batch in a bounce (nothing there needs the
+costs); sampling one batch in 32 while calm (a rise could go unseen for 43 ms; the delay is the price of saving 5 us a
+batch); a long dwell to enter (an inline plan that turns heavy would run on the audio thread alone for a long time);
+measuring a busy plan where it runs (the feedback above); skipping silent devices (a later item that builds on the
+per-node cost).
+
+**Limits.** The shares are fixed numbers, not settings. A project that sits between 20 and 30 % of the budget keeps the
+state it has. A plan above about 50 % of the budget is never probed inline and leaves busy only when its devices get
+lighter (their runs on workers lower the costs). The load is that of one engine: two engines in one process share the
+device timing switch but each has its own rule state.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.

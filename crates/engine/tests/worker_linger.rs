@@ -16,13 +16,13 @@ use common::*;
 use std::time::Duration;
 
 fn engine_lingering(threads: u16, linger: u64) -> (Engine, EngineHandle) {
-    let (mut engine, handle) = lingering_engine(threads, linger);
+    let (mut engine, handle) = lingering_engine(threads, linger, false);
     // These tests are about the workers' spin and park: every level is handed over.
-    engine.set_level_gate_mode(atomik_engine::GateMode::ForceDispatch);
+    engine.set_gate_mode(atomik_engine::GateMode::ForceDispatch);
     (engine, handle)
 }
 
-fn lingering_engine(threads: u16, linger: u64) -> (Engine, EngineHandle) {
+fn lingering_engine(threads: u16, linger: u64, realtime: bool) -> (Engine, EngineHandle) {
     new_engine_with_options(
         cfg(0, 2),
         EngineOptions {
@@ -31,6 +31,7 @@ fn lingering_engine(threads: u16, linger: u64) -> (Engine, EngineHandle) {
                 on_thread_start: None,
             },
             worker_linger_spins: linger,
+            realtime,
         },
     )
 }
@@ -197,9 +198,10 @@ fn linger_does_not_change_the_output() {
 
 // ---------------------------------------------------------------------------------------------
 // Benchmark (ignored): renders paced like a 48 kHz audio callback, per worker count and linger,
-// with the callback flag as it is ("after": every level of two or more devices is handed over)
-// and forced up for good ("before": workers spin for the whole linger between callbacks, as they
-// did before the flag existed), and with the level gate deciding ("gated").
+// per patch: with no workers, with every level of two or more devices handed over ("dispatch"),
+// and with the load rule of a live engine deciding ("live"). The share column is the median
+// callback of the no-workers row as a percentage of the callback period, that is the load the
+// audio thread alone carries; the rule enters at 30 % and leaves under 20 %.
 // ---------------------------------------------------------------------------------------------
 
 /// CPU seconds this process has used so far (all threads), or `None` where the benchmark has no
@@ -252,83 +254,80 @@ fn bench_paced_callbacks_per_linger() {
         t0.elapsed().as_secs_f64() * 1e9 / 1e7
     );
     println!(
-        "frames workers linger  flag   | callback us: p50   p99   max | barrier spins | idle spins          | parks | cpu % of a core"
+        "patch    frames workers mode     | callback us: p50   p99   max | share % | busy | idle spins          | parks | cpu % of a core"
     );
-    for block in [128usize, 480] {
-        let period = Duration::from_secs_f64(block as f64 / 48_000.0);
-        let callbacks = (10.0 / period.as_secs_f64()) as usize; // 10 s
-        for (threads, linger, mode) in [
-            (0u16, 0u64, "after"),
-            (4, WORKER_SPIN_LIMIT, "before"),
-            (4, WORKER_SPIN_LIMIT, "after"),
-            (4, WORKER_SPIN_LIMIT, "gated"),
-            (4, WORKER_SPIN_LIMIT * 5, "before"),
-            (4, WORKER_SPIN_LIMIT * 5, "after"),
-            (4, WORKER_SPIN_LIMIT * 5, "gated"),
-            (4, WORKER_SPIN_LIMIT * 25, "before"),
-            (4, WORKER_SPIN_LIMIT * 25, "after"),
-            (4, WORKER_SPIN_LIMIT * 25, "gated"),
-        ] {
-            let built = real_patch(&c, 4);
-            let (mut engine, mut handle) = engine_lingering(threads, linger);
-            engine.set_workers_always_active(mode == "before");
-            if mode == "gated" {
-                engine.set_level_gate_mode(atomik_engine::GateMode::Auto);
-            }
-            for (k, &(device, socket)) in built.note_targets.iter().enumerate() {
-                for v in 0..6u8 {
-                    handle
-                        .send_note(ScheduledNote {
-                            frame: 0,
-                            device,
-                            socket,
-                            kind: NoteKind::On {
-                                key: 36 + k as u8 + v * 7,
-                                velocity: 0.7,
-                            },
-                        })
-                        .unwrap();
-                }
-            }
-            handle.submit_plan(built.plan).unwrap();
-            let mut l = vec![0.0f32; block];
-            let mut r = vec![0.0f32; block];
-            let mut times = Vec::with_capacity(callbacks);
-            let mut max_spins = 0u64;
-            let cpu0 = process_cpu_seconds();
-            let wall = Instant::now();
-            let mut next = Instant::now() + period;
-            for _ in 0..callbacks {
-                // Wait like an audio thread between callbacks: sleep, then spin to the deadline.
-                while let Some(left) = next.checked_duration_since(Instant::now()) {
-                    if left > Duration::from_millis(2) {
-                        std::thread::sleep(Duration::from_millis(1));
-                    } else {
-                        std::hint::spin_loop();
+    // The synth count and the voices played on each: light, the patch of the other rows of
+    // `perf/BASELINE.md`, and a heavy one.
+    for (label, synths, voices) in [("light", 1usize, 1u8), ("existing", 4, 6), ("heavy", 6, 16)] {
+        for block in [128usize, 480] {
+            let period = Duration::from_secs_f64(block as f64 / 48_000.0);
+            let callbacks = (10.0 / period.as_secs_f64()) as usize; // 10 s
+            let mut share = f64::NAN;
+            for (threads, mode) in [(0u16, "inline"), (4, "dispatch"), (4, "live")] {
+                let built = real_patch(&c, synths);
+                let (mut engine, mut handle) = match mode {
+                    "live" => lingering_engine(threads, WORKER_SPIN_LIMIT * 25, true),
+                    _ => engine_lingering(threads, WORKER_SPIN_LIMIT * 25),
+                };
+                for (k, &(device, socket)) in built.note_targets.iter().enumerate() {
+                    for v in 0..voices {
+                        handle
+                            .send_note(ScheduledNote {
+                                frame: 0,
+                                device,
+                                socket,
+                                kind: NoteKind::On {
+                                    key: 36 + k as u8 + v * 7,
+                                    velocity: 0.7,
+                                },
+                            })
+                            .unwrap();
                     }
                 }
-                next += period;
-                let start = Instant::now();
-                engine.render(&[], &mut [&mut l[..], &mut r[..]]);
-                times.push(start.elapsed());
-                max_spins = max_spins.max(engine.take_max_barrier_spins());
+                handle.submit_plan(built.plan).unwrap();
+                let mut l = vec![0.0f32; block];
+                let mut r = vec![0.0f32; block];
+                let mut times = Vec::with_capacity(callbacks);
+                let mut max_spins = 0u64;
+                let cpu0 = process_cpu_seconds();
+                let wall = Instant::now();
+                let mut next = Instant::now() + period;
+                for _ in 0..callbacks {
+                    // Wait like an audio thread between callbacks: sleep, then spin to the deadline.
+                    while let Some(left) = next.checked_duration_since(Instant::now()) {
+                        if left > Duration::from_millis(2) {
+                            std::thread::sleep(Duration::from_millis(1));
+                        } else {
+                            std::hint::spin_loop();
+                        }
+                    }
+                    next += period;
+                    let start = Instant::now();
+                    engine.render(&[], &mut [&mut l[..], &mut r[..]]);
+                    times.push(start.elapsed());
+                    max_spins = max_spins.max(engine.take_max_barrier_spins());
+                }
+                let wall = wall.elapsed().as_secs_f64();
+                let cpu = match (cpu0, process_cpu_seconds()) {
+                    (Some(a), Some(b)) => format!("{:6.1}", (b - a) / wall * 100.0),
+                    _ => "   n/a".to_string(),
+                };
+                times.sort();
+                let pct =
+                    |p: f64| times[((times.len() - 1) as f64 * p) as usize].as_secs_f64() * 1e6;
+                if threads == 0 {
+                    share = pct(0.5) / (period.as_secs_f64() * 1e6) * 100.0;
+                }
+                println!(
+                    "{label:<8} {block:>6} {threads:>7} {mode:<8} | {:>16.1} {:>5.1} {:>6.1} | {share:>7.1} | {:>4} | {:>19} | {:>5} | {cpu}",
+                    pct(0.5),
+                    pct(0.99),
+                    pct(1.0),
+                    engine.workers_busy(),
+                    engine.worker_idle_spins(),
+                    engine.worker_parks(),
+                );
             }
-            let wall = wall.elapsed().as_secs_f64();
-            let cpu = match (cpu0, process_cpu_seconds()) {
-                (Some(a), Some(b)) => format!("{:6.1}", (b - a) / wall * 100.0),
-                _ => "   n/a".to_string(),
-            };
-            times.sort();
-            let pct = |p: f64| times[((times.len() - 1) as f64 * p) as usize].as_secs_f64() * 1e6;
-            println!(
-                "{block:>6} {threads:>7} {linger:>7}  {:<6} | {:>16.1} {:>5.1} {:>6.1} | {max_spins:>13}                  | {:>10} | {:>5} | {cpu}",
-                mode,
-                pct(0.5),
-                pct(0.99),
-                pct(1.0),
-                engine.worker_idle_spins(),
-                engine.worker_parks(),
-            );
         }
     }
 }
