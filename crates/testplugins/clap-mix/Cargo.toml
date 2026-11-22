@@ -16,14 +16,5 @@ crate-type = ["cdylib"]
 atomik-test-clap-shell.workspace = true
 atomik-test-plugin-core.workspace = true
 
-[lints.rust]
-unsafe_code = "allow"
-missing_docs = "warn"
-unused_must_use = "deny"
-
-[lints.clippy]
-all = { level = "deny", priority = -1 }
-float_cmp = "deny"
-disallowed_types = "deny"
-disallowed_methods = "deny"
-undocumented_unsafe_blocks = "deny"
+[lints]
+workspace = true

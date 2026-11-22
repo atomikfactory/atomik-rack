@@ -8,7 +8,7 @@
 //!   (elsewhere), runs for five minutes, shares the creator's output pipes, and its process id is
 //!   written to that file. A scan that leaves nothing behind has ended it again.
 //! * `atomik.test.mix.stuck` never returns from `create` when `ATOMIK_TEST_MIX_STUCK` is set and
-//!   crashes the process there when `ATOMIK_TEST_MIX_CRASH` is set.
+//!   aborts the process there when `ATOMIK_TEST_MIX_CRASH` is set.
 //! * `ATOMIK_TEST_MIX_SLOW_MS` makes every class take that many milliseconds to create (a slow
 //!   but healthy file).
 
@@ -85,9 +85,9 @@ fn start_helper() {
 fn stuck_or_crash() {
     pause();
     if std::env::var_os("ATOMIK_TEST_MIX_CRASH").is_some() {
-        // SAFETY: this is deliberately undefined behaviour: a write through a null pointer
-        // crashes the process, which is what this test plugin exists to do.
-        unsafe { std::ptr::null_mut::<u8>().write_volatile(1) };
+        // An abort ends the process abnormally on every system (a signal on Unix, a non-zero
+        // status on Windows), which is what this test plugin exists to do; it needs no `unsafe`.
+        std::process::abort();
     }
     if std::env::var_os("ATOMIK_TEST_MIX_STUCK").is_some() {
         loop {

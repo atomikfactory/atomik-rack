@@ -402,8 +402,9 @@ grows a param at run time), `clap-shell` is a minimal raw `clap-sys` CLAP plugin
 tested against a plugin not written with its own CLAP library), and `clap`, `clap-bad` (init fails),
 `clap-hang` (init never returns), `clap-crash` (segfaults in `create` or `process` when an
 environment variable asks for it), `clap-mix` (four classes; environment variables make one hang or
-crash, make every class slow, or make one start a helper process whose id it writes to a file: the
-scanner robustness tests use it), `clap-leak` (instance counters) and `clap-variants` (a MIDI-only
+abort the process (no `unsafe`), make every class slow, or make one start a helper process whose id it
+writes to a file: the scanner robustness tests use it), `clap-leak` (instance counters) and
+`clap-variants` (a MIDI-only
 synth, a mono effect, plugins that fail at activation or return errors or NaN, plugins that ask
 for restarts from inside activation or after every block, one that retitles a param) are the
 libraries.
