@@ -457,6 +457,7 @@ mod tests {
                     callback_min: 96,
                     callback_max: 480,
                     allowed_backlog_frames: 1536,
+                    extra_backlog_frames: 512,
                 },
                 workers: atomik_engine::WorkerStats {
                     threads: 3,

@@ -91,6 +91,8 @@ pub struct InputTrim {
     /// The most input frames the ring may hold beyond one callback's read now (0 without input):
     /// the bound on the latency the ring adds to the input.
     pub allowed_backlog_frames: u32,
+    /// The part of that above the base of two buffers (0: nothing was needed).
+    pub extra_backlog_frames: u32,
 }
 
 /// The one debug line written when the trim count rose, e.g. `input trimmed: 3 trims, backlog max
@@ -375,7 +377,7 @@ fn input_text(s: &AudioStatus) -> String {
             ms(s.output_latency_frames)
         ));
     }
-    if open > 0 && s.sample_rate > 0 && s.input_trim.allowed_backlog_frames > 0 {
+    if open > 0 && s.sample_rate > 0 && s.input_trim.extra_backlog_frames > 0 {
         let ms = f64::from(s.input_trim.allowed_backlog_frames) * 1000.0 / f64::from(s.sample_rate);
         text.push_str(&format!(" (input backlog up to {ms:.1} ms)"));
     }
@@ -453,6 +455,7 @@ mod tests {
                 callback_min: 96,
                 callback_max: 480,
                 allowed_backlog_frames: 1536,
+                extra_backlog_frames: 512,
             },
             ..AudioStatus::default()
         };
@@ -557,6 +560,11 @@ mod tests {
         };
         assert!(!status_text(&s).contains("backlog"), "not measured yet");
         s.input_trim.allowed_backlog_frames = 1536;
+        assert!(
+            !status_text(&s).contains("backlog"),
+            "at the base the status line says nothing"
+        );
+        s.input_trim.extra_backlog_frames = 512;
         let text = status_text(&s);
         assert!(
             text.contains("(latency in 10.0 + out 20.0 ms) (input backlog up to 32.0 ms)"),

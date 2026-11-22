@@ -732,6 +732,7 @@ fn polling_publishes_the_input_trims_and_the_requested_buffer() {
         callback_frames_min: 96,
         callback_frames_max: 480,
         input_backlog_allowed_frames: 1536,
+        input_backlog_extra_frames: 512,
         ..Telemetry::default()
     });
     let st = s.poll().clone();
@@ -743,6 +744,7 @@ fn polling_publishes_the_input_trims_and_the_requested_buffer() {
             callback_min: 96,
             callback_max: 480,
             allowed_backlog_frames: 1536,
+            extra_backlog_frames: 512,
         }
     );
     assert_eq!(
