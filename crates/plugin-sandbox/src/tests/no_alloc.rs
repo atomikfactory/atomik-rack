@@ -39,7 +39,12 @@ fn the_late_path_never_allocates() {
         for _ in 0..5 {
             assert_eq!(p.process(&mut b.io()), ProcessStatus::Late);
         }
-        assert!(!p.start_processing());
+        // Owed to the child, not asked of it: nothing to wait for while a request is in flight.
+        assert!(p.start_processing());
+        p.stop_processing();
+        p.reset();
+        assert!(p.start_processing());
+        assert_eq!(p.process(&mut b.io()), ProcessStatus::Late);
     });
 }
 

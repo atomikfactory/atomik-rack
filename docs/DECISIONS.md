@@ -1896,3 +1896,50 @@ resizes (stretched content during a live resize); reading the monitor's rate (se
 tolerance for input too (a sweep could paint more often than the period allows).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BI. A sandboxed plugin's start, stop and reset are never waited for on the audio thread
+
+**Question.** For a plugin in its own process, `start_processing`, `stop_processing` and `reset` were requests of
+their own, and the audio thread spun for the answer for up to 50 ms (at least `LIVE_OP_DEADLINE`). That is a dropout
+by construction (50 ms is 15 to 40 callbacks), and a start that took longer than the wait was a permanent failure of
+the device ("the plugin could not start processing" until RELOAD), where the same plugin in this process just starts,
+however long it takes. Since the sleep rule an instrument that goes quiet is told to stop and is started again by the
+batch that wakes it, so a start happens on the audio thread whenever a sleeping instrument gets a note, and a reset
+after every locate.
+
+**Decision.** Live, the audio thread spends on a start, a stop or a reset no more than it spends on any batch, and a
+slow start is late, not failed. The start and the reset ride on the batch that needs them: the request carries "stop
+first", "start first" and "reset first" (bits above the op code in the request's op word), the child performs them in
+that order inside the one request and then processes the batch, and the answer says whether the start succeeded
+(`ProcessStatus::StartFailed`, no audio). The audio thread waits for the batch with the batch deadline, the cool-down
+and the hang guard it already has. A stop is sent at once and not waited for; when a request is in flight it is owed and
+rides on the next batch, ahead of its start. A start that was owed and not sent is dropped by a stop (the child never
+heard of it). A refusal that arrives after a late batch is read before the next request overwrites the answer. The
+same rule holds offline, where the batch is waited for up to the watchdog: there is no second, synchronous path, and
+the child sees the same calls in the same order, so a bounce is byte-identical with the sandbox on and off.
+
+**Why.** The batch already has everything a start needs: a deadline, a way to be late, a counter, a recovery when the
+answer arrives, and a hang detection. A separate request would need its own state machine for "start pending", "start
+late" and "events that arrived meanwhile". With the start on the batch no event is lost (the notes of the batch travel
+with the request and are processed after the start, at their offsets), and the cost of the start shows as what it is:
+time in that batch. In-process plugins keep calling the trait methods as before; the remote processor only records
+what is owed.
+
+**What a slow start costs now.** A start of 100 ms is one full wait (one batch period, or the callback's published
+budget, at most 100 ms) that runs out, then the batches behind it are polled and late at once for the rest of the 100 ms,
+counted in the `late` meter, dry for an effect and silent for an instrument; the plugin then plays. One miss is far from
+the four that start a cool-down and an answered batch forgives it, so many slow starts in a row never look like a
+broken plugin. A start slower than the hang limit (three seconds of batches with nothing completed) is a hung child
+and is ended and reloaded by the existing rule.
+
+**Limits.** The device believes the plugin started as soon as it asked, so a refusal fails it one batch later than
+before (the batch that carried the start, or the first one after it when that one was late). A reset that is owed when
+the plugin is stopped is not sent on its own: a stop supersedes it. A stop that cannot be sent because a request is in
+flight and is followed by no start is left to the child, which stops its plugin itself when it gives it back.
+
+**Rejected.** Submitting the start alone, playing dry or silence meanwhile, polling once per batch and delivering later
+every event that arrived (a second state machine, and a note-on and its note-off could be split by it); keeping the
+synchronous wait with a longer deadline (a longer dropout); a separate offline path (it would let a bounce and live
+play follow different rules).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

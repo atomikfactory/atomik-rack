@@ -435,6 +435,14 @@ may break APIs and the patch and project formats.
   death of a plugin process from the process itself, not only from the end of its pipes, so a plugin that started a
   helper process is shown as crashed when it dies instead of seconds later (or when the helper ends); a shared process
   loses all its plugins at once. There is one report per death, and a shutdown the app asked for is never one.
+- **A plugin in its own process that is slow to start no longer stalls the audio or fails.** The start (and the reset
+  after a locate) used to be a request the audio thread waited for up to 50 ms: a plugin that took 20 ms to start
+  held every callback for 20 ms, and one that took longer failed with "the plugin could not start processing" until
+  RELOAD. The start now rides on the first batch that needs it, which is waited for like any batch, so a slow start is
+  only a run of late batches (dry or silent) and the plugin plays as soon as it has started. A sleeping instrument
+  that is woken by a note is started the same way, and its first note sounds. A stop is sent without waiting. A plugin
+  that refuses to start still fails once with the same message, and one whose start never returns is still ended as
+  hung. A bounce is unchanged.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

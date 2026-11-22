@@ -5398,6 +5398,20 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     value or the clock for a decision. A bounce (`SandboxConfig::bounce`, set by
     `atomik-render`, also for `--plugin-mode realtime`) and an offline instance wait for every batch
     up to a 30 s watchdog, so a sandboxed bounce is byte-identical to an in-process one.
+  - *Start, stop and reset.* None of the three is a request the audio thread waits for. `start_processing`
+    and `reset` are owed to the child and ride on the next batch (the op word of the request carries the
+    work, `Before` in `atomik-plugin-ipc`; the child serves stop, start, reset and then the batch, and a start it
+    does not need, because the plugin is already started, is skipped). The audio thread waits for that batch like
+    for any other, so a plugin that takes 100 ms to start makes the batches of those 100 ms late (dry or silent, the
+    `late` meter counts them, the batches behind the first are polled, not waited for) and is never failed for it;
+    one full wait that ran out is one miss, which an answered batch forgives. A start the plugin refuses answers
+    with `ProcessStatus::StartFailed` and no audio (also for a batch that was late: the refusal is read before
+    the next request overwrites it) and fails the device once with "the plugin could not start processing", as
+    an in-process plugin does. `stop_processing` is sent at once and not waited for; when a request is in flight
+    it is owed and rides on the next batch ahead of its start (a stop followed at once by a start leaves the plugin
+    started), and a start that was owed and never sent is simply dropped. A start that never returns is a child
+    that completes nothing: the hang guard below ends it. Offline instances follow the same rule and wait for the
+    batch up to the watchdog, so a bounce is byte-identical with the sandbox on and off.
   - *Crash.* When the child ends, the reader thread (the end of the pipe) or the watcher thread
     (the process itself: a helper process that inherited the pipes cannot hide the death), whichever
     comes first and only once, marks the block dead (`DeathHandle`) and posts

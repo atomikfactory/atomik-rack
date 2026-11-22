@@ -8,6 +8,15 @@
 //! the offline watchdog runs out the processor only marks the block dead: the main thread
 //! (the instance's `poll`) kills the process, because killing needs a lock.
 //!
+//! Starting, stopping and resetting are not requests the audio thread waits for. A start (and a
+//! reset) is owed to the child and rides on the next batch, which the child serves in the order
+//! stop, start, reset, process. The audio thread then waits for it exactly as for any batch: a
+//! plugin that is slow to start only makes that batch late (and the ones behind it, which are
+//! polled while the child is busy) and is never failed for it. A start the plugin refuses comes
+//! back as [`ProcessStatus::StartFailed`] with the answer of the batch that carried it, or with
+//! the first batch after it when that one was late. A stop is sent at once without waiting; when
+//! a request is still in flight it is owed and rides on the next batch, ahead of its start.
+//!
 //! Live, a batch is waited for one period, or until the moment the running audio callback
 //! published as the end of its plugin budget when that is later (one atomic load): a plugin
 //! with bursty work uses the callback's slack instead of dropping the batch. A plugin that
@@ -18,14 +27,10 @@ use atomik_core::CallbackDeadline;
 use atomik_plugin_host::{
     PluginEvent, PluginIo, PluginProcessor, ProcessStatus, SleepRule, TailLength,
 };
-use atomik_plugin_ipc::{AudioOp, Deadline, MAX_EVENTS_IN, ParentPort, Poll, Ticket};
+use atomik_plugin_ipc::{AudioOp, Before, Deadline, MAX_EVENTS_IN, ParentPort, Poll, Ticket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
-
-/// How long a live `start_processing`, `stop_processing` or `reset` may take. These are not
-/// audio: a plugin may need a few milliseconds to start, which is not a failure.
-pub(crate) const LIVE_OP_DEADLINE: Duration = Duration::from_millis(50);
 
 /// The longest a live batch is waited for, whatever deadline the callback published: the
 /// callback's slack is a buffer (a few ten milliseconds at most), never more.
@@ -143,6 +148,13 @@ pub(crate) struct RemoteProcessor {
     cooling: u32,
     /// Whether the published budget is in use.
     budget: BudgetState,
+    /// Work owed to the child, which rides on the next batch (see the module documentation).
+    owed: Before,
+    /// The batch that carried a start, until its answer has been looked at: the refusal must not
+    /// be lost when that batch was late.
+    start_ticket: Option<Ticket>,
+    /// A refusal found just before its answer would be overwritten: the next batch reports it.
+    start_refused: bool,
     #[cfg(test)]
     trace: Option<Arc<Mutex<Vec<WaitKind>>>>,
 }
@@ -183,6 +195,9 @@ impl RemoteProcessor {
             misses: 0,
             cooling: 0,
             budget: BudgetState::default(),
+            owed: Before::NONE,
+            start_ticket: None,
+            start_refused: false,
             #[cfg(test)]
             trace: None,
         }
@@ -251,16 +266,17 @@ impl RemoteProcessor {
         }
     }
 
-    /// Submits the batch with the carried events in front (all at offset 0), and clears the
-    /// carry.
+    /// Submits the batch (with the work owed before it) and the carried events in front (all at
+    /// offset 0), and clears the carry.
     fn submit_with_carry(
         carry: &mut Vec<PluginEvent>,
         merged: &mut Vec<PluginEvent>,
         port: &mut ParentPort,
+        before: Before,
         io: &mut PluginIo<'_>,
     ) -> Ticket {
         if carry.is_empty() {
-            return port.submit(AudioOp::Process, io);
+            return port.submit_before(AudioOp::Process, before, io);
         }
         merged.clear();
         merged.extend(carry.iter().map(|e| PluginEvent {
@@ -285,7 +301,7 @@ impl RemoteProcessor {
                 transport: io.transport,
                 dropped: 0,
             };
-            port.submit(AudioOp::Process, &view)
+            port.submit_before(AudioOp::Process, before, &view)
         };
         if !t.is_none() {
             carry.clear();
@@ -293,22 +309,15 @@ impl RemoteProcessor {
         t
     }
 
-    /// Handles a request left in flight by an earlier call. Live, a request that is still
-    /// running is waited for no longer than `wait` (`None`: not at all); offline it is waited
-    /// for up to the watchdog, since an offline batch is never late.
-    fn drain(
-        port: &ParentPort,
-        offline: bool,
-        watchdog: Duration,
-        wait: Option<Duration>,
-    ) -> Drain {
+    /// Handles a request left in flight by an earlier call: live it is polled, never waited for
+    /// (a batch behind it is late); offline it is waited for up to the watchdog, since an
+    /// offline batch is never late.
+    fn drain(port: &ParentPort, offline: bool, watchdog: Duration) -> Drain {
         let Some(t) = port.outstanding() else {
             return Drain::Clear;
         };
         let polled = if offline {
             port.wait_done(t, Deadline::after(watchdog))
-        } else if let Some(wait) = wait {
-            port.wait_done(t, Deadline::after(wait))
         } else {
             port.poll(t)
         };
@@ -328,40 +337,9 @@ impl RemoteProcessor {
         }
     }
 
-    /// The deadline of a block-less op.
-    fn op_wait(&self) -> Duration {
-        self.period.max(LIVE_OP_DEADLINE)
-    }
-
-    /// Runs one op without audio. `None`: not done (late, or the child is gone).
-    fn run_op(&mut self, op: AudioOp) -> Option<bool> {
-        let (offline, watchdog, wait) = (self.offline, self.watchdog, self.op_wait());
-        let port = self.port.as_mut()?;
-        if port.is_dead() {
-            return None;
-        }
-        match Self::drain(port, offline, watchdog, Some(wait)) {
-            Drain::Clear => {}
-            Drain::Busy | Drain::Lost => return None,
-        }
-        let t = port.submit_op(op);
-        if t.is_none() {
-            return None;
-        }
-        let deadline = Deadline::after(if offline { watchdog } else { wait });
-        match port.wait_done(t, deadline) {
-            Poll::Done => Some(Self::take_ok(port, t)),
-            Poll::TimedOut if offline => {
-                port.mark_dead();
-                None
-            }
-            Poll::TimedOut | Poll::Pending | Poll::Dead => None,
-        }
-    }
-
-    /// The boolean result of a finished op. The op carries no audio, so the output side of
-    /// the view is empty.
-    fn take_ok(port: &mut ParentPort, t: Ticket) -> bool {
+    /// The status of an answered request whose audio nobody wants (the answer of a batch that
+    /// was late, or of a stop). Nothing is copied: the output side of the view is empty.
+    fn take_status(port: &mut ParentPort, t: Ticket) -> ProcessStatus {
         let mut events_out = atomik_plugin_host::EventList::with_capacity(0);
         let mut main_out: [atomik_core::Batch; 0] = [];
         let mut io = PluginIo {
@@ -377,8 +355,23 @@ impl RemoteProcessor {
             transport: atomik_plugin_host::PluginTransport::default(),
             dropped: 0,
         };
-        let response = port.take_response(t, &mut io);
-        response.ok && response.status != ProcessStatus::Error
+        port.take_response(t, &mut io).status
+    }
+
+    /// Whether the answer of the batch that carried a start says the plugin refused it. Must be
+    /// asked before another request is submitted (it would overwrite the answer).
+    fn start_was_refused(port: &mut ParentPort, t: Ticket) -> bool {
+        Self::take_status(port, t) == ProcessStatus::StartFailed
+    }
+
+    /// The work to ride on the next batch: a stop owed with nothing to start afterwards is
+    /// dropped (a batch only follows a start), the rest goes as it is.
+    fn riding(owed: Before) -> Before {
+        if owed.has(Before::START) {
+            owed
+        } else {
+            owed.without(Before::STOP)
+        }
     }
 }
 
@@ -409,6 +402,9 @@ impl RemoteProcessor {
             misses,
             cooling,
             budget,
+            owed,
+            start_ticket,
+            start_refused,
             ..
         } = self;
         let Some(port) = port.as_mut() else {
@@ -417,7 +413,7 @@ impl RemoteProcessor {
         if port.is_dead() {
             return ProcessStatus::Lost;
         }
-        match Self::drain(port, offline, watchdog, None) {
+        match Self::drain(port, offline, watchdog) {
             Drain::Clear => {}
             Drain::Busy => {
                 Self::carry_over(carry, io);
@@ -425,10 +421,24 @@ impl RemoteProcessor {
             }
             Drain::Lost => return ProcessStatus::Lost,
         }
-        let t = Self::submit_with_carry(carry, merged, port, io);
+        // A start that rode on an earlier batch (one that was late) has been answered: say so if
+        // the plugin refused it, before the next request overwrites the answer.
+        let refused = match start_ticket.take() {
+            Some(t) => Self::start_was_refused(port, t),
+            None => false,
+        };
+        if refused || std::mem::take(start_refused) {
+            return ProcessStatus::StartFailed;
+        }
+        let before = Self::riding(*owed);
+        let t = Self::submit_with_carry(carry, merged, port, before, io);
         if t.is_none() {
             Self::carry_over(carry, io);
             return ProcessStatus::Late;
+        }
+        *owed = Before::NONE;
+        if before.has(Before::START) {
+            *start_ticket = Some(t);
         }
         let polled = if offline {
             port.wait_done(t, Deadline::after(watchdog))
@@ -457,6 +467,7 @@ impl RemoteProcessor {
             Poll::Done => {
                 *misses = 0;
                 *cooling = 0;
+                *start_ticket = None;
                 port.take_response(t, io).status
             }
             Poll::Dead => ProcessStatus::Lost,
@@ -490,16 +501,66 @@ impl RemoteProcessor {
 }
 
 impl PluginProcessor for RemoteProcessor {
+    /// Owes the start to the child: it rides on the next batch, so nothing waits for it here. A
+    /// plugin whose process is gone cannot start (the batch would only say it is lost).
     fn start_processing(&mut self) -> bool {
-        self.run_op(AudioOp::Start).unwrap_or(false)
+        if self.port.as_ref().is_none_or(ParentPort::is_dead) {
+            return false;
+        }
+        self.owed = self.owed.with(Before::START);
+        true
     }
 
+    /// Sends the stop at once and does not wait for it: the next request finds it in flight and
+    /// is handled like it handles any earlier one. A start that was owed and not yet sent is
+    /// cancelled (the child never heard of it); a stop that cannot be sent now, because a
+    /// request is in flight, is owed and rides on the next batch, ahead of the start that
+    /// batch will carry.
     fn stop_processing(&mut self) {
-        let _ = self.run_op(AudioOp::Stop);
+        let Self {
+            port,
+            owed,
+            start_ticket,
+            start_refused,
+            ..
+        } = self;
+        let Some(port) = port.as_mut() else {
+            return;
+        };
+        if port.is_dead() {
+            return;
+        }
+        let (owed_start, owed_stop) = (owed.has(Before::START), owed.has(Before::STOP));
+        *owed = owed.without(Before::START);
+        if owed_start && !owed_stop {
+            // The child never heard of that start: there is nothing to stop.
+            *owed = Before::NONE;
+            return;
+        }
+        if port.outstanding().is_some() {
+            *owed = owed.with(Before::STOP);
+            return;
+        }
+        // Nothing is in flight: the answer of a start that rode on a late batch is read before
+        // the stop overwrites it.
+        if let Some(t) = start_ticket.take()
+            && Self::start_was_refused(port, t)
+        {
+            *start_refused = true;
+        }
+        let first = owed.without(Before::STOP);
+        if !port.submit_op_before(AudioOp::Stop, first).is_none() {
+            *owed = Before::NONE;
+        } else {
+            *owed = owed.with(Before::STOP);
+        }
     }
 
+    /// Owes the reset to the child: it rides on the next batch, ahead of that batch's events.
     fn reset(&mut self) {
-        let _ = self.run_op(AudioOp::Reset);
+        if self.port.as_ref().is_some_and(|p| !p.is_dead()) {
+            self.owed = self.owed.with(Before::RESET);
+        }
     }
 
     fn process(&mut self, io: &mut PluginIo<'_>) -> ProcessStatus {

@@ -11,6 +11,7 @@ mod polled;
 mod processor;
 mod rpc;
 mod soft;
+mod start;
 mod stuck;
 mod supervision;
 mod watcher;

@@ -477,6 +477,14 @@ libraries.
   reports such an edit when its state is loaded and `ATOMIK_TEST_GUI_EDIT_ON_RESTORE` is `<param>:<value>`.
   A live child that misses a batch's deadline passes the dry input, so the tests that compare a live output
   process until the child keeps up (`process_settled`). Editors need a desktop and stay hand checks.
+- **A slow, refused or never-ending start in the sandbox.** The built-in `null` plugins wait
+  `ATOMIK_NULL_START_MS` milliseconds in `start_processing`, and `null.refuse-start` and `null.hang-start`
+  refuse or never return; the test plugin libraries wait `ATOMIK_TEST_START_MS`.
+  `plugin-sandbox/src/tests/start.rs` drives the processor over the fake child with a start the test holds
+  and releases (late, not failed; events kept; refusal read once; stop and start in consecutive batches; reset
+  before the notes; hung when it never answers), `plugin-hostd/tests/e2e_start.rs` does the same through a real
+  child and device, `null_plugins.rs` and `real_plugins.rs` check the child side bit for bit, and
+  `plugin_sandbox_bounce.rs` checks that a slow start leaves a bounce unchanged.
 - **Real plugins** are only for manual checks (the ignored tests in `app_core_plugins_real_tests.rs`
   and `plugin-vst3/tests/real_plugin.rs`, driven by the `ATOMIK_REAL_*` environment variables, and
   `plugin_scan_fallback.rs`, which scans the folders named by `ATOMIK_SCAN_SMOKE`, run against
