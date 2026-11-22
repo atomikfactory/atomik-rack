@@ -1603,3 +1603,37 @@ sizes (still tracks short callbacks); growing on every counted trim (drift pushe
 by wall time (the audio thread has no clock it may read for this).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BC. A plugin rests when its input was silent for its tail and its own output for a second
+
+**Decision.** One rule for every plugin format and kind, decided per 64-frame block from batch content and from what the
+plugin returned, never from a clock. A plugin is not called in a block when nothing wakes it (an event of any kind, a
+param change included; a request of the plugin; a non-silent main or sidechain input; a change of the play state) and
+all of this holds: its input has been silent, with no event, for at least the tail it reports (a tail without end waives
+this); its own output (main, aux, and the notes it emits) has been at or below -120 dB for the idle time of one second,
+counted in calls (`IDLE_SECONDS`, 750 blocks at 48 kHz); no note is open; and the format leaves the choice to the host
+(VST3), or the plugin last answered "continue if not quiet" (CLAP). A CLAP plugin that answers "sleep" rests until
+woken, with no other condition; one that answers "tail" or "continue" is called every block. A plugin that is new,
+restarted, reset or just un-bypassed is observed for the idle second before it can rest. A VST3 instrument that rests is
+also told to stop processing and is started before the block that wakes it, as before.
+
+**Why.** The old rule skipped a VST3 plugin only for a tail of exactly zero, so a reverb that reports a tail ran for
+ever on silence, and a plugin that reports none while it rings (a common framework default) was cut at the first silent
+input block. The CLAP path rested only on "sleep", so plugins that answer the other quiet statuses never did. Requiring
+the output to have been silent for a second is what makes a skipped call inaudible: a skipped plugin makes silence,
+because it had been making silence. Everything it looks at is in the batches or in the plugin's answers, so a live run, a
+bounce and a plugin in its own process agree, and nothing on the audio path allocates, locks or reads a clock.
+
+**Limits.** A plugin whose output never goes quiet (a constant offset, noise, a dither) never rests, which is the safe
+side. A plugin that makes sound from the transport alone after a second of silence, with no event, is not woken
+mid-play (a change of the play state wakes it), as already for instruments. Any event, a param event of automation
+included, restarts the idle second, so a plugin under continuous automation is always called. After a wake the plugin's
+modulation phase and similar state are where the last call left them, not where silent calls would have taken them.
+In a plugin's own process the tail it reports reaches the host one block late, which only matters if a plugin changes
+its tail while it runs.
+
+**Rejected.** Resting on the reported tail alone (cuts plugins that under-report); a fixed idle time with no output test
+(cuts any ring longer than it); trusting "continue" and "tail" to mean the plugin may rest (they mean the opposite in the
+CLAP specification); a wall-clock idle time (a bounce would differ from playback).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

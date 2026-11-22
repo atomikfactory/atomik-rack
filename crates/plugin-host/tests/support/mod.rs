@@ -13,7 +13,7 @@ use atomik_plugin_host::{
     PluginTransport, ProcessStatus, ReaperQueue, SleepRule, TailLength, plugin_channel,
 };
 use atomik_test_plugin_core as core;
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub const SR: f64 = 48_000.0;
@@ -431,7 +431,8 @@ pub struct ProbeShared {
     /// Panic in the call with this index (`usize::MAX` = never).
     panic_at: AtomicUsize,
     rule: AtomicU8,
-    tail: AtomicU8,
+    /// The reported tail in frames (`u32::MAX`: infinite).
+    tail: AtomicU32,
     /// Events the probe emits on `events_out` in every call.
     pub emit: Mutex<Vec<PluginEvent>>,
 }
@@ -449,7 +450,7 @@ impl Probe {
             out_value: Mutex::new(1.0),
             panic_at: AtomicUsize::new(usize::MAX),
             rule: AtomicU8::new(0),
-            tail: AtomicU8::new(0),
+            tail: AtomicU32::new(0),
             emit: Mutex::new(Vec::with_capacity(64)),
         });
         // Apple's `std` mutex boxes its pthread mutex on the first lock; take each lock once here so
@@ -505,9 +506,8 @@ impl ProbeShared {
         );
         self.tail.store(
             match tail {
-                TailLength::Finite(0) => 0,
-                TailLength::Finite(_) => 1,
-                TailLength::Infinite => 2,
+                TailLength::Finite(frames) => frames.min(u32::MAX - 1),
+                TailLength::Infinite => u32::MAX,
             },
             Ordering::Relaxed,
         );
@@ -600,9 +600,8 @@ impl PluginProcessor for Probe {
     }
     fn tail_samples(&self) -> TailLength {
         match self.shared.tail.load(Ordering::Relaxed) {
-            0 => TailLength::Finite(0),
-            1 => TailLength::Finite(1_000),
-            _ => TailLength::Infinite,
+            u32::MAX => TailLength::Infinite,
+            frames => TailLength::Finite(frames),
         }
     }
 }

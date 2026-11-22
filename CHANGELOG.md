@@ -185,6 +185,12 @@ may break APIs and the patch and project formats.
 - **The audio streamer rests when it has been idle for a while.** After a tenth of a second with nothing to
   fill it sleeps 10 ms between looks instead of 1 ms; playing, a locate, a loop change and any transport
   command from the interface bring it back at once.
+- **Reverbs and delays stop using CPU once their tail has died away.** A plugin now rests when its input has been
+  silent for the tail it reports and its own output has been silent for a second, in both plugin formats; any
+  input, note, parameter change, request of the plugin or play/stop wakes it. A plugin that reports no tail but
+  keeps ringing is no longer cut at the first silent block, a tail without end rests once the output is silent,
+  and CLAP plugins that answer "continue if not quiet" rest too (one that answers "tail" or "continue" is still
+  called). A bounce is unchanged for plugins that make silence from silence.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

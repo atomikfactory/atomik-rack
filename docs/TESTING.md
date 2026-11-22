@@ -1578,6 +1578,19 @@ Hand checks, on every OS:
   its window forward. Double-click the divider between the rack and the song: the rack collapses;
   again: the split is back.
 
+## Plugins that sleep and bypassed plugins
+
+`crates/plugin-host/tests/device_sleep.rs` runs the sleep rule against a ringing effect and against the same
+processor called in every block, and the outputs are equal bit for bit: what a resting plugin would have made is
+what it makes. It covers a tail of two seconds, one that reports none but rings for a second (not cut), a tail
+without end, a plugin whose output never goes quiet (never rests), the CLAP statuses (tail, continue if not
+quiet, continue, sleep) and the wakes (input, param, request of the plugin, play state).
+`crates/plugin-vst3/tests/effect_sleep.rs` does the same with the real test plugins of both formats.
+
+Hand checks, not automated (they need real plugins and your ears): put a reverb and a delay on a track, play a
+note or a hit and stop; the tail is never cut, and the CPU readout of the device falls to zero once it has died
+away.
+
 ## Hardware and manual tests
 
 Tests that need real hardware or a plugin installed on your machine are `#[ignore]`d and never run

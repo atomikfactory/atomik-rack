@@ -287,39 +287,78 @@ fn a_sleeping_effect_wakes_on_a_non_silent_input() {
 }
 
 #[test]
-fn the_vst3_style_rule_skips_only_with_zero_tail_silence_and_nothing_pending() {
-    // Zero tail: nothing to do on a silent, eventless batch of an effect.
+fn the_vst3_style_rule_skips_after_a_silent_input_for_the_tail_and_a_silent_output_for_the_idle_time()
+ {
+    // Zero tail: nothing to do on a silent, eventless input once the output has been silent for
+    // the idle time (a fresh plugin is observed first: it may still ring).
     let (probe, shared) = Probe::new();
     shared.set_rule(SleepRule::ZeroTail, TailLength::Finite(0));
     let (mut h, _r) = harness(rig("st.zt", &fx_layout(), Box::new(probe)));
-    h.process();
-    h.process();
-    assert_eq!(shared.calls(), 0);
+    for _ in 0..IDLE {
+        h.process();
+    }
+    assert_eq!(shared.calls(), IDLE, "observed for the idle time");
+    for _ in 0..4 {
+        h.process();
+    }
+    assert_eq!(shared.calls(), IDLE, "then skipped");
     h.set_param("p2", 0.5);
     h.process();
-    assert_eq!(shared.calls(), 1, "a param change is work");
+    assert_eq!(shared.calls(), IDLE + 1, "a param change is work");
     h.process();
-    assert_eq!(shared.calls(), 1);
-    // A finite tail above zero or an infinite one never sleeps.
-    for tail in [TailLength::Finite(1_000), TailLength::Infinite] {
-        let (probe, shared) = Probe::new();
-        shared.set_rule(SleepRule::ZeroTail, tail);
-        let (mut h, _r) = harness(rig("st.zt2", &synth_layout(), Box::new(probe)));
-        for _ in 0..4 {
-            h.process();
-        }
-        assert_eq!(shared.calls(), 4, "{tail:?}");
-    }
+    assert_eq!(
+        shared.calls(),
+        IDLE + 2,
+        "and is observed for the idle time again"
+    );
     // A non-silent input is work too.
-    let (probe, shared) = Probe::new();
-    shared.set_rule(SleepRule::ZeroTail, TailLength::Finite(0));
-    let (mut h, _r) = harness(rig("st.zt3", &fx_layout(), Box::new(probe)));
-    h.input_mut("in_l");
+    for _ in 0..IDLE + 4 {
+        h.process();
+    }
+    let slept = shared.calls();
     h.process();
-    assert_eq!(shared.calls(), 0);
+    assert_eq!(shared.calls(), slept, "asleep");
     h.input_mut("in_l")[0] = 0.1;
     h.process();
-    assert_eq!(shared.calls(), 1);
+    assert_eq!(shared.calls(), slept + 1);
+    // A tail longer than the idle time keeps an effect awake until the input has been silent
+    // for all of it, an infinite tail leaves the decision to the output alone.
+    let tail_frames = 2 * 48_000;
+    let (probe, shared) = Probe::new();
+    shared.set_rule(SleepRule::ZeroTail, TailLength::Finite(tail_frames));
+    let (mut h, _r) = harness(rig("st.zt2", &fx_layout(), Box::new(probe)));
+    h.input_mut("in_l")[0] = 0.5;
+    h.process();
+    *h.input_mut("in_l") = [0.0; BATCH];
+    let tail_batches = tail_frames as usize / BATCH;
+    for _ in 0..tail_batches {
+        h.process();
+    }
+    assert_eq!(
+        shared.calls(),
+        1 + tail_batches,
+        "processed through its tail"
+    );
+    let after = shared.calls();
+    for _ in 0..4 {
+        h.process();
+    }
+    assert_eq!(shared.calls(), after, "asleep once the tail has elapsed");
+    let (probe, shared) = Probe::new();
+    shared.set_rule(SleepRule::ZeroTail, TailLength::Infinite);
+    let (mut h, _r) = harness(rig("st.zt-inf", &fx_layout(), Box::new(probe)));
+    h.input_mut("in_l")[0] = 0.5;
+    h.process();
+    *h.input_mut("in_l") = [0.0; BATCH];
+    for _ in 0..IDLE + 4 {
+        h.process();
+    }
+    assert!(shared.calls() <= IDLE + 2, "output silence alone decides");
+    let after = shared.calls();
+    for _ in 0..4 {
+        h.process();
+    }
+    assert_eq!(shared.calls(), after);
 }
 
 /// 1 s of 64-frame batches at 48 kHz.
@@ -423,13 +462,13 @@ fn a_note_effect_with_an_open_note_is_processed_and_never_stopped_and_an_idle_ef
     assert_eq!(shared.log.lock().unwrap().stops, 0);
     h.push_note("notes_in", off(0, 60));
     h.process();
-    for _ in 0..20 {
+    for _ in 0..IDLE + 20 {
         h.process();
     }
     assert_eq!(
         shared.calls(),
-        2 * IDLE + 2,
-        "skipped once the note is closed"
+        3 * IDLE + 2,
+        "skipped once the note is closed and the idle time has passed"
     );
     assert_eq!(
         shared.log.lock().unwrap().stops,
@@ -443,10 +482,10 @@ fn a_note_effect_with_an_open_note_is_processed_and_never_stopped_and_an_idle_ef
     *h.input_mut("in_l") = [0.1; BATCH];
     h.process();
     *h.input_mut("in_l") = [0.0; BATCH];
-    for _ in 0..10 {
+    for _ in 0..IDLE + 10 {
         h.process();
     }
-    assert_eq!(shared.calls(), 1);
+    assert_eq!(shared.calls(), IDLE + 1);
     assert_eq!(shared.log.lock().unwrap().stops, 0);
 }
 
