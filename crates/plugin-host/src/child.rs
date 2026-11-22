@@ -67,6 +67,7 @@ impl ScannerCommand {
 pub struct ChildScanner {
     command: ScannerCommand,
     spawned: AtomicUsize,
+    first_look_delay: Duration,
 }
 
 impl ChildScanner {
@@ -75,7 +76,16 @@ impl ChildScanner {
         Self {
             command,
             spawned: AtomicUsize::new(0),
+            first_look_delay: Duration::ZERO,
         }
+    }
+
+    /// Test seam: waits this long after starting a child before first looking at it, so a child
+    /// that is quick has already ended when the parent looks (what a fast machine does).
+    #[must_use]
+    pub fn with_first_look_delay(mut self, delay: Duration) -> Self {
+        self.first_look_delay = delay;
+        self
     }
 
     /// How many children this runner has started (a cache hit starts none).
@@ -266,6 +276,9 @@ impl ChildScanner {
         };
         let out_rx = reader(out, MAX_SCAN_OUTPUT);
         let err_rx = reader(err, STDERR_REASON_BYTES);
+        if !self.first_look_delay.is_zero() {
+            std::thread::sleep(self.first_look_delay);
+        }
         let mut window_start = Instant::now();
         let mut lines_seen = 0usize;
         let end = loop {
@@ -325,6 +338,13 @@ impl ChildScanner {
             .bytes
             .recv_timeout(Duration::from_secs(2))
             .unwrap_or_default();
+        // Too much output wins over a clean exit, whichever the parent noticed first: the reader
+        // sets `over` before it hands its bytes over, so once they are here (or the wait for them
+        // is over) the flag is settled for everything read.
+        let end = match end {
+            End::Clean if out_rx.over.load(Ordering::Acquire) => End::TooLarge,
+            other => other,
+        };
         Ok(Run {
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
             end,

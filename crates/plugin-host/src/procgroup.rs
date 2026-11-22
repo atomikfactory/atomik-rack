@@ -245,9 +245,8 @@ mod os {
 #[cfg(unix)]
 mod os {
     pub fn peek_exited(pid: u32) -> std::io::Result<bool> {
-        let Ok(id) = libc::id_t::try_from(pid) else {
-            return Ok(false);
-        };
+        // `id_t` is `u32` on every system this builds for, as a process id is.
+        let id: libc::id_t = pid;
         // SAFETY: an all-zero `siginfo_t` is a valid value for `waitid` to fill in.
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
         // SAFETY: `waitid` with WNOWAIT and WNOHANG only looks at our own child `id`, which the

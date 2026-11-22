@@ -16,7 +16,6 @@ const ALLOWED_DIRS: &[&str] = &[
     "crates/testplugins/clap-shell/",
     "crates/testplugins/clap-bad/",
     "crates/testplugins/clap-hang/",
-    "crates/testplugins/clap-mix/",
     "crates/testplugins/clap-crash/",
     "crates/testplugins/clap-leak/",
     "crates/testplugins/clap-variants/",
