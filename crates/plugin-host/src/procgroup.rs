@@ -3,8 +3,11 @@
 //!
 //! * [`prepare`] (before the spawn) puts the child below normal priority and, on Unix, in a
 //!   process group of its own; [`ScanGroup::attach`] (after it) joins it to a kill-on-close job
-//!   object (Windows) or lowers its niceness (Unix). A helper process a plugin starts while it
-//!   loads inherits the group and the priority.
+//!   object (Windows). A helper process a plugin starts while it loads inherits the group and
+//!   the priority. On Unix the niceness is set in the child itself, between the fork and the
+//!   exec: set by the parent after the spawn it could come too late for a helper the scanner
+//!   had already started, which then kept the normal priority for good. `attach` still sets it
+//!   once more from outside, which costs nothing and covers a child whose own call failed.
 //! * [`ScanGroup::kill`], also run when the group is dropped, ends every process of the group: a
 //!   scan that timed out, crashed, was cancelled or even finished leaves nothing behind. A group
 //!   is signalled at most once, and on Unix only while its leader is not yet reaped: a process
@@ -49,7 +52,7 @@ pub fn scan_creation_flags() -> u32 {
 }
 
 /// Configures `cmd` for a scan child (see the module docs): the creation flags on Windows, a
-/// process group of its own on Unix.
+/// process group of its own and a lower priority from its first instruction on Unix.
 pub fn prepare(cmd: &mut Command) {
     #[cfg(windows)]
     {
@@ -60,6 +63,16 @@ pub fn prepare(cmd: &mut Command) {
     {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
+        // SAFETY: the closure runs in the forked child before the exec. It makes one system
+        // call, `setpriority` on the calling process, which takes no lock and allocates
+        // nothing, and it touches no state of the parent. A failure is ignored: the child then
+        // starts at the normal priority and `ScanGroup::attach` lowers it from outside.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setpriority(libc::PRIO_PROCESS, 0, SCAN_NICE);
+                Ok(())
+            });
+        }
     }
     #[cfg(not(any(windows, unix)))]
     {
