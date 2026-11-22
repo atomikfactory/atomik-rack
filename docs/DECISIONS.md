@@ -1566,3 +1566,30 @@ the paint tail is smaller and cannot miss a visible change for longer than the s
 cost is the frame, not only the paint).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BB. Captured input waits for three buffers of the configured size, plus an allowance that grows on trims and shrinks when quiet
+
+**Decision.** The render callback keeps at most `3 * B + extra` frames of captured input in the ring, where `B` is the
+buffer the stream was opened with or the largest callback seen, if larger, and `extra` starts at zero. Each counted
+trim raises `extra` by half a buffer (at least 16 frames) up to a maximum of two buffers, clamped to between 10 ms and
+30 ms of audio; 2000 callbacks in a row without a counted trim lower it by one step. Past the allowance the oldest
+frames are discarded and counted, as before. The allowed backlog beyond one callback (`2 * B + extra`) is published
+as `input_backlog_allowed_frames` and shown in the status line and in Export Diagnostics. Examples at 48 kHz: a
+buffer of 64 allows 192 + up to 480 frames (4 ms, at most 14 ms); 256: 768 + up to 512 (16 ms, up to 27 ms); 512: 1536
++ up to 1024 (32 ms, up to 53 ms); 4096: 12288 + up to 1440 (256 ms, up to 286 ms).
+
+**Why.** The old rule measured three buffers of the callback that was running. Shared-mode drivers deliver callbacks
+of uneven size, so after a short callback a burst of input looked like a backlog and was dropped: audio lost from takes
+and monitoring with no clock drift at all. The configured buffer is what the interface promises on average; the
+extra absorbs a driver that is burstier than that, and the cap keeps real drift from growing the latency. Takes are
+placed with the measured input latency, which already includes the frames the ring holds, and the allowance changes
+only what is discarded, so a take does not move. All integers on the callback, counted in callbacks, so a bounce and
+the audio path are untouched.
+
+**Limits.** Two interfaces whose clocks drift still lose a frame now and then (counted); there is no resampling. The
+extra shrinks slowly, so after a burst the monitoring latency may stay a few milliseconds higher for a while.
+
+**Rejected.** A fixed larger threshold (more latency for everyone); a threshold from the running average of callback
+sizes (still tracks short callbacks); shrinking by wall time (the audio thread has no clock it may read for this).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

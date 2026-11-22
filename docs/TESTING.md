@@ -1841,10 +1841,13 @@ Two more groups are in the report. For lost input (the `input overruns` of the s
 the render callback trimmed the captured input, the most frames the ring held just before such a trim, the smallest
 and the largest callback seen and the buffer size the stream was opened with, so a trim count that grows with a
 backlog far above the callback size (capture running ahead) can be told from one that grows with a backlog just over
-it (a threshold that follows the current callback too closely). A DEBUG line `input trimmed: 3 trims, backlog max
-1440 frames, callback 96..480 frames, buffer 480` is written when the count rose (run with `ATOMIK_LOG=debug`). And
+it (a threshold that follows the current callback too closely). The allowed backlog (what the ring may hold beyond one
+callback, in frames and milliseconds) is in the same line, and in the status line next to the latencies. A DEBUG
+line `input trimmed: 3 trims, backlog max 1440 frames, allowed 1536 frames, callback 96..480 frames, buffer 480` is written when the count rose (run with `ATOMIK_LOG=debug`). And
 it gives the render workers: their count, the linger, and the idle spins and parks so far, next to the late sandbox
-batches of the overload counters. `crates/audio-io/src/telemetry.rs` and `stream.rs` test the counters,
+batches of the overload counters. `crates/audio-io/src/telemetry.rs` and `stream.rs` test the counters, `slack.rs` the trim rule (bursts against
+callbacks of uneven size lose nothing, steady drift is trimmed and bounded, the allowance grows, stops and shrinks,
+a take lands on the same frame at either end of it),
 `crates/engine/tests/worker_linger.rs` the worker read-out (and, ignored, a paced benchmark of the callback
 duration, the idle spins and the process CPU per worker count and linger: `cargo test -p atomik-engine --release
 --test worker_linger -- --ignored --nocapture`), and `diagnostics.rs` and `session_tests.rs` the report

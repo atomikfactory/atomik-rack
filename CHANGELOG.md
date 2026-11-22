@@ -368,6 +368,13 @@ may break APIs and the patch and project formats.
   titles appear in the rack as they are. A plugin that still asks for a fifth restart in a row is ignored, with
   one warning in its log, and keeps running in its last working activation; the rule counts polls, not time, so a
   bounce is unchanged and the same with the plugin sandbox on or off.
+- **Recordings and monitoring no longer lose audio when the driver delivers buffers of uneven size.** With an audio
+  input open, captured audio that arrived in a burst was thrown away whenever one callback happened to be short,
+  which counted as input overruns (hundreds to thousands of frames in a session) and clicked in the monitor and in
+  takes. The room kept for captured audio now follows the buffer size the interface was opened with, grows a little
+  when audio does run ahead and shrinks again when it settles; two interfaces with drifting clocks are still kept
+  in step, with the limit shown. The status line and Export Diagnostics show how much input backlog is allowed.
+  Takes land on the timeline where they did before, and a bounce is unchanged.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

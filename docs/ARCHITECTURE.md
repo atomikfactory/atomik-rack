@@ -3132,7 +3132,16 @@ while the song plays or records. It is one try (a failed one does not make the d
 picking devices in the dialog forgets it.
 Input that the capture ring could not hold, or that the render callback discarded to bound the
 latency, is `Telemetry::input_overruns` (frames; the first discard, of what was captured before the
-output started, is not counted). The Audio Settings dialog warns when the open input and output are
+output started, is not counted). How much captured input may wait is `InputSlack`
+(`crates/audio-io/src/slack.rs`): three buffers of the size the stream was opened with (or of the
+largest callback a driver delivered, if larger), never of the callback that is running, so a short
+callback in shared mode does not turn a burst into a backlog; on top of that an extra allowance that
+a counted trim raises by half a buffer and 2000 quiet callbacks lower by the same step, between zero
+and two buffers clamped to 10..30 ms. Past the allowance the ring is trimmed and counted as before.
+The allowed backlog is `Telemetry::input_backlog_allowed_frames`, shown in the status line and in
+Export Diagnostics. A take's compensation uses the measured input latency, which includes the frames
+the ring actually holds, and the allowance only decides what is discarded, so a larger one never
+moves a take. The Audio Settings dialog warns when the open input and output are
 different devices, since their clocks drift apart; a device named like the output is the default
 input, so one interface for both is what opens unless another input is chosen.
 

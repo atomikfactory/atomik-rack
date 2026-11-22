@@ -275,6 +275,8 @@ pub(crate) struct TelemetryState {
     /// (published by the render callback).
     input_trims: AtomicU64,
     input_backlog_max: AtomicU32,
+    /// The most frames the input ring may hold beyond one callback's read now.
+    input_backlog_allowed: AtomicU32,
     /// The smallest and the largest callback seen, in frames (0: none yet). Only the render
     /// callback writes them.
     frames_min: AtomicU32,
@@ -380,11 +382,14 @@ impl TelemetryState {
     }
 
     /// Publishes how often the render callback trimmed the input ring and the largest backlog
-    /// before such a trim, in frames (two relaxed stores per callback).
-    pub(crate) fn set_input_trims(&self, trims: u64, backlog_max_frames: u32) {
+    /// before such a trim, in frames, and how much backlog the ring may hold now (three relaxed
+    /// stores per callback).
+    pub(crate) fn set_input_trims(&self, trims: u64, backlog_max_frames: u32, allowed_frames: u32) {
         self.input_trims.store(trims, Ordering::Relaxed);
         self.input_backlog_max
             .store(backlog_max_frames, Ordering::Relaxed);
+        self.input_backlog_allowed
+            .store(allowed_frames, Ordering::Relaxed);
     }
 
     /// Records that the backend reported the device gone (sticky; one relaxed store).
@@ -429,6 +434,7 @@ impl TelemetryState {
             input_overruns: self.input_lost.load(Ordering::Relaxed),
             input_trims: self.input_trims.load(Ordering::Relaxed),
             input_backlog_max_frames: self.input_backlog_max.load(Ordering::Relaxed),
+            input_backlog_allowed_frames: self.input_backlog_allowed.load(Ordering::Relaxed),
             callback_frames_min: self.frames_min.load(Ordering::Relaxed),
             callback_frames_max: self.frames_max.load(Ordering::Relaxed),
             device_lost: self.device_lost.load(Ordering::Relaxed),
@@ -473,10 +479,11 @@ mod tests {
             let at = t0 + Duration::from_millis(10 * i as u64);
             state.on_callback(&mut d, at, frames, 48_000, Duration::from_micros(50), 0);
         }
-        state.set_input_trims(3, 1440);
+        state.set_input_trims(3, 1440, 1536);
         let t = state.snapshot();
         assert_eq!((t.callback_frames_min, t.callback_frames_max), (96, 480));
         assert_eq!((t.input_trims, t.input_backlog_max_frames), (3, 1440));
+        assert_eq!(t.input_backlog_allowed_frames, 1536);
     }
 
     #[allow(clippy::disallowed_methods)] // Justification: test-only origin of a simulated timeline.
