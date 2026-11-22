@@ -1637,3 +1637,32 @@ its tail while it runs.
 CLAP specification); a wall-clock idle time (a bounce would differ from playback).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BD. A bypassed effect is not called once the fade is done, and comes back cleared and pre-rolled
+
+**Decision.** Live, an effect (not an instrument or a note effect) whose bypass has crossfaded to the dry signal is
+treated like a powered-off device: no `process` call, the dry ring and its delay compensation keep running, the end of an
+open note is still delivered, new notes are held back, and param changes stay pending and are sent in the first block
+after the bypass is switched off. The state shows as STOPPED. When the bypass is switched off, the plugin is reset
+(`reset`), then called for the pre-roll with its output held at the dry signal, then faded in over the usual 5 ms. The
+pre-roll is `PREROLL_SECONDS` (20 ms: 15 blocks at 48 kHz) or the plugin's latency in frames if that is longer, so that a
+plugin with look-ahead has produced real output by the time its first wet frame is used. A bounce (a device activated in
+offline mode) never parks the plugin.
+
+**Why.** A user who bypasses a heavy plugin to save CPU saved nothing: the plugin was processed for ever after the
+fade. A parked plugin has not heard the input for as long as it was bypassed, so without a reset a reverb would bring
+back the tail it had when it was bypassed, and without a pre-roll its filters and followers would start from stale state
+under the fade. The reset costs nothing audible because the output is still dry; the pre-roll is short enough that the
+switch is heard well within a tenth of a second. Offline the render must not depend on when a bypass came and must stay
+what it always was, so nothing is parked there; a wall clock is not involved either way. The device learns its mode from
+the activation of the plugin (it was never told before).
+
+**Limits.** Live and offline differ after a bypass: live the plugin restarts from a cleared state, offline it ran all
+along (only for a plugin whose output depends on its own history). A plugin that dislikes `reset` gets one per
+un-bypass. Instruments and note effects keep what bypass meant for them (silence or no notes, still called).
+
+**Rejected.** Pre-rolling for the plugin's whole tail (unbounded cost on the audio thread); no reset (stale tails);
+parking a bounce too (would change what existing projects render); running the pre-roll with the output faded in
+(a clicking, half-formed wet signal).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

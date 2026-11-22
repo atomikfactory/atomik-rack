@@ -5041,7 +5041,9 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   a 5 ms bypass crossfade to the dry main input (an effect's dry input is delayed by the plugin's
   reported latency, so a bypassed latent plugin stays where the delay compensation put it), applies
   the sleep rule (a plugin whose input has been silent for its tail and whose own output has been
-  silent for a second is not called; only batch content and what the plugin returned decide), sets
+  silent for a second is not called; only batch content and what the plugin returned decide) and
+  the bypass rule (live, an effect whose bypass has faded to dry is not called, and switching the
+  bypass off clears it and pre-rolls it for 20 ms, or its latency, before the fade in), sets
   flush-to-zero around `process`,
   and turns a panic, or a run of bad blocks (an error status or a non-finite output; `bad_run_limit`,
   a quarter of a second), into FAILED (silence, or dry for effects). A single bad block is replaced by the

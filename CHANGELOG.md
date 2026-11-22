@@ -191,6 +191,11 @@ may break APIs and the patch and project formats.
   keeps ringing is no longer cut at the first silent block, a tail without end rests once the output is silent,
   and CLAP plugins that answer "continue if not quiet" rest too (one that answers "tail" or "continue" is still
   called). A bounce is unchanged for plugins that make silence from silence.
+- **A bypassed plugin uses no CPU.** An effect whose bypass has faded to the dry signal is no longer run; its delay
+  compensation, the dry signal and the end of held notes are unchanged, and parameter changes made meanwhile reach
+  the plugin when the bypass is switched off. Switching it off clears the plugin and runs it for 20 ms (or its
+  latency, if longer) with the output still dry before the usual fade in, so it does not start from stale state or
+  click. A bounce still runs a bypassed plugin, so a bounce does not depend on when the bypass came.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

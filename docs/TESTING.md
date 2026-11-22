@@ -1584,12 +1584,17 @@ Hand checks, on every OS:
 processor called in every block, and the outputs are equal bit for bit: what a resting plugin would have made is
 what it makes. It covers a tail of two seconds, one that reports none but rings for a second (not cut), a tail
 without end, a plugin whose output never goes quiet (never rests), the CLAP statuses (tail, continue if not
-quiet, continue, sleep) and the wakes (input, param, request of the plugin, play state).
-`crates/plugin-vst3/tests/effect_sleep.rs` does the same with the real test plugins of both formats.
+quiet, continue, sleep) and the wakes (input, param, request of the plugin, play state). The bypass tests count
+the calls of the plugin (none after the fade), compare the dry output with the input delayed by the latency, and
+check the pre-roll and the fade against a reference without a step; a low-pass filter shows that live the plugin
+starts clean after the bypass and that a bounce (offline) renders what processing all along renders.
+`crates/plugin-vst3/tests/effect_sleep.rs` does the sleep part with the real test plugins of both formats, and
+`crates/plugin-hostd/tests/e2e_sleep.rs` renders the same script in the plugin's own process and in this one and
+compares every output block and state meter.
 
 Hand checks, not automated (they need real plugins and your ears): put a reverb and a delay on a track, play a
 note or a hit and stop; the tail is never cut, and the CPU readout of the device falls to zero once it has died
-away.
+away. Bypass a heavy plugin: its CPU readout falls to zero, and switching the bypass off does not click.
 
 ## Hardware and manual tests
 

@@ -6,7 +6,7 @@
 //! 2. gathers the cabled inputs into preallocated buffers (stereo, or the mono mapping of
 //!    the sockets) and builds the event list: coalesced param changes first, then the batch's notes
 //!    as events with host note ids,
-//! 3. applies the skipping rules (sleep, power off),
+//! 3. applies the skipping rules (sleep, a bypassed effect, power off),
 //! 4. calls the processor with exactly 64 frames inside a panic boundary and a flush-to-zero
 //!    guard, and fails the device on a panic, or on a run of bad blocks (an error status or
 //!    non-finite output: see below; a sandboxed plugin may also answer `Late`: no wet signal this
@@ -62,6 +62,16 @@
 //! un-bypassed plugin is observed for the idle time before it can sleep. An instrument that
 //! sleeps by the VST3 rule is also told to stop processing and is started again before the
 //! block that wakes it.
+//!
+//! **A bypassed effect is not called.** Once the bypass crossfade has finished (live runs only;
+//! a bounce keeps calling the plugin, so what it renders cannot depend on when the bypass came)
+//! an effect is treated like a powered-off device: no `process`, the dry ring and its delay
+//! compensation keep running, the end of a note is still delivered, new notes are held back and
+//! param changes stay pending and reach the plugin in the first block after the bypass is
+//! switched off. When it is, the plugin's audio state is cleared and it runs a pre-roll of
+//! [`PREROLL_SECONDS`] (or its latency, if longer) fed with the real input while the output stays
+//! at the dry signal; then the usual 5 ms crossfade fades it in. Instruments and note effects
+//! keep what bypass meant for them (silence, new notes held back, still called).
 //!
 //! **Bypass keeps the delay compensation.** An effect's dry signal is the main input delayed by
 //! the plugin's reported latency (a ring of 100 ms, written every sample), so a bypassed latent
@@ -134,6 +144,13 @@ const CLOSED: i32 = -1;
 /// must not be cut: its own output is the evidence.
 const IDLE_SECONDS: f64 = 1.0;
 
+/// The least an effect runs after its bypass is switched off before it fades in (seconds). The
+/// plugin is cleared first, then fed the real input with its output held back, so that filters,
+/// envelope followers and a delay line start from what is playing and not from what was playing
+/// when it was bypassed. A plugin that reports more latency than this runs for its latency
+/// instead (its first wet frames are what it computed from the input of one latency earlier).
+const PREROLL_SECONDS: f64 = 0.02;
+
 /// An output block whose peak is at or below this is silent for the idle rule (-120 dB).
 const IDLE_PEAK: f32 = 1.0e-6;
 
@@ -168,6 +185,13 @@ pub struct PluginDevice {
     last_status: ProcessStatus,
     /// The transport was playing in the last batch (a change of it wakes a sleeping plugin).
     seen_playing: bool,
+    /// The effect was parked by its bypass in the last batch (not called, see [`PREROLL_SECONDS`]).
+    bypass_parked: bool,
+    /// Blocks the effect still runs after a bypass before it fades in (its output is held at the
+    /// dry signal meanwhile).
+    preroll: u32,
+    /// Clear the plugin's audio state before the next call (it was parked by the bypass).
+    reset_before_call: bool,
     state: DeviceState,
     slot: PluginSlot,
     messenger: HostMessenger,
@@ -258,6 +282,14 @@ pub struct PluginDevice {
 
 fn idle_batches_for(sample_rate: f64) -> u32 {
     (sample_rate * IDLE_SECONDS / BATCH as f64).ceil().max(1.0) as u32
+}
+
+/// Blocks of pre-roll for `sample_rate` and a plugin reporting `latency` frames.
+fn preroll_batches_for(sample_rate: f64, latency: u32) -> u32 {
+    let frames = (sample_rate * PREROLL_SECONDS)
+        .ceil()
+        .max(f64::from(latency));
+    (frames / BATCH as f64).ceil().max(1.0) as u32
 }
 
 fn fade_step_for(sample_rate: f64) -> f32 {
@@ -379,6 +411,9 @@ impl PluginDevice {
             input_quiet_frames: 0,
             last_status: ProcessStatus::Continue,
             seen_playing: false,
+            bypass_parked: false,
+            preroll: 0,
+            reset_before_call: false,
             idle_batches: idle_batches_for(activation_rate),
             state: DeviceState::Running,
             messenger: slot.messenger(),
@@ -445,7 +480,15 @@ impl PluginDevice {
         self
     }
 
-    /// The run mode set by [`Device::set_run_mode`].
+    /// Tells the device how its plugin is run (a bounce is [`RunMode::Offline`]): a bypassed
+    /// effect is parked only live, see the module docs. The manager sets it from the activation.
+    #[must_use]
+    pub fn with_run_mode(mut self, mode: RunMode) -> Self {
+        self.run_mode = mode;
+        self
+    }
+
+    /// The run mode set by [`Device::set_run_mode`] or [`PluginDevice::with_run_mode`].
     pub fn run_mode(&self) -> RunMode {
         self.run_mode
     }
@@ -1008,11 +1051,31 @@ impl PluginDevice {
         self.apply_cv(ctx);
         self.wet = [SILENCE; 2];
         self.aux_wet.fill(SILENCE);
+        // Powered off, or an effect whose bypass has finished fading to the dry signal (live
+        // only): the plugin is not called, only the end of a note is delivered, so a held note
+        // cannot hang inside the plugin; params stay pending (they reach the plugin in the first
+        // block after the bypass is switched off), new notes are held back, and without such an
+        // event the plugin is not called at all. A bounce keeps calling a bypassed plugin, so
+        // what it renders does not depend on when the bypass came.
         let stopped = !powered && self.bypass_mix >= 1.0;
-        if stopped {
-            // Powered off and fully bypassed: only the end of a note is delivered, so a held
-            // note cannot hang inside the plugin; params stay pending, new notes
-            // are held back, and without such an event the plugin is not called at all.
+        let parked_by_bypass = powered
+            && bypassed
+            && self.bypass_mix >= 1.0
+            && self.descriptor.kind == DeviceKind::Effect
+            && self.run_mode != RunMode::Offline;
+        if self.bypass_parked && !parked_by_bypass && !stopped {
+            // The bypass is off again (or the run went offline): the plugin has not heard the
+            // input for as long as it was bypassed, so it starts from a clean state and runs a
+            // pre-roll with its output held back (see `PREROLL_SECONDS`).
+            self.preroll = preroll_batches_for(self.sample_rate, self.slot.latency());
+            self.reset_before_call = self.started;
+            self.forget_sleep_evidence();
+        }
+        // Powered off while parked is still parked: the plugin has not heard the input either.
+        self.bypass_parked = parked_by_bypass || (stopped && self.bypass_parked);
+        let parked = stopped || parked_by_bypass;
+        if parked {
+            self.preroll = 0;
             self.state = DeviceState::Stopped;
             self.build_stopped_events(ctx);
             if self.events_in.is_empty() {
@@ -1094,6 +1157,18 @@ impl PluginDevice {
                 return false;
             }
             self.started = true;
+        }
+        if std::mem::take(&mut self.reset_before_call) {
+            let cleared = catch_unwind(AssertUnwindSafe(|| {
+                let _flush = FtzGuard::enter();
+                processor.reset();
+            }));
+            if cleared.is_err() {
+                self.processor = Some(processor);
+                self.bad_now = true;
+                self.fail("the plugin panicked");
+                return false;
+            }
         }
         let transport = self.transport(ctx);
         self.events_out.clear();
@@ -1189,7 +1264,7 @@ impl PluginDevice {
                     } else {
                         0
                     };
-                self.state = if stopped {
+                self.state = if parked {
                     DeviceState::Stopped
                 } else if self.sleeping {
                     DeviceState::Sleeping
@@ -1367,6 +1442,9 @@ impl Device for PluginDevice {
         self.bad_run = 0;
         self.prev_wet = false;
         self.episode_bad = false;
+        self.bypass_parked = false;
+        self.preroll = 0;
+        self.reset_before_call = false;
         for ring in &mut self.dry_ring {
             ring.fill(0.0);
         }
@@ -1440,7 +1518,10 @@ impl Device for PluginDevice {
         } else {
             self.run_plugin(ctx, &raw, bypassed, powered)
         };
-        self.write_outputs(ctx, &dry, wet_valid, bypassed);
+        // After a bypass the effect runs its pre-roll with the output still at the dry signal.
+        let preroll = self.preroll > 0;
+        self.write_outputs(ctx, &dry, wet_valid, bypassed || preroll);
+        self.preroll = self.preroll.saturating_sub(1);
         if self.scope.is_live() && self.scope.is_pre() {
             // The point before the plugin: what comes in (a panel asked for PRE).
             self.scope.push(&raw[0], &raw[1]);

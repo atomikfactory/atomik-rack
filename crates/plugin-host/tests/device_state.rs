@@ -64,17 +64,33 @@ fn bypass_is_a_five_millisecond_linear_crossfade_to_the_dry_main_input() {
         "fully dry after the fade"
     );
     assert_eq!(h.output("out_r")[BATCH - 1], -1.0);
-    // Back: the fade runs the other way and ends on the wet signal.
+    // Back: the plugin is cleared and runs a pre-roll with the output held at the dry signal
+    // (15 blocks at 48 kHz: 20 ms), then the fade runs the other way and ends on the wet signal.
     h.set_param("bypass", 0.0);
+    let preroll = 15 * BATCH;
     let mut back = Vec::new();
-    for _ in 0..5 {
+    for _ in 0..(preroll + FADE) / BATCH + 3 {
         h.process();
         back.extend_from_slice(h.output("out_l"));
     }
-    assert!(back[0] < 1.0 && back[0] > 0.99);
-    assert!(back[FADE..].iter().all(|s| *s == 0.5));
-    // The plugin kept processing the whole time (state stays warm).
-    assert_eq!(shared.calls(), 11);
+    assert!(
+        back[..preroll].iter().all(|s| *s == 1.0),
+        "dry during the pre-roll"
+    );
+    for (i, s) in back[preroll..preroll + FADE].iter().enumerate() {
+        let m = 1.0 - (i + 1) as f32 / FADE as f32;
+        let want = 0.5 * (1.0 - m) + 1.0 * m;
+        assert!((s - want).abs() < 1e-5, "fade frame {i}: {s} vs {want}");
+    }
+    assert!(back[preroll + FADE..].iter().all(|s| *s == 0.5));
+    // The plugin is not called once the fade to dry is done, and is called again from the block
+    // the bypass is switched off (cleared first).
+    assert_eq!(
+        shared.calls(),
+        1 + 4 + (preroll + FADE) / BATCH + 3,
+        "no call while parked"
+    );
+    assert_eq!(shared.log.lock().unwrap().resets, 1, "cleared once");
 }
 
 /// The bypassed output of an effect whose input is a unit impulse at `at` (after the fade has

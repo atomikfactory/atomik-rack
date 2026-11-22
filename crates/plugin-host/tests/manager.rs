@@ -1172,3 +1172,14 @@ fn a_slow_restart_does_not_end_the_burst_it_belongs_to() {
     assert_eq!(stats.activated(), 1 + RESTART_BURST as usize, "{events:?}");
     assert_eq!(warnings(&events), 1, "said once: {events:?}");
 }
+
+#[test]
+fn the_device_knows_the_run_mode_the_plugin_was_activated_in() {
+    for mode in [RunMode::Realtime, RunMode::Offline] {
+        let (mut m, _) = manager();
+        let mut req = request("null.fx");
+        req.mode = mode;
+        let handle = m.instantiate(&req).unwrap();
+        assert_eq!(handle.device.run_mode(), mode);
+    }
+}

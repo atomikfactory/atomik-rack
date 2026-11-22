@@ -6293,9 +6293,12 @@ modules know nothing about it.
 - **Plugins.** A plugin effect's bypass is the same switch with the same fade, and its dry signal is
   also the input delayed by the plugin's reported latency (a 100 ms ring), so bypassing a latent
   plugin does not move the channel against the others.
-  Plugins that have nothing to do also rest: a plugin is not called while its input has been silent for its
-  reported tail and its own output for a second (a plugin that answers "continue" in CLAP, or whose output
-  never goes quiet, is always called).
+  Live, a bypassed plugin effect is not called once the fade is done (it uses no CPU), and switching
+  the bypass off clears it and runs it for 20 ms (or its latency) with the output still dry before
+  the usual 5 ms fade; a bounce keeps calling it, so its render does not depend on when the bypass
+  came. Plugins that have nothing to do also rest: a plugin is not called while its input has been
+  silent for its reported tail and its own output for a second (a plugin that answers "continue" in
+  CLAP, or whose output never goes quiet, is always called).
 - **Console inserts.** The console's BYP ALL button and the B of an insert slot set this `bypass` on
   the effects of the chain, so the delay compensation holds (see Channel strip upgrades in
   [ARCHITECTURE.md](ARCHITECTURE.md)). A channel's own `insert.bypass` is a separate switch that is
