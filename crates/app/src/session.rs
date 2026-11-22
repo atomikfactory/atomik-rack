@@ -523,6 +523,7 @@ impl<B: AudioBackend> LiveSession<B> {
                 backlog_max_frames: t.input_backlog_max_frames,
                 callback_min: t.callback_frames_min,
                 callback_max: t.callback_frames_max,
+                allowed_backlog_frames: t.input_backlog_allowed_frames,
             };
             self.status.workers = r.handle.worker_stats();
             if t.input_trims > self.input_trims_logged {

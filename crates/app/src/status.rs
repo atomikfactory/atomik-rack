@@ -88,16 +88,20 @@ pub struct InputTrim {
     pub callback_min: u32,
     /// The largest callback seen, in frames (0 before the first).
     pub callback_max: u32,
+    /// The most input frames the ring may hold beyond one callback's read now (0 without input):
+    /// the bound on the latency the ring adds to the input.
+    pub allowed_backlog_frames: u32,
 }
 
 /// The one debug line written when the trim count rose, e.g. `input trimmed: 3 trims, backlog max
-/// 1440 frames, callback 96..480 frames, buffer 480`.
+/// 1440 frames, allowed 1536 frames, callback 96..480 frames, buffer 480`.
 pub fn input_trim_line(s: &AudioStatus) -> String {
     let t = &s.input_trim;
     format!(
-        "input trimmed: {} trims, backlog max {} frames, callback {}..{} frames, buffer {}",
+        "input trimmed: {} trims, backlog max {} frames, allowed {} frames, callback {}..{} frames, buffer {}",
         t.trims,
         t.backlog_max_frames,
+        t.allowed_backlog_frames,
         t.callback_min,
         t.callback_max,
         s.buffer_requested
@@ -371,6 +375,10 @@ fn input_text(s: &AudioStatus) -> String {
             ms(s.output_latency_frames)
         ));
     }
+    if open > 0 && s.sample_rate > 0 && s.input_trim.allowed_backlog_frames > 0 {
+        let ms = f64::from(s.input_trim.allowed_backlog_frames) * 1000.0 / f64::from(s.sample_rate);
+        text.push_str(&format!(" (input backlog up to {ms:.1} ms)"));
+    }
     text
 }
 
@@ -444,12 +452,13 @@ mod tests {
                 backlog_max_frames: 1440,
                 callback_min: 96,
                 callback_max: 480,
+                allowed_backlog_frames: 1536,
             },
             ..AudioStatus::default()
         };
         assert_eq!(
             input_trim_line(&s),
-            "input trimmed: 3 trims, backlog max 1440 frames, callback 96..480 frames, buffer unknown"
+            "input trimmed: 3 trims, backlog max 1440 frames, allowed 1536 frames, callback 96..480 frames, buffer unknown"
         );
         s.buffer_requested = Some(480);
         assert!(input_trim_line(&s).ends_with(", buffer 480"));
@@ -535,6 +544,24 @@ mod tests {
             "{text}"
         );
         assert!(!status_text(&running()).contains("underruns"));
+    }
+
+    #[test]
+    fn the_status_shows_how_much_input_backlog_is_allowed() {
+        let mut s = AudioStatus {
+            input_channels_wanted: 2,
+            input_channels_open: 2,
+            input_latency_frames: 480,
+            output_latency_frames: 960,
+            ..running()
+        };
+        assert!(!status_text(&s).contains("backlog"), "not measured yet");
+        s.input_trim.allowed_backlog_frames = 1536;
+        let text = status_text(&s);
+        assert!(
+            text.contains("(latency in 10.0 + out 20.0 ms) (input backlog up to 32.0 ms)"),
+            "{text}"
+        );
     }
 
     #[test]

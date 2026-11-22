@@ -170,10 +170,12 @@ fn session_section(out: &mut String, i: &Inputs) {
     }
     let t = &a.input_trim;
     out.push_str(&format!(
-        "input trims: {} trims, backlog max {} frames, callback {}..{} frames, buffer requested {}
+        "input trims: {} trims, backlog max {} frames, allowed backlog {} frames ({:.1} ms), callback {}..{} frames, buffer requested {}
 ",
         t.trims,
         t.backlog_max_frames,
+        t.allowed_backlog_frames,
+        f64::from(t.allowed_backlog_frames) * 1000.0 / f64::from(a.sample_rate.max(1)),
         t.callback_min,
         t.callback_max,
         a.buffer_requested
@@ -447,12 +449,14 @@ mod tests {
     fn the_report_carries_the_input_trim_and_worker_counters() {
         let inputs = Inputs {
             audio: AudioStatus {
+                sample_rate: 48_000,
                 buffer_requested: Some(480),
                 input_trim: crate::status::InputTrim {
                     trims: 3,
                     backlog_max_frames: 1440,
                     callback_min: 96,
                     callback_max: 480,
+                    allowed_backlog_frames: 1536,
                 },
                 workers: atomik_engine::WorkerStats {
                     threads: 3,
@@ -471,7 +475,7 @@ mod tests {
         };
         let text = build(&inputs, 0);
         for want in [
-            "input trims: 3 trims, backlog max 1440 frames, callback 96..480 frames, buffer requested 480",
+            "input trims: 3 trims, backlog max 1440 frames, allowed backlog 1536 frames (32.0 ms), callback 96..480 frames, buffer requested 480",
             "render workers: 3 threads, linger 500000 spins, idle spins 77, parks 5",
             "late sandbox batches: 9",
             "bad plugin blocks: 4",
