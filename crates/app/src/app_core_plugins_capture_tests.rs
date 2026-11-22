@@ -8,7 +8,7 @@ use super::*;
 use crate::app_core::plugins::SNAPSHOT_GRACE_SECS;
 use crate::offline_sink::OfflineSink;
 use crate::plugin_test_support::*;
-use atomik_model::{ConsoleCommand, SongCommand, WorkflowCommand, empty_doc};
+use atomik_model::{ConsoleCommand, PluginCommand, SongCommand, WorkflowCommand, empty_doc};
 use atomik_plugin_host::{NullBackend, NullBehavior, NullPlugin, NullStats, PluginMessage};
 use atomik_render::plugins::{PluginHost, PluginIsolation};
 
@@ -853,4 +853,88 @@ fn the_too_large_notices_name_the_devices_the_sizes_and_whether_a_state_was_stor
         french(unsaved_settings_notice(&two)),
         "Les réglages actuels de Lead, Pad n'ont pas pu être enregistrés ; leurs derniers réglages enregistrés ont été conservés."
     );
+}
+
+/// Pins the first param of the test plugin's layout on `device`.
+fn pin_first_param(core: &mut AppCore<OfflineSink>, device: &DeviceKey) {
+    let id = core
+        .doc()
+        .resolve(device)
+        .unwrap()
+        .plugin
+        .as_ref()
+        .unwrap()
+        .layout
+        .params[0]
+        .id;
+    apply(
+        core,
+        Command::Plugin(PluginCommand::SetPinned {
+            device: device.clone(),
+            pinned: vec![id],
+        }),
+    );
+}
+
+fn pinned_rows(core: &AppCore<OfflineSink>) -> usize {
+    core.plugins
+        .host
+        .pinned_params()
+        .values()
+        .map(Vec::len)
+        .sum()
+}
+
+#[test]
+fn a_second_project_is_pinned_and_fed_whatever_revision_the_first_had() {
+    let (mut a, _stats, _dev) = bg_core(None);
+    add_plugin(&mut a, GAIN, "second");
+    pin_first_param(&mut a, &key("second"));
+    a.frame();
+    assert_eq!(pinned_rows(&a), 1);
+    let text = atomik_model::save_project(a.doc());
+    let (mut b, _stats_b, _dev_b) = bg_core(None);
+    b.frame();
+    assert_eq!(pinned_rows(&b), 0, "the second core starts without pins");
+    let before = b.document().revision();
+    b.open_str(&text, None).unwrap();
+    assert_ne!(
+        b.document().revision(),
+        before,
+        "a replaced document has a new revision"
+    );
+    b.frame();
+    assert_eq!(
+        pinned_rows(&b),
+        1,
+        "the pins of the opened project are registered"
+    );
+    let (revision, devices) = b.plugins.view_devices.clone().expect("the views were fed");
+    assert_eq!(revision, b.document().revision());
+    let keys: Vec<&str> = devices.iter().map(|(k, _)| k.0.as_str()).collect();
+    assert_eq!(keys, ["echo", "second"], "the list is the opened project's");
+}
+
+#[test]
+fn a_host_that_is_replaced_by_a_configuration_has_the_pins_at_once_and_after_the_frame() {
+    let mut core = AppCore::with_doc(OfflineSink::new(), empty_doc(), None);
+    core.configure_plugins(config(true, &[PKG]));
+    add_plugin(&mut core, GAIN, "echo");
+    pin_first_param(&mut core, &key("echo"));
+    core.plugins_pin_document_params();
+    assert_eq!(pinned_rows(&core), 1);
+    // No instance exists yet, so a configuration that names an isolation builds a new host.
+    let mut again = config(true, &[PKG]);
+    again.isolation = Some(PluginIsolation::InProcess);
+    core.configure_plugins(again);
+    // The configuration registers the catalog from the document again, which writes the pins to
+    // the new host; the frame's gate must not undo that or hold on to the old host's state.
+    assert_eq!(pinned_rows(&core), 1, "the new host has the pins at once");
+    assert!(
+        core.plugins.view_devices.is_none(),
+        "the views are fed again"
+    );
+    core.frame();
+    assert_eq!(pinned_rows(&core), 1);
+    assert!(core.plugins.view_devices.is_some());
 }

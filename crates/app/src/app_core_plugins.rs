@@ -508,6 +508,18 @@ struct Recovery {
     marker: Option<SessionMarker>,
 }
 
+impl PluginState {
+    /// Forgets what the per-frame gates remember (the document revision the pinned params were
+    /// compared at, the device list the views are fed from), so the next frame looks again.
+    /// Call it wherever the host is replaced or its pins are written by other hands. A new
+    /// document needs no call: revisions come from one process-wide counter, so a replaced
+    /// document and the one that took its place never share one.
+    pub(super) fn forget_view_caches(&mut self) {
+        self.pins_checked = None;
+        self.view_devices = None;
+    }
+}
+
 /// What a background state capture is for when it arrives.
 #[derive(Debug, Default, Clone)]
 pub(super) struct Capturing {
@@ -628,7 +640,7 @@ pub(super) struct PluginState {
     pins_checked: Option<u64>,
     /// The plugin devices of the document at a revision, as `(flat key, plugin)`: the list the
     /// views are fed from, rebuilt only when the document changed.
-    view_devices: Option<(u64, Vec<(DeviceKey, PluginRef)>)>,
+    pub(super) view_devices: Option<(u64, Vec<(DeviceKey, PluginRef)>)>,
     catalog_dirty: bool,
     /// The scan cache learned a layout from a live plugin: `plugins.json` is saved at the next frame.
     cache_dirty: bool,
@@ -923,6 +935,9 @@ impl<S: EngineSink> AppCore<S> {
                 &mut self.registry,
             );
             self.plugins.host = PluginHost::with_isolation(isolation);
+            // The new host knows no pinned params and nobody has fed the views from it: the
+            // frame looks at both again.
+            self.plugins.forget_view_caches();
         }
         let p = &mut self.plugins;
         p.settings = config.settings;
@@ -1083,6 +1098,9 @@ impl<S: EngineSink> AppCore<S> {
         // A project saved after a plugin grew new ports teaches the scan about them first, so
         // the catalog and the registry agree with the devices the project holds.
         self.adopt_document_ports();
+        // The pins are written from the document just below, and the catalog changes under the
+        // views: the next frame looks at both again.
+        self.plugins.forget_view_caches();
         // The params the project uses that a plugin's own table leaves out stay listed.
         self.plugins
             .host
