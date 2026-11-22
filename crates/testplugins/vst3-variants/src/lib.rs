@@ -2,10 +2,11 @@
 //! component and controller effect, a mono effect, a surround-only effect (the host must refuse
 //! it) and plugins that fail at initialise, setup, start or process, or produce non-finite
 //! output, plugins that ask the host for restarts (from inside setup, after every block) and one
-//! that retitles a param. Kept apart from `atomik-test-vst3` so that library lists exactly the
+//! that retitles a param, and three effects that ring after their input and report a tail of two
+//! seconds, none or no end. Kept apart from `atomik-test-vst3` so that library lists exactly the
 //! four plugins of that set.
 
-use atomik_test_plugin_core::{BLOCK, Event, GainFx, TestSynth, TimedEvent};
+use atomik_test_plugin_core::{BLOCK, Event, GainFx, RingFx, TestSynth, TimedEvent};
 use atomik_test_vst3_shell::{
     Arrangement, Dsp, Info, Io, LibraryDef, ParamSpec, PluginDef, Ports, Status, vst3_library,
 };
@@ -517,6 +518,43 @@ impl Dsp for Retitle {
     }
 }
 
+/// An effect that rings for `ring` frames after its input and reports `tail` as its tail
+/// (`u32::MAX`: no end, `kInfiniteTail`). VST3 has no process status, so the host's rule is all
+/// there is.
+struct Ringing {
+    fx: RingFx,
+    tail: u32,
+}
+
+impl Dsp for Ringing {
+    fn ports(&self) -> Ports {
+        Ports::effect(false)
+    }
+
+    fn params(&self) -> Vec<ParamSpec> {
+        Vec::new()
+    }
+
+    fn set_param(&mut self, _id: u32, _value: f64) {}
+
+    fn param(&self, _id: u32) -> f64 {
+        0.0
+    }
+
+    fn tail(&self) -> u32 {
+        self.tail
+    }
+
+    fn reset(&mut self) {
+        self.fx.reset();
+    }
+
+    fn process(&mut self, io: &mut Io<'_>) -> Status {
+        self.fx.process(&io.input, &mut io.output);
+        Status::Continue
+    }
+}
+
 macro_rules! info {
     ($name:ident, $text:expr, $n:expr) => {
         static $name: Info = Info {
@@ -563,8 +601,11 @@ info!(PROXIES_SLOW_INFO, "Atomik Test Slow Proxies", 11);
 info!(CHATTY_INFO, "Atomik Test Chatty Activation", 14);
 info!(STORM_INFO, "Atomik Test Restart Storm", 15);
 info!(RETITLE_INFO, "Atomik Test Retitle", 16);
+info!(TAIL_INFO, "Atomik Test Tail 2s", 17);
+info!(UNDERREPORT_INFO, "Atomik Test Tail Underreported", 18);
+info!(ENDLESS_INFO, "Atomik Test Tail Infinite", 19);
 
-static PLUGINS: [PluginDef; 16] = [
+static PLUGINS: [PluginDef; 19] = [
     PluginDef {
         info: &CHATTY_INFO,
         create: || Box::new(Chatty { asked: false }),
@@ -643,6 +684,33 @@ static PLUGINS: [PluginDef; 16] = [
     PluginDef {
         info: &PROXIES_SLOW_INFO,
         create: || Box::new(Proxies { slow: true }),
+    },
+    PluginDef {
+        info: &TAIL_INFO,
+        create: || {
+            Box::new(Ringing {
+                fx: RingFx::new(2 * 48_000),
+                tail: 2 * 48_000,
+            })
+        },
+    },
+    PluginDef {
+        info: &UNDERREPORT_INFO,
+        create: || {
+            Box::new(Ringing {
+                fx: RingFx::new(48_000),
+                tail: 0,
+            })
+        },
+    },
+    PluginDef {
+        info: &ENDLESS_INFO,
+        create: || {
+            Box::new(Ringing {
+                fx: RingFx::new(48_000),
+                tail: u32::MAX,
+            })
+        },
     },
 ];
 

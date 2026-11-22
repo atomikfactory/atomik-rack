@@ -227,6 +227,9 @@ pub const V_NAN_ONCE: u32 = 13;
 pub const V_CHATTY: u32 = 14;
 pub const V_STORM: u32 = 15;
 pub const V_RETITLE: u32 = 16;
+pub const V_TAIL: u32 = 17;
+pub const V_UNDERREPORTED: u32 = 18;
+pub const V_ENDLESS: u32 = 19;
 
 /// The first controller proxy id of the proxies plugins (`atomik_test_vst3_variants::PROXY_BASE`).
 pub const PROXY_BASE: u32 = 1_000;
@@ -249,6 +252,12 @@ pub enum Variant {
     Storm,
     /// Changes the title of its one param when told to (see `retitle`).
     Retitle,
+    /// Rings for two seconds after its input and reports a tail of two seconds.
+    Tail2s,
+    /// Rings for a second after its input and reports no tail.
+    Underreported,
+    /// Rings for a second after its input and reports a tail without end.
+    Endless,
 }
 
 impl Variant {
@@ -264,6 +273,9 @@ impl Variant {
             (Format::Clap, Variant::Chatty) => "atomik.test.chatty-activation".to_string(),
             (Format::Clap, Variant::Storm) => "atomik.test.restart-storm".to_string(),
             (Format::Clap, Variant::Retitle) => "atomik.test.retitle".to_string(),
+            (Format::Clap, Variant::Tail2s) => "atomik.test.tail-2s".to_string(),
+            (Format::Clap, Variant::Underreported) => "atomik.test.tail-underreported".to_string(),
+            (Format::Clap, Variant::Endless) => "atomik.test.tail-infinite".to_string(),
             (Format::Vst3, Variant::Mono) => variant_id(V_MONO),
             (Format::Vst3, Variant::Error) => variant_id(V_ERROR),
             (Format::Vst3, Variant::Nan) => variant_id(V_NAN),
@@ -274,6 +286,9 @@ impl Variant {
             (Format::Vst3, Variant::Chatty) => variant_id(V_CHATTY),
             (Format::Vst3, Variant::Storm) => variant_id(V_STORM),
             (Format::Vst3, Variant::Retitle) => variant_id(V_RETITLE),
+            (Format::Vst3, Variant::Tail2s) => variant_id(V_TAIL),
+            (Format::Vst3, Variant::Underreported) => variant_id(V_UNDERREPORTED),
+            (Format::Vst3, Variant::Endless) => variant_id(V_ENDLESS),
         }
     }
 }

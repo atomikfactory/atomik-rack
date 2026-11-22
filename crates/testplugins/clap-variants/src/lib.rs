@@ -1,14 +1,15 @@
 //! Extra CLAP test plugins for the host's edge cases: a MIDI-only synth, a mono effect, and
 //! plugins that fail at init, activation, start or process, or produce non-finite output, and
 //! plugins that ask the host for restarts (from inside activation, after every block) or
-//! retitle a param (`atomik-test-clap-variants`). Kept apart from `atomik-test-clap` so that library keeps
+//! retitle a param, and three effects that ring after their input and report a tail of two
+//! seconds, none or no end (`atomik-test-clap-variants`). Kept apart from `atomik-test-clap` so that library keeps
 //! exactly the four plugins of the CLAP test set.
 
 use atomik_test_clap_shell::{
     Dsp, Info, Io, LibraryDef, MainAction, ParamSpec, PluginDef, Ports, Requests, Status,
     clap_library, dialect, sys::plugin_features as feat,
 };
-use atomik_test_plugin_core::{BLOCK, Event, TestSynth, TimedEvent};
+use atomik_test_plugin_core::{BLOCK, Event, RingFx, TestSynth, TimedEvent};
 
 /// The test synth, but its note port offers MIDI 1.0 only.
 struct MidiSynth {
@@ -361,6 +362,46 @@ impl Dsp for Retitle {
     }
 }
 
+/// An effect that rings for `ring` frames after its input and reports `tail` as its tail
+/// (`u32::MAX`: no end). It answers "tail" while it rings and "continue if not quiet" after, as
+/// plugins from some frameworks do.
+struct Ringing {
+    fx: RingFx,
+    tail: u32,
+}
+
+impl Dsp for Ringing {
+    fn ports(&self) -> Ports {
+        Ports::effect(false)
+    }
+
+    fn params(&self) -> Vec<ParamSpec> {
+        Vec::new()
+    }
+
+    fn set_param(&mut self, _id: u32, _value: f64) {}
+
+    fn param(&self, _id: u32) -> f64 {
+        0.0
+    }
+
+    fn tail(&self) -> u32 {
+        self.tail
+    }
+
+    fn reset(&mut self) {
+        self.fx.reset();
+    }
+
+    fn process(&mut self, io: &mut Io<'_>) -> Status {
+        if self.fx.process(&io.input, &mut io.output) {
+            Status::Tail
+        } else {
+            Status::ContinueIfNotQuiet
+        }
+    }
+}
+
 macro_rules! info {
     ($name:ident, $id:expr, $feature:expr) => {
         static $name: Info = Info {
@@ -439,8 +480,23 @@ info!(
     c"atomik.test.retitle",
     feat::CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
 );
+info!(
+    TAIL_INFO,
+    c"atomik.test.tail-2s",
+    feat::CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
+);
+info!(
+    UNDERREPORT_INFO,
+    c"atomik.test.tail-underreported",
+    feat::CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
+);
+info!(
+    ENDLESS_INFO,
+    c"atomik.test.tail-infinite",
+    feat::CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
+);
 
-static PLUGINS: [PluginDef; 13] = [
+static PLUGINS: [PluginDef; 16] = [
     PluginDef {
         info: &CHATTY_INFO,
         create: || Box::new(Chatty { asked: false }),
@@ -505,6 +561,33 @@ static PLUGINS: [PluginDef; 13] = [
             Box::new(MultiOut {
                 synth: TestSynth::new(48_000.0),
                 buf: Vec::with_capacity(8_192),
+            })
+        },
+    },
+    PluginDef {
+        info: &TAIL_INFO,
+        create: || {
+            Box::new(Ringing {
+                fx: RingFx::new(2 * 48_000),
+                tail: 2 * 48_000,
+            })
+        },
+    },
+    PluginDef {
+        info: &UNDERREPORT_INFO,
+        create: || {
+            Box::new(Ringing {
+                fx: RingFx::new(48_000),
+                tail: 0,
+            })
+        },
+    },
+    PluginDef {
+        info: &ENDLESS_INFO,
+        create: || {
+            Box::new(Ringing {
+                fx: RingFx::new(48_000),
+                tail: u32::MAX,
             })
         },
     },
