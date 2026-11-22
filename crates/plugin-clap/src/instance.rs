@@ -5,10 +5,10 @@ use crate::hub::{AudioHandle, ClapHost, Hub, MainHandle, SharedHandle, now};
 use crate::layout::{self, AudioPlan, DescInfo, NotePlan, Read};
 use crate::presets::{self, Catalog};
 use crate::processor::ClapProcessor;
-use atomik_device_sdk::{PluginLayout, PluginStateBlob, RunMode};
+use atomik_device_sdk::{LayoutChange, PluginLayout, PluginStateBlob, RunMode};
 use atomik_plugin_host::{
-    ActivateConfig, BackendError, NativeParent, PluginInstance as HostInstance, PluginProcessor,
-    PresetInfo, assert_main_thread,
+    ActivateConfig, BackendError, NativeParent, PluginInstance as HostInstance, PluginMessage,
+    PluginProcessor, PresetInfo, assert_main_thread,
 };
 use clack_extensions::gui::{GuiApiType, GuiConfiguration, GuiSize, PluginGui, Window};
 use clack_extensions::latency::PluginLatency;
@@ -23,6 +23,39 @@ use std::ffi::{CStr, c_void};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+/// The most a plugin may write when it saves its state: the largest state the rest of the
+/// system can carry (the frame limit of the plugin protocol). A plugin that writes more gets a
+/// write error instead of memory growing without limit inside its callback.
+pub(crate) const MAX_STATE_BYTES: usize = 64 << 20;
+
+/// A byte sink that refuses to hold more than [`MAX_STATE_BYTES`].
+#[derive(Default)]
+struct CappedWriter {
+    bytes: Vec<u8>,
+}
+
+impl std::io::Write for CappedWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self.bytes.len().checked_add(buf.len()) {
+            Some(end) if end <= MAX_STATE_BYTES => {
+                self.bytes.try_reserve(buf.len()).map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::OutOfMemory, "out of memory")
+                })?;
+                self.bytes.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "the state is too large",
+            )),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// The `PluginInstance` of a CLAP plugin.
 pub(crate) struct ClapInstance {
     plugin: PluginInstance<ClapHost>,
@@ -32,7 +65,13 @@ pub(crate) struct ClapInstance {
     audio: AudioPlan,
     notes: NotePlan,
     latency: u32,
+    /// The latency the running activation was made with (`latency` follows a restored state at
+    /// once; the device only follows a restart): what a latency request is compared with.
+    activated_latency: u32,
     layout_changed: bool,
+    /// Between a successful activation and the deactivation: what the plugin asks for then is
+    /// compared with what it reported (see [`ClapInstance::answer_asks`]).
+    active: bool,
     params_truncated: bool,
     gui_open: bool,
     rendering: Option<RunMode>,
@@ -80,7 +119,9 @@ impl ClapInstance {
             audio,
             notes,
             latency: 0,
+            activated_latency: 0,
             layout_changed: false,
+            active: false,
             params_truncated,
             gui_open: false,
             rendering: None,
@@ -96,15 +137,62 @@ impl ClapInstance {
         (self.layout.clone(), self.params_truncated)
     }
 
-    fn refresh_layout(&mut self) {
-        if let Ok(read) = layout::read(&mut self.plugin, &self.desc) {
-            if read.layout != self.layout {
-                self.layout_changed = true;
+    /// Reads the layout again; says how it differs from the one held before.
+    fn refresh_layout(&mut self) -> LayoutChange {
+        let Ok(read) = layout::read(&mut self.plugin, &self.desc) else {
+            return LayoutChange::Same;
+        };
+        let change = read.layout.change_from(&self.layout);
+        if change != LayoutChange::Same {
+            self.layout_changed = true;
+        }
+        self.layout = read.layout;
+        self.params_truncated = read.params_truncated;
+        self.audio = read.audio;
+        self.notes = read.notes;
+        change
+    }
+
+    /// The latency the plugin reports now, without changing what the instance reports.
+    fn live_latency(&mut self) -> u32 {
+        let handle = self.plugin.plugin_handle();
+        handle
+            .get_extension::<PluginLatency>()
+            .map_or(0, |ext| ext.get(&handle))
+    }
+
+    /// Answers what the plugin asked of the host since the last poll. Only a request that
+    /// changes something reaches the manager: a latency that is the one reported, a table that
+    /// reads the same and a table whose titles alone changed need no restart (the titles go to
+    /// the app as they are). Nothing is asked of a plugin that is not active: its next
+    /// activation reads everything again.
+    fn answer_asks(&mut self) {
+        let restart = self.hub.restart.swap(false, Ordering::AcqRel);
+        let latency = self.hub.latency.swap(false, Ordering::AcqRel);
+        let rescan = self.hub.rescan.swap(false, Ordering::AcqRel);
+        let mut post = Vec::new();
+        if rescan {
+            let pending = self.layout_changed;
+            let change = self.refresh_layout();
+            if self.active {
+                match change {
+                    LayoutChange::Same => {}
+                    LayoutChange::Titles => {
+                        self.layout_changed = pending;
+                        post.push(PluginMessage::ParamTitles(Box::new(self.layout.clone())));
+                    }
+                    LayoutChange::Structure => post.push(PluginMessage::RescanParams),
+                }
             }
-            self.layout = read.layout;
-            self.params_truncated = read.params_truncated;
-            self.audio = read.audio;
-            self.notes = read.notes;
+        }
+        if latency && self.active && self.live_latency() != self.activated_latency {
+            post.push(PluginMessage::LatencyChanged);
+        }
+        if restart && self.active {
+            post.push(PluginMessage::RequestRestart);
+        }
+        for message in post {
+            self.hub.messenger.post(message);
         }
     }
 
@@ -153,6 +241,13 @@ impl HostInstance for ClapInstance {
             .activate(|_, _| AudioHandle, config)
             .map_err(|e| failed("the plugin could not be activated", e))?;
         self.read_latency();
+        self.activated_latency = self.latency;
+        // What the plugin asked for while it was being activated is what this activation did: it
+        // has read the latency just now, and a restart asked for inside the call would only repeat
+        // the call.
+        self.hub.latency.store(false, Ordering::Release);
+        self.hub.restart.store(false, Ordering::Release);
+        self.active = true;
         let tail_ext: Option<PluginTail> = self.plugin.plugin_handle().get_extension();
         Ok(Box::new(ClapProcessor::new(
             stopped.into(),
@@ -169,6 +264,7 @@ impl HostInstance for ClapInstance {
         // Dropping the processor releases the last reference clack needs to deactivate.
         drop(processor);
         let _ = self.plugin.try_deactivate();
+        self.active = false;
         // The plugin may have asked for a main-thread callback while deactivating (a table
         // change applied once inactive); run it now so the new layout is known at once.
         self.poll();
@@ -184,10 +280,10 @@ impl HostInstance for ClapInstance {
         let ext = handle
             .get_extension::<PluginState>()
             .ok_or_else(|| BackendError::Unsupported("the plugin has no state".to_string()))?;
-        let mut bytes = Vec::new();
-        ext.save(&handle, &mut bytes)
+        let mut out = CappedWriter::default();
+        ext.save(&handle, &mut out)
             .map_err(|e| failed("saving the state", e))?;
-        Ok(PluginStateBlob(bytes))
+        Ok(PluginStateBlob(out.bytes))
     }
 
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError> {
@@ -384,9 +480,7 @@ impl HostInstance for ClapInstance {
         if self.hub.callback.swap(false, Ordering::AcqRel) {
             self.plugin.call_on_main_thread_callback();
         }
-        if self.hub.rescan.swap(false, Ordering::AcqRel) {
-            self.refresh_layout();
-        }
+        self.answer_asks();
         let due = self.hub.due_timers(now());
         if !due.is_empty() {
             let handle = self.plugin.plugin_handle();
@@ -420,4 +514,23 @@ impl Drop for ClapInstance {
 
 fn is_main() -> bool {
     atomik_plugin_host::is_main_thread()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn the_state_writer_refuses_what_would_pass_the_cap_and_keeps_what_it_has() {
+        let mut w = CappedWriter::default();
+        assert_eq!(w.write(b"abc").unwrap(), 3);
+        let big = vec![0u8; MAX_STATE_BYTES];
+        assert!(w.write(&big).is_err(), "past the cap");
+        assert_eq!(w.bytes, b"abc", "nothing was added by the refused write");
+        let rest = vec![1u8; MAX_STATE_BYTES - 3];
+        assert_eq!(w.write(&rest).unwrap(), rest.len(), "exactly to the cap");
+        assert!(w.write(b"x").is_err(), "one byte more");
+        assert_eq!(w.bytes.len(), MAX_STATE_BYTES);
+    }
 }

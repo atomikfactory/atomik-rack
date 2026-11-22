@@ -43,9 +43,19 @@
 //!   tempo, and the gaps, which the streamer fills with zeros at many times real time, are
 //!   skipped at the clock's pace, so the same two seconds of ring cover any followed tempo.
 //! * **Streamer.** One thread, spawned lazily by the first `submit_song` with a streamed
-//!   asset, joined when the handle is dropped. It polls (1 ms) requests and lane commands and
-//!   fills each active lane round-robin, a few chunks at a time, so a slow source delays other
-//!   lanes but never the audio thread. `StreamSource::read` runs only here.
+//!   asset, joined when the handle is dropped. It polls requests and lane commands and fills
+//!   each active lane round-robin, a few chunks at a time, so a slow source delays other lanes
+//!   but never the audio thread. `StreamSource::read` runs only here. While a round fills
+//!   something or serves a request the next one follows at once; a round with nothing to do
+//!   waits [`SHORT_PARK`] (1 ms), and only after [`QUIET_ROUNDS`] such rounds in a row (about a
+//!   tenth of a second in which nothing was filled, served or applied, which a playing
+//!   transport never reaches: a chunk leaves a ring every few milliseconds) does it wait
+//!   [`IDLE_PARK`] between rounds. A new set of lanes and every transport command the app sends
+//!   the engine wake it at once and restart that quiet time ([`StreamControl::wake`]), so a
+//!   locate, a start or a loop change made from the interface is seen as fast as ever. The one
+//!   thing that still waits up to [`IDLE_PARK`] is a refill request that only the audio thread
+//!   makes after a long quiet (a followed external clock that relocates): the audio thread
+//!   cannot wake the streamer, it takes no syscall.
 
 use crate::audio::{LaneData, SongAsset};
 use atomik_core::BATCH;
@@ -64,6 +74,14 @@ pub(crate) const RING_SECONDS: f64 = 2.0;
 pub(crate) const PRIME_SECONDS: f64 = 1.0;
 /// Chunks filled per lane per round.
 const ROUND_CHUNKS: usize = 4;
+/// How long the streamer sleeps between rounds once it has been quiet for [`QUIET_ROUNDS`]
+/// rounds. The audio thread only pushes to a wait-free queue, so this bounds how late a refill
+/// request that nothing woke the thread for is seen.
+pub(crate) const IDLE_PARK: Duration = Duration::from_millis(10);
+/// How long the streamer sleeps after a round with nothing to do, until it has been quiet long.
+const SHORT_PARK: Duration = Duration::from_millis(1);
+/// Rounds in a row with nothing filled, served or applied after which the streamer rests long.
+pub(crate) const QUIET_ROUNDS: u32 = 100;
 /// Capacity of the request queue (audio thread -> streamer).
 pub(crate) const REQUEST_CAPACITY: usize = 256;
 
@@ -103,6 +121,10 @@ pub(crate) struct StreamStats {
     /// Lane-set commands the handle has sent / the streamer has applied.
     pub(crate) commands_sent: AtomicU64,
     pub(crate) commands_applied: AtomicU64,
+    /// Rounds the streamer thread has run (a gauge of how busy it is).
+    pub(crate) rounds: AtomicU64,
+    /// Wake-ups from the non-real-time side (lane sets, transport commands).
+    pub(crate) wakes: AtomicU64,
 }
 
 impl StreamStats {
@@ -126,6 +148,8 @@ impl Default for StreamStats {
             served: AtomicU64::new(0),
             commands_sent: AtomicU64::new(0),
             commands_applied: AtomicU64::new(0),
+            rounds: AtomicU64::new(0),
+            wakes: AtomicU64::new(0),
         }
     }
 }
@@ -494,6 +518,7 @@ enum Command {
 
 /// The streamer thread and its command channel (owned by the engine handle).
 pub(crate) struct Streamer {
+    stats: Arc<StreamStats>,
     commands: Sender<Command>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -504,14 +529,16 @@ impl Streamer {
     pub(crate) fn spawn(requests: Consumer<StreamRequest>, stats: Arc<StreamStats>) -> Self {
         let (commands, rx) = channel();
         let stop = Arc::new(AtomicBool::new(false));
+        let thread_stats = Arc::clone(&stats);
         let thread = {
             let stop = Arc::clone(&stop);
             std::thread::Builder::new()
                 .name("atomik-streamer".into())
-                .spawn(move || run(rx, requests, stats, stop))
+                .spawn(move || run(rx, requests, thread_stats, stop))
                 .ok()
         };
         Self {
+            stats,
             commands,
             stop,
             thread,
@@ -521,6 +548,15 @@ impl Streamer {
     /// Replaces the lanes the streamer serves.
     pub(crate) fn set_lanes(&self, lanes: Vec<LaneFill>) {
         let _ = self.commands.send(Command::Lanes(lanes));
+        self.wake();
+    }
+
+    /// Wakes the thread out of a park and restarts its quiet time.
+    fn wake(&self) {
+        self.stats.wakes.fetch_add(1, Ordering::Release);
+        if let Some(t) = &self.thread {
+            t.thread().unpark();
+        }
     }
 }
 
@@ -534,6 +570,34 @@ impl Drop for Streamer {
     }
 }
 
+/// How long the streamer rests between rounds: it counts the rounds with nothing to do.
+#[derive(Debug, Default)]
+struct Rest {
+    quiet: u32,
+    wakes_seen: u64,
+}
+
+impl Rest {
+    /// The rest after a round that `worked` (filled a chunk), `served` requests and `applied`
+    /// lane-set commands, with `wakes` the count of wake-ups so far: none while there was
+    /// something to do (the next round looks for more at once, as a refill must not be
+    /// throttled), [`SHORT_PARK`] after a round with nothing to do, [`IDLE_PARK`] once
+    /// [`QUIET_ROUNDS`] such rounds followed one another with no wake-up between.
+    fn after(&mut self, worked: bool, served: u64, applied: u64, wakes: u64) -> Duration {
+        if worked || served > 0 || applied > 0 || wakes != self.wakes_seen {
+            self.wakes_seen = wakes;
+            self.quiet = 0;
+            return Duration::ZERO;
+        }
+        self.quiet = self.quiet.saturating_add(1);
+        if self.quiet >= QUIET_ROUNDS {
+            IDLE_PARK
+        } else {
+            SHORT_PARK
+        }
+    }
+}
+
 fn run(
     commands: Receiver<Command>,
     mut requests: Consumer<StreamRequest>,
@@ -541,6 +605,7 @@ fn run(
     stop: Arc<AtomicBool>,
 ) {
     let mut lanes: Vec<LaneFill> = Vec::new();
+    let mut rest = Rest::default();
     while !stop.load(Ordering::Acquire) {
         let mut applied = 0;
         while let Ok(Command::Lanes(new)) = commands.try_recv() {
@@ -565,9 +630,9 @@ fn run(
         // Acknowledge only after `primed` reflects the restarts and new lanes.
         stats.served.fetch_add(served, Ordering::Release);
         stats.commands_applied.fetch_add(applied, Ordering::Release);
-        if !worked {
-            std::thread::park_timeout(Duration::from_millis(1));
-        }
+        stats.rounds.fetch_add(1, Ordering::Relaxed);
+        let wakes = stats.wakes.load(Ordering::Acquire);
+        std::thread::park_timeout(rest.after(worked, served, applied, wakes));
     }
 }
 
@@ -587,6 +652,14 @@ impl StreamControl {
             requests: Some(requests),
             streamer: None,
             next_lane: 1,
+        }
+    }
+
+    /// Wakes the streamer (if there is one) and restarts its quiet time: the app calls it for
+    /// every transport command, so a locate or a start finds the thread awake.
+    pub(crate) fn wake(&self) {
+        if let Some(s) = &self.streamer {
+            s.wake();
         }
     }
 
@@ -624,3 +697,59 @@ impl StreamControl {
 }
 
 const _: () = assert!(CHUNK <= u16::MAX as usize && BATCH <= CHUNK);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_round_with_nothing_to_do_waits_briefly_and_only_a_long_quiet_rests_long() {
+        let mut r = Rest::default();
+        // Something to do: no wait at all.
+        assert_eq!(r.after(true, 0, 0, 0), Duration::ZERO);
+        assert_eq!(
+            r.after(false, 1, 0, 0),
+            Duration::ZERO,
+            "a request was served"
+        );
+        assert_eq!(
+            r.after(false, 0, 1, 0),
+            Duration::ZERO,
+            "new lanes were applied"
+        );
+        // Nothing to do: the short wait, until the quiet time has passed.
+        for _ in 1..QUIET_ROUNDS {
+            assert_eq!(r.after(false, 0, 0, 0), SHORT_PARK);
+        }
+        assert_eq!(r.after(false, 0, 0, 0), IDLE_PARK, "quiet for the constant");
+        assert_eq!(r.after(false, 0, 0, 0), IDLE_PARK);
+        // A wake restarts the quiet time.
+        assert_eq!(r.after(false, 0, 0, 1), Duration::ZERO);
+        assert_eq!(r.after(false, 0, 0, 1), SHORT_PARK);
+        // Work restarts it too.
+        for _ in 0..QUIET_ROUNDS {
+            r.after(false, 0, 0, 1);
+        }
+        assert_eq!(r.after(true, 0, 0, 1), Duration::ZERO);
+        assert_eq!(r.after(false, 0, 0, 1), SHORT_PARK);
+    }
+
+    #[test]
+    fn a_playing_pattern_of_one_busy_round_in_six_never_rests_long() {
+        let mut r = Rest::default();
+        for round in 0..10_000u32 {
+            let busy = round % 6 == 0;
+            let wait = r.after(busy, 0, 0, 0);
+            assert_ne!(wait, IDLE_PARK, "round {round}");
+        }
+    }
+
+    #[test]
+    fn the_constants_keep_the_wait_short() {
+        assert!(SHORT_PARK < IDLE_PARK);
+        assert!(
+            IDLE_PARK <= Duration::from_millis(50),
+            "bounds the one case nothing wakes"
+        );
+    }
+}

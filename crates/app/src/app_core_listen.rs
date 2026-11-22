@@ -119,6 +119,15 @@ pub fn listen_inputs(channels: u16) -> Vec<SamplingInput> {
     singles.chain(pairs).collect()
 }
 
+/// Whether `input` is one of [`listen_inputs`]`(channels)`.
+pub(super) fn is_listen_input(channels: u16, input: SamplingInput) -> bool {
+    if input.mono {
+        input.first < channels
+    } else {
+        input.first.is_multiple_of(2) && input.first.saturating_add(1) < channels
+    }
+}
+
 impl<S: EngineSink> AppCore<S> {
     /// Whether listen and grade is on.
     pub fn listen_on(&self) -> bool {
@@ -153,11 +162,18 @@ impl<S: EngineSink> AppCore<S> {
 
     /// The input listening uses: the chosen one if the interface still has it, else the first.
     pub fn listen_input(&self) -> Option<SamplingInput> {
-        let options = listen_inputs(self.doc().input_channels);
+        let channels = self.doc().input_channels;
+        // The same choice as over `listen_inputs`, without building the list (this runs every
+        // frame for the practice bar).
         self.listen
             .input
-            .filter(|i| options.contains(i))
-            .or_else(|| options.first().copied())
+            .filter(|i| is_listen_input(channels, *i))
+            .or_else(|| {
+                (channels > 0).then_some(SamplingInput {
+                    first: 0,
+                    mono: true,
+                })
+            })
     }
 
     /// What the practice bar shows of listening.

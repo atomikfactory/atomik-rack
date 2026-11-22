@@ -1558,3 +1558,245 @@ fn a_size_that_a_busy_editor_takes_later_is_applied_and_a_fixed_one_springs_the_
     );
     assert_eq!(core.docked_editor(&dev).map(|d| d.size), Some((640, 480)));
 }
+
+// ------------------------------------------------------------------ one reload after a crash
+
+/// The process of `device` ends at the frame-clock time `at` (the device and the manager post
+/// what they do); the frame then answers it, and the plugin the null backend makes next is a
+/// healthy one.
+fn crash_at(
+    core: &mut AppCore<OfflineSink>,
+    stats: &NullStats,
+    device: &DeviceKey,
+    at: f64,
+    reason: &str,
+) {
+    core.plugin_tick(at);
+    lose(core, stats, device, reason);
+    stats.set_lost(false);
+    core.wait_plugins();
+    settle(core);
+}
+
+fn crash_lines(core: &AppCore<OfflineSink>) -> usize {
+    core.plugin_log()
+        .iter()
+        .filter(|l| l.contains("] crashed: "))
+        .count()
+}
+
+fn log_has(core: &AppCore<OfflineSink>, text: &str) -> usize {
+    core.plugin_log()
+        .iter()
+        .filter(|l| l.contains(text))
+        .count()
+}
+
+#[test]
+fn a_plugin_that_crashes_after_running_a_while_is_reloaded_once_with_its_state() {
+    let (mut core, stats, dev) = lost_core();
+    let before = core.plugin_instance(&dev).unwrap();
+    let patched = atomik_device_sdk::PluginStateBlob(b"patched".to_vec());
+    core.plugin_host()
+        .manager()
+        .restore_state(before, &patched)
+        .unwrap();
+    post(&mut core, &dev, PluginMessage::StateDirty);
+    core.frame();
+    core.plugin_tick(10.0);
+    core.plugin_tick(12.0);
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"patched"[..]));
+
+    crash_at(&mut core, &stats, &dev, 20.0, "exited with code 3");
+    let after = core.plugin_instance(&dev).expect("a new instance");
+    assert_ne!(after, before);
+    assert_eq!(stats.created(), 2, "reloaded once");
+    assert!(!core.plugin_host().manager_ref().is_lost(after));
+    assert_eq!(core.plugin_crash(&dev), None, "it runs again");
+    assert!(core.view().plugin_status(&dev).crashed.is_none());
+    assert_eq!(live(&mut core, &dev), b"patched", "with its last state");
+    assert_eq!(crash_lines(&core), 1, "one line per death");
+    assert_eq!(log_has(&core, "reloading it once from its last state"), 1);
+    let notice = core.last_rejection().unwrap_or_default().to_owned();
+    assert!(
+        notice.ends_with("crashed and was reloaded from its last state."),
+        "{notice}"
+    );
+    // Nothing is said or done again by later frames.
+    let lines = core.plugin_log().len();
+    settle(&mut core);
+    assert_eq!(core.plugin_log().len(), lines);
+    assert_eq!(stats.created(), 2);
+    // Quarantine: the crash was counted once, the reload added nothing.
+    assert_eq!(core.plugins_user().failures(GAIN), 1);
+}
+
+#[test]
+fn a_second_crash_inside_the_window_stays_crashed_until_reload_gives_the_allowance_back() {
+    let (mut core, stats, dev) = lost_core();
+    stats.set_lost(true);
+    crash_at(&mut core, &stats, &dev, 20.0, "exited with code 3");
+    assert_eq!(stats.created(), 2);
+
+    // Ready again at clock 20: a crash 30 s later is inside the window.
+    stats.set_lost(true);
+    core.plugin_tick(50.0);
+    lose(&mut core, &stats, &dev, "killed by signal 9");
+    assert_eq!(stats.created(), 2, "not reloaded again");
+    assert_eq!(core.plugin_crash(&dev), Some("killed by signal 9"));
+    assert_eq!(log_has(&core, "crashed again within 5 minutes"), 1);
+    let notice = core.last_rejection().unwrap_or_default().to_owned();
+    assert!(notice.contains("stays crashed"), "{notice}");
+    assert_eq!(crash_lines(&core), 2);
+
+    // RELOAD works and gives the allowance back.
+    core.handle_action(UiAction::ReloadPlugin {
+        device: dev.clone(),
+    });
+    stats.set_lost(false);
+    core.wait_plugins();
+    settle(&mut core);
+    assert_eq!(stats.created(), 3);
+    assert_eq!(core.plugin_crash(&dev), None);
+    // (Two crashes are counted; a third would quarantine it, which another test covers.)
+    core.plugin_worked(GAIN);
+    stats.set_lost(true);
+    crash_at(&mut core, &stats, &dev, 80.0, "exited with code 3");
+    assert_eq!(stats.created(), 4, "reloaded by itself once more");
+}
+
+#[test]
+fn a_crash_after_the_window_is_reloaded_again() {
+    let (mut core, stats, dev) = lost_core();
+    crash_at(&mut core, &stats, &dev, 20.0, "exited with code 3");
+    assert_eq!(stats.created(), 2);
+    stats.set_lost(true);
+    let later = 20.0 + crate::app_core::plugins::CRASH_RELOAD_WINDOW_SECS + 1.0;
+    crash_at(&mut core, &stats, &dev, later, "exited with code 3");
+    assert_eq!(stats.created(), 3);
+}
+
+#[test]
+fn a_crash_before_the_minimum_alive_time_is_not_reloaded() {
+    let (mut core, stats, dev) = lost_core();
+    // The instance was ready at clock 0: five seconds is too early.
+    core.plugin_tick(5.0);
+    lose(&mut core, &stats, &dev, "exited with code 3");
+    core.wait_plugins();
+    assert_eq!(stats.created(), 1);
+    assert_eq!(core.plugin_crash(&dev), Some("exited with code 3"));
+    assert_eq!(log_has(&core, "had run for less than 10 s"), 1);
+    assert_eq!(log_has(&core, "reloading it once"), 0);
+
+    // A reload that dies at once is not followed by another one.
+    core.handle_action(UiAction::ReloadPlugin {
+        device: dev.clone(),
+    });
+    stats.set_lost(false);
+    core.wait_plugins();
+    settle(&mut core);
+    assert_eq!(stats.created(), 2);
+    stats.set_lost(true);
+    core.plugin_tick(8.0);
+    lose(&mut core, &stats, &dev, "exited with code 3");
+    core.wait_plugins();
+    assert_eq!(stats.created(), 2);
+}
+
+#[test]
+fn the_crashes_count_toward_quarantine_and_a_quarantined_plugin_is_not_reloaded() {
+    let (mut core, stats, dev) = lost_core();
+    let n = crate::plugins_user::QUARANTINE_AFTER;
+    // Crash 1: reloaded by itself. Crash 2 (inside the window): stays crashed; RELOAD.
+    // Crash 3: the one that quarantines it, so nothing reloads it.
+    stats.set_lost(true);
+    crash_at(&mut core, &stats, &dev, 20.0, "exited with code 3");
+    assert_eq!(core.plugins_user().failures(GAIN), 1);
+    stats.set_lost(true);
+    core.plugin_tick(50.0);
+    lose(&mut core, &stats, &dev, "exited with code 3");
+    assert_eq!(core.plugins_user().failures(GAIN), 2);
+    core.handle_action(UiAction::ReloadPlugin {
+        device: dev.clone(),
+    });
+    stats.set_lost(false);
+    core.wait_plugins();
+    settle(&mut core);
+    assert_eq!(
+        stats.created(),
+        3,
+        "the original, one by itself, one by RELOAD"
+    );
+    stats.set_lost(true);
+    core.plugin_tick(80.0);
+    lose(&mut core, &stats, &dev, "exited with code 3");
+    core.wait_plugins();
+    assert!(
+        core.plugins_user().is_quarantined(GAIN),
+        "after {n} crashes"
+    );
+    assert_eq!(
+        stats.created(),
+        3,
+        "the last crash quarantined it: no reload"
+    );
+    assert_eq!(log_has(&core, "the plugin is quarantined"), 1);
+}
+
+#[test]
+fn no_reload_by_itself_while_an_export_renders() {
+    use atomik_model::{Clip, ClipContent, ClipId, CreateOptions, CreateSource, Note};
+    use atomik_model::{SongCommand, WorkflowCommand};
+    let (mut core, stats, dev) = lost_core();
+    core.apply_command(Command::Workflow(WorkflowCommand::CreateInstrument {
+        index: usize::MAX,
+        source: CreateSource::Type("atomik.poly-synth".into()),
+        key: Some(key("lead")),
+        options: CreateOptions::default(),
+    }))
+    .unwrap();
+    core.apply_command(Command::Song(SongCommand::AddClip {
+        device: key("lead"),
+        lane: 0,
+        clip: Clip {
+            id: ClipId(0),
+            start: 0,
+            length: 4 * atomik_core::PPQ,
+            offset: 0,
+            loop_length: None,
+            muted: false,
+            scale: None,
+            param_lanes: Vec::new(),
+            midi: Default::default(),
+            groove: None,
+            follow_song_key: true,
+            controllers: Vec::new(),
+            name: None,
+            color: None,
+            grid: None,
+            content: ClipContent::Notes(vec![Note::new(0, atomik_core::PPQ, 64, 0.8)].into()),
+        },
+    }))
+    .unwrap();
+    let dir = temp("crash-reload-export");
+    core.start_audio_export(
+        atomik_ui::ExportScope::Song,
+        dir.join("song.wav"),
+        atomik_ui::ExportValues::default(),
+    )
+    .unwrap();
+    assert!(core.audio_export_busy());
+    let id = core.plugin_instance(&dev).unwrap();
+    core.plugin_tick(20.0);
+    stats.set_lost(true);
+    core.plugin_event(atomik_plugin_host::ManagerEvent::Crashed {
+        instance: id,
+        reason: "exited with code 3".to_string(),
+    });
+    assert!(core.audio_export_busy(), "the export was still running");
+    assert_eq!(stats.created(), 1, "no reload while it renders");
+    assert_eq!(log_has(&core, "an export or a bounce is rendering"), 1);
+    assert!(core.plugin_crash(&dev).is_some());
+    core.wait_background();
+    let _ = std::fs::remove_dir_all(&dir);
+}

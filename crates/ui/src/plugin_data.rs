@@ -324,6 +324,9 @@ pub enum PluginSettingsAction {
     },
     /// Take one failed file off the blacklist and scan it again.
     RetryFile(String),
+    /// Scan one file that timed out again with no time limit (it stays on the blacklist unless it
+    /// scans; CANCEL stops it).
+    RetryFileNoLimit(String),
     /// Clear the CRASHED mark of one plugin (type id) so it is used again as any other.
     RetryPlugin(String),
 }
@@ -422,4 +425,11 @@ pub struct PresetItem {
     pub name: String,
     /// The folder or program list it belongs to (empty for none).
     pub group: String,
+}
+
+/// True when the reason a file is on the blacklist says it ran out of time (a timeout, as
+/// opposed to a crash or an error): only then is a scan with no time limit offered. Mirror of the
+/// host's `is_timeout_reason`, pinned by a test.
+pub fn is_timeout_reason(reason: &str) -> bool {
+    reason.starts_with("did not finish within ")
 }

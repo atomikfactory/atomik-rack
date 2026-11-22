@@ -17,6 +17,7 @@ mod io_peaks;
 mod launch;
 mod lens;
 mod live;
+mod load_gate;
 mod offline;
 mod phase_lock;
 mod plan;
@@ -57,6 +58,7 @@ pub use launch::{
     LaunchState, LaunchTrackInput, MAX_LAUNCH_TRACKS,
 };
 pub use live::{EngineOptions, FrameClock, LIVE_RELEASE_HEADROOM, LiveNoteSender, WorkerConfig};
+pub use load_gate::{GateMode, set_default_gate_mode};
 pub use offline::{
     OfflineError, OfflineJob, render_offline, render_offline_scripted, render_offline_song,
     render_offline_with, try_render_offline, try_render_offline_scripted, try_render_offline_song,

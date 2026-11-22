@@ -6,7 +6,7 @@
 //! 2. gathers the cabled inputs into preallocated buffers (stereo, or the mono mapping of
 //!    the sockets) and builds the event list: coalesced param changes first, then the batch's notes
 //!    as events with host note ids,
-//! 3. applies the skipping rules (sleep, zero tail, power off),
+//! 3. applies the skipping rules (sleep, a bypassed effect, power off),
 //! 4. calls the processor with exactly 64 frames inside a panic boundary and a flush-to-zero
 //!    guard, and fails the device on a panic, or on a run of bad blocks (an error status or
 //!    non-finite output: see below; a sandboxed plugin may also answer `Late`: no wet signal this
@@ -41,6 +41,46 @@
 //! goes back to the value set in the rack. The events take the usual path: in a sandbox they ride
 //! the shared block like any other param change, so the result does not depend on where the
 //! plugin runs.
+//!
+//! **Sleeping.** A plugin that has nothing to do is not called. One rule for every format, which
+//! looks only at batch content and at what the plugin returned (never a clock), so a live run, a
+//! bounce and a plugin in its own process agree. A call is skipped when nothing wakes the plugin
+//! (a param change, a note or any other event, a request of the plugin, a non-silent input, main or
+//! sidechain, a change of the transport's play state) and
+//!
+//! * its input has been silent, with no event, for at least its reported tail, and
+//! * its own output has been silent (at or below -120 dB, aux outputs and the notes it emits
+//!   included) for [`IDLE_SECONDS`] of calls, and no note is open, and
+//! * the format lets the host decide and the tail is not infinite (VST3), or the plugin answered
+//!   "continue if not quiet" (CLAP; its tail does not matter then). "Continue" and "tail" keep it
+//!   called until it answers otherwise; "sleep" is its own word and rests it until something
+//!   wakes it.
+//!
+//! A VST3 plugin that declares an infinite tail is never skipped by the host: that declaration is
+//! the plugin saying it may sound with no input at any time (a feedback delay set to a long time
+//! is silent for seconds and then echoes), and nothing it has made so far says when. It still
+//! stops when powered off and parks with a long bypass.
+//!
+//! The output condition is what makes the skip inaudible: a plugin that under-reports its tail
+//! keeps ringing, so it is called through the ring and sleeps after it. A plugin whose output
+//! never goes quiet (a constant offset, noise, a dither) never sleeps. A fresh, restarted or just
+//! un-bypassed plugin is observed for the idle time before it can sleep. An instrument that
+//! sleeps by the VST3 rule is also told to stop processing and is started again before the
+//! block that wakes it.
+//!
+//! **A bypassed effect is parked after a long bypass.** Comparing with and without a plugin (on, off,
+//! on, a few seconds apart) is what a bypass is mostly for, so a bypassed effect is called as ever
+//! until the bypass has been on, after its crossfade, for [`PARK_AFTER_SECONDS`] (counted in
+//! blocks, the same live and in a bounce); switching it off before that is as seamless as it
+//! always was. Then the effect is parked like a powered-off device: no `process`, the dry ring and
+//! its delay compensation keep running, the end of a note is still delivered, new notes are held
+//! back, and pending param changes go to the plugin in one call with silent input and discarded
+//! output at most every [`PARK_FLUSH_SECONDS`] (so a value set meanwhile is in the plugin when its
+//! state is saved, and the call does not count as the plugin hearing the input). When the bypass is
+//! switched off after a park, the plugin's audio state is cleared and it runs a pre-roll of
+//! [`PREROLL_SECONDS`] (or its latency, if longer) fed with the real input while the output stays
+//! at the dry signal; then the usual 5 ms crossfade fades it in. Instruments and note effects
+//! keep what bypass meant for them (silence, new notes held back, still called).
 //!
 //! **Bypass keeps the delay compensation.** An effect's dry signal is the main input delayed by
 //! the plugin's reported latency (a ring of 100 ms, written every sample), so a bypassed latent
@@ -107,10 +147,30 @@ const MIN_DRY_RING: usize = 8192;
 /// "No note open on this key."
 const CLOSED: i32 = -1;
 
-/// How long an instrument must have been silent, with no note open and nothing pending, before
-/// a zero-tail plugin is put to sleep (seconds). A plugin that reports a zero tail while a
-/// voice still sounds or releases (a commercial wavetable synth) must not be cut: its own output is the evidence.
+/// How long a plugin's own output must have been silent, with no note open and no event in or
+/// out, before it can be put to sleep (seconds). A plugin that reports a zero tail while a
+/// voice or a reverb still sounds or releases (a commercial wavetable synth, a framework default)
+/// must not be cut: its own output is the evidence.
 const IDLE_SECONDS: f64 = 1.0;
+
+/// The least an effect runs after its bypass is switched off before it fades in (seconds). The
+/// plugin is cleared first, then fed the real input with its output held back, so that filters,
+/// envelope followers and a delay line start from what is playing and not from what was playing
+/// when it was bypassed. A plugin that reports more latency than this runs for its latency
+/// instead (its first wet frames are what it computed from the input of one latency earlier).
+const PREROLL_SECONDS: f64 = 0.02;
+
+/// How long the bypass must have been on without a break (after its fade) before an effect is
+/// parked (seconds). Comparing with and without a plugin (on, off, on, a few seconds apart) is
+/// the common use of a bypass, and it must stay seamless: the plugin keeps being called, with
+/// the state it has, until the bypass has been on for this long. Counted in blocks, the same
+/// live and in a bounce.
+const PARK_AFTER_SECONDS: f64 = 10.0;
+
+/// While a device is parked or powered off, pending param changes reach the plugin in one call
+/// with silent input and discarded output, at most this often (seconds), so that a value set
+/// meanwhile is in the plugin when its state is saved and automation does not call it every block.
+const PARK_FLUSH_SECONDS: f64 = 0.05;
 
 /// An output block whose peak is at or below this is silent for the idle rule (-120 dB).
 const IDLE_PEAK: f32 = 1.0e-6;
@@ -134,11 +194,33 @@ pub struct PluginDevice {
     started: bool,
     failed: bool,
     sleeping: bool,
-    /// Consecutive processed blocks of an instrument with silent output and no event (the idle
-    /// rule of [`SleepRule::ZeroTail`]); any event or sound resets it.
+    /// Consecutive processed blocks with silent output, no event in and none out (the output
+    /// half of the sleep rule); any event or sound resets it, a skipped block leaves it as it is.
     quiet_batches: u32,
-    /// Quiet blocks that make an instrument idle (`IDLE_SECONDS`).
+    /// Quiet blocks that make a plugin idle (`IDLE_SECONDS`).
     idle_batches: u32,
+    /// Frames the inputs (main and sidechain) have been silent with no event, counted whether
+    /// the plugin was called or skipped (the input half of the sleep rule, against the tail).
+    input_quiet_frames: u32,
+    /// What the plugin answered the last time it was called (the status half of the sleep rule).
+    last_status: ProcessStatus,
+    /// The transport was playing in the last batch (a change of it wakes a sleeping plugin).
+    seen_playing: bool,
+    /// The effect was parked by its bypass in the last batch (not called, see [`PREROLL_SECONDS`]).
+    bypass_parked: bool,
+    /// Blocks the bypass has been on without a break after its fade (see [`PARK_AFTER_SECONDS`]).
+    bypass_run: u32,
+    /// Blocks that make an effect parked (`PARK_AFTER_SECONDS`).
+    park_batches: u32,
+    /// Parked blocks to wait before the next call that carries pending params.
+    flush_wait: u32,
+    /// Blocks between those calls (`PARK_FLUSH_SECONDS`).
+    flush_batches: u32,
+    /// Blocks the effect still runs after a bypass before it fades in (its output is held at the
+    /// dry signal meanwhile).
+    preroll: u32,
+    /// Clear the plugin's audio state before the next call (it was parked by the bypass).
+    reset_before_call: bool,
     state: DeviceState,
     slot: PluginSlot,
     messenger: HostMessenger,
@@ -229,6 +311,18 @@ pub struct PluginDevice {
 
 fn idle_batches_for(sample_rate: f64) -> u32 {
     (sample_rate * IDLE_SECONDS / BATCH as f64).ceil().max(1.0) as u32
+}
+
+fn blocks_for(sample_rate: f64, seconds: f64) -> u32 {
+    (sample_rate * seconds / BATCH as f64).ceil().max(1.0) as u32
+}
+
+/// Blocks of pre-roll for `sample_rate` and a plugin reporting `latency` frames.
+fn preroll_batches_for(sample_rate: f64, latency: u32) -> u32 {
+    let frames = (sample_rate * PREROLL_SECONDS)
+        .ceil()
+        .max(f64::from(latency));
+    (frames / BATCH as f64).ceil().max(1.0) as u32
 }
 
 fn fade_step_for(sample_rate: f64) -> f32 {
@@ -347,6 +441,16 @@ impl PluginDevice {
             failed: false,
             sleeping: false,
             quiet_batches: 0,
+            input_quiet_frames: 0,
+            last_status: ProcessStatus::Continue,
+            seen_playing: false,
+            bypass_parked: false,
+            bypass_run: 0,
+            park_batches: blocks_for(activation_rate, PARK_AFTER_SECONDS),
+            flush_wait: 0,
+            flush_batches: blocks_for(activation_rate, PARK_FLUSH_SECONDS),
+            preroll: 0,
+            reset_before_call: false,
             idle_batches: idle_batches_for(activation_rate),
             state: DeviceState::Running,
             messenger: slot.messenger(),
@@ -517,6 +621,15 @@ impl PluginDevice {
         self.messenger.post(PluginMessage::Failed { reason: LOST });
     }
 
+    /// The plugin starts afresh (a new processor, a reset, the end of a bypass): what the sleep rule
+    /// saw of the old state says nothing about it, so it is observed again.
+    fn forget_sleep_evidence(&mut self) {
+        self.sleeping = false;
+        self.quiet_batches = 0;
+        self.input_quiet_frames = 0;
+        self.last_status = ProcessStatus::Continue;
+    }
+
     fn close_all_notes(&mut self) {
         self.note_ids = [CLOSED; 128];
         self.mpe = MpeEncoder::new(ZoneSide::Lower, atomik_core::mpe::MAX_MEMBERS);
@@ -554,8 +667,7 @@ impl PluginDevice {
             self.bad_run = 0;
             // A new processor starts afresh: no ramp back from a failed one.
             self.episode_bad = false;
-            self.sleeping = false;
-            self.quiet_batches = 0;
+            self.forget_sleep_evidence();
             self.state = DeviceState::Running;
             self.close_all_notes();
             // A restarted plugin has not heard of the MPE zone.
@@ -572,8 +684,8 @@ impl PluginDevice {
 
     // ----- events -------------------------------------------------------------------------------
 
-    fn build_events(&mut self, ctx: &ProcessContext<'_>, hold_new_notes: bool) {
-        self.events_in.clear();
+    /// Turns the pending param changes into events at frame 0 of this batch.
+    fn push_pending_params(&mut self) {
         for k in 0..self.pending.len() {
             let i = self.pending[k] as usize;
             self.dirty[i] = false;
@@ -584,6 +696,11 @@ impl PluginDevice {
             self.events_in.push(0, kind);
         }
         self.pending.clear();
+    }
+
+    fn build_events(&mut self, ctx: &ProcessContext<'_>, hold_new_notes: bool) {
+        self.events_in.clear();
+        self.push_pending_params();
         self.mpe_housekeeping(ctx);
         if let Some(socket) = self.sockets.notes_in {
             let events = ctx.notes_in(socket);
@@ -968,46 +1085,98 @@ impl PluginDevice {
         self.apply_cv(ctx);
         self.wet = [SILENCE; 2];
         self.aux_wet.fill(SILENCE);
+        // Powered off, or an effect whose bypass has been on, after its fade, for
+        // `PARK_AFTER_SECONDS`: the plugin is not called (until then a bypassed plugin is called as
+        // ever, so switching it off again is seamless). Only the end of a note is delivered, so a
+        // held note cannot hang inside the plugin; new notes are held back; pending param changes go
+        // out in one call every `PARK_FLUSH_SECONDS` at most (silent input, output discarded, so
+        // the plugin has the values when its state is saved); without such an event the plugin is
+        // not called at all. The rule counts blocks, so a bounce and live playback park alike.
         let stopped = !powered && self.bypass_mix >= 1.0;
-        if stopped {
-            // Powered off and fully bypassed: only the end of a note is delivered, so a held
-            // note cannot hang inside the plugin; params stay pending, new notes
-            // are held back, and without such an event the plugin is not called at all.
+        if self.bypass && self.bypass_mix >= 1.0 {
+            self.bypass_run = self.bypass_run.saturating_add(1);
+        } else if !self.bypass {
+            self.bypass_run = 0;
+        }
+        let parked_by_bypass = powered
+            && bypassed
+            && self.bypass_mix >= 1.0
+            && self.descriptor.kind == DeviceKind::Effect
+            && self.bypass_run >= self.park_batches;
+        if self.bypass_parked && !parked_by_bypass && !stopped {
+            // The bypass is off again: the plugin has not heard the input for as long as it was
+            // parked, so it starts from a clean state and runs a pre-roll with its output held
+            // back (see `PREROLL_SECONDS`).
+            self.preroll = preroll_batches_for(self.sample_rate, self.slot.latency());
+            self.reset_before_call = self.started;
+            self.forget_sleep_evidence();
+        }
+        // Powered off while parked is still parked: the plugin has not heard the input either.
+        self.bypass_parked = parked_by_bypass || (stopped && self.bypass_parked);
+        let parked = stopped || parked_by_bypass;
+        if parked {
+            self.preroll = 0;
             self.state = DeviceState::Stopped;
             self.build_stopped_events(ctx);
+            self.flush_wait = self.flush_wait.saturating_sub(1);
+            if self.flush_wait == 0 && !self.pending.is_empty() {
+                self.flush_wait = self.flush_batches;
+                self.push_pending_params();
+            }
             if self.events_in.is_empty() {
                 return true;
             }
+            // A call that only carries events: the plugin hears nothing.
+            self.in_main = [SILENCE; 2];
+            self.sidechain = [SILENCE; 2];
         } else {
             let hold_new_notes = bypassed && self.bypass_mix >= 1.0;
             self.build_events(ctx, hold_new_notes);
         }
-        let (rule, zero_tail, requested) = match self.processor.as_ref() {
-            Some(p) => (
-                p.sleep_rule(),
-                p.tail_samples() == TailLength::Finite(0),
-                p.wake_requested(),
-            ),
+        let (rule, tail, requested) = match self.processor.as_ref() {
+            Some(p) => (p.sleep_rule(), p.tail_samples(), p.wake_requested()),
             None => return false,
         };
-        let watch_input = self.sleeping || rule == SleepRule::ZeroTail;
-        let wake =
-            !self.events_in.is_empty() || requested || (watch_input && self.inputs_have_signal());
+        // The sleep rule. The input has been silent for `input_quiet_frames` (before this batch)
+        // and for this one too when it is not woken by it; the plugin's own output has been
+        // silent for `quiet_batches` blocks. Only batch content and what the plugin returned
+        // decide (never a clock), so the live path, a bounce and a plugin in its own process
+        // agree.
+        let playing = ctx.time.playing;
+        let transport_changed = playing != self.seen_playing;
+        self.seen_playing = playing;
+        let input_signal = self.inputs_have_signal();
+        let wake = !self.events_in.is_empty() || requested || input_signal || transport_changed;
+        let input_quiet_before = self.input_quiet_frames;
+        self.input_quiet_frames = if input_signal || !self.events_in.is_empty() {
+            0
+        } else {
+            self.input_quiet_frames.saturating_add(BATCH as u32)
+        };
         // A device with a note open is never idle (a note effect holds the state of its open
-        // notes, an instrument may report a zero tail and still sound a held note). An
-        // instrument (a plugin of kind Instrument, which may still have an audio input) is also
-        // not idle until its own output has been silent for a while: its release sounds after
-        // the note ended. Only batch content and the plugin's deterministic output decide, so
-        // the live path and the bounce agree.
+        // notes, an instrument may report a zero tail and still sound a held note).
+        let busy = self.note_ids.iter().any(|id| *id != CLOSED) || self.mpe.sounding() > 0;
+        // (An infinite tail only reaches this for a plugin that answered "continue if not quiet".)
+        let tail_elapsed = match tail {
+            TailLength::Infinite => true,
+            TailLength::Finite(frames) => input_quiet_before >= frames,
+        };
+        // Who may sleep by the rule: a plugin of a format that leaves it to the host (VST3) unless it
+        // declares an infinite tail (it may sound on its own at any time, so the host cannot know);
+        // one that answers a status (CLAP) when it answered "continue if not quiet" (it may rest
+        // when the input is quiet). "Continue" and "tail" keep it called, and "sleep" is its own
+        // word: it rests until something wakes it, with no other condition.
+        let by_rule = match rule {
+            SleepRule::ZeroTail => tail != TailLength::Infinite,
+            SleepRule::PluginDecides => self.last_status == ProcessStatus::ContinueIfNotQuiet,
+        };
+        let skip = !wake
+            && match rule {
+                SleepRule::PluginDecides if self.sleeping => true,
+                _ => by_rule && tail_elapsed && !busy && self.quiet_batches >= self.idle_batches,
+            };
         let instrument =
             self.descriptor.kind == DeviceKind::Instrument && self.sockets.notes_in.is_some();
-        let busy = self.note_ids.iter().any(|id| *id != CLOSED)
-            || self.mpe.sounding() > 0
-            || (instrument && self.quiet_batches < self.idle_batches);
-        let skip = match rule {
-            SleepRule::PluginDecides => self.sleeping && !wake,
-            SleepRule::ZeroTail => zero_tail && !wake && !busy,
-        };
         if skip {
             self.state = DeviceState::Sleeping;
             if instrument
@@ -1038,6 +1207,18 @@ impl PluginDevice {
                 return false;
             }
             self.started = true;
+        }
+        if std::mem::take(&mut self.reset_before_call) {
+            let cleared = catch_unwind(AssertUnwindSafe(|| {
+                let _flush = FtzGuard::enter();
+                processor.reset();
+            }));
+            if cleared.is_err() {
+                self.processor = Some(processor);
+                self.bad_now = true;
+                self.fail("the plugin panicked");
+                return false;
+            }
         }
         let transport = self.transport(ctx);
         self.events_out.clear();
@@ -1122,18 +1303,18 @@ impl PluginDevice {
                 if status == ProcessStatus::Sleep && rule == SleepRule::PluginDecides {
                     self.sleeping = true;
                 }
-                if instrument {
-                    let silent = self.wet[..self.out_channels]
-                        .iter()
-                        .chain(&self.aux_wet)
-                        .all(|b| b.iter().all(|s| s.abs() <= IDLE_PEAK));
-                    self.quiet_batches = if silent && self.events_in.is_empty() {
+                self.last_status = status;
+                let silent = self.wet[..self.out_channels]
+                    .iter()
+                    .chain(&self.aux_wet)
+                    .all(|b| b.iter().all(|s| s.abs() <= IDLE_PEAK));
+                self.quiet_batches =
+                    if silent && self.events_in.is_empty() && self.events_out.is_empty() {
                         self.quiet_batches.saturating_add(1)
                     } else {
                         0
                     };
-                }
-                self.state = if stopped {
+                self.state = if parked {
                     DeviceState::Stopped
                 } else if self.sleeping {
                     DeviceState::Sleeping
@@ -1290,6 +1471,8 @@ impl Device for PluginDevice {
         self.sample_rate = info.sample_rate.hz();
         self.fade_step = fade_step_for(self.sample_rate);
         self.idle_batches = idle_batches_for(self.sample_rate);
+        self.park_batches = blocks_for(self.sample_rate, PARK_AFTER_SECONDS);
+        self.flush_batches = blocks_for(self.sample_rate, PARK_FLUSH_SECONDS);
         self.bad_limit = bad_run_limit(self.sample_rate);
         if !self.dry_ring[0].is_empty() {
             let len = dry_ring_len(self.sample_rate);
@@ -1307,11 +1490,15 @@ impl Device for PluginDevice {
 
     fn reset(&mut self) {
         self.close_all_notes();
-        self.sleeping = false;
+        self.forget_sleep_evidence();
         self.bad_run = 0;
         self.prev_wet = false;
         self.episode_bad = false;
-        self.quiet_batches = 0;
+        self.bypass_parked = false;
+        self.bypass_run = 0;
+        self.flush_wait = 0;
+        self.preroll = 0;
+        self.reset_before_call = false;
         for ring in &mut self.dry_ring {
             ring.fill(0.0);
         }
@@ -1385,7 +1572,10 @@ impl Device for PluginDevice {
         } else {
             self.run_plugin(ctx, &raw, bypassed, powered)
         };
-        self.write_outputs(ctx, &dry, wet_valid, bypassed);
+        // After a bypass the effect runs its pre-roll with the output still at the dry signal.
+        let preroll = self.preroll > 0;
+        self.write_outputs(ctx, &dry, wet_valid, bypassed || preroll);
+        self.preroll = self.preroll.saturating_sub(1);
         if self.scope.is_live() && self.scope.is_pre() {
             // The point before the plugin: what comes in (a panel asked for PRE).
             self.scope.push(&raw[0], &raw[1]);

@@ -193,6 +193,14 @@ pub enum ManagerEvent {
         /// The new layout.
         layout: PluginLayout,
     },
+    /// The plugin renamed params (titles or groups) and nothing else changed: the app shows the
+    /// new titles. Nothing restarted, and the device is the same.
+    ParamTitlesChanged {
+        /// The instance.
+        instance: InstanceId,
+        /// The new layout, as the rack lists it.
+        layout: PluginLayout,
+    },
     /// The plugin asked for its editor to be resized.
     GuiResize {
         /// The instance.
@@ -325,8 +333,70 @@ struct Managed {
     /// A parked instance that is being reattached to a new device (see
     /// [`PluginManager::begin_reattach`]).
     reattach: Option<Reattach>,
+    /// The restart-storm rule (see [`RESTART_BURST`]) for this instance.
+    storm: Storm,
     /// The pinned params the plugin had when this instance was made.
     pins: Arc<Vec<PluginParamInfo>>,
+}
+
+/// The most restarts the plugin itself may ask for, one after the other, before the manager
+/// stops honouring them (see [`Storm`]). A patch change or a sign-in legitimately asks two or
+/// three times in a row (a latency change, then a layout change); a plugin that asks a fifth
+/// time is looping, and the last activation that worked stays.
+pub const RESTART_BURST: u32 = 4;
+
+/// How many polls in which the plugin was running and did not ask end a burst. The count is
+/// polls, never wall time, so an offline render (one poll after every batch) and a live run
+/// apply the same rule and a bounce is the same on every run, with the plugin sandbox on or
+/// off. Polls while a restart is under way do not count (the plugin cannot ask then), so a slow
+/// restart never ends its own burst. At the interface rate this is a few seconds, in a bounce
+/// about two seconds of audio: far shorter than a plugin that asks only now and then.
+pub const RESTART_QUIET_POLLS: u32 = 200;
+
+/// The restart-storm rule of one instance: counts the restarts the plugin asked for in a row and
+/// the polls since its last request.
+#[derive(Debug, Default)]
+struct Storm {
+    /// Restarts honoured in the current burst.
+    in_a_row: u32,
+    /// Polls in which the plugin was running and did not ask, since it last asked (honoured or
+    /// not).
+    quiet: u32,
+    /// The log line about the ignored requests was written for this burst.
+    warned: bool,
+}
+
+impl Storm {
+    /// One poll went by without a request.
+    fn quiet_poll(&mut self) {
+        self.quiet = self.quiet.saturating_add(1);
+    }
+
+    /// The plugin asked for a restart: honoured, or turned down when the burst is over its limit
+    /// (the first one turned down says so).
+    fn asked(&mut self) -> Verdict {
+        if self.quiet >= RESTART_QUIET_POLLS {
+            *self = Self::default();
+        }
+        self.quiet = 0;
+        if self.in_a_row < RESTART_BURST {
+            self.in_a_row += 1;
+            return Verdict::Honour;
+        }
+        if std::mem::replace(&mut self.warned, true) {
+            Verdict::Ignore
+        } else {
+            Verdict::IgnoreFirst
+        }
+    }
+}
+
+/// What [`Storm::asked`] decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    Honour,
+    Ignore,
+    IgnoreFirst,
 }
 
 /// A reattach in progress: the instance deactivates, then activates at `rate`.
@@ -1103,6 +1173,7 @@ impl PluginManager {
                 layout_changed: false,
                 again: false,
                 reattach: None,
+                storm: Storm::default(),
                 pins: self.pins_of(&request.plugin),
             },
         );
@@ -2010,6 +2081,16 @@ impl PluginManager {
                 PluginMessage::LatencyChanged
                 | PluginMessage::RescanParams
                 | PluginMessage::RequestRestart => restart = true,
+                PluginMessage::ParamTitles(layout) => {
+                    let listed = listed_layout(&layout, &m.pins);
+                    if listed != m.layout {
+                        m.layout = listed.clone();
+                        events.push(ManagerEvent::ParamTitlesChanged {
+                            instance: id,
+                            layout: listed,
+                        });
+                    }
+                }
                 PluginMessage::RequestCallback => {}
                 PluginMessage::GuiResize { w, h } => {
                     events.push(ManagerEvent::GuiResize { instance: id, w, h })
@@ -2085,11 +2166,32 @@ impl PluginManager {
             m.deferred_restart = restart;
             return;
         }
-        if restart && !m.parked && m.phase == Phase::Running {
-            m.end.request_stop();
-            m.phase = Phase::Stopping;
-        } else if restart && !m.parked && m.phase == Phase::Activating {
-            m.again = true;
+        if restart && !m.parked && matches!(m.phase, Phase::Running | Phase::Activating) {
+            match m.storm.asked() {
+                Verdict::Honour if m.phase == Phase::Running => {
+                    m.end.request_stop();
+                    m.phase = Phase::Stopping;
+                }
+                Verdict::Honour => m.again = true,
+                Verdict::Ignore => {}
+                Verdict::IgnoreFirst => events.push(ManagerEvent::Log {
+                    instance: id,
+                    level: LogLevel::Warning,
+                    text: format!(
+                        "the plugin asked to be restarted {RESTART_BURST} times in a row and keeps asking: the host keeps its last working activation and ignores the requests until it stops asking"
+                    ),
+                }),
+            }
+        } else if !restart
+            && m.phase == Phase::Running
+            && !m.parked
+            && !m.again
+            && !m.deferred_restart
+            && m.reattach.is_none()
+        {
+            // Only a poll in which the plugin was running and did not ask is calm: while it is
+            // being restarted it cannot ask, and a slow restart must not end its own burst.
+            m.storm.quiet_poll();
         }
         if m.phase == Phase::Stopping
             && let Some(processor) = m.end.take_processor()

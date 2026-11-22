@@ -22,6 +22,17 @@
 //!   in-progress files are deleted once their laps are stored. **One asset per lap and track**:
 //!   an asset is exactly the audio of one pass (its sub-tick head is skipped by `source_offset`).
 //! * **Cancel.** [`Ctl::Cancel`] (or a dropped sender) deletes the files and ends the thread.
+//! * **No abort at the end of a long take.** A lap is read back whole to be hashed and stored,
+//!   so its buffers are the one allocation that grows with the take. They are reserved with
+//!   `try_reserve_exact`: when the memory is not there the take ends with a notice, the in-progress
+//!   files stay where they are (the orphan scan of [`crate::recovery`] brings them back at the next
+//!   start) and the app goes on. The same holds for any other failure while the laps are stored:
+//!   the in-progress files are only deleted once every lap is stored. Hashing, the file write and
+//!   the peak scan work in bounded blocks and need nothing proportional to the take.
+//! * **A write error stops the take at once.** The thread that cannot write sets the take's
+//!   failure flag (a shared [`AtomicBool`] the UI thread reads every frame, nothing on the audio
+//!   thread) and ends with the reason as its result; the app then ends the recording as if the
+//!   user had stopped it, and the transport keeps running.
 
 use crate::audio_import::{Msg, RecDoneGuard};
 use crate::audio_record::{PlannedTrack, TakeRange, split_laps};
@@ -29,10 +40,12 @@ use crate::stream_source::{open_stream_asset, should_stream};
 use atomik_audio_file::{AssetInfo, AudioData, Bundle, PeakPyramid, WavStreamReader};
 use atomik_engine::{RecordTap, SongAsset, SongPosition};
 use atomik_model::DeviceKey;
+use atomik_ui::i18n;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::Duration;
 
@@ -121,28 +134,71 @@ pub struct TakeResult {
     pub frames: u64,
 }
 
+/// Failures a test asks the writer to simulate, so that the code runs without allocating
+/// gigabytes or filling a disk. The app never sets any (`Faults::default()`).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Faults {
+    /// A lap of more samples than this (all channels) is refused as if its buffers could not be
+    /// allocated.
+    pub lap_limit_samples: Option<u64>,
+    /// Writing fails with a full disk once this many frames of the take are written.
+    pub fail_after_frames: Option<u64>,
+}
+
 /// Starts the writer thread for `tap`; the result arrives as [`Msg::Recorded`]. Returns the
 /// control channel.
 ///
 /// # Errors
 /// The thread could not be spawned.
+#[cfg(test)]
 pub(crate) fn spawn(
     tap: RecordTap,
     config: WriterConfig,
     tx: Sender<Msg>,
 ) -> std::io::Result<(Sender<Ctl>, std::thread::JoinHandle<()>)> {
+    spawn_with(tap, config, tx, Faults::default())
+}
+
+/// [`spawn_watched`] without the flag (for tests).
+///
+/// # Errors
+/// The thread could not be spawned.
+#[cfg(test)]
+pub(crate) fn spawn_with(
+    tap: RecordTap,
+    config: WriterConfig,
+    tx: Sender<Msg>,
+    faults: Faults,
+) -> std::io::Result<(Sender<Ctl>, std::thread::JoinHandle<()>)> {
+    spawn_watched(tap, config, tx, faults).map(|(ctl, handle, _)| (ctl, handle))
+}
+
+/// Starts the writer thread like [`spawn`] and also returns the take's failure flag: it is set,
+/// before the result is sent, when writing the take failed and the thread has ended. `faults`
+/// is for tests.
+///
+/// # Errors
+/// The thread could not be spawned.
+pub(crate) fn spawn_watched(
+    tap: RecordTap,
+    config: WriterConfig,
+    tx: Sender<Msg>,
+    faults: Faults,
+) -> std::io::Result<(Sender<Ctl>, std::thread::JoinHandle<()>, Arc<AtomicBool>)> {
     let (ctl_tx, ctl_rx) = channel();
     let generation = config.generation;
+    let failed = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&failed);
     let handle = std::thread::Builder::new()
         .name("atomik-record".into())
         .spawn(move || {
             let mut guard = RecDoneGuard::new(tx, generation);
-            match run(tap, &config, &ctl_rx) {
+            match run(tap, &config, &ctl_rx, &flag, faults) {
                 Some(result) => guard.send(result),
                 None => guard.disarm(),
             }
         })?;
-    Ok((ctl_tx, handle))
+    Ok((ctl_tx, handle, failed))
 }
 
 type Wav = hound::WavWriter<BufWriter<File>>;
@@ -167,6 +223,85 @@ fn remove_partials(config: &WriterConfig) {
     }
 }
 
+/// The files of the take, as the notices name them.
+fn kept_files(config: &WriterConfig) -> String {
+    config
+        .tracks
+        .iter()
+        .filter_map(|t| t.path.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Why a write failed, in words: a full disk says so, anything else gives the error's text.
+fn write_reason(e: &hound::Error) -> String {
+    match e {
+        hound::Error::IoError(io) if io.kind() == std::io::ErrorKind::StorageFull => {
+            i18n::t("the disk is full").to_owned()
+        }
+        other => other.to_string(),
+    }
+}
+
+/// The notice of a take that stopped because writing failed; the files written so far stay.
+fn write_failure(config: &WriterConfig, e: &hound::Error) -> String {
+    i18n::tf(
+        "writing the recording failed ({reason}): the recording stopped, and what was written so far was kept as {files} in the project's Audio folder and comes back as a recovered take the next time Atomik Rack starts",
+        &[("reason", &write_reason(e)), ("files", &kept_files(config))],
+    )
+}
+
+/// Why the laps of a take could not be stored.
+enum StoreError {
+    /// The buffers of a lap could not be allocated.
+    TooLong,
+    /// Anything else (the file, the bundle).
+    Failed(String),
+}
+
+impl From<String> for StoreError {
+    fn from(e: String) -> Self {
+        Self::Failed(e)
+    }
+}
+
+/// The notice of a take whose laps could not be stored; the files of the take stay.
+fn store_failure(config: &WriterConfig, e: StoreError) -> String {
+    let files = kept_files(config);
+    match e {
+        StoreError::TooLong => i18n::tf(
+            "the recording is too long to finish in memory: the take was kept as {files} in the project's Audio folder and comes back as a recovered take the next time Atomik Rack starts",
+            &[("files", &files)],
+        ),
+        StoreError::Failed(error) => i18n::tf(
+            "{error}: the take was kept as {files} in the project's Audio folder and comes back as a recovered take the next time Atomik Rack starts",
+            &[("error", &error), ("files", &files)],
+        ),
+    }
+}
+
+/// The buffers to read a lap of `len` frames of `channels` channels into, zero-filled, or `None`
+/// when they cannot be had: the take is as long as the user played, so the request may be larger
+/// than the memory, and a failed allocation of that size would abort the whole program.
+/// `limit` (a test seam) refuses more than that many samples.
+fn lap_buffers(channels: usize, len: usize, limit: Option<u64>) -> Option<Vec<Vec<f32>>> {
+    let samples = (channels as u64).saturating_mul(len as u64);
+    if limit.is_some_and(|l| samples > l) {
+        return None;
+    }
+    let mut planar: Vec<Vec<f32>> = Vec::new();
+    planar.try_reserve_exact(channels).ok()?;
+    for _ in 0..channels {
+        let mut channel = Vec::new();
+        channel.try_reserve_exact(len).ok()?;
+        // Within the reserved capacity: nothing is allocated here.
+        channel.resize(len, 0.0);
+        planar.push(channel);
+    }
+    Some(planar)
+}
+
 /// Appends `frames` frames of `drained` (tap channel buffers, from frame `from`) to every file.
 fn write_frames(
     writers: &mut [Wav],
@@ -174,7 +309,7 @@ fn write_frames(
     drained: &[Vec<f32>],
     from: usize,
     frames: usize,
-) -> Result<(), String> {
+) -> Result<(), hound::Error> {
     for (w, t) in writers.iter_mut().zip(tracks) {
         for i in from..from + frames {
             for &ch in &t.planned.tap_index {
@@ -183,18 +318,22 @@ fn write_frames(
                     .and_then(|c| c.get(i))
                     .copied()
                     .unwrap_or(0.0);
-                w.write_sample(s).map_err(io)?;
+                w.write_sample(s)?;
             }
         }
     }
     Ok(())
 }
 
-fn write_silence(writers: &mut [Wav], tracks: &[WriterTrack], frames: u64) -> Result<(), String> {
+fn write_silence(
+    writers: &mut [Wav],
+    tracks: &[WriterTrack],
+    frames: u64,
+) -> Result<(), hound::Error> {
     for (w, t) in writers.iter_mut().zip(tracks) {
         for _ in 0..frames {
             for _ in &t.planned.tap_index {
-                w.write_sample(0.0f32).map_err(io)?;
+                w.write_sample(0.0f32)?;
             }
         }
     }
@@ -206,6 +345,8 @@ fn run(
     mut tap: RecordTap,
     config: &WriterConfig,
     ctl: &Receiver<Ctl>,
+    failed: &AtomicBool,
+    faults: Faults,
 ) -> Option<Result<TakeResult, String>> {
     let mut writers = Vec::new();
     for t in &config.tracks {
@@ -223,6 +364,7 @@ fn run(
     let mut next = 0u64;
     let mut gap_frames = 0u64;
     let mut unflushed = 0u64;
+    let mut written = 0u64;
     let mut finish: Option<Box<FinishInfo>> = None;
     let mut quiet_polls = 0u32;
     loop {
@@ -276,17 +418,27 @@ fn run(
                     write_frames(&mut writers, &config.tracks, &drained, skip, keep)?;
                     next = usable_from + keep as u64;
                     unflushed += keep as u64;
+                    written += keep as u64;
+                    if faults.fail_after_frames.is_some_and(|n| written >= n) {
+                        return Err(hound::Error::IoError(
+                            std::io::ErrorKind::StorageFull.into(),
+                        ));
+                    }
                 }
                 if unflushed >= FLUSH_SECONDS * rate / 2 {
                     for w in &mut writers {
-                        w.flush().map_err(io)?;
+                        w.flush()?;
                     }
                     unflushed = 0;
                 }
-                Ok::<(), String>(())
+                Ok::<(), hound::Error>(())
             })();
             if let Err(e) = result {
-                return Some(Err(format!("writing the recording failed: {e}")));
+                // Closing the files writes their headers as far as the disk allows; what they
+                // hold stays for the orphan scan. The flag is set before the thread ends.
+                drop(writers);
+                failed.store(true, Ordering::Release);
+                return Some(Err(write_failure(config, &e)));
             }
         } else if finish.is_some() {
             quiet_polls += 1;
@@ -311,15 +463,20 @@ fn run(
     let frames = first.map_or(0, |f| {
         next.min(finish.end_engine_frame.max(f)).saturating_sub(f)
     });
-    let result = store_laps(config, first.unwrap_or(0), frames, &finish);
-    remove_partials(config);
-    Some(result.map(|laps| TakeResult {
-        take: config.take,
-        laps,
-        overflow_frames,
-        gap_frames,
-        frames,
-    }))
+    match store_laps(config, first.unwrap_or(0), frames, &finish, faults) {
+        Ok(laps) => {
+            remove_partials(config);
+            Some(Ok(TakeResult {
+                take: config.take,
+                laps,
+                overflow_frames,
+                gap_frames,
+                frames,
+            }))
+        }
+        // The in-progress files are the only copy of what was recorded: they stay.
+        Err(e) => Some(Err(store_failure(config, e))),
+    }
 }
 
 /// Cuts every file into laps and stores them. A track that records a console strip is placed with
@@ -329,7 +486,8 @@ fn store_laps(
     first: u64,
     frames: u64,
     finish: &FinishInfo,
-) -> Result<Vec<RecordedLap>, String> {
+    faults: Faults,
+) -> Result<Vec<RecordedLap>, StoreError> {
     let mut bundle = config.bundle.clone();
     let mut laps = Vec::new();
     for track in &config.tracks {
@@ -351,13 +509,14 @@ fn store_laps(
         let channels = track.planned.tap_index.len();
         for seg in &segments {
             let len = usize::try_from(seg.frames).map_err(io)?;
-            let mut planar = vec![vec![0.0f32; len]; channels];
+            let mut planar =
+                lap_buffers(channels, len, faults.lap_limit_samples).ok_or(StoreError::TooLong)?;
             let n = reader.read_frames(seg.first, &mut planar).map_err(io)?;
             if n < len {
-                return Err(format!(
+                return Err(StoreError::Failed(format!(
                     "{} is shorter than expected ({n} of {len} frames)",
                     track.path.display()
-                ));
+                )));
             }
             let data = AudioData::new(config.sample_rate, planar).map_err(io)?;
             let name = format!("{} take {}", track.name, seg.lap + 1);

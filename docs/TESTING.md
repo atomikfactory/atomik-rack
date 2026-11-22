@@ -401,8 +401,13 @@ with latency, sidechain and tail, a deterministic synth, a note effect, a 2 000-
 grows a param at run time), `clap-shell` is a minimal raw `clap-sys` CLAP plugin (so the host is
 tested against a plugin not written with its own CLAP library), and `clap`, `clap-bad` (init fails),
 `clap-hang` (init never returns), `clap-crash` (segfaults in `create` or `process` when an
-environment variable asks for it), `clap-leak` (instance counters) and `clap-variants` (a MIDI-only
-synth, a mono effect, plugins that fail at activation or return errors or NaN) are the libraries.
+environment variable asks for it), `clap-mix` (four classes; environment variables make one hang or
+abort the process (no `unsafe`), make every class slow, or make one start a helper process whose id it
+writes to a file: the scanner robustness tests use it), `clap-leak` (instance counters) and
+`clap-variants` (a MIDI-only
+synth, a mono effect, plugins that fail at activation or return errors or NaN, plugins that ask
+for restarts from inside activation or after every block, one that retitles a param) are the
+libraries.
 
 - **Building.** The tests build the libraries themselves:
   `atomik_plugin_host::testing::clap_test_plugin("atomik-test-clap")` runs `cargo build -p ...` (the
@@ -416,12 +421,13 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
 - **Reference oracle.** The effect and synth tests compare the output of the plugin through the real
   CLAP backend and the `PluginDevice` with the DSP core run directly, bit for bit, at host blocks 1,
   64, 333, 480 and 512 and workers 0, 1, 2, 4, under the allocation guard.
-- **Processes.** `plugin-scan/tests/scanner.rs` and `plugin-clap/tests/crash.rs` start real child
-  processes (a scanner that is killed at a timeout, a plugin that segfaults); `hang.rs` proves the
-  in-process loader would block, which is why scanning is out of process.
+- **Processes.** `plugin-scan/tests/scanner.rs`, `scanner_robust.rs` and `plugin-clap/tests/crash.rs` start
+  real child processes (a scanner that is killed at a timeout, a plugin that segfaults, a plugin whose helper
+  process must not outlive the scan, found by process id); `hang.rs` proves the in-process loader would block,
+  which is why scanning is out of process.
 - **Unsafe policy.** `plugin-host/tests/unsafe_policy.rs` fails if `unsafe` appears outside
-  `plugin-clap`, `plugin-vst3`, the test plugins and the audited `fpenv.rs`, or if a block lacks a
-  `SAFETY:` comment. The app, render and UI tests therefore cannot probe plugin libraries; they go
+  `plugin-clap`, `plugin-vst3`, the test plugins and the audited `fpenv.rs`, `ole.rs` and `procgroup.rs`, or
+  if a block lacks a `SAFETY:` comment. The app, render and UI tests therefore cannot probe plugin libraries; they go
   through the manager and the slot's message ring.
 - **VST3.** The same DSP core sits behind `vst3-shell` (a plugin shell over the `vst3` crate's
   plugin-side helpers: factory, `IComponent`, `IAudioProcessor`, `IEditController`, `IMidiMapping`,
@@ -429,7 +435,8 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   the libraries `vst3` (the four test plugins, same names as the CLAP ones), `vst3-variants` (a
   split gain, a mono effect, a 5.1-only effect the host refuses, plugins that stand a parameter for
   every controller and channel (one answers `IMidiMapping` slowly), plugins that fail to initialise,
-  set up, start or process, one that returns NaN), `vst3-bad`, `vst3-hang`, `vst3-crash`,
+  set up, start or process, one that returns NaN, plugins that ask for restarts from inside setup or
+  after every block, one that retitles a param), `vst3-bad`, `vst3-hang`, `vst3-crash`,
   `vst3-leak`. `atomik_plugin_host::testing::vst3_test_plugin("atomik-test-vst3")` builds a library
   and installs it as a `.vst3` **bundle** with the layout of the running OS. The shell announces a
   latency change itself (`restartComponent(kLatencyChanged)`), like the CLAP effect asks for a
@@ -463,7 +470,10 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   sandbox_only=true` runs it alone). `plugin-hostd/tests/e2e_variants.rs` loads every test library through
   the sandbox in both formats (a failing entry, an entry that never returns, many instances in a row, and
   each edge-case plugin, which must end up as it does in process); `e2e_gesture.rs` checks that an edit made
-  in a sandboxed plugin's editor reaches the app as a whole gesture (begin, change, end). A test plugin
+  in a sandboxed plugin's editor reaches the app as a whole gesture (begin, change, end).
+  `e2e_restarts.rs` drives the plugins that ask for restarts through the sandbox (none from inside
+  activation, a cut-off after a burst with one warning, renamed params with no restart); its in-process
+  twin is the end of `plugin-vst3/tests/lifecycle.rs`, which covers both formats. A test plugin
   reports such an edit when its state is loaded and `ATOMIK_TEST_GUI_EDIT_ON_RESTORE` is `<param>:<value>`.
   A live child that misses a batch's deadline passes the dry input, so the tests that compare a live output
   process until the child keeps up (`process_settled`). Editors need a desktop and stay hand checks.
@@ -1495,7 +1505,9 @@ Hand checks, not automated (they need hardware):
 ## Detached windows
 
 The window code in `platform/` is not unit-tested (it needs a window and a GPU); what it decides is
-in `platform/window_logic.rs` and `windows.rs`, and the shell side is in `shell_windows_tests.rs`.
+in `platform/window_logic.rs` and `windows.rs`, and the shell side is in `shell_windows_tests.rs`. The frame cap
+(`paint_gate`, `loop_deadline`) has its own tests there, including a pointer sweep played on the pure functions; its
+hand check follows the list below.
 These are the hand checks, on every OS (`atomik --detach rack,console` opens both panes at start):
 
 - Detach and attach both panes from the View menu, with their shortcuts, and by closing the window.
@@ -1529,6 +1541,16 @@ These are the hand checks, on every OS (`atomik --detach rack,console` opens bot
 - Windows: the menu bar is in the main window only. macOS: the global menu works with each window
   focused,
   Cmd+` cycles the windows, and the frame time with three windows stays near 16 ms (if a frame takes more than 20 ms, try a present mode without vsync for the detached windows). Linux X11: positions are restored. Wayland: detaching works, positions are not restored, and a drag leaving its window cancels with the status note.
+- Frame cap: detach the rack (View menu) so two windows are open, start the app with `ATOMIK_LOG=debug`, and sweep
+  the pointer over the rack window for ten seconds (drag a knob or scroll the rack). The `ui activity` line, every
+  five seconds, shows the rack at about 60 paints/s or fewer with a `rack N deferred/s` part (before the cap it
+  showed several hundred paints/s on a fast mouse); the sweep still looks smooth, the last position is drawn when you
+  stop, and resizing the window shows no stretched content. Attach the rack again: with one window the paints
+  follow the monitor and no `deferred` part appears.
+- Frame cap while playing: open a project with an audio track, detach the mixer so two windows are open, press
+  play, move the pointer over one window for a few seconds, then stop moving and read the next `ui activity`
+  lines: wake-ups should be about 60 a second (not about 120) and both windows about 60 paints/s. Do the same
+  after resizing one of the windows by dragging its edge, and after clicking the other window to focus it.
 
 Run on Windows only so far (three windows open, draw, close, quit and restore); macOS, Linux (X11
 and Wayland) and monitors of mixed scale have not been tried.
@@ -1571,6 +1593,30 @@ Hand checks, on every OS:
 - Window lists the main window, and the Rack and Mixer windows while they are detached; each brings
   its window forward. Double-click the divider between the rack and the song: the rack collapses;
   again: the split is back.
+
+## Plugins that sleep and bypassed plugins
+
+`crates/plugin-host/tests/device_sleep.rs` runs the sleep rule against a ringing effect and against the same
+processor called in every block, and the outputs are equal bit for bit: what a resting plugin would have made is
+what it makes. It covers a tail of two seconds, one that reports none but rings for a second (not cut), a VST3
+plugin with a tail without end that is silent for two seconds and then sounds on its own (never skipped, nothing
+lost), a CLAP plugin that rests on "continue if not quiet" whatever its tail says, a plugin whose output never
+goes quiet (never rests), the other CLAP statuses and the wakes (input, param, request of the plugin, play state).
+`device_bypass.rs` covers the bypass: toggling inside the park time is bit for bit what always calling gives and
+never clears the plugin, a bypass of ten seconds parks it (call count, dry signal and latency unchanged), the
+return is cleared, pre-rolled and faded without a step, a value set while parked reaches the plugin in one silent
+call (and automation costs one call in 38 blocks), and an effect bypassed from the first block to the last renders
+its dry signal. `crates/plugin-vst3/tests/effect_sleep.rs` does the sleep part with the real test plugins of both
+formats and `parked_params.rs` proves that a value set while parked or powered off is in the saved state.
+`crates/plugin-hostd/tests/e2e_sleep.rs` renders one script (sleep, wake, a short and a long bypass) in the
+plugin's own process and in this one and compares every output block and state meter, and checks the saved state
+of a parked effect in both.
+
+Hand checks, not automated (they need real plugins and your ears): put a reverb and a delay on a track, play a
+note or a hit and stop; the tail is never cut, and the CPU readout of the device falls to zero once it has died
+away. Bypass a heavy plugin and compare on and off a few seconds apart: no click, the sound comes back as it was.
+Leave it bypassed for ten seconds: its CPU readout falls to zero; switch it off, with no click. Turn a knob while
+it is bypassed, save, reopen: the value is there. A delay with a long delay time stays alive between hits.
 
 ## Hardware and manual tests
 
@@ -1835,14 +1881,29 @@ Two more groups are in the report. For lost input (the `input overruns` of the s
 the render callback trimmed the captured input, the most frames the ring held just before such a trim, the smallest
 and the largest callback seen and the buffer size the stream was opened with, so a trim count that grows with a
 backlog far above the callback size (capture running ahead) can be told from one that grows with a backlog just over
-it (a threshold that follows the current callback too closely). A DEBUG line `input trimmed: 3 trims, backlog max
-1440 frames, callback 96..480 frames, buffer 480` is written when the count rose (run with `ATOMIK_LOG=debug`). And
+it (a threshold that follows the current callback too closely). The allowed backlog (what the ring may hold beyond one
+callback, in frames and milliseconds) is in the same line, and in the status line while extra room is in use. A DEBUG
+line `input trimmed: 3 trims, backlog max 1440 frames, allowed 1536 frames, callback 96..480 frames, buffer 480` is written when the count rose (run with `ATOMIK_LOG=debug`). And
 it gives the render workers: their count, the linger, and the idle spins and parks so far, next to the late sandbox
-batches of the overload counters. `crates/audio-io/src/telemetry.rs` and `stream.rs` test the counters,
+batches of the overload counters. `crates/audio-io/src/telemetry.rs` and `stream.rs` test the counters, `slack.rs` the trim rule (bursts against
+callbacks of uneven size lose nothing, drift is counted and never moves the allowance, packets grow it until nothing
+is lost and it then stays, it comes down window by window when the bursts stop, a freak callback is forgotten, a take
+lands on the same frame at either end of it),
 `crates/engine/tests/worker_linger.rs` the worker read-out (and, ignored, a paced benchmark of the callback
 duration, the idle spins and the process CPU per worker count and linger: `cargo test -p atomik-engine --release
---test worker_linger -- --ignored --nocapture`), and `diagnostics.rs` and `session_tests.rs` the report
-and the status.
+--test worker_linger -- --ignored --nocapture`), `crates/engine/src/load_gate.rs` the pure load rule (the shares, the fast enter, the slow leave, no
+flapping, the holds after a transport start and while a cost is unknown, the smoothing) and
+`crates/engine/tests/load_gate.rs` the same with a real pool and a fake clock the devices advance
+(many cheap nodes park every worker although a level of them would save time spread; a plan that
+turns heavy is busy within three batches and one that turns light stays busy for most of a second;
+no batch of a plan that needs help runs on the audio thread alone, neither at the end of the hold
+after Play nor after a rise while busy; a plan that needed help while playing stays busy through a
+quiet section and a plan that never did plays inline; pinned devices wake no worker; an offline
+engine hands every level over; the output is identical for the live rule, the offline rule, forced
+inline and forced dispatch, also while the busy state flips; `load_gate_alloc.rs` runs the flips
+under the allocation guards; the tests that exercise the hand-over itself build their engine with
+the rule forced to dispatch), and
+`diagnostics.rs` and `session_tests.rs` the report and the status.
 
 Three more groups say how the app starts and how busy the UI is, with no behaviour change (the log is at INFO, the
 last at DEBUG). `startup 412 ms: first frame presented` is one line per stage with the milliseconds since the process
@@ -1857,7 +1918,9 @@ something marked on a tick (an engine or plugin poll, a finished load, a live va
 `resize` a size or scale change, `focus` a window gained focus or was uncovered, and `surface` a frame that was not
 shown and is painted again. The report has the last second and the totals since the start. The wake-up and paint
 counts are plain integers on the UI thread (`crates/app/src/ui_activity.rs`, tested with explicit durations);
-`startup.rs` has the tests of the line shapes and `platform/gpu.rs` those of the adapter words.
+`startup.rs` has the tests of the line shapes and `platform/gpu.rs` those of the adapter words. When a window is
+held back by the frame cap the line adds `rack 940 deferred/s` beside its paints (a paint wanted too early, counted
+each time it is asked for; the paint itself is counted when it happens).
 
 ### Measuring the running app
 
@@ -1873,7 +1936,8 @@ The parameters are `-Exe` (default `target\release\atomik.exe`), `-Scenario` (a 
 `all`), `-Settle` (seconds after the first window, default 15), `-Window` (seconds sampled, default 20), `-Affinity`
 (a processor mask, default none), `-OutDir` (default `atomik-perf` in the temp folder) and `-ExtraArgs` (more app
 arguments for every scenario). For each scenario it makes a fresh temporary settings folder and library folder (a
-reused settings folder keeps the saved window layout and skews the numbers), starts the app with `--settings`,
+reused settings folder keeps the saved window layout and skews the numbers; a settings file is written so that the
+first-run audio setup panel, which repaints all the time, does not open), starts the app with `--settings`,
 `--library`, `--no-midi` and `--quit-after`, waits for the first window, settles, samples, and deletes the
 folders. It writes one CSV (`perf-<date>.csv`, a row per scenario) and prints the same as a table. The exit code is 0
 unless the app crashed in a scenario. **It never passes `--play`**: the transport stays stopped, nothing sounds, and
@@ -1884,6 +1948,9 @@ The scenarios are `empty-noaudio` (`--no-audio`), `empty` (the audio stream runs
 `stress-audio-fx` (`--stress-audio --stress-fx`), `stress-detached` (`--stress --no-audio --detach rack,console`) and
 `stress-plugins` (`--stress-plugins`). The last needs the test plugins (`cargo build -p atomik-test-clap`) and the
 plugin scanner next to the app; when they are missing the script says so and writes a skipped row.
+
+`-Minimized` minimizes the window after the settle time and samples the minimized app (the row's scenario gets the
+suffix `+min`); with the transport stopped it should cost less than the same scenario with the window open.
 
 The columns:
 
@@ -1900,6 +1967,10 @@ The columns:
   sends the main window a `WM_NULL` message and times the round trip through the app's window procedure; a probe not
   answered in 2 s counts as a timeout. A busy or blocked UI thread shows here first. Reading them next to the
   `ui stall` lines of the log says what blocked.
+- `WakesPerSec`, `PaintsPerSec`: the average of the app's own `ui activity` lines after the settle time: the event
+  loop's wake-ups and the main window's paints per second. The script runs the app with `ATOMIK_LOG=debug` unless the
+  variable is set, because those lines are debug lines. An idle app with the stream open reads about 10 wakes, a
+  minimized one about 4, a playing one about 60.
 - `FirstWindowMs`: from the start of the process to a window handle.
 
 Two ways to look at a small machine on a development machine:

@@ -40,6 +40,12 @@ pub(crate) struct Hub {
     pub layout_dirty: AtomicBool,
     /// A restart asked for new MIDI or expression maps.
     pub midi_dirty: AtomicBool,
+    /// `kLatencyChanged`: compare the latency with the one reported.
+    pub latency_asked: AtomicBool,
+    /// `kParamTitlesChanged` (or a reload): the param table may differ.
+    pub params_asked: AtomicBool,
+    /// A reload or a MIDI map change: the plugin wants a restart.
+    pub restart_asked: AtomicBool,
     /// Edits from the plugin's own editor that did not fit the ring to the processor.
     pub edits_dropped: AtomicU32,
 }
@@ -53,6 +59,9 @@ impl Hub {
             edits: warmed(Mutex::new(None)),
             layout_dirty: AtomicBool::new(false),
             midi_dirty: AtomicBool::new(false),
+            latency_asked: AtomicBool::new(false),
+            params_asked: AtomicBool::new(false),
+            restart_asked: AtomicBool::new(false),
             edits_dropped: AtomicU32::new(0),
         })
     }
@@ -392,18 +401,18 @@ impl IComponentHandlerTrait for ComponentHandler {
     unsafe fn restartComponent(&self, flags: i32) -> tresult {
         let a = values::restart_actions(flags);
         if a.latency {
-            self.hub.messenger.post(PluginMessage::LatencyChanged);
+            self.hub.latency_asked.store(true, Ordering::Release);
         }
         if a.params {
             self.hub.layout_dirty.store(true, Ordering::Release);
-            self.hub.messenger.post(PluginMessage::RescanParams);
+            self.hub.params_asked.store(true, Ordering::Release);
         }
         if a.reload {
-            self.hub.messenger.post(PluginMessage::RequestRestart);
+            self.hub.restart_asked.store(true, Ordering::Release);
         }
         if a.midi {
             self.hub.midi_dirty.store(true, Ordering::Release);
-            self.hub.messenger.post(PluginMessage::RequestRestart);
+            self.hub.restart_asked.store(true, Ordering::Release);
         }
         if a.values {
             self.hub.messenger.post(PluginMessage::StateDirty);

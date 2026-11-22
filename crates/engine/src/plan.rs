@@ -15,6 +15,7 @@ use crate::fault::FaultState;
 use crate::graph::rules::{self, CableMap, Lookup};
 use crate::graph::{DeviceInstanceId, Endpoint, Graph, GraphError};
 use crate::preview_clock::PreviewClock;
+use crate::timing::CostProbe;
 use atomik_core::{
     BATCH, Batch, MAX_EVENTS_PER_BATCH, NoteBuffer, NoteEvent, NoteKind, ParamId, TimeInfo,
 };
@@ -80,6 +81,17 @@ pub(crate) struct Node {
     /// Nanoseconds spent in `process` while the timing was on (see [`crate::timing`]). Written
     /// only by the thread that runs the node, read by the audio thread between batches.
     pub(crate) busy_ns: u64,
+    /// Smoothed nanoseconds this node takes in one batch, all its stages together (see
+    /// [`crate::load_gate`]); meaningful once `cost_known`. Written only by the thread that
+    /// runs the node, read by the audio thread between batches, like `busy_ns`.
+    pub(crate) cost_ns: u64,
+    /// The stages timed so far in the current batch, folded into `cost_ns` after the last.
+    cost_acc: u64,
+    /// The raw time of the last timed batch, all stages, wherever it ran (no smoothing): an
+    /// upper estimate of the batch at home, the only cost that rises while the plan is busy.
+    pub(crate) seen_ns: u64,
+    /// At least one whole batch has been timed.
+    pub(crate) cost_known: bool,
     /// A tap on the notes the device receives (Direct Record, Send to Track): every note on or
     /// off of its notes input is copied into the queue before the device runs.
     pub(crate) note_tap: Option<std::sync::Arc<atomik_device_sdk::MidiTap>>,
@@ -213,6 +225,10 @@ impl Node {
             faulted: false,
             fresh_fault: false,
             busy_ns: 0,
+            cost_ns: 0,
+            cost_acc: 0,
+            seen_ns: 0,
+            cost_known: false,
             note_tap: None,
             preview: None,
         }
@@ -329,12 +345,29 @@ impl Node {
     /// panics): the node is marked faulted, its outputs are zeroed and it is skipped from then
     /// on. Returns true for the call in which the device panicked, so the caller can record
     /// the fault.
-    pub(crate) fn run(&mut self, time: TimeInfo, stage: u8, last: bool) -> bool {
+    ///
+    /// The run is timed for the cost the load rule reads on the batches `probe` marks due and
+    /// while the node has no cost yet (a run on a worker costs more than the same run on the
+    /// audio thread, so only inline batches are marked due once the plan is busy). While the
+    /// per-device timing is on, its two clock reads serve both `busy_ns` and the cost.
+    pub(crate) fn run(
+        &mut self,
+        time: TimeInfo,
+        stage: u8,
+        last: bool,
+        probe: Option<CostProbe>,
+    ) -> bool {
         if self.faulted {
             self.silence();
             return false;
         }
         let started = crate::timing::start();
+        let accurate = probe.is_some_and(|p| p.due) || !self.cost_known;
+        let sampling = probe.is_some_and(|p| p.due || p.lower || !self.cost_known);
+        let sampled = match (started, probe) {
+            (None, Some(p)) if sampling => Some((p.clock, (p.clock)())),
+            _ => None,
+        };
         // A previewing player runs on its own clock while the song stands still; the song
         // transport starting ends the preview and the song's time is used from here on.
         let song_time = time;
@@ -350,7 +383,13 @@ impl Node {
             clock.advance(song_time.ticks_per_frame);
         }
         if let Some(started) = started {
-            self.busy_ns = self.busy_ns.wrapping_add(crate::timing::elapsed(started));
+            let ns = crate::timing::elapsed(started);
+            self.busy_ns = self.busy_ns.wrapping_add(ns);
+            if sampling {
+                self.note_cost(ns, last, accurate);
+            }
+        } else if let Some(sampled) = sampled {
+            self.note_cost(crate::timing::elapsed(sampled), last, accurate);
         }
         if outcome.is_err() {
             self.faulted = true;
@@ -358,6 +397,38 @@ impl Node {
             return true;
         }
         false
+    }
+
+    /// Adds one timed stage to the batch's cost; after the last stage the total is folded into
+    /// the smoothed cost, so a device whose stages differ is read as the sum of them. A batch
+    /// that is not `accurate` (it ran on a worker) can only lower the cost.
+    fn note_cost(&mut self, ns: u64, last: bool, accurate: bool) {
+        self.cost_acc = self.cost_acc.saturating_add(ns);
+        if last {
+            self.seen_ns = self.cost_acc;
+            let previous = self.cost_known.then_some(self.cost_ns);
+            let folded = crate::load_gate::smooth(previous, self.cost_acc);
+            if accurate || folded < self.cost_ns {
+                self.cost_ns = folded;
+            }
+            self.cost_acc = 0;
+            self.cost_known = true;
+        }
+    }
+
+    /// What one run of this node costs, in nanoseconds: `None` until it has been timed, 0 for a
+    /// node that panicked (it is silent from then on).
+    pub(crate) fn cost(&self) -> Option<u64> {
+        if self.faulted {
+            Some(0)
+        } else {
+            self.cost_known.then_some(self.cost_ns)
+        }
+    }
+
+    /// The raw time of the last timed batch, in nanoseconds (0 for a node that panicked).
+    pub(crate) fn seen(&self) -> u64 {
+        if self.faulted { 0 } else { self.seen_ns }
     }
 
     fn run_device(&mut self, time: TimeInfo, stage: u8, last: bool) {
@@ -491,7 +562,16 @@ impl RoutingPlan {
         fault: &FaultState,
     ) {
         self.read_host_inputs(host_in, meters);
-        self.run_sequential(0, self.steps.len(), time, dropped, arena, meters, fault);
+        self.run_sequential(
+            0,
+            self.steps.len(),
+            time,
+            dropped,
+            arena,
+            meters,
+            fault,
+            None,
+        );
         self.write_host_outputs(host_out);
     }
 
@@ -507,6 +587,7 @@ impl RoutingPlan {
         arena: &mut Arena,
         meters: &Meters,
         fault: &FaultState,
+        probe: Option<CostProbe>,
     ) {
         let Self {
             devices,
@@ -525,7 +606,7 @@ impl RoutingPlan {
             let r = &step.routes;
             let overflow = node.gather(r, step.stage, slots, note_slots, spare_notes, delays);
             count_overflow(dropped, overflow);
-            if node.run(time, step.stage, step.last) {
+            if node.run(time, step.stage, step.last, probe) {
                 fault.record(devices[step.device].id);
             }
             node.scatter(r, slots, note_slots, meters);
@@ -1004,6 +1085,7 @@ pub(crate) fn compile_routing(
         host_in,
         host_out,
         spare_notes: NoteBuffer::with_capacity(MAX_EVENTS_PER_BATCH),
+        dispatchable: true,
         console: Box::new(ConsoleRouting {
             delays: delay_lines,
             click_delay: click_delay(&report, options),

@@ -873,3 +873,75 @@ fn the_internal_error_notice_offers_save_and_dismiss_and_only_save_when_paused()
     assert!(has(&t, "SAVE") && !has(&t, "DISMISS"), "{t:?}");
     assert!(paused.dismiss_rect().is_none());
 }
+
+#[test]
+fn a_file_that_timed_out_offers_scan_again_with_no_time_limit_and_a_crashed_one_does_not() {
+    let mut data = on_data();
+    data.failed = vec![
+        FailedFileInfo {
+            path: "D:/Plugins/CLAP/crashes.clap".into(),
+            reason: "the scanner exited with code 3 (0x3)".into(),
+        },
+        FailedFileInfo {
+            path: "D:/Plugins/CLAP/slow.clap".into(),
+            reason: atomik_plugin_host::timeout_reason(30),
+        },
+    ];
+    let mut v = view(data);
+    // A crash keeps today's RETRY and nothing else.
+    assert!(v.retry_rect(0).is_some());
+    assert!(v.retry_no_limit_rect(0).is_none());
+    // A timeout has both, side by side.
+    let retry = v.retry_rect(1).unwrap();
+    let no_limit = v.retry_no_limit_rect(1).unwrap();
+    assert!(no_limit.x1 <= retry.x0, "the buttons do not overlap");
+    assert!(has(&texts_of(&v), "NO LIMIT"));
+    let help = v.help_at(no_limit.center()).expect("a tooltip");
+    assert!(
+        help.text.starts_with("Scan again with no time limit"),
+        "{}",
+        help.text
+    );
+    let acts = click_at(&mut v, no_limit.center());
+    assert_eq!(
+        settings(&acts),
+        [PluginSettingsAction::RetryFileNoLimit(
+            "D:/Plugins/CLAP/slow.clap".into()
+        )]
+    );
+    // RETRY of the same row is what it was.
+    let acts = click_at(&mut v, retry.center());
+    assert_eq!(
+        settings(&acts),
+        [PluginSettingsAction::RetryFile(
+            "D:/Plugins/CLAP/slow.clap".into()
+        )]
+    );
+    // And a crashed row has nothing to click left of its RETRY.
+    let left_of_retry = Point::new(
+        v.retry_rect(0).unwrap().x0 - 40.0,
+        v.retry_rect(0).unwrap().center().y,
+    );
+    assert!(settings(&click_at(&mut v, left_of_retry)).is_empty());
+}
+
+#[test]
+fn the_timeout_reason_check_mirrors_the_host_crate() {
+    use atomik_ui::plugin_data::is_timeout_reason;
+    for secs in [5, 30, 300] {
+        let reason = atomik_plugin_host::timeout_reason(secs);
+        assert!(is_timeout_reason(&reason), "{reason}");
+    }
+    for reason in [
+        "the scanner exited with code 3 (0x3)",
+        "the file holds no plugin",
+        "the scan output is too large",
+        "",
+    ] {
+        assert_eq!(
+            is_timeout_reason(reason),
+            atomik_plugin_host::is_timeout_reason(reason),
+            "{reason}"
+        );
+    }
+}

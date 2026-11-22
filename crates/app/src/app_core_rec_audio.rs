@@ -81,7 +81,7 @@ use crate::audio_record::{
     TAP_SECONDS, TrackInput, input_peak, input_peaks, input_settings, place_lap, plan_tap,
     track_input,
 };
-use crate::audio_writer::{Ctl, FinishInfo, TakeResult, WriterConfig, WriterTrack, spawn};
+use crate::audio_writer::{Ctl, FinishInfo, TakeResult, WriterConfig, WriterTrack, spawn_watched};
 use atomik_engine::TapControls;
 use atomik_model::console::MASTER_TYPE;
 use atomik_model::song::AUDIO_TRACK_TYPE;
@@ -89,6 +89,7 @@ use atomik_model::{
     AssetMeta, AudioClipContent, Clip, ClipContent, ClipId, RecSource, rec_source, source_refusal,
 };
 use atomik_ui::{ChannelMeters, MeterSource, RecInput, TrackLevel};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
 /// Frames after the last transport state seen that a finished take still records (on top of the
@@ -107,6 +108,8 @@ pub(super) struct AudioRecording {
     strips: Vec<DeviceKey>,
     /// The writer thread.
     writer: std::thread::JoinHandle<()>,
+    /// Set by the writer when writing failed and it has ended ([`AppCore::stop_failed_audio_take`]).
+    failed: Arc<AtomicBool>,
     /// Song frame the transport started from, when recording started from a stopped transport.
     start_song_frame: Option<u64>,
     /// The transport's loop count when recording started.
@@ -244,6 +247,7 @@ impl<S: EngineSink> AppCore<S> {
         };
         let rate = self.doc().sample_rate;
         let plan = plan_tap(&planned);
+        self.warn_if_space_is_low(&bundle, rate, &plan);
         let capacity = TAP_SECONDS * rate as usize;
         let strips: Vec<DeviceKey> = plan.tracks.iter().map(|t| t.device.clone()).collect();
         let controls = Arc::new(TapControls::new(strips.len()));
@@ -281,14 +285,15 @@ impl<S: EngineSink> AppCore<S> {
             generation: self.audio.generation,
             take,
         };
-        let (ctl, writer) = match spawn(tap, config, self.audio.tx.clone()) {
-            Ok(w) => w,
-            Err(e) => {
-                self.sink.stop_audio_record();
-                self.reject(format!("audio recording: cannot start the writer: {e}"));
-                return false;
-            }
-        };
+        let (ctl, writer, failed) =
+            match spawn_watched(tap, config, self.audio.tx.clone(), self.audio.writer_faults) {
+                Ok(w) => w,
+                Err(e) => {
+                    self.sink.stop_audio_record();
+                    self.reject(format!("audio recording: cannot start the writer: {e}"));
+                    return false;
+                }
+            };
         self.audio.rec_pending += 1;
         let state = self.sink.transport_state();
         let start_song_frame =
@@ -298,6 +303,7 @@ impl<S: EngineSink> AppCore<S> {
             controls,
             strips,
             writer,
+            failed,
             start_song_frame,
             start_loop_count: state.loop_count,
             origin: None,
@@ -465,6 +471,14 @@ impl<S: EngineSink> AppCore<S> {
         let Some(rec) = self.audio.recording.take() else {
             return;
         };
+        if rec.failed.load(Ordering::Acquire) {
+            // The writer ended on a write error and has reported it (one notice, with the files
+            // it kept): there is nobody to finish, and its result is already on its way.
+            self.audio.cancelled.retain(|w| !w.is_finished());
+            self.audio.cancelled.push(rec.writer);
+            self.stop_tap_when_idle();
+            return;
+        }
         let (Some(origin), Some(last), Some(snapshot)) =
             (rec.origin, rec.last, self.snapshot.clone())
         else {
@@ -502,6 +516,40 @@ impl<S: EngineSink> AppCore<S> {
             self.audio.rec_pending = self.audio.rec_pending.saturating_sub(1);
             self.reject("audio recording: the writer is gone, the take is lost".to_owned());
             self.stop_tap_when_idle();
+        }
+    }
+
+    /// Ends the audio take of a writer that failed, as if the user had pressed stop: the
+    /// writer's own notice says why and what was kept, the transport goes on. Called every UI
+    /// frame; one atomic load while nothing is wrong.
+    pub(super) fn stop_failed_audio_take(&mut self) {
+        let failed = self
+            .audio
+            .recording
+            .as_ref()
+            .is_some_and(|rec| rec.failed.load(Ordering::Acquire));
+        if failed && self.take.is_some() {
+            let state = self.sink.transport_state();
+            self.finish_take(&state);
+            self.finish_launch_rec(state.tick);
+        } else if failed {
+            self.finish_audio_take();
+        }
+    }
+
+    /// Warns (a notice, never a refusal) when the volume of the take's folder has less room than
+    /// [`crate::record_space::FREE_SPACE_MINUTES`] of this take need.
+    fn warn_if_space_is_low(
+        &mut self,
+        bundle: &atomik_audio_file::Bundle,
+        rate: u32,
+        plan: &crate::audio_record::TapPlan,
+    ) {
+        let channels: usize = plan.tracks.iter().map(|t| t.tap_index.len()).sum();
+        let needed = crate::record_space::needed_bytes(rate, channels);
+        let free = (self.audio.free_space)(&bundle.audio_dir());
+        if let Some(notice) = crate::record_space::low_space_notice(free, needed) {
+            self.reject(notice);
         }
     }
 

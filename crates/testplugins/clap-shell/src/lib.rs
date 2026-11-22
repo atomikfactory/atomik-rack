@@ -51,7 +51,7 @@ use clap_sys::ext::note_ports::{
 };
 use clap_sys::ext::params::{
     CLAP_EXT_PARAMS, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_STEPPED, CLAP_PARAM_RESCAN_ALL,
-    clap_host_params, clap_param_info, clap_plugin_params,
+    CLAP_PARAM_RESCAN_INFO, clap_host_params, clap_param_info, clap_plugin_params,
 };
 use clap_sys::ext::preset_load::CLAP_EXT_PRESET_LOAD;
 use clap_sys::ext::remote_controls::{
@@ -207,6 +207,8 @@ pub enum Status {
 pub struct Requests {
     /// `request_restart`.
     pub restart: bool,
+    /// `latency.changed` (also asked right after `activate`, from inside the activation).
+    pub latency: bool,
     /// `request_callback`.
     pub callback: bool,
 }
@@ -216,6 +218,8 @@ pub struct Requests {
 pub struct MainAction {
     /// Call `params.rescan(ALL)` (the plugin must not be active).
     pub rescan_params: bool,
+    /// Call `params.rescan(INFO)`: titles changed, the table is the same.
+    pub rescan_info: bool,
 }
 
 /// One 64-frame block.
@@ -720,6 +724,20 @@ fn request_restart(i: &Instance) {
     }
 }
 
+fn announce_latency(i: &Instance) {
+    if let Some(ext) = host_ext(i)
+        && !ext.latency.is_null()
+    {
+        // SAFETY: the host's latency table is valid; `changed` is called on the main thread, as
+        // `activate` is.
+        unsafe {
+            if let Some(f) = (*ext.latency).changed {
+                f(i.host);
+            }
+        }
+    }
+}
+
 fn request_callback(i: &Instance) {
     // SAFETY: as above; `request_callback` is thread-safe.
     unsafe {
@@ -775,6 +793,14 @@ extern "C" fn plugin_activate(
     let ok = lock(i).dsp.activate(sample_rate);
     if ok {
         bump(counter::ACTIVATED);
+        // A plugin may announce from inside the call, as plugins do.
+        let requests = lock(i).dsp.take_requests();
+        if requests.latency {
+            announce_latency(i);
+        }
+        if requests.restart {
+            request_restart(i);
+        }
     }
     ok
 }
@@ -808,7 +834,14 @@ extern "C" fn plugin_on_main_thread(plugin: *const clap_plugin) {
         inner.params = inner.dsp.params();
         action
     };
-    if action.rescan_params
+    let flags = if action.rescan_params {
+        CLAP_PARAM_RESCAN_ALL
+    } else if action.rescan_info {
+        CLAP_PARAM_RESCAN_INFO
+    } else {
+        0
+    };
+    if flags != 0
         && let Some(ext) = host_ext(i)
         && !ext.params.is_null()
     {
@@ -816,7 +849,7 @@ extern "C" fn plugin_on_main_thread(plugin: *const clap_plugin) {
         // this callback is.
         unsafe {
             if let Some(f) = (*ext.params).rescan {
-                f(i.host, CLAP_PARAM_RESCAN_ALL);
+                f(i.host, flags);
             }
         }
     }

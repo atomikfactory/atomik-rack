@@ -279,12 +279,14 @@ dependencies = [
  "atomik-render",
  "atomik-stems",
  "atomik-tab",
+ "atomik-testkit",
  "atomik-ui",
  "atomik-update",
  "atomik-video",
  "atomik-vision",
  "clap",
  "embed-resource",
+ "fs4",
  "hound",
  "log",
  "midir",
@@ -492,6 +494,7 @@ dependencies = [
  "atomik-engine",
  "atomik-test-plugin-core",
  "atomik-testkit",
+ "libc",
  "proptest",
  "rtrb",
  "serde",
@@ -654,6 +657,14 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-clap-leak"
+version = "0.5.0-rc.1"
+dependencies = [
+ "atomik-test-clap-shell",
+ "atomik-test-plugin-core",
+]
+
+[[package]]
+name = "atomik-test-clap-mix"
 version = "0.5.0-rc.1"
 dependencies = [
  "atomik-test-clap-shell",
@@ -1942,6 +1953,16 @@ name = "foreign-types-shared"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
+
+[[package]]
+name = "fs4"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e72ed92b67c146290f88e9c89d60ca163ea417a446f61ffd7b72df3e7f1dfd5"
+dependencies = [
+ "rustix 1.1.5",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "futures-core"

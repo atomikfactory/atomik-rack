@@ -60,6 +60,8 @@ muda = "0.21.2"
 rfd = "0.18.0"
 arboard = { version = "3.7.0", default-features = false }
 sys-locale = "0.3.2"
+# Free space of the volume a recording is written to (no standard library call; no `unsafe` in the program).
+fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
 pollster = "1.0"
 symphonia = { version = "0.6.1", default-features = false }
 rubato = "5.0.1"

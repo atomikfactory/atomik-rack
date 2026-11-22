@@ -831,6 +831,8 @@ pub struct RackView {
     /// First revision of a new panel view (bumped when the scope changes, so the scene cache
     /// never mixes panels of two scopes).
     epoch: u64,
+    /// Panel rebuilds so far, see [`Self::rebuild_count`].
+    rebuilds: u64,
     /// The Workflow setting "Auto-route new devices" (default on): creating routes the device,
     /// deleting bridges its audio path. Shift at the create action inverts it for one device.
     auto_route: bool,
@@ -1136,6 +1138,7 @@ impl RackView {
             scope_macros: Default::default(),
             popped: 0,
             epoch: 0,
+            rebuilds: 0,
             auto_route: true,
             inline: false,
             frames: Vec::new(),
@@ -1620,6 +1623,7 @@ impl RackView {
     }
 
     fn rebuild(&mut self, doc: &RackDoc, registry: &Registry) {
+        self.rebuilds += 1;
         let mut old: BTreeMap<DeviceKey, DeviceView> =
             self.devices.drain(..).map(|d| (d.key.clone(), d)).collect();
         let unit = f64::from(RACK_UNIT);
@@ -2887,6 +2891,13 @@ impl RackView {
             (self.size.width * self.scale).ceil().max(1.0) as u32,
             (self.size.height * self.scale).ceil().max(1.0) as u32,
         )
+    }
+
+    /// How many times the panels were rebuilt from the document (a new rack, a new scope, a
+    /// change of structure): a panel made again starts without the meter values it was fed, so
+    /// a host that skips feeding unchanged values must feed everything once more when this moves.
+    pub fn rebuild_count(&self) -> u64 {
+        self.rebuilds
     }
 
     /// True when something changed since the last [`Self::paint`].

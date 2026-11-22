@@ -49,7 +49,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk, tab | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`), the tab sidecar of note clips (`tab_data.rs`), its edit operations (`tab_edit.rs`) and the technique renderer (`tab_render.rs`), the song chord sheets (`chord_sheets.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
-| `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
+| `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs`, `src/procgroup.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
 | `atomik-plugin-clap` | [crates/plugin-clap](../crates/plugin-clap) | core, device-sdk, plugin-host (clack-host, clack-extensions) | `crate` | The CLAP backend (every `unsafe` block has a `SAFETY:` comment) |
 | `atomik-plugin-vst3` | [crates/plugin-vst3](../crates/plugin-vst3) | core, device-sdk, plugin-host (vst3, libloading) | `crate` | The VST3 backend, hosting `.vst3` modules through the `vst3` bindings (every `unsafe` block has a `SAFETY:` comment) |
 | `atomik-plugin-scan` | [crates/plugin-scan](../crates/plugin-scan) | device-sdk, plugin-host, plugin-clap, plugin-vst3 | none | The out-of-process scanner (bin `atomik-plugin-scan`) |
@@ -590,8 +590,12 @@ new ones, so editing during playback does not retrigger a note that is already s
                   → bump the lane epoch, push a StreamRequest (wait-free)
                 every playing batch consumes exactly its frames from the ring (discards outside regions);
                 missing data = silence + underrun counter, never a wait
- streamer thread "atomik-streamer": polls requests every 1 ms, restarts lanes, fills each lane a few
-                chunks per round by calling StreamSource::read (the app's reader over the bundle WAV)
+ streamer thread "atomik-streamer": polls requests, restarts lanes, fills each lane a few
+                chunks per round by calling StreamSource::read (the app's reader over the bundle WAV);
+                rounds that fill or serve follow at once, a round with nothing to do waits 1 ms, and
+                only 100 such rounds in a row (a playing transport never gets there) bring the wait to
+                10 ms; a new lane set and every transport command wake it and restart that count (only
+                a refill request made by the audio thread alone after a long quiet waits up to 10 ms)
 ```
 
 ### 2.6 Recording
@@ -976,9 +980,41 @@ changes nothing. An import, a recording or opening another project waits for the
 (`AppCore::settle_save`), and a save that starts while audio is loading, recording, converting or
 freezing runs blocking. Scripts, tests and the QA server keep the blocking `AppCore::save`.
 
-The event loop sleeps until an event when nothing is due. A loaded plugin only asks for a look every
-100 ms (`PLUGIN_IDLE_POLL`: its notifications, dirty flags and main-thread work); frames at 60 Hz
-run while audio runs, a worker is busy, a plugin is being created or an editor is open.
+The event loop sleeps until an event when nothing is due, and otherwise wakes at one of three rates
+(`window_logic::wake_after`). Frames at 60 Hz run only while something moves or is polled at that rate
+(`Shell::wants_fast_frames`, which joins `AppCore::wants_fast_frames` with what the shell and the views hold:
+the transport, a take, a deferred start, a momentary param pulse, a live input analysis, a sampling, the
+camera, a control surface, MIDI heard in the last second, a worker or import, a menu or tooltip that waits
+for the pointer, a scroll, glide or morph, a plugin that loads or is captured) plus what the platform owns (a
+held pointer button, an open plugin editor window, a Learn strip or a docked frame), and for one second after
+the last frame that painted something (not one that only the status poll asked for), so meter ballistics and
+lights settle. The frame itself keeps nothing alive: a frame with nothing to show builds no list, string or
+map entry (the MIDI mapping, relink, film and export passes return before they build anything while their
+panel is closed, the plugin device list and the pinned plugin params are looked at again only when the
+document revision moved, and `crates/app/tests/idle_frame_alloc.rs` counts the allocations of idle frames).
+With an audio stream open (or a plugin loaded) and none of that, the loop wakes every 100 ms
+(`IDLE_STREAM_WAKE`) for the engine garbage, the plugin notifications and the status poll; an open stream alone
+no longer means 60 Hz. While every window has no area (minimized) and nothing animates it wakes every 250 ms
+(`MINIMIZED_WAKE`) and paints nothing; with something animating (the transport plays, a glide or a snapshot
+marker is timed on the frame) it keeps the frame period and still paints nothing, and the paint tail does not
+apply; a resize to no area returns before the graphics target is reallocated and before anything
+is laid out, and the restore lays out and paints once. Live MIDI wakes the loop at once through an event-loop
+proxy (`ControlHub::set_waker`), so a mapped control does not wait for the next slow wake. Exact deadlines (a
+quit time, a screenshot, a submenu switch, the graphics back-off) always win over the slow wake. The headless
+shell, the QA server and the tests drive the shell directly and never see these rates.
+The windows that present without waiting for the vertical blank (two or more windows are open) share one frame
+phase: time is cut into slots of one frame period (`App::frame`, from `FRAME`; `App::frame_started` is the start
+of the current slot) and each such window is painted at most once per slot (`window_logic::paint_gate`, with
+`AppWindow::last_painted`, apart from the app-wide `last_paint` of the paint tail). A tick uses its one time for
+every window it paints. Input, live and update paints of a window not yet painted in the slot are made at once; one
+already painted in it waits for the slot to end, and the paint after the end opens the next slot, so every window
+is painted by the same wake-up of the loop and a window painted off the tick does not split the loop into two
+phases. A resize or scale change, a focus change or uncover, a frame that was painted but not shown, a redraw the
+system asks for while nothing is marked and the screenshot paths are painted at once and do not move the slot.
+A held-back paint leaves the shell's marks alone, so the window is found again by the next tick, and the loop wakes
+when the slot is over (`window_logic::loop_deadline`, `App::held_until`) even when no stream or plugin would wake
+it; a paint that came from a timer may be early by an eighth of the period (`frame_tolerance`), input may not. A
+lone window (vsync) is never held back. `ui activity` counts what was held back per window as `deferred`.
 `ui-state.json` is written atomically and at most every two seconds (`Shell::flush_ui_state`, and on
 shutdown, detaching and attaching a pane); `keymap.json` is looked at when a window gets the focus
 and when a menu opens.
@@ -2955,7 +2991,22 @@ worker so the wake-up overlaps the call's serial work) and lowers it at the end,
 finds it down parks at once. A long linger therefore keeps workers awake for the whole callback
 and costs nothing between callbacks or while the transport is stopped; both calls are atomics and
 `unpark`, so the audio thread still allocates and locks nothing. The app and `atomik-play` start
-at most `cores - 1` workers. A level with a single device is never dispatched. The app's default
+at most `cores - 1` workers. A level with a single device is never dispatched, and a live engine
+uses the workers only while the audio thread needs help
+([load_gate.rs](../crates/engine/src/load_gate.rs)): each node keeps a smoothed cost in nanoseconds
+per batch, the audio thread sums them over the plan before each batch and compares the sum with the
+batch budget. The plan is busy from 30 % of the budget at once and calm after a second under 20 %;
+it is busy while a cost is unknown and for the first second after the transport starts. A calm plan
+runs every level inline, wakes no worker and is timed on every batch; a busy one hands every level
+over that has a device a worker can take (a device pinned to the audio thread cannot be taken) and
+runs one batch in 64 inline and timed, because a node takes longer on a worker than at home, but
+only if the batch just before it, timed where it ran, was under half the budget; at or over half it
+neither probes nor counts calm time. A plan that has needed the workers while the transport plays
+stays busy for as long as it plays (it is remembered until the engine is rebuilt) so that a dense
+section after a quiet one is not taken inline. The callback flag and the wake-up at the start of a
+call follow the same state. An offline engine (`EngineOptions::realtime` false, as a bounce or an
+export creates it) has no deadline and hands every level over, as before. The state never changes
+the output. The app's default
 is an automatic count (`auto_workers_for` in [audio-io](../crates/audio-io/src/lib.rs)): one
 worker per physical core but the audio thread's own, at most 8, one on a dual-core machine and
 none on a single core. The physical core count comes from the `num_cpus` crate; when it reports
@@ -3109,9 +3160,24 @@ while the song plays or records. It is one try (a failed one does not make the d
 picking devices in the dialog forgets it.
 Input that the capture ring could not hold, or that the render callback discarded to bound the
 latency, is `Telemetry::input_overruns` (frames; the first discard, of what was captured before the
-output started, is not counted). The Audio Settings dialog warns when the open input and output are
-different devices, since their clocks drift apart; a device named like the output is the default
-input, so one interface for both is what opens unless another input is chosen.
+output started, is not counted). How much captured input may wait is `InputSlack`
+(`crates/audio-io/src/slack.rs`): three buffers of the size the stream was opened with (or of the
+largest callback of the last two windows of 2000 callbacks, if larger), never of the callback that
+is running, so a short callback in shared mode does not turn a burst into a backlog and one freak
+callback is forgotten; on top of that an extra allowance for a driver that delivers packets larger
+than a buffer. It grows by half a buffer only when a trim follows a lump (input that arrived in one
+callback exceeding a buffer by half a buffer, at least 32 frames); a trim after a steady arrival is
+drift, counted as lost but never moving the allowance. At the end of a window it shrinks by a step
+only if no lump was trimmed in it and the window's largest backlog would still have fitted under the
+smaller threshold. It lies between zero and two buffers clamped to 10..30 ms. Past the allowance the
+ring is trimmed and counted as before. The allowed backlog is
+`Telemetry::input_backlog_allowed_frames`, always in Export Diagnostics; the status line shows it
+only while the extra part (`input_backlog_extra_frames`) is above zero. A take's compensation uses
+the measured input latency, which includes the frames the ring actually holds, and the allowance
+only decides what is discarded, so a larger one never moves a take. The Audio Settings dialog warns
+when the open input and output are different devices, since their clocks drift apart; a device named
+like the output is the default input, so one interface for both is what opens unless another input
+is chosen.
 
 **Settings that do not open.** `LiveSession` remembers the device configuration that last opened a
 stream (`device_loss.last_good` in `settings.json`). When the current one fails to open, at
@@ -3280,9 +3346,15 @@ of this is saved in the project.
   with a count, an owner id and a publish sequence that only grows; any other device costs one bool
   test per batch. The UI reads with `EngineHandle::device_meter_values(id, out)` or
   `Meters::device_values` (`AppCore::device_meter_values(key, out)`), getting `(count, seq)`; an
-  unchanged `seq` means no news. A removed device (or a swapped plan) clears its slot, and a reader
-  only gets values from the slot whose owner is the id it asked for, so a reused slot never shows
-  old values.
+  unchanged `seq` means no news. The sequence also moves with every batch while the engine runs, so
+  `AppCore::feed_device_meters` keeps the values it last fed per device and skips a device whose
+  values are bit for bit the same, once its panel settled on them (`RackView::set_device_meter_values`
+  answers `false` for that; the effect, plugin and note-player panels do, every other panel answers
+  `true` and is fed on). The feed starts over when the rack view rebuilds its panels
+  (`RackView::rebuild_count`). A panel is still recorded whole when a value it shows changes: a
+  display list per device, replaced when its revision moves.
+  A removed device (or a swapped plan) clears its slot, and a reader only gets values from the slot whose
+  owner is the id it asked for, so a reused slot never shows old values.
 - **Model and app.** The model keeps the console (`Console`, channels bound to rack devices, master,
   8 returns, VCA groups); every instrument gets a channel automatically. Solo is additive and
   returns are solo-safe; the app sets `internal.solo_silence` and the `internal.vca_*` feed on the
@@ -4399,7 +4471,8 @@ and the native menu. Audio adds:
 - [`app_core_rate.rs`](../crates/app/src/app_core_rate.rs): a new project at a rate, the sample
   rate conversion with its audio, and the channel counts.
 - [`app_core_templates.rs`](../crates/app/src/app_core_templates.rs): the templates folder
-  (`Templates` beside the library folder, listed by name and refreshed by the shell once a second),
+  (`Templates` beside the library folder, listed by name and read again when a menu of the menu bar opens,
+  when a window gets the focus and after Save as Template or Reset Default Song, never on a timer),
   File > New from Template (`open_template`: the project opens with no file name, so Save cannot
   overwrite it, and its audio is copied into the session bundle by the adopt worker, so it plays at
   once and goes into the project folder on the first save), Save as Template and the default song
@@ -4963,7 +5036,8 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
 
 - **Crates and the unsafe policy.** `atomik-plugin-host` (the generic `PluginDevice`, the
   `PluginManager`, the slot and hand-shake, scan, cache, catalog, journal, settings; `unsafe` only
-  in `fpenv.rs`, the floating-point control register, and `ole.rs`, `OleInitialize` on Windows),
+  in `fpenv.rs`, the floating-point control register, `ole.rs`, `OleInitialize` on Windows, and
+  `procgroup.rs`, the scan child's job object, process group and error mode),
   `atomik-plugin-clap` (the CLAP backend over `clack-host` and `clack-extensions` 0.2.0, pinned),
   `atomik-plugin-vst3` (the VST3 backend over the `vst3` crate 0.3.0, pinned, bindings generated
   from VST 3.8; the host layer is ours) and `atomik-plugin-ipc` (the sandbox wire: the mapped block
@@ -4995,7 +5069,12 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   events with host note ids, passes the batch `TimeInfo` as the transport, writes the output through
   a 5 ms bypass crossfade to the dry main input (an effect's dry input is delayed by the plugin's
   reported latency, so a bypassed latent plugin stays where the delay compensation put it), applies
-  the sleep and skip rules (they depend only on batch content), sets flush-to-zero around `process`,
+  the sleep rule (a plugin whose input has been silent for its tail and whose own output has been
+  silent for a second is not called; only batch content and what the plugin returned decide) and
+  the bypass rule (an effect bypassed for 10 s without a break is parked: not called, its pending
+  params sent in one silent call every 50 ms; switching the bypass off then clears it and pre-rolls it
+  for 20 ms, or its latency, before the fade in; the same live and in a bounce), sets flush-to-zero
+  around `process`,
   and turns a panic, or a run of bad blocks (an error status or a non-finite output; `bad_run_limit`,
   a quarter of a second), into FAILED (silence, or dry for effects). A single bad block is replaced by the
   same fallback with a one-block ramp and counted (the seventh meter value, `bad plugin blocks`).
@@ -5007,10 +5086,21 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   rate, latency or param-table change, RELOAD) is a hand-shake: the manager requests a stop, the
   device answers silence or dry and hands the processor back at the next batch, the manager
   deactivates and activates again and sends it back; the device then re-sends every param the rack
-  ever set. Dropping a device never destroys the plugin on the dropping thread: `Drop` posts to the
-  **reaper queue**, and `poll` tears down on the main thread. An engine restart keeps the living
-  instances (`retain`, then `reattach` at the new rate: nothing is created again). A plugin that
-  reports another param table or other ports while it runs gets a new device of its own and nothing
+  ever set. A plugin's own request for one is acted on only when it changes something, and the
+  decision is made where the plugin lives (inside the plugin process when it is sandboxed), so both
+  agree: a latency request restarts only when the latency now differs from the one the running
+  activation was made with; a param-table rescan restarts only when what the host caches differs
+  (ids and their order, ranges, step counts, ports) while a change of titles alone goes to the app
+  as `ManagerEvent::ParamTitlesChanged` with no deactivate or activate; what a plugin asks for
+  while it is being activated is what that activation did and is dropped; and a plugin that asks
+  for restarts again and again is honoured `RESTART_BURST` (4) times, then ignored with one
+  warning in its log until it has gone `RESTART_QUIET_POLLS` (200) polls without asking (polls,
+  never time, so a bounce is the same on every run, sandbox on or off; see
+  [DECISIONS.md](DECISIONS.md) entry AZ). Dropping a device never destroys the plugin on the
+  dropping thread: `Drop` posts to the **reaper queue**, and `poll` tears down on the main thread. An
+  engine restart keeps the living instances (`retain`, then `reattach` at the new rate: nothing is
+  created again). A plugin that reports another param table or other ports while it runs gets a new
+  device of its own and nothing
   else restarts (`AppCore::swap_device_layout`): a stand-in of the new shape takes the place of its
   device, the instance is parked when the old device goes, and `adopt_offline` puts the live device in
   when the plugin is active again, so the transport and the other devices keep going. The whole
@@ -5028,8 +5118,13 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   Render).
 - **Scanner, cache, consent.** Plugins are off by default. `atomik-plugin-scan clap <path>` loads
   one file in a child process, activates every plugin once, and prints a JSON `ScanResult`; the app
-  runs up to two children with a hard timeout (default 30 s, 5 to 300), kills a hang, and blacklists
-  files that crash, hang, print garbage or are not plugins until they change or the user retries.
+  runs scanner children (one on a machine with four logical CPUs or fewer, otherwise half the CPUs,
+  two to eight) below normal priority, each in a group that ends with it and with the system error
+  dialogs off. The child announces the classes of the file and prints each class as it finishes it.
+  The time limit (default 30 s, 5 to 300) is per class: a hang or crash in one class keeps the classes
+  that answered, lists that class as unsupported and starts the scanner again for the rest, and a file
+  is blacklisted only when nothing in it answered (or it prints garbage or is not a plugin), until it
+  changes or the user retries.
   `plugins.json` (atomic write, versioned, incremental rescan by size and mtime) feeds
   `PluginCatalog`, which registers descriptors **without loading any plugin file**. A project never
   carries a path: a device resolves only by (format, id) against that cache. A project that uses
@@ -5099,7 +5194,10 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   `AppCore::plugin_tick` queues a snapshot when the document differs from its saved state and from
   the last snapshot (the document revision, see 2.2) and the autosave period has passed (Settings,
   Workflow, **Autosave**: off, 1, 2, 5 (default), 10, 15 or 30 minutes; while a plugin is loaded
-  every 60 s whatever changed, and after a plugin state capture). The frame only clones the
+  every 60 s, and after a plugin state capture). The periodic snapshot of a project with a plugin
+  asks every plugin first and is written only when the document differs from the last snapshot (and
+  from its saved state) or a capture stored a different state; a project whose plugins nobody touches
+  writes nothing, and the period then starts again. The frame only clones the
   document; one `RecoveryWriter` thread serialises, writes
   `<config>/recovery/<project>-<sequence>.recover.atomik` through a temporary file and a rename, and
   prunes to the newest three, so two snapshots never prune each other. A snapshot of a project with audio
@@ -5300,12 +5398,15 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     value or the clock for a decision. A bounce (`SandboxConfig::bounce`, set by
     `atomik-render`, also for `--plugin-mode realtime`) and an offline instance wait for every batch
     up to a 30 s watchdog, so a sandboxed bounce is byte-identical to an in-process one.
-  - *Crash.* When the child ends, the reader thread marks the block dead (`DeathHandle`) and posts
+  - *Crash.* When the child ends, the reader thread (the end of the pipe) or the watcher thread
+    (the process itself: a helper process that inherited the pipes cannot hide the death), whichever
+    comes first and only once, marks the block dead (`DeathHandle`) and posts
     `ProcessExited` with the exit code or signal and the last stderr lines; the next `process`
     returns `Lost`, the device turns `Crashed` (dry or silent, never called again), and the manager
     emits `ManagerEvent::Crashed`. A lost instance fails every call at once; `restart` and `reload`
     refuse it, and the app's RELOAD creates a new instance from the document's last captured state
-    and the rack's params.
+    and the rack's params. A plugin that had run for ten seconds is reloaded this way once by itself
+    (`reload_crashed_plugin` in the app); a second crash within five minutes stays CRASHED until RELOAD.
   - *Supervision.* A child never outlives the app. On Windows it joins a job object that ends
     its processes when the app's last handle to the job closes, whatever ends the app; every
     child also runs a watchdog thread that ends it a second after its parent's process is gone,
@@ -5391,7 +5492,7 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   equals the reference DSP and is bit-identical across blocks and workers under the allocation
   guard, PDC from a reported and a changed latency, thread-check per worker count, a restart in the
   middle of a render), `plugin-clap/tests/{process,lifecycle,state,gui,leak,crash,hang}.rs` against
-  the real backend and the test plugins, `plugin-scan/tests/scanner.rs` (real child process),
+  the real backend and the test plugins, `plugin-scan/tests/scanner.rs` and `scanner_robust.rs` (real child processes),
   `render/tests/plugin_demo.rs`, `plugin_demo_vst3.rs` and the app's `app_core_plugins*_tests.rs`
   (live equals the realtime bounce, including a saved latency and a latency that moves mid-song in
   both formats, stand-ins, one instance per frame, engine restart keeps instances, journal and
@@ -6924,8 +7025,9 @@ winit and GPU code is not (it needs a window and a GPU).
   (`Shell::repaint_window`). With more than one window open the surfaces present without waiting for
   the vertical blank (`window_logic::presents_with_vsync`): the windows are painted one after the
   other on one thread, so a wait for one monitor's blank would stall the others, and monitors with
-  different refresh rates would drag each other down; the 60 Hz tick sets the pace. A lone window
-  keeps vsync.
+  different refresh rates would drag each other down; the 60 Hz tick sets the pace, and a window is
+  painted at most once per shared frame slot (`window_logic::paint_gate`), so a burst of input events cannot
+  build more frames than the tick would. A lone window keeps vsync and is not capped.
 - **Invariants.** Every song has a main window, and it is the owner of the editors of that song's sandboxed
   plugins (`set_plugin_editor_owner`), whichever pane is detached; plugin editor windows are
   separate top-level windows (kept per song) and are not touched by any of this. Nothing here reaches the engine,

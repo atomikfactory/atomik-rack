@@ -297,11 +297,16 @@ impl ComponentCore {
             p.dsp.grow();
             p.params = p.dsp.params();
         }
-        if p.dsp.activate(s.sampleRate) {
-            kResultOk
-        } else {
-            kResultFalse
+        if !p.dsp.activate(s.sampleRate) {
+            return kResultFalse;
         }
+        // A plugin may announce from inside the call, as plugins do.
+        let flags = p.dsp.host_flags();
+        drop(p);
+        if flags != 0 {
+            self.shared.announce(flags);
+        }
+        kResultOk
     }
 
     pub fn set_processing(&self, state: bool) -> tresult {
@@ -590,6 +595,14 @@ impl ComponentCore {
             // for a restart the same way). Real plugins announce from their controller or from
             // a message; this test shell announces from the call that changed the latency.
             self.shared.announce_latency();
+        }
+        let flags = p.dsp.host_flags();
+        if flags != 0 {
+            if flags & vst3::Steinberg::Vst::RestartFlags_::kParamTitlesChanged != 0 {
+                // The controller has its own copy of the plugin and rebuilds its table when told.
+                self.shared.set_grown();
+            }
+            self.shared.announce(flags);
         }
 
         // Audio out.

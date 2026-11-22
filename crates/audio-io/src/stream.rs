@@ -13,6 +13,7 @@ use crate::select::{
     ConfigCandidate, SampleKind, buffer_request, choose_config, default_input_index, host_kind,
     host_name, match_device,
 };
+use crate::slack::InputSlack;
 use crate::telemetry::{self, LoadMeter, TelemetryState, XrunDetector, event_channel};
 use crate::{DeviceInfo, HostInfo, HostKind, IoError, StreamSpec, Telemetry, XrunEvent, XrunKind};
 use atomik_core::CallbackDeadline;
@@ -30,10 +31,6 @@ const STANDARD_RATES: [u32; 5] = [44_100, 48_000, 88_200, 96_000, 192_000];
 /// Smallest chunk the callback scratch is preallocated for; larger host buffers are rendered in
 /// chunks of this many frames (or of the requested buffer size, if larger).
 const MIN_CHUNK_FRAMES: usize = 1024;
-
-/// Captured input kept in the ring beyond the current buffer, in buffers, before the oldest
-/// samples are discarded (bounds the latency added by input/output clock drift).
-const INPUT_SLACK_BUFFERS: usize = 2;
 
 /// Input ring capacity, in chunks of `max_frames`.
 const INPUT_RING_CHUNKS: usize = 8;
@@ -282,6 +279,7 @@ pub fn start_with_input(
                 scratch_out: vec![0.0; max_frames * usize::from(out_choice.channels)],
                 scratch_in: vec![0.0; max_frames * usize::from(in_channels)],
                 input_loss: InputLoss::default(),
+                slack: InputSlack::new(requested, spec.sample_rate),
                 halted: false,
             };
             out_device.build_output_stream_raw(
@@ -595,6 +593,8 @@ struct OutputCallback {
     scratch_in: Vec<f32>,
     /// What the input ring lost to clock drift.
     input_loss: InputLoss,
+    /// How much captured input may wait in the ring before the oldest is discarded.
+    slack: InputSlack,
     /// The callback caught a panic from the engine itself: it renders silence from then on.
     /// (A panicking device never gets here: the engine contains it.)
     halted: bool,
@@ -623,8 +623,13 @@ impl OutputCallback {
         if let Some(reader) = payload.input.as_mut() {
             let in_ch = usize::from(self.adapter.inputs());
             let backlog = reader.available();
-            let discarded = reader.trim(in_ch * frames * (1 + INPUT_SLACK_BUFFERS));
-            self.input_loss.on_trim(discarded, backlog);
+            self.slack
+                .on_callback(u32::try_from(frames).unwrap_or(u32::MAX));
+            let keep = in_ch * usize::try_from(self.slack.keep_frames()).unwrap_or(usize::MAX / 64);
+            let discarded = reader.trim(keep);
+            let counted = self.input_loss.on_trim(discarded, backlog);
+            let backlog_frames = u32::try_from(backlog / in_ch.max(1)).unwrap_or(u32::MAX);
+            self.slack.after_trim(backlog_frames, counted);
         }
         let mut render = Render {
             engine: &mut payload.engine,
@@ -660,6 +665,7 @@ impl OutputCallback {
         if let Some(reader) = payload.input.as_ref() {
             let in_ch = usize::from(self.adapter.inputs()).max(1);
             let backlog = u32::try_from(reader.available() / in_ch).unwrap_or(u32::MAX);
+            self.slack.after_read(backlog);
             self.telemetry.on_input_backlog(backlog);
             let in_ch = u64::from(self.adapter.inputs());
             self.telemetry
@@ -667,6 +673,8 @@ impl OutputCallback {
             self.telemetry.set_input_trims(
                 self.input_loss.trims,
                 self.input_loss.backlog_max_frames(in_ch),
+                self.slack.allowed_backlog_frames(),
+                self.slack.extra_frames(),
             );
         }
         let elapsed = telemetry::now().saturating_duration_since(start);
@@ -713,14 +721,17 @@ struct InputLoss {
 }
 
 impl InputLoss {
-    /// One trim discarded `discarded` samples of the `backlog` the ring held before it.
-    fn on_trim(&mut self, discarded: usize, backlog: usize) {
-        if self.seen_first && discarded > 0 {
+    /// One trim discarded `discarded` samples of the `backlog` the ring held before it. Returns
+    /// whether it was counted (not the start-up trim, and it discarded something).
+    fn on_trim(&mut self, discarded: usize, backlog: usize) -> bool {
+        let counted = self.seen_first && discarded > 0;
+        if counted {
             self.trimmed = self.trimmed.saturating_add(discarded as u64);
             self.trims = self.trims.saturating_add(1);
             self.backlog_max = self.backlog_max.max(backlog);
         }
         self.seen_first = true;
+        counted
     }
 
     /// The largest backlog before a counted trim, in frames of `channels` samples.

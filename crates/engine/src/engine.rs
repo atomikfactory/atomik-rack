@@ -570,7 +570,13 @@ pub fn new_engine_with_arena(
         };
         // If the OS refuses every worker thread the engine renders single-threaded: the
         // output does not depend on the worker count.
-        engine.pool = Pool::new(workers.threads, workers.on_thread_start, linger).ok();
+        engine.pool = Pool::new(
+            workers.threads,
+            workers.on_thread_start,
+            linger,
+            options.realtime,
+        )
+        .ok();
         handle.workers = engine.pool.as_ref().map(Pool::counters);
     }
     (engine, handle)
@@ -861,7 +867,10 @@ impl EngineHandle {
             HotEdit::PlayerData { device, data } => self.player_data_at(frame, device, data),
             HotEdit::Tempo(tempo) => self.push(frame, ControlOp::Tempo(tempo)),
             HotEdit::Song(song) => self.song_at(frame, song),
-            HotEdit::Transport(command) => self.push(frame, ControlOp::Transport(command)),
+            HotEdit::Transport(command) => {
+                self.streams.wake();
+                self.push(frame, ControlOp::Transport(command))
+            }
         }
     }
 
@@ -896,6 +905,12 @@ impl EngineHandle {
     /// its data missing (the missing frames play as silence). Never blocks.
     pub fn stream_underruns(&self) -> u64 {
         self.streams.stats.underruns.load(Ordering::Relaxed)
+    }
+
+    /// Rounds the streamer thread has run so far: a gauge of how busy it is (a streamer whose
+    /// rings are full rests between rounds, see `stream.rs`). Never blocks.
+    pub fn stream_rounds(&self) -> u64 {
+        self.streams.stats.rounds.load(Ordering::Relaxed)
     }
 
     /// Segment reads of interim warps that should have kept their pitch but found every
@@ -1167,6 +1182,8 @@ impl EngineHandle {
     /// # Errors
     /// [`EngineError::QueueFull`].
     pub fn transport(&mut self, command: crate::TransportCommand) -> Result<(), EngineError> {
+        // The streamer may be resting: a locate, a start or a loop change must find it awake.
+        self.streams.wake();
         // A lane of its own: it keeps its place behind the control messages queued before it,
         // but a parked retirement cannot hold it back.
         self.transport_tx
@@ -1432,13 +1449,12 @@ impl Engine {
         self.host_frames += frames as u64;
         self.last_render_spins = 0;
         // Workers spin only while a call that can hand them work is running.
-        let pooled = match (&self.routing, &self.pool) {
-            (Some(routing), Some(pool)) if pool.len() > 0 && routing.has_parallel_level() => {
-                pool.begin_callback();
-                true
-            }
-            _ => false,
-        };
+        if let (Some(routing), Some(pool)) = (&self.routing, &mut self.pool)
+            && pool.len() > 0
+            && routing.wants_workers(pool)
+        {
+            pool.begin_callback();
+        }
         let mut done = 0;
         while done < frames {
             let n = (BATCH - self.fifo_pos).min(frames - done);
@@ -1463,7 +1479,8 @@ impl Engine {
                 self.fifo_pos = 0;
             }
         }
-        if pooled && let Some(pool) = &self.pool {
+        // A level may have turned to dispatch during the call and raised the flag itself.
+        if let Some(pool) = &mut self.pool {
             pool.end_callback();
         }
         self.max_render_spins = self.max_render_spins.max(self.last_render_spins);
@@ -1514,6 +1531,32 @@ impl Engine {
     pub fn set_workers_always_active(&mut self, on: bool) {
         if let Some(pool) = &mut self.pool {
             pool.set_always_active(on);
+        }
+    }
+
+    /// Sets how the engine decides when the workers are used: by the host (the default: the
+    /// load rule for a live engine, every level handed over for an offline one), by the load
+    /// rule, never, or always (test and benchmark hook; not a stable API). Output is the same
+    /// in every mode.
+    #[doc(hidden)]
+    pub fn set_gate_mode(&mut self, mode: crate::GateMode) {
+        if let Some(pool) = &mut self.pool {
+            pool.gate_mode = mode;
+        }
+    }
+
+    /// Whether the load rule holds the plan busy now (test hook; not a stable API).
+    #[doc(hidden)]
+    pub fn workers_busy(&self) -> bool {
+        self.pool.as_ref().is_some_and(|pool| pool.load.busy())
+    }
+
+    /// Replaces the clock that times devices for the load rule while the per-device timing is
+    /// off (test hook; not a stable API). The clock must not allocate, lock or block.
+    #[doc(hidden)]
+    pub fn set_level_cost_clock(&mut self, clock: crate::timing::ClockFn) {
+        if let Some(pool) = &mut self.pool {
+            pool.cost_clock = clock;
         }
     }
 

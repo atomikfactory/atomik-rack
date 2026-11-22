@@ -15,17 +15,21 @@
 //!   channel and per-note pressure, note expression and note ids.
 //! * [`NoteShift`]: a note effect that transposes and emits notes.
 //! * [`ParamBank`]: 2 000 plain params plus one that can appear at run time.
+//! * [`RingFx`]: an effect that rings for a set time, after a delay, once its input stops, for the
+//!   sleep rule.
 //! * [`gui_edit_on_restore`]: the edit a shell reports as if made in its editor when its state
 //!   is loaded, for tests that drive a plugin in another process.
 
 mod gain;
 mod noteshift;
 mod params;
+mod ringer;
 mod synth;
 
 pub use gain::GainFx;
 pub use noteshift::NoteShift;
 pub use params::ParamBank;
+pub use ringer::{RING_LEVEL, RingFx};
 pub use synth::TestSynth;
 
 /// Frames in one block: the host always calls with exactly this many.

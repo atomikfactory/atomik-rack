@@ -144,6 +144,16 @@ const STATE_MERGE_BASE: u64 = PLUGIN_GESTURE_MERGE_BASE + (1 << 38);
 const STATE_STEP_GAP_SECS: f64 = 5.0;
 /// How many times in a row a plugin that stopped answering audio is reloaded without the user.
 const MAX_AUTO_RELOADS: u8 = 2;
+/// How long a plugin must have run, from the moment its instance was ready, for its crash to be
+/// answered by one automatic reload: a plugin that dies while it loads or at once after would
+/// only die again, so it stays CRASHED for the user to decide.
+pub(crate) const CRASH_RELOAD_MIN_ALIVE_SECS: f64 = 10.0;
+/// After an automatic reload because of a crash, a second crash within this long stays CRASHED
+/// until RELOAD. Five minutes: long enough that a plugin that dies on the same material each
+/// time (a bad state, a passage it cannot render) shows the pattern within one attempt and is
+/// not looped, and short enough that a one-off crash earlier in the session does not use up the
+/// allowance of a plugin that has behaved since.
+pub(crate) const CRASH_RELOAD_WINDOW_SECS: f64 = 300.0;
 /// An instance is created again for a port mismatch at most once per this long, per plugin and
 /// port shape (a guard against a recreate loop).
 const RECREATE_WINDOW_SECS: u64 = 30;
@@ -508,6 +518,18 @@ struct Recovery {
     marker: Option<SessionMarker>,
 }
 
+impl PluginState {
+    /// Forgets what the per-frame gates remember (the document revision the pinned params were
+    /// compared at, the device list the views are fed from), so the next frame looks again.
+    /// Call it wherever the host is replaced or its pins are written by other hands. A new
+    /// document needs no call: revisions come from one process-wide counter, so a replaced
+    /// document and the one that took its place never share one.
+    pub(super) fn forget_view_caches(&mut self) {
+        self.pins_checked = None;
+        self.view_devices = None;
+    }
+}
+
 /// What a background state capture is for when it arrives.
 #[derive(Debug, Default, Clone)]
 pub(super) struct Capturing {
@@ -610,6 +632,12 @@ pub(super) struct PluginState {
     pub(super) too_large_hit: Vec<DeviceKey>,
     /// How many times a hung plugin was reloaded by itself since the user last pressed RELOAD.
     auto_reloads: BTreeMap<DeviceKey, u8>,
+    /// When (frame clock) a device was last reloaded by itself after its plugin process crashed,
+    /// until the user presses RELOAD or the device goes: a second crash within
+    /// [`CRASH_RELOAD_WINDOW_SECS`] of it is not answered.
+    crash_reloads: BTreeMap<DeviceKey, f64>,
+    /// When (frame clock) each live instance became ready: how long it ran before a crash.
+    ready_at: BTreeMap<InstanceId, f64>,
     /// Devices whose saved state failed to restore: the blob is kept, never captured over.
     no_capture: BTreeSet<DeviceKey>,
     /// The descriptor each live device was inserted with.
@@ -624,6 +652,11 @@ pub(super) struct PluginState {
     /// (blocking) creation of an instance starts.
     paint_first: bool,
     shown: BTreeMap<DeviceKey, PluginDeviceStatus>,
+    /// The document revision the pinned params were last compared at.
+    pins_checked: Option<u64>,
+    /// The plugin devices of the document at a revision, as `(flat key, plugin)`: the list the
+    /// views are fed from, rebuilt only when the document changed.
+    pub(super) view_devices: Option<(u64, Vec<(DeviceKey, PluginRef)>)>,
     catalog_dirty: bool,
     /// The scan cache learned a layout from a live plugin: `plugins.json` is saved at the next frame.
     cache_dirty: bool,
@@ -724,12 +757,16 @@ impl PluginState {
             too_large: BTreeMap::new(),
             too_large_hit: Vec::new(),
             auto_reloads: BTreeMap::new(),
+            crash_reloads: BTreeMap::new(),
+            ready_at: BTreeMap::new(),
             no_capture: BTreeSet::new(),
             live_desc: BTreeMap::new(),
             recreated: BTreeMap::new(),
             offline: BTreeSet::new(),
             paint_first: false,
             shown: BTreeMap::new(),
+            pins_checked: None,
+            view_devices: None,
             catalog_dirty: true,
             cache_dirty: false,
             merger: PluginGestureMerger::new(),
@@ -916,6 +953,9 @@ impl<S: EngineSink> AppCore<S> {
                 &mut self.registry,
             );
             self.plugins.host = PluginHost::with_isolation(isolation);
+            // The new host knows no pinned params and nobody has fed the views from it: the
+            // frame looks at both again.
+            self.plugins.forget_view_caches();
         }
         let p = &mut self.plugins;
         p.settings = config.settings;
@@ -1037,6 +1077,13 @@ impl<S: EngineSink> AppCore<S> {
     /// answer is what the host has; otherwise the descriptors are registered again, without
     /// touching any device (the engine is rebuilt or replaced by the caller as it was).
     pub(super) fn plugins_pin_document_params(&mut self) {
+        // The pins are a function of the document, and equal revisions are equal documents: a
+        // frame that finds the document as it was has nothing to compare.
+        let revision = self.document.revision();
+        if self.plugins.pins_checked == Some(revision) {
+            return;
+        }
+        self.plugins.pins_checked = Some(revision);
         let pins = self.document.doc().plugin_pinned_rows();
         if &pins == self.plugins.host.pinned_params() {
             return;
@@ -1069,6 +1116,9 @@ impl<S: EngineSink> AppCore<S> {
         // A project saved after a plugin grew new ports teaches the scan about them first, so
         // the catalog and the registry agree with the devices the project holds.
         self.adopt_document_ports();
+        // The pins are written from the document just below, and the catalog changes under the
+        // views: the next frame looks at both again.
+        self.plugins.forget_view_caches();
         // The params the project uses that a plugin's own table leaves out stay listed.
         self.plugins
             .host
@@ -1305,6 +1355,7 @@ impl<S: EngineSink> AppCore<S> {
 
     fn release_instance_maps(&mut self, key: &DeviceKey) {
         if let Some(id) = self.plugins.instances.remove(key) {
+            self.plugins.ready_at.remove(&id);
             self.plugins.keys.remove(&id);
             self.plugins.dirty.remove(&id);
             self.plugins.capturing.remove(&id);
@@ -1419,6 +1470,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.failed.remove(flat);
         self.plugins.crashed.remove(flat);
         self.plugins.auto_reloads.remove(flat);
+        self.plugins.crash_reloads.remove(flat);
         self.plugins.load_anyway.remove(flat);
         self.plugins.skipped.remove(flat);
         self.plugins.no_capture.remove(flat);
@@ -1681,9 +1733,16 @@ impl<S: EngineSink> AppCore<S> {
                         }
                     }
                     let hung = reason.starts_with(HUNG);
+                    let ran_for = self
+                        .plugins
+                        .ready_at
+                        .remove(&instance)
+                        .map(|at| self.plugins.clock - at);
                     self.plugins.crashed.insert(key.clone(), reason);
                     if hung {
                         self.reload_hung_plugin(&key);
+                    } else {
+                        self.reload_crashed_plugin(&key, ran_for);
                     }
                 }
             }
@@ -1713,6 +1772,9 @@ impl<S: EngineSink> AppCore<S> {
             }
             ManagerEvent::LayoutChanged { instance, layout } => {
                 self.plugin_layout_changed(instance, layout);
+            }
+            ManagerEvent::ParamTitlesChanged { instance, layout } => {
+                self.plugin_titles_changed(instance, layout);
             }
             ManagerEvent::GuiResize { instance, w, h } => {
                 if let Some(key) = self.plugins.keys.get(&instance).cloned()
@@ -1816,6 +1878,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.plugins.log(format!("[{name}] {level:?}: {text}"));
             }
             ManagerEvent::Destroyed(id) => {
+                self.plugins.ready_at.remove(&id);
                 let ended_well = !self.plugins.bad.remove(&id);
                 if let Some(info) = self.plugins.loaded.remove(&id) {
                     if ended_well {
@@ -2051,6 +2114,7 @@ impl<S: EngineSink> AppCore<S> {
             ..
         } = handle;
         self.plugins.instances.insert(key.clone(), id);
+        self.plugins.ready_at.insert(id, self.plugins.clock);
         self.plugins.presets.remove(key);
         self.plugins.preset_current.remove(key);
         self.plugins.keys.insert(id, key.clone());
@@ -2960,6 +3024,39 @@ impl<S: EngineSink> AppCore<S> {
             .is_some_and(|f| f.descriptor.param_by_key(&format!("p{id}")).is_some())
     }
 
+    /// The live plugin renamed params and nothing else changed: the document and the registry take
+    /// the new titles. The device stays: its sockets and its param
+    /// ids are the same, and the plugin did not restart.
+    fn plugin_titles_changed(
+        &mut self,
+        instance: InstanceId,
+        layout: atomik_device_sdk::PluginLayout,
+    ) {
+        let Some(key) = self.plugins.keys.get(&instance).cloned() else {
+            return;
+        };
+        let Some(plugin) = self.plugins.loaded.get(&instance).map(|i| i.plugin.clone()) else {
+            return;
+        };
+        if self
+            .doc()
+            .resolve(&key)
+            .and_then(|d| d.plugin.as_deref())
+            .is_some_and(|p| p.layout == layout)
+        {
+            return;
+        }
+        let _ = self.sync_silent(Command::Plugin(PluginCommand::SyncLayout {
+            device: key,
+            layout: layout.clone(),
+        }));
+        // The scan cache and the catalog do not learn titles (a plugin renames its params per
+        // patch); the registry does, so the rack shows what the plugin shows.
+        if let Ok(descriptor) = atomik_device_sdk::descriptor_for(&plugin, &layout) {
+            self.adopt_descriptor(&plugin.type_id(), descriptor);
+        }
+    }
+
     /// The plugin's param table or ports changed: register the new descriptor and rebuild the
     /// device of that plugin alone, keeping values by key ([`Self::swap_device_layout`]). The
     /// whole engine is rebuilt only when another live instance of the same plugin has to follow.
@@ -3163,6 +3260,7 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::ClosePluginParams => self.close_plugin_params(),
             UiAction::ReloadPlugin { device } => {
                 self.plugins.auto_reloads.remove(device);
+                self.plugins.crash_reloads.remove(device);
                 // RELOAD on a quarantined plugin is LOAD ANYWAY.
                 self.plugins.load_anyway.insert(device.clone());
                 self.reload_plugin(device);
@@ -3211,6 +3309,66 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins
             .log(format!("[{device}] hung: reloading it from its last state"));
         self.reload_plugin(device);
+    }
+
+    /// A plugin process crashed (it died by itself; the hang guard's stops are handled by
+    /// [`Self::reload_hung_plugin`]): it is reloaded from the document's last captured state, as
+    /// RELOAD does and through the same load queue, once. Not when the plugin ran for less than
+    /// [`CRASH_RELOAD_MIN_ALIVE_SECS`] (`ran_for`: it would only die again), not when it was
+    /// reloaded this way less than [`CRASH_RELOAD_WINDOW_SECS`] ago (a second crash stays
+    /// CRASHED until RELOAD, which gives the allowance back), not while an export or a bounce
+    /// renders, and not when the crash quarantined the plugin. The crash was counted toward the
+    /// quarantine already; the reload counts nothing itself, so a plugin that crashes after
+    /// every reload is quarantined after the same number of crashes as before.
+    fn reload_crashed_plugin(&mut self, device: &DeviceKey, ran_for: Option<f64>) {
+        let Some(type_id) = self
+            .doc()
+            .resolve(device)
+            .and_then(|d| d.plugin.as_ref())
+            .map(|p| p.type_id())
+        else {
+            return;
+        };
+        let now = self.plugins.clock;
+        let name = self.device_label(device);
+        let not = |why: String| format!("[{device}] not reloaded by itself: {why}");
+        if self.plugins.user.is_quarantined(&type_id) {
+            let line = not("the plugin is quarantined; press RELOAD to load it anyway".into());
+            self.plugins.log(line);
+        } else if ran_for.is_none_or(|secs| secs < CRASH_RELOAD_MIN_ALIVE_SECS) {
+            let line = not(format!(
+                "it had run for less than {CRASH_RELOAD_MIN_ALIVE_SECS:.0} s; press RELOAD to try again"
+            ));
+            self.plugins.log(line);
+        } else if self
+            .plugins
+            .crash_reloads
+            .get(device)
+            .is_some_and(|at| now - at < CRASH_RELOAD_WINDOW_SECS)
+        {
+            let line = not(format!(
+                "it crashed again within {:.0} minutes of its reload; press RELOAD to try once more",
+                CRASH_RELOAD_WINDOW_SECS / 60.0
+            ));
+            self.plugins.log(line);
+            self.report(format!(
+                "{name} crashed again and stays crashed; press RELOAD to try once more."
+            ));
+        } else if self.audio_export_busy() || self.freeze_busy() {
+            let line =
+                not("an export or a bounce is rendering; press RELOAD when it is done".into());
+            self.plugins.log(line);
+        } else {
+            self.plugins.crash_reloads.insert(device.clone(), now);
+            self.plugins.log(format!(
+                "[{device}] reloading it once from its last state (it had run for {:.0} s)",
+                ran_for.unwrap_or_default()
+            ));
+            self.report(format!(
+                "{name} crashed and was reloaded from its last state."
+            ));
+            self.reload_plugin(device);
+        }
     }
 
     /// RELOAD: a stand-in whose plugin is installed gets its instance; a live instance restores
@@ -3628,22 +3786,33 @@ impl<S: EngineSink> AppCore<S> {
             self.view.set_plugin_catalog(infos);
             self.view.set_plugin_failed_files(failed);
         }
-        let devices: Vec<(DeviceKey, PluginRef)> = self
-            .doc()
-            .plugin_devices()
-            .into_iter()
-            .filter_map(|(k, d)| Some((k, d.plugin.as_ref()?.plugin_ref())))
-            .collect();
-        for (key, plugin) in devices {
-            let mut status = self.plugin_status_of(&key, &plugin);
-            if let Some(id) = self.plugins.instances.get(&key)
+        let revision = self.document.revision();
+        if self.plugins.view_devices.as_ref().map(|(r, _)| *r) != Some(revision) {
+            let devices: Vec<(DeviceKey, PluginRef)> = self
+                .doc()
+                .plugin_devices()
+                .into_iter()
+                .filter_map(|(k, d)| Some((k, d.plugin.as_ref()?.plugin_ref())))
+                .collect();
+            self.plugins.view_devices = Some((revision, devices));
+        }
+        let mut changed: Vec<(usize, PluginDeviceStatus)> = Vec::new();
+        for (i, (key, plugin)) in self
+            .plugins
+            .view_devices
+            .iter()
+            .flat_map(|(_, devices)| devices.iter())
+            .enumerate()
+        {
+            let mut status = self.plugin_status_of(key, plugin);
+            if let Some(id) = self.plugins.instances.get(key)
                 && let Some(slot) = self.plugins.host.manager_ref().slot(*id)
                 && slot.device_state() == atomik_plugin_host::DeviceState::Failed
                 && status.failed.is_none()
             {
                 status.failed = Some("the plugin failed; press RELOAD".to_string());
             }
-            if let Some(id) = self.plugins.instances.get(&key)
+            if let Some(id) = self.plugins.instances.get(key)
                 && let Some(slot) = self.plugins.host.manager_ref().slot(*id)
                 && slot.device_state() == atomik_plugin_host::DeviceState::Crashed
                 && status.crashed.is_none()
@@ -3651,10 +3820,22 @@ impl<S: EngineSink> AppCore<S> {
                 // The device knows before the process's exit reason arrives.
                 status.crashed = Some(LOST.to_string());
             }
-            if self.plugins.shown.get(&key) != Some(&status) {
-                self.view.set_plugin_status(&key, status.clone());
-                self.plugins.shown.insert(key, status);
+            if self.plugins.shown.get(key) != Some(&status) {
+                changed.push((i, status));
             }
+        }
+        for (i, status) in changed {
+            let Some(key) = self
+                .plugins
+                .view_devices
+                .as_ref()
+                .and_then(|(_, devices)| devices.get(i))
+                .map(|(key, _)| key.clone())
+            else {
+                continue;
+            };
+            self.view.set_plugin_status(&key, status.clone());
+            self.plugins.shown.insert(key, status);
         }
     }
 
@@ -3812,6 +3993,7 @@ impl<S: EngineSink> AppCore<S> {
                     self.start_scan(RescanMode::Incremental);
                 }
             }
+            PluginSettingsAction::RetryFileNoLimit(path) => self.scan_file_without_limit(path),
         }
     }
 
@@ -3848,6 +4030,45 @@ impl<S: EngineSink> AppCore<S> {
             Some(env) => ScanJob::start_with_env(settings, formats, os, mode, cache, runner, env),
             None => ScanJob::start(settings, formats, os, mode, cache, runner),
         });
+    }
+
+    /// Scans one blacklisted file again with no time limit, on the scan worker (progress and
+    /// cancel as for any scan). The file stays on the blacklist while it runs and leaves it only
+    /// when it scans; a scan that is cancelled changes nothing. A scan that is refused (one is
+    /// running already, plugins are off, no scanner) says so and touches nothing.
+    pub fn scan_file_without_limit(&mut self, path: &str) {
+        if self.plugins.job.is_some() {
+            return;
+        }
+        // Only a file that ran out of time is offered this (a crash or an error is not cured by
+        // waiting), so only such a file is run.
+        let Some(format) = self
+            .plugins
+            .cache
+            .blacklisted(Path::new(path))
+            .filter(|b| atomik_plugin_host::is_timeout_reason(&b.reason))
+            .map(|b| b.format)
+        else {
+            return;
+        };
+        if !self.plugins.settings.enabled {
+            self.scan_refused("enable third-party plugins (ENABLE switch) before scanning");
+            return;
+        }
+        let Some(runner) = self.plugins.runner.clone() else {
+            self.scan_refused(
+                "no plugin scanner can be run: the app could not start a scanner process",
+            );
+            return;
+        };
+        let cache = std::mem::take(&mut self.plugins.cache);
+        self.plugins.scan_note = None;
+        self.plugins.job = Some(ScanJob::start_file_without_limit(
+            self.plugins.settings.clone(),
+            (format, PathBuf::from(path)),
+            cache,
+            runner,
+        ));
     }
 
     /// Replaces the environment scans read the default folders from (`CLAP_PATH`, the OS folder
@@ -4070,7 +4291,7 @@ impl<S: EngineSink> AppCore<S> {
             asked |= self.request_capture_for(&key, undoable);
         }
         if !asked {
-            self.write_recovery_snapshot(now);
+            self.finish_periodic_snapshot(now);
             return;
         }
         self.plugins.snapshot_wait = Some(now);
@@ -4086,7 +4307,25 @@ impl<S: EngineSink> AppCore<S> {
         };
         if self.plugins.capturing.is_empty() || now - since >= SNAPSHOT_GRACE_SECS {
             self.plugins.snapshot_wait = None;
+            self.finish_periodic_snapshot(now);
+        }
+    }
+
+    /// The end of a periodic snapshot, once the plugins were asked: writes it when something
+    /// differs from what the last snapshot held (the document, or a plugin state a capture
+    /// stored since: the capture marks it `wanted`), and otherwise only starts the next period.
+    /// A project whose plugins nobody touches writes nothing.
+    fn finish_periodic_snapshot(&mut self, now: f64) {
+        let revision = self.document.revision();
+        let differs = self
+            .plugins
+            .recovery
+            .as_ref()
+            .is_some_and(|r| r.wanted || (r.revision != Some(revision) && self.is_dirty()));
+        if differs {
             self.write_recovery_snapshot(now);
+        } else if let Some(r) = &mut self.plugins.recovery {
+            r.last = Some(now);
         }
     }
 
@@ -4127,6 +4366,13 @@ impl<S: EngineSink> AppCore<S> {
         if let Some(r) = &mut self.plugins.recovery {
             r.wanted = true;
         }
+    }
+
+    /// The sequence number of the newest recovery snapshot queued (it moves with each one; 0
+    /// before any).
+    #[cfg(test)]
+    pub(super) fn recovery_sequence(&self) -> u64 {
+        self.plugins.recovery.as_ref().map_or(0, |r| r.sequence)
     }
 
     /// Waits for the queued snapshots to reach the disk (tests, and the exit path).

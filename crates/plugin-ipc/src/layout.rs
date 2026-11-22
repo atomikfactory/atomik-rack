@@ -303,9 +303,12 @@ impl WireEvent {
         w
     }
 
-    /// Decodes an event; `None` for an empty slot or a value no encoder writes.
+    /// Decodes an event; `None` for an empty slot or a value no encoder writes. A frame offset
+    /// past the batch is pulled back to the batch's last frame (the event is still delivered,
+    /// as late as the batch allows, where dropping it could leave a note hanging); an offset
+    /// that fits a batch is untouched.
     pub fn decode(&self) -> Option<PluginEvent> {
-        let offset = u16::try_from(self.offset).ok()?;
+        let offset = u16::try_from(self.offset.min(BATCH as u32 - 1)).ok()?;
         let key = || u8::try_from(self.a).ok();
         let value = f32::from_bits(self.value);
         let note_id = self.b as i32;

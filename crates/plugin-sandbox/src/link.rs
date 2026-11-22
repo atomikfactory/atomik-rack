@@ -17,12 +17,16 @@
 //! [`Link::begin_background`]): it has a slot of its own, so the state of a plugin whose main
 //! thread is busy can be asked for while the UI goes on, and nothing times it out. Once the
 //! child is killed the link is lost, and every call fails at once without any I/O. The reader
-//! thread is the one that learns that the child ended: it reaps the exit status, reads the
-//! stderr tail, marks the audio block dead (so the engine side sees
-//! [`atomik_plugin_host::ProcessStatus::Lost`]) and posts [`PluginMessage::ProcessExited`].
+//! thread and a watcher of the process learn that the child ended, whichever comes first: the
+//! reader from the end of the pipe, the watcher from the process itself (a plugin that started
+//! a helper holding the pipe open is noticed dead when it dies, not when the helper does). The
+//! first to arrive reaps the exit status, reads the stderr tail, marks the audio block dead
+//! (so the engine side sees [`atomik_plugin_host::ProcessStatus::Lost`]) and posts
+//! [`PluginMessage::ProcessExited`]; the other finds it done, so there is one report per
+//! death. A child the app asked to end is never reported.
 
 use crate::clock::now;
-use crate::transport::{ChildProcess, Transport};
+use crate::transport::{ChildProcess, ExitWaiter, Transport};
 use atomik_plugin_host::{
     BackendError, HUNG, HostMessenger, LOST, LogLevel, NOT_RESPONDING, ParamPhase, PluginMessage,
     STALL_THRESHOLD, SoftBudget, StallOutcome,
@@ -96,7 +100,8 @@ pub(crate) struct Timeouts {
     pub bounce: bool,
 }
 
-/// Counts the children that are alive; the reader thread holds one guard per child.
+/// Counts the children that are alive; the link holds one guard per child until its end has
+/// been dealt with.
 #[derive(Debug)]
 pub(crate) struct LiveGuard(Arc<AtomicUsize>);
 
@@ -271,6 +276,12 @@ pub(crate) struct Shared {
     lost: AtomicBool,
     /// The instance is being dropped on purpose: no `ProcessExited`.
     closing: AtomicBool,
+    /// The end of the child has been dealt with (the reason published, the death posted): the
+    /// reader at the end of the pipe and the watcher of the process both lead to
+    /// [`Shared::conclude`], and the first one does the work, once.
+    concluded: AtomicBool,
+    /// The count of live children, released when the end has been dealt with.
+    live: Mutex<Option<LiveGuard>>,
     kill_reason: Mutex<Option<String>>,
     child: Mutex<Box<dyn ChildProcess>>,
     death: DeathHandle,
@@ -784,6 +795,38 @@ impl Shared {
         }
     }
 
+    /// Deals with the end of the child, once: whichever of the reader (the pipe closed or broke)
+    /// and the watcher (the process ended) gets here first does it, and the other finds it
+    /// done. `bad` is why the reader gave up on a pipe that was still open.
+    fn conclude(&self, bad: Option<std::io::Error>) {
+        if self.concluded.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        self.mark_ended();
+        if let Some(e) = bad {
+            self.kill(format!(
+                "the plugin process sent a message the app cannot read: {e}"
+            ));
+        }
+        let status = self.reap();
+        let start = now();
+        while !self.stderr_done.load(Ordering::Acquire)
+            && now().saturating_duration_since(start) < STDERR_GRACE
+        {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let reason = self.compose_reason(status);
+        // Posted before the reason is published, so that a caller that learns the reason and
+        // then drops the instance cannot race this check.
+        if !self.closing.load(Ordering::SeqCst) {
+            self.messenger.post(PluginMessage::ProcessExited {
+                reason: reason.clone(),
+            });
+        }
+        drop(lock(&self.live).take());
+        self.finish(reason);
+    }
+
     fn finish(&self, reason: String) {
         let mut mb = lock(&self.mailbox);
         mb.reason = Some(reason);
@@ -844,6 +887,9 @@ impl Shared {
             FromChild::StateDirty => return post(PluginMessage::StateDirty),
             FromChild::LatencyChanged => return post(PluginMessage::LatencyChanged),
             FromChild::RescanParams => return post(PluginMessage::RescanParams),
+            FromChild::ParamTitles { layout } => {
+                return post(PluginMessage::ParamTitles(Box::new(layout.clone().into())));
+            }
             FromChild::RequestRestart => return post(PluginMessage::RequestRestart),
             FromChild::GuiResize { w, h } => {
                 if *w > MAX_GUI_DIMENSION || *h > MAX_GUI_DIMENSION {
@@ -910,7 +956,7 @@ impl Shared {
     }
 }
 
-fn run_reader(shared: &Shared, mut reader: Box<dyn Read + Send>, live: LiveGuard) {
+fn run_reader(shared: &Shared, mut reader: Box<dyn Read + Send>) {
     let bad = loop {
         // Replies are small and only the state has a blob: both limits are checked before
         // anything is allocated, so a hostile child cannot make the app grow.
@@ -932,34 +978,22 @@ fn run_reader(shared: &Shared, mut reader: Box<dyn Read + Send>, live: LiveGuard
             },
         );
         match read {
+            // The process has been seen to end by its watcher: what comes late is not routed.
+            Ok(_) if shared.concluded.load(Ordering::SeqCst) => break None,
             Ok((msg, blob)) => shared.route(msg, blob),
             Err(e) if e.kind() == ErrorKind::UnexpectedEof => break None,
             Err(e) => break Some(e),
         }
     };
-    shared.mark_ended();
-    if let Some(e) = bad {
-        shared.kill(format!(
-            "the plugin process sent a message the app cannot read: {e}"
-        ));
+    shared.conclude(bad);
+}
+
+/// The watcher of the process: learns of its end from the process itself, so that a plugin that
+/// started a helper holding the pipes open is not noticed dead only when the helper ends.
+fn run_watcher(shared: &Shared, wait: ExitWaiter) {
+    if wait() {
+        shared.conclude(None);
     }
-    let status = shared.reap();
-    let start = now();
-    while !shared.stderr_done.load(Ordering::Acquire)
-        && now().saturating_duration_since(start) < STDERR_GRACE
-    {
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    let reason = shared.compose_reason(status);
-    // Posted before the reason is published, so that a caller that learns the reason and then
-    // drops the instance cannot race this check.
-    if !shared.closing.load(Ordering::SeqCst) {
-        shared.messenger.post(PluginMessage::ProcessExited {
-            reason: reason.clone(),
-        });
-    }
-    drop(live);
-    shared.finish(reason);
 }
 
 fn run_writer(rx: &Receiver<Vec<u8>>, mut writer: Box<dyn Write + Send>) {
@@ -1026,6 +1060,9 @@ pub(crate) struct Link {
     tx: Option<Sender<Vec<u8>>>,
     reader: Option<JoinHandle<()>>,
     writer: Option<JoinHandle<()>>,
+    /// The watcher of the process (none for a child that cannot be waited for apart from its
+    /// pipes).
+    watcher: Option<JoinHandle<()>>,
     next_id: u64,
     timeouts: Timeouts,
     /// The allowance of waiting for cosmetic answers that every instance of the manager shares
@@ -1114,6 +1151,8 @@ impl Link {
             cv: Condvar::new(),
             lost: AtomicBool::new(false),
             closing: AtomicBool::new(false),
+            concluded: AtomicBool::new(false),
+            live: Mutex::new(Some(live)),
             kill_reason: Mutex::new(None),
             child: Mutex::new(child),
             death,
@@ -1131,8 +1170,15 @@ impl Link {
             let shared = Arc::clone(&shared);
             std::thread::Builder::new()
                 .name("sandbox-reader".to_string())
-                .spawn(move || run_reader(&shared, reader, live))
+                .spawn(move || run_reader(&shared, reader))
         };
+        let watcher = lock(&shared.child).exit_waiter().and_then(|wait| {
+            let shared = Arc::clone(&shared);
+            std::thread::Builder::new()
+                .name("sandbox-watch".to_string())
+                .spawn(move || run_watcher(&shared, wait))
+                .ok()
+        });
         let writer_handle = std::thread::Builder::new()
             .name("sandbox-writer".to_string())
             .spawn(move || run_writer(&rx, writer));
@@ -1148,6 +1194,7 @@ impl Link {
             tx: Some(tx),
             reader: reader_handle.ok(),
             writer: writer_handle.ok(),
+            watcher,
             next_id: 0,
             timeouts,
             budget,
@@ -1818,22 +1865,34 @@ impl Link {
     }
 }
 
+/// How long a drop gives a helper thread that has just been told the end to be done.
+const THREAD_GRACE: Duration = Duration::from_millis(100);
+
+/// Joins `handle` when its thread is done, or is done within [`THREAD_GRACE`]; a thread that is
+/// still running (the reader blocked on a pipe that a helper process holds open) is left alone.
+fn join_if_done(handle: Option<JoinHandle<()>>) {
+    let Some(h) = handle else { return };
+    let start = now();
+    while !h.is_finished() && now().saturating_duration_since(start) < THREAD_GRACE {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    if h.is_finished() {
+        let _ = h.join();
+    }
+}
+
 impl Drop for Link {
     /// Asks the child to end (unless that was done already), gives it what is left of a
-    /// second, then kills it; leaves no thread behind that can end.
+    /// second, then kills it; joins the helper threads that have ended and never waits for one
+    /// that has not. The process is gone by then, and the watcher has reported it, but a helper
+    /// process it started can hold the pipes open for as long as it lives (the app does not end
+    /// a plugin's helper itself): the reader thread then stays blocked in its read, with the
+    /// pipe handles, and ends by itself when the helper ends. Nothing else waits for it.
     fn drop(&mut self) {
         self.wait_for_end();
-        // Only a finished thread is joined: a stuck one (a grandchild holding the pipe) must
-        // not stall the caller.
-        let finished = lock(&self.shared.mailbox).reason.is_some();
-        if finished {
-            if let Some(h) = self.reader.take() {
-                let _ = h.join();
-            }
-            if let Some(h) = self.writer.take() {
-                let _ = h.join();
-            }
-        }
+        join_if_done(self.reader.take());
+        join_if_done(self.writer.take());
+        join_if_done(self.watcher.take());
     }
 }
 

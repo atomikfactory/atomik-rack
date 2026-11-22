@@ -489,27 +489,32 @@ fn garbage_is_not_a_state_and_the_plugin_is_left_alone() {
 #[test]
 fn restart_requests_become_the_matching_messages() {
     let (k, lib) = k();
-    let r = rig(&k, Plug::Gain);
+    let mut r = rig(&k, Plug::Gain);
     let _ = drain(&r.manager);
-    let cases: [(u32, PluginMessage); 4] = [
-        (command::LATENCY_CHANGED, PluginMessage::LatencyChanged),
+    // The instance answers a request when it is polled, and sends the manager only what needs
+    // a restart: a latency the plugin already has needs none.
+    lib.command(&*r.instance, command::LATENCY_CHANGED, 0, 0);
+    r.instance.poll();
+    assert!(drain(&r.manager).is_empty(), "the latency did not change");
+    let cases: [(u32, PluginMessage); 3] = [
         (command::REQUEST_RESTART, PluginMessage::RequestRestart),
         (command::MARK_DIRTY, PluginMessage::StateDirty),
         (command::PARAM_VALUES_CHANGED, PluginMessage::StateDirty),
     ];
     for (cmd, want) in cases {
         lib.command(&*r.instance, cmd, 0, 0);
+        r.instance.poll();
         let got = drain(&r.manager);
         assert!(got.contains(&want), "command {cmd}: {got:?}");
     }
     lib.command(&*r.instance, command::MIDI_MAPPING_CHANGED, 0, 0);
+    r.instance.poll();
     assert!(drain(&r.manager).contains(&PluginMessage::RequestRestart));
+    // A change of the buses is one restart (the restart reads the table again).
     lib.command(&*r.instance, command::IO_CHANGED, 0, 0);
+    r.instance.poll();
     let got = drain(&r.manager);
-    assert!(
-        got.contains(&PluginMessage::RequestRestart) && got.contains(&PluginMessage::RescanParams),
-        "{got:?}"
-    );
+    assert_eq!(got, vec![PluginMessage::RequestRestart], "{got:?}");
 }
 
 #[test]
@@ -519,6 +524,9 @@ fn a_param_titles_change_gives_a_new_table_at_the_next_activation() {
     assert_eq!(inst.layout().params.len(), 2_000);
     let p = inst.activate(&activate_config(RunMode::Realtime)).unwrap();
     lib.command(&*inst, command::RESCAN_PARAMS, 0, 0);
+    // The instance compares the table with what it reported and tells the manager only for a
+    // change a restart is needed for (the plugin's table grew).
+    inst.poll();
     assert!(drain(&m).contains(&PluginMessage::RescanParams));
     // The restart: deactivate, the plugin's table is re-read, then activate again.
     inst.deactivate(p);
@@ -543,6 +551,9 @@ fn a_changed_latency_is_read_at_the_next_activation() {
     assert_eq!(inst.latency_frames(), 0, "read at activation, not before");
     let _ = drain(&m);
     lib.command(&*inst, command::LATENCY_CHANGED, 0, 0);
+    // The manager hears of it once the instance has compared the latency with the one it runs
+    // with.
+    inst.poll();
     assert!(drain(&m).contains(&PluginMessage::LatencyChanged));
     p.stop_processing();
     inst.deactivate(p);

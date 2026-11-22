@@ -501,3 +501,22 @@ fn a_creation_cancelled_by_a_rebuild_a_removal_or_a_close_counts_for_nothing() {
     assert!(core.plugin_failure(&p0).is_none());
     assert!(core.plugins.settings.crashed.is_empty());
 }
+
+#[test]
+fn a_plugin_that_is_loading_wants_fast_frames_until_it_is_live() {
+    let (mut core, stats) = core_with(1);
+    assert!(
+        !core.wants_fast_frames(1.0),
+        "a live plugin alone is polled slowly"
+    );
+    stats.set_deactivate_delay(6);
+    stats.set_activate_delay(6);
+    core.rebuild_engine();
+    assert!(!core.plugins_ready());
+    assert!(
+        core.wants_fast_frames(1.0),
+        "the load is stepped on the frame"
+    );
+    frames_until(&mut core, 200, AppCore::plugins_ready);
+    assert!(!core.wants_fast_frames(2.0));
+}

@@ -21,10 +21,22 @@
 //!   handed to a worker: it keeps its share position but runs on the audio thread (step 3 of a
 //!   level), for plugins that assume a stable thread. The answer is read on the audio thread
 //!   before each dispatch, so it may change while running.
-//! * **Distribution.** Item `j` of a level with `n > 1` devices goes to participant
+//! * **When the workers are used.** A level of one device is never dispatched. For a live
+//!   engine (`EngineOptions::realtime`) the workers are used only while the audio thread needs
+//!   help (`crate::load_gate`): the plan is *busy* from 30 % of the batch budget at once and
+//!   *calm* after a second under 20 %; it is busy while a cost is unknown, for a second after
+//!   the transport starts and, once it has needed help while playing, for as long as it plays.
+//!   A calm plan runs every level inline and wakes no worker. The node costs are timed on every
+//!   batch while the plan is calm and, while it is busy, on every batch where they ran plus one
+//!   inline batch in 64, taken only if the batch before it, timed where it ran, was under half
+//!   the budget (a run on a worker costs more than the same run at home). The clock is the
+//!   per-device timing's when it is on, else the engine's own. An offline engine has no
+//!   deadline and hands every level of two or more devices over. The decision never reaches
+//!   the signal.
+//! * **Distribution.** Item `j` of a dispatched level of `n > 1` devices goes to participant
 //!   `j % p`, `p = min(workers + 1, n)`; participant 0 is the audio thread. Only workers that
-//!   received work are unparked, and nothing is dispatched for levels of one device. If a job
-//!   queue is full the node simply runs on the audio thread.
+//!   received work are unparked. If a job queue is full the node simply runs on the audio
+//!   thread.
 //! * **Barrier.** The audio thread counts outstanding jobs and waits (`spin_loop` for a bounded
 //!   number of empty iterations, then `yield_now`) until every
 //!   node has come back through the done queues. The queues' release/acquire handoff makes
@@ -35,10 +47,13 @@
 //!   `EngineOptions::worker_linger_spins`), then parks. `unpark` keeps a token, so a wake-up
 //!   that races the decision to park is never lost. A linger longer than the callback period
 //!   keeps workers awake while a callback runs, so no level depends on an OS wake-up.
-//! * **Callback flag.** A worker spins only while a render call that uses the pool is in
+//! * **Callback flag.** A worker spins only while a render call that dispatches a level is in
 //!   progress: the audio thread raises an atomic flag at the start of such a call
-//!   ([`Pool::begin_callback`]), unparks every live worker so the wake-up overlaps the call's
-//!   serial work, and lowers the flag at its end ([`Pool::end_callback`]). A worker that finds
+//!   ([`Pool::begin_callback`]; only when the plan is busy and a level has a device a worker
+//!   can take), unparks every live worker so the wake-up overlaps the call's serial work, and
+//!   lowers the flag at its end ([`Pool::end_callback`]). A level handed over in the middle of
+//!   a call (the plan turned busy since the call began) raises it itself
+//!   ([`Pool::ensure_callback`]); a calm plan leaves every worker parked. A worker that finds
 //!   the flag down parks at once, so a long linger costs nothing between callbacks or while
 //!   the transport is stopped. Both calls are atomics and `unpark`: no allocation, no lock.
 //! * **Determinism.** A device's output depends only on its own state and its gathered
@@ -53,7 +68,9 @@
 use crate::arena::{Arena, RoutingPlan};
 use crate::console::Meters;
 use crate::fault::FaultState;
+use crate::load_gate::{GateMode, LoadGate, PlanLoad};
 use crate::plan::{Node, count_overflow};
+use crate::timing::{ClockFn, CostProbe};
 use atomik_core::{Batch, TimeInfo};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use std::sync::Arc;
@@ -98,6 +115,7 @@ pub(crate) struct Job {
     /// The device stage to run and whether it is the device's last.
     stage: u8,
     last: bool,
+    probe: Option<CostProbe>,
     panicked: bool,
 }
 
@@ -139,6 +157,16 @@ pub(crate) struct Pool {
     shared: Arc<Shared>,
     /// Keep `callback_active` raised (see [`Pool::set_always_active`]; audio side only).
     always_active: bool,
+    /// A render call that uses the pool is in progress (audio side only).
+    in_callback: bool,
+    /// How the engine decides when to use the workers (see [`GateMode`]; audio side only).
+    pub(crate) gate_mode: GateMode,
+    /// The engine serves a live host with a deadline (`EngineOptions::realtime`).
+    realtime: bool,
+    /// The load rule's state (audio side only).
+    pub(crate) load: LoadGate,
+    /// The clock that times nodes for the load rule when the per-device timing is off.
+    pub(crate) cost_clock: ClockFn,
 }
 
 impl Pool {
@@ -149,7 +177,10 @@ impl Pool {
         threads: u16,
         on_thread_start: Option<fn()>,
         linger: u64,
+        realtime: bool,
     ) -> Result<Self, PoolError> {
+        // Read the origin of the gate's clock once here, off the audio thread.
+        let _ = crate::timing::own_clock();
         let shared = Arc::new(Shared {
             shutdown: AtomicBool::new(false),
             idle_spins: AtomicU64::new(0),
@@ -190,13 +221,19 @@ impl Pool {
             links,
             shared,
             always_active: false,
+            in_callback: false,
+            gate_mode: crate::load_gate::default_gate_mode(),
+            realtime,
+            load: LoadGate::new(),
+            cost_clock: crate::timing::own_clock,
         })
     }
 
     /// Marks the start of a render call that will use the pool: idle workers may spin from
     /// now on, and every live one is woken so it is running when the first level needs it.
     /// Atomics and `unpark` only (audio thread).
-    pub(crate) fn begin_callback(&self) {
+    pub(crate) fn begin_callback(&mut self) {
+        self.in_callback = true;
         self.shared.callback_active.store(true, Ordering::Release);
         for link in self.links.iter().filter(|l| !l.dead) {
             link.thread.unpark();
@@ -205,9 +242,19 @@ impl Pool {
 
     /// Marks the end of the render call: a worker that runs out of jobs parks instead of
     /// spinning. Stays raised while [`Pool::set_always_active`] is on.
-    pub(crate) fn end_callback(&self) {
+    pub(crate) fn end_callback(&mut self) {
+        self.in_callback = false;
         if !self.always_active {
             self.shared.callback_active.store(false, Ordering::Release);
+        }
+    }
+
+    /// Starts the callback in the middle of a render call, when the first level of it that
+    /// is worth a hand-over comes up (a level turned to dispatch since the call began). Does
+    /// nothing while the call is already marked. Audio thread.
+    fn ensure_callback(&mut self) {
+        if !self.in_callback {
+            self.begin_callback();
         }
     }
 
@@ -216,6 +263,11 @@ impl Pool {
     pub(crate) fn set_always_active(&mut self, on: bool) {
         self.always_active = on;
         self.shared.callback_active.store(on, Ordering::Release);
+    }
+
+    /// The rule in force: the mode, with `Auto` resolved for the host.
+    pub(crate) fn mode(&self) -> GateMode {
+        self.gate_mode.resolve(self.realtime)
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -307,7 +359,7 @@ fn worker(
     loop {
         if let Ok(mut job) = jobs.pop() {
             let (node, time, stage, last) = (&mut job.node, job.time, job.stage, job.last);
-            job.panicked = node.run(time, stage, last);
+            job.panicked = node.run(time, stage, last, job.probe);
             // At most WORKER_QUEUE_CAPACITY jobs are in flight per worker, so this fits.
             while let Err(PushError::Full(back)) = done.push(job) {
                 job = back;
@@ -335,14 +387,54 @@ fn worker(
 }
 
 impl RoutingPlan {
-    /// Whether any level holds two or more devices, so a render call would hand work to the
-    /// pool.
+    /// Whether any level holds two or more devices (what [`GateMode::ForceDispatch`] hands to
+    /// the pool).
     pub(crate) fn has_parallel_level(&self) -> bool {
         self.level_starts.windows(2).any(|w| w[1] - w[0] > 1)
     }
 
+    /// Whether a render call would hand work to the pool: the rule forces it, or the plan is
+    /// busy and some level has a device a worker could take. A calm plan leaves the workers
+    /// parked.
+    pub(crate) fn wants_workers(&self, pool: &Pool) -> bool {
+        match pool.mode() {
+            GateMode::ForceInline => false,
+            GateMode::ForceDispatch => self.has_parallel_level(),
+            _ => pool.load.busy() && self.dispatchable && self.has_parallel_level(),
+        }
+    }
+
+    /// What the plan costs in one batch: every device's cost, counted at its last stage.
+    fn plan_load(&self, arena: &Arena) -> PlanLoad {
+        let mut load = PlanLoad::default();
+        for step in self.steps.iter().filter(|step| step.last) {
+            if let Some(Some(node)) = arena.nodes.get(self.devices[step.device].slot) {
+                load.add(node.cost(), node.seen());
+            }
+        }
+        load
+    }
+
+    /// How many devices of steps `a..b` a worker could take: those `run_level` would hand over,
+    /// that is not at the audio thread's own positions and not pinned to it.
+    fn sendable(&self, a: usize, b: usize, pool: &Pool, arena: &Arena) -> usize {
+        let participants = (pool.links.len() + 1).min(b - a);
+        self.steps[a..b]
+            .iter()
+            .enumerate()
+            .filter(|(j, step)| {
+                j % participants != 0
+                    && matches!(
+                        arena.nodes.get(self.devices[step.device].slot),
+                        Some(Some(node)) if !node.device.pinned_to_audio_thread()
+                    )
+            })
+            .count()
+    }
+
     /// Like `process`, with the devices of each level spread over the audio thread and the
-    /// pool's workers. Never allocates, frees, locks or blocks (the audio thread only spins
+    /// pool's workers when the rule says so (see [`crate::load_gate`]); otherwise every level
+    /// runs inline. Never allocates, frees, locks or blocks (the audio thread only spins
     /// while waiting for the level's last device). Returns the barrier spins: busy-wait
     /// iterations in which the audio thread found no finished node to collect.
     ///
@@ -360,15 +452,48 @@ impl RoutingPlan {
         fault: &FaultState,
     ) -> u64 {
         self.read_host_inputs(host_in, meters);
+        let mode = pool.mode();
+        // The load rule: decided from the costs of the batches before this one, which this
+        // batch may time again: every batch while the plan is calm (so a rise is seen at once)
+        // and one inline batch in 64 while it is busy.
+        let mut busy = true;
+        let mut probing = false;
+        let mut probe = None;
+        if mode == GateMode::Load {
+            let budget = crate::timing::batch_budget_ns(time.sample_rate.hz());
+            busy = pool
+                .load
+                .update(self.plan_load(arena), budget, time.playing);
+            probing = busy && pool.load.probe_due();
+            probe = Some(CostProbe {
+                clock: pool.cost_clock,
+                due: !busy || probing,
+                lower: busy && !probing,
+            });
+        }
         let mut spins = 0u64;
+        let mut any = false;
         for level in 0..self.level_starts.len().saturating_sub(1) {
             let (a, b) = (self.level_starts[level], self.level_starts[level + 1]);
-            if b - a <= 1 || pool.links.is_empty() {
-                self.run_sequential(a, b, time, dropped, arena, meters, fault);
-            } else {
-                let level_spins = self.run_level(a, b, time, dropped, pool, arena, meters, fault);
+            let dispatch = b - a > 1
+                && !pool.links.is_empty()
+                && match mode {
+                    GateMode::ForceInline => false,
+                    GateMode::ForceDispatch => true,
+                    _ => busy && !probing && self.sendable(a, b, pool, arena) > 0,
+                };
+            if dispatch {
+                any = true;
+                pool.ensure_callback();
+                let level_spins =
+                    self.run_level(a, b, time, dropped, pool, arena, meters, fault, probe);
                 spins = spins.saturating_add(level_spins);
+            } else {
+                self.run_sequential(a, b, time, dropped, arena, meters, fault, probe);
             }
+        }
+        if mode == GateMode::Load && busy && !probing {
+            self.dispatchable = any;
         }
         self.write_host_outputs(host_out);
         spins
@@ -389,6 +514,7 @@ impl RoutingPlan {
         arena: &mut Arena,
         meters: &Meters,
         fault: &FaultState,
+        probe: Option<CostProbe>,
     ) -> u64 {
         let Self {
             devices,
@@ -443,6 +569,7 @@ impl RoutingPlan {
                     time,
                     stage: step.stage,
                     last: step.last,
+                    probe,
                     panicked: false,
                 };
                 match link.jobs.push(job) {
@@ -462,7 +589,7 @@ impl RoutingPlan {
         // 3. The audio thread runs whatever stayed home (its share and any overflow).
         for step in level {
             if let Some(node) = arena.node_mut(slot_of(step))
-                && node.run(time, step.stage, step.last)
+                && node.run(time, step.stage, step.last, probe)
             {
                 fault.record(devices[step.device].id);
             }

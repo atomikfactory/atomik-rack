@@ -391,6 +391,33 @@ fn the_meter_feed_repaints_only_when_a_displayed_value_changes() {
 }
 
 #[test]
+fn the_meter_feed_says_whether_the_panel_settled_on_the_values() {
+    let (_, mut v) = rack(FxKind::Compressor);
+    let loud = [0.5, 0.35, 6.0];
+    assert!(
+        v.set_device_meter_values(&key("fx"), &loud),
+        "a first feed shows something new"
+    );
+    assert!(
+        !v.set_device_meter_values(&key("fx"), &loud),
+        "the same values again change nothing, so the host may stop feeding them"
+    );
+    assert!(
+        v.set_device_meter_values(&key("fx"), &[0.0, 0.0, 0.0]),
+        "a drop to silence starts the release"
+    );
+    // The release is per call, so repeated silence keeps answering `true` until it settled.
+    let mut calls = 0;
+    while v.set_device_meter_values(&key("fx"), &[0.0, 0.0, 0.0]) {
+        calls += 1;
+        assert!(calls < 200, "meters never settle");
+    }
+    assert!(calls > 0, "the release took more than one call");
+    // A device the view does not know cannot be called settled.
+    assert!(v.set_device_meter_values(&key("nope"), &[1.0]));
+}
+
+#[test]
 fn a_hidden_panel_does_not_request_repaints() {
     let (doc, mut v) = rack(FxKind::Distortion);
     let mut dl = DisplayList::new();

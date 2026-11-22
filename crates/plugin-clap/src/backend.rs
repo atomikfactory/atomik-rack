@@ -11,7 +11,7 @@ use atomik_core::BATCH;
 use atomik_device_sdk::{PluginCategory, PluginFormat, PluginRef, RunMode};
 use atomik_plugin_host::{
     ActivateConfig, BackendError, HostHandle, PluginBackend, PluginInstance as HostInstance,
-    ScannedPlugin, assert_main_thread, plugin_channel,
+    ScanEvent, ScannedPlugin, assert_main_thread, plugin_channel,
 };
 use clack_host::prelude::*;
 use std::collections::BTreeMap;
@@ -57,6 +57,36 @@ fn describe(descriptor: &clack_host::plugin::PluginDescriptor) -> DescInfo {
 }
 
 impl ClapBackend {
+    /// What is known of a plugin without creating it: its name and the plugin it would be, marked
+    /// as not scanned until the scan of the class answers. `None` for a descriptor with no id.
+    fn announced(descriptor: &clack_host::plugin::PluginDescriptor) -> Option<ScannedPlugin> {
+        let id = descriptor.id()?;
+        let info = describe(descriptor);
+        let layout = atomik_device_sdk::PluginLayout {
+            name: info.name,
+            vendor: info.vendor,
+            version: info.version,
+            kind_hint: atomik_device_sdk::PluginKindHint::Effect,
+            main_in: None,
+            main_out: None,
+            sidechain: false,
+            notes_in: false,
+            notes_out: false,
+            aux_out: 0,
+            params: Vec::new(),
+        };
+        Some(ScannedPlugin {
+            plugin: PluginRef {
+                format: PluginFormat::Clap,
+                id: id.to_string_lossy().into_owned(),
+            },
+            category: PluginCategory::from_clap_features(layout.kind_hint, &info.features),
+            layout,
+            unsupported: Some("not scanned".to_string()),
+            params_truncated: false,
+        })
+    }
+
     /// A backend that knows no plugin files yet.
     pub fn new() -> Self {
         Self {
@@ -120,36 +150,63 @@ impl PluginBackend for ClapBackend {
     }
 
     fn scan_file(&self, path: &Path) -> Result<Vec<ScannedPlugin>, BackendError> {
+        let mut found = Vec::new();
+        self.scan_file_each(path, &[], &mut |event| {
+            if let ScanEvent::Class(p) = event {
+                found.push(p);
+            }
+        })?;
+        Ok(found)
+    }
+
+    fn scan_file_each(
+        &self,
+        path: &Path,
+        skip: &[String],
+        emit: &mut dyn FnMut(ScanEvent),
+    ) -> Result<(), BackendError> {
         assert_main_thread("scanning a CLAP file");
         let entry = self.load(path)?;
         let factory = entry.get_plugin_factory().ok_or_else(|| {
             BackendError::NotAPlugin(format!("{}: no plugin factory", path.display()))
         })?;
-        let mut found = Vec::new();
-        for descriptor in factory.plugin_descriptors() {
+        let descriptors: Vec<_> = factory
+            .plugin_descriptors()
+            .filter(|d| d.id().is_some())
+            .collect();
+        if descriptors.is_empty() {
+            return Err(BackendError::NotAPlugin(format!(
+                "{}: the file holds no plugin",
+                path.display()
+            )));
+        }
+        let descriptors: Vec<_> = descriptors
+            .into_iter()
+            .filter(|d| {
+                d.id().is_some_and(|id| {
+                    let id = id.to_string_lossy();
+                    !skip.iter().any(|s| *s == id)
+                })
+            })
+            .collect();
+        emit(ScanEvent::Classes(
+            descriptors
+                .iter()
+                .filter_map(|d| Self::announced(d))
+                .collect(),
+        ));
+        for descriptor in descriptors {
             let Some(id) = descriptor.id() else { continue };
+            let Some(announced) = Self::announced(descriptor) else {
+                continue;
+            };
             let info = describe(descriptor);
             let features = info.features.clone();
-            let plugin = PluginRef {
-                format: PluginFormat::Clap,
-                id: id.to_string_lossy().into_owned(),
-            };
+            let plugin = announced.plugin;
             // The scan creates the plugin on a throw-away channel and drops it again.
             let (_device_end, manager) = plugin_channel(atomik_plugin_host::InstanceId(0));
             let hub = Hub::new(manager.messenger());
-            let mut layout_info = atomik_device_sdk::PluginLayout {
-                name: info.name.clone(),
-                vendor: info.vendor.clone(),
-                version: info.version.clone(),
-                kind_hint: atomik_device_sdk::PluginKindHint::Effect,
-                main_in: None,
-                main_out: None,
-                sidechain: false,
-                notes_in: false,
-                notes_out: false,
-                aux_out: 0,
-                params: Vec::new(),
-            };
+            let mut layout_info = announced.layout;
             let (unsupported, truncated) =
                 match ClapInstance::create(&entry, &self.host_info, id, info, hub) {
                     Ok(mut instance) => {
@@ -174,21 +231,15 @@ impl PluginBackend for ClapBackend {
                 };
             self.register_plugin_file(&plugin.id, path);
             let category = PluginCategory::from_clap_features(layout_info.kind_hint, &features);
-            found.push(ScannedPlugin {
+            emit(ScanEvent::Class(ScannedPlugin {
                 plugin,
                 layout: layout_info,
                 category,
                 unsupported,
                 params_truncated: truncated,
-            });
+            }));
         }
-        if found.is_empty() {
-            return Err(BackendError::NotAPlugin(format!(
-                "{}: the file holds no plugin",
-                path.display()
-            )));
-        }
-        Ok(found)
+        Ok(())
     }
 
     fn instantiate(

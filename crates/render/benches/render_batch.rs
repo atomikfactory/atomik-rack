@@ -88,6 +88,16 @@ fn main() {
         atomik_engine::timing::set_enabled(true);
         println!("per-device timing on");
     }
+    // `ATOMIK_BENCH_GATE=dispatch|inline|load` sets how engines decide when the render workers
+    // are used (default: a bounce hands every level over).
+    match std::env::var("ATOMIK_BENCH_GATE").as_deref() {
+        Ok("dispatch") => {
+            atomik_engine::set_default_gate_mode(atomik_engine::GateMode::ForceDispatch)
+        }
+        Ok("inline") => atomik_engine::set_default_gate_mode(atomik_engine::GateMode::ForceInline),
+        Ok("load") => atomik_engine::set_default_gate_mode(atomik_engine::GateMode::Load),
+        _ => {}
+    }
     let all = scenarios();
     if once_mode() {
         for (name, doc) in &all {

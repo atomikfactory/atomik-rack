@@ -6076,7 +6076,9 @@ it is not 0, so a project saved before aux outputs loads with none.
   plugin announces a latency change (CLAP `latency.changed` and a restart request, VST3
   `restartComponent(kLatencyChanged)`); the host restarts it, reads the latency again after the
   re-activation (VST3 also after every `setActive` and every state restore) and the other channels
-  are re-aligned, with the one-click discontinuity of the new delay lines. A latency that comes from
+  are re-aligned, with the one-click discontinuity of the new delay lines. A plugin that
+  announces a latency that is the one it already has, or announces it from inside its own
+  activation, is not restarted: the host restarts only for a latency that differs. A latency that comes from
   a saved param (or from a container macro the song automates) is therefore followed live once the
   plugin has applied the value, and by a bounce from its first frame (see below).
 - **Crashes.** By default (Settings > Plugins, the sandbox option, on) each plugin instance runs in
@@ -6291,6 +6293,13 @@ modules know nothing about it.
 - **Plugins.** A plugin effect's bypass is the same switch with the same fade, and its dry signal is
   also the input delayed by the plugin's reported latency (a 100 ms ring), so bypassing a latent
   plugin does not move the channel against the others.
+  A plugin effect bypassed for 10 seconds without a break is parked (it uses no CPU): comparing with
+  the bypass on and off a few seconds apart keeps calling it. Switching the bypass off after a park
+  clears the plugin and runs it for 20 ms (or its latency) with the output still dry before the usual
+  5 ms fade; a value set meanwhile reaches the plugin within 50 ms. A bounce parks the same way.
+  Plugins that have nothing to do also rest: a plugin is not called while its input has been silent
+  for its reported tail and its own output for a second (a plugin that answers "continue" in CLAP,
+  declares an infinite tail in VST3, or whose output never goes quiet, is always called).
 - **Console inserts.** The console's BYP ALL button and the B of an insert slot set this `bypass` on
   the effects of the chain, so the delay compensation holds (see Channel strip upgrades in
   [ARCHITECTURE.md](ARCHITECTURE.md)). A channel's own `insert.bypass` is a separate switch that is

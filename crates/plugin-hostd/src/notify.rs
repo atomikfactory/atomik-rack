@@ -2,7 +2,7 @@
 //! parent: one notification frame per message, in the order the plugin posted them.
 
 use atomik_plugin_host::{ParamPhase, PluginMessage};
-use atomik_plugin_ipc::{FromChild, MAX_LOG_BYTES, WireLevel};
+use atomik_plugin_ipc::{FromChild, MAX_LOG_BYTES, WireLayout, WireLevel};
 
 /// `text` cut to what the parent accepts in a log line, at a character boundary.
 fn truncated(mut text: String) -> String {
@@ -42,6 +42,9 @@ pub fn to_wire(message: PluginMessage) -> Option<FromChild> {
         PluginMessage::StateDirty => FromChild::StateDirty,
         PluginMessage::LatencyChanged => FromChild::LatencyChanged,
         PluginMessage::RescanParams => FromChild::RescanParams,
+        PluginMessage::ParamTitles(layout) => FromChild::ParamTitles {
+            layout: WireLayout::from(&*layout),
+        },
         PluginMessage::RequestRestart => FromChild::RequestRestart,
         PluginMessage::GuiResize { w, h } => FromChild::GuiResize { w, h },
         PluginMessage::GuiFrame { x, y, w, h } => FromChild::GuiFrame { x, y, w, h },
@@ -164,6 +167,29 @@ mod tests {
         assert_eq!(
             to_wire(PluginMessage::GuiRequestHide),
             Some(FromChild::GuiRequestHide)
+        );
+    }
+
+    #[test]
+    fn renamed_params_go_out_with_their_layout() {
+        let layout = atomik_device_sdk::PluginLayout {
+            name: "P".to_string(),
+            vendor: String::new(),
+            version: String::new(),
+            kind_hint: atomik_device_sdk::PluginKindHint::Effect,
+            main_in: None,
+            main_out: None,
+            sidechain: false,
+            notes_in: false,
+            notes_out: false,
+            aux_out: 0,
+            params: Vec::new(),
+        };
+        assert_eq!(
+            to_wire(PluginMessage::ParamTitles(Box::new(layout.clone()))),
+            Some(FromChild::ParamTitles {
+                layout: WireLayout::from(&layout)
+            })
         );
     }
 

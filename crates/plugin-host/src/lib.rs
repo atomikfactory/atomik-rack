@@ -29,6 +29,7 @@ mod manager;
 #[cfg(windows)]
 mod ole;
 pub mod paths;
+mod procgroup;
 mod scan;
 mod settings;
 mod slot;
@@ -49,17 +50,23 @@ pub use cache::{
     now_secs,
 };
 pub use catalog::{FailedFile, PluginCatalog, PluginEntry, PluginStatus, RegisterReport};
-pub use child::{ChildScanner, MAX_SCAN_OUTPUT, STDERR_REASON_BYTES, ScannerCommand};
+pub use child::{
+    ChildScanner, MAX_CLASS_RESTARTS, MAX_SCAN_OUTPUT, SKIP_FLAG, STDERR_REASON_BYTES,
+    ScannerCommand,
+};
 pub use device::{METER_VALUES, PluginDevice, bad_run_limit};
 pub use fpenv::{FLUSH_SUPPORTED, FtzGuard, denormals_flushed};
 pub use journal::{CrashJournal, InUsePlugin, RecoveryDir, blacklist_in_use};
 pub use manager::{
     CaptureLanded, CreateTicket, CreateTiming, HUNG, InstantiateRequest, LOST, ManagerError,
-    ManagerEvent, NOT_RESPONDING, PluginHandle, PluginManager, PluginProvider, StallRecord,
+    ManagerEvent, NOT_RESPONDING, PluginHandle, PluginManager, PluginProvider, RESTART_BURST,
+    RESTART_QUIET_POLLS, StallRecord,
 };
+pub use procgroup::{SCAN_NICE, ScanGroup, scan_creation_flags, suppress_error_dialogs};
 pub use scan::{
-    ALL_FORMATS, FailureKind, MAX_PARALLEL_SCANS, RescanMode, ScanEnv, ScanError, ScanFailure,
-    ScanJob, ScanProgress, ScanReport, ScanRequest, ScanResult, ScanRunner, parallel_scans, rescan,
+    ALL_FORMATS, FailureKind, MAX_PARALLEL_SCANS, NO_TIME_LIMIT, RescanMode, SERIAL_SCAN_CORES,
+    ScanEnv, ScanError, ScanEvent, ScanFailure, ScanJob, ScanProgress, ScanReport, ScanRequest,
+    ScanResult, ScanRunner, is_timeout_reason, parallel_scans, rescan, rescan_file, timeout_reason,
 };
 pub use settings::{
     DEFAULT_TIMEOUT_SECS, EditorHome, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, PluginSettings,

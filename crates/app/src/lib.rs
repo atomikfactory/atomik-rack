@@ -85,6 +85,7 @@ pub mod practice;
 pub mod recent;
 pub mod record;
 pub mod record_over;
+pub mod record_space;
 pub mod recovery;
 pub mod session;
 pub mod settings;

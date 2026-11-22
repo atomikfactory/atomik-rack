@@ -46,6 +46,24 @@ pub struct ControlHub {
     /// audio setup panel reads them to light its "note received" lamp.
     notes_seen: AtomicU64,
     last_key: AtomicU32,
+    waker: Mutex<Waker>,
+}
+
+/// The function that wakes the platform loop (see [`ControlHub::set_waker`]).
+pub type WakeFn = Arc<dyn Fn() + Send + Sync>;
+
+/// The optional waker, with a `Debug` that hides the closure.
+#[derive(Default)]
+struct Waker(Option<WakeFn>);
+
+impl std::fmt::Debug for Waker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() {
+            "Waker(set)"
+        } else {
+            "Waker(none)"
+        })
+    }
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -73,6 +91,8 @@ impl ControlHub {
             port: Arc::clone(port),
             message,
         });
+        drop(inbox);
+        self.wake();
     }
 
     /// How many note-ons the ports have sent since the start, and the key of the last one
@@ -93,6 +113,8 @@ impl ControlHub {
             return;
         }
         queue.push_back(command);
+        drop(queue);
+        self.wake();
     }
 
     /// Moves the queued machine control commands into `out`, oldest first (UI thread).
@@ -103,6 +125,25 @@ impl ControlHub {
     /// Moves the queued messages into `out`, oldest first (UI thread).
     pub fn drain(&self, out: &mut Vec<Inbound>) {
         out.extend(lock(&self.inbox).drain(..));
+    }
+
+    /// Whether messages or machine control commands wait for the UI thread.
+    pub fn has_pending(&self) -> bool {
+        !lock(&self.inbox).is_empty() || !lock(&self.mmc).is_empty()
+    }
+
+    /// A function called whenever a message or a command is queued, from the MIDI thread: the
+    /// platform loop uses it to wake up at once instead of at its next idle poll. It must be
+    /// short and must not block.
+    pub fn set_waker(&self, waker: WakeFn) {
+        lock(&self.waker).0 = Some(waker);
+    }
+
+    fn wake(&self) {
+        let waker = lock(&self.waker).0.clone();
+        if let Some(waker) = waker {
+            waker();
+        }
     }
 
     /// Messages dropped because the inbox was full.

@@ -15,7 +15,7 @@ use crate::processor::{self, Vst3Processor};
 use crate::stream::MemStream;
 use crate::util::utf16_text;
 use crate::values;
-use atomik_device_sdk::{PluginLayout, PluginStateBlob, RunMode};
+use atomik_device_sdk::{LayoutChange, PluginLayout, PluginStateBlob, RunMode};
 use atomik_plugin_host::{
     ActivateConfig, BackendError, LogLevel, NativeParent, PluginInstance as HostInstance,
     PluginMessage, PluginProcessor, PresetInfo, PresetLister, assert_main_thread, is_main_thread,
@@ -87,6 +87,9 @@ pub(crate) struct Vst3Instance {
     read: Read,
     layout_changed: bool,
     latency: u32,
+    /// The latency the running activation was made with (`latency` follows a restored state at
+    /// once; the device only follows a restart): what a latency request is compared with.
+    activated_latency: u32,
     active: bool,
     gui_open: bool,
     has_view: bool,
@@ -220,6 +223,7 @@ impl Vst3Instance {
             read: layout::empty_read(class),
             layout_changed: false,
             latency: 0,
+            activated_latency: 0,
             active: false,
             gui_open: false,
             has_view: false,
@@ -275,6 +279,71 @@ impl Vst3Instance {
         self.read = read;
     }
 
+    /// Answers what the plugin asked of the host since the last poll. Only a request that changes
+    /// something reaches the manager: a latency that is the one reported, a table that reads the
+    /// same and a table whose titles alone changed need no restart (the titles go to the app as
+    /// they are). Nothing is asked of a plugin that is not active: its next activation reads
+    /// everything again.
+    fn answer_asks(&mut self) {
+        use std::sync::atomic::Ordering;
+        let restart = self.hub.restart_asked.swap(false, Ordering::AcqRel);
+        let latency = self.hub.latency_asked.swap(false, Ordering::AcqRel);
+        let params = self.hub.params_asked.swap(false, Ordering::AcqRel);
+        if !self.active {
+            return;
+        }
+        let mut post = Vec::new();
+        if restart {
+            post.push(PluginMessage::RequestRestart);
+        } else if params {
+            match self.reread_params() {
+                LayoutChange::Same => {}
+                LayoutChange::Titles => {
+                    post.push(PluginMessage::ParamTitles(Box::new(
+                        self.read.layout.clone(),
+                    )));
+                }
+                LayoutChange::Structure => post.push(PluginMessage::RescanParams),
+            }
+        }
+        // SAFETY: a live processor.
+        if latency && unsafe { self.processor.getLatencySamples() } != self.activated_latency {
+            post.push(PluginMessage::LatencyChanged);
+        }
+        for message in post {
+            self.hub.messenger.post(message);
+        }
+    }
+
+    /// Reads the param table of the running plugin again, as far as that needs no new buses:
+    /// a table that reads the same or with other titles is taken over (the restart the plugin
+    /// asked for is not needed); anything else is left for the restart. A plugin whose buses
+    /// moved needs the restart.
+    fn reread_params(&mut self) -> LayoutChange {
+        if !layout::plan_is_current(&self.component, &self.processor, &self.read.plan) {
+            return LayoutChange::Structure;
+        }
+        let Ok(read) = layout::read(
+            &self.class,
+            self.read.plan.clone(),
+            self.controller.as_ref(),
+        ) else {
+            return LayoutChange::Structure;
+        };
+        let change = read.layout.change_from(&self.read.layout);
+        if change == LayoutChange::Structure {
+            return change;
+        }
+        self.hub
+            .layout_dirty
+            .store(false, std::sync::atomic::Ordering::Release);
+        if change == LayoutChange::Titles {
+            self.hub.set_steps(read.steps.clone());
+            self.read = read;
+        }
+        change
+    }
+
     /// Tells the controller the param values the rack set since the last call (the processor
     /// copied them into the mirror ring), so an open editor shows them.
     fn apply_mirrored(&mut self) {
@@ -310,7 +379,7 @@ impl Vst3Instance {
     fn state_of(&self, stream_for: impl Fn(*mut IBStream) -> bool) -> Option<Vec<u8>> {
         let stream = MemStream::new(Vec::new());
         let s = stream.as_com_ref::<IBStream>()?;
-        stream_for(s.as_ptr()).then(|| stream.bytes())
+        stream_for(s.as_ptr()).then(|| stream.take_bytes())
     }
 }
 
@@ -363,6 +432,16 @@ impl HostInstance for Vst3Instance {
         self.active = true;
         // SAFETY: a live processor.
         self.latency = unsafe { self.processor.getLatencySamples() };
+        self.activated_latency = self.latency;
+        // What the plugin asked for while it was being activated is what this activation did: it
+        // has read the latency just now, and a restart asked for inside the call would only repeat
+        // the call.
+        self.hub
+            .latency_asked
+            .store(false, std::sync::atomic::Ordering::Release);
+        self.hub
+            .restart_asked
+            .store(false, std::sync::atomic::Ordering::Release);
         let (producer, consumer) = rtrb::RingBuffer::new(EDIT_RING);
         self.hub.set_edit_sink(Some(producer));
         let (mirror_in, mirror_out) = rtrb::RingBuffer::new(EDIT_RING);
@@ -379,6 +458,7 @@ impl HostInstance for Vst3Instance {
             hub: Arc::clone(&self.hub),
             edits: consumer,
             mirror: mirror_in,
+            module: Arc::clone(&self._module),
         })))
     }
 
@@ -638,6 +718,7 @@ impl HostInstance for Vst3Instance {
 
     fn poll(&mut self) {
         assert_main_thread("polling a VST3 plugin");
+        self.answer_asks();
         self.apply_mirrored();
         self.frame.run_event_handlers();
         self.frame.run_timers();

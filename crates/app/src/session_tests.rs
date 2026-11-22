@@ -731,6 +731,8 @@ fn polling_publishes_the_input_trims_and_the_requested_buffer() {
         input_backlog_max_frames: 1440,
         callback_frames_min: 96,
         callback_frames_max: 480,
+        input_backlog_allowed_frames: 1536,
+        input_backlog_extra_frames: 512,
         ..Telemetry::default()
     });
     let st = s.poll().clone();
@@ -741,11 +743,13 @@ fn polling_publishes_the_input_trims_and_the_requested_buffer() {
             backlog_max_frames: 1440,
             callback_min: 96,
             callback_max: 480,
+            allowed_backlog_frames: 1536,
+            extra_backlog_frames: 512,
         }
     );
     assert_eq!(
         crate::status::input_trim_line(&st),
-        "input trimmed: 3 trims, backlog max 1440 frames, callback 96..480 frames, buffer 480"
+        "input trimmed: 3 trims, backlog max 1440 frames, allowed 1536 frames, callback 96..480 frames, buffer 480"
     );
 }
 

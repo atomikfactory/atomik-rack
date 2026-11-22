@@ -88,6 +88,90 @@ device/stereo-delay/256batches: median 480.575 us  p99 775.217 us
 device/wavetable-synth/256batches: median 3.882 ms  p99 5.511 ms
 ```
 
+## Render workers used only while the audio thread needs them (2026-11-22)
+
+Three measurements of the load rule (`crates/engine/src/load_gate.rs`; the rule and its reasons are in
+[DECISIONS.md](../docs/DECISIONS.md#bg-the-render-workers-are-used-only-while-the-audio-thread-needs-help)).
+
+**Bounce with two workers, what a bounce hands over.** `cargo bench -p atomik-render --bench render_batch -- "rack|console-64|lanes"`
+with `ATOMIK_BENCH_GATE=dispatch` and `ATOMIK_BENCH_GATE=levels` (a switch of the bench binary that sets the mode engines
+start in; the value `levels` existed only in the measured build of the first commit of this change, which had the
+per-level rule, and the current tree accepts `dispatch`, `inline` and `load` only, so the per-level column cannot be
+reproduced from it), five rounds, one binary, the two settings alternating round by round so that the drift of the machine
+cannot favour one; medians of the five runs, and for workers 0 the median of all ten (the setting does not touch it).
+"dispatch" is what the engine did before the rule and what a bounce does now (every level of two or more devices goes
+to the workers). "per level" is a rule tried first and removed: it decided each level from the time spreading it would
+save (at least 7 us to dispatch, under 3.5 us to run inline, 64 batches of the opposite verdict to change). The ratios
+are to the workers 0 median of the same session.
+
+```text
+case                 workers 0    workers 2, dispatch    workers 2, per level
+rack                 765.9 ms     544.9 ms (0.71)        561.2 ms (0.73)
+console-64           1.350 s      827.1 ms (0.61)        817.6 ms (0.61)
+lanes-200            168.1 ms     161.4 ms (0.96)        175.3 ms (1.04)
+lanes-2000           1.745 s      1.599 s (0.92)         1.533 s (0.88)
+```
+
+Per level earned nothing (it ties on rack and console-64, loses on lanes-200 and gains 4 points on lanes-2000), so the
+bounce keeps dispatching every level and the rule that remains is the load rule. The earlier claim that cheap levels
+are slower with workers does not hold on this machine: lanes-200 is faster with two workers than with none.
+
+**The paced callback benchmark** (`cargo test -p atomik-engine --release --test worker_linger -- --ignored --nocapture`:
+a callback every 128 or 480 frames at 48 kHz, paced like an audio thread, 10 s per row, four workers, linger 500 000).
+"inline" is no workers, "dispatch" hands every level over, "live" is the load rule of a live engine. "share" is the
+median callback of the inline row as a percentage of the callback period: the load the audio thread alone carries. The
+patches are one synth with one voice (light), four synths with six voices each (existing) and six synths with sixteen
+voices each (heavy). Callback times in microseconds.
+
+```text
+patch     frames  mode      p50     p99     max   share %  busy   parks   cpu % of a core
+light     128     inline    14.2    31.2    92.8   0.5     no         0   50.8
+light     128     dispatch  14.0    29.4    93.3          yes        4   48.9
+light     128     live      14.7    31.6    75.3          no         4   50.5
+light     480     inline    45.7    84.5   125.5   0.5     no         0   13.3
+light     480     dispatch  44.8    86.1   114.2          yes        4   10.0
+light     480     live      46.5    89.9   146.6          no         4   12.5
+existing  128     inline    87.0   144.3   208.3   3.3     no         0   51.6
+existing  128     dispatch  67.1    85.1   164.6          yes   26 247   58.6
+existing  128     live      84.0   143.5   184.3          no     5 253   53.0
+existing  480     inline   328.7   522.7   612.3   3.3     no         0   13.9
+existing  480     dispatch 197.8   279.3   397.3          yes    7 004   39.2
+existing  480     live     318.6   516.6   622.7          no     1 411   12.5
+heavy     128     inline   327.0   502.3   605.5  12.3     no         0   51.6
+heavy     128     dispatch 159.5   259.8   377.2          yes   29 996   74.5
+heavy     128     live     311.2   500.5   743.4          no     5 989   54.9
+heavy     480     inline  1201.4  1911.0  2061.6  12.0     no         0   26.4
+heavy     480     dispatch 574.1   738.8   866.7          yes    8 004   44.1
+heavy     480     live    1190.8  1794.4  1983.4          no     1 609   30.6
+```
+
+The pacing loop itself costs about 50 points at 128 frames (the first row, with no workers and a nearly empty
+callback). None of the three patches reaches the enter share (30 %), so a live engine runs all of them inline after
+the first second (the parks of the live rows are those of the start, while the plan was busy): the inline p99 of the
+heaviest, 500 us at 128 frames and 1.8 ms at 480, is 19 % and 18 % of the callback period. A plan over 30 % cannot be
+built from this device set within the poly synth's voice limit; the tests of the rule (`crates/engine/tests/load_gate.rs`)
+cover that side with devices of chosen cost.
+
+**The running app**, `scripts/perf/sample-app.ps1` on the release build of each side (the base of this change and
+this change), transport stopped, nothing sounding, no `--play`, 15 s settle, 20 s window, three rounds with the two
+alternating; CPU is a percentage of one core:
+
+```text
+scenario           before (3 rounds)      after (3 rounds)
+stress (auto)      76.4, 80.7, 85.7       16.8, 16.4, 19.0
+stress-workers2    30.1, 33.8, 32.9       17.6, 18.5, 18.4
+stress-workers0    17.6, 17.9, 17.0       18.1, 17.1, 17.9
+empty              0.31, 1.09, 0.47       0.70, 0.55, 0.70
+```
+
+After the review fixes (the seen load, the probe guard, the rule while playing) the same rows were taken again on the
+final build, three rounds of the stopped rack and one of the reference: stress (auto) 19.6, 17.5, 23.7; stress-workers2
+17.2, 16.3, 17.0; stress-workers0 17.5. The stopped rack still calms down.
+
+The stopped stress rack with automatic workers (7 here) and with two workers now costs what it costs with none, since
+its devices take about a seventh of the callback time (about 220 us in a 1.33 ms batch) and the workers sleep. The empty
+project is unchanged within the spread of the sampler (its idle figures read 0.3 to 1.1 on either side).
+
 ## Model commands on a growing song
 
 `cargo bench -p atomik-model --bench commands`: a command and its undo on a song of 10 tracks and
@@ -295,6 +379,52 @@ process.
 | Two cores / four threads: stress rack, 1 worker | 116 | 784 | 295 | 39 | 503 |
 | Two cores / four threads: stress rack, no workers | 20.4 | 823 | 307 | 39 | 503 |
 | Two cores / four threads: stress rack, 3 workers, linger engine default | 73 | 811 | 307 | 42 | 503 |
+
+## Idle wake-ups: full frame rate only while something moves (2026-11-21)
+
+The same reference machine and release build, the transport stopped and nothing sounding (no `--play`). Before is
+the branch this change started from, after is this change. The first two rows of CPU are the process CPU time over
+40 s after a 20 s settle, read at the start and the end of the window with no other probe on the app, three runs
+each (two for minimized, with the transport stopped: a minimized window with something
+animating keeps the frame period): the numbers move by a few tenths of a percent from run to run, so the runs are listed.
+The sampler rows are `scripts/perf/sample-app.ps1` (20 s window): its UI probe sends the window a message every
+100 ms, which wakes the app about ten more times a second in both columns, and the settings file it writes keeps the
+first-run audio setup panel (live meters, repaints all the time) from opening. "Wakes" is the app's own `ui activity`
+line.
+
+| Scenario | CPU % before | CPU % after | Wakes/s before | Wakes/s after |
+|---|---|---|---|---|
+| Empty project, audio on (40 s runs) | 0.86, 1.17, 1.29 | 0.43, 0.66, 0.86 | 60 | 10 |
+| Empty project, audio on, minimized (40 s runs) | 1.29, 1.48 | 0.63, 0.74 | 60 | 4 |
+| Empty project, no audio (sampler) | 0.31 | 0.31 | 6 | 6 |
+| Empty project, audio on (sampler) | 0.93 | 1.25 | 62 | 14 |
+| Empty project, audio on, minimized (sampler) | 1.63 | 0.78 | 62 | 6.5 |
+| Stress rack, audio on, no workers (sampler) | 20.2 | 16.5 | 60 | 14 |
+
+What is left with the stream open is the audio stream's own thread, not the interface: the empty project with audio
+on is 0.3 to 0.4 points above the no-audio figure in the better runs. The status line's DSP figures are held steady
+for ten seconds while they move by less than two points; before that, an idle engine's jitter in the rounded figure
+repainted the whole window every couple of seconds (3 paints a second in the stress rack).
+
+## Meter feeds with the engine running and nothing sounding (2026-11-21)
+
+The same reference machine and release build, the transport stopped, no `--play`, `scripts/perf/sample-app.ps1`
+(15 s settle, 20 s window, one run per row). Before is the branch this change started from (the idle wake item
+already on it), after is this change. The stress rack's devices are silent, so their published values do not move;
+the engine still publishes a new sequence with every batch.
+
+| Scenario | CPU % before | CPU % after | GPU % before | GPU % after | Paints/s before | Paints/s after |
+|---|---|---|---|---|---|---|
+| Stress rack, audio on, no workers | 17.9 | 16.9 | 0.87 | 0.53 | 0.1 | 0.5 |
+| Stress rack, audio on | 69 | 92 | 3.2 | 0.9 | 0.2 | 0 |
+| Stress rack, no audio, rack and mixer detached | 0.78 | 0.47 | 0 | 0 | 0 | 0 |
+| Empty project, audio on | 1.09 | 1.09 | 0.02 | 0.02 | 0 | 0 |
+
+Wakes stay at 14 a second (6 detached without audio) in both columns. The stopped stress rack already paints about
+nothing before this change (the earlier item's full-rate tail ends because the panels settle), so the paint count does
+not fall further; the 17 points over the no-audio row are the engine's own render of 100 devices on the audio thread,
+which the interface cannot reduce (the run with render workers varies with how the workers spin). The differences
+between before and after are within the run-to-run spread of the sampler.
 
 ## Render workers parked between callbacks (2026-11-20)
 

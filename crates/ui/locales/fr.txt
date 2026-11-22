@@ -3117,6 +3117,8 @@ SKIPPED => PASSÉ
 RELOAD tries again => RECHARGER l'essaie
 Skip Loading Plugin => Passer le chargement du plugin
 Select a plugin device that is loading first => Sélectionnez d'abord un appareil plugin en cours de chargement
+{name} crashed and was reloaded from its last state. => {name} a planté et a été rechargé depuis son dernier état.
+{name} crashed again and stays crashed; press RELOAD to try once more. => {name} a de nouveau planté et reste planté ; appuyez sur RECHARGER pour réessayer.
 {name} did not hand over its current settings; its last captured settings were saved. => {name} n'a pas transmis ses réglages actuels ; ses derniers réglages capturés ont été enregistrés.
 {name} did not hand over its current settings and none were captured before; it was saved without them. => {name} n'a pas transmis ses réglages actuels et aucun n'avait été capturé avant ; il a été enregistré sans eux.
 {names} did not hand over their current settings; their last captured settings were saved. => {names} n'ont pas transmis leurs réglages actuels ; leurs derniers réglages capturés ont été enregistrés.
@@ -3594,3 +3596,18 @@ Repeated internal errors: this window is paused. Save your work and restart Atom
 DISMISS => MASQUER
 Save the project now => Enregistrer le projet maintenant
 Hide this notice => Masquer cette notice
+
+# Notices of an audio take that could not be finished (the files of the take stay in the project)
+the recording is too long to finish in memory: the take was kept as {files} in the project's Audio folder and comes back as a recovered take the next time Atomik Rack starts => l'enregistrement est trop long pour être terminé en mémoire : la prise a été conservée sous {files} dans le dossier Audio du projet et revient comme prise récupérée au prochain démarrage d'Atomik Rack
+{error}: the take was kept as {files} in the project's Audio folder and comes back as a recovered take the next time Atomik Rack starts => {error} : la prise a été conservée sous {files} dans le dossier Audio du projet et revient comme prise récupérée au prochain démarrage d'Atomik Rack
+
+# Notices of an audio take: a write error, and a nearly full disk
+writing the recording failed ({reason}): the recording stopped, and what was written so far was kept as {files} in the project's Audio folder and comes back as a recovered take the next time Atomik Rack starts => l'écriture de l'enregistrement a échoué ({reason}) : l'enregistrement s'est arrêté, et ce qui était écrit a été conservé sous {files} dans le dossier Audio du projet et revient comme prise récupérée au prochain démarrage d'Atomik Rack
+the disk is full => le disque est plein
+low disk space for recording: {free} free where this project's audio is written, and {needed} are wanted for {minutes} minutes of this take; the recording stops by itself if the disk fills up => espace disque faible pour l'enregistrement : {free} libres là où l'audio de ce projet est écrit, et {needed} sont souhaités pour {minutes} minutes de cette prise ; l'enregistrement s'arrête de lui-même si le disque est plein
+
+# Scanning a plugin file again with no time limit
+NO LIMIT => SANS LIMITE
+NO TIME LIMIT => SANS LIMITE DE TEMPS
+Scan again with no time limit: a slow plugin gets as long as it needs => Réanalyser sans limite de temps : un plugin lent a tout le temps qu'il lui faut
+Scan again with no time limit: a slow plugin gets as long as it needs; CANCEL stops it => Réanalyser sans limite de temps : un plugin lent a tout le temps qu'il lui faut ; ANNULER l'arrête

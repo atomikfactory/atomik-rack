@@ -172,27 +172,32 @@ fn a_full_edit_ring_drops_and_counts_but_the_app_still_hears_the_edit() {
 }
 
 #[test]
-fn restart_requests_dirty_flags_and_open_requests_become_messages() {
+fn restart_requests_dirty_flags_and_open_requests_become_flags_and_messages() {
     let (hub, m) = hub();
     let h = ComWrapper::new(ComponentHandler {
         hub: Arc::clone(&hub),
     });
     let r = h.as_com_ref::<IComponentHandler>().unwrap();
     let r2 = h.as_com_ref::<IComponentHandler2>().unwrap();
+    let take = |flag: &AtomicBool| flag.swap(false, Ordering::Acquire);
     // SAFETY: plain calls.
     unsafe {
+        // What may need a restart is a flag for the instance to compare at its next poll; no
+        // message goes out until it has.
         r.restartComponent(8);
-        assert_eq!(drain(&m), vec![PluginMessage::LatencyChanged]);
+        assert!(take(&hub.latency_asked));
         r.restartComponent(16);
-        assert_eq!(drain(&m), vec![PluginMessage::RescanParams]);
-        assert!(hub.layout_dirty.swap(false, Ordering::Acquire));
+        assert!(take(&hub.params_asked));
+        assert!(take(&hub.layout_dirty));
+        assert!(!take(&hub.restart_asked), "titles alone ask for no restart");
         r.restartComponent(1);
-        let got = drain(&m);
-        assert!(got.contains(&PluginMessage::RescanParams));
-        assert!(got.contains(&PluginMessage::RequestRestart));
+        assert!(take(&hub.params_asked));
+        assert!(take(&hub.restart_asked));
+        assert!(take(&hub.layout_dirty));
         r.restartComponent(32);
-        assert_eq!(drain(&m), vec![PluginMessage::RequestRestart]);
-        assert!(hub.midi_dirty.swap(false, Ordering::Acquire));
+        assert!(take(&hub.restart_asked));
+        assert!(take(&hub.midi_dirty));
+        assert!(drain(&m).is_empty(), "nothing is posted by the call itself");
         r.restartComponent(4);
         assert_eq!(drain(&m), vec![PluginMessage::StateDirty]);
         r.restartComponent(0);

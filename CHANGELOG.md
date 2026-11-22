@@ -90,6 +90,11 @@ may break APIs and the patch and project formats.
   without anything waiting for it), leaves the device a stand-in with its saved state untouched, and shows SKIPPED.
   RELOAD tries again from that state. A skipped plugin is not a crash and does not count towards quarantine, and a
   saved project keeps what it held.
+- **Scan a plugin file again with no time limit.** A plugin file that is on the blacklist because its scan timed out
+  (a licence check, a first-run index) now has a NO TIME LIMIT button in the plugin manager (when the file is chosen)
+  and a NO LIMIT button next to RETRY in the plugin settings. It scans that one file with no time limit, with
+  progress and CANCEL like any scan; a file that scans leaves the blacklist, one that does not stays on it, and
+  cancelling changes nothing. A file blacklisted for a crash keeps today's actions only.
 
 ### Changed
 - **Shift+click on a track header selects a range.** It selects every track from the anchor (the track last
@@ -157,6 +162,76 @@ may break APIs and the patch and project formats.
   out, and polls its plugin every 100 ms instead of every 16 ms while no editor is open; a batch, an editor or a
   call from the app brings the quick rhythm back at once. The app still sees an idle process alive (it beats at
   least every 100 ms). Thirty idle plugins no longer keep thirty processes waking well over a hundred times a second.
+- **The app uses almost no CPU while nothing moves, and less still when minimized.** An open audio stream no
+  longer keeps the interface running sixty frames a second. With the transport stopped and nothing animating,
+  the app looks at the engine, the meters and the plugins ten times a second; a minimized window with nothing
+  moving does it four times a second and draws nothing (while the transport plays or something else moves,
+  it keeps the full rate and still draws nothing), and a resize to nothing no longer rebuilds the graphics
+  target. Playback, recording, a drag, a menu, a plugin that loads, live MIDI and anything else that moves still
+  run at the full rate, and the full rate lasts a second after the last thing drawn, so meters and lights settle
+  as before. Live MIDI wakes the app at once. The DSP figures in the status line no longer flip with the tiniest
+  jitter of an idle engine: a small move (under two points) shows up to ten seconds late, a real change at once.
+- **A device that shows the same meter values every batch is not fed again.** The engine publishes a new
+  sequence with every batch while it runs, so every metered effect, plugin and note player was handed its
+  values on every frame even when nothing sounded. The app now keeps what it last fed each device and
+  skips a device whose values are identical and whose panel had settled on them; a panel that is made again
+  (an edit that changes the rack, a container opened) is fed once more. Meters show the same values with the
+  same ballistics. A stopped rack was already painting about zero frames a second; this removes the
+  per-device work behind it.
+- **A frame with nothing to show builds nothing, and the templates folder is not read on a timer.** The MIDI
+  mapping rows, the relink list and the film and export encoder text are made only while their panel is open,
+  the plugin device list and the pinned plugin params are looked at only when the project changed, and the
+  menu and listening checks no longer copy lists, so an idle frame allocates nothing (a test counts it). The
+  templates folder is read when a menu opens, when a window gets the focus and after Save as Template, not once
+  a second.
+- **The recovery snapshot of a project with plugins is written only when something changed.** The plugins are
+  still asked for their state in every period, but the snapshot is written only when the project or a plugin
+  state differs from the last one, so a project nobody touches no longer writes to the disk every minute.
+- **The audio streamer rests when it has been idle for a while.** After a tenth of a second with nothing to
+  fill it sleeps 10 ms between looks instead of 1 ms; playing, a locate, a loop change and any transport
+  command from the interface bring it back at once.
+- **Reverbs and delays stop using CPU once their tail has died away.** A plugin now rests when its input has been
+  silent for the tail it reports and its own output has been silent for a second, in both plugin formats; any
+  input, note, parameter change, request of the plugin or play/stop wakes it. A plugin that reports no tail but
+  keeps ringing is no longer cut at the first silent block, and a VST3 plugin that declares a tail without end is
+  never put to sleep (it may sound on its own after a silence, like a long feedback delay). CLAP plugins that answer
+  "continue if not quiet" rest too (one that answers "tail" or "continue" is still called). A bounce is unchanged for
+  plugins that make silence from silence.
+- **A bypassed plugin uses no CPU after a while.** An effect that has been bypassed for 10 seconds without a break is
+  no longer run; its delay compensation, the dry signal and the end of held notes are unchanged, and a value you set
+  meanwhile reaches the plugin (and so a saved project) within a twentieth of a second. Switching the bypass off
+  after that clears the plugin and runs it for 20 ms (or its latency, if longer) with the output still dry before
+  the usual fade in, so it does not start from stale state or click. Comparing with the bypass on and off a few
+  seconds apart is unchanged: the plugin keeps running meanwhile. A bounce parks the same way, so an export
+  equals what you hear; one whose effect is bypassed throughout, or never, is unchanged.
+- **A plugin scan runs gently.** The scanner programs start below normal priority, so a rescan no longer competes with
+  playback or the interface, and a machine with four logical CPUs or fewer runs one scanner at a time (more CPUs: half
+  of them, at least two and at most eight, as before). A scan started while audio plays follows the same rule.
+- **The scan time limit is per plugin class, not per file.** The limit in the plugin settings now applies to each class
+  of a plugin file: the clock starts again whenever the scanner reports a class, so a large shell file with many
+  plugins in it is no longer judged by one limit for all of them. A file whose scan times out with nothing found is
+  still blacklisted as before. Scan results of plugins that behave are unchanged.
+- **A crashed plugin is reloaded once by itself.** A plugin whose process crashed after it had run for ten seconds
+  is reloaded from its last captured state, as RELOAD does; the device says so in the plugin log and in a notice.
+  A second crash within five minutes stays CRASHED until RELOAD, and a plugin that dies while it loads, during an
+  export or a bounce, or by the crash that quarantines it is not reloaded. Every crash still counts toward the
+  quarantine.
+- **Render workers only run while the audio thread needs them.** The engine times each device and, while a project's
+  devices together take under a fifth of the time one callback has, runs everything on the audio thread and leaves the
+  render workers asleep: a stopped rack no longer keeps them spinning through every callback (the 100-device stress
+  rack with automatic workers falls from about 80 % of a core to about 17 %, what it costs with none). When the load
+  reaches 30 % of that time the workers are used from the next batch, they are used for the first second after Play,
+  and they are given up again only after a second under 20 %. A project that has needed them while playing keeps
+  them for as long as it plays. Exports and bounces still hand every level to the workers. The sound is unchanged:
+  a bounce is the same bytes for any worker count.
+- **A window that presents without waiting is painted at most once per frame.** With two or more windows open (a
+  detached rack or mixer, the spectrum or browser window, a second song) a sweep of the pointer, a drag or a scroll
+  built and rendered a full frame for every batch of events, many times more often than any screen shows. Such a
+  window now paints at most once per frame period (60 Hz); the paint that was held back happens when the period is
+  over and shows the latest state, even with no further event and no audio running. A resize, a scale change, a
+  window that is uncovered or gains the focus, a frame that was not shown, the first paint and screenshots are never
+  held back, a lone window keeps painting in step with its monitor as before, and the periodic activity line now
+  also says how many paints were held back per window.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
@@ -313,6 +388,53 @@ may break APIs and the patch and project formats.
   blocks in a row, and a good block starts the count again. A panic still fails it at once. The rule looks only at
   what the plugin returned, so a bounce, live playback, a plugin in the app and a sandboxed one agree, and a
   project with no bad block renders exactly as before.
+- **A misbehaving plugin can no longer take the app down through an oversized state, at exit, or through an
+  out-of-range event.** A VST3 or CLAP plugin that seeks far into its state stream and writes, or that writes
+  without end, now gets an error from the stream at 64 MB (the most the app can carry anyway) instead of
+  exhausting memory; saving a large VST3 state holds one copy less. A plugin that is still in use when the app
+  shuts down or restarts its engine keeps its library loaded until it has been released, instead of crashing
+  as it is let go. An event a plugin process places beyond the 64 frames of a block is delivered on the block's
+  last frame; a project and a bounce with events inside the block are unchanged.
+- **Stopping a very long recording no longer risks closing the app.** At the end of a take each lap is read back to
+  be stored; the memory for it is now asked for in a way that can fail without aborting. When a take is too long
+  to finish in memory, or storing a lap fails for any other reason, the recording ends with a notice that names the
+  files, the files stay in the project's `Audio` folder, and they come back as a recovered take the next time
+  Atomik Rack starts; the app keeps running. A take that finishes is stored exactly as before.
+- **A recording that cannot be written stops at once, and a nearly full disk is announced.** When writing a take
+  fails (the disk is full, or the system reports another error) the recording now ends in the same frame, as if
+  stop had been pressed, with one notice that gives the reason and names the files that were kept for recovery; the
+  transport keeps running. Before, the app went on showing a recording that was no longer being written. When an
+  audio take starts with less room on the disk than ten minutes of it need (twice, for the copy stored at the
+  end), a notice says so; the take still starts.
+- **A plugin that asks to be restarted again and again no longer loops.** A plugin that announces a latency change
+  from inside its own activation (many do) made the host restart it, which made it announce again, for ever:
+  dropouts and a busy interface. The host now restarts a plugin for a latency that differs from the one it runs
+  with, for a parameter table whose ids, ranges or ports differ, and for an explicit request; what a plugin asks
+  while it is being activated is dropped, and its latency is read once afterwards. A change of parameter titles
+  alone (what many plugins announce when a preset loads) no longer deactivates and activates the plugin: the new
+  titles appear in the rack as they are. A plugin that still asks for a fifth restart in a row is ignored, with
+  one warning in its log, and keeps running in its last working activation; the rule counts polls, not time, so a
+  bounce is unchanged and the same with the plugin sandbox on or off.
+- **Recordings and monitoring no longer lose audio when the driver delivers buffers of uneven size.** With an audio
+  input open, captured audio that arrived in a burst was thrown away whenever one callback happened to be short,
+  which counted as input overruns (hundreds to thousands of frames in a session) and clicked in the monitor and in
+  takes. The room kept for captured audio now follows the buffer size the interface was opened with, grows a little
+  for a driver that delivers its input in packets and shrinks again when the room is no longer used; two interfaces
+  with drifting clocks are still kept in step and never get extra delay for it. Export Diagnostics shows how much
+  input backlog is allowed, and the status line shows it while extra room is in use.
+  Takes land on the timeline where they did before, and a bounce is unchanged.
+- **One bad plugin class no longer costs the whole plugin file.** A plugin file with many classes used to be
+  blacklisted whole when one of them hung or crashed the scanner. The scanner now reports each class as it finishes it;
+  the classes that answered are kept, the class that did not is listed as unsupported with the reason, and the scanner
+  is started again for the classes after it. Only a file in which nothing answers is blacklisted.
+- **A crashing plugin no longer shows a system error dialog during a scan, and leaves nothing behind.** The scanner
+  turns the system error dialogs off, so a plugin that crashes while it loads is reported as a crash at once, not as a
+  timeout half a minute later. Everything a scanner starts (a plugin's helper process too) ends with it, whether the
+  scan finished, timed out, crashed or was cancelled.
+- **A plugin that died while a helper process held its pipes open is noticed at once.** The app now learns of the
+  death of a plugin process from the process itself, not only from the end of its pipes, so a plugin that started a
+  helper process is shown as crashed when it dies instead of seconds later (or when the helper ends); a shared process
+  loses all its plugins at once. There is one report per death, and a shutdown the app asked for is never one.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

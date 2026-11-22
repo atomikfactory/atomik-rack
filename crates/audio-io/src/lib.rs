@@ -71,6 +71,7 @@ mod liveness;
 mod ring;
 mod rt;
 mod select;
+mod slack;
 mod stream;
 mod telemetry;
 
@@ -245,6 +246,14 @@ pub struct Telemetry {
     pub input_trims: u64,
     /// The most input frames the ring held just before one of those trims.
     pub input_backlog_max_frames: u32,
+    /// The most input frames the ring may hold beyond one callback's read before the oldest are
+    /// discarded, now: the bound on the latency the ring adds to the input. It starts at two
+    /// buffers and grows when trims recur (see the audio I/O section of the architecture notes);
+    /// 0 without input.
+    pub input_backlog_allowed_frames: u32,
+    /// The part of [`Telemetry::input_backlog_allowed_frames`] above the base of two buffers: room
+    /// made for a driver that delivers its input in packets larger than a buffer. 0 at the base.
+    pub input_backlog_extra_frames: u32,
     /// The smallest callback seen so far, in frames (0 before the first).
     pub callback_frames_min: u32,
     /// The largest callback seen so far, in frames (0 before the first).

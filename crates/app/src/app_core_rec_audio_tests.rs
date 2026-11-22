@@ -1366,3 +1366,128 @@ fn an_armed_track_is_heard_when_stopped_but_not_in_plain_playback() {
     core.transport_action(TransportAction::Stop);
     assert_eq!(monitor_params(&mut core), vec![(id, 1.0)]);
 }
+
+#[test]
+fn a_take_too_long_to_finish_ends_with_a_notice_and_the_app_goes_on() {
+    let mut core = core_with(2);
+    core.audio.writer_faults = crate::audio_writer::Faults {
+        lap_limit_samples: Some(1_000),
+        fail_after_frames: None,
+    };
+    let key = add_audio_track(&mut core, "Long");
+    arm(&mut core, &key, true);
+    core.transport_action(TransportAction::ToggleRecord);
+    pump(&mut core, 9_600, 480);
+    core.transport_action(TransportAction::Stop);
+    pump(&mut core, 2_400, 480);
+    core.wait_background();
+    assert!(!core.is_recording());
+    assert_eq!(core.audio.rec_pending, 0, "the writer's result was taken");
+    let message = core.last_rejection().unwrap_or_default().to_owned();
+    assert!(
+        message.contains("too long to finish in memory"),
+        "{message}"
+    );
+    assert!(clips(&core, &key).is_empty(), "no clip for a lost take");
+    assert!(core.doc().assets.is_empty(), "no half-registered asset");
+    // The in-progress file stays in the bundle for the next start to recover.
+    let audio = core.bundle_root().unwrap().join("Audio");
+    let kept = std::fs::read_dir(&audio)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("rec-"))
+        .count();
+    assert_eq!(kept, 1);
+    // The next take is an ordinary one.
+    core.audio.writer_faults = Default::default();
+    core.transport_action(TransportAction::ToggleRecord);
+    pump(&mut core, 9_600, 480);
+    core.transport_action(TransportAction::Stop);
+    pump(&mut core, 2_400, 480);
+    core.wait_background();
+    assert_eq!(clips(&core, &key).len(), 1);
+}
+
+#[test]
+fn a_write_error_ends_the_take_at_once_with_one_notice_and_the_transport_goes_on() {
+    let mut core = core_with(2);
+    core.audio.writer_faults = crate::audio_writer::Faults {
+        lap_limit_samples: None,
+        fail_after_frames: Some(2_000),
+    };
+    let key = add_audio_track(&mut core, "Full");
+    arm(&mut core, &key, true);
+    core.transport_action(TransportAction::ToggleRecord);
+    assert!(core.is_recording());
+    // The writer fails on its own thread after 2 000 frames; wait (bounded) for the UI to see it.
+    for _ in 0..2_000 {
+        pump(&mut core, 480, 480);
+        if !core.is_recording() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(!core.is_recording(), "the take stopped without a stop");
+    assert!(
+        core.sink().transport_state().playing,
+        "the transport goes on"
+    );
+    core.wait_background();
+    pump(&mut core, 480, 480);
+    let message = core.last_rejection().unwrap_or_default().to_owned();
+    assert!(message.contains("the disk is full"), "{message}");
+    assert!(message.contains("kept as rec-"), "{message}");
+    assert!(core.audio.recording.is_none());
+    assert_eq!(core.audio.rec_pending, 0);
+    assert!(clips(&core, &key).is_empty());
+    // Pressing stop afterwards adds no second notice.
+    core.transport_action(TransportAction::Stop);
+    pump(&mut core, 480, 480);
+    assert_eq!(core.last_rejection().unwrap_or_default(), message);
+    // The next take is an ordinary one.
+    core.audio.writer_faults = Default::default();
+    core.transport_action(TransportAction::ToggleRecord);
+    pump(&mut core, 9_600, 480);
+    core.transport_action(TransportAction::Stop);
+    pump(&mut core, 2_400, 480);
+    core.wait_background();
+    assert_eq!(clips(&core, &key).len(), 1);
+}
+
+#[test]
+fn arming_a_take_on_a_nearly_full_volume_warns_once_and_a_normal_one_does_not() {
+    let mut core = core_with(2);
+    let key = add_audio_track(&mut core, "Space");
+    arm(&mut core, &key, true);
+    core.audio.free_space = |_| Some(50_000_000);
+    core.transport_action(TransportAction::ToggleRecord);
+    assert!(core.is_recording(), "a warning, not a refusal");
+    let message = core.last_rejection().unwrap_or_default().to_owned();
+    assert!(
+        message.contains("low disk space for recording"),
+        "{message}"
+    );
+    assert!(message.contains("50 MB"), "{message}");
+    core.transport_action(TransportAction::Stop);
+    pump(&mut core, 2_400, 480);
+    core.wait_background();
+
+    let mut roomy = core_with(2);
+    let key = add_audio_track(&mut roomy, "Space");
+    arm(&mut roomy, &key, true);
+    roomy.audio.free_space = |_| Some(u64::MAX);
+    roomy.transport_action(TransportAction::ToggleRecord);
+    assert!(roomy.is_recording());
+    assert!(
+        roomy.last_rejection().is_none(),
+        "{:?}",
+        roomy.last_rejection()
+    );
+    // A volume that cannot say is not a low one.
+    let mut unknown = core_with(2);
+    let key = add_audio_track(&mut unknown, "Space");
+    arm(&mut unknown, &key, true);
+    unknown.audio.free_space = |_| None;
+    unknown.transport_action(TransportAction::ToggleRecord);
+    assert!(unknown.last_rejection().is_none());
+}

@@ -35,7 +35,8 @@
 //!   with the matching [`crate::plugin_data::PluginRescan`]; while a scan runs they are dim and
 //!   the progress bar and `CANCEL` show. The timeout steps by 5 s (Shift: 30 s) within 5 to 300.
 //! * **Lists.** Each plugin has a DISABLE check (`SetPluginDisabled`), each failed file its
-//!   reason and a RETRY (`RetryFile`); a plugin row marked CRASHED has a RETRY of its own
+//!   reason and a RETRY (`RetryFile`), and a NO LIMIT (`RetryFileNoLimit`) when it timed out; a
+//!   plugin row marked CRASHED has a RETRY of its own
 //!   (`RetryPlugin`). The list is scrolled with the wheel; only the rows in view are painted.
 
 use crate::action::UiAction;
@@ -398,6 +399,14 @@ impl PluginSettingsView {
         Some(Rect::new(r.x1 - 64.0, r.y0 + 7.0, r.x1 - 4.0, r.y1 - 7.0))
     }
 
+    /// The NO LIMIT button of failed file `i`, left of RETRY, only for a file that timed out: it
+    /// scans the file again with no time limit.
+    pub fn retry_no_limit_rect(&self, i: usize) -> Option<Rect> {
+        let (_, r) = self.find(Item::Failed(i))?;
+        crate::plugin_data::is_timeout_reason(&self.data.failed.get(i)?.reason)
+            .then(|| Rect::new(r.x1 - 164.0, r.y0 + 7.0, r.x1 - 70.0, r.y1 - 7.0))
+    }
+
     // ------------------------------------------------------------------ events
 
     /// What the button under `pos` does, for its tooltip.
@@ -494,7 +503,12 @@ impl PluginSettingsView {
                         "Disable this plugin: it stays installed but is not offered",
                     )
                 }),
-                Item::Failed(i) => at(self.retry_rect(i), "Try this file again"),
+                Item::Failed(i) => at(self.retry_rect(i), "Try this file again").or_else(|| {
+                    at(
+                        self.retry_no_limit_rect(i),
+                        "Scan again with no time limit: a slow plugin gets as long as it needs",
+                    )
+                }),
                 _ => None,
             };
             if found.is_some() {
@@ -642,6 +656,10 @@ impl PluginSettingsView {
         for (i, f) in self.data.failed.clone().into_iter().enumerate() {
             if self.retry_rect(i).is_some_and(|r| r.contains(pos)) {
                 Self::emit(out, PluginSettingsAction::RetryFile(f.path));
+                return;
+            }
+            if self.retry_no_limit_rect(i).is_some_and(|r| r.contains(pos)) {
+                Self::emit(out, PluginSettingsAction::RetryFileNoLimit(f.path));
                 return;
             }
         }
@@ -1003,9 +1021,16 @@ impl PluginSettingsView {
             Item::Failed(i) => {
                 let f = &d.failed[i];
                 let name = f.path.rsplit(['/', '\\']).next().unwrap_or(&f.path);
+                // The text stops short of the buttons: one more for a file that timed out.
+                let room = r.width()
+                    - if self.retry_no_limit_rect(i).is_some() {
+                        180.0
+                    } else {
+                        80.0
+                    };
                 label(
                     c,
-                    &crate::paint::fit_label_raw(name, r.width() - 80.0, 10.0),
+                    &crate::paint::fit_label_raw(name, room, 10.0),
                     r.x0 + 8.0,
                     r.y0 + 14.0,
                     10.0,
@@ -1014,13 +1039,16 @@ impl PluginSettingsView {
                 );
                 label(
                     c,
-                    &fit_label(&f.reason, r.width() - 80.0, 8.5),
+                    &fit_label(&f.reason, room, 8.5),
                     r.x0 + 8.0,
                     r.y0 + 27.0,
                     8.5,
                     Color::from_rgba8(255, 120, 96, 255),
                     Align::Start,
                 );
+                if let Some(x) = self.retry_no_limit_rect(i) {
+                    sp::button(c, st, x, "NO LIMIT", None, self.hovered(x));
+                }
                 if let Some(x) = self.retry_rect(i) {
                     sp::button(c, st, x, "RETRY", None, self.hovered(x));
                 }

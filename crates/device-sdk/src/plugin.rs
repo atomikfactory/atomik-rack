@@ -302,7 +302,47 @@ fn channels_code(c: Option<Channels>) -> u64 {
     }
 }
 
+/// How a plugin's layout differs from an earlier one, as far as the host has to act on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutChange {
+    /// Nothing differs.
+    Same,
+    /// Only the display text of params differs (names and module paths): the ids, their order,
+    /// the ranges, the step counts and the ports are the same, so the plugin can go on running
+    /// and the app only shows the new titles.
+    Titles,
+    /// The ports or the param table differ in what the host caches: the device is built again.
+    Structure,
+}
+
 impl PluginLayout {
+    /// How this layout differs from `old`: see [`LayoutChange`].
+    pub fn change_from(&self, old: &Self) -> LayoutChange {
+        if self == old {
+            return LayoutChange::Same;
+        }
+        let same_params = self.params.len() == old.params.len()
+            && self.params.iter().zip(&old.params).all(|(a, b)| {
+                a.id == b.id
+                    && a.min.to_bits() == b.min.to_bits()
+                    && a.max.to_bits() == b.max.to_bits()
+                    && a.default.to_bits() == b.default.to_bits()
+                    && a.stepped == b.stepped
+                    && a.steps == b.steps
+            });
+        if same_params
+            && self.same_ports(old)
+            && self.name == old.name
+            && self.vendor == old.vendor
+            && self.version == old.version
+            && self.kind_hint == old.kind_hint
+        {
+            LayoutChange::Titles
+        } else {
+            LayoutChange::Structure
+        }
+    }
+
     /// True when `other` has the same port shape: the same main buses, sidechain, note ports and
     /// aux outputs (what gives the device its sockets). Names, vendor, version and the param
     /// table are not compared: a plugin may rename or reshape its params per patch.

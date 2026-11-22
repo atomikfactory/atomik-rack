@@ -389,3 +389,136 @@ fn big_laps_stream_from_the_bundle_instead_of_staying_in_ram() {
 fn test_now() -> std::time::Instant {
     std::time::Instant::now()
 }
+
+/// The files of the take under the name the orphan scan reads (`rec-<pid>-<take>-<n>.wav`).
+fn orphan_named(cfg: &mut WriterConfig, rig: &Rig) {
+    for (n, t) in cfg.tracks.iter_mut().enumerate() {
+        t.path = rig
+            .bundle
+            .audio_dir()
+            .join(format!("rec-4242-{}-{n}.wav", cfg.take));
+    }
+}
+
+#[test]
+fn a_lap_that_cannot_be_allocated_is_refused_without_allocating() {
+    assert!(lap_buffers(2, 1_000, None).is_some_and(|b| b.len() == 2 && b[1].len() == 1_000));
+    assert!(lap_buffers(2, 1_000, Some(2_000)).is_some(), "at the limit");
+    assert!(
+        lap_buffers(2, 1_000, Some(1_999)).is_none(),
+        "over the limit"
+    );
+    // A request no machine can satisfy fails instead of aborting the process.
+    assert!(lap_buffers(2, usize::MAX / 8, None).is_none());
+    assert!(lap_buffers(usize::MAX / 8, 1, None).is_none());
+}
+
+#[test]
+fn a_take_too_long_to_finish_in_memory_ends_with_a_notice_and_keeps_its_files() {
+    let mut rig = Rig::new("toolong");
+    let tap = rig.handle.record_tap(&[0, 1], 16_384).unwrap();
+    let mut cfgw = rig.config(&[("a", TrackInput::Stereo(0, 1))], 21, u64::MAX);
+    orphan_named(&mut cfgw, &rig);
+    let partial = cfgw.tracks[0].path.clone();
+    let faults = Faults {
+        lap_limit_samples: Some(1_000),
+        fail_after_frames: None,
+    };
+    let (ctl, _) = spawn_with(tap, cfgw, rig.tx.clone(), faults).unwrap();
+    render(&mut rig.engine, 0, 4_096, 64);
+    ctl.send(finish(4_096, 0, linear(0))).unwrap();
+    let message = match rig.result() {
+        Ok(_) => panic!("a take over the limit must not be stored"),
+        Err(m) => m,
+    };
+    assert!(
+        message.contains("too long to finish in memory"),
+        "{message}"
+    );
+    assert!(message.contains("rec-4242-21-0.wav"), "{message}");
+    // Nothing on disk was lost: the in-progress file holds the whole take and the orphan scan
+    // finds it where it looks.
+    let reader = WavStreamReader::open(&partial).expect("a valid WAV");
+    assert_eq!((reader.channel_count(), reader.frames()), (2, 4_096));
+    let found = crate::recovery::scan_orphans(&[rig.bundle.root().to_path_buf()], None, &|_| false);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].path, partial);
+    // No asset was stored for it.
+    let stored: Vec<_> = std::fs::read_dir(rig.bundle.audio_dir())
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().is_file() && !e.file_name().to_string_lossy().starts_with("rec-"))
+        .collect();
+    assert!(stored.is_empty(), "no half-stored asset: {stored:?}");
+}
+
+#[test]
+fn a_take_under_the_limit_is_stored_as_usual() {
+    let mut rig = Rig::new("underlimit");
+    let tap = rig.handle.record_tap(&[0, 1], 16_384).unwrap();
+    let cfgw = rig.config(&[("a", TrackInput::Stereo(0, 1))], 22, u64::MAX);
+    let partial = cfgw.tracks[0].path.clone();
+    let faults = Faults {
+        lap_limit_samples: Some(1_000_000),
+        fail_after_frames: None,
+    };
+    let (ctl, _) = spawn_with(tap, cfgw, rig.tx.clone(), faults).unwrap();
+    render(&mut rig.engine, 0, 4_096, 64);
+    ctl.send(finish(4_096, 0, linear(0))).unwrap();
+    let result = rig.result().unwrap();
+    assert_eq!(result.laps.len(), 1);
+    assert_eq!(bits(&memory(&result.laps[0].asset)[0]), expect(0, 0, 4_096));
+    assert!(!partial.exists(), "stored takes still delete their files");
+}
+
+#[test]
+fn a_write_error_sets_the_flag_names_the_reason_and_keeps_the_files() {
+    let mut rig = Rig::new("diskfull");
+    let tap = rig.handle.record_tap(&[0, 1], 16_384).unwrap();
+    let mut cfgw = rig.config(&[("a", TrackInput::Stereo(0, 1))], 23, u64::MAX);
+    orphan_named(&mut cfgw, &rig);
+    let partial = cfgw.tracks[0].path.clone();
+    let faults = Faults {
+        lap_limit_samples: None,
+        fail_after_frames: Some(2_000),
+    };
+    let (_ctl, _, failed) = spawn_watched(tap, cfgw, rig.tx.clone(), faults).unwrap();
+    assert!(
+        !failed.load(Ordering::Acquire),
+        "clear until something fails"
+    );
+    render(&mut rig.engine, 0, 8_192, 64);
+    // No finish is sent: the writer ends by itself, as soon as it cannot write.
+    let message = match rig.result() {
+        Ok(_) => panic!("a take that cannot be written has no laps"),
+        Err(m) => m,
+    };
+    assert!(
+        failed.load(Ordering::Acquire),
+        "set before the result is sent"
+    );
+    assert!(message.contains("the disk is full"), "{message}");
+    assert!(message.contains("rec-4242-23-0.wav"), "{message}");
+    let reader = WavStreamReader::open(&partial).expect("a valid WAV");
+    assert!(
+        reader.frames() >= 2_000,
+        "what was written stays: {}",
+        reader.frames()
+    );
+    assert!(rig.rx.try_recv().is_err(), "one result, one notice");
+    // The next take has a flag of its own, clear.
+    let tap = rig.handle.record_tap(&[0], 8_192).unwrap();
+    let next = rig.config(&[("b", TrackInput::Mono(0))], 24, u64::MAX);
+    let (ctl, _, failed_next) =
+        spawn_watched(tap, next, rig.tx.clone(), Faults::default()).unwrap();
+    assert!(!failed_next.load(Ordering::Acquire));
+    ctl.send(Ctl::Cancel).unwrap();
+}
+
+#[test]
+fn another_write_error_gives_its_own_text() {
+    let e = hound::Error::IoError(std::io::Error::other("the device went away"));
+    assert!(write_reason(&e).contains("the device went away"));
+    let full = hound::Error::IoError(std::io::ErrorKind::StorageFull.into());
+    assert_eq!(write_reason(&full), "the disk is full");
+}

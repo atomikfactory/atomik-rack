@@ -627,6 +627,14 @@ impl<B: AudioBackend> Shell<B> {
         self.context_menu.as_ref().map(|o| o.window)
     }
 
+    /// Looks at the templates folder again (the menu opens, a window gets the focus) and repaints
+    /// when the list changed. The folder is not watched and never read on a timer.
+    pub(super) fn refresh_templates_list(&mut self) {
+        if self.core.reload_templates() {
+            self.repaint = true;
+        }
+    }
+
     /// The window that has the OS focus as far as the shell knows.
     pub fn focused_window(&self) -> WindowKind {
         self.focused
@@ -636,8 +644,10 @@ impl<B: AudioBackend> Shell<B> {
     /// them there (the rack in the rack window, the console in the console window), and the
     /// keymap context follows. Global shortcuts work from every window.
     pub fn window_focused(&mut self, kind: WindowKind) {
-        // A window coming to the front shows the keys as `keymap.json` has them now.
+        // A window coming to the front shows the keys as `keymap.json` has them now, and the
+        // templates the folder holds now (a file put there while the app was in the background).
         self.reload_keymap_file();
+        self.refresh_templates_list();
         // A menu open in another window closes: one menu is open at a time.
         self.close_other_bars(kind);
         let Some(last) = self.win(kind).map(|w| w.last_focus) else {
@@ -791,16 +801,21 @@ impl<B: AudioBackend> Shell<B> {
 
     /// The windows that have a bar state.
     pub(super) fn bar_windows(&self) -> Vec<WindowKind> {
-        let main = self.menubar.as_ref().map(|_| WindowKind::Main);
-        main.into_iter()
+        self.bar_window_iter().collect()
+    }
+
+    /// [`Self::bar_windows`] without the list (the per-frame questions use it).
+    fn bar_window_iter(&self) -> impl Iterator<Item = WindowKind> + '_ {
+        self.menubar
+            .as_ref()
+            .map(|_| WindowKind::Main)
+            .into_iter()
             .chain(self.window_bars.keys().copied())
-            .collect()
     }
 
     /// The window whose menu is open, if any.
     pub fn open_menu_window(&self) -> Option<WindowKind> {
-        self.bar_windows()
-            .into_iter()
+        self.bar_window_iter()
             .find(|&w| self.bar_ref(w).is_some_and(MenuBar::is_open))
     }
 
@@ -883,8 +898,10 @@ impl<B: AudioBackend> Shell<B> {
         let changed = (bar.look(), bar.deep_look()) != before;
         if opened {
             self.close_other_bars(target);
-            // A menu that opens shows the keys as the file has them now.
+            // A menu that opens shows the keys as the file has them now, and the templates the
+            // folder holds now (it is not watched).
             self.reload_keymap_file();
+            self.refresh_templates_list();
         }
         match outcome {
             MenuBarOutcome::Ignored => None,

@@ -8,6 +8,7 @@
 //!   called with [`PluginIo`], a format-neutral view of one 64-frame block.
 //! * [`NullBackend`] is an in-repo implementation for tests: it needs no plugin file.
 
+use crate::scan::ScanEvent;
 use crate::slot::HostMessenger;
 use crate::soft::{SoftAnswer, SoftBudget};
 use atomik_core::{BATCH, Batch, ExprKind};
@@ -755,6 +756,33 @@ pub trait PluginBackend {
     fn format(&self) -> PluginFormat;
     /// Loads one file and describes every plugin in it.
     fn scan_file(&self, path: &Path) -> Result<Vec<ScannedPlugin>, BackendError>;
+    /// As [`PluginBackend::scan_file`], but tells `emit` what it finds as it goes: first the
+    /// classes it is going to visit ([`ScanEvent::Classes`], each with the little that is known
+    /// without creating it), then each class as soon as it is done ([`ScanEvent::Class`]). The
+    /// classes whose id is in `skip` are neither announced nor visited (a scan that was restarted
+    /// after a class hung leaves out what it already knows). The default scans the whole file
+    /// first and then reports it.
+    ///
+    /// # Errors
+    /// As [`PluginBackend::scan_file`]; a file that holds no class at all is an error, one whose
+    /// classes were all skipped is not.
+    fn scan_file_each(
+        &self,
+        path: &Path,
+        skip: &[String],
+        emit: &mut dyn FnMut(ScanEvent),
+    ) -> Result<(), BackendError> {
+        let found: Vec<ScannedPlugin> = self
+            .scan_file(path)?
+            .into_iter()
+            .filter(|p| !skip.iter().any(|s| s.eq_ignore_ascii_case(&p.plugin.id)))
+            .collect();
+        emit(ScanEvent::Classes(found.clone()));
+        for p in found {
+            emit(ScanEvent::Class(p));
+        }
+        Ok(())
+    }
     /// Creates an instance of a plugin.
     fn instantiate(
         &self,

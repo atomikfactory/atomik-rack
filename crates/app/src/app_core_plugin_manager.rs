@@ -239,6 +239,7 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             PluginManagerAction::RescanFiles(paths) => self.rescan_plugin_files(paths),
+            PluginManagerAction::RescanNoLimit(path) => self.scan_file_without_limit(path),
             PluginManagerAction::RescanAll => self.start_scan(RescanMode::Full),
             PluginManagerAction::CancelScan => {
                 if let Some(job) = &self.plugins.job {

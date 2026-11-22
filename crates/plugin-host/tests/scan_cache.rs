@@ -778,8 +778,12 @@ fn scanners_run_in_parallel_up_to_the_core_count_and_the_cache_order_is_determin
     let cores = std::thread::available_parallelism().map_or(2, std::num::NonZero::get);
     let expected = atomik_plugin_host::parallel_scans(cores).min(names.len());
     let ran = slow.max_running.load(Ordering::SeqCst);
-    // Threads may not all overlap on a loaded machine: at least two did, never more than allowed.
-    assert!((2..=expected).contains(&ran), "{ran} of {expected}");
+    // Threads may not all overlap on a loaded machine: at least two did where two are allowed,
+    // and never more than allowed (a machine of four cores or fewer runs one scanner at a time).
+    assert!(
+        (expected.min(2)..=expected).contains(&ran),
+        "{ran} of {expected}"
+    );
     let paths: Vec<_> = cache.files().map(|f| f.path.clone()).collect();
     let mut sorted = paths.clone();
     sorted.sort();

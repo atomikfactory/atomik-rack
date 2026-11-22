@@ -85,6 +85,10 @@ pub struct Counts {
     pub wakes: u64,
     /// Paints per window, each split by reason (indexed like [`PaintReason::ALL`]).
     pub paints: BTreeMap<WindowKind, [u64; PaintReason::ALL.len()]>,
+    /// Paints per window that the frame cap held back (a paint wanted before the window's frame
+    /// period was over; each is painted later, so these are not paints). A window that is asked
+    /// again before its period ends counts each time.
+    pub deferred: BTreeMap<WindowKind, u64>,
 }
 
 impl Counts {
@@ -114,6 +118,9 @@ impl Counts {
                 window_label(*kind),
                 causes.join(", ")
             ));
+        }
+        for (kind, held) in &self.deferred {
+            out.push_str(&format!(", {} {held} deferred{unit}", window_label(*kind)));
         }
         out
     }
@@ -178,6 +185,12 @@ impl Activity {
         let at = reason.index();
         self.current.paints.entry(kind).or_default()[at] += 1;
         self.total.paints.entry(kind).or_default()[at] += 1;
+    }
+
+    /// A paint of `kind` that the frame cap held back: not a paint.
+    pub fn deferred(&mut self, kind: WindowKind) {
+        *self.current.deferred.entry(kind).or_default() += 1;
+        *self.total.deferred.entry(kind).or_default() += 1;
     }
 
     /// The last full second and the totals.
@@ -305,6 +318,31 @@ mod tests {
         assert_eq!(
             a.snapshot().last_second.summary("/s"),
             "0 wakes/s, main 1 paints/s (resize 1), console 1 paints/s (live 1)"
+        );
+    }
+
+    #[test]
+    fn a_deferred_paint_is_counted_apart_and_is_not_a_paint() {
+        let mut a = Activity::new();
+        a.paint(WindowKind::Rack, PaintReason::Input);
+        for _ in 0..40 {
+            a.deferred(WindowKind::Rack);
+        }
+        a.deferred(WindowKind::Console);
+        a.advance(secs(1.0));
+        let s = a.snapshot();
+        assert_eq!(s.last_second.paints_of(WindowKind::Rack), 1);
+        assert_eq!(s.last_second.paints_of(WindowKind::Console), 0);
+        assert_eq!(
+            s.last_second.summary("/s"),
+            "0 wakes/s, rack 1 paints/s (input 1), rack 40 deferred/s, console 1 deferred/s"
+        );
+        assert_eq!(s.total.deferred.get(&WindowKind::Rack), Some(&40));
+        // A second with none says nothing about it.
+        a.advance(secs(2.0));
+        assert_eq!(
+            a.snapshot().last_second.summary("/s"),
+            "0 wakes/s, no paints"
         );
     }
 

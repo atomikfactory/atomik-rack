@@ -29,43 +29,46 @@ impl RackView {
     /// quiet device settles and stops repainting. Values for unknown devices or devices without
     /// a visual are ignored; the per-device buffer is reused, nothing allocates after the first
     /// call.
-    pub fn set_device_meter_values(&mut self, key: &DeviceKey, values: &[f32]) {
+    ///
+    /// Returns `false` when the values left the panel exactly as it was and the panel feed is a
+    /// pure function of the values and of what the panel shows (the effect panels, the plugin
+    /// panels and the note players): feeding the same values again then changes nothing either,
+    /// so the host may stop feeding them until they differ. Every other panel answers `true`.
+    pub fn set_device_meter_values(&mut self, key: &DeviceKey, values: &[f32]) -> bool {
         let Some(i) = self.device_index(key) else {
-            return;
+            return true;
         };
         if self.devices[i].spec.seq.is_some()
             || self.devices[i].spec.arp.is_some()
             || self.devices[i].spec.drum_gen.is_some()
             || self.devices[i].spec.chord_wheel.is_some()
         {
-            self.player_meter_feed(i, values);
-            return;
+            return self.player_meter_feed(i, values);
         }
         if self.devices[i].spec.drum.is_some() {
             self.drum_meter_feed(i, values);
-            return;
+            return true;
         }
         if self.devices[i].spec.modsrc.is_some() {
             self.modsrc_meter_feed(i, values);
-            return;
+            return true;
         }
         if self.devices[i].spec.granular.is_some() {
             self.granular_meter_feed(i, values);
-            return;
+            return true;
         }
         if self.devices[i].spec.wavetable.is_some() {
             self.wavetable_meter_feed(i, values);
-            return;
+            return true;
         }
         if self.devices[i].spec.plugin.is_some() {
-            self.plugin_meter_feed(i, values);
-            return;
+            return self.plugin_meter_feed(i, values);
         }
         let Some(kind) = self.devices[i].fx else {
-            return;
+            return true;
         };
         if !fx::update_display(kind, values, &mut self.devices[i].meters) {
-            return;
+            return false;
         }
         self.devices[i].bump_live();
         if kind == FxKind::Character {
@@ -81,6 +84,7 @@ impl RackView {
         if self.flip == super::Flip::Front && !d.folded && d.y + d.height >= top && d.y <= bottom {
             self.repaint = true;
         }
+        true
     }
 
     /// Feeds the analysis of a spectrum or phase meter device (`AppCore::feed_device_scopes`):

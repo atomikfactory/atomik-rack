@@ -85,8 +85,11 @@ pub enum PluginMessage {
     StateDirty,
     /// The plugin's latency changed.
     LatencyChanged,
-    /// The plugin's param table changed.
+    /// The plugin's param table changed in what the host caches: the device restarts.
     RescanParams,
+    /// The plugin renamed params (titles, groups) and nothing else changed: the new layout, to
+    /// show without a restart.
+    ParamTitles(Box<atomik_device_sdk::PluginLayout>),
     /// The plugin or the device wants a restart (a new sample rate, a changed layout).
     RequestRestart,
     /// The plugin asked for a main-thread callback.

@@ -645,6 +645,8 @@ pub struct Shell<B: AudioBackend> {
     overload: OverloadStats,
     /// The audio status of the last poll, for the diagnostics report.
     audio_status: AudioStatus,
+    /// Keeps the DSP figures of the status line from flipping with every jitter.
+    dsp_hold: crate::status::DspHold,
     overload_logged: OverloadStats,
     /// Status polls since the counters were last logged (they are logged at most every 20).
     overload_polls: u32,
@@ -970,6 +972,7 @@ impl<B: AudioBackend> Shell<B> {
             stream_reset: false,
             overload: OverloadStats::default(),
             audio_status: AudioStatus::default(),
+            dsp_hold: crate::status::DspHold::default(),
             overload_logged: OverloadStats::default(),
             overload_polls: 0,
             crash_context: String::new(),
@@ -3342,20 +3345,22 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Feeds the relink panel the missing list; it closes when nothing is missing any more.
     fn sync_relink(&mut self) {
-        let entries: Vec<RelinkEntry> = self
-            .core
-            .missing_assets()
-            .iter()
-            .map(|m| RelinkEntry {
-                hash: m.hash.clone(),
-                name: m.name.clone(),
-            })
-            .collect();
-        if entries.is_empty() {
+        // Nothing is missing, or nobody looks at the list: no entries are built (they clone two
+        // strings each).
+        if self.core.missing_assets().is_empty() {
             if self.relink.take().is_some() {
                 self.repaint = true;
             }
         } else if let Some(view) = &mut self.relink {
+            let entries: Vec<RelinkEntry> = self
+                .core
+                .missing_assets()
+                .iter()
+                .map(|m| RelinkEntry {
+                    hash: m.hash.clone(),
+                    name: m.name.clone(),
+                })
+                .collect();
             view.set_missing(entries);
             if view.needs_repaint() {
                 self.repaint = true;
@@ -3410,6 +3415,10 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Feeds the MIDI Mappings panel the project's rows.
     fn sync_midi_maps(&mut self) {
+        // The rows and the ports are only built for a panel that is there to show them.
+        if self.midi_maps.is_none() {
+            return;
+        }
         let rows = self.core.midi_map_rows();
         let ports = self.midi_port_names();
         if let Some(view) = &mut self.midi_maps {
@@ -5977,6 +5986,11 @@ impl<B: AudioBackend> Shell<B> {
                 return Vec::new();
             }
             UiEvent::Resize(size) => {
+                // A window with no area (minimized) has nothing to lay out: it keeps the size
+                // it had and is laid out again when it comes back.
+                if !(size.width > 0.0 && size.height > 0.0) {
+                    return Vec::new();
+                }
                 if let Some(w) = self.wins.get_mut(&window) {
                     w.size = *size;
                 }
@@ -10948,10 +10962,6 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
         }
         self.core.transport_frame(now_seconds);
-        // A template dropped into the folder shows in File > New from Template.
-        if self.core.refresh_templates(now_seconds) {
-            self.repaint = true;
-        }
         self.save_click_level();
         self.core.plugin_tick(now_seconds);
         // A plugin window closed somewhere new: the position is kept for next time.
@@ -11738,7 +11748,10 @@ impl<B: AudioBackend> Shell<B> {
                 report.display()
             ));
         }
-        let mut text = status_text(&status);
+        // The text shows the DSP figures held steady; everything else reads the real ones.
+        let mut shown = status.clone();
+        self.dsp_hold.apply(&mut shown, at);
+        let mut text = status_text(&shown);
         if let Some(alert) = self.core.pdc_alert() {
             text = format!("{alert} \u{b7} {text}");
         }
@@ -12360,6 +12373,13 @@ mod themes_impl;
 #[path = "shell_help.rs"]
 mod help_impl;
 use help_impl::HelpMode;
+
+#[path = "shell_wake.rs"]
+mod wake_impl;
+
+#[cfg(test)]
+#[path = "shell_wake_tests.rs"]
+mod wake_tests;
 
 #[path = "shell_tooltip.rs"]
 mod tooltip_impl;

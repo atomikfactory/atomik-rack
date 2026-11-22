@@ -108,7 +108,7 @@ impl RackView {
 
     /// Feeds the meter values of a plugin device (state, latency, dropped): the panel repaints
     /// only when one of the three, rounded, changed.
-    pub(super) fn plugin_meter_feed(&mut self, i: usize, values: &[f32]) {
+    pub(super) fn plugin_meter_feed(&mut self, i: usize, values: &[f32]) -> bool {
         let at = |ix: usize| values.get(ix).copied().unwrap_or(0.0).round();
         let new = [
             0.0,
@@ -118,12 +118,13 @@ impl RackView {
             at(METER_DROPPED),
         ];
         if self.devices[i].meters.as_slice() == new {
-            return;
+            return false;
         }
         self.devices[i].meters.clear();
         self.devices[i].meters.extend_from_slice(&new);
         self.devices[i].bump_live();
         self.repaint = true;
+        true
     }
 
     /// Centre of a button of a plugin panel (logical view coordinates); `None` when the button

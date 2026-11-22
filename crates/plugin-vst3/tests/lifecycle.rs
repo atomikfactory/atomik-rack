@@ -6,7 +6,9 @@ atomik_testkit::install_alloc_guard!();
 mod support;
 
 use atomik_core::BATCH;
-use atomik_plugin_host::{InstanceId, ManagerEvent, PluginHandle, PluginManager};
+use atomik_plugin_host::{
+    InstanceId, LogLevel, ManagerEvent, PluginHandle, PluginManager, RESTART_BURST,
+};
 use atomik_test_plugin_core as core;
 use atomik_testkit::harness::DeviceHarness;
 use support::*;
@@ -423,3 +425,195 @@ fn the_processor_runs_on_whichever_thread_the_device_is_driven_from() {
         drop(h);
     }
 }
+
+// ----- the module outlives the audio half -------------------------------------------------------
+
+#[test]
+fn a_device_that_outlives_the_manager_and_the_backend_keeps_the_module_loaded_until_it_is_dropped()
+{
+    let _s = serial();
+    for format in FORMATS {
+        let k = kit(format);
+        // A second handle on the library, to read its entry and exit counters (it also keeps the
+        // file mapped, so a plugin released too late is seen in the counters, not as a crash).
+        let lib = TestLib::open_path(&k.path);
+        let mut m = manager_for(format, std::slice::from_ref(&k.path));
+        let (mut h, _id, _) = open(&mut m, &k.plugin(Plug::Gain));
+        run(&mut h, 3);
+        let init = lib.counter(counter::ENTRY_INIT);
+        let deinit = lib.counter(counter::ENTRY_DEINIT);
+        // The host goes away first (an engine restart or the exit), the device last: its
+        // processor is released after the manager and the backend that loaded the module.
+        drop(m);
+        assert_eq!(
+            lib.counter(counter::ENTRY_DEINIT),
+            deinit,
+            "{}: the module's exit ran while a device still held its processor",
+            format.name()
+        );
+        drop(h);
+        assert_eq!(lib.counter(counter::ENTRY_INIT), init);
+        if format == Format::Vst3 {
+            assert_eq!(
+                lib.counter(counter::ENTRY_DEINIT),
+                deinit + 1,
+                "the exit runs once the last device is gone"
+            );
+        }
+    }
+}
+
+// ----- a restart only when something changed ----------------------------------------------------------
+
+fn restarts(events: &[ManagerEvent], id: InstanceId) -> usize {
+    events
+        .iter()
+        .filter(|e| matches!(e, ManagerEvent::Restarted(i) if *i == id))
+        .count()
+}
+
+#[test]
+fn a_latency_signal_that_changes_nothing_restarts_nothing() {
+    let _s = serial();
+    for format in FORMATS {
+        let k = kit(format);
+        let lib = TestLib::open_path(&k.path);
+        let mut m = manager_for(format, std::slice::from_ref(&k.path));
+        let (mut h, id, native) = open(&mut m, &k.plugin(Plug::Gain));
+        run(&mut h, 2);
+        let _ = m.poll();
+        let mut events = Vec::new();
+        for _ in 0..3 {
+            lib.command_raw(native, command::LATENCY_CHANGED, 0, 0);
+            for _ in 0..4 {
+                h.process();
+                events.extend(m.poll());
+            }
+        }
+        assert_eq!(restarts(&events, id), 0, "{}: {events:?}", format.name());
+        assert_eq!(lib.probe_raw(native, probe::ACTIVATIONS), 1);
+        assert_eq!(lib.probe_raw(native, probe::DEACTIVATIONS), 0);
+        assert_eq!(m.latency(id), Some(0));
+    }
+}
+
+#[test]
+fn a_plugin_that_announces_from_inside_its_activation_is_activated_once() {
+    let _s = serial();
+    for format in FORMATS {
+        let k = kit_variants(format);
+        let lib = TestLib::open_path(&k.path);
+        let mut m = manager_for(format, std::slice::from_ref(&k.path));
+        let (mut h, id, native) = open(&mut m, &k.variant(Variant::Chatty));
+        let mut events = Vec::new();
+        for _ in 0..40 {
+            h.process();
+            events.extend(m.poll());
+        }
+        // Without the rule every activation asks for the next one, for ever.
+        assert_eq!(restarts(&events, id), 0, "{}: {events:?}", format.name());
+        assert_eq!(lib.probe_raw(native, probe::ACTIVATIONS), 1);
+    }
+}
+
+#[test]
+fn a_plugin_that_asks_for_a_restart_after_every_block_is_stopped_after_a_burst() {
+    let _s = serial();
+    for format in FORMATS {
+        let k = kit_variants(format);
+        let lib = TestLib::open_path(&k.path);
+        let mut m = manager_for(format, std::slice::from_ref(&k.path));
+        let (mut h, id, native) = open(&mut m, &k.variant(Variant::Storm));
+        *h.input_mut("in_l") = [0.25; BATCH];
+        let mut events = Vec::new();
+        // Until the warning (a condition, with a generous bound), then a while longer.
+        let warned = |events: &[ManagerEvent]| {
+            events.iter().any(
+                |e| matches!(e, ManagerEvent::Log { text, .. } if text.contains("keeps asking")),
+            )
+        };
+        for _ in 0..20_000 {
+            h.process();
+            events.extend(m.poll());
+            if warned(&events) {
+                break;
+            }
+        }
+        for _ in 0..60 {
+            h.process();
+            events.extend(m.poll());
+        }
+        let name = format.name();
+        assert_eq!(
+            restarts(&events, id),
+            RESTART_BURST as usize,
+            "{name}: {events:?}"
+        );
+        let warnings = events
+            .iter()
+            .filter(|e| {
+                matches!(e, ManagerEvent::Log { instance, level: LogLevel::Warning, text }
+                    if *instance == id && text.contains("keeps asking"))
+            })
+            .count();
+        assert_eq!(warnings, 1, "{name}: said once: {events:?}");
+        // The plugin stays in its last activation and goes on processing.
+        let calls = lib.probe_raw(native, probe::PROCESS_CALLS);
+        run(&mut h, 8);
+        assert!(
+            lib.probe_raw(native, probe::PROCESS_CALLS) >= calls + 8,
+            "{name}"
+        );
+        assert!(!silent(&h), "{name}");
+        assert_eq!(
+            lib.probe_raw(native, probe::ACTIVATIONS),
+            1 + u64::from(RESTART_BURST)
+        );
+    }
+}
+
+#[test]
+fn a_change_of_param_titles_alone_is_shown_without_a_restart() {
+    let _s = serial();
+    for format in FORMATS {
+        let k = kit_variants(format);
+        let lib = TestLib::open_path(&k.path);
+        let mut m = manager_for(format, std::slice::from_ref(&k.path));
+        let (mut h, id, native) = open(&mut m, &k.variant(Variant::Retitle));
+        let name = format.name();
+        assert_eq!(m.layout(id).unwrap().params[0].name, "Level");
+        match format {
+            // The plugin is asked for a main-thread callback and rescans the titles there.
+            Format::Clap => lib.command_raw(native, CLAP_REQUEST_CALLBACK, 0, 0),
+            // The plugin renames and tells the host `kParamTitlesChanged`.
+            Format::Vst3 => lib.command_raw(native, command::RESCAN_PARAMS, 0, 0),
+        };
+        let mut events = Vec::new();
+        for _ in 0..8 {
+            h.process();
+            events.extend(m.poll());
+        }
+        let titles = events.iter().find_map(|e| match e {
+            ManagerEvent::ParamTitlesChanged { instance, layout } if *instance == id => {
+                Some(layout)
+            }
+            _ => None,
+        });
+        let titles =
+            titles.unwrap_or_else(|| panic!("{name}: no ParamTitlesChanged in {events:?}"));
+        assert_eq!(titles.params[0].name, "Drive");
+        assert_eq!(m.layout(id).unwrap().params[0].name, "Drive");
+        assert_eq!(restarts(&events, id), 0, "{name}: {events:?}");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, ManagerEvent::LayoutChanged { .. })),
+            "{name}: {events:?}"
+        );
+        assert_eq!(lib.probe_raw(native, probe::ACTIVATIONS), 1, "{name}");
+        assert_eq!(lib.probe_raw(native, probe::DEACTIVATIONS), 0, "{name}");
+    }
+}
+
+/// The CLAP test command `request_callback()`.
+const CLAP_REQUEST_CALLBACK: u32 = 6;

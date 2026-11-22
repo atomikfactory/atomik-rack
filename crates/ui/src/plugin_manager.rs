@@ -23,6 +23,8 @@
 //! * RESCAN SELECTED and RESCAN ALL start the scan worker, which shows its progress here (the
 //!   same button then cancels it): [`PluginManagerAction::RescanFiles`], [`PluginManagerAction::RescanAll`],
 //!   [`PluginManagerAction::CancelScan`];
+//! * NO TIME LIMIT, which appears when a file that timed out is chosen, scans that file again with no
+//!   time limit (CANCEL stops it): [`PluginManagerAction::RescanNoLimit`];
 //! * SHOW IN FOLDER asks the platform to open the file manager at the file;
 //! * the tag field and ADD TAG tag the chosen plugins, a click on a tag of the first chosen plugin
 //!   takes it away: [`PluginManagerAction::AddTag`], [`PluginManagerAction::RemoveTag`].
@@ -157,6 +159,8 @@ pub enum PluginManagerAction {
     },
     /// Scan these files again.
     RescanFiles(Vec<String>),
+    /// Scan this file, which timed out, again with no time limit (CANCEL stops it).
+    RescanNoLimit(String),
     /// Scan everything again.
     RescanAll,
     /// Stop the running scan.
@@ -845,6 +849,35 @@ impl PluginManagerView {
         self.action_rects()[4]
     }
 
+    /// The NO TIME LIMIT button, right of RESCAN ALL. It is there only while a file that timed
+    /// out is chosen and no scan runs; a file that crashed or failed has no such button.
+    pub fn no_limit_rect(&self) -> Option<Rect> {
+        if self.data.scan.is_some() || self.no_limit_targets().is_empty() {
+            return None;
+        }
+        let all = self.rescan_all_rect();
+        Some(Rect::new(
+            all.x1 + 8.0,
+            all.y0,
+            all.x1 + 8.0 + 124.0,
+            all.y1,
+        ))
+    }
+
+    /// The chosen files that failed to scan because they ran out of time.
+    fn no_limit_targets(&self) -> Vec<String> {
+        let mut files: Vec<String> = Vec::new();
+        for row in self.chosen() {
+            if let (None, PluginEntryStatus::Failed(reason)) = (&row.type_id, &row.status)
+                && crate::plugin_data::is_timeout_reason(reason)
+                && !files.contains(&row.path)
+            {
+                files.push(row.path.clone());
+            }
+        }
+        files
+    }
+
     // ------------------------------------------------------------------ what the buttons do
 
     /// Whether the chosen plugins are all hidden by the user already (the button then enables).
@@ -1084,6 +1117,12 @@ impl PluginManagerView {
                 return tip(rect, text);
             }
         }
+        if let Some(r) = self.no_limit_rect().filter(|r| r.contains(pos)) {
+            return tip(
+                r,
+                "Scan again with no time limit: a slow plugin gets as long as it needs; CANCEL stops it",
+            );
+        }
         if self.rescan_all_rect().contains(pos) {
             let r = self.rescan_all_rect();
             return tip(
@@ -1237,6 +1276,13 @@ impl PluginManagerView {
             if !paths.is_empty() && self.data.scan.is_none() {
                 out.push(act(PluginManagerAction::RescanFiles(paths)));
             }
+        } else if self.no_limit_rect().is_some_and(|r| r.contains(pos)) {
+            out.extend(
+                self.no_limit_targets()
+                    .into_iter()
+                    .next()
+                    .map(|path| act(PluginManagerAction::RescanNoLimit(path))),
+            );
         } else if self.rescan_all_rect().contains(pos) {
             out.push(act(if self.data.scan.is_some() {
                 PluginManagerAction::CancelScan
@@ -1682,7 +1728,11 @@ impl PluginManagerView {
             scanning.then_some(st.loop_on),
             hovered(all),
         );
-        let after = all.x1 + 14.0;
+        let mut after = all.x1 + 14.0;
+        if let Some(r) = self.no_limit_rect() {
+            sp::button(c, st, r, "NO TIME LIMIT", None, hovered(r));
+            after = r.x1 + 14.0;
+        }
         let note = match (self.data.scan, self.data.scanner_available) {
             (Some(ScanProgressInfo { done, total }), _) => format!("Scanning {done} of {total}"),
             (None, false) => "No plugin scanner can be run".to_owned(),

@@ -1467,3 +1467,432 @@ while after a bad block (the plugin would miss the notes and parameters that fol
 a preset loads.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AY. The free-space warning before a take is a floor of ten minutes of audio, twice over, and only a warning
+
+**Decision.** When an audio take starts, the app asks the system how much room is left on the volume of the
+project's `Audio` folder and shows a notice when it is less than ten minutes of the take's own audio, twice over
+(`record_space::FREE_SPACE_MINUTES`; 460 MB for one stereo track at 48 kHz). The take starts anyway. The twice is
+the stored copy: when a take ends, each lap is written again under its content hash before the in-progress file is
+deleted. A take whose writer cannot write stops at once, keeps its files for the next start to recover, and says why;
+the transport keeps running.
+
+**Why.** Ten minutes is a song-length take and is a small part of any disk the app is installed on, so the warning
+is rare and means something; a longer take on a nearly full disk is exactly the case the notice is for. A refusal
+would be wrong because the number is an estimate (quotas, other programs writing, a volume that cannot say), and
+because a short take on a small disk is a normal thing to do.
+
+**Limits.** The check is made when the take starts, not when a track is armed, because that is where the folder is
+chosen. A disk that fills up during a take is caught by the writer's error, not by the estimate. The system call
+comes from the `fs4` crate (see [DEPENDENCIES.md](DEPENDENCIES.md)).
+
+**Rejected.** Refusing to record below the floor; checking on every arm (the folder is not chosen yet, and the
+notice would repeat); a floor in bytes whatever the sample rate and track count.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## AZ. A plugin's request for a restart is acted on only when it changes something, and a loop is cut off by counting polls
+
+**Decision.** When a plugin asks the host to restart it, the host restarts it only if something differs. A latency
+request restarts when the latency the plugin reports now is not the one its running activation was made with. A
+param-table rescan restarts when what the host caches differs (the ids and their order, the ranges, the step
+counts, the ports); when only titles or groups changed, nothing restarts and the app shows the new titles
+(`ManagerEvent::ParamTitlesChanged`). An explicit restart request is honoured. What a plugin asks for while the host
+is activating it is what that activation did and is dropped: the latency is read once after the activation. A
+plugin that still asks again and again is honoured `RESTART_BURST` = 4 times in a row; the fifth request and the
+ones after are ignored, one warning goes to the plugin's log, and the plugin keeps running in its last working
+activation. The burst ends after `RESTART_QUIET_POLLS` = 200 manager polls in which the plugin was running and
+did not ask (polls during a restart do not count, so a slow restart cannot end its own burst), and
+the next request is honoured again. The comparison is made where the plugin lives: in the format backend's `poll`, which runs in the
+plugin's own process when the plugin is sandboxed, so a plugin in this process and a sandboxed one agree and only a
+request that matters crosses to the manager.
+
+**Why.** Plugins often announce a latency change from inside their own activation, and a plugin that announces
+unconditionally made every activation start the next one, for ever: dropouts, CPU, a stream of interface changes.
+Mainstream hosts restart a plugin for the change it announced, not for the announcement. Four in a row is more than a
+patch change or a sign-in needs (a latency change, then a layout change, then one more) and few enough that a loop
+costs a fraction of a second. The window is counted in polls, never in time, because an offline render polls once
+after every batch: a bounce does the same on every run, with the plugin sandbox on or off (200 polls are a few
+seconds at the interface rate and about two seconds of audio in a bounce, far longer than a restart takes).
+
+**Limits.** A plugin that asks for a restart once every few seconds for ever is honoured every time; that is a
+plugin that restarts on purpose. A latency that changes by itself while the plugin is parked (deactivated) is read at
+the next activation. A request ignored by the rule is lost, not queued: the plugin is not restarted later for it.
+
+**Rejected.** Comparing in the manager only (a sandboxed plugin would need a call into its process for every
+request, on the interface thread); a time window (a bounce would depend on the machine).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BA. The interface runs at full frame rate only while something moves, and a minimized window does almost nothing
+
+**Decision.** The windowed event loop has three wake rates. At the full frame period (60 Hz) it runs while something
+moves or is polled at that rate: the transport plays or records, a take, a deferred start or a momentary param
+pulse is in flight, a live input analysis, a sampling or the camera runs, a control surface is open, MIDI was heard
+in the last second, a worker or an import is busy, a menu or tooltip waits for the pointer, the rack scrolls, a
+glide or a morph runs, a plugin loads or is captured, a plugin editor window is open, or a pointer button is held.
+It also stays at the full rate for one second (`PAINT_TAIL`) after the last frame that painted something,
+except a frame that only the status poll asked for and a frame painted again because it was not shown. With an
+audio stream open (or a plugin loaded) and none of that, it wakes every 100 ms (`IDLE_STREAM_WAKE`). While every
+window has no area and nothing animates it wakes every 250 ms (`MINIMIZED_WAKE`) and paints nothing; with something
+animating it keeps the frame period and paints nothing, because the timed work of the frame (a snapshot recalled at
+a marker, a glide, a momentary pulse, a preview note) runs there; a resize to no area is dropped
+before the graphics target is reallocated and before the shell lays out. A project with no stream and no plugin
+still sleeps until an event, and the tail applies only where a slow wake exists anyway. Live MIDI wakes the loop at
+once (an event-loop proxy called from the MIDI thread when a message is queued), and the exact deadlines (quit time,
+screenshot, submenu switch, graphics back-off) win over every rate.
+
+The DSP figures of the status line are held steady for ten seconds while they move by less than two points
+(`status::DspHold`): an idle engine's load jitters by a fraction of a point, which flipped the rounded figure and
+repainted the whole window every couple of seconds for nothing. A real change shows at once.
+
+**Why.** An open stream used to mean 60 wakes a second, each running the whole housekeeping frame, for a stopped
+transport and an empty rack: a measurable share of a core, no deep CPU sleep, and the same while minimized. Mainstream
+hosts drop their interface to a few updates a second when idle or hidden and go back to full rate on input or
+playback. The second of tail is long enough for a meter's ballistics and a light to settle and for an animation that
+repaints every few frames to keep itself going, so the tail covers what the list of causes does not name; the first
+paint of anything that changes starts it. Painting nothing while minimized is the cheapest saving of all.
+
+**Limits.** Work that is polled on the frame but is not in the list (engine garbage, the plugin event pumps of idle
+plugins, the status poll, the recovery writer, the plugin cache writer, an idle plugin's notifications, the templates
+folder, autosave timers) runs at most 100 ms late while idle, 250 ms while minimized and idle. A change that happens with
+nothing awake is seen at the next slow wake, up to 100 ms later, and then runs at the full rate. A control surface
+or an open plugin editor keeps the full rate for as long as it is open. A small move of the DSP figures in the status
+line shows up to ten seconds late.
+
+**Rejected.** Waking on every cause with a proxy (the causes live on many threads and in many places; the list plus
+the paint tail is smaller and cannot miss a visible change for longer than the slow period); a longer idle period
+(a mapped control or a worker's result would wait visibly); throttling by painting less often at the full rate (the
+cost is the frame, not only the paint).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BB. Captured input waits for three buffers of the configured size, plus an allowance that grows on lumps and shrinks when the room is unused
+
+**Decision.** The render callback keeps at most `3 * B + extra` frames of captured input in the ring, where `B` is the
+buffer the stream was opened with or the largest callback of the last two windows, if larger (a window is 2000
+callbacks), and `extra` starts at zero. `extra` grows by half a buffer (at least 16 frames) only when a counted trim
+follows a lump: input that arrived in one callback exceeding a buffer by at least half a buffer and at least 32
+frames. It lies between zero and two buffers, clamped to between 10 ms and 30 ms of audio. A trim after a steady
+arrival is clock drift: it is counted as lost but changes nothing. At the end of a window `extra` shrinks by one step
+only if no lump was trimmed in the window and the largest backlog the window saw (before its trim) would still have
+fitted under the smaller threshold. The allowed backlog beyond one callback (`2 * B + extra`) is published as
+`input_backlog_allowed_frames` (with `input_backlog_extra_frames`); Export Diagnostics and the debug trim line always
+show it, the status line only while `extra` is above zero. Examples at 48 kHz, frames held including the read: a
+buffer of 64 holds 192 (4 ms), at most 672 (14 ms); 256: 768 (16 ms), at most 1280 (27 ms); 512: 1536 (32 ms), at most
+2560 (53 ms); 4096: 12288 (256 ms), at most 13728 (286 ms).
+
+**Why.** The old rule measured three buffers of the callback that was running. Shared-mode drivers deliver callbacks
+of uneven size, so after a short callback a burst of input looked like a backlog and was dropped: audio lost from takes
+and monitoring with no clock drift at all. The configured buffer is what the interface promises on average; the extra
+absorbs a driver that delivers packets (10 ms against a 64-frame buffer, say) and the cap keeps the latency bounded.
+Growing only on lumps keeps drift between two devices from buying latency that cannot stop the loss; shrinking only
+when the room was not used stops a steady packet driver from losing a packet every window; forgetting the largest
+callback after a window keeps one freak callback from tripling the threshold for a session. Takes are placed with the
+measured input latency, which already includes the frames the ring holds, and the allowance changes only what is
+discarded, so a take does not move. All integers on the callback, counted in callbacks, so a bounce and the audio path
+are untouched.
+
+**Limits.** Two interfaces whose clocks drift still lose a frame now and then (counted); there is no resampling. A
+packet driver loses the first packets while the allowance grows (a handful, one step each). A steady backlog left over
+from a burst is room in use, so the allowance stays until the ring drains. An outlier callback is followed at once and
+forgotten within two windows (about ten seconds at a 64-frame buffer).
+
+**Rejected.** A fixed larger threshold (more latency for everyone); a threshold from the running average of callback
+sizes (still tracks short callbacks); growing on every counted trim (drift pushes it to the ceiling for good); shrinking
+by wall time (the audio thread has no clock it may read for this).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+
+## BC. A plugin rests when its input was silent for its tail and its own output for a second
+
+**Decision.** One rule for every plugin format and kind, decided per 64-frame block from batch content and from what the
+plugin returned, never from a clock. A plugin is not called in a block when nothing wakes it (an event of any kind, a
+param change included; a request of the plugin; a non-silent main or sidechain input; a change of the play state) and
+all of this holds: its input has been silent, with no event, for at least the tail it reports; its own output (main,
+aux, and the notes it emits) has been at or below -120 dB for the idle time of one second, counted in calls
+(`IDLE_SECONDS`, 750 blocks at 48 kHz); no note is open; and either the format leaves the choice to the host and the
+tail is not infinite (VST3), or the plugin last answered "continue if not quiet" (CLAP; what its tail extension says
+does not matter then). A VST3 plugin that declares an infinite tail is never skipped by the host. A CLAP plugin that
+answers "sleep" rests until woken, with no other condition; one that answers "tail" or "continue" is called every block.
+A plugin that is new, restarted, reset or just un-parked is observed for the idle second before it can rest. A VST3
+instrument that rests is also told to stop processing and is started before the block that wakes it, as before.
+
+**Why.** The old rule skipped a VST3 plugin only for a tail of exactly zero, so a reverb that reports a tail ran for
+ever on silence, and a plugin that reports none while it rings (a common framework default) was cut at the first silent
+input block. The CLAP path rested only on "sleep", so plugins that answer the other quiet statuses never did. Requiring
+the output to have been silent for a second is what makes a skipped call inaudible: a skipped plugin makes silence,
+because it had been making silence. An infinite tail is the plugin saying it may sound with no input at any time (a
+feedback delay set to three seconds is silent for three seconds and then echoes), and silence so far says nothing about
+when; before this rule such a plugin was always called, and it still is. A CLAP plugin says for
+itself, per block. Everything the rule looks at is in the batches or in the plugin's answers, so a live run, a bounce and a plugin in its own process agree, and
+nothing on the audio path allocates, locks or reads a clock.
+
+**Limits.** A plugin whose output never goes quiet (a constant offset, noise, a dither) never rests, which is the safe
+side. A plugin that makes sound from the transport alone after a second of silence, with no event, is not woken
+mid-play (a change of the play state wakes it), as already for instruments; a VST3 plugin that declares a finite tail
+and then sounds on its own is cut, the declaration being its word. Any event, a param event of automation
+included, restarts the idle second, so a plugin under continuous automation is always called. After a wake the plugin's
+modulation phase and similar state are where the last call left them, not where silent calls would have taken them.
+In a plugin's own process the tail it reports reaches the host one block late, which only matters if a plugin changes
+its tail while it runs.
+
+**Rejected.** Resting on the reported tail alone (cuts plugins that under-report); a fixed idle time with no output test
+(cuts any ring longer than it); resting an infinite tail on output silence (loses a late echo); trusting "continue" and
+"tail" to mean the plugin may rest (they mean the opposite in the CLAP specification); a wall-clock idle time (a bounce
+would differ from playback).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BD. A bypassed effect is parked after ten seconds of bypass, and comes back cleared and pre-rolled
+
+**Decision.** An effect (not an instrument or a note effect) is called as ever while its bypass is on, so comparing with
+and without it (on, off, on, a few seconds apart) is seamless. When the bypass has been on without a break for
+`PARK_AFTER_SECONDS` (10 s, 7500 blocks at 48 kHz, counted from the end of the 5 ms crossfade to the dry signal) the effect
+is parked like a powered-off device: no `process` call, the dry ring and its delay compensation keep running, the end of
+an open note is still delivered, new notes are held back. Pending param changes go to the plugin in one call, with silent
+input and discarded output, at most every `PARK_FLUSH_SECONDS` (50 ms); the plugin is still parked afterwards and the call
+counts for nothing else. The same call serves a powered-off device. The state shows as STOPPED. When the bypass is
+switched off after a park the plugin is reset (`reset`), then called for the pre-roll with its output held at the dry
+signal, then faded in over the usual 5 ms. The pre-roll is `PREROLL_SECONDS` (20 ms: 15 blocks at 48 kHz) or the plugin's
+latency in frames if that is longer, so that a plugin with look-ahead has produced real output by the time its first wet
+frame is used. The rule is the same live and in a bounce: it counts blocks.
+
+**Why.** A user who bypasses a heavy plugin to save CPU saved nothing: the plugin was processed for ever after the fade.
+But parking at once would clear the plugin on every return of a comparison (a compressor with no gain reduction, a reverb
+with no tail, 20 ms late), so the plugin keeps running until the bypass has clearly become a decision. A parked plugin has
+not heard the input for as long as it was bypassed, so without a reset a reverb would bring back the tail it had, and
+without a pre-roll its filters and followers would start from stale state under the fade. A value set meanwhile must be in
+the plugin when its state is saved; waiting for the next real block left it out of a project saved meanwhile, so it is
+sent at once, rate-limited so that automation on a parked plugin costs one call in 38 blocks and not one per block.
+A bounce and live playback must agree, so nothing depends on the run mode; a bounce whose effect is bypassed throughout,
+or never, is what it was (the dry signal, or no change); only a bypass switched off after more than ten seconds
+differs from the version before, and there it equals the live result.
+
+**Limits.** After a park the plugin restarts from a cleared state (only audible for a plugin whose output depends on its
+history). A plugin that dislikes `reset` gets one per return from a park. Instruments and note effects keep what bypass
+meant for them (silence or no notes, still called). A value set in the plugin's own window reaches the plugin directly and
+is not affected.
+
+**Rejected.** Parking as soon as the fade ends (every comparison clears the plugin); pre-rolling for the plugin's whole
+tail (unbounded cost on the audio thread); no reset (stale tails); parking live only (an export would differ from what was
+heard); keeping parameter changes pending until the next real block (missing from a project saved meanwhile); running the
+pre-roll with the output faded in (a clicking, half-formed wet signal).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+
+## BE. A plugin file is scanned class by class, and the scan's time limit is per class
+
+**Decision.** The scanner child prints one line when it knows the classes of a file (their ids and names, nothing created
+yet) and one more as each class is finished, then the result line. The parent measures the time limit per class: the clock
+starts with the child and starts again at every such line, so the limit of the plugin settings (30 s by default) is what one
+class may take, not what a whole file may take. When the child hangs or crashes inside a class, the classes that answered
+are kept, the first class without an answer is listed in the cache as unsupported with the reason, and the scanner is
+started again for the classes after it with that class and the answered ones left out (`MAX_CLASS_RESTARTS`, 8, at most).
+The file as a whole is blacklisted, as before, only when no class answered; two classes that fail before any answers also
+end the attempt, because a file in which everything fails is the file's fault. Everything a scanner child starts lives in a
+group that ends with it (a job object that kills on close on Windows, a process group elsewhere), so a timeout, a crash, a
+cancel and a finished scan all leave no helper process; the scanner runs below normal priority and with the system error
+dialogs off, so a crash is a crash at once. A machine with four logical CPUs or fewer runs one scanner at a time.
+A group is signalled at most once, and on Unix only before its leader is reaped: a process group id is held only while the
+group has a member or its leader is a zombie, so a later signal could kill an unrelated process that was given the number.
+Every path therefore looks at the leader without reaping it (`waitid` with `WNOWAIT`), signals the group, then waits for the
+child; a group dropped unsignalled is signalled in its drop, still before the child is waited for.
+
+**Why.** A shell file with a hundred classes was judged by one limit for all of them and blacklisted whole when one was
+slow, losing the ninety-nine that were fine. A limit per class is what a user sets the number for: how long one plugin may
+take to wake up. Counting only the scanner's own lines, not whatever a plugin prints, keeps a plugin that talks while it is
+stuck from keeping itself alive. The cache keeps no new field: a class that did not answer is an ordinary entry that is not
+supported, with the reason, so an old cache reads as before and the scanner version did not change (the entries of plugins
+that behave are the same bytes).
+
+**Limits.** A class that times out costs a full limit, then a restart of the file's load; a file of many bad classes costs
+up to nine limits before it is given up on. The retry with no time limit (NO TIME LIMIT in the plugin manager, NO LIMIT in the
+plugin settings) runs one file alone with no limit, and is offered for a file that is blacklisted for a timeout, not for
+one class listed as unsupported in a file that mostly worked; for that file a full rescan is the way to try again.
+
+**Rejected.** One limit that grows with the number of classes (a file that is slow to load is not slow per class, and the
+number is only known once the file is loaded); a limit per file with no restart (the old behaviour); keeping the answered
+classes in a separate cache section (a format change for what a flag on an entry says).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BF. A plugin that crashed after a while is reloaded once by itself, and its death is noticed from its process
+
+**Decision.** The app learns that a plugin process died from the process itself, not only from the end of its output pipe:
+a watcher thread of the link waits on the child (a wait on the process handle on Windows, `waitid` with `WNOWAIT` on Unix,
+which leaves the exit status to be collected as before; a group child has one watcher for all its members). A plugin that
+started a helper process which inherited the pipes used to look alive until the hang guard or the helper ended; it is now
+CRASHED when it dies. The pipe and the watcher lead to the same code, which does its work once, so there is one event and
+one log line per death; a child the app asked to end is never reported. A bounce keeps its deterministic waits and the same
+reporting as before.
+
+A crashed plugin (not one the hang guard stopped, which has its own two reloads) is reloaded once, by itself, from the
+document's last captured state, through the same path and load queue as RELOAD, when it had run for at least ten seconds
+from the moment its instance was ready (`CRASH_RELOAD_MIN_ALIVE_SECS`): a plugin that dies while it loads would only die
+again. The device says so in the plugin log and in a notice, once per crash. A second crash within five minutes of that
+reload (`CRASH_RELOAD_WINDOW_SECS`) stays CRASHED until RELOAD, which gives the allowance back; so does a crash during an
+export or a bounce, and a crash that quarantined the plugin. There is no setting for it: the hang reload has none either.
+
+**Counting.** Every crash is counted toward the quarantine, as before, including the one that is reloaded; the reload counts
+nothing and does not reset the count. A plugin that crashes after every reload is therefore quarantined by its third crash,
+and a plugin that crashes at every load is not looped, since a crash before ten seconds is not reloaded.
+
+**Why.** Ten seconds separates "died at load" from "died while working"; five minutes is long enough that a plugin that dies
+on the same material each time shows the pattern within one attempt, and short enough that a one-off crash earlier in the
+session does not use up the allowance of a plugin that has behaved since. Resting on the process rather than on traffic
+matters because a parked or sleeping plugin sends nothing.
+
+**Limits.** A helper process that outlives its plugin and holds the pipes keeps one blocked reader thread and the pipe
+handles until the helper ends; dropping the dead instance does not wait for it (only threads that have ended are joined).
+The app does not end a plugin's helper itself.
+
+**Rejected.** Polling the process (a wake-up per child for nothing); one reload per session (a crash an hour ago would
+cost a plugin its allowance); reloading again and again with a back-off (a plugin that crashes on its own state would
+loop, and the user would learn of it late); a setting (nobody asked to switch it off, and the hang reload has none).
+
+**Status.** Decided by the owner on 2026-11-21 (one automatic reload, then stay crashed).
+
+## BG. The render workers are used only while the audio thread needs help
+
+**Question.** The engine woke the render workers on every callback of a project that has a level of two or more
+devices, and the workers spin through the whole callback. A stopped rack of 100 silent devices, which takes about a
+seventh of the callback time on the audio thread, kept 76 to 86 % of a core busy with automatic workers and 30 % with two,
+against 18 % with none. What a live engine needs to know is not whether spreading one level saves time but whether the
+audio thread needs help to meet its deadline.
+
+**Decision.** Each node keeps a smoothed cost in nanoseconds per batch (its stages added up; an integer written by the
+thread that runs it and read by the audio thread between batches, like the CPU readout's total). Before each batch a
+live engine (`EngineOptions::realtime`, set by the app's stream and `atomik-play`) sums the costs of the plan and compares
+the sum with the batch budget. The plan is **busy** when the sum reaches 30 % of the budget and **calm** after a second
+of audio under 20 %. Entering is immediate (the next batch after the smoothed cost crosses 30 %), leaving is slow, and
+between the shares nothing changes: a wrong "busy" costs some CPU, a wrong "calm" on a heavy project is a missed deadline.
+A calm plan runs every level inline and wakes no worker; a busy one hands every level over that has a device a worker can
+take (a device pinned to the audio thread cannot be taken, so a level of pinned devices wakes nobody). Two loads are read:
+the smoothed one (the sum of the smoothed per-node costs, set by batches that ran inline and only ever lowered by the
+others) and the seen one (the sum of each node's raw time in the last timed batch, wherever it ran: an upper estimate of
+the inline load, and the only figure that rises while the plan is busy). Entering uses the smoothed load; while busy,
+a seen load at or over 50 % of the budget stops the inline probes and the calm count, because inflation cannot be told
+from load without an inline batch and an inline batch at that load is not safe: staying busy is the safe side. The callback flag and
+the wake-up at the start of a call follow the state, and a level that is handed over in the middle of a call raises the
+flag itself. A plan whose nodes have no cost yet is busy, and so is the first second after the transport starts (the
+stopped to playing edge): playback never begins inline and finds the load a batch late. The hold counts audio time.
+Offline engines (a bounce, an export, the freeze and analysis workers) have no deadline and want throughput, so they never
+use the rule and hand every level over, exactly as before; the choice is `EngineOptions::realtime`, false by default.
+
+**Costs.** While the plan is calm every device is timed on every batch, so a rise is seen at once: the worst delay to
+become busy is one batch plus the half-way smoothing (a jump to twice the enter share is seen in the first batch). That
+costs two clock reads per device per batch (a few tens of nanoseconds a pair, an estimate that was not measured on its
+own: the sampler's stopped-rack rows with the rule on show no difference from none). The app times every device call all the time already (its CPU readout), so the clock is the host's there;
+`atomik-play` runs with the device timing off and uses the engine's own clock, on the same batches. A busy plan cannot be
+timed where it runs: a node takes longer on a worker than at home (its data has moved to another core), which would read as a load over the leave share and keep a calm plan busy for
+ever; the first version of the rule, timed where the nodes run, left the stopped stress rack with seven workers at 87 %
+of a core in the sampler. So a
+busy plan runs one batch in 64 inline and timed (never in the hold, never while a cost is unknown, and only if the batch
+just before it, as timed where it ran, was under 50 % of the budget, so a probe batch is bounded by what was just
+measured and not by an old figure; the first version of the rule bounded it by the last inline load, which is stale by
+construction once the plan is busy, and ran one whole batch on the audio thread, a second after Play, for a project that
+is light when stopped and takes 150 % of a batch when playing), and the batches it runs on workers can only lower a
+smoothed cost, never raise it, so a plan that became light is seen without waiting for a probe. The sum counts each
+device once, at its last stage, so a multi-stage device whose stages differ is read as their total.
+
+**A plan that needed help while playing keeps the workers while it plays.** A song with a quiet section of more than a
+second under 20 %, followed by a dense one, would go calm in the quiet part and take the dense onset inline: the first
+batch of the onset on the audio thread alone, late at small buffers, at every such transition. So once the plan has
+shown a need while the transport plays (the smoothed load at or over 30 %, or the seen load at or over 50 %, for 250 ms
+of audio in a row: one noisy batch would otherwise make a light project heavy for good) the gate remembers it for the
+life of the pool, and while the transport plays it stays busy: it never leaves and never probes. Stopped, it leaves as any
+plan does (a second under 20 %); the next Play holds and then stays busy. A project that never showed a need while playing
+plays inline. The memory is not cleared on a plan swap, only when the engine is rebuilt: a project made light by removing
+devices keeps the workers while it plays until the engine is rebuilt. The workers' CPU in the quiet part of such a song is
+small, since they spin only for the length of a callback, and the measured gain (the stopped rack, the light project) is
+untouched.
+
+**Paths that carry timing.** Playback start: the hold above, from the first playing batch. Live notes on a stopped
+transport: no hold, but the plan is calm and timed on every batch, so voices that raise the cost are seen in the next batch
+(at the enter share the audio thread alone carries 30 % of a batch before workers join; the paced benchmark's heaviest
+patch carries 12 %). A preview clock (a note player previewing while the song stands still): its devices run and are
+timed like any other. Audio streaming lanes and clips: they are part of the devices' cost; the streamer's own thread is not
+the render workers. Sandboxed plugin devices: their measured cost includes the wait for their process, which is real time
+the audio thread spends, so it counts towards busy (a plugin that waits long is a reason to have the other devices run
+beside it). A device pinned to the audio thread counts in the load but is never handed over. A plan swap in the middle of
+playback: the state lives in the pool, not in the plan; the devices that were in the arena keep their costs, a new device
+has none and makes the plan busy for the batches until it is timed. MIDI out and the metronome do not go through the nodes.
+Nothing the rule reads reaches the signal: a node's output does not depend on its thread, and a bounce is byte-identical
+whichever rule decides (the tests render the same project under the live rule, the offline rule, forced inline and forced
+dispatch, also while the busy state flips).
+
+**Evidence.** `perf/BASELINE.md`, "Render workers used only while the audio thread needs them": the stopped stress rack falls
+from 76 to 86 % to 16 to 19 % with automatic workers and from 30 to 34 % to 17 to 19 % with two, equal to the figure with no
+workers; the empty project is unchanged; the heaviest patch of the paced benchmark, inline, has a p99 under a fifth of the
+callback period. A rule that judged each level by the time spreading it would save (tried first, 7 us to dispatch) tied
+with dispatching everything on a bounce (rack 0.73 against 0.71 of the workers 0 time, console-64 0.61 against 0.61,
+lanes-200 1.04 against 0.96, lanes-2000 0.88 against 0.92) and could not lower the idle cost of the live rack, because as
+long as one level goes to the workers they spin through the whole callback; it was removed.
+
+**Rejected.** A per-level saved-time rule (above); timing every call on every batch in a bounce (nothing there needs the
+costs); sampling one batch in 32 while calm (a rise could go unseen for 43 ms; the delay is the price of saving 5 us a
+batch); a long dwell to enter (an inline plan that turns heavy would run on the audio thread alone for a long time);
+measuring a busy plan where it runs (the feedback above); skipping silent devices (a later item that builds on the
+per-node cost).
+
+**Limits.** The shares are fixed numbers, not settings. A project that sits between 20 and 30 % of the budget keeps the
+state it has. A plan whose seen load is at or over 50 % of the budget is never probed inline and leaves busy only when its
+devices get lighter (their runs on workers lower the costs). A plan that has never been busy while playing and jumps from
+under the enter share to over a whole batch within one batch runs that one batch inline, playing or stopped (a large chord
+on a stopped transport, a dense onset in a song that has not needed help before): the rule bounds what an inline plan can
+run up between two batches by the enter share and the growth of one batch, not that growth. The load is that of one engine: two engines in one process share the
+device timing switch but each has its own rule state.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BH. The windows that present without waiting share one frame slot and are painted at most once in it
+
+**Decision.** With two or more windows open every surface presents without waiting for the vertical blank, and the
+loop paints them in turn on one thread. Time is cut into slots of the frame period, 60 Hz (`App::frame`, a field
+started from `FRAME`, so one place can change it later; `App::frame_started` is where the current slot began), and a
+window is painted at most once per slot. The rule is a pure function (`window_logic::paint_gate`) of how the window
+presents, the time since the slot began, whether the window was already painted in it, and the reason for the paint. A
+window with vsync is never held back. A paint of a window not yet painted in the slot is made at once, in that slot
+(the first paint of a window too). A window already painted in it waits for the slot to end, and the paint made after
+the end opens the next slot. Resize or scale change, focus change or uncover, a frame painted but not shown (the
+retry), a redraw the system asks for while nothing is marked (an exposure) and the screenshot paths are painted at
+once and do not move the slot: they only mark the window as painted in it, so a resize does not push the animation
+phase around. A tick judges every window at its one time, not at the moment after another window's render. A held-back
+paint changes nothing in the shell: the window stays marked, the reason is kept for the counters, and the loop's wake
+deadline becomes the earlier of its own and the time the slot ends (`window_logic::loop_deadline`), also when no
+stream or plugin would wake it. A paint that arrives by a timer counts as due when it is up to an eighth of the period
+(about 2 ms) early; input counts as due only at the full period.
+
+**Why.** A sweep of the pointer, a drag or a scroll delivers an event batch every millisecond or two, each marks the
+window and each cost a full scene build and render, many times what any display shows. The tick already sets the
+pace of animations; this puts the same bound on events. The vsync window is paced by its present call, and a timer
+that beats against the blank would show every other frame. Resizes, exposures and retries are things the system or the
+last frame is waiting for: a stale or stretched window during a live resize, or a frame that stays unshown, is worse
+than one more paint. The tolerance exists because the tick's timer rounds to milliseconds: a tick that arrives a hair
+early would be held and the cadence would slip. It is an eighth of the period because the cadence stays within 8 % of
+60 Hz; input gets none so that a sweep never paints more often than the period allows.
+
+**Why one slot for all windows.** The first form gave each window its own phase (gated on its own last paint). A paint
+off the tick (an exposure, a focus change, a resize) then left two animating windows half a period apart for good: one
+window was due at the tick and the other half a period later, and each wake-up runs the whole of the loop's tick, so
+the loop woke twice per frame (120 a second instead of 60, in a model of the loop on the pure functions) and the change
+that was meant to save CPU doubled the tick rate in the most common multi-window case. With one slot the windows are
+painted by the same wake-up, a window painted off the tick only marks itself as painted in the slot, and the loop is
+back to one wake-up per period within two periods of any such paint.
+
+**Why the period is the app's and not the monitor's.** The windows can be on monitors of different rates and the app
+paints them from one loop, so there is no single rate to read; the vsync window already follows its monitor. A later
+low-power mode will lengthen the period, which is why it is a value the app holds and not a constant.
+
+**Limits.** The period is 60 Hz even on a faster monitor, so an unpaced window on a 144 Hz screen shows at most 60
+updates a second (the tick it replaces never did better). A held-back paint is delayed by at most one slot. The
+counter of held-back paints counts each time a paint is asked for too early, not each distinct paint.
+
+**Rejected.** A phase per window (above); pacing the vsync window as well (the timer beats against the blank and halves the rate); holding back
+resizes (stretched content during a live resize); reading the monitor's rate (several monitors, one loop); a
+tolerance for input too (a sweep could paint more often than the period allows).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

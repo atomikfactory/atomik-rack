@@ -665,3 +665,42 @@ fn a_layout_learned_from_a_live_plugin_is_written_to_the_scan_cache_by_the_write
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn renamed_params_of_a_live_plugin_reach_the_document_and_the_registry_without_a_restart() {
+    let base = scanned_gain().layout;
+    assert!(!base.params.is_empty());
+    let (mut core, stats) = null_core(base.clone(), base.clone());
+    add_plugin(&mut core, GAIN, "a");
+    let activated = stats.activated();
+    let mut renamed = base.clone();
+    renamed.params[0].name = "Renamed".to_string();
+    post(
+        &mut core,
+        &key("a"),
+        PluginMessage::ParamTitles(Box::new(renamed)),
+    );
+    for _ in 0..10 {
+        settle(&mut core);
+    }
+    let saved = core
+        .doc()
+        .resolve(&key("a"))
+        .unwrap()
+        .plugin
+        .clone()
+        .unwrap();
+    assert_eq!(saved.layout.params[0].name, "Renamed", "the document");
+    let shown = core.registry().descriptor(GAIN).unwrap();
+    assert!(
+        shown.params.iter().any(|p| p.name == "Renamed"),
+        "the registry"
+    );
+    assert_eq!(stats.activated(), activated, "the plugin did not restart");
+    assert!(core.plugin_instance(&key("a")).is_some());
+    assert!(
+        core.last_rejection().is_none(),
+        "{:?}",
+        core.last_rejection()
+    );
+}

@@ -523,6 +523,8 @@ impl<B: AudioBackend> LiveSession<B> {
                 backlog_max_frames: t.input_backlog_max_frames,
                 callback_min: t.callback_frames_min,
                 callback_max: t.callback_frames_max,
+                allowed_backlog_frames: t.input_backlog_allowed_frames,
+                extra_backlog_frames: t.input_backlog_extra_frames,
             };
             self.status.workers = r.handle.worker_stats();
             if t.input_trims > self.input_trims_logged {
@@ -668,6 +670,8 @@ impl<B: AudioBackend> LiveSession<B> {
                 on_thread_start: Some(atomik_audio_io::promote_worker_thread),
             },
             worker_linger_spins: settings.worker_linger_spins,
+            // A live stream: the workers are used only while the audio thread needs help.
+            realtime: true,
         };
         // Document rates are whole Hz (the model accepts the standard rates only).
         let rate = config.sample_rate.hz().round() as u32;

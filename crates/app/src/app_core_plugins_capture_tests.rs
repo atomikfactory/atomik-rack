@@ -8,7 +8,7 @@ use super::*;
 use crate::app_core::plugins::SNAPSHOT_GRACE_SECS;
 use crate::offline_sink::OfflineSink;
 use crate::plugin_test_support::*;
-use atomik_model::{ConsoleCommand, SongCommand, WorkflowCommand, empty_doc};
+use atomik_model::{ConsoleCommand, PluginCommand, SongCommand, WorkflowCommand, empty_doc};
 use atomik_plugin_host::{NullBackend, NullBehavior, NullPlugin, NullStats, PluginMessage};
 use atomik_render::plugins::{PluginHost, PluginIsolation};
 
@@ -228,9 +228,12 @@ fn a_periodic_snapshot_asks_in_the_background_and_goes_without_a_plugin_that_is_
     let syncs = stats.sync_captures();
     core.plugin_tick(0.0);
     core.wait_recovery_writes();
-    // The first tick of a loaded project snapshots: the plugin answered at once.
+    // The first tick of a loaded project with an edit nobody saved snapshots: the plugin
+    // answered at once.
     assert_eq!(snapshots(&dir), 1);
-    // The next one: the plugin is busy, the snapshot waits for the grace, then goes without it.
+    // The project changes and the plugin is busy: the snapshot waits for the grace, then goes
+    // without it.
+    apply(&mut core, Command::SetTempo(100.0));
     stats.hold_captures(true);
     core.plugin_tick(1_000.0);
     core.wait_recovery_writes();
@@ -243,6 +246,71 @@ fn a_periodic_snapshot_asks_in_the_background_and_goes_without_a_plugin_that_is_
     assert_eq!(snapshots(&dir), 2, "written with what is stored");
     assert_eq!(stats.sync_captures(), syncs);
     assert_eq!(stored(&core, &dev).as_deref(), Some(&b""[..]));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The sequence number of the newest snapshot: it moves with every snapshot that is queued.
+fn queued(core: &AppCore<OfflineSink>) -> u64 {
+    core.recovery_sequence()
+}
+
+/// Ticks `periods` periods apart from `from` (each tick one frame): returns the time after.
+fn periods(core: &mut AppCore<OfflineSink>, from: f64, n: u32) -> f64 {
+    let mut t = from;
+    for _ in 0..n {
+        core.frame();
+        core.plugin_tick(t);
+        t += 1_000.0;
+    }
+    t
+}
+
+#[test]
+fn a_loaded_plugin_that_nobody_touches_writes_no_snapshot_in_any_period() {
+    let dir = temp("untouched");
+    let (mut core, stats, dev) = bg_core(Some(&dir));
+    // The first period writes the unsaved project once; after that nothing changes.
+    let mut t = periods(&mut core, 0.0, 1);
+    core.wait_recovery_writes();
+    let written = queued(&core);
+    assert_eq!(snapshots(&dir), 1);
+    let asked = stats.capture_requests();
+    t = periods(&mut core, t, 6);
+    core.wait_recovery_writes();
+    assert_eq!(queued(&core), written, "six quiet periods queued nothing");
+    assert_eq!(snapshots(&dir), 1);
+    assert!(
+        stats.capture_requests() > asked,
+        "the plugin is still asked in every period (it may have moved without saying so)"
+    );
+    // A command on the project: the next period writes one.
+    apply(&mut core, Command::SetTempo(101.0));
+    t = periods(&mut core, t, 1);
+    core.wait_recovery_writes();
+    assert!(queued(&core) > written, "a document edit is snapshotted");
+    let after_edit = queued(&core);
+    // Quiet again.
+    t = periods(&mut core, t, 3);
+    core.wait_recovery_writes();
+    assert_eq!(queued(&core), after_edit);
+    // A plugin that says its state changed: stored by the capture, written by the next tick.
+    patch(&mut core, &stats, &dev, b"patched");
+    t = periods(&mut core, t, 1);
+    core.wait_recovery_writes();
+    assert!(
+        queued(&core) > after_edit,
+        "a flagged state change is snapshotted"
+    );
+    let after_flag = queued(&core);
+    // A plugin that changes its state without saying so: the period's own capture finds it.
+    set_live(&stats, b"moved quietly");
+    periods(&mut core, t, 1);
+    core.wait_recovery_writes();
+    assert!(
+        queued(&core) > after_flag,
+        "an unflagged state change is snapshotted"
+    );
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"moved quietly"[..]));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -785,4 +853,88 @@ fn the_too_large_notices_name_the_devices_the_sizes_and_whether_a_state_was_stor
         french(unsaved_settings_notice(&two)),
         "Les réglages actuels de Lead, Pad n'ont pas pu être enregistrés ; leurs derniers réglages enregistrés ont été conservés."
     );
+}
+
+/// Pins the first param of the test plugin's layout on `device`.
+fn pin_first_param(core: &mut AppCore<OfflineSink>, device: &DeviceKey) {
+    let id = core
+        .doc()
+        .resolve(device)
+        .unwrap()
+        .plugin
+        .as_ref()
+        .unwrap()
+        .layout
+        .params[0]
+        .id;
+    apply(
+        core,
+        Command::Plugin(PluginCommand::SetPinned {
+            device: device.clone(),
+            pinned: vec![id],
+        }),
+    );
+}
+
+fn pinned_rows(core: &AppCore<OfflineSink>) -> usize {
+    core.plugins
+        .host
+        .pinned_params()
+        .values()
+        .map(Vec::len)
+        .sum()
+}
+
+#[test]
+fn a_second_project_is_pinned_and_fed_whatever_revision_the_first_had() {
+    let (mut a, _stats, _dev) = bg_core(None);
+    add_plugin(&mut a, GAIN, "second");
+    pin_first_param(&mut a, &key("second"));
+    a.frame();
+    assert_eq!(pinned_rows(&a), 1);
+    let text = atomik_model::save_project(a.doc());
+    let (mut b, _stats_b, _dev_b) = bg_core(None);
+    b.frame();
+    assert_eq!(pinned_rows(&b), 0, "the second core starts without pins");
+    let before = b.document().revision();
+    b.open_str(&text, None).unwrap();
+    assert_ne!(
+        b.document().revision(),
+        before,
+        "a replaced document has a new revision"
+    );
+    b.frame();
+    assert_eq!(
+        pinned_rows(&b),
+        1,
+        "the pins of the opened project are registered"
+    );
+    let (revision, devices) = b.plugins.view_devices.clone().expect("the views were fed");
+    assert_eq!(revision, b.document().revision());
+    let keys: Vec<&str> = devices.iter().map(|(k, _)| k.0.as_str()).collect();
+    assert_eq!(keys, ["echo", "second"], "the list is the opened project's");
+}
+
+#[test]
+fn a_host_that_is_replaced_by_a_configuration_has_the_pins_at_once_and_after_the_frame() {
+    let mut core = AppCore::with_doc(OfflineSink::new(), empty_doc(), None);
+    core.configure_plugins(config(true, &[PKG]));
+    add_plugin(&mut core, GAIN, "echo");
+    pin_first_param(&mut core, &key("echo"));
+    core.plugins_pin_document_params();
+    assert_eq!(pinned_rows(&core), 1);
+    // No instance exists yet, so a configuration that names an isolation builds a new host.
+    let mut again = config(true, &[PKG]);
+    again.isolation = Some(PluginIsolation::InProcess);
+    core.configure_plugins(again);
+    // The configuration registers the catalog from the document again, which writes the pins to
+    // the new host; the frame's gate must not undo that or hold on to the old host's state.
+    assert_eq!(pinned_rows(&core), 1, "the new host has the pins at once");
+    assert!(
+        core.plugins.view_devices.is_none(),
+        "the views are fed again"
+    );
+    core.frame();
+    assert_eq!(pinned_rows(&core), 1);
+    assert!(core.plugins.view_devices.is_some());
 }

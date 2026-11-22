@@ -127,17 +127,17 @@ fn the_folder_is_next_to_the_library_and_the_list_follows_it() {
     assert_eq!(c.templates_dir(), Some(t.templates()));
     assert!(c.templates().is_empty());
     touch(&t.templates().join("first.atomik"));
-    // A look within the second of the last one changes nothing; a later one lists the file.
-    assert!(c.refresh_templates(100.0));
-    assert!(c.templates().is_empty() || names(c.templates()) == ["first"]);
+    // The list is what the last look found: a file put there later shows at the next look.
+    assert!(c.reload_templates());
+    assert_eq!(names(c.templates()), ["first"]);
     touch(&t.templates().join("second.atomik"));
-    assert!(!c.refresh_templates(100.5));
-    assert!(c.refresh_templates(101.5));
+    assert_eq!(names(c.templates()), ["first"], "nothing looks on its own");
+    assert!(c.reload_templates());
     assert_eq!(names(c.templates()), ["first", "second"]);
     std::fs::remove_file(t.templates().join("first.atomik")).unwrap();
-    assert!(c.refresh_templates(103.0));
+    assert!(c.reload_templates());
     assert_eq!(names(c.templates()), ["second"]);
-    assert!(!c.refresh_templates(105.0), "nothing changed");
+    assert!(!c.reload_templates(), "nothing changed");
     // No library folder, no templates folder.
     c.set_library_root(None);
     assert_eq!(c.templates_dir(), None);

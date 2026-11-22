@@ -5,6 +5,12 @@ use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::{Arc, Mutex, PoisonError};
+
+/// A blocking wait for the end of a process, to run on a thread of its own: true once the
+/// process has ended, false when it could not be waited for (the pipes then stay the only
+/// witness). It does not reap the process.
+pub(crate) type ExitWaiter = Box<dyn FnOnce() -> bool + Send>;
 
 /// The process behind a transport.
 pub(crate) trait ChildProcess: Send {
@@ -15,6 +21,13 @@ pub(crate) trait ChildProcess: Send {
     /// What the reason of a lost instance should add about the process: a child that is shared
     /// with other instances names its group. `None` for a child of one instance.
     fn note(&self) -> Option<String> {
+        None
+    }
+    /// A wait for the end of the process itself, for a process that can be waited for apart
+    /// from its pipes: a plugin that started a helper process holding the pipes open is then
+    /// noticed dead when it dies, not when the helper does. `None` when there is none (a
+    /// member of a group learns of the end from its group).
+    fn exit_waiter(&mut self) -> Option<ExitWaiter> {
         None
     }
 }
@@ -31,16 +44,35 @@ pub(crate) struct Transport {
     pub child: Box<dyn ChildProcess>,
 }
 
-struct OsChild(Child);
+/// The child object is shared with the exit watcher so that it stays alive (and its handle
+/// open) for as long as the watcher waits; the watcher does not hold the lock while it waits.
+struct OsChild(Arc<Mutex<Child>>);
+
+impl OsChild {
+    fn child(&self) -> std::sync::MutexGuard<'_, Child> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
 
 impl ChildProcess for OsChild {
     fn kill(&mut self) {
         // A process that already ended refuses to be killed; that is fine.
-        let _ = self.0.kill();
+        let _ = self.child().kill();
+    }
+
+    fn exit_waiter(&mut self) -> Option<ExitWaiter> {
+        let watch = atomik_plugin_ipc::lifetime::ExitWatch::of(&self.child());
+        let keep_alive = Arc::clone(&self.0);
+        Some(Box::new(move || {
+            let ended = watch.wait();
+            drop(keep_alive);
+            ended
+        }))
     }
 
     fn try_wait(&mut self) -> Option<String> {
-        match self.0.try_wait() {
+        let waited = self.child().try_wait();
+        match waited {
             Ok(Some(status)) => Some(describe_exit(status)),
             Ok(None) => None,
             Err(e) => Some(format!("the plugin process cannot be waited for: {e}")),
@@ -112,7 +144,7 @@ pub(crate) fn spawn_process(
         writer: Box::new(writer),
         reader: Box::new(reader),
         stderr: Some(Box::new(stderr)),
-        child: Box::new(OsChild(child)),
+        child: Box::new(OsChild(Arc::new(Mutex::new(child)))),
     })
 }
 

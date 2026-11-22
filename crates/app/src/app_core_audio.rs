@@ -200,6 +200,10 @@ pub(super) struct AudioState {
     /// Writers of cancelled takes, still deleting their partial files.
     pub(super) cancelled: Vec<std::thread::JoinHandle<()>>,
     pub(super) next_take: u64,
+    /// Failures the next audio take's writer simulates (tests only; none in the app).
+    pub(super) writer_faults: crate::audio_writer::Faults,
+    /// The free bytes of the volume holding a folder (replaced in tests).
+    pub(super) free_space: fn(&Path) -> Option<u64>,
     /// `internal.monitor_live` as the engine has it, per audio track.
     pub(super) monitor_sent: BTreeMap<DeviceKey, bool>,
     pub(super) tx: Sender<Msg>,
@@ -271,6 +275,8 @@ impl AudioState {
             rec_pending: 0,
             cancelled: Vec::new(),
             next_take: 0,
+            writer_faults: crate::audio_writer::Faults::default(),
+            free_space: crate::record_space::free_bytes,
             monitor_sent: BTreeMap::new(),
             tx,
             rx,

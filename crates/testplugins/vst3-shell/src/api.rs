@@ -176,6 +176,11 @@ pub trait Dsp: Send {
     }
     /// Processes one block.
     fn process(&mut self, io: &mut Io<'_>) -> Status;
+    /// The `restartComponent` flags the plugin announces (read and cleared): asked right after
+    /// `setupProcessing`, from inside the activation, and after every processed block. 0 for none.
+    fn host_flags(&mut self) -> i32 {
+        0
+    }
     /// Makes the run-time param appear (the param bank); true when the table changed.
     fn grow(&mut self) -> bool {
         false

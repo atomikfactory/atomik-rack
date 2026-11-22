@@ -718,3 +718,32 @@ fn aux_outputs_become_sockets_after_the_cv_inputs() {
     assert_eq!(d.sockets.len(), 3 + PLUGIN_CV_INPUTS + 2 * MAX_AUX_OUTPUTS);
     assert_eq!(d.validate(), Ok(()));
 }
+
+#[test]
+fn a_layout_that_differs_only_in_param_titles_is_a_titles_change() {
+    let old = layout(PluginKindHint::Effect);
+    assert_eq!(old.change_from(&old.clone()), LayoutChange::Same);
+
+    let mut renamed = old.clone();
+    renamed.params[0].name = "Drive".to_string();
+    renamed.params[1].module = "Other".to_string();
+    assert_eq!(renamed.change_from(&old), LayoutChange::Titles);
+
+    // Anything the host caches is a structural change.
+    let mut ranged = old.clone();
+    ranged.params[0].max = 2.0;
+    assert_eq!(ranged.change_from(&old), LayoutChange::Structure);
+    let mut reordered = old.clone();
+    reordered.params.reverse();
+    assert_eq!(reordered.change_from(&old), LayoutChange::Structure);
+    let mut grown = old.clone();
+    grown.params.push(param(9, "New"));
+    assert_eq!(grown.change_from(&old), LayoutChange::Structure);
+    let mut ported = old.clone();
+    ported.sidechain = true;
+    assert_eq!(ported.change_from(&old), LayoutChange::Structure);
+    // A rename that comes with a structural change is structural.
+    let mut both = renamed;
+    both.params[0].steps = 3;
+    assert_eq!(both.change_from(&old), LayoutChange::Structure);
+}

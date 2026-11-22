@@ -290,12 +290,16 @@ fn symlink_loops_terminate() {
 }
 
 #[test]
-fn the_scanner_count_follows_the_cores_between_two_and_eight() {
-    use atomik_plugin_host::{MAX_PARALLEL_SCANS, parallel_scans};
-    assert_eq!(parallel_scans(1), 2);
-    assert_eq!(parallel_scans(4), 2);
+fn the_scanner_count_is_one_on_a_small_machine_then_follows_the_cores_up_to_eight() {
+    use atomik_plugin_host::{MAX_PARALLEL_SCANS, SERIAL_SCAN_CORES, parallel_scans};
+    assert_eq!(SERIAL_SCAN_CORES, 4);
+    for cores in 0..=4 {
+        assert_eq!(parallel_scans(cores), 1, "{cores} logical CPUs");
+    }
+    assert_eq!(parallel_scans(5), 2);
     assert_eq!(parallel_scans(8), 4);
     assert_eq!(parallel_scans(12), 6);
+    assert_eq!(parallel_scans(16), 8);
     assert_eq!(parallel_scans(64), MAX_PARALLEL_SCANS);
     assert_eq!(MAX_PARALLEL_SCANS, 8);
 }

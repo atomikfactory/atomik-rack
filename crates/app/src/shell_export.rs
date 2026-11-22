@@ -358,13 +358,13 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Feeds the progress bar, and closes the panel when the export is over.
     pub(super) fn sync_export(&mut self) {
-        let encoder = self.core.export_encoder();
         let Some(view) = &mut self.export else {
             return;
         };
         if !view.in_progress() {
-            // The answer to "is FFmpeg there" may arrive while the options are open.
-            view.set_encoder(encoder);
+            // The answer to "is FFmpeg there" may arrive while the options are open. It is asked
+            // only while the panel is, as the missing-encoder text is built on every ask.
+            view.set_encoder(self.core.export_encoder());
             if view.needs_repaint() {
                 self.repaint = true;
             }
