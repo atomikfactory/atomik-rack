@@ -251,6 +251,9 @@ pub struct Telemetry {
     /// buffers and grows when trims recur (see the audio I/O section of the architecture notes);
     /// 0 without input.
     pub input_backlog_allowed_frames: u32,
+    /// The part of [`Telemetry::input_backlog_allowed_frames`] above the base of two buffers: room
+    /// made for a driver that delivers its input in packets larger than a buffer. 0 at the base.
+    pub input_backlog_extra_frames: u32,
     /// The smallest callback seen so far, in frames (0 before the first).
     pub callback_frames_min: u32,
     /// The largest callback seen so far, in frames (0 before the first).

@@ -3134,16 +3134,22 @@ Input that the capture ring could not hold, or that the render callback discarde
 latency, is `Telemetry::input_overruns` (frames; the first discard, of what was captured before the
 output started, is not counted). How much captured input may wait is `InputSlack`
 (`crates/audio-io/src/slack.rs`): three buffers of the size the stream was opened with (or of the
-largest callback a driver delivered, if larger), never of the callback that is running, so a short
-callback in shared mode does not turn a burst into a backlog; on top of that an extra allowance that
-a counted trim raises by half a buffer and 2000 quiet callbacks lower by the same step, between zero
-and two buffers clamped to 10..30 ms. Past the allowance the ring is trimmed and counted as before.
-The allowed backlog is `Telemetry::input_backlog_allowed_frames`, shown in the status line and in
-Export Diagnostics. A take's compensation uses the measured input latency, which includes the frames
-the ring actually holds, and the allowance only decides what is discarded, so a larger one never
-moves a take. The Audio Settings dialog warns when the open input and output are
-different devices, since their clocks drift apart; a device named like the output is the default
-input, so one interface for both is what opens unless another input is chosen.
+largest callback of the last two windows of 2000 callbacks, if larger), never of the callback that
+is running, so a short callback in shared mode does not turn a burst into a backlog and one freak
+callback is forgotten; on top of that an extra allowance for a driver that delivers packets larger
+than a buffer. It grows by half a buffer only when a trim follows a lump (input that arrived in one
+callback exceeding a buffer by half a buffer, at least 32 frames); a trim after a steady arrival is
+drift, counted as lost but never moving the allowance. At the end of a window it shrinks by a step
+only if no lump was trimmed in it and the window's largest backlog would still have fitted under the
+smaller threshold. It lies between zero and two buffers clamped to 10..30 ms. Past the allowance the
+ring is trimmed and counted as before. The allowed backlog is
+`Telemetry::input_backlog_allowed_frames`, always in Export Diagnostics; the status line shows it
+only while the extra part (`input_backlog_extra_frames`) is above zero. A take's compensation uses
+the measured input latency, which includes the frames the ring actually holds, and the allowance
+only decides what is discarded, so a larger one never moves a take. The Audio Settings dialog warns
+when the open input and output are different devices, since their clocks drift apart; a device named
+like the output is the default input, so one interface for both is what opens unless another input
+is chosen.
 
 **Settings that do not open.** `LiveSession` remembers the device configuration that last opened a
 stream (`device_loss.last_good` in `settings.json`). When the current one fails to open, at

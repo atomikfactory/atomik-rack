@@ -372,8 +372,9 @@ may break APIs and the patch and project formats.
   input open, captured audio that arrived in a burst was thrown away whenever one callback happened to be short,
   which counted as input overruns (hundreds to thousands of frames in a session) and clicked in the monitor and in
   takes. The room kept for captured audio now follows the buffer size the interface was opened with, grows a little
-  when audio does run ahead and shrinks again when it settles; two interfaces with drifting clocks are still kept
-  in step, with the limit shown. The status line and Export Diagnostics show how much input backlog is allowed.
+  for a driver that delivers its input in packets and shrinks again when the room is no longer used; two interfaces
+  with drifting clocks are still kept in step and never get extra delay for it. Export Diagnostics shows how much
+  input backlog is allowed, and the status line shows it while extra room is in use.
   Takes land on the timeline where they did before, and a bounce is unchanged.
 
 ## [0.5.0-rc.1] - 2026-11-18

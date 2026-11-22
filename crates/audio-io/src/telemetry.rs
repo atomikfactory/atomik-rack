@@ -277,6 +277,8 @@ pub(crate) struct TelemetryState {
     input_backlog_max: AtomicU32,
     /// The most frames the input ring may hold beyond one callback's read now.
     input_backlog_allowed: AtomicU32,
+    /// The part of that allowance above the base (made room for a bursty driver).
+    input_backlog_extra: AtomicU32,
     /// The smallest and the largest callback seen, in frames (0: none yet). Only the render
     /// callback writes them.
     frames_min: AtomicU32,
@@ -383,13 +385,21 @@ impl TelemetryState {
 
     /// Publishes how often the render callback trimmed the input ring and the largest backlog
     /// before such a trim, in frames, and how much backlog the ring may hold now (three relaxed
-    /// stores per callback).
-    pub(crate) fn set_input_trims(&self, trims: u64, backlog_max_frames: u32, allowed_frames: u32) {
+    /// stores per callback), and how much of that is above the base.
+    pub(crate) fn set_input_trims(
+        &self,
+        trims: u64,
+        backlog_max_frames: u32,
+        allowed_frames: u32,
+        extra_frames: u32,
+    ) {
         self.input_trims.store(trims, Ordering::Relaxed);
         self.input_backlog_max
             .store(backlog_max_frames, Ordering::Relaxed);
         self.input_backlog_allowed
             .store(allowed_frames, Ordering::Relaxed);
+        self.input_backlog_extra
+            .store(extra_frames, Ordering::Relaxed);
     }
 
     /// Records that the backend reported the device gone (sticky; one relaxed store).
@@ -435,6 +445,7 @@ impl TelemetryState {
             input_trims: self.input_trims.load(Ordering::Relaxed),
             input_backlog_max_frames: self.input_backlog_max.load(Ordering::Relaxed),
             input_backlog_allowed_frames: self.input_backlog_allowed.load(Ordering::Relaxed),
+            input_backlog_extra_frames: self.input_backlog_extra.load(Ordering::Relaxed),
             callback_frames_min: self.frames_min.load(Ordering::Relaxed),
             callback_frames_max: self.frames_max.load(Ordering::Relaxed),
             device_lost: self.device_lost.load(Ordering::Relaxed),
@@ -479,11 +490,12 @@ mod tests {
             let at = t0 + Duration::from_millis(10 * i as u64);
             state.on_callback(&mut d, at, frames, 48_000, Duration::from_micros(50), 0);
         }
-        state.set_input_trims(3, 1440, 1536);
+        state.set_input_trims(3, 1440, 1536, 512);
         let t = state.snapshot();
         assert_eq!((t.callback_frames_min, t.callback_frames_max), (96, 480));
         assert_eq!((t.input_trims, t.input_backlog_max_frames), (3, 1440));
         assert_eq!(t.input_backlog_allowed_frames, 1536);
+        assert_eq!(t.input_backlog_extra_frames, 512);
     }
 
     #[allow(clippy::disallowed_methods)] // Justification: test-only origin of a simulated timeline.

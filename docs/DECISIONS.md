@@ -1567,29 +1567,39 @@ cost is the frame, not only the paint).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
 
-## BB. Captured input waits for three buffers of the configured size, plus an allowance that grows on trims and shrinks when quiet
+## BB. Captured input waits for three buffers of the configured size, plus an allowance that grows on lumps and shrinks when the room is unused
 
 **Decision.** The render callback keeps at most `3 * B + extra` frames of captured input in the ring, where `B` is the
-buffer the stream was opened with or the largest callback seen, if larger, and `extra` starts at zero. Each counted
-trim raises `extra` by half a buffer (at least 16 frames) up to a maximum of two buffers, clamped to between 10 ms and
-30 ms of audio; 2000 callbacks in a row without a counted trim lower it by one step. Past the allowance the oldest
-frames are discarded and counted, as before. The allowed backlog beyond one callback (`2 * B + extra`) is published
-as `input_backlog_allowed_frames` and shown in the status line and in Export Diagnostics. Examples at 48 kHz: a
-buffer of 64 allows 192 + up to 480 frames (4 ms, at most 14 ms); 256: 768 + up to 512 (16 ms, up to 27 ms); 512: 1536
-+ up to 1024 (32 ms, up to 53 ms); 4096: 12288 + up to 1440 (256 ms, up to 286 ms).
+buffer the stream was opened with or the largest callback of the last two windows, if larger (a window is 2000
+callbacks), and `extra` starts at zero. `extra` grows by half a buffer (at least 16 frames) only when a counted trim
+follows a lump: input that arrived in one callback exceeding a buffer by at least half a buffer and at least 32
+frames. It lies between zero and two buffers, clamped to between 10 ms and 30 ms of audio. A trim after a steady
+arrival is clock drift: it is counted as lost but changes nothing. At the end of a window `extra` shrinks by one step
+only if no lump was trimmed in the window and the largest backlog the window saw (before its trim) would still have
+fitted under the smaller threshold. The allowed backlog beyond one callback (`2 * B + extra`) is published as
+`input_backlog_allowed_frames` (with `input_backlog_extra_frames`); Export Diagnostics and the debug trim line always
+show it, the status line only while `extra` is above zero. Examples at 48 kHz, frames held including the read: a
+buffer of 64 holds 192 (4 ms), at most 672 (14 ms); 256: 768 (16 ms), at most 1280 (27 ms); 512: 1536 (32 ms), at most
+2560 (53 ms); 4096: 12288 (256 ms), at most 13728 (286 ms).
 
 **Why.** The old rule measured three buffers of the callback that was running. Shared-mode drivers deliver callbacks
 of uneven size, so after a short callback a burst of input looked like a backlog and was dropped: audio lost from takes
-and monitoring with no clock drift at all. The configured buffer is what the interface promises on average; the
-extra absorbs a driver that is burstier than that, and the cap keeps real drift from growing the latency. Takes are
-placed with the measured input latency, which already includes the frames the ring holds, and the allowance changes
-only what is discarded, so a take does not move. All integers on the callback, counted in callbacks, so a bounce and
-the audio path are untouched.
+and monitoring with no clock drift at all. The configured buffer is what the interface promises on average; the extra
+absorbs a driver that delivers packets (10 ms against a 64-frame buffer, say) and the cap keeps the latency bounded.
+Growing only on lumps keeps drift between two devices from buying latency that cannot stop the loss; shrinking only
+when the room was not used stops a steady packet driver from losing a packet every window; forgetting the largest
+callback after a window keeps one freak callback from tripling the threshold for a session. Takes are placed with the
+measured input latency, which already includes the frames the ring holds, and the allowance changes only what is
+discarded, so a take does not move. All integers on the callback, counted in callbacks, so a bounce and the audio path
+are untouched.
 
-**Limits.** Two interfaces whose clocks drift still lose a frame now and then (counted); there is no resampling. The
-extra shrinks slowly, so after a burst the monitoring latency may stay a few milliseconds higher for a while.
+**Limits.** Two interfaces whose clocks drift still lose a frame now and then (counted); there is no resampling. A
+packet driver loses the first packets while the allowance grows (a handful, one step each). A steady backlog left over
+from a burst is room in use, so the allowance stays until the ring drains. An outlier callback is followed at once and
+forgotten within two windows (about ten seconds at a 64-frame buffer).
 
 **Rejected.** A fixed larger threshold (more latency for everyone); a threshold from the running average of callback
-sizes (still tracks short callbacks); shrinking by wall time (the audio thread has no clock it may read for this).
+sizes (still tracks short callbacks); growing on every counted trim (drift pushes it to the ceiling for good); shrinking
+by wall time (the audio thread has no clock it may read for this).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.

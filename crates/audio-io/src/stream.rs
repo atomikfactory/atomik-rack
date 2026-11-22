@@ -628,7 +628,8 @@ impl OutputCallback {
             let keep = in_ch * usize::try_from(self.slack.keep_frames()).unwrap_or(usize::MAX / 64);
             let discarded = reader.trim(keep);
             let counted = self.input_loss.on_trim(discarded, backlog);
-            self.slack.after_trim(counted);
+            let backlog_frames = u32::try_from(backlog / in_ch.max(1)).unwrap_or(u32::MAX);
+            self.slack.after_trim(backlog_frames, counted);
         }
         let mut render = Render {
             engine: &mut payload.engine,
@@ -664,6 +665,7 @@ impl OutputCallback {
         if let Some(reader) = payload.input.as_ref() {
             let in_ch = usize::from(self.adapter.inputs()).max(1);
             let backlog = u32::try_from(reader.available() / in_ch).unwrap_or(u32::MAX);
+            self.slack.after_read(backlog);
             self.telemetry.on_input_backlog(backlog);
             let in_ch = u64::from(self.adapter.inputs());
             self.telemetry
@@ -672,6 +674,7 @@ impl OutputCallback {
                 self.input_loss.trims,
                 self.input_loss.backlog_max_frames(in_ch),
                 self.slack.allowed_backlog_frames(),
+                self.slack.extra_frames(),
             );
         }
         let elapsed = telemetry::now().saturating_duration_since(start);
