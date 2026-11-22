@@ -533,8 +533,9 @@ impl PluginProcessor for RemoteProcessor {
         let (owed_start, owed_stop) = (owed.has(Before::START), owed.has(Before::STOP));
         *owed = owed.without(Before::START);
         if owed_start && !owed_stop {
-            // The child never heard of that start: there is nothing to stop.
-            *owed = Before::NONE;
+            // The child never heard of that start: there is nothing to stop. A reset that was
+            // owed with it stays owed (a locate happened; the plugin must still forget what it
+            // was playing) and rides on the batch of the next start.
             return;
         }
         if port.outstanding().is_some() {

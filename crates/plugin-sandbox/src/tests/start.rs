@@ -298,6 +298,22 @@ fn a_start_that_was_owed_and_not_sent_is_cancelled_by_a_stop() {
 }
 
 #[test]
+fn a_reset_owed_with_a_cancelled_start_still_reaches_the_plugin() {
+    let mut t = traced(FAST, RunMode::Realtime);
+    let mut b = Bufs::new();
+    assert!(t.p.start_processing());
+    t.p.reset();
+    t.p.stop_processing();
+    // The start is cancelled, the reset is not: it rides on the batch of the next start.
+    assert!(t.p.start_processing());
+    assert_eq!(t.until_taken(&mut b), ProcessStatus::Continue);
+    assert_eq!(
+        t.r.fake.ctl.audio_before(),
+        vec![Before::START.with(Before::RESET)]
+    );
+}
+
+#[test]
 fn a_reset_happens_before_the_notes_of_the_batch_that_follows_it() {
     let mut t = traced(FAST, RunMode::Realtime);
     let mut b = Bufs::new();
