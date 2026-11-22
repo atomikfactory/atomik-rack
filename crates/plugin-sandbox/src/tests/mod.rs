@@ -13,6 +13,7 @@ mod rpc;
 mod soft;
 mod stuck;
 mod supervision;
+mod watcher;
 
 use crate::fake::{Fake, FakeOptions, start};
 use crate::instance::RemoteInstance;

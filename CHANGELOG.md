@@ -410,6 +410,10 @@ may break APIs and the patch and project formats.
   turns the system error dialogs off, so a plugin that crashes while it loads is reported as a crash at once, not as a
   timeout half a minute later. Everything a scanner starts (a plugin's helper process too) ends with it, whether the
   scan finished, timed out, crashed or was cancelled.
+- **A plugin that died while a helper process held its pipes open is noticed at once.** The app now learns of the
+  death of a plugin process from the process itself, not only from the end of its pipes, so a plugin that started a
+  helper process is shown as crashed when it dies instead of seconds later (or when the helper ends); a shared process
+  loses all its plugins at once. There is one report per death, and a shutdown the app asked for is never one.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

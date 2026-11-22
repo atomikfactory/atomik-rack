@@ -104,6 +104,20 @@ mod os {
         }
     }
 
+    /// The raw handle of `child`, for a wait that does not own it.
+    pub fn raw_of(child: &Child) -> usize {
+        use std::os::windows::io::AsRawHandle;
+        child.as_raw_handle() as usize
+    }
+
+    /// Blocks until the process behind `handle` has ended. False when it cannot be waited for.
+    pub fn wait_handle(handle: usize) -> bool {
+        // SAFETY: the handle is the one a `Child` owns; the caller keeps that `Child` alive for
+        // the whole wait (see `ExitWatch`), so the handle is valid and is not closed under us.
+        // The wait only reads the process object's signalled state.
+        unsafe { WaitForSingleObject(handle as _, INFINITE) == WAIT_OBJECT_0 }
+    }
+
     pub fn allow_foreground(pid: u32) -> bool {
         if pid == 0 {
             return false;
@@ -150,6 +164,41 @@ mod os {
         true
     }
 
+    /// The pid of `child`, for a wait that does not own it.
+    pub fn raw_of(child: &Child) -> usize {
+        child.id() as usize
+    }
+
+    /// Blocks until the child `pid` has ended, without reaping it (the owner still collects
+    /// the exit status). Also returns (true) when it was reaped already.
+    pub fn wait_handle(pid: usize) -> bool {
+        let Ok(pid) = libc::id_t::try_from(pid) else {
+            return false;
+        };
+        loop {
+            // SAFETY: `siginfo_t` is plain data that the call fills in; WNOWAIT leaves the
+            // zombie in place, so the pid stays ours until the owner reaps it, and a pid that
+            // is already reaped only makes the call fail with ECHILD.
+            let r = unsafe {
+                let mut info: libc::siginfo_t = std::mem::zeroed();
+                libc::waitid(
+                    libc::P_PID,
+                    pid,
+                    &raw mut info,
+                    libc::WEXITED | libc::WNOWAIT,
+                )
+            };
+            if r == 0 {
+                return true;
+            }
+            match io::Error::last_os_error().raw_os_error() {
+                Some(libc::EINTR) => {}
+                // Reaped by the owner already (or not ours any more): it has ended.
+                _ => return true,
+            }
+        }
+    }
+
     pub fn allow_foreground(_pid: u32) -> bool {
         false
     }
@@ -170,6 +219,26 @@ mod os {
 /// and still watches its parent.
 pub fn bind_child(child: &Child) -> io::Result<()> {
     os::bind_child(child)
+}
+
+/// A way to wait for a child process to end that does not own it and does not reap it: the
+/// owner of the `Child` goes on to kill it, look at it (`try_wait`) and collect its exit status
+/// as before, and this learns of the end from the process itself, with no polling. The `Child`
+/// must stay alive until [`ExitWatch::wait`] has returned (Windows waits on its handle).
+#[derive(Debug, Clone, Copy)]
+pub struct ExitWatch(usize);
+
+impl ExitWatch {
+    /// Watches `child`.
+    pub fn of(child: &Child) -> Self {
+        Self(os::raw_of(child))
+    }
+
+    /// Blocks until the process has ended. False when it could not be waited for (the caller
+    /// then relies on its pipes).
+    pub fn wait(&self) -> bool {
+        os::wait_handle(self.0)
+    }
 }
 
 /// Lets the process `pid` (a child) bring its windows to the front, as the app could: a plugin

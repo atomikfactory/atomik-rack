@@ -108,8 +108,9 @@ impl Hub {
             writer,
             reader,
             stderr,
-            child,
+            mut child,
         } = transport;
+        let waiter = child.exit_waiter();
         let (out, rx) = channel::<Vec<u8>>();
         let hub = Arc::new(Self {
             out: Mutex::new(Some(out)),
@@ -129,6 +130,20 @@ impl Hub {
         let _ = std::thread::Builder::new()
             .name("sandbox-group-reader".to_string())
             .spawn(move || run_reader(&weak, reader));
+        if let Some(wait) = waiter {
+            // The process itself tells when it ends, even when a helper it started holds its
+            // pipes open: every member is then lost at once, not when the pipe closes.
+            let weak = Arc::downgrade(&hub);
+            let _ = std::thread::Builder::new()
+                .name("sandbox-group-watch".to_string())
+                .spawn(move || {
+                    if wait()
+                        && let Some(hub) = weak.upgrade()
+                    {
+                        hub.end();
+                    }
+                });
+        }
         if let Some(stderr) = stderr {
             let weak = Arc::downgrade(&hub);
             let _ = std::thread::Builder::new()
@@ -233,11 +248,14 @@ impl Hub {
         exit.clone()
     }
 
-    /// The child's stdout closed: the group is over and every member with it.
+    /// The child's stdout closed or the process ended: the group is over and every member with
+    /// it. Whichever of the pipe and the process saw the end first does this, once.
     fn end(&self) {
+        if self.dead.swap(true, Ordering::SeqCst) {
+            return;
+        }
         let members = std::mem::take(&mut *lock(&self.members));
         *lock(&self.ended_with) = members.values().map(|m| m.plugin.clone()).collect();
-        self.dead.store(true, Ordering::SeqCst);
         for member in members.into_values() {
             member.state.set_gone(Gone::GroupEnded);
             // Dropping the sender closes the member's reader.

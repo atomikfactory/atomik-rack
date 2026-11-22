@@ -5370,7 +5370,9 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     value or the clock for a decision. A bounce (`SandboxConfig::bounce`, set by
     `atomik-render`, also for `--plugin-mode realtime`) and an offline instance wait for every batch
     up to a 30 s watchdog, so a sandboxed bounce is byte-identical to an in-process one.
-  - *Crash.* When the child ends, the reader thread marks the block dead (`DeathHandle`) and posts
+  - *Crash.* When the child ends, the reader thread (the end of the pipe) or the watcher thread
+    (the process itself: a helper process that inherited the pipes cannot hide the death), whichever
+    comes first and only once, marks the block dead (`DeathHandle`) and posts
     `ProcessExited` with the exit code or signal and the last stderr lines; the next `process`
     returns `Lost`, the device turns `Crashed` (dry or silent, never called again), and the manager
     emits `ManagerEvent::Crashed`. A lost instance fails every call at once; `restart` and `reload`

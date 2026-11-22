@@ -22,7 +22,7 @@ use atomik_plugin_ipc::{
 };
 use std::io::{PipeReader, PipeWriter, Write};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 /// The pid the fake child reports.
@@ -64,6 +64,10 @@ pub(crate) enum AudioMode {
 pub(crate) struct Control {
     killed: AtomicBool,
     exit: Mutex<Option<String>>,
+    /// Signalled when the process ends (see [`Control::exit_silently`]) or the fake is dropped.
+    exited: Condvar,
+    /// How many waits for the end of the process are running (see [`Control::watching`]).
+    watching: AtomicUsize,
     out: Mutex<Option<PipeWriter>>,
     err: Mutex<Option<PipeWriter>>,
     requests: Mutex<Vec<ToChild>>,
@@ -91,6 +95,8 @@ impl Control {
         Self {
             killed: AtomicBool::new(false),
             exit: Mutex::new(None),
+            exited: Condvar::new(),
+            watching: AtomicUsize::new(0),
             out: Mutex::new(Some(out)),
             err: Mutex::new(Some(err)),
             requests: Mutex::new(Vec::new()),
@@ -143,9 +149,44 @@ impl Control {
 
     /// The process ends with `description`: its pipes close.
     pub fn exit(&self, description: &str) {
-        lock(&self.exit).get_or_insert_with(|| description.to_string());
+        self.exit_silently(description);
         *lock(&self.err) = None;
         *lock(&self.out) = None;
+    }
+
+    /// The process ends with `description` but its pipes stay open, as when it has started a
+    /// helper process that inherited them: only the process itself tells.
+    pub fn exit_silently(&self, description: &str) {
+        lock(&self.exit).get_or_insert_with(|| description.to_string());
+        self.exited.notify_all();
+    }
+
+    /// How many waits for the end of the process are running: the watcher of the link, which
+    /// ends with the process.
+    pub fn watching(&self) -> usize {
+        self.watching.load(Ordering::SeqCst)
+    }
+
+    /// Blocks until the process ended (true) or the fake was dropped (false).
+    fn wait_exit(&self) -> bool {
+        self.watching.fetch_add(1, Ordering::SeqCst);
+        let ended = self.wait_exit_inner();
+        self.watching.fetch_sub(1, Ordering::SeqCst);
+        ended
+    }
+
+    fn wait_exit_inner(&self) -> bool {
+        let mut exit = lock(&self.exit);
+        while exit.is_none() {
+            if self.stop.load(Ordering::SeqCst) {
+                return false;
+            }
+            exit = self
+                .exited
+                .wait(exit)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        true
     }
 
     /// True once the parent killed the fake process.
@@ -230,6 +271,11 @@ impl ChildProcess for FakeProcess {
 
     fn try_wait(&mut self) -> Option<String> {
         lock(&self.0.exit).clone()
+    }
+
+    fn exit_waiter(&mut self) -> Option<crate::transport::ExitWaiter> {
+        let ctl = Arc::clone(&self.0);
+        Some(Box::new(move || ctl.wait_exit()))
     }
 }
 
@@ -495,6 +541,9 @@ pub(crate) struct Fake {
 impl Drop for Fake {
     fn drop(&mut self) {
         self.ctl.stop.store(true, Ordering::SeqCst);
+        // Under the lock the waiter checks under, so it cannot miss the wake-up.
+        let _held = lock(&self.ctl.exit);
+        self.ctl.exited.notify_all();
     }
 }
 
@@ -577,6 +626,23 @@ pub(crate) fn fake_transport(
         child: Box::new(FakeProcess(Arc::clone(&ctl))),
     };
     (transport, parent_port, Fake { ctl })
+}
+
+/// The transport of a fake process that only exists: it takes everything written to it and says
+/// nothing, and its pipes stay open until the test lets its process end (see
+/// [`Control::exit_silently`]). For the tests of a group child, which must not be disturbed by a
+/// fake that reads what the group writes as a plugin's requests.
+pub(crate) fn idle_transport() -> (Transport, Fake) {
+    let (from_child_r, from_child_w) = std::io::pipe().expect("pipe");
+    let (_err_r, err_w) = std::io::pipe().expect("pipe");
+    let ctl = Arc::new(Control::new(from_child_w, err_w));
+    let transport = Transport {
+        writer: Box::new(std::io::sink()),
+        reader: Box::new(from_child_r),
+        stderr: None,
+        child: Box::new(FakeProcess(Arc::clone(&ctl))),
+    };
+    (transport, Fake { ctl })
 }
 
 /// Starts an instance over a fake child with the test timeouts.
