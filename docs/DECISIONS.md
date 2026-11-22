@@ -1770,7 +1770,12 @@ the sum with the batch budget. The plan is **busy** when the sum reaches 30 % of
 of audio under 20 %. Entering is immediate (the next batch after the smoothed cost crosses 30 %), leaving is slow, and
 between the shares nothing changes: a wrong "busy" costs some CPU, a wrong "calm" on a heavy project is a missed deadline.
 A calm plan runs every level inline and wakes no worker; a busy one hands every level over that has a device a worker can
-take (a device pinned to the audio thread cannot be taken, so a level of pinned devices wakes nobody). The callback flag and
+take (a device pinned to the audio thread cannot be taken, so a level of pinned devices wakes nobody). Two loads are read:
+the smoothed one (the sum of the smoothed per-node costs, set by batches that ran inline and only ever lowered by the
+others) and the seen one (the sum of each node's raw time in the last timed batch, wherever it ran: an upper estimate of
+the inline load, and the only figure that rises while the plan is busy). Entering uses the smoothed load; while busy,
+a seen load at or over 50 % of the budget stops the inline probes and the calm count, because inflation cannot be told
+from load without an inline batch and an inline batch at that load is not safe: staying busy is the safe side. The callback flag and
 the wake-up at the start of a call follow the state, and a level that is handed over in the middle of a call raises the
 flag itself. A plan whose nodes have no cost yet is busy, and so is the first second after the transport starts (the
 stopped to playing edge): playback never begins inline and finds the load a batch late. The hold counts audio time.
@@ -1785,10 +1790,25 @@ own: the sampler's stopped-rack rows with the rule on show no difference from no
 timed where it runs: a node takes longer on a worker than at home (its data has moved to another core), which would read as a load over the leave share and keep a calm plan busy for
 ever; the first version of the rule, timed where the nodes run, left the stopped stress rack with seven workers at 87 %
 of a core in the sampler. So a
-busy plan runs one batch in 64 inline and timed (never in the hold, never while a cost is unknown, and only while the last
-inline load was under 50 % of the budget, so a probe batch cannot be a heavy one), and the batches it runs on workers can
-only lower a cost, never raise it, so a plan that became light is seen without waiting for a probe. The sum counts each
+busy plan runs one batch in 64 inline and timed (never in the hold, never while a cost is unknown, and only if the batch
+just before it, as timed where it ran, was under 50 % of the budget, so a probe batch is bounded by what was just
+measured and not by an old figure; the first version of the rule bounded it by the last inline load, which is stale by
+construction once the plan is busy, and ran one whole batch on the audio thread, a second after Play, for a project that
+is light when stopped and takes 150 % of a batch when playing), and the batches it runs on workers can only lower a
+smoothed cost, never raise it, so a plan that became light is seen without waiting for a probe. The sum counts each
 device once, at its last stage, so a multi-stage device whose stages differ is read as their total.
+
+**A plan that needed help while playing keeps the workers while it plays.** A song with a quiet section of more than a
+second under 20 %, followed by a dense one, would go calm in the quiet part and take the dense onset inline: the first
+batch of the onset on the audio thread alone, late at small buffers, at every such transition. So once the plan has
+shown a need while the transport plays (the smoothed load at or over 30 %, or the seen load at or over 50 %, for 250 ms
+of audio in a row: one noisy batch would otherwise make a light project heavy for good) the gate remembers it for the
+life of the pool, and while the transport plays it stays busy: it never leaves and never probes. Stopped, it leaves as any
+plan does (a second under 20 %); the next Play holds and then stays busy. A project that never showed a need while playing
+plays inline. The memory is not cleared on a plan swap, only when the engine is rebuilt: a project made light by removing
+devices keeps the workers while it plays until the engine is rebuilt. The workers' CPU in the quiet part of such a song is
+small, since they spin only for the length of a callback, and the measured gain (the stopped rack, the light project) is
+untouched.
 
 **Paths that carry timing.** Playback start: the hold above, from the first playing batch. Live notes on a stopped
 transport: no hold, but the plan is calm and timed on every batch, so voices that raise the cost are seen in the next batch
@@ -1819,8 +1839,11 @@ measuring a busy plan where it runs (the feedback above); skipping silent device
 per-node cost).
 
 **Limits.** The shares are fixed numbers, not settings. A project that sits between 20 and 30 % of the budget keeps the
-state it has. A plan above about 50 % of the budget is never probed inline and leaves busy only when its devices get
-lighter (their runs on workers lower the costs). The load is that of one engine: two engines in one process share the
+state it has. A plan whose seen load is at or over 50 % of the budget is never probed inline and leaves busy only when its
+devices get lighter (their runs on workers lower the costs). A plan that has never been busy while playing and jumps from
+under the enter share to over a whole batch within one batch runs that one batch inline, playing or stopped (a large chord
+on a stopped transport, a dense onset in a song that has not needed help before): the rule bounds what an inline plan can
+run up between two batches by the enter share and the growth of one batch, not that growth. The load is that of one engine: two engines in one process share the
 device timing switch but each has its own rule state.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.

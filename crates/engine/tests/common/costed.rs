@@ -6,7 +6,7 @@ use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceKind, Direction, PrepareInfo, ProcessContext, SocketDescriptor,
     SocketId, SocketKind,
 };
-use atomik_engine::GateMode;
+use atomik_engine::{GateMode, TransportCommand};
 use atomik_testkit::no_alloc::forbid_on_this_thread;
 use std::cell::Cell;
 use std::sync::Arc;
@@ -94,9 +94,10 @@ const OUTPUTS: usize = 4;
 /// Batches within which the load rule must notice a rise: the plan is sampled on every batch
 /// while calm and the cost is smoothed half way per sample.
 pub const ENTER_BOUND_BATCHES: usize = 3;
-/// Batches after which a plan that became light must be calm: a second of audio plus a margin,
-/// and for a new engine another second, the hold after the free-running transport starts.
-pub const CALM_BOUND_BATCHES: usize = 2_000;
+/// Batches after which a plan that became light must be calm: a second of audio plus a margin.
+/// (The rig has a song that stands still, so no hold follows a transport start; without a song
+/// the transport always plays.)
+pub const CALM_BOUND_BATCHES: usize = 1_200;
 /// Batches during which a plan that became light must still be busy (well under a second).
 pub const STILL_BUSY_BATCHES: usize = 500;
 
@@ -113,7 +114,7 @@ pub fn node_cost_for(nodes: usize, percent: u64) -> u64 {
 pub struct Rig {
     pub engine: Engine,
     /// Kept alive: dropping the handle would end the engine's control side.
-    _handle: EngineHandle,
+    pub handle: EngineHandle,
     /// The cost each device of level 0 and of level 1 takes, in nanoseconds.
     pub costs: [Arc<AtomicU64>; 2],
     /// Percent of its cost a device takes on a worker thread (shared by every device).
@@ -177,9 +178,13 @@ pub fn rig(
         engine.set_gate_mode(mode);
     }
     handle.submit_plan(g.compile().unwrap()).unwrap();
+    // A song that stands still: the transport is stopped until the test starts it.
+    handle
+        .submit_song(super::song::song(Vec::new(), &[(0, 120.0)]))
+        .unwrap();
     Rig {
         engine,
-        _handle: handle,
+        handle,
         costs,
         on_worker,
         nodes: 2 * width,
@@ -187,6 +192,33 @@ pub fn rig(
 }
 
 impl Rig {
+    /// Starts the transport.
+    pub fn play(&mut self) {
+        self.handle.transport(TransportCommand::Play).unwrap();
+    }
+
+    /// Stops the transport.
+    pub fn stop(&mut self) {
+        self.handle.transport(TransportCommand::Stop).unwrap();
+    }
+
+    /// Renders one batch and returns what ran on the calling (audio) thread: the advance of its
+    /// fake clock, in nanoseconds. A plan that is spread over the workers advances it by a
+    /// share of the plan's cost, one that runs wholly inline by all of it.
+    pub fn home_batch(&mut self) -> u64 {
+        let before = fake_clock();
+        batch(&mut self.engine);
+        fake_clock() - before
+    }
+
+    /// The summed cost of every device, in nanoseconds.
+    pub fn total_cost(&self) -> u64 {
+        self.costs
+            .iter()
+            .map(|c| c.load(Ordering::Relaxed) * (self.nodes as u64 / 2))
+            .sum()
+    }
+
     /// Sets the cost of every device.
     pub fn set_cost(&self, ns: u64) {
         self.costs

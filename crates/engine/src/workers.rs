@@ -23,13 +23,16 @@
 //!   before each dispatch, so it may change while running.
 //! * **When the workers are used.** A level of one device is never dispatched. For a live
 //!   engine (`EngineOptions::realtime`) the workers are used only while the audio thread needs
-//!   help: the summed cost of the plan against the batch budget (`crate::load_gate`: busy from
-//!   30 % at once, calm after a second under 20 %, busy for a second after the transport starts
-//!   and while a cost is unknown); a calm plan runs every level inline and wakes no worker. The
-//!   node costs are timed on every batch while the plan is calm and on one inline batch in 64
-//!   while it is busy (a run on a worker costs more than the same run at home), by the
-//!   per-device timing's clock when it is on, else by the engine's own. An offline engine has no deadline and hands every level of two or more devices over. The
-//!   decision never reaches the signal.
+//!   help (`crate::load_gate`): the plan is *busy* from 30 % of the batch budget at once and
+//!   *calm* after a second under 20 %; it is busy while a cost is unknown, for a second after
+//!   the transport starts and, once it has needed help while playing, for as long as it plays.
+//!   A calm plan runs every level inline and wakes no worker. The node costs are timed on every
+//!   batch while the plan is calm and, while it is busy, on every batch where they ran plus one
+//!   inline batch in 64, taken only if the batch before it, timed where it ran, was under half
+//!   the budget (a run on a worker costs more than the same run at home). The clock is the
+//!   per-device timing's when it is on, else the engine's own. An offline engine has no
+//!   deadline and hands every level of two or more devices over. The decision never reaches
+//!   the signal.
 //! * **Distribution.** Item `j` of a dispatched level of `n > 1` devices goes to participant
 //!   `j % p`, `p = min(workers + 1, n)`; participant 0 is the audio thread. Only workers that
 //!   received work are unparked. If a job queue is full the node simply runs on the audio
@@ -46,13 +49,13 @@
 //!   keeps workers awake while a callback runs, so no level depends on an OS wake-up.
 //! * **Callback flag.** A worker spins only while a render call that dispatches a level is in
 //!   progress: the audio thread raises an atomic flag at the start of such a call
-//!   ([`Pool::begin_callback`]; only when a level of the current plan is in dispatch mode),
-//!   unparks every live worker so the wake-up overlaps the call's serial work, and lowers the
-//!   flag at its end ([`Pool::end_callback`]). A level that turns to dispatch in the middle of a
-//!   call raises it itself ([`Pool::ensure_callback`]); a plan whose levels are all cheap leaves
-//!   every worker parked. A worker that finds the flag down parks at once, so a long linger
-//!   costs nothing between callbacks or while the transport is stopped. Both calls are atomics
-//!   and `unpark`: no allocation, no lock.
+//!   ([`Pool::begin_callback`]; only when the plan is busy and a level has a device a worker
+//!   can take), unparks every live worker so the wake-up overlaps the call's serial work, and
+//!   lowers the flag at its end ([`Pool::end_callback`]). A level handed over in the middle of
+//!   a call (the plan turned busy since the call began) raises it itself
+//!   ([`Pool::ensure_callback`]); a calm plan leaves every worker parked. A worker that finds
+//!   the flag down parks at once, so a long linger costs nothing between callbacks or while
+//!   the transport is stopped. Both calls are atomics and `unpark`: no allocation, no lock.
 //! * **Determinism.** A device's output depends only on its own state and its gathered
 //!   inputs, which are identical whatever thread runs it; the scatter order is the plan order.
 //!   So output is bit-identical for any worker count.
@@ -406,7 +409,7 @@ impl RoutingPlan {
         let mut load = PlanLoad::default();
         for step in self.steps.iter().filter(|step| step.last) {
             if let Some(Some(node)) = arena.nodes.get(self.devices[step.device].slot) {
-                load.add(node.cost());
+                load.add(node.cost(), node.seen());
             }
         }
         load

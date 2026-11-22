@@ -1879,14 +1879,18 @@ is lost and it then stays, it comes down window by window when the bursts stop, 
 lands on the same frame at either end of it),
 `crates/engine/tests/worker_linger.rs` the worker read-out (and, ignored, a paced benchmark of the callback
 duration, the idle spins and the process CPU per worker count and linger: `cargo test -p atomik-engine --release
---test worker_linger -- --ignored --nocapture`), `crates/engine/src/load_gate.rs` the pure load rule (the shares, the
-fast enter, the slow leave, no flapping, the holds after a transport start and while a cost is unknown, the
-smoothing) and `crates/engine/tests/load_gate.rs` the same with a real pool and a fake clock the devices advance
-(many cheap nodes park every worker although a level of them would save time spread; a plan that turns heavy is
-busy within three batches and one that turns light stays busy for most of a second; pinned devices wake no worker;
-an offline engine hands every level over; the output is identical for the live rule, the offline rule, forced
-inline and forced dispatch, also while the busy state flips; `load_gate_alloc.rs` runs the flips under the allocation
-guards; the tests that exercise the hand-over itself build their engine with the rule forced to dispatch), and
+--test worker_linger -- --ignored --nocapture`), `crates/engine/src/load_gate.rs` the pure load rule (the shares, the fast enter, the slow leave, no
+flapping, the holds after a transport start and while a cost is unknown, the smoothing) and
+`crates/engine/tests/load_gate.rs` the same with a real pool and a fake clock the devices advance
+(many cheap nodes park every worker although a level of them would save time spread; a plan that
+turns heavy is busy within three batches and one that turns light stays busy for most of a second;
+no batch of a plan that needs help runs on the audio thread alone, neither at the end of the hold
+after Play nor after a rise while busy; a plan that needed help while playing stays busy through a
+quiet section and a plan that never did plays inline; pinned devices wake no worker; an offline
+engine hands every level over; the output is identical for the live rule, the offline rule, forced
+inline and forced dispatch, also while the busy state flips; `load_gate_alloc.rs` runs the flips
+under the allocation guards; the tests that exercise the hand-over itself build their engine with
+the rule forced to dispatch), and
 `diagnostics.rs` and `session_tests.rs` the report and the status.
 
 Three more groups say how the app starts and how busy the UI is, with no behaviour change (the log is at INFO, the

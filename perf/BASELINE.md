@@ -95,7 +95,9 @@ Three measurements of the load rule (`crates/engine/src/load_gate.rs`; the rule 
 
 **Bounce with two workers, what a bounce hands over.** `cargo bench -p atomik-render --bench render_batch -- "rack|console-64|lanes"`
 with `ATOMIK_BENCH_GATE=dispatch` and `ATOMIK_BENCH_GATE=levels` (a switch of the bench binary that sets the mode engines
-start in), five rounds, one binary, the two settings alternating round by round so that the drift of the machine
+start in; the value `levels` existed only in the measured build of the first commit of this change, which had the
+per-level rule, and the current tree accepts `dispatch`, `inline` and `load` only, so the per-level column cannot be
+reproduced from it), five rounds, one binary, the two settings alternating round by round so that the drift of the machine
 cannot favour one; medians of the five runs, and for workers 0 the median of all ten (the setting does not touch it).
 "dispatch" is what the engine did before the rule and what a bounce does now (every level of two or more devices goes
 to the workers). "per level" is a rule tried first and removed: it decided each level from the time spreading it would
@@ -161,6 +163,10 @@ stress-workers2    30.1, 33.8, 32.9       17.6, 18.5, 18.4
 stress-workers0    17.6, 17.9, 17.0       18.1, 17.1, 17.9
 empty              0.31, 1.09, 0.47       0.70, 0.55, 0.70
 ```
+
+After the review fixes (the seen load, the probe guard, the rule while playing) the same rows were taken again on the
+final build, three rounds of the stopped rack and one of the reference: stress (auto) 19.6, 17.5, 23.7; stress-workers2
+17.2, 16.3, 17.0; stress-workers0 17.5. The stopped rack still calms down.
 
 The stopped stress rack with automatic workers (7 here) and with two workers now costs what it costs with none, since
 its devices take about a seventh of the callback time (about 220 us in a 1.33 ms batch) and the workers sleep. The empty

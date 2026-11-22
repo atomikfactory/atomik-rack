@@ -17,24 +17,42 @@
 //! crosses the share; a wrong "busy" costs a little CPU), leaving is slow (a wrong "calm" on a
 //! heavy project is a missed deadline). Between the two shares the state does not change. The
 //! cost an inline plan can run up before the gate reacts is bounded by the enter share plus the
-//! growth of one batch; a calm plan is sampled on every batch (see [`crate::workers`]), so the
+//! growth of one batch; a calm plan is timed on every batch (see [`crate::workers`]), so the
 //! worst-case delay to notice is one batch plus the smoothing.
+//!
+//! # Two loads
+//!
+//! A node timed on a worker takes longer than the same node on the audio thread (its data moves
+//! between cores), so a plan that is busy and dispatching cannot be read from those timings as
+//! a smoothed cost: they may only lower it. The gate therefore reads two loads. The *smoothed*
+//! load is the sum of the smoothed per-node costs, updated by batches that ran inline (and only
+//! lowered by the others). The *seen* load is the sum of each node's raw time in the last timed
+//! batch, wherever it ran: an upper estimate of the inline load, and the only figure that
+//! rises while the plan is busy.
 //!
 //! # Inline probes
 //!
-//! A node timed on a worker takes longer than the same node on the audio thread (its data moves
-//! between cores), so a plan that is busy and dispatching would read as busier than it is and
-//! never calm down. Once busy, the costs are therefore only updated by a probe: one batch in
-//! [`PROBE_EVERY_BATCHES`] runs inline and timed, and only while the last inline load was under
-//! [`PROBE_BELOW_PERCENT`] of the budget (a probe cannot be a heavy batch). A calm plan is inline
-//! anyway and is timed on every batch.
+//! While busy, one batch in [`PROBE_EVERY_BATCHES`] runs inline and timed, to learn what the
+//! plan costs at home. A probe is allowed only if the batch just before it, as timed where it
+//! ran, was under [`PROBE_BELOW_PERCENT`] of the budget, so a probe batch is bounded by what
+//! was just measured and not by an old figure. While the seen load is at or over that share the
+//! plan neither probes nor counts calm time: it cannot tell inflation from load, and staying
+//! busy is the safe side.
 //!
-//! # Holds
+//! # Holds, and a plan that needed help while playing
 //!
 //! A plan whose nodes have no cost yet (a new plan, a new device) is busy, as the engine was
 //! before the gate existed, and so is the first second after the transport starts: a stopped
 //! project with silent, cheap devices must not begin playback inline and find the load one
-//! batch late. The hold counts audio time, not wall time. Offline renders do not use the gate.
+//! batch late. The hold counts audio time, not wall time.
+//!
+//! A plan that has needed the workers while the transport plays (the smoothed load at or over
+//! the enter share, or the seen load at or over the probe share, for [`NEED_AFTER_NS`] of audio
+//! in a row) is remembered for the life of the pool: while the transport plays it stays busy,
+//! never leaves and never probes, because a song that goes quiet and then dense would otherwise
+//! take the dense onset inline. Stopped, it leaves as any plan does; the next Play holds and
+//! then stays busy. A plan that never reached those shares while playing plays inline.
+//! Offline renders do not use the gate.
 
 /// Share of the batch budget, in percent, at which a plan becomes busy.
 pub(crate) const ENTER_PERCENT: u64 = 30;
@@ -47,22 +65,30 @@ pub(crate) const HOLD_NS: u64 = 1_000_000_000;
 /// While busy, one batch in this many runs inline and timed, to see what the plan costs on the
 /// audio thread alone (a run on a worker costs more: the node's data moves between cores).
 pub(crate) const PROBE_EVERY_BATCHES: u32 = 64;
-/// A busy plan is probed inline only while its last inline cost was under this share of the
-/// budget, in percent, so a probe batch cannot be a heavy one.
+/// A busy plan is probed inline only if the batch just before, as timed where it ran, was under
+/// this share of the budget, in percent; at or over it the plan also counts no calm time.
 pub(crate) const PROBE_BELOW_PERCENT: u64 = 50;
+/// Nanoseconds of audio in a row a playing plan must show a need (see the module doc) before
+/// it is remembered as one that needs the workers; a single noisy batch is no evidence.
+pub(crate) const NEED_AFTER_NS: u64 = 250_000_000;
 
 /// What the nodes of a plan cost in one batch, summed. Built by [`PlanLoad::add`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PlanLoad {
     total: u64,
+    seen: u64,
     unknown: bool,
 }
 
 impl PlanLoad {
-    /// Adds one step: its node's smoothed cost in nanoseconds, or `None` while it has none yet.
-    pub(crate) fn add(&mut self, cost_ns: Option<u64>) {
+    /// Adds one device: its smoothed cost in nanoseconds, or `None` while it has none yet, and
+    /// the raw time of its last timed batch wherever it ran.
+    pub(crate) fn add(&mut self, cost_ns: Option<u64>, seen_ns: u64) {
         match cost_ns {
-            Some(ns) => self.total = self.total.saturating_add(ns),
+            Some(ns) => {
+                self.total = self.total.saturating_add(ns);
+                self.seen = self.seen.saturating_add(seen_ns);
+            }
             None => self.unknown = true,
         }
     }
@@ -77,11 +103,16 @@ pub(crate) struct LoadGate {
     calm_ns: u64,
     /// Nanoseconds of audio the busy state is still held.
     hold_ns: u64,
-    was_playing: bool,
-    /// The last known load, in percent of the budget (0 while a cost is unknown).
-    share_percent: u64,
+    playing: bool,
+    /// The seen load of the last batch, in percent of the budget (`u64::MAX` while a cost is
+    /// unknown).
+    seen_percent: u64,
     /// Batches since the last inline probe.
     since_probe: u32,
+    /// Nanoseconds of audio in a row the playing plan has shown a need.
+    need_ns: u64,
+    /// The plan has needed the workers while playing (kept for the life of the gate).
+    needy: bool,
 }
 
 impl LoadGate {
@@ -91,9 +122,11 @@ impl LoadGate {
             busy: true,
             calm_ns: 0,
             hold_ns: 0,
-            was_playing: false,
-            share_percent: u64::MAX,
+            playing: false,
+            seen_percent: u64::MAX,
             since_probe: 0,
+            need_ns: 0,
+            needy: false,
         }
     }
 
@@ -103,13 +136,15 @@ impl LoadGate {
     }
 
     /// While busy: whether this batch should run inline and timed (one in
-    /// [`PROBE_EVERY_BATCHES`], never in a hold, never while a cost is unknown or the last
-    /// inline load was heavy).
+    /// [`PROBE_EVERY_BATCHES`]; never in a hold, never while a cost is unknown, never while the
+    /// seen load of the batch before is at or over the probe share, never for a plan that has
+    /// needed the workers and is playing).
     pub(crate) fn probe_due(&mut self) -> bool {
         self.since_probe = self.since_probe.saturating_add(1);
         if self.since_probe >= PROBE_EVERY_BATCHES
             && self.hold_ns == 0
-            && self.share_percent < PROBE_BELOW_PERCENT
+            && self.seen_percent < PROBE_BELOW_PERCENT
+            && !(self.needy && self.playing)
         {
             self.since_probe = 0;
             return true;
@@ -120,30 +155,47 @@ impl LoadGate {
     /// Takes one batch: the plan's load, the batch budget in nanoseconds and whether the
     /// transport is playing; returns whether the plan is busy for this batch.
     pub(crate) fn update(&mut self, load: PlanLoad, budget_ns: u64, playing: bool) -> bool {
-        if playing && !self.was_playing {
+        if playing && !self.playing {
             self.hold_ns = HOLD_NS;
         }
-        self.was_playing = playing;
+        self.playing = playing;
+        if load.unknown {
+            self.busy = true;
+            self.calm_ns = 0;
+            self.need_ns = 0;
+            self.seen_percent = u64::MAX;
+            return true;
+        }
+        let budget = u128::from(budget_ns.max(1));
+        let smoothed = u128::from(load.total) * 100;
+        let seen = u128::from(load.seen) * 100;
+        self.seen_percent = u64::try_from(seen / budget).unwrap_or(u64::MAX);
+        let enter = smoothed >= budget * u128::from(ENTER_PERCENT);
+        // Evidence that the plan needs the workers: only while the transport plays, and only
+        // when it lasts.
+        let need = enter || self.seen_percent >= PROBE_BELOW_PERCENT;
+        if playing && need {
+            self.need_ns = self.need_ns.saturating_add(budget_ns);
+            if self.need_ns >= NEED_AFTER_NS {
+                self.needy = true;
+            }
+        } else {
+            self.need_ns = 0;
+        }
         if self.hold_ns > 0 {
             self.hold_ns = self.hold_ns.saturating_sub(budget_ns.max(1));
             self.busy = true;
             self.calm_ns = 0;
             return true;
         }
-        if load.unknown {
-            self.busy = true;
-            self.calm_ns = 0;
-            self.share_percent = u64::MAX;
-            return true;
-        }
-        let scaled = u128::from(load.total) * 100;
-        let budget = u128::from(budget_ns);
-        self.share_percent = u64::try_from(scaled / budget.max(1)).unwrap_or(u64::MAX);
-        if scaled >= budget * u128::from(ENTER_PERCENT) {
+        if enter {
             self.busy = true;
             self.calm_ns = 0;
         } else if self.busy {
-            if scaled < budget * u128::from(LEAVE_PERCENT) {
+            let heavy_seen = self.seen_percent >= PROBE_BELOW_PERCENT;
+            if (self.needy && playing) || heavy_seen {
+                self.calm_ns = 0;
+            } else if smoothed < budget * u128::from(LEAVE_PERCENT) {
                 self.calm_ns = self.calm_ns.saturating_add(budget_ns);
                 if self.calm_ns >= LEAVE_AFTER_NS {
                     self.busy = false;
@@ -232,19 +284,29 @@ mod tests {
     /// 64 frames at 48 kHz.
     const BUDGET: u64 = 1_333_333;
 
-    fn load(share_percent: u64) -> PlanLoad {
+    fn share(percent: u64) -> u64 {
+        BUDGET * percent / 100
+    }
+
+    /// A plan whose smoothed load is `smoothed` percent of the budget and whose last batch,
+    /// as timed where it ran, was `seen` percent.
+    fn load2(smoothed: u64, seen: u64) -> PlanLoad {
         let mut l = PlanLoad::default();
-        l.add(Some(BUDGET * share_percent / 100));
+        l.add(Some(share(smoothed)), share(seen));
         l
+    }
+
+    fn load(percent: u64) -> PlanLoad {
+        load2(percent, percent)
     }
 
     fn batches_in(ns: u64) -> u64 {
         ns / BUDGET + 1
     }
 
+    /// A gate that has settled calm while stopped.
     fn calm_gate() -> LoadGate {
         let mut gate = LoadGate::new();
-        // Known costs, nothing playing: calm down after the leave dwell.
         for _ in 0..batches_in(LEAVE_AFTER_NS) + 1 {
             gate.update(load(1), BUDGET, false);
         }
@@ -252,12 +314,26 @@ mod tests {
         gate
     }
 
+    /// A gate that is busy because of a load, stopped.
+    fn busy_gate(percent: u64) -> LoadGate {
+        let mut gate = LoadGate::new();
+        gate.update(load(percent), BUDGET, false);
+        assert!(gate.busy());
+        gate
+    }
+
+    fn run(gate: &mut LoadGate, l: PlanLoad, playing: bool, batches: u64) {
+        for _ in 0..batches {
+            gate.update(l, BUDGET, playing);
+        }
+    }
+
     #[test]
     fn a_new_gate_is_busy_and_stays_busy_while_a_cost_is_unknown() {
         let mut gate = LoadGate::new();
         assert!(gate.busy());
         let mut unknown = load(1);
-        unknown.add(None);
+        unknown.add(None, 0);
         for _ in 0..5_000 {
             assert!(gate.update(unknown, BUDGET, false));
         }
@@ -284,37 +360,29 @@ mod tests {
             gate.update(load(31), BUDGET, false),
             "no dwell on the way in"
         );
-        assert!(gate.busy());
     }
 
     #[test]
     fn leaving_needs_a_whole_second_under_the_leave_share() {
-        let mut gate = LoadGate::new();
-        gate.update(load(60), BUDGET, false);
-        // Almost a second under the leave share, then one batch above it: the count restarts.
-        for _ in 0..batches_in(LEAVE_AFTER_NS) - 2 {
-            assert!(gate.update(load(10), BUDGET, false));
-        }
-        assert!(gate.update(load(25), BUDGET, false));
-        for _ in 0..batches_in(LEAVE_AFTER_NS) - 2 {
-            assert!(gate.update(load(10), BUDGET, false));
-        }
-        let mut left = false;
-        for _ in 0..4 {
-            left |= !gate.update(load(10), BUDGET, false);
-        }
-        assert!(left, "calm once the second is complete");
+        let mut gate = busy_gate(60);
+        run(&mut gate, load(10), false, batches_in(LEAVE_AFTER_NS) - 2);
+        assert!(gate.busy());
+        // One batch above the leave share: the count restarts.
+        gate.update(load(25), BUDGET, false);
+        run(&mut gate, load(10), false, batches_in(LEAVE_AFTER_NS) - 2);
+        assert!(gate.busy());
+        run(&mut gate, load(10), false, 4);
+        assert!(!gate.busy(), "calm once the second is complete");
     }
 
     #[test]
     fn a_load_between_the_shares_changes_nothing_in_either_state() {
         let mut calm = calm_gate();
-        let mut busy = LoadGate::new();
-        busy.update(load(60), BUDGET, false);
+        let mut busy = busy_gate(60);
         for k in 0..10_000 {
-            let share = 21 + k % 8; // 21..=28
-            assert!(!calm.update(load(share), BUDGET, false), "batch {k}");
-            assert!(busy.update(load(share), BUDGET, false), "batch {k}");
+            let s = 21 + k % 8; // 21..=28
+            assert!(!calm.update(load(s), BUDGET, false), "batch {k}");
+            assert!(busy.update(load(s), BUDGET, false), "batch {k}");
         }
     }
 
@@ -324,8 +392,8 @@ mod tests {
         let mut changes = 0;
         let mut last = gate.busy();
         for k in 0..20_000 {
-            let share = if k % 2 == 0 { 31 } else { 5 };
-            let now = gate.update(load(share), BUDGET, false);
+            let s = if k % 2 == 0 { 31 } else { 5 };
+            let now = gate.update(load(s), BUDGET, false);
             changes += u32::from(now != last);
             last = now;
         }
@@ -336,23 +404,24 @@ mod tests {
     fn the_transport_start_holds_the_busy_state_for_a_second() {
         let mut gate = calm_gate();
         assert!(!gate.update(load(1), BUDGET, false));
-        // Playing starts: busy at once although the load is tiny, for a second of audio.
         let mut held = 0u64;
         while gate.update(load(1), BUDGET, true) {
             held += 1;
             assert!(held < 10_000);
         }
         assert!(held * BUDGET >= HOLD_NS - BUDGET, "held {held} batches");
-        // Playing on does not hold it again.
-        assert!(!gate.update(load(1), BUDGET, true));
+        assert!(!gate.update(load(1), BUDGET, true), "no second hold");
     }
 
     #[test]
     fn each_start_holds_again() {
         let mut gate = calm_gate();
-        for _ in 0..batches_in(HOLD_NS + LEAVE_AFTER_NS) + 4 {
-            gate.update(load(1), BUDGET, true);
-        }
+        run(
+            &mut gate,
+            load(1),
+            true,
+            batches_in(HOLD_NS + LEAVE_AFTER_NS) + 4,
+        );
         assert!(!gate.busy());
         gate.update(load(1), BUDGET, false);
         assert!(
@@ -363,24 +432,21 @@ mod tests {
 
     #[test]
     fn a_busy_plan_is_probed_inline_one_batch_in_sixty_four_and_only_while_light() {
-        let mut gate = LoadGate::new();
-        gate.update(load(40), BUDGET, false);
+        let mut gate = busy_gate(40);
         let mut probes = 0;
         for _ in 0..(PROBE_EVERY_BATCHES * 10) {
             gate.update(load(40), BUDGET, false);
             probes += u32::from(gate.probe_due());
         }
         assert_eq!(probes, 10, "light enough to probe: every 64th batch");
-        // Heavier than the probe share: never.
-        let mut heavy = LoadGate::new();
+        let mut heavy = busy_gate(70);
         for _ in 0..(PROBE_EVERY_BATCHES * 10) {
             heavy.update(load(70), BUDGET, false);
             assert!(!heavy.probe_due());
         }
-        // Never while a cost is unknown, nor in a hold.
         let mut unknown = LoadGate::new();
         let mut l = load(10);
-        l.add(None);
+        l.add(None, 0);
         for _ in 0..(PROBE_EVERY_BATCHES * 3) {
             unknown.update(l, BUDGET, false);
             assert!(!unknown.probe_due());
@@ -390,6 +456,115 @@ mod tests {
             held.update(load(10), BUDGET, true);
             assert!(!held.probe_due(), "the hold after the transport starts");
         }
+    }
+
+    #[test]
+    fn a_seen_load_over_the_probe_share_blocks_the_probe_and_the_calm_count() {
+        // Busy, the smoothed load stale and low (5 %), but the batches that ran on workers saw
+        // 150 %: such a plan neither probes inline nor goes calm.
+        let mut gate = busy_gate(40);
+        for k in 0..3_000u64 {
+            gate.update(load2(5, 150), BUDGET, false);
+            assert!(!gate.probe_due(), "batch {k}");
+            assert!(gate.busy(), "batch {k}: it needs help");
+        }
+        // The seen load falling under the share releases both.
+        gate.update(load2(5, 40), BUDGET, false);
+        let mut probed = false;
+        for _ in 0..(PROBE_EVERY_BATCHES * 2) {
+            gate.update(load2(5, 40), BUDGET, false);
+            probed |= gate.probe_due();
+        }
+        assert!(probed, "probes again");
+        run(
+            &mut gate,
+            load2(5, 40),
+            false,
+            batches_in(LEAVE_AFTER_NS) + 1,
+        );
+        assert!(!gate.busy(), "and calms down after a second");
+    }
+
+    #[test]
+    fn a_seen_load_over_the_share_resets_the_calm_count() {
+        let mut gate = busy_gate(60);
+        run(
+            &mut gate,
+            load2(5, 10),
+            false,
+            batches_in(LEAVE_AFTER_NS) - 3,
+        );
+        assert!(gate.busy());
+        gate.update(load2(5, 60), BUDGET, false);
+        run(
+            &mut gate,
+            load2(5, 10),
+            false,
+            batches_in(LEAVE_AFTER_NS) - 3,
+        );
+        assert!(gate.busy(), "the count started again");
+        run(&mut gate, load2(5, 10), false, 6);
+        assert!(!gate.busy());
+    }
+
+    #[test]
+    fn the_end_of_the_hold_after_play_does_not_probe_a_plan_that_got_heavy() {
+        // Light while stopped, 150 % seen once it plays (it needs the workers to play at all):
+        // not one batch is probed inline and the plan does not go calm.
+        let mut gate = calm_gate();
+        for k in 0..4_000u64 {
+            gate.update(load2(5, 150), BUDGET, true);
+            assert!(!gate.probe_due(), "batch {k}");
+            assert!(gate.busy(), "batch {k}");
+        }
+    }
+
+    #[test]
+    fn a_plan_that_needed_help_while_playing_stays_busy_for_as_long_as_it_plays() {
+        let mut gate = calm_gate();
+        // Play, dense for half a second: remembered.
+        run(&mut gate, load(60), true, batches_in(HOLD_NS));
+        run(&mut gate, load(60), true, batches_in(NEED_AFTER_NS * 2));
+        // A long quiet section while playing: still busy, and no inline probe either.
+        for k in 0..(5 * batches_in(LEAVE_AFTER_NS)) {
+            gate.update(load(2), BUDGET, true);
+            assert!(gate.busy(), "batch {k}");
+            assert!(!gate.probe_due(), "batch {k}");
+        }
+        // Stopped, it leaves as any plan does.
+        run(&mut gate, load(2), false, batches_in(LEAVE_AFTER_NS) + 2);
+        assert!(!gate.busy());
+        // The next Play holds, and then stays busy again.
+        assert!(gate.update(load(2), BUDGET, true));
+        run(&mut gate, load(2), true, batches_in(HOLD_NS) + 5);
+        assert!(gate.busy(), "needy: busy after the hold too");
+        run(&mut gate, load(2), true, 5 * batches_in(LEAVE_AFTER_NS));
+        assert!(gate.busy());
+    }
+
+    #[test]
+    fn a_need_is_only_remembered_while_the_transport_plays_and_only_when_it_lasts() {
+        // Heavy while stopped: busy, but nothing is remembered; it still leaves, and a later
+        // Play over a light plan calms down while playing.
+        let mut gate = LoadGate::new();
+        run(&mut gate, load(80), false, 2 * batches_in(NEED_AFTER_NS));
+        run(&mut gate, load(2), false, batches_in(LEAVE_AFTER_NS) + 2);
+        assert!(!gate.busy());
+        run(&mut gate, load(2), true, batches_in(HOLD_NS) + 2);
+        run(&mut gate, load(2), true, batches_in(LEAVE_AFTER_NS) + 2);
+        assert!(
+            !gate.busy(),
+            "never needed help while playing: plays inline"
+        );
+        // A noisy batch or two while playing is no evidence.
+        let mut noisy = LoadGate::new();
+        run(&mut noisy, load(2), true, batches_in(HOLD_NS) + 2);
+        for _ in 0..5 {
+            run(&mut noisy, load(2), true, 40);
+            noisy.update(load2(2, 90), BUDGET, true);
+        }
+        run(&mut noisy, load(2), true, batches_in(LEAVE_AFTER_NS) + 2);
+        assert!(!noisy.busy(), "isolated noisy batches are not a need");
     }
 
     #[test]

@@ -2978,16 +2978,22 @@ worker so the wake-up overlaps the call's serial work) and lowers it at the end,
 finds it down parks at once. A long linger therefore keeps workers awake for the whole callback
 and costs nothing between callbacks or while the transport is stopped; both calls are atomics and
 `unpark`, so the audio thread still allocates and locks nothing. The app and `atomik-play` start
-at most `cores - 1` workers. A level with a single device is never dispatched, and a live engine uses the
-workers only while the audio thread needs help ([load_gate.rs](../crates/engine/src/load_gate.rs)):
-each node keeps a smoothed cost in nanoseconds per batch, the audio thread sums them over the plan before each batch and
-compares the sum with the batch budget. The plan is busy from 30 % of the budget at once and calm after a second under
-20 %; it is busy while a cost is unknown and for the first second after the transport starts. A calm plan runs every
-level inline, wakes no worker and is timed on every batch; a busy one hands every level over that has a device a worker
-can take (a device pinned to the audio thread cannot be taken) and runs one batch in 64 inline and timed, because a node
-takes longer on a worker than at home. The callback flag and the wake-up at the start of a call follow the same state.
-An offline engine (`EngineOptions::realtime` false, as a bounce or an export creates it) has no deadline and hands every
-level over, as before. The state never changes the output. The app's default
+at most `cores - 1` workers. A level with a single device is never dispatched, and a live engine
+uses the workers only while the audio thread needs help
+([load_gate.rs](../crates/engine/src/load_gate.rs)): each node keeps a smoothed cost in nanoseconds
+per batch, the audio thread sums them over the plan before each batch and compares the sum with the
+batch budget. The plan is busy from 30 % of the budget at once and calm after a second under 20 %;
+it is busy while a cost is unknown and for the first second after the transport starts. A calm plan
+runs every level inline, wakes no worker and is timed on every batch; a busy one hands every level
+over that has a device a worker can take (a device pinned to the audio thread cannot be taken) and
+runs one batch in 64 inline and timed, because a node takes longer on a worker than at home, but
+only if the batch just before it, timed where it ran, was under half the budget; at or over half it
+neither probes nor counts calm time. A plan that has needed the workers while the transport plays
+stays busy for as long as it plays (it is remembered until the engine is rebuilt) so that a dense
+section after a quiet one is not taken inline. The callback flag and the wake-up at the start of a
+call follow the same state. An offline engine (`EngineOptions::realtime` false, as a bounce or an
+export creates it) has no deadline and hands every level over, as before. The state never changes
+the output. The app's default
 is an automatic count (`auto_workers_for` in [audio-io](../crates/audio-io/src/lib.rs)): one
 worker per physical core but the audio thread's own, at most 8, one on a dual-core machine and
 none on a single core. The physical core count comes from the `num_cpus` crate; when it reports

@@ -87,6 +87,9 @@ pub(crate) struct Node {
     pub(crate) cost_ns: u64,
     /// The stages timed so far in the current batch, folded into `cost_ns` after the last.
     cost_acc: u64,
+    /// The raw time of the last timed batch, all stages, wherever it ran (no smoothing): an
+    /// upper estimate of the batch at home, the only cost that rises while the plan is busy.
+    pub(crate) seen_ns: u64,
     /// At least one whole batch has been timed.
     pub(crate) cost_known: bool,
     /// A tap on the notes the device receives (Direct Record, Send to Track): every note on or
@@ -224,6 +227,7 @@ impl Node {
             busy_ns: 0,
             cost_ns: 0,
             cost_acc: 0,
+            seen_ns: 0,
             cost_known: false,
             note_tap: None,
             preview: None,
@@ -401,6 +405,7 @@ impl Node {
     fn note_cost(&mut self, ns: u64, last: bool, accurate: bool) {
         self.cost_acc = self.cost_acc.saturating_add(ns);
         if last {
+            self.seen_ns = self.cost_acc;
             let previous = self.cost_known.then_some(self.cost_ns);
             let folded = crate::load_gate::smooth(previous, self.cost_acc);
             if accurate || folded < self.cost_ns {
@@ -419,6 +424,11 @@ impl Node {
         } else {
             self.cost_known.then_some(self.cost_ns)
         }
+    }
+
+    /// The raw time of the last timed batch, in nanoseconds (0 for a node that panicked).
+    pub(crate) fn seen(&self) -> u64 {
+        if self.faulted { 0 } else { self.seen_ns }
     }
 
     fn run_device(&mut self, time: TimeInfo, stage: u8, last: bool) {
