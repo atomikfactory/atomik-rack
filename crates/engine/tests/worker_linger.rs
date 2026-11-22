@@ -16,6 +16,13 @@ use common::*;
 use std::time::Duration;
 
 fn engine_lingering(threads: u16, linger: u64) -> (Engine, EngineHandle) {
+    let (mut engine, handle) = lingering_engine(threads, linger);
+    // These tests are about the workers' spin and park: every level is handed over.
+    engine.set_level_gate_mode(atomik_engine::GateMode::ForceDispatch);
+    (engine, handle)
+}
+
+fn lingering_engine(threads: u16, linger: u64) -> (Engine, EngineHandle) {
     new_engine_with_options(
         cfg(0, 2),
         EngineOptions {
@@ -190,8 +197,9 @@ fn linger_does_not_change_the_output() {
 
 // ---------------------------------------------------------------------------------------------
 // Benchmark (ignored): renders paced like a 48 kHz audio callback, per worker count and linger,
-// with the callback flag as it is ("after") and forced up for good ("before": workers spin for
-// the whole linger between callbacks, as they did before the flag existed).
+// with the callback flag as it is ("after": every level of two or more devices is handed over)
+// and forced up for good ("before": workers spin for the whole linger between callbacks, as they
+// did before the flag existed), and with the level gate deciding ("gated").
 // ---------------------------------------------------------------------------------------------
 
 /// CPU seconds this process has used so far (all threads), or `None` where the benchmark has no
@@ -249,18 +257,24 @@ fn bench_paced_callbacks_per_linger() {
     for block in [128usize, 480] {
         let period = Duration::from_secs_f64(block as f64 / 48_000.0);
         let callbacks = (10.0 / period.as_secs_f64()) as usize; // 10 s
-        for (threads, linger, before) in [
-            (0u16, 0u64, false),
-            (4, WORKER_SPIN_LIMIT, true),
-            (4, WORKER_SPIN_LIMIT, false),
-            (4, WORKER_SPIN_LIMIT * 5, true),
-            (4, WORKER_SPIN_LIMIT * 5, false),
-            (4, WORKER_SPIN_LIMIT * 25, true),
-            (4, WORKER_SPIN_LIMIT * 25, false),
+        for (threads, linger, mode) in [
+            (0u16, 0u64, "after"),
+            (4, WORKER_SPIN_LIMIT, "before"),
+            (4, WORKER_SPIN_LIMIT, "after"),
+            (4, WORKER_SPIN_LIMIT, "gated"),
+            (4, WORKER_SPIN_LIMIT * 5, "before"),
+            (4, WORKER_SPIN_LIMIT * 5, "after"),
+            (4, WORKER_SPIN_LIMIT * 5, "gated"),
+            (4, WORKER_SPIN_LIMIT * 25, "before"),
+            (4, WORKER_SPIN_LIMIT * 25, "after"),
+            (4, WORKER_SPIN_LIMIT * 25, "gated"),
         ] {
             let built = real_patch(&c, 4);
             let (mut engine, mut handle) = engine_lingering(threads, linger);
-            engine.set_workers_always_active(before);
+            engine.set_workers_always_active(mode == "before");
+            if mode == "gated" {
+                engine.set_level_gate_mode(atomik_engine::GateMode::Auto);
+            }
             for (k, &(device, socket)) in built.note_targets.iter().enumerate() {
                 for v in 0..6u8 {
                     handle
@@ -308,7 +322,7 @@ fn bench_paced_callbacks_per_linger() {
             let pct = |p: f64| times[((times.len() - 1) as f64 * p) as usize].as_secs_f64() * 1e6;
             println!(
                 "{block:>6} {threads:>7} {linger:>7}  {:<6} | {:>16.1} {:>5.1} {:>6.1} | {max_spins:>13}                  | {:>10} | {:>5} | {cpu}",
-                if before { "before" } else { "after" },
+                mode,
                 pct(0.5),
                 pct(0.99),
                 pct(1.0),

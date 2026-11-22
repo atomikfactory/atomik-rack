@@ -21,10 +21,16 @@
 //!   handed to a worker: it keeps its share position but runs on the audio thread (step 3 of a
 //!   level), for plugins that assume a stable thread. The answer is read on the audio thread
 //!   before each dispatch, so it may change while running.
-//! * **Distribution.** Item `j` of a level with `n > 1` devices goes to participant
+//! * **Which levels.** A level of one device is never dispatched, and a level of several only
+//!   when it is worth it: the audio thread decides before each level from the smoothed cost of
+//!   its nodes (`crate::level_gate`), with a lower leave threshold and a dwell so a level does not
+//!   flap, and runs the cheap ones inline. The node costs are timed on every call while the
+//!   per-device timing is on, otherwise on one batch in 32 with the engine's own clock; the
+//!   decision never reaches the signal. A level whose nodes have no cost yet is dispatched.
+//! * **Distribution.** Item `j` of a dispatched level of `n > 1` devices goes to participant
 //!   `j % p`, `p = min(workers + 1, n)`; participant 0 is the audio thread. Only workers that
-//!   received work are unparked, and nothing is dispatched for levels of one device. If a job
-//!   queue is full the node simply runs on the audio thread.
+//!   received work are unparked. If a job queue is full the node simply runs on the audio
+//!   thread.
 //! * **Barrier.** The audio thread counts outstanding jobs and waits (`spin_loop` for a bounded
 //!   number of empty iterations, then `yield_now`) until every
 //!   node has come back through the done queues. The queues' release/acquire handoff makes
@@ -35,12 +41,15 @@
 //!   `EngineOptions::worker_linger_spins`), then parks. `unpark` keeps a token, so a wake-up
 //!   that races the decision to park is never lost. A linger longer than the callback period
 //!   keeps workers awake while a callback runs, so no level depends on an OS wake-up.
-//! * **Callback flag.** A worker spins only while a render call that uses the pool is in
+//! * **Callback flag.** A worker spins only while a render call that dispatches a level is in
 //!   progress: the audio thread raises an atomic flag at the start of such a call
-//!   ([`Pool::begin_callback`]), unparks every live worker so the wake-up overlaps the call's
-//!   serial work, and lowers the flag at its end ([`Pool::end_callback`]). A worker that finds
-//!   the flag down parks at once, so a long linger costs nothing between callbacks or while
-//!   the transport is stopped. Both calls are atomics and `unpark`: no allocation, no lock.
+//!   ([`Pool::begin_callback`]; only when a level of the current plan is in dispatch mode),
+//!   unparks every live worker so the wake-up overlaps the call's serial work, and lowers the
+//!   flag at its end ([`Pool::end_callback`]). A level that turns to dispatch in the middle of a
+//!   call raises it itself ([`Pool::ensure_callback`]); a plan whose levels are all cheap leaves
+//!   every worker parked. A worker that finds the flag down parks at once, so a long linger
+//!   costs nothing between callbacks or while the transport is stopped. Both calls are atomics
+//!   and `unpark`: no allocation, no lock.
 //! * **Determinism.** A device's output depends only on its own state and its gathered
 //!   inputs, which are identical whatever thread runs it; the scatter order is the plan order.
 //!   So output is bit-identical for any worker count.
@@ -53,7 +62,9 @@
 use crate::arena::{Arena, RoutingPlan};
 use crate::console::Meters;
 use crate::fault::FaultState;
+use crate::level_gate::{GateMode, LevelCost};
 use crate::plan::{Node, count_overflow};
+use crate::timing::{COST_SAMPLE_EVERY, ClockFn, CostProbe};
 use atomik_core::{Batch, TimeInfo};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use std::sync::Arc;
@@ -98,6 +109,7 @@ pub(crate) struct Job {
     /// The device stage to run and whether it is the device's last.
     stage: u8,
     last: bool,
+    probe: Option<CostProbe>,
     panicked: bool,
 }
 
@@ -139,6 +151,12 @@ pub(crate) struct Pool {
     shared: Arc<Shared>,
     /// Keep `callback_active` raised (see [`Pool::set_always_active`]; audio side only).
     always_active: bool,
+    /// A render call that uses the pool is in progress (audio side only).
+    in_callback: bool,
+    /// How each level is decided (see [`GateMode`]; audio side only).
+    pub(crate) gate_mode: GateMode,
+    /// The clock that times nodes for the level gate when the per-device timing is off.
+    pub(crate) cost_clock: ClockFn,
 }
 
 impl Pool {
@@ -150,6 +168,8 @@ impl Pool {
         on_thread_start: Option<fn()>,
         linger: u64,
     ) -> Result<Self, PoolError> {
+        // Read the origin of the gate's clock once here, off the audio thread.
+        let _ = crate::timing::own_clock();
         let shared = Arc::new(Shared {
             shutdown: AtomicBool::new(false),
             idle_spins: AtomicU64::new(0),
@@ -190,13 +210,17 @@ impl Pool {
             links,
             shared,
             always_active: false,
+            in_callback: false,
+            gate_mode: GateMode::Auto,
+            cost_clock: crate::timing::own_clock,
         })
     }
 
     /// Marks the start of a render call that will use the pool: idle workers may spin from
     /// now on, and every live one is woken so it is running when the first level needs it.
     /// Atomics and `unpark` only (audio thread).
-    pub(crate) fn begin_callback(&self) {
+    pub(crate) fn begin_callback(&mut self) {
+        self.in_callback = true;
         self.shared.callback_active.store(true, Ordering::Release);
         for link in self.links.iter().filter(|l| !l.dead) {
             link.thread.unpark();
@@ -205,9 +229,19 @@ impl Pool {
 
     /// Marks the end of the render call: a worker that runs out of jobs parks instead of
     /// spinning. Stays raised while [`Pool::set_always_active`] is on.
-    pub(crate) fn end_callback(&self) {
+    pub(crate) fn end_callback(&mut self) {
+        self.in_callback = false;
         if !self.always_active {
             self.shared.callback_active.store(false, Ordering::Release);
+        }
+    }
+
+    /// Starts the callback in the middle of a render call, when the first level of it that
+    /// is worth a hand-over comes up (a level turned to dispatch since the call began). Does
+    /// nothing while the call is already marked. Audio thread.
+    fn ensure_callback(&mut self) {
+        if !self.in_callback {
+            self.begin_callback();
         }
     }
 
@@ -307,7 +341,7 @@ fn worker(
     loop {
         if let Ok(mut job) = jobs.pop() {
             let (node, time, stage, last) = (&mut job.node, job.time, job.stage, job.last);
-            job.panicked = node.run(time, stage, last);
+            job.panicked = node.run(time, stage, last, job.probe);
             // At most WORKER_QUEUE_CAPACITY jobs are in flight per worker, so this fits.
             while let Err(PushError::Full(back)) = done.push(job) {
                 job = back;
@@ -335,14 +369,36 @@ fn worker(
 }
 
 impl RoutingPlan {
-    /// Whether any level holds two or more devices, so a render call would hand work to the
-    /// pool.
+    /// Whether any level holds two or more devices (what [`GateMode::ForceDispatch`] hands to
+    /// the pool).
     pub(crate) fn has_parallel_level(&self) -> bool {
         self.level_starts.windows(2).any(|w| w[1] - w[0] > 1)
     }
 
+    /// Whether a render call would hand work to the pool: some level is in dispatch mode (or
+    /// the mode forces it). A routing whose levels are all cheap leaves the workers parked.
+    pub(crate) fn wants_workers(&self, mode: GateMode) -> bool {
+        match mode {
+            GateMode::Auto => self.gates.iter().any(|g| g.dispatched()),
+            GateMode::ForceInline => false,
+            GateMode::ForceDispatch => self.has_parallel_level(),
+        }
+    }
+
+    /// What the nodes of steps `a..b` cost, as the gate reads it.
+    fn level_cost(&self, a: usize, b: usize, arena: &Arena) -> LevelCost {
+        let mut cost = LevelCost::default();
+        for step in &self.steps[a..b] {
+            if let Some(Some(node)) = arena.nodes.get(self.devices[step.device].slot) {
+                cost.add(node.cost());
+            }
+        }
+        cost
+    }
+
     /// Like `process`, with the devices of each level spread over the audio thread and the
-    /// pool's workers. Never allocates, frees, locks or blocks (the audio thread only spins
+    /// pool's workers when the level is worth it (see [`crate::level_gate`]); cheap levels run
+    /// inline. Never allocates, frees, locks or blocks (the audio thread only spins
     /// while waiting for the level's last device). Returns the barrier spins: busy-wait
     /// iterations in which the audio thread found no finished node to collect.
     ///
@@ -360,14 +416,33 @@ impl RoutingPlan {
         fault: &FaultState,
     ) -> u64 {
         self.read_host_inputs(host_in, meters);
+        let probe = Some(CostProbe {
+            clock: pool.cost_clock,
+            due: self.batch_no.is_multiple_of(COST_SAMPLE_EVERY),
+        });
+        self.batch_no = self.batch_no.wrapping_add(1);
         let mut spins = 0u64;
         for level in 0..self.level_starts.len().saturating_sub(1) {
             let (a, b) = (self.level_starts[level], self.level_starts[level + 1]);
             if b - a <= 1 || pool.links.is_empty() {
-                self.run_sequential(a, b, time, dropped, arena, meters, fault);
-            } else {
-                let level_spins = self.run_level(a, b, time, dropped, pool, arena, meters, fault);
+                self.run_sequential(a, b, time, dropped, arena, meters, fault, probe);
+                continue;
+            }
+            let cost = self.level_cost(a, b, arena);
+            let participants = (pool.links.len() + 1).min(b - a);
+            let decided = self.gates[level].update(cost, participants);
+            let dispatch = match pool.gate_mode {
+                GateMode::Auto => decided,
+                GateMode::ForceInline => false,
+                GateMode::ForceDispatch => true,
+            };
+            if dispatch {
+                pool.ensure_callback();
+                let level_spins =
+                    self.run_level(a, b, time, dropped, pool, arena, meters, fault, probe);
                 spins = spins.saturating_add(level_spins);
+            } else {
+                self.run_sequential(a, b, time, dropped, arena, meters, fault, probe);
             }
         }
         self.write_host_outputs(host_out);
@@ -389,6 +464,7 @@ impl RoutingPlan {
         arena: &mut Arena,
         meters: &Meters,
         fault: &FaultState,
+        probe: Option<CostProbe>,
     ) -> u64 {
         let Self {
             devices,
@@ -443,6 +519,7 @@ impl RoutingPlan {
                     time,
                     stage: step.stage,
                     last: step.last,
+                    probe,
                     panicked: false,
                 };
                 match link.jobs.push(job) {
@@ -462,7 +539,7 @@ impl RoutingPlan {
         // 3. The audio thread runs whatever stayed home (its share and any overflow).
         for step in level {
             if let Some(node) = arena.node_mut(slot_of(step))
-                && node.run(time, step.stage, step.last)
+                && node.run(time, step.stage, step.last, probe)
             {
                 fault.record(devices[step.device].id);
             }

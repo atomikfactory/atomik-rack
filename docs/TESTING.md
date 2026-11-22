@@ -1879,8 +1879,14 @@ is lost and it then stays, it comes down window by window when the bursts stop, 
 lands on the same frame at either end of it),
 `crates/engine/tests/worker_linger.rs` the worker read-out (and, ignored, a paced benchmark of the callback
 duration, the idle spins and the process CPU per worker count and linger: `cargo test -p atomik-engine --release
---test worker_linger -- --ignored --nocapture`), and `diagnostics.rs` and `session_tests.rs` the report
-and the status.
+--test worker_linger -- --ignored --nocapture`), `crates/engine/src/level_gate.rs` the pure decision of
+which levels go to the workers (the saving rule, the hysteresis, the start mode, the smoothing) and
+`crates/engine/tests/level_gate.rs` the same with a real pool and a fake clock the devices advance
+(cheap levels never wake a worker, only the heavy level is dispatched, a level that turns heavy or
+cheap flips within a bound counted in batches, the output is identical whichever way the gate decides,
+also while the modes flip; `level_gate_alloc.rs` runs the flips under the allocation guards; the tests
+that exercise the hand-over itself build their engine with the gate forced to dispatch), and
+`diagnostics.rs` and `session_tests.rs` the report and the status.
 
 Three more groups say how the app starts and how busy the UI is, with no behaviour change (the log is at INFO, the
 last at DEBUG). `startup 412 ms: first frame presented` is one line per stage with the milliseconds since the process

@@ -2978,7 +2978,16 @@ worker so the wake-up overlaps the call's serial work) and lowers it at the end,
 finds it down parks at once. A long linger therefore keeps workers awake for the whole callback
 and costs nothing between callbacks or while the transport is stopped; both calls are atomics and
 `unpark`, so the audio thread still allocates and locks nothing. The app and `atomik-play` start
-at most `cores - 1` workers. A level with a single device is never dispatched. The app's default
+at most `cores - 1` workers. A level with a single device is never dispatched, and a level of
+several is dispatched only when it is worth it ([level_gate.rs](../crates/engine/src/level_gate.rs)):
+each node keeps a smoothed cost in nanoseconds (every run while the per-device timing is on,
+otherwise one batch in 32 of the engine's own clock reads), and before a level runs the audio
+thread dispatches it when spreading it over the threads would save at least 7 microseconds, and
+runs it inline when the saving falls below 3.5, with the opposite verdict held for 64 batches before
+the mode changes. A level whose nodes have no cost yet starts dispatched. The raised callback flag
+and the wake-up at the start of a call follow the same decision: a rack whose levels are all
+cheap leaves every worker parked, and a level that turns heavy raises the flag itself. The mode
+never changes the output. The app's default
 is an automatic count (`auto_workers_for` in [audio-io](../crates/audio-io/src/lib.rs)): one
 worker per physical core but the audio thread's own, at most 8, one on a dual-core machine and
 none on a single core. The physical core count comes from the `num_cpus` crate; when it reports

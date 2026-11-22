@@ -1443,13 +1443,12 @@ impl Engine {
         self.host_frames += frames as u64;
         self.last_render_spins = 0;
         // Workers spin only while a call that can hand them work is running.
-        let pooled = match (&self.routing, &self.pool) {
-            (Some(routing), Some(pool)) if pool.len() > 0 && routing.has_parallel_level() => {
-                pool.begin_callback();
-                true
-            }
-            _ => false,
-        };
+        if let (Some(routing), Some(pool)) = (&self.routing, &mut self.pool)
+            && pool.len() > 0
+            && routing.wants_workers(pool.gate_mode)
+        {
+            pool.begin_callback();
+        }
         let mut done = 0;
         while done < frames {
             let n = (BATCH - self.fifo_pos).min(frames - done);
@@ -1474,7 +1473,8 @@ impl Engine {
                 self.fifo_pos = 0;
             }
         }
-        if pooled && let Some(pool) = &self.pool {
+        // A level may have turned to dispatch during the call and raised the flag itself.
+        if let Some(pool) = &mut self.pool {
             pool.end_callback();
         }
         self.max_render_spins = self.max_render_spins.max(self.last_render_spins);
@@ -1525,6 +1525,34 @@ impl Engine {
     pub fn set_workers_always_active(&mut self, on: bool) {
         if let Some(pool) = &mut self.pool {
             pool.set_always_active(on);
+        }
+    }
+
+    /// Decides every level from its measured cost (the default), runs every level inline, or
+    /// hands every level of two or more devices to the workers, as before the level gate
+    /// existed (test and benchmark hook; not a stable API). Output is the same in every mode.
+    #[doc(hidden)]
+    pub fn set_level_gate_mode(&mut self, mode: crate::GateMode) {
+        if let Some(pool) = &mut self.pool {
+            pool.gate_mode = mode;
+        }
+    }
+
+    /// Per level of the current routing, whether it is handed to the workers now (test hook;
+    /// not a stable API).
+    #[doc(hidden)]
+    pub fn level_modes(&self) -> Vec<bool> {
+        self.routing.as_ref().map_or_else(Vec::new, |routing| {
+            routing.gates.iter().map(|g| g.dispatched()).collect()
+        })
+    }
+
+    /// Replaces the clock that times devices for the level gate while the per-device timing is
+    /// off (test hook; not a stable API). The clock must not allocate, lock or block.
+    #[doc(hidden)]
+    pub fn set_level_cost_clock(&mut self, clock: crate::timing::ClockFn) {
+        if let Some(pool) = &mut self.pool {
+            pool.cost_clock = clock;
         }
     }
 

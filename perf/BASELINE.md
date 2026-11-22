@@ -88,6 +88,61 @@ device/stereo-delay/256batches: median 480.575 us  p99 775.217 us
 device/wavetable-synth/256batches: median 3.882 ms  p99 5.511 ms
 ```
 
+## Levels handed to the render workers only when they are worth it (2026-11-22)
+
+`cargo bench -p atomik-render --bench render_batch -- "rack|console-64|lanes"`, three runs each, medians of the three
+(`ATOMIK_BENCH_TIMING=1` for the timing-on columns, which is what the running app pays), same machine and build
+directory. Before is the commit this change is built on, after is the level cost gate. The before and after sets ran
+one after the other, and the machine ran faster in the second (the single-threaded rows, which the change does not
+touch, are 12 to 26 % lower in the after set), so compare each row with the workers 0 row of its own set: the speed-up
+of console-64 is 1.74 before and 1.65 after, of rack 1.65 before and 1.37 after (a rack level that saves under 7 us is
+now run inline); the two lanes rows no longer lose to no workers.
+
+```text
+case                                     before (off / timing on)    after (off / timing on)
+render/rack/workers0/block256            945.0 ms / 943.7 ms         766.9 ms / 799.5 ms
+render/rack/workers2/block256            571.6 ms / 582.6 ms         559.5 ms / 570.1 ms
+render/console-64/workers0/block256      1.558 s / 1.723 s           1.352 s / 1.406 s
+render/console-64/workers2/block256      894.9 ms / 911.0 ms         820.5 ms / 861.0 ms
+render/lanes-200/workers0/block256       227.2 ms / 201.8 ms         167.1 ms / 171.8 ms
+render/lanes-200/workers2/block256       190.6 ms / 191.8 ms         163.8 ms / 172.8 ms
+render/lanes-2000/workers0/block256      2.065 s / 2.092 s           1.756 s / 1.774 s
+render/lanes-2000/workers2/block256      1.778 s / 1.772 s           1.639 s / 1.667 s
+```
+
+The paced callback benchmark (`cargo test -p atomik-engine --release --test worker_linger -- --ignored --nocapture`,
+paced as described in the section on parked workers below; "after" is every level handed over as before the gate,
+"gated" is the gate deciding). Its four-synth patch is one heavy level, so the gate keeps it dispatched and the rows
+agree within the spread of the benchmark; callback p50 / p99 in microseconds, 4 workers:
+
+```text
+frames linger    after p50 / p99     gated p50 / p99
+128    20 000    67.2 / 150.1        66.3 / 88.4
+128    100 000   65.3 / 99.7         65.5 / 87.2
+128    500 000   66.4 / 102.7        65.6 / 91.6
+480    20 000    192.9 / 248.8       197.8 / 256.7
+480    100 000   201.9 / 289.6       198.9 / 273.9
+480    500 000   196.1 / 375.8       194.5 / 283.4
+```
+
+The running app, `scripts/perf/sample-app.ps1` on the release build of each side (transport stopped, nothing
+sounding, no `--play`, 15 s settle, 20 s window), two rounds, before and after alternating; CPU is a percentage of one
+core:
+
+```text
+scenario           before (2 rounds)   after (2 rounds)
+stress (auto)      77.3, 63.4          79.8, 91.9
+stress-workers2    29.1, 29.8          40.7, 32.0
+stress-workers0    17.6, 18.2          17.7, 17.3
+empty              0.62, 0.78          0.78, 0.78
+```
+
+The stopped stress rack does not fall towards the workers 0 figure: its devices are silent but not cheap (the render
+bench of the same shape measures a first level of 65 devices at about 89 us and eight more levels of 2 to 6 devices at
+8 to 29 us, about 220 us a batch in all), so most of its levels save more than the 7 us threshold and stay dispatched,
+and the workers spin through the callback while they are. Making them sleep needs the devices to be skipped while
+silent, which this change does not do.
+
 ## Model commands on a growing song
 
 `cargo bench -p atomik-model --bench commands`: a command and its undo on a song of 10 tracks and

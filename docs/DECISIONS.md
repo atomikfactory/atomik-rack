@@ -1754,3 +1754,47 @@ cost a plugin its allowance); reloading again and again with a back-off (a plugi
 loop, and the user would learn of it late); a setting (nobody asked to switch it off, and the hang reload has none).
 
 **Status.** Decided by the owner on 2026-11-21 (one automatic reload, then stay crashed).
+
+## BG. A level goes to the render workers only when handing it over saves time
+
+**Question.** Every level of two or more devices was handed to the worker pool whatever the devices cost. A level of
+trivial devices pays the queue hand-offs, a possible wake-up, the barrier and the cache migration for work that takes a
+few microseconds inline (lanes-200 was slower with two workers than with none), and a rack whose levels were all cheap
+still kept every worker spinning through every callback.
+
+**Decision.** Each node keeps a smoothed cost in nanoseconds (an integer written by the thread that runs it, read by the
+audio thread between batches, like the CPU readout's total). Before each level the audio thread computes the time that
+spreading the level over its `p` threads would save, `total - max(longest node, total / p)`, and dispatches the level
+when that is at least 7 microseconds, runs it inline when it falls below 3.5 and keeps the mode in between; a change of
+mode also needs the opposite verdict for 64 batches in a row. A level whose nodes have no cost yet starts dispatched
+(what the engine did before, and safe for the deadline: a heavy device is never run inline unmeasured); the first
+verdict with every cost known applies at once. The callback flag follows the decision: it is raised at the start of a
+render call only when a level of the plan is in dispatch mode, and a level that turns to dispatch in the middle of a
+call raises it itself, so a plan of cheap levels leaves every worker parked. The saving rule, not a count of heavy
+nodes, because a level of 64 nodes of 3 us has no heavy node and still gains two thirds of its 190 us, while one heavy
+node among trivial ones saves only what the trivial ones cost. The cost is measured on every call while the per-device
+timing is on (the app always has it on: the same two clock reads feed the readout), and otherwise on one batch in 32
+with a clock of the engine itself (a bounce, the benchmarks, `atomik-play`); the sampling costs about two clock reads
+per node every 32 batches. Costs are smoothed half way per sample, so a level that turns heavy or cheap flips within
+about a fifth of a second of audio at the app's batch size. Nothing the gate reads reaches the signal: a node's output
+does not depend on its thread, and a bounce is the same bytes whichever way each level is decided (the tests force the
+gate both ways and flip it during a run). A multi-stage device's stages share one cost value; a device that cannot leave
+the audio thread is counted like any other (its cost can only lower the saving, so the gate errs towards inline).
+
+**Evidence.** `perf/BASELINE.md`, "Levels handed to the render workers only when they are worth it": lanes-200 and
+lanes-2000 with two workers are faster than with none, console-64 keeps a 1.65 speed-up, rack keeps its time, the paced
+callback's p99 is no worse. The first thresholds (a level of at least 30 us with two nodes of at least 5 us) sent the
+console and rack benchmarks back to inline (64 strips of 3 us each are no heavy node), which is why the rule counts the
+saving; 20 and 10 us still lost on rack, 10 and 5 on lanes-200 (a 3-node level whose cost jitters from 7 to 22 us),
+and the dwell was raised from 4 to 64 batches so that one noisy sample cannot flip a level.
+
+**Rejected.** Timing every node on every batch when no clock is installed (two clock reads per device per batch, about
+the whole cost of a trivial device); a fixed per-level cost threshold (it cannot tell a level of equal nodes from one
+heavy node); a flag per node that excludes cheap nodes from a dispatched level (a later item); skipping silent devices
+(a later item built on the per-node cost, out of scope here).
+
+**Limits.** The stopped 100-device stress rack with automatic workers still costs 80 to 90 % of a core, against 18 % with
+no workers: its devices are silent but their calls cost about 220 us a batch, which several of its levels can share, so
+they stay dispatched and the workers spin through the callback. Only skipping silent devices lowers that.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

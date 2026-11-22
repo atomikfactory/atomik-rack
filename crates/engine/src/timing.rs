@@ -58,6 +58,29 @@ pub(crate) fn elapsed(started: (ClockFn, u64)) -> u64 {
     (started.0)().saturating_sub(started.1)
 }
 
+/// How often (in batches) a node is timed for the level gate when the per-device timing is off.
+pub(crate) const COST_SAMPLE_EVERY: u64 = 32;
+
+/// RT: what [`crate::plan::Node::run`] needs to time a run for the level gate when the
+/// per-device timing is off: the clock, and whether this batch is one of the sampled ones.
+#[derive(Clone, Copy)]
+pub(crate) struct CostProbe {
+    pub(crate) clock: ClockFn,
+    pub(crate) due: bool,
+}
+
+/// Nanoseconds since the first call, on the OS monotonic counter: the engine's own clock for
+/// the level gate when no host clock is installed (a bounce, a benchmark). It allocates nothing
+/// and takes no lock, and it only steers which thread runs a device, never the signal.
+#[allow(clippy::disallowed_methods)] // Justification: the level gate's clock; see the doc above.
+pub(crate) fn own_clock() -> u64 {
+    static ORIGIN: OnceLock<std::time::Instant> = OnceLock::new();
+    ORIGIN
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_nanos() as u64
+}
+
 /// Nanoseconds of audio in one batch at `rate` Hz (the budget a batch may use).
 pub(crate) fn batch_budget_ns(rate: f64) -> u64 {
     (atomik_core::BATCH as f64 * 1e9 / rate.max(1.0)) as u64

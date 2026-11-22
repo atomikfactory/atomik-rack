@@ -216,6 +216,13 @@ may break APIs and the patch and project formats.
   A second crash within five minutes stays CRASHED until RELOAD, and a plugin that dies while it loads, during an
   export or a bounce, or by the crash that quarantines it is not reloaded. Every crash still counts toward the
   quarantine.
+- **Render workers only get levels that are worth it.** The engine times each device (every call while the CPU
+  readout is on, otherwise one batch in 32) and hands a level of devices to the render workers only when spreading
+  it would save at least about 7 microseconds per batch; cheaper levels run on the audio thread, where handing
+  them over cost more than it saved. A rack whose levels are all cheap now leaves the workers asleep (a stopped
+  rack no longer keeps them spinning through every callback), and a level that turns heavy is handed over again
+  within a fraction of a second. A new device starts handed over until it has been timed. The sound is unchanged:
+  a bounce is the same bytes for any worker count.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
