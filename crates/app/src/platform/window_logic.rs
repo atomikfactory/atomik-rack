@@ -371,15 +371,15 @@ pub(super) fn all_minimized(sizes: impl IntoIterator<Item = bool>, others_open: 
 /// What the frame cap says about a paint that is wanted now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PaintGate {
-    /// Paint now.
-    Now,
-    /// Paint later: the rest of the window's frame period.
+    /// Paint now. `opens_slot`: this paint starts a new frame slot (see [`paint_gate`]).
+    Now { opens_slot: bool },
+    /// Paint later: the rest of the frame slot.
     Wait(Duration),
 }
 
 /// Whether a paint for `reason` may be held back by the frame cap. The person's input, a view
 /// that keeps itself painting and a change something marked can wait for the end of the frame
-/// period (the paint then shows the latest state). A resize or scale change must not show
+/// slot (the paint then shows the latest state). A resize or scale change must not show
 /// stale or stretched content, a focus change or an uncovered window is an exposure the system
 /// is waiting on, and a frame that was painted but not shown is a retry: none of them waits.
 pub(super) fn paint_deferrable(reason: PaintReason) -> bool {
@@ -390,33 +390,42 @@ pub(super) fn paint_deferrable(reason: PaintReason) -> bool {
 }
 
 /// How early a paint that arrives by a timer still counts as due: an eighth of the period. The
-/// animation tick is a timer of one period, taken from the start of the tick while the window's
-/// last paint was stamped a little after it, and the timer itself rounds to milliseconds; a
-/// tick that came a hair early must paint, not fall to every other tick. The person's input is
-/// not a timer and gets no tolerance, so a sweep of the pointer paints at most once per period.
+/// animation tick is a timer of one period and the timer itself rounds to milliseconds; a tick
+/// that came a hair early must start the next slot, not fall to every other tick. The person's
+/// input is not a timer and gets no tolerance, so a sweep of the pointer paints a window at
+/// most once per period.
 pub(super) fn frame_tolerance(period: Duration) -> Duration {
     period / 8
 }
 
-/// Whether a window is painted now or waits, with `since_last` the time since its last paint
-/// (`None` before its first paint).
+/// Whether a window is painted now or waits.
 ///
-/// A window that presents with vsync is paced by its present call and is never held back (a
-/// timer beating against the vertical blank would halve the visible rate). A window that
-/// presents without waiting is painted at most once per `period`: a paint that
-/// [`paint_deferrable`] allows waits for the remainder of the period, and everything else is
-/// painted at once, as is a window that was never painted.
+/// The windows that present without waiting share ONE frame phase, so that they are all painted
+/// by the same wake-up of the loop. Time is cut into slots of `period`; the slot began
+/// `since_slot` ago (`None` before the first). A window that presents with vsync is paced by
+/// its present call and is never held back (a timer beating against the vertical blank would
+/// halve the visible rate). For the others:
+/// - a paint that [`paint_deferrable`] does not allow is made at once and does not move the
+///   slot (a resize does not push the animation phase around);
+/// - a window not yet painted in the current slot (`painted_in_slot` false) is painted at
+///   once, in that slot;
+/// - a window already painted in it waits for the slot to end, and when it has (within the
+///   tolerance, none for input) the paint is made and opens the next slot.
 pub(super) fn paint_gate(
     vsync: bool,
-    since_last: Option<Duration>,
+    since_slot: Option<Duration>,
+    painted_in_slot: bool,
     period: Duration,
     reason: PaintReason,
 ) -> PaintGate {
-    let Some(since) = since_last else {
-        return PaintGate::Now;
-    };
     if vsync || !paint_deferrable(reason) {
-        return PaintGate::Now;
+        return PaintGate::Now { opens_slot: false };
+    }
+    let Some(since) = since_slot else {
+        return PaintGate::Now { opens_slot: true };
+    };
+    if !painted_in_slot {
+        return PaintGate::Now { opens_slot: false };
     }
     let slack = if reason == PaintReason::Input {
         Duration::ZERO
@@ -424,7 +433,7 @@ pub(super) fn paint_gate(
         frame_tolerance(period)
     };
     if since + slack >= period {
-        PaintGate::Now
+        PaintGate::Now { opens_slot: true }
     } else {
         PaintGate::Wait(period - since)
     }
@@ -657,157 +666,398 @@ mod tests {
 
     const MS: Duration = Duration::from_millis(1);
 
-    fn gate(vsync: bool, since: Option<Duration>, reason: PaintReason) -> PaintGate {
-        paint_gate(vsync, since, FRAME, reason)
+    fn gate(
+        vsync: bool,
+        since_slot: Option<Duration>,
+        painted: bool,
+        reason: PaintReason,
+    ) -> PaintGate {
+        paint_gate(vsync, since_slot, painted, FRAME, reason)
     }
 
+    const OPENS: PaintGate = PaintGate::Now { opens_slot: true };
+    const JOINS: PaintGate = PaintGate::Now { opens_slot: false };
+
     #[test]
-    fn a_window_that_was_never_painted_is_painted_at_once() {
-        for vsync in [false, true] {
-            for reason in PaintReason::ALL {
-                assert_eq!(gate(vsync, None, reason), PaintGate::Now, "{reason:?}");
+    fn the_first_paint_opens_the_first_slot_and_a_window_not_yet_painted_in_a_slot_joins_it() {
+        for reason in [PaintReason::Input, PaintReason::Live, PaintReason::Update] {
+            assert_eq!(gate(false, None, false, reason), OPENS, "{reason:?}");
+            // A window that has not been painted in this slot is painted now, in it.
+            for ago in [Duration::ZERO, 5 * MS, FRAME - MS] {
+                assert_eq!(gate(false, Some(ago), false, reason), JOINS, "{reason:?}");
             }
         }
     }
 
     #[test]
-    fn only_input_live_and_update_paints_wait_for_the_frame_period() {
-        let just_painted = Some(Duration::ZERO);
-        for reason in PaintReason::ALL {
-            let waits = matches!(
-                reason,
-                PaintReason::Input | PaintReason::Live | PaintReason::Update
+    fn a_window_already_painted_in_the_slot_waits_for_its_end() {
+        for reason in [PaintReason::Input, PaintReason::Live, PaintReason::Update] {
+            assert_eq!(
+                gate(false, Some(Duration::ZERO), true, reason),
+                PaintGate::Wait(FRAME),
+                "{reason:?}"
             );
-            assert_eq!(paint_deferrable(reason), waits, "{reason:?}");
-            let want = if waits {
-                PaintGate::Wait(FRAME)
-            } else {
-                PaintGate::Now
-            };
-            assert_eq!(gate(false, just_painted, reason), want, "{reason:?}");
+            // The wait is exactly the rest of the slot.
+            for ago in [1u64, 4_000, 10_000, 14_000] {
+                let since = Duration::from_micros(ago);
+                assert_eq!(
+                    gate(false, Some(since), true, PaintReason::Input),
+                    PaintGate::Wait(FRAME - since),
+                    "{ago}"
+                );
+            }
+        }
+        // At the end of the slot and after it: due, and it opens the next slot.
+        assert_eq!(gate(false, Some(FRAME), true, PaintReason::Input), OPENS);
+        assert_eq!(
+            gate(false, Some(FRAME + MS), true, PaintReason::Input),
+            OPENS
+        );
+    }
+
+    #[test]
+    fn the_paints_the_system_waits_for_are_never_held_and_do_not_move_the_slot() {
+        for reason in [
+            PaintReason::Resize,
+            PaintReason::Focus,
+            PaintReason::Surface,
+        ] {
+            assert!(!paint_deferrable(reason));
+            for slot in [None, Some(Duration::ZERO), Some(FRAME)] {
+                for painted in [false, true] {
+                    assert_eq!(gate(false, slot, painted, reason), JOINS, "{reason:?}");
+                }
+            }
         }
     }
 
     #[test]
     fn a_window_that_presents_with_vsync_is_never_held_back() {
         for reason in PaintReason::ALL {
-            for ago_us in [0, 1, 500, 8_000, 16_000] {
-                let since = Some(Duration::from_micros(ago_us));
+            for ago in [None, Some(Duration::ZERO), Some(8 * MS)] {
+                assert_eq!(gate(true, ago, true, reason), JOINS, "{reason:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_tick_that_comes_a_hair_early_starts_the_next_slot_but_input_is_held_to_the_period() {
+        let tol = frame_tolerance(FRAME);
+        assert!(tol >= MS && tol < FRAME / 4, "{tol:?}");
+        for reason in [PaintReason::Live, PaintReason::Update] {
+            for early in [Duration::ZERO, MS, tol] {
+                assert_eq!(gate(false, Some(FRAME - early), true, reason), OPENS);
+            }
+            let since = FRAME - tol - MS;
+            assert_eq!(
+                gate(false, Some(since), true, reason),
+                PaintGate::Wait(tol + MS)
+            );
+        }
+        assert_eq!(
+            gate(false, Some(FRAME - MS), true, PaintReason::Input),
+            PaintGate::Wait(MS)
+        );
+    }
+
+    /// The loop on the pure functions, with `n` windows that present without waiting. Time is a
+    /// `Duration` since the start. Mirrors the platform: a window is painted by an event's
+    /// redraw (`redraw`) or by a wake-up of the loop (`tick`, which also recomputes the loop's
+    /// next wake from the tick's one `now`). With `per_window` it follows the first version of
+    /// the cap, where each window was gated against its own last paint, to show what that did.
+    struct Sim {
+        vsync: bool,
+        per_window: bool,
+        /// The event's reason also applies to the paints of the tick that follows it, as the
+        /// platform's `event_cause` does; off for an exposure the system asks for with no event.
+        event_sets_cause: bool,
+        animating: bool,
+        slot: Option<Duration>,
+        last: Vec<Option<Duration>>,
+        marked: Vec<bool>,
+        held: Option<Duration>,
+        next_tick: Option<Duration>,
+        cause: PaintReason,
+        paints: Vec<Vec<Duration>>,
+        wakes: Vec<Duration>,
+    }
+
+    impl Sim {
+        fn new(n: usize, vsync: bool, animating: bool) -> Self {
+            Sim {
+                vsync,
+                per_window: false,
+                event_sets_cause: true,
+                animating,
+                slot: None,
+                last: vec![None; n],
+                marked: vec![false; n],
+                held: None,
+                next_tick: None,
+                cause: PaintReason::Live,
+                paints: vec![Vec::new(); n],
+                wakes: Vec::new(),
+            }
+        }
+
+        fn redraw(&mut self, w: usize, now: Duration, reason: PaintReason) {
+            if !self.marked[w] {
+                return;
+            }
+            let decision = if self.per_window {
+                // The first version: the time since this window's own last paint.
+                let since = self.last[w].map(|l| now - l);
+                match (self.vsync, since) {
+                    (true, _) | (_, None) => JOINS,
+                    _ if !paint_deferrable(reason) => JOINS,
+                    (_, Some(s)) => {
+                        let slack = if reason == PaintReason::Input {
+                            Duration::ZERO
+                        } else {
+                            frame_tolerance(FRAME)
+                        };
+                        if s + slack >= FRAME {
+                            JOINS
+                        } else {
+                            PaintGate::Wait(FRAME - s)
+                        }
+                    }
+                }
+            } else {
+                let painted = matches!((self.last[w], self.slot), (Some(l), Some(s)) if l >= s);
+                paint_gate(
+                    self.vsync,
+                    self.slot.map(|s| now - s),
+                    painted,
+                    FRAME,
+                    reason,
+                )
+            };
+            match decision {
+                PaintGate::Now { opens_slot } => {
+                    if opens_slot {
+                        self.slot = Some(now);
+                    }
+                    self.last[w] = Some(now);
+                    self.marked[w] = false;
+                    self.paints[w].push(now);
+                }
+                PaintGate::Wait(d) => {
+                    self.held = Some(self.held.map_or(now + d, |h| h.min(now + d)));
+                }
+            }
+        }
+
+        fn tick(&mut self, now: Duration) {
+            self.wakes.push(now);
+            if self.animating {
+                self.marked.iter_mut().for_each(|m| *m = true);
+            }
+            self.held = None;
+            for w in 0..self.marked.len() {
+                self.redraw(w, now, self.cause);
+            }
+            // The cause of the paints is spent unless something was held back.
+            if self.held.is_none() {
+                self.cause = PaintReason::Live;
+            }
+            self.next_tick = self.animating.then_some(now + FRAME);
+        }
+
+        /// Runs to `until`; `events` are (time, window, reason), in order.
+        fn run(&mut self, until: Duration, events: &[(Duration, usize, PaintReason)]) {
+            if self.wakes.is_empty() {
+                self.tick(Duration::ZERO);
+            }
+            let mut events = events.iter().peekable();
+            loop {
+                let timer = [self.next_tick, self.held].into_iter().flatten().min();
+                let event = events.peek().map(|e| e.0);
+                let (at, is_event) = match (timer, event) {
+                    (Some(t), Some(e)) if e <= t => (e, true),
+                    (Some(t), _) => (t, false),
+                    (None, Some(e)) => (e, true),
+                    (None, None) => return,
+                };
+                if at > until {
+                    return;
+                }
+                if is_event {
+                    let &(_, w, reason) = events.next().unwrap();
+                    self.marked[w] = true;
+                    if self.event_sets_cause {
+                        self.cause = reason;
+                    }
+                    self.redraw(w, at, reason);
+                }
+                self.tick(at);
+            }
+        }
+
+        fn wakes_in(&self, from: Duration, to: Duration) -> usize {
+            self.wakes
+                .iter()
+                .filter(|t| **t >= from && **t < to)
+                .count()
+        }
+
+        fn paints_in(&self, w: usize, from: Duration, to: Duration) -> usize {
+            self.paints[w]
+                .iter()
+                .filter(|t| **t >= from && **t < to)
+                .count()
+        }
+    }
+
+    const SECOND: Duration = Duration::from_secs(1);
+
+    #[test]
+    fn steady_animating_windows_share_one_wake_up_per_period_and_all_paint_on_it() {
+        for n in [1, 2, 3] {
+            let mut sim = Sim::new(n, false, true);
+            sim.run(SECOND * 2, &[]);
+            let wakes = sim.wakes_in(SECOND, SECOND * 2);
+            assert!((59..=61).contains(&wakes), "{n} windows: {wakes} wake-ups");
+            for w in 0..n {
                 assert_eq!(
-                    gate(true, since, reason),
-                    PaintGate::Now,
-                    "{reason:?} {ago_us}"
+                    sim.paints_in(w, SECOND, SECOND * 2),
+                    wakes,
+                    "window {w} of {n} is painted on every wake-up"
                 );
             }
         }
     }
 
-    #[test]
-    fn the_wait_is_exactly_the_rest_of_the_period() {
-        for ago in [0u64, 1, 4_000, 10_000, 14_000] {
-            let since = Duration::from_micros(ago);
-            assert_eq!(
-                gate(false, Some(since), PaintReason::Input),
-                PaintGate::Wait(FRAME - since),
-                "{ago}"
+    /// One event at `offset` after a tick, then a second counted after two periods.
+    fn after_a_perturbation(
+        n: usize,
+        window: usize,
+        offset: Duration,
+        reason: PaintReason,
+        per_window: bool,
+        event_sets_cause: bool,
+    ) -> Sim {
+        let mut sim = Sim::new(n, false, true);
+        sim.per_window = per_window;
+        sim.event_sets_cause = event_sets_cause;
+        let at = FRAME * 30 + offset;
+        sim.run(SECOND * 4, &[(at, window, reason)]);
+        sim
+    }
+
+    fn assert_back_to_one_wake_up(sim: &Sim, n: usize, label: &str) {
+        // Two periods after the event (at 30 periods + offset), a whole second.
+        let from = FRAME * 33;
+        let to = from + SECOND;
+        let wakes = sim.wakes_in(from, to);
+        assert!(
+            (59..=61).contains(&wakes),
+            "{label}: {wakes} wake-ups a second"
+        );
+        for w in 0..n {
+            let paints = sim.paints_in(w, from, to);
+            assert!(
+                (55..=61).contains(&paints),
+                "{label}: window {w} has {paints} paints a second"
             );
         }
-        // At the period and after it: due.
-        assert_eq!(gate(false, Some(FRAME), PaintReason::Input), PaintGate::Now);
-        assert_eq!(
-            gate(false, Some(FRAME + MS), PaintReason::Input),
-            PaintGate::Now
-        );
     }
 
     #[test]
-    fn a_tick_that_comes_a_hair_early_still_paints_but_input_is_held_to_the_period() {
-        let tol = frame_tolerance(FRAME);
-        assert!(tol >= MS && tol < FRAME / 4, "{tol:?}");
-        for reason in [PaintReason::Live, PaintReason::Update] {
-            // Steady ticks at the period, and early by 1 ms, by the whole tolerance.
-            for early in [Duration::ZERO, MS, tol] {
-                assert_eq!(gate(false, Some(FRAME - early), reason), PaintGate::Now);
-            }
-            // Earlier than the tolerance waits for the rest.
-            let since = FRAME - tol - MS;
-            assert_eq!(gate(false, Some(since), reason), PaintGate::Wait(tol + MS));
-        }
-        // Input has no tolerance: a millisecond early waits that millisecond.
-        assert_eq!(
-            gate(false, Some(FRAME - MS), PaintReason::Input),
-            PaintGate::Wait(MS)
-        );
-    }
-
-    /// The loop on the pure functions, one step per millisecond: `wanted(i)` says whether an
-    /// event marks the window at step `i`. Returns the steps of the paints. A paint that waits is
-    /// made at the due time (the wake deadline), as the loop does.
-    fn run_loop(
-        vsync: bool,
-        reason: PaintReason,
-        steps: u64,
-        mut wanted: impl FnMut(u64) -> bool,
-    ) -> Vec<u64> {
-        let mut paints: Vec<u64> = Vec::new();
-        let mut dirty = false;
-        let mut due: Option<u64> = None;
-        for t in 0..steps {
-            let event = wanted(t);
-            dirty |= event;
-            let woke = due.is_some_and(|d| t >= d);
-            if !dirty || !(event || woke) {
-                continue;
-            }
-            let since = paints.last().map(|p| MS * u32::try_from(t - p).unwrap());
-            match gate(vsync, since, reason) {
-                PaintGate::Now => {
-                    paints.push(t);
-                    dirty = false;
-                    due = None;
-                }
-                PaintGate::Wait(w) => {
-                    let at = t + (w.as_secs_f64() * 1000.0).ceil() as u64;
-                    due = Some(due.map_or(at, |d| d.min(at)));
+    fn a_paint_off_the_tick_does_not_leave_the_windows_in_two_phases() {
+        for n in [2, 3] {
+            for ms in [1u32, 5, 8, 12, 15] {
+                for reason in [PaintReason::Input, PaintReason::Resize] {
+                    for (window, cause) in (0..n).flat_map(|w| [(w, true), (w, false)]) {
+                        let sim = after_a_perturbation(n, window, MS * ms, reason, false, cause);
+                        let label = format!(
+                            "{n} windows, {reason:?} of {window} at +{ms} ms, event cause {cause}"
+                        );
+                        assert_back_to_one_wake_up(&sim, n, &label);
+                        // Never more than two wake-ups close together, whatever the event.
+                        let from = FRAME * 33;
+                        for pair in sim.wakes.windows(2).filter(|p| p[0] >= from) {
+                            assert!(
+                                pair[1] - pair[0] + frame_tolerance(FRAME) >= FRAME,
+                                "{label}"
+                            );
+                        }
+                    }
                 }
             }
         }
-        paints
     }
 
     #[test]
-    fn a_pointer_sweep_paints_once_per_period_and_the_last_state_is_painted() {
-        // An event every millisecond for a second, then quiet for a few periods.
-        let paints = run_loop(false, PaintReason::Input, 1100, |i| i < 1000);
-        let in_sweep = paints.iter().filter(|p| **p < 1000).count();
+    fn with_a_phase_per_window_the_loop_would_wake_twice_a_frame() {
+        // What the first version of the cap did (each window gated on its own last paint): a
+        // paint that is never held (an exposure, a resize) 8 ms after a tick leaves the two
+        // windows half a period apart for good, and the loop wakes for each of them.
+        let sim = after_a_perturbation(2, 0, MS * 8, PaintReason::Resize, true, false);
+        let wakes = sim.wakes_in(FRAME * 33, FRAME * 33 + SECOND);
         assert!(
-            in_sweep as u128 <= Duration::from_secs(1).as_micros() / FRAME.as_micros() + 1,
+            wakes >= 110,
+            "{wakes} wake-ups a second with a phase per window"
+        );
+    }
+
+    #[test]
+    fn a_pointer_sweep_paints_once_per_slot_and_the_last_state_is_painted() {
+        let events: Vec<_> = (0..1000u32)
+            .map(|i| (MS * i, 0, PaintReason::Input))
+            .collect();
+        let mut sim = Sim::new(1, false, false);
+        sim.run(SECOND + FRAME * 4, &events);
+        let paints = &sim.paints[0];
+        let in_sweep = sim.paints_in(0, Duration::ZERO, SECOND);
+        assert!(
+            in_sweep as u128 <= SECOND.as_micros() / FRAME.as_micros() + 1,
             "{in_sweep} paints in the sweep"
         );
         assert!(
             in_sweep >= 55,
             "{in_sweep}: the cap must not starve the sweep"
         );
-        // The last event (step 999) is painted within one period, with no further event.
-        let last = paints.last().copied().unwrap();
-        assert!((999..=999 + 17).contains(&last), "{last}");
-        // Two paints are never closer than the period.
+        // The last event (999 ms) is painted within one period, with no further event.
+        let last = *paints.last().unwrap();
+        assert!(last >= MS * 999 && last <= MS * 999 + FRAME, "{last:?}");
+        // Slots are at least a period apart: no window paints twice in one.
         for w in paints.windows(2) {
-            assert!(w[1] - w[0] >= 17, "{w:?}");
+            assert!(w[1] - w[0] >= FRAME, "{w:?}");
         }
     }
 
     #[test]
-    fn the_same_sweep_on_a_window_with_vsync_paints_on_every_event() {
-        let paints = run_loop(true, PaintReason::Input, 1100, |i| i < 1000);
-        assert_eq!(paints.len(), 1000);
+    fn a_sweep_over_one_of_two_animating_windows_caps_it_and_keeps_the_other_at_the_tick() {
+        let events: Vec<_> = (0..1000u32)
+            .map(|i| (MS * i + MS * 3, 0, PaintReason::Input))
+            .collect();
+        let mut sim = Sim::new(2, false, true);
+        sim.run(SECOND + FRAME * 4, &events);
+        for w in 0..2 {
+            let paints = sim.paints_in(w, Duration::ZERO, SECOND);
+            assert!((55..=62).contains(&paints), "window {w}: {paints} paints");
+        }
+        // Back to one wake-up per period after the sweep.
+        let wakes = sim.wakes_in(SECOND + FRAME * 2, SECOND + FRAME * 4);
+        assert!(wakes <= 3, "{wakes}");
     }
 
     #[test]
-    fn steady_ticks_paint_on_every_tick_with_and_without_jitter() {
+    fn the_same_sweep_on_a_window_with_vsync_paints_on_every_event() {
+        let events: Vec<_> = (0..1000u32)
+            .map(|i| (MS * i, 0, PaintReason::Input))
+            .collect();
+        let mut sim = Sim::new(1, true, false);
+        sim.run(SECOND + FRAME * 4, &events);
+        assert_eq!(sim.paints[0].len(), 1000);
+    }
+
+    #[test]
+    fn steady_ticks_with_jitter_paint_on_every_tick() {
         let tol = frame_tolerance(FRAME);
         for jitter in [Duration::ZERO, MS, tol] {
-            let mut last: Option<Duration> = None;
+            let mut slot: Option<Duration> = None;
             let mut painted = 0;
             for tick in 0..120u32 {
                 // Every second tick comes early by the jitter.
@@ -817,10 +1067,13 @@ mod tests {
                     Duration::ZERO
                 };
                 let t = FRAME * tick - early;
-                let since = last.map(|l| t - l);
-                if gate(false, since, PaintReason::Live) == PaintGate::Now {
+                let in_slot = slot.is_some();
+                let decision = gate(false, slot.map(|s| t - s), in_slot, PaintReason::Live);
+                if let PaintGate::Now { opens_slot } = decision {
                     painted += 1;
-                    last = Some(t);
+                    if opens_slot {
+                        slot = Some(t);
+                    }
                 }
             }
             assert_eq!(painted, 120, "jitter {jitter:?}");
@@ -866,6 +1119,19 @@ mod tests {
         let both = sooner(first, due);
         assert_eq!(both, Some(due));
         assert_eq!(sooner(both, now + Duration::from_millis(15)), Some(due));
+    }
+
+    #[test]
+    fn with_nothing_animating_a_held_paint_still_wakes_the_loop() {
+        // No stream, no plugin, no animation: only the held paint wakes the loop, and the last
+        // state is painted one period after the first paint of the burst.
+        let events = [
+            (Duration::ZERO, 0, PaintReason::Input),
+            (MS * 3, 0, PaintReason::Input),
+        ];
+        let mut sim = Sim::new(2, false, false);
+        sim.run(SECOND, &events);
+        assert_eq!(sim.paints[0], vec![Duration::ZERO, FRAME]);
     }
 
     #[test]

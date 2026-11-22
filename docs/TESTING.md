@@ -1547,6 +1547,10 @@ These are the hand checks, on every OS (`atomik --detach rack,console` opens bot
   showed several hundred paints/s on a fast mouse); the sweep still looks smooth, the last position is drawn when you
   stop, and resizing the window shows no stretched content. Attach the rack again: with one window the paints
   follow the monitor and no `deferred` part appears.
+- Frame cap while playing: open a project with an audio track, detach the mixer so two windows are open, press
+  play, move the pointer over one window for a few seconds, then stop moving and read the next `ui activity`
+  lines: wake-ups should be about 60 a second (not about 120) and both windows about 60 paints/s. Do the same
+  after resizing one of the windows by dragging its edge, and after clicking the other window to focus it.
 
 Run on Windows only so far (three windows open, draw, close, quit and restore); macOS, Linux (X11
 and Wayland) and monitors of mixed scale have not been tried.

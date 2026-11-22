@@ -417,6 +417,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         activity: crate::ui_activity::Activity::new(),
         last_paint: None,
         frame: FRAME,
+        frame_started: None,
         held_until: None,
         held_buttons: window_logic::HeldButtons::default(),
         poll_paint: false,
@@ -503,8 +504,9 @@ struct AppWindow {
     title: String,
     /// The application zoom the window was last told (it is told again when it changes).
     zoom: f64,
-    /// When a paint of this window last started (`None` before the first). The frame cap reads
-    /// it; it is not the app-wide [`App::last_paint`], which only drives the paint tail.
+    /// When this window was last painted (`None` before the first), on the clock of the frame
+    /// slots. The frame cap reads it; it is not the app-wide [`App::last_paint`], which only
+    /// drives the paint tail.
     last_painted: Option<Instant>,
 }
 
@@ -544,9 +546,11 @@ struct App {
     /// When a window was last painted: the loop stays at the full frame rate for a while after
     /// it (see [`window_logic::PAINT_TAIL`]).
     last_paint: Option<Instant>,
-    /// The shortest time between two paints of a window that presents without waiting for the
+    /// The length of the frame slots of the windows that present without waiting for the
     /// vertical blank (see [`window_logic::paint_gate`]): [`FRAME`] now, one place to change.
     frame: Duration,
+    /// When the current frame slot began: the windows that present without waiting share it.
+    frame_started: Option<Instant>,
     /// When the earliest paint that the frame cap held back in this tick is due; the loop wakes
     /// then even when nothing else would.
     held_until: Option<Instant>,
@@ -787,9 +791,15 @@ impl App {
         self.pace_presentation();
     }
 
+    /// Whether the surfaces wait for the vertical blank now: the one rule that sets the present
+    /// mode and decides whether the frame cap applies.
+    fn presents_with_vsync(&self) -> bool {
+        window_logic::presents_with_vsync(self.windows.len())
+    }
+
     /// Lets the surfaces wait for the vertical blank only while one window is open.
     fn pace_presentation(&mut self) {
-        let vsync = window_logic::presents_with_vsync(self.windows.len());
+        let vsync = self.presents_with_vsync();
         for w in self.windows.values_mut() {
             if let Some(surface) = &mut w.surface {
                 self.gpu.set_vsync(surface, vsync);
@@ -1229,27 +1239,30 @@ impl App {
 
     /// Whether the window `key` is painted now for `reason` or waits (see
     /// [`window_logic::paint_gate`]). A redraw the system asks for while nothing is marked is an
-    /// exposure and is never held back.
+    /// exposure and is never held back. `now` is the one time of the tick (or of the redraw
+    /// request), the same for every window painted in it.
     fn frame_gate(&self, key: Key, reason: PaintReason, now: Instant) -> window_logic::PaintGate {
         let marked = self
             .shell
             .song(key.0)
             .is_some_and(|s| s.needs_repaint_in(key.1));
         let Some(w) = self.windows.get(&key) else {
-            return window_logic::PaintGate::Now;
+            return window_logic::PaintGate::Now { opens_slot: false };
         };
         if !marked {
-            return window_logic::PaintGate::Now;
+            return window_logic::PaintGate::Now { opens_slot: false };
         }
         window_logic::paint_gate(
-            window_logic::presents_with_vsync(self.windows.len()),
-            w.last_painted.map(|t| now.saturating_duration_since(t)),
+            self.presents_with_vsync(),
+            self.frame_started
+                .map(|started| now.saturating_duration_since(started)),
+            matches!((w.last_painted, self.frame_started), (Some(l), Some(s)) if l >= s),
             self.frame,
             reason,
         )
     }
 
-    fn redraw(&mut self, key: Key, reason: PaintReason) {
+    fn redraw(&mut self, key: Key, reason: PaintReason, now: Instant) {
         let kind = key.1;
         self.service_graphics();
         if self.recovery.is_down() {
@@ -1263,13 +1276,18 @@ impl App {
             return; // minimized
         }
         self.advance_activity();
-        let now = clock::now();
-        if let window_logic::PaintGate::Wait(wait) = self.frame_gate(key, reason, now) {
-            // Held back: nothing is painted and the shell's marks stay, so the window is asked
-            // for again; the loop wakes when the period is over.
-            self.activity.deferred(kind);
-            self.held_until = window_logic::sooner(self.held_until, now + wait);
-            return;
+        let opens_slot = match self.frame_gate(key, reason, now) {
+            window_logic::PaintGate::Now { opens_slot } => opens_slot,
+            window_logic::PaintGate::Wait(wait) => {
+                // Held back: nothing is painted and the shell's marks stay, so the window is
+                // asked for again; the loop wakes when the slot is over.
+                self.activity.deferred(kind);
+                self.held_until = window_logic::sooner(self.held_until, now + wait);
+                return;
+            }
+        };
+        if opens_slot {
+            self.frame_started = Some(now);
         }
         if let Some(w) = self.windows.get_mut(&key) {
             w.last_painted = Some(now);
@@ -1544,7 +1562,7 @@ impl App {
     }
 
     /// Paints and presents every window that has something to paint.
-    fn paint_due_windows(&mut self) {
+    fn paint_due_windows(&mut self, now: Instant) {
         for id in self.shell.ids() {
             let due = self.shell.song(id).map(|s| s.windows_to_paint());
             // The reasons are read before the first paint clears the marks.
@@ -1554,7 +1572,7 @@ impl App {
                 .map(|kind| (kind, self.paint_reason(id, kind)))
                 .collect();
             for (kind, reason) in due {
-                self.redraw((id, kind), reason);
+                self.redraw((id, kind), reason, now);
             }
         }
         // The cause of this tick's paints is spent; a frame that was not shown keeps its own, and
@@ -2743,7 +2761,7 @@ impl App {
             }
             WindowEvent::RedrawRequested => {
                 let reason = self.paint_reason(key.0, kind);
-                self.redraw(key, reason);
+                self.redraw(key, reason, clock::now());
             }
             WindowEvent::Focused(false) => {
                 self.held_buttons.reset();
@@ -2844,7 +2862,7 @@ impl App {
         // marked), so the deadline starts empty.
         self.held_until = None;
         if window_logic::paints_on_wake(minimized) {
-            self.paint_due_windows();
+            self.paint_due_windows(now);
         }
         // Audio imports and loads finish on worker threads: poll them even without a stream.
         let songs: Vec<_> = self
