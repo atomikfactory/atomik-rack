@@ -61,6 +61,8 @@ pub mod counter {
     pub const SEQ_TERMINATE_COMPONENT: u32 = 21;
     /// Messages a plugin sent from inside `disconnect` or `terminate` that the peer accepted.
     pub const TEARDOWN_MESSAGES_DELIVERED: u32 = 22;
+    /// `createView` calls on any controller (a plugin without an editor answers them, too).
+    pub const VIEW_ASKS: u32 = 23;
     /// Number of counters.
     pub const COUNT: usize = 24;
 }
@@ -163,8 +165,15 @@ pub mod probe {
     /// Non-zero: the value written for the parameter `k` in the block `n` (the number of
     /// `process` calls so far) is `((n + k) % 997) / 997`.
     pub const OUT_RAMP: u32 = 51;
+    /// `IEditController::createView` calls on this instance.
+    pub const VIEW_ASKS: u32 = 52;
+    /// Non-zero: the editor cannot be resized by the user (`canResize` answers false); see
+    /// [`super::command::FIXED_SIZE`].
+    pub const FIXED_SIZE: u32 = 53;
+    /// `IPlugView::onSize` calls.
+    pub const ON_SIZE_CALLS: u32 = 54;
     /// Number of probe slots.
-    pub const COUNT: usize = 52;
+    pub const COUNT: usize = 55;
 }
 
 /// Commands of `atomik_test_command`.
@@ -193,6 +202,9 @@ pub mod command {
     pub const OUT_PARAMS: u32 = 17;
     /// Sets the value the output parameters write (`a`: f64 bits) and whether they ramp (`b`).
     pub const OUT_VALUE: u32 = 18;
+    /// Makes the editor refuse a resize by the user (`a` non-zero: `canResize` answers false) or
+    /// accept it again (0). The plugin can still ask for a size itself.
+    pub const FIXED_SIZE: u32 = 19;
 }
 
 static COUNTERS: [AtomicU64; counter::COUNT] = [const { AtomicU64::new(0) }; counter::COUNT];

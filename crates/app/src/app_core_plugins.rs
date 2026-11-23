@@ -1788,6 +1788,13 @@ impl<S: EngineSink> AppCore<S> {
                         .window_requests
                         .push(PluginWindowRequest::Resize { device: key, w, h });
                 }
+                // The window follows the size the plugin asked for: an editor the user cannot
+                // resize is told it has it, too. A plugin in another process was told by its own
+                // process, and this call is for the editors of this one.
+                self.plugins
+                    .host
+                    .manager()
+                    .plugin_resized_gui(instance, w, h);
             }
             ManagerEvent::GuiFrame {
                 instance,

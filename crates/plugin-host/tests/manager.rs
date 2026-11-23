@@ -1173,3 +1173,66 @@ fn a_slow_restart_does_not_end_the_burst_it_belongs_to() {
     assert_eq!(stats.activated(), 1 + RESTART_BURST as usize, "{events:?}");
     assert_eq!(warnings(&events), 1, "said once: {events:?}");
 }
+
+#[test]
+fn a_poll_with_nothing_to_report_allocates_nothing_once_it_has_run() {
+    let (mut m, _stats) = manager();
+    let handles: Vec<_> = (0..8)
+        .map(|i| {
+            m.instantiate(&request(if i % 2 == 0 { "null.fx" } else { "null.fx2" }))
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(m.instance_count(), 8);
+    let _ = m.poll();
+    // The list of ids the poll walks is kept: the second poll does not build it again (and
+    // nothing else a poll does with the null backend allocates when it has nothing to report).
+    let events = atomik_testkit::no_alloc::assert_no_alloc(|| m.poll());
+    assert!(events.is_empty());
+    drop(events);
+    drop(handles);
+}
+
+#[test]
+fn a_plugin_whose_layout_changed_while_it_activated_is_installed_with_the_layout_it_has() {
+    let (mut m, stats) = manager();
+    let mut grown = fx_layout();
+    grown.sidechain = true;
+    grown.aux_out = 2;
+    // The plugin reports the change while it restores its state and activates.
+    stats.change_layout(grown.clone());
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    assert_eq!(handle.layout, grown, "the handle");
+    let want = atomik_device_sdk::descriptor_for(
+        &PluginRef {
+            format: PluginFormat::Clap,
+            id: "null.fx".to_string(),
+        },
+        &grown,
+    )
+    .unwrap();
+    assert!(
+        std::ptr::eq(handle.descriptor, want),
+        "the device is made from the descriptor of the new layout"
+    );
+    assert_eq!(m.layout(id).unwrap(), &grown, "the manager's list");
+    let (mut h, _) = harness_of(handle);
+    *h.input_mut("in_l") = [1.0; BATCH];
+    run(&mut h, 2);
+    assert_eq!(h.output("out_l")[0], 0.5, "the plugin plays");
+    // A later restart does not report the change the device already carries.
+    m.restart(id).unwrap();
+    let mut events = Vec::new();
+    for _ in 0..6 {
+        h.process();
+        events.extend(m.poll());
+    }
+    assert!(events.contains(&ManagerEvent::Restarted(id)), "{events:?}");
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, ManagerEvent::LayoutChanged { .. })),
+        "{events:?}"
+    );
+}

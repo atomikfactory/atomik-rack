@@ -239,6 +239,15 @@ may break APIs and the patch and project formats.
   processes falls from about 59 s to about 42 s). Every plugin is still asked after every batch, so a restart or a
   latency change lands on the same batch as before and the rendered file is the same bytes. A live project is
   unchanged.
+- **A VST3 editor is told each automated value once per frame.** Every value the rack sets on a VST3 plugin is
+  mirrored to the plugin's controller so an open editor follows it. An automated parameter used to cost one
+  controller call per event, hundreds a frame; the controller now hears each parameter once per frame, with the
+  latest value. A state saved or a plugin deactivated still applies everything first.
+- **A scan no longer builds an editor view for every plugin.** Creating a VST3 plugin built an editor view and dropped
+  it only to learn whether the plugin has one, and a scan creates every plugin of every file. The question is now put
+  to the plugin once, the first time the app wants the answer (or when the editor is opened, which settles it).
+- **The plugin manager's frame poll no longer builds its list of instances every frame.** The list is kept and
+  reused; with nothing to report a poll now allocates nothing.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
@@ -478,6 +487,27 @@ may break APIs and the patch and project formats.
   released without being terminated. A factory that answers the controller class with the component's own object is
   one object: initialised and terminated once, with no second initialisation and no proxies. A factory that
   implements the host-context interface now gets the host context once, before anything is created from it.
+- **A VST3 editor that changes its own size is told it has it.** An editor asks for a new size (a zoom menu, a view
+  that folds open) and the window follows; the format then expects the host to tell the view with `onSize`, which the
+  host only did for an editor the user could resize. A fixed-size editor never heard of its new size, and some drew
+  at the old size inside the new window. The view is now told whenever the window followed a size it asked for,
+  in the app and in the plugin process, once per size; a resize by the user of a fixed editor is still refused.
+- **A VST3 instrument plays when the device's MPE switch is on.** The switch sends the notes as raw MIDI messages,
+  and VST3 has no raw MIDI input, so a VST3 instrument on a device with the switch on received no notes and stayed
+  silent. A plugin device now ignores the switch for a format that takes no raw MIDI and sends note events as it does
+  with the switch off; the parameter and a project that has it on are unchanged, and the switch is no longer offered
+  on the panel of a VST3 plugin. A project with such a device now renders the instrument's notes where it rendered
+  silence.
+- **A CLAP plugin that ships support libraries beside it loads on Windows.** The CLAP library was opened with the
+  plain library load, which does not look in the plugin's own folder for the libraries it depends on, so such a
+  plugin failed to load and a scan listed it as failed. It is now opened with the folder of its file searched first,
+  as a VST3 plugin already was. Other platforms are unchanged.
+- **A plugin whose saved state changes its parameter list starts with the right list.** The device of a plugin was
+  built from the parameter list the plugin had before its state was restored. A plugin whose state changes its
+  parameters says so while it activates, and its audio half is made for the new list, so the device could be
+  installed with a descriptor that did not match it until some later restart. The manager now takes that change
+  once the plugin is active and builds the device and the listed layout from the new list, when it loads
+  in the app's own process and when it loads in the background; the change is not reported a second time.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

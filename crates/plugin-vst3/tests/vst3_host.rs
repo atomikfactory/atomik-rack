@@ -642,6 +642,54 @@ fn values_the_rack_sets_reach_the_controller_on_the_main_thread_so_an_editor_sho
 }
 
 #[test]
+fn many_values_the_rack_set_between_two_polls_reach_the_controller_once_per_parameter() {
+    let (k, lib) = k();
+    let (mut inst, _m) = bare(&*k.backend, &k.plugin(Plug::Gain));
+    let mut p = inst.activate(&activate_config(RunMode::Realtime)).unwrap();
+    assert!(p.start_processing());
+    let mut b = Bufs::new();
+    let before = lib.probe(&*inst, probe::CTRL_SET_PARAMS);
+    // 900 events over three parameters (the mirror ring holds 1 024): gain, mute and latency.
+    for block in 0..9 {
+        let events: Vec<PluginEvent> = (0..100)
+            .map(|j| {
+                let last = block == 8 && j >= 90;
+                let (id, early, late) = match j % 3 {
+                    0 => (1, 0.25, 0.5),
+                    1 => (2, 0.0, 1.0),
+                    _ => (3, 8.0, 64.0),
+                };
+                ev(
+                    j as u16,
+                    K::Param {
+                        id,
+                        value: if last { late } else { early },
+                    },
+                )
+            })
+            .collect();
+        b.run(&mut *p, &events, 2, 2);
+    }
+    inst.poll();
+    assert_eq!(
+        lib.probe(&*inst, probe::CTRL_SET_PARAMS),
+        before + 3,
+        "one call per parameter, not one per event"
+    );
+    let now: std::collections::BTreeMap<u32, f64> = inst.read_params().into_iter().collect();
+    assert_eq!(now[&1], 0.5);
+    assert_eq!(now[&2], 1.0);
+    assert_eq!(now[&3], 64.0);
+    inst.poll();
+    assert_eq!(
+        lib.probe(&*inst, probe::CTRL_SET_PARAMS),
+        before + 3,
+        "once"
+    );
+    inst.deactivate(p);
+}
+
+#[test]
 fn a_state_taken_right_after_a_rack_edit_holds_the_edit_in_the_controller_section() {
     let (k, _) = k();
     let (mut inst, _m) = bare(&*k.backend, &k.plugin(Plug::Gain));
@@ -661,6 +709,50 @@ fn a_state_taken_right_after_a_rack_edit_holds_the_edit_in_the_controller_sectio
     assert_eq!(u32::from_le_bytes(ctrl[4..8].try_into().unwrap()), 4);
     assert_eq!(f64::from_le_bytes(ctrl[8..16].try_into().unwrap()), 0.75);
     inst.deactivate(p);
+}
+
+// ----- the MPE option --------------------------------------------------------------------------------
+
+/// What a VST3 synth device plays for one held note, with the device's `mpe.send` at `option`.
+fn synth_note_with_mpe_option(option: f32) -> Vec<f32> {
+    use atomik_core::{NoteEvent, NoteKind};
+    let (k, _) = k();
+    // Through the manager, as the app builds the device: it tells the device the format.
+    let mut m = manager_for(Format::Vst3, std::slice::from_ref(&k.path));
+    let handle = m.instantiate(&request(&k.plugin(Plug::Synth))).unwrap();
+    let mut h = atomik_testkit::harness::DeviceHarness::new(Box::new(handle.device), SR);
+    h.set_param("mpe.send", option);
+    h.push_note(
+        "notes_in",
+        NoteEvent {
+            offset: 0,
+            kind: NoteKind::On {
+                key: 69,
+                velocity: 1.0,
+            },
+        },
+    );
+    let mut played = Vec::new();
+    for _ in 0..4 {
+        h.process();
+        played.extend_from_slice(h.output("out_l"));
+    }
+    played
+}
+
+#[test]
+fn a_vst3_instrument_plays_when_the_mpe_option_is_on_and_sounds_as_with_it_off() {
+    let plain = synth_note_with_mpe_option(0.0);
+    let with_option = synth_note_with_mpe_option(1.0);
+    assert!(
+        plain.iter().any(|s| s.abs() > 0.01),
+        "the reference note sounds"
+    );
+    assert_eq!(
+        plain.iter().map(|s| s.to_bits()).collect::<Vec<_>>(),
+        with_option.iter().map(|s| s.to_bits()).collect::<Vec<_>>(),
+        "a format without raw MIDI ignores the option: the notes reach it as note events"
+    );
 }
 
 // ----- parameter text -------------------------------------------------------------------------------
@@ -737,6 +829,73 @@ fn the_editor_is_created_scaled_sized_attached_resized_and_closed() {
     // And it can be opened again.
     inst.open_gui(parent(), 1.0).unwrap();
     inst.close_gui();
+}
+
+/// Asks for the size `w` x `h` from another thread, the way a plugin's own thread may.
+fn plugin_asks_for_size(
+    lib: &TestLib,
+    inst: &dyn atomik_plugin_host::PluginInstance,
+    w: u64,
+    h: u64,
+) {
+    let handle = inst.native_handle();
+    let path = lib.path.clone();
+    std::thread::spawn(move || {
+        let l = TestLib::open_path(&path);
+        l.command_raw(handle, command::GUI_REQUEST_RESIZE, w, h);
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn an_editor_the_user_cannot_resize_is_told_the_size_it_asked_for_once() {
+    let (k, lib) = k();
+    let (mut inst, m) = bare(&*k.backend, &k.plugin(Plug::Gain));
+    inst.plugin_resized_gui(410, 330);
+    assert_eq!(
+        lib.probe(&*inst, probe::ON_SIZE_CALLS),
+        0,
+        "no editor, nobody to tell"
+    );
+    inst.open_gui(parent(), 1.0).unwrap();
+    lib.command(&*inst, command::FIXED_SIZE, 1, 0);
+    assert!(
+        inst.resize_gui(500, 400).is_err(),
+        "the user cannot resize a fixed editor"
+    );
+    assert_eq!(lib.probe(&*inst, probe::ON_SIZE_CALLS), 0);
+    // The editor asks for a size of its own: the message reaches the app, the window follows,
+    // and the app tells the editor it has the size.
+    let _ = drain(&m);
+    plugin_asks_for_size(&lib, &*inst, 410, 330);
+    assert!(drain(&m).contains(&PluginMessage::GuiResize { w: 410, h: 330 }));
+    assert_eq!(
+        lib.probe(&*inst, probe::ON_SIZE_CALLS),
+        0,
+        "not from inside the plugin's own request"
+    );
+    inst.plugin_resized_gui(410, 330);
+    assert_eq!(lib.probe(&*inst, probe::ON_SIZE_CALLS), 1);
+    assert_eq!(lib.probe(&*inst, probe::GUI_WIDTH), 410);
+    assert_eq!(lib.probe(&*inst, probe::GUI_HEIGHT), 330);
+    // The same size again (a plugin that answers `onSize` with the same request) is not told again.
+    plugin_asks_for_size(&lib, &*inst, 410, 330);
+    assert!(drain(&m).contains(&PluginMessage::GuiResize { w: 410, h: 330 }));
+    inst.plugin_resized_gui(410, 330);
+    assert_eq!(lib.probe(&*inst, probe::ON_SIZE_CALLS), 1, "once");
+    // Another size is told, and the user's resize is still refused.
+    inst.plugin_resized_gui(420, 340);
+    assert_eq!(lib.probe(&*inst, probe::ON_SIZE_CALLS), 2);
+    assert!(inst.resize_gui(500, 400).is_err());
+    assert_eq!(lib.probe(&*inst, probe::ON_SIZE_CALLS), 2);
+    inst.close_gui();
+    inst.plugin_resized_gui(500, 500);
+    assert_eq!(
+        lib.probe(&*inst, probe::ON_SIZE_CALLS),
+        2,
+        "a closed editor is not told"
+    );
 }
 
 #[test]

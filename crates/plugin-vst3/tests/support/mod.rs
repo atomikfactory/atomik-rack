@@ -75,6 +75,9 @@ pub mod probe {
     pub const CTRL_SET_PARAMS: u32 = 45;
     pub const LAST_SET_ID: u32 = 46;
     pub const LAST_SET_VALUE: u32 = 47;
+    pub const VIEW_ASKS: u32 = 52;
+    pub const FIXED_SIZE: u32 = 53;
+    pub const ON_SIZE_CALLS: u32 = 54;
 }
 
 /// Commands of the VST3 test library's `atomik_test_command`.
@@ -90,6 +93,7 @@ pub mod command {
     pub const IO_CHANGED: u32 = 16;
     pub const OUT_PARAMS: u32 = 17;
     pub const OUT_VALUE: u32 = 18;
+    pub const FIXED_SIZE: u32 = 19;
 }
 
 /// The process-wide counters of a test library.
@@ -130,6 +134,8 @@ pub mod counter {
     pub const SEQ_TERMINATE_COMPONENT: u32 = 21;
     /// Messages sent from inside `disconnect` or `terminate` that the peer accepted.
     pub const TEARDOWN_MESSAGES_DELIVERED: u32 = 22;
+    /// `createView` calls on any controller of the library.
+    pub const VIEW_ASKS: u32 = 23;
 }
 
 // SAFETY: these are the signatures of the exported test hooks.
@@ -566,7 +572,8 @@ pub fn rig_for(backend: &dyn PluginBackend, plugin: &PluginRef, mode: RunMode) -
     manager.slot().set_latency(instance.latency_frames(), SR);
     let descriptor = descriptor_for(plugin, &layout).expect("descriptor");
     let device = PluginDevice::new(descriptor, &layout, processor, device_end, SR)
-        .with_reaper(reaper.clone());
+        .with_reaper(reaper.clone())
+        .with_format(plugin.format);
     Rig {
         instance,
         device: Some(device),

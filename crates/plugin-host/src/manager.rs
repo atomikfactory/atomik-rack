@@ -675,6 +675,9 @@ pub struct PluginManager {
     /// The params each plugin lists beyond what it reports (see
     /// [`PluginManager::set_pinned_params`]).
     pins: BTreeMap<PluginRef, Arc<Vec<PluginParamInfo>>>,
+    /// The instance ids one [`PluginManager::poll`] walks: kept between polls so that a frame
+    /// does not allocate the list again.
+    poll_ids: Vec<InstanceId>,
 }
 
 /// `layout` as the rack lists it: what the plugin reports plus the `pins` (see
@@ -741,6 +744,7 @@ impl PluginManager {
             next_ticket: 1,
             leaving: Vec::new(),
             pins: BTreeMap::new(),
+            poll_ids: Vec::new(),
         }
     }
 
@@ -1007,11 +1011,7 @@ impl PluginManager {
                 Stage::Activating(mut boot, prepared) => match boot.instance.poll_activate() {
                     None => return Stage::Activating(boot, prepared),
                     Some(Err(e)) => return Stage::Failed(Box::new(e.into())),
-                    Some(Ok(processor)) => Stage::Ready(Box::new(Readied {
-                        boot,
-                        prepared,
-                        processor,
-                    })),
+                    Some(Ok(processor)) => self.ready(request, boot, prepared, processor),
                 },
             };
         }
@@ -1051,13 +1051,53 @@ impl PluginManager {
             Err(e) => return Stage::Failed(Box::new(e.into())),
         };
         match activate_now_or_later(boot.instance.as_mut(), &activate_config(request)) {
-            Ok(Some(processor)) => Stage::Ready(Box::new(Readied {
+            Ok(Some(processor)) => self.ready(request, boot, prepared, processor),
+            Ok(None) => Stage::Activating(boot, prepared),
+            Err(e) => Stage::Failed(Box::new(e.into())),
+        }
+    }
+
+    /// What the descriptor and the listed layout are once the plugin is active. A plugin whose
+    /// restored state changes its param list reports it while it activates (a VST3 plugin reads
+    /// its table again then, and its processor is made for that table): the device is then made
+    /// for the list the plugin has now, not the one it had before its state was restored. The
+    /// change is taken here, so it is not reported again as a layout change after the device is
+    /// installed. A descriptor that cannot be built fails the creation as before (the plugin is
+    /// deactivated first).
+    fn settle_layout(
+        &self,
+        plugin: &PluginRef,
+        instance: &mut dyn PluginInstance,
+        prepared: Prepared,
+        processor: Box<dyn PluginProcessor>,
+    ) -> Result<(Prepared, Box<dyn PluginProcessor>), ManagerError> {
+        if !instance.take_layout_changed() {
+            return Ok((prepared, processor));
+        }
+        match descriptor_of(plugin, instance.layout(), &self.pins_of(plugin)) {
+            Ok(settled) => Ok((settled, processor)),
+            Err(e) => {
+                instance.deactivate(processor);
+                Err(e.into())
+            }
+        }
+    }
+
+    /// The stage of an instance that is active: see [`PluginManager::settle_layout`].
+    fn ready(
+        &self,
+        request: &InstantiateRequest,
+        mut boot: Booting,
+        prepared: Prepared,
+        processor: Box<dyn PluginProcessor>,
+    ) -> Stage {
+        match self.settle_layout(&request.plugin, boot.instance.as_mut(), prepared, processor) {
+            Ok((prepared, processor)) => Stage::Ready(Box::new(Readied {
                 boot,
                 prepared,
                 processor,
             })),
-            Ok(None) => Stage::Activating(boot, prepared),
-            Err(e) => Stage::Failed(Box::new(e.into())),
+            Err(e) => Stage::Failed(Box::new(e)),
         }
     }
 
@@ -1104,12 +1144,14 @@ impl PluginManager {
             .and_then(|s| instance.restore_state(s).err())
             .map(|e| e.to_string());
         let restored = clock();
-        let (descriptor, layout) = descriptor_of(
+        let prepared = descriptor_of(
             &request.plugin,
             instance.layout(),
             &self.pins_of(&request.plugin),
         )?;
         let processor = instance.activate(&activate_config(request))?;
+        let ((descriptor, layout), processor) =
+            self.settle_layout(&request.plugin, instance.as_mut(), prepared, processor)?;
         let timing = CreateTiming {
             restore: restored.saturating_duration_since(began),
             activate: clock().saturating_duration_since(restored),
@@ -1153,7 +1195,8 @@ impl PluginManager {
         slot.set_pinned(request.pinned);
         slot.set_powered(request.powered);
         let device = PluginDevice::new(descriptor, &layout, processor, device_end, cfg.sample_rate)
-            .with_reaper(self.reaper.clone());
+            .with_reaper(self.reaper.clone())
+            .with_format(request.plugin.format);
         self.instances.insert(
             id,
             Managed {
@@ -1516,6 +1559,15 @@ impl PluginManager {
         Ok(self.get(id)?.instance.resize_gui(w, h)?)
     }
 
+    /// The window of the editor of `id` followed a size the plugin asked for: the plugin is told
+    /// (see [`PluginInstance::plugin_resized_gui`]). An unknown instance is ignored.
+    pub fn plugin_resized_gui(&mut self, id: InstanceId, w: u32, h: u32) {
+        assert_main_thread("PluginManager::plugin_resized_gui");
+        if let Ok(m) = self.get(id) {
+            m.instance.plugin_resized_gui(w, h);
+        }
+    }
+
     /// Asks the plugin's editor to resize without waiting for a plugin that is busy (see
     /// [`PluginInstance::request_resize_gui`]): `Some(size)` is the size it took, `None` means
     /// the answer comes later through [`PluginManager::take_soft_answers`] as a
@@ -1771,7 +1823,8 @@ impl PluginManager {
         m.parked = false;
         m.phase = Phase::Running;
         let device = PluginDevice::new(descriptor, &layout, processor, device_end, sample_rate)
-            .with_reaper(reaper);
+            .with_reaper(reaper)
+            .with_format(m.plugin.format);
         Ok(PluginHandle {
             id,
             device,
@@ -1873,7 +1926,8 @@ impl PluginManager {
             device_end,
             m.cfg.sample_rate,
         )
-        .with_reaper(reaper.clone());
+        .with_reaper(reaper.clone())
+        .with_format(m.plugin.format);
         job.ready = Some(Ok(PluginHandle {
             id,
             device,
@@ -1985,7 +2039,9 @@ impl PluginManager {
         // The instances that ended are deactivated and their processes end together, across
         // polls, so that a project with dozens of plugins waits for none of its slow ones.
         self.advance_leaving();
-        let ids: Vec<InstanceId> = self.instances.keys().copied().collect();
+        let mut ids = std::mem::take(&mut self.poll_ids);
+        ids.clear();
+        ids.extend(self.instances.keys().copied());
         // Every instance is asked first for what its poll waits for (an offline render's flush
         // of a plugin in another process), so the waits overlap. Only this instance's own link
         // is touched by its `poll_one`, so nothing runs between an instance's ask and its poll
@@ -1995,9 +2051,10 @@ impl PluginManager {
                 m.instance.begin_poll();
             }
         }
-        for id in ids {
+        for &id in &ids {
             self.poll_one(id, &mut events);
         }
+        self.poll_ids = ids;
         events
     }
 

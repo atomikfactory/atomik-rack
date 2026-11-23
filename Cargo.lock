@@ -482,6 +482,7 @@ dependencies = [
  "clack-extensions",
  "clack-host",
  "clap-sys",
+ "libloading 0.8.9",
  "libloading 0.9.1",
 ]
 

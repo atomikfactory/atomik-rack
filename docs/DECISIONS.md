@@ -2050,3 +2050,58 @@ is the only thing that makes the notifications of a batch visible before the nex
 restart would land on another batch than in a live run).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BM. A VST3 editor is told the size it asked for, whether or not the user may resize it
+
+**Question.** A VST3 editor asks for a size with `resizeView` and the format expects the host to answer by telling the
+view with `onSize`. The host only had `resize_gui`, which asks `canResize` first and refuses an editor of a fixed size,
+so an editor that changes its own size (a zoom menu, a view that folds open) never heard that its window had followed.
+
+**Decision.** `PluginInstance::plugin_resized_gui` (default: nothing) is called where the window has followed a size the
+plugin asked for: in the app when it handles the plugin's resize message (for a plugin of the app's own process), and
+in the plugin process right after its window followed (for a sandboxed one; the app's call is then a no-op). The VST3
+instance calls `onSize` with that rectangle, without `canResize` and without `checkSizeConstraint` (the plugin chose
+the size), only while the view is open, and not again for a size the view was told already (at the opening, by a user
+resize or by this call). A resize by the user keeps its `canResize` check.
+
+**Why no `canResize` check.** The question "may the user drag the frame" is not the question "did the window take the
+size the plugin chose". An editor that can be resized is told by this call too, a moment before the platform's own
+resize event reaches `resize_gui` with the same size: that second `onSize` carries the rectangle the view already
+has, as the one it always got from that event did. `resize_gui` is left as it was, so a resize by the user reaches a
+plugin exactly as before.
+
+**Why from the poll and not from `resizeView`.** The plugin is inside its own call there, and answering a request with
+a call back into the view from the same stack is the way a plugin loops or deadlocks. The message is handled at the next
+poll, as before, and the call happens there.
+
+**CLAP.** Unchanged: its host callback only posts the request, and the window's own size change reaches the plugin
+through `set_size`, which is attempted only for an editor that reports it can be resized.
+
+**Rejected.** Making `resize_gui` skip the `canResize` check (the user's drag of a fixed editor must stay refused);
+calling `onSize` from inside `resizeView` (reentrancy).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BN. The MPE switch of a plugin device is ignored, and not offered, for a format without raw MIDI
+
+**Question.** The `mpe.send` switch of a plugin device sends the notes as raw MIDI messages on member channels. VST3 has
+no raw MIDI input, and the VST3 processor drops those messages on purpose, so a VST3 instrument on a device with the
+switch on received no notes at all and stayed silent.
+
+**Decision.** `PluginFormat::takes_raw_midi` says whether a format takes raw MIDI (CLAP: yes, VST3: no). The manager
+tells each plugin device its format when it builds it (a device built without that call assumes a format that takes
+raw MIDI), and a device of a format that does not take raw MIDI treats `mpe.send` as off whatever its value, so the
+notes reach the plugin as note events, with the per-note expression the plain path already gives a VST3 plugin as note
+expression events. The parameter stays in the descriptor and in saved projects (no descriptor change, no format change):
+a project that has the value on keeps it, and its VST3 instrument now plays. The switch is hidden, not greyed out, on
+the panel of such a plugin (the rack panel and its hit test share one visibility rule). A plugin of this format in its
+own process takes the same path: the format comes from the request that names the plugin, not from where it runs.
+
+**Rendered audio.** The one deliberate change of rendered audio of this work: a project with a VST3 instrument on a
+device whose switch was on rendered silence from that device and now renders its notes. That case was broken.
+
+**Rejected.** Translating the MPE messages into VST3 events (the plain path already carries the same per-note
+information natively, with a note id); removing the parameter for such a plugin (a descriptor change, and a project
+saved with the value would no longer match); greying the switch out (a control that cannot work is better absent).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

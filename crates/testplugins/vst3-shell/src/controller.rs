@@ -205,16 +205,28 @@ impl ControllerCore {
             return kInvalidArgument;
         };
         let mut dsp = lock(&self.dsp);
+        let before = dsp.params().len();
         if !dsp.load(&bytes) {
             return kResultFalse;
         }
+        // A state that brings params the plugin did not list yet (the run-time param) changes the
+        // table: the controller rebuilds it and, like a plugin whose state changes its
+        // parameters, tells the host.
+        let grew = dsp.params().len() != before;
         let mut table = self.sync();
+        if grew {
+            let rebuilt = build_table(&**dsp, self.info.midi, Some(&table));
+            *table = rebuilt;
+        }
         for i in 0..table.entries.len() {
             if let Some(spec) = table.entries[i].spec.clone() {
                 table.values[i] = norm_of(&spec, dsp.param(spec.id));
             }
         }
         drop((table, dsp));
+        if grew {
+            self.shared().announce(RestartFlags_::kParamTitlesChanged);
+        }
         if let Some((id, value)) = atomik_test_plugin_core::gui_edit_on_restore() {
             self.gui_edit(id, value);
         }
@@ -489,10 +501,12 @@ impl ControllerCore {
     pub fn create_view(&self, name: *const c_char) -> *mut IPlugView {
         // SAFETY: the host passes a NUL-terminated name or null.
         let name = unsafe { crate::util::cstr_text(name) };
+        let shared = self.shared();
+        bump(counter::VIEW_ASKS);
+        shared.add(probe::VIEW_ASKS, 1);
         if !self.info.gui || name != "editor" {
             return std::ptr::null_mut();
         }
-        let shared = self.shared();
         shared.add(probe::VIEWS_CREATED, 1);
         let view = ComWrapper::new(View {
             shared: Arc::clone(&shared),
@@ -646,6 +660,7 @@ impl IPlugViewTrait for View {
 
     unsafe fn onSize(&self, new_size: *mut ViewRect) -> tresult {
         self.shared.or(probe::GUI_CALLS, 8);
+        self.shared.add(probe::ON_SIZE_CALLS, 1);
         // SAFETY: the host passes a valid rect.
         let r = unsafe { &*new_size };
         self.shared
@@ -668,7 +683,11 @@ impl IPlugViewTrait for View {
 
     unsafe fn canResize(&self) -> tresult {
         self.shared.or(probe::GUI_CALLS, 64);
-        kResultTrue
+        if self.shared.get(probe::FIXED_SIZE) != 0 {
+            kResultFalse
+        } else {
+            kResultTrue
+        }
     }
 
     unsafe fn checkSizeConstraint(&self, rect: *mut ViewRect) -> tresult {
@@ -745,6 +764,10 @@ pub fn command_run(handle: usize, cmd: u32, a: u64, b: u64) -> u64 {
         command::OUT_PARAMS => {
             shared.set(probe::OUT_COUNT, a);
             shared.set(probe::OUT_BASE, b);
+            0
+        }
+        command::FIXED_SIZE => {
+            shared.set(probe::FIXED_SIZE, a);
             0
         }
         command::OUT_VALUE => {

@@ -136,6 +136,17 @@ impl PluginFormat {
         }
     }
 
+    /// Whether a plugin of this format takes raw MIDI messages as input. CLAP does; VST3 has no
+    /// raw MIDI input (its notes, bend and controllers are events and parameters), so what is
+    /// sent as MIDI never reaches it. The one place that says so: the MPE option of a plugin
+    /// device, which sends its notes as raw MIDI, only applies to a format that takes them.
+    pub fn takes_raw_midi(self) -> bool {
+        match self {
+            PluginFormat::Clap => true,
+            PluginFormat::Vst3 => false,
+        }
+    }
+
     fn prefix(self) -> &'static str {
         match self {
             PluginFormat::Clap => CLAP_PREFIX,

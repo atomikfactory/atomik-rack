@@ -249,7 +249,7 @@ impl Control {
             if let Some(instance) = self.instance.as_deref_mut() {
                 match &message {
                     PluginMessage::GuiResize { w, h } => {
-                        self.editor.plugin_resized(windows, *w, *h);
+                        self.editor.plugin_resized(instance, windows, *w, *h);
                     }
                     PluginMessage::GuiRequestShow => self.editor.plugin_visible(windows, true),
                     PluginMessage::GuiRequestHide => self.editor.plugin_visible(windows, false),

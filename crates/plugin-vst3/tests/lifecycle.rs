@@ -617,3 +617,72 @@ fn a_change_of_param_titles_alone_is_shown_without_a_restart() {
 
 /// The CLAP test command `request_callback()`.
 const CLAP_REQUEST_CALLBACK: u32 = 6;
+
+#[test]
+fn a_saved_state_that_changes_the_param_list_gives_a_device_that_matches_the_list() {
+    use atomik_device_sdk::RunMode;
+    let _s = serial();
+    let k = kit(Format::Vst3);
+    let lib = TestLib::open_path(&k.path);
+    // A state saved by a plugin whose param list grew at run time (the param bank's extra param).
+    let state = {
+        let (mut inst, _m) = bare(&*k.backend, &k.plugin(Plug::Params));
+        let p = inst.activate(&activate_config(RunMode::Realtime)).unwrap();
+        lib.command(&*inst, command::RESCAN_PARAMS, 0, 0);
+        inst.poll();
+        inst.deactivate(p);
+        assert_eq!(inst.layout().params.len(), 2_001);
+        // The plugin's own copy of the table grows when it is activated again.
+        let p = inst.activate(&activate_config(RunMode::Realtime)).unwrap();
+        inst.deactivate(p);
+        inst.capture_state().unwrap()
+    };
+    // A fresh plugin that restores it lists the extra param only through its state: it tells the
+    // host while the state is restored, and again reads its table when it activates.
+    let mut m = manager_for(Format::Vst3, std::slice::from_ref(&k.path));
+    let mut req = request(&k.plugin(Plug::Params));
+    req.state = Some(state);
+    let handle = m.instantiate(&req).expect("instantiates");
+    let id = handle.id;
+    assert!(handle.restore_error.is_none(), "{:?}", handle.restore_error);
+    assert_eq!(
+        handle.layout.params.len(),
+        2_001,
+        "the handle lists the params the plugin has after its state"
+    );
+    assert_eq!(handle.layout.params[2_000].id, 2_000);
+    assert!(
+        handle.descriptor.params.iter().any(|p| p.key == "p2000"),
+        "the descriptor of the device has the param"
+    );
+    assert_eq!(m.layout(id).unwrap(), &handle.layout, "the manager's list");
+    let mut h = DeviceHarness::new(Box::new(handle.device), SR);
+    // The device drives the extra param and nothing asks for a restart to get there.
+    h.set_param("p2000", 0.5);
+    let mut events = Vec::new();
+    for _ in 0..10 {
+        h.process();
+        events.extend(m.poll());
+    }
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            ManagerEvent::LayoutChanged { .. }
+                | ManagerEvent::Restarted(_)
+                | ManagerEvent::RestartFailed { .. }
+        )),
+        "no restart and no layout change after creation: {events:?}"
+    );
+    // A restart later does not report the change a second time.
+    m.set_sample_rate(44_100.0);
+    for _ in 0..10 {
+        h.process();
+        events.extend(m.poll());
+    }
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, ManagerEvent::LayoutChanged { .. })),
+        "the change the descriptor already carries is not reported again: {events:?}"
+    );
+}

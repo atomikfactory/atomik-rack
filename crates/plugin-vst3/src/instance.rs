@@ -39,9 +39,6 @@ use vst3::Steinberg::Vst::*;
 use vst3::Steinberg::*;
 use vst3::{ComPtr, ComWrapper, Interface};
 
-/// The most mirrored values applied in one `poll`.
-const MIRROR_PER_POLL: usize = 4_096;
-
 /// Capacity of the ring that carries edits made in the plugin's editor to the processor.
 const EDIT_RING: usize = 1_024;
 
@@ -133,6 +130,8 @@ pub(crate) struct Vst3Instance {
     _host_app: ComWrapper<HostApplication>,
     hub: Arc<Hub>,
     mirror: Option<rtrb::Consumer<(u32, f64)>>,
+    /// The values one drain of the mirror ring pops (never grows past the ring's size).
+    mirror_buf: Vec<(u32, u32, f64)>,
     class: ClassInfo,
     read: Read,
     layout_changed: bool,
@@ -142,7 +141,12 @@ pub(crate) struct Vst3Instance {
     activated_latency: u32,
     active: bool,
     gui_open: bool,
-    has_view: bool,
+    /// The size the open editor was last told it has (`getSize` at the opening, then each
+    /// `onSize`): a size the plugin asks for that is this one needs no `onSize`.
+    gui_size: Option<(u32, u32)>,
+    /// Whether the controller has an editor view: asked of the plugin once, the first time it is
+    /// needed (an opened editor answers it too), so a scan builds no view.
+    has_view: std::cell::Cell<Option<bool>>,
     pub(crate) preset_roots: Option<Vec<std::path::PathBuf>>,
     _module: Arc<Module>,
 }
@@ -289,6 +293,7 @@ impl Vst3Instance {
             _host_app: host_app,
             hub,
             mirror: None,
+            mirror_buf: Vec::with_capacity(EDIT_RING),
             class: class.clone(),
             read: layout::empty_read(class),
             layout_changed: false,
@@ -296,7 +301,8 @@ impl Vst3Instance {
             activated_latency: 0,
             active: false,
             gui_open: false,
-            has_view: false,
+            gui_size: None,
+            has_view: std::cell::Cell::new(None),
             preset_roots: None,
             _module: Arc::clone(module),
         };
@@ -306,10 +312,6 @@ impl Vst3Instance {
             .map_err(BackendError::Unsupported)?;
         instance.hub.set_steps(read.steps.clone());
         instance.read = read;
-        instance.has_view = instance
-            .controller
-            .as_ref()
-            .is_some_and(|c| make_view(c).is_some());
         Ok(instance)
     }
 
@@ -442,16 +444,16 @@ impl Vst3Instance {
     }
 
     /// Tells the controller the param values the rack set since the last call (the processor
-    /// copied them into the mirror ring), so an open editor shows them.
+    /// copied them into the mirror ring), so an open editor shows them. The whole ring is drained
+    /// and the controller hears each parameter once, with the latest value the rack set.
     fn apply_mirrored(&mut self) {
         let (Some(ring), Some(c)) = (self.mirror.as_mut(), self.controller.as_ref()) else {
             return;
         };
-        for _ in 0..MIRROR_PER_POLL {
-            let Ok((id, n)) = ring.pop() else { break };
+        drain_latest(ring, &mut self.mirror_buf, |id, n| {
             // SAFETY: a live controller, on the main thread.
             unsafe { c.setParamNormalized(id, n) };
-        }
+        });
     }
 
     /// The folders the presets of this plugin are looked for in.
@@ -477,6 +479,33 @@ impl Vst3Instance {
         let stream = MemStream::new(Vec::new());
         let s = stream.as_com_ref::<IBStream>()?;
         stream_for(s.as_ptr()).then(|| stream.take_bytes())
+    }
+}
+
+/// Pops everything now in `ring` and calls `apply` once per parameter id with the last value
+/// popped for it, ids in ascending order. `buf` holds the popped entries (id, arrival number,
+/// value) and keeps its capacity: one made as large as the ring is never grown here.
+fn drain_latest(
+    ring: &mut rtrb::Consumer<(u32, f64)>,
+    buf: &mut Vec<(u32, u32, f64)>,
+    mut apply: impl FnMut(u32, f64),
+) {
+    buf.clear();
+    // What is in the ring now: the audio thread may keep pushing while this runs.
+    for seq in 0..ring.slots() {
+        let Ok((id, n)) = ring.pop() else { break };
+        buf.push((id, seq as u32, n));
+    }
+    buf.sort_unstable_by_key(|&(id, seq, _)| (id, seq));
+    let mut i = 0;
+    while i < buf.len() {
+        let id = buf[i].0;
+        let mut last = i;
+        while last + 1 < buf.len() && buf[last + 1].0 == id {
+            last += 1;
+        }
+        apply(id, buf[last].2);
+        i = last + 1;
     }
 }
 
@@ -705,8 +734,11 @@ impl HostInstance for Vst3Instance {
             .controller
             .as_ref()
             .ok_or_else(|| BackendError::Unsupported("the plugin has no editor".to_string()))?;
-        let view = make_view(controller)
-            .ok_or_else(|| BackendError::Unsupported("the plugin has no editor".to_string()))?;
+        let view = make_view(controller);
+        // Whatever the plugin answered is what `has_gui` says from now on.
+        self.has_view.set(Some(view.is_some()));
+        let view =
+            view.ok_or_else(|| BackendError::Unsupported("the plugin has no editor".to_string()))?;
         let (kind, handle): (&[u8], *mut c_void) = match parent {
             NativeParent::Win32(hwnd) => (b"HWND\0", hwnd as *mut c_void),
             NativeParent::Cocoa(v) => (b"NSView\0", v as *mut c_void),
@@ -754,6 +786,7 @@ impl HostInstance for Vst3Instance {
         };
         self.view = Some(view);
         self.gui_open = true;
+        self.gui_size = Some(size);
         Ok(size)
     }
 
@@ -768,6 +801,7 @@ impl HostInstance for Vst3Instance {
         }
         self.frame.clear();
         self.gui_open = false;
+        self.gui_size = None;
     }
 
     fn resize_gui(&mut self, w: u32, h: u32) -> Result<(u32, u32), BackendError> {
@@ -796,14 +830,50 @@ impl HostInstance for Vst3Instance {
         if !ok(unsafe { view.onSize(&mut rect) }) {
             return Err(failed("resizing the editor", "onSize failed"));
         }
-        Ok((
+        let size = (
             (rect.right - rect.left).max(1) as u32,
             (rect.bottom - rect.top).max(1) as u32,
-        ))
+        );
+        self.gui_size = Some(size);
+        Ok(size)
+    }
+
+    fn plugin_resized_gui(&mut self, w: u32, h: u32) {
+        assert_main_thread("telling a VST3 plugin editor its new size");
+        let Some(view) = self.view.as_ref().filter(|_| self.gui_open) else {
+            return;
+        };
+        // A size the plugin was told already: a plugin that answers `onSize` with a request for
+        // the same size must not be told again for ever.
+        if self.gui_size == Some((w, h)) {
+            return;
+        }
+        let mut rect = ViewRect {
+            left: 0,
+            top: 0,
+            right: w as i32,
+            bottom: h as i32,
+        };
+        // No `canResize` and no `checkSizeConstraint`: the plugin chose this size; the window
+        // follows it, and the format expects the view to be told it has it.
+        // SAFETY: a live view and a valid rect, on the main thread (and not from inside
+        // `resizeView`: this runs from the poll that handled the plugin's request).
+        unsafe { view.onSize(&mut rect) };
+        self.gui_size = Some((w, h));
     }
 
     fn has_gui(&self) -> bool {
-        self.has_view
+        // The probe builds a view and drops it again: done once, when the answer is first wanted
+        // (a scan never wants it).
+        if let Some(known) = self.has_view.get() {
+            return known;
+        }
+        let known = self
+            .controller
+            .as_ref()
+            .is_some_and(|c| make_view(c).is_some());
+        self.has_view.set(Some(known));
+        known
     }
 
     fn take_layout_changed(&mut self) -> bool {
@@ -853,6 +923,34 @@ impl Drop for Vst3Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_drained_ring_gives_each_id_once_with_its_last_value() {
+        let (mut tx, mut rx) = rtrb::RingBuffer::new(16_384);
+        for i in 0..10_000u32 {
+            tx.push((i % 3, f64::from(i))).unwrap();
+        }
+        let mut buf = Vec::with_capacity(EDIT_RING);
+        let mut seen = Vec::new();
+        drain_latest(&mut rx, &mut buf, |id, n| seen.push((id, n)));
+        assert_eq!(seen, [(0, 9_999.0), (1, 9_997.0), (2, 9_998.0)]);
+        assert!(rx.is_empty());
+        seen.clear();
+        drain_latest(&mut rx, &mut buf, |id, n| seen.push((id, n)));
+        assert!(seen.is_empty(), "nothing is told twice");
+    }
+
+    #[test]
+    fn a_drain_of_a_ring_sized_buffer_never_grows_it() {
+        let (mut tx, mut rx) = rtrb::RingBuffer::new(EDIT_RING);
+        let mut buf = Vec::with_capacity(EDIT_RING);
+        let (ptr, cap) = (buf.as_ptr(), buf.capacity());
+        for round in 0..4u32 {
+            while tx.push((round % 7, 1.0)).is_ok() {}
+            drain_latest(&mut rx, &mut buf, |_, _| {});
+        }
+        assert_eq!((buf.as_ptr(), buf.capacity()), (ptr, cap));
+    }
 
     #[test]
     fn a_state_blob_round_trips_both_sections() {

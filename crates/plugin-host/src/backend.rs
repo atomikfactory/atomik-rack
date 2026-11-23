@@ -630,6 +630,13 @@ pub trait PluginInstance {
             "this plugin's editor cannot be resized".to_string(),
         ))
     }
+    /// The window now has the size the plugin asked for (a [`PluginMessage::GuiResize`] that the
+    /// window followed): the plugin is told, for the formats that expect it to be. Unlike
+    /// [`PluginInstance::resize_gui`] this is no question: the plugin chose the size, so an
+    /// editor that cannot be resized by the user is told, too. Nothing happens while the editor
+    /// is not open, and a size the plugin was told already is not told again. Called from the
+    /// poll that handled the message, never from inside the plugin's own request.
+    fn plugin_resized_gui(&mut self, _w: u32, _h: u32) {}
     /// [`PluginInstance::resize_gui`] for the interface thread, which must not wait for a plugin
     /// that is busy: `Some(size)` is the answer ([`PluginInstance::resize_gui`] gives it at
     /// once for a plugin in this process), `None` means the request is out (or merged into the

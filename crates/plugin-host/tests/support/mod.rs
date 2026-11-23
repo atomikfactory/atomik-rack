@@ -140,6 +140,18 @@ pub fn rig(id: &str, layout: &PluginLayout, processor: Box<dyn PluginProcessor>)
     }
 }
 
+/// [`rig`] for a plugin of `format` (the manager tells its device the format).
+pub fn rig_of_format(
+    id: &str,
+    layout: &PluginLayout,
+    processor: Box<dyn PluginProcessor>,
+    format: PluginFormat,
+) -> Rig {
+    let mut r = rig(id, layout, processor);
+    r.device = r.device.with_format(format);
+    r
+}
+
 /// What stays with the test when the device moves into a harness or an engine.
 pub struct Rest {
     pub manager: ManagerEnd,

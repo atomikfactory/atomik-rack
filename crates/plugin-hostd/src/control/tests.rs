@@ -536,6 +536,7 @@ fn the_plugins_own_resize_hide_and_close_follow_the_window_and_are_forwarded() {
         r.lines(),
         vec![
             "resize 900x700".to_string(),
+            "plugin_resized_gui 900x700".to_string(),
             "hide".to_string(),
             "close_gui".to_string(),
             "destroy".to_string()
