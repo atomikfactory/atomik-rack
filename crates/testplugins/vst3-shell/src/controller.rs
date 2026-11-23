@@ -2,11 +2,13 @@
 //! `INoteExpressionController` and the editor view, over its own copy of the [`Dsp`] (it reads
 //! the parameter table, converts values and keeps the normalised values).
 
-use crate::api::{Dsp, Info, ParamSpec, PluginDef};
+use crate::api::{Dsp, Info, ParamSpec, PluginDef, Quirks};
 use crate::component::{
     MIDI_ALL_OFF, MIDI_BEND, MIDI_MOD, MIDI_PRESSURE, midi_param, read_message, send_message,
 };
-use crate::hooks::{Shared, command, find_by_number, find_by_ptr, probe};
+use crate::hooks::{
+    Shared, bump, command, counter, disconnect_peer, find_by_number, find_by_ptr, probe, stamp,
+};
 use crate::util::{copy_wstr, norm_of, plain_of, read_all, write_all};
 use std::ffi::{c_char, c_void};
 use std::sync::atomic::Ordering;
@@ -131,6 +133,7 @@ pub(crate) struct ControllerCore {
     shared: Mutex<Arc<Shared>>,
     dsp: Mutex<Box<dyn Dsp>>,
     table: Mutex<Table>,
+    pub quirks: Quirks,
     grown: Mutex<bool>,
     host: Mutex<Option<ComPtr<IHostApplication>>>,
     peer: Mutex<Option<ComPtr<IConnectionPoint>>>,
@@ -140,11 +143,13 @@ impl ControllerCore {
     pub fn new(def: &'static PluginDef, shared: Arc<Shared>) -> Self {
         let dsp = (def.create)();
         let table = build_table(&*dsp, def.info.midi, None);
+        let quirks = dsp.quirks();
         Self {
             info: def.info,
             shared: Mutex::new(shared),
             dsp: Mutex::new(dsp),
             table: Mutex::new(table),
+            quirks,
             grown: Mutex::new(false),
             host: Mutex::new(None),
             peer: Mutex::new(None),
@@ -180,8 +185,14 @@ impl ControllerCore {
     }
 
     pub fn terminate(&self) -> tresult {
+        if self.quirks.chatty_teardown {
+            self.say_goodbye();
+        }
         *lock(&self.host) = None;
-        *lock(&self.peer) = None;
+        // A strict plugin keeps its peer here: it lets go of it only in `disconnect`.
+        if !self.quirks.strict_peer {
+            *lock(&self.peer) = None;
+        }
         kResultOk
     }
 
@@ -505,9 +516,28 @@ impl ControllerCore {
         kResultOk
     }
 
-    pub unsafe fn disconnect(&self, _other: *mut IConnectionPoint) -> tresult {
-        *lock(&self.peer) = None;
-        kResultOk
+    pub unsafe fn disconnect(&self, other: *mut IConnectionPoint) -> tresult {
+        stamp(counter::SEQ_DISCONNECT_CONTROLLER);
+        if self.quirks.chatty_teardown {
+            self.say_goodbye();
+        }
+        disconnect_peer(&self.peer, other, self.quirks.strict_peer)
+    }
+
+    /// A chatty plugin's last word to its peer, from inside `disconnect` and `terminate`.
+    fn say_goodbye(&self) {
+        let peer = lock(&self.peer).clone();
+        let host = lock(&self.host).clone();
+        if let Some(peer) = peer
+            && send_message(
+                host.as_ref(),
+                &peer,
+                "atomik.bye",
+                self.shared().number as i64,
+            )
+        {
+            bump(counter::TEARDOWN_MESSAGES_DELIVERED);
+        }
     }
 
     pub unsafe fn notify(&self, message: *mut IMessage) -> tresult {

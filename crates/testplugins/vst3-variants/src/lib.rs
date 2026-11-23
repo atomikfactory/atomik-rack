@@ -3,20 +3,41 @@
 //! it) and plugins that fail at initialise, setup, start or process, or produce non-finite
 //! output, plugins that ask the host for restarts (from inside setup, after every block) and one
 //! that retitles a param, and three effects that ring after their input and report a tail of two
-//! seconds, none or no end. Kept apart from `atomik-test-vst3` so that library lists exactly the
-//! four plugins of that set.
+//! seconds, none or no end, and five that behave like strict real plugins towards the host: a
+//! split plugin that lets go of its peer only for the object it was connected with (with and
+//! without a message to the peer from inside `disconnect` and `terminate`), a component that is not
+//! an audio processor, a controller that refuses to initialise and a controller class answered
+//! with the component's own object. The factory of this library refuses the host context (an
+//! advisory call: a host must carry on). Kept apart from `atomik-test-vst3` so that library
+//! lists exactly the four plugins of that set.
 
 use atomik_test_plugin_core::{BLOCK, Event, GainFx, RingFx, TestSynth, TimedEvent};
 use atomik_test_vst3_shell::{
-    Arrangement, Dsp, Info, Io, LibraryDef, ParamSpec, PluginDef, Ports, Status, vst3_library,
+    Arrangement, Dsp, Info, Io, LibraryDef, ParamSpec, PluginDef, Ports, Quirks, Status,
+    vst3_library,
 };
 
-/// The gain effect, split into a component and a controller class.
+/// The gain effect, split into a component and a controller class. The strict variants of the
+/// library are this effect with [`Quirks`].
 struct SplitGain {
     fx: GainFx,
+    quirks: Quirks,
+}
+
+impl SplitGain {
+    fn new(quirks: Quirks) -> Self {
+        Self {
+            fx: GainFx::new(48_000.0),
+            quirks,
+        }
+    }
 }
 
 impl Dsp for SplitGain {
+    fn quirks(&self) -> Quirks {
+        self.quirks
+    }
+
     fn ports(&self) -> Ports {
         Ports::effect(true)
     }
@@ -598,6 +619,30 @@ static PICKY_INFO: Info = Info {
     midi: false,
 };
 
+/// A split plugin with a controller class of its own, with the given name and ids.
+macro_rules! split_info {
+    ($name:ident, $text:expr, $n:expr) => {
+        static $name: Info = Info {
+            name: $text,
+            cid: cid($n),
+            controller_cid: Some(cid(0x100 + $n)),
+            sub_categories: "Fx",
+            gui: true,
+            midi: false,
+        };
+    };
+}
+
+split_info!(STRICT_INFO, "Atomik Test Strict Peer", 20);
+split_info!(STRICT_CHATTY_INFO, "Atomik Test Strict Chatty Teardown", 21);
+info!(NOT_PROC_INFO, "Atomik Test Not A Processor", 22);
+split_info!(CTRL_REFUSES_INFO, "Atomik Test Controller Refuses", 23);
+split_info!(
+    CTRL_IS_COMPONENT_INFO,
+    "Atomik Test Controller Is Component",
+    24
+);
+
 info!(PROXIES_INFO, "Atomik Test Proxies", 10);
 info!(PROXIES_SLOW_INFO, "Atomik Test Slow Proxies", 11);
 info!(CHATTY_INFO, "Atomik Test Chatty Activation", 14);
@@ -607,7 +652,7 @@ info!(TAIL_INFO, "Atomik Test Tail 2s", 17);
 info!(UNDERREPORT_INFO, "Atomik Test Tail Underreported", 18);
 info!(ENDLESS_INFO, "Atomik Test Tail Infinite", 19);
 
-static PLUGINS: [PluginDef; 19] = [
+static PLUGINS: [PluginDef; 24] = [
     PluginDef {
         info: &CHATTY_INFO,
         create: || Box::new(Chatty { asked: false }),
@@ -627,10 +672,52 @@ static PLUGINS: [PluginDef; 19] = [
     },
     PluginDef {
         info: &SPLIT_INFO,
+        create: || Box::new(SplitGain::new(Quirks::default())),
+    },
+    PluginDef {
+        info: &STRICT_INFO,
         create: || {
-            Box::new(SplitGain {
-                fx: GainFx::new(48_000.0),
-            })
+            Box::new(SplitGain::new(Quirks {
+                strict_peer: true,
+                ..Quirks::default()
+            }))
+        },
+    },
+    PluginDef {
+        info: &STRICT_CHATTY_INFO,
+        create: || {
+            Box::new(SplitGain::new(Quirks {
+                strict_peer: true,
+                chatty_teardown: true,
+                ..Quirks::default()
+            }))
+        },
+    },
+    PluginDef {
+        info: &NOT_PROC_INFO,
+        create: || {
+            Box::new(SplitGain::new(Quirks {
+                not_a_processor: true,
+                ..Quirks::default()
+            }))
+        },
+    },
+    PluginDef {
+        info: &CTRL_REFUSES_INFO,
+        create: || {
+            Box::new(SplitGain::new(Quirks {
+                controller_refuses: true,
+                ..Quirks::default()
+            }))
+        },
+    },
+    PluginDef {
+        info: &CTRL_IS_COMPONENT_INFO,
+        create: || {
+            Box::new(SplitGain::new(Quirks {
+                controller_is_component: true,
+                ..Quirks::default()
+            }))
         },
     },
     PluginDef {
@@ -716,4 +803,4 @@ static PLUGINS: [PluginDef; 19] = [
     },
 ];
 
-vst3_library!(LibraryDef::new(&PLUGINS, || true));
+vst3_library!(LibraryDef::new(&PLUGINS, || true).refusing_host_context());

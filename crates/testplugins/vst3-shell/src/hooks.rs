@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use vst3::{
     ComPtr,
     Steinberg::IPlugFrame,
+    Steinberg::Vst::IConnectionPoint,
     Steinberg::Vst::{IComponentHandler, IComponentHandlerTrait},
 };
 
@@ -25,8 +26,43 @@ pub mod counter {
     pub const ENTRY_INIT: u32 = 4;
     /// Module exit calls.
     pub const ENTRY_DEINIT: u32 = 5;
+    /// `IPluginFactory3::setHostContext` calls (on every factory of the library).
+    pub const HOST_CONTEXT_CALLS: u32 = 6;
+    /// `createInstance` calls on a factory that had not been given a host context yet.
+    pub const CREATES_BEFORE_CONTEXT: u32 = 7;
+    /// The references the host context still had when the last factory let go of it (the host's
+    /// own, once it keeps the context alive for longer than the factory).
+    pub const CONTEXT_REFS_AT_FACTORY_DROP: u32 = 8;
+    /// `initialize` calls on component classes (a single-class plugin counts here, once).
+    pub const COMPONENT_INITS: u32 = 9;
+    /// `terminate` calls on component classes (a single-class plugin counts here, once).
+    pub const COMPONENT_TERMS: u32 = 10;
+    /// `initialize` calls on controller classes.
+    pub const CONTROLLER_INITS: u32 = 11;
+    /// `terminate` calls on controller classes.
+    pub const CONTROLLER_TERMS: u32 = 12;
+    /// Controller class objects created.
+    pub const CONTROLLERS_CREATED: u32 = 13;
+    /// Controller class objects destroyed.
+    pub const CONTROLLERS_DESTROYED: u32 = 14;
+    /// `disconnect` calls that got the peer the half had stored.
+    pub const DISCONNECTS_OWN: u32 = 15;
+    /// `disconnect` calls that got anything else (null included).
+    pub const DISCONNECTS_OTHER: u32 = 16;
+    /// The order stamp of the last `setActive(false)`.
+    pub const SEQ_DEACTIVATE: u32 = 17;
+    /// The order stamp of the last `disconnect` of a component.
+    pub const SEQ_DISCONNECT_COMPONENT: u32 = 18;
+    /// The order stamp of the last `disconnect` of a controller class.
+    pub const SEQ_DISCONNECT_CONTROLLER: u32 = 19;
+    /// The order stamp of the last `terminate` of a controller class.
+    pub const SEQ_TERMINATE_CONTROLLER: u32 = 20;
+    /// The order stamp of the last `terminate` of a component class.
+    pub const SEQ_TERMINATE_COMPONENT: u32 = 21;
+    /// Messages a plugin sent from inside `disconnect` or `terminate` that the peer accepted.
+    pub const TEARDOWN_MESSAGES_DELIVERED: u32 = 22;
     /// Number of counters.
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 24;
 }
 
 /// Indexes of `atomik_test_probe` (the first 32 follow the CLAP test plugins').
@@ -166,6 +202,20 @@ pub(crate) fn bump(i: u32) {
     COUNTERS[i as usize].fetch_add(1, Ordering::Relaxed);
 }
 
+/// Sets a process-wide counter.
+pub(crate) fn set_counter(i: u32, v: u64) {
+    COUNTERS[i as usize].store(v, Ordering::Relaxed);
+}
+
+/// The next number of the process-wide order of events.
+static ORDER: AtomicU64 = AtomicU64::new(0);
+
+/// Records that the event of counter `i` happened now: the counter holds its place in the order
+/// of all stamped events (later events have larger numbers).
+pub(crate) fn stamp(i: u32) {
+    set_counter(i, ORDER.fetch_add(1, Ordering::Relaxed) + 1);
+}
+
 /// Reads a process-wide counter.
 pub fn counter_read(i: u32) -> u64 {
     COUNTERS
@@ -253,6 +303,33 @@ impl Shared {
     pub fn and_not(&self, i: u32, v: u64) {
         self.slots[i as usize].fetch_and(!v, Ordering::Relaxed);
     }
+}
+
+/// The `disconnect` of a plugin half over the peer it stored. A strict plugin lets go of the peer
+/// only when `other` is that very object and answers `kResultFalse` otherwise (a null included);
+/// the others let go of it whatever they are given. The peer is released after the lock is.
+pub(crate) fn disconnect_peer(
+    peer: &Mutex<Option<ComPtr<IConnectionPoint>>>,
+    other: *mut IConnectionPoint,
+    strict: bool,
+) -> vst3::Steinberg::tresult {
+    use vst3::Steinberg::{kResultFalse, kResultOk};
+    let (released, result) = {
+        let mut stored = peer.lock().unwrap_or_else(PoisonError::into_inner);
+        let own = stored.as_ref().is_some_and(|p| p.as_ptr() == other);
+        bump(if own {
+            counter::DISCONNECTS_OWN
+        } else {
+            counter::DISCONNECTS_OTHER
+        });
+        if strict && !own {
+            (None, kResultFalse)
+        } else {
+            (stored.take(), kResultOk)
+        }
+    };
+    drop(released);
+    result
 }
 
 /// The live instances by the address of their `IComponent` interface.
