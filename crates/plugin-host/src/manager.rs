@@ -1157,7 +1157,8 @@ impl PluginManager {
         slot.set_pinned(request.pinned);
         slot.set_powered(request.powered);
         let device = PluginDevice::new(descriptor, &layout, processor, device_end, cfg.sample_rate)
-            .with_reaper(self.reaper.clone());
+            .with_reaper(self.reaper.clone())
+            .with_format(request.plugin.format);
         self.instances.insert(
             id,
             Managed {
@@ -1784,7 +1785,8 @@ impl PluginManager {
         m.parked = false;
         m.phase = Phase::Running;
         let device = PluginDevice::new(descriptor, &layout, processor, device_end, sample_rate)
-            .with_reaper(reaper);
+            .with_reaper(reaper)
+            .with_format(m.plugin.format);
         Ok(PluginHandle {
             id,
             device,
@@ -1886,7 +1888,8 @@ impl PluginManager {
             device_end,
             m.cfg.sample_rate,
         )
-        .with_reaper(reaper.clone());
+        .with_reaper(reaper.clone())
+        .with_format(m.plugin.format);
         job.ready = Some(Ok(PluginHandle {
             id,
             device,

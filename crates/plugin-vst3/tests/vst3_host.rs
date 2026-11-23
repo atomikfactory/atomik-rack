@@ -711,6 +711,50 @@ fn a_state_taken_right_after_a_rack_edit_holds_the_edit_in_the_controller_sectio
     inst.deactivate(p);
 }
 
+// ----- the MPE option --------------------------------------------------------------------------------
+
+/// What a VST3 synth device plays for one held note, with the device's `mpe.send` at `option`.
+fn synth_note_with_mpe_option(option: f32) -> Vec<f32> {
+    use atomik_core::{NoteEvent, NoteKind};
+    let (k, _) = k();
+    // Through the manager, as the app builds the device: it tells the device the format.
+    let mut m = manager_for(Format::Vst3, std::slice::from_ref(&k.path));
+    let handle = m.instantiate(&request(&k.plugin(Plug::Synth))).unwrap();
+    let mut h = atomik_testkit::harness::DeviceHarness::new(Box::new(handle.device), SR);
+    h.set_param("mpe.send", option);
+    h.push_note(
+        "notes_in",
+        NoteEvent {
+            offset: 0,
+            kind: NoteKind::On {
+                key: 69,
+                velocity: 1.0,
+            },
+        },
+    );
+    let mut played = Vec::new();
+    for _ in 0..4 {
+        h.process();
+        played.extend_from_slice(h.output("out_l"));
+    }
+    played
+}
+
+#[test]
+fn a_vst3_instrument_plays_when_the_mpe_option_is_on_and_sounds_as_with_it_off() {
+    let plain = synth_note_with_mpe_option(0.0);
+    let with_option = synth_note_with_mpe_option(1.0);
+    assert!(
+        plain.iter().any(|s| s.abs() > 0.01),
+        "the reference note sounds"
+    );
+    assert_eq!(
+        plain.iter().map(|s| s.to_bits()).collect::<Vec<_>>(),
+        with_option.iter().map(|s| s.to_bits()).collect::<Vec<_>>(),
+        "a format without raw MIDI ignores the option: the notes reach it as note events"
+    );
+}
+
 // ----- parameter text -------------------------------------------------------------------------------
 
 #[test]

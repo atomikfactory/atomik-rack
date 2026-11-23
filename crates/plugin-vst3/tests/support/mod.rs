@@ -572,7 +572,8 @@ pub fn rig_for(backend: &dyn PluginBackend, plugin: &PluginRef, mode: RunMode) -
     manager.slot().set_latency(instance.latency_frames(), SR);
     let descriptor = descriptor_for(plugin, &layout).expect("descriptor");
     let device = PluginDevice::new(descriptor, &layout, processor, device_end, SR)
-        .with_reaper(reaper.clone());
+        .with_reaper(reaper.clone())
+        .with_format(plugin.format);
     Rig {
         instance,
         device: Some(device),

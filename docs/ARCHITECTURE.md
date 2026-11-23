@@ -7348,8 +7348,11 @@ each note on that note's channel. Atomik keeps that as data of the note and play
   that share a note on's frame so they go first. The MIDI Out device (`mpe.zone`, `mpe.members`) sends everything
   as frames on its tap and announces the zone at its start, at each playback start and on a change. The plugin
   device (`mpe.send`, the last param) turns notes into `PluginEventKind::Midi` raw messages (wire tag 9) on member
-  channels 2 to 16; the CLAP processor passes them to a plugin that takes MIDI and the VST3 processor ignores them
-  (those plugins get note expression events). Both devices are allocation free on the audio thread.
+  channels 2 to 16 for a plugin whose format takes raw MIDI (`PluginFormat::takes_raw_midi`: CLAP; the manager tells
+  the device the format when it builds it). A VST3 plugin has no raw MIDI input, so its device ignores the switch
+  whatever its value (the parameter stays in the descriptor and in the project) and sends note events, which the
+  VST3 processor turns into note expression; the panel does not offer the switch for it. Both devices are
+  allocation free on the audio thread.
 
 ## 6q. Webcam control in the app
 

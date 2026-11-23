@@ -109,7 +109,7 @@ use atomik_core::{
 };
 use atomik_device_sdk::{
     Channels, Device, DeviceDescriptor, DeviceKind, MAX_AUX_OUTPUTS, PLUGIN_CV_INPUTS,
-    PluginLayout, PrepareInfo, ProcessContext, RunMode, ScopeTap, SocketId,
+    PluginFormat, PluginLayout, PrepareInfo, ProcessContext, RunMode, ScopeTap, SocketId,
 };
 use rtrb::{Consumer, Producer, PushError};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -269,6 +269,9 @@ pub struct PluginDevice {
     /// `mpe.send`: the notes go out as a lower MPE zone of raw MIDI messages (member channels
     /// 2 to 16) instead of note events.
     mpe_send: bool,
+    /// The plugin's format takes raw MIDI (see [`PluginFormat::takes_raw_midi`]): when it does
+    /// not, `mpe.send` is ignored whatever its value and the notes go out as note events.
+    raw_midi: bool,
     /// `mpe.send` changed: release the notes of the old way and announce or end the zone.
     mpe_changed: bool,
     /// Send the MPE Configuration Message with the next events.
@@ -484,6 +487,7 @@ impl PluginDevice {
             unsent_failure: None,
             run_mode: RunMode::Realtime,
             mpe_send: false,
+            raw_midi: true,
             mpe_changed: false,
             mpe_announce: false,
             mpe: MpeEncoder::new(ZoneSide::Lower, atomik_core::mpe::MAX_MEMBERS),
@@ -518,6 +522,20 @@ impl PluginDevice {
     #[must_use]
     pub fn with_reaper(mut self, reaper: ReaperQueue) -> Self {
         self.reaper = Some(reaper);
+        self
+    }
+
+    /// Tells the device the format of its plugin. A format that takes no raw MIDI (VST3) makes
+    /// the `mpe.send` option do nothing, whatever its value, so the notes reach the plugin as
+    /// note events; the value stays in the parameter and in the saved project. A device built
+    /// without this call assumes a format that takes raw MIDI.
+    #[must_use]
+    pub fn with_format(mut self, format: PluginFormat) -> Self {
+        self.raw_midi = format.takes_raw_midi();
+        if !self.raw_midi {
+            self.mpe_send = false;
+            self.mpe_changed = false;
+        }
         self
     }
 
@@ -1568,7 +1586,7 @@ impl Device for PluginDevice {
                 }
             } else if j == 2 * PLUGIN_CV_INPUTS {
                 // `mpe.send`, after the CV programmer params.
-                let on = plain >= 0.5;
+                let on = plain >= 0.5 && self.raw_midi;
                 self.mpe_changed |= on != self.mpe_send;
                 self.mpe_send = on;
             }

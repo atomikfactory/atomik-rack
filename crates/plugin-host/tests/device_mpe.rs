@@ -229,3 +229,54 @@ fn switching_it_on_ends_plain_notes_and_switching_it_off_ends_the_zone() {
         K::NoteOn { key: 65, .. }
     ));
 }
+
+#[test]
+fn a_plugin_whose_format_takes_no_raw_midi_gets_note_events_with_the_option_on() {
+    let (probe, shared) = Probe::new();
+    let (mut h, _r) = harness(rig_of_format(
+        "mpe.vst3",
+        &synth_layout(),
+        Box::new(probe),
+        atomik_device_sdk::PluginFormat::Vst3,
+    ));
+    h.set_param("mpe.send", 1.0);
+    h.push_note("notes_in", on(5, 60));
+    h.push_note("notes_in", expr(5, 60, ExprKind::Tuning, 2.0));
+    h.process();
+    h.push_note("notes_in", off(1, 60));
+    h.process();
+    for call in 0..2 {
+        let e = events(&shared, call);
+        assert!(
+            midi(&e).is_empty(),
+            "no raw MIDI, not even the zone announcement"
+        );
+    }
+    let first = events(&shared, 0);
+    assert!(
+        matches!(first[0].kind, K::NoteOn { key: 60, .. }),
+        "{first:?}"
+    );
+    assert!(matches!(first[1].kind, K::NoteExpr { key: 60, .. }));
+    assert!(matches!(
+        events(&shared, 1)[0].kind,
+        K::NoteOff { key: 60, .. }
+    ));
+}
+
+#[test]
+fn a_plugin_that_takes_raw_midi_is_unchanged_by_the_format_being_told() {
+    let (probe, shared) = Probe::new();
+    let (mut h, _r) = harness(rig_of_format(
+        "mpe.clap",
+        &synth_layout(),
+        Box::new(probe),
+        atomik_device_sdk::PluginFormat::Clap,
+    ));
+    h.set_param("mpe.send", 1.0);
+    h.push_note("notes_in", on(5, 60));
+    h.process();
+    let m = midi(&events(&shared, 0));
+    assert_eq!(m.len(), 6, "the zone announcement and the note");
+    assert_eq!(m[5], (5, vec![0x91, 60, 127]));
+}

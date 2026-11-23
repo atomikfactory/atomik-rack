@@ -492,6 +492,12 @@ may break APIs and the patch and project formats.
   host only did for an editor the user could resize. A fixed-size editor never heard of its new size, and some drew
   at the old size inside the new window. The view is now told whenever the window followed a size it asked for,
   in the app and in the plugin process, once per size; a resize by the user of a fixed editor is still refused.
+- **A VST3 instrument plays when the device's MPE switch is on.** The switch sends the notes as raw MIDI messages,
+  and VST3 has no raw MIDI input, so a VST3 instrument on a device with the switch on received no notes and stayed
+  silent. A plugin device now ignores the switch for a format that takes no raw MIDI and sends note events as it does
+  with the switch off; the parameter and a project that has it on are unchanged, and the switch is no longer offered
+  on the panel of a VST3 plugin. A project with such a device now renders the instrument's notes where it rendered
+  silence.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

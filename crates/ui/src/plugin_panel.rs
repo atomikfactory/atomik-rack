@@ -332,7 +332,11 @@ pub fn button_visible(b: PluginButton, doc: &PluginDoc, status: &PluginDeviceSta
         PluginButton::OpenGui => status.has_editor && status.missing.is_none(),
         PluginButton::ToChannel => doc.layout.kind_hint == PluginKindHint::Instrument,
         PluginButton::Relink => status.missing.is_some(),
-        PluginButton::Mpe => status.missing.is_none() && doc.layout.notes_in,
+        // Only a format that takes raw MIDI has the option: the notes reach a VST3 plugin as note
+        // events whatever the switch says, so it is not offered.
+        PluginButton::Mpe => {
+            status.missing.is_none() && doc.layout.notes_in && doc.format.takes_raw_midi()
+        }
         _ => true,
     }
 }

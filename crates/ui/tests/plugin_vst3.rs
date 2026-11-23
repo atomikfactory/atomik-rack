@@ -206,3 +206,32 @@ fn a_stepped_vst3_param_is_a_discrete_param_driven_by_its_step_index() {
     let dev = doc.device(&key("vfx")).unwrap();
     assert!((dev.params["p8"] - 3.0).abs() < f32::EPSILON);
 }
+
+/// A VST3 instrument: the VST3 effect with a note input.
+fn vst3_instrument() -> PluginLayout {
+    PluginLayout {
+        kind_hint: PluginKindHint::Instrument,
+        notes_in: true,
+        ..vst3_layout()
+    }
+}
+
+#[test]
+fn the_mpe_switch_is_offered_for_a_clap_instrument_and_not_for_a_vst3_one() {
+    use atomik_model::PluginDoc;
+    use atomik_ui::plugin_data::PluginDeviceStatus;
+    use atomik_ui::plugin_panel::{PluginButton, button_visible};
+    // A VST3 plugin has no raw MIDI input: the switch would do nothing, so it is not offered.
+    let vst3_synth = PluginRef {
+        format: PluginFormat::Vst3,
+        id: "a70f1c014a5b4c018d2e1f0000000002".to_string(),
+    };
+    let status = PluginDeviceStatus::default();
+    let clap = PluginDoc::new(&synth_ref(), synth_layout(), None);
+    let vst3 = PluginDoc::new(&vst3_synth, vst3_instrument(), None);
+    assert!(button_visible(PluginButton::Mpe, &clap, &status));
+    assert!(!button_visible(PluginButton::Mpe, &vst3, &status));
+    // The other buttons of the same plugin are unaffected.
+    assert!(button_visible(PluginButton::ToChannel, &vst3, &status));
+    assert!(button_visible(PluginButton::Bypass, &vst3, &status));
+}

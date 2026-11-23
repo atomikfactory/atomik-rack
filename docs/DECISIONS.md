@@ -2079,3 +2079,27 @@ through `set_size`, which is attempted only for an editor that reports it can be
 calling `onSize` from inside `resizeView` (reentrancy).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BN. The MPE switch of a plugin device is ignored, and not offered, for a format without raw MIDI
+
+**Question.** The `mpe.send` switch of a plugin device sends the notes as raw MIDI messages on member channels. VST3 has
+no raw MIDI input, and the VST3 processor drops those messages on purpose, so a VST3 instrument on a device with the
+switch on received no notes at all and stayed silent.
+
+**Decision.** `PluginFormat::takes_raw_midi` says whether a format takes raw MIDI (CLAP: yes, VST3: no). The manager
+tells each plugin device its format when it builds it (a device built without that call assumes a format that takes
+raw MIDI), and a device of a format that does not take raw MIDI treats `mpe.send` as off whatever its value, so the
+notes reach the plugin as note events, with the per-note expression the plain path already gives a VST3 plugin as note
+expression events. The parameter stays in the descriptor and in saved projects (no descriptor change, no format change):
+a project that has the value on keeps it, and its VST3 instrument now plays. The switch is hidden, not greyed out, on
+the panel of such a plugin (the rack panel and its hit test share one visibility rule). A plugin of this format in its
+own process takes the same path: the format comes from the request that names the plugin, not from where it runs.
+
+**Rendered audio.** The one deliberate change of rendered audio of this work: a project with a VST3 instrument on a
+device whose switch was on rendered silence from that device and now renders its notes. That case was broken.
+
+**Rejected.** Translating the MPE messages into VST3 events (the plain path already carries the same per-note
+information natively, with a note id); removing the parameter for such a plugin (a descriptor change, and a project
+saved with the value would no longer match); greying the switch out (a control that cannot work is better absent).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
