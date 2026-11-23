@@ -4,8 +4,8 @@
 //! The mappings are **project data** (`RackDoc::midi_maps`, project format 28, undoable), but
 //! they never take part in the sound: they only decide which commands the live MIDI input
 //! issues, so the routing, the plan and the bounce of a project are exactly what they were
-//! (`crates/render/tests/midi_maps.rs` proves a project with mappings bounces bit for bit like
-//! one without).
+//! (`crates/render/tests/suite/midi_maps.rs` proves a project with mappings bounces bit for bit
+//! like one without).
 //!
 //! # Sources
 //!
