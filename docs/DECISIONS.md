@@ -2066,7 +2066,9 @@ resize or by this call). A resize by the user keeps its `canResize` check.
 
 **Why no `canResize` check.** The question "may the user drag the frame" is not the question "did the window take the
 size the plugin chose". An editor that can be resized is told by this call too, a moment before the platform's own
-resize event reaches `resize_gui`; the size is the same, so it is told once.
+resize event reaches `resize_gui` with the same size: that second `onSize` carries the rectangle the view already
+has, as the one it always got from that event did. `resize_gui` is left as it was, so a resize by the user reaches a
+plugin exactly as before.
 
 **Why from the poll and not from `resizeView`.** The plugin is inside its own call there, and answering a request with
 a call back into the view from the same stack is the way a plugin loops or deadlocks. The message is handled at the next
