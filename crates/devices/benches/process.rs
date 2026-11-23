@@ -2,7 +2,9 @@
 //! connected input gets deterministic noise, notes inputs get a held three-note chord, and 256
 //! batches (a third of a second of audio) are processed per timed run. The cost per batch is the
 //! median run divided by 256. Run: `cargo bench -p atomik-devices --bench process`; a filter
-//! argument selects devices (`-- poly-synth`). `ATOMIK_BENCH_ONCE` runs each device once.
+//! argument selects devices (`-- poly-synth`). `ATOMIK_BENCH_ONCE` runs each device once. The
+//! built-in instruments also run an `idle` row (`device/<name>/idle/256batches`): the same rig
+//! without notes, what an instrument costs while nothing is played.
 #![allow(
     clippy::disallowed_methods,
     reason = "wall-clock timing is the point of a benchmark"
@@ -18,6 +20,15 @@ use std::time::Duration;
 const BATCHES: usize = 256;
 /// Types that need host data (children, audio assets or a plugin) and cannot run bare.
 const SKIPPED: [&str; 2] = ["atomik.container", "atomik.audio-track"];
+/// The instruments that also get an idle row.
+const INSTRUMENTS: [&str; 6] = [
+    "atomik.poly-synth",
+    "atomik.fm-synth",
+    "atomik.wavetable-synth",
+    "atomik.sampler",
+    "atomik.granular",
+    "atomik.organ",
+];
 
 fn noise(seed: &mut u32) -> [f32; BATCH] {
     let mut b = [0.0f32; BATCH];
@@ -28,8 +39,9 @@ fn noise(seed: &mut u32) -> [f32; BATCH] {
     b
 }
 
-/// A device of `type_id` with every input connected and a chord held on its notes inputs.
-fn rig(registry: &Registry, type_id: &str) -> DeviceHarness {
+/// A device of `type_id` with every input connected and, with `chord`, a chord held on its
+/// notes inputs.
+fn rig(registry: &Registry, type_id: &str, chord: bool) -> DeviceHarness {
     let factory = registry.factory(type_id).expect("registered type");
     let mut h = DeviceHarness::new((factory.create)(), 48_000.0);
     let mut seed = 7;
@@ -39,7 +51,7 @@ fn rig(registry: &Registry, type_id: &str) -> DeviceHarness {
         }
         match s.kind {
             SocketKind::Audio | SocketKind::Cv => *h.input_mut(s.key) = noise(&mut seed),
-            SocketKind::Notes => {
+            SocketKind::Notes if chord => {
                 for key in [48u8, 55, 64] {
                     h.push_note(
                         s.key,
@@ -50,6 +62,7 @@ fn rig(registry: &Registry, type_id: &str) -> DeviceHarness {
                     );
                 }
             }
+            SocketKind::Notes => {}
         }
     }
     h
@@ -71,8 +84,12 @@ fn main() {
         .collect();
     if once_mode() {
         for id in ids {
-            let mut h = rig(&registry, id);
+            let mut h = rig(&registry, id, true);
             println!("{id}: once {:.6} s", time_once(|| run(&mut h)));
+            if INSTRUMENTS.contains(&id) {
+                let mut h = rig(&registry, id, false);
+                println!("{id}: idle once {:.6} s", time_once(|| run(&mut h)));
+            }
         }
         return;
     }
@@ -86,10 +103,20 @@ fn main() {
             "device/{}/{BATCHES}batches",
             id.trim_start_matches("atomik.")
         );
-        let mut h = rig(&registry, id);
+        let mut h = rig(&registry, id, true);
         let rec = Recorder::new();
         c.bench_function(&name, |b| b.iter_custom(rec.runner(|| run(&mut h))));
         rec.report(&name);
+        if INSTRUMENTS.contains(&id) {
+            let name = format!(
+                "device/{}/idle/{BATCHES}batches",
+                id.trim_start_matches("atomik.")
+            );
+            let mut h = rig(&registry, id, false);
+            let rec = Recorder::new();
+            c.bench_function(&name, |b| b.iter_custom(rec.runner(|| run(&mut h))));
+            rec.report(&name);
+        }
     }
     c.final_summary();
 }

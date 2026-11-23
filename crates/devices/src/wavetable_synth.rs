@@ -3,7 +3,8 @@
 //! Per voice: two wavetable oscillators (each reads one of the factory tables of
 //! [`atomik_dsp::wavetable`] at a morphing frame position), a sub sine one octave below the key
 //! and white noise, a stereo pair of TPT state-variable filters (LP/BP/HP 12 dB/oct), an amp ADSR
-//! and a mod ADSR. One global LFO is written to `lfo_cv_out` every sample.
+//! and a mod ADSR. One global LFO is written to `lfo_cv_out` every sample (a batch with no sounding
+//! voice, no note and no cable on that output only moves it on).
 //!
 //! * **Oscillators.** `osc1.*` and `osc2.*`: table, frame `position` (0 is the first frame, 1 the
 //!   last; the output blends the two neighbouring frames, so it is continuous), octave, semitone
@@ -1670,9 +1671,21 @@ impl Device for WavetableSynth {
             self.fresh = false;
         }
         self.shared.tune_cents = ctx.time.tune_cents;
+        let events = ctx.notes_in(NOTES_IN);
         let mut lfo = [0.0f32; BATCH];
-        for s in &mut lfo {
-            *s = self.lfo.next_sample();
+        // Only a sounding voice, a note of this batch or a cable on the LFO output reads the LFO:
+        // a batch with none of them moves it on without evaluating the shape.
+        if crate::shortcuts::enabled()
+            && !ctx.is_connected(LFO_CV_OUT)
+            && events.is_empty()
+            && !self.voices.iter().any(Voice::is_active)
+        {
+            crate::shortcuts::took();
+            self.lfo.skip(BATCH);
+        } else {
+            for s in &mut lfo {
+                *s = self.lfo.next_sample();
+            }
         }
         let cv = *ctx.input(CUTOFF_CV_IN);
         let cv_pitch = *ctx.input(PITCH_CV_IN);
@@ -1681,7 +1694,6 @@ impl Device for WavetableSynth {
         self.shared.cv_resonance_on = ctx.is_connected(RESONANCE_CV_IN);
         let (mut left, mut right) = ([0.0f32; BATCH], [0.0f32; BATCH]);
         let mut ctl_gain = [1.0f32; BATCH];
-        let events = ctx.notes_in(NOTES_IN);
         let mut next = 0;
         let mut start = 0;
         // Render in segments between note events so events are sample-accurate.
@@ -2071,6 +2083,8 @@ mod tests {
     #[test]
     fn writes_lfo_to_cv_out_every_sample() {
         let (mut h, _) = synth();
+        // A cable on the output: an LFO nobody reads is not evaluated while the synth is idle.
+        h.set_connected("lfo_cv_out", true);
         h.set_param("lfo.rate", 2.0);
         let o = h.render(seconds(1.0), &["lfo_cv_out"]).remove(0);
         assert!(o.iter().all(|v| (-1.0..=1.0).contains(v)));
@@ -3124,5 +3138,26 @@ mod tests {
             let want = 440.0 * 2f64.powf(f64::from(cents) / 1200.0);
             assert!((f - want).abs() < 0.6, "{cents} cents: {f} vs {want}");
         }
+    }
+}
+
+#[cfg(test)]
+mod idle_lfo_tests {
+    use super::*;
+    use crate::shortcuts::lfo_check::{Case, assert_same};
+    use crate::test_support::harness;
+
+    #[test]
+    fn an_idle_batch_without_a_cable_on_the_lfo_output_skips_the_lfo_bit_for_bit() {
+        assert_same(
+            &|| harness(Box::new(WavetableSynth::new())),
+            &Case {
+                notes: "notes_in",
+                outs: &["out_l", "out_r"],
+                lfo_out: Some("lfo_cv_out"),
+                amount: ("lfo.to_pos1", 0.5),
+                setup: &[("env.amp.release", 5.0)],
+            },
+        );
     }
 }

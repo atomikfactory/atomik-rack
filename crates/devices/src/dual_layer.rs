@@ -276,6 +276,7 @@ impl Device for DualLayer {
                 resonance_on: ctx.is_connected(RESONANCE_CV_IN),
                 level_on: ctx.is_connected(LEVEL_CV_IN),
                 pan_on: ctx.is_connected(PAN_CV_IN),
+                lfo_out_on: false,
                 tune_cents: ctx.time.tune_cents,
             };
             self.layers[0].render_batch(&inp, false, &mut a);

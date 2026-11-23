@@ -554,6 +554,8 @@ fn the_lfo_vibrato_swings_the_pitch_and_the_tremolo_the_level() {
 #[test]
 fn the_lfo_is_written_to_the_cv_output_every_sample() {
     let (mut h, _) = synth();
+    // A cable on the output: an LFO nobody reads is not evaluated while the synth is idle.
+    h.set_connected("lfo_cv_out", true);
     h.set_param("lfo.rate", 10.0);
     h.render(3, &OUT);
     let a = h.output("lfo_cv_out").to_vec();
@@ -2094,4 +2096,19 @@ fn the_slope_time_holds_at_every_oversampling() {
         let d = 20.0 * (level_at(&x, 0.3) / level_at(&x, 1.3)).log10();
         assert!((d - 60.0).abs() < 6.0, "oversample {over}: {d} dB");
     }
+}
+
+#[test]
+fn an_idle_batch_without_a_cable_on_the_lfo_output_skips_the_lfo_bit_for_bit() {
+    use crate::shortcuts::lfo_check::{Case, assert_same};
+    assert_same(
+        &|| synth().0,
+        &Case {
+            notes: "notes_in",
+            outs: &OUT,
+            lfo_out: Some("lfo_cv_out"),
+            amount: ("lfo.to_pitch", 7.0),
+            setup: &[("op1.release", 5.0), ("op2.release", 5.0)],
+        },
+    );
 }

@@ -2872,3 +2872,22 @@ fn the_new_sounds_use_the_new_modes() {
     let (lo, hi) = p.pos();
     assert!(hi - lo > 0.1, "the position sweeps: {lo}..{hi}");
 }
+
+#[test]
+fn an_idle_batch_skips_the_device_lfo_bit_for_bit() {
+    use crate::shortcuts::lfo_check::{Case, assert_same};
+    assert_same(
+        &|| {
+            let (mut h, _) = granular();
+            plain(&mut h);
+            h
+        },
+        &Case {
+            notes: "notes_in",
+            outs: &OUT,
+            lfo_out: None,
+            amount: ("lfo.to_position", 0.4),
+            setup: &[("env.amp.release", 5.0)],
+        },
+    );
+}

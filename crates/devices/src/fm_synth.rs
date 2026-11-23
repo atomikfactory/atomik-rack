@@ -77,7 +77,8 @@
 //!   note start; the LFO moves the pitch by `lfo.to_pitch` semitones; pitch bend moves it by up to
 //!   `bend.range` semitones (default 2). The fixed-frequency operators ignore all of them.
 //! * **LFO.** One global LFO (`lfo.*`: wave, rate; targets pitch, amplitude and index), written
-//!   to `lfo_cv_out` every sample.
+//!   to `lfo_cv_out` every sample (a batch with no sounding voice, no note and no cable on that
+//!   output only moves it on).
 //! * **Play.** `play.mode`: `poly` (up to `voices`, default 8, at most 16: a note that finds no
 //!   free voice steals the oldest, which fades out over 2 ms), `mono` (one voice; every key
 //!   retriggers the envelopes and returns to the key still held when one is released) and
@@ -1970,9 +1971,24 @@ impl Device for FmSynth {
             self.fresh = false;
         }
         self.shared.tune_cents = ctx.time.tune_cents;
+        let events = ctx.notes_in(NOTES_IN);
         let mut lfo = [0.0f32; BATCH];
-        for s in &mut lfo {
-            *s = self.lfo.next_sample();
+        // Only a sounding voice, a note of this batch or a cable on the LFO output reads the LFO:
+        // a batch with none of them moves it on without evaluating the shape.
+        if crate::shortcuts::enabled()
+            && !ctx.is_connected(LFO_CV_OUT)
+            && events.is_empty()
+            && !self
+                .voices
+                .iter()
+                .any(|v| v.is_active(self.shared.algorithm))
+        {
+            crate::shortcuts::took();
+            self.lfo.skip(BATCH);
+        } else {
+            for s in &mut lfo {
+                *s = self.lfo.next_sample();
+            }
         }
         let cv_pitch = *ctx.input(PITCH_CV_IN);
         let cv_index = *ctx.input(INDEX_CV_IN);
@@ -1980,7 +1996,6 @@ impl Device for FmSynth {
         let shift = self.shared.shift;
         let (mut hi_l, mut hi_r) = ([0.0f32; 4 * BATCH], [0.0f32; 4 * BATCH]);
         let mut ctl_gain = [1.0f32; BATCH];
-        let events = ctx.notes_in(NOTES_IN);
         let mut next = 0;
         let mut start = 0;
         // Render in segments between note events so events are sample-accurate.

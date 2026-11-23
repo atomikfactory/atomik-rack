@@ -248,6 +248,12 @@ may break APIs and the patch and project formats.
   to the plugin once, the first time the app wants the answer (or when the editor is opened, which settles it).
 - **The plugin manager's frame poll no longer builds its list of instances every frame.** The list is kept and
   reused; with nothing to report a poll now allocates nothing.
+- **An idle instrument no longer evaluates its LFO.** The poly synth, FM synth, wavetable synth, sampler and granular
+  synth computed 64 LFO values at the start of every batch, also when no note sounded and nobody read them. A batch
+  with no sounding voice, no note event and no cable on the LFO output now moves the LFO on (the same phase steps,
+  the same sample & hold draws) without evaluating its shape, so the next note finds it exactly where it was and
+  every output sample is unchanged. An idle sampler or granular synth costs about a quarter less per batch (about
+  370 us to 280 us per 256 batches on the bench machine), the other three about a tenth.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

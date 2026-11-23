@@ -73,7 +73,7 @@ level; there is glide, legato, a stereo spread, drift and an in-device chorus an
 | `pan_cv_in` | CV | in | Balances the output by `pan_cv_trim` × CV (−1 = left, +1 = right). |
 | `out_l` | Audio | out | Left output |
 | `out_r` | Audio | out | Right output: identical to `out_l` unless `pan_cv_in` is cabled (see below) |
-| `lfo_cv_out` | CV | out | The global LFO, bipolar −1..+1, written every sample |
+| `lfo_cv_out` | CV | out | The global LFO, bipolar −1..+1, written every sample (an idle device with no cable here does not evaluate it) |
 
 ### Params
 
@@ -794,7 +794,7 @@ patches use a drawn table: Drawn Bell Morph, Aligned Saw Pad and Table Sub Morph
 | `pan_cv_in` | CV | in | Balances the stereo output by `pan_cv_trim` × CV (−1 = left, +1 = right). |
 | `out_l` | Audio | out | Left output |
 | `out_r` | Audio | out | Right output: identical to `out_l` unless `unison.spread` moves copies apart or `pan_cv_in` is cabled |
-| `lfo_cv_out` | CV | out | The global LFO, bipolar −1..+1, written every sample |
+| `lfo_cv_out` | CV | out | The global LFO, bipolar −1..+1, written every sample (an idle device with no cable here does not evaluate it) |
 
 ### Params
 
@@ -954,7 +954,7 @@ In every routing operator 4 is the feedback operator.
 | `pan_cv_in` | CV | in | Balances the stereo output by `pan_cv_trim` × CV (−1 = left, +1 = right; when cabled). |
 | `out_l` | Audio | out | Left output |
 | `out_r` | Audio | out | Right output: identical to `out_l` unless `spread` pans the keys or `pan_cv_in` is cabled |
-| `lfo_cv_out` | CV | out | The global LFO, bipolar −1..+1, written every sample |
+| `lfo_cv_out` | CV | out | The global LFO, bipolar −1..+1, written every sample (an idle device with no cable here does not evaluate it) |
 
 ### Params
 

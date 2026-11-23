@@ -1505,9 +1505,20 @@ impl Device for Sampler {
             self.fresh = false;
         }
         self.shared.master_cents = ctx.time.tune_cents;
+        let events = ctx.notes_in(NOTES_IN);
         let mut lfo = [0.0f32; BATCH];
-        for s in &mut lfo {
-            *s = self.lfo.next_sample();
+        // Only a sounding voice or a note of this batch reads the LFO (the sampler has no LFO
+        // output): a batch with neither moves it on without evaluating the shape.
+        if crate::shortcuts::enabled()
+            && events.is_empty()
+            && !self.voices.iter().any(Voice::is_active)
+        {
+            crate::shortcuts::took();
+            self.lfo.skip(BATCH);
+        } else {
+            for s in &mut lfo {
+                *s = self.lfo.next_sample();
+            }
         }
         let cv_pitch = *ctx.input(PITCH_CV_IN);
         let cv_cutoff = *ctx.input(CUTOFF_CV_IN);
@@ -1517,7 +1528,6 @@ impl Device for Sampler {
         self.shared.cv_pan_on = ctx.is_connected(PAN_CV_IN);
         let mut mix = [[0.0f32; BATCH]; 2];
         let mut ctl_gain = [1.0f32; BATCH];
-        let events = ctx.notes_in(NOTES_IN);
         let mut next = 0;
         let mut start = 0;
         // Render in segments between note events so events are sample-accurate.
