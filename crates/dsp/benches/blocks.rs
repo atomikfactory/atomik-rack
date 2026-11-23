@@ -1,6 +1,8 @@
 //! Speed of the DSP primitives the devices are built from: cost of a 4,096-sample block through a
 //! smoothed biquad, a state-variable filter, a chorus and a compressor (stereo where the
-//! primitive is). Run: `cargo bench -p atomik-dsp --bench blocks`. Each case prints criterion's
+//! primitive is), and through the oversampler (a round trip at 2x, 4x and 8x with a hard clip
+//! between up and down, and the up half alone at 4x as the true-peak detectors use it, both fed
+//! in 64-sample batches as the devices do). Run: `cargo bench -p atomik-dsp --bench blocks`. Each case prints criterion's
 //! report and a line `median .. p99 ..` over its timed runs; `ATOMIK_BENCH_ONCE` runs each case
 //! once (for an instruction counter).
 #![allow(
@@ -8,6 +10,7 @@
     reason = "wall-clock timing is the point of a benchmark"
 )]
 
+use atomik_dsp::oversample::{OversampleFactor, Oversampler};
 use atomik_dsp::{BiquadShape, Chorus, Compressor, FilterMode, Svf};
 use atomik_testkit::bench::{Recorder, SAMPLES, once_mode, time_once};
 use criterion::Criterion;
@@ -15,6 +18,8 @@ use std::time::Duration;
 
 const SR: f32 = 48_000.0;
 const BLOCK: usize = 4096;
+/// The batch a device hands to its oversampler.
+const BATCH: usize = 64;
 
 /// A deterministic noise block in -0.5..0.5.
 fn noise(seed: u32) -> Vec<f32> {
@@ -31,6 +36,7 @@ type Case = (&'static str, Box<dyn FnMut() -> f32>);
 
 fn cases() -> Vec<Case> {
     let (nl, nr) = (noise(1), noise(2));
+    let nl2 = nl.clone();
     let mut biquad = atomik_dsp::SmoothedBiquad::new(BiquadShape::Peaking, 1_000.0, 1.0, 6.0, SR);
     let (l, r) = (nl.clone(), nr.clone());
     let biquad_case: Case = (
@@ -73,7 +79,48 @@ fn cases() -> Vec<Case> {
         "compressor-stereo",
         Box::new(move || l.iter().zip(&r).map(|(a, b)| comp.process(*a, *b)).sum()),
     );
-    vec![biquad_case, svf_case, chorus_case, comp_case]
+    let mut all = vec![biquad_case, svf_case, chorus_case, comp_case];
+    for (name, factor) in [
+        ("oversample-2x-roundtrip", OversampleFactor::X2),
+        ("oversample-4x-roundtrip", OversampleFactor::X4),
+        ("oversample-8x-roundtrip", OversampleFactor::X8),
+    ] {
+        let mut os = Oversampler::new(BATCH);
+        os.set_factor(factor);
+        let x = nl2.clone();
+        all.push((
+            name,
+            Box::new(move || {
+                let mut out = [0.0f32; BATCH];
+                let mut acc = 0.0;
+                for batch in x.chunks(BATCH) {
+                    for v in os.upsample(batch) {
+                        *v = (*v * 2.0).clamp(-0.5, 0.5);
+                    }
+                    os.downsample(&mut out);
+                    acc += out[BATCH - 1];
+                }
+                acc
+            }),
+        ));
+    }
+    let mut os = Oversampler::new(BATCH);
+    os.set_factor(OversampleFactor::X4);
+    let x = nl2;
+    all.push((
+        "oversample-4x-up",
+        Box::new(move || {
+            let mut acc = 0.0;
+            for batch in x.chunks(BATCH) {
+                acc += os
+                    .upsample(batch)
+                    .iter()
+                    .fold(0.0f32, |m, v| m.max(v.abs()));
+            }
+            acc
+        }),
+    ));
+    all
 }
 
 fn main() {

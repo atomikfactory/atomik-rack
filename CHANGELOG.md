@@ -265,6 +265,11 @@ may break APIs and the patch and project formats.
   The default patch with a three-note chord costs about 38 % less per batch (about 11.7 ms to 7.2 ms per 256 batches
   on the bench machine).
   A key scale of zero no longer costs an `exp2` per operator at every control step: the gain is exactly 1 either way.
+- **The oversampler filters a block at a time.** The halfband stages ran sample by sample through a ring buffer; they
+  now run a stage at a time over contiguous history, with the same additions in the same order, so no output bit
+  changes. The oversampler alone is 3.0 to 3.9 times faster (4x round trip 292 to 88 us per 4,096 samples), a
+  distortion, saturation or clipper 23 to 51 % cheaper per batch, the level meters with a true-peak detector 38 to
+  49 % and the mastering device 25 to 34 %. An oversampler keeps about 8.5 KB more buffer memory.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
